@@ -28,6 +28,7 @@ import {
   TurnStepStarted,
 } from '#/agent/loop/turnEvents';
 import { TurnEnded } from '#/agent/loop/turnOps';
+import { LoopDrained, LoopIdle } from '#/agent/loop/loopOps';
 import { runAgentTurn } from '#/session/subagent/runAgentTurn';
 import type { ExecutableTool } from '#/tool/toolContract';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
@@ -1097,6 +1098,15 @@ describe('Agent loop', () => {
     await completion;
 
     expect(ctx.llmCalls).toHaveLength(2);
+    const lifecycleEvents = ctx.allEvents.filter(
+      (event) => event.type === '[rpc]' && (event.event === 'turn.ended' || event.event === 'loop.drained' || event.event === 'loop.idle'),
+    );
+    expect(lifecycleEvents.map((event) => event.event)).toEqual([
+      'turn.ended',
+      'turn.ended',
+      'loop.drained',
+      'loop.idle',
+    ]);
     await expect(loop.settled()).resolves.toEqual({
       type: 'completed',
       steps: 1,
@@ -1107,6 +1117,39 @@ describe('Agent loop', () => {
       steps: 1,
       truncated: false,
     });
+
+    const eventOffset = ctx.allEvents.length;
+    let followUpSubmitted = false;
+    let firstGeneration: number | undefined;
+    let lastGeneration: number | undefined;
+    const idleSubscription = ctx.get(IEventBus).subscribe(LoopIdle, (event) => {
+      lastGeneration = event.generation;
+    });
+    const subscription = ctx.get(IEventBus).subscribe(LoopDrained, (event) => {
+      firstGeneration = event.generation;
+      subscription.dispose();
+      loop.submit({
+        role: 'user',
+        content: [{ type: 'text', text: 'submitted from drained' }],
+      });
+      followUpSubmitted = true;
+    });
+    ctx.mockNextResponse({ type: 'text', text: 'First macro answer.' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'start first macro' }] });
+    ctx.mockNextResponse({ type: 'text', text: 'Second macro answer.' });
+    await vi.waitFor(() => expect(followUpSubmitted).toBe(true));
+    await loop.settled();
+    expect(ctx.allEvents.slice(eventOffset).filter(
+      (event) => event.type === '[rpc]' && (event.event === 'turn.ended' || event.event === 'loop.drained' || event.event === 'loop.idle'),
+    ).map((event) => event.event)).toEqual([
+      'turn.ended',
+      'loop.drained',
+      'turn.ended',
+      'loop.drained',
+      'loop.idle',
+    ]);
+    expect(lastGeneration).toBe(firstGeneration! + 1);
+    idleSubscription.dispose();
   });
 
   it('carries a tool stopTurnReason into the completed turn result and turn.ended', async () => {

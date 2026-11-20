@@ -202,7 +202,10 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
         workDir,
         mainAgentBinding: { profile: 'print-reviewer' },
       });
-      expect(await client.getStatus({ sessionId: session.id })).toMatchObject({ model: 'stub' });
+      expect(await client.getStatus({ sessionId: session.id })).toMatchObject({
+        model: 'stub',
+        loopLifecycleEvents: true,
+      });
     } finally {
       await client.close();
     }

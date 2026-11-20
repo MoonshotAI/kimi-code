@@ -148,6 +148,10 @@ class LoopMailbox {
     return this.notifyEntries.length > 0;
   }
 
+  get hasReminders(): boolean {
+    return this.reminders.length > 0;
+  }
+
   submit(message: UserMessage): LoopAck<'prompt.submitted'> {
     this.normal.push(message);
     const ack: LoopAck<'prompt.submitted'> = { type: 'prompt.submitted', message };
@@ -329,6 +333,9 @@ class LoopActor implements Loop {
   private closeCompletion?: Deferred<void>;
   private completionContinuation?: () => void;
   private completionHandoff = false;
+  private lifecycleGeneration = 0;
+  private lifecycleDrained = false;
+  private lifecycleIdle = false;
 
   constructor(options: CreateLoopOptions) {
     const input = options.input ?? {};
@@ -419,6 +426,18 @@ class LoopActor implements Loop {
   }
 
   private record<E extends LoopEmitted>(event: E): E {
+    if (
+      event.type === 'prompt.submitted' ||
+      event.type === 'prompt.notified' ||
+      event.type === 'prompt.reminded' ||
+      event.type === 'turn.started' ||
+      event.type === 'turn.resumed' ||
+      (event.type === 'tool.ended' && event.detached)
+    ) {
+      if (this.lifecycleDrained) this.lifecycleGeneration += 1;
+      this.lifecycleDrained = false;
+      this.lifecycleIdle = false;
+    }
     this.durable = this.projection.reduce(this.durable, {
       seq: this.seq,
       time: 0,
@@ -539,10 +558,31 @@ class LoopActor implements Loop {
   }
 
   private settleIdle(): void {
-    if (this.resetting || this.phase === 'running' || this.messages.length > 0 || this.events.length > 0 || this.hasPendingCompletions || this.canSchedule()) return;
+    const drained =
+      !this.resetting &&
+      this.phase !== 'running' &&
+      this.messages.length === 0 &&
+      this.events.length === 0 &&
+      !this.hasPendingCompletions &&
+      !this.canSchedule();
+    if (!drained) this.lifecycleDrained = false;
+    const idle = drained && !this.hasActiveBackgroundTasks;
+    if (!idle) this.lifecycleIdle = false;
+    const publishDrained = this.open() && drained && !this.lifecycleDrained;
+    const publishIdle = this.open() && idle && this.lifecycleDrained && !this.lifecycleIdle;
+    if (publishDrained) {
+      this.lifecycleDrained = true;
+      this.record({ type: 'loop.drained', generation: this.lifecycleGeneration });
+    }
+    if (publishIdle) {
+      this.lifecycleIdle = true;
+      this.record({ type: 'loop.idle', generation: this.lifecycleGeneration });
+    }
+    if (!drained) return;
     const waiters = Array.from(this.idleWaiters);
     this.idleWaiters.clear();
     for (const resolve of waiters) resolve();
+    if (publishDrained || publishIdle) this.kick();
   }
 
   private settleClose(): void {
@@ -563,13 +603,30 @@ class LoopActor implements Loop {
     return false;
   }
 
+  private get hasActiveBackgroundTasks(): boolean {
+    for (const slot of this.tools.values()) {
+      if (slot.detached && !slot.done) return true;
+    }
+    return false;
+  }
+
   private canSchedule(): boolean {
-    return !this.resetting && this.phase === 'idle' && !this.held && !this.hasPendingCompletions && this.mailbox.hasTrigger;
+    return (
+      !this.resetting &&
+      this.phase === 'idle' &&
+      !this.held &&
+      !this.hasPendingCompletions &&
+      (this.mailbox.hasTrigger || this.mailbox.hasReminders)
+    );
   }
 
   private schedule(): boolean {
     if (!this.canSchedule()) return false;
     this.closeUnfinished();
+    if (!this.mailbox.hasTrigger) {
+      this.flushReminders();
+      return true;
+    }
     const next = this.mailbox.take();
     if (next === undefined) return false;
     const turn = createTurn(this.root, {
