@@ -1,4 +1,54 @@
 <script lang="ts">
+import type { PromptAttachment } from '@moonshot-ai/app-client/client';
+import type { AttachmentEntry } from '@moonshot-ai/app-composer/features/attachment';
+import type { ComposerDocumentSnapshot } from '@moonshot-ai/app-composer/model';
+
+export interface ComposerSubmitPayload {
+  text: string;
+  restoreText: string;
+  editText: string;
+  attachments: PromptAttachment[];
+  restoreEntries: AttachmentEntry[];
+  snapshot?: ComposerDocumentSnapshot;
+  skills?: { name: string; path?: string }[];
+  forceQueue?: boolean;
+}
+
+export interface ComposerSteerPayload {
+  text: string;
+  restoreText: string;
+  editText: string;
+  attachments: PromptAttachment[];
+  restoreEntries: AttachmentEntry[];
+  snapshot?: ComposerDocumentSnapshot;
+  skills?: { name: string; path?: string }[];
+}
+
+export interface ComposerCommandPayload {
+  cmd: string;
+  attachments: PromptAttachment[];
+  restoreText?: string;
+  skillName?: string;
+  skillPath?: string;
+  restoreEntries?: AttachmentEntry[];
+  snapshot?: ComposerDocumentSnapshot;
+  editText?: string;
+  delivery?: 'steer' | 'queue';
+}
+
+export type ComposerEmits = {
+  submit: [payload: ComposerSubmitPayload];
+  steer: [payload: ComposerSteerPayload];
+  steerQueued: [index: number];
+  command: [payload: ComposerCommandPayload];
+  interrupt: [];
+  continue: [];
+  focusGoal: [];
+  pickModel: [];
+  login: [];
+  configureModel: [];
+};
+
 let composerMenuSequence = 0;
 </script>
 
@@ -11,7 +61,7 @@ import { BrowserScreenshotRecovery } from '@moonshot-ai/app-client/lib';
 import { useComposerBrowserReferenceHost, restoreBrowserCaptureBookmark, browserReferenceAnchor, type BrowserCaptureResource } from './browserReferences';
 import type { BrowserCapture, BrowserReference } from '@moonshot-ai/app-core/browser-reference';
 import { newAttId } from '@moonshot-ai/app-composer/features/attachment';
-import { composerSnapshotDocument, docToText, type ComposerDocumentSnapshot } from '@moonshot-ai/app-composer/model';
+import { composerSnapshotDocument, docToText } from '@moonshot-ai/app-composer/model';
 import type { NativeMenuItem } from '@moonshot-ai/app-core/native-menu';
 import { measureNaturalWidth, prepareWithSegments } from '@chenglou/pretext';
 import { v4 as randomUUID } from 'uuid';
@@ -49,7 +99,6 @@ import {
   adoptAttachment,
   attachmentReferenceName,
   rebaseAttachmentMediaOrdinals,
-  type AttachmentEntry,
   type AttachmentInventoryState,
 } from '@moonshot-ai/app-composer/features/attachment';
 import { startMentionSelectionSync } from '@moonshot-ai/app-composer/features/mention';
@@ -80,7 +129,6 @@ import {
 } from '@moonshot-ai/app-client/lib';
 import { getKimiWebApi, sessionObservationOptions } from '@moonshot-ai/app-client/client';
 import { composerSessionScope } from '@moonshot-ai/app-core/lib';
-import type { PromptAttachment } from '@moonshot-ai/app-client/client';
 import {
   ContextRing,
   Icon,
@@ -184,17 +232,7 @@ const placeholder = computed(() =>
             : t('composer.placeholder')
 );
 
-const emit = defineEmits<{
-  submit: [payload: { text: string; restoreText: string; editText: string; attachments: PromptAttachment[]; restoreEntries: AttachmentEntry[]; snapshot?: ComposerDocumentSnapshot; skills?: { name: string; path?: string }[]; forceQueue?: boolean }];
-  steer: [payload: { text: string; restoreText: string; editText: string; attachments: PromptAttachment[]; restoreEntries: AttachmentEntry[]; snapshot?: ComposerDocumentSnapshot; skills?: { name: string; path?: string }[] }];
-  steerQueued: [index: number];
-  command: [payload: { cmd: string; attachments: PromptAttachment[]; restoreText?: string; skillName?: string; skillPath?: string; restoreEntries?: AttachmentEntry[]; snapshot?: ComposerDocumentSnapshot; editText?: string; delivery?: 'steer' | 'queue' }];
-  interrupt: [];
-  focusGoal: [];
-  pickModel: [];
-  login: [];
-  configureModel: [];
-}>();
+const emit = defineEmits<ComposerEmits>();
 
 const browserReferenceHost = useComposerBrowserReferenceHost();
 const browserDetails = useBrowserReferenceDetails(() => JSON.stringify([sessionId.value, client.activeWorkspaceId.value]));
@@ -1703,6 +1741,30 @@ const canSend = computed(() => {
   }).kind !== 'noop';
 });
 
+const showContinueButton = computed(
+  () =>
+    !isSideChat.value &&
+    props.submitDisabled !== true &&
+    !canSend.value &&
+    !goalMode.value &&
+    text.value.trim() === '' &&
+    activeAttachmentEntries.value.length === 0 &&
+    !pillGate.value.uploading &&
+    !pillGate.value.errored &&
+    !pillGate.value.missing &&
+    Boolean(client.canContinue?.value) &&
+    client.activeTurnEnd?.value?.outcome !== 'failed',
+);
+
+function handleSendOrContinue(): void {
+  if (showContinueButton.value) {
+    if (!passSubmitGate()) return;
+    emit('continue');
+    return;
+  }
+  handleSubmit();
+}
+
 const clearDispatchPolicy = {
   attachments: 'clear',
   mentionMenu: 'close',
@@ -2116,7 +2178,7 @@ function insertNewlineAtCaret(): void {
   editor.insertNewlineAtCaret();
 }
 
-const sendLabel = computed(() => t('composer.send'));
+const sendLabel = computed(() => t(showContinueButton.value ? 'composer.continue' : 'composer.send'));
 const hasUpload = computed(() => !!uploadImage);
 
 const dropdownOpen = ref(false);
@@ -3503,10 +3565,11 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
           <Tooltip v-if="stopButtonVisible" :text="t(interruptArmed ? 'composer.interruptConfirm' : 'composer.interruptTitle')">
             <button
               class="stop"
+              :class="{ 'is-armed': interruptArmed }"
               :aria-label="t(interruptArmed ? 'composer.interruptConfirm' : 'composer.interrupt')"
               @click="emit('interrupt')"
             >
-              <span v-if="interruptArmed" class="text-ui-xs" aria-hidden="true">ESC</span>
+              <span v-if="interruptArmed" class="stop-esc" aria-hidden="true">ESC</span>
               <Icon v-else name="stop" size="sm" />
             </button>
           </Tooltip>
@@ -3515,10 +3578,13 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
             class="send"
             :class="{ 'is-starting': starting }"
             :aria-label="sendLabel"
-            :disabled="starting || !canSend"
-            @click="handleSubmit()"
+            :disabled="starting || (!canSend && !showContinueButton)"
+            @click="handleSendOrContinue()"
           >
             <Spinner v-if="starting" size="sm" />
+            <svg v-else-if="showContinueButton" class="send-continue" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M9 8.25A1 1 0 0 1 10.543 7.41L16.343 11.16A1 1 0 0 1 16.343 12.84L10.543 16.59A1 1 0 0 1 9 15.75V8.25Z" fill="currentColor" />
+            </svg>
             <Icon v-else name="send" size="sm" />
           </button>
           </Tooltip>
@@ -4366,6 +4432,10 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
   flex-shrink: 0;
   transition: background 0.16s ease, color 0.16s ease, transform 0.12s ease;
 }
+.stop.is-armed {
+  background: var(--color-danger-soft);
+  color: var(--color-danger);
+}
 .stop:hover {
   background: var(--color-danger);
   color: var(--color-text-on-accent);
@@ -4377,6 +4447,14 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
   flex: none;
   width: var(--composer-send-icon-size);
   height: var(--composer-send-icon-size);
+}
+.stop-esc {
+  font-family: var(--font-ui);
+  font-size: 12px;
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.02em;
+  line-height: 1;
+  transform: scale(0.72);
 }
 
 .toolbar {

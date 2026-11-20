@@ -3,6 +3,7 @@ export default {
   placeholder: 'Type a message…',
   commandArgumentHint: 'Type {argument} after {command}',
   send: 'Send ↵',
+  continue: 'Continue',
   queueLabel: 'Queue',
   placeholderRunning: 'Press <kbd>Enter</kbd> to queue · <kbd>Ctrl</kbd>+<kbd>S</kbd> to inject into the running turn',
   placeholderRunningMobile: 'Press <kbd>Enter</kbd> to queue',

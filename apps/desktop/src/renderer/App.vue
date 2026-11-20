@@ -1634,6 +1634,19 @@ async function handleInterrupt(): Promise<void> {
   await client.abortCurrentPrompt();
 }
 
+async function handleContinue(): Promise<void> {
+  const gateSid = client.activeSessionId.value;
+  if (!gateSid) return;
+  const verdict = await client.ensureChatReady();
+  if (verdict !== 'ok') {
+    if (verdict !== 'server-auth-required') await actOnGateVerdict(verdict);
+    return;
+  }
+  if (client.activeSessionId.value !== gateSid) return;
+  ++sendGeneration;
+  await client.continueSession(gateSid);
+}
+
 const pendingQuoteInserts = ref<Array<{ quote: string; comment?: string; source?: string; sessionId: string | undefined }>>([]);
 watch(
   () => [client.activeSessionId.value, conversationPaneRef.value?.hasInsertableComposer() ?? false] as const,
@@ -2457,6 +2470,7 @@ function openPr(url: string): void {
       @login="openLogin()"
       @command="handleCommand"
       @interrupt="handleInterrupt"
+      @continue="handleContinue"
       @steer-queued="handleSteerQueued"
       @toggle-pin="togglePinFromHeader"
       @pick-model="openModelPicker()"

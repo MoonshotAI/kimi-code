@@ -3,6 +3,7 @@ export default {
   placeholder: '输入消息…',
   commandArgumentHint: '在 {command} 后输入{argument}',
   send: '发送 ↵',
+  continue: '继续',
   queueLabel: '队列',
   placeholderRunning: '输入会加入队列 · <kbd>Ctrl</kbd>+<kbd>S</kbd> 立即插入运行中的回合',
   placeholderRunningMobile: '输入会加入队列',
