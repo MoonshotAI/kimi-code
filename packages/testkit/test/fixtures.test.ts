@@ -2,8 +2,9 @@ import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { request as httpRequest } from 'node:http';
 import { existsSync } from 'node:fs';
+import { readFile, writeFile } from 'node:fs/promises';
 import { createServer, type Socket } from 'node:net';
-import { resolve } from 'node:path';
+import { join, resolve } from 'node:path';
 import { text } from 'node:stream/consumers';
 import { fileURLToPath } from 'node:url';
 import { inflateSync } from 'node:zlib';
@@ -11,13 +12,231 @@ import { inflateSync } from 'node:zlib';
 import { describe, expect, it } from 'vitest';
 
 import { WaitTimeoutError } from '#/errors';
+import { CLI_BUILD_ENV, KIMI_SERVICE_URL, kimiCliBuild, kimiCliCommand, kimiCliEnv, kimiServiceStubs } from '#/fixtures/cli';
 import { kimiConfigToml, mergeKimiConfig } from '#/fixtures/config';
+import { expectGolden, jsonDifferences, REFRESH_ENV, stableJson } from '#/fixtures/golden';
 import { isolateProcessEnv, TEST_ENV_DEFAULTS, testEnv } from '#/fixtures/env';
-import { createTestHome } from '#/fixtures/home';
+import { createTestHome, osHomeEnv, type TestHome } from '#/fixtures/home';
 import { BROKEN_DATA_URLS, dataUrl, mp4Header, ONE_PIXEL_PNG_BASE64, solidPng } from '#/fixtures/media';
 import { installNetworkGuard, isLoopback, tcpTargetOf } from '#/fixtures/network';
-import { createNormalizer, normalize } from '#/fixtures/normalize';
+import { createNormalizer, FIXED_TIME, normalize } from '#/fixtures/normalize';
+import { killProcessTree, readNetworkViolations, TestProcess, type StartTestProcessOptions } from '#/fixtures/process';
+import { repoPath } from '#/fixtures/repo';
 import { deferred, gate, until, waitForEvent } from '#/fixtures/wait';
+
+const BLOCKED_CONNECTION = `await new Promise((resolve) => {
+  connect({ host: 'blocked.example.test', port: 443, lookup: (_host, _options, callback) => callback(new Error('lookup disabled')) }).once('error', resolve);
+});`;
+
+async function startScript(home: TestHome, source: string, options: Partial<StartTestProcessOptions> = {}): Promise<TestProcess> {
+  const entry = join(home.root, `probe-${Math.random().toString(36).slice(2)}.mjs`);
+  await writeFile(entry, `import { connect } from 'node:net';\n${source}\n`);
+  return TestProcess.start({ label: 'probe', command: { entry }, cwd: home.workspace, env: testEnv(), logDir: home.root, ...options });
+}
+
+describe('TestProcess', () => {
+  it('refuses to start an entry that does not exist', async () => {
+    const home = await createTestHome('testkit-process');
+    try {
+      const entry = join(home.root, 'missing.mjs');
+      expect(() => TestProcess.start({ label: 'probe', command: { entry }, cwd: home.workspace, env: testEnv(), logDir: home.root }))
+        .toThrow(`probe cannot start: ${entry} does not exist`);
+    } finally {
+      await home.remove();
+    }
+  });
+
+  it('drains a large output, finds the ready line and reports a connection the child swallowed', async () => {
+    const home = await createTestHome('testkit-process');
+    try {
+      const child = await startScript(home, [
+        "console.log('starting');",
+        'console.log(JSON.stringify({ ready: true }));',
+        "process.stdout.write('x'.repeat(2 * 1024 * 1024) + '\\n');",
+        BLOCKED_CONNECTION,
+        "process.stderr.write('finished\\n');",
+      ].join('\n'));
+      expect(JSON.parse(await child.waitForLine((line) => line.startsWith('{')))).toEqual({ ready: true });
+      await expect(child.closed).resolves.toEqual({ code: 0, signal: null });
+      expect(child.stderrTail()).toBe('finished\n');
+      await expect(child.networkViolations()).resolves.toEqual(['blocked.example.test:443']);
+    } finally {
+      await home.remove();
+    }
+  }, 20_000);
+
+  it('keeps the connections a child tried before it was killed', async () => {
+    const home = await createTestHome('testkit-process');
+    try {
+      const child = await startScript(home, [BLOCKED_CONNECTION, "console.log('ready');", 'setInterval(() => {}, 60_000);'].join('\n'));
+      await child.waitForLine((line) => line === 'ready');
+      const exit = await child.forceKill();
+      expect(process.platform === 'win32' ? exit.code !== 0 : exit.signal === 'SIGKILL').toBe(true);
+      await expect(child.networkViolations()).resolves.toEqual(['blocked.example.test:443']);
+    } finally {
+      await home.remove();
+    }
+  }, 20_000);
+
+  it('answers stubbed fetches inside the child and still blocks the rest', async () => {
+    const home = await createTestHome('testkit-process');
+    try {
+      const child = await startScript(home, [
+        "const stubbed = await fetch('http://stub.example.test/configs', { method: 'POST', body: '{}' });",
+        "const other = await fetch('http://other.example.test/').then(() => 'connected', (error) => error.cause?.code ?? error.message);",
+        'console.log(JSON.stringify({ stubbed: stubbed.status, other }));',
+      ].join('\n'), { fetchStubs: [{ method: 'post', url: 'http://stub.example.test/configs', status: 404 }] });
+      expect(JSON.parse(await child.waitForLine((line) => line.startsWith('{')))).toEqual({ stubbed: 404, other: 'ECONNREFUSED' });
+      await expect(child.closed).resolves.toEqual({ code: 0, signal: null });
+      await expect(child.networkViolations()).resolves.toEqual(['other.example.test:80']);
+    } finally {
+      await home.remove();
+    }
+  }, 20_000);
+
+  it('rejects a line wait as soon as the child exits and shows its stderr', async () => {
+    const home = await createTestHome('testkit-process');
+    try {
+      const child = await startScript(home, "process.stderr.write('boom\\n');\nprocess.exit(3);");
+      await expect(child.waitForLine(() => false, { description: 'the ready line' })).rejects.toThrow(
+        /probe exited before printing the ready line\nprobe pid=\d+ exit=3 signal=null\nstderr:\nboom/,
+      );
+    } finally {
+      await home.remove();
+    }
+  }, 20_000);
+
+  it('lets a Node grandchild that inherits the preload start and records its connections too', async () => {
+    const home = await createTestHome('testkit-process');
+    try {
+      const grandchild = `${BLOCKED_CONNECTION.replaceAll('\n', ' ')} console.log('grandchild done');`;
+      const child = await startScript(home, [
+        "import { execFileSync } from 'node:child_process';",
+        `const output = execFileSync(process.execPath, [...process.execArgv, '--input-type=module', '-e', ${JSON.stringify(`import { connect } from 'node:net'; ${grandchild}`)}], { encoding: 'utf8' });`,
+        'process.stdout.write(output);',
+      ].join('\n'));
+      await expect(child.waitForLine((line) => line === 'grandchild done')).resolves.toBe('grandchild done');
+      await expect(child.closed).resolves.toEqual({ code: 0, signal: null });
+      await expect(child.networkViolations()).resolves.toEqual(['blocked.example.test:443']);
+    } finally {
+      await home.remove();
+    }
+  }, 20_000);
+
+  it('reaps the process group of a child that already exited while a grandchild still holds its output', async () => {
+    const home = await createTestHome('testkit-process');
+    try {
+      const child = await startScript(home, [
+        "import { spawn } from 'node:child_process';",
+        "spawn(process.execPath, ['-e', 'setInterval(() => {}, 60_000)'], { stdio: ['ignore', 'inherit', 'inherit'] });",
+        "console.log('spawned');",
+        'process.exit(0);',
+      ].join('\n'));
+      await child.waitForLine((line) => line === 'spawned');
+      await until('the child exited while its grandchild holds the pipe', () => child.exited);
+      expect(child.exit()).toBeUndefined();
+      await expect(child.forceKill()).resolves.toEqual({ code: 0, signal: null });
+    } finally {
+      await home.remove();
+    }
+  }, 20_000);
+
+  it('fails closed when a child never loaded the network guard preload', async () => {
+    const home = await createTestHome('testkit-process');
+    try {
+      await expect(readNetworkViolations(join(home.root, 'missing.log'), 'KAP server')).rejects.toThrow(
+        /KAP server did not load the testkit network guard preload/,
+      );
+    } finally {
+      await home.remove();
+    }
+  });
+});
+
+describe('child process environment', () => {
+  it('points every OS home variable at the test home', () => {
+    expect(osHomeEnv('/tmp/os-home')).toEqual({
+      HOME: '/tmp/os-home',
+      USERPROFILE: '/tmp/os-home',
+      XDG_CONFIG_HOME: join('/tmp/os-home', '.config'),
+      XDG_CACHE_HOME: join('/tmp/os-home', '.cache'),
+      XDG_DATA_HOME: join('/tmp/os-home', '.local', 'share'),
+      APPDATA: join('/tmp/os-home', 'AppData', 'Roaming'),
+      LOCALAPPDATA: join('/tmp/os-home', 'AppData', 'Local'),
+    });
+  });
+
+  it('isolates the CLI from the host and points Kimi services at a host the guard blocks', async () => {
+    const home = await createTestHome('testkit-cli-env');
+    const restore = isolateProcessEnv({ set: { KIMI_CODE_EXPERIMENTAL_FLAG: '1', OPENAI_API_KEY: 'sk-real' } });
+    try {
+      const env = kimiCliEnv(home, { COLUMNS: '100' });
+      expect(env).toMatchObject({
+        ...osHomeEnv(home.home),
+        KIMI_CODE_HOME: home.dataDir,
+        KIMI_CODE_BASE_URL: KIMI_SERVICE_URL,
+        KIMI_CODE_NO_AUTO_UPDATE: '1',
+        COLUMNS: '100',
+      });
+      expect(env).not.toHaveProperty('KIMI_CODE_EXPERIMENTAL_FLAG');
+      expect(env).not.toHaveProperty('OPENAI_API_KEY');
+      expect(existsSync(repoPath('apps', 'kimi-code', 'src', 'main.ts'))).toBe(true);
+      expect(kimiServiceStubs()).toEqual([
+        { method: 'POST', url: `${KIMI_SERVICE_URL}/client_configs`, status: 404 },
+        { method: 'POST', url: `${KIMI_SERVICE_URL}/resource_configs`, status: 404 },
+      ]);
+    } finally {
+      restore();
+      await home.remove();
+    }
+  });
+
+  it('runs the CLI from source unless the built bundle is asked for', () => {
+    expect(kimiCliBuild(undefined)).toBe('source');
+    expect(kimiCliBuild('')).toBe('source');
+    expect(kimiCliBuild('source')).toBe('source');
+    expect(kimiCliBuild('dist')).toBe('dist');
+    expect(() => kimiCliBuild('built')).toThrow('TESTKIT_CLI_BUILD must be "source" or "dist", got "built"');
+    expect(kimiCliCommand('source')).toMatchObject({ entry: repoPath('apps', 'kimi-code', 'src', 'main.ts'), env: { KIMI_CODE_DEV_SERVER: '1' } });
+    expect(kimiCliCommand('dist')).toEqual({ entry: repoPath('apps', 'kimi-code', 'dist', 'main.mjs') });
+    const restore = isolateProcessEnv({ set: { [CLI_BUILD_ENV]: 'dist' } });
+    try {
+      expect(kimiCliCommand()).toEqual(kimiCliCommand('dist'));
+    } finally {
+      restore();
+    }
+  });
+});
+
+describe('killProcessTree', () => {
+  it.each([0, 1, -1, NaN])('rejects an invalid child PID %s', pid => {
+    expect(() => killProcessTree(pid)).toThrow(RangeError);
+  });
+
+  it('reaps a process group even when a grandchild holds its output pipe open', async () => {
+    const grandchildCode = "process.stdout.write(String(process.pid) + '\\n'); setInterval(() => {}, 60_000)";
+    const parentCode = `require('node:child_process').spawn(process.execPath, ['-e', ${JSON.stringify(grandchildCode)}], { stdio: ['ignore', 1, 2] })`;
+    const child = spawn(process.execPath, ['-e', parentCode], {
+      detached: process.platform !== 'win32',
+      stdio: 'pipe',
+    });
+    const stdout = child.stdout.setEncoding('utf8');
+    let grandchildPid: number | undefined;
+    try {
+      const [data] = await once(stdout, 'data', { signal: AbortSignal.timeout(5_000) });
+      grandchildPid = Number(String(data).trim());
+      expect(grandchildPid).toBeGreaterThan(1);
+      const closed = once(child, 'close', { signal: AbortSignal.timeout(5_000) });
+      killProcessTree(child.pid!);
+      const [code, signal] = await closed;
+      expect(code !== 0 || signal !== null).toBe(true);
+      grandchildPid = undefined;
+    } finally {
+      if (grandchildPid !== undefined && grandchildPid > 1) killProcessTree(grandchildPid);
+      if (child.pid !== undefined && child.exitCode === null && child.signalCode === null) killProcessTree(child.pid);
+    }
+  }, 15_000);
+});
 
 describe('testEnv', () => {
   it('drops KIMI_ variables, vendor keys and proxies, then applies the test defaults', () => {
@@ -178,6 +397,25 @@ describe('normalize', () => {
     expect(value).toEqual(['<home>/a.txt', '<home>/b.txt', 'C:<home>', 'one\ntwo']);
   });
 
+  it('keeps one token per value across keys, ID arrays and inline UUIDs', () => {
+    const normalizer = createNormalizer({ idKeys: ['item_id', 'prompt_ids'] });
+    const prompt = '0f8fad5b-d9cb-469f-a165-70867728950e';
+    expect(normalizer({ item_id: prompt, prompt_ids: [prompt, 'p-2'], text: `see ${prompt.toUpperCase()}` })).toEqual({
+      item_id: '<item_id:1>',
+      prompt_ids: ['<item_id:1>', '<prompt_ids:1>'],
+      text: 'see <item_id:1>',
+    });
+  });
+
+  it('can keep time fields parseable for consumers that read them', () => {
+    const value = normalize(
+      { created_at: '2026-11-19T08:00:00.000Z', duration_ms: 1234, note: 'at 2026-11-19T08:00:00Z' },
+      { timeKeys: ['created_at', 'duration_ms'], timePlaceholder: 'fixed' },
+    );
+    expect(value).toEqual({ created_at: FIXED_TIME, duration_ms: 0, note: `at ${FIXED_TIME}` });
+    expect(Number.isNaN(Date.parse(value.created_at))).toBe(false);
+  });
+
   it('tokenizes chosen keys and keeps numbering across calls of one normalizer', () => {
     const normalizer = createNormalizer({ idKeys: ['session_id'], timeKeys: ['created_at'] });
     expect(normalizer({ session_id: 'a', created_at: 17 })).toEqual({ session_id: '<session_id:1>', created_at: '<time>' });
@@ -318,3 +556,62 @@ function get(url: string): Promise<string> {
     request.end();
   });
 }
+
+describe('expectGolden', () => {
+  const options = { kind: 'probe', refreshCommand: 'pnpm qa:refresh probe' };
+
+  it('lists every changed field with its JSON pointer and the refresh command', async () => {
+    const home = await createTestHome('testkit-golden');
+    try {
+      const path = join(home.root, 'golden.json');
+      await writeFile(path, stableJson({ a: 1, list: [1, 2], nested: { 'x/y': 'old', gone: true } }));
+      await expect(expectGolden(path, { a: 1, list: [1, 3, 4], nested: { 'x/y': 'new', added: 1 } }, options)).rejects.toThrow(
+        [
+          'differs from the committed golden in 5 place(s):',
+          '- /list/1: expected 2, received 3',
+          '- /list/2: expected <absent>, received 4',
+          '- /nested/added: expected <absent>, received 1',
+          '- /nested/gone: expected true, received <absent>',
+          '- /nested/x~1y: expected "old", received "new"',
+          'To accept the change intentionally: pnpm qa:refresh probe',
+        ].join('\n'),
+      );
+    } finally {
+      await home.remove();
+    }
+  });
+
+  it('accepts a checkout with CRLF line endings and reports missing goldens', async () => {
+    const home = await createTestHome('testkit-golden');
+    try {
+      const path = join(home.root, 'golden.json');
+      await writeFile(path, stableJson({ b: [1], a: 'x' }).replaceAll('\n', '\r\n'));
+      await expect(expectGolden(path, { a: 'x', b: [1] }, options)).resolves.toBeUndefined();
+      await expect(expectGolden(join(home.root, 'missing.json'), {}, options)).rejects.toThrow(/Missing golden .*pnpm qa:refresh probe/);
+    } finally {
+      await home.remove();
+    }
+  });
+
+  it('writes only when the matching refresh is requested and never in CI', async () => {
+    const home = await createTestHome('testkit-golden');
+    const restore = isolateProcessEnv({ set: { [REFRESH_ENV]: 'probe', CI: undefined } });
+    try {
+      const path = join(home.root, 'nested', 'golden.json');
+      await expectGolden(path, { z: 1, a: 2 }, options);
+      await expect(readFile(path, 'utf8')).resolves.toBe('{\n  "a": 2,\n  "z": 1\n}\n');
+      process.env['CI'] = 'true';
+      await expect(expectGolden(path, { z: 3 }, options)).rejects.toThrow(/CI only verifies committed goldens/);
+      process.env[REFRESH_ENV] = 'other';
+      await expect(expectGolden(path, { z: 1, a: 2 }, options)).resolves.toBeUndefined();
+    } finally {
+      restore();
+      await home.remove();
+    }
+  });
+
+  it('reports structural differences only', () => {
+    expect(jsonDifferences({ a: [1, { b: 2 }] }, { a: [1, { b: 2 }] })).toEqual([]);
+    expect(jsonDifferences([1], { 0: 1 })).toEqual([{ pointer: '', expected: [1], actual: { 0: 1 } }]);
+  });
+});

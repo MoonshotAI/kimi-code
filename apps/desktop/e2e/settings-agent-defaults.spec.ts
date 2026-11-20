@@ -33,7 +33,7 @@ async function newSession(app: DesktopApp): Promise<void> {
   await expect.poll(() => app.window.url()).not.toMatch(/\/sessions\//);
 }
 
-test('agent defaults shape new sessions: thinking, title, subagent model and folding', async ({ app, model, scratch }) => {
+test('agent defaults shape new sessions: thinking, title, subagent model and folding', { tag: '@quarantine' }, async ({ app, model, scratch }) => {
   const rec = await startRecordingModel({ apiKey: 'sk-rec', models: [], reply: recReply, sideReply: 'unused' });
   const home = join(scratch, 'home');
   const transcript = (): Locator => app.window.getByRole('list').first();

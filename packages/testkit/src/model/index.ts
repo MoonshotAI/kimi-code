@@ -1,5 +1,6 @@
 export { FakeModelClosedError, FakeModelVerificationError, TestkitError, WaitTimeoutError } from '#/errors';
 export { callProblems, messageProblems } from '#/model/checks';
+export type { ChunkingOptions } from '#/model/chunking';
 export { createFakeModel, startFakeModel, type FakeModel, type FakeModelOptions, type RequestTarget } from '#/model/fake-model';
 export type { Hold } from '#/model/holds';
 export type { Lane, LaneMatcher } from '#/model/lanes';

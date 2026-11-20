@@ -1,7 +1,9 @@
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import { expect, test } from './fixtures/app';
+import { held, say } from '@moonshot-ai/testkit/model';
+
+import { expect, test, testWithProvider } from './fixtures/app';
 import { answerNativeDialog } from './fixtures/native-dialog';
 import { createProject } from './fixtures/project';
 import { sidebarOf } from './fixtures/sessions';
@@ -12,14 +14,14 @@ const FULL_REPLY = REPLY.join('');
 
 test.use({ seedWorkspace: false });
 
-test('a first turn in a new workspace streams, finishes and survives a relaunch', async ({ app, model }) => {
+testWithProvider('[L0:desktop.first-turn] a first turn in a new workspace streams, finishes and survives a relaunch', { tag: '@smoke' }, async ({ app, provider }) => {
   await createProject(app);
   const sidebar = sidebarOf(app);
   await expect(sidebar.getByText('workspace', { exact: true })).toBeVisible();
   await expect(app.window.getByRole('button', { name: 'New project', exact: true })).toBeHidden();
   await app.trustWorkspace();
 
-  const reply = model.queueReply(REPLY, { holdAfterFirstChunk: true });
+  provider.script(held('first-chunk', say(REPLY), 1));
   await app.window.getByRole('combobox', { name: 'Message input' }).click();
   await app.window.keyboard.type(PROMPT);
   await app.window.keyboard.press('Enter');
@@ -33,7 +35,7 @@ test('a first turn in a new workspace streams, finishes and survives a relaunch'
   await expect(sidebar.getByRole('status', { name: 'Loading' })).toBeVisible();
   await app.snapshot('streaming-held');
 
-  reply.release();
+  provider.hold('first-chunk').release();
   await expect(transcript.getByText(FULL_REPLY, { exact: true })).toBeVisible();
   await expect(app.window.getByRole('status').filter({ hasText: 'Working…' })).toBeHidden();
   await expect(app.window.getByRole('button', { name: 'Interrupt', exact: true })).toBeHidden();
@@ -41,8 +43,13 @@ test('a first turn in a new workspace streams, finishes and survives a relaunch'
   await expect(sidebar.getByText(PROMPT)).toBeVisible();
   const sessionUrl = app.window.url();
   expect(sessionUrl).toMatch(/\/sessions\/[^/?#]+/);
-  expect(model.agentRequests()).toBe(1);
+  expect(provider.requests('main')).toHaveLength(1);
   await app.snapshot('turn-finished');
+
+  const composer = app.window.getByRole('combobox', { name: 'Message input' });
+  await composer.fill('My next question');
+  await expect(composer).toHaveText('My next question');
+  await composer.fill('');
 
   await app.relaunch();
   const restoredSidebar = sidebarOf(app);
@@ -54,7 +61,7 @@ test('a first turn in a new workspace streams, finishes and survives a relaunch'
   await expect(restored.getByText(PROMPT, { exact: true })).toBeVisible();
   await expect(restored.getByText(FULL_REPLY, { exact: true })).toBeVisible();
   await expect(app.window.getByRole('button', { name: 'Interrupt', exact: true })).toBeHidden();
-  expect(model.agentRequests()).toBe(1);
+  expect(provider.requests('main')).toHaveLength(1);
   await app.snapshot('restored-after-relaunch');
 });
 

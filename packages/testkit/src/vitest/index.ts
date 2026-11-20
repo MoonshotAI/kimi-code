@@ -41,7 +41,7 @@ export interface KapFixtureOptions<O extends KapLaunchOptions, S extends KapRunn
 const verifiedModels = new WeakSet<FakeModel>();
 const kapDiagnostics = new WeakMap<FakeModel, () => string>();
 
-function verifyOnce(model: FakeModel): void {
+export function verifyModelOnce(model: FakeModel): void {
   if (verifiedModels.has(model)) return;
   verifiedModels.add(model);
   model.verify();
@@ -57,7 +57,7 @@ export function modelFixtures(options: FakeModelOptions = {}): ModelFixtureDefin
       });
       try {
         await use(model);
-        verifyOnce(model);
+        verifyModelOnce(model);
       } finally {
         await model.close();
       }
@@ -108,7 +108,7 @@ export function kapFixtures<O extends KapLaunchOptions, S extends KapRunningServ
       });
       try {
         await use(kap);
-        verifyOnce(model);
+        verifyModelOnce(model);
       } finally {
         modelBeforeShutdown = describeModel(model);
         await kap.close();

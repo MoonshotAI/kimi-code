@@ -9,19 +9,28 @@ import { scenarioFixtures, type ScenarioFixtures } from './support/scenario';
 const test = base.extend<ScenarioFixtures>(scenarioFixtures());
 
 describe('conversation over KAP', () => {
-  test('streams a reply live and persists the same turns', async ({ kap, model }) => {
-    model.script(think('pondering', say(['Hel', 'lo'])));
+  test('[L0:kap.first-turn] streams a reply live and persists the same turns', { tags: ['smoke'] }, async ({ kap, model }) => {
+    model.script(held('before-final-text', think('pondering', say(['Hel', 'lo'])), 2));
     const socket = await kap.connect();
     const session = await kap.createSession();
     await socket.subscribe(session.id);
 
-    await kap.prompt(session.id, 'hi');
+    const prompt = await kap.prompt(session.id, 'hi');
+    const hold = model.hold('before-final-text');
+    await hold.reached();
+    try {
+      await expect.poll(() => socket.turns(session.id)[0]?.items.find(item => item.type === 'assistant_message')?.['text']).toBe('Hel');
+    } finally {
+      hold.release();
+    }
     await kap.waitIdle(session.id);
     await socket.waitFor((frame) => frame.type === 'turn.ended' && frame['session_id'] === session.id);
 
     const persisted = await kap.turns(session.id);
     expect(socket.turns(session.id)).toEqual(persisted);
     expect(persisted).toHaveLength(1);
+    expect(persisted[0]).toMatchObject({ status: 'ended', outcome: 'completed' });
+    expect(persisted[0]?.items[0]).toMatchObject({ type: 'user_message', prompt_ids: [prompt.prompt_id] });
     expect(persisted[0]?.items.map((item) => [item.type, item['text']])).toEqual([
       ['user_message', 'hi'],
       ['reasoning', 'pondering'],

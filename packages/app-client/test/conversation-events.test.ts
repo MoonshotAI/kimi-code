@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
   AppAgentState,
   AppEvent,
@@ -54,6 +54,12 @@ function endedTurn(ordinal: number, extra: Partial<ConversationTurn> = {}): Conv
     ...extra,
   };
 }
+
+async function compileClientModules(): Promise<void> {
+  await Promise.all([import('../src/client/useKimiWebClient'), import('../src/stores/warnings')]);
+}
+
+beforeAll(compileClientModules);
 
 beforeEach(() => {
   setKimiClientDeps({ api: () => clientApiMock as unknown as KimiWebApi, t: (key) => key });
@@ -453,6 +459,27 @@ describe('conversation events in the client', () => {
     expect(h.client.sessionLoading.value).toBe(false);
     expect(h.client.turns.value.map((turn) => turn.id)).toEqual(['u0']);
     expect(states.some((state) => !state.loading && state.count === 0)).toBe(false);
+  });
+
+  it('reads each older page once for a 240-turn history despite concurrent requests', async () => {
+    const h = await boot({ deferPages: true });
+    const turns = Array.from({ length: 240 }, (_, ordinal) => endedTurn(ordinal));
+    const size = 20;
+    const reads = vi.fn(async (_sid: string, _agent: string, query: { beforeOrdinal: number; pageSize: number }) => {
+      const from = Math.max(0, query.beforeOrdinal - query.pageSize);
+      return { turns: turns.slice(from, query.beforeOrdinal), has_more: from > 0 };
+    });
+    clientApiMock['getAgentTurns'] = reads;
+    h.frame('s1', { type: 'turns', turns: turns.slice(-size), has_more: true });
+    for (let cursor = turns.length - size; cursor > 0; cursor -= size) {
+      await Promise.all([h.client.loadOlderMessages('s1'), h.client.loadOlderMessages('s1')]);
+    }
+    await h.client.loadOlderMessages('s1');
+    expect(reads.mock.calls.map(([, , query]) => [query.beforeOrdinal, query.pageSize]), 'history page-read budget').toEqual(
+      Array.from({ length: 11 }, (_, i) => [220 - i * size, size]),
+    );
+    expect(h.client.hasMoreMessages.value).toBe(false);
+    expect(h.client.turns.value.map(turn => turn.id)).toEqual(turns.map(turn => turn.items[0]!.item_id));
   });
 
   it('commits prepended older turns before loadOlderMessages resolves and flags a stalled older page', async () => {

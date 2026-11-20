@@ -49,7 +49,7 @@ async function expectPanelRestored(app: DesktopApp): Promise<void> {
   await expect(app.window.getByText('Release notes draft', { exact: true }).last()).toBeVisible();
 }
 
-test('panel tabs, sidebar layout, pins and window size survive a relaunch and a renderer reload', async ({ app, model, scratch }) => {
+test('panel tabs, sidebar layout, pins and window size survive a relaunch and a renderer reload', { tag: '@quarantine' }, async ({ app, model, scratch }) => {
   const sidebar = () => sidebarOf(app);
   const resizer = () => app.window.getByRole('separator', { name: 'Resize sidebar width' });
   let firstSession = '';

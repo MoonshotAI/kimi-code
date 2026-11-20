@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { checkWiring, diffConfigs, expandOverridePlugins } from './guards.mjs';
+import { stringify } from 'yaml';
+
+import { checkFanIn, checkWiring, diffConfigs, expandOverridePlugins } from './guards.mjs';
 
 function config(patch = {}) {
   return {
@@ -251,4 +253,63 @@ await test('checkWiring flags a fix flag in the pre-commit lint command', () => 
   assert.equal(findings[0].kind, 'forbidden');
   assert.equal(findings[0].command, 'oxlint --fix --quiet');
   assert.equal(findings[0].flag, '--fix');
+});
+
+const FAN_IN = {
+  fanIn: [
+    {
+      workflow: '.github/workflows/e2e.yml',
+      job: 'result',
+      needs: ['plan', 'journeys'],
+      checksResults: true,
+      coversJobsExcept: ['nightly'],
+      why: 'It reports every shard under one check name.',
+    },
+  ],
+};
+
+function gateWorkflow({ needs = ['plan', 'journeys'], condition = '${{ always() }}', reads = needs, extraJobs = {} } = {}) {
+  const env = Object.fromEntries(reads.map((job) => [job.toUpperCase(), '${{ needs.' + job + '.result }}']));
+  return stringify({
+    jobs: {
+      plan: { 'runs-on': 'ubuntu-latest', steps: [{ run: 'true' }] },
+      journeys: { needs: 'plan', 'runs-on': 'macos-15', steps: [{ run: 'true' }] },
+      nightly: { 'runs-on': 'macos-15', steps: [{ run: 'true' }] },
+      result: { needs, ...(condition === null ? {} : { if: condition }), 'runs-on': 'ubuntu-latest', steps: [{ env, run: 'test "$PLAN" = success' }] },
+      ...extraJobs,
+    },
+  });
+}
+
+const fanIn = (text) =>
+  checkFanIn(FAN_IN, (file) => (file === '.github/workflows/e2e.yml' ? text : undefined)).map(
+    (finding) => `${finding.kind}${finding.job === undefined ? '' : `: ${finding.job}`}`,
+  );
+
+await test('checkFanIn passes a gate that waits for every job, runs after failures and reads each result', () => {
+  assert.deepEqual(fanIn(gateWorkflow()), []);
+  assert.deepEqual(fanIn(gateWorkflow({ condition: '${{ !cancelled() }}' })), []);
+});
+
+await test('checkFanIn flags a gate that stopped waiting for a collected job', () => {
+  assert.deepEqual(fanIn(gateWorkflow({ needs: ['plan'] })), ['fan-in-need: journeys', 'fan-in-uncovered: journeys']);
+});
+
+await test('checkFanIn flags a gate that would be skipped, and so reported as passed, when a collected job fails', () => {
+  assert.deepEqual(fanIn(gateWorkflow({ condition: null })), ['fan-in-condition']);
+  assert.deepEqual(fanIn(gateWorkflow({ condition: '${{ success() }}' })), ['fan-in-condition']);
+});
+
+await test('checkFanIn flags a gate that waits for a job but never reads its result', () => {
+  assert.deepEqual(fanIn(gateWorkflow({ reads: ['plan'] })), ['fan-in-result: journeys']);
+});
+
+await test('checkFanIn flags a new job in the workflow that the gate does not collect', () => {
+  const extraJobs = { windows: { needs: 'plan', 'runs-on': 'windows-2025', steps: [{ run: 'true' }] } };
+  assert.deepEqual(fanIn(gateWorkflow({ extraJobs })), ['fan-in-uncovered: windows']);
+});
+
+await test('checkFanIn flags a registered gate whose job or workflow is gone', () => {
+  assert.deepEqual(fanIn(stringify({ jobs: { plan: { steps: [{ run: 'true' }] } } })), ['fan-in-missing']);
+  assert.deepEqual(fanIn(undefined), ['fan-in-missing']);
 });

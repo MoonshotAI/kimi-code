@@ -167,7 +167,7 @@
     "packages/agent-core-v2/test/features/tower/store.test.ts": 1,
     "packages/agent-core-v2/test/features/tower/tools/spawnTool.test.ts": 1,
     "packages/agent-core-v2/test/features/tower/tools/towerTools.test.ts": 1,
-    "packages/agent-core-v2/test/harness/agent.ts": 13,
+    "packages/agent-core-v2/test/harness/agent.ts": 12,
     "packages/agent-core-v2/test/index.test.ts": 3,
     "packages/agent-core-v2/test/llm-adapter/model/catalog.test.ts": 2,
     "packages/agent-core-v2/test/mcpCore/client-stdio.test.ts": 1,

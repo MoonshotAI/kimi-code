@@ -258,7 +258,7 @@
   },
   "overrides": [
     {
-      "files": ["apps/desktop/e2e/*.spec.ts"],
+      "files": ["apps/desktop/e2e/*.spec.ts", "apps/desktop/test/e2e/**/*.spec.ts"],
       "rules": {
         "no-restricted-globals": ["error", "localStorage", "sessionStorage"],
         "no-restricted-imports": ["error", { "patterns": ["../src/*", "../src/**", "**/known-bug"] }],
