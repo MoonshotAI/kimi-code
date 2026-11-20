@@ -73,6 +73,7 @@ const ROUTES = {
   setPluginEnabled: 'local',
   removePlugin: 'local',
   getMcpAuthStatuses: 'local',
+  inspectMcpAuthStatuses: 'local',
   beginMcpAuth: 'local',
   completeMcpAuth: 'local',
   cancelMcpAuth: 'local',
