@@ -16,7 +16,7 @@ The `type` field in the `providers` table determines which protocol implementati
 | [`google-genai`](#google-genai) | Google GenAI | Gemini API |
 | [`vertexai`](#vertexai) | Google GenAI on Vertex | Google Cloud Vertex AI |
 
-All providers communicate with models in streaming mode by default. Capabilities such as thinking, vision, and tool use are matched automatically for recognized model families, so you typically do not need to declare them manually. Most Bedrock models, including Kimi models, do not have full capability auto-detection; declare their `capabilities` explicitly as shown in the [Bedrock quick start](#bedrock).
+All providers communicate with models in streaming mode by default. Capabilities such as thinking, vision, and tool use are matched automatically by model name prefix, so you typically do not need to declare them manually. For most Bedrock models, including Kimi models, declare `capabilities` explicitly according to the [Bedrock model card](https://docs.aws.amazon.com/bedrock/latest/userguide/model-cards.html).
 
 **Credential priority**: `api_key` or `api_key_env` (mutually exclusive alternatives — set exactly one) > `[providers.<name>.env]` sub-table key (only when neither is present) > if all are absent, startup fails with an error. Except for the explicitly declared `api_key_env`, the CLI does not fall back to shell environment variables for credentials. See [Config overrides: provider credentials](./overrides.md#provider-credentials).
 
@@ -167,51 +167,6 @@ For connecting to Amazon Bedrock. One `bedrock` provider can serve models over t
 ::: info Added
 The native `bedrock` provider was added in Kimi Code CLI v2.7.0.
 :::
-
-### Quick start with Kimi K3.1
-
-This example connects to Kimi K3.1 Pro Highspeed through its global cross-Region inference profile (a Bedrock endpoint that routes requests across Regions). Use Kimi Code CLI v2.7.0 or later; run `kimi --version` to check your installation. You need an AWS account with access to the model and inference profile, plus an IAM identity (the AWS user or role resolved by your credentials) with permissions to create short-term bearer tokens and invoke the model through the inference profile. See the [AWS walkthrough](https://aws.amazon.com/blogs/machine-learning/use-kimi-code-cli-with-models-on-amazon-bedrock/) for an example IAM policy and current Region requirements.
-
-1. Configure credentials using your standard AWS workflow. For example, with AWS IAM Identity Center (single sign-on, SSO), set up a named profile, log in, and verify the resolved identity:
-
-   ```sh
-   aws configure sso --profile YOUR_PROFILE_NAME
-   aws sso login --profile YOUR_PROFILE_NAME
-   aws sts get-caller-identity --profile YOUR_PROFILE_NAME
-   ```
-
-   Omit `--profile YOUR_PROFILE_NAME` to use the default AWS profile. Other methods in the standard AWS credential chain also work.
-
-2. Add the following entries to [`config.toml`](./config-files.md) (`~/.kimi-code/config.toml` by default). Replace `us-west-2` with your supported source Region. To use a named profile, replace `YOUR_PROFILE_NAME` and uncomment the `AWS_PROFILE` line:
-
-   ```toml
-   default_model = "bedrock-kimi-k3-1"
-
-   [providers.bedrock]
-   type = "bedrock"
-
-   [providers.bedrock.env]
-   AWS_REGION = "us-west-2"
-   # AWS_PROFILE = "YOUR_PROFILE_NAME"
-
-   [models.bedrock-kimi-k3-1]
-   provider = "bedrock"
-   model = "global.moonshotai.kimi-k3.1"
-   max_context_size = 1000000
-   capabilities = ["always_thinking", "thinking", "image_in", "tool_use"]
-   ```
-
-   The model alias `bedrock-kimi-k3-1` is a local name; `model` is the Bedrock global inference profile ID. Omitting `api_key`, `api_key_env`, and `AWS_BEARER_TOKEN_BEDROCK` makes the provider use your ambient AWS credentials.
-
-   Kimi Code CLI does not auto-detect all capabilities for most Bedrock models, including Kimi models. Declare the capabilities supported by your target model and API explicitly; the example enables reasoning, image input, and client-side tool calling for Kimi K3.1 Pro Highspeed. Check the [Bedrock model card](https://docs.aws.amazon.com/bedrock/latest/userguide/model-cards.html) before changing these values.
-
-3. Send a small non-interactive request to validate the complete connection:
-
-   ```sh
-   kimi --model bedrock-kimi-k3-1 --prompt "Write a Python function that checks whether a string is a palindrome. Include a short usage example."
-   ```
-
-   A streamed response confirms that authentication, IAM permissions, Region, model access, and the network path all work. A provider's `connected` status alone does not validate this path when using ambient AWS credentials.
 
 ### Authentication
 

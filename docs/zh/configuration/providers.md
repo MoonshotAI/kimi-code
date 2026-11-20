@@ -16,7 +16,7 @@ Kimi Code CLI 支持同时接入多家模型供应商服务，模型在供应商
 | [`google-genai`](#google-genai) | Google GenAI | Gemini API |
 | [`vertexai`](#vertexai) | Google GenAI on Vertex | Google Cloud Vertex AI |
 
-所有供应商默认以流式方式与模型交互。对于可识别的模型系列，thinking、视觉、工具调用等能力会自动匹配，通常不需要手动声明。大多数 Bedrock 模型（包括 Kimi 模型）没有完整的能力自动检测，需要按照 [Bedrock 快速配置](#bedrock) 中的示例显式声明 `capabilities`。
+所有供应商默认以流式方式与模型交互。thinking、视觉、工具调用等能力按模型名前缀自动匹配，通常不需要手动声明。对于大多数 Bedrock 模型（包括 Kimi 模型），请根据 [Bedrock 模型卡片](https://docs.aws.amazon.com/zh_cn/bedrock/latest/userguide/model-cards.html) 显式声明 `capabilities`。
 
 **凭证优先级**：`api_key` 或 `api_key_env`（互斥替代项，只能设置其中一个）> `[providers.<name>.env]` 子表键（两者都不存在时才读）> 全部缺失时启动报错。除显式声明的 `api_key_env` 外，CLI 不会从 shell 环境变量自动取凭证，详见[配置覆盖：供应商凭证](./overrides.md#供应商凭证)。
 
@@ -167,51 +167,6 @@ base_url = "https://your-gateway.example"
 ::: info 新增
 原生 `bedrock` 供应商新增于 Kimi Code CLI v2.7.0。
 :::
-
-### Kimi K3.1 快速配置
-
-本示例通过全局跨区域推理 profile（可跨区域路由请求的 Bedrock 端点）连接 Kimi K3.1 Pro Highspeed。请使用 Kimi Code CLI v2.7.0 或更高版本，可运行 `kimi --version` 检查安装版本。你需要一个有权访问该模型和推理 profile 的 AWS 账号，以及一个有权限创建短期持有者令牌、能通过推理 profile 调用该模型的 IAM 身份（凭证解析出的 AWS 用户或角色）。完整的 IAM policy 示例和当前区域要求见 [AWS 实践指南](https://aws.amazon.com/blogs/machine-learning/use-kimi-code-cli-with-models-on-amazon-bedrock/)。
-
-1. 使用你的标准 AWS 工作流配置凭证。例如，使用 AWS IAM Identity Center（单点登录，SSO）时，设置命名 profile、登录并验证解析出的身份：
-
-   ```sh
-   aws configure sso --profile YOUR_PROFILE_NAME
-   aws sso login --profile YOUR_PROFILE_NAME
-   aws sts get-caller-identity --profile YOUR_PROFILE_NAME
-   ```
-
-   使用默认 AWS profile 时省略 `--profile YOUR_PROFILE_NAME`。标准 AWS 凭证链中的其他方式也可使用。
-
-2. 把以下条目添加到 [`config.toml`](./config-files.md)（默认路径为 `~/.kimi-code/config.toml`）。将 `us-west-2` 替换为支持的源区域。使用命名 profile 时，替换 `YOUR_PROFILE_NAME` 并取消 `AWS_PROFILE` 行的注释：
-
-   ```toml
-   default_model = "bedrock-kimi-k3-1"
-
-   [providers.bedrock]
-   type = "bedrock"
-
-   [providers.bedrock.env]
-   AWS_REGION = "us-west-2"
-   # AWS_PROFILE = "YOUR_PROFILE_NAME"
-
-   [models.bedrock-kimi-k3-1]
-   provider = "bedrock"
-   model = "global.moonshotai.kimi-k3.1"
-   max_context_size = 1000000
-   capabilities = ["always_thinking", "thinking", "image_in", "tool_use"]
-   ```
-
-   模型别名 `bedrock-kimi-k3-1` 是本地名称，`model` 是 Bedrock 全局推理 profile ID。未设置 `api_key`、`api_key_env` 和 `AWS_BEARER_TOKEN_BEDROCK` 时，供应商会使用环境中的 AWS 凭证。
-
-   Kimi Code CLI 无法为大多数 Bedrock 模型（包括 Kimi 模型）自动检测全部能力。请显式声明目标模型和 API 支持的能力；本示例为 Kimi K3.1 Pro Highspeed 启用推理、图片输入和客户端工具调用。修改这些值之前，请查阅 [Bedrock 模型卡片](https://docs.aws.amazon.com/zh_cn/bedrock/latest/userguide/model-cards.html)。
-
-3. 发送一个小的非交互请求，验证完整连接：
-
-   ```sh
-   kimi --model bedrock-kimi-k3-1 --prompt "Write a Python function that checks whether a string is a palindrome. Include a short usage example."
-   ```
-
-   收到流式响应即说明认证、IAM 权限、区域、模型访问和网络路径均已打通。使用环境 AWS 凭证时，供应商的 `connected` 状态本身并不能验证这条链路。
 
 ### 认证
 
