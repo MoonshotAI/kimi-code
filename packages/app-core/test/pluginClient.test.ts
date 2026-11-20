@@ -244,7 +244,7 @@ describe('DaemonKimiWebApi MCP OAuth', () => {
     ], { cwd: '/workspace/demo' });
 
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-    expect(url).toBe('http://test.local/api/v1/mcp/servers::inspect');
+    expect(url).toBe('http://test.local/api/v1/mcp/servers:inspect');
     expect(init.method).toBe('POST');
     expect(JSON.parse(init.body as string)).toEqual({
       targets: [{ source: 'plugin', plugin_id: 'vercel', server_name: 'vercel' }],

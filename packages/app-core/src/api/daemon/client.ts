@@ -1058,7 +1058,7 @@ export class DaemonKimiWebApi implements KimiWebApi {
     locators: AppMcpServerLocator[],
     options?: { cwd?: string },
   ): Promise<AppMcpAuthStatus[]> {
-    const data = await this.http.post<WireMcpServerAuthInspection[]>('/mcp/servers::inspect', {
+    const data = await this.http.post<WireMcpServerAuthInspection[]>('/mcp/servers:inspect', {
       targets: locators.map(toWireMcpServerLocator),
       cwd: options?.cwd,
     });
