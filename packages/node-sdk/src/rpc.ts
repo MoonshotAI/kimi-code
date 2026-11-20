@@ -1,3 +1,4 @@
+import type { SessionResumeSelection, SessionResumeTarget } from '@moonshot-ai/agent-core-v2';
 import { AsyncLocalStorage } from 'node:async_hooks';
 
 import type {
@@ -220,6 +221,10 @@ export abstract class SDKRpcClientBase {
 
   abstract listSessions(input?: ListSessionsOptions): Promise<readonly SessionSummary[]>;
 
+  async resolveSessionResumeTarget(_selection: SessionResumeSelection): Promise<SessionResumeTarget | undefined> {
+    throw new KimiError(ErrorCodes.NOT_IMPLEMENTED, 'Session resume target lookup is not implemented for this engine');
+  }
+
   abstract listSessionsPage(input?: ListSessionsOptions): Promise<SessionSummaryPage>;
 
   abstract listWorkspaceSkills(workDir: string): Promise<readonly SkillSummary[]>;
@@ -236,7 +241,7 @@ export abstract class SDKRpcClientBase {
     options?: WorkspaceTrustInfoOptions,
   ): Promise<WorkspaceTrustInfo>;
 
-  abstract trustWorkspace(workDir: string): Promise<void>;
+  abstract trustWorkspace(workDir: string, projectId?: string): Promise<void>;
 
   abstract renameSession(input: RenameSessionInput): Promise<void>;
 

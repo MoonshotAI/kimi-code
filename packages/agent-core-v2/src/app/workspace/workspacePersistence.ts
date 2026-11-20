@@ -1,7 +1,8 @@
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import type { Event } from '#/_base/event';
 
-import type { Workspace } from './workspace';
+import type { RepositoryStore } from '#/app/git/repository';
+import type { Project } from '#/app/project/project';
 
 export const PROJECTS_KEY = 'projects.json';
 
@@ -9,6 +10,7 @@ export interface PersistedWorkspaceEntry {
   readonly root: string;
   readonly name: string;
   readonly kind?: string;
+  readonly vcs?: RepositoryStore;
   readonly additional_dirs?: readonly string[];
   readonly created_at: string;
   readonly last_opened_at: string;
@@ -37,7 +39,7 @@ export interface PersistedProjectsFile {
 }
 
 export interface WorkspaceCatalog {
-  readonly workspaces: readonly Workspace[];
+  readonly workspaces: readonly Project[];
   readonly deletedIds: readonly string[];
   readonly idempotencyKeys?: Readonly<Record<string, string>>;
 }

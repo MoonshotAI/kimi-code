@@ -230,7 +230,7 @@ export function registerSessionsRoutes(
           );
           return;
         }
-        if (callerCwd !== workspace.root && hostCwd !== workspace.root) {
+        if (callerCwd !== workspace.root && resolve(callerCwd) !== workspace.root) {
           reply.send(
             buildValidationEnvelope(
               [

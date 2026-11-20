@@ -99,6 +99,17 @@ describe('TrustPromptComponent', () => {
     ])
       expect(text).not.toContain(hidden);
   });
+  it('shows the shared project and the selected checkout before granting trust', () => {
+    const prompt = new TrustPromptComponent({
+      workDir: '/code/app-fix/src',
+      info: info({ project: { id: 'project', defaultCwd: '/code/app' } }),
+      onSelect: vi.fn(),
+    });
+    const text = render(prompt).join('\n');
+    expect(text).toContain('/code/app');
+    expect(text).toContain('Working directory: /code/app-fix/src');
+    expect(text).toContain('other working directories');
+  });
   it('distinguishes empty activation from unreadable configuration', () => {
     const empty = new TrustPromptComponent({ workDir, info: info(), onSelect: vi.fn() });
     expect(render(empty).join('\n')).toContain(

@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto';
-import { stat } from 'node:fs/promises';
+import { mkdir, stat } from 'node:fs/promises';
+import { dirname, relative } from 'node:path';
 
-import { join, normalize } from 'pathe';
+import { isAbsolute, join } from 'pathe';
 import lockfile from 'proper-lockfile';
 
 import { LifecycleScope } from '#/app/scopes';
@@ -9,6 +10,7 @@ import { LifecycleScope } from '#/app/scopes';
 import { Disposable } from '#/_base/di/lifecycle';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { Emitter, type Event } from '#/_base/event';
+import { directoryKey } from '#/_base/utils/paths';
 import { TimeoutTimer } from '#/_base/utils/timer';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
@@ -16,6 +18,7 @@ import {
   IFileSystemStorageService,
   StorageError,
   StorageErrors,
+  toStorageIoError,
 } from '#/persistence/interface/storage';
 import { watch } from '#human/utils/watch';
 
@@ -60,13 +63,15 @@ export class FileWorkspacePersistence extends Disposable implements IWorkspacePe
   ) {
     super();
     const catalogFile = join(this.bootstrap.homeDir, PROJECTS_KEY);
-    const handle = watch(catalogFile);
+    const handle = watch(this.bootstrap.homeDir, {
+      listing: false,
+      recursive: false,
+      ignored: (path) => relative(this.bootstrap.homeDir, path) !== '' && relative(catalogFile, path) !== '',
+    });
     this._register(handle);
     this.watchReady = handle.ready;
     this._register(
-      handle.onDidChange((change) => {
-        if (normalize(change.path) !== normalize(catalogFile)) return;
-        this.catalogCache = undefined;
+      handle.onDidChange(() => {
         this.watchDebounce.cancelAndSet(() => {
           this.changeEmitter.fire();
         }, WATCH_DEBOUNCE_MS);
@@ -109,6 +114,8 @@ export class FileWorkspacePersistence extends Disposable implements IWorkspacePe
         merged['root'] = ws.root;
         merged['name'] = ws.name;
         merged['kind'] = ws.kind;
+        if (ws.vcs === undefined) delete merged['vcs'];
+        else merged['vcs'] = { ...rawEntry?.vcs, ...ws.vcs };
         merged['created_at'] = new Date(ws.createdAt).toISOString();
         merged['last_opened_at'] = new Date(ws.lastOpenedAt).toISOString();
         record[ws.id] = merged as unknown as PersistedWorkspaceEntry;
@@ -217,12 +224,13 @@ export class FileWorkspacePersistence extends Disposable implements IWorkspacePe
   }
 
   private async withLock<T>(operation: () => Promise<T>): Promise<T> {
-    await this.storage.write(WORKSPACE_CATALOG_SCOPE, PROJECTS_LOCK_KEY, new Uint8Array(), {
-      atomic: true,
-    });
     const target =
       this.storage.pathFor(WORKSPACE_CATALOG_SCOPE, PROJECTS_LOCK_KEY) ??
       join(this.bootstrap.homeDir, PROJECTS_LOCK_KEY);
+    const parent = dirname(target);
+    await mkdir(parent, { recursive: true, mode: 0o700 }).catch((error: unknown) => {
+      throw toStorageIoError(error, { path: parent, op: 'mkdir' });
+    });
     const release = await lockfile.lock(target, {
       retries: { retries: 120, factor: 1, minTimeout: 50, maxTimeout: 200 },
       stale: 5_000,
@@ -253,14 +261,21 @@ function parseProjectsDocument(value: unknown): {
   const rawProjects = asRecord(raw['projects'], `${PROJECTS_KEY} projects`);
   const now = Date.now();
   const workspaces: Workspace[] = [];
+  const repositoryOwners = new Map<string, string>();
   for (const [id, rawEntry] of Object.entries(rawProjects)) {
     const entry = sanitizeEntry(rawEntry, version === PROJECTS_SCHEMA_VERSION);
     if (entry === null) throw projectsCorrupted(`invalid project entry ${id}`);
+    if (entry.vcs !== undefined) {
+      const key = directoryKey(entry.vcs.store);
+      const owner = repositoryOwners.get(key);
+      if (owner !== undefined) throw projectsCorrupted(`projects ${owner} and ${id} both claim Git store ${entry.vcs.store}`);
+      repositoryOwners.set(key, id);
+    }
     workspaces.push({
       id,
       root: entry.root,
       name: entry.name,
-      kind: entry.kind === 'managed' ? 'managed' : 'implicit',
+      ...(entry.kind === 'managed' ? { kind: 'managed' } : { kind: 'implicit', vcs: entry.vcs }),
       additionalDirs: entry.additional_dirs ?? [],
       createdAt: parseTime(entry.created_at, now),
       lastOpenedAt: parseTime(entry.last_opened_at, now),
@@ -288,7 +303,7 @@ function migrateLegacyDocument(file: PersistedWorkspaceFile, hash: string): Pers
       ...(typeof value === 'object' && value !== null ? value : {}),
       root: entry.root,
       name: entry.name,
-      kind: entry.kind === 'managed' ? 'managed' : 'implicit',
+      ...(entry.kind === 'managed' ? { kind: 'managed' } : { kind: 'implicit', vcs: entry.vcs }),
       additional_dirs: entry.additional_dirs ?? [],
       created_at: entry.created_at,
       last_opened_at: entry.last_opened_at,
@@ -358,6 +373,12 @@ function sanitizeEntry(value: unknown, strict = false): PersistedWorkspaceEntry 
   if (strict && v.kind !== 'managed' && v.kind !== 'implicit') {
     throw projectsCorrupted('invalid kind');
   }
+  if (v.vcs !== undefined && (
+    v.kind === 'managed' || v.vcs === null || v.vcs.type !== 'git' ||
+    typeof v.vcs.store !== 'string' || !isAbsolute(v.vcs.store)
+  )) {
+    throw projectsCorrupted(`invalid vcs for project at ${v.root}`);
+  }
   const rawDirs = v.additional_dirs;
   if (
     strict &&
@@ -373,6 +394,7 @@ function sanitizeEntry(value: unknown, strict = false): PersistedWorkspaceEntry 
     root: v.root,
     name: v.name,
     kind: typeof v.kind === 'string' ? v.kind : undefined,
+    vcs: v.vcs === undefined ? undefined : { type: v.vcs.type, store: v.vcs.store },
     additional_dirs: additionalDirs,
     created_at: v.created_at,
     last_opened_at: v.last_opened_at,

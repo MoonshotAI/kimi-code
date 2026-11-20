@@ -152,7 +152,7 @@ describe('WorkspaceAliasesService (file-backed)', () => {
   it('resolveAliasIds returns every registered id for one physical directory', async () => {
     const lowerRoot = 'c:\\users\\foo\\proj';
     const typedRoot = 'C:\\Users\\Foo\\Proj';
-    const legacyId = 'wd_proj_deadbeef0002';
+    const legacyId = encodeWorkDirKey(typedRoot);
     const canonicalId = encodeWorkDirKey(lowerRoot);
     const entry = (root: string): PersistedWorkspaceEntry => ({
       root,
@@ -301,7 +301,7 @@ describe('WorkspaceAliasesService (file-backed)', () => {
     });
     const typedRoot = 'C:\\Users\\Foo\\Proj';
     const typedId = encodeWorkDirKey(typedRoot);
-    const legacyId = 'wd_proj_deadbeef0002';
+    const legacyId = encodeWorkDirKey('c:\\users\\foo\\proj');
     await writeWorkspacesJson({ [typedId]: entry(typedRoot) });
     const aliases = build();
     expect(await aliases.resolveAliasIds(typedId)).toEqual([typedId]);
@@ -348,7 +348,7 @@ describe('WorkspaceAliasesService (file-backed)', () => {
     });
     const typedRoot = 'C:\\Users\\Foo\\Proj';
     const typedId = encodeWorkDirKey(typedRoot);
-    const legacyId = 'wd_proj_deadbeef0002';
+    const legacyId = encodeWorkDirKey('c:\\users\\foo\\proj');
     await writeWorkspacesJson({ [typedId]: entry(typedRoot) });
     const storage = new FileStorageService(homeDir);
     const persistence = new GatedPersistence(
@@ -409,7 +409,7 @@ describe('WorkspaceAliasesService (file-backed)', () => {
     });
     const typedRoot = 'C:\\Users\\Foo\\Proj';
     const typedId = encodeWorkDirKey(typedRoot);
-    const legacyId = 'wd_proj_deadbeef0002';
+    const legacyId = encodeWorkDirKey('c:\\users\\foo\\proj');
     await writeWorkspacesJson({ [typedId]: entry(typedRoot) });
     const storage = new GatedStorage(homeDir);
     const aliases = build(undefined, storage);
@@ -478,7 +478,7 @@ describe('WorkspaceAliasesService (file-backed)', () => {
     });
     const typedRoot = 'C:\\Users\\Foo\\Proj';
     const typedId = encodeWorkDirKey(typedRoot);
-    const legacyId = 'wd_proj_deadbeef0002';
+    const legacyId = encodeWorkDirKey('c:\\users\\foo\\proj');
     await writeWorkspacesJson({ [typedId]: entry(typedRoot) });
     const aliases = build();
     expect(await aliases.resolveAliasIds(typedId)).toEqual([typedId]);

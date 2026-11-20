@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -514,7 +515,7 @@ describe("VS Code Kimi harness integration (shares one in-process SDK home)", ()
     const rig = await createMcpHandlerRig();
     const project = await mkdtemp(join(tmpdir(), "kimi-vscode-mcp-project-"));
     cleanups.push(() => rm(project, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }));
-    await mkdir(join(project, ".git"), { recursive: true });
+    execFileSync("git", ["init", "--quiet", project]);
     await writeFile(
       join(project, ".mcp.json"),
       JSON.stringify({

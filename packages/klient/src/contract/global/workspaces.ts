@@ -3,15 +3,19 @@ import { z } from 'zod';
 import { maybe, noResult } from '../helpers.js';
 import type { ServiceContract } from '../types.js';
 
-export const workspaceSchema = z.object({
+const projectFields = {
   id: z.string(),
   root: z.string(),
   name: z.string(),
-  kind: z.enum(['managed', 'implicit']),
   additionalDirs: z.array(z.string()),
   createdAt: z.number(),
   lastOpenedAt: z.number(),
-});
+};
+
+export const workspaceSchema = z.discriminatedUnion('kind', [
+  z.object({ ...projectFields, kind: z.literal('managed'), vcs: z.never().optional() }),
+  z.object({ ...projectFields, kind: z.literal('implicit'), vcs: z.object({ type: z.literal('git'), store: z.string() }).optional() }),
+]);
 
 export const workspaceUpdateSchema = z.object({
   name: z.string().optional(),

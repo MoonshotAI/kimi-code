@@ -37,6 +37,7 @@ import {
   ISessionRunGate,
   ISessionManager,
   ITelemetryService,
+  IWorkspaceAliases,
   IWorkspaceInstanceManager,
   InMemorySessionLockService,
   Error2,
@@ -48,6 +49,8 @@ import {
   type Event2,
 } from '@moonshot-ai/agent-core-v2';
 
+import type { TrustGatedActivation } from '@moonshot-ai/agent-core-v2/workspace/workspaceTrust/trustDisclosure';
+
 import { CLI_SHUTDOWN_TIMEOUT_MS, CLI_USER_AGENT_PRODUCT } from '#/constant/app';
 
 import { runV2Print } from '../../src/cli/v2/run-v2-print';
@@ -56,15 +59,6 @@ import { resetKimiRegionCache } from '../../src/utils/region';
 const mocks = vi.hoisted(() => ({
   bootstrap: vi.fn(),
   ensureMainAgent: vi.fn(),
-  loadMcpServersDetailed: vi.fn(async () => ({
-    servers: {},
-    origins: {},
-  })),
-  resolveMcpJsonPaths: vi.fn(async () => ({
-    user: '/tmp/kimi-code-test-home/mcp.json',
-    projectRoot: '/tmp/project/.mcp.json',
-    project: '/tmp/project/.kimi-code/mcp.json',
-  })),
   createKimiDefaultHeaders: vi.fn(() => ({})),
   resolveKimiHome: vi.fn((homeDir?: string) => homeDir ?? '/tmp/kimi-code-test-home'),
   createKimiDeviceId: vi.fn(() => 'device-1'),
@@ -83,11 +77,6 @@ vi.mock('@moonshot-ai/agent-core-v2', async (importOriginal) => {
     ensureMainAgent: mocks.ensureMainAgent,
   };
 });
-
-vi.mock('@moonshot-ai/agent-core-v2/app/mcpConfig/configLoader', () => ({
-  loadMcpServersDetailed: mocks.loadMcpServersDetailed,
-  resolveMcpJsonPaths: mocks.resolveMcpJsonPaths,
-}));
 
 vi.mock('@moonshot-ai/kimi-code-oauth', async () => {
   const actual = await vi.importActual<typeof import('@moonshot-ai/kimi-code-oauth')>(
@@ -176,7 +165,10 @@ function opts(overrides: Record<string, unknown> = {}) {
 function makeFakeHarness(toolUpdates = false) {
   const eventListeners = new Set<(event: Event2<any>) => void>();
   const profileState: { profileName: string | undefined } = { profileName: undefined };
-  const trustState = { trusted: true };
+  const trustState = {
+    trusted: true,
+    describe: vi.fn<() => Promise<Pick<TrustGatedActivation, 'mcpServers'>>>().mockResolvedValue({ mcpServers: [] }),
+  };
   const planState = { active: false };
 
   const goal = { createGoal: vi.fn(), getGoal: vi.fn() };
@@ -310,25 +302,13 @@ function makeFakeHarness(toolUpdates = false) {
       ISessionManager,
       {
         create: vi.fn(async () => session),
+        resolveCreationEnvironment: vi.fn(async () => ({ workspaceId: 'wd_v2', environmentId: 'local', environmentCwd: process.cwd() })),
         resume: vi.fn(async () => session),
         get: vi.fn(() => session),
         list: vi.fn(() => [session]),
       } as unknown as ISessionManager,
     ],
-    [
-      ISessionIndex,
-      {
-        list: vi.fn(async () => ({ items: [] })),
-        get: vi.fn(async (id: string) => ({
-          id,
-          workspaceId: 'wd_v2',
-          cwd: process.cwd(),
-          createdAt: 1,
-          updatedAt: 1,
-          archived: false,
-        })),
-      },
-    ],
+    [IWorkspaceAliases, { resolveAliasIds: vi.fn(async (id: string) => [id]) }],
     [ISessionIndex, { get: vi.fn(async () => undefined), listRecent: vi.fn(async () => ({ items: [] })) }],
     [ISessionLockService, new InMemorySessionLockService()],
     [
@@ -365,14 +345,22 @@ function makeFakeHarness(toolUpdates = false) {
       },
     ],
     [IFileSystemStorageService, {}],
-    [IHostFileSystem, {}],
+    [IHostFileSystem, { stat: vi.fn(async () => ({ isDirectory: true })) }],
     [IEnvironmentService, { addProvider: vi.fn(async () => ({ dispose: vi.fn() })) }],
     [
       IWorkspaceInstanceManager,
       {
         acquire: vi.fn(async () => ({
           instance: {
-            program: { trust: { get: vi.fn(async () => trustState.trusted) } },
+            id: 'wd_v2',
+            root: process.cwd(),
+            program: {
+              trust: { get: vi.fn(async () => trustState.trusted) },
+              acquireWorkdir: vi.fn(async () => ({
+                trustDisclosure: { describeGatedActivation: trustState.describe },
+                dispose: vi.fn(),
+              })),
+            },
           },
           dispose: vi.fn(),
         })),
@@ -414,10 +402,6 @@ describe('runV2Print', () => {
     vi.stubEnv('KIMI_DISABLE_TELEMETRY', '');
     vi.stubEnv('KIMI_CODE_OAUTH_HOST', 'https://auth.kimi.com');
     resetKimiRegionCache();
-    mocks.loadMcpServersDetailed.mockImplementation(async () => ({
-      servers: {},
-      origins: {},
-    }));
   });
 
   afterEach(() => {
@@ -441,11 +425,14 @@ describe('runV2Print', () => {
 
     await runV2Print(opts() as never, '1.2.3-test', { stdout, stderr });
 
-    const promptService = agentServices.get(IAgentLoopService) as { submit: ReturnType<typeof vi.fn> };
+    const promptService = agentServices.get(IAgentLoopService) as {
+      submit: ReturnType<typeof vi.fn>;
+      promptHandle: ReturnType<typeof vi.fn>;
+    };
+    const [promptId] = promptService.promptHandle.mock.calls[0]!;
     expect(promptService.submit).toHaveBeenCalledWith({
-      role: 'user',
-      content: [{ type: 'text', text: 'say hello' }],
-      attributes: { origin: { kind: 'user' } },
+      input: [{ type: 'text', text: 'say hello' }],
+      promptId,
     });
     expect(stderr.write).toHaveBeenNthCalledWith(1, 'kimi version 1.2.3-test\n');
     expect(stderr.text()).toContain('Warning: deprecated setting\n');
@@ -1229,16 +1216,10 @@ describe('runV2Print', () => {
     const stderr = writer();
     const { app, trustState } = makeFakeHarness();
     trustState.trusted = false;
-    mocks.loadMcpServersDetailed.mockResolvedValue({
-      servers: {
-        fs: { transport: 'stdio', command: 'node', args: ['server.js'] },
-        api: { transport: 'http', url: 'https://example.com/mcp' },
-      },
-      origins: {
-        fs: '/tmp/project/.mcp.json',
-        api: '/tmp/project/.kimi-code/mcp.json',
-      },
-    });
+    trustState.describe.mockResolvedValue({ mcpServers: [
+      { name: 'api', transport: 'http', url: 'https://example.com/mcp', origin: '/project/.kimi-code/mcp.json' },
+      { name: 'fs', transport: 'stdio', command: 'node', args: ['server.js'], origin: '/project/.mcp.json' },
+    ] });
 
     mocks.bootstrap.mockReturnValue({ app });
     mocks.ensureMainAgent.mockResolvedValue({ agentId: 'main', generation: 1 });
@@ -1249,21 +1230,21 @@ describe('runV2Print', () => {
       'Warning: this folder is not trusted; skipped 2 project-level MCP servers: ' +
         'api (http: https://example.com/mcp), fs (stdio: node server.js).',
     );
-    expect(stderr.text()).toContain('"Trust this folder"');
+    expect(stderr.text()).toContain('"Trust and continue"');
     expect(stdout.text()).toContain('hello world');
   });
 
   it('does not read mcp.json for the trust warning when the folder is trusted', async () => {
     const stdout = writer();
     const stderr = writer();
-    const { app } = makeFakeHarness();
+    const { app, trustState } = makeFakeHarness();
 
     mocks.bootstrap.mockReturnValue({ app });
     mocks.ensureMainAgent.mockResolvedValue({ agentId: 'main', generation: 1 });
 
     await runV2Print(opts() as never, '1.2.3-test', { stdout, stderr });
 
-    expect(mocks.loadMcpServersDetailed).not.toHaveBeenCalled();
+    expect(trustState.describe).not.toHaveBeenCalled();
     expect(stderr.text()).not.toContain('not trusted');
   });
 
@@ -1278,7 +1259,7 @@ describe('runV2Print', () => {
 
     await runV2Print(opts() as never, '1.2.3-test', { stdout, stderr });
 
-    expect(mocks.loadMcpServersDetailed).toHaveBeenCalled();
+    expect(trustState.describe).toHaveBeenCalled();
     expect(stderr.text()).not.toContain('not trusted');
   });
 
@@ -1287,16 +1268,10 @@ describe('runV2Print', () => {
     const stderr = writer();
     const { app, trustState } = makeFakeHarness();
     trustState.trusted = false;
-    mocks.loadMcpServersDetailed.mockResolvedValue({
-      servers: {
-        github: { transport: 'stdio', command: './project-github' },
-        toString: { transport: 'http', url: 'https://example.com/mcp' },
-      },
-      origins: {
-        github: '/tmp/project/.mcp.json',
-        toString: '/tmp/project/.kimi-code/mcp.json',
-      },
-    });
+    trustState.describe.mockResolvedValue({ mcpServers: [
+      { name: 'github', transport: 'stdio', command: './project-github', origin: '/project/.mcp.json' },
+      { name: 'toString', transport: 'http', url: 'https://example.com/mcp', origin: '/project/.kimi-code/mcp.json' },
+    ] });
 
     mocks.bootstrap.mockReturnValue({ app });
     mocks.ensureMainAgent.mockResolvedValue({ agentId: 'main', generation: 1 });

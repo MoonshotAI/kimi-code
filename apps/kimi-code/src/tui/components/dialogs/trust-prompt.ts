@@ -102,18 +102,22 @@ export class TrustPromptComponent implements Component, Focusable {
     const availableRows = Math.max(0, Math.floor(this.opts.getAvailableRows?.() ?? Infinity));
     const header = [
       rule,
-      currentTheme.boldFg('primary', ' Trust this folder?'),
+      currentTheme.boldFg('primary', ' Trust this project?'),
       currentTheme.fg('textMuted', ' ↑↓ navigate · Enter select · Esc exit'),
       '',
     ];
+    const projectRoot = this.opts.info.project?.defaultCwd;
     const body = [
-      ...wrap(this.opts.workDir, 1, width, 'textStrong'),
+      ...wrap(projectRoot ?? this.opts.workDir, 1, width, 'textStrong'),
+      ...(projectRoot !== undefined && projectRoot !== this.opts.workDir
+        ? wrap(`Working directory: ${this.opts.workDir}`, 1, width, 'textMuted')
+        : []),
       '',
       ...this.renderDisclosure(width),
     ];
     const footer = [
       ...wrap(
-        'Trust is remembered for this folder, including future project config changes.',
+        'Trust covers other working directories and future project config changes.',
         1,
         width,
         'textMuted',

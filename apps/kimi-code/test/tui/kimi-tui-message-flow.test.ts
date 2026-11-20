@@ -15849,7 +15849,15 @@ describe('KimiTUI session rating survey', () => {
         startup.cliOptions.session = 'ses-1';
         const { driver, harness } = await makeDriver(
           session,
-          { listSessions: vi.fn(async () => [{ id: 'ses-1', workDir: '/tmp/proj-a' }]) },
+          {
+            resolveSessionResumeTarget: vi.fn(async () => ({
+              id: session.id,
+              projectId: 'project',
+              workDir: '/tmp/proj-a',
+              environmentId: 'local',
+              environmentCwd: '/tmp/proj-a',
+            })),
+          },
           mount === 'startup' ? startup : undefined,
         );
         if (mount === 'switch') {

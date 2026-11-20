@@ -379,6 +379,33 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
     }
   });
 
+  it('resumes a historical remote session by ID when only its remote cwd was recorded', async () => {
+    const hostRoot = await mkdtemp(join(tmpdir(), 'kimi-sdk-legacy-host-'));
+    const remoteCwd = await mkdtemp(join(tmpdir(), 'kimi-sdk-legacy-target-'));
+    tempDirs.push(hostRoot, remoteCwd);
+    const { harness, client, homeDir } = await makeEnvironmentHarness({ defaultCwd: remoteCwd });
+    const provider = await attachFakeBoxEnvironment(client);
+    try {
+      const project = await client.engineAccessor.get(IWorkspaceService).create({ root: hostRoot });
+      const id = 'historical-remote';
+      const dir = join(homeDir, 'sessions', project.id, id);
+      await mkdir(dir, { recursive: true });
+      await writeFile(join(dir, 'state.json'), JSON.stringify({ id, environmentId: 'fake-box', environmentCwd: remoteCwd }));
+      expect(await client.resolveSessionResumeTarget({ sessionId: id })).toEqual({
+        id, projectId: project.id, workDir: project.root, environmentId: 'fake-box', environmentCwd: remoteCwd,
+      });
+      const session = await harness.resumeSession({ id });
+      expect(await session.getEnvironment()).toMatchObject({ environmentId: 'fake-box', cwd: remoteCwd });
+      const other = 'historical-relative-host';
+      const otherDir = join(homeDir, 'sessions', project.id, other);
+      await mkdir(otherDir, { recursive: true });
+      await writeFile(join(otherDir, 'state.json'), JSON.stringify({ id: other, cwd: 'relative', environmentId: 'fake-box', environmentCwd: remoteCwd }));
+      await expect(client.resolveSessionResumeTarget({ sessionId: other })).rejects.toThrow(/absolute.*working directory/i);
+    } finally {
+      await provider.dispose(); await harness.close(); vi.unstubAllEnvs();
+    }
+  });
+
   it('resolves relative additional directories against the same remote cwd on cold resume', async () => {
     const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-resume-local-'));
     const target = await mkdtemp(join(tmpdir(), 'kimi-sdk-resume-target-'));
@@ -2877,6 +2904,7 @@ describe('SDKRpcClientV2 workspace trust', () => {
       const info = await harness.getWorkspaceTrustInfo(workDir);
       expect(info).toEqual({
         trusted: false,
+        project: { id: expect.stringMatching(/^wd_/), defaultCwd: workDir },
         gatedMcpServers: [],
         gatedAdditionalDirs: [],
         additionalDirSources: [],

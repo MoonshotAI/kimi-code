@@ -194,16 +194,18 @@ async function resolveWorkspaceFs(
   required: readonly EnvironmentCapability[],
 ): Promise<FsScope | undefined> {
   const workspaces = core.accessor.get(IWorkspaceService);
-  let ws = await workspaces.get(ref);
-  if (ws === undefined) {
-    if (!isAbsolute(ref)) return undefined;
-    try {
-      ws = await workspaces.createOrTouch(ref);
-    } catch {
-      return undefined;
-    }
+  const byId = await workspaces.get(ref);
+  if (byId !== undefined) {
+    return acquireLocalRootedFs(core, byId.id, { workDir: byId.root, additionalDirs: byId.additionalDirs }, required);
   }
-  return acquireLocalRootedFs(core, ws.id, { workDir: ws.root, additionalDirs: ws.additionalDirs }, required);
+  if (!isAbsolute(ref)) return undefined;
+  try {
+    const project = await workspaces.createOrTouch(ref);
+    return acquireLocalRootedFs(core, project.id, { workDir: ref, additionalDirs: project.additionalDirs }, required);
+  } catch (error) {
+    if (isError2(error) && error.code === ErrorCodes.FS_PATH_NOT_FOUND) return undefined;
+    throw error;
+  }
 }
 
 async function sendSuggestStream(

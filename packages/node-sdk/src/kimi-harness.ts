@@ -1,3 +1,4 @@
+import type { SessionResumeSelection, SessionResumeTarget } from '@moonshot-ai/agent-core-v2';
 import { ErrorCodes, KimiError } from '#/errors';
 import type { ExperimentalFeatureState } from '#/flag';
 import type { ImageLimits } from '#/image';
@@ -331,6 +332,10 @@ export class KimiHarness {
     return this.rpc.listSessions(options);
   }
 
+  resolveSessionResumeTarget(selection: SessionResumeSelection): Promise<SessionResumeTarget | undefined> {
+    return this.rpc.resolveSessionResumeTarget(selection);
+  }
+
   /**
    * One keyset page of the session listing (`limit` / `before` in
    * `ListSessionsOptions`). Paged on the v2 engine; the v1 engine serves the
@@ -458,8 +463,8 @@ export class KimiHarness {
   }
 
   /** Mark `workDir` as trusted; project-level MCP servers connect live afterwards. */
-  async trustWorkspace(workDir: string): Promise<void> {
-    return this.rpc.trustWorkspace(workDir);
+  async trustWorkspace(workDir: string, projectId?: string): Promise<void> {
+    return this.rpc.trustWorkspace(workDir, projectId);
   }
 
   async getConfig(options: GetConfigOptions = {}): Promise<KimiConfig> {

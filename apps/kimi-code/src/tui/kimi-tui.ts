@@ -788,9 +788,12 @@ export class KimiTUI {
     this.registerSignalHandlers();
     let trustPromptStartedLoop = false;
     try {
-      startupTrace('trustPrompt:begin');
-      trustPromptStartedLoop = await this.maybeRunWorkspaceTrustPrompt();
-      startupTrace('trustPrompt:end');
+      const resumeAfterMigration = this.migrationPlan !== null && !this.migrateOnly && this.hasStartupResumeTarget();
+      if (!resumeAfterMigration) {
+        startupTrace('trustPrompt:begin');
+        trustPromptStartedLoop = await this.maybeRunWorkspaceTrustPrompt();
+        startupTrace('trustPrompt:end');
+      }
 
       if (this.migrationPlan !== null) {
         if (!trustPromptStartedLoop) this.startEventLoop();
@@ -803,6 +806,7 @@ export class KimiTUI {
             await this.onExit?.(failed ? 1 : 0);
             return;
           }
+          if (resumeAfterMigration) await this.maybeRunWorkspaceTrustPrompt(true);
           const startupSpinner = this.showProgressSpinner(this.startupProgressLabel());
           const shouldReplayHistory = await this.initMainTui().then(
             (result) => {
@@ -1163,6 +1167,8 @@ export class KimiTUI {
       planMode: startup.plan ? true : undefined,
       agentProfile: startup.agentProfile,
       agentFiles: startup.agentFiles?.length ? [...startup.agentFiles] : undefined,
+      environmentId: startup.environment,
+      environmentCwd: startup.environmentCwd,
     };
     const startupAdditionalDirs = this.options.startup.additionalDirs ?? [];
     if (startupAdditionalDirs.length > 0) {
@@ -1176,51 +1182,21 @@ export class KimiTUI {
           return false;
         }
 
-        if (startup.sessionFlag !== undefined) {
-          const sessions = await this.harness.listSessions({
-            sessionId: startup.sessionFlag,
-            workDir,
-          });
-          const target = sessions[0];
-          if (target === undefined) {
-            throw new Error(`Session "${startup.sessionFlag}" not found.`);
-          }
-          if (resolve(target.workDir) !== resolve(workDir)) {
-            this.state.ui.stop();
-            process.stderr.write(
-              `${currentTheme.fg(
-                'warning',
-                `Session "${startup.sessionFlag}" was created under a different directory.\n` +
-                  `  cd "${target.workDir}" && kimi -r ${startup.sessionFlag}`,
-              )}\n\n`,
-            );
-            throw new Error(
-              `Session "${startup.sessionFlag}" was created under a different directory.`,
-            );
-          }
+        const target = await this.resolveStartupTarget();
+        if (target !== undefined) {
           session = await this.harness.resumeSession({
-            id: startup.sessionFlag,
+            id: target.id,
             additionalDirs: createSessionOptions.additionalDirs,
             replayTurnLimit: REPLAY_FETCH_TURN_LIMIT,
           });
+          this.setAppState({ workDir: target.workDir });
           shouldReplayHistory = true;
         } else {
-          const page = await this.harness.listSessionsPage({ workDir, limit: 1 });
-          const target = page.items[0];
-          if (target !== undefined) {
-            session = await this.harness.resumeSession({
-              id: target.id,
-              additionalDirs: createSessionOptions.additionalDirs,
-              replayTurnLimit: REPLAY_FETCH_TURN_LIMIT,
-            });
-            shouldReplayHistory = true;
-          } else {
-            session = await this.harness.createSession(createSessionOptions);
-            this.startupNotice = combineStartupNotice(
-              this.startupNotice,
-              `No sessions to continue under "${workDir}"; starting a fresh session.`,
-            );
-          }
+          session = await this.harness.createSession(createSessionOptions);
+          this.startupNotice = combineStartupNotice(
+            this.startupNotice,
+            `No sessions to continue under "${workDir}"; starting a fresh session.`,
+          );
         }
       } else {
         await this.hydrateLazyConfigDefaults();
@@ -4761,14 +4737,37 @@ export class KimiTUI {
     return result;
   }
 
-  private async maybeRunWorkspaceTrustPrompt(): Promise<boolean> {
-    const workDir = this.state.appState.workDir;
+  private startupTarget?: ReturnType<KimiHarness['resolveSessionResumeTarget']>;
+
+  private hasStartupResumeTarget(): boolean {
+    const { sessionFlag, continueLast } = this.options.startup;
+    return sessionFlag === undefined ? continueLast : sessionFlag !== '';
+  }
+
+  private resolveStartupTarget(): ReturnType<KimiHarness['resolveSessionResumeTarget']> {
+    const { startup } = this.options;
+    if (!this.hasStartupResumeTarget()) return Promise.resolve(undefined);
+    return this.startupTarget ??= this.harness.resolveSessionResumeTarget(
+      startup.sessionFlag === undefined
+        ? {
+            workDir: this.state.appState.workDir,
+            environmentId: startup.environment,
+            environmentCwd: startup.environmentCwd,
+          }
+        : { sessionId: startup.sessionFlag },
+    );
+  }
+
+  private async maybeRunWorkspaceTrustPrompt(eventLoopStarted = false): Promise<boolean> {
+    const target = await this.resolveStartupTarget();
+    const workDir = target?.workDir ?? this.state.appState.workDir;
     let info: WorkspaceTrustInfo;
     try {
       info = await this.harness.getWorkspaceTrustInfo(workDir, {
         additionalDirs: this.state.appState.additionalDirs,
-        environmentId: this.options.startup.environment,
-        environmentCwd: this.options.startup.environmentCwd,
+        environmentId: target?.environmentId ?? this.options.startup.environment,
+        environmentCwd: target?.environmentCwd ?? this.options.startup.environmentCwd,
+        projectId: target?.projectId,
       });
     } catch {
       info = {
@@ -4783,7 +4782,7 @@ export class KimiTUI {
     if (info.trusted) {
       return false;
     }
-    this.startEventLoop();
+    if (!eventLoopStarted) this.startEventLoop();
     const interaction = this.programStatus.startInteraction({
       kind: 'permission',
       message: 'Workspace trust required',
@@ -4814,7 +4813,7 @@ export class KimiTUI {
     }
     this.restoreEditor();
     try {
-      await this.harness.trustWorkspace(workDir);
+      await this.harness.trustWorkspace(workDir, info.project?.id ?? target?.projectId);
     } catch {
     }
     return true;

@@ -1,4 +1,7 @@
+import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import * as watchService from '#human/utils/watch';
+import { Emitter } from '#/_base/event';
 
 import { normalize } from 'pathe';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -175,6 +178,281 @@ describe('WorkspaceService (file-backed)', () => {
     const list = await restart().list();
     expect(list.map((w) => w.id)).toContain(created.id);
     expect(list.find((w) => w.id === created.id)?.name).toBe('proj');
+  });
+
+  function git(cwd: string, ...args: string[]): void {
+    execFileSync('git', ['-c', 'user.name=Test', '-c', 'user.email=test@example.com', '-c', 'commit.gpgsign=false', ...args], {
+      cwd,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+  }
+
+  async function worktrees() {
+    const main = join(await fsp.realpath(homeDir), 'main repo');
+    const linked = join(homeDir, 'linked tree');
+    const child = join(linked, 'src');
+    await fsp.mkdir(main);
+    git(main, 'init');
+    git(main, 'commit', '--allow-empty', '-m', 'initial');
+    git(main, 'worktree', 'add', '--detach', linked);
+    await fsp.mkdir(child);
+    return { main, linked, child };
+  }
+
+  it('registers one repository when independent clients open its checkouts concurrently', async () => {
+    const { main, linked, child } = await worktrees();
+    const marker = join(homeDir, '.projects-write-lock');
+    await fsp.writeFile(marker, '');
+    const earlierMarker = await fsp.open(marker, 'r');
+    const first = build();
+    const firstHost = currentHost!;
+    const second = build();
+    try {
+      const [linkedProject, mainProject] = await Promise.all([first.createOrTouch(child), second.createOrTouch(main)]);
+      const id = encodeWorkDirKey(main);
+      expect([linkedProject.id, mainProject.id]).toEqual([id, id]);
+      expect(linkedProject.root).toBe(main);
+      expect(linkedProject).toMatchObject({ vcs: { type: 'git', store: join(main, '.git') } });
+      await Promise.all([first.update(id, { name: 'renamed', additionalDirs: [linked] }), second.createOrTouch(linked)]);
+      expect(await second.list()).toMatchObject([{ id, root: main, name: 'renamed', additionalDirs: [normalize(linked)] }]);
+      expect((await fsp.stat(marker)).ino).toBe((await earlierMarker.stat()).ino);
+    } finally {
+      await earlierMarker.close();
+      firstHost.dispose();
+    }
+  });
+
+  it('keeps the exact legacy worktree while a new child and a separate clone get their own owners', async () => {
+    const { main, linked, child } = await worktrees();
+    const linkId = encodeWorkDirKey(linked);
+    await writeProjectsJson({
+      [linkId]: { root: linked, name: 'historic', kind: 'implicit', created_at: '', last_opened_at: '' },
+    });
+    const registry = build();
+    expect(await registry.createOrTouch(linked)).toMatchObject({ id: linkId, name: 'historic' });
+    expect(await registry.createOrTouch(child)).toMatchObject({ id: encodeWorkDirKey(main), root: main });
+    const clone = join(await fsp.realpath(homeDir), 'clone');
+    git(main, 'clone', '--local', main, clone);
+    expect(await registry.createOrTouch(clone)).toMatchObject({ id: encodeWorkDirKey(clone), root: clone });
+    expect((await registry.list()).map((entry) => entry.id).toSorted()).toEqual(
+      [linkId, encodeWorkDirKey(main), encodeWorkDirKey(clone)].toSorted(),
+    );
+  });
+
+  it('opens the exact legacy project before probing Git for an unregistered directory', async () => {
+    const { linked, child } = await worktrees();
+    const id = encodeWorkDirKey(linked);
+    await writeProjectsJson({
+      [id]: { root: linked, name: 'historic', kind: 'implicit', created_at: '', last_opened_at: '' },
+    });
+    const marker = join(linked, '.git');
+    await fsp.rm(marker);
+    await fsp.writeFile(marker, 'gitdir: missing-checkout\n');
+    const registry = build();
+    await expect(registry.createOrTouch(linked)).resolves.toMatchObject({ id, name: 'historic' });
+    await expect(registry.implicitDirectories(linked)).resolves.toEqual([linked]);
+    await expect(registry.createOrTouch(child)).rejects.toMatchObject({ code: ErrorCodes.FS_GIT_UNAVAILABLE });
+    expect(await registry.list()).toHaveLength(1);
+  });
+
+  it('does not claim a repository for an implicit id whose mutable primary was promoted into it', async () => {
+    const { main, linked } = await worktrees();
+    const original = join(homeDir, 'original');
+    await fsp.mkdir(original);
+    const id = encodeWorkDirKey(original);
+    await writeProjectsJson({
+      [id]: { root: main, name: 'promoted', kind: 'implicit', created_at: '', last_opened_at: '' },
+    });
+    const registry = build();
+    expect((await registry.createOrTouch(original)).id).toBe(id);
+    expect((await registry.createOrTouch(main)).id).toBe(id);
+    expect((await registry.createOrTouch(linked)).id).toBe(encodeWorkDirKey(main));
+    expect((await registry.createOrTouch(main)).id).toBe(encodeWorkDirKey(main));
+    expect((await registry.list()).map((entry) => entry.id).toSorted()).toEqual([id, encodeWorkDirKey(main)].toSorted());
+    await registry.delete(id);
+    expect((await registry.list()).map((entry) => entry.id)).toEqual([encodeWorkDirKey(main)]);
+  });
+
+  it('recovers the owning bucket from old and mixed-version logs without cataloguing the worktree cwd', async () => {
+    const { main, child } = await worktrees();
+    const id = encodeWorkDirKey(main);
+    const sessionDir = join(homeDir, 'sessions', id, 's');
+    await fsp.mkdir(sessionDir, { recursive: true });
+    await fsp.writeFile(join(homeDir, 'session_index.jsonl'), [
+      JSON.stringify({ sessionId: 's', sessionDir, cwd: child }),
+      JSON.stringify({ sessionId: 't', sessionDir: join(homeDir, 'sessions', id, 't'), workDir: child }),
+    ].join('\n'));
+    const registry = build();
+    expect(await registry.list()).toMatchObject([{ id, root: main }]);
+    const saved = await registry.createOrTouch(child);
+    expect(saved.id).toBe(id);
+    await registry.delete(id);
+    expect(await restart().list()).toEqual([]);
+    expect((await readRegistry()).deleted_workspace_ids).toEqual([id]);
+  });
+
+  it('recovers a project from physical session state when both the catalog and location log are gone', async () => {
+    const { main, linked, child } = await worktrees();
+    const id = encodeWorkDirKey(main);
+    const state = join(homeDir, 'sessions', id, 'source', 'session-meta');
+    const unrelated = join(homeDir, 'sessions', encodeWorkDirKey(linked), 'other');
+    const remote = join(homeDir, 'sessions', encodeWorkDirKey(child), 'remote');
+    for (const dir of [state, unrelated, remote]) await fsp.mkdir(dir, { recursive: true });
+    await fsp.writeFile(join(state, 'state.json'), JSON.stringify({ cwd: '/unused-host-anchor', environmentId: 'local', environmentCwd: child }));
+    await fsp.writeFile(join(unrelated, 'state.json'), JSON.stringify({ cwd: child }));
+    await fsp.writeFile(join(remote, 'state.json'), JSON.stringify({ cwd: '/host', environmentId: 'ssh', environmentCwd: child }));
+    expect(await build().list()).toMatchObject([{ id, root: main }]);
+    expect((await readRegistry()).workspaces).toHaveProperty(id);
+  });
+
+  it('uses an old session record to recover only the project with a matching directory hash', async () => {
+    const root = await fsp.realpath(homeDir);
+    const good = encodeWorkDirKey(root);
+    for (const id of [good, encodeWorkDirKey('relative')]) {
+      const session = join(homeDir, 'sessions', id, 'source');
+      const agent = join(session, 'agents', 'main');
+      await fsp.mkdir(agent, { recursive: true });
+      await fsp.writeFile(join(session, 'state.json'), JSON.stringify({ cwd: 'relative' }));
+      await fsp.writeFile(join(agent, 'wire.jsonl'), JSON.stringify({ type: 'profile.bind', agentId: 'main', environmentDisclosure: { cwd: root } }) + '\n');
+    }
+    expect(await build().list()).toMatchObject([{ id: good, root }]);
+  });
+
+  it('resolves trust directories without opening or creating a project', async () => {
+    const { main, linked, child } = await worktrees();
+    const registry = build();
+    expect(await registry.implicitDirectories(child)).toEqual([main]);
+    expect(await registry.list()).toEqual([]);
+    const project = await registry.createOrTouch(child);
+    await registry.update(project.id, { additionalDirs: [linked] });
+    const before = await fsp.readFile(join(homeDir, 'projects.json'), 'utf8');
+    expect(await registry.implicitDirectories(linked)).toEqual([main, normalize(linked)]);
+    expect(await fsp.readFile(join(homeDir, 'projects.json'), 'utf8')).toBe(before);
+  });
+
+  it('requires the main separate-git-dir checkout once and reuses a verifiable old main project', async () => {
+    const base = await fsp.realpath(homeDir);
+    const main = join(base, 'primary');
+    const store = join(base, 'metadata');
+    const tree = join(base, 'linked');
+    git(base, 'init', '--separate-git-dir', store, main);
+    git(main, 'commit', '--allow-empty', '-m', 'initial');
+    git(main, 'worktree', 'add', '--detach', tree);
+    const registry = build();
+    await expect(registry.createOrTouch(tree)).rejects.toThrow(/open the main checkout/i);
+    expect(await registry.list()).toEqual([]);
+    const id = encodeWorkDirKey(main);
+    await writeProjectsJson({
+      [id]: { root: main, name: 'original', kind: 'implicit', created_at: '', last_opened_at: '' },
+    });
+    expect(await registry.createOrTouch(tree)).toMatchObject({ id, root: main, name: 'original', vcs: { store } });
+    expect((await restart().createOrTouch(main)).id).toBe(id);
+  });
+
+  it('reports two live main checkouts initialized against one separate Git store', async () => {
+    const base = await fsp.realpath(homeDir);
+    const original = join(base, 'original');
+    const second = join(base, 'second');
+    const store = join(base, 'metadata');
+    git(base, 'init', '--separate-git-dir', store, original);
+    const registry = build();
+    const project = await registry.createOrTouch(original);
+    git(base, 'init', '--separate-git-dir', store, second);
+    await expect(registry.createOrTouch(second)).rejects.toThrow(/main checkout/);
+    expect(await registry.list()).toMatchObject([{ id: project.id, root: original }]);
+    expect((await registry.createOrTouch(original)).id).toBe(project.id);
+  });
+
+  it('reuses a legacy main checkout entered through a symbolic link', async () => {
+    const { main, child } = await worktrees();
+    const oldPath = join(homeDir, 'checkout');
+    await fsp.symlink(main, oldPath, 'dir');
+    const id = encodeWorkDirKey(oldPath);
+    await writeProjectsJson({
+      [id]: { root: oldPath, name: 'old alias', kind: 'implicit', created_at: '', last_opened_at: '' },
+    });
+    const registry = build();
+    const grouped = await registry.createOrTouch(child);
+    expect(grouped).toMatchObject({ id, root: oldPath, vcs: { type: 'git', store: join(main, '.git') } });
+    expect((await registry.createOrTouch(oldPath)).id).toBe(id);
+  });
+
+  it('preserves unknown fields in the project and its repository binding after touch and rename', async () => {
+    const { main, child } = await worktrees();
+    const id = encodeWorkDirKey(main);
+    const store = join(main, '.git');
+    const entry = {
+      root: main, name: 'original', kind: 'implicit', created_at: '', last_opened_at: '',
+      vcs: { type: 'git' as const, store, provider_version: 4 }, icon: 'changes',
+    };
+    await writeProjectsJson({ [id]: entry });
+    const registry = build();
+    await registry.createOrTouch(child);
+    await registry.update(id, { name: 'renamed' });
+    expect((await readRegistry()).workspaces[id]).toMatchObject({
+      name: 'renamed', icon: 'changes', vcs: { type: 'git', store, provider_version: 4 },
+    });
+  });
+
+  it('rejects invalid or duplicate repository bindings and leaves the file untouched', async () => {
+    const { main, linked } = await worktrees();
+    const first = { root: main, name: 'one', kind: 'implicit', created_at: '', last_opened_at: '',
+      vcs: { type: 'git' as const, store: join(main, '.git') } };
+    const file = join(homeDir, 'projects.json');
+    for (const extra of [
+      { ...first, kind: 'managed' },
+      { ...first, vcs: { type: 'git', store: 'relative' } },
+      { ...first, vcs: { type: 'other', store: '/store' } },
+      { ...first, root: linked },
+    ]) {
+      const bytes = JSON.stringify({ schema_version: 2, projects: { [encodeWorkDirKey(main)]: first, [encodeWorkDirKey(linked)]: extra }, deleted_project_ids: [] });
+      await fsp.writeFile(file, bytes);
+      await expect(restart().createOrTouch(linked)).rejects.toMatchObject({ code: 'storage.corrupted' });
+      expect(await fsp.readFile(file, 'utf8')).toBe(bytes);
+    }
+  });
+
+  it('atomically adds directories across independent clients and deduplicates the primary and retries', async () => {
+    const firstDir = join(homeDir, 'firstDir');
+    const secondDir = join(homeDir, 'secondDir');
+    await Promise.all([fsp.mkdir(firstDir), fsp.mkdir(secondDir)]);
+    const first = build();
+    const firstHost = currentHost!;
+    const second = build();
+    try {
+      const { id } = await first.create({ root: homeDir });
+      await Promise.all([first.addDirectory(id, firstDir), second.addDirectory(id, secondDir)]);
+      await first.addDirectory(id, homeDir);
+      expect((await second.addDirectory(id, firstDir))?.additionalDirs.toSorted()).toEqual([normalize(firstDir), normalize(secondDir)].toSorted());
+      await expect(first.addDirectory(id, join(homeDir, 'missing'))).rejects.toThrow();
+      expect(await second.addDirectory('wm_missing', firstDir)).toBeUndefined();
+      expect((await first.get(id))?.additionalDirs.toSorted()).toEqual([normalize(firstDir), normalize(secondDir)].toSorted());
+    } finally {
+      firstHost.dispose();
+    }
+  });
+
+  it('accepts a relative session bucket and rejects logs for another storage root or session id', async () => {
+    const valid = join(homeDir, 'known');
+    const foreign = join(homeDir, 'elsewhere');
+    const wrongId = join(homeDir, 'mismatch');
+    await fsp.writeFile(join(homeDir, 'session_index.jsonl'), [
+      { sessionId: 'ok', sessionDir: join('sessions', encodeWorkDirKey(valid), 'ok'), cwd: valid },
+      { sessionId: 'other', sessionDir: join(homeDir, 'other-home', 'sessions', encodeWorkDirKey(foreign), 'other'), workDir: foreign },
+      { sessionId: 'wrong', sessionDir: join(homeDir, 'sessions', encodeWorkDirKey(wrongId), 'different'), workDir: wrongId },
+    ].map((entry) => JSON.stringify(entry)).join('\n'));
+    expect((await build().list()).map((project) => project.root)).toEqual([valid]);
+  });
+
+  it('only replays session locations after the last deletion of a reused session id', async () => {
+    const oldRoot = join(homeDir, 'old');
+    const newRoot = join(homeDir, 'new');
+    await fsp.writeFile(join(homeDir, 'session_index.jsonl'), [
+      originalSession('same', oldRoot),
+      { sessionId: 'same', deleted: true },
+      originalSession('same', newRoot),
+    ].map((entry) => JSON.stringify(entry)).join('\n'));
+    expect((await build().list()).map((ws) => ws.root)).toEqual([newRoot]);
   });
 
   it('publishes lifecycle events on create, touch, rename, and delete', async () => {
@@ -378,40 +656,6 @@ describe('WorkspaceService (file-backed)', () => {
     expect((await registry.list()).map((w) => w.id)).toContain(encodeWorkDirKey(dirB));
   });
 
-  it('atomically adds directories across independent clients and deduplicates the primary and retries', async () => {
-    const a = join(homeDir, 'a');
-    const b = join(homeDir, 'b');
-    await Promise.all([fsp.mkdir(a), fsp.mkdir(b)]);
-    const first = build();
-    const firstHost = currentHost!;
-    const second = build();
-    try {
-      const { id } = await first.create({ root: homeDir });
-      await Promise.all([first.addDirectory(id, a), second.addDirectory(id, b)]);
-      await first.addDirectory(id, homeDir);
-      expect((await second.addDirectory(id, a))?.additionalDirs.toSorted()).toEqual([a, b].toSorted());
-      await expect(first.addDirectory(id, join(homeDir, 'missing'))).rejects.toThrow();
-      expect(await second.addDirectory('wm_missing', a)).toBeUndefined();
-      expect((await first.get(id))?.additionalDirs.toSorted()).toEqual([a, b].toSorted());
-    } finally {
-      firstHost.dispose();
-    }
-  });
-
-  it('reads the implicit project trust directories without opening a workspace', async () => {
-    const root = join(homeDir, 'root');
-    const extra = join(homeDir, 'extra');
-    await Promise.all([root, extra].map((dir) => fsp.mkdir(dir)));
-    const registry = build();
-    expect(await registry.implicitDirectories(root)).toEqual([root]);
-    expect(await registry.list()).toEqual([]);
-    const project = await registry.createOrTouch(root);
-    await registry.addDirectory(project.id, extra);
-    const before = await fsp.readFile(join(homeDir, 'projects.json'), 'utf8');
-    expect(await registry.implicitDirectories(root)).toEqual([root, extra]);
-    expect(await fsp.readFile(join(homeDir, 'projects.json'), 'utf8')).toBe(before);
-  });
-
   it('delete adds its tombstone on top of the current file state', async () => {
     const dirA = join(homeDir, 'dir-a');
     await fsp.mkdir(dirA);
@@ -495,9 +739,11 @@ describe('WorkspaceService (file-backed)', () => {
   });
 
   it('collapses duplicate registered entries for the same root, preferring the canonical id', async () => {
-    const root = join(homeDir, 'dup');
+    const root = 'c:/users/test/dup';
+    const original = 'C:/Users/Test/Dup';
     const canonicalId = encodeWorkDirKey(root);
-    const legacyId = 'wd_duplegacy_deadbeef0000';
+    const legacyId = encodeWorkDirKey(original);
+    await seedSessionIndex([originalSession('old', original)]);
     const entry: PersistedWorkspaceEntry = {
       root,
       name: 'dup',
@@ -537,7 +783,7 @@ describe('WorkspaceService (file-backed)', () => {
   it('merges legacy entries whose roots differ only by casing, preferring the canonical id', async () => {
     const lowerRoot = 'c:\\users\\foo\\proj';
     const typedRoot = 'C:\\Users\\Foo\\Proj';
-    const legacyId = 'wd_proj_deadbeef0002';
+    const legacyId = encodeWorkDirKey(typedRoot);
     const canonicalId = encodeWorkDirKey(lowerRoot);
     const entry = (root: string): PersistedWorkspaceEntry => ({
       root,
@@ -991,6 +1237,20 @@ describe('WorkspaceService (file-backed)', () => {
     expect(afterRestart).toHaveLength(28);
   });
 
+  it('compacts mixed-version cwd entries by sessionDir and keeps a live row in its original wire shape', async () => {
+    const { main, child } = await worktrees();
+    const id = encodeWorkDirKey(main);
+    const live = { sessionId: 'live', sessionDir: join(homeDir, 'sessions', id, 'live'), cwd: child };
+    await fsp.mkdir(live.sessionDir, { recursive: true });
+    const stale = Array.from({ length: 20 }, (_, i) => ({
+      sessionId: `stale-${i}`, sessionDir: join(homeDir, 'sessions', id, `stale-${i}`), cwd: child,
+    }));
+    await writeSessionIndexLines([...stale, live]);
+    expect((await build().list()).map((ws) => ws.id)).toEqual([id]);
+    const remaining = (await fsp.readFile(join(homeDir, 'session_index.jsonl'), 'utf8')).trim();
+    expect(JSON.parse(remaining)).toEqual(live);
+  });
+
   it('keeps relative session directories under the data home when compacting stale rows', async () => {
     const id = encodeWorkDirKey(homeDir);
     const live = { sessionId: 'relative', sessionDir: join('sessions', id, 'relative'), cwd: join(homeDir, 'checkout') };
@@ -1130,6 +1390,23 @@ describe('projects.json migration and patch', () => {
       expect((await persistence.load())?.deletedIds).toEqual(['wd_removed']);
     } finally {
       persistence.dispose();
+    }
+  });
+
+  it('retains the cached catalog when a delayed directory notification follows a read', async () => {
+    const signal = new Emitter<watchService.WatchChange>();
+    const observe = vi.spyOn(watchService, 'watch').mockReturnValue({
+      ready: Promise.resolve(), onDidChange: signal.event, dispose: () => signal.dispose(),
+    });
+    await writeProjects({ schema_version: 2, projects: {}, deleted_project_ids: [] });
+    const persistence = createPersistence();
+    try {
+      const current = await persistence.load();
+      signal.fire({ action: 'modified', kind: 'directory', path: homeDir });
+      expect(await persistence.load()).toBe(current);
+    } finally {
+      persistence.dispose();
+      observe.mockRestore();
     }
   });
 

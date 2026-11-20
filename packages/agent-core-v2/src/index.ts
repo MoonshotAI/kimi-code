@@ -504,6 +504,7 @@ export * from '#/session/subagent/configSection';
 export * from '#/agent/tools/agent/agent';
 import '#/agent/tools/agent/agentTool';
 export * from '#/app/sessionManager/sessionLookup';
+export * from '#/app/sessionManager/sessionResumeTarget';
 export * from '#/workspace/workspaceContext/workspaceContext';
 export * from '#/workspace/sessionLifecycle/sessionLifecycle';
 export * from '#/workspace/sessionLifecycle/sessionLifecycleEvents';

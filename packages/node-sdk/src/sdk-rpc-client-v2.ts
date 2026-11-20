@@ -230,6 +230,9 @@ import {
   environmentEntryInfo,
   snapshotAgentEnvironmentBinding,
   resumeSessionById,
+  resolveSessionResumeTarget,
+  type SessionResumeSelection,
+  type SessionResumeTarget,
   sessionDirOf,
   workspacePersistenceScope,
   logSeed,
@@ -717,10 +720,11 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     operation: string,
     workDir: string,
     use: (instance: WorkspaceInstance) => Promise<T>,
+    projectId?: string,
   ): Promise<T> {
     const root = normalizeRequiredWorkDir(operation, workDir);
     await assertUsableWorkDir(this.engineAccessor.get(IHostFileSystem), root);
-    const lease = await this.engineAccessor.get(IWorkspaceInstanceManager).acquire({ root });
+    const lease = await this.engineAccessor.get(IWorkspaceInstanceManager).acquire(projectId === undefined ? { root } : { workspaceId: projectId });
     try {
       return await use(lease.instance);
     } finally {
@@ -858,17 +862,20 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
           instructionSources: EMPTY_INSTRUCTION_SOURCES,
         };
       }
-      const environment = await this.resolveSessionEnvironment({
-        workDir: baseDir,
-        environmentId: options?.environmentId,
-        environmentCwd: options?.environmentCwd,
-      });
+      const environment = options?.projectId === undefined
+        ? await this.resolveSessionEnvironment({
+            workDir: baseDir,
+            environmentId: options?.environmentId,
+            environmentCwd: options?.environmentCwd,
+          })
+        : { environmentId: options.environmentId ?? 'local', cwd: options.environmentCwd };
       const cwd = environment.cwd ?? baseDir;
       const workdir = await handler.program.acquireWorkdir(environment.environmentId, cwd);
       try {
         const activation = await workdir.trustDisclosure.describeGatedActivation(options?.additionalDirs, cwd);
         return {
           trusted: false,
+          project: { id: handler.id, defaultCwd: handler.root },
           gatedMcpServers: activation.mcpServers,
           gatedAdditionalDirs: activation.additionalDirs,
           additionalDirSources: activation.additionalDirSources,
@@ -878,7 +885,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       } finally {
         workdir.dispose();
       }
-    });
+    }, options?.projectId);
   }
 
   /**
@@ -887,10 +894,10 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    * `workspaceMcpConfig` reload with project files included — project MCP
    * servers connect live, no restart needed.
    */
-  override async trustWorkspace(workDir: string): Promise<void> {
+  override async trustWorkspace(workDir: string, projectId?: string): Promise<void> {
     await this.withWorkspaceInstance('trustWorkspace', workDir, async (handler) => {
       await handler.program.trust.trust();
-    });
+    }, projectId);
   }
 
   /**
@@ -1427,6 +1434,10 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       )
       .map((workspace) => workspace.id);
     return [...new Set([...hashIds, ...memberIds])];
+  }
+
+  override resolveSessionResumeTarget(selection: SessionResumeSelection): Promise<SessionResumeTarget | undefined> {
+    return resolveSessionResumeTarget(this.engineAccessor, selection);
   }
 
   override async listSessions(input: ListSessionsOptions = {}): Promise<readonly SessionSummary[]> {
