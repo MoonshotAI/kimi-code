@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
-import { stat } from 'node:fs/promises';
-import { relative } from 'node:path';
+import { mkdir, stat } from 'node:fs/promises';
+import { dirname, relative } from 'node:path';
 
 import { isAbsolute, join } from 'pathe';
 import lockfile from 'proper-lockfile';
@@ -18,6 +18,7 @@ import {
   IFileSystemStorageService,
   StorageError,
   StorageErrors,
+  toStorageIoError,
 } from '#/persistence/interface/storage';
 import { watch } from '#human/utils/watch';
 
@@ -224,12 +225,13 @@ export class FileWorkspacePersistence extends Disposable implements IWorkspacePe
   }
 
   private async withLock<T>(operation: () => Promise<T>): Promise<T> {
-    await this.storage.write(WORKSPACE_CATALOG_SCOPE, PROJECTS_LOCK_KEY, new Uint8Array(), {
-      atomic: true,
-    });
     const target =
       this.storage.pathFor(WORKSPACE_CATALOG_SCOPE, PROJECTS_LOCK_KEY) ??
       join(this.bootstrap.homeDir, PROJECTS_LOCK_KEY);
+    const parent = dirname(target);
+    await mkdir(parent, { recursive: true, mode: 0o700 }).catch((error: unknown) => {
+      throw toStorageIoError(error, { path: parent, op: 'mkdir' });
+    });
     const release = await lockfile.lock(target, {
       retries: { retries: 120, factor: 1, minTimeout: 50, maxTimeout: 200 },
       stale: 5_000,

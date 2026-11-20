@@ -714,6 +714,8 @@ A session reads `.kimi-code/local.toml` from its Git checkout root, or from its 
 
 In a CLI-created project, `[workspace].additional_dir` adds directories to sessions in that checkout. Directories remembered with [`/add-dir`](../reference/slash-commands.md) are stored in `~/.kimi-code/projects.json` and shared across the project. A temporary addition applies only to the running workdir. For a manually created project, use the import action in the desktop project dialog to copy directories from the file into the project registry.
 
+A desktop project can use the same path as an implicit project. Starting the CLI there loads directories registered to the implicit project. Resuming a session in the desktop project loads that project’s directories.
+
 ### `[workspace]`
 
 The `[workspace]` table groups project-level workspace settings:

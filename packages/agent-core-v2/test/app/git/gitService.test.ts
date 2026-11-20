@@ -82,13 +82,13 @@ describe('GitService', () => {
 
   describe('discoverRepository', () => {
     function outside(): string {
-      const path = realpathSync(mkdtempSync(join(tmpdir(), 'git-discovery-')));
+      const path = realpathSync.native(mkdtempSync(join(tmpdir(), 'git-discovery-')));
       onTestFinished(() => rmSync(path, { recursive: true, force: true }));
       return path;
     }
 
     it('identifies a repository before its first commit, including subdirectories', async () => {
-      const root = realpathSync(repo);
+      const root = realpathSync.native(repo);
       const child = join(root, 'child');
       mkdirSync(child);
       expect(await discoverRepository(child)).toEqual({
@@ -99,7 +99,7 @@ describe('GitService', () => {
     });
 
     it('discovers the parent checkout across device boundaries only when Git is configured to cross them', async () => {
-      const root = realpathSync(repo);
+      const root = realpathSync.native(repo);
       const child = join(root, 'mounted');
       mkdirSync(child);
       const original = fsPromises.stat;
@@ -126,7 +126,7 @@ describe('GitService', () => {
     });
 
     it('honors Git discovery ceilings when opening a child, the ceiling itself, or a nested checkout', async () => {
-      const root = realpathSync(repo);
+      const root = realpathSync.native(repo);
       const child = join(root, 'child');
       const nested = join(child, 'nested');
       mkdirSync(nested, { recursive: true });
@@ -145,7 +145,7 @@ describe('GitService', () => {
     });
 
     it('preserves literal Git ceiling paths after an empty entry', async () => {
-      const root = realpathSync(repo);
+      const root = realpathSync.native(repo);
       const child = join(root, 'child');
       const gitRoot = root.split(sep).join('/');
       mkdirSync(child);
@@ -157,7 +157,7 @@ describe('GitService', () => {
         if (sep === '\\') differentSpellings.push(root);
         for (const entry of differentSpellings) {
           vi.stubEnv('GIT_CEILING_DIRECTORIES', `${delimiter}${entry}`);
-          expect(realpathSync(git(child, 'rev-parse', '--show-toplevel'))).toBe(root);
+          expect(realpathSync.native(git(child, 'rev-parse', '--show-toplevel'))).toBe(root);
           await expect(discoverRepository(child)).resolves.toMatchObject({ checkoutRoot: root });
         }
       } finally {
@@ -170,8 +170,8 @@ describe('GitService', () => {
       const bin = join(install, 'bin & %PATH%');
       mkdirSync(bin);
       const nativeGit = execFileSync('where.exe', ['git.exe'], { encoding: 'utf8' }).split(/\r?\n/, 1)[0]!;
-      writeFileSync(join(bin, `git.${ext}`), `@"${nativeGit}" %*\r\n`);
-      const root = join(outside(), 'work tree & %PATH%');
+      writeFileSync(join(bin, `git.${ext}`), `@setlocal EnableDelayedExpansion\r\n@if not exist ".git" if not exist "HEAD" exit /b 90\r\n@"${nativeGit}" %*\r\n`);
+      const root = join(outside(), 'work tree & %PATH% !literal!');
       mkdirSync(root);
       git(root, 'init');
       vi.stubEnv('PATH', bin);
@@ -191,7 +191,7 @@ describe('GitService', () => {
       git(repo, 'clone', '--bare', repo, bare);
       git(bare, 'worktree', 'add', '--detach', tree);
       const marker = join(tree, '.git');
-      writeFileSync(marker, readFileSync(marker, 'utf8').replace(/\r?\n$/, '\r\n'));
+      writeFileSync(marker, readFileSync(marker, 'utf8').replace(/\r?\n$/, '\r\n'), { flag: 'r+' });
       const store = { vcs: { type: 'git', store: bare }, defaultDirectory: { kind: 'bare', cwd: bare } };
       expect(await discoverRepository(tree)).toEqual({ ...store, checkoutRoot: tree });
       expect(await discoverRepository(bare)).toEqual({ ...store, checkoutRoot: null });
@@ -234,7 +234,7 @@ describe('GitService', () => {
       renameSync(tree, moved);
       await expect(discoverRepository(moved)).rejects.toMatchObject({ code: ErrorCodes.FS_GIT_UNAVAILABLE });
       git(repo, 'worktree', 'repair', moved);
-      expect(await discoverRepository(moved)).toMatchObject({ checkoutRoot: moved, defaultDirectory: { cwd: realpathSync(repo) } });
+      expect(await discoverRepository(moved)).toMatchObject({ checkoutRoot: moved, defaultDirectory: { cwd: realpathSync.native(repo) } });
     });
 
     it('treats ordinary HEAD and refs files as contents of the opened directory', async () => {
@@ -246,7 +246,7 @@ describe('GitService', () => {
         writeFileSync(join(folder, 'refs'), 'references');
         writeFileSync(join(folder, 'objects'), 'objects');
       }
-      expect(await discoverRepository(child)).toMatchObject({ checkoutRoot: realpathSync(repo) });
+      expect(await discoverRepository(child)).toMatchObject({ checkoutRoot: realpathSync.native(repo) });
       expect(await discoverRepository(plain)).toBeNull();
     });
 
@@ -284,7 +284,7 @@ describe('GitService', () => {
             (found) => found?.checkoutRoot,
             (error: unknown) => isError2(error) ? error.code : error,
           );
-          expect(discovered).toBe(direct.status === 0 ? realpathSync(repo) : ErrorCodes.FS_GIT_UNAVAILABLE);
+          expect(discovered).toBe(direct.status === 0 ? realpathSync.native(repo) : ErrorCodes.FS_GIT_UNAVAILABLE);
         }
       } finally {
         vi.unstubAllEnvs();
@@ -298,7 +298,7 @@ describe('GitService', () => {
       vi.stubEnv('GIT_WORK_TREE', other);
       vi.stubEnv('GIT_COMMON_DIR', join(other, '.git'));
       try {
-        expect(await discoverRepository(repo)).toMatchObject({ vcs: { store: join(realpathSync(repo), '.git') } });
+        expect(await discoverRepository(repo)).toMatchObject({ vcs: { store: join(realpathSync.native(repo), '.git') } });
       } finally {
         vi.unstubAllEnvs();
       }

@@ -117,10 +117,14 @@ function localGit(cwd: string): RunGit {
     env['NoDefaultCurrentDirectoryInExePath'] = '1';
   }
   return async (dir, ...args) => {
-    const argv = batch ? ['/d', '/v:off', '/s', '/c', `""%KIMI_CODE_GIT_SHIM%" ${args.join(' ')}"`] : args;
+    const networkCwd = batch && dir.startsWith('\\\\');
+    const changeDirectory = networkCwd ? ' -C "%KIMI_CODE_GIT_CWD%"' : '';
+    const argv = batch ? ['/d', '/v:off', '/s', '/c', `""%KIMI_CODE_GIT_SHIM%"${changeDirectory} ${args.join(' ')}"`] : args;
     const { stdout } = await execFileAsync(command, argv, {
       windowsVerbatimArguments: batch,
-      cwd: dir, env, timeout: 30_000, maxBuffer: 16 * 1024 * 1024, windowsHide: true,
+      cwd: networkCwd ? dirname(command) : dir,
+      env: networkCwd ? { ...env, KIMI_CODE_GIT_CWD: dir.replaceAll('\\', '/') } : env,
+      timeout: 30_000, maxBuffer: 16 * 1024 * 1024, windowsHide: true,
     });
     return stdout.replace(/\r?\n$/, '');
   };

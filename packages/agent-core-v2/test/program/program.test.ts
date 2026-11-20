@@ -2,9 +2,10 @@ import { directoryKey } from '#/_base/utils/paths';
 import { execFile } from 'node:child_process';
 import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { isAbsolute, join, relative, sep } from 'node:path';
 import { promisify } from 'node:util';
 
+import { join as joinConfigPath, normalize } from 'pathe';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { Emitter, Event } from '#/_base/event';
@@ -342,7 +343,10 @@ interface LocalityFixture {
 
 function scopedFs(base: string, realBase: string, inner: IHostFileSystem, additionalRoots: readonly string[] = []): IHostFileSystem {
   const within = (path: string): boolean =>
-    [base, realBase, ...additionalRoots].some((root) => path === root || path.startsWith(`${root}/`));
+    [base, realBase, ...additionalRoots].some((root) => {
+      const child = relative(root, path);
+      return child !== '..' && !child.startsWith(`..${sep}`) && !isAbsolute(child);
+    });
   const assert = (path: string): void => {
     if (!within(path)) throw new HostFsError(OsFsErrors.codes.OS_FS_NOT_FOUND, `not found: ${path}`);
   };
@@ -367,7 +371,7 @@ function scopedFs(base: string, realBase: string, inner: IHostFileSystem, additi
 }
 
 async function localityFixture(options: { readonly remoteCwd?: string; readonly relativeResources?: boolean } = {}): Promise<LocalityFixture> {
-  const base = await mkdtemp(join(tmpdir(), 'kimi-program-locality-'));
+  const base = await realpath(await mkdtemp(join(tmpdir(), 'kimi-program-locality-')));
   const localRoot = join(base, 'local');
   const remoteRoot = join(base, 'target');
   const remoteAltRoot = join(base, 'alt');
@@ -626,7 +630,7 @@ describe('Program local generation and remote workdirs', () => {
       expect(initial.ready).toBe(true);
       expect(initial.catalog.skills.total).toBe(2);
       expect(initial.sources.mcpServers.toSorted()).toEqual(['local-project-server', 'user-server']);
-      expect(initial.sources.instructionPaths).toContain(join(fixture.localRoot, 'AGENTS.md'));
+      expect(initial.sources.instructionPaths).toContain(joinConfigPath(fixture.localRoot, 'AGENTS.md'));
 
       const promoted = join(fixture.localRoot, 'promoted');
       await mkdir(promoted);
@@ -636,7 +640,7 @@ describe('Program local generation and remote workdirs', () => {
       await fixture.program.prepareSnapshot();
       const next = fixture.program.snapshot();
       expect(next.ready).toBe(true);
-      expect(next.sources.instructionPaths).toContain(join(promoted, 'AGENTS.md'));
+      expect(next.sources.instructionPaths).toContain(joinConfigPath(promoted, 'AGENTS.md'));
       expect(next.sources.mcpServers).toEqual(['user-server']);
 
       await fixture.program.trust.untrust();
@@ -659,7 +663,7 @@ describe('Program local generation and remote workdirs', () => {
       expect(local.instructions.snapshot.agentsMd).not.toContain('remote user instructions');
 
       expect(local.skills.catalog.listSkills().map((skill) => skill.name)).toEqual(['local-skill', 'user-skill']);
-      expect(local.dirs.additionalDirs).toEqual([join(fixture.localRoot, 'localextra')]);
+      expect(local.dirs.additionalDirs).toEqual([joinConfigPath(fixture.localRoot, 'localextra')]);
       expect(Object.keys(local.mcpConfig.servers()).toSorted()).toEqual(['local-project-server', 'user-server']);
       expect(fixture.profileRegistrations.filter((entry) => entry.sourceId === 'workspace')).toEqual([
         { sourceId: 'workspace', profiles: ['local-agent'] },
@@ -721,11 +725,11 @@ describe('Program local generation and remote workdirs', () => {
       expect(agentsMd).not.toContain('local project instructions');
       expect(agentsMd).not.toContain('remote user instructions');
       const instructionPaths = remote.instructions.snapshot.agentsMdPaths ?? [];
-      expect(instructionPaths).toContain(join(fixture.remoteRoot, 'AGENTS.md'));
-      expect(instructionPaths).not.toContain(join(fixture.localRoot, 'AGENTS.md'));
+      expect(instructionPaths).toContain(joinConfigPath(fixture.remoteRoot, 'AGENTS.md'));
+      expect(instructionPaths).not.toContain(joinConfigPath(fixture.localRoot, 'AGENTS.md'));
 
       expect(remote.skills.catalog.listSkills().map((skill) => skill.name)).toEqual(['target-skill', 'user-skill']);
-      expect(remote.dirs.additionalDirs).toEqual([join(fixture.remoteRoot, 'targetextra')]);
+      expect(remote.dirs.additionalDirs).toEqual([joinConfigPath(fixture.remoteRoot, 'targetextra')]);
       expect(remoteProfiles.toSorted((a, b) => a.sourceId.localeCompare(b.sourceId))).toEqual([
         { sourceId: 'explicit', profiles: [] },
         { sourceId: 'extra', profiles: [] },
@@ -753,7 +757,7 @@ describe('Program local generation and remote workdirs', () => {
       expect(instructions.agentsMd).toContain('target project instructions');
       expect(instructions.agentsMd).toContain('user instructions');
       expect(instructions.agentsMd).not.toContain('local project instructions');
-      expect(instructions.agentsMdPaths).toContain(join(fixture.remoteRoot, 'AGENTS.md'));
+      expect(instructions.agentsMdPaths).toContain(joinConfigPath(fixture.remoteRoot, 'AGENTS.md'));
     } finally {
       await fixture.cleanup();
     }
@@ -770,7 +774,7 @@ describe('Program local generation and remote workdirs', () => {
       );
       const remote = await fixture.workdir(fixture.remoteRoot);
       await awaitWorkdir(remote);
-      expect(remote.dirs.additionalDirs).toEqual([join(fixture.remoteHomeDir, 'shared')]);
+      expect(remote.dirs.additionalDirs).toEqual([joinConfigPath(fixture.remoteHomeDir, 'shared')]);
     } finally {
       await fixture.cleanup();
     }
@@ -820,7 +824,7 @@ describe('Program local generation and remote workdirs', () => {
         await rules.ready;
         expect(rules.rules).toEqual([{ decision: 'allow', scope: 'project', pattern: `Bash(${name} *)` }]);
         expect(view.instructions.snapshot.agentsMd).toContain(name);
-        expect(view.dirs.additionalDirs).toEqual([join(checkout(name), 'extra')]);
+        expect(view.dirs.additionalDirs).toEqual([joinConfigPath(checkout(name), 'extra')]);
         expect(await callCwd(view, 'shared')).toEqual({ type: 'text', text: await realpath(cwd(name)) });
         expect(await callCwd(view, 'repo')).toEqual({ type: 'text', text: await realpath(checkout(name)) });
         expect(view.mcpConfig.servers()['shared']).toMatchObject({ env: { CHECKOUT: name } });
@@ -830,7 +834,7 @@ describe('Program local generation and remote workdirs', () => {
       await vi.waitFor(() => expect(permissions[0]!.rules[0]?.pattern).toBe('Write'));
       expect(permissions[1]!.rules[0]?.pattern).toBe('Bash(two *)');
       await one!.dirs.mergeAdditionalDirs(checkout('one'), ['.kimi-code']);
-      expect(two!.dirs.additionalDirs).toEqual([join(checkout('two'), 'extra')]);
+      expect(two!.dirs.additionalDirs).toEqual([joinConfigPath(checkout('two'), 'extra')]);
       const oldConnections = one!.mcp.connectionManager();
       permissions[0]!.dispose();
       one!.dispose();
@@ -891,7 +895,7 @@ describe('Program local generation and remote workdirs', () => {
       const valid = await fixture.workdir(cwd, 'local');
       await awaitWorkdir(valid);
       const invalid = await fixture.workdir(fixture.localRoot, 'local');
-      await expect(invalid.dirs.ready).rejects.toThrow(invalidFile);
+      await expect(invalid.dirs.ready).rejects.toThrow(normalize(invalidFile));
       expect(valid.instructions.snapshot.agentsMd).toContain('valid workdir instructions');
     } finally {
       await fixture.cleanup();
@@ -934,11 +938,11 @@ describe('Program local generation and remote workdirs', () => {
       expect(alt.instructions).not.toBe(target.instructions);
       expect(target.instructions.snapshot.agentsMd).toContain('target project instructions');
       expect(target.instructions.snapshot.agentsMd).not.toContain('alt project instructions');
-      expect(target.dirs.additionalDirs).toEqual([join(fixture.remoteRoot, 'targetextra')]);
+      expect(target.dirs.additionalDirs).toEqual([joinConfigPath(fixture.remoteRoot, 'targetextra')]);
 
       expect(alt.instructions.snapshot.agentsMd).toContain('alt project instructions');
       expect(alt.instructions.snapshot.agentsMd).not.toContain('target project instructions');
-      expect(alt.dirs.additionalDirs).toEqual([join(fixture.remoteAltRoot, 'altextra')]);
+      expect(alt.dirs.additionalDirs).toEqual([joinConfigPath(fixture.remoteAltRoot, 'altextra')]);
 
       target.dispose();
       expect((await fixture.workdir(fixture.remoteRoot)).instructions).toBe(shared.instructions);

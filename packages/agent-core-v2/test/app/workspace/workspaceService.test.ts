@@ -1,6 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 
+import { normalize } from 'pathe';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { promises as fsp } from 'node:fs';
@@ -198,6 +199,9 @@ describe('WorkspaceService (file-backed)', () => {
 
   it('registers one repository when independent clients open its checkouts concurrently', async () => {
     const { main, linked, child } = await worktrees();
+    const marker = join(homeDir, '.projects-write-lock');
+    await fsp.writeFile(marker, '');
+    const earlierMarker = await fsp.open(marker, 'r');
     const first = build();
     const firstHost = currentHost!;
     const second = build();
@@ -208,8 +212,10 @@ describe('WorkspaceService (file-backed)', () => {
       expect(linkedProject.root).toBe(main);
       expect(linkedProject).toMatchObject({ vcs: { type: 'git', store: join(main, '.git') } });
       await Promise.all([first.update(id, { name: 'renamed', additionalDirs: [linked] }), second.createOrTouch(linked)]);
-      expect(await second.list()).toMatchObject([{ id, root: main, name: 'renamed', additionalDirs: [linked] }]);
+      expect(await second.list()).toMatchObject([{ id, root: main, name: 'renamed', additionalDirs: [normalize(linked)] }]);
+      expect((await fsp.stat(marker)).ino).toBe((await earlierMarker.stat()).ino);
     } finally {
+      await earlierMarker.close();
       firstHost.dispose();
     }
   });
@@ -237,7 +243,9 @@ describe('WorkspaceService (file-backed)', () => {
     await writeProjectsJson({
       [id]: { root: linked, name: 'historic', kind: 'implicit', created_at: '', last_opened_at: '' },
     });
-    await fsp.writeFile(join(linked, '.git'), 'gitdir: missing-checkout\n');
+    const marker = join(linked, '.git');
+    await fsp.rm(marker);
+    await fsp.writeFile(marker, 'gitdir: missing-checkout\n');
     const registry = build();
     await expect(registry.createOrTouch(linked)).resolves.toMatchObject({ id, name: 'historic' });
     await expect(registry.implicitDirectories(linked)).resolves.toEqual([linked]);
@@ -303,7 +311,7 @@ describe('WorkspaceService (file-backed)', () => {
     const project = await registry.createOrTouch(child);
     await registry.update(project.id, { additionalDirs: [linked] });
     const before = await fsp.readFile(join(homeDir, 'projects.json'), 'utf8');
-    expect(await registry.implicitDirectories(linked)).toEqual([main, linked]);
+    expect(await registry.implicitDirectories(linked)).toEqual([main, normalize(linked)]);
     expect(await fsp.readFile(join(homeDir, 'projects.json'), 'utf8')).toBe(before);
   });
 
@@ -400,10 +408,10 @@ describe('WorkspaceService (file-backed)', () => {
       const { id } = await first.create({ root: homeDir });
       await Promise.all([first.addDirectory(id, firstDir), second.addDirectory(id, secondDir)]);
       await first.addDirectory(id, homeDir);
-      expect((await second.addDirectory(id, firstDir))?.additionalDirs.toSorted()).toEqual([firstDir, secondDir].toSorted());
+      expect((await second.addDirectory(id, firstDir))?.additionalDirs.toSorted()).toEqual([normalize(firstDir), normalize(secondDir)].toSorted());
       await expect(first.addDirectory(id, join(homeDir, 'missing'))).rejects.toThrow();
       expect(await second.addDirectory('wm_missing', firstDir)).toBeUndefined();
-      expect((await first.get(id))?.additionalDirs.toSorted()).toEqual([firstDir, secondDir].toSorted());
+      expect((await first.get(id))?.additionalDirs.toSorted()).toEqual([normalize(firstDir), normalize(secondDir)].toSorted());
     } finally {
       firstHost.dispose();
     }
@@ -1266,7 +1274,7 @@ describe('WorkspaceService (file-backed)', () => {
     const gated = Object.create(hostFs) as IHostFileSystem;
     let first = true;
     gated.stat = async (path: string) => {
-      if (path === gateDir && first) {
+      if (first && normalize(path) === normalize(gateDir)) {
         first = false;
         statEntered();
         await gate;
