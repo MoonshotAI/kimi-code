@@ -235,6 +235,12 @@ Each card: **decision** and **why not in the app**. Status is `keep` or `absorbe
 
 **Why not in the app:** The terminal owns capability detection, replay, stop, and direct-exit restoration. An app wrapper around ordinary reports would leave the other lifecycle paths unwrapped.
 
+### visible-hardware-cursor-hidden-during-redraw — keep
+
+**Decision:** When the opt-in hardware cursor is visible, content redraws hide it before intermediate terminal cursor movement and restore it at the editor cursor marker. Frames without content changes do not add cursor hide/show operations. The default hidden-cursor behavior is unchanged.
+
+**Why not in the app:** Intermediate cursor movement and final cursor placement are internal to the main-screen and alternate-screen renderers; the host cannot wrap those writes without replacing the rendering pipeline.
+
 ### shared-animation-frames — keep
 
 **Decision:** `requestAnimationFrame` and `cancelAnimationFrame` on the TUI work like the browser's. A request runs once; every callback of a frame gets the same timestamp on the `performance.now()` clock; frames are never replayed after a late wake. By default they land on a fixed `ANIMATION_FRAME_INTERVAL_MS` grid. `setAnimationFrameRate` on `TuiBase` takes a whole number of frames per second from 1 to `MAX_ANIMATION_FRAME_RATE` and throws `RangeError` on anything else; after it, the next frame comes one new interval after the last frame. One unref'd timer serves all requests and exists only while a request is pending. A throwing callback does not stop the other callbacks or later frames, and the first error is rethrown in a microtask. `stop()` pauses frames and keeps the requests; `start()` resumes on the next frame. An optional constructor clock lets tests drive frames by hand. Without one, each scheduler keeps the global timers and `performance.now` it found when it was created, so a running frame chain never moves onto fake timers that a later test installs. With no requests, behavior matches upstream.

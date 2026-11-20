@@ -85,6 +85,23 @@ class LoggingVirtualTerminal extends VirtualTerminal {
 	}
 }
 
+class CursorTrackingTerminal extends BoundedWriteTerminal {
+	readonly events: string[] = [];
+
+	override write(data: string): void {
+		this.events.push(`write:${data}`);
+		super.write(data);
+	}
+
+	override hideCursor(): void {
+		this.events.push("hide");
+	}
+
+	override showCursor(): void {
+		this.events.push("show");
+	}
+}
+
 async function withEnv<T>(updates: Record<string, string | undefined>, run: () => Promise<T>): Promise<T> {
 	const previousValues = new Map<string, string | undefined>();
 	for (const [key, value] of Object.entries(updates)) {
@@ -1405,6 +1422,29 @@ describe("TUI steady-frame processed-line reuse", () => {
 });
 
 describe("TUI fake cursor", () => {
+	it("hides a visible hardware cursor during redraws and restores it at the marker", () => {
+		const terminal = new CursorTrackingTerminal();
+		const tui = new TuiMainScreen(terminal, true);
+		const component = new TestComponent();
+		component.lines = [`ab${CURSOR_MARKER}cd`, "footer"];
+		tui.addChild(component);
+		tui.renderNow();
+		terminal.events.length = 0;
+
+		component.lines = [`abx${CURSOR_MARKER}cd`, "footer"];
+		tui.renderNow();
+
+		assert.deepStrictEqual(
+			terminal.events.map((event) => event.split(":", 1)[0]),
+			["hide", "write", "write", "show"],
+		);
+		assert.strictEqual(terminal.events.at(-2), "write:\x1b[4G");
+
+		terminal.events.length = 0;
+		tui.renderNow();
+		assert.deepStrictEqual(terminal.events, ["write:\x1b[4G", "show"]);
+	});
+
 	it("draws the focused fake cursor in reverse video and omits it when the hardware cursor is shown", async () => {
 		const terminal = new LoggingVirtualTerminal(20, 5);
 		const tui: TUI = new TuiMainScreen(terminal);
