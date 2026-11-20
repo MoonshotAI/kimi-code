@@ -244,7 +244,7 @@ describe('agent state frames', () => {
   });
 
   it('keeps a successful thinking write when its agent frame arrives after the response', async () => {
-    vi.stubGlobal('WebSocket', class {});
+    vi.stubGlobal('WebSocket', vi.fn());
     vi.resetModules();
 
     const connection = makeConnection();
