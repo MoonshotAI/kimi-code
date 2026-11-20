@@ -89,7 +89,7 @@ export class FeedbackGateway {
       }
     }
     const body: SubmitFeedbackBody = {
-      session_id: input.session_id,
+      session_id: input.session_id ?? 'global',
       content: input.kind === 'global' ? input.content : 'null',
       version: client.version,
       os: client.os,
