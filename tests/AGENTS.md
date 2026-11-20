@@ -87,7 +87,16 @@ pnpm --filter kimi-code-app run e2e --project=smoke
 
 ## Desktop 的临时隔离用例
 
-默认 Desktop 运行排除标记为 `@quarantine` 的单条用例。同一文件的其他用例照常运行。[Desktop E2E 工作流](../.github/workflows/desktop-e2e.yml)是可选检查，不阻断合并：改动桌面端或其依赖的 PR 上，只改了 spec 时跑改动的 spec，否则跑全部旅程；合入 main 后跑全部；每晚另外不重试地跑一次隔离用例，结果只作参考。旅程最多分成 4 片，在不同的 macOS 机器上并行跑，只改了 spec 时片数不超过改动的文件数；每片都会先跑一遍被依赖的首轮 smoke，`Desktop E2E journeys (optional)` 汇总各片的结果。当前隔离十条。其中九条在基线 `0ee6dff5f` 上用同一 Electron 构建逐条复现，涉及断流恢复、侧聊与压缩、后台命令、失败转录、插话、审批中停止、附件、默认设置和外观；另一条是重启后恢复面板、侧栏和窗口尺寸，只在 CI 的 macOS runner 上失败，窗口尺寸回到了默认值，本地通过。隔离期间，默认运行的绿灯不涵盖这十个场景。
+默认 Desktop 运行排除标记为 `@quarantine` 的单条用例。同一文件的其他用例照常运行。[Desktop E2E 工作流](../.github/workflows/desktop-e2e.yml)是可选检查，不阻断合并。
+
+- **PR 上**：一次全量运行要占用组织的 5 台 macOS 机器，所以只在两种情况下运行。由[选择脚本](../apps/desktop/scripts/ci/select-e2e-specs.mjs)判断：
+  - **改了旅程本身**：包括 `apps/desktop/e2e/`、`apps/desktop/test/e2e/`、testkit、选择脚本或工作流。只改了 spec 时跑改动的 spec，否则跑全部旅程。
+  - **打了 `desktop-e2e` 标签**：跑全部旅程。
+
+  其他 PR 上汇总检查显示为跳过，所以绿灯只代表真的跑过。
+- **合入 main 后**：跑全部旅程。失败时开一个标题为 `Desktop E2E journeys are failing on main` 的 issue，列出失败的旅程，以及上次通过以来的提交；之后再失败就追加评论，main 再次通过后自动关闭。
+- **每晚**：另外不重试地跑一次隔离用例，结果只作参考。
+- **分片**：旅程最多分成 5 片，在不同的 macOS 机器上并行跑；只改了 spec 时，片数不超过改动的文件数。每片都会先跑一遍被依赖的首轮 smoke，`Desktop E2E journeys (optional)` 汇总各片的结果。当前隔离十条。其中九条在基线 `0ee6dff5f` 上用同一 Electron 构建逐条复现，涉及断流恢复、侧聊与压缩、后台命令、失败转录、插话、审批中停止、附件、默认设置和外观；另一条是重启后恢复面板、侧栏和窗口尺寸，只在 CI 的 macOS runner 上失败，窗口尺寸回到了默认值，本地通过。隔离期间，默认运行的绿灯不涵盖这十个场景。
 
 每条隔离用例都登记在[隔离清单](quarantine.yaml)，写明原因、负责人、开始日期和到期日。`pnpm lint` 里的 `scripts/checks/quarantine.mjs` 用当前提交的日期核对，以下情况都会失败：打了标签却没登记、登记了却找不到用例、已过期、到期日比提交日期晚 60 天以上，以及隔离 L0 或 smoke 用例。用提交日期而不是运行当天的日期，是为了让同一个提交的检查结果不随时间改变。到期前修好用例并去掉标签，或者写明新原因、改到期日续期。
 
@@ -112,6 +121,11 @@ pnpm --filter kimi-code-app run e2e:headless --quarantine --retries=0
 
 ## 改动行的变异测试
 
-`pnpm qa:mutation` 检验「这次改动的代码出错时，有没有测试会发现」。它只看与 `origin/main` 分叉点之后、已经提交的改动（`--base` 可换比较对象），并且只看各包 `src` 下、所在包有 Vitest 配置的 TS/JS 源文件，测试文件除外。脚本在系统临时目录另建一个 git worktree，离线安装依赖后逐个包运行 Stryker，只跑引用了被改文件的测试，当前工作区不会被改动。存活的变异体、没有相关测试覆盖的行，以及没能运行的包和原因，写进 `.tmp/mutation/summary.md`，同目录还有每个包的 HTML 报告。模块级常量这类静态变异体要重跑整包测试，默认跳过，加 `--include-static` 才会测。
+`pnpm qa:mutation` 检验「这次改动的代码出错时，有没有测试会发现」。它只看与 `origin/main` 分叉点之后、已经提交的改动（`--base` 可换比较对象），并且只看各包 `src` 下、所在包有 Vitest 配置的 TS/JS 源文件，测试文件除外。脚本在系统临时目录另建一个 git worktree，离线安装依赖后逐个包运行 Stryker，只跑引用了被改文件的测试，当前工作区不会被改动。存活的变异体、没有相关测试覆盖的行，以及没能运行的包和原因，写进 `.tmp/mutation/summary.md`，同目录还有每个包的 HTML 报告。模块级常量这类静态变异体要重跑整包测试，默认跳过，加 `--include-static` 才会测。加 `--budget-minutes` 可以给整次运行设一个时间上限，超时没跑完的包会在摘要里注明。
 
-结果是评审信息，不是门禁。[变异测试工作流](../.github/workflows/mutation.yml)在改动包源码的 PR 上运行，把摘要写进任务摘要，不是必过检查。Stryker 在单个 worker 线程里跑 Vitest，改 `HOME`、工作目录这类进程级状态的测试在那里会失败；这样的包在变异前就停下，摘要里列出失败的用例。
+启停系统进程的文件不做变异，也就是调用了 `child_process`、`process.kill`、`killProcessTree` 或 `TestProcess.start` 的文件，摘要里会写明原因。
+
+- **为什么跳过**：变异体去掉进程号守卫后，验证这个守卫的测试会把 SIGKILL 发给自己所在的进程组，甚至当前用户的所有进程，在 CI 上就表现为 runner 失联。改坏清理逻辑的变异体则会让子进程一直泄漏。
+- **兜底**：脚本还让 Stryker 单独占一个进程组；运行期间清理已经脱离进程树的残留进程，结束后再清一遍。
+
+结果是评审信息，不是门禁。[变异测试工作流](../.github/workflows/mutation.yml)只在改动包源码、并且打了 `mutation` 标签的 PR 上运行，每次最多跑 30 分钟。摘要写进任务摘要，它也不是必过检查。Stryker 在单个 worker 线程里跑 Vitest，改 `HOME`、工作目录这类进程级状态的测试在那里会失败；这样的包在变异前就停下，摘要里列出失败的用例。

@@ -1,9 +1,13 @@
 name: Mutation testing
 
-# Informational: lists mutants on the changed lines that no related test
-# noticed, as review input. It is not a required check.
+# Informational and opt-in: add the mutation label to a pull request to list
+# the mutants on its changed lines that no related test noticed, as review
+# input. It is not a required check. Files that start or stop processes are
+# not mutated, because a mutant there can signal the runner and every other
+# process of its user.
 on:
   pull_request:
+    types: [opened, synchronize, reopened, labeled]
     paths:
       - 'packages/*/src/**'
       - 'apps/*/src/**'
@@ -21,8 +25,9 @@ concurrency:
 jobs:
   changed-lines:
     name: Mutation testing on changed lines (informational)
+    if: contains(github.event.pull_request.labels.*.name, 'mutation')
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v6
         with:
@@ -35,7 +40,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       # The checkout is the merge commit, so its first parent is the base
       # branch and the diff against it is exactly this pull request.
-      - run: node scripts/mutation-diff.mjs --base HEAD^1
+      - run: node scripts/mutation-diff.mjs --base HEAD^1 --budget-minutes 30
       - uses: actions/upload-artifact@v7
         if: ${{ !cancelled() }}
         with:

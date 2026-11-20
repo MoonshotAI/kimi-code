@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { baselineFailures, changedLines, mutationTargets, runResult, strykerConfig, summarize } from './mutation-diff.mjs';
+import { baselineFailures, changedLines, leakedProcesses, mutationTargets, parseProcessTable, runResult, strykerConfig, summarize } from './mutation-diff.mjs';
 
 const diff = [
   'diff --git a/packages/kit/src/a.ts b/packages/kit/src/a.ts',
@@ -77,13 +77,53 @@ await test('mutates source files of packages with a Vitest config and reports th
     ['apps/vis/server/src/nested/b.mts', [[7, 8]]],
     ['scripts/tool.mjs', [[1, 1]]],
   ]);
-  const { packages, skipped } = mutationTargets(changes, path => files.has(path));
+  const { packages, skipped } = mutationTargets(changes, path => files.has(path), () => 'export const value = 1;\n');
   assert.deepEqual([...packages], [
     ['packages/kit', { config: 'vitest.config.ts', mutate: ['src/a.ts:3-3', 'src/a.ts:11-12'] }],
     ['apps/vis/server', { config: 'vitest.config.mts', mutate: ['src/nested/b.mts:7-8'] }],
   ]);
   assert.deepEqual(skipped.map(entry => entry.subject), ['packages/bare/src/index.ts']);
   assert.match(skipped[0].reason, /packages\/bare has no Vitest config/);
+});
+
+await test('does not mutate code that starts or stops processes, because a mutant there can kill the runner', () => {
+  const files = new Set(['packages/kit/package.json', 'packages/kit/vitest.config.ts']);
+  const sources = new Map([
+    ['packages/kit/src/spawns.ts', "import { spawn } from 'node:child_process';\nexport const start = () => spawn('node');\n"],
+    ['packages/kit/src/requires.cjs', "const { execFile } = require('child_process');\n"],
+    ['packages/kit/src/kills.ts', 'export function stop(pid: number) { process.kill(-pid, "SIGKILL"); }\n'],
+    ['packages/kit/src/fixture.ts', "import { TestProcess } from '#/fixtures/process';\nconst child = TestProcess.start(options);\n"],
+    ['packages/kit/src/reaper.ts', 'killProcessTree(child.pid);\n'],
+    ['packages/kit/src/plain.ts', 'export const pattern = /x/;\npattern.exec(text);\nagent.spawn(task);\nsession.fork();\n'],
+    ['packages/kit/src/index.ts', "export { killProcessTree, TestProcess } from './process';\n"],
+  ]);
+  const changes = new Map([...sources.keys()].map(path => [path, [[1, 2]]]));
+  const { packages, skipped } = mutationTargets(changes, path => files.has(path), path => sources.get(path));
+  assert.deepEqual([...packages], [['packages/kit', { config: 'vitest.config.ts', mutate: ['src/plain.ts:1-2', 'src/index.ts:1-2'] }]]);
+  assert.deepEqual(skipped.map(entry => entry.subject), [
+    'packages/kit/src/spawns.ts',
+    'packages/kit/src/requires.cjs',
+    'packages/kit/src/kills.ts',
+    'packages/kit/src/fixture.ts',
+    'packages/kit/src/reaper.ts',
+  ]);
+  for (const entry of skipped) assert.match(entry.reason, /starts or stops operating-system processes/);
+});
+
+await test('finds the processes a mutation run leaked: marked with its checkout, but no longer under a marked parent', () => {
+  const table = parseProcessTable([
+    '  101     1 node /tmp/kimi-mutation-AbC123/checkout/node_modules/@stryker-mutator/core/bin/stryker.js run',
+    '  102   101 node /tmp/kimi-mutation-AbC123/checkout/node_modules/@stryker-mutator/core/dist/src/child-proxy/child-process-proxy-worker.js',
+    '  103   102 node --import file:///private/tmp/kimi-mutation-AbC123/checkout/packages/kit/src/preload.ts stub-server.mjs',
+    '  104     1 node --import file:///private/tmp/kimi-mutation-AbC123/checkout/packages/kit/src/preload.ts orphan.mjs',
+    '  105  4242 node --import file:///private/tmp/kimi-mutation-AbC123/checkout/packages/kit/src/preload.ts adopted-by-a-subreaper.mjs',
+    '  106     1 node /tmp/kimi-mutation-Other9/checkout/stub.mjs',
+    '  107     1 node unrelated.js',
+    'not a process line',
+  ].join('\n'));
+  assert.equal(table.length, 7);
+  assert.deepEqual(table[2], { pid: 103, ppid: 102, command: 'node --import file:///private/tmp/kimi-mutation-AbC123/checkout/packages/kit/src/preload.ts stub-server.mjs' });
+  assert.deepEqual(leakedProcesses(table, 'kimi-mutation-AbC123', 101), [104, 105]);
 });
 
 await test('runs each package in place with its own config and only the related tests', () => {
@@ -108,6 +148,15 @@ await test('tells a package without related tests apart from a Stryker error', (
     packageDir: 'packages/broken',
     error: 'Stryker exited with code 1 before writing a report; see .tmp/mutation/packages-broken.log',
   });
+});
+
+await test('reports a package stopped by the time budget, unless Stryker still wrote its report', () => {
+  assert.deepEqual(runResult('packages/slow', { code: null, outOfTime: true, budgetMinutes: 35, report: undefined, log: '', logPath: 'slow.log' }), {
+    packageDir: 'packages/slow',
+    stopped: 'stopped when the 35-minute budget ran out, before Stryker wrote a report',
+  });
+  const report = { files: {} };
+  assert.deepEqual(runResult('packages/slow', { code: 0, outOfTime: true, budgetMinutes: 35, report, log: '', logPath: 'slow.log' }), { packageDir: 'packages/slow', report });
 });
 
 await test('reads the tests that failed before any mutation from the Stryker log', () => {
@@ -148,6 +197,7 @@ await test('lists surviving and uncovered mutants with their code, and every pac
       { packageDir: 'packages/server', baseline: [{ test: 'expands tilde paths', details: ['expected 50001 to be +0'] }] },
       { packageDir: 'packages/broken', error: 'Stryker exited with code 1 before writing a report; see .tmp/mutation/packages-broken.log' },
       { packageDir: 'packages/pi-tui', untested: true },
+      { packageDir: 'packages/slow', stopped: 'stopped when the 35-minute budget ran out, before Stryker wrote a report' },
     ],
     skipped: [{ subject: 'packages/bare/src/index.ts', reason: 'packages/bare has no Vitest config, so nothing runs its tests under Stryker' }],
   });
@@ -159,6 +209,7 @@ await test('lists surviving and uncovered mutants with their code, and every pac
   assert.match(summary, /- packages\/server: these related tests fail under Stryker before any mutation[^\n]*\n {2}- expands tilde paths \(expected 50001 to be \+0\)/);
   assert.match(summary, /- packages\/broken: Stryker exited with code 1/);
   assert.match(summary, /- packages\/pi-tui: no Vitest test of this package imports the changed files/);
+  assert.match(summary, /- packages\/slow: stopped when the 35-minute budget ran out/);
   assert.match(summary, /- packages\/bare\/src\/index.ts: packages\/bare has no Vitest config/);
   assert.match(summarize({ base: 'abc', results: [], skipped: [] }), /No changed lines under a package `src` directory/);
 });

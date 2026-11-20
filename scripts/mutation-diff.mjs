@@ -19,6 +19,9 @@ const MAX_LISTED = 100;
 const BASELINE_START = 'One or more tests failed in the initial test run:';
 const BASELINE_END = 'There were failed tests in the initial test run';
 const NO_RELATED_TESTS = 'No tests were executed';
+const PROCESS_CONTROL = /['"](?:node:)?child_process['"]|\bprocess\.kill\(|\bkillProcessTree\(|\bTestProcess\.start\(/;
+const PROCESS_CONTROL_REASON = 'starts or stops operating-system processes. A mutant there can make a test signal the test runner\'s process group or every process of the user, or leak children until the machine runs out of memory, so it is not mutated';
+const LEAK_SWEEP_MS = 30_000;
 
 export function changedLines(diff) {
   const changes = new Map();
@@ -65,7 +68,7 @@ function unquote(quoted) {
   return Buffer.from(bytes).toString('utf8');
 }
 
-export function mutationTargets(changes, exists = path => existsSync(join(root, path))) {
+export function mutationTargets(changes, exists = path => existsSync(join(root, path)), read = path => readFileSync(join(root, path), 'utf8')) {
   const packages = new Map();
   const skipped = [];
   for (const [file, ranges] of changes) {
@@ -77,6 +80,10 @@ export function mutationTargets(changes, exists = path => existsSync(join(root, 
     const config = VITEST_CONFIGS.find(name => exists(`${packageDir}/${name}`));
     if (config === undefined) {
       skipped.push({ subject: file, reason: `${packageDir} has no Vitest config, so nothing runs its tests under Stryker` });
+      continue;
+    }
+    if (PROCESS_CONTROL.test(read(file))) {
+      skipped.push({ subject: file, reason: PROCESS_CONTROL_REASON });
       continue;
     }
     const target = packages.get(packageDir) ?? { config, mutate: [] };
@@ -157,6 +164,7 @@ export function summarize({ base, results, skipped }) {
     ].join('\n')),
     ...results.filter(result => result.untested === true).map(result => `- ${result.packageDir}: no Vitest test of this package imports the changed files, so a mistake on these lines would go unnoticed here.`),
     ...results.filter(result => result.error !== undefined).map(result => `- ${result.packageDir}: ${result.error}`),
+    ...results.filter(result => result.stopped !== undefined).map(result => `- ${result.packageDir}: ${result.stopped}`),
     ...skipped.map(entry => `- ${entry.subject}: ${entry.reason}`),
   ];
   if (notRun.length > 0) lines.push('### Not mutated', '', ...notRun, '');
@@ -187,20 +195,84 @@ function git(args) {
   return run.stdout;
 }
 
-function runStryker(checkout, packageDir, configPath, logPath) {
+function runStryker({ checkout, marker, packageDir, configPath, logPath, deadline }) {
   const strykerBin = join(createRequire(join(checkout, 'package.json')).resolve('@stryker-mutator/core/package.json'), '..', 'bin', 'stryker.js');
   return new Promise((resolve, reject) => {
     const log = createWriteStream(logPath);
-    const child = spawn(process.execPath, [strykerBin, 'run', configPath], { cwd: join(checkout, packageDir), stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(process.execPath, [strykerBin, 'run', configPath], {
+      cwd: join(checkout, packageDir),
+      stdio: ['ignore', 'pipe', 'pipe'],
+      detached: process.platform !== 'win32',
+    });
+    let outOfTime = false;
+    const sweep = setInterval(() => killProcesses(leakedProcesses(processTable(), marker, child.pid)), LEAK_SWEEP_MS);
+    const timer = Number.isFinite(deadline)
+      ? setTimeout(() => {
+        outOfTime = true;
+        killProcessGroup(child);
+      }, Math.max(0, deadline - Date.now()))
+      : undefined;
+    const stop = () => {
+      clearInterval(sweep);
+      clearTimeout(timer);
+    };
     child.stdout.on('data', chunk => { log.write(chunk); process.stdout.write(chunk); });
     child.stderr.on('data', chunk => { log.write(chunk); process.stderr.write(chunk); });
-    child.on('error', reject);
-    child.on('close', code => log.end(() => resolve(code)));
+    child.on('error', error => {
+      stop();
+      reject(error);
+    });
+    child.on('close', code => {
+      stop();
+      killProcessGroup(child);
+      killMarkedProcesses(marker);
+      log.end(() => resolve({ code, outOfTime }));
+    });
   });
 }
 
-export function runResult(packageDir, { code, report, log, logPath }) {
+export function leakedProcesses(table, marker, rootPid) {
+  const marked = table.filter(entry => entry.command.includes(marker));
+  const markedPids = new Set(marked.map(entry => entry.pid));
+  return marked.filter(entry => entry.pid !== rootPid && !markedPids.has(entry.ppid)).map(entry => entry.pid);
+}
+
+export function parseProcessTable(text) {
+  return text.split('\n').flatMap(line => {
+    const match = /^\s*(\d+)\s+(\d+)\s+(.*)$/.exec(line);
+    return match ? [{ pid: Number(match[1]), ppid: Number(match[2]), command: match[3] }] : [];
+  });
+}
+
+function processTable() {
+  if (process.platform === 'win32') return [];
+  const run = spawnSync('ps', ['-Aww', '-o', 'pid=,ppid=,args='], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+  return run.status === 0 ? parseProcessTable(run.stdout) : [];
+}
+
+function killProcesses(pids) {
+  for (const pid of pids) {
+    if (pid <= 1 || pid === process.pid) continue;
+    try { process.kill(pid, 'SIGKILL'); } catch { continue; }
+  }
+}
+
+function killMarkedProcesses(marker) {
+  killProcesses(processTable().filter(entry => entry.command.includes(marker)).map(entry => entry.pid));
+}
+
+function killProcessGroup(child) {
+  if (child.pid === undefined || child.pid <= 1) return;
+  if (process.platform === 'win32') {
+    spawnSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true });
+    return;
+  }
+  try { process.kill(-child.pid, 'SIGKILL'); } catch { return; }
+}
+
+export function runResult(packageDir, { code, report, log, logPath, outOfTime = false, budgetMinutes }) {
   if (report !== undefined) return { packageDir, report };
+  if (outOfTime) return { packageDir, stopped: `stopped when the ${budgetMinutes}-minute budget ran out, before Stryker wrote a report` };
   const failures = baselineFailures(log);
   if (failures.length > 0) return { packageDir, baseline: failures };
   if (log.includes(NO_RELATED_TESTS)) return { packageDir, untested: true };
@@ -241,8 +313,14 @@ async function main() {
       'include-static': { type: 'boolean', default: false },
       'dry-run': { type: 'boolean', default: false },
       keep: { type: 'boolean', default: false },
+      'budget-minutes': { type: 'string' },
     },
   });
+  const budgetMinutes = values['budget-minutes'] === undefined ? undefined : Number(values['budget-minutes']);
+  if (budgetMinutes !== undefined && !(budgetMinutes > 0 && budgetMinutes <= 24 * 60)) {
+    throw new Error(`--budget-minutes needs a number of minutes between 0 and ${24 * 60}, got ${values['budget-minutes']}`);
+  }
+  const deadline = budgetMinutes === undefined ? Infinity : Date.now() + budgetMinutes * 60_000;
   const base = git(['merge-base', values.base, 'HEAD']).trim();
   const diff = git([
     '-c', 'core.quotePath=false', 'diff', '--unified=0', '--inter-hunk-context=0', '--no-color', '--no-ext-diff', '--no-textconv',
@@ -259,7 +337,9 @@ async function main() {
   if (packages.size > 0) {
     const holder = mkdtempSync(join(tmpdir(), 'kimi-mutation-'));
     const checkout = join(holder, 'checkout');
+    const marker = basename(holder);
     cleanUp = () => {
+      killMarkedProcesses(marker);
       if (values.keep) process.stdout.write(`Kept the mutation checkout at ${checkout}\n`);
       else removeCheckout(holder, checkout);
     };
@@ -273,14 +353,21 @@ async function main() {
       installDependencies(checkout);
       const vitestRunner = createRequire(join(checkout, 'package.json')).resolve('@stryker-mutator/vitest-runner');
       for (const [packageDir, target] of packages) {
+        if (Date.now() >= deadline) {
+          results.push({ packageDir, stopped: `not mutated: the ${budgetMinutes}-minute budget ran out before this package` });
+          continue;
+        }
         const reportBase = join(reportsDir, packageDir.replaceAll('/', '-'));
         writeFileSync(`${reportBase}.stryker.json`, JSON.stringify(strykerConfig(target, reportBase, { vitestRunner, includeStatic: values['include-static'] }), null, 2));
-        const code = await runStryker(checkout, packageDir, `${reportBase}.stryker.json`, `${reportBase}.log`);
+        const logPath = `${reportBase}.log`;
+        const { code, outOfTime } = await runStryker({ checkout, marker, packageDir, configPath: `${reportBase}.stryker.json`, logPath, deadline });
         results.push(runResult(packageDir, {
           code,
+          outOfTime,
+          budgetMinutes,
           report: existsSync(`${reportBase}.json`) ? JSON.parse(readFileSync(`${reportBase}.json`, 'utf8')) : undefined,
-          log: readFileSync(`${reportBase}.log`, 'utf8'),
-          logPath: displayPath(`${reportBase}.log`),
+          log: readFileSync(logPath, 'utf8'),
+          logPath: displayPath(logPath),
         }));
       }
     } catch (error) {

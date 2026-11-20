@@ -1,8 +1,12 @@
 name: Desktop E2E
 
-# Optional: the Electron journeys run in up to four shards on separate machines,
+# Optional: the Electron journeys run in up to five shards on separate machines,
 # and the result job reports them under one check name. It is not a required
-# check. The protected first turn also runs in the L0 smoke gate.
+# check. Pull requests run the journeys only when they change them or carry the
+# desktop-e2e label, because every run takes five of the organization's macOS
+# machines. main runs all of them on every push and every night, and a failure
+# there opens or updates one tracking issue. The protected first turn also runs
+# in the L0 smoke gate on every pull request.
 on:
   workflow_dispatch:
     inputs:
@@ -15,14 +19,7 @@ on:
   push:
     branches: [main]
   pull_request:
-    paths:
-      - 'apps/desktop/**'
-      - 'packages/app-*/**'
-      - 'packages/kap-server/src/**'
-      - 'packages/agent-core-v2/src/**'
-      - 'packages/testkit/**'
-      - 'pnpm-lock.yaml'
-      - '.github/workflows/desktop-e2e.yml'
+    types: [opened, synchronize, reopened, labeled]
 
 permissions:
   contents: read
@@ -50,12 +47,16 @@ jobs:
         shell: bash
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          EVENT_NAME: ${{ github.event_name }}
+          LABELLED: ${{ contains(github.event.pull_request.labels.*.name, 'desktop-e2e') }}
         run: |
           set -euo pipefail
-          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
-            git diff --name-only "$BASE_SHA" HEAD | node apps/desktop/scripts/ci/select-e2e-specs.mjs
+          if [[ "$EVENT_NAME" == "pull_request" ]]; then
+            args=(--pull-request)
+            if [[ "$LABELLED" == "true" ]]; then args+=(--labelled); fi
+            git diff --name-only "$BASE_SHA" HEAD | node apps/desktop/scripts/ci/select-e2e-specs.mjs "${args[@]}"
           else
-            node apps/desktop/scripts/ci/select-e2e-specs.mjs < /dev/null
+            node apps/desktop/scripts/ci/select-e2e-specs.mjs
           fi
       - name: Split them across machines
         id: split
@@ -63,7 +64,7 @@ jobs:
         env:
           MODE: ${{ steps.select.outputs.mode }}
           SPECS: ${{ steps.select.outputs.specs }}
-          MAX_SHARDS: 4
+          MAX_SHARDS: 5
         run: |
           set -euo pipefail
           read -r -a specs <<< "$SPECS"
@@ -120,7 +121,7 @@ jobs:
   result:
     name: Desktop E2E journeys (optional)
     needs: [plan, journeys]
-    if: always()
+    if: always() && needs.plan.outputs.mode != 'none'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -128,14 +129,35 @@ jobs:
         shell: bash
         env:
           PLAN: ${{ needs.plan.result }}
-          MODE: ${{ needs.plan.outputs.mode }}
           JOURNEYS: ${{ needs.journeys.result }}
         run: |
           set -euo pipefail
           if [[ "$PLAN" != "success" ]]; then echo "::error::Planning the desktop journeys ended with $PLAN"; exit 1; fi
-          if [[ "$MODE" == "none" ]]; then echo "No desktop journeys to run for this change"; exit 0; fi
           if [[ "$JOURNEYS" != "success" ]]; then echo "::error::The desktop journey shards ended with $JOURNEYS"; exit 1; fi
           echo "Every desktop journey shard passed"
+
+  alert:
+    name: Track desktop journey failures on main
+    needs: result
+    if: ${{ !cancelled() && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'schedule') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+      issues: write
+    concurrency:
+      group: desktop-e2e-main-tracking-issue
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: apps/desktop/scripts/ci
+      - name: Open, update or close the tracking issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RESULT: ${{ needs.result.result }}
+        run: node apps/desktop/scripts/ci/report-main-journeys.mjs --result "$RESULT"
 
   quarantine:
     name: Quarantined desktop journeys (informational)

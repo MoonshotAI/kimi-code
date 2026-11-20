@@ -106,8 +106,8 @@
       "job": "result",
       "needs": ["plan", "journeys"],
       "checksResults": true,
-      "coversJobsExcept": ["quarantine"],
-      "why": "It reports every Desktop E2E shard under one check name. A job it does not wait for, or whose result it does not read, could fail while the check stays green. The nightly quarantine job is informational and stays outside it."
+      "coversJobsExcept": ["quarantine", "alert"],
+      "why": "It reports every Desktop E2E shard under one check name. A job it does not wait for, or whose result it does not read, could fail while the check stays green. The nightly quarantine job is informational, and the alert job runs after it on main to keep the tracking issue, so both stay outside it."
     }
   ]
 }
