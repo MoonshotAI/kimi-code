@@ -11,6 +11,14 @@ export class HistoryHeights {
     }
   }
 
+  get length(): number {
+    return this.sizes.length;
+  }
+
+  get(index: number): number {
+    return this.sizes[index] ?? 0;
+  }
+
   set(index: number, size: number): void {
     const delta = size - (this.sizes[index] ?? 0);
     this.sizes[index] = size;

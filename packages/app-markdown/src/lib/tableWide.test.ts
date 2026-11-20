@@ -11,6 +11,7 @@ import {
   TABLE_COPY_CLASS,
   TABLE_LAYOUT_EVENT,
   TABLE_TOGGLE_CLASS,
+  TABLE_TOGGLE_EVENT,
   TABLE_WIDE_CLASS,
   toggleTableWide,
 } from './tableWide';
@@ -400,6 +401,14 @@ describe('toggleTableWide', () => {
     expect(button.innerHTML).toContain('15 3 21 3 21 9');
     expect(button.getAttribute('aria-label')).toBe(LABELS.widen);
     expect(stubOf(wrapper).dispatched).toHaveLength(2);
+  });
+
+  it('announces user toggles before the width changes, unlike restored state', () => {
+    const wrapper = makeWrapper();
+    stubOf(ensureTableWideToggle(wrapper, LABELS)!).click();
+    expect(stubOf(wrapper).dispatched.map(event => event.type)).toEqual([TABLE_TOGGLE_EVENT, TABLE_LAYOUT_EVENT]);
+    toggleTableWide(wrapper, LABELS);
+    expect(stubOf(wrapper).dispatched.map(event => event.type)).toEqual([TABLE_TOGGLE_EVENT, TABLE_LAYOUT_EVENT, TABLE_LAYOUT_EVENT]);
   });
 
   it('uses the latest labels for clicks after a locale switch', () => {

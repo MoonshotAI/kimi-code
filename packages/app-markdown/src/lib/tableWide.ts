@@ -8,6 +8,7 @@ export const TABLE_TOGGLE_CLASS = 'md-table-toggle';
 export const TABLE_COPY_CLASS = 'md-table-copy';
 export const TABLE_ACTIONS_CLASS = 'md-table-actions';
 export const TABLE_LAYOUT_EVENT = 'kimi-table-layout';
+export const TABLE_TOGGLE_EVENT = 'kimi-table-toggle';
 
 export interface TableWideToggleLabels {
   widen: string;
@@ -189,6 +190,7 @@ export function ensureTableWideToggle(
   toggle.addEventListener('click', (event) => {
     event.preventDefault();
     event.stopPropagation();
+    wrapper.dispatchEvent(new CustomEvent(TABLE_TOGGLE_EVENT, { bubbles: true }));
     toggleTableWide(wrapper, wrapperLabels.get(wrapper) ?? labels);
   });
   actions.appendChild(toggle);

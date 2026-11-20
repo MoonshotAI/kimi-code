@@ -64,7 +64,6 @@ app.whenReady().then(async () => {
         if (process.env.PERF_MOBILE) result.mobile = await win.webContents.executeJavaScript('window.verifyMobileHistory()');
         if (process.env.PERF_IMAGES) result.images = await win.webContents.executeJavaScript('window.verifyImages()');
         if (process.env.PERF_SPACING) result.spacing = await win.webContents.executeJavaScript('window.verifySpacing()');
-        if (process.env.PERF_STATE) result.state = await win.webContents.executeJavaScript('window.verifyHistoryState()');
         if (process.env.PERF_FONT) result.font = await win.webContents.executeJavaScript('window.verifyFontScale()');
         if (process.env.PERF_STABILITY) result.stability = await win.webContents.executeJavaScript(`window.runStability(${JSON.stringify(process.env.PERF_SCENARIOS ?? '')})`);
         if (process.env.PERF_SCROLL_KEYS) {

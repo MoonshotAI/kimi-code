@@ -9,7 +9,7 @@ const rawScrollTop = Object.getOwnPropertyDescriptor(Element.prototype, 'scrollT
 const pane = () => document.querySelector('.panes');
 const turnEl = id => pane()?.querySelector(`[data-turn-id="${id}"]`);
 const distance = () => pane().scrollHeight - pane().scrollTop - pane().clientHeight;
-const PLACEHOLDER = '.history-space, .transcript-space';
+const PLACEHOLDER = '.transcript-space';
 
 let fileChangeDelay = 0;
 let fileChangeCount = 0;

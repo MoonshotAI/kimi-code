@@ -211,8 +211,7 @@
     "packages/remote-control/test/remote-control.test.ts": 1
   },
   "eslint/no-useless-constructor": {
-    "packages/agent-core-v2/src/session/state/sessionStateService.ts": 1,
-    "packages/app-client/test/useFollowScroll.test.ts": 1
+    "packages/agent-core-v2/src/session/state/sessionStateService.ts": 1
   },
   "eslint/no-var": {
     "apps/desktop/src/renderer/public/boot.js": 32
@@ -243,7 +242,6 @@
     "packages/agent-core-v2/test/wire/wireService.test.ts": 1,
     "packages/app-client/src/lib/sessionExecutionReadiness.ts": 1,
     "packages/app-client/test/input-history.test.ts": 1,
-    "packages/app-client/test/useFollowScroll.test.ts": 1,
     "packages/core/src/loop/tool/tasks.ts": 1,
     "packages/core/src/store/append-log.ts": 1,
     "packages/core/src/utils/wait.ts": 1,
@@ -1221,7 +1219,6 @@
     "packages/app-client/test/panel-registry.test.ts": 2,
     "packages/app-client/test/startSessionAndActivateSkill.test.ts": 1,
     "packages/app-components/src/chat/DiffView.vue": 1,
-    "packages/app-components/src/chat/HistoryWindow.vue": 2,
     "packages/app-components/src/chat/tool-calls/browserActivity.ts": 2,
     "packages/app-components/src/chat/tool-calls/browserRetries.ts": 1,
     "packages/app-components/src/chatTurnRendering.ts": 1,
