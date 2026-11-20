@@ -1189,6 +1189,9 @@ importers:
         specifier: 4.3.6
         version: 4.3.6
     devDependencies:
+      '@moonshot-ai/testkit':
+        specifier: workspace:^
+        version: link:../testkit
       '@types/bcryptjs':
         specifier: ^2.4.6
         version: 2.4.6

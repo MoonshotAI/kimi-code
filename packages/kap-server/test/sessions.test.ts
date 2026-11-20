@@ -2,13 +2,16 @@ import { randomBytes } from 'node:crypto';
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { setTimeout as slowDisk } from 'node:timers/promises';
 import { inflateRawSync } from 'node:zlib';
 import { ISessionMediaStore } from '@moonshot-ai/agent-core-v2/agent/media/sessionMediaStore';
 import { mcpResultToExecutableOutput } from '@moonshot-ai/agent-core-v2/agent/mcp/output';
 import { renderToolResultForModel } from '@moonshot-ai/agent-core-v2/agent/contextMemory/toolResultRender';
 import { IReadTool, ReadInputSchema, type ReadInput } from '@moonshot-ai/agent-core-v2/agent/tools/os/read/read';
 
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { say } from '@moonshot-ai/testkit/model';
+import { kapFixtures, type KapFixtures } from '@moonshot-ai/testkit/vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, test as base, vi } from 'vitest';
 
 import {
   Error2,
@@ -29,6 +32,7 @@ import {
   IEventDispatcher,
   IEventService,
   IEnvironmentService,
+  IFileSystemStorageService,
   IModelCatalog,
   IModelService,
   ISessionActivityView,
@@ -3658,4 +3662,23 @@ describe('POST /api/v1/sessions/{id}:wait and live turns buffer flush', () => {
     expect(finalWait.data.session.activity).toBe('idle');
     expect(finalWait.data.pending_interactions).toEqual([]);
   });
+});
+
+const kapTest = base.extend<KapFixtures<RunningServer>>(kapFixtures({ startServer }));
+const SLOW_WRITE_MS = 1_000;
+
+kapTest(':wait reports a finished turn only after the session wrote it to disk, even when the disk is slow', { timeout: 30_000 }, async ({ kap, model }) => {
+  const storage = kap.server.core.accessor.get(IFileSystemStorageService);
+  const append = storage.append.bind(storage);
+  storage.append = async (scope, key, data, options) => {
+    if (new TextDecoder().decode(data).includes('"type":"turn.ended"')) await slowDisk(SLOW_WRITE_MS);
+    return append(scope, key, data, options);
+  };
+  model.script(say('Saved answer.'));
+  const session = await kap.createSession();
+  await kap.prompt(session.id, 'Save this turn.');
+  expect((await kap.waitIdle(session.id)).activity).toBe('idle');
+  const sessionDir = sessionDirOf(kap.server.core.accessor.get(IBootstrapService).homeDir, `sessions/${session.workspace_id}`, session.id);
+  const wire = await readFile(join(sessionDir, 'agents', MAIN_AGENT_ID, 'wire.jsonl'), 'utf8');
+  expect(wire.split('\n').filter((line) => line !== '').map((line) => (JSON.parse(line) as { type: string }).type)).toContain('turn.ended');
 });
