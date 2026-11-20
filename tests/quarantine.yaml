@@ -20,6 +20,13 @@ quarantine:
     owner: '@RealKai42'
     since: '2026-11-19'
     expires: '2027-01-18'
+  - file: apps/desktop/e2e/composer-drafts-models.spec.ts
+    test: per-session drafts survive switching and a relaunch, and model, favourite and thinking choices reach the request
+    runner: playwright
+    reason: 合入 main 的 #5048 后在 CI 上偶发失败，本地通过：在模型菜单里选「Off」后按 Escape，菜单开始关闭后又被应用自己重新显示，15 秒内没有关闭。
+    owner: '@RealKai42'
+    since: '2026-11-20'
+    expires: '2027-01-19'
   - file: apps/desktop/e2e/lifecycle-model-errors.spec.ts
     test: model errors fail the turn with diagnostics, retry when allowed and Continue recovers
     runner: playwright

@@ -10,7 +10,7 @@ const BETA = 'Beta: tidy the docs';
 const ALPHA_DRAFT = 'alpha draft that must survive';
 const BETA_DRAFT = 'beta draft, also unsent';
 
-test('per-session drafts survive switching and a relaunch, and model, favourite and thinking choices reach the request', async ({ app, model, scratch }) => {
+test('per-session drafts survive switching and a relaunch, and model, favourite and thinking choices reach the request', { tag: '@quarantine' }, async ({ app, model, scratch }) => {
   model.script(say('Alpha ready.'), say('Beta ready.'));
   const sidebar = () => sidebarOf(app);
   const input = () => app.window.getByRole('combobox', { name: 'Message input' });
