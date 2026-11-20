@@ -8,7 +8,6 @@ import { pipeline } from 'node:stream/promises';
 import { ErrorCodes, IFileService, ISessionExportService, isError2, type Scope } from '@moonshot-ai/agent-core-v2';
 import { desktopFeedbackFlag } from '@moonshot-ai/agent-core-v2/app/auth/feedback/flag';
 import { IFlagService } from '@moonshot-ai/agent-core-v2/app/flag/flag';
-import { registerFlagDefinition } from '@moonshot-ai/agent-core-v2/app/flag/flagRegistry';
 import type { KimiHostIdentity } from '@moonshot-ai/kimi-code-oauth';
 import type { FastifyReply, FastifyRequest, RouteHandlerMethod } from 'fastify';
 
@@ -36,8 +35,6 @@ const MIB = 1024 * 1024;
 const VIDEO_LIMIT = 100 * MIB;
 const IMAGE_LIMIT = 10 * MIB;
 const ARCHIVE_TTL_SECONDS = 24 * 60 * 60;
-
-registerFlagDefinition(desktopFeedbackFlag);
 
 const feedbackErrors = {
   [ErrorCode.VALIDATION_FAILED]: {},

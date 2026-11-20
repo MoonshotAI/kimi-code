@@ -1,4 +1,4 @@
-import type { FlagDefinitionInput } from '#/app/flag/flagRegistry';
+import { type FlagDefinitionInput, registerFlagDefinition } from '#/app/flag/flagRegistry';
 
 export const desktopFeedbackFlag = {
   id: 'desktop_feedback',
@@ -8,3 +8,5 @@ export const desktopFeedbackFlag = {
   default: false,
   surface: 'core',
 } satisfies FlagDefinitionInput;
+
+registerFlagDefinition(desktopFeedbackFlag);
