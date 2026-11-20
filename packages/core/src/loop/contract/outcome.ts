@@ -15,6 +15,8 @@ export const CRASHED: Cause = { by: 'loop', reason: 'crashed' };
 
 export const CLOSED: Cause = { by: 'loop', reason: 'closed' };
 
+export const CANCELED: Cause = { by: 'loop', reason: 'canceled' };
+
 export type TurnOutcome =
   | { readonly type: 'done'; readonly cause?: Cause }
   | { readonly type: 'failed'; readonly error?: unknown }

@@ -1,6 +1,6 @@
 import { Readable } from 'node:stream';
 
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, test as base, vi } from 'vitest';
 
 import { IEventBus } from '#/app/event/eventBus';
 import { IFileService } from '#/app/file/fileService';
@@ -19,13 +19,16 @@ import {
   PromptSubmitted,
 } from '#/agent/prompt/promptEvents';
 import type { ContentPart, Message } from '@moonshot-ai/core/llm/message';
+import { say } from '@moonshot-ai/testkit/model';
 
 import {
   appService,
   createTestAgent,
   createMockProvider,
   sessionService,
+  testkitAgentFixtures,
   type TestAgentContext,
+  type TestkitAgentFixtures,
   type TestAgentOptions,
   type TestAgentServiceOverride,
 } from '../../harness';
@@ -1259,5 +1262,62 @@ describe('prompt queue', () => {
     expect(loop.snapshot().activePromptId).toBe('a');
     expect(pendingIds(loop)).toEqual(['b']);
     await loop.settled();
+  });
+});
+
+describe('prompt cancel before its turn starts', () => {
+  const test = base.extend<TestkitAgentFixtures>(testkitAgentFixtures());
+
+  test('withdraws a cancelled in-flight gate item instead of running it', async ({ agent, model }) => {
+    model.script(say('follow-up answer'));
+    const loop = agent.get(IAgentLoopService);
+    let releaseHook!: () => void;
+    let markEntered!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      markEntered = resolve;
+    });
+    const aborted: PromptAborted[] = [];
+    agent.get(IEventBus).subscribe(PromptAborted, (event) => aborted.push(event));
+    loop.hooks.onBeforeSubmitPrompt.register('gate', async (hookCtx, next) => {
+      const first = hookCtx.promptMessage.content[0];
+      if (first?.type === 'text' && first.text === 'cancel me') {
+        markEntered();
+        await new Promise<void>((resolve) => {
+          releaseHook = resolve;
+        });
+      }
+      await next();
+    });
+
+    const cancelled = loop.submit({
+      role: 'user',
+      content: message('cancel me').content,
+      attributes: { promptId: 'cancelled', origin: { kind: 'user' } },
+    });
+    await entered;
+    const followUp = loop.submit({
+      role: 'user',
+      content: message('follow-up').content,
+      attributes: { promptId: 'follow-up', origin: { kind: 'user' } },
+    });
+    expect(pendingIds(loop)).toEqual(expect.arrayContaining([cancelled.id, followUp.id]));
+
+    expect(loop.cancel({ promptId: cancelled.id })).toBe(true);
+    await expect(loop.promptHandle(cancelled.id)!.completion).resolves.toMatchObject({ state: 'cancelled' });
+    expect(pendingIds(loop)).not.toContain(cancelled.id);
+    releaseHook();
+    await expect(loop.promptHandle(followUp.id)!.completion).resolves.toMatchObject({ state: 'completed' });
+    await loop.settled();
+
+    expect(aborted.map((event) => event.promptId)).toEqual([cancelled.id]);
+    expect(model.requests('main').map((request) => request.texts('user'))).toEqual([['follow-up']]);
+    expect(loop.history().map((entry) => [entry.role, entry.content])).toEqual([
+      ['user', [{ type: 'text', text: 'follow-up' }]],
+      ['assistant', [{ type: 'text', text: 'follow-up answer' }]],
+    ]);
+    expect(loop.snapshot()).toMatchObject({ state: 'idle', queue: [] });
+    const turnPrompts = (await agent.persistedWireRecords()).filter((record) => record.type === 'turn.prompt');
+    expect(turnPrompts.map((record) => [record['turnId'], record['promptId']])).toEqual([[0, followUp.id]]);
+    await agent.expectResumeMatches();
   });
 });

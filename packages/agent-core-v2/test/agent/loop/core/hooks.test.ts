@@ -11,7 +11,7 @@ import type {
 import { createMockProviderRequester, type MockProviderResponse } from '../../../harness/scripted-generate';
 import { createTestLoop as createLoop, loopHookRegistry } from './factory';
 import type { LoopToolContext } from '@moonshot-ai/core/loop/create-loop';
-import type { ToolExecuteContext, ToolExecutorHook, ToolReturn } from '#/tool/executor';
+import { textToolContent, type ToolExecuteContext, type ToolExecutorHook, type ToolReturn } from '#/tool/executor';
 import { executorFrom, successfulExecutor } from './executor';
 
 function requester(responses: MockProviderResponse[], onGenerate?: () => void): LoopLlmRequester {
@@ -604,6 +604,190 @@ describe('hook failure policies', () => {
     expect(tools.map((entry) => extractText(entry))).toEqual([
       '[hook failed] tool.batch-starting: bang',
       '[hook failed] tool.batch-starting: bang',
+    ]);
+    await loop.close();
+  });
+});
+
+describe('prompt cancel during turn start', () => {
+  function gate(): { readonly entered: Promise<AbortSignal>; readonly wait: (signal: AbortSignal) => Promise<void>; readonly release: () => void } {
+    let markEntered!: (signal: AbortSignal) => void;
+    let release!: () => void;
+    const entered = new Promise<AbortSignal>((resolve) => {
+      markEntered = resolve;
+    });
+    const released = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    return {
+      entered,
+      wait: async (signal) => {
+        markEntered(signal);
+        await released;
+      },
+      release,
+    };
+  }
+
+  const promptIdOf = (item: { readonly message: Message }) =>
+    item.message.role === 'user' ? item.message.attributes?.promptId : undefined;
+
+  it('withdraws a prompt whose turn.starting hook is still running and starts the next prompt in its place', async () => {
+    const held = gate();
+    let generates = 0;
+    const events: LoopEmitted[] = [];
+    const loop = createLoop({
+      requester: requester([done('second answer')], () => {
+        generates += 1;
+      }),
+      executor: successfulExecutor([]),
+      hooks: [
+        {
+          point: 'turn.starting',
+          id: 'gate',
+          hook: async (event, signal) => {
+            if (event.pending.some((item) => promptIdOf(item) === 'first')) await held.wait(signal);
+          },
+        },
+      ],
+    });
+    loop.subscribe((event) => events.push(event));
+
+    loop.submit(createUserMessage('first', { promptId: 'first' }));
+    const signal = await held.entered;
+    loop.submit(createUserMessage('second', { promptId: 'second' }));
+
+    expect(loop.cancel('first')).toEqual({ type: 'prompt.canceled', promptId: 'first', canceled: true });
+    expect(signal.aborted).toBe(true);
+    held.release();
+    await loop.waitForIdle();
+
+    expect(generates).toBe(1);
+    expect(events.filter((event) => event.type === 'turn.started').map((event) => [event.turnId, event.message])).toEqual([
+      [0, createUserMessage('second', { promptId: 'second' })],
+    ]);
+    expect(loop.state.messages.map((entry) => [entry.role, extractText(entry)])).toEqual([
+      ['user', 'second'],
+      ['assistant', 'second answer'],
+    ]);
+    expect(loop.state.nextTurnId).toBe(1);
+    await loop.close();
+  });
+
+  it('leaves no turn behind when the only prompt is withdrawn before its turn starts', async () => {
+    const held = gate();
+    let generates = 0;
+    const events: LoopEmitted[] = [];
+    const loop = createLoop({
+      requester: requester([], () => {
+        generates += 1;
+      }),
+      executor: successfulExecutor([]),
+      hooks: [{ point: 'turn.starting', id: 'gate', hook: async (_event, signal) => held.wait(signal) }],
+    });
+    loop.subscribe((event) => events.push(event));
+
+    loop.submit(createUserMessage('only', { promptId: 'only' }));
+    await held.entered;
+    expect(loop.cancel('only')).toMatchObject({ canceled: true });
+    held.release();
+    await loop.waitForIdle();
+
+    expect(generates).toBe(0);
+    expect(events.map((event) => event.type).filter((type) => type.startsWith('turn.') || type === 'message.appended')).toEqual([]);
+    expect(loop.state).toMatchObject({ status: 'idle', messages: [], nextTurnId: 0, inbox: { normal: [], notify: [], remind: [] } });
+    expect(loop.state.turn).toBeUndefined();
+    await loop.close();
+  });
+
+  it('ends an announced turn without its prompt when the prompt is cancelled while message.appending runs', async () => {
+    const held = gate();
+    let generates = 0;
+    const events: LoopEmitted[] = [];
+    const loop = createLoop({
+      requester: requester([done('second answer')], () => {
+        generates += 1;
+      }),
+      executor: successfulExecutor([]),
+      hooks: [
+        {
+          point: 'message.appending',
+          id: 'gate',
+          hook: async (event, signal) => {
+            if (promptIdOf(event.item) === 'first') await held.wait(signal);
+          },
+        },
+      ],
+    });
+    loop.subscribe((event) => events.push(event));
+
+    loop.submit(createUserMessage('first', { promptId: 'first' }));
+    const signal = await held.entered;
+    loop.submit(createUserMessage('second', { promptId: 'second' }));
+
+    expect(loop.cancel('first')).toMatchObject({ canceled: true });
+    expect(signal.aborted).toBe(true);
+    held.release();
+    await loop.waitForIdle();
+
+    expect(generates).toBe(1);
+    expect(events.find((event) => event.type === 'turn.ended' && event.turnId === 0)).toMatchObject({
+      outcome: { type: 'aborted' },
+    });
+    expect(loop.state.messages.map((entry) => [entry.role, extractText(entry)])).toEqual([
+      ['user', 'second'],
+      ['assistant', 'second answer'],
+    ]);
+    await loop.close();
+  });
+
+  it('answers a background completion that arrived while the withdrawn prompt was starting', async () => {
+    const held = gate();
+    let settleBackground!: (result: ToolReturn) => void;
+    let generates = 0;
+    const loop = createLoop({
+      requester: requester([done('', [call('call-bg', 'bg')]), done('started'), done('saw completion')], () => {
+        generates += 1;
+      }),
+      executor: executorFrom(['bg'], (context) => {
+        context.onDetach(() => ({ content: textToolContent('bg ack') }));
+        context.detach('bg ack');
+        return new Promise<ToolReturn>((resolve) => {
+          settleBackground = resolve;
+        });
+      }),
+      hooks: [
+        {
+          point: 'turn.starting',
+          id: 'gate',
+          hook: async (event, signal) => {
+            if (event.pending.some((item) => promptIdOf(item) === 'first')) await held.wait(signal);
+          },
+        },
+      ],
+    });
+    const backgroundStarted = once(loop, (event) => event.type === 'turn.ended' && event.turnId === 0);
+    loop.submit(createUserMessage('work'));
+    await backgroundStarted;
+
+    loop.submit(createUserMessage('first', { promptId: 'first' }));
+    await held.entered;
+    const completed = once(loop, (event) => event.type === 'tool.async_ended');
+    settleBackground({ content: textToolContent('background finished') });
+    await completed;
+
+    expect(loop.cancel('first')).toMatchObject({ canceled: true });
+    held.release();
+    await loop.waitForIdle();
+
+    expect(generates).toBe(3);
+    expect(loop.state.messages.map((entry) => [entry.role, extractText(entry)])).toEqual([
+      ['user', 'work'],
+      ['assistant', ''],
+      ['tool', 'bg ack'],
+      ['assistant', 'started'],
+      ['user', expect.stringContaining('call-bg')],
+      ['assistant', 'saw completion'],
     ]);
     await loop.close();
   });

@@ -275,6 +275,9 @@ export class AgentPromptProjection {
   }
 
   cancel(id: string): void {
+    for (const [turnId, pending] of this.pendingTurns) {
+      if (pending.waiter?.id === id) this.pendingTurns.delete(turnId);
+    }
     const waiter = this.waiters.get(id);
     if (waiter === undefined || waiter.settled === true) return;
     waiter.settled = true;

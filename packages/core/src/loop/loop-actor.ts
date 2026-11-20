@@ -10,7 +10,7 @@ import type { LoopCommand, LoopInput, UnfinishedTurn } from './contract/command'
 import { llmMessageTiming, type LoopAck, type LoopEmitted } from './contract/emitted';
 import type { HookPoint, LoopHooks } from './contract/hook';
 import type { Inbox, QueuedItem, RemindMessage } from './contract/inbox';
-import { CLOSED, CRASHED, STEERED, type AsyncToolOutcome, type StepOutcome, type TurnOutcome } from './contract/outcome';
+import { CANCELED, CLOSED, CRASHED, STEERED, type AsyncToolOutcome, type StepOutcome, type TurnOutcome } from './contract/outcome';
 import type { LoopProfile } from './contract/profile';
 import { isMessage, isObject } from './guards';
 import {
@@ -192,10 +192,11 @@ class LoopMailbox {
     return ack;
   }
 
-  cancel(promptId: string): LoopAck<'prompt.canceled'> {
+  cancel(promptId: string, withdrawnFromTurn: boolean): LoopAck<'prompt.canceled'> {
     const normal = this.normal.filter((message) => message.attributes?.promptId !== promptId);
     const notify = this.notifyEntries.filter((message) => message.attributes?.promptId !== promptId);
-    const canceled = normal.length !== this.normal.length || notify.length !== this.notifyEntries.length;
+    const canceled =
+      withdrawnFromTurn || normal.length !== this.normal.length || notify.length !== this.notifyEntries.length;
     this.normal = normal;
     this.notifyEntries = notify;
     const ack: LoopAck<'prompt.canceled'> = { type: 'prompt.canceled', promptId, canceled };
@@ -845,9 +846,31 @@ class LoopActor implements Loop {
   cancel(promptId: string): LoopAck<'prompt.canceled'> | undefined {
     this.check({ type: 'input.cancel', promptId });
     if (!this.open()) return undefined;
-    const ack = this.mailbox.cancel(promptId);
+    const ack = this.mailbox.cancel(promptId, this.withdrawFromTurn(promptId));
     this.kick();
     return ack;
+  }
+
+  private withdrawFromTurn(promptId: string): boolean {
+    const turn = this.turn;
+    if (turn === undefined || !this.isCurrent(turn)) return false;
+    const pending = turn.pending.filter(
+      (item) => item.kind === 'remind' || item.message.attributes?.promptId !== promptId,
+    );
+    if (pending.length === turn.pending.length) return false;
+    turn.pending = pending;
+    if (turn.announced) this.requestAbort(turn, CANCELED, true);
+    else this.retractTurn(turn);
+    return true;
+  }
+
+  private retractTurn(turn: LiveTurn): void {
+    turn.outcome = { type: 'aborted', reason: CANCELED };
+    turn.phase = 'finished';
+    turn.scope.abort(CANCELED);
+    this.mailbox.restore(turn.pending);
+    turn.pending = [];
+    this.clearTurn(turn);
   }
 
   start(): void {
@@ -1931,6 +1954,12 @@ class LoopActor implements Loop {
     turn.phase = 'finished';
     if (outcome.type === 'aborted') this.appendPendingReminders(turn);
     this.record({ type: 'turn.ended', turnId: turn.id, outcome, requestId: this.requestId });
+    this.clearTurn(turn);
+    if (outcome.type === 'aborted' && turn.continueAfterAbort === true) this.held = false;
+    this.schedule();
+  }
+
+  private clearTurn(turn: LiveTurn): void {
     this.completionHandoff = false;
     this.completionContinuation = undefined;
     this.turn = undefined;
@@ -1940,8 +1969,6 @@ class LoopActor implements Loop {
     this.requesterError = undefined;
     this.toolsSettled = false;
     this.completedTurns.push(turn);
-    if (outcome.type === 'aborted' && turn.continueAfterAbort === true) this.held = false;
-    this.schedule();
   }
 
   private appendPendingReminders(turn: LiveTurn): void {
