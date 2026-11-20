@@ -44,11 +44,12 @@ function projectToolResultOutput(output: unknown): unknown {
  *   `task.notified`, `plan.revision`, and the `permission.approval.*` pair
  *   (v1 surfaces approvals through the `requestApproval` callback, never as
  *   events).
- * - `prompt.*` other than `prompt.completed`: the v2 prompt service publishes
- *   them on the agent bus, but in v1 they are synthesized by the daemon
- *   services layer onto the global `IEventService` — the in-process SDK client
- *   never sees them. `prompt.completed(blocked|failed)` remains visible because
- *   a pre-turn rejection has no `turn.ended` counterpart that could settle the UI.
+ * - `prompt.*` other than `prompt.queued` and `prompt.completed`: the v2 prompt
+ *   service publishes them on the agent bus, but in v1 they are synthesized by
+ *   the daemon services layer onto the global `IEventService` — the in-process
+ *   SDK client never sees them. `prompt.queued` lets hosts reconcile local
+ *   queues. `prompt.completed(blocked|failed)` remains visible because a
+ *   pre-turn rejection has no `turn.ended` counterpart that could settle the UI.
  */
 const DROPPED_DOMAIN_EVENT_TYPES: ReadonlySet<string> = new Set([
   'context.spliced',

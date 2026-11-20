@@ -1,17 +1,13 @@
+import type { HookFailure } from '#/hook/result';
 import { createUserMessage, type UserMessage } from '#/llm/message';
 import { errorText } from '#/llm/protocol/errors';
-import type { HookPoint as LoopHookPoint, ToolHookPoint } from '../contract/hook';
-import type { HookFailedEvent } from '../contract/emitted';
-import type { Cause } from '../contract/outcome';
+import type { HookFailedEvent } from '#/loop/contract/emitted';
+import type { HookPoint as LoopHookPoint, ToolHookPoint } from '#/loop/contract/hook';
+import type { Cause } from '#/loop/contract/outcome';
 
 type HookPoint = LoopHookPoint | ToolHookPoint;
 
-export interface HookFailure {
-  hookId?: string;
-  error: unknown;
-  paused: boolean;
-  blocking: boolean;
-}
+export type { HookFailure };
 
 export interface HookFailureReport {
   readonly failure: HookFailure;

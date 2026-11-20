@@ -4,14 +4,10 @@ import { mkdtempSync, rmSync, appendFileSync, existsSync, mkdirSync, writeFileSy
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { SyncDescriptor } from '#/_base/di/descriptors';
-import { DisposableStore } from '#/_base/di/lifecycle';
-import { TestInstantiationService } from '#/_base/di/test';
-import { AppendLogCorruptedError, IAppendLogStore, type AppendLogTruncation } from '#/persistence/interface/appendLogStore';
-import { IFileSystemStorageService } from '#/persistence/interface/storage';
-import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
-import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
-import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
+import { AppendLogCorruptedError, AppendLogStore, type AppendLogTruncation } from '#/store/append-log';
+import { FileStorageService } from '#/store/backend/node';
+import { InMemoryStorageService } from '#/store/backend/memory';
+import type { Storage } from '#/store/storage';
 
 const enc = new TextEncoder();
 
@@ -22,9 +18,8 @@ interface Rec {
 const SCOPE = 'agents/main';
 const KEY = 'wire.jsonl';
 
-function chunkedStorage(chunks: Uint8Array[]): IFileSystemStorageService {
+function chunkedStorage(chunks: Uint8Array[]): Storage {
   return {
-    _serviceBrand: undefined,
     read: async () => undefined,
     readStream: async function* () {
       for (const c of chunks) yield c;
@@ -44,21 +39,25 @@ function chunkedStorage(chunks: Uint8Array[]): IFileSystemStorageService {
 }
 
 describe('AppendLogStore', () => {
-  let disposables: DisposableStore;
-  let ix: TestInstantiationService;
   let storage: InMemoryStorageService;
-  let record: IAppendLogStore;
+  let record: AppendLogStore;
+  let ownedLogs: AppendLogStore[];
 
   beforeEach(() => {
-    disposables = new DisposableStore();
-    ix = disposables.add(new TestInstantiationService());
+    ownedLogs = [];
     storage = new InMemoryStorageService();
-    ix.stub(IFileSystemStorageService, storage);
-    ix.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
-    record = ix.get(IAppendLogStore);
+    record = appendLog(storage);
   });
 
-  afterEach(() => disposables.dispose());
+  afterEach(() => {
+    for (const log of ownedLogs) log.dispose();
+  });
+
+  function appendLog(storage: Storage): AppendLogStore {
+    const log = new AppendLogStore(storage);
+    ownedLogs.push(log);
+    return log;
+  }
 
   async function collect<R>(scope: string, key: string): Promise<readonly R[]> {
     const out: R[] = [];
@@ -724,10 +723,7 @@ describe('AppendLogStore', () => {
     const full = `${JSON.stringify({ n: 1 })}\n${JSON.stringify({ n: 2 })}\n${JSON.stringify({ n: 3 })}\n`;
     const bytes = enc.encode(full);
     const chunks = [bytes.slice(0, 7), bytes.slice(7, 23), bytes.slice(23)];
-    const localIx = disposables.add(new TestInstantiationService());
-    localIx.stub(IFileSystemStorageService, chunkedStorage(chunks));
-    localIx.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
-    const log = localIx.get(IAppendLogStore);
+    const log = appendLog(chunkedStorage(chunks));
 
     const out: Rec[] = [];
     for await (const r of log.read<Rec>(SCOPE, KEY)) out.push(r);
@@ -740,10 +736,7 @@ describe('AppendLogStore', () => {
     const bytes = enc.encode(line1 + line2);
     const cut = bytes.indexOf(enc.encode('中')[0]!) + 1;
     const chunks = [bytes.slice(0, cut), bytes.slice(cut)];
-    const localIx = disposables.add(new TestInstantiationService());
-    localIx.stub(IFileSystemStorageService, chunkedStorage(chunks));
-    localIx.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
-    const log = localIx.get(IAppendLogStore);
+    const log = appendLog(chunkedStorage(chunks));
 
     const first: Array<{ type: string }> = [];
     for await (const r of log.read<{ type: string }>(SCOPE, KEY)) {
@@ -764,10 +757,7 @@ describe('AppendLogStore', () => {
     const content = `${JSON.stringify({ s: '中文日本語' })}\n`;
     const bytes = enc.encode(content);
     const chunks = Array.from(bytes, (b) => new Uint8Array([b]));
-    const localIx = disposables.add(new TestInstantiationService());
-    localIx.stub(IFileSystemStorageService, chunkedStorage(chunks));
-    localIx.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
-    const log = localIx.get(IAppendLogStore);
+    const log = appendLog(chunkedStorage(chunks));
 
     const readAll = async (): Promise<Array<{ s: string }>> => {
       const out: Array<{ s: string }> = [];
@@ -783,10 +773,7 @@ describe('AppendLogStore', () => {
     const full = `${JSON.stringify({ n: 1, s: '中文' })}\n${JSON.stringify({ n: 2, s: '日本語' })}\n`;
     const bytes = enc.encode(full);
     const chunks = Array.from(bytes, (b) => new Uint8Array([b]));
-    const localIx = disposables.add(new TestInstantiationService());
-    localIx.stub(IFileSystemStorageService, chunkedStorage(chunks));
-    localIx.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
-    const log = localIx.get(IAppendLogStore);
+    const log = appendLog(chunkedStorage(chunks));
 
     const out: Array<Rec & { s?: string }> = [];
     for await (const r of log.read<Rec & { s?: string }>(SCOPE, KEY)) out.push(r);
@@ -840,23 +827,18 @@ describe('AppendLogStore', () => {
 
 describe('AppendLogStore session lock integration', () => {
   let homeDir: string;
-  let disposables: DisposableStore;
   let storage: FileStorageService;
-  let log: IAppendLogStore;
+  let log: AppendLogStore;
 
   beforeEach(() => {
     homeDir = mkdtempSync(join(tmpdir(), 'append-log-lock-'));
     mkdirSync(join(homeDir, SCOPE), { recursive: true });
-    disposables = new DisposableStore();
-    const ix = disposables.add(new TestInstantiationService());
     storage = new FileStorageService(homeDir);
-    ix.stub(IFileSystemStorageService, storage);
-    ix.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
-    log = ix.get(IAppendLogStore);
+    log = new AppendLogStore(storage);
   });
 
   afterEach(() => {
-    disposables.dispose();
+    log.dispose();
     rmSync(homeDir, { recursive: true, force: true });
   });
 

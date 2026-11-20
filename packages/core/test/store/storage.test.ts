@@ -4,15 +4,15 @@ import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import type { IFileSystemStorageService } from '#/persistence/interface/storage';
-import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
-import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
+import type { Storage } from '#/store/storage';
+import { FileStorageService } from '#/store/backend/node';
+import { InMemoryStorageService } from '#/store/backend/memory';
 
 const enc = new TextEncoder();
 const dec = new TextDecoder();
 
 interface ServiceHandle {
-  readonly service: IFileSystemStorageService;
+  readonly service: Storage;
   readonly cleanup?: () => Promise<void>;
 }
 
@@ -21,7 +21,7 @@ function storageServiceSuite(
   setup: () => Promise<ServiceHandle>,
 ): void {
   describe(name, () => {
-    let service: IFileSystemStorageService;
+    let service: Storage;
     let cleanup: (() => Promise<void>) | undefined;
 
     beforeEach(async () => {

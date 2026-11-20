@@ -9,7 +9,7 @@ import type {
   ToolBatchStartingEvent,
 } from '@moonshot-ai/core/loop/index';
 import { createMockProviderRequester, type MockProviderResponse } from '../../../harness/scripted-generate';
-import { createTestLoop as createLoop } from './factory';
+import { createTestLoop as createLoop, loopHookRegistry } from './factory';
 import type { LoopToolContext } from '@moonshot-ai/core/loop/create-loop';
 import type { ToolExecuteContext, ToolExecutorHook, ToolReturn } from '#/tool/executor';
 import { executorFrom, successfulExecutor } from './executor';
@@ -496,12 +496,12 @@ describe('hook failure policies', () => {
     const failed = events.filter((event) => event.type === 'hook.failed');
     expect(failed).toHaveLength(1);
     expect(failed[0]).toMatchObject({ point: 'step.starting', hookId: 'flaky', paused: true });
-    expect(loop.hooks.list().find((hook) => hook.id === 'flaky')?.paused).toBe(true);
+    expect(loopHookRegistry(loop).list().find((hook) => hook.id === 'flaky')?.paused).toBe(true);
     expect(generates).toBe(2);
     await loop.close();
   });
 
-  it('converts a throwing step.starting hook with the block policy into a blocked turn', async () => {
+  it('converts throwing step hooks with the block policy into blocked turns', async () => {
     let thrown = false;
     const scripted = requester([done('after')]);
     const events: LoopEmitted[] = [];
@@ -534,6 +534,36 @@ describe('hook failure policies', () => {
     expect(failed).toHaveLength(1);
     expect(failed[0]).toMatchObject({ point: 'step.starting', hookId: 'strict', paused: false });
     await loop.close();
+
+    let stopThrown = false;
+    const stoppingEvents: LoopEmitted[] = [];
+    const stoppingLoop = createLoop({
+      requester: requester([done('before stop'), done('after notification')]),
+      executor: successfulExecutor(['lookup', 'alpha', 'beta', 'work'], ''),
+      hooks: [
+        {
+          point: 'step.stopping',
+          id: 'strict-stopping',
+          onFailure: 'block',
+          hook: () => {
+            if (stopThrown) return;
+            stopThrown = true;
+            throw new Error('stop');
+          },
+        },
+      ],
+    });
+    stoppingLoop.subscribe((event) => stoppingEvents.push(event));
+    const stoppingFollowup = once(stoppingLoop, (event) => event.type === 'turn.ended' && event.turnId === 1);
+    const stoppingOutcome = await stoppingLoop.runTurn(prompt('hello'));
+    expect(stoppingOutcome).toEqual({
+      type: 'blocked',
+      at: 'step.stopping',
+      cause: { by: 'strict-stopping', reason: 'hook_failed', message: '[hook failed] step.stopping: stop' },
+    });
+    await stoppingFollowup;
+    expect(stoppingEvents.filter((event) => event.type === 'hook.failed')).toHaveLength(1);
+    await stoppingLoop.close();
   });
 
   it('applies a tool.batch-starting block-policy failure to every call', async () => {
@@ -624,7 +654,7 @@ describe('notify turn handoff', () => {
     await resetting;
     loop.start();
     await afterReset;
-    expect(loop.hooks.list()).toHaveLength(1);
+    expect(loopHookRegistry(loop).list()).toHaveLength(1);
     expect(events.filter((event) => event.type === 'step.started').map((event) => [event.turnId, event.step])).toEqual([
       [0, 1],
       [1, 1],

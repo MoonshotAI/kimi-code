@@ -1,13 +1,31 @@
 // Core hook 组合契约；不包含 Issue #4439 的配置 regex matcher，也不包含 loop 调度。
 import { describe, expect, it, vi } from 'vitest';
 
-import { composeToolExecutorHooks } from '#/tool/hook-composer';
+import { createToolExecutorHookRegistry } from '#/hook/tool-executor/registry';
 import { textToolContent } from '#/tool/tool-executor';
 import type {
   ToolDecisionContext,
   ToolExecutionEvent,
+  ToolExecutorHook,
   ToolResult,
 } from '#/tool/types';
+
+function registeredToolExecutorHook(hooks: readonly ToolExecutorHook[]): ToolExecutorHook {
+  const registry = createToolExecutorHookRegistry();
+  for (const hook of hooks) {
+    if (hook.validating !== undefined) registry.addToolHook({ point: 'validating', hook: hook.validating.bind(hook) });
+    if (hook.starting !== undefined) registry.addToolHook({ point: 'starting', hook: hook.starting.bind(hook) });
+    if (hook.permitting !== undefined) registry.addToolHook({ point: 'permitting', hook: hook.permitting.bind(hook) });
+    if (hook.beforeExecute !== undefined) {
+      registry.addToolHook({ point: 'beforeExecute', hook: hook.beforeExecute.bind(hook) });
+    }
+    if (hook.afterExecute !== undefined) {
+      registry.addToolHook({ point: 'afterExecute', hook: hook.afterExecute.bind(hook) });
+    }
+    if (hook.observe !== undefined) registry.addToolHook({ point: 'observe', hook: hook.observe.bind(hook) });
+  }
+  return registry.hook;
+}
 
 function decisionContext(args: unknown): ToolDecisionContext {
   return {
@@ -28,7 +46,7 @@ function successResult(text = 'raw'): ToolResult {
   };
 }
 
-describe('composeToolExecutorHooks', () => {
+describe('createToolExecutorHookRegistry', () => {
   it('chains validating rewrites in order and preserves hook this binding', () => {
     const first = {
       label: 'first',
@@ -45,7 +63,7 @@ describe('composeToolExecutorHooks', () => {
         return { args: { first: 1, second: 2 } };
       },
     };
-    const composed = composeToolExecutorHooks([first, second]);
+    const composed = registeredToolExecutorHook([first, second]);
     expect(composed.validating?.(decisionContext({ initial: true }))).toEqual({
       args: { first: 1, second: 2 },
     });
@@ -54,14 +72,14 @@ describe('composeToolExecutorHooks', () => {
   it('stops validating and starting at the first rejection', async () => {
     const laterValidating = vi.fn();
     const laterStarting = vi.fn();
-    const rejected = composeToolExecutorHooks([
+    const rejected = registeredToolExecutorHook([
       { validating: () => ({ reject: 'validation denied' }) },
       { validating: laterValidating },
     ]);
     expect(rejected.validating?.(decisionContext({}))).toEqual({ reject: 'validation denied' });
     expect(laterValidating).not.toHaveBeenCalled();
 
-    const startingRejected = composeToolExecutorHooks([
+    const startingRejected = registeredToolExecutorHook([
       { starting: () => ({ reject: 'starting denied' }) },
       { starting: laterStarting },
     ]);
@@ -72,7 +90,7 @@ describe('composeToolExecutorHooks', () => {
   });
 
   it('combines starting rewrites with skipPermitting', async () => {
-    const composed = composeToolExecutorHooks([
+    const composed = registeredToolExecutorHook([
       { starting: () => ({ args: { rewritten: true } }) },
       {
         starting: (context) => {
@@ -92,7 +110,7 @@ describe('composeToolExecutorHooks', () => {
   // https://github.com/MoonshotAI/kimi-code/issues/4437
   it('chains permitting rewrites until a rejection and skips later hooks', async () => {
     const later = vi.fn();
-    const composed = composeToolExecutorHooks([
+    const composed = registeredToolExecutorHook([
       { permitting: () => ({ args: { first: true } }) },
       {
         permitting: (context) => {
@@ -110,7 +128,7 @@ describe('composeToolExecutorHooks', () => {
 
   it('awaits beforeExecute hooks in registration order', async () => {
     const events: string[] = [];
-    const composed = composeToolExecutorHooks([
+    const composed = registeredToolExecutorHook([
       {
         beforeExecute: async () => {
           await Promise.resolve();
@@ -134,7 +152,7 @@ describe('composeToolExecutorHooks', () => {
       result: successResult(),
       set: () => {},
     };
-    const composed = composeToolExecutorHooks([
+    const composed = registeredToolExecutorHook([
       {
         afterExecute: () => ({
           ...successResult('first'),
@@ -153,7 +171,7 @@ describe('composeToolExecutorHooks', () => {
 
   it('isolates observe failures and continues with the remaining hooks', () => {
     const second = vi.fn();
-    const composed = composeToolExecutorHooks([
+    const composed = registeredToolExecutorHook([
       {
         observe: () => {
           throw new Error('observer failed');
@@ -166,8 +184,8 @@ describe('composeToolExecutorHooks', () => {
     expect(second).toHaveBeenCalledWith(event);
   });
 
-  it('returns no decisions and the original result when no hooks make changes', async () => {
-    const composed = composeToolExecutorHooks([]);
+  it('returns no decisions without rewrites and supports nonblocking registrations', async () => {
+    const composed = registeredToolExecutorHook([]);
     const context = decisionContext({});
     const result = successResult();
     expect(composed.validating?.(context)).toBeUndefined();
@@ -179,6 +197,71 @@ describe('composeToolExecutorHooks', () => {
       result,
       set: () => {},
     })).resolves.toBe(result);
+
+    const registry = createToolExecutorHookRegistry();
+    const events: string[] = [];
+    const lifecycle: { type: string; hookId: string; point: string }[] = [];
+    registry.subscribe((event) => lifecycle.push(event));
+    let release = (): void => {};
+    const waiting = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    registry.addToolHook({
+      point: 'starting',
+      id: 'observer',
+      blocking: false,
+      hook: async () => {
+        events.push('nonblocking');
+        await waiting;
+      },
+    });
+    registry.addToolHook({
+      point: 'starting',
+      id: 'failed',
+      blocking: false,
+      hook: () => {
+        throw new Error('observer failed');
+      },
+    });
+    registry.addToolHook({
+      point: 'starting',
+      id: 'blocking',
+      hook: () => {
+        events.push('blocking');
+        return { args: { rewritten: true } };
+      },
+    });
+    await expect(registry.hook.starting?.(context)).resolves.toEqual({ args: { rewritten: true } });
+    expect(events).toEqual(['nonblocking', 'blocking']);
+    expect(registry.list()).toEqual([
+      { id: 'observer', point: 'starting', onFailure: 'pause', paused: false, mode: 'nonblocking' },
+      { id: 'failed', point: 'starting', onFailure: 'pause', paused: true, mode: 'nonblocking' },
+      { id: 'blocking', point: 'starting', onFailure: 'pause', paused: false, mode: 'blocking' },
+    ]);
+    expect(lifecycle).toEqual([
+      { type: 'hook.added', hookId: 'observer', point: 'starting', mode: 'nonblocking' },
+      { type: 'hook.added', hookId: 'failed', point: 'starting', mode: 'nonblocking' },
+      { type: 'hook.added', hookId: 'blocking', point: 'starting', mode: 'blocking' },
+      { type: 'hook.paused', hookId: 'failed', point: 'starting', reason: 'failed' },
+      {
+        type: 'hook.failed',
+        hookId: 'failed',
+        point: 'starting',
+        error: new Error('observer failed'),
+        paused: true,
+        blocking: false,
+        mode: 'nonblocking',
+      },
+    ]);
+    expect(registry.pause('observer')).toBe(true);
+    expect(registry.resume('observer')).toBe(true);
+    expect(registry.remove('observer')).toBe(true);
+    expect(lifecycle.slice(5)).toEqual([
+      { type: 'hook.paused', hookId: 'observer', point: 'starting', reason: 'manual' },
+      { type: 'hook.resumed', hookId: 'observer', point: 'starting' },
+      { type: 'hook.removed', hookId: 'observer', point: 'starting', mode: 'nonblocking' },
+    ]);
+    release();
   });
 
 });
@@ -186,7 +269,7 @@ describe('composeToolExecutorHooks', () => {
 describe('As a policy author, I want partially implemented hooks to be optional so that composed policies only act on decisions they understand', () => {
   it('skips missing validating hooks and undefined validating decisions', () => {
     const later = vi.fn(() => ({ args: { validated: true } }));
-    const composed = composeToolExecutorHooks([
+    const composed = registeredToolExecutorHook([
       {},
       { validating: () => undefined },
       { validating: later },
@@ -198,7 +281,7 @@ describe('As a policy author, I want partially implemented hooks to be optional 
 
   it('skips missing starting hooks and undefined starting decisions', async () => {
     const later = vi.fn(() => ({ args: { started: true } }));
-    const composed = composeToolExecutorHooks([
+    const composed = registeredToolExecutorHook([
       {},
       { starting: () => undefined },
       { starting: later },
@@ -212,7 +295,7 @@ describe('As a policy author, I want partially implemented hooks to be optional 
 
   it('skips missing permitting hooks and undefined permitting decisions', async () => {
     const later = vi.fn(() => ({ args: { permitted: true } }));
-    const composed = composeToolExecutorHooks([
+    const composed = registeredToolExecutorHook([
       {},
       { permitting: () => undefined },
       { permitting: later },
@@ -231,7 +314,7 @@ describe('As a policy author, I want partially implemented hooks to be optional 
       result: successResult(),
       set: () => {},
     };
-    const composed = composeToolExecutorHooks([
+    const composed = registeredToolExecutorHook([
       {},
       { afterExecute: () => undefined },
       {
@@ -249,7 +332,7 @@ describe('As a policy author, I want partially implemented hooks to be optional 
 
 describe('As a permission policy author, I want argument rewrites and skipPermitting to remain independent so that composed decisions do not add unintended behavior', () => {
   it('returns skipPermitting without args when no starting rewrite occurred', async () => {
-    const composed = composeToolExecutorHooks([
+    const composed = registeredToolExecutorHook([
       { starting: () => ({ skipPermitting: true }) },
     ]);
 
@@ -259,7 +342,7 @@ describe('As a permission policy author, I want argument rewrites and skipPermit
   });
 
   it('returns starting args when no hook skips permitting', async () => {
-    const composed = composeToolExecutorHooks([
+    const composed = registeredToolExecutorHook([
       { starting: () => ({ args: { rewritten: true } }) },
       { starting: () => undefined },
     ]);
@@ -270,7 +353,7 @@ describe('As a permission policy author, I want argument rewrites and skipPermit
   });
 
   it('returns permitting args after all hooks decline to reject', async () => {
-    const composed = composeToolExecutorHooks([
+    const composed = registeredToolExecutorHook([
       { permitting: () => ({ args: { first: true } }) },
       {
         permitting: (current) => {

@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'pathe';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
+import { FileStorageService } from '#/store/backend/node';
 
 const isWin = process.platform === 'win32';
 const encoder = new TextEncoder();

@@ -1,7 +1,6 @@
 ### 新功能
 
 - 支持 SSH 远程项目，本机离线后任务继续运行。
-- 支持安装 `use-kimi-code` 技能，可以跟其他 Agent 客户端交互，详情见 [Agent to Agent](https://moonshotai.github.io/kimi-code/zh/guides/other-agents.html)。
 
 ### 优化
 
