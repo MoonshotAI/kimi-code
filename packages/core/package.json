@@ -45,7 +45,8 @@
     "ajv-formats": "^3.0.1",
     "openai": "^6.34.0",
     "radashi": "^12.9.1",
-    "undici": "^7.27.1"
+    "undici": "^7.27.1",
+    "uuid": "14.0.1"
   },
   "devDependencies": {
     "pino": "^9.5.0"

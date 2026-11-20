@@ -75,6 +75,7 @@
     "tsdown": "0.22.0",
     "typescript": "6.0.2",
     "unplugin-icons": "^23.0.0",
+    "uuid": "14.0.1",
     "vite": "^6.3.3",
     "vitest": "4.1.4",
     "vue": "^3.5.35",

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { v4 as randomUUID } from 'uuid';
 import { onMounted, onUnmounted, ref } from 'vue';
 import { nextBrowserMenuIndex } from '../../lib/browserMenuNavigation';
 import { useI18n } from 'vue-i18n';
@@ -70,7 +71,7 @@ function boundedQueryTerms(): string {
 }
 
 const registration: BrowserOverlayMenuRegistration = {
-  id: `browser.address.${crypto.randomUUID()}`,
+  id: `browser.address.${randomUUID()}`,
   width: 360,
   placement: 'bottom-start',
   preserveFocus: true,
