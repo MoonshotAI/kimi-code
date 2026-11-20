@@ -1,12 +1,14 @@
 name: Desktop E2E
 
-# Optional: the Electron journeys run in up to five shards on separate machines,
+# Optional: the Electron journeys run in up to four shards on separate machines,
 # and the result job reports them under one check name. It is not a required
-# check. Pull requests run the journeys only when they change them or carry the
-# desktop-e2e label, because every run takes five of the organization's macOS
-# machines. main runs all of them on every push and every night, and a failure
-# there opens or updates one tracking issue. The protected first turn also runs
-# in the L0 smoke gate on every pull request.
+# check. The organization runs at most five macOS jobs at once: four shards plus
+# the L0 smoke gate that every push also starts fill them exactly, and a fifth
+# shard would queue behind it. For the same reason pull requests run the
+# journeys only when they change them or carry the desktop-e2e label. main runs
+# all of them on every push and every night, and a failure there opens or
+# updates one tracking issue. The protected first turn also runs in the L0 smoke
+# gate on every pull request.
 on:
   workflow_dispatch:
     inputs:
@@ -64,7 +66,7 @@ jobs:
         env:
           MODE: ${{ steps.select.outputs.mode }}
           SPECS: ${{ steps.select.outputs.specs }}
-          MAX_SHARDS: 5
+          MAX_SHARDS: 4
         run: |
           set -euo pipefail
           read -r -a specs <<< "$SPECS"

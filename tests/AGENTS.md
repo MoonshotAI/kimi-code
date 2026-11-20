@@ -89,14 +89,14 @@ pnpm --filter kimi-code-app run e2e --project=smoke
 
 默认 Desktop 运行排除标记为 `@quarantine` 的单条用例。同一文件的其他用例照常运行。[Desktop E2E 工作流](../.github/workflows/desktop-e2e.yml)是可选检查，不阻断合并。
 
-- **PR 上**：一次全量运行要占用组织的 5 台 macOS 机器，所以只在两种情况下运行。由[选择脚本](../apps/desktop/scripts/ci/select-e2e-specs.mjs)判断：
+- **PR 上**：组织最多同时跑 5 台 macOS，一次全量运行就要占其中 4 台，所以只在两种情况下运行。由[选择脚本](../apps/desktop/scripts/ci/select-e2e-specs.mjs)判断：
   - **改了旅程本身**：包括 `apps/desktop/e2e/`、`apps/desktop/test/e2e/`、testkit、选择脚本或工作流。只改了 spec 时跑改动的 spec，否则跑全部旅程。
   - **打了 `desktop-e2e` 标签**：跑全部旅程。
 
   其他 PR 上汇总检查显示为跳过，所以绿灯只代表真的跑过。
 - **合入 main 后**：跑全部旅程。失败时开一个标题为 `Desktop E2E journeys are failing on main` 的 issue，列出失败的旅程，以及上次通过以来的提交；之后再失败就追加评论，main 再次通过后自动关闭。
 - **每晚**：另外不重试地跑一次隔离用例，结果只作参考。
-- **分片**：旅程最多分成 5 片，在不同的 macOS 机器上并行跑；只改了 spec 时，片数不超过改动的文件数。每片都会先跑一遍被依赖的首轮 smoke，`Desktop E2E journeys (optional)` 汇总各片的结果。当前隔离十条。其中九条在基线 `0ee6dff5f` 上用同一 Electron 构建逐条复现，涉及断流恢复、侧聊与压缩、后台命令、失败转录、插话、审批中停止、附件、默认设置和外观；另一条是重启后恢复面板、侧栏和窗口尺寸，只在 CI 的 macOS runner 上失败，窗口尺寸回到了默认值，本地通过。隔离期间，默认运行的绿灯不涵盖这十个场景。
+- **分片**：旅程最多分成 4 片，在不同的 macOS 机器上并行跑；只改了 spec 时，片数不超过改动的文件数。每次推送都会同时启动 L0 smoke gate，4 片加上它正好占满 5 台；实测分成 5 片时，总有一片要排队，整体反而更慢。每片都会先跑一遍被依赖的首轮 smoke，`Desktop E2E journeys (optional)` 汇总各片的结果。当前隔离十条。其中九条在基线 `0ee6dff5f` 上用同一 Electron 构建逐条复现，涉及断流恢复、侧聊与压缩、后台命令、失败转录、插话、审批中停止、附件、默认设置和外观；另一条是重启后恢复面板、侧栏和窗口尺寸，只在 CI 的 macOS runner 上失败，窗口尺寸回到了默认值，本地通过。隔离期间，默认运行的绿灯不涵盖这十个场景。
 
 每条隔离用例都登记在[隔离清单](quarantine.yaml)，写明原因、负责人、开始日期和到期日。`pnpm lint` 里的 `scripts/checks/quarantine.mjs` 用当前提交的日期核对，以下情况都会失败：打了标签却没登记、登记了却找不到用例、已过期、到期日比提交日期晚 60 天以上，以及隔离 L0 或 smoke 用例。用提交日期而不是运行当天的日期，是为了让同一个提交的检查结果不随时间改变。到期前修好用例并去掉标签，或者写明新原因、改到期日续期。
 
