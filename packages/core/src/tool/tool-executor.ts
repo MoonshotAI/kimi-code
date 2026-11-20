@@ -5,7 +5,7 @@ import { abortedToolOutput, isUserCancellation } from '#/utils/abort';
 import { clock } from '#/utils/clock';
 import { log, type LogContext } from '#/utils/log';
 import { now } from '#/utils/now';
-import { parseToolCallArguments } from '#/tool/args';
+import { applyToolArgAliases, parseToolCallArguments } from '#/tool/args';
 
 import { memoryOutputStore } from './output-store';
 import { ToolTimeoutError } from './types';
@@ -327,7 +327,7 @@ class CallControl<TContext> {
           parsed.error,
         ));
       }
-      this.setArgs(parsed.data);
+      this.setArgs(applyToolArgAliases(tool?.argAliases, parsed.data));
       if (tool === undefined) {
         throw new ToolStop(rejected('resolve', `Tool "${this.call.name}" not found`, undefined, 'resolve'));
       }
