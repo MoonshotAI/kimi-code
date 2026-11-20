@@ -252,6 +252,10 @@ export function useModelProviderState(
     );
   }
 
+  function normalizeSessionModel(sessionId: string, modelId: string): Promise<boolean> {
+    return writeSessionModel(sessionId, modelId, rawState.thinkingBySession[sessionId]);
+  }
+
   async function activateSkill(
     skillName: string,
     args?: string,
@@ -561,6 +565,7 @@ export function useModelProviderState(
     loadProviders,
     setModel,
     setSessionModel,
+    normalizeSessionModel,
     thinkingLevelForModelId,
     thinkingLevelForSessionId,
     resolveThinkingForPrompt,
