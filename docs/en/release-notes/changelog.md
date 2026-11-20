@@ -10,10 +10,10 @@ This page documents the changes in each Kimi Code CLI release.
 
 ### Bug Fixes
 
-- Web: Fix draft thinking effort selections reverting to the model default after sending.
 - Fix turn-specific fork failures after restoring sessions with in-turn steering.
-- Web: Fix the input composer disappearing when accessed over insecure HTTP.
 - Keep queued prompts pending until background notification turns finish.
+- Web: Fix draft thinking effort selections reverting to the model default after sending.
+- Web: Fix the input composer disappearing when accessed over insecure HTTP.
 
 ## 2.7.0 (2026-11-19)
 
