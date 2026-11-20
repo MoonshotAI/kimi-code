@@ -657,7 +657,23 @@ export function createActor<TState, TEvent extends ActorEvent = never>(
   };
 
   const settleIdle = (): void => {
-    if (idleWaiters.size === 0 || !isQuiescent() || !isIdleNow()) return;
+    if (!isQuiescent() || !isIdleNow()) return;
+    if (options.onIdle !== undefined) {
+      const outerMutating = mutating;
+      mutating = true;
+      try {
+        withTurnControl((ctrl) => {
+          options.onIdle?.(ctrl);
+        });
+      } finally {
+        mutating = outerMutating;
+      }
+      if (!isQuiescent()) {
+        kick();
+        return;
+      }
+    }
+    if (idleWaiters.size === 0) return;
     const waiters = Array.from(idleWaiters);
     idleWaiters.clear();
     for (const resolve of waiters) resolve();

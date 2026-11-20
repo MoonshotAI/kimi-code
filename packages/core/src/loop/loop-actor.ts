@@ -1,9 +1,9 @@
+import { createActor, type Actor, type ActorControl } from '#/actor/index';
 import type { Message, ToolDescription, UserMessage } from '#/llm/message';
 import { createPolicyRegistry, type PolicyRegistry } from '#/llm/policy/registry';
 import { isToolDetachAck } from '#/tool/tool-executor';
 import type { ToolExecutionResponse, ToolResult } from '#/tool/types';
-import { createAbortScope, type AbortScope } from '#/utils/abort';
-import { waitEvent, type WaitOpts } from '#/utils/wait';
+import type { WaitOpts } from '#/utils/wait';
 import type { CreateLoopOptions, Loop, LoopToolExecutor } from './create-loop';
 import type { LoopCommand, LoopInput, UnfinishedTurn } from './contract/command';
 import type { LoopAck, LoopEmitted } from './contract/emitted';
@@ -256,23 +256,16 @@ class LoopMailbox {
   }
 }
 
-type ActorMessage =
-  | { readonly type: 'turn.start'; readonly turn: LiveTurn }
-  | { readonly type: 'tool.prepared'; readonly slot: LiveTool }
-  | { readonly type: 'tool.responded'; readonly slot: LiveTool; readonly response: ToolExecutionResponse }
-  | { readonly type: 'tool.failed'; readonly slot: LiveTool; readonly error: unknown }
-  | { readonly type: 'tool.completed'; readonly slot: LiveTool; readonly result: ToolResult }
-  | { readonly type: 'tool.detached_completed'; readonly slot: LiveTool; readonly outcome: AsyncToolOutcome; readonly completion: UserMessage }
-  | { readonly type: 'tool.detached_rejected'; readonly slot: LiveTool; readonly outcome: AsyncToolOutcome; readonly completion: UserMessage }
-  | { readonly type: 'tool.abort'; readonly toolCallId: string; readonly reason?: unknown }
-  | { readonly type: 'abort.requested'; readonly turn?: LiveTurn; readonly reason?: unknown; readonly continueAfterAbort: boolean }
-  | { readonly type: 'continue'; readonly force: boolean }
-  | { readonly type: 'close' }
-  | {
-      readonly type: 'close.detached';
-      readonly completions: readonly { readonly slot: LiveTool; readonly outcome: AsyncToolOutcome; readonly message: UserMessage }[];
-    }
-  | { readonly type: 'close.failed'; readonly error: unknown };
+type LoopActorState =
+  | { readonly status: 'idle'; readonly pendingContinue?: { readonly force: boolean } }
+  | { readonly status: 'running'; readonly turn: LiveTurn }
+  | { readonly status: 'resetting' };
+
+type LoopControl = ActorControl<LoopActorState, LoopEmitted>;
+
+function turnOf(state: LoopActorState): LiveTurn | undefined {
+  return state.status === 'running' ? state.turn : undefined;
+}
 
 interface ActiveToolBatch extends TurnToolBatch {
   readonly outcomes: (ToolCallOutcome | null | undefined)[];
@@ -288,36 +281,24 @@ class LoopActor implements Loop {
   private readonly hook: Partial<LoopHooks>;
   private readonly turnHooks = createTurnHookRegistry();
   private readonly turnRuntime: TurnRuntime;
-  private readonly root: AbortScope = createAbortScope();
   private readonly projection = loopProjection();
+  private readonly actor: Actor<LoopActorState, LoopEmitted>;
   private mailbox: LoopMailbox;
-  private readonly listeners = new Set<(event: LoopEmitted) => void>();
-  private readonly idleWaiters = new Set<() => void>();
-  private readonly messages: ActorMessage[] = [];
-  private readonly events: LoopEmitted[] = [];
-  private readonly completedTurns: LiveTurn[] = [];
   private readonly toolContext?: CreateLoopOptions['toolContext'];
   private readonly completionFactory?: CreateLoopOptions['completionMessage'];
   private readonly shouldQueueTaskNotification?: CreateLoopOptions['shouldQueueTaskNotification'];
   private readonly abortGraceMs: number;
-  private readonly onListenerError?: CreateLoopOptions['onListenerError'];
-  private phase: 'idle' | 'running' | 'closed' = 'idle';
   private held = true;
   private durable: LoopRecordState;
-  private turn: LiveTurn | undefined;
   private readonly tools = new Map<string, LiveTool>();
   private toolBatch: ActiveToolBatch | undefined;
   private completedToolBatch: { readonly turnId: number; readonly step: number; readonly result: TurnToolBatchResult } | undefined;
   private requesterTemplate: LoopLlmRequester | undefined;
   private revision = 0;
   private seq = 0;
-  private kicking = false;
-  private dispatching = false;
-  private turnTransitions = 0;
-  private resetting = false;
-  private closePending = false;
-  private closeCompletion?: Deferred<void>;
-  private completionContinuation?: () => void;
+  private readonly completionWaiters = new Set<() => void>();
+  private readonly detachedCloseWaiters = new Set<() => void>();
+  private closeFailure: { readonly error: unknown } | undefined;
   private completionHandoff = false;
   private lifecycleGeneration = 0;
   private lifecycleDrained = false;
@@ -349,24 +330,52 @@ class LoopActor implements Loop {
     this.completionFactory = options.completionMessage;
     this.shouldQueueTaskNotification = options.shouldQueueTaskNotification;
     this.abortGraceMs = options.abortGraceMs ?? 2_500;
-    this.onListenerError = options.onListenerError;
     this.hook = options.hook ?? {};
     this.policy = createPolicyRegistry();
     this.waitForTasks = createWaitForTasks(() =>
       Array.from(this.tools.values()).filter((slot) => slot.detached && !slot.done),
     );
-    this.turnHooks.addTurnHook({ point: 'starting', id: 'loop', hook: (event, ctx) => this.ownerStarting(event, ctx) });
-    this.turnHooks.addTurnHook({ point: 'requesting', id: 'loop', hook: (event, ctx) => this.ownerRequesting(event, ctx) });
-    this.turnHooks.addTurnHook({ point: 'continuing', id: 'loop', hook: (event, ctx) => this.ownerContinuing(event, ctx) });
-    this.turnHooks.addTurnHook({ point: 'ending', id: 'loop', hook: (event, ctx) => this.ownerEnding(event, ctx) });
+    this.actor = createActor<LoopActorState, LoopEmitted>({
+      initial: { status: 'idle' },
+      onListenerError: options.onListenerError,
+      onEmit: (event) => {
+        this.durable = this.projection.reduce(this.durable, {
+          seq: this.seq,
+          time: 0,
+          event: event as LoopRecord,
+        });
+        this.seq += 1;
+        if (event.type === 'context.settled') this.revision += 1;
+      },
+      onSchedule: (ctrl) => {
+        if (ctrl.state.status !== 'idle' || this.hasPendingCompletions) return;
+        if (ctrl.state.pendingContinue !== undefined) {
+          const { force } = ctrl.state.pendingContinue;
+          ctrl.setState({ status: 'idle' });
+          this.continueTurn(ctrl, force);
+          return;
+        }
+        this.schedule(ctrl);
+      },
+      onIdle: () => this.settleLifecycle(),
+      onClose: (ctrl) => this.closeRuntime(ctrl),
+      isIdle: (state) => state.status === 'idle' && !this.hasPendingCompletions && !this.canSchedule(state),
+    });
+    this.turnHooks.registerTurnHooks({
+      starting: (event, ctx) => this.actor.act(() => this.ownerStarting(event, ctx)),
+      requesting: (event, ctx) => this.actor.act(() => this.ownerRequesting(event, ctx)),
+      continuing: (event, ctx) => this.actor.act(() => this.ownerContinuing(event, ctx)),
+      ending: (event, ctx) => this.actor.act(() => this.ownerEnding(event, ctx)),
+    });
+    const rootSignal = this.actor.act((ctrl) => ctrl.rootSignal);
     this.turnRuntime = {
       request: {
         current: () => this.requesterTemplate,
         policy: this.policy,
       },
       tools: {
-        executeBatch: (batch) => this.executeToolBatch(batch),
-        abortBatch: (batch, reason, options) => this.abortToolBatch(batch, reason, options),
+        executeBatch: (batch) => this.actor.act(() => this.executeToolBatch(batch)),
+        abortBatch: (batch, reason, options) => this.actor.act(() => this.abortToolBatch(batch, reason, options)),
       },
       hooks: this.turnHooks.hook,
       extensions: this.hook,
@@ -386,9 +395,22 @@ class LoopActor implements Loop {
           if (this.turn?.id === turnId) this.turn.pending = [];
         },
       },
-      signal: this.root.signal,
+      signal: rootSignal,
       abortGraceMs: this.abortGraceMs,
     };
+  }
+
+  private get turn(): LiveTurn | undefined {
+    return turnOf(this.actor.state);
+  }
+
+  private get phase(): 'idle' | 'running' | 'closed' {
+    if (this.actor.closing || this.actor.closed) return 'closed';
+    return this.actor.state.status === 'running' ? 'running' : 'idle';
+  }
+
+  private get resetting(): boolean {
+    return this.actor.state.status === 'resetting';
   }
 
   get state(): LoopState {
@@ -457,129 +479,18 @@ class LoopActor implements Loop {
       this.lifecycleDrained = false;
       this.lifecycleIdle = false;
     }
-    this.durable = this.projection.reduce(this.durable, {
-      seq: this.seq,
-      time: 0,
-      event: event as LoopRecord,
-    });
-    this.seq += 1;
-    if (event.type === 'context.settled') this.revision += 1;
-    this.events.push(event);
-    return event;
-  }
-
-  private post(message: ActorMessage): void {
-    this.messages.push(message);
+    if (this.actor.closed) return event;
+    return this.actor.act((ctrl) => ctrl.emit(event));
   }
 
   private transition<T>(run: () => T): T {
-    this.turnTransitions += 1;
-    try {
-      return run();
-    } finally {
-      this.turnTransitions -= 1;
-      if (this.turnTransitions === 0) this.kick();
-    }
+    return this.actor.act(() => run());
   }
 
-  private kick(): void {
-    if (this.kicking || this.dispatching || this.turnTransitions > 0) return;
-    this.kicking = true;
-    let failed = false;
-    let failure: unknown;
-    const deliver = (): void => {
-      try {
-        this.drainEvents();
-      } catch (error) {
-        if (!failed) {
-          failed = true;
-          failure = error;
-        }
-      }
-    };
-    try {
-      while (true) {
-        if (!this.resetting && !this.hasPendingCompletions && this.completionContinuation !== undefined) {
-          const continuation = this.completionContinuation;
-          this.completionContinuation = undefined;
-          continuation();
-          continue;
-        }
-        deliver();
-        this.settleTurnCompletions();
-        const message = this.messages.shift();
-        if (message !== undefined) this.handle(message);
-        else if (!this.schedule()) {
-          deliver();
-          this.settleTurnCompletions();
-          break;
-        }
-      }
-    } finally {
-      this.kicking = false;
-      this.settleIdle();
-      this.settleClose();
-    }
-    if (failed) throw failure;
-  }
-
-  private drainEvents(): void {
-    if (this.dispatching) return;
-    this.dispatching = true;
-    let failed = false;
-    let failure: unknown;
-    const capture = (error: unknown): void => {
-      if (failed) return;
-      failed = true;
-      failure = error;
-    };
-    try {
-      for (let event = this.events.shift(); event !== undefined; event = this.events.shift()) {
-        for (const listener of Array.from(this.listeners)) {
-          try {
-            listener(event);
-          } catch (error) {
-            if (this.onListenerError === undefined) capture(error);
-            else {
-              try {
-                this.onListenerError(error, event);
-              } catch (listenerError) {
-                capture(listenerError);
-              }
-            }
-          }
-        }
-      }
-    } finally {
-      this.dispatching = false;
-    }
-    if (failed) throw failure;
-  }
-
-  private settleTurnCompletions(): void {
-    if (this.completedTurns.length === 0) return;
-    const turns = this.completedTurns.splice(0);
-    for (const turn of turns) {
-      if (turn.completion === undefined) continue;
-      if (turn.signal !== undefined && turn.onAbort !== undefined) {
-        turn.signal.removeEventListener('abort', turn.onAbort);
-      }
-      turn.completion.resolve(turn.outcome ?? { type: 'aborted' });
-    }
-  }
-
-  private settleIdle(): void {
-    const drained =
-      !this.resetting &&
-      this.phase !== 'running' &&
-      this.messages.length === 0 &&
-      this.events.length === 0 &&
-      !this.hasPendingCompletions &&
-      !this.canSchedule();
-    if (!drained) this.lifecycleDrained = false;
-    const idle = drained && !this.hasActiveBackgroundTasks;
+  private settleLifecycle(): void {
+    const idle = !this.hasActiveBackgroundTasks;
     if (!idle) this.lifecycleIdle = false;
-    const publishDrained = this.open() && drained && !this.lifecycleDrained;
+    const publishDrained = this.open() && !this.lifecycleDrained;
     const publishIdle = this.open() && idle && this.lifecycleDrained && !this.lifecycleIdle;
     if (publishDrained) {
       this.lifecycleDrained = true;
@@ -589,22 +500,6 @@ class LoopActor implements Loop {
       this.lifecycleIdle = true;
       this.record({ type: 'loop.idle', generation: this.lifecycleGeneration });
     }
-    if (!drained) return;
-    const waiters = Array.from(this.idleWaiters);
-    this.idleWaiters.clear();
-    for (const resolve of waiters) resolve();
-    if (publishDrained || publishIdle) this.kick();
-  }
-
-  private settleClose(): void {
-    if (
-      this.phase !== 'closed' ||
-      this.turn !== undefined ||
-      this.closePending ||
-      this.messages.length > 0 ||
-      this.events.length > 0
-    ) return;
-    this.closeCompletion?.resolve();
   }
 
   private get hasPendingCompletions(): boolean {
@@ -621,18 +516,25 @@ class LoopActor implements Loop {
     return false;
   }
 
-  private canSchedule(): boolean {
+  private get hasDetachedTools(): boolean {
+    for (const slot of this.tools.values()) {
+      if (slot.detached) return true;
+    }
+    return false;
+  }
+
+  private canSchedule(state: LoopActorState): boolean {
     return (
-      !this.resetting &&
-      this.phase === 'idle' &&
+      this.open() &&
+      state.status === 'idle' &&
       !this.held &&
       !this.hasPendingCompletions &&
       (this.mailbox.hasTrigger || this.mailbox.hasReminders)
     );
   }
 
-  private schedule(): boolean {
-    if (!this.canSchedule()) return false;
+  private schedule(ctrl: LoopControl): boolean {
+    if (!this.canSchedule(ctrl.state)) return false;
     this.closeUnfinished();
     if (!this.mailbox.hasTrigger) {
       this.flushReminders();
@@ -640,7 +542,7 @@ class LoopActor implements Loop {
     }
     const next = this.mailbox.take();
     if (next === undefined) return false;
-    this.activate({
+    this.activate(ctrl, {
       id: this.durable.nextTurnId,
       start: {
         type: 'prompt',
@@ -653,8 +555,8 @@ class LoopActor implements Loop {
     return true;
   }
 
-  private activate(input: TurnInput, completion?: TurnCompletion): LiveTurn | undefined {
-    if (this.phase !== 'idle' || this.turn !== undefined) return undefined;
+  private activate(ctrl: LoopControl, input: TurnInput, completion?: TurnCompletion): LiveTurn | undefined {
+    if (ctrl.state.status !== 'idle' || this.turn !== undefined) return undefined;
     const machine = createTurn(input, this.turnRuntime);
     const turn: LiveTurn = {
       id: input.id,
@@ -667,87 +569,44 @@ class LoopActor implements Loop {
       completion,
       signal: input.signal,
     };
-    this.phase = 'running';
     this.held = false;
-    this.turn = turn;
-    this.post({ type: 'turn.start', turn });
+    ctrl.setState({ status: 'running', turn });
+    ctrl.defer(() => {
+      if (this.isCurrent(turn)) turn.machine.start();
+    });
     return turn;
-  }
-
-  private startTurn(turn: LiveTurn): void {
-    if (this.isCurrent(turn)) turn.machine.start();
   }
 
   private releaseIntake(): void {
     if (!this.resetting) this.held = false;
-    if (!this.kicking && !this.dispatching) this.schedule();
   }
 
   private abortRequest(): void {
     this.turn?.machine.interrupt(STEERED);
   }
 
-  private handle(message: ActorMessage): void {
-    switch (message.type) {
-      case 'turn.start':
-        this.startTurn(message.turn);
-        return;
-      case 'tool.prepared':
-        this.announceTool(message.slot);
-        return;
-      case 'tool.responded':
-        this.respondToTool(message.slot, message.response);
-        return;
-      case 'tool.failed':
-        this.failTool(message.slot, message.error);
-        return;
-      case 'tool.completed':
-        this.completeTool(message.slot, message.result);
-        return;
-      case 'tool.detached_completed':
-        this.completeDetached(message.slot, message.outcome, message.completion);
-        return;
-      case 'tool.detached_rejected':
-        if (this.phase !== 'closed') this.completeDetached(message.slot, message.outcome, message.completion);
-        return;
-      case 'tool.abort':
-        this.abortToolCall(message.toolCallId, message.reason);
-        return;
-      case 'abort.requested':
-        this.requestAbort(message.turn ?? this.turn, message.reason, message.continueAfterAbort);
-        return;
-      case 'continue':
-        this.continueTurn(message.force);
-        return;
-      case 'close':
-        this.closeRuntime();
-        return;
-      case 'close.detached':
-        this.completeDetachedClose(message.completions);
-        return;
-      case 'close.failed':
-        this.failClose(message.error);
-    }
-  }
-
   submit(message: UserMessage): LoopAck<'prompt.submitted'> | undefined {
     const normalized = normalizeUserMessage(message);
     this.check({ type: 'input.submit', message: normalized });
     if (!this.open()) return undefined;
-    const ack = this.mailbox.submit(normalized);
-    this.releaseIntake();
-    this.kick();
-    return ack;
+    return this.actor.act(() => {
+      if (!this.open()) return undefined;
+      const ack = this.mailbox.submit(normalized);
+      this.releaseIntake();
+      return ack;
+    });
   }
 
   notify(message: UserMessage): LoopAck<'prompt.notified'> | undefined {
     const normalized = normalizeUserMessage(message);
     this.check({ type: 'input.notify', message: normalized });
     if (!this.open()) return undefined;
-    const ack = this.mailbox.notify(normalized);
-    this.releaseIntake();
-    this.kick();
-    return ack;
+    return this.actor.act(() => {
+      if (!this.open()) return undefined;
+      const ack = this.mailbox.notify(normalized);
+      this.releaseIntake();
+      return ack;
+    });
   }
 
   recordNotification(message: UserMessage): LoopAck<'prompt.notified'> | undefined {
@@ -757,27 +616,33 @@ class LoopActor implements Loop {
     });
     this.check({ type: 'input.notify', message: normalized });
     if (!this.open()) return undefined;
-    return this.mailbox.notify(normalized);
+    return this.actor.act(() => {
+      if (!this.open()) return undefined;
+      return this.mailbox.notify(normalized);
+    });
   }
 
   remind(...messages: readonly RemindMessage[]): LoopAck<'prompt.reminded'> | undefined {
     for (const message of messages) this.check({ type: 'input.remind', message });
     if (!this.open() || messages.length === 0) return undefined;
-    const ack = this.mailbox.remind(messages);
-    this.kick();
-    return ack;
+    return this.actor.act(() => {
+      if (!this.open()) return undefined;
+      return this.mailbox.remind(messages);
+    });
   }
 
   steer(promptIds: readonly string[]): LoopAck<'prompt.steered'> | undefined {
     this.check({ type: 'input.steer', promptIds });
     if (!this.open()) return undefined;
-    const ack = this.mailbox.steer(promptIds);
-    if ((ack.messages?.length ?? 0) > 0) {
-      this.releaseIntake();
-      if (this.turn?.machine.state.phase === 'requesting') this.abortRequest();
-    }
-    this.kick();
-    return ack;
+    return this.actor.act(() => {
+      if (!this.open()) return undefined;
+      const ack = this.mailbox.steer(promptIds);
+      if ((ack.messages?.length ?? 0) > 0) {
+        this.releaseIntake();
+        if (this.turn?.machine.state.phase === 'requesting') this.abortRequest();
+      }
+      return ack;
+    });
   }
 
   sendNow(message: UserMessage): LoopAck<'prompt.notified'> | undefined;
@@ -788,41 +653,47 @@ class LoopActor implements Loop {
       const normalized = normalizeUserMessage(message);
       this.check({ type: 'input.notify', message: normalized });
       if (!this.open()) return undefined;
-      const ack = this.mailbox.notify(normalized);
-      this.releaseIntake();
-      this.abortRequest();
-      this.kick();
-      return ack;
+      return this.actor.act(() => {
+        if (!this.open()) return undefined;
+        const ack = this.mailbox.notify(normalized);
+        this.releaseIntake();
+        this.abortRequest();
+        return ack;
+      });
     }
     const promptIds = input as readonly string[];
     this.check({ type: 'input.steer', promptIds });
     if (!this.open()) return;
-    const ids = new Set(promptIds);
-    if (ids.size !== promptIds.length) return;
-    const inbox = this.mailbox.snapshot;
-    const normal = new Set(inbox.normal.map((item) => item.attributes?.promptId));
-    const notify = new Set(inbox.notify.map((item) => item.attributes?.promptId));
-    if (![...ids].every((id) => normal.has(id) || notify.has(id))) return;
-    const pending = promptIds.filter((id) => normal.has(id));
-    if (pending.length > 0) this.mailbox.steer(pending);
-    this.releaseIntake();
-    this.abortRequest();
-    this.kick();
+    this.actor.act(() => {
+      if (!this.open()) return;
+      const ids = new Set(promptIds);
+      if (ids.size !== promptIds.length) return;
+      const inbox = this.mailbox.snapshot;
+      const normal = new Set(inbox.normal.map((item) => item.attributes?.promptId));
+      const notify = new Set(inbox.notify.map((item) => item.attributes?.promptId));
+      if (![...ids].every((id) => normal.has(id) || notify.has(id))) return;
+      const pending = promptIds.filter((id) => normal.has(id));
+      if (pending.length > 0) this.mailbox.steer(pending);
+      this.releaseIntake();
+      this.abortRequest();
+    });
   }
 
   cancel(promptId: string): LoopAck<'prompt.canceled'> | undefined {
     this.check({ type: 'input.cancel', promptId });
     if (!this.open()) return undefined;
-    const ack = this.mailbox.cancel(promptId);
-    this.kick();
-    return ack;
+    return this.actor.act(() => {
+      if (!this.open()) return undefined;
+      return this.mailbox.cancel(promptId);
+    });
   }
 
   start(): void {
     if (!this.open()) return;
-    this.held = false;
-    this.schedule();
-    this.kick();
+    this.actor.act(() => {
+      if (!this.open()) return;
+      this.releaseIntake();
+    });
   }
 
   resume(): void {
@@ -832,114 +703,141 @@ class LoopActor implements Loop {
 
   continue(options?: { readonly force?: boolean }): void {
     if (!this.open()) return;
-    this.post({ type: 'continue', force: options?.force === true });
-    this.kick();
+    const force = options?.force === true;
+    this.actor.act((ctrl) => {
+      ctrl.defer((nextCtrl) => {
+        if (!this.open() || nextCtrl.state.status !== 'idle') return;
+        this.drainDetachedCompletions();
+        if (this.hasPendingCompletions) {
+          nextCtrl.setState({ status: 'idle', pendingContinue: { force } });
+          return;
+        }
+        this.continueTurn(nextCtrl, force);
+      });
+    });
   }
 
   abort(reason?: unknown, options?: { readonly continue?: boolean }): void {
     if (!this.open()) return;
-    this.post({ type: 'abort.requested', reason, continueAfterAbort: options?.continue === true });
-    this.kick();
+    const continueAfterAbort = options?.continue === true;
+    this.actor.act((ctrl) => {
+      ctrl.defer(() => {
+        if (!this.open()) return;
+        this.requestAbort(this.turn, reason, continueAfterAbort);
+      });
+    });
   }
 
   abortTool(toolCallId: string, reason?: unknown): void {
     this.check({ type: 'input.abort_tool', toolCallId });
     if (!this.open()) return;
-    this.post({ type: 'tool.abort', toolCallId, reason });
-    this.kick();
+    this.actor.act((ctrl) => {
+      ctrl.defer(() => this.abortToolCall(toolCallId, reason));
+    });
   }
 
   detachTool(toolCallId: string, text?: string, completion?: ToolCompletionFactory): void {
     this.check({ type: 'input.detach_tool', toolCallId });
     if (!this.open()) return;
-    for (const slot of Array.from(this.tools.values())) {
-      if (slot.toolCall.id === toolCallId && !slot.detached) {
-        slot.completion = completion;
-        const acknowledgement = text ?? `moved to background by the user: ${slot.toolCall.name} (tool_call_id=${toolCallId})`;
-        const response = slot.handler.detach(acknowledgement, {
-          content: [{ type: 'text', text: acknowledgement }],
-        });
-        if (response !== undefined) this.post({ type: 'tool.responded', slot, response });
+    this.actor.act((ctrl) => {
+      if (!this.open()) return;
+      for (const slot of Array.from(this.tools.values())) {
+        if (slot.toolCall.id === toolCallId && !slot.detached) {
+          slot.completion = completion;
+          const acknowledgement = text ?? `moved to background by the user: ${slot.toolCall.name} (tool_call_id=${toolCallId})`;
+          const response = slot.handler.detach(acknowledgement, {
+            content: [{ type: 'text', text: acknowledgement }],
+          });
+          if (response !== undefined) ctrl.defer(() => this.respondToTool(slot, response));
+        }
       }
-    }
-    this.kick();
+    });
   }
 
   async reset(prepare: () => Promise<LoopInput>): Promise<void> {
-    if (!this.open() || this.resetting || this.phase !== 'idle') {
+    if (!this.open() || this.actor.state.status !== 'idle') {
       throw new Error('Loop reset requires an idle open loop');
     }
-    const held = this.held;
+    const previousHeld = this.held;
     const liveToolCallIds = new Set(
       Array.from(this.tools.values()).filter((slot) => slot.detached).map((slot) => slot.toolCall.id),
     );
-    this.resetting = true;
-    this.held = true;
+    this.actor.act((ctrl) => {
+      this.held = true;
+      ctrl.setState({ status: 'resetting' });
+    });
+    if (!this.open()) return;
     try {
-      this.kick();
-      if (!this.open()) return;
       const input = await prepare();
       if (!this.open()) return;
-      const invalid = inputError(input);
-      if (invalid !== undefined) throw new TypeError(invalid);
-      const live = this.mailbox.snapshot;
-      const restored = input.inbox ?? {};
-      const normal = mergeResetEntries(live.normal, restored.normal ?? [], liveToolCallIds);
-      const notify = mergeResetEntries(live.notify, restored.notify ?? [], liveToolCallIds);
-      const remind = mergeResetEntries(live.remind, restored.remind ?? [], liveToolCallIds);
-      const unfinished = input.unfinished;
-      const profile = input.profile ?? this.durable.profile;
-      const nextTurnId = Math.max(
-        this.durable.nextTurnId,
-        input.nextTurnId ?? 0,
-        unfinished === undefined ? 0 : unfinished.turnId + 1,
-      );
-      const revision = Math.max(this.revision, input.historyRevision ?? 0);
-      this.durable = {
-        ...this.projection.initial(),
-        profile: {
-          ...(profile.systemPrompt === undefined ? {} : { systemPrompt: profile.systemPrompt }),
-          ...(profile.tools === undefined ? {} : { tools: [...profile.tools] }),
-        },
-        messages: [...(input.messages ?? [])],
-        nextTurnId,
-        ...(unfinished === undefined ? {} : { unfinished: { ...unfinished } }),
-      };
-      this.revision = revision;
-      this.mailbox = new LoopMailbox({ normal, notify, remind }, (event) => {
-        this.record(event);
+      this.actor.act((ctrl) => {
+        if (!this.open() || ctrl.state.status !== 'resetting') return;
+        const invalid = inputError(input);
+        if (invalid !== undefined) throw new TypeError(invalid);
+        const live = this.mailbox.snapshot;
+        const restored = input.inbox ?? {};
+        const normal = mergeResetEntries(live.normal, restored.normal ?? [], liveToolCallIds);
+        const notify = mergeResetEntries(live.notify, restored.notify ?? [], liveToolCallIds);
+        const remind = mergeResetEntries(live.remind, restored.remind ?? [], liveToolCallIds);
+        const unfinished = input.unfinished;
+        const profile = input.profile ?? this.durable.profile;
+        const nextTurnId = Math.max(
+          this.durable.nextTurnId,
+          input.nextTurnId ?? 0,
+          unfinished === undefined ? 0 : unfinished.turnId + 1,
+        );
+        const revision = Math.max(this.revision, input.historyRevision ?? 0);
+        this.durable = {
+          ...this.projection.initial(),
+          profile: {
+            ...(profile.systemPrompt === undefined ? {} : { systemPrompt: profile.systemPrompt }),
+            ...(profile.tools === undefined ? {} : { tools: [...profile.tools] }),
+          },
+          messages: [...(input.messages ?? [])],
+          nextTurnId,
+          ...(unfinished === undefined ? {} : { unfinished: { ...unfinished } }),
+        };
+        this.revision = revision;
+        this.mailbox = new LoopMailbox({ normal, notify, remind }, (event) => {
+          this.record(event);
+        });
+        this.toolBatch = undefined;
+        this.completedToolBatch = undefined;
+        this.completionHandoff = false;
+        this.held = true;
+        ctrl.setState({ status: 'idle' });
       });
-      this.turn = undefined;
-      this.toolBatch = undefined;
-      this.completedToolBatch = undefined;
-      this.completionHandoff = false;
-      this.held = true;
     } catch (error) {
-      this.held = held;
+      if (this.open()) {
+        this.actor.act((ctrl) => {
+          if (!this.open() || ctrl.state.status !== 'resetting') return;
+          this.held = previousHeld;
+          ctrl.setState({ status: 'idle' });
+        });
+      }
       throw error;
-    } finally {
-      this.resetting = false;
-      this.kick();
     }
   }
 
   setRequester(requester: LoopLlmRequester | undefined): void {
     if (!this.open()) return;
-    this.requesterTemplate = requester;
+    this.actor.act(() => {
+      if (!this.open()) return;
+      this.requesterTemplate = requester;
+    });
   }
 
   setContext(messages: Message[], reason?: string): LoopAck<'context.settled' | 'context.rejected'> | undefined {
     this.check({ type: 'input.set_context', messages });
     if (!this.open()) return undefined;
-    if (!this.editable() && reason !== 'compaction' && reason !== 'clear' && reason !== 'context.clear') {
-      const ack = this.record({ type: 'context.rejected', messages, reason });
-      this.kick();
-      return ack;
-    }
-    if (reason === 'compaction') this.mailbox.clearReminders();
-    const ack = this.record({ type: 'context.settled', messages, reason });
-    this.kick();
-    return ack;
+    return this.actor.act(() => {
+      if (!this.open()) return undefined;
+      if (!this.editable() && reason !== 'compaction' && reason !== 'clear' && reason !== 'context.clear') {
+        return this.record({ type: 'context.rejected', messages, reason });
+      }
+      if (reason === 'compaction') this.mailbox.clearReminders();
+      return this.record({ type: 'context.settled', messages, reason });
+    });
   }
 
   private editable(): boolean {
@@ -953,26 +851,18 @@ class LoopActor implements Loop {
   setSystemPrompt(systemPrompt: string): LoopAck<'system_prompt.settled'> | undefined {
     this.check({ type: 'input.set_system_prompt', systemPrompt });
     if (!this.open()) return undefined;
-    const ack = this.record({ type: 'system_prompt.settled', systemPrompt });
-    this.kick();
-    return ack;
+    return this.actor.act(() => {
+      if (!this.open()) return undefined;
+      return this.record({ type: 'system_prompt.settled', systemPrompt });
+    });
   }
 
   subscribe(listener: (event: LoopEmitted) => void): () => void {
-    this.listeners.add(listener);
-    return () => {
-      this.listeners.delete(listener);
-    };
+    return this.actor.subscribe(listener);
   }
 
   wait<T extends LoopEmitted['type']>(type: T, opts?: WaitOpts<LoopAck<T>>): Promise<LoopAck<T>> {
-    return waitEvent<LoopAck<T>>(
-      (handler) =>
-        this.subscribe((event) => {
-          if (event.type === type) handler(event as LoopAck<T>);
-        }),
-      opts,
-    );
+    return this.actor.wait(type, opts);
   }
 
   runTurn(message: UserMessage, opts?: { readonly signal?: AbortSignal }): Promise<TurnOutcome> {
@@ -980,67 +870,46 @@ class LoopActor implements Loop {
     if (signal?.aborted) return Promise.resolve({ type: 'aborted', reason: signal.reason });
     try {
       this.check({ type: 'input.run_turn', message });
-      if (!this.open() || this.phase !== 'idle') {
+      if (!this.open() || this.actor.state.status !== 'idle') {
         return Promise.reject(new Error('runTurn is only accepted while idle'));
       }
-      const completion = turnCompletion();
-      this.closeUnfinished();
-      const turn = this.activate({
-        id: this.durable.nextTurnId,
-        start: {
-          type: 'prompt',
-          trigger: 'normal',
-          pending: [
-            { kind: 'normal', message },
-            ...this.mailbox.drainReminders().map((reminder) => ({ kind: 'remind' as const, message: reminder })),
-          ],
-        },
-        bypassMaxSteps: message.attributes?.bypassMaxSteps === true,
-        signal,
-      }, completion)!;
-      if (signal !== undefined) {
-        turn.onAbort = () => {
-          if (this.turn !== turn || !this.open()) return;
-          this.post({ type: 'abort.requested', turn, reason: signal.reason, continueAfterAbort: false });
-          this.kick();
-        };
-        signal.addEventListener('abort', turn.onAbort, { once: true });
-      }
-      this.record({ type: 'prompt.submitted', message });
-      this.kick();
-      return completion.promise;
+      return this.actor.act((ctrl) => {
+        const completion = turnCompletion();
+        this.closeUnfinished();
+        const turn = this.activate(ctrl, {
+          id: this.durable.nextTurnId,
+          start: {
+            type: 'prompt',
+            trigger: 'normal',
+            pending: [
+              { kind: 'normal', message },
+              ...this.mailbox.drainReminders().map((reminder) => ({ kind: 'remind' as const, message: reminder })),
+            ],
+          },
+          bypassMaxSteps: message.attributes?.bypassMaxSteps === true,
+          signal,
+        }, completion)!;
+        if (signal !== undefined) {
+          turn.onAbort = this.actor.bind(() => {
+            if (this.turn !== turn || !this.open()) return;
+            this.requestAbort(turn, signal.reason, false);
+          });
+          signal.addEventListener('abort', turn.onAbort, { once: true });
+        }
+        this.record({ type: 'prompt.submitted', message });
+        return completion.promise;
+      });
     } catch (error) {
       return Promise.reject(error);
     }
   }
 
   waitForIdle(): Promise<void> {
-    if (
-      !this.resetting &&
-      this.phase !== 'running' &&
-      !this.kicking &&
-      !this.dispatching &&
-      this.messages.length === 0 &&
-      this.events.length === 0 &&
-      !this.hasPendingCompletions &&
-      !this.canSchedule()
-    ) return Promise.resolve();
-    return new Promise((resolve) => {
-      this.idleWaiters.add(resolve);
-    });
+    return this.actor.waitForIdle();
   }
 
   close(): Promise<void> {
-    if (this.closeCompletion !== undefined) return this.closeCompletion.promise;
-    const completion = deferred<void>();
-    this.closeCompletion = completion;
-    try {
-      this.post({ type: 'close' });
-      this.kick();
-    } catch (error) {
-      completion.reject(error);
-    }
-    return completion.promise;
+    return this.actor.close();
   }
 
   private isCurrent(turn: LiveTurn): boolean {
@@ -1077,7 +946,6 @@ class LoopActor implements Loop {
     if (notify) {
       this.mailbox.queue(messages);
       this.held = false;
-      this.schedule();
     }
   }
 
@@ -1220,11 +1088,11 @@ class LoopActor implements Loop {
   }
 
   private settleCompletions(): void | Promise<void> {
-    let resume!: () => void;
+    this.drainDetachedCompletions();
+    if (!this.hasPendingCompletions) return;
     const waiting = new Promise<void>((resolve) => {
-      resume = resolve;
+      this.completionWaiters.add(resolve);
     });
-    if (!this.deferForCompletion(resume)) return;
     return waiting.then(() => this.settleCompletions() as void);
   }
 
@@ -1247,17 +1115,19 @@ class LoopActor implements Loop {
 
   flushReminders(): void {
     if (!this.open()) return;
-    const messages = this.mailbox.drainReminders();
-    for (const message of messages) {
-      this.record({
-        type: 'message.appended',
-        turnId: this.turn?.id ?? this.durable.nextTurnId,
-        step: this.turn?.machine.state.step ?? 0,
-        source: 'remind',
-        message,
-      });
-    }
-    this.kick();
+    this.actor.act(() => {
+      if (!this.open()) return;
+      const messages = this.mailbox.drainReminders();
+      for (const message of messages) {
+        this.record({
+          type: 'message.appended',
+          turnId: this.turn?.id ?? this.durable.nextTurnId,
+          step: this.turn?.machine.state.step ?? 0,
+          source: 'remind',
+          message,
+        });
+      }
+    });
   }
 
   private settleUnfinished(outcome: StepOutcome): void {
@@ -1280,13 +1150,12 @@ class LoopActor implements Loop {
     this.record({ type: 'turn.ended', turnId: unfinished.turnId, outcome });
   }
 
-  private continueTurn(force: boolean): void {
-    if (this.resetting || this.phase !== 'idle') return;
-    if (this.deferForCompletion(() => this.continueTurn(force))) return;
+  private continueTurn(ctrl: LoopControl, force: boolean): void {
+    if (ctrl.state.status !== 'idle') return;
     const unfinished = this.durable.unfinished;
     if (unfinished !== undefined && isResumable(this.durable)) {
       this.settleUnfinished({ type: 'continue', cause: CRASHED });
-      this.activate({
+      this.activate(ctrl, {
         id: unfinished.turnId,
         start: { type: 'resume', trigger: unfinished.trigger, step: unfinished.step },
       });
@@ -1294,52 +1163,67 @@ class LoopActor implements Loop {
     }
     this.closeUnfinished();
     if (!this.mailbox.hasTrigger && (force || canContinue(this.durable.messages))) {
-      this.activate({
+      this.activate(ctrl, {
         id: this.durable.nextTurnId,
         start: { type: 'continue' },
       });
       return;
     }
     this.held = false;
-    this.schedule();
   }
 
   private finishTurn(turn: LiveTurn, outcome: TurnOutcome): void {
     if (this.turn !== turn) return;
-    this.announceTurn(turn);
-    for (const [key, slot] of this.tools) {
-      if (slot.turnId !== turn.id || slot.detached) continue;
-      slot.done = true;
-      this.tools.delete(key);
-      this.notifyTool(slot);
-    }
-    const batch = this.toolBatch;
-    if (batch?.turnId === turn.id) {
-      this.toolBatch = undefined;
-      batch.resolve({
-        outcomes: batch.calls.map((_, index) => batch.outcomes[index] ?? null),
-        failure: batch.failure,
+    this.actor.act((ctrl) => {
+      if (this.turn !== turn) return;
+      this.announceTurn(turn);
+      for (const [key, slot] of this.tools) {
+        if (slot.turnId !== turn.id || slot.detached) continue;
+        slot.done = true;
+        this.tools.delete(key);
+        this.notifyTool(slot);
+      }
+      const batch = this.toolBatch;
+      if (batch?.turnId === turn.id) {
+        this.toolBatch = undefined;
+        batch.resolve({
+          outcomes: batch.calls.map((_, index) => batch.outcomes[index] ?? null),
+          failure: batch.failure,
+        });
+      }
+      turn.outcome = outcome;
+      if (this.completedToolBatch?.turnId === turn.id) this.completedToolBatch = undefined;
+      this.completionHandoff = false;
+      if (outcome.type === 'aborted' && turn.continueAfterAbort === true && !this.actor.closing) this.held = false;
+      ctrl.setState({ status: 'idle' });
+      ctrl.afterDeliver(() => {
+        if (turn.completion === undefined) return;
+        if (turn.signal !== undefined && turn.onAbort !== undefined) {
+          turn.signal.removeEventListener('abort', turn.onAbort);
+        }
+        turn.completion.resolve(turn.outcome ?? { type: 'aborted' });
       });
-    }
-    turn.outcome = outcome;
-    if (this.completedToolBatch?.turnId === turn.id) this.completedToolBatch = undefined;
-    this.completionHandoff = false;
-    this.completionContinuation = undefined;
-    this.turn = undefined;
-    this.phase = this.phase === 'closed' ? 'closed' : 'idle';
-    this.completedTurns.push(turn);
-    if (outcome.type === 'aborted' && turn.continueAfterAbort === true) this.held = false;
-    this.schedule();
+    });
   }
 
-  private closeRuntime(): void {
-    if (this.phase !== 'closed') {
-      this.closeDetached();
-      this.phase = 'closed';
-      const turn = this.turn;
-      if (turn !== undefined) this.closeTurn(turn);
-      this.root.abort();
-    }
+  private closeRuntime(ctrl: LoopControl): Promise<void> | void {
+    this.closeDetached();
+    const turn = turnOf(ctrl.state);
+    if (turn !== undefined) this.closeTurn(turn);
+    if (turn === undefined && !this.hasDetachedTools) return;
+    return (async () => {
+      await Promise.all([
+        turn?.machine.done ?? Promise.resolve({ type: 'aborted' as const }),
+        new Promise<void>((resolve) => {
+          if (!this.hasDetachedTools) {
+            resolve();
+            return;
+          }
+          this.detachedCloseWaiters.add(resolve);
+        }),
+      ]);
+      if (this.closeFailure !== undefined) throw this.closeFailure.error;
+    })();
   }
 
   private closeTurn(turn: LiveTurn): void {
@@ -1400,7 +1284,6 @@ class LoopActor implements Loop {
     }
     for (const slot of slots) this.executeTool(slot);
     this.checkToolBatch(active);
-    this.kick();
     return completion.promise;
   }
 
@@ -1470,10 +1353,10 @@ class LoopActor implements Loop {
   }
 
   private executeTool(slot: LiveTool): void {
-    const prepared = (): void => {
-      this.post({ type: 'tool.prepared', slot });
-      this.kick();
-    };
+    const prepared = this.actor.bind(() => this.announceTool(slot));
+    const responded = this.actor.bind((_ctrl, response: ToolExecutionResponse) => this.respondToTool(slot, response));
+    const failed = this.actor.bind((_ctrl, error: unknown) => this.failTool(slot, error));
+    const completed = this.actor.bind((_ctrl, result: ToolResult) => this.completeTool(slot, result));
     const unsubscribe = slot.handler.observe((event) => {
       if (event.type !== 'change') return;
       const snapshot = event.snapshot;
@@ -1485,17 +1368,14 @@ class LoopActor implements Loop {
       ) prepared();
     });
     void Promise.resolve(slot.handler).then((response) => {
-      this.post({ type: 'tool.responded', slot, response });
-      this.kick();
+      responded(response);
     }, (error: unknown) => {
       unsubscribe();
-      this.post({ type: 'tool.failed', slot, error });
-      this.kick();
+      failed(error);
     });
     void slot.handler.wait().then((result) => {
       unsubscribe();
-      this.post({ type: 'tool.completed', slot, result });
-      this.kick();
+      completed(result);
     }, () => undefined);
   }
 
@@ -1552,10 +1432,13 @@ class LoopActor implements Loop {
       slot.completionPending = true;
       const outcome = asyncOutcomeOf(slot);
       const completion = slot.completion ?? this.completionFactory;
+      const settled = this.actor.bind((_ctrl, settledOutcome: AsyncToolOutcome, message: UserMessage) => {
+        this.completeDetached(slot, settledOutcome, message);
+      });
       if (completion === undefined) {
         const message = completionMessage(slot.toolCall, outcome, result);
         slot.completionMessage = Promise.resolve(message);
-        this.post({ type: 'tool.detached_completed', slot, outcome, completion: message });
+        settled(outcome, message);
       } else {
         slot.completionMessage = resolveCompletionMessage({
           toolCall: slot.toolCall,
@@ -1563,12 +1446,10 @@ class LoopActor implements Loop {
           result,
         }, completion);
         void slot.completionMessage.then((message) => {
-          this.post({ type: 'tool.detached_completed', slot, outcome, completion: message });
-          this.kick();
+          settled(outcome, message);
         }, (error: unknown) => {
           if (this.phase === 'closed') {
             this.closeDetached();
-            this.kick();
             return;
           }
           const failed: AsyncToolOutcome = { type: 'failed', error };
@@ -1584,12 +1465,10 @@ class LoopActor implements Loop {
           };
           void fallback().then((message) => {
             if (this.phase === 'closed') return;
-            this.post({ type: 'tool.detached_rejected', slot, outcome: failed, completion: message });
-            this.kick();
+            settled(failed, message);
           });
         });
       }
-      this.kick();
       return;
     }
     this.tools.delete(slot.key);
@@ -1625,16 +1504,22 @@ class LoopActor implements Loop {
       }
       drained = true;
     }
-    if (!drained) return;
-    if (!this.resetting) this.held = false;
-    this.schedule();
+    if (drained && !this.resetting) this.held = false;
+    this.notifyCompletionWaiters();
   }
 
-  private deferForCompletion(continuation: () => void): boolean {
-    this.drainDetachedCompletions();
-    if (!this.hasPendingCompletions) return false;
-    this.completionContinuation = continuation;
-    return true;
+  private notifyCompletionWaiters(): void {
+    if (this.hasPendingCompletions || this.completionWaiters.size === 0) return;
+    const waiters = Array.from(this.completionWaiters);
+    this.completionWaiters.clear();
+    for (const resolve of waiters) resolve();
+  }
+
+  private notifyDetachedCloseWaiters(): void {
+    if ((this.hasDetachedTools && this.closeFailure === undefined) || this.detachedCloseWaiters.size === 0) return;
+    const waiters = Array.from(this.detachedCloseWaiters);
+    this.detachedCloseWaiters.clear();
+    for (const resolve of waiters) resolve();
   }
 
   private notifyTool(slot: LiveTool): void {
@@ -1651,10 +1536,8 @@ class LoopActor implements Loop {
 
   private closeDetached(): void {
     const closing: { slot: LiveTool; outcome: AsyncToolOutcome; message: Promise<UserMessage> }[] = [];
-    let pending = false;
     for (const slot of this.tools.values()) {
       if (!slot.detached) continue;
-      pending = true;
       void slot.handler.stop(CLOSED);
       if (!slot.done) continue;
       const outcome = asyncOutcomeOf(slot);
@@ -1665,37 +1548,39 @@ class LoopActor implements Loop {
       }, slot.completion ?? this.completionFactory);
       closing.push({ slot, outcome, message: slot.completionMessage });
     }
-    this.closePending = pending;
     if (closing.length === 0) return;
+    const completed = this.actor.bind((
+      _ctrl,
+      completions: readonly {
+        readonly slot: LiveTool;
+        readonly outcome: AsyncToolOutcome;
+        readonly message: UserMessage;
+        readonly failure?: { readonly error: unknown };
+      }[],
+    ) => {
+      this.completeDetachedClose(completions);
+      const failure = completions.find((item) => item.failure !== undefined)?.failure;
+      if (failure !== undefined) this.failClose(failure.error);
+    });
+    const failed = this.actor.bind((_ctrl, error: unknown) => this.failClose(error));
     void Promise.all(closing.map(async ({ slot, outcome, message }) => {
       try {
         return { slot, outcome, message: await message, failure: undefined };
       } catch (error) {
-        const failed: AsyncToolOutcome = { type: 'failed', error };
-        const input = { toolCall: slot.toolCall, outcome: failed, result: slot.result };
+        const failedOutcome: AsyncToolOutcome = { type: 'failed', error };
+        const input = { toolCall: slot.toolCall, outcome: failedOutcome, result: slot.result };
         let terminalMessage: UserMessage;
         const completion = slot.completion ?? this.completionFactory;
         try {
           terminalMessage = completion?.onRejected === undefined
-            ? completionMessage(slot.toolCall, failed, slot.result)
+            ? completionMessage(slot.toolCall, failedOutcome, slot.result)
             : await completion.onRejected(error, input);
         } catch {
-          terminalMessage = completionMessage(slot.toolCall, failed, slot.result);
+          terminalMessage = completionMessage(slot.toolCall, failedOutcome, slot.result);
         }
-        return { slot, outcome: failed, message: terminalMessage, failure: { error } };
+        return { slot, outcome: failedOutcome, message: terminalMessage, failure: { error } };
       }
-    })).then(
-      (completions) => {
-        this.post({ type: 'close.detached', completions });
-        const failure = completions.find((item) => item.failure !== undefined)?.failure;
-        if (failure !== undefined) this.post({ type: 'close.failed', error: failure.error });
-        this.kick();
-      },
-      (error: unknown) => {
-        this.post({ type: 'close.failed', error });
-        this.kick();
-      },
-    );
+    })).then(completed, failed);
   }
 
   private completeDetachedClose(
@@ -1708,12 +1593,13 @@ class LoopActor implements Loop {
       this.record({ type: 'tool.async_ended', taskId: slot.handler.taskId, toolCallId: slot.toolCall.id, outcome, message });
       this.notifyTool(slot);
     }
-    this.closePending = Array.from(this.tools.values()).some((slot) => slot.detached);
+    this.notifyCompletionWaiters();
+    this.notifyDetachedCloseWaiters();
   }
 
   private failClose(error: unknown): void {
-    this.closePending = false;
-    this.closeCompletion?.reject(error);
+    if (this.closeFailure === undefined) this.closeFailure = { error };
+    this.notifyDetachedCloseWaiters();
   }
 }
 

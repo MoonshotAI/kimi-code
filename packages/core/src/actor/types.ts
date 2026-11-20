@@ -73,6 +73,7 @@ export interface ActorOptions<TState, TEvent extends ActorEvent = never> {
   readonly initial: TState;
   onEmit?(event: TEvent): void;
   onSchedule?(control: ActorControl<TState, TEvent>): void;
+  onIdle?(control: ActorControl<TState, TEvent>): void;
   onError?(control: ActorControl<TState, TEvent>, error: unknown): void;
   onClose?(control: ActorControl<TState, TEvent>): Promise<void> | void;
   onListenerError?(error: unknown, event: TEvent): void;

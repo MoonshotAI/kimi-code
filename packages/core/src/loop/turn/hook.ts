@@ -3,7 +3,6 @@ import {
   type HookChainControl,
   type HookChains,
   type HookItem,
-  type HookRegistrar,
   type HookRegistry,
 } from '#/hook/registry';
 import { isPromiseLike } from '#/hook/result';
@@ -42,11 +41,22 @@ const chains: HookChains<TurnHooks> = {
 
 export type TurnHookRegistry = Omit<HookRegistry<TurnHooks>, 'add'> & {
   readonly hook: TurnHooks;
-  readonly addTurnHook: HookRegistrar<TurnHooks, string>;
+  readonly registerTurnHooks: (hooks: TurnHooks) => void;
 };
 
 export function createTurnHookRegistry(): TurnHookRegistry {
   const { hook, registry } = createHookRegistry(chains);
   const { add, ...rest } = registry;
-  return { ...rest, hook, addTurnHook: add };
+  let registered = false;
+  return {
+    ...rest,
+    hook,
+    registerTurnHooks(hooks) {
+      if (registered) throw new Error('turn hooks already registered');
+      registered = true;
+      for (const point of Object.keys(hooks) as (keyof TurnHooks)[]) {
+        add({ point, hook: hooks[point] });
+      }
+    },
+  };
 }

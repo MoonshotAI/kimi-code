@@ -7,7 +7,9 @@ import type {
   LoopLlmRequester,
   StepStartingEvent,
   ToolBatchStartingEvent,
+  TurnHooks,
 } from '@moonshot-ai/core/loop/index';
+import { createTurnHookRegistry } from '@moonshot-ai/core/loop/index';
 import { createMockProviderRequester, type MockProviderResponse } from '../../../harness/scripted-generate';
 import { createTestLoop as createLoop, loopHookRegistry } from './factory';
 import type { LoopToolContext } from '@moonshot-ai/core/loop/create-loop';
@@ -861,5 +863,21 @@ describe('notify turn handoff', () => {
       message: prompt('new input'),
     });
     await loop.close();
+  });
+});
+
+describe('turn host hooks', () => {
+  it('registers once and rejects any further registration', () => {
+    const registry = createTurnHookRegistry();
+    const hooks: TurnHooks = {
+      starting: () => undefined,
+      requesting: () => undefined,
+      continuing: () => undefined,
+      ending: () => undefined,
+    };
+    registry.registerTurnHooks(hooks);
+    expect(registry.list()).toHaveLength(4);
+    expect(() => registry.registerTurnHooks(hooks)).toThrow('turn hooks already registered');
+    expect(registry.list()).toHaveLength(4);
   });
 });

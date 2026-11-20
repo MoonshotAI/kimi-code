@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   createActor,
   isProcessCancelled,
+  type Actor,
   type ActorControl,
   type ProcessControl,
 } from '#/actor/index';
@@ -86,6 +87,37 @@ describe('createActor', () => {
       'event:finished:idle:queued=0',
       'afterDeliver:alpha',
     ]);
+    await actor.close();
+  });
+
+  it('flushes onIdle emissions before resolving idle waiters', async () => {
+    type Ev = { readonly type: 'work' | 'drained' | 'idle' };
+    const events: Ev[] = [];
+    let ready = false;
+    let idleCalls = 0;
+    const actor: Actor<'idle', Ev> = createActor<'idle', Ev>({
+      initial: 'idle',
+      onIdle: () => {
+        idleCalls += 1;
+        if (idleCalls === 1) {
+          actor.act((ctrl) => ctrl.emit({ type: 'drained' }));
+          return;
+        }
+        if (idleCalls === 2) actor.act((ctrl) => ctrl.emit({ type: 'idle' }));
+      },
+      isIdle: () => ready,
+    });
+    actor.subscribe((event) => events.push(event));
+
+    const waiting = actor.waitForIdle();
+    actor.act((ctrl) => {
+      ready = true;
+      ctrl.emit({ type: 'work' });
+    });
+    await waiting;
+
+    expect(events).toEqual([{ type: 'work' }, { type: 'drained' }, { type: 'idle' }]);
+    expect(idleCalls).toBe(3);
     await actor.close();
   });
 
