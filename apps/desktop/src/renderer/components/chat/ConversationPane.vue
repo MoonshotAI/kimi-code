@@ -19,6 +19,7 @@ import ChatDock from './ChatDock.vue';
 import SessionInfoPanel from './SessionInfoPanel.vue';
 import { useSessionInfoLayout } from '../../composables/useSessionInfoLayout';
 import { toHtmlEl, useTranscriptScrollBinding } from '../../composables/useTranscriptScroll';
+import { useTranscriptStabilityProbe } from '../../composables/useTranscriptStabilityProbe';
 import WorkspaceHome from './WorkspaceHome.vue';
 import { WorkspaceRecentSessions } from '@moonshot-ai/app-components';
 import { ConversationToc, type ConversationTocItem } from '@moonshot-ai/app-components';
@@ -511,6 +512,7 @@ const {
   syncWideTableToc,
   keyScrollBlocked: (event) => isComposingKeyEvent(event) || anyOverlayOpen.value || composerPopupOpen(),
 });
+useTranscriptStabilityProbe(panesRef);
 type ComposerHandle = {
   loadForEdit: (value: string, snapshot?: ComposerDocumentSnapshot) => boolean | void;
   insertQuote?: (quote: string, comment?: string, source?: string) => boolean | void;
