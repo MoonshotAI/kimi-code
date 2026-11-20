@@ -9,6 +9,7 @@ beforeEach(() => {
   getKimiWebApiMock.mockReset();
   setKimiClientDeps({ api: () => getKimiWebApiMock(), t: (key) => key });
   const store = workspacesStore();
+  store.showCliWorkspaces = true;
   store.removeWorkspaceEntries('ws/1', '/repo/ws1');
   store.workspaces = [{ id: 'ws/1', root: '/repo/ws1', name: 'ws1', sessionCount: 1, kind: 'implicit', additionalDirs: [] }];
   store.storedActiveWorkspaceId = 'ws/1';
