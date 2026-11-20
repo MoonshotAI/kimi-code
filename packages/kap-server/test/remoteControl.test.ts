@@ -201,6 +201,24 @@ describe('server-v2 /api/v1/remote-control', () => {
     await relay.close();
   });
 
+  it('refuses an idle-only shutdown while the tunnel is active', async () => {
+    const relay = await startRegisterAckRelay();
+    vi.stubEnv('KIMI_CODE_REMOTE_CONTROL_RELAY_URL', `http://127.0.0.1:${relay.port}`);
+    try {
+      expect((await postRemoteControl(true)).data.state).toBe('on');
+      const res = await authedFetch(server as RunningServer, base, '/api/v1/shutdown?if_idle=true', {
+        method: 'POST',
+      });
+      const body = (await res.json()) as Envelope<{ ok: boolean }>;
+      expect(body.data.ok).toBe(false);
+      const status = await authedFetch(server as RunningServer, base, '/api/v1/remote-control');
+      expect(((await status.json()) as Envelope<RemoteControlStatusWire>).data.state).toBe('on');
+    } finally {
+      await postRemoteControl(false);
+      await relay.close();
+    }
+  });
+
   it('reports REMOTE_CONTROL_ALREADY_RUNNING when another live process holds the lock', async () => {
     await mkdir(join(home as string, 'server'), { recursive: true });
     await writeFile(

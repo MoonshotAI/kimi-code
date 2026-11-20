@@ -32,7 +32,7 @@ import {
   isLoopbackHost,
   splitTokenFragment,
 } from './access-urls';
-import { ensureWebDaemon } from './ensure-daemon';
+import { ensureWebDaemon, type DaemonConnection, type WebDaemon } from './ensure-daemon';
 import { type NetworkAddress } from './networks';
 import {
   formatRemoteControlOutput,
@@ -66,6 +66,7 @@ export interface WebCliOptions extends ServerCliOptions {
   open?: boolean;
   json?: boolean;
   remoteControl?: boolean;
+  daemon?: boolean;
   sharedDaemon?: boolean;
 }
 
@@ -85,6 +86,7 @@ export interface WebCommandDeps {
     hooks?: StartForegroundHooks,
   ) => Promise<never>;
   startRemoteControl?: (options: RemoteControlOptions) => Promise<RemoteControlHandle>;
+  listenForExitSignals?: (listener: () => void) => () => void;
   openUrl(url: string): void;
   resolveToken?: () => string | undefined;
   networkAddresses?: NetworkAddress[];
@@ -104,6 +106,7 @@ export function buildWebCommand(
   const forceRemoteControl = opts.forceRemoteControl === true;
   const defaultOpen = opts.defaultOpen ?? true;
   const useSharedDaemon = opts.sharedDaemon === true && process.platform !== 'win32';
+  const daemonNeutralOptions = new Set(['open', 'remoteControl', 'daemon']);
   const withServerOptions = cmd
     .option(
       '--port <port>',
@@ -163,6 +166,12 @@ export function buildWebCommand(
     withServerOptions.option('--open', 'Open the web UI in the default browser.', false);
     withServerOptions.addOption(new Option('--no-open').hideHelp());
   }
+  if (opts.sharedDaemon === true) {
+    withServerOptions.option(
+      '--no-daemon',
+      'Run a separate server in this terminal instead of the shared background server (stop it with Ctrl+C).',
+    );
+  }
   if (!forceRemoteControl) {
     withServerOptions.option(
       '--json',
@@ -172,10 +181,13 @@ export function buildWebCommand(
   }
   return withServerOptions.action(async (cliOptions: WebCliOptions) => {
     try {
-      const sharedDaemon = useSharedDaemon && !withServerOptions.options.some((option) => {
-        const key = option.attributeName();
-        return key !== 'open' && withServerOptions.getOptionValueSource(key) === 'cli';
-      });
+      const sharedDaemon =
+        useSharedDaemon &&
+        cliOptions.daemon !== false &&
+        !withServerOptions.options.some((option) => {
+          const key = option.attributeName();
+          return !daemonNeutralOptions.has(key) && withServerOptions.getOptionValueSource(key) === 'cli';
+        });
       await handleWebCommand(
         { ...cliOptions, sharedDaemon, remoteControl: forceRemoteControl || cliOptions.remoteControl === true },
         deps,
@@ -233,15 +245,24 @@ export async function handleWebCommand(
 ): Promise<void> {
   const parsed = parseServerOptions(opts);
   if (opts.sharedDaemon === true) {
-    const { origin, connection } = await (deps.ensureWebDaemon ?? ensureWebDaemon)();
+    const daemon = await (deps.ensureWebDaemon ?? ensureWebDaemon)();
     try {
       const token = deps.resolveToken?.();
       if (token === undefined) throw new Error('Unable to read the local server token.');
-      deps.stdout.write(formatReadyBanner(origin, parsed.host, { token, sharedDaemon: true }));
-      if (opts.open === true) deps.openUrl(buildWebUrl(origin, token));
-      await finished(connection.stream, { cleanup: true });
+      if (opts.remoteControl === true) {
+        await attachRemoteControl(daemon, token, opts.open === true, deps);
+        return;
+      }
+      deps.stdout.write(
+        formatReadyBanner(daemon.origin, parsed.host, {
+          token,
+          sharedDaemon: { pid: daemon.pid, logPath: daemon.logPath },
+        }),
+      );
+      if (opts.open === true) deps.openUrl(buildWebUrl(daemon.origin, token));
+      await finished(daemon.connection.stream, { cleanup: true });
     } finally {
-      connection.close();
+      daemon.connection.close();
     }
     return;
   }
@@ -354,6 +375,100 @@ export async function handleWebCommand(
     onShutdown: async () => {
       await remoteControl?.close();
     },
+  });
+}
+
+interface RemoteControlStatusWire {
+  readonly state: 'off' | 'starting' | 'on' | 'stopping';
+  readonly url?: string;
+  readonly device_name?: string;
+}
+
+const REMOTE_CONTROL_POLL_MS = 2_000;
+
+async function setDaemonRemoteControl(
+  connection: DaemonConnection,
+  enabled: boolean,
+): Promise<RemoteControlStatusWire> {
+  const res = await connection.request<RemoteControlStatusWire>('POST', '/api/v1/remote-control', { enabled });
+  const data = res?.code === 0 ? (res.data ?? undefined) : undefined;
+  if (data === undefined) {
+    throw new Error(res?.msg ?? 'The shared Kimi server did not answer the Remote Control request.');
+  }
+  return data;
+}
+
+const EXIT_SIGNALS = ['SIGINT', 'SIGTERM', 'SIGHUP'] as const;
+
+function listenForExitSignals(listener: () => void): () => void {
+  for (const signal of EXIT_SIGNALS) process.once(signal, listener);
+  return () => {
+    for (const signal of EXIT_SIGNALS) process.off(signal, listener);
+  };
+}
+
+async function attachRemoteControl(
+  daemon: WebDaemon,
+  token: string,
+  open: boolean,
+  deps: WebCommandDeps,
+): Promise<void> {
+  const { connection } = daemon;
+  const before = (await connection.request<RemoteControlStatusWire>('GET', '/api/v1/remote-control'))?.data ?? undefined;
+  if (before === undefined) throw new Error('Unable to read the Remote Control status of the shared Kimi server.');
+  const ownsTunnel = before.state === 'off' || before.state === 'stopping';
+  const status = await setDaemonRemoteControl(connection, true);
+  if (status.url === undefined) throw new Error('Remote Control started without a device link.');
+  let turnOffOnExit = ownsTunnel;
+  try {
+    const qrCode = await generateRemoteControlQr(status.url, getDataDir());
+    deps.stdout.write(
+      formatRemoteControlOutput({
+        url: status.url,
+        localOrigin: daemon.origin,
+        localServerToken: token,
+        deviceName: status.device_name ?? '',
+        qrCode: qrCode.terminal,
+        pngPath: qrCode.pngPath,
+        sharedDaemon: { ownsTunnel, logPath: daemon.logPath },
+      }),
+    );
+    if (open) deps.openUrl(status.url);
+    const reason = await waitForRemoteControlExit(connection, deps);
+    if (reason === 'remote_off') {
+      turnOffOnExit = false;
+      deps.stdout.write('  Remote Control was turned off; exiting.\n');
+    } else if (reason === 'daemon_closed') {
+      turnOffOnExit = false;
+      deps.stderr.write('The shared Kimi server stopped; Remote Control is no longer available.\n');
+    }
+  } finally {
+    if (turnOffOnExit) await setDaemonRemoteControl(connection, false);
+  }
+}
+
+function waitForRemoteControlExit(
+  connection: DaemonConnection,
+  deps: WebCommandDeps,
+): Promise<'signal' | 'daemon_closed' | 'remote_off'> {
+  return new Promise((resolve) => {
+    const onClose = (): void => finish('daemon_closed');
+    const poll = setInterval(() => {
+      void connection
+        .request<RemoteControlStatusWire>('GET', '/api/v1/remote-control')
+        .then((res) => {
+          if (res?.data?.state === 'off') finish('remote_off');
+        });
+    }, REMOTE_CONTROL_POLL_MS);
+    const stopListening = (deps.listenForExitSignals ?? listenForExitSignals)(() => finish('signal'));
+    function finish(result: 'signal' | 'daemon_closed' | 'remote_off'): void {
+      clearInterval(poll);
+      stopListening();
+      connection.stream.off('close', onClose);
+      resolve(result);
+    }
+    connection.stream.once('close', onClose);
+    if (connection.stream.destroyed) finish('daemon_closed');
   });
 }
 
@@ -509,7 +624,7 @@ export function resolveServerWebAssetsDir(
 }
 
 interface FormatReadyBannerOptions {
-  sharedDaemon?: boolean;
+  sharedDaemon?: { pid: number; logPath: string };
   token?: string;
   networkAddresses?: NetworkAddress[];
   dangerousBypassAuth?: boolean;
@@ -561,8 +676,12 @@ export function formatReadyBanner(
     lines.push('');
   }
 
-  if (opts.sharedDaemon === true) {
-    lines.push(`  ${label('Exit:     ')}${muted('Ctrl+C')}${dim('  the shared server stays running')}`);
+  if (opts.sharedDaemon !== undefined) {
+    lines.push(`  ${label('Server:   ')}${muted(`shared background server (pid ${String(opts.sharedDaemon.pid)})`)}`);
+    lines.push(`  ${label('Logs:     ')}${muted(opts.sharedDaemon.logPath)}`);
+    lines.push(
+      `  ${label('Exit:     ')}${muted('Ctrl+C')}${dim('  the shared server stays running · stop it with `kimi web stop`')}`,
+    );
   } else {
     lines.push(`  ${label('Logs:     ')}${muted('off')}${dim('  use --log-level info to enable')}`);
     lines.push(`  ${label('Stop:     ')}${muted('Ctrl+C')}`);

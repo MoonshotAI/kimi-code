@@ -26,7 +26,9 @@ Kimi Code Web 是 Kimi Code CLI 内置的浏览器图形界面：既可以在本
 ```text
 Local:   http://127.0.0.1:58627/#token=...
 Token:   ...
-Exit:    Ctrl+C  the shared server stays running
+Server:  shared background server (pid 12345)
+Logs:    ~/.kimi-code/server/ensure-daemon.log
+Exit:    Ctrl+C  the shared server stays running · stop it with `kimi web stop`
 ```
 
 ::: warning 注意
@@ -34,7 +36,11 @@ Exit:    Ctrl+C  the shared server stays running
 :::
 </div>
 
-在 macOS 和 Linux 上，`kimi web` 与 Kimi Code 连到同一台机器的 SSH 连接，只要使用同一个 Kimi 数据目录，就能共享会话。按 `Ctrl+C` 会退出命令，共享服务会继续运行，直到空闲后自动退出。在 Windows 上，或显式指定 `--host`、`--port` 等服务选项时，按 `Ctrl+C` 会停止前台服务。
+在 macOS 和 Linux 上，`kimi web` 和 `kimi rc` 默认使用同一个后台共享服务。只要使用同一个 Kimi 数据目录，浏览器、远程控制和 Kimi Code 连到这台机器的 SSH 连接看到的是同一批正在运行的会话。按 `Ctrl+C` 只会退出命令，共享服务会继续运行；没有连接、没有正在运行的任务、也没有开启远程控制的状态持续 10 分钟后，它会自动退出。用 `kimi web status` 查看共享服务的状态，用 `kimi web stop` 停止它。
+
+共享服务使用它启动时的环境变量。修改环境变量后，先运行 `kimi web stop`，再重新运行命令。
+
+在 Windows 上，或指定 `--no-daemon`、`--host`、`--port` 等服务选项时，命令会在当前终端启动独立的前台服务，按 `Ctrl+C` 会停止它。
 
 ### 启动选项
 
@@ -43,6 +49,7 @@ Exit:    Ctrl+C  the shared server stays running
 | `--port <port>` | 绑定端口；默认 `58627`，被占用时自动 +1 重试 |
 | `--host [host]` | 开启局域网共享，让同一网络下的手机、平板或其他电脑访问；也可指定 IP，如 `--host 192.168.1.10` |
 | `--no-open` | 就绪后不自动打开浏览器 |
+| `--no-daemon` | 不使用共享服务，在当前终端启动独立的前台服务 |
 | `--log-level <level>` | 按所选级别开启服务日志；默认不输出 |
 
 ## 远程控制（公网与手机访问） {#远程控制}
@@ -51,9 +58,9 @@ Exit:    Ctrl+C  the shared server stays running
 
 ### 启动与连接
 
-在本机任选一种方式启动前台进程（一台机器同时只能运行一个远程控制实例，每个账号最多支持约 **3 台**设备）：
+在本机任选一种方式开启远程控制（一台机器同时只能运行一个远程控制实例，每个账号最多支持约 **3 台**设备）：
 
-- **`kimi rc`**（别名 `kimi remote`）：直接启动远程控制；
+- **`kimi rc`**（别名 `kimi remote`）：直接开启远程控制。在 macOS 和 Linux 上，它在共享服务中开启远程控制，手机上看到的会话和本机浏览器、SSH 连接一致；
 - **`kimi web --remote-control`**：与 `kimi rc` 等价；
 - **`/remote-control`**（别名 `/rc`）：已在 CLI 会话中时，把当前会话直接交给远程界面。
 
@@ -65,7 +72,7 @@ Exit:    Ctrl+C  the shared server stays running
 2. 登录与本机**相同**的 Kimi 账号，在设备列表中选择这台机器即可查看并操控会话。
 
 ::: warning 注意
-远程控制链接对应这台机器的访问入口，仅限登录同一 Kimi 账号后使用，请勿分享给他人。结束时在本地终端按 `Ctrl+C` 即可下线（若找不到原终端，可根据 `~/.kimi-code/server/rc.json` 中的 `pid` 执行 `kill <pid>`）。关闭远程浏览器页面不会中断本机正在运行的任务。
+远程控制链接对应这台机器的访问入口，仅限登录同一 Kimi 账号后使用，请勿分享给他人。结束时在本地终端按 `Ctrl+C` 即可下线。如果运行 `kimi rc` 之前远程控制已经开启（例如在 Web 界面的设置中打开），按 `Ctrl+C` 只会退出命令，远程控制保持开启。找不到原终端时，可以在 Web 界面设置的远程控制面板中关闭它，或运行 `kimi web stop --force` 停止共享服务；使用 `--no-daemon` 或在 Windows 上运行时，可根据 `~/.kimi-code/server/rc.json` 中的 `pid` 执行 `kill <pid>`。关闭远程浏览器页面不会中断本机正在运行的任务。
 :::
 
 ## 与 CLI 的关系

@@ -159,9 +159,9 @@ kimi acp
 
 ### `kimi web`
 
-Open the local Kimi web UI in your default browser. On macOS and Linux, `kimi web` and `kimi web --no-open` reuse the background server that Kimi Code uses for SSH connections to that machine, or start it if needed. Both connections see the same sessions when they use the same Kimi data directory. `Ctrl+C` exits the command and leaves the shared server running until idle.
+Open the local Kimi web UI in your default browser. On macOS and Linux, `kimi web`, `kimi web --no-open`, `kimi web --remote-control`, and `kimi rc` reuse the shared background server on this machine, or start it if needed. Kimi Code's SSH connections use the same server, so every entry point sees the same sessions when they use the same Kimi data directory. `Ctrl+C` exits the command and leaves the shared server running; it exits on its own after 10 minutes with no connections, no running tasks, and Remote Control off. The shared server keeps the environment variables it started with, so run `kimi web stop` after changing them.
 
-On Windows, and when you supply a server option such as `--host`, `--port`, or `--json`, the command starts a separate foreground server. Use `kimi web --port 58627` if you want a server that stops when you press `Ctrl+C`.
+On Windows, and when you pass `--no-daemon` or a server option such as `--host`, `--port`, or `--json`, the command starts a separate foreground server in the current terminal, and `Ctrl+C` stops it.
 
 When the server is running, `GET /api/v1/kap.md` returns the version-matched KAP runtime guide, `GET /openapi.json` returns the REST OpenAPI document, and `GET /asyncapi.json` returns the local WebSocket AsyncAPI document. For interacting with or handing off sessions from other agents, see [Using in Other Agents (Agent to Agent)](../guides/other-agents.md).
 
@@ -183,6 +183,7 @@ Multiple instances can share one home directory: each registers itself under `~/
 | `--dangerous-bypass-auth` | Disable bearer-token auth on all REST and WebSocket routes so the web UI connects without a token; only for trusted networks or behind an authenticating proxy |
 | `--web-title <title>` | Custom browser tab title for the web UI; defaults to the workspace directory name |
 | `--no-open` | Do not open the browser once the server is ready |
+| `--no-daemon` | Start a separate foreground server in the current terminal instead of using the shared server; also accepted by `kimi rc` |
 | `--json` | Machine-readable startup mode: skips opening the browser, mints an in-memory bearer token for this process, prints a single JSON line (`{ origin, ws_url, token, kimi_agent_protocol_version }`) on `stdout` once ready, and routes logs to `stderr` |
 
 `kimi web` binds to local loopback only by default and prints the bearer token in the startup banner; the web UI authenticates automatically via the `#token=` URL fragment.
@@ -194,6 +195,14 @@ Multiple instances can share one home directory: each registers itself under `~/
 #### `kimi server kill`
 
 Deprecated — only stops a server started by a version before 0.28.0. Those versions could leave a background server behind, recorded in the legacy single-instance lock at `~/.kimi-code/server/lock`; the command first tries `POST /api/v1/shutdown` for a graceful exit, then signals the recorded pid with SIGTERM, escalating to SIGKILL when needed, and removes the lock file once the process is confirmed dead.
+
+#### `kimi web status`
+
+Show the shared server's status: version, process ID, web address, socket path, log path, and Remote Control state. The log path is printed even when the server is not running. Pass `--json` to print a single JSON object.
+
+#### `kimi web stop`
+
+Stop the shared server once it is idle. While tasks are running, clients are connected, or Remote Control is on, the command refuses and exits with code `1`; pass `--force` to stop it anyway, which interrupts running tasks. Pass `--json` to print a single JSON object.
 
 #### `kimi web rotate-token`
 

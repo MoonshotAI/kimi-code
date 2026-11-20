@@ -26,7 +26,9 @@ The startup banner prints the access URL — if the browser doesn't open automat
 ```text
 Local:   http://127.0.0.1:58627/#token=...
 Token:   ...
-Exit:    Ctrl+C  the shared server stays running
+Server:  shared background server (pid 12345)
+Logs:    ~/.kimi-code/server/ensure-daemon.log
+Exit:    Ctrl+C  the shared server stays running · stop it with `kimi web stop`
 ```
 
 ::: warning
@@ -34,7 +36,11 @@ Keep the `#token=` fragment private. It grants access to the server.
 :::
 </div>
 
-On macOS and Linux, `kimi web` and Kimi Code's SSH connection to the same machine share sessions when they use the same Kimi data directory. Pressing `Ctrl+C` exits the command and leaves the shared server running until idle. On Windows, and when you supply a server option such as `--host` or `--port`, `Ctrl+C` stops the foreground server.
+On macOS and Linux, `kimi web` and `kimi rc` use one shared background server by default. With the same Kimi data directory, the browser, Remote Control, and Kimi Code's SSH connections to this machine all see the same running sessions. Pressing `Ctrl+C` only exits the command; the shared server keeps running and exits on its own after 10 minutes with no connections, no running tasks, and Remote Control off. Run `kimi web status` to inspect the shared server and `kimi web stop` to stop it.
+
+The shared server keeps the environment variables it started with. After changing environment variables, run `kimi web stop` and then run the command again.
+
+On Windows, and when you pass `--no-daemon` or a server option such as `--host` or `--port`, the command starts a separate foreground server in the current terminal, and `Ctrl+C` stops it.
 
 ### Startup options
 
@@ -43,6 +49,7 @@ On macOS and Linux, `kimi web` and Kimi Code's SSH connection to the same machin
 | `--port <port>` | Bind port; defaults to `58627`, auto-increments when taken |
 | `--host [host]` | Enable LAN sharing so phones, tablets, or other computers on the same network can connect; or specify an IP such as `--host 192.168.1.10` |
 | `--no-open` | Don't open the browser when ready |
+| `--no-daemon` | Start a separate foreground server in the current terminal instead of using the shared server |
 | `--log-level <level>` | Enable server logs at the given level; off by default |
 
 ## Remote Control (phone & public internet access) {#remote-control}
@@ -51,9 +58,9 @@ To check task progress, approve permissions, or continue chatting from your phon
 
 ### Starting and connecting
 
-Run any of the following foreground commands on your machine (one Remote Control instance per machine; up to about **3 devices** per account):
+Turn on Remote Control on your machine in any of the following ways (one Remote Control instance per machine; up to about **3 devices** per account):
 
-- **`kimi rc`** (alias `kimi remote`): start Remote Control directly;
+- **`kimi rc`** (alias `kimi remote`): start Remote Control directly. On macOS and Linux, it turns Remote Control on in the shared server, so your phone sees the same sessions as the local browser and SSH connections;
 - **`kimi web --remote-control`**: equivalent to `kimi rc`;
 - **`/remote-control`** (alias `/rc`): hand your active CLI session directly to the remote web UI.
 
@@ -65,7 +72,7 @@ The terminal prints the access link (`https://code-rc.kimi.com/devices/<device I
 2. Log in with the **same** Kimi account as on your machine and select the device to view and control its sessions.
 
 ::: warning
-The Remote Control link grants access to your machine upon signing into the same Kimi account — do not share it publicly. Press `Ctrl+C` in the local terminal to go offline (or run `kill <pid>` using the `pid` in `~/.kimi-code/server/rc.json` if you lost the terminal). Closing the remote browser tab leaves local tasks running uninterrupted.
+The Remote Control link grants access to your machine upon signing into the same Kimi account — do not share it publicly. Press `Ctrl+C` in the local terminal to go offline. If Remote Control was already on before you ran `kimi rc` (for example, turned on from the web UI settings), `Ctrl+C` only exits the command and Remote Control stays on. If you lost the terminal, turn it off from the Remote Control panel in the web UI settings, or run `kimi web stop --force` to stop the shared server; with `--no-daemon` or on Windows, run `kill <pid>` using the `pid` in `~/.kimi-code/server/rc.json`. Closing the remote browser tab leaves local tasks running uninterrupted.
 :::
 
 ## Relationship with the CLI

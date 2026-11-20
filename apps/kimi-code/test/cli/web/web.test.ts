@@ -5,7 +5,7 @@ import { PassThrough } from 'node:stream';
 
 import chalk, { Chalk } from 'chalk';
 import { Command } from 'commander';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 
 import { resetCapabilitiesCache, setCapabilities } from '@moonshot-ai/pi-tui';
 
@@ -13,11 +13,17 @@ import { createInstanceRegistry, HOST_API_LEVEL, HOST_PROTOCOL_VERSION } from '@
 
 import { registerWebCommand } from '#/cli/sub/web';
 import {
+  daemonLogPath,
   daemonSocketPath,
   ensureDaemon,
   ensureWebDaemon,
+  formatSharedDaemonStatus,
+  inspectSharedDaemon,
+  stopSharedDaemon,
   type DaemonConnection,
+  type DaemonEnvelope,
   type EnsureDaemonDeps,
+  type WebDaemon,
 } from '#/cli/sub/web/ensure-daemon';
 import type { LegacyKillDeps } from '#/cli/sub/web/legacy-kill';
 import type {
@@ -58,6 +64,30 @@ function makeRunner(origin = 'http://127.0.0.1:58627'): {
   return { runner, calls };
 }
 
+function fakeWebDaemon(
+  handle: (method: string, path: string, body: unknown) => DaemonEnvelope<unknown> | undefined = () => undefined,
+): { daemon: WebDaemon; requests: Array<[string, string, unknown]>; stream: PassThrough; close: ReturnType<typeof vi.fn> } {
+  const stream = new PassThrough();
+  stream.resume();
+  const requests: Array<[string, string, unknown]> = [];
+  const close = vi.fn();
+  const request = (async (method: string, path: string, body?: unknown) => {
+    requests.push([method, path, body]);
+    return handle(method, path, body);
+  }) as DaemonConnection['request'];
+  return {
+    daemon: {
+      origin: 'http://127.0.0.1:58628',
+      pid: 4321,
+      logPath: '/example/server/ensure-daemon.log',
+      connection: { stream, close, request, version: '1.0.0', serverId: 'daemon', stopIfIdle: vi.fn() },
+    },
+    requests,
+    stream,
+    close,
+  };
+}
+
 function makeIo(): {
   stdout: Pick<NodeJS.WriteStream, 'write'>;
   stderr: Pick<NodeJS.WriteStream, 'write'>;
@@ -81,12 +111,12 @@ function makeIo(): {
 }
 
 describe('kimi web', () => {
-  it('registers the `web` command with only the rotate-token subcommand', () => {
+  it('registers the `web` command with the rotate-token, status and stop subcommands', () => {
     const program = makeProgram();
     const web = program.commands.find((c) => c.name() === 'web');
     expect(web).toBeDefined();
     const subs = web?.commands.map((c) => c.name());
-    expect(subs).toEqual(['rotate-token']);
+    expect(subs).toEqual(['rotate-token', 'status', 'stop']);
   });
 
   it('reports the host protocol from `kimi server ensure-daemon --probe` without starting a server', async () => {
@@ -119,6 +149,7 @@ describe('kimi web', () => {
     const remoteControl = web!.options.find((option) => option.long === '--remote-control');
     expect(remoteControl?.short).toBe('--rc');
     expect(longs).toContain('--no-open');
+    expect(longs).toContain('--no-daemon');
     expect(longs).not.toContain('--foreground');
     expect(longs).not.toContain('--keep-alive');
     expect(longs).not.toContain('--daemon');
@@ -150,14 +181,9 @@ describe('kimi web', () => {
   it.skipIf(process.platform === 'win32').each([true, false])(
     'attaches plain Web invocations to the shared daemon with open=%s',
     async (open) => {
-      const stream = new PassThrough();
-      stream.resume();
+      const { daemon, stream, close } = fakeWebDaemon();
       stream.end();
-      const close = vi.fn();
-      const ensureWebDaemon = vi.fn(async () => ({
-        origin: 'http://127.0.0.1:58628',
-        connection: { stream, close, version: '1.0.0', serverId: 'daemon', stopIfIdle: vi.fn() },
-      }));
+      const ensureWebDaemon = vi.fn(async () => daemon);
       const startServerForeground = vi.fn<ForegroundRunner>();
       const openUrl = vi.fn();
       const io = makeIo();
@@ -168,8 +194,66 @@ describe('kimi web', () => {
       expect(ensureWebDaemon).toHaveBeenCalledOnce();
       expect(startServerForeground).not.toHaveBeenCalled();
       expect(close).toHaveBeenCalledOnce();
-      expect(stripAnsi(io.readStdout())).toContain('the shared server stays running');
+      const banner = stripAnsi(io.readStdout());
+      expect(banner).toContain('the shared server stays running');
+      expect(banner).toContain('shared background server (pid 4321)');
+      expect(banner).toContain('/example/server/ensure-daemon.log');
+      expect(banner).toContain('kimi web stop');
+      expect(banner).not.toContain('Stop:');
       expect(openUrl.mock.calls).toEqual(open ? [['http://127.0.0.1:58628/#token=tok']] : []);
+    },
+  );
+
+  it('keeps the foreground lifecycle and banner with --no-daemon', async () => {
+    const ensureWebDaemon = vi.fn();
+    const { runner, calls } = makeRunner();
+    const startServerForeground = vi.fn(runner);
+    const io = makeIo();
+    const cmd = buildWebCommand(new Command('web'), { sharedDaemon: true }, {
+      ...io, ensureWebDaemon, startServerForeground, openUrl: vi.fn(), resolveToken: () => 'tok',
+    });
+    await cmd.parseAsync(['--no-daemon', '--no-open'], { from: 'user' });
+    expect(ensureWebDaemon).not.toHaveBeenCalled();
+    expect(calls.options).toMatchObject({ host: '127.0.0.1', port: 58627 });
+    const banner = stripAnsi(io.readStdout());
+    expect(banner).toMatch(/Stop:\s+Ctrl\+C/);
+    expect(banner).not.toContain('shared');
+  });
+
+  it('runs `kimi rc --no-daemon` as a separate foreground server', async () => {
+    const ensureWebDaemon = vi.fn();
+    const startServerForeground = vi.fn<ForegroundRunner>(async () => undefined as never);
+    const cmd = buildWebCommand(new Command('rc'), { forceRemoteControl: true, sharedDaemon: true }, {
+      ...makeIo(), ensureWebDaemon, startServerForeground, openUrl: vi.fn(),
+    });
+    await cmd.parseAsync(['--no-daemon'], { from: 'user' });
+    expect(ensureWebDaemon).not.toHaveBeenCalled();
+    expect(startServerForeground).toHaveBeenCalledOnce();
+  });
+
+  it.skipIf(process.platform === 'win32').each([['--rc'], ['--no-open']])(
+    'keeps %s on the shared daemon',
+    async (option) => {
+      const home = mkdtempSync(join(tmpdir(), 'kimi-web-shared-'));
+      vi.stubEnv('KIMI_CODE_HOME', home);
+      onTestFinished(() => {
+        vi.unstubAllEnvs();
+        rmSync(home, { recursive: true, force: true });
+      });
+      const { daemon, stream } = fakeWebDaemon((method) =>
+        method === 'GET'
+          ? { code: 0, data: { state: 'on' } }
+          : { code: 0, data: { state: 'on', url: 'https://example.test/devices/device-1/', device_name: 'example-device' } },
+      );
+      stream.end();
+      const ensureWebDaemon = vi.fn(async () => daemon);
+      const startServerForeground = vi.fn<ForegroundRunner>();
+      const cmd = buildWebCommand(new Command('web'), { sharedDaemon: true }, {
+        ...makeIo(), ensureWebDaemon, startServerForeground, openUrl: vi.fn(), resolveToken: () => 'tok',
+      });
+      await cmd.parseAsync([option], { from: 'user' });
+      expect(ensureWebDaemon).toHaveBeenCalledOnce();
+      expect(startServerForeground).not.toHaveBeenCalled();
     },
   );
 
@@ -629,6 +713,152 @@ describe('kimi rc', () => {
       }
       expect(stderr).toContain('--remote-control requires a loopback host.');
     }
+  });
+});
+
+describe('kimi rc on the shared daemon', () => {
+  let home: string;
+
+  beforeEach(() => {
+    home = mkdtempSync(join(tmpdir(), 'kimi-rc-daemon-'));
+    vi.stubEnv('KIMI_CODE_HOME', home);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllEnvs();
+    rmSync(home, { recursive: true, force: true });
+  });
+
+  function remoteControlDaemon(initial: 'off' | 'on') {
+    const state = { current: initial as 'off' | 'on' };
+    const fake = fakeWebDaemon((method, path, body) => {
+      if (path !== '/api/v1/remote-control') return undefined;
+      if (method === 'POST') state.current = (body as { enabled: boolean }).enabled ? 'on' : 'off';
+      return {
+        code: 0,
+        data: {
+          state: state.current,
+          ...(state.current === 'on'
+            ? { url: 'https://example.test/devices/device-1/?rc=1', device_name: 'example-device' }
+            : {}),
+        },
+      };
+    });
+    return { ...fake, state };
+  }
+
+  async function run(daemon: WebDaemon) {
+    const { handleWebCommand } = await import('#/cli/sub/web/run');
+    const io = makeIo();
+    let stderr = '';
+    let exitSignal: (() => void) | undefined;
+    const done = handleWebCommand(
+      { sharedDaemon: true, remoteControl: true, open: false },
+      {
+        ...io,
+        stderr: {
+          write(chunk: string | Uint8Array) {
+            stderr += String(chunk);
+            return true;
+          },
+        },
+        ensureWebDaemon: async () => daemon,
+        resolveToken: () => 'tok',
+        openUrl: vi.fn(),
+        listenForExitSignals: (listener) => {
+          exitSignal = listener;
+          return () => {
+            exitSignal = undefined;
+          };
+        },
+      },
+    );
+    await vi.waitFor(() => {
+      expect(exitSignal).toBeDefined();
+    });
+    return { done, io, stderr: () => stderr, signal: () => exitSignal?.() };
+  }
+
+  it('turns on the tunnel it needs and turns it off again on Ctrl+C', async () => {
+    const { daemon, requests, close } = remoteControlDaemon('off');
+    const session = await run(daemon);
+    expect(stripAnsi(session.io.readStdout())).toContain('turns Remote Control off; the shared server stays running');
+    session.signal();
+    await session.done;
+    expect(requests.filter(([method]) => method === 'POST').map(([, , body]) => body)).toEqual([
+      { enabled: true },
+      { enabled: false },
+    ]);
+    expect(close).toHaveBeenCalledOnce();
+  });
+
+  it('leaves a tunnel that was already on running after Ctrl+C', async () => {
+    const { daemon, requests, state } = remoteControlDaemon('on');
+    const session = await run(daemon);
+    expect(stripAnsi(session.io.readStdout())).toContain('leaves Remote Control on');
+    session.signal();
+    await session.done;
+    expect(requests.filter(([method]) => method === 'POST').map(([, , body]) => body)).toEqual([{ enabled: true }]);
+    expect(state.current).toBe('on');
+  });
+
+  it('exits without touching the tunnel when the shared server stops', async () => {
+    const { daemon, requests, stream } = remoteControlDaemon('off');
+    const session = await run(daemon);
+    stream.destroy();
+    await session.done;
+    expect(session.stderr()).toContain('The shared Kimi server stopped');
+    expect(requests.filter(([method]) => method === 'POST')).toHaveLength(1);
+  });
+
+  it('exits when Remote Control is turned off elsewhere', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    const { daemon, requests, state } = remoteControlDaemon('off');
+    const session = await run(daemon);
+    state.current = 'off';
+    await vi.advanceTimersByTimeAsync(2_000);
+    await session.done;
+    expect(session.io.readStdout()).toContain('Remote Control was turned off; exiting.');
+    expect(requests.filter(([method]) => method === 'POST')).toHaveLength(1);
+  });
+
+  it('turns its own tunnel off again when startup fails after enabling it', async () => {
+    const { handleWebCommand } = await import('#/cli/sub/web/run');
+    const { daemon, requests, state } = remoteControlDaemon('off');
+    await expect(
+      handleWebCommand(
+        { sharedDaemon: true, remoteControl: true, open: true },
+        {
+          ...makeIo(),
+          ensureWebDaemon: async () => daemon,
+          resolveToken: () => 'tok',
+          openUrl: () => {
+            throw new Error('no browser');
+          },
+        },
+      ),
+    ).rejects.toThrow('no browser');
+    expect(requests.filter(([method]) => method === 'POST').map(([, , body]) => body)).toEqual([
+      { enabled: true },
+      { enabled: false },
+    ]);
+    expect(state.current).toBe('off');
+  });
+
+  it('reports the server error when the tunnel cannot start', async () => {
+    const { handleWebCommand } = await import('#/cli/sub/web/run');
+    const message = 'Remote Control is already running on this machine (pid 1, http://127.0.0.1:58627).';
+    const { daemon, close } = fakeWebDaemon((method) =>
+      method === 'GET' ? { code: 0, data: { state: 'off' } } : { code: 40928, msg: message, data: null },
+    );
+    await expect(
+      handleWebCommand(
+        { sharedDaemon: true, remoteControl: true, open: false },
+        { ...makeIo(), ensureWebDaemon: async () => daemon, resolveToken: () => 'tok', openUrl: vi.fn() },
+      ),
+    ).rejects.toThrow(message);
+    expect(close).toHaveBeenCalledOnce();
   });
 });
 
@@ -1181,9 +1411,18 @@ describe('`kimi server ensure-daemon`', () => {
       stream: new PassThrough(),
       version: '1.0.0',
       serverId: 'daemon',
+      request: async () => undefined,
       stopIfIdle: async () => true,
       close: () => {},
       ...overrides,
+    };
+  }
+
+  function closesAfter(first: DaemonConnection): EnsureDaemonDeps['connectSocket'] {
+    let calls = 0;
+    return async () => {
+      calls += 1;
+      return calls === 1 ? first : undefined;
     };
   }
 
@@ -1197,6 +1436,77 @@ describe('`kimi server ensure-daemon`', () => {
       ...overrides,
     };
   }
+
+  it('reports that no shared daemon is running', async () => {
+    const status = await inspectSharedDaemon(makeDeps({ connectSocket: async () => undefined }));
+    expect(status).toEqual({ running: false, log: daemonLogPath(homeDir) });
+    expect(formatSharedDaemonStatus(status)).toContain('No shared Kimi server is running.');
+  });
+
+  it('reports the running daemon with its Web listener and Remote Control state', async () => {
+    const registry = createInstanceRegistry({ instancesDir: join(homeDir, 'server', 'instances') });
+    const registered = await registry.register({ pid: process.pid, host: '127.0.0.1', port: 58628, startedAt: 1 });
+    const close = vi.fn();
+    try {
+      const status = await inspectSharedDaemon(
+        makeDeps({
+          connectSocket: async () =>
+            connection({
+              serverId: registered.serverId,
+              close,
+              request: (async (_method: string, path: string) =>
+                path === '/api/v1/remote-control'
+                  ? { code: 0, data: { state: 'on', url: 'https://example.test/devices/device-1/' } }
+                  : undefined) as DaemonConnection['request'],
+            }),
+        }),
+      );
+      expect(status).toMatchObject({
+        running: true,
+        version: '1.0.0',
+        pid: process.pid,
+        origin: 'http://127.0.0.1:58628',
+        socket: daemonSocketPath(homeDir),
+        remote_control: { state: 'on', url: 'https://example.test/devices/device-1/' },
+      });
+      expect(formatSharedDaemonStatus(status)).toContain(`PID:      ${String(process.pid)}`);
+      expect(close).toHaveBeenCalledOnce();
+    } finally {
+      await registered.release();
+    }
+  });
+
+  it('stops an idle shared daemon and waits for its socket to close', async () => {
+    const stopIfIdle = vi.fn(async () => true);
+    const deps = makeDeps({ connectSocket: closesAfter(connection({ stopIfIdle })) });
+    await expect(stopSharedDaemon(false, deps)).resolves.toBe('stopped');
+    expect(stopIfIdle).toHaveBeenCalledOnce();
+  });
+
+  it('refuses to stop a busy shared daemon without --force', async () => {
+    const request = vi.fn();
+    const deps = makeDeps({
+      connectSocket: async () => connection({ stopIfIdle: async () => false, request }),
+    });
+    await expect(stopSharedDaemon(false, deps)).resolves.toBe('busy');
+    expect(request).not.toHaveBeenCalled();
+  });
+
+  it('stops a busy shared daemon with --force', async () => {
+    const stopIfIdle = vi.fn(async () => false);
+    const request = vi.fn(async () => ({ code: 0, data: { ok: true } }));
+    const deps = makeDeps({
+      connectSocket: closesAfter(connection({ stopIfIdle, request: request as DaemonConnection['request'] })),
+    });
+    await expect(stopSharedDaemon(true, deps)).resolves.toBe('stopped');
+    expect(request).toHaveBeenCalledWith('POST', '/api/v1/shutdown');
+    expect(stopIfIdle).not.toHaveBeenCalled();
+  });
+
+  it('reports when there is no shared daemon to stop', async () => {
+    const deps = makeDeps({ connectSocket: async () => undefined });
+    await expect(stopSharedDaemon(false, deps)).resolves.toBe('not_running');
+  });
 
   it('reuses a live daemon socket of the same version without spawning', async () => {
     const conn = connection();

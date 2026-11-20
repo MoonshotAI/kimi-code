@@ -430,10 +430,11 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     void close().catch((error: unknown) => logger.error({ err: error }, 'server close failed'));
   };
   const sessionManager = core.accessor.get(ISessionManager);
+  const remoteControlActive = (): boolean => remoteControlManager.status().state !== 'off';
   const drainIdleSessions = async (): Promise<boolean> => {
-    if (connectionRegistry.size() > 0) return false;
+    if (connectionRegistry.size() > 0 || remoteControlActive()) return false;
     await closeIdleSessions(sessionManager, 0);
-    return connectionRegistry.size() === 0 && sessionManager.list().length === 0;
+    return connectionRegistry.size() === 0 && sessionManager.list().length === 0 && !remoteControlActive();
   };
   const managedIdleExit =
     opts.managedBy === undefined
@@ -441,6 +442,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
       : new ManagedIdleExit(
           sessionManager,
           connectionRegistry,
+          remoteControlActive,
           opts.managedIdleExitMs ?? DEFAULT_MANAGED_IDLE_EXIT_MS,
           requestClose,
         );

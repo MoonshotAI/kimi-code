@@ -2,4 +2,4 @@
 "@moonshot-ai/kimi-code": minor
 ---
 
-Share live sessions between `kimi web` and SSH on macOS and Linux, with `Ctrl+C` closing only the Web command in shared mode.
+On macOS and Linux, `kimi web` and `kimi rc` now run on one shared background server that SSH connections also use, so `Ctrl+C` no longer stops it; run `kimi web status` or `kimi web stop` to inspect or stop it, or pass `--no-daemon` to keep a foreground server.

@@ -105,7 +105,7 @@ describe('SessionIdleReaper', () => {
 
 describe('ManagedIdleExit', () => {
   function setup(
-    state: { sessions: number; connections: number },
+    state: { sessions: number; connections: number; keepAlive?: boolean },
     closeIfIdle: (id: string) => Promise<boolean> = async () => false,
   ) {
     let now = 0;
@@ -117,6 +117,7 @@ describe('ManagedIdleExit', () => {
         closeIfIdle,
       },
       { size: () => state.connections },
+      () => state.keepAlive === true,
       1000,
       onIdle,
       () => now,
@@ -131,6 +132,21 @@ describe('ManagedIdleExit', () => {
     expect(onIdle).not.toHaveBeenCalled();
     advance(1);
     await exit.sweep();
+    await exit.sweep();
+    expect(onIdle).toHaveBeenCalledTimes(1);
+  });
+
+  it('stays alive while the keep-alive predicate holds', async () => {
+    const state = { sessions: 0, connections: 0, keepAlive: true };
+    const { exit, onIdle, advance } = setup(state);
+    advance(5000);
+    await exit.sweep();
+    expect(onIdle).not.toHaveBeenCalled();
+    state.keepAlive = false;
+    advance(999);
+    await exit.sweep();
+    expect(onIdle).not.toHaveBeenCalled();
+    advance(1);
     await exit.sweep();
     expect(onIdle).toHaveBeenCalledTimes(1);
   });
