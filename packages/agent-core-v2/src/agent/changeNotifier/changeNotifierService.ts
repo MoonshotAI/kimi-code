@@ -36,6 +36,7 @@ import { workspaceRootKey } from '#/_base/utils/workdir-slug';
 import {
   IAgentChangeNotifierService,
   type BeliefsSeed,
+  type ReloadNotificationGuard,
   type SubagentChangesInput,
 } from './changeNotifier';
 import {
@@ -139,6 +140,30 @@ export class AgentChangeNotifierService extends Disposable implements IAgentChan
 
   unmute(): void {
     this.muted = false;
+  }
+
+  prepareForReload(): ReloadNotificationGuard {
+    const previousSubagentNames = this.agentCatalog.list().map((profile) => profile.name);
+    this.mute();
+    return {
+      previousSubagentNames,
+      restoreAfterFailure: async () => {
+        this.unmute();
+        await Promise.all([
+          this.notifyAgentsMdChanges(),
+          this.notifySkillChanges(),
+          this.notifySubagentChanges({}),
+          this.notifyWorkspaceDirsChanges(),
+        ]).catch(() => undefined);
+      },
+    };
+  }
+
+  async notifyAllChanges(input?: SubagentChangesInput): Promise<void> {
+    await this.notifyAgentsMdChanges();
+    await this.notifySkillChanges();
+    await this.notifySubagentChanges(input);
+    await this.notifyWorkspaceDirsChanges();
   }
 
   async notifyAgentsMdChanges(): Promise<void> {

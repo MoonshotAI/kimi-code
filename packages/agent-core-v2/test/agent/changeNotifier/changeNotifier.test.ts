@@ -1358,6 +1358,29 @@ describe('mute', () => {
 
     expect(h.reminders).toHaveLength(0);
   });
+
+  it('prepareForReload mutes notifications and restoreAfterFailure unmutes and reconciles', async () => {
+    const h = createHarness({
+      profile: makeProfileData({
+        profileName: 'default',
+        systemPrompt: `header\n\n${LISTING_A}\n\nfooter`,
+      }),
+    });
+    h.skillListing.value = LISTING_A;
+    await h.notifier.notifySkillChanges();
+    expect(h.reminders).toHaveLength(0);
+
+    const guard = h.notifier.prepareForReload();
+    expect(guard.previousSubagentNames).toEqual(['default']);
+
+    h.skillListing.value = LISTING_AB;
+    await h.notifier.notifyAllChanges();
+    expect(h.reminders).toHaveLength(0);
+
+    await guard.restoreAfterFailure();
+    expect(h.reminders).toHaveLength(1);
+    expect(h.reminders[0]?.variant).toBe('skills_change');
+  });
 });
 
 describe('snapshot schema evolution', () => {
