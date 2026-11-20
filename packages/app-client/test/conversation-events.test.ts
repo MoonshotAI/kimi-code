@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
   AppAgentState,
   AppEvent,
@@ -54,6 +54,12 @@ function endedTurn(ordinal: number, extra: Partial<ConversationTurn> = {}): Conv
     ...extra,
   };
 }
+
+async function compileClientModules(): Promise<void> {
+  await Promise.all([import('../src/client/useKimiWebClient'), import('../src/stores/warnings')]);
+}
+
+beforeAll(compileClientModules);
 
 beforeEach(() => {
   setKimiClientDeps({ api: () => clientApiMock as unknown as KimiWebApi, t: (key) => key });
