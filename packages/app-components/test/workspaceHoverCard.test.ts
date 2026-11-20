@@ -12,6 +12,7 @@ const workspace: WorkspaceView = {
   id: 'ws1',
   name: 'code-app',
   root: '/repo/code-app',
+  kind: 'managed',
   shortPath: '~/repo/code-app',
   additionalDirs: ['/repo/docs', '/repo/packages'],
   sessionCount: 3,

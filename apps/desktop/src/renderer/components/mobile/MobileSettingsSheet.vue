@@ -6,6 +6,7 @@ import type { AppModel, ManagedUserInfo, ThinkingLevel } from '../../api/types';
 import type { ColorScheme, FontScale } from '@moonshot-ai/app-client/client';
 import { useKimiWebClient } from '@moonshot-ai/app-client/client';
 import { useActivityRunFolding, useConfirmDialog, usePasteImageAutoMention, useRunningSendMode, useTurnFolding, type RunningSendMode, type SettingsHighlightKey } from '@moonshot-ai/app-client/composables';
+import { workspacesStore } from '@moonshot-ai/app-client/stores';
 import { track } from '../../lib/track';
 import {
   commitLevel,
@@ -35,6 +36,14 @@ const { runningSendMode, setRunningSendMode } = useRunningSendMode();
 function onRunningSendModeChange(mode: RunningSendMode): void {
   setRunningSendMode(mode);
   track('settings_changed', { key: 'running-send-mode', value: mode, source_panel: 'mobile_settings' });
+}
+
+const showCliWorkspaces = computed(() => workspacesStore().showCliWorkspaces);
+
+function onShowCliWorkspacesChange(): void {
+  const show = !showCliWorkspaces.value;
+  workspacesStore().setShowCliWorkspaces(show);
+  track('settings_changed', { key: 'show-cli-workspaces', value: show ? 'on' : 'off', source_panel: 'mobile_settings' });
 }
 
 const client = useKimiWebClient();
@@ -443,6 +452,13 @@ function toggleAutoSessionTitle(): void {
           @update:model-value="onRunningSendModeChange($event as RunningSendMode)"
         />
       </div>
+      <button type="button" class="srow" role="switch" :aria-checked="showCliWorkspaces" @click="onShowCliWorkspacesChange">
+        <span class="srow-main">
+          <span class="srow-label">{{ t('settings.showCliWorkspaces') }}</span>
+          <span class="srow-sub">{{ t('settings.showCliWorkspacesHint') }}</span>
+        </span>
+        <span class="toggle" :class="{ on: showCliWorkspaces }" aria-hidden="true" />
+      </button>
       <button type="button" class="srow" role="switch" :aria-checked="pasteImageAutoMention" @click="setPasteImageAutoMention(!pasteImageAutoMention)">
         <span class="srow-main">
           <span class="srow-label">{{ t('settings.pasteImageAutoMention') }}</span>

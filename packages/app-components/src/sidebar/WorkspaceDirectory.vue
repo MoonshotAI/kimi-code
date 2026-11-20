@@ -4,7 +4,7 @@ import type { WorkspaceView } from '@moonshot-ai/app-core/client/types';
 import { hostsStore, sessionViewsStore, workspacesStore } from '@moonshot-ai/app-client/stores';
 import WorkspaceIcon from '../WorkspaceIcon.vue';
 import { useWorkspaceRename } from './useWorkspaceRename';
-import { Icon, IconButton, useImeComposition } from '@moonshot-ai/app-ui';
+import { Badge, Icon, IconButton, useImeComposition } from '@moonshot-ai/app-ui';
 import { computed } from 'vue';
 
 const { t } = useI18n();
@@ -85,6 +85,9 @@ function onWorkspaceMouseLeave(): void {
         @click.stop
       />
       <span v-else class="ws-dir-name">{{ g.workspace.name }}</span>
+      <Badge v-if="g.workspace.kind === 'implicit'" class="ws-dir-kind" size="sm" variant="neutral">
+        {{ t('workspace.cliBadge') }}
+      </Badge>
       <span class="ws-dir-act">
         <IconButton
           v-if="renamingId !== g.workspace.id"
@@ -149,6 +152,13 @@ function onWorkspaceMouseLeave(): void {
   text-overflow: clip;
   -webkit-mask-image: linear-gradient(to right, var(--color-text-strong) calc(100% - 16px), transparent);
   mask-image: linear-gradient(to right, var(--color-text-strong) calc(100% - 16px), transparent);
+}
+.ws-dir-kind {
+  flex: none;
+}
+.ws-dir:hover .ws-dir-kind,
+.ws-dir:focus-within .ws-dir-kind {
+  opacity: 0;
 }
 .ws-dir-act {
   position: absolute;

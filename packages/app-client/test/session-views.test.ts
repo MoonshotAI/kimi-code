@@ -82,6 +82,7 @@ function resetStores(): void {
   ws.fsHome = null;
   ws.recentRoots = [];
   ws.hiddenWorkspaceIds = [];
+  ws.showCliWorkspaces = true;
   ws.workspaceOrder = [];
   ws.pinnedWorkspaceIds = [];
   ws.workspaceSortMode = 'manual';
@@ -160,6 +161,38 @@ describe('sessionsForView', () => {
       time: formatTime(T1),
     });
     expect(rows[1]).toMatchObject({ id: 's2', workspaceId: 'ws-b', workspaceName: 'Beta' });
+  });
+});
+
+describe('CLI workspace visibility', () => {
+  it('filters implicit workspaces and their sessions from grouped, flat, pinned and mobile views until enabled', () => {
+    workspacesStore().showCliWorkspaces = false;
+    workspacesStore().workspaces = [
+      { id: 'ws-a', root: '/repo/a', name: 'Alpha', kind: 'managed', additionalDirs: [], sessionCount: 1 },
+      { id: 'ws-tui', root: '/repo/tui', name: 'Terminal', kind: 'implicit', additionalDirs: [], sessionCount: 1 },
+    ];
+    sessionsStore().setSessions([
+      sessionRow('s-a'),
+      sessionRow('s-tui', { workspaceId: 'ws-tui', cwd: '/repo/tui', updatedAt: T2 }),
+      sessionRow('s-tui-recent', { workspaceId: 'ws-tui', cwd: '/repo/tui', updatedAt: T3 }),
+    ]);
+    sessionsStore().pinSession('s-tui');
+    workspacesStore().pinWorkspace('ws-tui');
+    const views = sessionViewsStore();
+
+    expect(views.workspaceGroups.map((group) => group.workspace.id)).toEqual(['ws-a']);
+    expect(views.mobileWorkspaceGroups.map((group) => group.workspace.id)).toEqual(['ws-a']);
+    expect(views.flatSessionsAll.map((session) => session.id)).toEqual(['s-a']);
+    expect(views.pinnedSessions).toEqual([]);
+    expect(views.pinnedWorkspaceGroups).toEqual([]);
+
+    workspacesStore().setShowCliWorkspaces(true);
+
+    expect(views.workspaceGroups.map((group) => group.workspace.id)).toEqual(['ws-a', 'ws-tui']);
+    expect(views.mobileWorkspaceGroups.map((group) => group.workspace.id)).toEqual(['ws-a', 'ws-tui']);
+    expect(views.flatSessionsAll.map((session) => session.id)).toEqual(['s-tui-recent', 's-a']);
+    expect(views.pinnedSessions.map((session) => session.id)).toEqual(['s-tui']);
+    expect(views.pinnedWorkspaceGroups.map((group) => group.workspace.id)).toEqual(['ws-tui']);
   });
 });
 

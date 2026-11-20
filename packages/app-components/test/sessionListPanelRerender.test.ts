@@ -167,6 +167,16 @@ describe('SessionListPanel re-render scope', () => {
     expect(rowOf('s-0-0')?.classList.contains('on')).toBe(true);
   });
 
+  it('labels implicit workspaces as CLI', async () => {
+    const tuiGroup = group(0);
+    tuiGroup.workspace.kind = 'implicit';
+    fakes.views.workspaceGroups = [tuiGroup];
+    fakes.views.unpinnedWorkspaceGroups = fakes.views.workspaceGroups;
+    await nextTick();
+
+    expect(headerOf('ws-0').querySelector('.gh-kind')?.textContent).toBe('CLI');
+  });
+
   it('keeps the workspace root tooltip when hover cards are disabled', async () => {
     fakes.views.workspaceGroups = [group(0)];
     fakes.views.unpinnedWorkspaceGroups = fakes.views.workspaceGroups;

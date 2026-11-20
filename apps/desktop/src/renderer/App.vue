@@ -2148,7 +2148,7 @@ async function handleSubmit(payload: SubmitPayload): Promise<void> {
 
 type WorkspaceDialogState =
   | { mode: 'create'; dirs: string[]; hostId?: string }
-  | { mode: 'edit'; id: string; name: string; dirs: string[]; hostId?: string };
+  | { mode: 'edit'; id: string; name: string; dirs: string[]; kind: WorkspaceView['kind']; hostId?: string };
 
 const workspaceDialog = ref<WorkspaceDialogState | null>(null);
 const workspaceDialogBusy = ref(false);
@@ -2172,6 +2172,7 @@ function openWorkspaceEditor(ws: WorkspaceView): void {
     id: ws.id,
     name: full?.name ?? ws.name,
     dirs: [ws.root, ...(full?.additionalDirs ?? [])],
+    kind: ws.kind,
     hostId: ws.hostId,
   };
 }
@@ -2618,6 +2619,7 @@ function openPr(url: string): void {
       :hosts="remoteHosts"
       :manage-hosts="() => openHostSettings(undefined, { addIfEmpty: true })"
       :import-project-config="importProjectConfigDirs"
+      :can-change-primary="workspaceDialog.mode === 'create' || workspaceDialog.kind !== 'implicit'"
       :busy="workspaceDialogBusy"
       @submit="onWorkspaceDialogSubmit"
       @cancel="closeWorkspaceDialog"

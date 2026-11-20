@@ -23,7 +23,7 @@ import { hostsStore, sessionViewsStore, sessionsStore, workspacesStore } from '@
 import WorkspaceIcon from '../WorkspaceIcon.vue';
 import { useOverlayScrollbar } from '@moonshot-ai/app-client/composables';
 import { track } from '@moonshot-ai/app-client/contracts';
-import { Icon, IconButton, Menu, MenuItem, Tooltip } from '@moonshot-ai/app-ui';
+import { Badge, Icon, IconButton, Menu, MenuItem, Tooltip } from '@moonshot-ai/app-ui';
 import PinnedSessionList from '../PinnedSessionList.vue';
 import SessionRow from '../SessionRow.vue';
 import WorkspaceGroup from '../WorkspaceGroup.vue';
@@ -926,6 +926,9 @@ defineExpose({
               <Icon v-else-if="isCollapsed(g.workspace.id)" class="done-gh-folder" name="folder-closed" />
               <Icon v-else class="done-gh-folder" name="folder" />
               <span class="done-gh-name">{{ g.workspace.name }}</span>
+              <Badge v-if="g.workspace.kind === 'implicit'" class="done-gh-kind" size="sm" variant="neutral">
+                {{ t('workspace.cliBadge') }}
+              </Badge>
               <span class="done-gh-count">{{ g.sessions.length }}</span>
               <span class="done-gh-act">
                 <IconButton
@@ -1249,6 +1252,13 @@ defineExpose({
   text-overflow: clip;
   -webkit-mask-image: linear-gradient(to right, var(--color-text-strong) calc(100% - 16px), transparent);
   mask-image: linear-gradient(to right, var(--color-text-strong) calc(100% - 16px), transparent);
+}
+.done-gh-kind {
+  flex: none;
+}
+.done-gh:hover .done-gh-kind,
+.done-gh:focus-within .done-gh-kind {
+  opacity: 0;
 }
 .done-gh-count {
   flex: none;

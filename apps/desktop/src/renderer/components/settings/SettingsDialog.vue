@@ -33,7 +33,7 @@ import DockIconPicker from './DockIconPicker.vue';
 import BrowserSettingsTab from '../browser/BrowserSettingsTab.vue';
 import { copyTextToClipboard, hasDesktopBridge, isLinuxDesktop, isMacosDesktop, isRcLocation, prefersNativeTitleBar, providerDisplayName } from '@moonshot-ai/app-core/lib';
 import { useContextInspector, useSessionMentions, useSidebarTabs } from '@moonshot-ai/app-core';
-import { configStore, hostsStore } from '@moonshot-ai/app-client/stores';
+import { configStore, hostsStore, workspacesStore } from '@moonshot-ai/app-client/stores';
 import { useActivityRunFolding, usePasteImageAutoMention, useRunningSendMode, useTurnFolding, type RunningSendMode, type SettingsHighlightKey } from '@moonshot-ai/app-client';
 import { useVibrancy } from '../../composables/useVibrancy';
 import { usePreventSystemSleep } from '../../composables/usePreventSystemSleep';
@@ -80,6 +80,13 @@ function onRunningSendModeChange(mode: RunningSendMode): void {
 function onSidebarTabsChange(on: boolean): void {
   setSidebarTabs(on);
   track('settings_changed', { key: 'sidebar-multi-tab', value: on ? 'on' : 'off', source_panel: 'settings' });
+}
+
+const showCliWorkspaces = computed(() => workspacesStore().showCliWorkspaces);
+
+function onShowCliWorkspacesChange(on: boolean): void {
+  workspacesStore().setShowCliWorkspaces(on);
+  track('settings_changed', { key: 'show-cli-workspaces', value: on ? 'on' : 'off', source_panel: 'settings' });
 }
 
 const { sessionMentions, setSessionMentions } = useSessionMentions();
@@ -1258,6 +1265,23 @@ function archiveTime(iso: string): string {
                 :model-value="config?.autoSessionTitle !== false"
                 :label="t('settings.autoSessionTitle')"
                 @update:model-value="toggleAutoSessionTitle"
+              />
+            </div>
+            </div>
+          </section>
+
+          <section class="sec">
+            <h3 class="sec-title">{{ t('settings.cliProjectsSection') }}</h3>
+            <div class="settings-group">
+            <div class="row">
+              <span class="rlabel">
+                {{ t('settings.showCliWorkspaces') }}
+                <span class="hint">{{ t('settings.showCliWorkspacesHint') }}</span>
+              </span>
+              <Switch
+                :model-value="showCliWorkspaces"
+                :label="t('settings.showCliWorkspaces')"
+                @update:model-value="onShowCliWorkspacesChange"
               />
             </div>
             </div>

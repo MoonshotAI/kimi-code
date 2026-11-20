@@ -11,7 +11,7 @@ import {
 } from '@moonshot-ai/app-core/lib';
 import { SESSIONS_EXPAND_BATCH } from '@moonshot-ai/app-client/client';
 import { BottomSheet, RcDeviceSwitcher } from '@moonshot-ai/app-components';
-import { Icon, IconButton, Menu, MenuItem, SegmentedControl, Tooltip } from '@moonshot-ai/app-ui';
+import { Badge, Icon, IconButton, Menu, MenuItem, SegmentedControl, Tooltip } from '@moonshot-ai/app-ui';
 import { WorkspaceIcon } from '@moonshot-ai/app-components/support';
 
 const { t } = useI18n();
@@ -250,6 +250,9 @@ function onDeleteWorkspace(ws: WorkspaceView): void {
           <Icon v-else class="mgh-folder" name="folder" size="sm" />
 
           <span class="mgh-name">{{ g.workspace.name }}</span>
+          <Badge v-if="g.workspace.kind === 'implicit'" class="mgh-kind" size="sm" variant="neutral">
+            {{ t('workspace.cliBadge') }}
+          </Badge>
           <Tooltip :text="g.workspace.root">
             <span class="mgh-path">{{ g.workspace.shortPath }}</span>
           </Tooltip>
@@ -462,6 +465,7 @@ function onDeleteWorkspace(ws: WorkspaceView): void {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.mgh-kind { flex: none; }
 .mgh-path {
   flex: 1;
   min-width: 0;

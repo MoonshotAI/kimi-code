@@ -131,6 +131,7 @@ function resetWorkspacesStore(): void {
   store.fsHome = null;
   store.recentRoots = [];
   store.hiddenWorkspaceIds = [];
+  store.showCliWorkspaces = true;
   store.workspaceOrder = [];
   store.workspaceSortMode = 'manual';
   store.workspaceRecencyFloor = {};
@@ -1978,6 +1979,7 @@ describe('useWorkspaceState — session list loading', () => {
   });
 
   it('auto-selects from the committed pool, not the unfiltered load result', async () => {
+    workspacesStore().showCliWorkspaces = true;
     const archived = {
       ...createSession(),
       id: 'sess_arch',
@@ -2008,6 +2010,51 @@ describe('useWorkspaceState — session list loading', () => {
 
     expect(apiMock.getSession).not.toHaveBeenCalledWith('sess_arch');
     expect(sessionsStore().activeSessionId).toBe('sess_live');
+  });
+
+  it('skips hidden CLI projects when auto-selecting the most recent session', async () => {
+    workspacesStore().showCliWorkspaces = false;
+    const tui = {
+      ...createSession(),
+      id: 'sess_tui',
+      workspaceId: 'wd_tui',
+      cwd: '/tui',
+      busy: false,
+      lastPrompt: 'from the terminal',
+      updatedAt: '2026-06-01T00:00:00.000Z',
+    };
+    const managed = {
+      ...createSession(),
+      id: 'sess_managed',
+      workspaceId: 'wm_app',
+      cwd: '/app',
+      busy: false,
+      lastPrompt: 'from desktop',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    };
+    apiMock.listWorkspaces.mockResolvedValue([
+      workspace('wd_tui', '/tui', 'Terminal'),
+      workspace('wm_app', '/app', 'App'),
+    ]);
+    apiMock.listSessionGroups.mockResolvedValue({
+      groups: [
+        { workspaceId: 'wd_tui', sessions: [tui], total: 1 },
+        { workspaceId: 'wm_app', sessions: [managed], total: 1 },
+      ],
+      hasMore: false,
+      nextPageToken: null,
+      total: 2,
+    });
+    const { workspaceState } = createSessionLoadRig([]);
+    sessionsStore().setActiveSessionId(undefined);
+
+    await workspaceState.load();
+
+    expect(sessionsStore().sessions.map((session) => session.id)).toEqual(['sess_tui', 'sess_managed']);
+    expect(workspacesStore().workspacesView.map((item) => item.id)).toEqual(['wm_app']);
+    expect(workspacesStore().visibleWorkspaceIds.has('wm_app')).toBe(true);
+    expect(sessionsStore().activeSessionId).toBe('sess_managed');
+    expect(workspacesStore().storedActiveWorkspaceId).toBe('wm_app');
   });
 
   it('preserves a concurrently backfilled row when the stale first page commits', async () => {

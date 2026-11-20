@@ -42,6 +42,7 @@ interface MountOptions {
   hosts?: AppHost[];
   manageHosts?: () => void;
   importProjectConfig?: (primary: string, hostId?: string) => Promise<string[] | undefined>;
+  canChangePrimary?: boolean;
   busy?: boolean;
 }
 
@@ -60,6 +61,7 @@ function mountDialog(opts: MountOptions = {}) {
         hosts: opts.hosts,
         manageHosts: opts.manageHosts,
         importProjectConfig: opts.importProjectConfig,
+        canChangePrimary: opts.canChangePrimary,
         busy: opts.busy,
         onSubmit: submit,
         onCancel: cancel,
@@ -333,6 +335,31 @@ describe('WorkspaceEditDialog edit mode', () => {
     expect(rows[0]!.querySelector('.ui-badge--outline')).not.toBeNull();
     expect(rows[0]!.querySelector('button.we-dir-rm')).toBeNull();
     expect(rows[1]!.querySelector<HTMLButtonElement>('.we-dir-rm')!.disabled).toBe(false);
+  });
+
+  it('keeps the primary fixed when promotion is disabled while allowing additional directory edits', async () => {
+    const { submit } = mountDialog({
+      mode: 'edit',
+      initialName: 'terminal project',
+      initialDirs: ['/a/root', '/a/extra'],
+      canChangePrimary: false,
+      pick: async () => ['/a/new'],
+    });
+    await nextTick();
+
+    expect(document.querySelector('button.we-dir-primary')).toBeNull();
+    dirRows()[1]!.querySelector<HTMLButtonElement>('.we-dir-rm')!.click();
+    await nextTick();
+    document.querySelector<HTMLButtonElement>('.we-add-directory')!.click();
+    await vi.waitFor(() => expect(dirRows()).toHaveLength(2));
+    submitButton().click();
+    await nextTick();
+
+    expect(submit).toHaveBeenCalledWith({
+      name: 'terminal project',
+      dirs: ['/a/root', '/a/new'],
+      projectConfigDirs: [],
+    });
   });
 
   it('submits the full directory list with the primary kept first', async () => {

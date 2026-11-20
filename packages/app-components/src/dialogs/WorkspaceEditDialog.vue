@@ -22,12 +22,14 @@ const props = withDefaults(
     hosts?: AppHost[];
     manageHosts?: () => void;
     importProjectConfig?: (primary: string, hostId?: string) => Promise<string[] | undefined>;
+    canChangePrimary?: boolean;
     busy?: boolean;
   }>(),
   {
     initialName: '',
     initialDirs: () => [],
     hosts: () => [],
+    canChangePrimary: true,
     busy: false,
   },
 );
@@ -338,7 +340,7 @@ function onNameKeydown(e: KeyboardEvent): void {
               {{ t('workspace.dialog.primaryBadge') }}
             </Badge>
             <Button
-              v-else
+              v-else-if="canChangePrimary"
               variant="ghost"
               size="xs"
               class="we-dir-primary"
@@ -347,6 +349,7 @@ function onNameKeydown(e: KeyboardEvent): void {
             >
               {{ t('workspace.dialog.setPrimary') }}
             </Button>
+            <span v-else class="we-dir-primary" aria-hidden="true" />
             <IconButton
               v-if="mode === 'create' || i > 0"
               class="we-dir-rm"
