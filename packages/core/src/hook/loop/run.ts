@@ -9,14 +9,14 @@ import type {
   StepStartingDecision,
   StepStartingEvent,
   StepStoppingVerdict,
-  ToolResult,
+  HookToolResult,
   ToolBatchStartingDecision,
   ToolBatchStartingEvent,
   TurnStartingEvent,
   TurnStartingVerdict,
 } from '#/loop/contract/hook';
 import type { Cause, StepEndingPoint, StepOutcome } from '#/loop/contract/outcome';
-import { isCause, isMessage, isObject, isToolResult } from '#/loop/guards';
+import { isCause, isHookToolResult, isMessage, isObject } from '#/loop/guards';
 
 export function isTurnStartingVerdict(value: unknown): value is TurnStartingVerdict {
   return isObject(value) && value['type'] === 'blocked' && isCause(value['cause']);
@@ -43,7 +43,7 @@ export function isToolBatchStartingDecision(value: unknown): value is ToolBatchS
   return (
     isObject(value) &&
     isCause(value['blocked']) &&
-    (value['result'] === undefined || isToolResult(value['result']))
+    (value['result'] === undefined || isHookToolResult(value['result']))
   );
 }
 
@@ -55,7 +55,7 @@ export function isStepContinuingVerdict(value: unknown): value is StepContinuing
   return isObject(value) && (value['type'] === 'done' || value['type'] === 'blocked') && isCause(value['cause']);
 }
 
-interface ItemRun<D> {
+export interface HookRun<D> {
   decision?: D;
   blocked?: Cause;
   failures: HookFailure[];
@@ -66,13 +66,13 @@ function runItem<D>(
   point: HookPoint,
   call: () => unknown,
   isValid: (value: unknown) => value is D,
-): ItemRun<D> | Promise<ItemRun<D>> {
+): HookRun<D> | Promise<HookRun<D>> {
   const failures: HookFailure[] = [];
-  const fail = (error: unknown): ItemRun<D> => {
+  const fail = (error: unknown): HookRun<D> => {
     failures.push({ error, paused: false, blocking: false });
     return { failures };
   };
-  const settle = (returned: unknown): ItemRun<D> => {
+  const settle = (returned: unknown): HookRun<D> => {
     try {
       const chained = readHookChainResult(returned);
       if (chained !== undefined) failures.push(...chained.failures);
@@ -156,7 +156,7 @@ export async function runStepStarting(
 }
 
 export interface ToolBatchStartingRun {
-  blocked?: { cause: Cause; result?: ToolResult };
+  blocked?: { cause: Cause; result?: HookToolResult };
   failures: HookFailure[];
 }
 
@@ -200,7 +200,7 @@ export function runStepEnding(
 ): StepEndingRun | Promise<StepEndingRun> {
   const failures: StepEndingFailure[] = [];
   if (draft.type === 'aborted' || draft.type === 'blocked') return { outcome: draft, failures };
-  const finishContinuing = (continuing: ItemRun<StepContinuingVerdict>, cause: Cause | undefined): StepEndingRun => {
+  const finishContinuing = (continuing: HookRun<StepContinuingVerdict>, cause: Cause | undefined): StepEndingRun => {
     failures.push(...continuing.failures.map((failure) => ({ point: 'step.continuing' as const, failure })));
     const decision = continuing.decision;
     const blocked = decision?.type === 'blocked' ? decision.cause : continuing.blocked;
@@ -208,7 +208,7 @@ export function runStepEnding(
     if (decision !== undefined) return { outcome: { type: 'done', cause: decision.cause }, failures };
     return { outcome: cause === undefined ? { type: 'continue' } : { type: 'continue', cause }, failures };
   };
-  const finishStopping = (stopping: ItemRun<StepStoppingVerdict>): StepEndingRun | Promise<StepEndingRun> => {
+  const finishStopping = (stopping: HookRun<StepStoppingVerdict>): StepEndingRun | Promise<StepEndingRun> => {
     failures.push(...stopping.failures.map((failure) => ({ point: 'step.stopping' as const, failure })));
     if (stopping.blocked !== undefined) {
       return { outcome: { type: 'blocked', at: 'step.stopping', cause: stopping.blocked }, failures };
@@ -224,7 +224,7 @@ export function runStepEnding(
       cause = stopping.decision.cause;
     }
     const continuingHook = hooks['step.continuing'];
-    const continuing: ItemRun<StepContinuingVerdict> | Promise<ItemRun<StepContinuingVerdict>> =
+    const continuing: HookRun<StepContinuingVerdict> | Promise<HookRun<StepContinuingVerdict>> =
       continuingHook === undefined
         ? { failures: [] }
         : runItem(
@@ -237,7 +237,7 @@ export function runStepEnding(
       : finishContinuing(continuing, cause);
   };
   const stoppingHook = hooks['step.stopping'];
-  const stopping: ItemRun<StepStoppingVerdict> | Promise<ItemRun<StepStoppingVerdict>> = stoppingHook === undefined
+  const stopping: HookRun<StepStoppingVerdict> | Promise<HookRun<StepStoppingVerdict>> = stoppingHook === undefined
     ? { failures: [] }
     : runItem('step.stopping', () => stoppingHook({ ...event, draft }, signal), isStepStoppingVerdict);
   return isPromiseLike(stopping) ? stopping.then(finishStopping) : finishStopping(stopping);

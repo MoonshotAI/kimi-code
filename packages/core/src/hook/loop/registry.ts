@@ -16,6 +16,7 @@ import {
   isStepStoppingVerdict,
   isToolBatchStartingDecision,
   isTurnStartingVerdict,
+  type HookRun,
 } from '#/hook/loop/run';
 import {
   createHookRegistry,
@@ -87,18 +88,12 @@ function signed(cause: Cause, item: HookItem): Cause {
   return cause.by === undefined ? { ...cause, by: item.id } : cause;
 }
 
-interface FirstRun<D> {
-  decision?: D;
-  blocked?: Cause;
-  failures: readonly HookFailure[];
-}
-
 function runFirst<D extends { readonly cause: Cause }, R>(
   items: readonly HookItem[],
   args: readonly unknown[],
   control: HookChainControl,
   isValid: (value: unknown) => value is D,
-  map: (run: FirstRun<D>) => R,
+  map: (run: HookRun<D>) => R,
 ): R | Promise<R> {
   const failures: HookFailure[] = [];
   const visit = (index: number): R | Promise<R> => {
@@ -119,7 +114,7 @@ function runFirst<D extends { readonly cause: Cause }, R>(
 }
 
 function firstResult<D extends { readonly cause: Cause }>(
-  run: FirstRun<D>,
+  run: HookRun<D>,
   blocked: (cause: Cause) => D,
 ): D {
   if (run.decision !== undefined) return wrapHookChainResult({ decision: run.decision, failures: run.failures });

@@ -181,14 +181,13 @@ describe('loop.wait', () => {
     };
     const events: TurnEmitted[] = [];
     const runtime: TurnRuntime = {
-      request: { current: () => requester, policy: createPolicyRegistry() },
-      tools: {
-        executeBatch: () => {
-          batchCount += 1;
-          return { outcomes: [] };
-        },
-        abortBatch: () => ({ outcomes: [] }),
+      requester: () => requester,
+      policy: createPolicyRegistry(),
+      executeBatch: () => {
+        batchCount += 1;
+        return { outcomes: [] };
       },
+      abortBatch: () => ({ outcomes: [] }),
       hooks: {
         starting: () => {
           startingCount += 1;
@@ -199,18 +198,24 @@ describe('loop.wait', () => {
           batchCount += 1;
         },
       },
-      host: {
-        read: () => ({ messages: [], profile: {} }),
-        emit: (event) => {
-          events.push(event);
-        },
-        transition: (run) => run(),
-        report: () => undefined,
-        committed: () => undefined,
+      read: () => ({ messages: [], profile: {} }),
+      emit: (event) => {
+        events.push(event);
       },
+      transition: (run) => run(),
+      report: () => undefined,
+      committed: () => undefined,
       signal: new AbortController().signal,
     };
-    const turn = createTurn({ id: 90, start: { type: 'continue' } }, runtime);
+    const turn = createTurn({
+      id: 90,
+      kind: 'continue',
+      trigger: 'continue',
+      initialPending: [],
+      promptOnly: false,
+      bypassMaxSteps: false,
+      step: 0,
+    }, runtime);
     expect(requestCount).toBe(0);
     expect(startingCount).toBe(0);
     expect(events).toEqual([]);

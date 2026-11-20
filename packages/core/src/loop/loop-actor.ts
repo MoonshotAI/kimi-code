@@ -5,7 +5,7 @@ import { isToolDetachAck } from '#/tool/tool-executor';
 import type { ToolExecutionResponse, ToolResult } from '#/tool/types';
 import type { WaitOpts } from '#/utils/wait';
 import type { CreateLoopOptions, Loop, LoopToolExecutor } from './create-loop';
-import type { LoopCommand, LoopInput, UnfinishedTurn } from './contract/command';
+import type { LoopInput, UnfinishedTurn } from './contract/command';
 import type { LoopAck, LoopEmitted } from './contract/emitted';
 import type { HookPoint, LoopHooks } from './contract/hook';
 import type { Inbox, QueuedItem, RemindMessage } from './contract/inbox';
@@ -39,12 +39,9 @@ import {
   isResumable,
   normalizeUserMessage,
   trailingCalls,
-  type AppendedItem,
-  type LiveTool,
-  type LiveTurn,
   type LoopState,
-  type TurnCompletion,
 } from './state';
+import type { LiveTool } from './live';
 import {
   abortedToolOutcome,
   blockedToolOutcome,
@@ -57,18 +54,28 @@ import { createWaitForTasks, type WaitForTasks } from './tool/tasks';
 import {
   createTurn,
   createTurnHookRegistry,
+  type Turn,
   type TurnEnding,
   type TurnHookContext,
   type TurnInput,
   type TurnMessage,
-  type TurnOwnerStartingEvent,
-  type TurnPoint,
   type TurnRuntime,
-  type TurnStartDecision,
+  type TurnState,
   type TurnToolBatch,
   type TurnToolBatchResult,
-  type TurnYield,
 } from './turn';
+
+type LoopCommand =
+  | { type: 'input.run_turn'; message: UserMessage }
+  | { type: 'input.submit'; message: UserMessage }
+  | { type: 'input.cancel'; promptId: string }
+  | { type: 'input.steer'; promptIds: readonly string[] }
+  | { type: 'input.notify'; message: UserMessage }
+  | { type: 'input.remind'; message: RemindMessage }
+  | { type: 'input.abort_tool'; toolCallId: string }
+  | { type: 'input.detach_tool'; toolCallId: string }
+  | { type: 'input.set_context'; messages: Message[] }
+  | { type: 'input.set_system_prompt'; systemPrompt: string };
 
 interface Deferred<T> {
   readonly promise: Promise<T>;
@@ -84,16 +91,6 @@ function deferred<T>(): Deferred<T> {
     reject = no;
   });
   return { promise, resolve, reject };
-}
-
-function turnCompletion(): TurnCompletion {
-  const completion = deferred<TurnOutcome>();
-  return {
-    promise: completion.promise,
-    resolve: (outcome) => {
-      completion.resolve(outcome);
-    },
-  };
 }
 
 function toolOutcomeOf(slot: LiveTool): ToolCallOutcome {
@@ -117,12 +114,6 @@ function asyncOutcomeOf(slot: LiveTool): AsyncToolOutcome {
     return { type: 'aborted', reason: outcome.error.data ?? outcome.error.reason };
   }
   return { type: 'failed', error: outcome.error.data ?? outcome.error.reason };
-}
-
-interface MailboxTurn {
-  readonly kind: 'normal' | 'notify';
-  readonly pending: QueuedItem[];
-  readonly promptOnly: boolean;
 }
 
 class LoopMailbox {
@@ -223,7 +214,7 @@ class LoopMailbox {
     this.reminders = [...restored.remind, ...this.reminders];
   }
 
-  take(): MailboxTurn | undefined {
+  take(id: number): TurnInput | undefined {
     const normalHead = this.normal[0];
     const head = normalHead ?? this.notifyEntries[0];
     if (head === undefined) return undefined;
@@ -235,13 +226,18 @@ class LoopMailbox {
     this.normal = normalHead === undefined ? this.normal : this.normal.slice(1);
     this.notifyEntries = remainingNotify;
     const reminders = promptOnly ? [] : this.drainReminders();
+    const pending: QueuedItem[] = [
+      { kind, message: head },
+      ...reminders.map((message) => ({ kind: 'remind' as const, message })),
+    ];
     return {
-      kind,
-      pending: [
-        { kind, message: head },
-        ...reminders.map((message) => ({ kind: 'remind' as const, message })),
-      ],
+      id,
+      kind: 'prompt',
+      trigger: kind,
+      initialPending: pending,
       promptOnly,
+      bypassMaxSteps: pending.some((item) => item.kind !== 'remind' && item.message.attributes?.bypassMaxSteps === true),
+      step: 0,
     };
   }
 
@@ -258,13 +254,23 @@ class LoopMailbox {
 
 type LoopActorState =
   | { readonly status: 'idle'; readonly pendingContinue?: { readonly force: boolean } }
-  | { readonly status: 'running'; readonly turn: LiveTurn }
+  | {
+      readonly status: 'running';
+      readonly machine: Turn;
+      pending: QueuedItem[];
+      announced: boolean;
+      readonly completion?: Deferred<TurnOutcome>;
+      readonly signal?: AbortSignal;
+      onAbort?: () => void;
+      continueAfterAbort?: boolean;
+    }
   | { readonly status: 'resetting' };
 
+type RunningTurn = Extract<LoopActorState, { status: 'running' }>;
 type LoopControl = ActorControl<LoopActorState, LoopEmitted>;
 
-function turnOf(state: LoopActorState): LiveTurn | undefined {
-  return state.status === 'running' ? state.turn : undefined;
+function turnOf(state: LoopActorState): RunningTurn | undefined {
+  return state.status === 'running' ? state : undefined;
 }
 
 interface ActiveToolBatch extends TurnToolBatch {
@@ -369,38 +375,32 @@ class LoopActor implements Loop {
     });
     const rootSignal = this.actor.act((ctrl) => ctrl.rootSignal);
     this.turnRuntime = {
-      request: {
-        current: () => this.requesterTemplate,
-        policy: this.policy,
-      },
-      tools: {
-        executeBatch: (batch) => this.actor.act(() => this.executeToolBatch(batch)),
-        abortBatch: (batch, reason, options) => this.actor.act(() => this.abortToolBatch(batch, reason, options)),
-      },
+      requester: () => this.requesterTemplate,
+      policy: this.policy,
+      executeBatch: (batch) => this.actor.act(() => this.executeToolBatch(batch)),
+      abortBatch: (batch, reason, options) => this.actor.act(() => this.abortToolBatch(batch, reason, options)),
       hooks: this.turnHooks.hook,
       extensions: this.hook,
-      host: {
-        read: () => ({ messages: this.durable.messages, profile: this.durable.profile }),
-        emit: (event) => {
-          this.record(event);
-          if (event.type === 'turn.ended' && this.turn?.id === event.turnId) {
-            this.finishTurn(this.turn, event.outcome);
-          }
-        },
-        transition: (run) => this.transition(run),
-        report: (point, event, reports, notify) => {
-          if (this.turn?.id === event.turnId) this.report(point, this.turn, event.step, reports, notify);
-        },
-        committed: (turnId) => {
-          if (this.turn?.id === turnId) this.turn.pending = [];
-        },
+      read: () => ({ messages: this.durable.messages, profile: this.durable.profile }),
+      emit: (event) => {
+        this.record(event);
+        if (event.type === 'turn.ended' && this.turn?.machine.id === event.turnId) {
+          this.finishTurn(this.turn, event.outcome);
+        }
+      },
+      transition: (run) => this.transition(run),
+      report: (point, event, reports, notify) => {
+        if (this.turn?.machine.id === event.turnId) this.report(point, this.turn, event.step, reports, notify);
+      },
+      committed: (turnId) => {
+        if (this.turn?.machine.id === turnId) this.turn.pending = [];
       },
       signal: rootSignal,
       abortGraceMs: this.abortGraceMs,
     };
   }
 
-  private get turn(): LiveTurn | undefined {
+  private get turn(): RunningTurn | undefined {
     return turnOf(this.actor.state);
   }
 
@@ -418,8 +418,8 @@ class LoopActor implements Loop {
     const live = this.turn;
     const current = live !== undefined
       ? {
-          id: live.id,
-          trigger: live.trigger,
+          id: live.machine.id,
+          trigger: live.machine.state.trigger,
           step: live.machine.state.step,
           bypassMaxSteps: live.machine.state.bypassMaxSteps,
         }
@@ -540,37 +540,30 @@ class LoopActor implements Loop {
       this.flushReminders();
       return true;
     }
-    const next = this.mailbox.take();
+    const next = this.mailbox.take(this.durable.nextTurnId);
     if (next === undefined) return false;
-    this.activate(ctrl, {
-      id: this.durable.nextTurnId,
-      start: {
-        type: 'prompt',
-        trigger: next.kind,
-        pending: next.pending,
-        promptOnly: next.promptOnly ? true : undefined,
-      },
-      bypassMaxSteps: next.pending.some((item) => item.kind !== 'remind' && item.message.attributes?.bypassMaxSteps === true),
-    });
+    this.activate(ctrl, next);
     return true;
   }
 
-  private activate(ctrl: LoopControl, input: TurnInput, completion?: TurnCompletion): LiveTurn | undefined {
+  private activate(
+    ctrl: LoopControl,
+    input: TurnInput,
+    completion?: Deferred<TurnOutcome>,
+    signal?: AbortSignal,
+  ): RunningTurn | undefined {
     if (ctrl.state.status !== 'idle' || this.turn !== undefined) return undefined;
     const machine = createTurn(input, this.turnRuntime);
-    const turn: LiveTurn = {
-      id: input.id,
-      trigger: machine.state.trigger,
+    const turn: RunningTurn = {
+      status: 'running',
       machine,
-      pending: input.start.type === 'prompt' ? [...input.start.pending] : [],
-      promptOnly: input.start.type === 'prompt' && input.start.promptOnly === true ? true : undefined,
-      resumed: input.start.type === 'resume' ? true : undefined,
+      pending: [...input.initialPending],
       announced: false,
       completion,
-      signal: input.signal,
+      signal,
     };
     this.held = false;
-    ctrl.setState({ status: 'running', turn });
+    ctrl.setState(turn);
     ctrl.defer(() => {
       if (this.isCurrent(turn)) turn.machine.start();
     });
@@ -645,23 +638,20 @@ class LoopActor implements Loop {
     });
   }
 
-  sendNow(message: UserMessage): LoopAck<'prompt.notified'> | undefined;
-  sendNow(promptIds: readonly string[]): void;
-  sendNow(input: UserMessage | readonly string[]): LoopAck<'prompt.notified'> | undefined | void {
-    const message = Array.isArray(input) ? undefined : input as UserMessage;
-    if (message !== undefined) {
-      const normalized = normalizeUserMessage(message);
-      this.check({ type: 'input.notify', message: normalized });
+  sendNow(message: UserMessage): LoopAck<'prompt.notified'> | undefined {
+    const normalized = normalizeUserMessage(message);
+    this.check({ type: 'input.notify', message: normalized });
+    if (!this.open()) return undefined;
+    return this.actor.act(() => {
       if (!this.open()) return undefined;
-      return this.actor.act(() => {
-        if (!this.open()) return undefined;
-        const ack = this.mailbox.notify(normalized);
-        this.releaseIntake();
-        this.abortRequest();
-        return ack;
-      });
-    }
-    const promptIds = input as readonly string[];
+      const ack = this.mailbox.notify(normalized);
+      this.releaseIntake();
+      this.abortRequest();
+      return ack;
+    });
+  }
+
+  sendNowQueued(promptIds: readonly string[]): void {
     this.check({ type: 'input.steer', promptIds });
     if (!this.open()) return;
     this.actor.act(() => {
@@ -874,21 +864,20 @@ class LoopActor implements Loop {
         return Promise.reject(new Error('runTurn is only accepted while idle'));
       }
       return this.actor.act((ctrl) => {
-        const completion = turnCompletion();
+        const completion = deferred<TurnOutcome>();
         this.closeUnfinished();
         const turn = this.activate(ctrl, {
           id: this.durable.nextTurnId,
-          start: {
-            type: 'prompt',
-            trigger: 'normal',
-            pending: [
-              { kind: 'normal', message },
-              ...this.mailbox.drainReminders().map((reminder) => ({ kind: 'remind' as const, message: reminder })),
-            ],
-          },
+          kind: 'prompt',
+          trigger: 'normal',
+          initialPending: [
+            { kind: 'normal', message },
+            ...this.mailbox.drainReminders().map((reminder) => ({ kind: 'remind' as const, message: reminder })),
+          ],
+          promptOnly: false,
           bypassMaxSteps: message.attributes?.bypassMaxSteps === true,
-          signal,
-        }, completion)!;
+          step: 0,
+        }, completion, signal)!;
         if (signal !== undefined) {
           turn.onAbort = this.actor.bind(() => {
             if (this.turn !== turn || !this.open()) return;
@@ -912,33 +901,34 @@ class LoopActor implements Loop {
     return this.actor.close();
   }
 
-  private isCurrent(turn: LiveTurn): boolean {
+  private isCurrent(turn: RunningTurn): boolean {
     return this.turn === turn && this.phase === 'running';
   }
 
-  private announceTurn(turn: LiveTurn): void {
+  private announceTurn(turn: RunningTurn): void {
     if (turn.announced) return;
     turn.announced = true;
-    if (turn.resumed === true) this.record({ type: 'turn.resumed', turnId: turn.id, step: turn.machine.state.step });
-    else this.record({
+    if (turn.machine.state.kind === 'resume') {
+      this.record({ type: 'turn.resumed', turnId: turn.machine.id, step: turn.machine.state.step });
+    } else this.record({
       type: 'turn.started',
-      turnId: turn.id,
-      trigger: turn.trigger,
-      promptOnly: turn.promptOnly,
+      turnId: turn.machine.id,
+      trigger: turn.machine.state.trigger,
+      promptOnly: turn.machine.state.promptOnly ? true : undefined,
       message: turn.pending.find((item): item is Extract<QueuedItem, { kind: 'normal' | 'notify' }> => item.kind !== 'remind')?.message,
     });
   }
 
   private report(
     point: HookPoint,
-    turn: LiveTurn,
+    turn: RunningTurn,
     step: number,
     reports: readonly HookFailureReport[],
     notify: boolean,
   ): void {
     const messages: UserMessage[] = [];
     for (const { failure, message } of reports) {
-      this.record(hookFailedEvent(point, turn.id, step, failure));
+      this.record(hookFailedEvent(point, turn.machine.id, step, failure));
       this.record({ type: 'prompt.notified', message });
       messages.push(message);
       failure.suspend?.();
@@ -949,22 +939,19 @@ class LoopActor implements Loop {
     }
   }
 
-  private releaseTurn(turn: LiveTurn, outcome: TurnOutcome): void {
+  private releaseTurn(turn: RunningTurn): void {
     const pending = turn.pending;
     turn.pending = [];
-    turn.outcome = outcome;
     this.mailbox.restore(pending);
     this.held = true;
   }
 
   private settleBlockedTurn(
-    turn: LiveTurn,
-    outcome: Extract<TurnOutcome, { type: 'blocked' }>,
+    turn: RunningTurn,
     ctx: Pick<TurnHookContext, 'append'>,
   ): void {
     const pending = turn.pending;
     turn.pending = [];
-    turn.outcome = outcome;
     this.mailbox.restore(pending.filter((item) => item.kind === 'notify'));
     const reminders = [
       ...pending.flatMap((item) => item.kind === 'remind' ? [item.message] : []),
@@ -973,12 +960,12 @@ class LoopActor implements Loop {
     this.held = true;
     this.announceTurn(turn);
     for (const item of pending) {
-      if (item.kind === 'normal') ctx.append({ source: 'normal', message: item.message });
+      if (item.kind === 'normal') ctx.append(item);
     }
-    for (const message of reminders) ctx.append({ source: 'remind', message });
+    for (const message of reminders) ctx.append({ kind: 'remind', message });
   }
 
-  private requestAbort(turn: LiveTurn | undefined, reason: unknown, continueAfterAbort: boolean): void {
+  private requestAbort(turn: RunningTurn | undefined, reason: unknown, continueAfterAbort: boolean): void {
     if (turn === undefined) {
       if (this.phase === 'idle') this.closeUnfinished();
       return;
@@ -989,73 +976,65 @@ class LoopActor implements Loop {
       return;
     }
     turn.continueAfterAbort = continueAfterAbort || turn.continueAfterAbort === true;
-    this.releaseTurn(turn, { type: 'aborted', reason });
+    this.releaseTurn(turn);
     turn.machine.abort(reason);
   }
 
   private async ownerStarting(
-    event: TurnOwnerStartingEvent,
+    state: TurnState,
     ctx: TurnHookContext,
-  ): Promise<TurnStartDecision> {
+  ): Promise<Extract<TurnOutcome, { type: 'done' | 'blocked' }> | void> {
     const turn = this.turn;
-    if (turn === undefined || turn.id !== event.turnId) throw new Error('turn is no longer active');
-    if (turn.resumed === true) {
+    if (turn === undefined || turn.machine.id !== state.id) throw new Error('turn is no longer active');
+    if (state.kind === 'resume') {
       this.announceTurn(turn);
-      if (this.mailbox.hasNotify) return { done: { by: 'loop', reason: 'notify' } };
-      return {};
+      if (this.mailbox.hasNotify) return { type: 'done', cause: { by: 'loop', reason: 'notify' } };
+      return;
     }
     const run = await (async (): Promise<TurnStartingRun> => {
       try {
         return await runTurnStarting(
           this.hook,
-          { turnId: turn.id, trigger: turn.trigger, pending: turn.pending },
+          { turnId: state.id, trigger: state.trigger, pending: turn.pending },
           ctx.signal,
         );
       } catch (error) {
         return { failures: [runtimeFailure(error)] };
       }
     })();
-    if (this.turn !== turn || ctx.signal.aborted) return {};
+    if (this.turn !== turn || ctx.signal.aborted) return;
     this.transition(() => {
       const reports = hookFailureReports('turn.starting', run.failures);
       turn.pending.push(...reports.map(({ message }) => ({ kind: 'notify' as const, message })));
-      this.report('turn.starting', turn, turn.machine.state.step, reports, false);
+      this.report('turn.starting', turn, state.step, reports, false);
       if (run.blocked === undefined) this.announceTurn(turn);
     });
-    if (run.blocked !== undefined) return { blocked: run.blocked };
+    if (run.blocked !== undefined) return { type: 'blocked', at: 'turn.starting', cause: run.blocked };
     const items = await this.appendPendingItems(turn, ctx.signal);
-    if (this.turn !== turn || ctx.signal.aborted) return {};
-    for (const item of items) {
-      ctx.append({
-        source: item.source as TurnMessage['source'],
-        message: item.message,
-        blocked: 'blocked' in item ? item.blocked : undefined,
-        failure: 'failure' in item ? item.failure : undefined,
-      });
-    }
-    return {};
+    if (this.turn !== turn || ctx.signal.aborted) return;
+    ctx.append(...items);
   }
 
-  private async appendPendingItems(turn: LiveTurn, signal: AbortSignal): Promise<AppendedItem[]> {
+  private async appendPendingItems(turn: RunningTurn, signal: AbortSignal): Promise<TurnMessage[]> {
     const items = turn.pending;
-    const appended: AppendedItem[] = [];
+    const appended: TurnMessage[] = [];
     try {
       for (const item of items) {
         const run = await runMessageAppending(
           this.hook,
-          { turnId: turn.id, step: turn.machine.state.step, item },
+          { turnId: turn.machine.id, step: turn.machine.state.step, item },
           signal,
         );
-        appended.push({ source: item.kind, message: run.message, blocked: run.blocked });
+        appended.push({ kind: item.kind, message: run.message, blocked: run.blocked });
         for (const failure of run.failures) {
-          appended.push({ source: 'notify', message: hookFailureMessage('message.appending', failure.error), failure });
+          appended.push({ kind: 'notify', message: hookFailureMessage('message.appending', failure.error), failure });
         }
       }
     } catch (error) {
       appended.length = 0;
-      appended.push(...items.map((item) => ({ source: item.kind, message: item.message })));
+      appended.push(...items);
       appended.push({
-        source: 'notify',
+        kind: 'notify',
         message: hookFailureMessage('message.appending', error),
         failure: runtimeFailure(error),
       });
@@ -1063,25 +1042,31 @@ class LoopActor implements Loop {
     return appended;
   }
 
-  private ownerRequesting(event: TurnPoint, ctx: TurnHookContext): TurnYield | void | Promise<TurnYield | void> {
-    if (this.turn?.id !== event.turnId) return;
+  private ownerRequesting(
+    state: TurnState,
+    ctx: TurnHookContext,
+  ): Extract<TurnOutcome, { type: 'done' }> | void | Promise<Extract<TurnOutcome, { type: 'done' }> | void> {
+    if (this.turn?.machine.id !== state.id) return;
     const settled = this.settleCompletions();
-    const complete = (): TurnYield | void => {
-      if (this.turn?.id !== event.turnId || ctx.signal.aborted) return;
+    const complete = (): Extract<TurnOutcome, { type: 'done' }> | void => {
+      if (this.turn?.machine.id !== state.id || ctx.signal.aborted) return;
       if (this.completionHandoff) {
         this.completionHandoff = false;
         return { type: 'done', cause: { by: 'loop', reason: 'notify' } };
       }
-      ctx.append(...this.mailbox.drainReminders().map((message) => ({ source: 'remind' as const, message })));
+      ctx.append(...this.mailbox.drainReminders().map((message) => ({ kind: 'remind' as const, message })));
     };
     return isPromiseLike(settled) ? settled.then(complete) : complete();
   }
 
-  private ownerContinuing(event: TurnPoint, _ctx: TurnHookContext): TurnYield | void | Promise<TurnYield | void> {
-    if (this.turn?.id !== event.turnId) return;
+  private ownerContinuing(
+    state: TurnState,
+    _ctx: TurnHookContext,
+  ): Extract<TurnOutcome, { type: 'done' }> | void | Promise<Extract<TurnOutcome, { type: 'done' }> | void> {
+    if (this.turn?.machine.id !== state.id) return;
     const settled = this.settleCompletions();
-    const complete = (): TurnYield | void => {
-      if (this.turn?.id !== event.turnId) return;
+    const complete = (): Extract<TurnOutcome, { type: 'done' }> | void => {
+      if (this.turn?.machine.id !== state.id) return;
       if (this.mailbox.hasNotify) return { type: 'done', cause: { by: 'loop', reason: 'notify' } };
     };
     return isPromiseLike(settled) ? settled.then(complete) : complete();
@@ -1098,19 +1083,19 @@ class LoopActor implements Loop {
 
   private ownerEnding(event: TurnEnding, ctx: Pick<TurnHookContext, 'append'>): void {
     const turn = this.turn;
-    if (turn === undefined || turn.id !== event.turnId) return;
-    if (event.outcome.type === 'blocked' && event.outcome.at === 'turn.starting') {
-      this.settleBlockedTurn(turn, event.outcome, ctx);
+    if (turn === undefined || turn.machine.id !== event.turn.id) return;
+    if (event.turn.outcome.type === 'blocked' && event.turn.outcome.at === 'turn.starting') {
+      this.settleBlockedTurn(turn, ctx);
       return;
     }
     this.announceTurn(turn);
     if (event.at === 'requesting') {
-      this.mailbox.restore(event.uncommitted.flatMap((item) =>
-        item.source === 'remind' ? [{ kind: 'remind' as const, message: item.message }] : [],
+      this.mailbox.restore(event.uncommitted.filter(
+        (item): item is TurnMessage & { readonly kind: 'remind' } => item.kind === 'remind',
       ));
     }
-    if (event.outcome.type !== 'aborted') return;
-    for (const message of this.mailbox.drainReminders()) ctx.append({ source: 'remind', message });
+    if (event.turn.outcome.type !== 'aborted') return;
+    for (const message of this.mailbox.drainReminders()) ctx.append({ kind: 'remind', message });
   }
 
   flushReminders(): void {
@@ -1121,7 +1106,7 @@ class LoopActor implements Loop {
       for (const message of messages) {
         this.record({
           type: 'message.appended',
-          turnId: this.turn?.id ?? this.durable.nextTurnId,
+          turnId: this.turn?.machine.id ?? this.durable.nextTurnId,
           step: this.turn?.machine.state.step ?? 0,
           source: 'remind',
           message,
@@ -1157,7 +1142,12 @@ class LoopActor implements Loop {
       this.settleUnfinished({ type: 'continue', cause: CRASHED });
       this.activate(ctrl, {
         id: unfinished.turnId,
-        start: { type: 'resume', trigger: unfinished.trigger, step: unfinished.step },
+        kind: 'resume',
+        trigger: unfinished.trigger,
+        initialPending: [],
+        promptOnly: false,
+        bypassMaxSteps: false,
+        step: unfinished.step,
       });
       return;
     }
@@ -1165,34 +1155,38 @@ class LoopActor implements Loop {
     if (!this.mailbox.hasTrigger && (force || canContinue(this.durable.messages))) {
       this.activate(ctrl, {
         id: this.durable.nextTurnId,
-        start: { type: 'continue' },
+        kind: 'continue',
+        trigger: 'continue',
+        initialPending: [],
+        promptOnly: false,
+        bypassMaxSteps: false,
+        step: 0,
       });
       return;
     }
     this.held = false;
   }
 
-  private finishTurn(turn: LiveTurn, outcome: TurnOutcome): void {
+  private finishTurn(turn: RunningTurn, outcome: TurnOutcome): void {
     if (this.turn !== turn) return;
     this.actor.act((ctrl) => {
       if (this.turn !== turn) return;
       this.announceTurn(turn);
       for (const [key, slot] of this.tools) {
-        if (slot.turnId !== turn.id || slot.detached) continue;
+        if (slot.turnId !== turn.machine.id || slot.detached) continue;
         slot.done = true;
         this.tools.delete(key);
         this.notifyTool(slot);
       }
       const batch = this.toolBatch;
-      if (batch?.turnId === turn.id) {
+      if (batch?.turnId === turn.machine.id) {
         this.toolBatch = undefined;
         batch.resolve({
           outcomes: batch.calls.map((_, index) => batch.outcomes[index] ?? null),
           failure: batch.failure,
         });
       }
-      turn.outcome = outcome;
-      if (this.completedToolBatch?.turnId === turn.id) this.completedToolBatch = undefined;
+      if (this.completedToolBatch?.turnId === turn.machine.id) this.completedToolBatch = undefined;
       this.completionHandoff = false;
       if (outcome.type === 'aborted' && turn.continueAfterAbort === true && !this.actor.closing) this.held = false;
       ctrl.setState({ status: 'idle' });
@@ -1201,7 +1195,7 @@ class LoopActor implements Loop {
         if (turn.signal !== undefined && turn.onAbort !== undefined) {
           turn.signal.removeEventListener('abort', turn.onAbort);
         }
-        turn.completion.resolve(turn.outcome ?? { type: 'aborted' });
+        turn.completion.resolve(turn.machine.state.outcome ?? { type: 'aborted' });
       });
     });
   }
@@ -1226,10 +1220,10 @@ class LoopActor implements Loop {
     })();
   }
 
-  private closeTurn(turn: LiveTurn): void {
+  private closeTurn(turn: RunningTurn): void {
     const outcome = turn.machine.state.outcome;
     const reason = outcome?.type === 'aborted' ? outcome.reason : CLOSED;
-    if (outcome?.type !== 'aborted') this.releaseTurn(turn, { type: 'aborted', reason: CLOSED });
+    if (outcome?.type !== 'aborted') this.releaseTurn(turn);
     turn.machine.abort(reason, { force: true });
   }
 

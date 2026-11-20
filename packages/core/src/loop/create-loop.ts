@@ -54,7 +54,7 @@ export interface Loop {
   remind(...messages: readonly RemindMessage[]): LoopAck<'prompt.reminded'> | undefined;
   sendNow(message: UserMessage): LoopAck<'prompt.notified'> | undefined;
   recordNotification(message: UserMessage): LoopAck<'prompt.notified'> | undefined;
-  
+
   start(): void;
   resume(): void;
   reset(prepare: () => Promise<LoopInput>): Promise<void>;
@@ -63,7 +63,7 @@ export interface Loop {
   continue(options?: { readonly force?: boolean }): void;
   flushReminders(): void;
   steer(promptIds: readonly string[]): LoopAck<'prompt.steered'> | undefined;
-  sendNow(promptIds: readonly string[]): void;
+  sendNowQueued(promptIds: readonly string[]): void;
   cancel(promptId: string): LoopAck<'prompt.canceled'> | undefined;
   abort(reason?: unknown, options?: { readonly continue?: boolean }): void;
   abortTool(toolCallId: string, reason?: unknown): void;

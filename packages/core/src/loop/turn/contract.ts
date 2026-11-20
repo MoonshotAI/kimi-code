@@ -2,56 +2,23 @@ import type { Message, ToolCall } from '#/llm/message';
 import type { PolicyRegistry } from '#/llm/policy/registry';
 import type { LlmOutcome } from '#/llm/response';
 import type { LoopEmitted } from '../contract/emitted';
-import type { HookPoint, LoopHooks, ToolResult as LoopHookToolResult } from '../contract/hook';
+import type { HookPoint, HookToolResult, LoopHooks } from '../contract/hook';
 import type { QueuedItem, TurnTrigger } from '../contract/inbox';
 import type { Cause, StepOutcome, ToolCallOutcome, TurnOutcome } from '../contract/outcome';
 import type { LoopProfile } from '../contract/profile';
 import type { HookFailure, HookFailureReport } from '#/hook/loop/failure';
 import type { LoopLlmRequester } from '../request';
 
-export type TurnMessageSource = 'normal' | 'notify' | 'remind';
-export type TurnHookFailure = HookFailure;
-export type TurnHookFailureReport = HookFailureReport;
-
-export interface TurnMessage<M extends Message = Message> {
-  readonly source: TurnMessageSource;
-  readonly message: M;
+export type TurnMessage = Pick<QueuedItem, 'kind'> & {
+  readonly message: Message;
   readonly blocked?: Cause;
-  readonly failure?: TurnHookFailure;
-}
-
-export interface TurnInput {
-  readonly id: number;
-  readonly start:
-    | {
-        readonly type: 'prompt';
-        readonly trigger: 'normal' | 'notify';
-        readonly pending: readonly QueuedItem[];
-        readonly promptOnly?: true;
-      }
-    | { readonly type: 'continue' }
-    | { readonly type: 'resume'; readonly trigger: TurnTrigger; readonly step: number };
-  readonly bypassMaxSteps?: boolean;
-  readonly signal?: AbortSignal;
-}
+  readonly failure?: HookFailure;
+};
 
 export interface TurnPoint {
   readonly turnId: number;
   readonly step: number;
 }
-
-export interface TurnOwnerStartingEvent extends TurnPoint {
-  readonly trigger: TurnTrigger;
-  readonly pending: readonly QueuedItem[];
-  readonly resumed: boolean;
-}
-
-export interface TurnStartDecision {
-  readonly blocked?: Cause;
-  readonly done?: Cause;
-}
-
-export type TurnYield = { readonly type: 'done'; readonly cause: Cause };
 
 export type TurnPhase =
   | 'starting'
@@ -64,8 +31,7 @@ export type TurnPhase =
   | 'finished';
 
 export interface TurnEnding {
-  readonly turnId: number;
-  readonly outcome: TurnOutcome;
+  readonly turn: TurnState & { readonly outcome: TurnOutcome };
   readonly at: 'created' | TurnPhase;
   readonly uncommitted: readonly TurnMessage[];
 }
@@ -77,17 +43,17 @@ export interface TurnHookContext {
 
 export interface TurnHooks {
   readonly starting: (
-    event: TurnOwnerStartingEvent,
+    turn: TurnState,
     ctx: TurnHookContext,
-  ) => TurnStartDecision | void | Promise<TurnStartDecision | void>;
+  ) => Extract<TurnOutcome, { type: 'done' | 'blocked' }> | void | Promise<Extract<TurnOutcome, { type: 'done' | 'blocked' }> | void>;
   readonly requesting: (
-    event: TurnPoint,
+    turn: TurnState,
     ctx: TurnHookContext,
-  ) => TurnYield | void | Promise<TurnYield | void>;
+  ) => Extract<TurnOutcome, { type: 'done' }> | void | Promise<Extract<TurnOutcome, { type: 'done' }> | void>;
   readonly continuing: (
-    event: TurnPoint,
+    turn: TurnState,
     ctx: TurnHookContext,
-  ) => TurnYield | void | Promise<TurnYield | void>;
+  ) => Extract<TurnOutcome, { type: 'done' }> | void | Promise<Extract<TurnOutcome, { type: 'done' }> | void>;
   readonly ending: (event: TurnEnding, ctx: Pick<TurnHookContext, 'append'>) => void;
 }
 
@@ -111,10 +77,10 @@ export interface StepCall {
 }
 
 export interface TurnToolBatch extends TurnPoint {
-  readonly calls: readonly StepCall[];
+  readonly calls: StepCall[];
   readonly signal: AbortSignal;
-  readonly blocked?: { readonly cause: Cause; readonly result?: LoopHookToolResult };
-  readonly aborted?: { readonly reason: unknown };
+  blocked?: { readonly cause: Cause; readonly result?: HookToolResult };
+  aborted?: { readonly reason: unknown };
 }
 
 export interface TurnToolBatchResult {
@@ -122,51 +88,44 @@ export interface TurnToolBatchResult {
   readonly failure?: unknown;
 }
 
-export interface TurnToolRuntime {
+export interface TurnRuntime {
+  requester(): LoopLlmRequester | undefined;
+  readonly policy: PolicyRegistry;
   executeBatch(batch: TurnToolBatch): TurnToolBatchResult | Promise<TurnToolBatchResult>;
   abortBatch(
     batch: TurnToolBatch,
     reason: unknown,
     options?: { readonly force?: boolean },
   ): TurnToolBatchResult | undefined;
-}
-
-export interface TurnRequestRuntime {
-  current(): LoopLlmRequester | undefined;
-  readonly policy: PolicyRegistry;
-}
-
-export interface TurnHost {
   read(): { readonly messages: readonly Message[]; readonly profile: LoopProfile };
   emit(event: TurnEmitted): void;
   transition<T>(run: () => T): T;
   report(
     point: HookPoint,
     event: TurnPoint,
-    reports: readonly TurnHookFailureReport[],
+    reports: readonly HookFailureReport[],
     notify: boolean,
   ): void;
   committed(turnId: number): void;
-}
-
-export interface TurnRuntime {
-  readonly request: TurnRequestRuntime;
-  readonly tools: TurnToolRuntime;
   readonly hooks: Partial<TurnHooks>;
   readonly extensions: Partial<LoopHooks>;
-  readonly host: TurnHost;
   readonly signal: AbortSignal;
   readonly abortGraceMs?: number;
 }
 
 export interface TurnState {
   readonly id: number;
+  readonly kind: 'prompt' | 'continue' | 'resume';
   readonly trigger: TurnTrigger;
+  readonly initialPending: readonly QueuedItem[];
+  readonly promptOnly: boolean;
+  readonly bypassMaxSteps: boolean;
   readonly phase: 'created' | TurnPhase;
   readonly step: number;
   readonly outcome?: TurnOutcome;
-  readonly bypassMaxSteps: boolean;
 }
+
+export type TurnInput = Omit<TurnState, 'phase' | 'outcome'>;
 
 export interface Turn {
   readonly id: number;
@@ -179,10 +138,9 @@ export interface Turn {
 
 export interface TurnStep {
   readonly scope: { readonly signal: AbortSignal; abort(reason?: unknown): void };
+  readonly batch: TurnToolBatch;
   steerRequested: boolean;
   toolCallStreaming: boolean;
   llm?: LlmOutcome;
-  readonly calls: StepCall[];
   outcome?: StepOutcome;
 }
-

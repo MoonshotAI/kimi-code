@@ -3,7 +3,7 @@ import type { QueuedItem, TurnTrigger } from './inbox';
 import type { Cause, StepOutcome } from './outcome';
 import type { LoopProfile } from './profile';
 
-export interface ToolResult {
+export interface HookToolResult {
   content: ContentPart[];
   isError?: boolean;
   durationMs?: number;
@@ -58,7 +58,7 @@ export type StepStartingDecision = {
   readonly blocked?: Cause;
 };
 
-export type ToolBatchStartingDecision = { readonly blocked: Cause; readonly result?: ToolResult };
+export type ToolBatchStartingDecision = { readonly blocked: Cause; readonly result?: HookToolResult };
 
 export type StepStoppingVerdict = { readonly type: 'continue' | 'done'; readonly cause: Cause };
 
@@ -76,5 +76,3 @@ export interface LoopHooks {
 }
 
 export type HookPoint = keyof LoopHooks;
-
-export type ToolHookPoint = 'tool.starting' | 'tool.permitting' | 'tool.ending';
