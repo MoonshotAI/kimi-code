@@ -828,7 +828,10 @@ describe('AgentToolSelectService S0 baseline (gate closed)', () => {
 
     const resolved = await resolveWith(h, { messages, tools: explicitTools });
 
-    expect(resolved.profile?.tools).toBe(explicitTools);
+    expect(resolved.profile?.tools).toEqual([
+      { name: 'explicit', description: 'explicit tool', parameters: {} },
+    ]);
+    expect(explicitTools[0]?.deferred).toBe(true);
     expect(resolved.content.messages.map((message) => message.role)).toEqual([
       'user',
       'assistant',
@@ -850,16 +853,17 @@ describe('AgentToolSelectService S0 baseline (gate closed)', () => {
       tools: baseline,
       capabilities: makeCapabilities({ tool_use: true, dynamically_loaded_tools: false }),
     });
-    expect(inline.profile?.tools).toBe(baseline);
-    expect(inline.profile?.tools?.[0]?.deferred).toBe(true);
+    expect(inline.profile?.tools).not.toBe(baseline);
+    expect(inline.profile?.tools?.every((tool) => tool.deferred === undefined)).toBe(true);
 
     const withoutToolUse = await resolveWith(h, {
       messages,
       tools: baseline,
       capabilities: makeCapabilities({ tool_use: false, dynamically_loaded_tools: false }),
     });
-    expect(withoutToolUse.profile?.tools).toBe(baseline);
-    expect(withoutToolUse.profile?.tools?.[0]?.deferred).toBe(true);
+    expect(withoutToolUse.profile?.tools).not.toBe(baseline);
+    expect(withoutToolUse.profile?.tools?.every((tool) => tool.deferred === undefined)).toBe(true);
+    expect(baseline.some((tool) => tool.deferred === true)).toBe(true);
   });
 
   it('missing-tool wording falls back to the default message', async () => {
@@ -1128,9 +1132,11 @@ describe('AgentToolSelectService view shaping (gate open)', () => {
     expect(h.sut.requestTools(frozen, true)).toBe(frozen);
     const staticTools = h.sut.requestTools(baseline, false);
     expect(staticTools.map((tool) => tool.name)).toEqual(['Echo', MCP_ALPHA, MCP_BETA]);
-    expect(staticTools.find((tool) => tool.name === MCP_ALPHA)?.deferred).toBe(true);
-    expect(staticTools.find((tool) => tool.name === MCP_BETA)?.deferred).toBe(true);
+    expect(staticTools.find((tool) => tool.name === MCP_ALPHA)?.deferred).toBeUndefined();
+    expect(staticTools.find((tool) => tool.name === MCP_BETA)?.deferred).toBeUndefined();
     expect(staticTools.find((tool) => tool.name === SELECT_TOOLS_TOOL_NAME)).toBeUndefined();
+    expect(baseline.find((tool) => tool.name === MCP_ALPHA)?.deferred).toBe(true);
+    expect(baseline.find((tool) => tool.name === MCP_BETA)?.deferred).toBe(true);
     expect(h.sut.requestTools(shaped, true)).toBe(shaped);
     expect(shaped.find((tool) => tool.name === SELECT_TOOLS_TOOL_NAME)).toBeDefined();
   });

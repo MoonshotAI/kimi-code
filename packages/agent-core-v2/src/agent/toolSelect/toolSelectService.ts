@@ -158,10 +158,26 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
     disclosure = this.enabled(),
   ): readonly Tool[] {
     const tools = base ?? [];
-    const drop = disclosure
-      ? (tool: Tool) => tool.deferred === true
-      : (tool: Tool) => tool.name === SELECT_TOOLS_TOOL_NAME;
-    return tools.some(drop) ? tools.filter((tool) => !drop(tool)) : tools;
+    let shaped: Tool[] | undefined;
+    for (let index = 0; index < tools.length; index += 1) {
+      const tool = tools[index]!;
+      const drop = disclosure
+        ? tool.deferred === true
+        : tool.name === SELECT_TOOLS_TOOL_NAME;
+      if (drop) {
+        if (shaped === undefined) shaped = tools.slice(0, index);
+        continue;
+      }
+      if (!disclosure && tool.deferred === true) {
+        if (shaped === undefined) shaped = tools.slice(0, index);
+        const { deferred: _deferred, ...description } = tool;
+        void _deferred;
+        shaped.push(description);
+        continue;
+      }
+      shaped?.push(tool);
+    }
+    return shaped ?? tools;
   }
 
   shapeTools(
