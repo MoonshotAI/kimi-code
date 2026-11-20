@@ -367,6 +367,25 @@ esac
     ),
   );
 
+  it.skipIf(process.platform === 'win32').each([
+    ['windows', "The term 'kimi' is not recognized as the name of a cmdlet", 1, 'executor_not_found_windows'],
+    ['posix', 'kimi: command not found', 127, 'executor_not_found'],
+  ] as const)('reports a missing Kimi executable on a %s host', async (platform, stderr, code, failure) => {
+    await withFakeSsh(
+      "echo \"" + stderr + "\" >&2\nexit " + String(code) + "\n",
+      async (ssh) => {
+        const bridge = new SshKapBridge({ host: 'example.test' }, { sshProgram: ssh });
+        try {
+          await expect(bridge.probe()).rejects.toMatchObject({ failure });
+          await expect(bridge.connect()).rejects.toMatchObject({ failure });
+        } finally {
+          bridge.dispose();
+        }
+      },
+      platform,
+    );
+  });
+
   it.skipIf(process.platform === 'win32')('reports an older kimi without the probe as outdated with its version', () =>
     withFakeSsh("#!/bin/sh\necho 'motd line'\necho '0.40.0'\necho \"error: unknown option '--probe'\" >&2\nexit 1\n", async (ssh) => {
       const bridge = new SshKapBridge({ host: 'dev' }, { sshProgram: ssh });

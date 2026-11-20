@@ -70,7 +70,9 @@ Stop:    Ctrl+C
 
 在 Kimi Code Web 或桌面端添加 Windows SSH 主机后，项目会在该主机上运行。请在远端启用 Windows OpenSSH Server，并安装支持 Windows SSH 主机的 Kimi Code CLI。使用 Windows PowerShell 5.1，并确保 SSH 登录账号可以通过 CIM 启动本地进程。如果连接时提示升级，请在远端升级 CLI。
 
-Kimi Code 默认在远端查找 `%USERPROFILE%\\.kimi-code\\bin\\kimi.exe`。如果安装在其他位置，请将该主机的 `remote_bin` 设为完整路径，例如 `C:\\Program Files\\Kimi\\kimi.exe`。SSH agent 转发适用于 POSIX 主机。在 Windows 上，请为远端账号配置 Git 等工具所需的凭据。
+Kimi Code 默认在远端查找 `%USERPROFILE%\.kimi-code\bin\kimi.exe`。如果连接测试找不到 Kimi，可以使用测试结果里提供的 PowerShell 安装命令。如果已经安装在其他位置，在 **高级选项 → Kimi Code CLI 可执行文件**（`remote_bin`）中填写完整路径，例如 `C:\Program Files\Kimi\kimi.exe`。
+
+SSH agent 转发适用于 POSIX 主机。在 Windows 上，请为远端账号配置 Git 等工具所需的凭据。
 
 桌面端的集成终端暂不支持 Windows SSH 项目。如需在远端打开终端，请使用系统终端通过 SSH 连接该主机。
 

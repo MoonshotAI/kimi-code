@@ -36,7 +36,7 @@ export default {
     identityBrowse: '选择…',
     advanced: '高级选项',
     binLabel: 'Kimi Code CLI 可执行文件',
-    binHint: '安装在非默认路径时填写，默认为 ~/.kimi-code/bin/kimi',
+    binHint: 'Kimi Code CLI 安装在自定义位置时，填写它在远端主机上的路径',
     enabledLabel: '启用 {name}',
     save: '保存',
     saveAnyway: '仍然保存',

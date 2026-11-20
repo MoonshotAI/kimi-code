@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { closeSync, mkdirSync, openSync } from 'node:fs';
-import { mkdir, open, readFile, rename, rm, symlink } from 'node:fs/promises';
+import { mkdir, open, readFile, realpath, rename, rm, symlink } from 'node:fs/promises';
 import { createConnection } from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -65,9 +65,9 @@ export interface EnsureDaemonDeps {
   wait(ms: number): Promise<void>;
 }
 
-export function daemonSocketPath(homeDir: string, platform: NodeJS.Platform = process.platform): string {
+export async function daemonSocketPath(homeDir: string, platform: NodeJS.Platform = process.platform): Promise<string> {
   if (platform === 'win32') {
-    const hash = createHash('sha256').update(homeDir).digest('hex').slice(0, 16);
+    const hash = createHash('sha256').update(await realpath(homeDir)).digest('hex').slice(0, 16);
     return `\\\\.\\pipe\\kimi-daemon-${hash}`;
   }
   const direct = join(homeDir, 'server', SOCKET_FILE);
@@ -132,7 +132,7 @@ async function syncAgentSocket(deps: EnsureDaemonDeps): Promise<void> {
 }
 
 async function findOrStart(deps: EnsureDaemonDeps): Promise<EnsureDaemonResult> {
-  const socketPath = daemonSocketPath(deps.homeDir);
+  const socketPath = await daemonSocketPath(deps.homeDir);
   const existing = await deps.connectSocket(socketPath);
   if (existing !== undefined) {
     if (existing.version === deps.version) {
@@ -366,14 +366,16 @@ function relayStdio(
   });
 }
 
-async function defaultDeps(): Promise<EnsureDaemonDeps> {
-  const homeDir = getDataDir();
-  const ipcKey = process.platform === 'win32' ? await loadWindowsIpcKey(daemonSocketPath(homeDir)) : undefined;
+function defaultDeps(): EnsureDaemonDeps {
+  let ipcKey: Buffer | undefined;
   return {
-    homeDir,
+    homeDir: getDataDir(),
     version: getVersion(),
     sshAuthSock: process.env['SSH_AUTH_SOCK'],
-    connectSocket: (socketPath) => connectDaemonSocket(socketPath, ipcKey),
+    connectSocket: async (socketPath) => {
+      if (process.platform === 'win32') ipcKey ??= await loadWindowsIpcKey(socketPath);
+      return connectDaemonSocket(socketPath, ipcKey);
+    },
     spawnServer: spawnDetachedServer,
     wait: (ms) => sleep(ms),
   };
@@ -395,7 +397,7 @@ export function registerEnsureDaemonCommand(web: Command): void {
         return;
       }
       try {
-        const daemon = await ensureDaemon(await defaultDeps());
+        const daemon = await ensureDaemon(defaultDeps());
         report({});
         await relayStdio(process.stdin, process.stdout, daemon.stream);
       } catch (error) {

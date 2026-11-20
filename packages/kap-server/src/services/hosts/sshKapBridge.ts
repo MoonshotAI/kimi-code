@@ -18,6 +18,7 @@ export type HostConnectFailure =
   | 'authentication_failed'
   | 'host_key_changed'
   | 'executor_not_found'
+  | 'executor_not_found_windows'
   | 'executor_outdated'
   | 'remote_busy'
   | 'remote_start_failed'
@@ -173,14 +174,15 @@ interface SshResult {
   readonly stderr: string;
 }
 
-function sshFailure(result: SshResult, inconclusiveProbe?: HostConnectError): HostConnectError {
+function sshFailure(result: SshResult, detection?: PlatformDetection): HostConnectError {
   const failure = classifySshFailure(result.stderr, result.code);
   const version = readVersionLine(result.stdout);
+  const inconclusiveProbe = detection?.inconclusiveFailure;
   if (inconclusiveProbe !== undefined && version === undefined && (failure === 'executor_not_found' || failure === 'executor_outdated')) {
     return inconclusiveProbe;
   }
   return new HostConnectError(
-    failure,
+    failure === 'executor_not_found' && detection?.platform === 'windows' ? 'executor_not_found_windows' : failure,
     result.stderr.trim() || `ssh exited with code ${String(result.code)}`,
     version,
   );
@@ -330,13 +332,14 @@ export class SshKapBridge {
   }
 
   async probe(): Promise<void> {
-    const { platform, inconclusiveFailure } = await this.platform();
+    const detection = await this.platform();
+    const { platform } = detection;
     const result = await this.collect(
       this.commandArgs(remoteKimiCommand(this.entry.remoteBin, 'server ensure-daemon --probe', platform)),
       VERSION_TIMEOUT_MS,
     );
     if (checkBootstrapOutput(result.stdout, platform)) return;
-    throw sshFailure(result, inconclusiveFailure);
+    throw sshFailure(result, detection);
   }
 
   private platform(): Promise<PlatformDetection> {
@@ -417,7 +420,8 @@ export class SshKapBridge {
 
   private async openSession(): Promise<ActiveHostSession> {
     if (this.disposed) throw new HostConnectError('unknown', 'host bridge disposed');
-    const { platform, inconclusiveFailure } = await this.platform();
+    const detection = await this.platform();
+    const { platform } = detection;
     if (this.disposed) throw new HostConnectError('unknown', 'host bridge disposed');
     const command = remoteKimiCommand(this.entry.remoteBin, 'server ensure-daemon', platform);
     return new Promise<ActiveHostSession>((resolve, reject) => {
@@ -505,7 +509,7 @@ export class SshKapBridge {
         if (!settled) {
           settled = true;
           preMarkerStdout ||= bootstrap.toString('utf8');
-          reject(sshFailure({ code, stdout: preMarkerStdout, stderr }, inconclusiveFailure));
+          reject(sshFailure({ code, stdout: preMarkerStdout, stderr }, detection));
           return;
         }
         if (activeSession !== undefined) {

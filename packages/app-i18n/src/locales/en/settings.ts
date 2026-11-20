@@ -36,7 +36,7 @@ export default {
     identityBrowse: 'Choose…',
     advanced: 'Advanced',
     binLabel: 'Kimi Code CLI executable',
-    binHint: 'Set if installed outside the default path (~/.kimi-code/bin/kimi)',
+    binHint: 'Set the path on the remote host if Kimi Code CLI is installed in a custom location',
     enabledLabel: 'Enable {name}',
     save: 'Save',
     saveAnyway: 'Save anyway',

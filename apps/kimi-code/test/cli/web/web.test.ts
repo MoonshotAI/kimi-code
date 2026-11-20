@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { lstatSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, rmSync, writeFileSync } from 'node:fs';
+import { lstatSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
@@ -1160,15 +1160,21 @@ describe('`kimi server ensure-daemon`', () => {
     };
   }
 
-  it('uses a stable named pipe on Windows', () => {
-    const pipe = daemonSocketPath(homeDir, 'win32');
+  it('uses the same Windows named pipe for aliases of one data directory', async () => {
+    const data = mkdtempSync(join(homeDir, 'data-'));
+    const other = mkdtempSync(join(homeDir, 'other-'));
+    const alias = join(homeDir, 'alias');
+    symlinkSync(data, alias, process.platform === 'win32' ? 'junction' : 'dir');
+
+    const pipe = await daemonSocketPath(data, 'win32');
     expect(pipe).toMatch(/^\\\\\.\\pipe\\kimi-daemon-[a-f0-9]{16}$/);
-    expect(daemonSocketPath(homeDir, 'win32')).toBe(pipe);
-    expect(daemonSocketPath(join(homeDir, 'other'), 'win32')).not.toBe(pipe);
+    expect(await daemonSocketPath(data + '/.', 'win32')).toBe(pipe);
+    expect(await daemonSocketPath(alias, 'win32')).toBe(pipe);
+    expect(await daemonSocketPath(other, 'win32')).not.toBe(pipe);
   });
 
   it.runIf(process.platform === 'win32')('persists one complete Windows IPC key across concurrent loads', async () => {
-    const pipe = daemonSocketPath(homeDir, 'win32');
+    const pipe = await daemonSocketPath(homeDir, 'win32');
     const file = `${createHash('sha256').update(pipe).digest('hex')}.key`;
     const localAppData = process.env['LOCALAPPDATA'];
     try {
@@ -1225,6 +1231,24 @@ describe('`kimi server ensure-daemon`', () => {
     expect(deps.spawnServer).not.toHaveBeenCalled();
   });
 
+  it.runIf(process.platform === 'win32')('reuses a Windows daemon through an equivalent data path', async () => {
+    const daemons = new Map<string, DaemonConnection>();
+    const data = join(homeDir, 'data');
+    const deps = makeDeps({
+      homeDir: data,
+      connectSocket: async (socketPath) => daemons.get(socketPath),
+      spawnServer: vi.fn((socketPath) => {
+        daemons.set(socketPath, connection());
+      }),
+    });
+
+    const first = await ensureDaemon(deps);
+    const second = await ensureDaemon({ ...deps, homeDir: data.replaceAll('\\', '/') + '/.' });
+
+    expect(second.stream).toBe(first.stream);
+    expect(deps.spawnServer).toHaveBeenCalledOnce();
+  });
+
   it('spawns a new server when the socket is absent and waits until it connects', async () => {
     let attempts = 0;
     const spawned = connection();
@@ -1240,7 +1264,7 @@ describe('`kimi server ensure-daemon`', () => {
       stream: spawned.stream,
     });
     expect(deps.spawnServer).toHaveBeenCalledWith(
-      daemonSocketPath(homeDir),
+      await daemonSocketPath(homeDir),
       join(homeDir, 'server', 'ensure-daemon.log'),
       join(homeDir, 'server', 'forwarded-ssh-agent.sock'),
     );

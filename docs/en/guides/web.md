@@ -70,7 +70,9 @@ The Remote Control link grants access to your machine upon signing into the same
 
 Add a Windows SSH Host in Kimi Code Web or Desktop to run projects on that machine. Enable Windows OpenSSH Server and install a version of Kimi Code CLI that supports Windows SSH Hosts on the remote machine. Use Windows PowerShell 5.1 and an SSH account that can start local processes through CIM. If the connection asks you to upgrade Kimi, upgrade the CLI on the remote host.
 
-Kimi Code looks for `%USERPROFILE%\\.kimi-code\\bin\\kimi.exe` on the host. If Kimi is installed elsewhere, set `remote_bin` for that host to its full path, such as `C:\\Program Files\\Kimi\\kimi.exe`. SSH agent forwarding is available for POSIX Hosts. On Windows, configure Git and other tools to authenticate from the remote account.
+Kimi Code looks for `%USERPROFILE%\.kimi-code\bin\kimi.exe` on the host. If the connection test can’t find Kimi, use the PowerShell installation command it provides. If Kimi is already installed elsewhere, enter its full path, such as `C:\Program Files\Kimi\kimi.exe`, in **Advanced → Kimi Code CLI executable** (`remote_bin`).
+
+SSH agent forwarding is available for POSIX Hosts. On Windows, configure Git and other tools to authenticate from the remote account.
 
 The Desktop integrated terminal does not yet support projects on Windows SSH Hosts. To open a terminal on the remote machine, connect to the host over SSH from your system terminal.
 

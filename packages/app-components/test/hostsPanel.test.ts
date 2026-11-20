@@ -162,6 +162,7 @@ async function openRowEditor(index = 0): Promise<void> {
 describe('HostTestResult', () => {
   it.each([
     ['executor_not_found', '.etr-install-command', 'curl -fsSL https://code.kimi.com/kimi-code/install.sh | bash'],
+    ['executor_not_found_windows', '.etr-install-command', 'irm https://code.kimi.com/kimi-code/install.ps1 | iex'],
     ['executor_outdated', '.etr-update-command', 'kimi upgrade'],
   ] as const)('copies the recovery command for %s', async (failure, selector, command) => {
     const writeText = vi.fn(async () => undefined);
@@ -892,6 +893,16 @@ describe('HostsPanel connection test steps', () => {
     await vi.waitFor(() => expect(host.querySelector('.etr-install-command')).not.toBeNull());
     expect(host.querySelector('.etr-step')).toBeNull();
     expect(host.querySelector('.etr-reason')?.textContent).toContain('Kimi Code CLI');
+  });
+
+  it('offers PowerShell installation when the Windows Kimi executable is missing', async () => {
+    const test = vi.fn(async () => failedTest('kimi: not found', 'executor_not_found_windows'));
+    mountPanel({ test });
+    await openDraft();
+
+    saveButton().click();
+    await vi.waitFor(() => expect(host.querySelector<HTMLButtonElement>('.etr-install-command')?.title).toContain('install.ps1'));
+    expect(host.querySelector('.etr-hint')?.textContent).toContain('set the executable path under Advanced');
   });
 
   it('opens the raw output when an unclassified failure has no reason and copies it', async () => {
