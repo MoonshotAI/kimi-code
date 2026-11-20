@@ -18198,6 +18198,14 @@
                                     "minLength": 1,
                                     "type": "string"
                                   },
+                                  "segment": {
+                                    "enum": [
+                                      "thinking",
+                                      "reply",
+                                      "tool_call"
+                                    ],
+                                    "type": "string"
+                                  },
                                   "sequence": {
                                     "exclusiveMinimum": true,
                                     "maximum": 9007199254740991,
@@ -18315,6 +18323,14 @@
                                   },
                                   "role": {
                                     "minLength": 1,
+                                    "type": "string"
+                                  },
+                                  "segment": {
+                                    "enum": [
+                                      "thinking",
+                                      "reply",
+                                      "tool_call"
+                                    ],
                                     "type": "string"
                                   },
                                   "sequence": {
@@ -18659,6 +18675,14 @@
                             "raw": {},
                             "role": {
                               "minLength": 1,
+                              "type": "string"
+                            },
+                            "segment": {
+                              "enum": [
+                                "thinking",
+                                "reply",
+                                "tool_call"
+                              ],
                               "type": "string"
                             },
                             "sequence": {

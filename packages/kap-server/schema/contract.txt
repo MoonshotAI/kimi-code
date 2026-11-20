@@ -1007,6 +1007,7 @@ GET /api/v1/sessions/{session_id}/context/items response 200<code=0>.data.items[
 GET /api/v1/sessions/{session_id}/context/items response 200<code=0>.data.items[].name: string optional
 GET /api/v1/sessions/{session_id}/context/items response 200<code=0>.data.items[].preview: string
 GET /api/v1/sessions/{session_id}/context/items response 200<code=0>.data.items[].role: string minLength=1
+GET /api/v1/sessions/{session_id}/context/items response 200<code=0>.data.items[].segment: enum "reply"|"thinking"|"tool_call" optional
 GET /api/v1/sessions/{session_id}/context/items response 200<code=0>.data.items[].sequence: integer maximum=9007199254740991 exclusiveMinimum=true optional
 GET /api/v1/sessions/{session_id}/context/items response 200<code=0>.data.items[].tokens: integer minimum=0 maximum=9007199254740991
 GET /api/v1/sessions/{session_id}/context/items response 200<code=0>.data.items[]: object closed
@@ -1029,6 +1030,7 @@ GET /api/v1/sessions/{session_id}/context/items response 200<code=0>.data.tools[
 GET /api/v1/sessions/{session_id}/context/items response 200<code=0>.data.tools[].name: string optional
 GET /api/v1/sessions/{session_id}/context/items response 200<code=0>.data.tools[].preview: string
 GET /api/v1/sessions/{session_id}/context/items response 200<code=0>.data.tools[].role: string minLength=1
+GET /api/v1/sessions/{session_id}/context/items response 200<code=0>.data.tools[].segment: enum "reply"|"thinking"|"tool_call" optional
 GET /api/v1/sessions/{session_id}/context/items response 200<code=0>.data.tools[].sequence: integer maximum=9007199254740991 exclusiveMinimum=true optional
 GET /api/v1/sessions/{session_id}/context/items response 200<code=0>.data.tools[].tokens: integer minimum=0 maximum=9007199254740991
 GET /api/v1/sessions/{session_id}/context/items response 200<code=0>.data.tools[]: object closed
@@ -1060,6 +1062,7 @@ GET /api/v1/sessions/{session_id}/context/items/{item_id} response 200<code=0>.d
 GET /api/v1/sessions/{session_id}/context/items/{item_id} response 200<code=0>.data.parts[]: object closed
 GET /api/v1/sessions/{session_id}/context/items/{item_id} response 200<code=0>.data.raw: any
 GET /api/v1/sessions/{session_id}/context/items/{item_id} response 200<code=0>.data.role: string minLength=1
+GET /api/v1/sessions/{session_id}/context/items/{item_id} response 200<code=0>.data.segment: enum "reply"|"thinking"|"tool_call" optional
 GET /api/v1/sessions/{session_id}/context/items/{item_id} response 200<code=0>.data.sequence: integer maximum=9007199254740991 exclusiveMinimum=true optional
 GET /api/v1/sessions/{session_id}/context/items/{item_id} response 200<code=0>.data.tokens: integer minimum=0 maximum=9007199254740991
 GET /api/v1/sessions/{session_id}/context/items/{item_id} response 200<code=0>.data: object closed
