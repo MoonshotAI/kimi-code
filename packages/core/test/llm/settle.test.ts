@@ -93,21 +93,22 @@ describe('tool argument settlement', () => {
         };
       },
     });
+    const module = testModule({
+      profile: {
+        tools: [{
+          name: 'weather',
+          description: 'Get weather',
+          parameters: {
+            type: 'object',
+            properties: { city: { type: 'string' } },
+            required: ['city'],
+          },
+          deferred: true,
+        }],
+      },
+    });
     const generated = await runGenerate(protocol, {
-      module: testModule({
-        profile: {
-          tools: [{
-            name: 'weather',
-            description: 'Get weather',
-            parameters: {
-              type: 'object',
-              properties: { city: { type: 'string' } },
-              required: ['city'],
-            },
-            deferred: true,
-          }],
-        },
-      }),
+      module,
       maxAttemptsPerStep: 2,
     });
 
@@ -125,6 +126,19 @@ describe('tool argument settlement', () => {
     expect(encoded).toHaveLength(2);
     expect(encoded[1]?.at(-1)).toMatchObject({ role: 'system' });
     expect(JSON.stringify(encoded[1]?.at(-1))).toContain('not executed');
+
+    attempts = 0;
+    const infinite = await runGenerate(protocol, { module, infiniteRetry: true });
+    expect(doneOutcome(infinite.outcome).message.toolCalls).toMatchObject([
+      { name: 'weather', arguments: '{"city":"sf"}' },
+    ]);
+    const infiniteDelays = infinite.events.flatMap((event) =>
+      event.type === 'llm.retry' && event.reason === 'invalid_tool_arguments'
+        ? [event.delayMs]
+        : []
+    );
+    expect(infiniteDelays).toHaveLength(1);
+    expect(infiniteDelays[0]).toBeGreaterThan(0);
   });
 
   it('rejects non-object and unapproved empty arguments without executing or normalizing them', async () => {
@@ -173,7 +187,7 @@ describe('tool argument settlement', () => {
     expect(empty.message.toolCalls[0]?.arguments).toBe('');
   });
 
-  it('preserves correction feedback and rejected usage across transient retries', async () => {
+  it('preserves correction feedback across transient retries', async () => {
     const encoded: (readonly Message[])[] = [];
     let attempts = 0;
     const profile = {
@@ -217,14 +231,27 @@ describe('tool argument settlement', () => {
     });
 
     expect(attempts).toBe(3);
-    expect(doneOutcome(generated.outcome).usage).toMatchObject({ inputOther: 6, output: 4 });
-    expect(doneOutcome(generated.outcome).message.attributes?.usage).toMatchObject({ inputOther: 6, output: 4 });
+    expect(doneOutcome(generated.outcome).usage).toMatchObject({ inputOther: 4, output: 3 });
+    expect(doneOutcome(generated.outcome).message.attributes?.usage).toMatchObject({ inputOther: 4, output: 3 });
     expect(generated.events.filter((event) => event.type === 'llm.retry').map((event) => event.reason)).toEqual([
       'invalid_tool_arguments',
       'backoff',
     ]);
     expect(encoded[2]?.at(-1)).toMatchObject({ role: 'system' });
     expect(JSON.stringify(encoded[2]?.at(-1))).toContain('not executed');
+
+    const rejected = failedOutcome((await runGenerate(fakeProtocol({
+      chunks: [
+        { part: { type: 'text', text: 'I will call weather' } },
+        { tool: { type: 'function', id: 'call-rejected', name: 'weather', arguments: '{"city":' } },
+        { usage: { inputOther: 2, output: 1 } },
+        { finish: { finishReason: 'tool_calls', rawFinishReason: 'stop' } },
+      ],
+    }), {
+      module: testModule({ profile }),
+      maxAttemptsPerStep: 1,
+    })).outcome);
+    expect(rejected.message).toBeUndefined();
   });
 
   it('validates finalized calls when tool-call-end is missing or arrives before later deltas', async () => {

@@ -3,7 +3,6 @@ import { createSystemMessage, type SystemMessage, type ToolDescription } from '#
 import { isAbortError, toLlmErrorMessage } from '#/llm/protocol/errors';
 import type { LlmRequest } from '#/llm/request';
 import type { LlmOutcome, LlmRunEvent, LlmRunRequested, LlmRunStarted } from '#/llm/response';
-import { addUsage, type TokenUsage } from '#/llm/usage';
 import { sha256Hex } from '#/utils/hash';
 import { log } from '#/utils/log';
 
@@ -24,7 +23,7 @@ import {
   type LlmRetryable,
   type LlmRetryOptions,
 } from './retry';
-import { settleLlmRequest } from './settle';
+import { runAttempt } from './settle';
 
 export type LlmPolicyList<T> = readonly T[] | (() => readonly T[]);
 
@@ -187,6 +186,30 @@ export async function runLlmRequest(
   return outcome;
 }
 
+/**
+ * Drives the attempts of one LLM request.
+ *
+ * For each attempt, applies recovery and resolvers, adds any temporary correction,
+ * calls runAttempt, emits request/retry events, and enforces retry delays,
+ * attempt limits, and cancellation.
+ *
+ * Invariants:
+ * - Each attempt settles through an independent accumulator.
+ * - Retry partial assistant messages never enter conversation history; only the final outcome can.
+ * - Failed-attempt usage never contributes to a successful outcome or session usage.
+ * - Invalid tool calls never execute; corrections use only a temporary SystemMessage.
+ * - Bounded invalid-argument retries are immediate; infinite retries use Retry-After or backoff.
+ * - Cancellation prevents further attempts, including while waiting for a retry delay.
+ * - Final non-invalid failures may be salvaged; invalid-argument failures retain no text.
+ *
+ * State:
+ * buildAttempt(N) -> apply recovery/resolvers -> settle
+ *   done/aborted       -> return outcome
+ *   failed + recovery  -> record recovery -> emit retry -> buildAttempt(1)
+ *   failed + retryable -> emit retry -> wait -> buildAttempt(N + 1)
+ *   failed + terminal  -> return failed
+ *   abort at any point -> return aborted
+ */
 async function runAttempts(
   request: LlmRequest,
   control: LlmRunControl,
@@ -196,30 +219,17 @@ async function runAttempts(
   const policy = request.policy ?? {};
   const ledger = createRecoveryLedger(recoveries.read(request));
   let attempt = 1;
-  let retryMessage: SystemMessage | undefined;
+  // Currently only set for invalid tool-call arguments to guide the next generation.
+  let toolArgumentCorrectionMessage: SystemMessage | undefined;
   const maxAttempts = resolveMaxAttempts(policy.retry);
-  let rejectedUsage: TokenUsage | undefined;
-  const withRejectedUsage = (outcome: LlmOutcome): LlmOutcome => {
-    if (rejectedUsage === undefined) return outcome;
-    const usage = outcome.usage === undefined ? rejectedUsage : addUsage(rejectedUsage, outcome.usage);
-    const message = outcome.message;
-    return {
-      ...outcome,
-      usage,
-      ...(message === null || message === undefined
-        ? {}
-        : { message: { ...message, attributes: { ...message.attributes, usage } } }),
-    };
-  };
-
   while (!signal.aborted) {
-    const requestForAttempt = retryMessage === undefined
+    const requestForAttempt = toolArgumentCorrectionMessage === undefined
       ? request
       : {
           ...request,
           content: {
             ...request.content,
-            messages: [...request.content.messages, retryMessage],
+            messages: [...request.content.messages, toolArgumentCorrectionMessage],
           },
         };
     const recoveredRequest = ledger.apply(requestForAttempt);
@@ -240,7 +250,7 @@ async function runAttempts(
       });
       if (resolver.recoveryRequest === 'resolved') recoveryRequest = resolvedRequest;
       if (signal.aborted) {
-        return withRejectedUsage({ type: 'aborted', message: null, usage: undefined });
+        return { type: 'aborted', message: null, usage: undefined };
       }
     }
 
@@ -258,17 +268,16 @@ async function runAttempts(
       },
       'llm attempt',
     );
-    const result = await settleLlmRequest(resolvedRequest, { signal, onEvent });
+    const result = await runAttempt(resolvedRequest, { signal, onEvent });
     if (result.type === 'done' || result.type === 'aborted') {
-      return withRejectedUsage(result);
+      return result;
     }
+    // Invalid arguments set a temporary correction. It survives transient failures
+    // without a salvaged message and is cleared when another failure has output.
     if (result.error.kind === 'invalid_tool_arguments') {
-      if (result.usage !== undefined) {
-        rejectedUsage = rejectedUsage === undefined ? result.usage : addUsage(rejectedUsage, result.usage);
-      }
-      retryMessage = createSystemMessage(result.error.message);
+      toolArgumentCorrectionMessage = createSystemMessage(result.error.message);
     } else if (result.message !== undefined) {
-      retryMessage = undefined;
+      toolArgumentCorrectionMessage = undefined;
     }
 
     const proposal = proposeFirst(listOf(policy.recoveries), {
@@ -303,7 +312,7 @@ async function runAttempts(
 
     if (shouldRetry(policy.retry, attempt, result.error, listOf(policy.retryables))) {
       const invalidToolArguments = result.error.kind === 'invalid_tool_arguments';
-      const delayMs = invalidToolArguments
+      const delayMs = invalidToolArguments && policy.retry?.infiniteRetry !== true
         ? 0
         : (readRetryAfterMs(result.error) ?? retryBackoffDelay(attempt - 1));
       const retry: LlmRunEvent = {
@@ -325,7 +334,7 @@ async function runAttempts(
       log.info({ ...retry }, 'llm event');
       onEvent?.(retry);
       if (!(await delay(delayMs, signal))) {
-        return withRejectedUsage(abortedOf(result, signal.reason));
+        return abortedOf(result, signal.reason);
       }
       attempt += 1;
       continue;
@@ -343,8 +352,8 @@ async function runAttempts(
       },
       'llm request failed',
     );
-    return withRejectedUsage(result);
+    return result;
   }
 
-  return withRejectedUsage({ type: 'aborted', message: null, usage: undefined });
+  return { type: 'aborted', message: null, usage: undefined };
 }

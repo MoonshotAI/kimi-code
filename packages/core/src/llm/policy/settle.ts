@@ -87,14 +87,14 @@ export function emptyResponseError(
   return null;
 }
 
-export interface LlmSettleControl {
+export interface LlmRequestControl {
   readonly signal: AbortSignal;
   readonly onEvent?: (event: LlmDeltaEvent | LlmNoticeEvent) => void;
 }
 
-export async function settleLlmRequest(
+export async function runAttempt(
   request: LlmRequest,
-  control: LlmSettleControl,
+  control: LlmRequestControl,
 ): Promise<LlmOutcome> {
   const { signal, onEvent } = control;
   const inner = createMessageAccumulator();
@@ -209,7 +209,9 @@ export async function settleLlmRequest(
     return {
       type: 'failed',
       ...failure,
-      message: usable === null ? undefined : assistantMessage(usable, 'salvaged'),
+      message: failure.error.kind === 'invalid_tool_arguments'
+        ? undefined
+        : usable === null ? undefined : assistantMessage(usable, 'salvaged'),
       ...extras(),
       diagnostics: request.protocol.base.diagnoseError?.({
         error: failure.error,

@@ -472,11 +472,16 @@ describe('LLMRequester service migration coverage', () => {
         },
       });
       ctx.mockNextProviderResponse({
-        parts: [{ type: 'function', id: 'call_bad', name: 'Lookup', arguments: '{"query":' }],
+        parts: [
+          { type: 'text', text: 'I will call Lookup' },
+          { type: 'function', id: 'call_bad', name: 'Lookup', arguments: '{"query":' },
+        ],
+        usage: { inputOther: 2, output: 1, inputCacheRead: 0, inputCacheCreation: 0 },
         finishReason: 'tool_calls',
       });
       ctx.mockNextProviderResponse({
         parts: [{ type: 'function', id: 'call_good', name: 'Lookup', arguments: '{"query":"moon"}' }],
+        usage: { inputOther: 4, output: 3, inputCacheRead: 0, inputCacheCreation: 0 },
         finishReason: 'tool_calls',
       });
       await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Look up moon' }] });
@@ -498,6 +503,11 @@ describe('LLMRequester service migration coverage', () => {
       expect(ctx.llmCalls[1]?.history.at(-1)).toMatchObject({ role: 'system' });
       expect(JSON.stringify(ctx.llmCalls[1]?.history.at(-1))).toContain('not executed');
       expect(JSON.stringify(ctx.context.history())).not.toContain('was not executed because its arguments were invalid');
+      expect(JSON.stringify(ctx.context.history())).not.toContain('I will call Lookup');
+      expect(wireEvents(ctx, 'usage.record')[0]?.args).toMatchObject({
+        usage: { inputOther: 4, output: 3, inputCacheRead: 0, inputCacheCreation: 0 },
+      });
+      expect(wireEvents(ctx, 'token_counting.measured')[0]?.args).toMatchObject({ tokens: 7 });
       expect(drainPromptCacheViolations()).toEqual([
         expect.stringContaining('next step request does not extend the last turn request'),
       ]);
