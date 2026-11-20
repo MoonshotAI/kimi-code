@@ -28,6 +28,7 @@ import { WorkspaceInstructionsService } from '#/workspace/workspaceInstructions/
 import type { IUserAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/userAgentProfileLoader';
 import type { IWorkspaceAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/workspaceAgentProfileLoader';
 import { WorkspaceAgentProfileLoaderService } from '#/workspace/workspaceAgentProfileLoader/workspaceAgentProfileLoaderService';
+import type { WorkdirMcp } from '#/workspace/workspaceMcp/workspaceMcp';
 
 import type { ProgramDependencies } from './programDependencies';
 
@@ -50,7 +51,7 @@ export interface ProgramView {
   readonly agentProfiles: IWorkspaceAgentProfileLoader;
 }
 
-export interface ProgramWorkdir {
+export interface ProgramViewLease {
   readonly contextKey: string;
   readonly hostFs: IHostFileSystem;
   readonly localConfig: FileProjectLocalConfigService;
@@ -60,6 +61,10 @@ export interface ProgramWorkdir {
   readonly skills: IWorkspaceSkillCatalog;
   readonly agentProfiles: IWorkspaceAgentProfileLoader;
   dispose(): void;
+}
+
+export interface ProgramWorkdir extends ProgramViewLease {
+  readonly mcp: WorkdirMcp;
 }
 
 export const PROGRAM_CAPABILITIES = ['fs', 'process'] as const;
@@ -102,7 +107,7 @@ export class ProgramWorkdirs {
     this.entries.set(workdirContextKey(LOCAL_ENVIRONMENT_ID, context.cwd, true), { view: this.root, disposables: [], references: 1 });
   }
 
-  async acquire(environmentId: string, cwd: string, followsPrimary = environmentId === LOCAL_ENVIRONMENT_ID): Promise<ProgramWorkdir> {
+  async acquire(environmentId: string, cwd: string, followsPrimary = environmentId === LOCAL_ENVIRONMENT_ID): Promise<ProgramViewLease> {
     const contextKey = workdirContextKey(environmentId, cwd, followsPrimary);
     let entry = this.entries.get(contextKey);
     const stale = entry !== undefined && !watchable(environmentId);
@@ -123,7 +128,7 @@ export class ProgramWorkdirs {
     const acquired = entry;
     acquired.references += 1;
     let released = false;
-    const workdir: ProgramWorkdir = {
+    const workdir: ProgramViewLease = {
       contextKey,
       hostFs: acquired.view.hostFs,
       localConfig: acquired.view.localConfig,

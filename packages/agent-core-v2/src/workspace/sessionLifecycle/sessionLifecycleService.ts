@@ -59,7 +59,7 @@ import {
 import { ensureMainAgent } from '#/session/agentLifecycle/mainAgent';
 import { labelsFromAgentMeta } from '#/session/agentLifecycle/subagentMetadata';
 import { ISessionContext, sessionContextSeed } from '#/session/sessionContext/sessionContext';
-import { sessionEphemeralMcpServersSeed } from '#/session/mcp/ephemeralMcpServers';
+import { ISessionEphemeralMcpServers, sessionEphemeralMcpServersSeed } from '#/session/mcp/ephemeralMcpServers';
 import { sessionAgentProfileCatalogSeed } from '#/session/sessionAgentProfileCatalog/agentProfileCatalogSeed';
 import {
   ISessionMetadata,
@@ -102,7 +102,7 @@ import {
 import {
   IExtraAgentProfileLoader,
 } from '#/workspace/workspaceAgentProfileLoader/extraAgentProfileLoader';
-import { IWorkspaceMcpService } from '#/workspace/workspaceMcp/workspaceMcp';
+import type { SessionMcpLease } from '#/workspace/workspaceMcp/workspaceMcp';
 import { PLUGIN_SKILL_SOURCE_ID } from '#/features/skill/catalog/skillSource';
 
 import { agentScopeOf, sessionDirOf, sessionScopeOf } from './internal/addressing';
@@ -207,7 +207,6 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     private readonly userAgentProfileLoader: IUserAgentProfileLoader,
     @IPluginAgentProfileLoader
     private readonly pluginAgentProfileLoader: IPluginAgentProfileLoader,
-    @IWorkspaceMcpService private readonly workspaceMcp: IWorkspaceMcpService,
     @IModelService private readonly models: IModelService,
     @IProviderService private readonly providers: IProviderService,
     private readonly environments: IEnvironmentService,
@@ -316,6 +315,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       session_id: opts.sessionId,
     });
     let handle: ISessionScopeHandle;
+    let mcp: SessionMcpLease | undefined;
     const scopeCreated = new Emitter<ISessionScopeHandle>();
     try {
       handle = createScopedChildHandle(
@@ -335,7 +335,6 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
             }),
             [ISessionSkillCatalogData, workdir.skills.sessionData()],
             [ISessionInstructionsProvider, workdir.instructions.sessionProvider()],
-            [ISessionMcpHandle, this.workspaceMcp.sessionHandle()],
             [ISessionWorkspaceInfo, dirs.sessionInfo()],
             [ISessionWorkdir, {
               _serviceBrand: undefined,
@@ -362,12 +361,22 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
                 container.anchorKernelEntry(dispose, 'sessionLifecycle:willCreateParticipant');
               },
             });
+            const sessionMcp = workdir.mcp.sessionHandle({
+              sessionId: opts.sessionId,
+              ephemeral: container.invokeFunction((accessor) => accessor.get(ISessionEphemeralMcpServers)),
+            });
+            mcp = sessionMcp;
+            container.provide(ISessionMcpHandle, sessionMcp.handle);
+            container.anchorKernelEntry(() => {
+              void sessionMcp.dispose();
+            }, 'sessionLifecycle:mcp');
           },
         },
       ) as ISessionScopeHandle;
       scopeCreated.fire(handle);
     } catch (error) {
       telemetryBinding.dispose();
+      void mcp?.dispose();
       workdir.dispose();
       throw error;
     } finally {

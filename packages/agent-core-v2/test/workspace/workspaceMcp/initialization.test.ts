@@ -6,11 +6,13 @@ import { join } from 'pathe';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices } from '#/_base/di/test';
 import { Event } from '#/_base/event';
 import { ILogService } from '#/_base/log/log';
 import { McpConnectionManager } from '#/mcpCore/connection-manager';
+import { rootAnchor } from '#/app/mcpConfig/configLoader';
 import { MCP_SECTION, type McpSection } from '#/app/mcpConfig/configSection';
 import { IMcpOAuthService } from '#/app/mcpConfig/oauthService';
 import { IMcpConfigStore, type McpConfigWriteEvent } from '#/app/mcpConfig/configStore';
@@ -19,12 +21,9 @@ import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import { IPluginService } from '#/app/plugin/plugin';
 import type { PluginReloadEvent } from '#/app/plugin/types';
-import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemetry';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { HostProcessService } from '#/os/backends/node-local/hostProcessService';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
-import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
-import { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
 import { IEnvironmentService, type EnvironmentResolver } from '#/app/environment/environment';
 import { FakeEnvironment } from '#/environment/fakeEnvironment';
 import { IWorkspaceTrust } from '#/workspace/workspaceTrust/workspaceTrust';
@@ -68,15 +67,6 @@ describe('Workspace MCP initialization', () => {
       strict: true,
       additionalServices: (reg) => {
         reg.definePartialInstance(IBootstrapService, { homeDir });
-        reg.definePartialInstance(IWorkspaceContext, { cwd, workspaceId: 'test-workspace' });
-        reg.definePartialInstance(IWorkspaceDirs, {
-          ready: Promise.resolve(),
-          primary: cwd,
-          additionalDirs: [],
-          sharedAdditionalDirs: [],
-          primaryByWorkspace: {},
-          onDidChange: Event.None as Event<void>,
-        });
         reg.definePartialInstance(IPluginService, {
           enabledMcpServers: async () => ({}),
           mcpServerEntries: async () => [],
@@ -90,7 +80,6 @@ describe('Workspace MCP initialization', () => {
           onDidWrite: Event.None as Event<McpConfigWriteEvent>,
         });
         reg.defineInstance(ILogService, stubLog());
-        reg.defineInstance(ITelemetryService, noopTelemetryService);
         const environment = Object.assign(
           new FakeEnvironment({ environmentId: 'local', generation: 'test-generation' }, { capabilities: ['process'] }),
           { process: new HostProcessService() },
@@ -109,11 +98,14 @@ describe('Workspace MCP initialization', () => {
           isTrusted: () => true,
           onDidChange: Event.None as IWorkspaceTrust['onDidChange'],
         });
-        reg.define(IWorkspaceMcpConfigService, WorkspaceMcpConfigService);
         registerAgentIdentityStub(reg);
-        reg.define(IWorkspaceMcpService, WorkspaceMcpService);
       },
     });
+    ix.set(
+      IWorkspaceMcpConfigService,
+      new SyncDescriptor(WorkspaceMcpConfigService, [{ kind: 'workdir', anchor: rootAnchor(cwd) }]),
+    );
+    ix.set(IWorkspaceMcpService, new SyncDescriptor(WorkspaceMcpService, [{ stdioCwd: () => cwd }]));
     return ix.get(IWorkspaceMcpService);
   }
 

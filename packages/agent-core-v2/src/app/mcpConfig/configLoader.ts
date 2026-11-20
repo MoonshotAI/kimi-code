@@ -68,7 +68,7 @@ export async function resolveMcpJsonPaths(input: ResolveMcpJsonPathsInput): Prom
   };
 }
 
-function userMcpJsonPath(homeDir: string | undefined): string {
+export function userMcpJsonPath(homeDir?: string): string {
   return join(resolveKimiHome(homeDir), 'mcp.json');
 }
 

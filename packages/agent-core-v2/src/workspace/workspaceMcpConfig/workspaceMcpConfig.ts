@@ -1,6 +1,11 @@
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import type { Event, IWaitUntil } from '#/_base/event';
+import type { McpAnchor } from '#/app/mcpConfig/configLoader';
 import type { McpServerConfig } from '#/mcpCore/config-schema';
+
+export type McpConfigSource =
+  | { readonly kind: 'user' }
+  | { readonly kind: 'workdir'; readonly anchor: McpAnchor };
 
 export interface McpServersChange {
   readonly upsert: Readonly<Record<string, McpServerConfig>>;

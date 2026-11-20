@@ -65,12 +65,12 @@ function manager(
     { scope: () => 'sessions' },
     workspaces,
     { ready },
-    ...Array.from({ length: 27 }, () => undefined),
+    ...Array.from({ length: 26 }, () => undefined),
   ];
-  args[19] = { entries: () => [] };
-  args[29] = environments;
-  args[30] = { onDidChange: () => ({ dispose: () => {} }) };
-  args[31] = { assertAllowed: () => {} };
+  args[18] = { entries: () => [] };
+  args[28] = environments;
+  args[29] = { onDidChange: () => ({ dispose: () => {} }) };
+  args[30] = { assertAllowed: () => {} };
   customize?.(args);
   return Reflect.construct(WorkspaceInstanceManager, args) as WorkspaceInstanceManager;
 }

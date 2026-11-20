@@ -47,6 +47,7 @@ import {
   IAtomicDocumentStore,
   IConfigService,
   ISessionContext,
+  ISessionMcpHandle,
   IAgentTowerService,
   IHostRequestHeaders,
   IMcpManagementService,
@@ -2740,6 +2741,75 @@ key = "${titleOAuthRef.key}"
     } finally {
       vi.unstubAllEnvs();
       await harness.close();
+    }
+  });
+});
+
+describe('SDKRpcClientV2 explicit MCP upserts', () => {
+  const unreachable = { transport: 'http', url: 'http://127.0.0.1:1/mcp' } as const;
+
+  it('lands an explicit reconnect in the project layer and an unpersisted add in the shared user layer', async () => {
+    vi.stubEnv('KIMI_CODE_TRUST_WORKSPACE', '1');
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+    tempDirs.push(homeDir, workDir);
+    await mkdir(join(workDir, '.kimi-code'), { recursive: true });
+    await writeFile(
+      join(workDir, '.kimi-code', 'mcp.json'),
+      JSON.stringify({ mcpServers: { project: { command: 'never-runs', enabled: false } } }),
+      'utf-8',
+    );
+    const client = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
+    try {
+      await client.createSession({ id: 'ses_mcp_upsert', workDir });
+      const handle = getLiveSessionById(client.engineAccessor, 'ses_mcp_upsert')!.accessor.get(ISessionMcpHandle);
+      await handle.ready;
+      const projectLayer = handle.upsertTarget!('project');
+
+      await client.reconnectMcpServer({ sessionId: 'ses_mcp_upsert', name: 'project', config: { name: 'project', ...unreachable } });
+      await client.addSessionMcpServer({ sessionId: 'ses_mcp_upsert', server: { name: ' added ', ...unreachable } });
+
+      expect(projectLayer.get('project')?.transport).toBe('http');
+      expect(handle.upsertTarget!('added')).not.toBe(projectLayer);
+      expect(handle.upsertTarget!('added').get('added')?.transport).toBe('http');
+      const listed = await client.listMcpServers({ sessionId: 'ses_mcp_upsert' });
+      expect(listed.map((entry) => [entry.name, entry.transport]).toSorted()).toEqual([
+        ['added', 'http'],
+        ['project', 'http'],
+      ]);
+      const workspace = await client.listWorkspaceMcpServers(workDir);
+      expect(workspace.map((entry) => entry.name).toSorted()).toEqual(['added', 'project']);
+    } finally {
+      await client.close();
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('keeps rejecting explicit-config upserts for sessions that carry ephemeral servers', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+    tempDirs.push(homeDir, workDir);
+    const client = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
+    try {
+      const session = await client.engineAccessor.get(ISessionManager).create({
+        workDir,
+        mcpServers: { eph: { ...unreachable, enabled: false } },
+      });
+
+      await expect(
+        client.reconnectMcpServer({ sessionId: session.id, name: 'eph', config: { name: 'eph', ...unreachable } }),
+      ).rejects.toMatchObject({
+        code: ErrorCodes.NOT_IMPLEMENTED,
+        message: 'reconnectMcpServer with an explicit config is not supported for v2 sessions with ephemeral MCP servers',
+      });
+      await expect(
+        client.addSessionMcpServer({ sessionId: session.id, server: { name: 'added', ...unreachable } }),
+      ).rejects.toMatchObject({
+        code: ErrorCodes.NOT_IMPLEMENTED,
+        message: 'addSessionMcpServer is not supported for v2 sessions with ephemeral MCP servers',
+      });
+    } finally {
+      await client.close();
     }
   });
 });
