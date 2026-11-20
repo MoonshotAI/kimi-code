@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { DaemonKimiWebApi } from '../src/api/daemon/client';
 import { DaemonApiError, DaemonNetworkError, isDaemonTimeoutError } from '../src/api/errors';
+import { HostRouter } from '../src/api/hostRouting';
 import type { RestRequestInfo } from '../src/contracts';
 import type { AppEvent, AppSessionRatingReport, KimiEventConnection, ReadRequestOptions } from '../src/api/types';
 
@@ -131,6 +132,36 @@ describe('DaemonKimiWebApi lists across hosts', () => {
     await hostAwareApi(true).listSessions({ query: 'login fix', pageSize: 50, localOnly: true });
 
     expect(vi.mocked(fetch).mock.calls[0]?.[0]).toBe('http://daemon.test/api/v1/sessions?page_size=50&query=login+fix');
+  });
+
+  it.each([
+    ['beforeId', 'before_id'],
+    ['afterId', 'after_id'],
+  ] as const)('keeps paging a project with %s on its owning daemon', async (cursor, queryKey) => {
+    const sessions = Array.from({ length: 6 }, (_, index) => ({
+      id: `s${index + 6}`,
+      title: 'Test session',
+      created_at: '2026-01-01T00:00:00.000Z',
+      updated_at: '2026-01-01T00:00:00.000Z',
+      activity: 'idle',
+      cwd: '/srv/app',
+    }));
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(envelope({ hosts: [] }))
+      .mockResolvedValueOnce(envelope({ items: sessions.slice(0, 5), has_more: true }))
+      .mockResolvedValueOnce(envelope({ items: sessions.slice(5), has_more: false }));
+    const api = new HostRouter(hostAwareApi(true), () => hostAwareApi(false)).createApi();
+
+    const request = { workspaceId: 'wm_1', pageSize: 5, hasPrompt: true };
+    const first = await api.listSessions({ ...request, [cursor]: 's5' });
+    expect(first).toMatchObject({ hasMore: true, nextPageToken: null });
+    const next = await api.listSessions({ ...request, [cursor]: first.items.at(-1)?.id });
+    expect(next).toMatchObject({ items: [{ id: 's11' }], hasMore: false });
+    expect(vi.mocked(fetch).mock.calls.map(([url]) => url)).toEqual([
+      'http://daemon.test/api/v1/hosts',
+      `http://daemon.test/api/v1/sessions?${queryKey}=s5&page_size=5&workspace_id=wm_1&has_prompt=true`,
+      `http://daemon.test/api/v1/sessions?${queryKey}=s10&page_size=5&workspace_id=wm_1&has_prompt=true`,
+    ]);
   });
 
   it('never asks a host to list other hosts', async () => {
