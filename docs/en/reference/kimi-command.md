@@ -111,29 +111,66 @@ kimi -p --agent reviewer "Review the changes on this branch"
 
 `--agent-file` registers a single agent file at the highest priority for this launch only and selects it; the flag cannot be repeated, and `--agent` and `--agent-file` are mutually exclusive. Both flags only apply when starting a new session — neither can be combined with `--session`/`--continue`, because the agent is bound at session creation and resuming restores the bound agent automatically. The selection is fixed at the session's first bind and cannot be switched later; in the TUI the flags bind only the startup session, and a session created later in the same process (for example via `/new`) starts with the default agent. See [Agents and Sub-Agents](../customization/agents.md#custom-agents) for the agent file format and discovery directories.
 
-## Non-Interactive Execution
+## Print mode
 
-When running a single prompt in a script or CI environment, use `-p`:
+Use `-p` or `--prompt` to run a single task without opening the interactive terminal UI. Kimi prints the result to standard output and exits automatically, making it well suited for shell scripts, Git hooks, and CI pipelines.
+
+### Basic usage
+
+Pass a prompt directly to run a single task, and add `-m` when you want to override the model for that run.
 
 ```sh
+# Run a single prompt
 kimi -p "Summarize the current repository status"
-```
 
-Output uses a transcript style: thinking content and Assistant text are both prefixed with `• `, and wrapped lines are indented by two spaces. Assistant text goes to stdout; thinking, tool progress, and "resuming session" notices go to stderr. In `-p` mode, no human approval is requested — regular tool calls are handled under the `auto` permission policy, while static deny rules remain in effect.
-
-Temporarily switch the model:
-
-```sh
+# Override the model for this run
 kimi -m kimi-code/kimi-for-coding -p "Explain the latest diff"
 ```
 
-When you need to parse output programmatically, use the `stream-json` format — each line on stdout is a JSON object:
+By default, Kimi outputs plain text with output and progress separated. The final reply goes to `stdout`, with each paragraph prefixed by `• `, ready for file redirection or shell pipes; thinking traces, tool progress, and session-resume hints go to `stderr` so they never pollute redirected output.
+
+::: warning Unattended auto-approval
+`-p` runs without interactive approval prompts. Regular file operations and shell commands are allowed automatically, while `deny` rules in your configuration file still apply.
+:::
+
+### Structured output
+
+When your script or CI job needs to parse output fields programmatically, pass `--output-format stream-json`. Each line on `stdout` is a standalone JSON object emitted in order, covering assistant replies, tool calls, tool results, and the trailing session hint; thinking traces and tool progress still stay on `stderr`.
 
 ```sh
+# Stream the full JSON event output
 kimi -p "List changed files" --output-format stream-json
+
+# Extract the final reply text with jq
+kimi -p "Write a commit message for the staged changes" --output-format stream-json \
+  | jq -r 'select(.role == "assistant" and .content != null and (.tool_calls | not)) | .content' \
+  | tail -n 1
 ```
 
-In `stream-json` mode, regular replies produce an Assistant message; when the model calls a tool, an Assistant message with `tool_calls` is emitted first, followed by the corresponding Tool message, then subsequent Assistant messages. Thinking content is not written to JSONL; tool progress and "resuming session" notices are still written to stderr. For common scripting patterns, see [Using in Scripts and CI](../guides/print.md).
+### Continuing a session
+
+Every `-p` run saves its session automatically and outputs a `session_id` when finished. In plain-text mode it appears at the end of `stderr`; in `stream-json` mode it is emitted on `stdout` as a `session.resume_hint` line.
+
+Choose the continuation method that fits your workflow. Use `-c` to quickly continue the most recent session in the current directory, or capture `session_id` and pass it to `-S` for explicit chaining in scripts and CI.
+
+```sh
+# Continue the most recent session in the current directory
+kimi -p "Add parameter validation to src/retry.ts"
+kimi -c -p "Run the unit tests and fix any failures"
+
+# Capture session_id and chain explicitly in a script
+RUN=$(kimi -p "Add parameter validation to src/retry.ts" --output-format stream-json)
+SID=$(printf '%s\n' "$RUN" | jq -r 'select(.type == "session.resume_hint") | .session_id')
+kimi -S "$SID" -p "Run the unit tests and fix any failures"
+```
+
+### Exit codes
+
+| Exit code | Meaning |
+| --- | --- |
+| `0` | The task completed normally |
+| `1` | Invalid CLI arguments, model authentication not ready, or an execution error |
+| `4` | The session specified via `-S` / `-c` is currently held by another process |
 
 ## Subcommands
 
