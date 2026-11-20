@@ -191,7 +191,8 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   private taskReconciliation: Promise<void> | undefined;
   private loop: Loop | undefined;
   private initialized = false;
-  private lifecycleGeneration = 0;
+  private settlementGeneration = 0;
+  private macroGeneration = 0;
   private lifecycleDrained = true;
   private lifecycleIdle = true;
   private startPromise: Promise<void> | undefined;
@@ -1408,20 +1409,21 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   }
 
   private maybeSettle(): void {
-    const generation = ++this.lifecycleGeneration;
+    const generation = ++this.settlementGeneration;
     const drained = !this.disposing && this.quiescenceDepth === 0 && !this.hasPendingRequests();
     const idle = drained && !this.hasActiveBackgroundTasks();
+    if (!drained && this.lifecycleDrained) this.macroGeneration += 1;
     if (!drained) this.lifecycleDrained = false;
     if (!idle) this.lifecycleIdle = false;
     if (drained && (!this.lifecycleDrained || !this.lifecycleIdle)) {
       void this.turns.drain().then(() => {
-        if (generation !== this.lifecycleGeneration) return;
+        if (generation !== this.settlementGeneration) return;
         const currentDrained = !this.disposing && this.quiescenceDepth === 0 && !this.hasPendingRequests();
         if (currentDrained && !this.lifecycleDrained) {
           this.lifecycleDrained = true;
-          this.events.publish(new LoopDrained({ agentId: this.scopeContext.agentId }));
+          this.events.publish(new LoopDrained({ agentId: this.scopeContext.agentId, generation: this.macroGeneration }));
         }
-        if (generation !== this.lifecycleGeneration) return;
+        if (generation !== this.settlementGeneration) return;
         const currentIdle =
           !this.disposing &&
           this.quiescenceDepth === 0 &&
@@ -1430,7 +1432,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
           this.lifecycleDrained;
         if (currentIdle && !this.lifecycleIdle) {
           this.lifecycleIdle = true;
-          this.events.publish(new LoopIdle({ agentId: this.scopeContext.agentId }));
+          this.events.publish(new LoopIdle({ agentId: this.scopeContext.agentId, generation: this.macroGeneration }));
         }
       });
     }

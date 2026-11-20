@@ -28,7 +28,7 @@ import {
   TurnStepStarted,
 } from '#/agent/loop/turnEvents';
 import { TurnEnded } from '#/agent/loop/turnOps';
-import { LoopDrained } from '#/agent/loop/loopOps';
+import { LoopDrained, LoopIdle } from '#/agent/loop/loopOps';
 import { runAgentTurn } from '#/session/subagent/runAgentTurn';
 import type { ExecutableTool } from '#/tool/toolContract';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
@@ -1120,7 +1120,13 @@ describe('Agent loop', () => {
 
     const eventOffset = ctx.allEvents.length;
     let followUpSubmitted = false;
-    const subscription = ctx.get(IEventBus).subscribe(LoopDrained, () => {
+    let firstGeneration: number | undefined;
+    let lastGeneration: number | undefined;
+    const idleSubscription = ctx.get(IEventBus).subscribe(LoopIdle, (event) => {
+      lastGeneration = event.generation;
+    });
+    const subscription = ctx.get(IEventBus).subscribe(LoopDrained, (event) => {
+      firstGeneration = event.generation;
       subscription.dispose();
       loop.submit({
         role: 'user',
@@ -1142,6 +1148,8 @@ describe('Agent loop', () => {
       'loop.drained',
       'loop.idle',
     ]);
+    expect(lastGeneration).toBe(firstGeneration! + 1);
+    idleSubscription.dispose();
   });
 
   it('carries a tool stopTurnReason into the completed turn result and turn.ended', async () => {

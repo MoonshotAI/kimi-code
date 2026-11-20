@@ -315,8 +315,8 @@ export class SessionEventHandler {
     switch (event.type) {
       case 'turn.started': this.handleTurnBegin(event); break;
       case 'turn.ended': this.handleTurnEnd(event, sendQueued); break;
-      case 'loop.drained': this.host.streamingUI.finalizeDrained(sendQueued); break;
-      case 'loop.idle': this.host.streamingUI.finalizeIdle(); break;
+      case 'loop.drained': this.host.streamingUI.finalizeDrained(sendQueued, event.generation ?? null); break;
+      case 'loop.idle': this.host.streamingUI.finalizeIdle(event.generation ?? null); break;
       case 'prompt.completed': this.handlePromptCompleted(event, sendQueued); break;
       case 'turn.step.started': this.handleStepBegin(event); break;
       case 'turn.step.interrupted': this.handleStepInterrupted(event); break;
@@ -377,7 +377,6 @@ export class SessionEventHandler {
   }
 
   private handleTurnBegin(event: TurnStartedEvent): void {
-    this.host.streamingUI.beginLifecycleWork();
     this.host.streamingUI.timeline.turnStarted();
     this.host.acknowledgeSteerTurnStarted?.(event.promptId);
     this.host.handleTurnStarted?.(event);
@@ -1210,7 +1209,7 @@ export class SessionEventHandler {
     if (!hasActiveTurn && this.host.state.appState.loopLifecycleEvents === true) {
       this.host.setAppState({ isCompacting: false });
       if (!this.host.state.queuedMessageDispatchPending) this.host.streamingUI.finalizeDrained(sendQueued);
-      this.host.streamingUI.flushIdle();
+      this.host.streamingUI.finalizeIdle(undefined, false);
       return;
     }
     if (!hasActiveTurn && !this.host.state.queuedMessageDispatchPending) {

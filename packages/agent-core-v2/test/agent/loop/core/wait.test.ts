@@ -18,10 +18,12 @@ describe('loop.wait', () => {
   it('resolves with the first emitted event of the type passing match', async () => {
     const loop = createLoop({ requester: echoRequester(), executor: noopExecutor });
     const lifecycleEvents: LoopEmitted['type'][] = [];
+    const lifecycleGenerations: number[] = [];
     loop.subscribe((event) => {
       if (event.type === 'turn.ended' || event.type === 'loop.drained' || event.type === 'loop.idle') {
         lifecycleEvents.push(event.type);
       }
+      if (event.type === 'loop.drained' || event.type === 'loop.idle') lifecycleGenerations.push(event.generation);
     });
     const pending = loop.wait('turn.ended', { match: (event) => event.turnId === 1 });
     await loop.runTurn(prompt('one'));
@@ -88,6 +90,9 @@ describe('loop.wait', () => {
       'loop.drained',
       'loop.idle',
     ]);
+    const macroGenerations = lifecycleGenerations.slice(-3);
+    expect(macroGenerations[1]).toBe(macroGenerations[0]! + 1);
+    expect(macroGenerations[2]).toBe(macroGenerations[1]);
     await loop.close();
   });
 

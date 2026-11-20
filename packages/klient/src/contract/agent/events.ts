@@ -35,11 +35,13 @@ export const turnEndedEventSchema = z.object({
 
 export const loopDrainedEventSchema = z.object({
   type: z.literal('loop.drained'),
+  generation: z.number(),
   time: z.number().optional(),
 });
 
 export const loopIdleEventSchema = z.object({
   type: z.literal('loop.idle'),
+  generation: z.number(),
   time: z.number().optional(),
 });
 

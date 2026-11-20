@@ -882,8 +882,8 @@ describe('event hub', () => {
     channel.emit(0, blocked);
     channel.emit(0, cancelled);
     channel.emit(0, completed);
-    channel.emit(0, { type: 'loop.drained', time: 1 });
-    channel.emit(0, { type: 'loop.idle', time: 2 });
+    channel.emit(0, { type: 'loop.drained', generation: 1, time: 1 });
+    channel.emit(0, { type: 'loop.idle', generation: 2, time: 2 });
     channel.emit(0, { type: 'tool.updated', turnId: 1, toolCallId: 'tc1', taskId: 'task-1', status: 'running', detached: false }); // missing fields
     channel.emit(0, { type: 'unregistered.type', turnId: 1 });
     await tick();
@@ -894,8 +894,8 @@ describe('event hub', () => {
     expect(seen.blocked).toEqual([blocked]);
     expect(seen.cancelled).toEqual([cancelled]);
     expect(seen.completed).toEqual([completed]);
-    expect(seen.drained).toEqual([{ type: 'loop.drained', time: 1 }]);
-    expect(seen.idle).toEqual([{ type: 'loop.idle', time: 2 }]);
+    expect(seen.drained).toEqual([{ type: 'loop.drained', generation: 1, time: 1 }]);
+    expect(seen.idle).toEqual([{ type: 'loop.idle', generation: 2, time: 2 }]);
     expect(errors).toHaveLength(1);
     expect(errors[0]).toBeInstanceOf(KlientValidationError);
   });

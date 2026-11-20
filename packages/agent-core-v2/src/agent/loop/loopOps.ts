@@ -3,6 +3,7 @@ import { AgentEvent2 } from '#/app/event/event2';
 
 export interface LoopLifecyclePayload {
   readonly agentId: string;
+  readonly generation: number;
 }
 
 export class LoopDrained extends AgentEvent2<LoopLifecyclePayload> {
@@ -19,10 +20,12 @@ export interface LoopIdle extends LoopLifecyclePayload {}
 
 export interface LoopDrainedEvent {
   readonly type: 'loop.drained';
+  readonly generation: number;
   readonly time?: number;
 }
 
 export interface LoopIdleEvent {
   readonly type: 'loop.idle';
+  readonly generation: number;
   readonly time?: number;
 }

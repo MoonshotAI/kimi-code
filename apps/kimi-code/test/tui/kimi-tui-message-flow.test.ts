@@ -8683,6 +8683,25 @@ capabilities = ["image_in", "video_in"]
         staleSend,
       );
       expect(stale.driver.state.appState.streamingPhase).toBe('waiting');
+
+      const versioned = await makeDriver();
+      versioned.driver.state.appState.loopLifecycleEvents = true;
+      versioned.driver.state.appState.streamingPhase = 'waiting';
+      versioned.driver.sessionEventHandler.handleEvent(
+        { ...main, type: 'loop.drained', generation: 7 } as Event,
+        vi.fn(),
+      );
+      versioned.driver.state.appState.streamingPhase = 'waiting';
+      versioned.driver.sessionEventHandler.handleEvent(
+        { ...main, type: 'loop.idle', generation: 6 } as Event,
+        vi.fn(),
+      );
+      expect(versioned.driver.state.appState.streamingPhase).toBe('waiting');
+      versioned.driver.sessionEventHandler.handleEvent(
+        { ...main, type: 'loop.idle', generation: 7 } as Event,
+        vi.fn(),
+      );
+      expect(versioned.driver.state.appState.streamingPhase).toBe('idle');
     } finally {
       vi.useRealTimers();
     }

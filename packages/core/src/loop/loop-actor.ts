@@ -333,6 +333,7 @@ class LoopActor implements Loop {
   private closeCompletion?: Deferred<void>;
   private completionContinuation?: () => void;
   private completionHandoff = false;
+  private lifecycleGeneration = 0;
   private lifecycleDrained = false;
   private lifecycleIdle = false;
 
@@ -433,6 +434,7 @@ class LoopActor implements Loop {
       event.type === 'turn.resumed' ||
       (event.type === 'tool.ended' && event.detached)
     ) {
+      if (this.lifecycleDrained) this.lifecycleGeneration += 1;
       this.lifecycleDrained = false;
       this.lifecycleIdle = false;
     }
@@ -570,11 +572,11 @@ class LoopActor implements Loop {
     const publishIdle = this.open() && idle && this.lifecycleDrained && !this.lifecycleIdle;
     if (publishDrained) {
       this.lifecycleDrained = true;
-      this.record({ type: 'loop.drained' });
+      this.record({ type: 'loop.drained', generation: this.lifecycleGeneration });
     }
     if (publishIdle) {
       this.lifecycleIdle = true;
-      this.record({ type: 'loop.idle' });
+      this.record({ type: 'loop.idle', generation: this.lifecycleGeneration });
     }
     if (!drained) return;
     const waiters = Array.from(this.idleWaiters);
