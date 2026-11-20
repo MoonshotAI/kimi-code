@@ -1,4 +1,7 @@
-import { createTestHome, writeKimiConfig, type TestHome } from '@moonshot-ai/testkit/fixtures';
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
+
+import { createTestHome, until, writeKimiConfig, type TestHome } from '@moonshot-ai/testkit/fixtures';
 import { KapProcess, type KapSocket, type KapTurn } from '@moonshot-ai/testkit/kap';
 import { fakeModelConfig, say, type FakeModel } from '@moonshot-ai/testkit/model';
 import { modelFixtures, type ModelFixtures } from '@moonshot-ai/testkit/vitest';
@@ -46,6 +49,12 @@ async function continueAndRecover(corpus: ReleasedCorpus, home: TestHome, model:
     await second.prompt(id, 'Continue the greeting.');
     await second.waitIdle(id);
     completed = await second.turns(id);
+    const turnNumber = completed.at(-1)?.['turn_number'];
+    const wire = join(home.dataDir, Object.keys(corpus.manifest.files).find(name => name.endsWith('/agents/main/wire.jsonl'))!);
+    await until(`the turn continuing ${writer} is on disk before the process is killed`, async () => (await readFile(wire, 'utf8')).trimEnd().split('\n').some(line => {
+      const record = JSON.parse(line) as { type: string; turnId?: number; reason?: string };
+      return record.type === 'turn.ended' && record.turnId === turnNumber && record.reason === 'completed';
+    }));
   } finally {
     await second.crash();
   }
@@ -67,7 +76,7 @@ test('every released corpus is complete and unchanged since it was captured', as
   for (const corpus of corpora) expect(await corpusProblems(corpus), corpus.manifest.writer).toEqual([]);
 });
 
-test('[L0:kap.cold-recovery] continues sessions written by every released version in fresh KAP processes and recovers the turn :wait reported idle after a crash', { timeout: CORPUS_TIMEOUT_MS * Math.max(corpora.length, 1) }, async ({ model }) => {
+test('[L0:kap.cold-recovery] continues sessions written by every released version in fresh KAP processes and recovers the completed turn after a crash', { timeout: CORPUS_TIMEOUT_MS * Math.max(corpora.length, 1) }, async ({ model }) => {
   expect(corpora.map(corpus => corpus.version), 'released corpora').not.toEqual([]);
   await model.listen();
   for (const corpus of corpora) {

@@ -1,3 +1,6 @@
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
+
 import { TIMEOUTS, until, writeKimiConfig } from '@moonshot-ai/testkit/fixtures';
 import { KapProcess } from '@moonshot-ai/testkit/kap';
 import { fakeModelConfig, say } from '@moonshot-ai/testkit/model';
@@ -51,6 +54,8 @@ test('an open client reconnects by itself when the server is killed and restarte
     socket.subscribeConversation(session.id, 'main');
     await until('the client loaded the first turn', () => snapshots === 1 && view.turns.length === 1);
     const before = view.turns;
+    const wire = join(testHome.dataDir, 'sessions', session.workspace_id, session.id, 'agents', 'main', 'wire.jsonl');
+    await until('the first turn is on disk before the server is killed', async () => (await readFile(wire, 'utf8')).trimEnd().split('\n').some(line => (JSON.parse(line) as { type: string }).type === 'turn.ended'));
 
     await server.restart('crash');
     await until(

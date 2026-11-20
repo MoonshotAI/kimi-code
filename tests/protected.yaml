@@ -70,6 +70,6 @@ protected:
     runner: vitest
     project: scenarios
     file: tests/scenarios/cold-recovery.test.ts
-    behavior: '每个已发布版本写下的会话都能在新的 KAP 进程里继续；:wait 报告空闲后进程立即崩溃，重启后仍能看到刚完成的回合。'
-    source: 已发布版本的会话语料和 :wait 的落盘承诺
+    behavior: 每个已发布版本写下的会话都能在新的 KAP 进程里继续；续写的回合写入磁盘后进程崩溃，重启后仍能看到这一回合。
+    source: 已发布版本的会话语料
     owner: '@RealKai42'
