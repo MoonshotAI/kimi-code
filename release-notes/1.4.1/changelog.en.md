@@ -1,6 +1,6 @@
 ### Polish
 
-- Merge "Select this folder" into the primary button in the folder picker.
+- Add the current folder using the primary button when no subfolder is selected.
 
 ### Bug Fixes
 
