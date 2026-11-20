@@ -1,53 +1,21 @@
 {
-  "branch": "release/2026-11-20",
+  "branch": "release/2026-11-20-2",
   "changesets": [
-    "first-prompt-project.md",
-    "fix-draft-thinking-profile-race-cli.md",
-    "fix-draft-thinking-profile-race.md",
-    "fix-fork-restored-steers.md",
-    "fix-shared-uuid-generation.md",
-    "fix-web-uuid-secure-context.md",
-    "olive-queues-wait.md",
-    "route-ajv-diagnostics.md",
-    "simplify-folder-picker-actions.md",
-    "wait-settled-on-disk.md"
+    "fix-config-draft-thinking-cli.md",
+    "fix-config-draft-thinking.md"
   ],
   "packages": [
     {
       "name": "kimi-code-app",
       "path": "apps/desktop",
-      "version": "1.4.1",
+      "version": "1.4.2",
       "private": true
     },
     {
       "name": "@moonshot-ai/kimi-code",
       "path": "apps/kimi-code",
-      "version": "2.7.1",
+      "version": "2.7.2",
       "private": false
-    },
-    {
-      "name": "@moonshot-ai/app-components",
-      "path": "packages/app-components",
-      "version": "0.0.1",
-      "private": true
-    },
-    {
-      "name": "@moonshot-ai/app-composer",
-      "path": "packages/app-composer",
-      "version": "0.0.1",
-      "private": true
-    },
-    {
-      "name": "@moonshot-ai/core",
-      "path": "packages/core",
-      "version": "0.1.1",
-      "private": true
-    },
-    {
-      "name": "@moonshot-ai/kap-server",
-      "path": "packages/kap-server",
-      "version": "0.3.2",
-      "private": true
     }
   ]
 }
