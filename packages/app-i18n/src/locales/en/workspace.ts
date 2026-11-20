@@ -30,8 +30,8 @@ export default {
   requiredTitle: 'Choose a workspace first',
   requiredMessage: 'Pick a folder to use as your workspace before sending a message.',
   openThisFolder: 'Open this folder',
-  selectThisFolder: 'Select this folder',
-  addSelected: 'Add selected ({n})',
+  addCurrentFolder: 'Add current folder',
+  addFolders: 'Add folder ({n}) | Add folders ({n})',
   deletedHost: 'Removed host',
   hostState: {
     ready: 'Connected',
