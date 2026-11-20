@@ -1,7 +1,7 @@
 import { toRaw, type ComputedRef } from 'vue';
 import { isDaemonApiError, isSessionOccupiedError } from '@moonshot-ai/app-core/api';
 import type { AppMessage, AppMessageContent, AppSession, AppWorkspace } from '@moonshot-ai/app-core/api';
-import { markSwarmPending, markThinkingPending, markTowerPending, skillIdentity, defaultSkillPath } from '@moonshot-ai/app-core/lib';
+import { markSwarmPending, markThinkingPending, markTowerPending, skillIdentity, defaultSkillPath, upstreamModelIdFromConfigModels } from '@moonshot-ai/app-core/lib';
 import type { SessionUrlMode } from '@moonshot-ai/app-core/lib';
 import { offsetAttachmentLinkIndices } from '@moonshot-ai/app-composer/model';
 import { buildPromptContent, buildPromptMetadata } from '../lib/browserReferenceSubmission';
@@ -15,6 +15,7 @@ import { sideChatDrafts } from './sideChatDrafts';
 import { submitWithNetworkRetry } from './submitRetry';
 import type { ChatGateVerdict } from '../lib/chatGate';
 import { track } from '../contracts';
+import { configStore } from '../stores/config';
 import { modeStore } from '../stores/mode';
 import { modelsStore } from '../stores/models';
 import { modelSwitchConfirmStore } from '../stores/modelSwitchConfirm';
@@ -315,7 +316,9 @@ export function usePromptPipeline(rawState: ExtendedState, deps: PromptPipelineD
     const current = sessionsStore().sessions.find((s) => s.id === sid)?.model;
     const sendable = modelsStore().resolveSendModel(current);
     if (sendable !== null && sendable !== current) {
-      void modelProvider.normalizeSessionModel(sid, sendable);
+      const isSameModelAlias = upstreamModelIdFromConfigModels(configStore().config?.models, sendable) === current;
+      if (isSameModelAlias) void modelProvider.normalizeSessionModel(sid, sendable);
+      else void modelProvider.setSessionModel(sid, sendable);
     }
     return deps.whenSessionProfileSettled(sid);
   }

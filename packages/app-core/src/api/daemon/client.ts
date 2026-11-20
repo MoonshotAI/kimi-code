@@ -28,6 +28,7 @@ import type {
   AppPluginMarketplaceEntry,
   AppPluginSummary,
   AppSession,
+  AppSessionProfile,
   AppSessionRatingReport,
   AppSessionRatingOffer,
   AppSkill,
@@ -150,6 +151,7 @@ import type {
   WireProvider,
   WireProviderDetail,
   WireProviderRefreshResult,
+  WireAgentStateFrame,
   WireSession,
   WireSessionCancelResult,
   WireSessionWarning,
@@ -555,7 +557,7 @@ export class DaemonKimiWebApi implements KimiWebApi {
       goalControl?: 'pause' | 'resume' | 'cancel' | 'edit';
       thinking?: string;
     },
-  ): Promise<AppSession> {
+  ): Promise<AppSessionProfile> {
     const body: Record<string, unknown> = {};
     if (input.title !== undefined) body['title'] = input.title;
     if (input.cwd !== undefined) body['metadata'] = { cwd: input.cwd };
@@ -570,11 +572,11 @@ export class DaemonKimiWebApi implements KimiWebApi {
     if (input.goalControl !== undefined) agentConfig['goal_control'] = input.goalControl;
     if (input.thinking !== undefined) agentConfig['thinking'] = input.thinking;
     if (Object.keys(agentConfig).length > 0) body['agent_config'] = agentConfig;
-    const data = await this.http.post<{ session: WireSession }>(
+    const data = await this.http.post<{ session: WireSession; agent: WireAgentStateFrame }>(
       `/sessions/${encodeURIComponent(sessionId)}/profile`,
       body,
     );
-    return toAppSession(data.session);
+    return { session: toAppSession(data.session), agent: toAppAgentState(data.agent) };
   }
 
   async evaluateSessionRating(sessionId: string, turnId: string): Promise<AppSessionRatingOffer | null> {

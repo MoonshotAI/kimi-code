@@ -471,6 +471,11 @@ export interface AppAgentState {
   towerMode: boolean;
 }
 
+export interface AppSessionProfile {
+  session: AppSession;
+  agent: AppAgentState;
+}
+
 export interface AppAgentUsage {
   contextTokens: number;
   contextLimit?: number;
@@ -1033,7 +1038,7 @@ export interface KimiWebApi {
   listSessionGroups(input?: ListSessionGroupsInput, options?: ReadRequestOptions): Promise<SessionGroupsPage>;
   createSession(input: { title?: string; cwd?: string; model?: string; workspaceId?: string; planMode?: boolean }): Promise<AppSession>;
   getSession(sessionId: string, options?: ReadRequestOptions): Promise<AppSession>;
-  updateSession(sessionId: string, input: { title?: string; cwd?: string; model?: string; permissionMode?: string; planMode?: boolean; swarmMode?: boolean; towerMode?: boolean; towerBase?: string; goalObjective?: string; goalControl?: 'pause' | 'resume' | 'cancel' | 'edit'; thinking?: string }): Promise<AppSession>;
+  updateSession(sessionId: string, input: { title?: string; cwd?: string; model?: string; permissionMode?: string; planMode?: boolean; swarmMode?: boolean; towerMode?: boolean; towerBase?: string; goalObjective?: string; goalControl?: 'pause' | 'resume' | 'cancel' | 'edit'; thinking?: string }): Promise<AppSessionProfile>;
   evaluateSessionRating(sessionId: string, turnId: string): Promise<AppSessionRatingOffer | null>;
   reportSessionRating(sessionId: string, report: AppSessionRatingReport): Promise<void>;
   getTurnFileChanges(

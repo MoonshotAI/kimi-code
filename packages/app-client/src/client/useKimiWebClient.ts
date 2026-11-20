@@ -638,8 +638,9 @@ async function writeSessionProfile(
   tokens: ProfileWriteTokens,
 ): Promise<boolean> {
   let ok = true;
+  let agent: AppAgentState | undefined;
   try {
-    await getKimiWebApi().updateSession(sid, patch);
+    agent = (await getKimiWebApi().updateSession(sid, patch)).agent;
   } catch (err) {
     ok = false;
     warningsStore().pushOperationFailure('persistSessionProfile', err, { sessionId: sid });
@@ -650,7 +651,12 @@ async function writeSessionProfile(
   ackTowerPending(rawState, sid, tokens.tower);
   ackPlanPending(rawState, sid, tokens.plan);
   permissionsStore().settleExplicit(sid, tokens.permission, ok);
-  if (!ok) resyncMainAgentState(sid);
+  if (agent !== undefined) {
+    agentStatesStore().setState(sid, MAIN_AGENT_ID, agent);
+    applyMainAgentState(sid, agent);
+  } else if (!ok) {
+    resyncMainAgentState(sid);
+  }
   return ok;
 }
 
