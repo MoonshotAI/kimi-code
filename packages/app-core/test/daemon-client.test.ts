@@ -1531,4 +1531,12 @@ describe('DaemonKimiWebApi.mkdirFs', () => {
       'http://daemon.test/api/v1/sessions/sess%2F1/agents/btw%2F2:close',
     );
   });
+
+  it('posts continueSession to /sessions/{id}:continue', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(envelope({ continued: true }));
+    await expect(createApi().continueSession('sess/9')).resolves.toEqual({ continued: true });
+    expect(vi.mocked(fetch).mock.calls[0]?.[0]).toBe(
+      'http://daemon.test/api/v1/sessions/sess%2F9:continue',
+    );
+  });
 });

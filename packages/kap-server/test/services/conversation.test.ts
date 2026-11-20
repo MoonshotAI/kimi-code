@@ -900,6 +900,17 @@ describe('orphan turns', () => {
 
     expect(settled.turns[0]).toMatchObject({ status: 'ended', outcome: 'completed' });
   });
+
+  it('ends a crashed first turn from the modern engine (carrying trigger) as interrupted', () => {
+    const modernFirstTurn: WireRecord[] = [
+      record('turn.prompt', { turnId: 0, promptId: 'p1', origin: { kind: 'user' }, input: [], trigger: 'normal' }),
+      userMessage('p1', 'first turn crash'),
+      stepBegin(0, 1, 's0'),
+    ];
+    const settled = settleOrphanTurns(fold(modernFirstTurn));
+
+    expect(settled.turns[0]).toMatchObject({ status: 'ended', outcome: 'interrupted', end_reason: 'aborted' });
+  });
 });
 
 const passThroughBlobs = {
@@ -1283,5 +1294,97 @@ describe('conversation feed', () => {
     await huge.feed.ready;
     expect(await huge.feed.page(undefined, 10)).toMatchObject({ turns: [{ ordinal: 0 }], has_more: false });
     huge.dispatcher.dispose();
+  });
+
+  it('does not mark a failed notification-opened turn as a trailing rejected prompt', () => {
+    const state = fold([
+      turnPrompt(0, 'notif-p1', { kind: 'background_task', taskId: 'bg-1' }),
+      userMessage('notif-p1', notificationXml('bg-1'), { kind: 'background_task', taskId: 'bg-1' }),
+      turnEnded(0, 'failed'),
+      record('prompt.completed', { promptId: 'notif-p1', reason: 'failed' }),
+    ]);
+    expect(state.trailingRejectedPrompt).toBe(false);
+    expect(state.turns[0]).toMatchObject({ status: 'ended', outcome: 'failed' });
+
+    const rejected = fold([
+      turnPrompt(0, 'p1'),
+      userMessage('p1', 'work'),
+      turnEnded(0, 'failed'),
+      record('prompt.completed', { promptId: 'p2', reason: 'blocked' }),
+    ]);
+    expect(rejected.trailingRejectedPrompt).toBe(true);
+  });
+
+  it('keeps a failed continuation turn continuable while rejecting subsequent failed submissions', () => {
+    const continuedFailed = fold([
+      turnPrompt(0, 'p1'),
+      userMessage('p1', 'work'),
+      turnEnded(0, 'cancelled'),
+      record('turn.prompt', {
+        turnId: 1,
+        promptId: undefined,
+        origin: { kind: 'injection', variant: 'turn_continue', ownerPromptId: 'p1' },
+        input: [],
+        trigger: 'continue',
+      }),
+      loop({ type: 'step.begin', uuid: 'step-c1', turnId: '1', step: 1 }),
+      turnEnded(1, 'failed'),
+      record('prompt.completed', { promptId: 'generated-waiter-1', reason: 'failed' }),
+    ]);
+    expect(continuedFailed.trailingRejectedPrompt).toBe(false);
+    expect(continuedFailed.turns.at(-1)).toMatchObject({ status: 'ended', outcome: 'failed' });
+
+    const subsequentGateFailure = fold([
+      turnPrompt(0, 'p1'),
+      userMessage('p1', 'work'),
+      turnEnded(0, 'cancelled'),
+      record('turn.prompt', {
+        turnId: 1,
+        promptId: undefined,
+        origin: { kind: 'injection', variant: 'turn_continue', ownerPromptId: 'p1' },
+        input: [],
+        trigger: 'continue',
+      }),
+      loop({ type: 'step.begin', uuid: 'step-c1', turnId: '1', step: 1 }),
+      turnEnded(1, 'failed'),
+      record('prompt.completed', { promptId: 'generated-waiter-1', reason: 'failed' }),
+      record('prompt.completed', { promptId: 'p2', reason: 'failed' }),
+    ]);
+    expect(subsequentGateFailure.trailingRejectedPrompt).toBe(true);
+
+    const crashedContinuation = settleOrphanTurns(
+      fold([
+        turnPrompt(0, 'p1'),
+        userMessage('p1', 'work'),
+        turnEnded(0, 'cancelled'),
+        record('turn.prompt', {
+          turnId: 1,
+          promptId: undefined,
+          origin: { kind: 'injection', variant: 'turn_continue', ownerPromptId: 'p1' },
+          input: [],
+          trigger: 'continue',
+        }),
+        loop({ type: 'step.begin', uuid: 'step-c1', turnId: '1', step: 1 }),
+      ]),
+    );
+    applyConversationRecord(crashedContinuation, record('prompt.completed', { promptId: 'p2', reason: 'failed' }));
+    expect(crashedContinuation.trailingRejectedPrompt).toBe(true);
+
+    const cancelledContinuationThenGateFailure = fold([
+      turnPrompt(0, 'p1'),
+      userMessage('p1', 'work'),
+      turnEnded(0, 'cancelled'),
+      record('turn.prompt', {
+        turnId: 1,
+        promptId: undefined,
+        origin: { kind: 'injection', variant: 'turn_continue', ownerPromptId: 'p1' },
+        input: [],
+        trigger: 'continue',
+      }),
+      loop({ type: 'step.begin', uuid: 'step-c1', turnId: '1', step: 1 }),
+      turnEnded(1, 'cancelled'),
+      record('prompt.completed', { promptId: 'p2', reason: 'failed' }),
+    ]);
+    expect(cancelledContinuationThenGateFailure.trailingRejectedPrompt).toBe(true);
   });
 });

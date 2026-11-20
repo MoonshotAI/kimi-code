@@ -1391,6 +1391,7 @@ export function connectEventsIfNeeded(): void {
         }
         agentStatesStore().setState(sessionId, agentId, state);
         if (agentId !== MAIN_AGENT_ID) return;
+        promptStore().settleContinueTurnStart(sessionId);
         applyMainAgentState(sessionId, state);
         observeMainCompaction(sessionId);
         if (state.status === 'idle') promptPipeline.resumeQueueIfIdle(sessionId);
@@ -1751,7 +1752,28 @@ const promptPending = computed<boolean>(() => {
   return sid !== undefined && unechoedOptimisticMessages(sid).length > 0;
 });
 
-const working = computed<boolean>(() => inFlight.value || turnActive.value || promptPending.value);
+const continuePending = computed<boolean>(() => {
+  const sid = rawState.activeSessionId;
+  return sid !== undefined && promptStore().isContinueTurnStarting(sid);
+});
+
+const working = computed<boolean>(
+  () => inFlight.value || turnActive.value || promptPending.value || continuePending.value,
+);
+
+const canContinue = computed<boolean>(() => {
+  const sid = rawState.activeSessionId;
+  if (!sid) return false;
+  const session = rawState.sessions.find((s) => s.id === sid);
+  if (session?.archived === true) return false;
+  if (working.value || activity.value !== 'idle' || queued.value.length > 0) return false;
+  const lastAgentTurn = activeMainConversation()?.view.turns.findLast((turn) => turn.kind === 'agent');
+  if (lastAgentTurn?.status !== 'ended') return false;
+  return (
+    lastAgentTurn.outcome === 'interrupted' ||
+    (lastAgentTurn.outcome === 'failed' && lastAgentTurn.end_reason !== 'blocked')
+  );
+});
 
 watch(
   [() => rawState.activeSessionId, working],
@@ -1830,6 +1852,7 @@ function onMainPage(entry: ConversationEntry, previous: readonly ConversationTur
 }
 
 function onMainTurnsRemoved(entry: ConversationEntry, turnIds: readonly string[]): void {
+  promptStore().settleContinueTurnStart(entry.sessionId);
   const phases = turnPhasesOf(entry);
   for (const turnId of turnIds) phases.delete(turnId);
   clearTurnFileHistorySession(entry.sessionId);
@@ -1847,6 +1870,7 @@ function onMainTurnEnded(entry: ConversationEntry, turn: ConversationTurn): void
 
 function settleMainTurnEnd(entry: ConversationEntry, turn: ConversationTurn): void {
   const sessionId = entry.sessionId;
+  promptStore().settleContinueTurnStart(sessionId);
   turnPhasesOf(entry).set(turn.turn_id, 'settled');
   pruneEchoedPrompts(sessionId);
   promptPipeline.resumeQueueIfIdle(sessionId);
@@ -2777,6 +2801,7 @@ const promptPipeline = usePromptPipeline(rawState, {
   isCompacting: mainCompacting,
   isMainWaitForWaiting: mainWaitForWaiting,
   promptIdToAbort: mainPromptIdToAbort,
+  lastAgentTurnId: (sessionId) => mainTurnsOf(sessionId).findLast((turn) => turn.kind === 'agent')?.turn_id,
   selectSession: sessionSelection.selectSession,
   upsertSessionSorted,
 });
@@ -3311,6 +3336,7 @@ export function useKimiWebClient() {
     activeTurnError,
     activeTurnRetry,
     activeTurnEnd,
+    canContinue,
     inFlight,
     working,
     isStartingFirstPrompt,
@@ -3445,6 +3471,7 @@ export function useKimiWebClient() {
     clearSideChatDraftIfUnchanged: sideChat.clearSideChatDraftIfUnchanged,
     uploadImage: promptPipeline.uploadImage,
     abortCurrentPrompt: promptPipeline.abortCurrentPrompt,
+    continueSession: promptPipeline.continueSession,
     respondApproval: approvalsStore().respondApproval,
     respondQuestion: approvalsStore().respondQuestion,
     dismissQuestion: approvalsStore().dismissQuestion,

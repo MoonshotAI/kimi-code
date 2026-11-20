@@ -5,6 +5,7 @@ export const LoopErrors = {
     LOOP_MAX_STEPS_EXCEEDED: 'loop.max_steps_exceeded',
     TURN_AGENT_BUSY: 'turn.agent_busy',
     TURN_NOT_FOUND: 'turn.not_found',
+    TURN_NOT_CONTINUABLE: 'turn.not_continuable',
   },
   retryable: ['turn.agent_busy'],
   info: {

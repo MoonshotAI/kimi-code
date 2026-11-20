@@ -822,6 +822,14 @@ export class DaemonKimiWebApi implements KimiWebApi {
     return { cancelled: data.cancelled };
   }
 
+  async continueSession(sessionId: string): Promise<{ continued: true }> {
+    const data = await this.http.post<{ continued: true }>(
+      `/sessions/${encodeURIComponent(sessionId)}:continue`,
+      {},
+    );
+    return { continued: data.continued };
+  }
+
   async compactSession(sessionId: string, instruction?: string): Promise<void> {
     await this.http.post(
       `/sessions/${encodeURIComponent(sessionId)}:compact`,

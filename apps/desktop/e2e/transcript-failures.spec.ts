@@ -44,7 +44,7 @@ test('failed, stopped and dropped turns render their markers, resume with Contin
     await failure().getByRole('button', { name: 'Continue' }).click();
     await waitForSettledReply(app.window, RESUMED);
     await expect(failure()).toHaveCount(0);
-    await expect(transcript().getByText('Continue', { exact: true })).toBeVisible();
+    await expect(transcript().getByText('Continue', { exact: true })).toHaveCount(0);
     const resumed = model.request(1);
     expect(resumed.userTextsSinceReply.join('\n')).toContain('Continue');
     expect(resumed.texts('user').filter(text => text.includes(FAILING))).toHaveLength(1);

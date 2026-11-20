@@ -21,6 +21,7 @@ import { modelSwitchConfirmStore } from '../stores/modelSwitchConfirm';
 import { permissionsStore } from '../stores/permissions';
 import { chainSteer, isCurrentSteerChain, promptStore } from '../stores/prompt';
 import { sessionListStore } from '../stores/sessionList';
+import { sessionRatingStore } from '../stores/sessionRating';
 import { sessionRuntimeStore } from '../stores/sessionRuntime';
 import { sessionsStore } from '../stores/sessions';
 import { warningsStore } from '../stores/warnings';
@@ -59,6 +60,7 @@ export interface PromptPipelineDeps {
   isCompacting?: (sessionId: string) => boolean;
   isMainWaitForWaiting?: (sessionId: string) => boolean;
   promptIdToAbort?: (sessionId: string) => string | undefined;
+  lastAgentTurnId?: (sessionId: string) => string | undefined;
   selectSession: (
     sessionId: string,
     opts?: {
@@ -84,6 +86,7 @@ export function usePromptPipeline(rawState: ExtendedState, deps: PromptPipelineD
     isCompacting,
     isMainWaitForWaiting,
     promptIdToAbort,
+    lastAgentTurnId,
     selectSession,
     upsertSessionSorted,
   } = deps;
@@ -314,6 +317,7 @@ export function usePromptPipeline(rawState: ExtendedState, deps: PromptPipelineD
   function mainBusy(sid: string): boolean {
     return (
       promptStore().inFlightBySession[sid] === true ||
+      promptStore().isContinueTurnStarting(sid) ||
       isMainTurnRunning?.(sid) === true ||
       hasUnechoedPrompt?.(sid) === true
     );
@@ -328,11 +332,22 @@ export function usePromptPipeline(rawState: ExtendedState, deps: PromptPipelineD
     return deps.whenSessionProfileSettled(sid);
   }
 
-  async function submitPromptInternal(
-    sid: string,
-    prompt: PromptEnvelope,
-    opts?: { recoverConflicts?: boolean },
-  ): Promise<'ok' | 'rejected'> {
+  async function commitArmedPlanMode(sid: string): Promise<boolean> {
+    if (!(modeStore().planArmedBySession[sid] ?? false)) return true;
+    modeStore().planArmedBySession = { ...modeStore().planArmedBySession, [sid]: false };
+    modeStore().savePlanModeToStorage();
+    if (modeStore().planModeBySession[sid] ?? false) return true;
+    if (!(await persistSessionProfile({ planMode: true, towerMode: false }, sid))) return false;
+    modeStore().planModeBySession = { ...modeStore().planModeBySession, [sid]: true };
+    modeStore().towerModeBySession = { ...modeStore().towerModeBySession, [sid]: false };
+    modeStore().saveTowerModeToStorage();
+    return true;
+  }
+
+  function beginSubmitFlight(sid: string): {
+    sessionGenAtEntry: number;
+    endFlight: () => void;
+  } {
     let resolveSubmitReady!: () => void;
     const submitReady = {
       promise: new Promise<void>((resolve) => {
@@ -341,10 +356,27 @@ export function usePromptPipeline(rawState: ExtendedState, deps: PromptPipelineD
       resolve: () => resolveSubmitReady(),
     };
     pendingSubmitBySession.set(sid, submitReady);
-    const { text, skills } = prompt;
     const sessionGenAtEntry = permissionsStore().sessionTeardownGenFor(sid);
     permissionsStore().noteSubmitPrepStart(sid);
     promptStore().setInFlight(sid, true);
+    return {
+      sessionGenAtEntry,
+      endFlight: () => {
+        submitReady.resolve();
+        if (pendingSubmitBySession.get(sid) === submitReady) pendingSubmitBySession.delete(sid);
+        promptStore().setInFlight(sid, false);
+        permissionsStore().noteSubmitPrepEnd(sid);
+      },
+    };
+  }
+
+  async function submitPromptInternal(
+    sid: string,
+    prompt: PromptEnvelope,
+    opts?: { recoverConflicts?: boolean },
+  ): Promise<'ok' | 'rejected'> {
+    const { sessionGenAtEntry, endFlight } = beginSubmitFlight(sid);
+    const { text, skills } = prompt;
     const tempId = nextOptimisticMsgId();
     const promptId = newPromptId();
     let outcome: 'ok' | 'rejected' | null = null;
@@ -358,16 +390,7 @@ export function usePromptPipeline(rawState: ExtendedState, deps: PromptPipelineD
         ...(prompt.snapshot === undefined ? {} : { 'kimiWeb.composerSnapshot': prompt.snapshot }),
       }));
 
-      if (modeStore().planArmedBySession[sid] ?? false) {
-        modeStore().planArmedBySession = { ...modeStore().planArmedBySession, [sid]: false };
-        modeStore().savePlanModeToStorage();
-        if (!(modeStore().planModeBySession[sid] ?? false)) {
-          if (!(await persistSessionProfile({ planMode: true, towerMode: false }, sid))) return rollBackSubmit(sid, tempId);
-          modeStore().planModeBySession = { ...modeStore().planModeBySession, [sid]: true };
-          modeStore().towerModeBySession = { ...modeStore().towerModeBySession, [sid]: false };
-          modeStore().saveTowerModeToStorage();
-        }
-      }
+      if (!(await commitArmedPlanMode(sid))) return rollBackSubmit(sid, tempId);
 
       if ((modeStore().goalModeBySession[sid] ?? false) && text) {
         if (!(await persistSessionProfile({ goalObjective: text.trim(), planMode: false }, sid))) return rollBackSubmit(sid, tempId);
@@ -402,16 +425,19 @@ export function usePromptPipeline(rawState: ExtendedState, deps: PromptPipelineD
       if (!dismissedOccupied) pushSendFailure('sendPrompt', err, sid);
       return outcome;
     } finally {
-      submitReady.resolve();
-      if (pendingSubmitBySession.get(sid) === submitReady) pendingSubmitBySession.delete(sid);
-      promptStore().setInFlight(sid, false);
-      permissionsStore().noteSubmitPrepEnd(sid);
+      endFlight();
       if (outcome === 'ok') resumeQueueIfIdle(sid);
     }
   }
 
   function promptBacklog(sid: string): 'busy' | 'lined-up' | 'clear' {
-    if (activity.value !== 'idle' || promptStore().inFlightBySession[sid]) return 'busy';
+    if (
+      activity.value !== 'idle' ||
+      promptStore().inFlightBySession[sid] ||
+      promptStore().isContinueTurnStarting(sid)
+    ) {
+      return 'busy';
+    }
     if (
       promptStore().isCompactFlushHeld(sid) ||
       isCompacting?.(sid) === true ||
@@ -821,6 +847,35 @@ export function usePromptPipeline(rawState: ExtendedState, deps: PromptPipelineD
     }
   }
 
+  async function continueSession(targetSid?: string): Promise<'ok' | 'rejected' | 'noop'> {
+    const sid = targetSid ?? sessionsStore().activeSessionId;
+    if (!sid || mainBusy(sid) || promptBacklog(sid) !== 'clear') return 'noop';
+    const { sessionGenAtEntry, endFlight } = beginSubmitFlight(sid);
+    const turnIdBefore = lastAgentTurnId?.(sid);
+    sessionRatingStore().endSession(sid);
+    let outcome: 'ok' | 'rejected' = 'rejected';
+    try {
+      if (!(await commitArmedPlanMode(sid)) || !(await settleSessionSettings(sid))) return 'rejected';
+      const api = getKimiWebApi();
+      const result = await retryWhileOccupied(sid, async () => {
+        if (permissionsStore().sessionTeardownGenFor(sid) !== sessionGenAtEntry) return null;
+        return api.continueSession(sid);
+      });
+      if (result === null) return 'rejected';
+      outcome = 'ok';
+      if (isMainTurnRunning?.(sid) !== true && lastAgentTurnId?.(sid) === turnIdBefore) {
+        promptStore().beginContinueTurnStart(sid);
+      }
+      return 'ok';
+    } catch (err) {
+      if (!isSessionOccupiedError(err)) pushSendFailure('continueSession', err, sid);
+      return 'rejected';
+    } finally {
+      endFlight();
+      if (outcome === 'ok' && !promptStore().isContinueTurnStarting(sid)) resumeQueueIfIdle(sid);
+    }
+  }
+
   function unqueue(index: number): void {
     const sid = sessionsStore().activeSessionId;
     if (!sid) return;
@@ -862,6 +917,7 @@ export function usePromptPipeline(rawState: ExtendedState, deps: PromptPipelineD
     resumeAfterCompaction,
     resumeAfterExhaustedHeadChanged,
     abortCurrentPrompt,
+    continueSession,
     unqueue,
     reorderQueue,
   };
