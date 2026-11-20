@@ -149,12 +149,7 @@ export class AgentChangeNotifierService extends Disposable implements IAgentChan
       previousSubagentNames,
       restoreAfterFailure: async () => {
         this.unmute();
-        await Promise.all([
-          this.notifyAgentsMdChanges(),
-          this.notifySkillChanges(),
-          this.notifySubagentChanges({}),
-          this.notifyWorkspaceDirsChanges(),
-        ]).catch(() => undefined);
+        await this.notifyAllChanges().catch(() => undefined);
       },
     };
   }

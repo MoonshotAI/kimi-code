@@ -243,7 +243,7 @@ default_model = "kimi-code/kimi-for-coding-highspeed"
 `model` 参数的取值规则：
 
 - 配置 `[secondary_model]` 时只接受池中别名。main agent 自己的模型不是隐含选项：如果希望难的子任务能用主模型，需要把主模型的别名显式写进模型池。
-- `default_model` 与 `models` 都未配置时，省略 `model` 或传入调用方自身模型别名都会继承调用方的模型与 Thinking 设置；传入其他值会被拒绝。
+- `default_model` 与 `models` 都未配置时，subagent 继承调用方的模型与 Thinking 设置，不注入可选模型列表，传入任何 `model` 都会被拒绝。
 - 绑定池中别名时不继承调用方的 Thinking 档位，即使该别名就是调用方自己的模型。本节设置了 `default_effort` 时以它为准；否则，`[thinking].enabled = false` 会保持关闭 Thinking；开启 Thinking 时，再依次使用所绑定模型条目的 `default_effort`、全局 `[thinking].effort`、所绑定模型 `support_efforts` 的中间项。
 - 传入不在可选列表中的值时，本次派生报错并列出可选值；恢复已有 subagent（或未传 `items` 调用 `AgentSwarm`）时传入 `model` 也会报错。
 

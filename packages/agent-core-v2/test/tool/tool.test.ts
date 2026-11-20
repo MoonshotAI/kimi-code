@@ -1418,7 +1418,7 @@ describe('subagent models reminder', () => {
     await ctx.untilTurnEnd();
   }
 
-  it('announces the caller model on first turn when no pool is configured, dedups, and updates on model switch', async () => {
+  it('stays silent without a pool, including across main model switches', async () => {
     ctx = createTestAgent(
       modelProviderServices(modelCatalogResolving('mock-model', 'provider/smart')),
       { initialConfig: { models: POOL_MODEL_ENTRIES } },
@@ -1426,18 +1426,27 @@ describe('subagent models reminder', () => {
     await ctx.get(IAgentLoopService).bindProfile({ profile: 'agent', model: 'mock-model' });
 
     await runTurn('turn 1');
-    expect(subagentModelReminders()).toEqual([
-      '<system-reminder>\nAvailable subagent models (pass via model):\n- mock-model [default]\n</system-reminder>',
-    ]);
-
-    await runTurn('turn 2');
-    expect(subagentModelReminders()).toHaveLength(1);
-
     await ctx.get(IAgentLoopService).setModel('provider/smart');
+    await runTurn('turn 2');
+    expect(subagentModelReminders()).toEqual([]);
+  });
+
+  it('announces a pool added mid-session and dedups unchanged turns', async () => {
+    ctx = createTestAgent(
+      modelProviderServices(modelCatalogResolving('mock-model', 'provider/fast')),
+      { initialConfig: { models: POOL_MODEL_ENTRIES } },
+    );
+    await ctx.get(IAgentLoopService).bindProfile({ profile: 'agent', model: 'mock-model' });
+
+    await runTurn('turn 1');
+    await (ctx.get(IConfigService) as StubConfigService).replace(SECONDARY_MODEL_SECTION, {
+      defaultModel: 'provider/fast',
+      models: { 'provider/fast': 'fast and cheap' },
+    });
+    await runTurn('turn 2');
     await runTurn('turn 3');
     expect(subagentModelReminders()).toEqual([
-      '<system-reminder>\nAvailable subagent models (pass via model):\n- mock-model [default]\n</system-reminder>',
-      '<system-reminder>\nThe available subagent models changed; the list below replaces any earlier subagent model list.\n\nAvailable subagent models (pass via model):\n- provider/smart [default]\n</system-reminder>',
+      '<system-reminder>\nAvailable subagent models (pass via model):\n- provider/fast [default]: fast and cheap\n</system-reminder>',
     ]);
   });
 
@@ -1499,13 +1508,13 @@ describe('subagent models reminder', () => {
     expect(subagentModelReminders()[2]).toBe(
       [
         '<system-reminder>',
-        'The available subagent models changed; the list below replaces any earlier subagent model list.',
-        '',
-        'Available subagent models (pass via model):',
-        '- mock-model [default]',
+        'The subagent model list was withdrawn: no [secondary_model] pool is configured now. Omit the model parameter; subagents inherit your model.',
         '</system-reminder>',
       ].join('\n'),
     );
+
+    await runTurn('turn 4');
+    expect(subagentModelReminders()).toHaveLength(3);
   });
 
   it('skips leaf profiles that have no active subagent-spawning tools', async () => {
@@ -2463,16 +2472,15 @@ describe('Agent tool execution contract', () => {
     expect(lifecycle.create).not.toHaveBeenCalled();
   });
 
-  it('inherits the caller model when no pool is configured, accepting explicit caller model and rejecting others', async () => {
-    const lifecycle = createAgentLifecycleStub({ createAgentIds: ['agent-child-1', 'agent-child-2'] });
+  it('inherits the caller model when no pool is configured and rejects any explicit model', async () => {
+    const lifecycle = createAgentLifecycleStub({ createAgentIds: ['agent-child'] });
     const context = createAgentToolContext(lifecycle);
 
     await executeAgentTool(context, {
       prompt: 'Investigate',
       description: 'Find cause',
     });
-    expect(lifecycle.create).toHaveBeenNthCalledWith(
-      1,
+    expect(lifecycle.create).toHaveBeenCalledWith(
       expect.objectContaining({
         binding: expect.objectContaining({
           model: 'mock-model',
@@ -2481,29 +2489,18 @@ describe('Agent tool execution contract', () => {
       }),
     );
 
-    await executeAgentTool(context, {
-      prompt: 'Investigate again',
-      description: 'Find cause',
-      model: 'mock-model',
-    });
-    expect(lifecycle.create).toHaveBeenNthCalledWith(
-      2,
-      expect.objectContaining({
-        binding: expect.objectContaining({
-          model: 'mock-model',
-          thinking: 'off',
-        }),
-      }),
-    );
-
-    const rejected = await executeAgentTool(context, {
-      prompt: 'Investigate wrong model',
-      description: 'Find cause',
-      model: 'provider/fast',
-    });
-    expect(rejected.isError).toBe(true);
-    expect(rejected.output).toContain('Invalid model "provider/fast". Available models: mock-model.');
-    expect(lifecycle.create).toHaveBeenCalledTimes(2);
+    for (const model of ['mock-model', 'provider/fast']) {
+      const rejected = await executeAgentTool(context, {
+        prompt: 'Investigate with model',
+        description: 'Find cause',
+        model,
+      });
+      expect(rejected.isError).toBe(true);
+      expect(rejected.output).toContain(
+        `Invalid model "${model}": no [secondary_model] pool is configured`,
+      );
+    }
+    expect(lifecycle.create).toHaveBeenCalledTimes(1);
   });
 
   it('accepts a pool that gained a "primary" key through a runtime config edit', async () => {

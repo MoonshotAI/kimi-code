@@ -425,18 +425,17 @@ function openAiMessages(callIndex: number): Record<string, unknown>[] {
     | { messages?: Record<string, unknown>[] }
     | undefined;
   expect(body?.messages, `request #${callIndex} should carry a messages array`).toBeDefined();
-  return body!.messages!.filter((message) => !isBaselineReminderMessage(message));
+  return body!.messages!.filter((message) => !isDateReminderMessage(message));
 }
 
-const BASELINE_REMINDER_MARKERS = [
+const DATE_REMINDER_MARKERS = [
   'The current date is restated in a reminder whenever it changes',
   'Rely on this reminder over any earlier date statement',
-  'Available subagent models (pass via model):',
 ];
 
-function isBaselineReminderMessage(message: Record<string, unknown>): boolean {
+function isDateReminderMessage(message: Record<string, unknown>): boolean {
   const serialized = JSON.stringify(message);
-  return BASELINE_REMINDER_MARKERS.some((marker) => serialized.includes(marker));
+  return DATE_REMINDER_MARKERS.some((marker) => serialized.includes(marker));
 }
 
 describe('l1: klient input validation', () => {
@@ -703,7 +702,7 @@ describe('daemon file references (kimi-file://)', () => {
     expect(chatCalls).toHaveLength(1);
     expect(JSON.stringify(chatCalls[0]?.json)).not.toContain(`kimi-file://${meta.id}`);
     const content = (chatCalls[0]?.json as { messages?: Record<string, unknown>[] })
-      .messages?.filter((message) => !isBaselineReminderMessage(message))
+      .messages?.filter((message) => !isDateReminderMessage(message))
       .at(-1)?.['content'] as unknown[];
     const imagePart = content.find(
       (part) => (part as { type?: string }).type === 'image_url',

@@ -755,24 +755,18 @@ describe('TowerSpawnTool', () => {
     await expectNoWorkerSpawnSideEffects();
   });
 
-  it('rejects a non-caller explicit model without a secondary pool before any spawn side effect', async () => {
-    const result = await execute({ ...WORKER_ARGS, model: 'cheap/fast' });
+  it.each(['cheap/fast', 'kimi-code'])(
+    'rejects explicit model %s without a secondary pool before any spawn side effect',
+    async (model) => {
+      const result = await execute({ ...WORKER_ARGS, model });
 
-    expect(result.isError).toBe(true);
-    expect(result.output).toContain('Invalid model "cheap/fast". Available models: kimi-code.');
-    await expectNoWorkerSpawnSideEffects();
-  });
-
-  it('accepts an explicit caller model when no secondary pool is configured', async () => {
-    const result = await execute({ ...WORKER_ARGS, model: 'kimi-code' });
-
-    expect(result.isError).toBeUndefined();
-    expect(result.output).toContain('model: kimi-code');
-    expect(createAgent).toHaveBeenCalledWith({
-      binding: { profile: 'tower-worker', model: 'kimi-code', thinking: 'off' },
-      labels: { parentAgentId: 'main' },
-    });
-  });
+      expect(result.isError).toBe(true);
+      expect(result.output).toContain(
+        `Invalid model "${model}": no [secondary_model] pool is configured`,
+      );
+      await expectNoWorkerSpawnSideEffects();
+    },
+  );
 
   it('rejects an alias outside the pool before any spawn side effect', async () => {
     secondaryModel = {

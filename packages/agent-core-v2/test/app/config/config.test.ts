@@ -2125,13 +2125,8 @@ describe('subagent config section', () => {
       thinking: 'medium',
       modelSource: 'inherited',
     });
-    expect(resolveSubagentBinding(noPool.config, own, 'provider/main')).toEqual({
-      model: 'provider/main',
-      thinking: 'medium',
-      modelSource: 'inherited',
-    });
     expect(() => resolveSubagentBinding(noPool.config, own, 'primary')).toThrow(
-      'Invalid model "primary". Available models: provider/main.',
+      /Invalid model "primary": no \[secondary_model\] pool is configured/,
     );
     noPool.disposables.dispose();
 
@@ -2332,7 +2327,7 @@ describe('subagent config section', () => {
     const { config, disposables } = await createConfig({});
 
     expect(() => resolveSubagentBinding(config, own, 'provider/fast')).toThrow(
-      'Invalid model "provider/fast". Available models: provider/main.',
+      /Invalid model "provider\/fast": no \[secondary_model\] pool is configured/,
     );
 
     disposables.dispose();

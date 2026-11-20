@@ -3,4 +3,4 @@
 "kimi-code-app": patch
 ---
 
-Apply `[secondary_model]` updates to active sessions without changing subagent tool schemas, and reject `model` when resuming an existing subagent instead of ignoring it.
+Show the current `[secondary_model]` model choices to the agent as soon as they change mid-session, without changing subagent tool definitions, and reject `model` when resuming an existing subagent instead of ignoring it.

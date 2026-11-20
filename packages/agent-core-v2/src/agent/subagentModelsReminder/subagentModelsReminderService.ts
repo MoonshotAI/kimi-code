@@ -3,10 +3,9 @@ import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { IConfigService } from '#/app/config/config';
-import { isPlainObject } from '#/app/config/toml';
 import { LifecycleScope } from '#/app/scopes';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
-import type { ContextInjectionResult } from '#/features/reminder/types';
+import type { ContextInjectionContext, ContextInjectionResult } from '#/features/reminder/types';
 import { resolveSubagentModelPool } from '#/session/subagent/configSection';
 
 import {
@@ -32,23 +31,26 @@ export class AgentSubagentModelsReminderService
     this._register(
       reminder.register<SubagentModelsDisclosure>(
         SUBAGENT_MODELS_REMINDER_VARIANT,
-        ({ lastDisclosure }) => this.inject(lastDisclosure),
+        (context) => this.inject(context),
       ),
     );
   }
 
-  private inject(
-    lastDisclosure: unknown,
-  ): ContextInjectionResult<SubagentModelsDisclosure> | undefined {
-    const profileData = this.profile.data();
-    if (profileData.profileName === undefined) return undefined;
+  private inject({
+    lastDisclosure,
+  }: ContextInjectionContext<SubagentModelsDisclosure>):
+    | ContextInjectionResult<SubagentModelsDisclosure>
+    | undefined {
+    if (this.profile.data().profileName === undefined) return undefined;
     if (!this.hasActiveSubagentTool()) return undefined;
-    const current = resolveDisclosure(this.config, profileData.modelAlias);
-    if (current === undefined) return undefined;
-    const previous = isSubagentModelsDisclosure(lastDisclosure) ? lastDisclosure : undefined;
-    if (previous !== undefined && sameDisclosure(previous, current)) return undefined;
+    const current = currentDisclosure(this.config);
+    const unchanged =
+      lastDisclosure === undefined
+        ? !offersModels(current)
+        : sameDisclosure(lastDisclosure, current);
+    if (unchanged) return undefined;
     return {
-      content: renderSubagentModelsReminder(current, previous !== undefined),
+      content: renderSubagentModelsReminder(current, lastDisclosure !== undefined),
       disclosure: current,
     };
   }
@@ -62,27 +64,16 @@ export class AgentSubagentModelsReminderService
   }
 }
 
-function resolveDisclosure(
-  config: IConfigService,
-  ownModelAlias: string | undefined,
-): SubagentModelsDisclosure | undefined {
+const NO_SUBAGENT_MODELS: SubagentModelsDisclosure = { models: {} };
+
+function currentDisclosure(config: IConfigService): SubagentModelsDisclosure {
   const pool = resolveSubagentModelPool(config);
-  if (pool !== undefined) {
-    if (Object.keys(pool.models).length === 0) return undefined;
-    return { defaultModel: pool.defaultModel, models: { ...pool.models } };
-  }
-  if (ownModelAlias === undefined) return undefined;
-  return { defaultModel: ownModelAlias, models: { [ownModelAlias]: '' } };
+  if (pool === undefined || Object.keys(pool.models).length === 0) return NO_SUBAGENT_MODELS;
+  return { defaultModel: pool.defaultModel, models: { ...pool.models } };
 }
 
-function isSubagentModelsDisclosure(value: unknown): value is SubagentModelsDisclosure {
-  if (!isPlainObject(value)) return false;
-  if (value['defaultModel'] !== undefined && typeof value['defaultModel'] !== 'string') {
-    return false;
-  }
-  const models = value['models'];
-  if (!isPlainObject(models)) return false;
-  return Object.values(models).every((entry) => typeof entry === 'string');
+function offersModels(disclosure: SubagentModelsDisclosure): boolean {
+  return Object.keys(disclosure.models).length > 0;
 }
 
 function sameDisclosure(
@@ -115,6 +106,9 @@ function renderSubagentModelsReminder(
   disclosure: SubagentModelsDisclosure,
   changed: boolean,
 ): string {
+  if (!offersModels(disclosure)) {
+    return 'The subagent model list was withdrawn: no [secondary_model] pool is configured now. Omit the model parameter; subagents inherit your model.';
+  }
   const lines = ['Available subagent models (pass via model):'];
   for (const alias of orderedAliases(disclosure)) {
     const marker = alias === disclosure.defaultModel ? ' [default]' : '';

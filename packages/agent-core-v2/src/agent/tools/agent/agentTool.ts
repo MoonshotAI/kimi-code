@@ -275,21 +275,14 @@ export class SubagentTool implements ISubagentTool {
     | ExecutableToolErrorResult
     | {
         readonly requestedProfileName: string | undefined;
-        readonly resumeAgentId: string;
-        readonly isResume: true;
-      }
-    | {
-        readonly requestedProfileName: string | undefined;
-        readonly resumeAgentId: undefined;
-        readonly isResume: false;
+        readonly resumeAgentId: string | undefined;
       } {
     const requestedProfileName = args.subagent_type?.length ? args.subagent_type : undefined;
-    const resumeAgentId = args.resume?.trim();
-    const isResume = resumeAgentId !== undefined && resumeAgentId.length > 0;
-    if (isResume && requestedProfileName !== undefined) {
+    const resumeAgentId = args.resume?.trim() || undefined;
+    if (resumeAgentId !== undefined && requestedProfileName !== undefined) {
       return { output: RESUME_WITH_TYPE_UNAVAILABLE, isError: true };
     }
-    if (isResume && args.model !== undefined) {
+    if (resumeAgentId !== undefined && args.model !== undefined) {
       return { output: RESUME_WITH_MODEL_UNAVAILABLE, isError: true };
     }
     if (args.fork === true) {
@@ -301,17 +294,15 @@ export class SubagentTool implements ISubagentTool {
         return { output: forkError, isError: true };
       }
     }
-    return isResume
-      ? { requestedProfileName, resumeAgentId, isResume: true }
-      : { requestedProfileName, resumeAgentId: undefined, isResume: false };
+    return { requestedProfileName, resumeAgentId };
   }
 
   async resolveExecution(args: SubagentToolInput): Promise<ToolExecution> {
     const parsed = this.parseSubagentInput(args);
     if ('isError' in parsed) return parsed;
-    const { requestedProfileName, resumeAgentId, isResume } = parsed;
+    const { requestedProfileName, resumeAgentId } = parsed;
 
-    const profileNameForDisplay = isResume
+    const profileNameForDisplay = resumeAgentId !== undefined
       ? (await this.resumeProfileName(resumeAgentId)) ?? RESUMED_LABEL
       : (requestedProfileName ??
           (args.fork === true
@@ -499,7 +490,7 @@ export class SubagentTool implements ISubagentTool {
       const runInBackground = args.run_in_background === true;
       const parsed = this.parseSubagentInput(args);
       if ('isError' in parsed) return parsed;
-      const { requestedProfileName, resumeAgentId, isResume } = parsed;
+      const { requestedProfileName, resumeAgentId } = parsed;
 
       const allowBackground = this.canRunInBackground();
       if (runInBackground && !allowBackground) {
@@ -520,9 +511,9 @@ export class SubagentTool implements ISubagentTool {
         this.log.warn('subagent launch failed', {
           toolCallId,
           runInBackground,
-          operation: isResume ? 'resume' : 'spawn',
+          operation: resumeAgentId !== undefined ? 'resume' : 'spawn',
           subagentType: requestedProfileName ?? DEFAULT_PROFILE_NAME,
-          resumeAgentId: isResume ? resumeAgentId : undefined,
+          resumeAgentId,
           error,
         });
         throw error;

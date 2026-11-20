@@ -245,11 +245,11 @@ function bindSubagentModel(
   const section = config.get<SecondaryModelConfig | undefined>(SECONDARY_MODEL_SECTION);
   const pool = resolveSubagentModelPool(config);
   if (pool === undefined) {
-    if (requested !== undefined && requested !== own.modelAlias) {
+    if (requested !== undefined) {
       throw new Error2(
         ErrorCodes.CONFIG_INVALID,
-        `Invalid model "${requested}". Available models: ${own.modelAlias}.`,
-        { details: { model: requested, availableModels: [own.modelAlias] } },
+        `Invalid model "${requested}": no [secondary_model] pool is configured, so subagents inherit the caller's model (omit the model parameter).`,
+        { details: { model: requested } },
       );
     }
     return { model: own.modelAlias, thinking: own.thinkingLevel, modelSource: 'inherited' };

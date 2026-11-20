@@ -243,7 +243,7 @@ A spawn resolves the subagent's model in this order:
 Rules for the `model` parameter:
 
 - When `[secondary_model]` is configured, it accepts pool aliases only. The main agent's own model is not an implicit choice: to let it run hard subtasks on the main model, list that model's alias in the pool explicitly.
-- When neither `default_model` nor `models` is configured, omitting `model` or passing the caller's own model alias inherits the caller's model and thinking; any other value is rejected.
+- When neither `default_model` nor `models` is configured, subagents inherit the caller's model and thinking, no model list is announced, and passing any `model` is rejected.
 - Binding a pool alias does not inherit the caller's thinking effort, even when the alias is the caller's own model. The section's `default_effort` wins when set. Otherwise, `[thinking].enabled = false` keeps Thinking off; when Thinking is enabled, resolution continues with the bound model entry's `default_effort`, the global `[thinking].effort`, then the middle of the bound model's `support_efforts`.
 - Any value outside the available subagent models fails the spawn with an error listing the available choices. Passing `model` when resuming an existing subagent (or calling `AgentSwarm` without `items`) also fails with an error.
 
