@@ -52,6 +52,7 @@ interface ViewState {
 export class FileManager {
   private viewStates = new Map<string, ViewState>();
   private disposables: vscode.Disposable[] = [];
+  private refreshTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
   constructor(
     private readonly baselineManager: BaselineManager,
@@ -85,6 +86,7 @@ export class FileManager {
   }
 
   clearSession(webviewId: string): void {
+    this.cancelScheduledRefresh(webviewId);
     const state = this.getViewState(webviewId);
     state.session = null;
     state.trackedFiles.clear();
@@ -110,7 +112,32 @@ export class FileManager {
     this.getViewState(webviewId).trackedFiles.clear();
   }
 
+  scheduleRefreshChanges(webviewId: string, delayMs = 100): void {
+    const existing = this.refreshTimers.get(webviewId);
+    if (existing !== undefined) {
+      clearTimeout(existing);
+    }
+    this.refreshTimers.set(
+      webviewId,
+      setTimeout(() => {
+        this.refreshTimers.delete(webviewId);
+        void this.refreshChanges(webviewId).catch((error) => {
+          console.error("[kimi-vscode] Unable to refresh file changes", error);
+        });
+      }, delayMs),
+    );
+  }
+
+  cancelScheduledRefresh(webviewId: string): void {
+    const existing = this.refreshTimers.get(webviewId);
+    if (existing !== undefined) {
+      clearTimeout(existing);
+      this.refreshTimers.delete(webviewId);
+    }
+  }
+
   disposeView(webviewId: string): void {
+    this.cancelScheduledRefresh(webviewId);
     this.viewStates.delete(webviewId);
   }
 
@@ -122,11 +149,12 @@ export class FileManager {
         continue;
       }
 
-      await this.refreshChanges(webviewId);
+      this.scheduleRefreshChanges(webviewId, 100);
     }
   }
 
   async refreshChanges(webviewId: string): Promise<void> {
+    this.cancelScheduledRefresh(webviewId);
     const state = this.getViewState(webviewId);
     if (state.session === null) {
       this.broadcast(Events.FileChangesUpdated, [], webviewId);
@@ -159,6 +187,10 @@ export class FileManager {
   }
 
   dispose(): void {
+    for (const timer of this.refreshTimers.values()) {
+      clearTimeout(timer);
+    }
+    this.refreshTimers.clear();
     for (const d of this.disposables) {
       d.dispose();
     }
