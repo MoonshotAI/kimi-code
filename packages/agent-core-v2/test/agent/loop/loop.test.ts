@@ -28,6 +28,7 @@ import {
   TurnStepStarted,
 } from '#/agent/loop/turnEvents';
 import { TurnEnded } from '#/agent/loop/turnOps';
+import { LoopDrained } from '#/agent/loop/loopOps';
 import { runAgentTurn } from '#/session/subagent/runAgentTurn';
 import type { ExecutableTool } from '#/tool/toolContract';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
@@ -1116,6 +1117,31 @@ describe('Agent loop', () => {
       steps: 1,
       truncated: false,
     });
+
+    const eventOffset = ctx.allEvents.length;
+    let followUpSubmitted = false;
+    const subscription = ctx.get(IEventBus).subscribe(LoopDrained, () => {
+      subscription.dispose();
+      loop.submit({
+        role: 'user',
+        content: [{ type: 'text', text: 'submitted from drained' }],
+      });
+      followUpSubmitted = true;
+    });
+    ctx.mockNextResponse({ type: 'text', text: 'First macro answer.' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'start first macro' }] });
+    ctx.mockNextResponse({ type: 'text', text: 'Second macro answer.' });
+    await vi.waitFor(() => expect(followUpSubmitted).toBe(true));
+    await loop.settled();
+    expect(ctx.allEvents.slice(eventOffset).filter(
+      (event) => event.type === '[rpc]' && (event.event === 'turn.ended' || event.event === 'loop.drained' || event.event === 'loop.idle'),
+    ).map((event) => event.event)).toEqual([
+      'turn.ended',
+      'loop.drained',
+      'turn.ended',
+      'loop.drained',
+      'loop.idle',
+    ]);
   });
 
   it('carries a tool stopTurnReason into the completed turn result and turn.ended', async () => {

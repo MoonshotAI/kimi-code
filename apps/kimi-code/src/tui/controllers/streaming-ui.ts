@@ -54,6 +54,8 @@ export class StreamingUIController {
 
   private _currentTurnId: string | undefined = undefined;
   private lastCompletedTurnKey: string | undefined;
+  private lifecycleWorkStarted = false;
+  private idleEventPending = false;
   private _currentStep = 0;
   private _assistantDraft = '';
   private _thinkingDraft = '';
@@ -505,6 +507,8 @@ export class StreamingUIController {
     this._currentTurnId = undefined;
 
     if (state.appState.loopLifecycleEvents === true) {
+      this.lifecycleWorkStarted = false;
+      this.idleEventPending = false;
       this.host.setAppState({ streamingPhase: 'waiting' });
       return;
     }
@@ -529,16 +533,29 @@ export class StreamingUIController {
     });
   }
 
+  beginLifecycleWork(): void {
+    this.lifecycleWorkStarted = true;
+    this.idleEventPending = false;
+  }
+
   finalizeDrained(sendQueued: (item: QueuedMessage) => void): void {
     const { state } = this.host;
-    if (state.appState.loopLifecycleEvents !== true) return;
+    if (state.appState.loopLifecycleEvents !== true || state.appState.isCompacting) return;
     const next = this.host.shiftQueuedMessage();
     if (next !== undefined) {
+      this.beginLifecycleWork();
       state.queuedMessageDispatchPending = true;
       this.host.setAppState({ streamingPhase: 'idle' });
       this.host.resetLivePane();
       setTimeout(() => {
         state.queuedMessageDispatchPending = false;
+        if (state.appState.isCompacting) {
+          state.queuedMessages.unshift(next);
+          this.lifecycleWorkStarted = false;
+          this.host.setAppState({ streamingPhase: 'waiting' });
+          this.host.updateQueueDisplay();
+          return;
+        }
         sendQueued(next);
       }, 0);
       return;
@@ -548,12 +565,25 @@ export class StreamingUIController {
   }
 
   finalizeIdle(): void {
+    if (this.host.state.appState.loopLifecycleEvents !== true || this.lifecycleWorkStarted) return;
+    this.idleEventPending = true;
+    this.flushIdle();
+  }
+
+  flushIdle(): void {
     const { state } = this.host;
+    if (state.appState.loopLifecycleEvents !== true) return;
+    if (this.lifecycleWorkStarted) {
+      this.idleEventPending = false;
+      return;
+    }
     if (
-      state.appState.loopLifecycleEvents !== true ||
+      !this.idleEventPending ||
+      state.appState.isCompacting ||
       state.queuedMessageDispatchPending ||
       state.queuedMessages.length > 0
     ) return;
+    this.idleEventPending = false;
     this.host.setAppState({ streamingPhase: 'idle' });
     this.host.resetLivePane();
     const completedTurnKey =

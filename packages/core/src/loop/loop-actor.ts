@@ -567,7 +567,7 @@ class LoopActor implements Loop {
     const idle = drained && !this.hasActiveBackgroundTasks;
     if (!idle) this.lifecycleIdle = false;
     const publishDrained = this.open() && drained && !this.lifecycleDrained;
-    const publishIdle = this.open() && idle && !this.lifecycleIdle;
+    const publishIdle = this.open() && idle && this.lifecycleDrained && !this.lifecycleIdle;
     if (publishDrained) {
       this.lifecycleDrained = true;
       this.record({ type: 'loop.drained' });

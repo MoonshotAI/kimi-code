@@ -377,6 +377,7 @@ export class SessionEventHandler {
   }
 
   private handleTurnBegin(event: TurnStartedEvent): void {
+    this.host.streamingUI.beginLifecycleWork();
     this.host.streamingUI.timeline.turnStarted();
     this.host.acknowledgeSteerTurnStarted?.(event.promptId);
     this.host.handleTurnStarted?.(event);
@@ -1206,6 +1207,12 @@ export class SessionEventHandler {
 
   private finishCompaction(sendQueued: (item: QueuedMessage) => void): void {
     const hasActiveTurn = this.host.streamingUI.hasActiveTurn();
+    if (!hasActiveTurn && this.host.state.appState.loopLifecycleEvents === true) {
+      this.host.setAppState({ isCompacting: false });
+      if (!this.host.state.queuedMessageDispatchPending) this.host.streamingUI.finalizeDrained(sendQueued);
+      this.host.streamingUI.flushIdle();
+      return;
+    }
     if (!hasActiveTurn && !this.host.state.queuedMessageDispatchPending) {
       const next = this.host.shiftQueuedMessage();
       if (next !== undefined) {

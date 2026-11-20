@@ -1417,11 +1417,17 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       void this.turns.drain().then(() => {
         if (generation !== this.lifecycleGeneration) return;
         const currentDrained = !this.disposing && this.quiescenceDepth === 0 && !this.hasPendingRequests();
-        const currentIdle = currentDrained && !this.hasActiveBackgroundTasks();
         if (currentDrained && !this.lifecycleDrained) {
           this.lifecycleDrained = true;
           this.events.publish(new LoopDrained({ agentId: this.scopeContext.agentId }));
         }
+        if (generation !== this.lifecycleGeneration) return;
+        const currentIdle =
+          !this.disposing &&
+          this.quiescenceDepth === 0 &&
+          !this.hasPendingRequests() &&
+          !this.hasActiveBackgroundTasks() &&
+          this.lifecycleDrained;
         if (currentIdle && !this.lifecycleIdle) {
           this.lifecycleIdle = true;
           this.events.publish(new LoopIdle({ agentId: this.scopeContext.agentId }));

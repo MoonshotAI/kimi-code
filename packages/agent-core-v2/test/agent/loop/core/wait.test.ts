@@ -69,6 +69,25 @@ describe('loop.wait', () => {
     expect(loop.state.inbox.remind).toEqual([]);
     expect(lifecycleEvents).not.toContain('llm.started');
     expect(lifecycleEvents).toEqual(['loop.drained', 'loop.idle']);
+
+    lifecycleEvents.length = 0;
+    const stopDrained = loop.subscribe((event) => {
+      if (event.type !== 'loop.drained') return;
+      stopDrained();
+      loop.submit(prompt('submitted from drained'));
+    });
+    const followUpTurnId = loop.state.nextTurnId + 1;
+    const followUpTurn = loop.wait('turn.ended', { match: (event) => event.turnId === followUpTurnId });
+    loop.submit(prompt('start macro'));
+    await followUpTurn;
+    await loop.waitForIdle();
+    expect(lifecycleEvents).toEqual([
+      'turn.ended',
+      'loop.drained',
+      'turn.ended',
+      'loop.drained',
+      'loop.idle',
+    ]);
     await loop.close();
   });
 

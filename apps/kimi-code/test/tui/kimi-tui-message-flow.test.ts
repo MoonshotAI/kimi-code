@@ -6308,6 +6308,35 @@ command = "vim"
       expect(session.prompt).toHaveBeenCalledWith('second', { promptId: undefined });
     });
     expect(driver.state.queuedMessages).toEqual([]);
+
+    const compacting = await makeDriver();
+    compacting.driver.state.appState.loopLifecycleEvents = true;
+    compacting.driver.state.appState.streamingPhase = 'waiting';
+    compacting.driver.state.appState.isCompacting = true;
+    const compactingSend = vi.fn();
+    compacting.driver.handleUserInput('held for compaction');
+    compacting.driver.sessionEventHandler.handleEvent(
+      { type: 'loop.drained', agentId: 'main', sessionId: 'ses-1' } as Event,
+      compactingSend,
+    );
+    compacting.driver.sessionEventHandler.handleEvent(
+      { type: 'loop.idle', agentId: 'main', sessionId: 'ses-1' } as Event,
+      compactingSend,
+    );
+    expect(compactingSend).not.toHaveBeenCalled();
+    expect(compacting.driver.state.queuedMessages.map((item) => item.text)).toEqual(['held for compaction']);
+
+    compacting.driver.sessionEventHandler.handleEvent(
+      {
+        type: 'compaction.completed',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        result: { summary: 's', compactedCount: 1, tokensBefore: 10, tokensAfter: 5 },
+      } as Event,
+      compactingSend,
+    );
+    await vi.waitFor(() => expect(compactingSend).toHaveBeenCalledOnce());
+    expect(compacting.driver.state.queuedMessages).toEqual([]);
   });
 
   it('compacts and switches before sending the next queued prompt', async () => {
@@ -8617,6 +8646,43 @@ capabilities = ["image_in", "video_in"]
         handoffQueued,
       );
       expect(driver.state.terminalState.notificationKeys.has('turn-complete:3')).toBe(false);
+
+      const raced = await makeDriver();
+      raced.driver.state.appState.loopLifecycleEvents = true;
+      raced.driver.state.appState.streamingPhase = 'waiting';
+      const racedSend = vi.fn();
+      raced.driver.handleUserInput('requeue for compaction');
+      raced.driver.sessionEventHandler.handleEvent(
+        { ...main, type: 'loop.drained' } as Event,
+        racedSend,
+      );
+      raced.driver.state.appState.isCompacting = true;
+      await vi.advanceTimersByTimeAsync(0);
+      expect(racedSend).not.toHaveBeenCalled();
+      expect(raced.driver.state.queuedMessages.map((item) => item.text)).toEqual(['requeue for compaction']);
+      raced.driver.sessionEventHandler.handleEvent(
+        { ...main, type: 'compaction.cancelled' } as Event,
+        racedSend,
+      );
+      await vi.advanceTimersByTimeAsync(0);
+      expect(racedSend).toHaveBeenCalledWith(expect.objectContaining({ text: 'requeue for compaction' }));
+
+      const stale = await makeDriver();
+      stale.driver.state.appState.loopLifecycleEvents = true;
+      stale.driver.state.appState.streamingPhase = 'waiting';
+      const staleSend = vi.fn();
+      stale.driver.handleUserInput('new work');
+      stale.driver.sessionEventHandler.handleEvent(
+        { ...main, type: 'loop.drained' } as Event,
+        staleSend,
+      );
+      await vi.advanceTimersByTimeAsync(0);
+      stale.driver.state.appState.streamingPhase = 'waiting';
+      stale.driver.sessionEventHandler.handleEvent(
+        { ...main, type: 'loop.idle' } as Event,
+        staleSend,
+      );
+      expect(stale.driver.state.appState.streamingPhase).toBe('waiting');
     } finally {
       vi.useRealTimers();
     }
