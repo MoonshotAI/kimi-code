@@ -352,13 +352,17 @@ function goUp(): void {
 }
 
 const selected = ref<string[]>([]);
-const hasSelection = computed(() => props.multiple === true && selected.value.length > 0);
+const pathsToAdd = computed(() => {
+  if (!props.multiple || !pathEditing.value || !pathValid.value || selected.value.includes(pathTrimmed.value)) return selected.value;
+  return [...selected.value, pathTrimmed.value];
+});
+const hasSelection = computed(() => props.multiple === true && pathsToAdd.value.length > 0);
 const showPrimaryAction = computed(() => showBrowser.value || hasSelection.value);
 const primaryDisabled = computed(() => hasSelection.value ? creatingFolder.value : !canOpen.value);
 const primaryTooltip = computed(() => hasSelection.value ? undefined : currentPath.value);
 const primaryLabel = computed(() => {
   if (!props.multiple) return t('workspace.openThisFolder');
-  if (selected.value.length > 0) return t('workspace.addFolders', { n: selected.value.length }, selected.value.length);
+  if (pathsToAdd.value.length > 0) return t('workspace.addFolders', { n: pathsToAdd.value.length }, pathsToAdd.value.length);
   return t('workspace.addCurrentFolder');
 });
 
@@ -374,9 +378,9 @@ function isSelected(path: string): boolean {
 
 function submitPrimary(): void {
   if (props.multiple) {
-    if (selected.value.length > 0) {
+    if (pathsToAdd.value.length > 0) {
       if (creatingFolder.value) return;
-      emit('addMany', [...selected.value]);
+      emit('addMany', [...pathsToAdd.value]);
       return;
     }
     if (!canOpen.value) return;
