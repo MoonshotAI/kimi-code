@@ -74,10 +74,13 @@ test('submits global and reply feedback with opt-in attachments', async ({ app, 
   await page.reload();
   await feedbackButton.click();
   const dialog = page.getByRole('dialog', { name: 'Send feedback' });
+  const guideUrl = 'https://www.kimi.com/code/docs/en/kimi-code/feedback.html';
+  await expect(dialog.getByRole('link', { name: 'Learn more', exact: true })).toHaveAttribute('href', guideUrl);
+  await expect(dialog.locator('.global-feedback-note')).toHaveText('Your feedback helps improve Kimi Code Learn more');
   await expect(dialog).toHaveCSS('width', '560px');
   await expect(dialog).toHaveCSS('height', '484px');
-  await expect(dialog.getByRole('checkbox', { name: /Include diagnostic logs/ })).not.toBeChecked();
-  await expect(dialog.getByRole('checkbox', { name: /Include this conversation/ })).toHaveCount(0);
+  await expect(dialog.getByRole('checkbox', { name: /Submit diagnostic logs/ })).not.toBeChecked();
+  await expect(dialog.getByRole('checkbox', { name: /Submit this conversation/ })).toHaveCount(0);
   await dialog.getByRole('textbox', { name: 'Description' }).fill('A reproducible issue');
   await dialog.getByRole('button', { name: 'Cancel' }).click();
 
@@ -87,7 +90,7 @@ test('submits global and reply feedback with opt-in attachments', async ({ app, 
   await expect(dialog.getByRole('textbox', { name: 'Description' })).toHaveValue('A reproducible issue');
   await app.snapshot('global-feedback');
   await dialog.getByRole('button', { name: 'Submit', exact: true }).click();
-  await expect(dialog.getByRole('alert')).toContainText('Try again');
+  await expect(dialog.getByRole('alert')).toHaveText('Couldn’t submit feedback, please try again');
   await expect(dialog.getByRole('textbox', { name: 'Description' })).toHaveValue('A reproducible issue');
   await dialog.getByRole('button', { name: 'Resubmit' }).click();
   const receipt = (id: number) => page.locator('.feedback-receipt-toast').filter({ hasText: String(id) });
@@ -115,8 +118,9 @@ test('submits global and reply feedback with opt-in attachments', async ({ app, 
   await expect(page.getByText('A completed answer.', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Poor response' }).click();
   const details = page.getByRole('dialog', { name: 'What could be better?' });
+  await expect(details.getByRole('link', { name: 'Learn more about what you submit' })).toHaveAttribute('href', guideUrl);
   await expect(details).toHaveCSS('width', '400px');
-  await expect(details.getByRole('checkbox', { name: 'Also upload this conversation' })).not.toBeChecked();
+  await expect(details.getByRole('checkbox', { name: 'Also submit this conversation' })).not.toBeChecked();
   await app.snapshot('reply-feedback');
   const replyDescription = details.getByRole('textbox');
   const replySubmit = details.getByRole('button', { name: 'Submit', exact: true });
@@ -131,11 +135,11 @@ test('submits global and reply feedback with opt-in attachments', async ({ app, 
   await replyDescription.click();
   await expect.poll(() => details.evaluate(el => el.clientHeight)).toBeGreaterThan(initialHeight);
   await expect(replyDescription).toHaveValue(longDescription);
-  const uploadLabel = details.getByText('Also upload this conversation', { exact: true });
-  await uploadLabel.click();
+  const replyConversationLabel = details.getByText('Also submit this conversation', { exact: true });
+  await replyConversationLabel.click();
   await expect(details.getByRole('checkbox')).toBeChecked();
   await expectVisibleCheckmark(app, details.getByRole('checkbox'));
-  await uploadLabel.click();
+  await replyConversationLabel.click();
   await replyDescription.fill('');
   await details.getByRole('button', { name: 'Incorrect or incomplete' }).click();
   await replySubmit.click();
@@ -157,29 +161,29 @@ test('submits global and reply feedback with opt-in attachments', async ({ app, 
   const validImage = { name: 'screen.png', mimeType: 'image/png', buffer: image };
   await picker.setInputFiles([emptyImage, { name: 'empty.mp4', mimeType: 'video/mp4', buffer: Buffer.alloc(0) }, validImage]);
   await expect(dialog.getByRole('button', { name: /^Remove empty/ })).toHaveCount(0, { timeout: 3000 });
-  await expect(dialog.getByRole('alert')).toHaveText('Empty files can’t be attached.');
+  await expect(dialog.getByRole('alert')).toHaveText('Empty files can’t be attached');
   await dialog.getByRole('button', { name: 'Remove screen.png' }).click();
   await expect(dialog.getByRole('alert')).toBeHidden();
   await picker.setInputFiles(emptyImage);
-  await expect(dialog.getByRole('alert')).toHaveText('Empty files can’t be attached.');
+  await expect(dialog.getByRole('alert')).toHaveText('Empty files can’t be attached');
   await picker.setInputFiles(validImage);
   await expect(dialog.getByRole('alert')).toBeHidden();
   await expect(dialog.getByRole('button', { name: 'Remove screen.png' })).toBeVisible();
-  await dialog.getByText('Include diagnostic logs', { exact: true }).click();
-  await expect(dialog.getByRole('checkbox', { name: /Include diagnostic logs/ })).toBeChecked();
-  await expectVisibleCheckmark(app, dialog.getByRole('checkbox', { name: /Include diagnostic logs/ }));
+  await dialog.getByText('Submit diagnostic logs', { exact: true }).click();
+  await expect(dialog.getByRole('checkbox', { name: /Submit diagnostic logs/ })).toBeChecked();
+  await expectVisibleCheckmark(app, dialog.getByRole('checkbox', { name: /Submit diagnostic logs/ }));
   await dialog.getByRole('button', { name: 'Submit', exact: true }).click();
   await expect(receipt(23)).toBeVisible();
-  const uploadFailure = page.getByRole('alert').filter({ hasText: 'Couldn’t upload diagnostic logs' });
+  const uploadFailure = page.getByRole('alert').filter({ hasText: 'Couldn’t submit diagnostic logs' });
   await expect(uploadFailure).toBeVisible();
   await expect.poll(() => uploaded.map(({ kind }) => kind)).toEqual(['media', 'diagnostics']);
   expect(uploaded[0]?.bytes.includes(image)).toBe(true);
   expect(uploaded[1]?.bytes.includes(Buffer.from([0x50, 0x4b, 0x03, 0x04]))).toBe(true);
   const submitCount = feedbackRequests.length;
-  await uploadFailure.getByRole('button', { name: 'Retry upload' }).click();
+  await uploadFailure.getByRole('button', { name: 'Retry submission' }).click();
   await expect.poll(() => uploaded.map(({ kind }) => kind)).toEqual(['media', 'diagnostics', 'diagnostics']);
   await expect(uploadFailure).toBeHidden();
-  await expect(page.getByRole('status').filter({ hasText: 'Uploaded diagnostic logs' })).toBeVisible();
+  await expect(page.getByRole('status').filter({ hasText: 'Submitted diagnostic logs' })).toBeVisible();
   expect(feedbackRequests).toHaveLength(submitCount);
   expect(feedbackRequests.at(-1)?.body).toMatchObject({ client: 'desktop', upload_logs: true, upload_session: false });
 
@@ -200,8 +204,8 @@ test('submits global and reply feedback with opt-in attachments', async ({ app, 
   await expect(receipt(24)).toBeVisible();
   expect(feedbackRequests.at(-1)?.body).toMatchObject({ session_id: originalSession, category: 'suggestion', upload_session: false });
 
-  const conversationOption = dialog.getByRole('checkbox', { name: 'Include this conversation' });
-  const conversationLabel = dialog.getByText('Include this conversation', { exact: true });
+  const conversationOption = dialog.getByRole('checkbox', { name: 'Submit this conversation' });
+  const conversationLabel = dialog.getByText('Submit this conversation', { exact: true });
   await feedbackButton.click();
   await dialog.getByRole('textbox', { name: 'Description' }).fill('Attach the conversation I choose');
   await dialog.getByRole('button', { name: 'Cancel' }).click();
@@ -323,7 +327,7 @@ test('local feedback remains available when the SSH conversation host disables i
   await input.press('Enter');
   const dialog = page.getByRole('dialog', { name: 'Send feedback' });
   await expect(dialog).toBeVisible();
-  await expect(dialog.getByRole('checkbox', { name: /Include this conversation/ })).toHaveCount(0);
+  await expect(dialog.getByRole('checkbox', { name: /Submit this conversation/ })).toHaveCount(0);
   await dialog.getByRole('textbox', { name: 'Description' }).fill('A desktop issue');
   await app.snapshot('ssh-conversation-with-local-feedback');
   await dialog.getByRole('button', { name: 'Submit', exact: true }).click();
@@ -353,7 +357,7 @@ test('attaches an SSH conversation to the locally submitted feedback', async ({ 
   await page.getByRole('button', { name: 'Send feedback' }).click();
   const dialog = page.getByRole('dialog', { name: 'Send feedback' });
   await dialog.getByRole('textbox', { name: 'Description' }).fill('Include this conversation');
-  await dialog.getByText('Include this conversation', { exact: true }).click();
+  await dialog.getByText('Submit this conversation', { exact: true }).click();
   await dialog.getByRole('button', { name: 'Submit', exact: true }).click();
   await expect.poll(() => requests).toEqual([
     { path: '/api/v1/feedback', body: expect.objectContaining({ kind: 'global', session_id: sessionId, upload_session: true, upload_logs: false }) },

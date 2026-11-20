@@ -224,7 +224,7 @@ async function submit(): Promise<void> {
             >{{ t('feedback.includeSession') }}</Checkbox>
             <Checkbox v-if="canIncludeDiagnostics" v-model="draft.includeDiagnostics" :disabled="busy">{{ t('feedback.includeDiagnostics') }}</Checkbox>
           </div>
-          <p class="global-feedback-note">{{ t('feedback.dataUse') }}<FeedbackGuideLink /></p>
+          <p class="global-feedback-note">{{ t('feedback.dataUse') }} <FeedbackGuideLink /></p>
         </div>
       </div>
       <footer class="global-feedback-footer">
