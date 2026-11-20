@@ -1961,6 +1961,38 @@ describe('turn telemetry', () => {
     }
   });
 
+  it.each([
+    { feedback: '1', master: undefined, recorded: true },
+    { feedback: undefined, master: '1', recorded: true },
+    { feedback: '0', master: '1', recorded: false },
+  ])('persists model steps according to feedback=$feedback and master=$master', async ({ feedback, master, recorded }) => {
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_DESKTOP_FEEDBACK', feedback);
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', master);
+    const local = createTestAgent();
+    try {
+      local.mockNextProviderResponse({
+        parts: [{ type: 'text', text: 'Done' }],
+        requestId: 'example-request',
+      });
+      await local.rpc.prompt({ input: [{ type: 'text', text: 'Hello' }] });
+      await local.untilTurnEnd();
+      const record = (await local.persistedWireRecords()).find((entry) => entry.type === 'turn.ended');
+      expect(record).toMatchObject({ requestId: 'example-request' });
+      const modelSteps = [{
+        step: 1,
+        role: 'step',
+        model: 'mock-model',
+        provider: 'openai',
+        isKfc: false,
+        requestId: 'example-request',
+      }];
+      expect(record?.['modelSteps']).toStrictEqual(recorded ? modelSteps : undefined);
+    } finally {
+      vi.unstubAllEnvs();
+      await local.dispose();
+    }
+  });
+
   it('carries the in-flight request id on the turn.ended payload when the turn fails', async () => {
     const local = createTestAgent();
     try {

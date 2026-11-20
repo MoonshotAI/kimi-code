@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { KIMI_REGION_PROFILES } from '@moonshot-ai/kimi-code-oauth';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { FEEDBACK_REASONS_CONFIG } from '../src/protocol/feedback-reasons';
 import {
   clientConfigsBaseUrl,
   EFFORT_SWITCH_CONFIG_NAME,
@@ -367,6 +368,22 @@ describe('server-v2 GET /api/v1/client-configs/{name}', () => {
     const body = await postClientConfigs('no_such_config');
     expect(body.code).toBe(0);
     expect(body.data).toEqual({ name: 'no_such_config', config: null });
+  });
+
+  it('serves ordered bilingual feedback reasons and falls back for invalid updates', async () => {
+    const name = FEEDBACK_REASONS_CONFIG;
+    const first = { id: 'custom', en: 'Custom reason', zh: '自定义原因' };
+    const second = { id: 'other', en: 'Other', zh: '其他' };
+    cloudBehavior = { status: 200, body: { name, config: { reasons: [first, second] } } };
+    await boot();
+    expect((await postClientConfigs(name)).data).toEqual(cloudBehavior.body);
+
+    for (const reasons of [[first, first], [{ id: 'broken', zh: '缺译文' }]]) {
+      cloudBehavior = { status: 200, body: { name, config: { reasons } } };
+      expect((await postClientConfigs(name)).data).toEqual({ name, config: null });
+    }
+    cloudBehavior = { status: 200, body: { name, config: { reasons: [] } } };
+    expect((await postClientConfigs(name)).data).toEqual(cloudBehavior.body);
   });
 
   it('returns null config when the cloud fetch keeps failing', async () => {

@@ -1,4 +1,4 @@
-import { computed, ref } from 'vue';
+import { computed, ref, shallowReactive } from 'vue';
 import { defineStore } from 'pinia';
 import type { AppHost, AppHostDefinition, AppHostTestResult, AppProviderCopyResult, AppSshConfigHosts, KimiWebApi, OAuthLoginStartResult, OAuthRegion } from '@moonshot-ai/app-core/api';
 import { hostDisplayName, hostDisplayState, isHostBlocked, logWarn, type HostDisplayState } from '@moonshot-ai/app-core/lib';
@@ -7,6 +7,8 @@ import { modelsStore } from './models';
 import { clientPinia } from './pinia';
 
 export type { HostDisplayState };
+
+const HOST_FLAGS_RETRY_DELAY_MS = 1_000;
 
 export type HostProviderCopy =
   | { readonly status: 'copying' | 'failed' }
@@ -42,6 +44,7 @@ export const useHostsStore = defineStore('kimi.hosts', () => {
   const connecting = ref<Record<string, boolean>>({});
   const providerCopies = ref<Record<string, HostProviderCopy>>({});
   const accounts = ref<Record<string, HostAccount>>({});
+  const experimentalFlags = shallowReactive(new Map<string, Readonly<Record<string, boolean>>>());
   const loginHostId = ref<string | null>(null);
   const focusHostId = ref<string | null>(null);
   const addIfEmpty = ref(false);
@@ -65,6 +68,11 @@ export const useHostsStore = defineStore('kimi.hosts', () => {
       if (byId.value[hostId]?.status !== 'ready') setAccount(hostId, undefined);
     }
     if (loginHostId.value !== null && byId.value[loginHostId.value]?.status !== 'ready') loginHostId.value = null;
+    for (const hostId of removed) experimentalFlags.delete(hostId);
+    for (const { id } of list) {
+      if (displayState(id) !== 'ready') experimentalFlags.delete(id);
+      else if (!experimentalFlags.has(id)) void loadExperimentalFlags(id);
+    }
     for (const hostId of becameReady) void loadAccount(hostId);
     for (const hostId of Object.keys(providerCopies.value)) {
       if (byId.value[hostId] === undefined) setProviderCopy(hostId, undefined);
@@ -138,6 +146,25 @@ export const useHostsStore = defineStore('kimi.hosts', () => {
     } catch (err) {
       logWarn('[kimi-code] copying model providers to SSH host failed', hostId, err);
       if (stillCopying()) setProviderCopy(hostId, { status: 'failed' });
+    }
+  }
+
+  async function loadExperimentalFlags(hostId: string, retry = true): Promise<void> {
+    const pending = {};
+    experimentalFlags.set(hostId, pending);
+    try {
+      const meta = await getDeviceApi(hostId).getMeta();
+      if (experimentalFlags.get(hostId) === pending) experimentalFlags.set(hostId, meta.experimentalFlags);
+    } catch (error) {
+      if (experimentalFlags.get(hostId) !== pending) return;
+      if (retry) {
+        setTimeout(() => {
+          if (experimentalFlags.get(hostId) === pending) void loadExperimentalFlags(hostId, false);
+        }, HOST_FLAGS_RETRY_DELAY_MS);
+      } else {
+        experimentalFlags.delete(hostId);
+        logWarn('[kimi-code] loading SSH host flags failed', hostId, error);
+      }
     }
   }
 
@@ -274,7 +301,7 @@ export const useHostsStore = defineStore('kimi.hosts', () => {
     return pending;
   }
 
-  return { byId, hosts, loaded, connecting, accounts, loginHostId, focusHostId, addIfEmpty, requestFocus, takeAddIfEmpty, loadAccount, signOut, openLogin, closeLogin, startLogin, pollLogin, cancelLogin, loginRegion, finishLogin, needsLogin, applySnapshot, load, connect, save, remove, test, loadSshConfig, providerCopies, copyProviders, hostFor, displayState, displayName, hostLabel, searchTerms, workspacePathLabel, unavailable, blocked };
+  return { byId, hosts, loaded, connecting, accounts, experimentalFlags, loginHostId, focusHostId, addIfEmpty, requestFocus, takeAddIfEmpty, loadAccount, signOut, openLogin, closeLogin, startLogin, pollLogin, cancelLogin, loginRegion, finishLogin, needsLogin, applySnapshot, load, connect, save, remove, test, loadSshConfig, providerCopies, copyProviders, hostFor, displayState, displayName, hostLabel, searchTerms, workspacePathLabel, unavailable, blocked };
 });
 
 export function hostsStore() {

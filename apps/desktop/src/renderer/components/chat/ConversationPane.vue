@@ -52,6 +52,10 @@ import type {
   ComposerSubmitPayload,
   TurnFileChange,
 } from '@moonshot-ai/app-components';
+import type { SlashCommand } from '@moonshot-ai/app-core/lib';
+import { feedbackTurnTarget } from '../../composables/useDesktopFeedback';
+import TurnFeedbackActions from '../feedback/TurnFeedbackActions.vue';
+import TurnFeedbackStatus from '../feedback/TurnFeedbackStatus.vue';
 
 const { t } = useI18n();
 
@@ -69,7 +73,12 @@ const props = defineProps<{
   mainView?: 'chat' | 'sessionAdmin';
   panelTabs?: PanelTab[];
   availableTabs?: PanelLauncherItem[];
+  globalFeedbackEnabled?: boolean;
+  replyFeedbackEnabled?: boolean;
 }>();
+
+const feedbackCommands: readonly SlashCommand[] = [{ name: '/feedback', desc: 'feedback.send', noArgs: true }];
+const extraBuiltinCommands = computed(() => props.globalFeedbackEnabled ? feedbackCommands : undefined);
 
 const emit = defineEmits<{
   submit: [payload: ComposerSubmitPayload];
@@ -103,9 +112,13 @@ const openShortcutSettings = inject(OpenShortcutSettingsKey, undefined);
 const configureScreenshotShortcut = screenshotSupported && openShortcutSettings
   ? () => openShortcutSettings('captureScreenshot')
   : undefined;
-const screenshotShortcutKeys = computed(() =>
-  screenshotSupported ? resolvedBindingKeys('captureScreenshot') : [],
-);
+const screenshotProps = computed(() => ({
+  onCaptureScreenshot: captureScreenshotAction,
+  screenshotShortcutKeys: screenshotSupported ? resolvedBindingKeys('captureScreenshot') : [],
+  screenshotShortcutUnavailable: !!osGlobalFailures.captureScreenshot,
+  screenshotShortcutFailureReason: osGlobalFailures.captureScreenshot,
+  onConfigureScreenshotShortcut: configureScreenshotShortcut,
+}));
 
 const client = useKimiWebClient();
 const { anyOverlayOpen } = useAppDialogs();
@@ -935,11 +948,8 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
               hide-context
               :before-submit="gateSubmit"
               :defer-submit-reset="true"
-              :on-capture-screenshot="captureScreenshotAction"
-              :screenshot-shortcut-keys="screenshotShortcutKeys"
-              :screenshot-shortcut-unavailable="!!osGlobalFailures.captureScreenshot"
-              :screenshot-shortcut-failure-reason="osGlobalFailures.captureScreenshot"
-              :on-configure-screenshot-shortcut="configureScreenshotShortcut"
+              :extra-builtin-commands="extraBuiltinCommands"
+              v-bind="screenshotProps"
               @submit="handleComposerSubmit"
               @steer="handleComposerSteer"
               @steer-queued="emit('steerQueued', $event)"
@@ -1000,7 +1010,14 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
               @edit-queued="handleEditQueued"
               @reorder-queue="handleReorderQueue"
               @steer-queued="emit('steerQueued', $event)"
-            />
+            >
+              <template v-if="replyFeedbackEnabled" #assistant-reply-actions="{ turn }">
+                <TurnFeedbackActions :target="feedbackTurnTarget(sessionId, turn)" />
+              </template>
+              <template v-if="replyFeedbackEnabled" #assistant-reply-status="{ turn }">
+                <TurnFeedbackStatus :target="feedbackTurnTarget(sessionId, turn)" />
+              </template>
+            </ChatPane>
             </ErrorBoundary>
           </template>
         </div>
@@ -1026,11 +1043,8 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
         :mobile="mobile"
         :before-submit="gateSubmit"
         :defer-submit-reset="true"
-        :on-capture-screenshot="captureScreenshotAction"
-        :screenshot-shortcut-keys="screenshotShortcutKeys"
-        :screenshot-shortcut-unavailable="!!osGlobalFailures.captureScreenshot"
-        :screenshot-shortcut-failure-reason="osGlobalFailures.captureScreenshot"
-        :on-configure-screenshot-shortcut="configureScreenshotShortcut"
+        :extra-builtin-commands="extraBuiltinCommands"
+        v-bind="screenshotProps"
         @toggle-dock-panel="toggleDockPanel($event)"
         @close-dock-panel="closeDockPanel()"
         @answer="handleQuestionAnswer"

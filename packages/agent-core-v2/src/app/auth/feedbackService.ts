@@ -265,7 +265,7 @@ export class FeedbackService implements IFeedbackService {
       );
       cleanupDir = target.cleanupDir;
       const archive = await produce(target.archivePath);
-      await uploadArchive(api, { ...archive, cleanupDir: target.cleanupDir }, feedbackId, {
+      await uploadArchive(api, archive, feedbackId, {
         filename,
       });
       return true;
