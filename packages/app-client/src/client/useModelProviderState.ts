@@ -47,7 +47,11 @@ export interface UseModelProviderStateDeps {
     err: unknown,
     opts?: { title?: string; message?: string; sessionId?: string },
   ) => void;
-  persistSessionProfile: (patch: PersistSessionProfilePatch, sessionId?: string) => Promise<boolean>;
+  persistSessionProfile: (
+    patch: PersistSessionProfilePatch,
+    sessionId?: string,
+    preserveDraftThinking?: boolean,
+  ) => Promise<boolean>;
   whenSessionProfileSettled: (sid: string) => Promise<boolean>;
   savePlanModeToStorage: () => void;
   saveTowerModeToStorage: () => void;
@@ -207,12 +211,16 @@ export function useModelProviderState(
     sid: string,
     modelId: string,
     nextThinking: ThinkingLevel | undefined,
+    preserveDraftThinking = false,
   ): Promise<boolean> {
     updateSession(sid, (s) => ({ ...s, model: modelId }));
     sessionRuntimeStore().markModelPending(sid);
     if (nextThinking !== undefined) {
       rawState.thinkingBySession = { ...rawState.thinkingBySession, [sid]: nextThinking };
       markThinkingPending(rawState, sid);
+    }
+    if (preserveDraftThinking) {
+      return persistSessionProfile({ model: modelId, thinking: nextThinking }, sid, true);
     }
     return persistSessionProfile({ model: modelId, thinking: nextThinking }, sid);
   }
@@ -250,6 +258,10 @@ export function useModelProviderState(
       modelId,
       nextThinking === prevThinking ? undefined : nextThinking,
     );
+  }
+
+  function normalizeDraftSessionModel(sessionId: string, modelId: string): Promise<boolean> {
+    return writeSessionModel(sessionId, modelId, rawState.thinkingBySession[sessionId], true);
   }
 
   async function activateSkill(
@@ -561,6 +573,7 @@ export function useModelProviderState(
     loadProviders,
     setModel,
     setSessionModel,
+    normalizeDraftSessionModel,
     thinkingLevelForModelId,
     thinkingLevelForSessionId,
     resolveThinkingForPrompt,

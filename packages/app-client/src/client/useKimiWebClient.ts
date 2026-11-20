@@ -602,7 +602,11 @@ interface ProfileWriteTokens {
   permission: number | undefined;
 }
 
-function persistSessionProfile(patch: PersistSessionProfilePatch, sessionId?: string): Promise<boolean> {
+function persistSessionProfile(
+  patch: PersistSessionProfilePatch,
+  sessionId?: string,
+  preserveDraftThinking = false,
+): Promise<boolean> {
   const sid = sessionId ?? rawState.activeSessionId;
   if (!sid) return Promise.resolve(false);
   const tokens: ProfileWriteTokens = {
@@ -622,7 +626,7 @@ function persistSessionProfile(patch: PersistSessionProfilePatch, sessionId?: st
   permissionsStore().noteSubmitPrepStart(sid);
   const run = prev.then(async (prevOk) => {
     if (permissionsStore().sessionTeardownGenFor(sid) !== teardownGen) return false;
-    return (await writeSessionProfile(sid, patch, tokens)) && prevOk;
+    return (await writeSessionProfile(sid, patch, tokens, preserveDraftThinking)) && prevOk;
   });
   chainMap.set(sid, run);
   return run.then((ok) => {
@@ -636,6 +640,7 @@ async function writeSessionProfile(
   sid: string,
   patch: PersistSessionProfilePatch,
   tokens: ProfileWriteTokens,
+  preserveDraftThinking: boolean,
 ): Promise<boolean> {
   let ok = true;
   try {
@@ -650,7 +655,7 @@ async function writeSessionProfile(
   ackTowerPending(rawState, sid, tokens.tower);
   ackPlanPending(rawState, sid, tokens.plan);
   permissionsStore().settleExplicit(sid, tokens.permission, ok);
-  resyncMainAgentState(sid);
+  if (!ok || !preserveDraftThinking) resyncMainAgentState(sid);
   return ok;
 }
 
