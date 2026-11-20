@@ -6,6 +6,7 @@ import { promisify } from 'node:util';
 import { directoryKey } from '#/_base/utils/paths';
 import { resolveProgramPath } from '#/environment/programPath';
 import { Error2, ErrorCodes } from '#/errors';
+import { toHostFsError } from '#/os/interface/hostFsErrors';
 
 export interface RepositoryStore {
   readonly type: 'git';
@@ -46,7 +47,7 @@ async function hasMarker(path: string, kind?: 'file' | 'directory'): Promise<boo
     return kind === 'file' ? entry.isFile() : entry.isDirectory();
   } catch (error) {
     if (isMissing(error)) return false;
-    throw error;
+    throw toHostFsError(error, { path, op: kind === undefined ? 'lstat' : 'stat' });
   }
 }
 
@@ -75,32 +76,30 @@ function localGit(cwd: string): RunGit {
 }
 
 async function gitPath(git: RunGit, cwd: string, option: string): Promise<string> {
-  const path = await git(cwd, 'rev-parse', '--path-format=absolute', option);
-  if (!isAbsolute(path)) throw new Error(`Git returned a relative path for ${option}: ${path}`);
-  return realpath(path);
+  const path = await git(cwd, 'rev-parse', option);
+  if (path.length === 0) throw new Error(`Git returned an empty path for ${option}`);
+  return realpath(resolve(cwd, path));
 }
 
 async function defaultDirectory(
   git: RunGit,
   { control, store, checkoutRoot }: RepositoryPaths,
 ): Promise<DiscoveredRepository['defaultDirectory']> {
-  const listing = await git(store, '--git-dir', store, 'worktree', 'list', '--porcelain', '-z');
-  const [first, ...fields] = (listing.split('\0\0', 1)[0] ?? '').split('\0');
-  if (!first?.startsWith('worktree ')) throw new Error('Git did not list its main worktree');
-  const listed = await realpath(first.slice('worktree '.length));
   const inMain = checkoutRoot !== null && samePath(control, store);
-  if (fields.includes('bare')) {
-    if (!samePath(listed, store) || inMain) throw new Error('Git bare repository registration is inconsistent');
+  if ((await git(store, '--git-dir', store, 'rev-parse', '--is-bare-repository')) === 'true') {
+    if (inMain) throw new Error('Git reports a checkout for a bare repository');
     return { kind: 'bare', cwd: store };
   }
+  const parent = dirname(store);
+  const conventional = samePath(store, join(parent, '.git'));
   if (inMain) {
-    if (!samePath(listed, store) && !samePath(listed, checkoutRoot)) {
-      throw new Error(`Git registers a different main checkout at ${listed}`);
+    if (conventional && !samePath(parent, checkoutRoot)) {
+      throw new Error(`Git registers a different main checkout at ${parent}`);
     }
     return { kind: 'checkout', cwd: checkoutRoot };
   }
-  let main = listed;
-  if (samePath(listed, store)) {
+  let main = parent;
+  if (!conventional) {
     try {
       const configured = await git(store, 'config', '--local', '--path', '--get', 'core.worktree');
       main = await realpath(resolve(store, configured));
@@ -110,7 +109,7 @@ async function defaultDirectory(
     }
   }
   const [mainControl, mainRoot] = await Promise.all([
-    gitPath(git, main, '--absolute-git-dir'),
+    gitPath(git, main, '--git-dir'),
     gitPath(git, main, '--show-toplevel'),
   ]);
   if (!samePath(mainControl, store) || !samePath(mainRoot, main)) {
@@ -126,14 +125,14 @@ export async function discoverRepository(cwd: string): Promise<DiscoveredReposit
     location = await realpath(cwd);
   } catch (error) {
     if (isMissing(error)) return null;
-    throw error;
+    throw toHostFsError(error, { path: cwd, op: 'realpath' });
   }
+  const marker = await findMarker(location);
+  if (marker === undefined) return null;
   try {
-    const marker = await findMarker(location);
-    if (marker === undefined) return null;
     const git = localGit(marker.root);
     const [control, store, checkoutRoot] = await Promise.all([
-      gitPath(git, location, '--absolute-git-dir'),
+      gitPath(git, location, '--git-dir'),
       gitPath(git, location, '--git-common-dir'),
       marker.checkout ? gitPath(git, location, '--show-toplevel') : null,
     ]);

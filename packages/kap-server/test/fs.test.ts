@@ -818,6 +818,21 @@ describe('server-v2 /api/v1 fs routes', () => {
     expect(missing.code).toBe(ErrorCode.FS_PATH_NOT_FOUND);
   });
 
+  it('workspace fs:list uses the requested linked checkout and reports broken repository markers', async () => {
+    const root = work!;
+    git(root, 'init');
+    git(root, '-c', 'user.name=Test', '-c', 'user.email=test@example.com', '-c', 'commit.gpgsign=false', 'commit', '--allow-empty', '-m', 'initial');
+    const linked = join(root, 'linked');
+    git(root, 'worktree', 'add', '--detach', linked);
+    await writeFile(join(linked, 'linked-only'), '');
+    const listed = await postWorkspaceList<{ items: FsEntryWire[] }>({ workspace: linked });
+    expect(listed.code).toBe(0);
+    expect(listed.data.items.map((item) => item.name)).toContain('linked-only');
+    const broken = join(root, 'broken');
+    await mkdir(join(broken, '.git'), { recursive: true });
+    expect((await postWorkspaceList<null>({ workspace: broken })).code).toBe(ErrorCode.FS_GIT_UNAVAILABLE);
+  });
+
   it('workspace fs:list maps permission errors to FS_PERMISSION_DENIED', async () => {
     if (process.getuid?.() === 0) return;
     const blocked = join(work!, 'blocked');

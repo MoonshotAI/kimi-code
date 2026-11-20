@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -206,6 +207,35 @@ describe('KimiHarness.listSessions', () => {
 });
 
 describe('SDKRpcClientV2.listSessionsPage', () => {
+  it.each(['0', '1'])('lists only the queried linked checkout in the directory view (read model %s)', async (readModel) => {
+    vi.stubEnv('KIMI_CODE_PERSISTENCE_MINIDB_READMODEL', readModel);
+    const homeDir = await makeTempDir();
+    const repo = await makeTempDir();
+    const trees = await makeTempDir();
+    const first = join(trees, 'first');
+    const second = join(trees, 'second');
+    const git = (...args: string[]) => execFileSync('git', args, { cwd: repo, stdio: 'pipe' });
+    git('init');
+    git('-c', 'user.name=Test', '-c', 'user.email=test@example.com', '-c', 'commit.gpgsign=false', 'commit', '--allow-empty', '-m', 'initial');
+    git('worktree', 'add', '--detach', first);
+    git('worktree', 'add', '--detach', second);
+    const client = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
+    try {
+      for (const [id, workDir] of [['first', first], ['second', second]] as const) {
+        const session = await client.createSession({ id, workDir });
+        await client.closeSession({ sessionId: session.id });
+      }
+      const projects = await client.engineAccessor.get(IWorkspaceService).list();
+      expect(projects).toHaveLength(1);
+      expect(projects[0]?.additionalDirs).toEqual([]);
+      expect((await client.listSessionsPage({ workDir: first })).items.map(({ id }) => id)).toEqual(['first']);
+      expect((await client.listSessionsPage({ workDir: second })).items.map(({ id }) => id)).toEqual(['second']);
+    } finally {
+      await client.close();
+      vi.unstubAllEnvs();
+    }
+  });
+
   it('continues only the local session in the implicit project and selected directory', async () => {
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();
