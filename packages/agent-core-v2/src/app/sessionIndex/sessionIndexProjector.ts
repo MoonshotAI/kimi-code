@@ -1,3 +1,4 @@
+import type { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { directoryKey } from '#/_base/utils/paths';
 import { ILogService } from '#/_base/log/log';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
@@ -43,6 +44,7 @@ const STAT_CONCURRENCY = 64;
 const SHARED_SCAN_REUSE_MS = 30_000;
 
 export interface SessionIndexProjectorDeps {
+  readonly logs: IAppendLogStore;
   readonly storage: IFileSystemStorageService;
   readonly docs: IAtomicDocumentStore;
   readonly queryStore: IQueryStore;
@@ -231,6 +233,7 @@ export class SessionIndexProjector {
               workspaceId,
               sessionId,
               locations.get(`${workspaceId}/${sessionId}`),
+              this.deps.logs,
             );
       if (summary === undefined) {
         if (olds.get(sessionId) !== undefined) {
@@ -365,6 +368,7 @@ export class SessionIndexProjector {
           workspaceId,
           check.sessionId,
           locations.get(`${workspaceId}/${check.sessionId}`),
+          this.deps.logs,
         );
         if (summary === undefined) return undefined;
         nextCache.set(check.sessionId, {

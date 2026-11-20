@@ -32,6 +32,8 @@ import {
 } from '#/app/sessionIndex/sessionIndexModel';
 import { markSessionDirty } from '#/app/sessionIndex/sessionIndexDirtyJournal';
 import { FileSessionIndex } from '#/app/sessionIndex/sessionIndexService';
+import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
+import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { readSessionSummary } from '#/app/sessionIndex/sessionIndexSource';
 import {
   drainSessionIndexMirror,
@@ -74,6 +76,7 @@ describe('FileSessionIndex (legacy)', () => {
 
   beforeEach(async () => {
     _clearScopedRegistryForTests();
+    registerScopedService(LifecycleScope.App, IAppendLogStore, AppendLogStore, ScopeActivation.OnDemand, 'persistence');
     registerScopedService(
       LifecycleScope.App,
       ISessionIndex,
@@ -167,6 +170,31 @@ describe('FileSessionIndex (legacy)', () => {
     expect((await store.get('v1'))?.cwd).toBe('/repo/v1');
     expect((await store.get('old'))?.cwd).toBe('/repo/old');
     expect((await store.get('none'))?.cwd).toBeUndefined();
+  });
+
+  it('recovers relative local directories per session in the same historical bucket', async () => {
+    const first = join(homeDir, 'first', 'child');
+    const second = join(homeDir, 'second', 'child');
+    const store = build();
+    for (const [id, absolute, environment] of [['one', first, 'local'], ['two', second, 'local'], ['rebound', first, 'ssh']] as const) {
+      await seedSession(id, { cwd: 'child', environmentCwd: 'child' });
+      const dir = join(sessionsDir, workspaceId, id, 'agents', 'main');
+      await fsp.mkdir(dir, { recursive: true });
+      await fsp.writeFile(join(dir, 'wire.jsonl'), [
+        null,
+        { type: 'environment.set_binding', agentId: 'main', environmentId: environment },
+        { type: 'profile.bind', agentId: 'main', environmentDisclosure: { cwd: absolute } },
+      ].map((record) => JSON.stringify(record)).join('\n') + '\n');
+    }
+    await seedSession('broken', { cwd: 'child', title: 'Past work' });
+    const broken = join(sessionsDir, workspaceId, 'broken', 'agents', 'main');
+    await fsp.mkdir(broken, { recursive: true });
+    await fsp.writeFile(join(broken, 'wire.jsonl'), 'invalid JSON\n');
+    const page = await store.listRecent({ workspaceIds: [workspaceId] });
+    expect(page.items).toEqual(expect.arrayContaining([expect.objectContaining({ id: 'broken', title: 'Past work', cwd: 'child' })]));
+    expect(await store.get('one')).toMatchObject({ cwd: first, environmentCwd: first, workspaceId });
+    expect(await store.get('two')).toMatchObject({ cwd: second, environmentCwd: second, workspaceId });
+    expect(await store.get('rebound')).toMatchObject({ cwd: 'child', environmentCwd: 'child' });
   });
 
   it('keeps the saved workdir ahead of index log hints and preserves the remote host anchor', async () => {
@@ -427,6 +455,7 @@ describe('FileSessionIndex (read model)', () => {
 
   beforeEach(async () => {
     _clearScopedRegistryForTests();
+    registerScopedService(LifecycleScope.App, IAppendLogStore, AppendLogStore, ScopeActivation.OnDemand, 'persistence');
     registerScopedService(
       LifecycleScope.App,
       ISessionIndex,

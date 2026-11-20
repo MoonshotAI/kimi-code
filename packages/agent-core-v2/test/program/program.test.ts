@@ -527,17 +527,18 @@ async function localityFixture(options: { readonly remoteCwd?: string; readonly 
 
   const realFs = new HostFileSystem();
   const localFs = scopedFs(localRoot, await realpath(localRoot), realFs, [homeDir, await realpath(homeDir)]);
+  const pathClass = process.platform === 'win32' ? 'win32' : 'posix';
   const localRegistration = registry.register(Object.assign(
     new FakeEnvironment(
       { environmentId: 'local', generation: 'local-one' },
-      { capabilities: ['fs', 'process'], host: { homeDir } },
+      { capabilities: ['fs', 'process'], pathClass, host: { homeDir } },
     ),
     { fs: localFs, process: new HostProcessService() },
   ) as FakeEnvironment);
   const remoteRegistration = registry.register(Object.assign(
     new FakeEnvironment(
       { environmentId: 'remote', generation: 'remote-one' },
-      { capabilities: ['fs', 'process'], host: { homeDir: remoteHomeDir } },
+      { capabilities: ['fs', 'process'], pathClass, host: { homeDir: remoteHomeDir } },
     ),
     remoteCwd === undefined
       ? { fs: realFs, process: new HostProcessService() }
@@ -585,7 +586,7 @@ async function localityFixture(options: { readonly remoteCwd?: string; readonly 
       registry.register(Object.assign(
         new FakeEnvironment(
           { environmentId: 'local', generation },
-          { capabilities: ['fs', 'process'], host: { homeDir } },
+          { capabilities: ['fs', 'process'], pathClass, host: { homeDir } },
         ),
         { fs: realFs, process: new HostProcessService() },
       ) as FakeEnvironment);
