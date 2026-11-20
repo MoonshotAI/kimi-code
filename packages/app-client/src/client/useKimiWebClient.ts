@@ -651,7 +651,7 @@ async function writeSessionProfile(
   ackTowerPending(rawState, sid, tokens.tower);
   ackPlanPending(rawState, sid, tokens.plan);
   permissionsStore().settleExplicit(sid, tokens.permission, ok);
-  resyncMainAgentState(sid);
+  if (!ok) resyncMainAgentState(sid);
   return ok;
 }
 
