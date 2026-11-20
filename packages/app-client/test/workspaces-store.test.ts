@@ -74,6 +74,7 @@ function resetStore(): void {
   store.fsHome = null;
   store.recentRoots = [];
   store.hiddenWorkspaceIds = [];
+  store.showCliWorkspaces = true;
   store.workspaceOrder = [];
   store.pinnedWorkspaceIds = [];
   store.workspaceSortMode = 'manual';
@@ -126,6 +127,33 @@ describe('workspacesView ordering', () => {
     store.workspaces = [makeWorkspace('a', '/home/x/code/app', { hostId: 'devbox' })];
     store.fsHome = '/Users/x';
     expect(store.workspacesView[0]!.shortPath).toBe('/home/x/code/app');
+  });
+});
+
+describe('CLI workspace visibility', () => {
+  it('hides implicit workspaces by default and restores them with the persisted opt-in', () => {
+    const store = workspacesStore();
+    store.showCliWorkspaces = false;
+    store.workspaces = [
+      makeWorkspace('wd_tui', '/tui'),
+      makeWorkspace('wm_app', '/app'),
+    ];
+    store.storedActiveWorkspaceId = 'wd_tui';
+
+    expect(store.workspacesView.map((workspace) => workspace.id)).toEqual(['wm_app']);
+    expect(store.visibleWorkspaceIds.has('wd_tui')).toBe(false);
+    expect(store.activeWorkspaceId).toBe('wm_app');
+
+    store.setShowCliWorkspaces(true);
+
+    expect(store.workspacesView.map((workspace) => workspace.id)).toEqual(['wd_tui', 'wm_app']);
+    expect(store.workspacesView[0]?.kind).toBe('implicit');
+    expect(store.visibleWorkspaceIds.has('wd_tui')).toBe(true);
+    expect(store.activeWorkspaceId).toBe('wd_tui');
+    expect(memStorage.get(STORAGE_KEYS.showCliWorkspaces)).toBe('1');
+
+    store.setShowCliWorkspaces(false);
+    expect(memStorage.get(STORAGE_KEYS.showCliWorkspaces)).toBe('0');
   });
 });
 

@@ -2,7 +2,7 @@ import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import { computed, ref } from 'vue';
 
 import type { AppSession } from '@moonshot-ai/app-core/api';
-import { sessionsStore } from '@moonshot-ai/app-client/stores';
+import { sessionsStore, workspacesStore } from '@moonshot-ai/app-client/stores';
 import {
   resetKimiClientDeps,
   setKimiClientDeps,
@@ -13,6 +13,7 @@ const getKimiWebApiMock = vi.fn();
 
 beforeEach(() => {
   getKimiWebApiMock.mockReset();
+  workspacesStore().showCliWorkspaces = true;
   sessionsStore().setSessions([]);
   sessionsStore().setActiveSessionId(undefined);
   setKimiClientDeps({ api: () => getKimiWebApiMock(), t: (key) => key });

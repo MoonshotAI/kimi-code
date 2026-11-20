@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { computed, nextTick, onUnmounted, ref, watch } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { ConversationStatus, PermissionMode } from '../../types';
 import type { AppModel, ManagedUserInfo, ThinkingLevel } from '../../api/types';
 import type { ColorScheme, FontScale } from '@moonshot-ai/app-client/client';
 import { useKimiWebClient } from '@moonshot-ai/app-client/client';
-import { useActivityRunFolding, useConfirmDialog, usePasteImageAutoMention, useRunningSendMode, useTurnFolding, type RunningSendMode, type SettingsHighlightKey } from '@moonshot-ai/app-client/composables';
+import { useActivityRunFolding, useConfirmDialog, usePasteImageAutoMention, useRunningSendMode, useSettingHighlight, useTurnFolding, type RunningSendMode, type SettingsHighlightKey } from '@moonshot-ai/app-client/composables';
+import { workspacesStore } from '@moonshot-ai/app-client/stores';
 import { track } from '../../lib/track';
 import {
   commitLevel,
@@ -16,7 +17,7 @@ import {
   modelThinkingAvailability,
   segmentsFor,
 } from '@moonshot-ai/app-core/lib';
-import { BottomSheet, BrowserTabTitleSetting, FontSettingsPage, FontSettingsRow, ProvidersPanel, useSettingsSubpage } from '@moonshot-ai/app-components';
+import { BottomSheet, BrowserTabTitleSetting, FontSettingsPage, FontSettingsRow, ProvidersPanel, RunningSendModeSetting, useSettingsSubpage } from '@moonshot-ai/app-components';
 import type { FontTarget } from '@moonshot-ai/app-core';
 import LanguageSwitcher from '../settings/LanguageSwitcher.vue';
 import PlanUsageCard from '../settings/PlanUsageCard.vue';
@@ -35,6 +36,14 @@ const { runningSendMode, setRunningSendMode } = useRunningSendMode();
 function onRunningSendModeChange(mode: RunningSendMode): void {
   setRunningSendMode(mode);
   track('settings_changed', { key: 'running-send-mode', value: mode, source_panel: 'mobile_settings' });
+}
+
+const showCliWorkspaces = computed(() => workspacesStore().showCliWorkspaces);
+
+function onShowCliWorkspacesChange(): void {
+  const show = !showCliWorkspaces.value;
+  workspacesStore().setShowCliWorkspaces(show);
+  track('settings_changed', { key: 'show-cli-workspaces', value: show ? 'on' : 'off', source_panel: 'mobile_settings' });
 }
 
 const client = useKimiWebClient();
@@ -77,24 +86,12 @@ const props = withDefaults(
 const view = ref<'main' | 'providers'>('main');
 const fontPage = useSettingsSubpage<FontTarget>();
 const fontPageTarget = fontPage.page;
-const runningSendRowRef = ref<HTMLElement | null>(null);
-const highlightedSetting = ref<SettingsHighlightKey | null>(null);
-let highlightTimer: ReturnType<typeof setTimeout> | null = null;
-
-function clearHighlightTimer(): void {
-  if (highlightTimer !== null) {
-    clearTimeout(highlightTimer);
-    highlightTimer = null;
-  }
-}
-
-function prefersReducedMotion(): boolean {
-  return (
-    typeof window !== 'undefined' &&
-    typeof window.matchMedia === 'function' &&
-    window.matchMedia('(prefers-reduced-motion: reduce)').matches
-  );
-}
+const {
+  runningSendRowRef,
+  highlightedSetting,
+  clearSettingHighlight,
+  triggerSettingHighlight,
+} = useSettingHighlight();
 
 watch(
   [() => props.modelValue, () => props.initialTab],
@@ -108,36 +105,14 @@ watch(
 watch(
   [() => props.modelValue, () => props.highlightKey],
   ([open, key]) => {
-    clearHighlightTimer();
-    if (!open || !key || props.initialTab === 'providers') {
-      highlightedSetting.value = null;
-      return;
-    }
-    highlightedSetting.value = key;
-    void nextTick(() => {
-      const el = key === 'running-send-mode' ? runningSendRowRef.value : null;
-      el?.scrollIntoView?.({
-        block: 'center',
-        behavior: prefersReducedMotion() ? 'auto' : 'smooth',
-      });
-    });
-    highlightTimer = setTimeout(() => {
-      highlightedSetting.value = null;
-      highlightTimer = null;
-    }, 2200);
+    if (!open || props.initialTab === 'providers') clearSettingHighlight();
+    else triggerSettingHighlight(key);
   },
   { immediate: true },
 );
 
 watch([view, fontPageTarget], () => {
-  if (view.value !== 'main' || fontPageTarget.value !== null) {
-    clearHighlightTimer();
-    highlightedSetting.value = null;
-  }
-});
-
-onUnmounted(() => {
-  clearHighlightTimer();
+  if (view.value !== 'main' || fontPageTarget.value !== null) clearSettingHighlight();
 });
 
 const emit = defineEmits<{
@@ -423,26 +398,20 @@ function toggleAutoSessionTitle(): void {
       <FontSettingsRow target="code" @open="fontPage.open" />
       <FontSettingsRow v-if="desktopBridge" target="terminal" @open="fontPage.open" />
 
-      <div
+      <RunningSendModeSetting
         ref="runningSendRowRef"
-        class="srow read-only pref"
-        :class="{ 'srow-highlighted': highlightedSetting === 'running-send-mode' }"
-        :data-setting-highlighted="highlightedSetting === 'running-send-mode' ? 'true' : undefined"
-      >
+        :model-value="runningSendMode"
+        :highlighted="highlightedSetting === 'running-send-mode'"
+        mobile
+        @update:model-value="onRunningSendModeChange($event as RunningSendMode)"
+      />
+      <button type="button" class="srow" role="switch" :aria-checked="showCliWorkspaces" @click="onShowCliWorkspacesChange">
         <span class="srow-main">
-          <span class="srow-label">{{ t('settings.runningSendMode') }}</span>
-          <span class="srow-sub">{{ t('settings.runningSendModeHint') }}</span>
+          <span class="srow-label">{{ t('settings.showCliWorkspaces') }}</span>
+          <span class="srow-sub">{{ t('settings.showCliWorkspacesHint') }}</span>
         </span>
-        <SegmentedControl
-          :model-value="runningSendMode"
-          :options="[
-            { value: 'steer', label: t('settings.runningSendSteer') },
-            { value: 'queue', label: t('settings.runningSendQueue') },
-          ]"
-          :aria-label="t('settings.runningSendMode')"
-          @update:model-value="onRunningSendModeChange($event as RunningSendMode)"
-        />
-      </div>
+        <span class="toggle" :class="{ on: showCliWorkspaces }" aria-hidden="true" />
+      </button>
       <button type="button" class="srow" role="switch" :aria-checked="pasteImageAutoMention" @click="setPasteImageAutoMention(!pasteImageAutoMention)">
         <span class="srow-main">
           <span class="srow-label">{{ t('settings.pasteImageAutoMention') }}</span>

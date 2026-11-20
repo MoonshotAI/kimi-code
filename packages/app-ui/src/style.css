@@ -770,6 +770,23 @@ html[data-font-scale="xlarge"]  { --base-font: 18px; }
 /* Type-scale utility classes: font-size from the token, line-height locked to
    an integer px via round(size × ratio). UI group is for
    chrome only, MD group for Markdown content + composer — do not mix. */
+.text-row-label {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--ui-font-size-sm);
+  font-weight: var(--weight-caption);
+  line-height: var(--leading-tight);
+  color: var(--color-text);
+}
+
+.text-fade-clip {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: clip;
+  -webkit-mask-image: linear-gradient(to right, var(--color-text-strong) calc(100% - 16px), transparent);
+  mask-image: linear-gradient(to right, var(--color-text-strong) calc(100% - 16px), transparent);
+}
+
 .text-ui-t0 { font-size: var(--ui-t0); line-height: round(calc(var(--ui-t0) * 1.40), 1px); }
 .text-ui-t1 { font-size: var(--ui-t1); line-height: round(calc(var(--ui-t1) * 1.44), 1px); }
 .text-ui-t2 { font-size: var(--ui-t2); line-height: round(calc(var(--ui-t2) * 1.50), 1px); }

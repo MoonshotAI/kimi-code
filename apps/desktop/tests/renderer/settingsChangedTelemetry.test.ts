@@ -23,6 +23,7 @@ const ACCEPTED: Record<string, readonly string[]> = {
   'font-terminal': ['same', 'system', 'kimi', 'custom'],
   'font-terminal-size': ['default', '9', '13', '20', '32'],
   'running-send-mode': ['steer', 'queue'],
+  'show-cli-workspaces': ['on', 'off'],
   'browser-tab-title': [
     'workspace-session',
     'session-workspace',

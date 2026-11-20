@@ -98,6 +98,8 @@ Other CLI commands have point-and-click equivalents in the UI (settings, model p
 
 </div>
 
+Projects and sessions created in Kimi Code CLI are hidden from the sidebar by default. To show them, enable **Show CLI projects** under **Agent & Sessions → CLI projects**. On mobile, use **Settings → App**.
+
 ## Security notes
 
 - **Set a parallel credential on LAN**: when binding a LAN address (`--host`), also set the `KIMI_CODE_PASSWORD` environment variable so the server rate-limits failed authentication attempts.

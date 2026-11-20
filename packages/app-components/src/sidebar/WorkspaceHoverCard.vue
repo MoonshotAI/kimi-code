@@ -3,7 +3,7 @@ import { computed } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { WorkspaceView } from '@moonshot-ai/app-core/client/types';
 import { workspaceFolders } from '@moonshot-ai/app-core/client';
-import { Icon } from '@moonshot-ai/app-ui';
+import { Badge, Icon } from '@moonshot-ai/app-ui';
 import { hostsStore } from '@moonshot-ai/app-client/stores';
 import WorkspaceIcon from '../WorkspaceIcon.vue';
 import { useHostFailureText } from '../composables/useHostFailureText';
@@ -33,6 +33,7 @@ const hostFailure = computed(() => {
   <div class="workspace-hover-card" data-workspace-hover-card role="dialog" :aria-label="workspace.name">
     <div class="whc-head">
       <span class="whc-title">{{ workspace.name }}</span>
+      <Badge v-if="workspace.kind === 'implicit'" size="sm" variant="neutral">{{ t('workspace.cliBadge') }}</Badge>
     </div>
     <div class="whc-directories">
       <template v-if="remote">

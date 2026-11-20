@@ -1,5 +1,6 @@
 export default {
   noWorkspace: '暂无项目',
+  cliBadge: 'CLI',
   removeWorkspaceConfirm:
     '将「{name}」从侧边栏移除？\n文件夹和文件不会被删除，其中的会话记录也会保留，重新添加该文件夹即可找回。',
   removeWorkspaceConfirmDir:

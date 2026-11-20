@@ -7,7 +7,7 @@ import { serverEndpointLabel } from '../../api/config';
 import { useDialogFocus } from '@moonshot-ai/app-components';
 import { useConfirmDialog } from '@moonshot-ai/app-client/composables';
 import LanguageSwitcher from './LanguageSwitcher.vue';
-import { BrowserTabTitleSetting, FontSettingsPage, FontSettingsRow, useSettingsSubpage } from '@moonshot-ai/app-components';
+import { BrowserTabTitleSetting, FontSettingsPage, FontSettingsRow, RunningSendModeSetting, useSettingsSubpage } from '@moonshot-ai/app-components';
 import type { FontTarget } from '@moonshot-ai/app-core';
 import ShortcutsPanel from './ShortcutsPanel.vue';
 import type { ShortcutActionId } from '../../../shared/action-ids';
@@ -33,8 +33,8 @@ import DockIconPicker from './DockIconPicker.vue';
 import BrowserSettingsTab from '../browser/BrowserSettingsTab.vue';
 import { copyTextToClipboard, hasDesktopBridge, isLinuxDesktop, isMacosDesktop, isRcLocation, prefersNativeTitleBar, providerDisplayName } from '@moonshot-ai/app-core/lib';
 import { useContextInspector, useSessionMentions, useSidebarTabs } from '@moonshot-ai/app-core';
-import { configStore, hostsStore } from '@moonshot-ai/app-client/stores';
-import { useActivityRunFolding, usePasteImageAutoMention, useRunningSendMode, useTurnFolding, type RunningSendMode, type SettingsHighlightKey } from '@moonshot-ai/app-client';
+import { configStore, hostsStore, workspacesStore } from '@moonshot-ai/app-client/stores';
+import { useActivityRunFolding, usePasteImageAutoMention, useRunningSendMode, useSettingHighlight, useTurnFolding, type RunningSendMode, type SettingsHighlightKey } from '@moonshot-ai/app-client';
 import { useVibrancy } from '../../composables/useVibrancy';
 import { usePreventSystemSleep } from '../../composables/usePreventSystemSleep';
 import { useTerminalScreenReader } from '../../composables/useTerminalScreenReader';
@@ -80,6 +80,13 @@ function onRunningSendModeChange(mode: RunningSendMode): void {
 function onSidebarTabsChange(on: boolean): void {
   setSidebarTabs(on);
   track('settings_changed', { key: 'sidebar-multi-tab', value: on ? 'on' : 'off', source_panel: 'settings' });
+}
+
+const showCliWorkspaces = computed(() => workspacesStore().showCliWorkspaces);
+
+function onShowCliWorkspacesChange(on: boolean): void {
+  workspacesStore().setShowCliWorkspaces(on);
+  track('settings_changed', { key: 'show-cli-workspaces', value: on ? 'on' : 'off', source_panel: 'settings' });
 }
 
 const { sessionMentions, setSessionMentions } = useSessionMentions();
@@ -253,54 +260,18 @@ const accountSubtitle = computed(() =>
 const activeTab = ref<SettingsTab>(
   props.initialTab ?? (props.highlightKey === 'running-send-mode' ? 'agent' : 'general'),
 );
-const runningSendRowRef = ref<HTMLElement | null>(null);
-const highlightedSetting = ref<SettingsHighlightKey | null>(null);
-let highlightTimer: ReturnType<typeof setTimeout> | null = null;
-
-function clearHighlightTimer(): void {
-  if (highlightTimer !== null) {
-    clearTimeout(highlightTimer);
-    highlightTimer = null;
-  }
-}
-
-function prefersReducedMotion(): boolean {
-  return (
-    typeof window !== 'undefined' &&
-    typeof window.matchMedia === 'function' &&
-    window.matchMedia('(prefers-reduced-motion: reduce)').matches
-  );
-}
-
-function triggerSettingHighlight(key: SettingsHighlightKey | undefined): void {
-  clearHighlightTimer();
-  if (!key) {
-    highlightedSetting.value = null;
-    return;
-  }
-  if (key === 'running-send-mode' && activeTab.value !== 'agent') {
-    activeTab.value = 'agent';
-  }
-  highlightedSetting.value = key;
-  void nextTick(() => {
-    const el = key === 'running-send-mode' ? runningSendRowRef.value : null;
-    el?.scrollIntoView?.({
-      block: 'center',
-      behavior: prefersReducedMotion() ? 'auto' : 'smooth',
-    });
-  });
-  highlightTimer = setTimeout(() => {
-    highlightedSetting.value = null;
-    highlightTimer = null;
-  }, 2200);
-}
-
-watch(
-  () => props.highlightKey,
-  (key) => {
-    triggerSettingHighlight(key);
+const {
+  runningSendRowRef,
+  highlightedSetting,
+  clearSettingHighlight,
+  triggerSettingHighlight,
+} = useSettingHighlight({
+  beforeHighlight: (key) => {
+    if (key === 'running-send-mode' && activeTab.value !== 'agent') activeTab.value = 'agent';
   },
-);
+});
+
+watch(() => props.highlightKey, triggerSettingHighlight);
 
 const bodyScrolling = ref(false);
 let bodyScrollHideTimer: ReturnType<typeof setTimeout> | null = null;
@@ -359,7 +330,6 @@ onMounted(() => {
 onUnmounted(() => {
   document.removeEventListener('keydown', handleKeydown);
   if (bodyScrollHideTimer) clearTimeout(bodyScrollHideTimer);
-  clearHighlightTimer();
 });
 
 const openInAppOptions = ref<Array<{ value: string; label: string; icon?: string }> | null>(null);
@@ -669,10 +639,7 @@ function toggleAutoSessionTitle(): void {
 }
 
 function setTab(tab: SettingsTab): void {
-  if (tab !== activeTab.value) {
-    clearHighlightTimer();
-    highlightedSetting.value = null;
-  }
+  if (tab !== activeTab.value) clearSettingHighlight();
   activeTab.value = tab;
 }
 
@@ -1181,26 +1148,12 @@ function archiveTime(iso: string): string {
           <section class="sec">
             <h3 class="sec-title">{{ t('settings.composerSection') }}</h3>
             <div class="settings-group">
-            <div
+            <RunningSendModeSetting
               ref="runningSendRowRef"
-              class="row"
-              :class="{ 'row-highlighted': highlightedSetting === 'running-send-mode' }"
-              :data-setting-highlighted="highlightedSetting === 'running-send-mode' ? 'true' : undefined"
-            >
-              <span class="rlabel">
-                {{ t('settings.runningSendMode') }}
-                <span class="hint">{{ t('settings.runningSendModeHint') }}</span>
-              </span>
-              <SegmentedControl
-                :model-value="runningSendMode"
-                :options="[
-                  { value: 'steer', label: t('settings.runningSendSteer') },
-                  { value: 'queue', label: t('settings.runningSendQueue') },
-                ]"
-                :aria-label="t('settings.runningSendMode')"
-                @update:model-value="onRunningSendModeChange($event as RunningSendMode)"
-              />
-            </div>
+              :model-value="runningSendMode"
+              :highlighted="highlightedSetting === 'running-send-mode'"
+              @update:model-value="onRunningSendModeChange($event as RunningSendMode)"
+            />
             <div class="row">
               <span class="rlabel">
                 {{ t('settings.pasteImageAutoMention') }}
@@ -1258,6 +1211,23 @@ function archiveTime(iso: string): string {
                 :model-value="config?.autoSessionTitle !== false"
                 :label="t('settings.autoSessionTitle')"
                 @update:model-value="toggleAutoSessionTitle"
+              />
+            </div>
+            </div>
+          </section>
+
+          <section class="sec">
+            <h3 class="sec-title">{{ t('settings.cliProjectsSection') }}</h3>
+            <div class="settings-group">
+            <div class="row">
+              <span class="rlabel">
+                {{ t('settings.showCliWorkspaces') }}
+                <span class="hint">{{ t('settings.showCliWorkspacesHint') }}</span>
+              </span>
+              <Switch
+                :model-value="showCliWorkspaces"
+                :label="t('settings.showCliWorkspaces')"
+                @update:model-value="onShowCliWorkspacesChange"
               />
             </div>
             </div>

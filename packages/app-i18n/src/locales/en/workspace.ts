@@ -1,5 +1,6 @@
 export default {
   noWorkspace: 'No project',
+  cliBadge: 'CLI',
   removeWorkspaceConfirm:
     'Remove "{name}" from the sidebar?\nThe folder and its files are not deleted, and its sessions are kept — add the folder back at any time to bring them back.',
   removeWorkspaceConfirmDir:

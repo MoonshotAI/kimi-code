@@ -4,7 +4,7 @@ import { useI18n } from 'vue-i18n';
 import type { WorkspaceGroup, WorkspaceView } from '@moonshot-ai/app-core/client/types';
 import SessionRow from './SessionRow.vue';
 import { useSessionDrag, usePinnedReturnTarget } from './composables/useSessionDrag';
-import { Icon, IconButton, Tooltip, useImeComposition } from '@moonshot-ai/app-ui';
+import { Badge, Icon, IconButton, Tooltip, useImeComposition } from '@moonshot-ai/app-ui';
 import { hostsStore } from '@moonshot-ai/app-client/stores';
 import WorkspaceIcon from './WorkspaceIcon.vue';
 
@@ -181,6 +181,12 @@ function onHeaderDragStart(event: DragEvent): void {
           <span class="gh-name">{{ group.workspace.name }}</span>
         </Tooltip>
         <span v-else-if="renamingId !== group.workspace.id" class="gh-name">{{ group.workspace.name }}</span>
+        <Badge
+          v-if="renamingId !== group.workspace.id && group.workspace.kind === 'implicit'"
+          class="gh-kind"
+          size="sm"
+          variant="neutral"
+        >{{ t('workspace.cliBadge') }}</Badge>
         <input
           v-else
           :ref="setRenameInputRef"
@@ -356,6 +362,15 @@ function onHeaderDragStart(event: DragEvent): void {
 .gh-folder {
   flex: none;
   color: var(--color-text-muted);
+}
+
+.gh-kind {
+  flex: none;
+}
+.gh:hover .gh-kind,
+.gh:focus-within .gh-kind,
+.gh.menu-open .gh-kind {
+  opacity: 0;
 }
 
 .gh-name {

@@ -226,7 +226,9 @@ export function createWorkspaceBoot(rawState: ExtendedState, deps: WorkspaceBoot
       }
 
       bootStage.value = 'session';
-      const mostRecent = sessionsStore().sessions[0];
+      const mostRecent = sessionsStore().sessions.find((session) =>
+        workspacesStore().visibleWorkspaceIds.has(workspacesStore().workspaceIdForSession(session)),
+      );
       const persisted = workspacesStore().storedActiveWorkspaceId;
       const persistedStillExists =
         persisted !== null && workspacesStore().mergedWorkspaces.some((w) => w.id === persisted);
@@ -256,7 +258,9 @@ export function createWorkspaceBoot(rawState: ExtendedState, deps: WorkspaceBoot
         }
       }
 
-      const nextSession = sessionsStore().sessions[0];
+      const nextSession = sessionsStore().sessions.find((session) =>
+        workspacesStore().visibleWorkspaceIds.has(workspacesStore().workspaceIdForSession(session)),
+      );
       if (firstLoad && !sessionsStore().activeSessionId && allowMostRecent && nextSession !== undefined) {
         await hydrateTarget(nextSession.id);
         if (!sessionsStore().activeSessionId && !sessionListStore().hasDeletedTombstone(nextSession.id)) {

@@ -24,7 +24,9 @@ import {
   reconcileRecencyFloor,
   reconcileWorkspaceOrder,
   resolveLocalPath,
+  safeGetString,
   safeRemove,
+  safeSetString,
   saveActiveWorkspace,
   saveHiddenWorkspaceIds,
   savePinnedWorkspaces,
@@ -172,6 +174,7 @@ export const useWorkspacesStore = defineStore('kimi.workspaces', () => {
   const fsHome = ref<string | null>(null);
   const recentRoots = ref<string[]>([]);
   const hiddenWorkspaceIds = ref<string[]>(loadHiddenWorkspaceIds());
+  const showCliWorkspaces = ref(safeGetString(STORAGE_KEYS.showCliWorkspaces) === '1');
   const workspaceOrder = ref<string[]>(loadWorkspaceOrder());
   const pinnedWorkspaceIds = ref<string[]>(loadPinnedWorkspaces());
   const workspaceSortMode = ref<WorkspaceSortMode>(loadWorkspaceSort());
@@ -267,15 +270,18 @@ export const useWorkspacesStore = defineStore('kimi.workspaces', () => {
   const workspaceViewRows = createRowMemo<WorkspaceView>((view) => view.id);
 
   const workspacesView = computed<WorkspaceView[]>(() => {
-    const views = mergedWorkspaces.value.map((w) => ({
-      id: w.id,
-      name: w.name,
-      root: w.root,
-      hostId: w.hostId,
-      shortPath: w.hostId === undefined ? shortenHome(w.root, fsHome.value) : w.root,
-      additionalDirs: w.additionalDirs,
-      sessionCount: w.sessionCount,
-    }));
+    const views = mergedWorkspaces.value
+      .filter((w) => showCliWorkspaces.value || w.kind !== 'implicit')
+      .map((w) => ({
+        id: w.id,
+        name: w.name,
+        root: w.root,
+        kind: w.kind,
+        hostId: w.hostId,
+        shortPath: w.hostId === undefined ? shortenHome(w.root, fsHome.value) : w.root,
+        additionalDirs: w.additionalDirs,
+        sessionCount: w.sessionCount,
+      }));
     if (workspaceSortMode.value === 'recent') {
       return workspaceViewRows(sortWorkspacesByRecent(views, workspaceRecencyKeys.value));
     }
@@ -424,6 +430,11 @@ export const useWorkspacesStore = defineStore('kimi.workspaces', () => {
     if (workspaceSortMode.value === mode) return;
     workspaceSortMode.value = mode;
     saveWorkspaceSort(mode);
+  }
+
+  function setShowCliWorkspaces(show: boolean): void {
+    showCliWorkspaces.value = show;
+    safeSetString(STORAGE_KEYS.showCliWorkspaces, show ? '1' : '0');
   }
 
   function reorderWorkspaces(ids: string[]): void {
@@ -987,6 +998,7 @@ export const useWorkspacesStore = defineStore('kimi.workspaces', () => {
     fsHome,
     recentRoots,
     hiddenWorkspaceIds,
+    showCliWorkspaces,
     workspaceOrder,
     pinnedWorkspaceIds,
     workspaceSortMode,
@@ -1008,6 +1020,7 @@ export const useWorkspacesStore = defineStore('kimi.workspaces', () => {
     isLocalWorkspace,
     selectWorkspace,
     setWorkspaceSortMode,
+    setShowCliWorkspaces,
     reorderWorkspaces,
     pinWorkspace,
     unpinWorkspace,
