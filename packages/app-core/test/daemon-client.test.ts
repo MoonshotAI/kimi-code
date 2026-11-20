@@ -147,11 +147,15 @@ describe('DaemonKimiWebApi lists across hosts', () => {
       cwd: '/srv/app',
     }));
     vi.mocked(fetch)
-      .mockResolvedValueOnce(envelope({ hosts: [] }))
+      .mockResolvedValueOnce(envelope({ hosts: [{ id: 'dev', host: 'dev.example.test', status: 'ready' }] }))
+      .mockResolvedValueOnce(envelope({
+        items: [{ id: 'wm_1', root: '/srv/app', name: 'app', kind: 'managed', additional_dirs: [], session_count: 0, host_id: 'dev' }],
+      }))
       .mockResolvedValueOnce(envelope({ items: sessions.slice(0, 5), has_more: true }))
       .mockResolvedValueOnce(envelope({ items: sessions.slice(5), has_more: false }));
     const api = new HostRouter(hostAwareApi(true), () => hostAwareApi(false)).createApi();
 
+    await api.listWorkspaces();
     const request = { workspaceId: 'wm_1', pageSize: 5, hasPrompt: true };
     const first = await api.listSessions({ ...request, [cursor]: 's5' });
     expect(first).toMatchObject({ hasMore: true, nextPageToken: null });
@@ -159,8 +163,26 @@ describe('DaemonKimiWebApi lists across hosts', () => {
     expect(next).toMatchObject({ items: [{ id: 's11' }], hasMore: false });
     expect(vi.mocked(fetch).mock.calls.map(([url]) => url)).toEqual([
       'http://daemon.test/api/v1/hosts',
+      'http://daemon.test/api/v1/workspaces?hosts=include',
       `http://daemon.test/api/v1/sessions?${queryKey}=s5&page_size=5&workspace_id=wm_1&has_prompt=true`,
       `http://daemon.test/api/v1/sessions?${queryKey}=s10&page_size=5&workspace_id=wm_1&has_prompt=true`,
+    ]);
+  });
+
+  it.each([
+    ['beforeId', 'before_id'],
+    ['afterId', 'after_id'],
+  ] as const)('fans out a %s workspace cursor when ownership is unknown', async (cursor, queryKey) => {
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(envelope({ hosts: [] }))
+      .mockResolvedValueOnce(envelope({ items: [], has_more: false }));
+    const api = new HostRouter(hostAwareApi(true), () => hostAwareApi(false)).createApi();
+
+    await api.listSessions({ workspaceId: 'wm_unknown', pageSize: 5, hasPrompt: true, [cursor]: 's5' });
+
+    expect(vi.mocked(fetch).mock.calls.map(([url]) => url)).toEqual([
+      'http://daemon.test/api/v1/hosts',
+      `http://daemon.test/api/v1/sessions?${queryKey}=s5&page_size=5&workspace_id=wm_unknown&has_prompt=true&hosts=include`,
     ]);
   });
 

@@ -91,7 +91,7 @@ export function registerWorkspacesRoutes(app: WorkspaceRouteHost, core: Scope, h
         reply.send(okEnvelope({ items: projected }, req.id));
         return;
       }
-      const remote = await collectFromHosts(hosts, (session) => hostProjects<WorkspaceWire>(session));
+      const remote = await collectFromHosts(hosts, (session, startedAt) => hostProjects<WorkspaceWire>(session, startedAt));
       reply.send(
         okEnvelope({ items: [...projected, ...remote.items] }, req.id),
       );

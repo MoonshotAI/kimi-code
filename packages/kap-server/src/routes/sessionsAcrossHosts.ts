@@ -106,6 +106,7 @@ async function collectSources(
   const filter = query.workspace_id === undefined ? undefined : new Set([query.workspace_id].flat());
   const configured = hosts.sources();
   const remote = await Promise.all(configured.map(async (host): Promise<Source | undefined> => {
+    const startedAt = Date.now();
     const session = await host.getSession();
     if (session === undefined) {
       unavailable.push(host.id);
@@ -113,7 +114,7 @@ async function collectSources(
     }
     let projectIds: string[];
     try {
-      projectIds = (await hostProjects<{ id: string; kind: string }>(session)).map((project) => project.id);
+      projectIds = (await hostProjects<{ id: string; kind: string }>(session, startedAt)).map((project) => project.id);
     } catch (error) {
       if (error instanceof HostSourceError && error.code !== undefined) throw error;
       unavailable.push(host.id);

@@ -98,8 +98,13 @@ export async function hostGet<T>(
   return body.data;
 }
 
-export async function hostProjects<T extends { readonly kind: string }>(session: HostSession): Promise<T[]> {
-  const data = await hostGet<{ items: T[] }>(session, '/api/v1/workspaces', {}, HOST_PROJECTS_TIMEOUT_MS);
+export async function hostProjects<T extends { readonly kind: string }>(
+  session: HostSession,
+  startedAt = Date.now(),
+): Promise<T[]> {
+  const timeoutMs = HOST_PROJECTS_TIMEOUT_MS - (Date.now() - startedAt);
+  if (timeoutMs <= 0) throw new HostSourceError(undefined, 'host project discovery timed out');
+  const data = await hostGet<{ items: T[] }>(session, '/api/v1/workspaces', {}, timeoutMs);
   return data.items.filter((workspace) => workspace.kind === 'managed');
 }
 
@@ -110,14 +115,15 @@ export interface HostCollection<T> {
 
 export async function collectFromHosts<T extends object>(
   hosts: HostSources,
-  fetch: (session: HostSession) => Promise<readonly T[]>,
+  fetch: (session: HostSession, startedAt: number) => Promise<readonly T[]>,
 ): Promise<HostCollection<T>> {
   const results = await Promise.all(
     hosts.sources().map(async (source) => {
+      const startedAt = Date.now();
       const session = await source.getSession();
       if (session === undefined) return { id: source.id, items: undefined };
       try {
-        const items = await fetch(session);
+        const items = await fetch(session, startedAt);
         return { id: source.id, items: items.map((item) => ({ ...item, host_id: source.id })) };
       } catch {
         return { id: source.id, items: undefined };

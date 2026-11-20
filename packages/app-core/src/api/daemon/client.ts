@@ -441,7 +441,7 @@ export class DaemonKimiWebApi implements KimiWebApi {
       query: input?.query,
       sort: input?.sort,
       include: input?.include,
-      hosts: input?.localOnly === true || hasWorkspaceCursor ? undefined : this.hostsQuery(),
+      hosts: input?.localOnly === true || (hasWorkspaceCursor && this.opts.includeHosts !== true) ? undefined : this.hostsQuery(),
     };
     const data = await this.http.get<WireSessionsPage>('/sessions', query, options);
     return {

@@ -361,10 +361,21 @@ describe('projects across hosts', () => {
     const transport = new PassThrough();
     const stalled = new StdioHostSession(transport);
     const project = { id: 'wm_healthy', kind: 'managed' } as const;
-    const hosts = sourcesOf([
+    const healthy = sourcesOf([
       { id: 'healthy', session: fakeHost([project], [{ id: 'remote', workspace: project.id, updated: 10 }]) },
-      { id: 'stalled', session: stalled },
-    ]);
+    ]).sources()[0]!;
+    const hosts: HostSources = {
+      sources: () => [
+        healthy,
+        {
+          id: 'stalled',
+          getSession: async () => {
+            await new Promise<void>((resolve) => setTimeout(resolve, 2_000));
+            return stalled;
+          },
+        },
+      ],
+    };
     const onProjects = vi.fn();
     const onGroups = vi.fn();
     try {
