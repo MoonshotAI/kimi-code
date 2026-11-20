@@ -122,7 +122,7 @@ Tower 与 Goal、Plan 和 swarm 模式互斥。进入 Tower 会退出 Plan 或 s
 - "让 worker agent-docs 使用 smart/slow。"
 - "让审查 feat/build-gemm 的 reviewer 使用 smart/slow。"
 
-可选值仅限池中别名（`[secondary_model.models]` 的 key，或单独一行的 `default_model`）；只存在于 `[models]` 而不在池内的别名不能被接受。配置模型池后即提供 `model` 参数（含单条目池），reviewer 可用它显式沿用池中模型。
+配置模型池时，可选值仅限池中别名（`[secondary_model.models]` 的 key，或单独一行的 `default_model`）；未配置模型池时显式传入任何 `model` 都会被拒绝，只存在于 `[models]` 中的别名同样会被拒绝。`model` 参数始终可用（含单条目池），reviewer 可用它显式选用池中模型。
 
 如果希望控制 token 开支，可以把池默认值设为成本较低的模型：worker 默认使用它；worker 和 reviewer 都可以在单次派生时显式指定池中别名，覆盖各自的默认选择。
 

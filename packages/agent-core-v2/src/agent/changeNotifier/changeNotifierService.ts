@@ -27,7 +27,6 @@ import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalo
 import { DEFAULT_AGENT_PROFILE_NAME } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { loadAgentsMdForRoots, splitAgentsMdFiles, type LoadedAgentsMd } from '#/agent/profile/context';
-import { resolveSubagentModelPool, type SubagentModelPool } from '#/session/subagent/configSection';
 import { isToolActiveComposed } from '#/agent/toolPolicy/evaluate';
 import { TOOLS_SECTION, type ToolsConfig } from '#/agent/toolPolicy/configSection';
 import { ISessionToolPolicy } from '#/session/sessionToolPolicy/sessionToolPolicy';
@@ -37,8 +36,8 @@ import { workspaceRootKey } from '#/_base/utils/workdir-slug';
 import {
   IAgentChangeNotifierService,
   type BeliefsSeed,
+  type ReloadNotificationGuard,
   type SubagentChangesInput,
-  type SubagentModelPoolSnapshot,
 } from './changeNotifier';
 import {
   ChangeNotifierSnapshotEvent,
@@ -77,9 +76,7 @@ export class AgentChangeNotifierService extends Disposable implements IAgentChan
   private muted = false;
   private workspaceDirsNotificationTail: Promise<void> = Promise.resolve();
 
-  private legacySubagentBaseline:
-    | { readonly names: readonly string[]; readonly pool: SubagentModelPoolSnapshot | undefined }
-    | undefined;
+  private legacySubagentBaseline: { readonly names: readonly string[] } | undefined;
 
   constructor(
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
@@ -129,7 +126,6 @@ export class AgentChangeNotifierService extends Disposable implements IAgentChan
       if (this.snapshot.subagentNames !== undefined) return;
       this.legacySubagentBaseline = {
         names: this.agentCatalog.list().map((profile) => profile.name),
-        pool: snapshotModelPool(resolveSubagentModelPool(this.config)),
       };
     });
   }
@@ -144,6 +140,25 @@ export class AgentChangeNotifierService extends Disposable implements IAgentChan
 
   unmute(): void {
     this.muted = false;
+  }
+
+  prepareForReload(): ReloadNotificationGuard {
+    const previousSubagentNames = this.agentCatalog.list().map((profile) => profile.name);
+    this.mute();
+    return {
+      previousSubagentNames,
+      restoreAfterFailure: async () => {
+        this.unmute();
+        await this.notifyAllChanges().catch(() => undefined);
+      },
+    };
+  }
+
+  async notifyAllChanges(input?: SubagentChangesInput): Promise<void> {
+    await this.notifyAgentsMdChanges();
+    await this.notifySkillChanges();
+    await this.notifySubagentChanges(input);
+    await this.notifyWorkspaceDirsChanges();
   }
 
   async notifyAgentsMdChanges(): Promise<void> {
@@ -245,12 +260,10 @@ export class AgentChangeNotifierService extends Disposable implements IAgentChan
       await this.agentCatalog.ready;
       const currentProfileList = this.agentCatalog.list();
       const currentProfiles = currentProfileList.map((profile) => profile.name);
-      const currentPool = snapshotModelPool(resolveSubagentModelPool(this.config));
       const snapshot = this.snapshot;
       if (
         snapshot.subagentNames !== undefined &&
-        sameStringSet(currentProfiles, snapshot.subagentNames) &&
-        sameModelPool(currentPool, snapshot.modelPool)
+        sameStringSet(currentProfiles, snapshot.subagentNames)
       ) {
         return;
       }
@@ -260,33 +273,11 @@ export class AgentChangeNotifierService extends Disposable implements IAgentChan
         input?.previousSubagentNames ??
         this.legacySubagentBaseline?.names ??
         currentProfiles;
-      const basePool =
-        snapshot.subagentNames !== undefined
-          ? (snapshot.modelPool ?? null)
-          : input?.previousModelPool !== undefined
-            ? input.previousModelPool
-            : this.legacySubagentBaseline !== undefined
-              ? (this.legacySubagentBaseline.pool ?? null)
-              : currentPool;
       const profilesAdded = difference(currentProfiles, baseProfiles).map((name) => {
         const profile = currentProfileList.find((candidate) => candidate.name === name);
         return { name, description: profile?.description, whenToUse: profile?.whenToUse };
       });
       const profilesRemoved = difference(baseProfiles, currentProfiles);
-      const modelsAdded = difference(poolAliases(currentPool), poolAliases(basePool));
-      const modelsRemoved = difference(poolAliases(basePool), poolAliases(currentPool));
-      const modelsUpdated = poolAliases(currentPool).filter(
-        (alias) =>
-          basePool?.models[alias] !== undefined &&
-          basePool.models[alias] !== currentPool?.models[alias],
-      );
-      const defaultModelChange =
-        currentPool !== undefined &&
-        basePool !== null &&
-        basePool !== undefined &&
-        currentPool.defaultModel !== basePool.defaultModel
-          ? { from: basePool.defaultModel, to: currentPool.defaultModel }
-          : undefined;
       const allowlist = this.boundExplicitAllowlist(profileData);
       const visibleAdded =
         allowlist === undefined
@@ -296,16 +287,8 @@ export class AgentChangeNotifierService extends Disposable implements IAgentChan
         allowlist === undefined
           ? profilesRemoved
           : profilesRemoved.filter((name) => allowlist.includes(name));
-      await this.recordSnapshot({ subagentNames: currentProfiles, modelPool: currentPool });
-      if (
-        visibleAdded.length +
-          visibleRemoved.length +
-          modelsAdded.length +
-          modelsRemoved.length +
-          modelsUpdated.length ===
-          0 &&
-        defaultModelChange === undefined
-      ) {
+      await this.recordSnapshot({ subagentNames: currentProfiles });
+      if (visibleAdded.length + visibleRemoved.length === 0) {
         return;
       }
       if (
@@ -318,10 +301,6 @@ export class AgentChangeNotifierService extends Disposable implements IAgentChan
         subagentsChangeText({
           profilesAdded: visibleAdded,
           profilesRemoved: visibleRemoved,
-          modelsAdded,
-          modelsRemoved,
-          modelsUpdated,
-          defaultModelChange,
         }),
         { variant: SUBAGENTS_CHANGE_VARIANT },
       );
@@ -413,14 +392,12 @@ export class AgentChangeNotifierService extends Disposable implements IAgentChan
     try {
       await this.workspaceInfo.ready;
       const files = hashAgentsMdContents(splitAgentsMdFiles(seed.agentsMd, seed.agentsMdPaths));
-      const pool = resolveSubagentModelPool(this.config);
       const snapshot = this.snapshot;
       await this.recordSnapshot({
         agentsMdHash: undefined,
         agentsMdFiles: files,
         skillsHash: hashText(seed.skillsListing),
         subagentNames: this.agentCatalog.list().map((profile) => profile.name),
-        modelPool: snapshotModelPool(pool),
         workspacePrimaryByWorkspace:
           snapshot.workspacePrimaryByWorkspace ?? { ...this.workspaceInfo.primaryByWorkspace },
         workspaceAdditionalDirs:
@@ -466,31 +443,6 @@ function difference(left: readonly string[], right: readonly string[]): string[]
 
 function sameStringSet(left: readonly string[], right: readonly string[]): boolean {
   return left.length === right.length && left.every((item) => right.includes(item));
-}
-
-function snapshotModelPool(pool: SubagentModelPool | undefined): SubagentModelPoolSnapshot | undefined {
-  if (pool === undefined) return undefined;
-  return { defaultModel: pool.defaultModel, models: { ...pool.models } };
-}
-
-function poolAliases(pool: SubagentModelPoolSnapshot | null | undefined): readonly string[] {
-  return pool === undefined || pool === null ? [] : Object.keys(pool.models);
-}
-
-function sameModelPool(
-  left: SubagentModelPoolSnapshot | null | undefined,
-  right: SubagentModelPoolSnapshot | null | undefined,
-): boolean {
-  if (left === undefined || left === null || right === undefined || right === null) {
-    return (left ?? null) === (right ?? null);
-  }
-  if (left.defaultModel !== right.defaultModel) return false;
-  const leftAliases = Object.keys(left.models);
-  const rightAliases = Object.keys(right.models);
-  return (
-    leftAliases.length === rightAliases.length &&
-    leftAliases.every((alias) => right.models[alias] === left.models[alias])
-  );
 }
 
 function hashAgentsMdContents(contents: ReadonlyMap<string, string>): Record<string, string> {
@@ -589,32 +541,13 @@ function subagentsChangeText(diff: {
     readonly whenToUse?: string;
   }[];
   readonly profilesRemoved: readonly string[];
-  readonly modelsAdded: readonly string[];
-  readonly modelsRemoved: readonly string[];
-  readonly modelsUpdated: readonly string[];
-  readonly defaultModelChange?: { readonly from?: string; readonly to?: string };
 }): string {
-  const lines = ['The available subagent profiles and models changed:'];
+  const lines = ['The available subagent profiles changed:'];
   if (diff.profilesAdded.length > 0) {
     lines.push(`- Profiles added: ${diff.profilesAdded.map(addedProfileLabel).join(', ')}`);
   }
   if (diff.profilesRemoved.length > 0) {
     lines.push(`- Profiles removed: ${diff.profilesRemoved.join(', ')}`);
-  }
-  if (diff.modelsAdded.length > 0) lines.push(`- Models added: ${diff.modelsAdded.join(', ')}`);
-  if (diff.modelsRemoved.length > 0) lines.push(`- Models removed: ${diff.modelsRemoved.join(', ')}`);
-  if (diff.modelsUpdated.length > 0) {
-    lines.push(`- Model descriptions updated: ${diff.modelsUpdated.join(', ')}`);
-  }
-  if (diff.defaultModelChange !== undefined) {
-    const { from, to } = diff.defaultModelChange;
-    if (from !== undefined && to !== undefined) {
-      lines.push(`- Default model changed: ${from} → ${to}`);
-    } else if (to !== undefined) {
-      lines.push(`- Default model set: ${to}`);
-    } else if (from !== undefined) {
-      lines.push(`- Default model cleared (was ${from})`);
-    }
   }
   lines.push('You can use them right away — the Agent tool validates subagent_type against the live catalog.');
   return lines.join('\n');
