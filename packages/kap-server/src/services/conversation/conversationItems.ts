@@ -71,7 +71,7 @@ export function userMessageItem(
   content: readonly ContentPart[],
   time: number,
 ): UserMessageItem {
-  const presented = originOf(origin);
+  const presented = userMessageOriginOf(origin);
   const text: string[] = [];
   const attachments: Attachment[] = [];
   for (const part of content) {
@@ -336,7 +336,7 @@ function cronPromptOf(text: string): string {
   return CRON_FIRE_ENVELOPE.exec(text)?.[1] ?? text;
 }
 
-function originOf(origin: PromptOrigin | undefined): UserMessageOrigin {
+export function userMessageOriginOf(origin: PromptOrigin | undefined): UserMessageOrigin {
   switch (origin?.kind) {
     case undefined:
     case 'user':

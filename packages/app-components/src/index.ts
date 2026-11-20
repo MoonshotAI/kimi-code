@@ -94,6 +94,7 @@ export { default as ToolDisclosure } from './chat/tool-calls/ToolDisclosure.vue'
 export { default as WaitForTool } from './chat/tool-calls/WaitForTool.vue';
 export { default as WebFetchTool } from './chat/tool-calls/WebFetchTool.vue';
 export { default as Composer } from './composer/Composer.vue';
+export { default as ContextComposition } from './composer/ContextComposition.vue';
 export { default as ContextSummaryBody } from './composer/ContextSummaryBody.vue';
 export { default as MentionMenu } from './composer/MentionMenu.vue';
 export { default as SlashMenu } from './composer/SlashMenu.vue';
