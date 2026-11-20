@@ -3,7 +3,7 @@ import { computed, inject, nextTick, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Icon } from '@moonshot-ai/app-ui';
 import { HistoryStateKey } from '@moonshot-ai/app-core/contracts';
-import HistoryWindow from './HistoryWindow.vue';
+import BlockList from './BlockList.vue';
 import { PinScrollKey } from '@moonshot-ai/app-client/contracts';
 import { Markdown } from '@moonshot-ai/app-markdown';
 import ThinkingBlock from './ThinkingBlock.vue';
@@ -196,7 +196,7 @@ function isRunLive(block: { items: { sourceIndex: number }[] }): boolean {
     </button>
     <div v-if="bodyMounted" class="tf-body" :class="{ open: bodyOpen }" :inert="!effectiveOpen">
       <div class="tf-body-inner">
-        <HistoryWindow :items="visibleItems" :item-key="renderBlockKey" :enabled="!!historyState" scope="turn-fold" :tail="1"><template #default="{ item: blk }">
+        <BlockList :items="visibleItems" :item-key="renderBlockKey" :enabled="!!historyState" scope="turn-fold"><template #default="{ item: blk }">
           <ThinkingBlock
             v-if="blk.kind === 'thinking'"
             :text="blk.thinking"
@@ -236,7 +236,7 @@ function isRunLive(block: { items: { sourceIndex: number }[] }): boolean {
           />
           <NotificationCard v-else-if="blk.kind === 'notification'" :items="blk.items" />
           <template v-if="blk.kind === 'thinking' || blk.kind === 'text' || blk.kind === 'tool'"><RequestDebugRow v-for="(debug, di) in blk.debug ?? []" :key="di" :debug="debug" /></template>
-        </template></HistoryWindow>
+        </template></BlockList>
       </div>
     </div>
   </div>
@@ -312,75 +312,75 @@ function isRunLive(block: { items: { sourceIndex: number }[] }): boolean {
   padding-right: var(--space-1-5);
 }
 .tf-body-inner > :deep(.think),
-.tf-body-inner > :deep(.history-window > .history-row > .think),
+.tf-body-inner > :deep(.block-list > .history-row > .think),
 .tf-body-inner > :deep(.tool-group),
-.tf-body-inner > :deep(.history-window > .history-row > .tool-group),
+.tf-body-inner > :deep(.block-list > .history-row > .tool-group),
 .tf-body-inner > :deep(.activity-run),
-.tf-body-inner > :deep(.history-window > .history-row > .activity-run),
+.tf-body-inner > :deep(.block-list > .history-row > .activity-run),
 .tf-body-inner > :deep(.agent-group),
-.tf-body-inner > :deep(.history-window > .history-row > .agent-group),
+.tf-body-inner > :deep(.block-list > .history-row > .agent-group),
 .tf-body-inner > :deep(.tool-line),
-.tf-body-inner > :deep(.history-window > .history-row > .tool-line),
+.tf-body-inner > :deep(.block-list > .history-row > .tool-line),
 .tf-body-inner > :deep(.media-tool),
-.tf-body-inner > :deep(.history-window > .history-row > .media-tool),
+.tf-body-inner > :deep(.block-list > .history-row > .media-tool),
 .tf-body-inner > :deep(.ask-receipt),
-.tf-body-inner > :deep(.history-window > .history-row > .ask-receipt) {
+.tf-body-inner > :deep(.block-list > .history-row > .ask-receipt) {
   margin-top: var(--chat-block-gap);
 }
 .tf-body-inner > :deep(.think),
-.tf-body-inner > :deep(.history-window > .history-row > .think),
+.tf-body-inner > :deep(.block-list > .history-row > .think),
 .tf-body-inner > :deep(.turn-fold),
-.tf-body-inner > :deep(.history-window > .history-row > .turn-fold),
+.tf-body-inner > :deep(.block-list > .history-row > .turn-fold),
 .tf-body-inner > :deep(.activity-run),
-.tf-body-inner > :deep(.history-window > .history-row > .activity-run) {
+.tf-body-inner > :deep(.block-list > .history-row > .activity-run) {
   margin-top: var(--chat-strip-gap);
 }
 .tf-body-inner > :deep(.tool-line),
-.tf-body-inner > :deep(.history-window > .history-row > .tool-line),
+.tf-body-inner > :deep(.block-list > .history-row > .tool-line),
 .tf-body-inner > :deep(.ntf-list),
-.tf-body-inner > :deep(.history-window > .history-row > .ntf-list) {
+.tf-body-inner > :deep(.block-list > .history-row > .ntf-list) {
   margin-top: var(--chat-group-gap);
 }
 .tf-body-inner > .msg + :deep(.tool-line),
-.tf-body-inner > :deep(.history-window > .history-row:has(> .msg) + .history-row > .tool-line),
+.tf-body-inner > :deep(.block-list > .history-row:has(> .msg) + .history-row > .tool-line),
 .tf-body-inner > .msg + :deep(.ntf-list),
-.tf-body-inner > :deep(.history-window > .history-row:has(> .msg) + .history-row > .ntf-list) {
+.tf-body-inner > :deep(.block-list > .history-row:has(> .msg) + .history-row > .ntf-list) {
   margin-top: var(--chat-strip-gap);
 }
 .tf-body-inner > :deep(.tool-line + .tool-line),
-.tf-body-inner > :deep(.history-window > .history-row:has(> .tool-line) + .history-row > .tool-line),
+.tf-body-inner > :deep(.block-list > .history-row:has(> .tool-line) + .history-row > .tool-line),
 .tf-body-inner > :deep(.ntf-list + .tool-line),
-.tf-body-inner > :deep(.history-window > .history-row:has(> .ntf-list) + .history-row > .tool-line),
+.tf-body-inner > :deep(.block-list > .history-row:has(> .ntf-list) + .history-row > .tool-line),
 .tf-body-inner > :deep(.tool-line + .ntf-list),
-.tf-body-inner > :deep(.history-window > .history-row:has(> .tool-line) + .history-row > .ntf-list) {
+.tf-body-inner > :deep(.block-list > .history-row:has(> .tool-line) + .history-row > .ntf-list) {
   margin-top: var(--chat-strip-tight);
 }
 .tf-body-inner > :deep(.tool-line.open + .tool-line),
-.tf-body-inner > :deep(.history-window > .history-row:has(> .tool-line.open) + .history-row > .tool-line),
+.tf-body-inner > :deep(.block-list > .history-row:has(> .tool-line.open) + .history-row > .tool-line),
 .tf-body-inner > :deep(.ntf-list:has(.tool-line.open) + .tool-line),
-.tf-body-inner > :deep(.history-window > .history-row:has(> .ntf-list .tool-line.open) + .history-row > .tool-line),
+.tf-body-inner > :deep(.block-list > .history-row:has(> .ntf-list .tool-line.open) + .history-row > .tool-line),
 .tf-body-inner > :deep(.tool-line.open + .ntf-list),
-.tf-body-inner > :deep(.history-window > .history-row:has(> .tool-line.open) + .history-row > .ntf-list) {
+.tf-body-inner > :deep(.block-list > .history-row:has(> .tool-line.open) + .history-row > .ntf-list) {
   margin-top: var(--chat-group-gap);
 }
 .tf-body-inner > :deep(.tool-line + .think),
 .tf-body-inner > :deep(.tool-line + .activity-run),
 .tf-body-inner > :deep(.ntf-list + .think),
 .tf-body-inner > :deep(.ntf-list + .activity-run),
-.tf-body-inner > :deep(.history-window > .history-row:has(> .tool-line) + .history-row > .think),
-.tf-body-inner > :deep(.history-window > .history-row:has(> .tool-line) + .history-row > .activity-run),
-.tf-body-inner > :deep(.history-window > .history-row:has(> .ntf-list) + .history-row > .think),
-.tf-body-inner > :deep(.history-window > .history-row:has(> .ntf-list) + .history-row > .activity-run) {
+.tf-body-inner > :deep(.block-list > .history-row:has(> .tool-line) + .history-row > .think),
+.tf-body-inner > :deep(.block-list > .history-row:has(> .tool-line) + .history-row > .activity-run),
+.tf-body-inner > :deep(.block-list > .history-row:has(> .ntf-list) + .history-row > .think),
+.tf-body-inner > :deep(.block-list > .history-row:has(> .ntf-list) + .history-row > .activity-run) {
   margin-top: var(--chat-strip-tight);
 }
 .tf-body-inner > :deep(.tool-line.open + .think),
 .tf-body-inner > :deep(.tool-line.open + .activity-run),
 .tf-body-inner > :deep(.ntf-list:has(.tool-line.open) + .think),
 .tf-body-inner > :deep(.ntf-list:has(.tool-line.open) + .activity-run),
-.tf-body-inner > :deep(.history-window > .history-row:has(> .tool-line.open) + .history-row > .think),
-.tf-body-inner > :deep(.history-window > .history-row:has(> .tool-line.open) + .history-row > .activity-run),
-.tf-body-inner > :deep(.history-window > .history-row:has(> .ntf-list .tool-line.open) + .history-row > .think),
-.tf-body-inner > :deep(.history-window > .history-row:has(> .ntf-list .tool-line.open) + .history-row > .activity-run) {
+.tf-body-inner > :deep(.block-list > .history-row:has(> .tool-line.open) + .history-row > .think),
+.tf-body-inner > :deep(.block-list > .history-row:has(> .tool-line.open) + .history-row > .activity-run),
+.tf-body-inner > :deep(.block-list > .history-row:has(> .ntf-list .tool-line.open) + .history-row > .think),
+.tf-body-inner > :deep(.block-list > .history-row:has(> .ntf-list .tool-line.open) + .history-row > .activity-run) {
   margin-top: var(--chat-group-gap);
 }
 
@@ -393,15 +393,15 @@ function isRunLive(block: { items: { sourceIndex: number }[] }): boolean {
 .turn-fold.streaming .tf-body-inner > :deep(.ntf-list:first-child),
 .turn-fold.streaming .tf-body-inner > :deep(.media-tool:first-child),
 .turn-fold.streaming .tf-body-inner > :deep(.ask-receipt:first-child),
-.turn-fold.streaming .tf-body-inner > :deep(.history-window > .history-row:first-child > .msg),
-.turn-fold.streaming .tf-body-inner > :deep(.history-window > .history-row:first-child > .think),
-.turn-fold.streaming .tf-body-inner > :deep(.history-window > .history-row:first-child > .tool-group),
-.turn-fold.streaming .tf-body-inner > :deep(.history-window > .history-row:first-child > .activity-run),
-.turn-fold.streaming .tf-body-inner > :deep(.history-window > .history-row:first-child > .agent-group),
-.turn-fold.streaming .tf-body-inner > :deep(.history-window > .history-row:first-child > .tool-line),
-.turn-fold.streaming .tf-body-inner > :deep(.history-window > .history-row:first-child > .ntf-list),
-.turn-fold.streaming .tf-body-inner > :deep(.history-window > .history-row:first-child > .media-tool),
-.turn-fold.streaming .tf-body-inner > :deep(.history-window > .history-row:first-child > .ask-receipt) {
+.turn-fold.streaming .tf-body-inner > :deep(.block-list > .history-row:first-child > .msg),
+.turn-fold.streaming .tf-body-inner > :deep(.block-list > .history-row:first-child > .think),
+.turn-fold.streaming .tf-body-inner > :deep(.block-list > .history-row:first-child > .tool-group),
+.turn-fold.streaming .tf-body-inner > :deep(.block-list > .history-row:first-child > .activity-run),
+.turn-fold.streaming .tf-body-inner > :deep(.block-list > .history-row:first-child > .agent-group),
+.turn-fold.streaming .tf-body-inner > :deep(.block-list > .history-row:first-child > .tool-line),
+.turn-fold.streaming .tf-body-inner > :deep(.block-list > .history-row:first-child > .ntf-list),
+.turn-fold.streaming .tf-body-inner > :deep(.block-list > .history-row:first-child > .media-tool),
+.turn-fold.streaming .tf-body-inner > :deep(.block-list > .history-row:first-child > .ask-receipt) {
   margin-top: 0;
 }
 

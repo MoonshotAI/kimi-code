@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { createApp, h, nextTick, type App } from 'vue';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const clientState = vi.hoisted(() => ({
   activeSessionId: null as null | { value: string | null },
@@ -61,6 +61,11 @@ import { createComposerSnapshot, textToDoc } from '@moonshot-ai/app-composer/mod
 let app: App | undefined;
 let host: HTMLDivElement;
 let storage: Map<string, string>;
+
+beforeAll(async () => {
+  await import('../src/composer/Composer.vue');
+  vi.resetModules();
+});
 
 beforeEach(() => {
   storage = new Map<string, string>();
