@@ -47,21 +47,8 @@ export function describeDifferences(differences: readonly JsonDifference[]): str
 
 export async function expectGolden(path: string, value: unknown, options: GoldenOptions): Promise<void> {
   const text = stableJson(value);
-  if (process.env[REFRESH_ENV] === options.kind) {
-    if (process.env['CI']) throw new TestkitError(`CI only verifies committed goldens; refresh ${path} locally with: ${options.refreshCommand}`);
-    await writeAtomically(path, text);
-    return;
-  }
-  let committed: string;
-  try {
-    committed = (await readFile(path, 'utf8')).replaceAll('\r\n', '\n');
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-      throw new TestkitError(`Missing golden ${path}; create it intentionally with: ${options.refreshCommand}`, { cause: error });
-    }
-    throw error;
-  }
-  if (committed === text) return;
+  const committed = await mismatchedGolden(path, text, options);
+  if (committed === undefined) return;
   const differences = jsonDifferences(JSON.parse(committed), JSON.parse(text));
   const summary = differences.length === 0
     ? [`${path} has the same data as the committed golden but different formatting:`]
@@ -70,21 +57,8 @@ export async function expectGolden(path: string, value: unknown, options: Golden
 }
 
 export async function expectTextGolden(path: string, text: string, options: GoldenOptions): Promise<void> {
-  if (process.env[REFRESH_ENV] === options.kind) {
-    if (process.env['CI']) throw new TestkitError(`CI only verifies committed goldens; refresh ${path} locally with: ${options.refreshCommand}`);
-    await writeAtomically(path, text);
-    return;
-  }
-  let committed: string;
-  try {
-    committed = (await readFile(path, 'utf8')).replaceAll('\r\n', '\n');
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-      throw new TestkitError(`Missing golden ${path}; create it intentionally with: ${options.refreshCommand}`, { cause: error });
-    }
-    throw error;
-  }
-  if (committed === text) return;
+  const committed = await mismatchedGolden(path, text, options);
+  if (committed === undefined) return;
   const before = new Set(committed.split('\n'));
   const after = new Set(text.split('\n'));
   const lines = [
@@ -102,6 +76,24 @@ export async function expectTextGolden(path: string, text: string, options: Gold
       `To accept the change intentionally: ${options.refreshCommand}`,
     ].join('\n'),
   );
+}
+
+async function mismatchedGolden(path: string, text: string, options: GoldenOptions): Promise<string | undefined> {
+  if (process.env[REFRESH_ENV] === options.kind) {
+    if (process.env['CI']) throw new TestkitError(`CI only verifies committed goldens; refresh ${path} locally with: ${options.refreshCommand}`);
+    await writeAtomically(path, text);
+    return undefined;
+  }
+  let committed: string;
+  try {
+    committed = (await readFile(path, 'utf8')).replaceAll('\r\n', '\n');
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      throw new TestkitError(`Missing golden ${path}; create it intentionally with: ${options.refreshCommand}`, { cause: error });
+    }
+    throw error;
+  }
+  return committed === text ? undefined : committed;
 }
 
 async function writeAtomically(path: string, text: string): Promise<void> {

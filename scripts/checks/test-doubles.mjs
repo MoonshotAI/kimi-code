@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { existsSync, readFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 
-import { compareCounts } from './ratchet.mjs';
+import { ratchetBaseline } from './ratchet.mjs';
 
 const ROOT = resolve(import.meta.dirname, '../..');
 const CHECK_FILE = 'scripts/checks/test-doubles.mjs';
@@ -122,14 +122,6 @@ function trackedFiles() {
   return output.split('\0').filter((file) => file !== '' && isCheckedFile(file) && existsSync(join(ROOT, file)));
 }
 
-function sortCounts(counts) {
-  return Object.fromEntries(
-    Object.keys(counts)
-      .toSorted()
-      .map((id) => [id, Object.fromEntries(Object.keys(counts[id]).toSorted().map((file) => [file, counts[id][file]]))]),
-  );
-}
-
 export function main(args) {
   const known = new Set(['--update', '--allow-increase']);
   if (args.some((arg) => !known.has(arg)) || (args.includes('--allow-increase') && !args.includes('--update'))) {
@@ -137,21 +129,12 @@ export function main(args) {
     return 2;
   }
   const counts = countLegacyDoubles(trackedFiles().map((file) => ({ file, text: readFileSync(join(ROOT, file), 'utf8') })));
-  const baselinePath = join(ROOT, BASELINE_FILE);
-  const baseline = existsSync(baselinePath) ? JSON.parse(readFileSync(baselinePath, 'utf8')) : {};
-  const changes = compareCounts(baseline, counts);
-  if (args.includes('--update')) {
-    const added = changes.filter((change) => change.kind === 'added');
-    if (added.length > 0 && !args.includes('--allow-increase')) {
-      process.stderr.write(`${formatReport(added).join('\n')}\n`);
-      return 1;
-    }
-    mkdirSync(dirname(baselinePath), { recursive: true });
-    writeFileSync(baselinePath, `${JSON.stringify(sortCounts(counts), null, 2)}\n`);
+  const outcome = ratchetBaseline(join(ROOT, BASELINE_FILE), counts, args);
+  if (outcome.status === 'written') {
     process.stdout.write(`✓ test-doubles: wrote ${BASELINE_FILE}\n`);
     return 0;
   }
-  const report = formatReport(changes);
+  const report = formatReport(outcome.changes);
   if (report.length > 0) {
     process.stderr.write(`${report.join('\n')}\n`);
     return 1;
