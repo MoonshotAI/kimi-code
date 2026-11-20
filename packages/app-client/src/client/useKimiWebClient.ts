@@ -749,6 +749,7 @@ function canUsePromptPrediction(sessionId: string): boolean {
 
 const promptPredictionController = createPromptPrediction({
   api: getKimiWebApi,
+  isActiveSession: (sessionId) => sessionId === rawState.activeSessionId,
   canPredict: canUsePromptPrediction,
   hasEmptyInput: hasEmptyPromptPredictionInput,
 });
