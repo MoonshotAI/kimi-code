@@ -51,6 +51,7 @@ function conversation(state: 'running' | 'completed'): ChatTurn[] {
 }
 
 const turns = ref<ChatTurn[]>([]);
+const session = ref('s1');
 
 let app: App | null = null;
 let host: HTMLDivElement;
@@ -58,11 +59,12 @@ let resolve: (value: TurnFileChangesResult) => void;
 
 function mount(state: 'running' | 'completed'): void {
   turns.value = conversation(state);
+  session.value = 's1';
   const fetcher = Object.assign(
     vi.fn(() => new Promise<TurnFileChangesResult>((done) => { resolve = done; })),
     { getSignal: () => undefined },
   ) as FetchTurnFileChanges;
-  app = createApp({ render: () => h(ChatPane, { turns: turns.value, sessionId: 's1', windowHistory: false }) });
+  app = createApp({ render: () => h(ChatPane, { turns: turns.value, sessionId: session.value, windowHistory: false }) });
   app.use(createKimiI18n({ locale: 'en' }));
   app.provide(FetchTurnFileChangesKey, fetcher);
   app.mount(host);
@@ -129,4 +131,13 @@ it('does not reserve a card for turns that had already settled when the session 
   resolve([{ path: 'a.ts', status: 'modified', additions: 1, deletions: 0 }]);
   await settle();
   expect(host.querySelector('.turn-files')?.hasAttribute('aria-busy')).toBe(false);
+});
+
+it('does not reserve a card for a settled turn that reuses a live turn id from the previous session', async () => {
+  mount('running');
+  await nextTick();
+  session.value = 's2';
+  turns.value = conversation('completed');
+  await nextTick();
+  expect(host.querySelector('.turn-files')).toBeNull();
 });

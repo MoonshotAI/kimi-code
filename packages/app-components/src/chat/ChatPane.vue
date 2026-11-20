@@ -268,11 +268,14 @@ function forkAssistantRun(turn: ChatTurn): void {
   emit('forkTurn', { turnIndex: turn.forkTurnIndex });
 }
 
-const liveTurnIds = new Set<number>();
+const liveTurnKeys = new Set<string>();
+function liveTurnKey(turnId: number): string {
+  return `${props.sessionId ?? ''}:${turnId}`;
+}
 watchSyncEffect(() => {
   for (const group of assistantTurnGroups.value.values()) {
     const turnId = group[0]!.daemonTurnId;
-    if (turnId !== undefined && !groupSettled(group)) liveTurnIds.add(turnId);
+    if (turnId !== undefined && !groupSettled(group)) liveTurnKeys.add(liveTurnKey(turnId));
   }
 });
 
@@ -284,7 +287,7 @@ const turnFileChangesById = computed(() => {
     if (turnId === undefined || !groupSettled(group)) continue;
     const fetched = fetchedFileStats.value.get(turnId);
     if (fetched === 'pending') {
-      if (!liveTurnIds.has(turnId)) continue;
+      if (!liveTurnKeys.has(liveTurnKey(turnId))) continue;
       const expected = editedFileCount(group, props.cwd);
       if (expected > 0) map.set(group[group.length - 1]!.id, { changes: [], daemonTurnId: turnId, expected });
       continue;
