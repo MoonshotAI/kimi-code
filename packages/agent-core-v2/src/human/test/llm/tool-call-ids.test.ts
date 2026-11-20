@@ -213,4 +213,77 @@ describe('LLM tool call id normalization', () => {
       ['call_1__2', 'call_1'],
     ]);
   });
+
+  it('preserves tool-call id from early id-only delta without function object', async () => {
+    const chunks = [
+      {
+        id: 'chatcmpl-1',
+        object: 'chat.completion.chunk',
+        created: 0,
+        model: 'test-model',
+        choices: [
+          {
+            index: 0,
+            delta: {
+              tool_calls: [
+                {
+                  index: 0,
+                  id: 'call_expected',
+                  type: 'function',
+                },
+              ],
+            },
+          },
+        ],
+      },
+      {
+        id: 'chatcmpl-1',
+        object: 'chat.completion.chunk',
+        created: 0,
+        model: 'test-model',
+        choices: [
+          {
+            index: 0,
+            delta: {
+              tool_calls: [
+                {
+                  index: 0,
+                  function: { name: 'Bash', arguments: '{}' },
+                },
+              ],
+            },
+            finish_reason: 'tool_calls',
+          },
+        ],
+      },
+    ];
+    const requester = createCoreRequester().with({
+      protocol: { base: openAIProtocol },
+      endpoint: {
+        baseUrl: 'https://example.test/v1',
+        clientFactory: () => ({
+          chat: { completions: { create: () => withResponseStream(chunks) } },
+        }),
+      },
+    });
+    const parts: StreamedMessagePart[] = [];
+    const outcome = await requester.generate(
+      {
+        model: { spec: { provider: 'openai', name: 'test-model' } },
+        content: {
+          messages: [createUserMessage('hi')],
+        },
+      },
+      {
+        signal: new AbortController().signal,
+        onEvent: (event) => {
+          if (event.type === 'llm.streaming.part') parts.push(event.part);
+        },
+      },
+    );
+
+    expect(parts.filter(isToolCall).map((part) => part.id)).toEqual(['call_expected']);
+    if (outcome.type !== 'done') throw new Error('expected done outcome');
+    expect(outcome.message.toolCalls.map((call) => call.id)).toEqual(['call_expected']);
+  });
 });
