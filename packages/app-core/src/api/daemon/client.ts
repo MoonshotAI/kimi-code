@@ -139,6 +139,7 @@ import type {
   WireImportCustomRegistryResult,
   WireMcpAuthBeginResult,
   WireMcpAuthStatus,
+  WireMcpServerAuthInspection,
   WireModel,
   WireOAuthCancelResult,
   WireOAuthLoginPollResult,
@@ -1107,6 +1108,17 @@ export class DaemonKimiWebApi implements KimiWebApi {
       cwd: options?.cwd,
     });
     return data.map(toAppMcpAuthStatus);
+  }
+
+  async inspectMcpAuthStatuses(
+    locators: AppMcpServerLocator[],
+    options?: { cwd?: string },
+  ): Promise<AppMcpAuthStatus[]> {
+    const data = await this.http.post<WireMcpServerAuthInspection[]>('/mcp/servers::inspect', {
+      targets: locators.map(toWireMcpServerLocator),
+      cwd: options?.cwd,
+    });
+    return data.map((item) => ({ name: item.runtime_name, authStatus: item.auth_status }));
   }
 
   async beginMcpAuth(
