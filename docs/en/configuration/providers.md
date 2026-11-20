@@ -12,11 +12,11 @@ The `type` field in the `providers` table determines which protocol implementati
 | [`anthropic`](#anthropic) | Anthropic Messages | Claude model family |
 | [`openai`](#openai) | OpenAI Chat Completions | OpenAI and compatible services, DeepSeek, Qwen, etc. |
 | [`openai_responses`](#openai_responses) | OpenAI Responses API | OpenAI's newer Responses interface |
-| [`bedrock`](#bedrock) | Anthropic Messages / OpenAI-compatible (per model) | Amazon Bedrock |
 | [`google-genai`](#google-genai) | Google GenAI | Gemini API |
 | [`vertexai`](#vertexai) | Google GenAI on Vertex | Google Cloud Vertex AI |
+| [`bedrock`](#bedrock) | Anthropic Messages / OpenAI-compatible (per model) | Amazon Bedrock |
 
-All providers communicate with models in streaming mode by default. Capabilities such as thinking, vision, and tool use are matched automatically by model name prefix, so you typically do not need to declare them manually. For most Bedrock models, including Kimi models, declare `capabilities` explicitly according to the [Bedrock model card](https://docs.aws.amazon.com/bedrock/latest/userguide/model-cards.html).
+All providers communicate with models in streaming mode by default. Capabilities such as thinking, vision, and tool use are matched automatically by model name prefix, so you typically do not need to declare them manually.
 
 **Credential priority**: `api_key` or `api_key_env` (mutually exclusive alternatives — set exactly one) > `[providers.<name>.env]` sub-table key (only when neither is present) > if all are absent, startup fails with an error. Except for the explicitly declared `api_key_env`, the CLI does not fall back to shell environment variables for credentials. See [Config overrides: provider credentials](./overrides.md#provider-credentials).
 
@@ -160,71 +160,6 @@ api_key = "xxxxx"
 base_url = "https://your-gateway.example"
 ```
 
-## `bedrock`
-
-For connecting to Amazon Bedrock. One `bedrock` provider can serve models over the Anthropic Messages API or the OpenAI-compatible APIs — the wire protocol is inferred per model from the Bedrock model ID, so Claude, GPT, and Kimi models can share a single provider entry.
-
-::: info Added
-The native `bedrock` provider was added in Kimi Code CLI v2.7.0.
-:::
-
-### Authentication
-
-Providers with `type = "bedrock"` can use the standard [AWS CLI credential chain](https://docs.aws.amazon.com/cli/latest/userguide/cli-chap-configure.html) to generate short-lived bearer tokens from your ambient AWS credentials (from SSO, instance roles, environment variables, shared config, and so on). Just specify your AWS region and optionally a named [profile](https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-files.html#cli-configure-files-using-profiles):
-
-```toml
-[providers.bedrock]
-type = "bedrock"
-
-[providers.bedrock.env]
-AWS_REGION = "us-east-1"
-# AWS_PROFILE = "my-profile"   # optional named AWS CLI profile
-```
-
-Alternatively, you can use an [Amazon Bedrock API key](https://docs.aws.amazon.com/bedrock/latest/userguide/api-keys.html) instead by configuring it through `api_key`, `api_key_env`, or the `AWS_BEARER_TOKEN_BEDROCK` key in the `[providers.bedrock.env]` sub-table. However, for security AWS generally advises against using long-lived API keys. A configured key always takes precedence over the ambient credential chain.
-
-The region must be resolvable from `AWS_REGION` or `AWS_DEFAULT_REGION` (in the sub-table or exported in the shell). Inferring a default region from `~/.aws/config` is not currently supported.
-
-### Endpoint URLs
-
-The base URL defaults to the regional `bedrock-runtime.<region>.amazonaws.com` endpoint — set `base_url` (or the `AWS_BEDROCK_BASE_URL` env key) only when you need a custom endpoint such as `bedrock-mantle`, a proxy, or a FIPS/dual-stack hostname. A custom `base_url` is the complete URL: it must include the wire path (`/anthropic` or `/openai/v1`) of the protocol your models serve, and the CLI uses it verbatim without appending a protocol suffix.
-
-### Models and wire protocol
-
-Bedrock model IDs use the form `<vendor>.<model>`, optionally with a cross-region inference profile prefix (`global.`, `us.`, `eu.`, …). The CLI infers the wire protocol from the model ID after stripping that prefix, choosing the API each model family actually serves on `bedrock-runtime`:
-
-- `anthropic.*` → Anthropic Messages API
-- `openai.gpt-oss*` → OpenAI Chat Completions API (the only OpenAI API these open-weight models serve on `bedrock-runtime`)
-- other `openai.*` → OpenAI Responses API (the only API GPT-6 / GPT-5.6 models serve; OpenAI's preferred direction)
-- `moonshotai.*` / `moonshot.*` → OpenAI Chat Completions API (recommended on the Kimi model cards)
-
-Any other prefix defaults to the OpenAI Chat Completions API. To pick a different API for a model that serves more than one, set `protocol` on the model alias explicitly:
-
-```toml
-[models."sonnet"]
-provider = "bedrock"
-model = "global.anthropic.claude-sonnet-4-6"
-max_context_size = 200000
-
-[models."gpt-6"]
-provider = "bedrock"
-model = "global.openai.gpt-6-astra"   # infers the OpenAI Responses API
-max_context_size = 1050000
-
-[models."gpt-oss"]
-provider = "bedrock"
-model = "openai.gpt-oss-120b-1:0"     # infers the OpenAI Chat Completions API
-max_context_size = 128000
-
-[models."kimi-k3-1-responses"]
-provider = "bedrock"
-model = "global.moonshotai.kimi-k3.1"
-protocol = "openai_responses"         # explicit override: Kimi K3.1 also serves the Responses API
-max_context_size = 1000000
-```
-
-Most current Bedrock models require an inference profile ID (the `global.` / `us.` / … prefix) rather than the base model ID; check the [model card](https://docs.aws.amazon.com/bedrock/latest/userguide/model-cards.html) for your target models for full details of supported APIs and inference profiles.
-
 ## `vertexai`
 
 Shares the same implementation as `google-genai`; setting `type = "vertexai"` switches to the Vertex AI access path.
@@ -246,6 +181,46 @@ kimi
 ```
 
 To route Vertex requests through a custom (e.g. proxied) endpoint, set `base_url` (or the `GOOGLE_VERTEX_BASE_URL` env var); when omitted, the SDK default regional `*-aiplatform.googleapis.com` host is used. A trailing `/v1beta1` is stripped before the request. The SDK appends `/v1beta1/publishers/google/models/…` itself.
+
+## `bedrock`
+
+For connecting to Amazon Bedrock. One `bedrock` provider can serve Claude, GPT, and Kimi models over the Anthropic Messages API or OpenAI-compatible APIs, with the wire protocol inferred from each model ID.
+
+::: info Added
+The native `bedrock` provider was added in Kimi Code CLI v2.7.0.
+:::
+
+The provider can use the standard [AWS CLI credential chain](https://docs.aws.amazon.com/cli/latest/userguide/cli-chap-configure.html) with ambient credentials from SSO, instance roles, environment variables, or shared config. Set your AWS Region and optionally a named [profile](https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-files.html#cli-configure-files-using-profiles), then declare a model:
+
+```toml
+[providers.bedrock]
+type = "bedrock"
+
+[providers.bedrock.env]
+AWS_REGION = "us-west-2"
+# AWS_PROFILE = "my-profile"
+
+[models."kimi-k3-1"]
+provider = "bedrock"
+model = "global.moonshotai.kimi-k3.1"
+max_context_size = 1000000
+capabilities = ["always_thinking", "thinking", "image_in", "tool_use"]
+```
+
+`model` accepts a Bedrock model or inference profile ID; most current models require an inference profile with a prefix such as `global.` or `us.`. Most Bedrock models, including Kimi models, also need explicit `capabilities`; check the [model card](https://docs.aws.amazon.com/bedrock/latest/userguide/model-cards.html) for the supported features and inference profiles.
+
+The Region must be resolvable from `AWS_REGION` or `AWS_DEFAULT_REGION` in the provider's `env` table or the shell; a Region configured only in `~/.aws/config` is not used. Alternatively, configure an [Amazon Bedrock API key](https://docs.aws.amazon.com/bedrock/latest/userguide/api-keys.html) with the provider's `api_key` / `api_key_env` fields or the `AWS_BEARER_TOKEN_BEDROCK` key in its `env` table. A configured key takes precedence over the ambient credential chain.
+
+After stripping the inference profile prefix, the CLI infers the wire protocol as follows:
+
+- `anthropic.*` → Anthropic Messages API
+- `openai.gpt-oss*` → OpenAI Chat Completions API
+- other `openai.*` → OpenAI Responses API
+- `moonshotai.*` / `moonshot.*` → OpenAI Chat Completions API
+
+Other prefixes default to OpenAI Chat Completions. Set `protocol` on the model alias to override the inferred API.
+
+The base URL defaults to the regional `bedrock-runtime.<region>.amazonaws.com` endpoint. Set `base_url` (or `AWS_BEDROCK_BASE_URL`) only for a custom endpoint; it must be the complete URL, including the protocol path (`/anthropic` or `/openai/v1`).
 
 ## OAuth and credential injection
 

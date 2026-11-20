@@ -12,11 +12,11 @@ Kimi Code CLI 支持同时接入多家模型供应商服务，模型在供应商
 | [`anthropic`](#anthropic) | Anthropic Messages | Claude 系列模型 |
 | [`openai`](#openai) | OpenAI Chat Completions | OpenAI 及兼容服务、DeepSeek、Qwen 等 |
 | [`openai_responses`](#openai_responses) | OpenAI Responses API | OpenAI 较新的 Responses 接口 |
-| [`bedrock`](#bedrock) | Anthropic Messages / OpenAI 兼容（按模型区分） | Amazon Bedrock |
 | [`google-genai`](#google-genai) | Google GenAI | Gemini API |
 | [`vertexai`](#vertexai) | Google GenAI on Vertex | Google Cloud Vertex AI |
+| [`bedrock`](#bedrock) | Anthropic Messages / OpenAI 兼容（按模型区分） | Amazon Bedrock |
 
-所有供应商默认以流式方式与模型交互。thinking、视觉、工具调用等能力按模型名前缀自动匹配，通常不需要手动声明。对于大多数 Bedrock 模型（包括 Kimi 模型），请根据 [Bedrock 模型卡片](https://docs.aws.amazon.com/zh_cn/bedrock/latest/userguide/model-cards.html) 显式声明 `capabilities`。
+所有供应商默认以流式方式与模型交互。thinking、视觉、工具调用等能力按模型名前缀自动匹配，通常不需要手动声明。
 
 **凭证优先级**：`api_key` 或 `api_key_env`（互斥替代项，只能设置其中一个）> `[providers.<name>.env]` 子表键（两者都不存在时才读）> 全部缺失时启动报错。除显式声明的 `api_key_env` 外，CLI 不会从 shell 环境变量自动取凭证，详见[配置覆盖：供应商凭证](./overrides.md#供应商凭证)。
 
@@ -160,71 +160,6 @@ api_key = "xxxxx"
 base_url = "https://your-gateway.example"
 ```
 
-## `bedrock`
-
-用于接入 Amazon Bedrock。一个 `bedrock` 供应商可以承载 Anthropic Messages API 或 OpenAI 兼容 API 的模型——CLI 会按 Bedrock 模型 ID 逐个推断线路协议，因此 Claude、GPT 和 Kimi 模型可以共用同一个供应商条目。
-
-::: info 新增
-原生 `bedrock` 供应商新增于 Kimi Code CLI v2.7.0。
-:::
-
-### 认证
-
-`type = "bedrock"` 的供应商可以使用标准 [AWS CLI 凭证链](https://docs.aws.amazon.com/zh_cn/cli/latest/userguide/cli-chap-configure.html)，基于你的 AWS 环境凭证（来自 SSO、实例角色、环境变量、共享配置等）生成短期持有者令牌（bearer token）。只需指定 AWS 区域，可选地再指定一个命名 [profile](https://docs.aws.amazon.com/zh_cn/cli/latest/userguide/cli-configure-files.html#cli-configure-files-using-profiles)：
-
-```toml
-[providers.bedrock]
-type = "bedrock"
-
-[providers.bedrock.env]
-AWS_REGION = "us-east-1"
-# AWS_PROFILE = "my-profile"   # 可选的 AWS CLI 命名 profile
-```
-
-另外，也可以改用 [Amazon Bedrock API 密钥](https://docs.aws.amazon.com/zh_cn/bedrock/latest/userguide/api-keys.html)，通过 `api_key`、`api_key_env` 或 `[providers.bedrock.env]` 子表中的 `AWS_BEARER_TOKEN_BEDROCK` 键来配置。不过出于安全考虑，AWS 一般不建议使用长期 API 密钥。已配置的密钥始终优先于环境凭证链。
-
-区域必须能从 `AWS_REGION` 或 `AWS_DEFAULT_REGION`（写在子表里或在 shell 中导出）解析出来；目前不支持从 `~/.aws/config` 推断默认区域。
-
-### 端点 URL
-
-base URL 默认取区域化的 `bedrock-runtime.<region>.amazonaws.com` 端点——只有当你需要自定义端点（如 `bedrock-mantle`、代理或 FIPS/双栈主机名）时才设置 `base_url`（或 `AWS_BEDROCK_BASE_URL` 环境键）。自定义 `base_url` 是完整 URL：必须包含模型所用协议的线路路径（`/anthropic` 或 `/openai/v1`），CLI 会原样使用它，不会追加协议后缀。
-
-### 模型与线路协议
-
-Bedrock 模型 ID 形如 `<vendor>.<model>`，并可带有跨区域推理 profile 前缀（`global.`、`us.`、`eu.` 等）。CLI 会在去掉该前缀后按模型 ID 推断线路协议，选择各模型系列在 `bedrock-runtime` 上实际提供的 API：
-
-- `anthropic.*` → Anthropic Messages API
-- `openai.gpt-oss*` → OpenAI Chat Completions API（这些开放权重模型在 `bedrock-runtime` 上仅提供此 API）
-- 其他 `openai.*` → OpenAI Responses API（GPT-6 / GPT-5.6 系列仅提供此 API，也是 OpenAI 推荐的方向）
-- `moonshotai.*` / `moonshot.*` → OpenAI Chat Completions API（Kimi 模型卡片推荐）
-
-其他前缀默认使用 OpenAI Chat Completions API。要为同时提供多种 API 的模型另行选择时，请在模型别名上显式设置 `protocol`：
-
-```toml
-[models."sonnet"]
-provider = "bedrock"
-model = "global.anthropic.claude-sonnet-4-6"
-max_context_size = 200000
-
-[models."gpt-6"]
-provider = "bedrock"
-model = "global.openai.gpt-6-astra"   # 推断为 OpenAI Responses API
-max_context_size = 1050000
-
-[models."gpt-oss"]
-provider = "bedrock"
-model = "openai.gpt-oss-120b-1:0"     # 推断为 OpenAI Chat Completions API
-max_context_size = 128000
-
-[models."kimi-k3-1-responses"]
-provider = "bedrock"
-model = "global.moonshotai.kimi-k3.1"
-protocol = "openai_responses"         # 显式覆盖：Kimi K3.1 同时提供 Responses API
-max_context_size = 1000000
-```
-
-当前大多数 Bedrock 模型要求使用推理 profile ID（即 `global.` / `us.` 等前缀），而不是基础模型 ID；请查阅目标模型的[模型卡片](https://docs.aws.amazon.com/zh_cn/bedrock/latest/userguide/model-cards.html)，了解所支持的 API 与推理 profile 的完整信息。
-
 ## `vertexai`
 
 与 `google-genai` 共用实现，`type = "vertexai"` 时切换到 Vertex AI 访问路径。
@@ -247,6 +182,45 @@ kimi
 
 如需让 Vertex 请求走自定义（如代理）端点，可设置 `base_url`（或 `GOOGLE_VERTEX_BASE_URL` 环境变量）；不填时使用 SDK 默认的区域化 `*-aiplatform.googleapis.com` 地址。结尾的 `/v1beta1` 会在请求前去掉。SDK 随后自行追加 `/v1beta1/publishers/google/models/…`。
 
+## `bedrock`
+
+用于接入 Amazon Bedrock。一个 `bedrock` 供应商可以承载 Anthropic Messages API 或 OpenAI 兼容 API 的 Claude、GPT 和 Kimi 模型，CLI 会根据每个模型 ID 推断线路协议。
+
+::: info 新增
+原生 `bedrock` 供应商新增于 Kimi Code CLI v2.7.0。
+:::
+
+供应商可以使用标准 [AWS CLI 凭证链](https://docs.aws.amazon.com/zh_cn/cli/latest/userguide/cli-chap-configure.html)，读取来自 SSO、实例角色、环境变量或共享配置的环境凭证。设置 AWS 区域，可选地再指定一个命名 [profile](https://docs.aws.amazon.com/zh_cn/cli/latest/userguide/cli-configure-files.html#cli-configure-files-using-profiles)，然后声明模型：
+
+```toml
+[providers.bedrock]
+type = "bedrock"
+
+[providers.bedrock.env]
+AWS_REGION = "us-west-2"
+# AWS_PROFILE = "my-profile"
+
+[models."kimi-k3-1"]
+provider = "bedrock"
+model = "global.moonshotai.kimi-k3.1"
+max_context_size = 1000000
+capabilities = ["always_thinking", "thinking", "image_in", "tool_use"]
+```
+
+`model` 可以填写 Bedrock 模型或推理 profile ID；当前大多数模型要求使用带 `global.`、`us.` 等前缀的推理 profile。大多数 Bedrock 模型（包括 Kimi 模型）还需要显式声明 `capabilities`；请查阅 [模型卡片](https://docs.aws.amazon.com/zh_cn/bedrock/latest/userguide/model-cards.html)，了解支持的功能和推理 profile。
+
+区域必须能从供应商 `env` 子表或 shell 中的 `AWS_REGION` 或 `AWS_DEFAULT_REGION` 解析出来；仅写在 `~/.aws/config` 中的区域不会被读取。另外，也可以通过供应商的 `api_key` / `api_key_env` 字段或其 `env` 子表中的 `AWS_BEARER_TOKEN_BEDROCK` 键配置 [Amazon Bedrock API 密钥](https://docs.aws.amazon.com/zh_cn/bedrock/latest/userguide/api-keys.html)。已配置的密钥优先于环境凭证链。
+
+CLI 去掉推理 profile 前缀后，按以下规则推断线路协议：
+
+- `anthropic.*` → Anthropic Messages API
+- `openai.gpt-oss*` → OpenAI Chat Completions API
+- 其他 `openai.*` → OpenAI Responses API
+- `moonshotai.*` / `moonshot.*` → OpenAI Chat Completions API
+
+其他前缀默认使用 OpenAI Chat Completions。需要覆盖推断结果时，在模型别名上设置 `protocol`。
+
+base URL 默认取区域化的 `bedrock-runtime.<region>.amazonaws.com` 端点。只有需要自定义端点时才设置 `base_url`（或 `AWS_BEDROCK_BASE_URL`），并且必须填写包含协议路径（`/anthropic` 或 `/openai/v1`）的完整 URL。
 
 ## 下一步
 
