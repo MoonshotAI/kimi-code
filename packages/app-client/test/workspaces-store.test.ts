@@ -127,6 +127,22 @@ describe('workspacesView ordering', () => {
     store.fsHome = '/Users/x';
     expect(store.workspacesView[0]!.shortPath).toBe('/home/x/code/app');
   });
+
+  it('carries the project kind for projects on this machine and on SSH hosts', () => {
+    const store = workspacesStore();
+    store.workspaces = [
+      makeWorkspace('wd_repo', '/Users/x/repo'),
+      makeWorkspace('wm_team', '/Users/x/team'),
+      makeWorkspace('wd_remote', '/home/x/repo', { hostId: 'devbox' }),
+      makeWorkspace('wm_remote', '/home/x/team', { hostId: 'devbox' }),
+    ];
+    expect(Object.fromEntries(store.workspacesView.map((w) => [w.id, w.kind]))).toEqual({
+      wd_repo: 'implicit',
+      wm_team: 'managed',
+      wd_remote: 'implicit',
+      wm_remote: 'managed',
+    });
+  });
 });
 
 describe('ordering actions', () => {

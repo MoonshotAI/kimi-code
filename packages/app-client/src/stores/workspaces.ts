@@ -270,6 +270,7 @@ export const useWorkspacesStore = defineStore('kimi.workspaces', () => {
     const views = mergedWorkspaces.value.map((w) => ({
       id: w.id,
       name: w.name,
+      kind: w.kind,
       root: w.root,
       hostId: w.hostId,
       shortPath: w.hostId === undefined ? shortenHome(w.root, fsHome.value) : w.root,
