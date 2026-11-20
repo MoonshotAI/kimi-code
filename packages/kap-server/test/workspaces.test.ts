@@ -1,6 +1,6 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, sep } from 'node:path';
 
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
@@ -755,6 +755,8 @@ describe('server-v2 /api/v1/workspaces', () => {
       mkdtemp(join(home!, 'first-')), mkdtemp(join(home!, 'next-')),
       mkdtemp(join(home!, 'first-extra-')), mkdtemp(join(home!, 'next-extra-')),
     ]);
+    const expectedFirstExtra = firstExtra.split(sep).join('/');
+    const expectedNextExtra = nextExtra.split(sep).join('/');
     const workspace = await postJson<WorkspaceWire>('/api/v1/workspaces', { root: first, additional_dirs: [next] });
     expect(workspace.body.code).toBe(0);
     const id = workspace.body.data.id;
@@ -771,16 +773,16 @@ describe('server-v2 /api/v1/workspaces', () => {
     const project = projectLease.instance;
     const otherView = await project.program.acquireWorkdir('local', next);
     const firstDirs = await addTemporaryDir(firstExtra);
-    expect(project.program.dirs.additionalDirs).toContain(firstExtra);
+    expect(project.program.dirs.additionalDirs).toContain(expectedFirstExtra);
     const promoted = await postJson<WorkspaceWire>(`/api/v1/workspaces/${id}/primary`, { path: next });
     expect(promoted.body.code).toBe(0);
-    await vi.waitFor(() => expect(project.root).toBe(next));
-    expect(project.program.dirs.additionalDirs).not.toContain(firstExtra);
+    await vi.waitFor(() => expect(project.root).toBe(next.split(sep).join('/')));
+    expect(project.program.dirs.additionalDirs).not.toContain(expectedFirstExtra);
     const nextDirs = await addTemporaryDir(nextExtra);
-    expect(project.program.dirs.additionalDirs).toContain(nextExtra);
-    expect(firstDirs.additionalDirs).toContain(firstExtra);
-    expect(firstDirs.additionalDirs).not.toContain(nextExtra);
-    expect(nextDirs.additionalDirs).not.toContain(firstExtra);
+    expect(project.program.dirs.additionalDirs).toContain(expectedNextExtra);
+    expect(firstDirs.additionalDirs).toContain(expectedFirstExtra);
+    expect(firstDirs.additionalDirs).not.toContain(expectedNextExtra);
+    expect(nextDirs.additionalDirs).not.toContain(expectedFirstExtra);
     otherView.dispose();
     projectLease.dispose();
   });

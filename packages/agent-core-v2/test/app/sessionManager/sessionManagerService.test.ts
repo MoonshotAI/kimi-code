@@ -953,6 +953,7 @@ describe('SessionManager controller retirement', () => {
 
 describe('SessionManager creation environment', () => {
   let manager!: SessionManager;
+  const localRoot = join(tmpdir(), 'workspace');
   let registry!: EnvironmentRegistry;
   afterEach(async () => {
     manager.dispose();
@@ -998,7 +999,7 @@ describe('SessionManager creation environment', () => {
       sessionControllerGeneration: 'generation',
       createSessionController: () => service,
     } as unknown as Program;
-    const workspace = { id: 'workspace-1', root: '/workspace', environments: registry, program } as unknown as WorkspaceInstance;
+    const workspace = { id: 'workspace-1', root: localRoot, environments: registry, program } as unknown as WorkspaceInstance;
     manager = makeSessionManager(
       workspaceManager(workspace),
       { get: async () => undefined } as unknown as ISessionIndex,
@@ -1013,39 +1014,40 @@ describe('SessionManager creation environment', () => {
       sandbox: { command: 'sandbox', args: ['ssh'], defaultCwd: '/home/me/sandbox' },
     }), true);
 
-    await manager.create({ workDir: '/workspace' });
+    await manager.create({ workDir: localRoot });
     expect(options[0]).toMatchObject({ environmentId: 'sandbox', environmentCwd: '/home/me/sandbox' });
   });
 
   it('applies the declaration defaultCwd for an explicit environment id and rejects undeclared ids', async () => {
     const { options } = setup(configWith({ sandbox: { command: 'sandbox', defaultCwd: '/home/me/sandbox' } }), true);
 
-    await manager.create({ workDir: '/workspace', environmentId: 'sandbox' });
-    await manager.create({ workDir: '/workspace', environmentId: 'sandbox', environmentCwd: '/elsewhere' });
+    await manager.create({ workDir: localRoot, environmentId: 'sandbox' });
+    await manager.create({ workDir: localRoot, environmentId: 'sandbox', environmentCwd: '/elsewhere' });
     expect(options).toMatchObject([
       { environmentId: 'sandbox', environmentCwd: '/home/me/sandbox' },
       { environmentId: 'sandbox', environmentCwd: '/elsewhere' },
     ]);
-    await expect(manager.create({ workDir: '/workspace', environmentId: 'missing' })).rejects.toMatchObject({
+    await expect(manager.create({ workDir: localRoot, environmentId: 'missing' })).rejects.toMatchObject({
       code: 'config.invalid',
     });
   });
 
   it('uses the chosen local directory and resolves a known project without a caller directory', async () => {
     setup(configWith(undefined));
-    await expect(manager.resolveCreationEnvironment({ workDir: '/checkout/src' })).resolves.toEqual({
-      workspaceId: 'workspace-1', environmentId: 'local', environmentCwd: '/checkout/src',
+    const checkout = join(tmpdir(), 'checkout', 'src');
+    await expect(manager.resolveCreationEnvironment({ workDir: checkout })).resolves.toEqual({
+      workspaceId: 'workspace-1', environmentId: 'local', environmentCwd: checkout,
     });
     await expect(manager.resolveCreationEnvironment({ workspaceId: 'workspace-1' })).resolves.toEqual({
-      workspaceId: 'workspace-1', environmentId: 'local', environmentCwd: '/workspace',
+      workspaceId: 'workspace-1', environmentId: 'local', environmentCwd: localRoot,
     });
   });
 
   it('keeps new sessions local when no default is configured', async () => {
     const { options } = setup(configWith(undefined));
 
-    await manager.create({ workDir: '/workspace' });
-    expect(options[0]).toMatchObject({ workDir: '/workspace', environmentId: 'local' });
+    await manager.create({ workDir: localRoot });
+    expect(options[0]).toMatchObject({ workDir: localRoot, environmentId: 'local' });
   });
 
   it('rejects creation when declaration resolution fails and allows explicit local', async () => {
@@ -1058,17 +1060,18 @@ describe('SessionManager creation environment', () => {
       },
     } as unknown as IConfigService);
 
-    await expect(manager.create({ workDir: '/workspace', environmentId: 'sandbox' })).rejects.toThrow('config store corrupted');
-    await expect(manager.create({ workDir: '/workspace' })).rejects.toThrow('config store corrupted');
+    await expect(manager.create({ workDir: localRoot, environmentId: 'sandbox' })).rejects.toThrow('config store corrupted');
+    await expect(manager.create({ workDir: localRoot })).rejects.toThrow('config store corrupted');
     expect(options).toHaveLength(0);
 
-    await manager.create({ workDir: '/workspace', environmentId: 'local' });
-    await manager.create({ workDir: '/workspace', environmentId: 'local', environmentCwd: '/tmp/proj-a' });
-    expect(options[0]).toMatchObject({ workDir: '/workspace', environmentId: 'local' });
+    const checkout = join(tmpdir(), 'proj-a');
+    await manager.create({ workDir: localRoot, environmentId: 'local' });
+    await manager.create({ workDir: localRoot, environmentId: 'local', environmentCwd: checkout });
+    expect(options[0]).toMatchObject({ workDir: localRoot, environmentId: 'local' });
     expect(options[1]).toMatchObject({
-      workDir: '/tmp/proj-a',
+      workDir: checkout,
       environmentId: 'local',
-      environmentCwd: '/tmp/proj-a',
+      environmentCwd: checkout,
     });
   });
 
@@ -1081,7 +1084,7 @@ describe('SessionManager creation environment', () => {
     connectableEnvironment(registry, { environmentId: 'password-only', connect });
     const acquire = vi.spyOn(registry, 'acquireWhenReady');
 
-    const resolved = await manager.resolveCreationEnvironment({ workDir: '/workspace' });
+    const resolved = await manager.resolveCreationEnvironment({ workDir: localRoot });
 
     expect(resolved).toEqual({
       workspaceId: 'workspace-1',
@@ -1095,7 +1098,7 @@ describe('SessionManager creation environment', () => {
 
   it('normalizes a declared remote cwd before handing it to the controller', async () => {
     const { options } = setup(configWith({ sandbox: { command: 'sandbox', defaultCwd: '/remote//project/./sub/..' } }), true);
-    await manager.create({ workDir: '/workspace', environmentId: 'sandbox' });
+    await manager.create({ workDir: localRoot, environmentId: 'sandbox' });
     expect(options[0]).toMatchObject({ environmentId: 'sandbox', environmentCwd: '/remote/project' });
   });
 
@@ -1104,8 +1107,8 @@ describe('SessionManager creation environment', () => {
       drive: { command: 'sandbox', defaultCwd: 'C:/remote//project/./sub/..' },
       posix: { command: 'sandbox', defaultCwd: '//remote/project' },
     }), true);
-    await manager.create({ workDir: '/workspace', environmentId: 'drive' });
-    await manager.create({ workDir: '/workspace', environmentId: 'posix' });
+    await manager.create({ workDir: localRoot, environmentId: 'drive' });
+    await manager.create({ workDir: localRoot, environmentId: 'posix' });
     expect(options).toMatchObject([
       { environmentId: 'drive', environmentCwd: 'C:\\remote\\project' },
       { environmentId: 'posix', environmentCwd: '/remote/project' },
@@ -1114,8 +1117,8 @@ describe('SessionManager creation environment', () => {
 
   it('requires a cwd for a registered environment that is not declared', async () => {
     const { options } = setup(configWith(undefined), true);
-    await expect(manager.create({ workDir: '/workspace', environmentId: 'sandbox' })).rejects.toThrow('requires a cwd');
-    await manager.create({ workDir: '/workspace', environmentId: 'sandbox', environmentCwd: 'relative/dir' });
+    await expect(manager.create({ workDir: localRoot, environmentId: 'sandbox' })).rejects.toThrow('requires a cwd');
+    await manager.create({ workDir: localRoot, environmentId: 'sandbox', environmentCwd: 'relative/dir' });
     expect(options[0]).toMatchObject({ environmentId: 'sandbox', environmentCwd: 'relative/dir' });
   });
 });
