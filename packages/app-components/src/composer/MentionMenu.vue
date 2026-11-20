@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { ensurePointerTracking, isSyntheticPointerMove, Spinner } from '@moonshot-ai/app-ui';
+import { ensurePointerTracking, isSyntheticPointerMove } from '@moonshot-ai/app-ui';
 import { attachmentKindIconSvg } from '@moonshot-ai/app-composer/features/attachment';
 import { fileMentionIconSvg, mentionIconSvg, mentionMatchSpans, type MentionMatchSpan } from '@moonshot-ai/app-composer/features/mention';
 import type { MentionItem } from '@moonshot-ai/app-client/composables';
@@ -10,6 +10,7 @@ import type { FileItem } from '@moonshot-ai/app-core/client/types';
 import { skillDirectoryName, skillIdentity, skillSourceKind } from '@moonshot-ai/app-core/lib';
 import AuthMedia from '../chat/AuthMedia.vue';
 import VideoRailPreview from '../chat/VideoRailPreview.vue';
+import ComposerMenuHints from './ComposerMenuHints.vue';
 
 export type { FileItem };
 
@@ -17,10 +18,10 @@ const props = withDefaults(defineProps<{
   items: MentionItem[];
   activeIndex: number;
   loading: boolean;
-  stale?: boolean;
+  query?: string;
   layout?: 'popup' | 'sheet';
   submenuTitle?: string;
-}>(), { stale: false, layout: 'popup', submenuTitle: undefined });
+}>(), { query: '', layout: 'popup', submenuTitle: undefined });
 
 const emit = defineEmits<{
   select: [item: MentionItem];
@@ -60,6 +61,20 @@ function sectionLabel(item: MentionItem): string {
   if (item.kind === 'skill') return t('mention.skills');
   if (rowSection(item) === 'session') return '';
   return t('composer.addFiles');
+}
+
+const searchingLabel = computed(() =>
+  props.query === '' ? t('mention.searching') : t('mention.searchingFor', { query: props.query }),
+);
+
+const searchingNeedsHeader = computed(() => {
+  if (props.submenuTitle !== undefined) return false;
+  const last = props.items.at(-1);
+  return last === undefined || rowSection(last) !== 'file';
+});
+
+function onMenuMouseDown(event: MouseEvent): void {
+  if (props.layout === 'popup') event.preventDefault();
 }
 
 function rowIcon(item: MentionItem): string {
@@ -211,6 +226,7 @@ const maskImage = computed(() => {
 });
 
 const scrollMaxHeight = ref('');
+const showHints = computed(() => props.layout === 'popup' && props.items.length > 0);
 
 function clampScrollToViewport(): void {
   const menu = menuEl.value;
@@ -220,7 +236,9 @@ function clampScrollToViewport(): void {
   const menuStyle = getComputedStyle(menu);
   const gap = parseFloat(menuStyle.getPropertyValue('--space-2')) || 8;
   const margin = parseFloat(menuStyle.getPropertyValue('--space-2')) || 8;
-  const chrome = (parseFloat(menuStyle.paddingTop) || 0) + (parseFloat(menuStyle.paddingBottom) || 0) + (headEl.value?.offsetHeight ?? 0);
+  const hints = menu.querySelector<HTMLElement>('.composer-menu-hints');
+  const hintsHeight = hints ? hints.offsetHeight + (parseFloat(getComputedStyle(hints).marginTop) || 0) : 0;
+  const chrome = (parseFloat(menuStyle.paddingTop) || 0) + (parseFloat(menuStyle.paddingBottom) || 0) + hintsHeight + (headEl.value?.offsetHeight ?? 0);
   const cap = parseFloat(getComputedStyle(scroll).getPropertyValue('--p-mention-menu-h')) || Number.POSITIVE_INFINITY;
   const viewportTop = window.visualViewport?.offsetTop ?? 0;
   const available = parent.getBoundingClientRect().top - viewportTop - gap - margin - chrome;
@@ -292,8 +310,11 @@ watch(
     if (props.layout === 'popup') void nextTick(clampScrollToViewport);
   },
 );
+watch(showHints, () => {
+  if (props.layout === 'popup') void nextTick(clampScrollToViewport);
+});
 watch(
-  () => props.items,
+  () => [props.items, props.loading],
   () => {
     void nextTick(() => {
       updateScrollState();
@@ -304,7 +325,7 @@ watch(
 </script>
 
 <template>
-  <div ref="menuEl" class="mention-menu" :class="{ 'is-sheet': layout === 'sheet' }" data-menu-frame>
+  <div ref="menuEl" class="mention-menu" :class="{ 'is-sheet': layout === 'sheet' }" data-menu-frame @mousedown="onMenuMouseDown">
     <button
       v-if="props.submenuTitle !== undefined"
       ref="headEl"
@@ -317,12 +338,10 @@ watch(
       <span class="mention-icon" aria-hidden="true" v-html="iconSvg('chevron-left', 'sm')" />
       <span>{{ props.submenuTitle }}</span>
     </button>
-    <div v-if="props.loading && props.items.length === 0" class="mention-state dim" role="status">{{ t('mention.searching') }}</div>
-    <div v-else-if="props.items.length === 0" class="mention-state dim" role="status">{{ t('mention.noMatch') }}</div>
-    <Spinner v-if="props.loading && props.items.length > 0" class="mention-spin" size="xs" />
+    <div v-if="!props.loading && props.items.length === 0" class="mention-state dim" role="status">{{ t('mention.noMatch') }}</div>
     <div
       id="composer-mention-menu"
-      v-show="props.items.length > 0"
+      v-show="props.items.length > 0 || props.loading"
       ref="scrollEl"
       class="mention-scroll"
       role="listbox"
@@ -343,7 +362,6 @@ watch(
           class="mention-item"
           :class="{
             active: i === props.activeIndex,
-            stale: props.stale && (row.kind === 'file' || row.kind === 'folder'),
             'section-start': i > 0 && startsSection(i) && sectionLabel(row) === '',
           }"
           role="option"
@@ -414,9 +432,21 @@ watch(
           </template>
         </div>
       </template>
+      <template v-if="props.loading">
+        <div
+          v-if="searchingNeedsHeader"
+          class="mention-section-label"
+          :class="{ 'after-section': props.items.length > 0 }"
+          role="presentation"
+        >
+          {{ t('composer.addFiles') }}
+        </div>
+        <div class="mention-searching dim" role="status">{{ searchingLabel }}</div>
+      </template>
     </div>
     <!-- Overlay scroll indicator (the native bar is hidden — it ate row width) -->
     <div v-if="thumb && props.items.length > 0" class="scroll-thumb" @pointerdown="onThumbPointerDown" :style="{ top: `${thumb.top}px`, height: `${thumb.height}px` }" />
+    <ComposerMenuHints v-if="showHints" />
   </div>
 </template>
 
@@ -542,12 +572,10 @@ watch(
   padding-left: var(--space-4);
 }
 
-.mention-spin {
-  position: absolute;
-  top: var(--space-2);
-  right: var(--space-3);
-  color: var(--color-text-muted);
-  z-index: var(--z-raised);
+.mention-searching {
+  padding: var(--menu-row-padding-block) var(--space-2);
+  font-family: var(--font-ui);
+  font-size: var(--text-sm);
 }
 
 .dim {
@@ -635,13 +663,6 @@ watch(
 .mention-item.section-start {
   margin-top: var(--space-2);
 }
-.mention-item {
-  transition: opacity var(--duration-slow) var(--ease-out);
-}
-.mention-item.stale {
-  opacity: var(--opacity-stale);
-}
-
 @media (hover: none) {
   .mention-item {
     min-height: var(--touch-target-min);

@@ -190,7 +190,8 @@ describe('useMentionMenu — the default highlight is the top row of the merged 
     text.value = '@foo';
     editor.selectionStart = 4;
     mention.update();
-    expect(mention.fileStale.value).toBe(true);
+    expect(mention.fileItems.value).toHaveLength(0);
+    expect(mention.loading.value).toBe(true);
     expect(mention.active.value).toBe(0);
 
     skillList.value = [{ name: 'foo-skill', description: '' } as AppSkill];
@@ -198,7 +199,8 @@ describe('useMentionMenu — the default highlight is the top row of the merged 
     expect(mention.items.value[0]?.kind).toBe('skill');
 
     await vi.advanceTimersByTimeAsync(0);
-    expect(mention.fileStale.value).toBe(false);
+    expect(mention.fileItems.value).toHaveLength(1);
+    expect(mention.loading.value).toBe(false);
     expect(mention.items.value[mention.active.value]?.kind).toBe('skill');
   });
 });

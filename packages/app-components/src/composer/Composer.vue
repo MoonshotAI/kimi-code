@@ -82,7 +82,7 @@ import {
   segmentsFor,
 } from '@moonshot-ai/app-core/lib';
 import { openAgentSettings, openHostSettings, useInputHistory, useIsMobile, useRunningSendMode } from '@moonshot-ai/app-client/composables';
-import { useSlashMenu } from '@moonshot-ai/app-client/composables';
+import { slashMenuQuery, useSlashMenu } from '@moonshot-ai/app-client/composables';
 import { useMentionMenu, type MentionEntry } from '@moonshot-ai/app-client/composables';
 import { useComposerDraft } from '@moonshot-ai/app-client/composables';
 import { useAttachmentUpload, usePasteImageAutoMention } from '@moonshot-ai/app-client/composables';
@@ -229,7 +229,7 @@ const placeholder = computed(() =>
           ? t('status.goalPlaceholder')
           : planArmed.value || planMode.value
             ? t('status.planPlaceholder')
-            : t('composer.placeholder')
+            : t(isMobile.value || isSideChat.value ? 'composer.placeholder' : 'composer.placeholderHints')
 );
 
 const emit = defineEmits<ComposerEmits>();
@@ -875,7 +875,10 @@ const {
   ranges: slashRanges,
   active: slashActive,
   update: updateSlashMenu,
+  close: closeSlashMenu,
+  dismiss: dismissSlashMenu,
   select: selectSlashCommand,
+  complete: completeSlashCommand,
 } = useSlashMenu({
   text,
   editorRef,
@@ -906,9 +909,7 @@ const {
   resolveDesc: (item) => (item.isSkill ? item.desc : t(item.desc)),
 });
 
-const slashQuery = computed(() =>
-  text.value.startsWith('/') && !text.value.includes(' ') ? text.value.slice(1) : '',
-);
+const slashQuery = computed(() => slashMenuQuery(text.value) ?? '');
 
 const menuAriaControls = computed(() => {
   if (slashOpen.value) return 'composer-slash-menu';
@@ -926,10 +927,11 @@ const {
   items: mentionItems,
   active: mentionActive,
   loading: mentionLoading,
-  fileStale: mentionFileStale,
+  query: mentionQuery,
   sessionMenuOpen: mentionSessionMenuOpen,
   update: updateMentionMenu,
   close: closeMentionMenu,
+  dismiss: dismissMentionMenu,
   select: selectMentionItem,
   complete: completeMentionItem,
   navigate: mentionNavigate,
@@ -1008,7 +1010,7 @@ watch(mentionOpen, (open) => {
   }
 });
 function onSlashSheetClose(): void {
-  slashOpen.value = false;
+  closeSlashMenu();
 }
 function onMentionSheetClose(): void {
   closeMentionMenu();
@@ -1024,15 +1026,35 @@ const mentionMenuEl = computed(() => mentionMenuRef.value?.el ?? null);
 trackMenuSurface(slashOpen, slashMenuEl);
 trackMenuSurface(mentionOpen, mentionMenuEl);
 
+function onTokenMenuOutsidePointerDown(e: PointerEvent): void {
+  const target = e.target as Node;
+  const inside = [editorHostRef.value, slashMenuEl.value, mentionMenuEl.value].some((el) => el?.contains(target) === true);
+  if (inside) return;
+  closeSlashMenu();
+  closeMentionMenu();
+}
+
+watch(
+  () => !isMobile.value && (slashOpen.value || mentionOpen.value),
+  (open) => {
+    if (open) document.addEventListener('pointerdown', onTokenMenuOutsidePointerDown, true);
+    else document.removeEventListener('pointerdown', onTokenMenuOutsidePointerDown, true);
+  },
+);
+
+onUnmounted(() => {
+  document.removeEventListener('pointerdown', onTokenMenuOutsidePointerDown, true);
+});
+
 watch(() => scopeId.value, () => {
   expanded.value = false;
-  slashOpen.value = false;
+  closeSlashMenu();
   closeMentionMenu();
 });
 
 function handleEditorBlur(): void {
   if (isMobile.value) return;
-  slashOpen.value = false;
+  closeSlashMenu();
   closeMentionMenu();
 }
 
@@ -1061,7 +1083,7 @@ function insertFolderPaths(paths: string[]): void {
     firstPos = undefined;
     if (plan.entry) ed.upsertAttachmentEntry(plan.entry);
   }
-  slashOpen.value = false;
+  closeSlashMenu();
   closeMentionMenu();
 }
 
@@ -1071,7 +1093,7 @@ function insertPathMention(path: string, kind: 'file' | 'folder'): void {
   if (!ed) return;
   const pos = document.activeElement === ed.dom ? (ed.selectionStart ?? ed.getText().length) : ed.getText().length;
   ed.insertMention({ kind, name: basename(path) || path, path }, { start: pos, end: pos });
-  slashOpen.value = false;
+  closeSlashMenu();
   closeMentionMenu();
   ed.focus({ preventScroll: true });
 }
@@ -1784,9 +1806,7 @@ function resetAfterDispatch(
       },
       clearDraft,
       clearDraftAttachments,
-      closeSlashMenu: () => {
-        slashOpen.value = false;
-      },
+      closeSlashMenu,
       closeMentionMenu,
       collapse: collapseAndRefit,
     },
@@ -2031,11 +2051,11 @@ function handleKeydown(e: KeyboardEvent): boolean {
   if (slashOpen.value) {
     if (e.key === 'Escape') {
       e.preventDefault();
-      slashOpen.value = false;
+      dismissSlashMenu();
       return true;
     }
     if (e.key === 'Tab' && slashItems.value.length === 0) {
-      slashOpen.value = false;
+      closeSlashMenu();
       return false;
     }
   }
@@ -2050,10 +2070,16 @@ function handleKeydown(e: KeyboardEvent): boolean {
       slashActive.value = (slashActive.value - 1 + slashItems.value.length) % slashItems.value.length;
       return true;
     }
-    if (e.key === 'Enter' || e.key === 'Tab') {
+    if (e.key === 'Enter') {
       e.preventDefault();
       const item = slashItems.value[slashActive.value];
       if (item) selectSlashCommand(item);
+      return true;
+    }
+    if (e.key === 'Tab') {
+      e.preventDefault();
+      const item = slashItems.value[slashActive.value];
+      if (item) completeSlashCommand(item);
       return true;
     }
   }
@@ -2061,7 +2087,7 @@ function handleKeydown(e: KeyboardEvent): boolean {
   if (mentionOpen.value) {
     if (e.key === 'Escape') {
       e.preventDefault();
-      closeMentionMenu();
+      dismissMentionMenu();
       return true;
     }
     if (e.key === 'Backspace' && !e.shiftKey && !e.altKey && !e.metaKey && !e.ctrlKey && mentionSessionMenuOpen.value && getMentionToken()?.token === '') {
@@ -2072,6 +2098,10 @@ function handleKeydown(e: KeyboardEvent): boolean {
     if (e.key === 'Tab' && mentionItems.value.length === 0) {
       closeMentionMenu();
       return false;
+    }
+    if (e.key === 'Enter' && mentionItems.value.length === 0 && mentionLoading.value) {
+      e.preventDefault();
+      return true;
     }
     if (mentionItems.value.length > 0) {
       if (e.key === 'ArrowDown') {
@@ -2129,13 +2159,13 @@ function handleKeydown(e: KeyboardEvent): boolean {
         });
       }
       history.recallOlder();
-      slashOpen.value = false;
+      closeSlashMenu();
       return true;
     }
     if (e.key === 'ArrowDown' && browsing) {
       e.preventDefault();
       history.recallNewer();
-      slashOpen.value = false;
+      closeSlashMenu();
       if (!history.isBrowsing()) {
         const snapshot = historyEntrySnapshot;
         historyEntrySnapshot = null;
@@ -2287,7 +2317,7 @@ const anyPopupOpen = computed(
 );
 
 function closeOverlays(): void {
-  slashOpen.value = false;
+  closeSlashMenu();
   closeMentionMenu();
   closeAddMenu();
   closeDropdown();
@@ -2388,7 +2418,7 @@ function toggleAddMenu(): void {
     closeDropdown();
     closePermDropdown();
     ctxCardOpen.value = false;
-    slashOpen.value = false;
+    closeSlashMenu();
     closeMentionMenu();
     document.addEventListener('click', onDocClick, true);
     void nextTick(() => {
@@ -3267,7 +3297,7 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
           :items="mentionItems"
           :active-index="mentionActive"
           :loading="mentionLoading"
-          :stale="mentionFileStale"
+          :query="mentionQuery"
           :submenu-title="mentionSubmenuTitle"
           @select="selectMentionItem"
           @hover="mentionNavigate"
@@ -3810,7 +3840,7 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
         :items="mentionItems"
         :active-index="mentionActive"
         :loading="mentionLoading"
-        :stale="mentionFileStale"
+        :query="mentionQuery"
         :submenu-title="mentionSubmenuTitle"
         @select="selectMentionItem"
         @hover="mentionNavigate"
