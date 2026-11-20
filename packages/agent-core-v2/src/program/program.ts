@@ -329,7 +329,7 @@ export class Program {
         onDidChange: this.dependencies.workspaceStore.onDidChange,
       };
       const mcp = own(new ProgramMcp({ ...this.dependencies, environments: this.environments, hostFs, project, rootDirs: root.dirs, trust }));
-      const trustDisclosure = new WorkspaceTrustDisclosureService(this.context, hostFs, this.dependencies.bootstrap, this.dependencies.config, root.localConfig, root.dirs, trust, root.skills, root.agentProfiles, this.dependencies.agentProfiles, root.instructions, this.dependencies.log);
+      const trustDisclosure = new WorkspaceTrustDisclosureService(this.context, hostFs, this.dependencies.bootstrap, this.dependencies.config, root.localConfig, root.dirs, trust, mcp.root, root.skills, root.agentProfiles, this.dependencies.agentProfiles, root.instructions, this.dependencies.log);
       own(workdirs);
       return {
         id: environment.identity.generation,

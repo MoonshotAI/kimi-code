@@ -6,7 +6,6 @@ import { BUILTIN_AGENT_PROFILE_SOURCE_ID } from '#/app/agentProfileCatalog/built
 import type { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import type { IConfigService } from '#/app/config/config';
 import { findNearestGitMarker } from '#/app/git/workTree';
-import { loadMcpServersDetailed, resolveMcpJsonPaths } from '#/app/mcpConfig/configLoader';
 import type { IProjectLocalConfigService } from '#/app/projectLocalConfig/projectLocalConfig';
 import {
   MERGE_ALL_AVAILABLE_SKILLS_SECTION,
@@ -20,6 +19,7 @@ import type { IWorkspaceAgentProfileLoader } from '#/workspace/workspaceAgentPro
 import type { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
 import type { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
 import type { IWorkspaceInstructionsService } from '#/workspace/workspaceInstructions/workspaceInstructions';
+import type { WorkdirMcp } from '#/workspace/workspaceMcp/workspaceMcp';
 
 import type {
   IWorkspaceTrustDisclosure,
@@ -57,6 +57,7 @@ export class WorkspaceTrustDisclosureService implements IWorkspaceTrustDisclosur
     private readonly localConfig: IProjectLocalConfigService,
     private readonly workspaceDirs: IWorkspaceDirs,
     private readonly trust: IWorkspaceTrust,
+    private readonly mcp: WorkdirMcp,
     private readonly skills: IWorkspaceSkillCatalog,
     private readonly agentProfilesLoader: IWorkspaceAgentProfileLoader,
     private readonly agentProfilesRegistry: IAgentProfileRegistry,
@@ -106,17 +107,9 @@ export class WorkspaceTrustDisclosureService implements IWorkspaceTrustDisclosur
   }
 
   private async describeGatedMcpServers(): Promise<readonly TrustGatedMcpServer[]> {
-    const cwd = this.workspaceDirs.primary;
-    const homeDir = this.bootstrap.homeDir;
-    const [paths, loaded] = await Promise.all([
-      resolveMcpJsonPaths({ fs: this.fs, cwd, homeDir }),
-      loadMcpServersDetailed({ fs: this.fs, cwd, homeDir, includeProject: true }),
-    ]);
-    const projectPaths = new Set([paths.projectRoot, paths.project]);
-    const servers = Object.entries(loaded.servers)
-      .filter(([name]) => projectPaths.has(loaded.origins[name] ?? ''))
-      .filter(([, config]) => config.enabled !== false)
-      .map(([name, config]) => describeMcpServer(name, config, loaded.origins[name] ?? ''))
+    const servers = (await this.mcp.previewProjectServers())
+      .filter(({ config }) => config.enabled !== false)
+      .map(({ name, config, origin }) => describeMcpServer(name, config, origin))
       .toSorted((a, b) => a.name.localeCompare(b.name));
     return Promise.all(
       servers.map(async (server) => ({

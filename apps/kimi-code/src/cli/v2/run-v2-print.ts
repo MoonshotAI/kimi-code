@@ -13,7 +13,6 @@ import {
   IConfigService,
   IEventBus,
   IEventDispatcher,
-  IHostFileSystem,
   IOAuthToolkit,
   ISessionIndex,
   ISessionManager,
@@ -44,10 +43,6 @@ import {
   type PrintBackgroundMode,
   type ServicesAccessor,
 } from '@moonshot-ai/agent-core-v2';
-import {
-  loadMcpServersDetailed,
-  resolveMcpJsonPaths,
-} from '@moonshot-ai/agent-core-v2/app/mcpConfig/configLoader';
 import {
   createKimiDeviceId,
   KIMI_CODE_PROVIDER_NAME,
@@ -227,7 +222,7 @@ export async function runV2Print(
     }
 
     try {
-      const gated = await listTrustGatedMcpServers(services, workDir, homeDir);
+      const gated = await listTrustGatedMcpServers(services, workDir);
       if (gated.length > 0) stderr.write(formatTrustGatedMcpWarning(gated));
     } catch {}
 
@@ -468,22 +463,14 @@ export interface TrustGatedMcpServer {
 export async function listTrustGatedMcpServers(
   services: ServicesAccessor,
   workDir: string,
-  homeDir: string,
 ): Promise<readonly TrustGatedMcpServer[]> {
   const lease = await services
     .get(IWorkspaceInstanceManager)
     .acquire({ root: workDir });
   try {
     if (await lease.instance.program.trust.get()) return [];
-    const fs = services.get(IHostFileSystem);
-    const [paths, loaded] = await Promise.all([
-      resolveMcpJsonPaths({ fs, cwd: workDir, homeDir }),
-      loadMcpServersDetailed({ fs, cwd: workDir, homeDir, includeProject: true }),
-    ]);
-    const projectPaths = new Set([paths.projectRoot, paths.project]);
-    return Object.entries(loaded.servers)
-      .filter(([name]) => projectPaths.has(loaded.origins[name] ?? ''))
-      .map(([name, config]) => ({ name, target: describeMcpTarget(config) }))
+    return (await lease.instance.program.mcp.previewProjectServers())
+      .map(({ name, config }) => ({ name, target: describeMcpTarget(config) }))
       .toSorted((a, b) => a.name.localeCompare(b.name));
   } finally {
     lease.dispose();
