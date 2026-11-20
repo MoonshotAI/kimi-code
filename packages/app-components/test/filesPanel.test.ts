@@ -59,10 +59,11 @@ vi.mock('../src/FileTreeRootSelect.vue', () => ({
 vi.mock('../src/FileTreeSidebar.vue', () => ({
   default: {
     props: ['sessionId', 'workspaceId', 'cwd', 'root', 'selectedPath'],
-    render(this: { workspaceId?: string; root?: string }) {
+    render(this: { workspaceId?: string; cwd: string; root?: string }) {
       return h('div', {
         class: 'tree-sidebar',
         'data-workspace-id': this.workspaceId,
+        'data-cwd': this.cwd,
         'data-root': this.root,
       });
     },
@@ -231,5 +232,30 @@ describe('FilesPanel draft preview scope', () => {
     await mountPanel();
 
     expect(host.querySelector<HTMLElement>('.tree-sidebar')!.getAttribute('data-workspace-id')).toBeNull();
+  });
+});
+
+describe('FilesPanel session roots', () => {
+  it('roots the tree at a worktree session working directory instead of the project root', async () => {
+    fakes.client.activeSessionId.value = 's1';
+    fakes.client.status.value = { cwd: '/repo-wt' };
+
+    await mountPanel();
+
+    const sidebar = host.querySelector<HTMLElement>('.tree-sidebar')!;
+    expect(sidebar.getAttribute('data-cwd')).toBe('/repo-wt');
+    expect(sidebar.getAttribute('data-root')).toBe('/repo-wt');
+    expect(fakes.files.resolveFileTreeRoot).toHaveBeenLastCalledWith('w1', ['/repo-wt', '/extra-a'], '/repo-wt');
+  });
+
+  it('keeps a session that runs in the project root on the project directories', async () => {
+    fakes.client.activeSessionId.value = 's1';
+
+    await mountPanel();
+
+    const sidebar = host.querySelector<HTMLElement>('.tree-sidebar')!;
+    expect(sidebar.getAttribute('data-cwd')).toBe('/repo');
+    expect(sidebar.getAttribute('data-root')).toBe('/repo');
+    expect(fakes.files.resolveFileTreeRoot).toHaveBeenLastCalledWith('w1', ['/repo', '/extra-a'], '/repo');
   });
 });

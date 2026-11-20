@@ -65,6 +65,40 @@ function treeProps(tab: PanelTab, ctx: PanelAdapterCtx): TreeProps {
   return (panelTabProps(tab, ctx) as { tree: TreeProps }).tree;
 }
 
+function makeDiffCtx(workspaceId: string, cwd: string): PanelAdapterCtx {
+  return {
+    panel: {
+      detailDiffMode: ref('list'),
+      detailDiffPath: ref(null),
+      openDiffDetail: vi.fn(),
+      selectDiffFile: vi.fn(),
+      openFilePreview: vi.fn(),
+    },
+    client: {
+      activeSessionId: ref('s1'),
+      activeWorkspaceId: ref(workspaceId),
+      status: ref({ cwd }),
+      changes: ref([]),
+      gitInfo: ref(null),
+      fileDiff: ref([]),
+      fileDiffTexts: ref(null),
+      fileDiffEmptyFile: ref(false),
+      selectedDiffPath: ref(null),
+      fileDiffLoading: ref(false),
+      fileDiffLoadedSeq: ref(0),
+      fileDiffLoadStartedSeq: ref(0),
+      fileDiffRefreshing: ref(false),
+      loadFileDiff: vi.fn(),
+      clearFileDiff: vi.fn(),
+    },
+    filePreview: {},
+    previewStale: ref(false),
+    diffStale: ref(false),
+    onOpenMedia: vi.fn(),
+    openFile: vi.fn(),
+  } as unknown as PanelAdapterCtx;
+}
+
 beforeEach(() => {
   setKimiClientDeps({
     api: () => ({ getWorkspaceTrust: async () => ({ trusted: true }) }) as unknown as KimiWebApi,
@@ -103,9 +137,11 @@ describe('desktop file preview panel adapter workspace roots', () => {
     expect(panel.updateTabPayload).not.toHaveBeenCalled();
 
     client.activeWorkspaceId.value = 'wm_2';
+    client.status.value = { cwd: '/x' };
     expect(treeProps(tab, ctx).root).toBe('/x');
     treeProps(tab, ctx).onSelectRoot('/y');
     client.activeWorkspaceId.value = 'wm_1';
+    client.status.value = { cwd: '/a' };
     expect(treeProps(tab, ctx).root).toBe('/b');
 
     workspacesStore().workspaces[0]!.additionalDirs = [];
@@ -118,13 +154,26 @@ describe('desktop file preview panel adapter workspace roots', () => {
   it('falls back for a single root and no registered workspace', () => {
     workspacesStore().workspaces = [makeWorkspace('wm_single', '/single', [])];
     const { tab, client, ctx } = makeCtx('wm_single');
+    client.status.value = { cwd: '/single' };
     expect(treeProps(tab, ctx).roots).toEqual(['/single']);
     expect(treeProps(tab, ctx).root).toBe('/single');
 
     client.activeWorkspaceId.value = null;
+    client.status.value = { cwd: '/a' };
     const tree = treeProps(tab, ctx);
     expect(tree.roots).toEqual([]);
     expect(tree.root).toBe('/a');
+  });
+
+  it('roots the tree at a worktree session working directory instead of the project root', () => {
+    workspacesStore().workspaces = [makeWorkspace('wd_repo', '/repo', ['/shared'])];
+    const { tab, client, ctx } = makeCtx('wd_repo');
+    client.status.value = { cwd: '/repo-wt' };
+
+    const tree = treeProps(tab, ctx);
+    expect(tree.roots).toEqual(['/repo-wt', '/shared']);
+    expect(tree.root).toBe('/repo-wt');
+    expect(tree.cwd).toBe('/repo-wt');
   });
 });
 
@@ -191,5 +240,15 @@ describe('diff panel adapter workspace roots', () => {
     expect(panel.selectDiffFile).toHaveBeenCalledExactlyOnceWith('src/a.ts', '/b');
     expect(client.loadFileDiff).toHaveBeenCalledExactlyOnceWith('src/a.ts', { preserveCurrent: true, root: '/b' });
     expect(panel.openFilePreview).toHaveBeenCalledExactlyOnceWith({ path: '/b/src/a.ts' });
+  });
+
+  it('offers the working directory of a worktree session first instead of the project root', () => {
+    workspacesStore().workspaces = [makeWorkspace('wd_repo', '/repo', ['/shared'])];
+    const tab = { id: 'diff-1', type: 'diff', payload: {} } as PanelTab;
+
+    const props = panelTabProps(tab, makeDiffCtx('wd_repo', '/repo-wt')) as { roots: string[]; cwd: string };
+
+    expect(props.roots).toEqual(['/repo-wt', '/shared']);
+    expect(props.cwd).toBe('/repo-wt');
   });
 });

@@ -2,7 +2,7 @@
 import { computed, onMounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { FilePreviewRequest } from '@moonshot-ai/app-core/client';
-import { isAbsoluteLocalPath, safeGetString, safeSetString } from '@moonshot-ai/app-core/lib';
+import { isAbsoluteLocalPath, panelRoots, safeGetString, safeSetString } from '@moonshot-ai/app-core/lib';
 import { useKimiWebClient } from '@moonshot-ai/app-client/client';
 import { useFilePreview } from '@moonshot-ai/app-client/composables';
 import { filesStore, workspacesStore } from '@moonshot-ai/app-client/stores';
@@ -23,7 +23,12 @@ const workspace = computed(() => {
   const id = client.activeWorkspaceId.value;
   return id === null ? undefined : workspacesStore().mergedWorkspaces.find((w) => w.id === id);
 });
-const cwd = computed(() => client.status.value.cwd || workspace.value?.root || '');
+const panelDirs = computed(() => {
+  const ws = workspace.value;
+  if (ws === undefined) return undefined;
+  return panelRoots(sessionId.value === null ? undefined : { cwd: client.status.value.cwd }, ws);
+});
+const cwd = computed(() => panelDirs.value?.root ?? client.status.value.cwd);
 const registeredWorkspaceId = computed(() => {
   const id = client.activeWorkspaceId.value;
   return id !== null && workspacesStore().workspaces.some((w) => w.id === id) ? id : undefined;
@@ -36,10 +41,7 @@ const fileTreeKey = computed(() => {
 });
 const workspaceName = computed(() => workspace.value?.name ?? cwd.value.split(/[\\/]/).filter(Boolean).at(-1) ?? '');
 
-const treeRoots = computed<string[]>(() => {
-  const ws = workspace.value;
-  return ws === undefined ? [] : [ws.root, ...ws.additionalDirs];
-});
+const treeRoots = computed(() => panelDirs.value?.roots ?? []);
 
 const treeRoot = computed(() =>
   filesStore().resolveFileTreeRoot(client.activeWorkspaceId.value, treeRoots.value, cwd.value),

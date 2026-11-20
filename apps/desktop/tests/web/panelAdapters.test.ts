@@ -103,9 +103,11 @@ describe('web file preview panel adapter workspace roots', () => {
     expect(panel.updateTabPayload).not.toHaveBeenCalled();
 
     client.activeWorkspaceId.value = 'wm_2';
+    client.status.value = { cwd: '/x' };
     expect(treeProps(tab, ctx).root).toBe('/x');
     treeProps(tab, ctx).onSelectRoot('/y');
     client.activeWorkspaceId.value = 'wm_1';
+    client.status.value = { cwd: '/a' };
     expect(treeProps(tab, ctx).root).toBe('/b');
 
     workspacesStore().workspaces[0]!.additionalDirs = [];
@@ -118,10 +120,12 @@ describe('web file preview panel adapter workspace roots', () => {
   it('falls back for a single root and no registered workspace', () => {
     workspacesStore().workspaces = [makeWorkspace('wm_single', '/single', [])];
     const { tab, client, ctx } = makeCtx('wm_single');
+    client.status.value = { cwd: '/single' };
     expect(treeProps(tab, ctx).roots).toEqual(['/single']);
     expect(treeProps(tab, ctx).root).toBe('/single');
 
     client.activeWorkspaceId.value = null;
+    client.status.value = { cwd: '/a' };
     const tree = treeProps(tab, ctx);
     expect(tree.roots).toEqual([]);
     expect(tree.root).toBe('/a');

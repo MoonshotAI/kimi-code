@@ -19,7 +19,7 @@ import type {
 } from '@moonshot-ai/app-client/panel';
 import type { PromptAttachment, SideChatTurnError } from '@moonshot-ai/app-client/client';
 import type { OpenMediaRequest } from '../../types';
-import { isWindowsPath, normalizeRelativePath, pathRelativeTo, resolveLocalPath } from '@moonshot-ai/app-core/lib';
+import { isWindowsPath, normalizeRelativePath, panelRoots, pathRelativeTo, resolveLocalPath } from '@moonshot-ai/app-core/lib';
 import { useWorkspaceTrust } from '@moonshot-ai/app-client/composables';
 import { filesStore, workspacesStore } from '@moonshot-ai/app-client/stores';
 import { focusAfterTabClose } from './tabCloseFocus';
@@ -59,6 +59,15 @@ export interface PanelAdapterCtx {
   openFile: (target: FilePreviewRequest) => void;
 }
 
+function activePanelRoots(client: PanelAdapterClient): readonly string[] | undefined {
+  const workspaceId = client.activeWorkspaceId.value;
+  const workspace = workspaceId === null
+    ? undefined
+    : workspacesStore().mergedWorkspaces.find((item) => item.id === workspaceId);
+  if (workspace === undefined) return undefined;
+  return panelRoots(client.activeSessionId.value ? { cwd: client.status.value.cwd } : undefined, workspace).roots;
+}
+
 export function panelTabProps(tab: PanelTab, ctx: PanelAdapterCtx): Record<string, unknown> | null {
   const { panel, client, filePreview } = ctx;
   const closeThis = () => {
@@ -82,10 +91,7 @@ export function panelTabProps(tab: PanelTab, ctx: PanelAdapterCtx): Record<strin
       const payload = tab.payload as FileTabPayload;
       const sessionId = client.activeSessionId.value;
       const workspaceId = client.activeWorkspaceId.value;
-      const workspace = workspaceId === null
-        ? undefined
-        : workspacesStore().mergedWorkspaces.find((item) => item.id === workspaceId);
-      const roots = workspace === undefined ? [] : [workspace.root, ...workspace.additionalDirs];
+      const roots = activePanelRoots(client) ?? [];
       const root = filesStore().resolveFileTreeRoot(workspaceId, roots, client.status.value.cwd);
       return {
         preview: {
@@ -138,11 +144,7 @@ export function panelTabProps(tab: PanelTab, ctx: PanelAdapterCtx): Record<strin
     case 'diff': {
       const root = (tab.payload as DiffTabPayload | undefined)?.root;
       const sessionId = client.activeSessionId.value;
-      const workspaceId = client.activeWorkspaceId.value;
-      const workspace = workspaceId === null
-        ? undefined
-        : workspacesStore().mergedWorkspaces.find((item) => item.id === workspaceId);
-      const roots = workspace === undefined ? [client.status.value.cwd] : [workspace.root, ...workspace.additionalDirs];
+      const roots = activePanelRoots(client) ?? [client.status.value.cwd];
       const status = root === undefined || sessionId === null ? undefined : filesStore().gitStatusForRoot(sessionId, root);
       const changes = root === undefined
         ? client.changes.value
