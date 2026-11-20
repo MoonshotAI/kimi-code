@@ -106,6 +106,7 @@ const props = defineProps<{
   submitDisabled?: boolean;
   statusNote?: string;
   beforeSubmit?: () => boolean;
+  deferSubmitReset?: boolean;
   draftScopeKey?: string;
   placeholderText?: string;
   onCaptureScreenshot?: () => void;
@@ -1718,6 +1719,19 @@ function resetAfterDispatch(
   );
 }
 
+function clearAfterDispatch(expectedSnapshot?: ComposerDocumentSnapshot): void {
+  if (props.deferSubmitReset === true && expectedSnapshot !== undefined) {
+    const current = editor?.getSnapshot();
+    if (
+      current === undefined ||
+      docToText(composerSnapshotDocument(current)) !== docToText(composerSnapshotDocument(expectedSnapshot)) ||
+      JSON.stringify(current.attachmentOrder) !== JSON.stringify(expectedSnapshot.attachmentOrder) ||
+      JSON.stringify(current.browserReferences ?? []) !== JSON.stringify(expectedSnapshot.browserReferences ?? [])
+    ) return;
+  }
+  resetAfterDispatch(clearDispatchPolicy);
+}
+
 function passSubmitGate(): boolean {
   if (props.beforeSubmit !== undefined && props.beforeSubmit() === false) return false;
   if (hostSetupId.value !== undefined) {
@@ -1741,7 +1755,7 @@ function handleSteer(): void {
   const restoreEntries = snapshotAttachmentEntries(activeAttachmentEntries.value);
   history.push(decision.historyText, snapshot);
   historyEntrySnapshot = null;
-  resetAfterDispatch(clearDispatchPolicy);
+  if (props.deferSubmitReset !== true || decision.kind === 'prompt-command') clearAfterDispatch();
   if (decision.kind === 'prompt-command') {
     emit('command', { cmd: decision.cmd, attachments: decision.attachments, restoreText: decision.restoreText, restoreEntries, snapshot, editText: decision.editText, delivery: 'steer' });
     return;
@@ -1763,7 +1777,7 @@ function handleQueue(): void {
   const restoreEntries = snapshotAttachmentEntries(activeAttachmentEntries.value);
   history.push(decision.historyText, snapshot);
   historyEntrySnapshot = null;
-  resetAfterDispatch(clearDispatchPolicy);
+  if (props.deferSubmitReset !== true || decision.kind === 'prompt-command') clearAfterDispatch();
   if (decision.kind === 'prompt-command') {
     emit('command', { cmd: decision.cmd, attachments: decision.attachments, restoreText: decision.restoreText, restoreEntries, snapshot, editText: decision.editText, delivery: 'queue' });
     return;
@@ -1871,7 +1885,7 @@ function handleSubmit(): void {
         snapshot,
         ...(decision.kind === 'multi-skill-activation' ? { skills: decision.skills } : {}),
       };
-      resetAfterDispatch(clearDispatchPolicy);
+      if (props.deferSubmitReset !== true) clearAfterDispatch();
       if (!isSideChat.value && running.value) {
         if (runningSendMode.value === 'steer') {
           noteDefaultRunningSteerTriggered();
@@ -2180,7 +2194,7 @@ function closeOverlays(): void {
 
 const isEmpty = () => text.value.trim().length === 0 && activeAttachmentEntries.value.length === 0;
 
-defineExpose({ loadForEdit, insertQuote, insertScreenshotAnnotation, insertPathMention, addFiles, loadAttachmentsForEdit, restoreDraftEntries, focus, closeOverlays, anyPopupOpen, isEmpty });
+defineExpose({ loadForEdit, insertQuote, insertScreenshotAnnotation, insertPathMention, addFiles, loadAttachmentsForEdit, restoreDraftEntries, focus, closeOverlays, anyPopupOpen, isEmpty, clearAfterDispatch });
 
 function toggleDropdown(): void {
   if (nativeModelMenu?.available && !isMobile.value && modelPillRef.value !== null) {

@@ -17,6 +17,7 @@ export type PendingWorkspaceSubmit = {
 
 export type AppDialogsDeps = {
   restorePendingComposer: (pending: PendingWorkspaceSubmit, sessionId?: string) => void;
+  beforePendingPromptSend?: (pending: PendingWorkspaceSubmit) => void;
   onWorkspaceAdded?: () => void;
 };
 
@@ -219,10 +220,11 @@ export function useAppDialogs(dialogDeps?: AppDialogsDeps) {
     const wsId = client.activeWorkspaceId.value;
     if (pending && wsId) {
       await client.ensureWorkspaceTrust(wsId, { background: false });
-      if (client.activeSessionId.value !== null || client.activeWorkspaceId.value !== wsId || client.activeWorkspaceTrust.value !== true) {
+      if (client.activeSessionId.value || client.activeWorkspaceId.value !== wsId || client.activeWorkspaceTrust.value !== true) {
         deps?.restorePendingComposer(pending);
         return true;
       }
+      deps?.beforePendingPromptSend?.(pending);
       const started = await client.startSessionAndSendPrompt(wsId, pending.prompt);
       if (started.promptRejected || (started.sessionId === null && started.concurrent !== true)) {
         deps?.restorePendingComposer(pending, started.sessionId ?? undefined);

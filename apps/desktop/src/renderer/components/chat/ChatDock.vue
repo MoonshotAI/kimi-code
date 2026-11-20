@@ -45,6 +45,7 @@ const props = defineProps<{
   mobile?: boolean;
   statusNote?: string;
   beforeSubmit?: () => boolean;
+  deferSubmitReset?: boolean;
   onCaptureScreenshot?: () => void;
   screenshotShortcutKeys?: string[];
   screenshotShortcutUnavailable?: boolean;
@@ -166,6 +167,7 @@ const composerRef = ref<{
   loadAttachmentsForEdit: (atts: TurnAttachment[]) => void;
   restoreDraftEntries: (entries: AttachmentEntry[]) => void;
   focus: () => void;
+  clearAfterDispatch: (expectedSnapshot?: ComposerDocumentSnapshot) => void;
   closeOverlays?: () => void;
   anyPopupOpen?: boolean;
   isEmpty?: () => boolean;
@@ -234,6 +236,10 @@ function restoreDraftEntries(entries: AttachmentEntry[]): void {
 
 function focus(): void {
   composerRef.value?.focus();
+}
+
+function clearAfterDispatch(expectedSnapshot?: ComposerDocumentSnapshot): void {
+  composerRef.value?.clearAfterDispatch(expectedSnapshot);
 }
 
 const isEmpty = () => composerRef.value?.isEmpty?.() ?? false;
@@ -417,7 +423,7 @@ onUnmounted(() => {
   workBodyResizeObserver = null;
 });
 
-defineExpose({ loadForEdit, insertQuote, insertScreenshotAnnotation, insertPathMention, addFiles, hasInsertableComposer, loadAttachmentsForEdit, restoreDraftEntries, focus, anyPopupOpen, isEmpty });
+defineExpose({ loadForEdit, insertQuote, insertScreenshotAnnotation, insertPathMention, addFiles, hasInsertableComposer, loadAttachmentsForEdit, restoreDraftEntries, focus, anyPopupOpen, isEmpty, clearAfterDispatch });
 </script>
 
 <template>
@@ -685,6 +691,7 @@ defineExpose({ loadForEdit, insertQuote, insertScreenshotAnnotation, insertPathM
         :style="hasPendingCard ? { display: 'none' } : undefined"
         :status-note="props.statusNote"
         :before-submit="props.beforeSubmit"
+        :defer-submit-reset="props.deferSubmitReset"
         ref="composerRef"
         :on-capture-screenshot="props.onCaptureScreenshot"
         :screenshot-shortcut-keys="props.screenshotShortcutKeys"
