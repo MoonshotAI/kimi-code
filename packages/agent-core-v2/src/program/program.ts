@@ -119,8 +119,8 @@ export class Program {
 
   get status(): ProgramStatus { return this.currentStatus; }
   get state(): IWorkspaceStateService { return this.requireGeneration().workdirs.root.state; }
-  get dirs(): IWorkspaceDirs { return this.requireGeneration().workdirs.root.dirs; }
-  get fs(): IWorkspaceFsService { return this.requireGeneration().workdirs.root.fs; }
+  get dirs(): IWorkspaceDirs { return this.requireGeneration().workdirs.primaryWorkdir.dirs; }
+  get fs(): IWorkspaceFsService { return this.requireGeneration().workdirs.primaryWorkdir.fs; }
   get git(): IWorkspaceGitService { return this.requireGeneration().workdirs.root.git; }
   get instructions(): IWorkspaceInstructionsService { return this.requireGeneration().workdirs.root.instructions; }
   get mcpConfig(): IWorkspaceMcpConfigService { return this.requireGeneration().mcpConfig; }
