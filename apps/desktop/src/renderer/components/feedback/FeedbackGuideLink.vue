@@ -5,7 +5,7 @@ import { Link, Tooltip } from '@moonshot-ai/app-ui';
 
 defineProps<{ iconOnly?: boolean }>();
 const { locale, t } = useI18n();
-const href = computed(() => `https://moonshotai.github.io/kimi-code/${locale.value.startsWith('zh') ? 'zh' : 'en'}/guides/feedback.html`);
+const href = computed(() => `https://www.kimi.com/code/docs/${locale.value.startsWith('zh') ? '' : 'en/'}kimi-code/feedback.html`);
 </script>
 
 <template>
