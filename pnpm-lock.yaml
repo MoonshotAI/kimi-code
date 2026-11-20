@@ -243,6 +243,9 @@ importers:
       unplugin-icons:
         specifier: ^23.0.0
         version: 23.0.1(@vue/compiler-sfc@3.5.35)
+      uuid:
+        specifier: 14.0.1
+        version: 14.0.1
       vite:
         specifier: ^6.3.3
         version: 6.4.2(@types/node@24.19.2)(jiti@2.6.1)(lightningcss@1.32.0)(tsx@4.21.0)(yaml@2.9.1)
@@ -559,6 +562,9 @@ importers:
       tw-animate-css:
         specifier: ^1.4.0
         version: 1.4.0
+      uuid:
+        specifier: 14.0.1
+        version: 14.0.1
       zustand:
         specifier: ^5
         version: 5.0.14(@types/react@19.2.14)(immer@11.1.11)(react@19.2.5)(use-sync-external-store@1.6.0(react@19.2.5))
@@ -893,6 +899,9 @@ importers:
       '@xterm/xterm':
         specifier: ^6.0.0
         version: 6.0.0
+      uuid:
+        specifier: 14.0.1
+        version: 14.0.1
       vue-i18n:
         specifier: ^11.4.5
         version: 11.4.22(vue@3.5.35(typescript@6.0.2))
@@ -945,6 +954,9 @@ importers:
       prosemirror-view:
         specifier: ^1.42.2
         version: 1.42.9
+      uuid:
+        specifier: 14.0.1
+        version: 14.0.1
     devDependencies:
       '@moonshot-ai/app-client':
         specifier: workspace:*
@@ -1127,6 +1139,9 @@ importers:
       undici:
         specifier: ^7.27.1
         version: 7.27.1
+      uuid:
+        specifier: 14.0.1
+        version: 14.0.1
     devDependencies:
       pino:
         specifier: ^9.5.0
@@ -10895,10 +10910,6 @@ packages:
   util-deprecate@1.0.2:
     resolution: {integrity: sha512-EPD5q1uXyFxJpCrLnCc1nHnq3gOa6DZBocAIiI2TaSCA7VCJ1UJDMagCzIkXNsUYfD1daK//LTEQ8xiIbrHtcw==}
 
-  uuid@14.0.0:
-    resolution: {integrity: sha512-Qo+uWgilfSmAhXCMav1uYFynlQO7fMFiMVZsQqZRMIXp0O7rR7qjkj+cPvBHLgBqi960QCoo/PH2/6ZtVqKvrg==}
-    hasBin: true
-
   uuid@14.0.1:
     resolution: {integrity: sha512-6ZxzVpzDXDa3bJWaHilVayA+BH/1zmxCJoVgvmqJnid/gPoKHxUrS/aC/T6LGQtNHT+XHG9fXPJB4d+IrU30Ew==}
     hasBin: true
@@ -19198,7 +19209,7 @@ snapshots:
       roughjs: 4.6.6
       stylis: 4.4.0
       ts-dedent: 2.2.0
-      uuid: 14.0.0
+      uuid: 14.0.1
 
   micromark-core-commonmark@2.0.3:
     dependencies:
@@ -21926,8 +21937,6 @@ snapshots:
       pako: 1.0.11
 
   util-deprecate@1.0.2: {}
-
-  uuid@14.0.0: {}
 
   uuid@14.0.1: {}
 

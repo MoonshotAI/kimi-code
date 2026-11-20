@@ -1,3 +1,4 @@
+import { v4 as randomUUID } from "uuid";
 import { useCallback, useEffect } from "react";
 import { toast } from "@/components/ui/sonner";
 import { bridge } from "@/services";
@@ -30,7 +31,7 @@ export function useMediaUpload(): UseMediaUploadResult {
         return;
       }
 
-      const id = crypto.randomUUID();
+      const id = randomUUID();
       addDraftMedia(id);
 
       try {
@@ -99,7 +100,7 @@ export function useMediaUpload(): UseMediaUploadResult {
           break;
         }
         existingUris.push(dataUri);
-        addDraftMedia(crypto.randomUUID(), dataUri);
+        addDraftMedia(randomUUID(), dataUri);
       }
     } catch {
       toast.error("Failed to pick media");

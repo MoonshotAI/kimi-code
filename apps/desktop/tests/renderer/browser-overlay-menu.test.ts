@@ -309,3 +309,25 @@ it('discards pending menu data when an app dialog opens', async () => {
   openDialogCount.value -= 1;
   scope.stop();
 });
+
+
+it('registers a menu when native randomUUID is unavailable', async () => {
+  vi.stubGlobal('crypto', { getRandomValues: (bytes: Uint8Array) => bytes.fill(1) });
+  try {
+    const { registerBrowserOverlayMenu } = await import('../../src/renderer/lib/browserOverlayMenu');
+    const scope = effectScope();
+    const menu = scope.run(() => registerBrowserOverlayMenu({
+      id: 'insecure-context',
+      items: () => [{ kind: 'item', id: 'one', label: 'One' }],
+      onSelect: vi.fn(),
+    }))!;
+    menu.showAt({ x: 0, y: 0, width: 20, height: 20 });
+    expect(openMenu).toHaveBeenCalledWith(expect.objectContaining({
+      menuId: '01010101-0101-4101-8101-010101010101',
+    }));
+    expect(menu.open.value).toBe(true);
+    scope.stop();
+  } finally {
+    vi.unstubAllGlobals();
+  }
+});

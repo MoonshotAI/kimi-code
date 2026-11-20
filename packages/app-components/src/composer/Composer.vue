@@ -13,6 +13,7 @@ import { newAttId } from '@moonshot-ai/app-composer/features/attachment';
 import { composerSnapshotDocument, docToText, type ComposerDocumentSnapshot } from '@moonshot-ai/app-composer/model';
 import type { NativeMenuItem } from '@moonshot-ai/app-core/native-menu';
 import { measureNaturalWidth, prepareWithSegments } from '@chenglou/pretext';
+import { v4 as randomUUID } from 'uuid';
 import { computed, nextTick, onMounted, onUnmounted, ref, shallowRef, useId, watch, watchEffect } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { analyzeLeadingSlashCommand, basename, buildSlashItems, formatShortcutText, formatTokens, providerDisplayName } from '@moonshot-ai/app-core/lib';
@@ -542,7 +543,7 @@ async function acceptBrowserCapture(resource: BrowserCaptureResource, comment: s
     capture.screenshot.attachmentId = attId;
     composerAttachmentStore.upsert(scope, entry);
   }
-  ed.insertBrowserReference(capture, { id: `br_${crypto.randomUUID()}`, captureId: capture.id, comment: comment || undefined, includeScreenshot: capture.target.kind === 'region' || includeScreenshot });
+  ed.insertBrowserReference(capture, { id: `br_${randomUUID()}`, captureId: capture.id, comment: comment || undefined, includeScreenshot: capture.target.kind === 'region' || includeScreenshot });
   ed.focus();
   return true;
 }
@@ -802,7 +803,7 @@ function armGoalMode(): void {
 function insertMentionEntry(entry: MentionEntry, range: { start: number; end: number }): void {
   if (entry.kind === 'browser') {
     const capture = browserCaptures.value.find((candidate) => candidate.id === entry.captureId);
-    if (capture !== undefined) editor?.insertBrowserReference(capture, { id: `br_${crypto.randomUUID()}`, captureId: capture.id }, range);
+    if (capture !== undefined) editor?.insertBrowserReference(capture, { id: `br_${randomUUID()}`, captureId: capture.id }, range);
     return;
   }
   if (entry.kind === 'attachment') {
