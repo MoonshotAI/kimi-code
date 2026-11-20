@@ -39,6 +39,7 @@ export class StubConfigService implements IConfigService {
     return {
       value: this._values.get(domain) as T | undefined,
       defaultValue: undefined,
+      envValue: undefined,
       userValue: this._values.get(domain) as T | undefined,
       memoryValue: undefined,
     };
