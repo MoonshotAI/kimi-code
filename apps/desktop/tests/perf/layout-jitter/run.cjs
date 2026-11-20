@@ -22,7 +22,7 @@ app.whenReady().then(async () => {
   try {
     for (const count of counts.length ? counts.map(Number) : [16, 60]) {
       const win = new BrowserWindow({ width: 1280, height: 900, show: false, webPreferences: { backgroundThrottling: false } });
-      win.showInactive();
+      if (!process.env.JITTER_HEADLESS) win.showInactive();
       const errors = [];
       win.webContents.on('console-message', event => { if (event.level === 'error') errors.push(event.message); });
       await win.loadURL(`http://127.0.0.1:${server.address().port}/`);
