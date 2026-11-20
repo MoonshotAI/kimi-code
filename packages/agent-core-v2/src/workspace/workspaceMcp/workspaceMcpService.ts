@@ -14,7 +14,7 @@ import {
 import type { McpOAuthEvent, McpOAuthService } from '#/mcpCore/oauth/service';
 import { canonicalMcpOAuthResource } from '#/mcpCore/oauth/store';
 import { ISessionEphemeralMcpServers } from '#/session/mcp/ephemeralMcpServers';
-import { MergedMcpConnectionView } from '#/session/mcp/mergedConnectionView';
+import { LayeredMcpConnectionView } from '#/session/mcp/layeredConnectionView';
 import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
@@ -175,10 +175,10 @@ export class WorkspaceMcpService extends Disposable implements IWorkspaceMcpServ
         this.log.error('session mcp overlay initial load failed', { error });
       });
     const unsubscribeOAuth = this.oauthEventSubscription(sessionManager);
-    const view = new MergedMcpConnectionView(
-      this.manager,
-      sessionManager,
-      new Set(Object.keys(servers)),
+    const overlayNames = new Set(Object.keys(servers));
+    const view = new LayeredMcpConnectionView(
+      () => [{ manager: sessionManager, owns: (name) => overlayNames.has(name) }],
+      { manager: this.manager, owns: (name) => Object.hasOwn(this.mcpConfig.servers(), name) },
     );
     const ready = Promise.all([this.ready, connect]).then(() => undefined);
     return {

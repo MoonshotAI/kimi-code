@@ -27,7 +27,6 @@ import { McpOAuthService, type McpOAuthEvent } from '#/mcpCore/oauth/service';
 import { HostProcessService } from '#/os/backends/node-local/hostProcessService';
 import { FakeEnvironment } from '#/environment/fakeEnvironment';
 import { ISessionEphemeralMcpServers } from '#/session/mcp/ephemeralMcpServers';
-import { MergedMcpConnectionView } from '#/session/mcp/mergedConnectionView';
 import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
 import { ISessionContext, makeSessionContext } from '#/session/sessionContext/sessionContext';
 import type { SessionWillCreateEvent } from '#/workspace/sessionLifecycle/sessionLifecycle';
@@ -818,71 +817,5 @@ describe('WorkspaceMcpService', () => {
 
       expect(reconnectAndJoin).not.toHaveBeenCalled();
     });
-  });
-});
-
-describe('MergedMcpConnectionView', () => {
-  let base: McpConnectionManager;
-  let overlay: McpConnectionManager;
-
-  beforeEach(() => {
-    base = new McpConnectionManager();
-    overlay = new McpConnectionManager();
-  });
-
-  afterEach(async () => {
-    await base.shutdown();
-    await overlay.shutdown();
-  });
-
-  function disabledStdio(command: string): McpServerConfig {
-    return { transport: 'stdio', command, enabled: false };
-  }
-
-  it('shadows same-named base entries with overlay entries and filters their statuses', async () => {
-    await base.connect('shared', disabledStdio('base-cmd'));
-    await base.connect('base-only', disabledStdio('base-cmd'));
-    await overlay.connect('shared', {
-      transport: 'http',
-      url: 'https://example.com/mcp',
-      enabled: false,
-    });
-    await overlay.connect('eph', disabledStdio('eph-cmd'));
-    const view = new MergedMcpConnectionView(base, overlay, new Set(['shared', 'eph']));
-
-    expect(
-      view
-        .list()
-        .map((entry) => entry.name)
-        .toSorted(),
-    ).toEqual(['base-only', 'eph', 'shared']);
-    expect(view.get('shared')?.transport).toBe('http');
-    expect(view.get('base-only')?.transport).toBe('stdio');
-
-    const seen: string[] = [];
-    const unsubscribe = view.onStatusChange((entry) => seen.push(entry.name));
-    await base.connect('shared', disabledStdio('base-cmd'));
-    await base.connect('base-only', disabledStdio('base-cmd'));
-    await overlay.connect('shared', {
-      transport: 'http',
-      url: 'https://example.com/mcp',
-      enabled: false,
-    });
-    unsubscribe();
-
-    expect(seen).toEqual(['base-only', 'shared']);
-  });
-
-  it('routes reconnect to the name owner and aggregates initial-load readiness', async () => {
-    await base.connect('shared', disabledStdio('base-cmd'));
-    await overlay.connect('shared', { transport: 'http', url: 'http://127.0.0.1:1/mcp' });
-    expect(overlay.get('shared')?.status).toBe('failed');
-    const view = new MergedMcpConnectionView(base, overlay, new Set(['shared']));
-
-    await expect(view.reconnect('shared')).resolves.toBeUndefined();
-    await expect(view.reconnect('unknown')).rejects.toThrow('Unknown MCP server: unknown');
-
-    await view.waitForInitialLoad();
-    expect(view.initialLoadDurationMs()).toBe(0);
   });
 });
