@@ -159,14 +159,11 @@ const dockStyle = computed(() =>
         tag="div"
         class="app-toasts__list"
       >
-        <template v-for="item in group.items" :key="item.key">
-          <component v-if="item.options.presentation" :is="item.options.presentation" :dismiss="item.close" />
-          <Toast v-else v-bind="item.options" @close="item.close()">
-            <template v-if="item.options.body" #default>
-              <component :is="item.options.body" />
-            </template>
-          </Toast>
-        </template>
+        <Toast v-for="item in group.items" :key="item.key" v-bind="item.options" @close="item.close()">
+          <template v-if="item.options.body" #default>
+            <component :is="item.options.body" />
+          </template>
+        </Toast>
       </TransitionGroup>
     </div>
   </template>

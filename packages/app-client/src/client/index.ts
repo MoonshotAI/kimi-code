@@ -19,6 +19,6 @@ export { SESSIONS_INITIAL_PAGE_SIZE } from '../stores/workspaces';
 export * from './useSessionAdmin';
 export * from './turnFileHistory';
 export { sessionObservationOptions } from './observationScope';
-export { toast, onToast, dismissToastByKey, createKimiToast, type ToastEvent } from './toast';
+export { toast, onToast, dismissToastByKey, nextToastKey, createKimiToast, type ToastEvent } from './toast';
 export * from './adminBatchToast';
 export * from './useKimiWebClient';
