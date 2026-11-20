@@ -47,7 +47,7 @@ protected:
     project: kimi-code-app
     file: apps/desktop/tests/main/browser/browser-overlay.test.ts
     behavior: 用户在浮层菜单里刚改完选项就按 Escape，渲染进程在收到关闭通知前发出的菜单刷新不会让菜单重新弹出；菜单保持关闭，渲染进程和主进程都认为它已关闭。
-    source: 'desktop 修复：浮层菜单被迟到的刷新重新打开（Desktop E2E 抓到）'
+    source: 'desktop #5199 修复：浮层菜单被迟到的刷新重新打开'
     owner: '@RealKai42'
   - id: kap.api-contract
     kind: contract
