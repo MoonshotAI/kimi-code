@@ -5,7 +5,7 @@ import type { IAgentProfileRegistry } from '#/app/agentProfileCatalog/agentProfi
 import { BUILTIN_AGENT_PROFILE_SOURCE_ID } from '#/app/agentProfileCatalog/builtinAgentProfileLoader';
 import type { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import type { IConfigService } from '#/app/config/config';
-import { findGitWorkTree } from '#/app/git/workTree';
+import { findNearestGitMarker } from '#/app/git/workTree';
 import { loadMcpServersDetailed, resolveMcpJsonPaths } from '#/app/mcpConfig/configLoader';
 import type { IProjectLocalConfigService } from '#/app/projectLocalConfig/projectLocalConfig';
 import {
@@ -156,7 +156,7 @@ export class WorkspaceTrustDisclosureService implements IWorkspaceTrustDisclosur
     const mergeAllAvailableSkills =
       this.config.get<MergeAllAvailableSkillsConfig>(MERGE_ALL_AVAILABLE_SKILLS_SECTION) ?? true;
     const projectRoot =
-      (await findGitWorkTree(this.fs, this.workspaceDirs.primary))?.root ?? this.workspaceDirs.primary;
+      (await findNearestGitMarker(this.fs, this.workspaceDirs.primary))?.root ?? this.workspaceDirs.primary;
     const [roots, realRoot] = await Promise.all([
       projectRootsForDirs(
         [this.workspaceDirs.primary, ...this.workspaceDirs.sharedAdditionalDirs],
@@ -182,7 +182,7 @@ export class WorkspaceTrustDisclosureService implements IWorkspaceTrustDisclosur
       warnings.push('Project skills are still loading; inspect the project skill directories.');
     }
     const projectRoot =
-      (await findGitWorkTree(this.fs, this.workspaceDirs.primary))?.root ?? this.workspaceDirs.primary;
+      (await findNearestGitMarker(this.fs, this.workspaceDirs.primary))?.root ?? this.workspaceDirs.primary;
     if (this.instructions.snapshot.agentsMdWarning !== undefined) {
       warnings.push(this.instructions.snapshot.agentsMdWarning);
     }

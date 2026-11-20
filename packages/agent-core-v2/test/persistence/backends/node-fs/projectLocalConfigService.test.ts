@@ -1,6 +1,12 @@
-import { describe, expect, it } from 'vitest';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+
+import { dirname, join, normalize } from 'pathe';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { parse as parseToml } from 'smol-toml';
 
+import { findProjectRoot } from '#/agent/profile/context';
+import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { HostFsError, OsFsErrors } from '#/os/interface/hostFsErrors';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { FileProjectLocalConfigService } from '#/persistence/backends/node-fs/projectLocalConfigService';
@@ -24,6 +30,96 @@ describe('FileProjectLocalConfigService.readAdditionalDirs', () => {
       new HostFsError(OsFsErrors.codes.OS_FS_PERMISSION_DENIED, 'read failed: permission denied'),
     );
     await expect(service.readAdditionalDirs('/repo')).rejects.toMatchObject({ code: 'storage.io_failed' });
+  });
+});
+
+describe('FileProjectLocalConfigService project root', () => {
+  let base: string;
+
+  beforeEach(() => {
+    base = mkdtempSync(join(tmpdir(), 'kimi-project-root-'));
+  });
+
+  afterEach(() => {
+    rmSync(base, { recursive: true, force: true });
+  });
+
+  function layout(entries: Record<string, string | null>): void {
+    for (const [path, content] of Object.entries(entries)) {
+      const full = join(base, path);
+      if (content === null) {
+        mkdirSync(full, { recursive: true });
+      } else {
+        mkdirSync(dirname(full), { recursive: true });
+        writeFileSync(full, content);
+      }
+    }
+  }
+
+  it.each<{
+    readonly name: string;
+    readonly entries: Record<string, string | null>;
+    readonly start: string;
+    readonly checkout: string;
+  }>([
+    {
+      name: 'a nested directory of a repository',
+      entries: { 'repo/.git/HEAD': 'ref: refs/heads/main\n', 'repo/src/deep': null },
+      start: 'repo/src/deep',
+      checkout: 'repo',
+    },
+    {
+      name: 'a .git directory without HEAD',
+      entries: { 'repo/.git': null, 'repo/src': null },
+      start: 'repo/src',
+      checkout: 'repo',
+    },
+    {
+      name: 'a linked worktree pointer inside another repository',
+      entries: {
+        'main/.git/HEAD': 'ref: refs/heads/main\n',
+        'main/wt/.git': 'gitdir: ../.git/worktrees/wt\r\n',
+        'main/wt/src': null,
+      },
+      start: 'main/wt/src',
+      checkout: 'main/wt',
+    },
+    {
+      name: 'an unparseable .git file inside another repository',
+      entries: {
+        'main/.git/HEAD': 'ref: refs/heads/main\n',
+        'main/vendored/.git': 'not a pointer\n',
+        'main/vendored/src': null,
+      },
+      start: 'main/vendored/src',
+      checkout: 'main/vendored',
+    },
+  ])('agrees with the AGENTS.md project root on the checkout root of $name', async ({ entries, start, checkout }) => {
+    layout(entries);
+    const fs = new HostFileSystem();
+    const service = new FileProjectLocalConfigService(
+      { _serviceBrand: undefined, osHomeDir: '' } as never,
+      fs,
+    );
+
+    const { projectRoot } = await service.readAdditionalDirs(join(base, start));
+
+    expect(projectRoot).toBe(normalize(join(base, checkout)));
+    await expect(findProjectRoot({ fs }, join(base, start))).resolves.toBe(projectRoot);
+  });
+
+  it('falls back to the start directory outside any checkout', async () => {
+    layout({ 'plain/src': null });
+    const fs = new HostFileSystem();
+    const service = new FileProjectLocalConfigService(
+      { _serviceBrand: undefined, osHomeDir: '' } as never,
+      fs,
+    );
+
+    const { projectRoot } = await service.readAdditionalDirs(join(base, 'plain', 'src'));
+
+    expect(projectRoot).toBe(normalize(join(base, 'plain', 'src')));
+    await expect(findProjectRoot({ fs }, join(base, 'plain', 'src'))).resolves.toBe(projectRoot);
   });
 });
 

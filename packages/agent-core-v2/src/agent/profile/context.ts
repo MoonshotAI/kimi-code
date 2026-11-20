@@ -1,6 +1,6 @@
 import { basename, dirname, join, normalize } from 'pathe';
 
-import { findGitWorkTree } from '#/app/git/workTree';
+import { findNearestGitMarker } from '#/app/git/workTree';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 
 import type { SystemPromptContext } from './profile';
@@ -197,7 +197,7 @@ export async function loadAgentsMdForRoots(
 
   for (const workDir of workDirs) {
     const rootWorkDir = normalize(workDir);
-    const projectRoot = (await findGitWorkTree(deps.fs, rootWorkDir))?.root ?? rootWorkDir;
+    const projectRoot = (await findNearestGitMarker(deps.fs, rootWorkDir))?.root ?? rootWorkDir;
     const dirs = dirsRootToLeaf(rootWorkDir, projectRoot);
 
     for (const dir of dirs) {
@@ -243,7 +243,7 @@ export async function agentsMdWatchRoots(
     },
   ];
   const rootWorkDir = normalize(workDir);
-  const projectRoot = (await findGitWorkTree(deps.fs, rootWorkDir))?.root ?? rootWorkDir;
+  const projectRoot = (await findNearestGitMarker(deps.fs, rootWorkDir))?.root ?? rootWorkDir;
   const projectCandidates: string[] = [];
   for (const dir of dirsRootToLeaf(rootWorkDir, projectRoot)) {
     projectCandidates.push(
@@ -274,7 +274,7 @@ export async function findProjectRoot(
   workDir: string,
 ): Promise<string> {
   const rootWorkDir = normalize(workDir);
-  return (await findGitWorkTree(deps.fs, rootWorkDir))?.root ?? rootWorkDir;
+  return (await findNearestGitMarker(deps.fs, rootWorkDir))?.root ?? rootWorkDir;
 }
 
 export function dirsRootToLeaf(workDir: string, projectRoot: string): string[] {
