@@ -3,11 +3,13 @@ import {
   Error2,
   ErrorCodes,
   IAgentLifecycleService,
+  IAgentScopeContext,
   ISessionManager,
   ISessionStateService,
   MAIN_AGENT_ID,
   agentContextOf,
   getOrRestoreAgent,
+  isAutoReviewReviewerLabels,
   resumeSessionById,
   sessionMetadataDataKey,
   type AgentContext,
@@ -61,7 +63,7 @@ export class ConversationService implements IDisposable {
     const handle = agentId === MAIN_AGENT_ID
       ? await ensureMainAgent(session)
       : await getOrRestoreAgent(session, agentId);
-    if (handle === undefined) {
+    if (handle === undefined || isInternalReviewerHandle(handle)) {
       throw new Error2(ErrorCodes.AGENT_NOT_FOUND, `agent not found: ${agentId}`);
     }
     return this.attach(sessionId, this.watch(sessionId, session), handle).ready;
@@ -94,7 +96,8 @@ export class ConversationService implements IDisposable {
     const entry: SessionFeeds = { session, feeds: new Map(), watches: [] };
     this.sessions.set(sessionId, entry);
     entry.watches.push(
-      agents.onDidCreateScope(({ handle }) => {
+      agents.onDidCreateScope(({ handle, meta }) => {
+        if (isAutoReviewReviewerLabels(meta?.labels)) return;
         this.attach(sessionId, entry, handle);
       }),
       agents.onDidClose((agent) => {
@@ -106,7 +109,9 @@ export class ConversationService implements IDisposable {
     );
     for (const agent of agents.list()) {
       const handle = agents.handleOf(agent.agentId);
-      if (handle !== undefined) this.attach(sessionId, entry, handle);
+      if (handle !== undefined && !isInternalReviewerHandle(handle)) {
+        this.attach(sessionId, entry, handle);
+      }
     }
     return entry;
   }
@@ -131,6 +136,14 @@ export class ConversationService implements IDisposable {
     this.sessions.delete(sessionId);
     for (const watch of entry.watches) watch.dispose();
     for (const { feed } of entry.feeds.values()) feed.dispose();
+  }
+}
+
+function isInternalReviewerHandle(handle: IAgentScopeHandle): boolean {
+  try {
+    return isAutoReviewReviewerLabels(handle.accessor.get(IAgentScopeContext)?.meta?.labels);
+  } catch {
+    return false;
   }
 }
 

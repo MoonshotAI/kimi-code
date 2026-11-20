@@ -1429,6 +1429,26 @@ describe('AgentLifecycleService', () => {
     expect(svc.handleOf('main')!.accessor.get(IAgentStateService).get(permissionModeKey)).toBe('auto');
   });
 
+  it('broadcastPermissionMode leaves auto-review agents pinned to manual and keeps them ephemeral', async () => {
+    const svc = ix.get(IAgentLifecycleService);
+    await svc.create({ agentId: 'main' });
+    const reviewer = await svc.create({ agentId: 'reviewer-1', labels: { autoReview: 'reviewer' } });
+
+    svc.broadcastPermissionMode('yolo');
+
+    const reviewerScope = svc.handleOf('reviewer-1')!.accessor.get(IAgentScopeContext);
+    expect(svc.handleOf('main')!.accessor.get(IAgentStateService).get(permissionModeKey)).toBe('yolo');
+    expect(svc.handleOf('reviewer-1')!.accessor.get(IAgentStateService).get(permissionModeKey)).toBe('manual');
+    expect(reviewerScope.meta?.homedir).toContain('ephemeral/reviewer-1');
+    expect(reviewerScope.meta?.parentAgentId).toBeUndefined();
+    const persistedBeforeRemove = await ix.get(
+      (await import('#/session/sessionMetadata/sessionMetadata')).ISessionMetadata,
+    ).read();
+    expect(persistedBeforeRemove.agents?.['reviewer-1']).toBeUndefined();
+
+    await svc.remove(reviewer);
+  });
+
   it('broadcastPermissionMode leaves tower-worker agents pinned to their spawned mode', async () => {
     const svc = ix.get(IAgentLifecycleService);
     await svc.create({ agentId: 'main' });

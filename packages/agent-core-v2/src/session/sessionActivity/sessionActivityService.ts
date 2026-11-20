@@ -21,6 +21,8 @@ import {
   CompactionStarted,
 } from '#/agent/fullCompaction/compactionOps';
 import { IAgentStateService } from '#/agent/state/agentState';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { isAutoReviewReviewerLabels } from '#/features/autoReview/flag';
 import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import {
   INTERACTION_TAG_SESSION_ID,
@@ -80,7 +82,8 @@ export class SessionActivityView extends Disposable implements ISessionActivityV
     }
     this.current = this.aggregate();
     this._register(
-      this.agents.onDidCreateScope(({ handle }) => {
+      this.agents.onDidCreateScope(({ handle, meta }) => {
+        if (isAutoReviewReviewerLabels(meta?.labels)) return;
         this.attachAgent(handle);
         this.recompute('agent_lifecycle');
       }),
@@ -126,7 +129,7 @@ export class SessionActivityView extends Disposable implements ISessionActivityV
   }
 
   private attachAgent(handle: IAgentScopeHandle): void {
-    if (this.folds.has(handle.id)) return;
+    if (this.folds.has(handle.id) || isReviewerScopeHandle(handle)) return;
     this.folds.set(handle.id, seedFold(handle));
     const bus = handle.accessor.get(IEventBus) as IEventBus | undefined;
     if (bus === undefined) return;
@@ -282,6 +285,14 @@ function activityEquals(a: SessionActivityState, b: SessionActivityState): boole
     a.pendingInteraction === b.pendingInteraction &&
     a.lastTurnReason === b.lastTurnReason
   );
+}
+
+function isReviewerScopeHandle(handle: IAgentScopeHandle): boolean {
+  try {
+    return isAutoReviewReviewerLabels(handle.accessor.get(IAgentScopeContext)?.meta?.labels);
+  } catch {
+    return false;
+  }
 }
 
 registerScopedService(

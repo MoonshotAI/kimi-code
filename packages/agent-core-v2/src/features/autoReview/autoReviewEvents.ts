@@ -29,6 +29,7 @@ const autoReviewCompletedSchema = z.object({
   model: z.string(),
   decision: z.enum(['allow', 'deny', 'failed']),
   risk: z.enum(['low', 'medium', 'high']).optional(),
+  authorization: z.enum(['explicit', 'ambiguous', 'none']).optional(),
   reason: z.string().optional(),
   durationMs: z.number().nonnegative(),
 });
@@ -48,6 +49,7 @@ export interface AutoReviewCompleted {
   readonly model: string;
   readonly decision: 'allow' | 'deny' | 'failed';
   readonly risk?: 'low' | 'medium' | 'high';
+  readonly authorization?: 'explicit' | 'ambiguous' | 'none';
   readonly reason?: string;
   readonly durationMs: number;
 }

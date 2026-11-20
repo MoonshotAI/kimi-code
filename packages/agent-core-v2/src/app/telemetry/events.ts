@@ -211,6 +211,7 @@ export interface AutoReviewDecisionEvent {
   model: string;
   decision: 'allow' | 'deny' | 'failed';
   risk?: 'low' | 'medium' | 'high';
+  authorization?: 'explicit' | 'ambiguous' | 'none';
   duration_ms: number;
 }
 
@@ -961,6 +962,7 @@ export const telemetryEventDefinitions = {
       model: 'Reviewer model alias',
       decision: 'Whether the reviewer allowed, denied, or failed to decide',
       risk: 'Reviewer risk classification; absent when review failed',
+      authorization: 'Reviewer authorization classification; absent when review failed',
       duration_ms: 'Total review time in milliseconds',
     },
   }),

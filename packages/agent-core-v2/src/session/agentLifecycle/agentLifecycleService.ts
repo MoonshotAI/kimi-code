@@ -1,3 +1,4 @@
+import { rm } from 'node:fs/promises';
 import { join } from 'pathe';
 
 import { IInstantiationService } from '#/_base/di/instantiation';
@@ -20,6 +21,7 @@ import { ISessionEventBus } from '#/app/event/eventBus';
 import { DEFAULT_PERMISSION_MODE_SECTION } from '#/agent/permissionMode/configSection';
 import { permissionModeConfiguredKey } from '#/agent/permissionMode/permissionModeOps';
 import type { PermissionMode } from '#/agent/permissionPolicy/types';
+import { isAutoReviewReviewerLabels } from '#/features/autoReview/flag';
 import { hasPinnedPermissionMode } from '#/features/tower/tower';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionWorkdir } from '#/session/workdir/workdir';
@@ -197,13 +199,16 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     agentId: string,
     opts: CreateAgentOptions,
   ): Promise<AgentContext> {
-    const agentScope = this.ctx.scope(`agents/${agentId}`);
+    const ephemeralReviewer = isAutoReviewReviewerLabels(opts.labels);
+    const agentScope = this.ctx.scope(
+      ephemeralReviewer ? `ephemeral/${agentId}` : `agents/${agentId}`,
+    );
     const agentHomedir = join(this.bootstrap.homeDir, agentScope);
     const generation = ++this.nextLifecycleGeneration;
     const meta: AgentMeta = {
       homedir: agentHomedir,
       type: agentId === 'main' ? 'main' : 'sub',
-      parentAgentId: agentId === 'main' ? undefined : 'main',
+      parentAgentId: agentId === 'main' || ephemeralReviewer ? undefined : 'main',
       forkedFrom: opts.forkedFrom,
       labels: withSubagentProfile(
         opts.labels,
@@ -302,7 +307,9 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
       this.rosterAdopt(scopeHandle);
       managed = this.roster.get(agentId);
       stage = 'register';
-      await this.sessionMetadata.registerAgent(agentId, meta);
+      if (!ephemeralReviewer) {
+        await this.sessionMetadata.registerAgent(agentId, meta);
+      }
       this.onDidCreateEmitter.fire(agent);
       didCreate = true;
       this.onDidCreateScopeEmitter.fire({ context: agent, handle, meta });
@@ -450,7 +457,10 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     for (const managed of this.roster.values()) {
       if (managed.closing || !managed.active) continue;
       const handle = managed.handle;
-      if (hasPinnedPermissionMode(handle.accessor.get(IAgentLoopService).data().profileName)) {
+      if (
+        hasPinnedPermissionMode(handle.accessor.get(IAgentLoopService).data().profileName) ||
+        isAutoReviewReviewerLabels(handle.accessor.get(IAgentScopeContext).meta?.labels)
+      ) {
         continue;
       }
       handle.accessor.get(IAgentPermissionModeService).setMode(mode);
@@ -576,6 +586,11 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
       if (Date.now() >= promptIdleDeadline) break;
       await new Promise((resolve) => setTimeout(resolve, REMOVE_PROMPT_QUIESCE_POLL_MS));
     }
+    const ephemeralScope = isAutoReviewReviewerLabels(
+      handle.accessor.get(IAgentScopeContext).meta?.labels,
+    )
+      ? this.ctx.scope(`ephemeral/${agent.agentId}`)
+      : undefined;
     let stopError: Error | undefined;
     try {
       await loop.close();
@@ -590,12 +605,28 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
       } catch (error) {
         stopError ??= error instanceof Error ? error : new Error(String(error));
       }
+      if (ephemeralScope !== undefined) {
+        await this.cleanupEphemeralScope(ephemeralScope);
+      }
     } finally {
       releaseQuiescence?.();
     }
     if (this.roster.get(agent.agentId) === managed) this.roster.delete(agent.agentId);
     this.onDidCloseEmitter.fire(agent);
     if (stopError !== undefined) throw stopError;
+  }
+
+  private async cleanupEphemeralScope(scope: string): Promise<void> {
+    try {
+      await this.appendLogStore.flush();
+      const keys = await this.storage.list(scope);
+      await Promise.all(keys.map((key) => this.storage.delete(scope, key)));
+      const dir = this.storage.pathFor(scope, '');
+      if (dir !== undefined) {
+        await rm(dir, { recursive: true, force: true });
+      }
+    } catch {
+    }
   }
 
   private managedFor(agent: AgentContext): ManagedAgent | undefined {

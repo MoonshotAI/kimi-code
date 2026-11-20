@@ -1,8 +1,10 @@
 import {
   IAgentLoopService,
+  IAgentScopeContext,
   IAgentTodoService,
   IEventBus,
   MAIN_AGENT_ID,
+  isAutoReviewReviewerLabels,
   type Event2,
   type IAgentLifecycleService,
   type IAgentScopeHandle,
@@ -85,6 +87,7 @@ export class SessionAgentFeed implements IDisposable {
     if (this.watches.has(agentId)) return;
     const handle = this.agents.handleOf(agentId);
     if (handle === undefined) return;
+    if (isAutoReviewReviewerLabels(optionalService(handle, IAgentScopeContext)?.meta?.labels)) return;
     this.watches.set(
       agentId,
       new AgentWatch(this.sessionId, agentId, handle, this.send, this.contextIntervalMs, announce),

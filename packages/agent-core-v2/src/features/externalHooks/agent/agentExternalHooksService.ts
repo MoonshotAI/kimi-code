@@ -4,6 +4,7 @@ import { Service } from '#/_base/di/service';
 import { defineState } from '#/state/state';
 import { isPlainRecord } from '#/_base/utils/canonical-args';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { isAutoReviewReviewerLabels } from '#/features/autoReview/flag';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { historyEntryFromContext } from '#/agent/loop/history';
 import { USER_PROMPT_ORIGIN } from '#/agent/contextMemory/types';
@@ -90,6 +91,9 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
   ) {
     super();
     this.states.contributeState(externalHooksStopHookContinuationUsedKey);
+    if (isAutoReviewReviewerLabels(this.scopeContext.meta?.labels)) {
+      return;
+    }
     this._register({
       dispose: () => {
         this.stopHookAbortController.abort();
