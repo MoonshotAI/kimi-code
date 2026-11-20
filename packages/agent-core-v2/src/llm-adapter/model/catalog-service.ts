@@ -41,7 +41,7 @@ import {
 } from './catalog';
 import { IProviderCatalogRuntime, rawRecordOf } from './catalog-runtime';
 import { ModelCatalogErrors } from './errors';
-import { IHostRequestHeaders } from './host-request-headers';
+import { IHostRequestHeaders, isFirstPartyBaseUrl } from './host-request-headers';
 import { IModelService, type ModelRecord } from './model';
 import {
   deriveProviderId,
@@ -311,6 +311,7 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
           providerConfig?.type,
           providerConfig?.customHeaders,
           this.hostRequestHeaders,
+          resolvedBaseUrl,
         ),
         credentials: credentialProvider,
       },
@@ -421,10 +422,12 @@ export function resolveOutboundHeaders(
   providerType: string | undefined,
   customHeaders: Readonly<Record<string, string>> | undefined,
   host: Pick<IHostRequestHeaders, 'headers' | 'thirdPartyHeaders'>,
+  baseUrl: string | undefined,
 ): Readonly<Record<string, string>> {
   const forwardsAll =
     providerType !== undefined &&
-    getProviderDefinition(providerType)?.hostHeaders === 'full';
+    getProviderDefinition(providerType)?.hostHeaders === 'full' &&
+    isFirstPartyBaseUrl(baseUrl);
   const hostLayer = forwardsAll ? host.headers : host.thirdPartyHeaders;
   return { ...parseKimiCodeCustomHeaders(), ...hostLayer, ...customHeaders };
 }
