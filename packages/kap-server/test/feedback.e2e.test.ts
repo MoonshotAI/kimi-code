@@ -219,11 +219,11 @@ default_model = "alternate"
     const result = await request('POST', '/feedback', input);
     expect(result).toMatchObject({ code: 0, data: { feedback_id: 1 } });
     expect(created.at(-1)).toMatchObject({
+      session_id: 'global',
       content: 'App issue',
       version: TEST_HOST_IDENTITY.version,
       info: { kind: 'global', source: 'sidebar', category: 'bug', client: 'desktop' },
     });
-    expect(created.at(-1)).not.toHaveProperty('session_id');
   });
 
   it('advertises and enforces the experimental flag', async () => {
@@ -248,7 +248,7 @@ default_model = "alternate"
       session_id: 'example-session', upload_session: true, upload_logs: false,
     }, { 'x-kimi-client-ui-mode': 'web', 'x-kimi-client-version': '2.3.4', 'sec-ch-ua-platform': '"Windows"' });
     expect(code).toBe(0);
-    expect(created.at(-1)).toMatchObject({ version: '2.3.4', os: 'Windows', info: { client: 'web', upload_session: true, upload_logs: false } });
+    expect(created.at(-1)).toMatchObject({ session_id: 'example-session', version: '2.3.4', os: 'Windows', info: { client: 'web', upload_session: true, upload_logs: false } });
     expect(uploads.size).toBe(previousUploads);
   });
 
