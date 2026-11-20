@@ -62,3 +62,10 @@ quarantine:
     owner: '@RealKai42'
     since: '2026-11-19'
     expires: '2027-01-18'
+  - file: apps/desktop/e2e/lifecycle-restore.spec.ts
+    test: panel tabs, sidebar layout, pins and window size survive a relaunch and a renderer reload
+    runner: playwright
+    reason: 只在 CI 的 macOS runner 上失败：重启后窗口尺寸回到默认的 1440×900，期望 1180×820；本地通过，加网络守卫之前（c722f973f）就已出现。隔离期间，面板标签、侧栏布局和置顶的恢复也不在默认运行里。
+    owner: '@RealKai42'
+    since: '2026-11-19'
+    expires: '2027-01-18'
