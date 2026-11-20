@@ -1,6 +1,6 @@
 import type { Command } from 'commander';
 
-import { registerEnsureDaemonCommand } from './ensure-daemon';
+import { registerEnsureDaemonCommand, registerSharedDaemonCommands } from './ensure-daemon';
 import { registerLegacyKillCommand } from './legacy-kill';
 import { registerRotateTokenCommand } from './rotate-token';
 import { buildWebCommand } from './run';
@@ -9,9 +9,11 @@ export function registerWebCommand(program: Command): void {
   const web = buildWebCommand(
     program
       .command('web')
-      .description('Run the local Kimi server and open the web UI.'),
+      .description('Open the web UI and start a local Kimi server if needed.'),
+    { sharedDaemon: true },
   );
   registerRotateTokenCommand(web);
+  registerSharedDaemonCommands(web);
   const server = buildWebCommand(
     program
       .command('server', { hidden: true })
@@ -26,6 +28,6 @@ export function registerWebCommand(program: Command): void {
       .command('rc')
       .alias('remote')
       .description('Run the local Kimi server and open the web UI through Remote Control.'),
-    { forceRemoteControl: true },
+    { forceRemoteControl: true, sharedDaemon: true },
   );
 }

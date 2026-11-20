@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { createServer, type Server } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -488,5 +488,20 @@ describe('server-v2 boot — port retry', () => {
     } finally {
       await closeNetServer(occupant);
     }
+  });
+
+  it.skipIf(process.platform === 'win32')('releases TCP and unregisters when the Unix socket cannot bind', async () => {
+    home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-dual-'));
+    const { port } = await allocateAdjacentFreePair();
+    const socketPath = join(home, 'blocked');
+    await mkdir(socketPath);
+    await expect(startServer({
+      hostIdentity: TEST_HOST_IDENTITY, host: '127.0.0.1', port, homeDir: home, socketPath,
+      alsoListenTcp: true, logLevel: 'silent',
+    })).rejects.toThrow();
+
+    const next = await listenOnPort('127.0.0.1', port);
+    await closeNetServer(next);
+    expect(await listLiveServerInstances(home)).toEqual([]);
   });
 });

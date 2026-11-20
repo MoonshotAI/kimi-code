@@ -137,7 +137,7 @@ kimi -p "List changed files" --output-format stream-json
 
 ## 子命令
 
-`kimi` 提供以下子命令：`login`（非交互式登录）、`acp`（ACP IDE 模式）、`web`（前台运行本地 REST/WebSocket/web 服务并打开 web UI）、`doctor`（校验配置文件）、`export`（导出会话）、`migrate`（迁移旧版数据）、`import-sessions`（导入 Claude Code 和 Codex 会话）、`upgrade`（检查更新）、`provider`（管理供应商）。
+`kimi` 提供以下子命令：`login`（非交互式登录）、`acp`（ACP IDE 模式）、`web`（打开本地 Web 界面）、`doctor`（校验配置文件）、`export`（导出会话）、`migrate`（迁移旧版数据）、`import-sessions`（导入 Claude Code 和 Codex 会话）、`upgrade`（检查更新）、`provider`（管理供应商）。
 
 ### `kimi login`
 
@@ -159,12 +159,14 @@ kimi acp
 
 ### `kimi web`
 
-在当前终端前台运行本地 Kimi 服务 —— 同一个进程同时挂载 REST + WebSocket API 与 web UI —— 并在服务就绪后用默认浏览器打开 web UI。命令会一直挂在终端，直到收到 `SIGINT` / `SIGTERM`（如 `Ctrl-C`）时干净退出。
+在默认浏览器打开本地 Kimi Web 界面。在 macOS 和 Linux 上，`kimi web`、`kimi web --no-open`、`kimi web --remote-control` 和 `kimi rc` 会复用这台机器上的后台共享服务，没有运行时会自动启动。Kimi Code 的 SSH 连接也使用这个服务，所以使用同一个 Kimi 数据目录时，各个入口可以看到相同的会话。按 `Ctrl+C` 会退出命令，共享服务会继续运行；没有连接、没有正在运行的任务、也没有开启远程控制的状态持续 10 分钟后，它会自动退出。共享服务使用它启动时的环境变量，修改环境变量后先运行 `kimi web stop`。
+
+在 Windows 上，或指定 `--no-daemon`、`--host`、`--port`、`--json` 等服务选项时，命令会在当前终端启动独立的前台服务，按 `Ctrl+C` 会停止它。
 
 服务运行时，`GET /api/v1/kap.md` 会返回当前版本的 KAP 接口说明，`GET /openapi.json` 会返回 REST OpenAPI 文档，`GET /asyncapi.json` 会返回本地 WebSocket 协议的 AsyncAPI 文档。在其他 Agent 中交互与交接会话见[在其他 Agent 中使用（Agent to Agent）](../guides/other-agents.md)。
 
 ```sh
-kimi web                 # 前台运行服务并打开浏览器
+kimi web                 # 使用默认服务并打开浏览器
 kimi web --no-open       # 不打开浏览器
 kimi web --port 58628    # 指定绑定端口
 ```
@@ -181,6 +183,7 @@ kimi web --port 58628    # 指定绑定端口
 | `--dangerous-bypass-auth` | 关闭所有 REST 与 WebSocket 路由的 bearer token 鉴权，使 web UI 无需 token 即可连接；仅用于可信网络或自有鉴权代理之后 |
 | `--web-title <title>` | 自定义 web UI 的浏览器标签页标题；默认为工作区目录名 |
 | `--no-open` | 就绪后不自动打开浏览器 |
+| `--no-daemon` | 不使用共享服务，在当前终端启动独立的前台服务；`kimi rc` 同样支持 |
 | `--json` | 以机器可读模式启动：不自动打开浏览器，为当前进程生成一次性内存 token，就绪后向 `stdout` 输出单行 JSON（含 `origin`、`ws_url`、`token`、`kimi_agent_protocol_version`），日志输出到 `stderr` |
 
 `kimi web` 默认只绑定本机 loopback 地址，并在启动横幅中打印 bearer token；web UI 通过 URL 的 `#token=` 片段自动完成鉴权。
@@ -191,7 +194,15 @@ kimi web --port 58628    # 指定绑定端口
 
 #### `kimi server kill`
 
-已废弃——仅用于停止 0.28.0 之前的 Kimi Code 版本启动的服务。那些版本可能在后台遗留服务进程，记录在 legacy 单实例锁文件 `~/.kimi-code/server/lock` 中；该命令先请求 `POST /api/v1/shutdown` 优雅退出，再对锁中记录的 pid 发 SIGTERM、必要时升级为 SIGKILL，并在确认进程退出后删除锁文件。`kimi web` 启动的服务在前台运行，直接用 `Ctrl+C` 停止即可。
+已废弃——仅用于停止 0.28.0 之前的 Kimi Code 版本启动的服务。那些版本可能在后台遗留服务进程，记录在 legacy 单实例锁文件 `~/.kimi-code/server/lock` 中；该命令先请求 `POST /api/v1/shutdown` 优雅退出，再对锁中记录的 pid 发 SIGTERM、必要时升级为 SIGKILL，并在确认进程退出后删除锁文件。
+
+#### `kimi web status`
+
+显示共享服务的状态：版本、进程 ID、Web 地址、socket 路径、日志路径和远程控制状态。没有运行时也会打印日志路径。加 `--json` 输出单个 JSON 对象。
+
+#### `kimi web stop`
+
+在共享服务空闲时停止它。仍有正在运行的任务、已连接的客户端或开启的远程控制时，命令会拒绝停止并以退出码 `1` 退出；加 `--force` 可以强制停止，正在运行的任务会被中断。加 `--json` 输出单个 JSON 对象。
 
 #### `kimi web rotate-token`
 

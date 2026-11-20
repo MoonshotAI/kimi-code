@@ -712,7 +712,6 @@
     "packages/minidb/test/worker-build.test.ts": 1
   },
   "typescript/no-unnecessary-type-parameters": {
-    "apps/kimi-code/src/cli/sub/web/ensure-daemon.ts": 1,
     "apps/kimi-code/src/native/native-require.ts": 1,
     "apps/vscode/webview-ui/src/services/bridge.ts": 1,
     "packages/agent-core-v2/src/_base/di/instantiation.ts": 1,

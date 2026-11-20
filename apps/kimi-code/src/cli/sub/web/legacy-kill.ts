@@ -15,7 +15,7 @@ const POLL_INTERVAL_MS = 100;
 export const LEGACY_SERVER_MAX_VERSION = '0.28.0';
 
 export const DEPRECATED_KILL_NOTICE =
-  '`kimi server kill` is deprecated: it only stops servers started by a version before 0.28.0. Servers started by `kimi web` run in the foreground — stop them with Ctrl+C.\n';
+  '`kimi server kill` is deprecated: it only stops servers started by a version before 0.28.0. Use Ctrl+C to stop a foreground server.\n';
 
 export interface LegacyServerLock {
   pid: number;
@@ -40,7 +40,7 @@ export function registerLegacyKillCommand(server: Command): void {
   server
     .command('kill')
     .description(
-      'Deprecated — stop a server started by a version before 0.28.0 (recorded in the legacy server lock). Servers started by `kimi web` run in the foreground — stop them with Ctrl+C.',
+      'Deprecated — stop a server started by a version before 0.28.0 (recorded in the legacy server lock).',
     )
     .allowUnknownOption(true)
     .allowExcessArguments(true)

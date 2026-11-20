@@ -15,6 +15,7 @@ export class ManagedIdleExit {
   constructor(
     private readonly sessions: Pick<ISessionManager, 'list' | 'closeIfIdle'>,
     private readonly connections: Pick<IConnectionRegistry, 'size'>,
+    private readonly keepAlive: () => boolean,
     private readonly idleExitMs: number,
     private readonly onIdle: () => void,
     private readonly now: () => number = Date.now,
@@ -51,7 +52,7 @@ export class ManagedIdleExit {
 
   private async sweepOnce(): Promise<void> {
     if (this.fired) return;
-    if (this.connections.size() > 0) {
+    if (this.connections.size() > 0 || this.keepAlive()) {
       this.idleSince = this.now();
       return;
     }

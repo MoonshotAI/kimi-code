@@ -38,6 +38,7 @@ export interface RemoteControlOutputOptions {
   readonly deviceName: string;
   readonly qrCode: string;
   readonly pngPath: string;
+  readonly sharedDaemon?: { readonly ownsTunnel: boolean; readonly logPath: string };
 }
 
 export function formatRemoteControlOutput(options: RemoteControlOutputOptions): string {
@@ -72,7 +73,16 @@ export function formatRemoteControlOutput(options: RemoteControlOutputOptions): 
     `  ${label('Local UI: ')}${accent(localBase)}${dim(localFrag)} ${muted('(LAN: --host)')}`,
     '',
     `  ${docs} ${muted('·')} ${feedback}`,
-    `  ${label('Logs: ')}${muted('off (--log-level info)')} ${muted('·')} ${label('Stop: ')}${muted('Ctrl+C')}`,
+    ...(options.sharedDaemon === undefined
+      ? [`  ${label('Logs: ')}${muted('off (--log-level info)')} ${muted('·')} ${label('Stop: ')}${muted('Ctrl+C')}`]
+      : [
+          `  ${label('Logs: ')}${muted(options.sharedDaemon.logPath)}`,
+          `  ${label('Exit: ')}${muted('Ctrl+C')} ${muted(
+            options.sharedDaemon.ownsTunnel
+              ? 'turns Remote Control off; the shared server stays running'
+              : 'leaves Remote Control on; it was already running in the shared server',
+          )}`,
+        ]),
     '',
   ].join('\n');
 }

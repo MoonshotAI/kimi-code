@@ -38,6 +38,7 @@ export interface ParsedServerOptions {
   allowedHosts: readonly string[];
   webTitle?: string;
   socketPath?: string;
+  alsoListenTcp?: boolean;
   managedBy?: string;
   authTokenService?: IAuthTokenService;
   skipInstanceRegistry?: boolean;
@@ -55,6 +56,7 @@ export interface ServerCliOptions {
   allowedHost?: string[];
   webTitle?: string;
   socket?: string;
+  alsoListenTcp?: boolean;
   managedBy?: string;
 }
 
@@ -70,6 +72,7 @@ export function parseServerOptions(opts: ServerCliOptions): ParsedServerOptions 
     allowedHosts: parseAllowedHostArgs(opts.allowedHost),
     webTitle: opts.webTitle,
     socketPath: opts.socket,
+    alsoListenTcp: opts.alsoListenTcp,
     managedBy: opts.managedBy,
   };
 }
