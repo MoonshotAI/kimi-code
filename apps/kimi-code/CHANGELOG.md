@@ -1,5 +1,11 @@
 # @moonshot-ai/kimi-code
 
+## 2.7.2
+
+### Patch Changes
+
+- [#5191](https://github.com/MoonshotAI/kimi-code/pull/5191) [`7baee3c`](https://github.com/MoonshotAI/kimi-code/commit/7baee3cd9d74ac07efdf4a8587c19c1574fffbd2) Thanks [@chengluyu](https://github.com/chengluyu)! - Web: Fix the draft thinking effort inherited from the global thinking setting reverting to the model default after sending.
+
 ## 2.7.1
 
 ### Patch Changes
