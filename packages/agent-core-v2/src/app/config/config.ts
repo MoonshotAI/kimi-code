@@ -189,6 +189,7 @@ export enum ConfigTarget {
 export interface ConfigInspectValue<T = unknown> {
   readonly value: T | undefined;
   readonly defaultValue: T | undefined;
+  readonly envValue: T | undefined;
   readonly userValue: T | undefined;
   readonly memoryValue: T | undefined;
 }
