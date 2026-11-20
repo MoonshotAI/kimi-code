@@ -255,6 +255,7 @@ describe('WorkspaceService (file-backed)', () => {
     });
     const registry = build();
     expect((await registry.createOrTouch(original)).id).toBe(id);
+    expect((await registry.createOrTouch(main)).id).toBe(id);
     expect((await registry.createOrTouch(linked)).id).toBe(encodeWorkDirKey(main));
     expect((await registry.createOrTouch(main)).id).toBe(encodeWorkDirKey(main));
     expect((await registry.list()).map((entry) => entry.id).toSorted()).toEqual([id, encodeWorkDirKey(main)].toSorted());

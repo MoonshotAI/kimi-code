@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { lstat, readFile, realpath, stat } from 'node:fs/promises';
-import { dirname, isAbsolute, join, resolve } from 'node:path';
+import { delimiter, dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
 
 import { directoryKey } from '#/_base/utils/paths';
@@ -25,9 +25,18 @@ interface RepositoryPaths {
   readonly checkoutRoot: string | null;
 }
 
-type RunGit = (cwd: string, ...args: string[]) => Promise<string>;
+type GitPathOption = '--git-dir' | '--git-common-dir' | '--show-toplevel';
+type RepositoryConfigKey = 'extensions.worktreeConfig' | 'core.worktree';
+type DiscoveryArgument = GitPathOption | RepositoryConfigKey | 'rev-parse' | '--git-dir=.' | '--is-bare-repository'
+  | 'config' | 'config.worktree' | '--file' | '--includes' | '--bool' | '--path' | '--get';
+type RunGit = (cwd: string, ...args: DiscoveryArgument[]) => Promise<string>;
 
 const execFileAsync = promisify(execFile);
+
+const repositoryOverrides = new Set([
+  'GIT_ALTERNATE_OBJECT_DIRECTORIES', 'GIT_COMMON_DIR', 'GIT_DIR', 'GIT_IMPLICIT_WORK_TREE',
+  'GIT_INDEX_FILE', 'GIT_OBJECT_DIRECTORY', 'GIT_WORK_TREE',
+]);
 
 function samePath(left: string, right: string): boolean {
   return directoryKey(left) === directoryKey(right);
@@ -51,8 +60,41 @@ async function hasMarker(path: string, kind?: 'file' | 'directory'): Promise<boo
   }
 }
 
+function physicalCeilingKey(path: string): string {
+  return path.split(sep).join('/').replace(/\/$/, '');
+}
+
+async function discoveryCeilings(): Promise<Set<string>> {
+  const ceilings = new Set<string>();
+  let canonicalize = true;
+  for (const entry of (process.env['GIT_CEILING_DIRECTORIES'] ?? '').split(delimiter)) {
+    if (entry === '') {
+      canonicalize = false;
+      continue;
+    }
+    if (!isAbsolute(entry)) continue;
+    const key = canonicalize ? await realpath(entry).then(physicalCeilingKey, () => undefined) : entry.replace(/\/$/, '');
+    if (key !== undefined) ceilings.add(key);
+  }
+  return ceilings;
+}
+
 async function findMarker(cwd: string) {
+  const ceilings = await discoveryCeilings();
+  const across = process.env['GIT_DISCOVERY_ACROSS_FILESYSTEM'] ?? '';
+  const singleDevice = across === '' || /^(?:no|false|off)$/i.test(across) || /^\s*[+-]?(?:0+|0x0+)[kmg]?$/i.test(across);
+  let device: number | undefined;
   for (let root = cwd; ; root = dirname(root)) {
+    if (singleDevice) {
+      let current: number;
+      try {
+        current = (await stat(root)).dev;
+      } catch (error) {
+        throw toHostFsError(error, { path: root, op: 'stat' });
+      }
+      if (device !== undefined && current !== device) return undefined;
+      device = current;
+    }
     if (await hasMarker(join(root, '.git'))) return { root, checkout: true };
     if (
       await hasMarker(join(root, 'HEAD'), 'file') &&
@@ -60,25 +102,49 @@ async function findMarker(cwd: string) {
     ) {
       return { root, checkout: false };
     }
-    if (root === dirname(root)) return undefined;
+    const parent = dirname(root);
+    if (root === parent || ceilings.has(physicalCeilingKey(parent))) return undefined;
   }
 }
 
 function localGit(cwd: string): RunGit {
   const program = resolveProgramPath('git', { cwd });
-  const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.toUpperCase().startsWith('GIT_')));
+  const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !repositoryOverrides.has(key.toUpperCase())));
+  const batch = process.platform === 'win32' && /\.(?:cmd|bat)$/i.test(program);
+  const command = batch ? resolveProgramPath(join(process.env['SystemRoot'] ?? '', 'System32', 'cmd.exe'), { cwd }) : program;
+  if (batch) {
+    env['KIMI_CODE_GIT_SHIM'] = program;
+    env['NoDefaultCurrentDirectoryInExePath'] = '1';
+  }
   return async (dir, ...args) => {
-    const { stdout } = await execFileAsync(program, args, {
+    const argv = batch ? ['/d', '/v:off', '/s', '/c', `""%KIMI_CODE_GIT_SHIM%" ${args.join(' ')}"`] : args;
+    const { stdout } = await execFileAsync(command, argv, {
+      windowsVerbatimArguments: batch,
       cwd: dir, env, timeout: 30_000, maxBuffer: 16 * 1024 * 1024, windowsHide: true,
     });
     return stdout.replace(/\r?\n$/, '');
   };
 }
 
-async function gitPath(git: RunGit, cwd: string, option: string): Promise<string> {
+async function gitPath(git: RunGit, cwd: string, option: GitPathOption): Promise<string> {
   const path = await git(cwd, 'rev-parse', option);
   if (path.length === 0) throw new Error(`Git returned an empty path for ${option}`);
   return realpath(resolve(cwd, path));
+}
+
+async function repositoryConfig(
+  git: RunGit,
+  store: string,
+  file: 'config' | 'config.worktree',
+  type: '--bool' | '--path',
+  key: RepositoryConfigKey,
+): Promise<string | undefined> {
+  try {
+    return await git(store, 'config', '--file', file, '--includes', type, '--get', key);
+  } catch (error) {
+    if (error instanceof Error && 'code' in error && error.code === 1) return undefined;
+    throw error;
+  }
 }
 
 async function defaultDirectory(
@@ -86,7 +152,7 @@ async function defaultDirectory(
   { control, store, checkoutRoot }: RepositoryPaths,
 ): Promise<DiscoveredRepository['defaultDirectory']> {
   const inMain = checkoutRoot !== null && samePath(control, store);
-  if ((await git(store, '--git-dir', store, 'rev-parse', '--is-bare-repository')) === 'true') {
+  if ((await git(store, '--git-dir=.', 'rev-parse', '--is-bare-repository')) === 'true') {
     if (inMain) throw new Error('Git reports a checkout for a bare repository');
     return { kind: 'bare', cwd: store };
   }
@@ -100,13 +166,13 @@ async function defaultDirectory(
   }
   let main = parent;
   if (!conventional) {
-    try {
-      const configured = await git(store, 'config', '--local', '--path', '--get', 'core.worktree');
-      main = await realpath(resolve(store, configured));
-    } catch (error) {
-      if (error instanceof Error && 'code' in error && error.code === 1) return { kind: 'unknown' };
-      throw error;
-    }
+    const perWorktree = await repositoryConfig(git, store, 'config', '--bool', 'extensions.worktreeConfig');
+    const override = perWorktree === 'true'
+      ? await repositoryConfig(git, store, 'config.worktree', '--path', 'core.worktree')
+      : undefined;
+    const configured = override ?? await repositoryConfig(git, store, 'config', '--path', 'core.worktree');
+    if (configured === undefined) return { kind: 'unknown' };
+    main = await realpath(resolve(store, configured));
   }
   const [mainControl, mainRoot] = await Promise.all([
     gitPath(git, main, '--git-dir'),

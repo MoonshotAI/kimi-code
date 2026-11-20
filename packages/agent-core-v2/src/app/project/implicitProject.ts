@@ -90,7 +90,13 @@ export async function resolveImplicitProject(
   name?: string,
 ): Promise<Project> {
   let existing = findByOrigin(entries, roots, cwd);
-  if (existing !== undefined && existing.vcs === undefined) {
+  if (existing === undefined) {
+    const key = workspaceRootKey(cwd);
+    const primary = [...entries.values()].find((project) =>
+      project.kind === 'implicit' && workspaceRootKey(project.root) === key,
+    );
+    if (primary !== undefined) return { ...primary, lastOpenedAt: Date.now() };
+  } else if (existing.vcs === undefined) {
     return { ...existing, lastOpenedAt: Date.now() };
   }
   const repository = await discoverRepository(cwd);

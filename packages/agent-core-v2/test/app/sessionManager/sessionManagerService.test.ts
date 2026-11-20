@@ -841,18 +841,16 @@ describe('SessionManager controller retirement', () => {
       };
       return {
         id,
-        workdirs: { currentRoot: undefined },
-        state: behavior,
-        dirs: behavior,
-        fs: behavior,
-        watch: behavior,
-        git: behavior,
-        instructions: { ...behavior, snapshot: {} },
-        mcpConfig: { ...behavior, servers: () => ({}) },
-        mcp: behavior,
+        workdirs: {
+          root: {
+            dirs: behavior,
+            instructions: { ...behavior, snapshot: {} },
+            mcpConfig: { ...behavior, servers: () => ({}) },
+            skills: { ...behavior, catalog },
+            agentProfiles: behavior,
+          },
+        },
         trust: { ...behavior, isTrusted: () => false },
-        skills: { ...behavior, catalog },
-        agentProfiles: behavior,
         userAgentProfiles: behavior,
         pluginAgentProfiles: behavior,
         explicitAgentProfiles: behavior,

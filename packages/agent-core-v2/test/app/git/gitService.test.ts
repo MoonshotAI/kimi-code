@@ -1,7 +1,9 @@
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import fsPromises from 'node:fs/promises';
+import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
-import { basename, delimiter, isAbsolute, join } from 'node:path';
+import { basename, delimiter, isAbsolute, join, sep } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 
@@ -11,7 +13,7 @@ import { IGitService } from '#/app/git/git';
 import { discoverRepository } from '#/app/git/repository';
 import { GitService } from '#/app/git/gitService';
 import { findGitWorkTree } from '#/app/git/workTree';
-import { ErrorCodes } from '#/errors';
+import { ErrorCodes, isError2 } from '#/errors';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { HostProcessService } from '#/os/backends/node-local/hostProcessService';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
@@ -96,6 +98,91 @@ describe('GitService', () => {
       });
     });
 
+    it('discovers the parent checkout across device boundaries only when Git is configured to cross them', async () => {
+      const root = realpathSync(repo);
+      const child = join(root, 'mounted');
+      mkdirSync(child);
+      const original = fsPromises.stat;
+      const stub = vi.spyOn(fsPromises, 'stat').mockImplementation(async (path, options) => {
+        const entry = await original(path, options);
+        if (path === child) Object.defineProperty(entry, 'dev', { value: -1 });
+        return entry;
+      });
+      syncBuiltinESMExports();
+      try {
+        for (const value of [undefined, '', 'off', '0']) {
+          vi.stubEnv('GIT_DISCOVERY_ACROSS_FILESYSTEM', value);
+          await expect(discoverRepository(child)).resolves.toBeNull();
+        }
+        for (const value of ['ON', '1', '2']) {
+          vi.stubEnv('GIT_DISCOVERY_ACROSS_FILESYSTEM', value);
+          await expect(discoverRepository(child)).resolves.toMatchObject({ checkoutRoot: root });
+        }
+      } finally {
+        stub.mockRestore();
+        syncBuiltinESMExports();
+        vi.unstubAllEnvs();
+      }
+    });
+
+    it('honors Git discovery ceilings when opening a child, the ceiling itself, or a nested checkout', async () => {
+      const root = realpathSync(repo);
+      const child = join(root, 'child');
+      const nested = join(child, 'nested');
+      mkdirSync(nested, { recursive: true });
+      git(nested, 'init');
+      vi.stubEnv('GIT_CEILING_DIRECTORIES', root);
+      try {
+        expect(() => git(child, 'rev-parse', '--show-toplevel')).toThrow();
+        await expect(discoverRepository(child)).resolves.toBeNull();
+        await expect(discoverRepository(root)).resolves.toMatchObject({ checkoutRoot: root });
+        await expect(discoverRepository(nested)).resolves.toMatchObject({ checkoutRoot: nested });
+        vi.stubEnv('GIT_CEILING_DIRECTORIES', child);
+        await expect(discoverRepository(child)).resolves.toMatchObject({ checkoutRoot: root });
+      } finally {
+        vi.unstubAllEnvs();
+      }
+    });
+
+    it('preserves literal Git ceiling paths after an empty entry', async () => {
+      const root = realpathSync(repo);
+      const child = join(root, 'child');
+      const gitRoot = root.split(sep).join('/');
+      mkdirSync(child);
+      try {
+        vi.stubEnv('GIT_CEILING_DIRECTORIES', `${delimiter}${gitRoot}/`);
+        expect(() => git(child, 'rev-parse', '--show-toplevel')).toThrow();
+        await expect(discoverRepository(child)).resolves.toBeNull();
+        const differentSpellings = [gitRoot.toUpperCase(), `${gitRoot}/child/..`];
+        if (sep === '\\') differentSpellings.push(root);
+        for (const entry of differentSpellings) {
+          vi.stubEnv('GIT_CEILING_DIRECTORIES', `${delimiter}${entry}`);
+          expect(realpathSync(git(child, 'rev-parse', '--show-toplevel'))).toBe(root);
+          await expect(discoverRepository(child)).resolves.toMatchObject({ checkoutRoot: root });
+        }
+      } finally {
+        vi.unstubAllEnvs();
+      }
+    });
+
+    it.runIf(process.platform === 'win32').each(['cmd', 'bat'])('uses Git from a trusted .%s shim in PATH', async (ext) => {
+      const install = outside();
+      const bin = join(install, 'bin & %PATH%');
+      mkdirSync(bin);
+      const nativeGit = execFileSync('where.exe', ['git.exe'], { encoding: 'utf8' }).split(/\r?\n/, 1)[0]!;
+      writeFileSync(join(bin, `git.${ext}`), `@"${nativeGit}" %*\r\n`);
+      const root = join(outside(), 'work tree & %PATH%');
+      mkdirSync(root);
+      git(root, 'init');
+      vi.stubEnv('PATH', bin);
+      vi.stubEnv('PATHEXT', `.${ext.toUpperCase()}`);
+      try {
+        await expect(discoverRepository(root)).resolves.toMatchObject({ checkoutRoot: root });
+      } finally {
+        vi.unstubAllEnvs();
+      }
+    });
+
     it('uses the bare store as the default from the store and from a linked checkout', async () => {
       const parent = outside();
       const bare = join(parent, 'bare');
@@ -110,7 +197,7 @@ describe('GitService', () => {
       expect(await discoverRepository(bare)).toEqual({ ...store, checkoutRoot: null });
     });
 
-    it('uses the submodule checkout as the default for its linked trees', async () => {
+    it.each(['local', 'worktree', 'included', 'worktree-include'])('uses the submodule checkout from %s configuration for its linked trees', async (config) => {
       const parent = outside();
       const module = join(parent, 'module');
       const tree = join(parent, 'linked');
@@ -118,7 +205,21 @@ describe('GitService', () => {
       git(parent, 'init');
       git(parent, '-c', 'protocol.file.allow=always', 'submodule', 'add', repo, 'module');
       git(module, 'worktree', 'add', '--detach', tree);
-      const store = { vcs: { type: 'git', store: join(parent, '.git', 'modules', 'module') }, defaultDirectory: { kind: 'checkout', cwd: module } };
+      const control = join(parent, '.git', 'modules', 'module');
+      if (config !== 'local') {
+        const target = git(control, 'config', '--local', '--get', 'core.worktree');
+        git(control, 'config', '--local', '--unset', 'core.worktree');
+        const perWorktree = config.startsWith('worktree');
+        if (perWorktree) git(control, 'config', '--local', 'extensions.worktreeConfig', 'true');
+        const file = join(control, perWorktree ? 'config.worktree' : 'config');
+        if (config === 'worktree') {
+          git(control, 'config', '--file', file, 'core.worktree', target);
+        } else {
+          git(control, 'config', '--file', file, 'include.path', 'checkout-config');
+          git(control, 'config', '--file', join(control, 'checkout-config'), 'core.worktree', target);
+        }
+      }
+      const store = { vcs: { type: 'git', store: control }, defaultDirectory: { kind: 'checkout', cwd: module } };
       expect(await discoverRepository(tree)).toEqual({ ...store, checkoutRoot: tree });
       expect(await discoverRepository(module)).toEqual({ ...store, checkoutRoot: module });
       expect(await discoverRepository(parent)).toMatchObject({ vcs: { store: join(parent, '.git') } });
@@ -170,11 +271,32 @@ describe('GitService', () => {
       }
     });
 
+    it('respects the installed Git ownership policy and its selected global config', async () => {
+      const config = join(outside(), 'gitconfig');
+      vi.stubEnv('GIT_CONFIG_GLOBAL', config);
+      vi.stubEnv('GIT_CONFIG_NOSYSTEM', '1');
+      vi.stubEnv('GIT_TEST_ASSUME_DIFFERENT_OWNER', '1');
+      try {
+        for (const trusted of ['', '*']) {
+          writeFileSync(config, `[safe]\n directory = ${trusted}\n`);
+          const direct = spawnSync('git', ['rev-parse', '--git-dir'], { cwd: repo });
+          const discovered = await discoverRepository(repo).then(
+            (found) => found?.checkoutRoot,
+            (error: unknown) => isError2(error) ? error.code : error,
+          );
+          expect(discovered).toBe(direct.status === 0 ? realpathSync(repo) : ErrorCodes.FS_GIT_UNAVAILABLE);
+        }
+      } finally {
+        vi.unstubAllEnvs();
+      }
+    });
+
     it('uses the opened directory even when the parent process has selected a different repository', async () => {
       const other = outside();
       git(other, 'init');
       vi.stubEnv('GIT_DIR', join(other, '.git'));
       vi.stubEnv('GIT_WORK_TREE', other);
+      vi.stubEnv('GIT_COMMON_DIR', join(other, '.git'));
       try {
         expect(await discoverRepository(repo)).toMatchObject({ vcs: { store: join(realpathSync(repo), '.git') } });
       } finally {
