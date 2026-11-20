@@ -400,8 +400,7 @@
   "oxc/no-accumulating-spread": {
     "apps/vscode/webview-ui/src/components/MCPServersModal.tsx": 2,
     "packages/agent-core-v2/src/app/plugin/marketplaceService.ts": 1,
-    "packages/agent-core-v2/src/human/provider-catalog/catalog.ts": 1,
-    "packages/core/src/tool/hook-composer.ts": 4
+    "packages/agent-core-v2/src/human/provider-catalog/catalog.ts": 1
   },
   "promise/no-callback-in-promise": {
     "apps/desktop/src/renderer/components/browser/PanelBrowserTab.vue": 1,
@@ -551,7 +550,6 @@
     "packages/agent-core-v2/src/state/stateContribution.ts": 12,
     "packages/core/src/llm/protocol/protocol.ts": 4,
     "packages/core/src/llm/request.ts": 1,
-    "packages/core/src/tool/hook-composer.ts": 1,
     "packages/core/src/tool/tool-executor.ts": 32,
     "packages/core/src/tool/types.ts": 7,
     "packages/core/src/tool/validate.ts": 4,
