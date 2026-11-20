@@ -53,6 +53,7 @@ import { IHostProcessService, type IHostProcess } from '@moonshot-ai/agent-core-
 import { FakeEnvironment } from '@moonshot-ai/agent-core-v2/environment/fakeEnvironment';
 import { TurnEnded, TurnPrompt, TurnSteer } from '@moonshot-ai/agent-core-v2/agent/loop/turnOps';
 import { ContextAppendMessage } from '@moonshot-ai/agent-core-v2/agent/contextMemory/contextEvents';
+import type { PromptOrigin } from '@moonshot-ai/agent-core-v2/agent/contextMemory/types';
 import { historyEntryFromContext } from '@moonshot-ai/agent-core-v2/agent/loop/history';
 import type { ConversationItem, ConversationTurnsPage } from '../src/protocol/conversation';
 import { TurnStarted } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
@@ -1905,7 +1906,81 @@ describe('server-v2 /api/v1/sessions', () => {
     }
   });
 
-  it('forks a session and rejects an incompatible source', async () => {
+  it('forks using restored live turn ids and rejects an incompatible source', async () => {
+    const steeredParent = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd: home } });
+    const steeredParentId = steeredParent.body.data.id;
+    const steeredSession = getLiveSessionById((server as RunningServer).core.accessor, steeredParentId)!;
+    await steeredSession.accessor.get(IAgentLifecycleService).create({ agentId: MAIN_AGENT_ID });
+    const steeredMain = steeredSession.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID)!;
+    const dispatcher = steeredMain.accessor.get(IEventDispatcher);
+    const userSteerOrigin = { kind: 'user', inTurn: true } as PromptOrigin;
+    const skillSteerOrigin = {
+      kind: 'skill_activation',
+      activationId: 'activation-fork-steer',
+      skillName: 'review',
+      trigger: 'model-tool',
+      inTurn: true,
+    } as PromptOrigin;
+    await dispatcher.dispatch(new TurnPrompt({
+      agentId: MAIN_AGENT_ID,
+      input: [{ type: 'text', text: 'first prompt' }],
+      origin: { kind: 'user' },
+      turnId: 0,
+    }));
+    await dispatcher.dispatch(new ContextAppendMessage({
+      agentId: MAIN_AGENT_ID,
+      message: { role: 'user', content: [{ type: 'text', text: 'first prompt' }], origin: { kind: 'user' } },
+    }));
+    await dispatcher.dispatch(new TurnSteer({
+      agentId: MAIN_AGENT_ID,
+      input: [{ type: 'text', text: 'user steer' }],
+      origin: userSteerOrigin,
+      turnId: 0,
+    }));
+    await dispatcher.dispatch(new ContextAppendMessage({
+      agentId: MAIN_AGENT_ID,
+      message: { role: 'user', content: [{ type: 'text', text: 'user steer' }], origin: userSteerOrigin },
+    }));
+    await dispatcher.dispatch(new TurnSteer({
+      agentId: MAIN_AGENT_ID,
+      input: [{ type: 'text', text: 'skill steer' }],
+      origin: skillSteerOrigin,
+      turnId: 0,
+    }));
+    await dispatcher.dispatch(new ContextAppendMessage({
+      agentId: MAIN_AGENT_ID,
+      message: { role: 'user', content: [{ type: 'text', text: 'skill steer' }], origin: skillSteerOrigin },
+    }));
+    await dispatcher.dispatch(new TurnEnded({ agentId: MAIN_AGENT_ID, turnId: 0, reason: 'completed' }));
+    await dispatcher.dispatch(new TurnPrompt({
+      agentId: MAIN_AGENT_ID,
+      input: [{ type: 'text', text: 'second prompt' }],
+      origin: { kind: 'user' },
+      turnId: 1,
+    }));
+    await dispatcher.dispatch(new ContextAppendMessage({
+      agentId: MAIN_AGENT_ID,
+      message: { role: 'user', content: [{ type: 'text', text: 'second prompt' }], origin: { kind: 'user' } },
+    }));
+    await dispatcher.dispatch(new TurnEnded({ agentId: MAIN_AGENT_ID, turnId: 1, reason: 'completed' }));
+    await steeredMain.accessor.get(IWireService).flush();
+    await closeSessionById((server as RunningServer).core.accessor, steeredParentId);
+    expect(await resumeSessionById((server as RunningServer).core.accessor, steeredParentId)).toBeDefined();
+
+    const sourceTurns = await getJson<ConversationTurnsPage>(`/api/v1/sessions/${steeredParentId}/agents/main/turns`);
+    expect(sourceTurns.body.code).toBe(0);
+    const liveTurnNumber = sourceTurns.body.data.turns.at(-1)?.turn_number;
+    expect(liveTurnNumber).toBe(3);
+    const steeredFork = await postJson<SessionWire>(`/api/v1/sessions/${steeredParentId}:fork`, {
+      turn_index: liveTurnNumber,
+    });
+    expect(steeredFork.body.code).toBe(0);
+    expect(await resumeSessionById((server as RunningServer).core.accessor, steeredFork.body.data.id)).toBeDefined();
+    const forkedTurns = await getJson<ConversationTurnsPage>(
+      `/api/v1/sessions/${steeredFork.body.data.id}/agents/main/turns`,
+    );
+    expect(forkedTurns.body.data.turns.at(-1)?.turn_number).toBe(3);
+
     const cwd = home as string;
     const parent = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
     const parentId = parent.body.data.id;
