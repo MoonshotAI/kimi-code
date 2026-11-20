@@ -72,6 +72,8 @@ Add a Windows SSH Host in Kimi Code Web or Desktop to run projects on that machi
 
 Kimi Code looks for `%USERPROFILE%\\.kimi-code\\bin\\kimi.exe` on the host. If Kimi is installed elsewhere, set `remote_bin` for that host to its full path, such as `C:\\Program Files\\Kimi\\kimi.exe`. SSH agent forwarding is available for POSIX Hosts. On Windows, configure Git and other tools to authenticate from the remote account.
 
+The Desktop integrated terminal does not yet support projects on Windows SSH Hosts. To open a terminal on the remote machine, connect to the host over SSH from your system terminal.
+
 ## Relationship with the CLI
 
 The web UI and the CLI share the same login state, configuration (`config.toml`), and session data.

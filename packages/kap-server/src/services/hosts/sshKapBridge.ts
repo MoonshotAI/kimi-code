@@ -34,6 +34,11 @@ interface BootstrapMarker {
 
 type SshPlatform = 'posix' | 'windows';
 
+interface PlatformDetection {
+  readonly platform?: SshPlatform;
+  readonly inconclusiveFailure?: HostConnectError;
+}
+
 export class HostConnectError extends Error {
   constructor(
     readonly failure: HostConnectFailure,
@@ -168,11 +173,16 @@ interface SshResult {
   readonly stderr: string;
 }
 
-function sshFailure(result: SshResult): HostConnectError {
+function sshFailure(result: SshResult, inconclusiveProbe?: HostConnectError): HostConnectError {
+  const failure = classifySshFailure(result.stderr, result.code);
+  const version = readVersionLine(result.stdout);
+  if (inconclusiveProbe !== undefined && version === undefined && (failure === 'executor_not_found' || failure === 'executor_outdated')) {
+    return inconclusiveProbe;
+  }
   return new HostConnectError(
-    classifySshFailure(result.stderr, result.code),
+    failure,
     result.stderr.trim() || `ssh exited with code ${String(result.code)}`,
-    readVersionLine(result.stdout),
+    version,
   );
 }
 
@@ -257,7 +267,7 @@ export class SshKapBridge {
   private reconnectGeneration = 0;
   private readonly sshProgram: string;
   private readonly env: NodeJS.ProcessEnv;
-  private platformValue: Promise<SshPlatform> | undefined;
+  private platformValue: Promise<PlatformDetection> | undefined;
 
   constructor(
     private readonly entry: HostEntry,
@@ -320,20 +330,26 @@ export class SshKapBridge {
   }
 
   async probe(): Promise<void> {
-    const platform = await this.platform();
+    const { platform, inconclusiveFailure } = await this.platform();
     const result = await this.collect(
       this.commandArgs(remoteKimiCommand(this.entry.remoteBin, 'server ensure-daemon --probe', platform)),
       VERSION_TIMEOUT_MS,
     );
     if (checkBootstrapOutput(result.stdout, platform)) return;
-    throw sshFailure(result);
+    throw sshFailure(result, inconclusiveFailure);
   }
 
-  private platform(): Promise<SshPlatform> {
-    this.platformValue ??= this.detectPlatform().catch((error: unknown) => {
-      this.platformValue = undefined;
-      throw error;
-    });
+  private platform(): Promise<PlatformDetection> {
+    this.platformValue ??= this.detectPlatform().then(
+      (detection) => {
+        if (detection.platform === undefined) this.platformValue = undefined;
+        return detection;
+      },
+      (error: unknown) => {
+        this.platformValue = undefined;
+        throw error;
+      },
+    );
     return this.platformValue;
   }
 
@@ -341,25 +357,27 @@ export class SshKapBridge {
     return ['-T', ...SSH_OPTIONS, ...identityArgs(this.entry), this.entry.host, command];
   }
 
-  private async detectPlatform(): Promise<SshPlatform> {
+  private async detectPlatform(): Promise<PlatformDetection> {
     const probes = ['uname -s', powerShellCommand("if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) { [Console]::WriteLine('KIMI_WINDOWS') }")];
     for (const [index, command] of probes.entries()) {
       const result = await this.collect(this.commandArgs(command), VERSION_TIMEOUT_MS);
-      if (result.code === null || result.code === 255) {
+      if (result.code === null) throw sshFailure(result);
+      if (result.code === 255) {
         const error = sshFailure(result);
-        if (error.failure !== 'unknown') throw error;
-        break;
+        if (error.failure === 'unknown') return { inconclusiveFailure: error };
+        if (error.failure === 'authentication_failed' || error.failure === 'executor_not_found' || error.failure === 'executor_outdated') return {};
+        throw error;
       }
       if (result.code !== 0) continue;
       const output = result.stdout.trim().split(/\r?\n/).at(-1) ?? '';
       if (index === 0) {
-        if (/^(?:MINGW|MSYS|CYGWIN|Windows_NT)/i.test(output)) return 'windows';
-        if (/^(?:Linux|Darwin|FreeBSD|OpenBSD|NetBSD|DragonFly|SunOS|AIX)$/.test(output)) return 'posix';
+        if (/^(?:MINGW|MSYS|CYGWIN|Windows_NT)/i.test(output)) return { platform: 'windows' };
+        if (/^(?:Linux|Darwin|FreeBSD|OpenBSD|NetBSD|DragonFly|SunOS|AIX)$/.test(output)) return { platform: 'posix' };
       } else if (output === 'KIMI_WINDOWS') {
-        return 'windows';
+        return { platform: 'windows' };
       }
     }
-    return 'posix';
+    return {};
   }
 
   private update(status: HostStatus, failure?: HostConnectFailure, error?: string): void {
@@ -399,7 +417,7 @@ export class SshKapBridge {
 
   private async openSession(): Promise<ActiveHostSession> {
     if (this.disposed) throw new HostConnectError('unknown', 'host bridge disposed');
-    const platform = await this.platform();
+    const { platform, inconclusiveFailure } = await this.platform();
     if (this.disposed) throw new HostConnectError('unknown', 'host bridge disposed');
     const command = remoteKimiCommand(this.entry.remoteBin, 'server ensure-daemon', platform);
     return new Promise<ActiveHostSession>((resolve, reject) => {
@@ -487,7 +505,7 @@ export class SshKapBridge {
         if (!settled) {
           settled = true;
           preMarkerStdout ||= bootstrap.toString('utf8');
-          reject(sshFailure({ code, stdout: preMarkerStdout, stderr }));
+          reject(sshFailure({ code, stdout: preMarkerStdout, stderr }, inconclusiveFailure));
           return;
         }
         if (activeSession !== undefined) {

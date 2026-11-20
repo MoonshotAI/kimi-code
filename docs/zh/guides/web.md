@@ -72,6 +72,8 @@ Stop:    Ctrl+C
 
 Kimi Code 默认在远端查找 `%USERPROFILE%\\.kimi-code\\bin\\kimi.exe`。如果安装在其他位置，请将该主机的 `remote_bin` 设为完整路径，例如 `C:\\Program Files\\Kimi\\kimi.exe`。SSH agent 转发适用于 POSIX 主机。在 Windows 上，请为远端账号配置 Git 等工具所需的凭据。
 
+桌面端的集成终端暂不支持 Windows SSH 项目。如需在远端打开终端，请使用系统终端通过 SSH 连接该主机。
+
 ## 与 CLI 的关系
 
 Web 界面和 CLI 共享同一份登录态、配置（`config.toml`）和会话数据。

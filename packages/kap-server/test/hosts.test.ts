@@ -247,10 +247,15 @@ done
     );
   });
 
+  const deniedWith255 = "echo 'Permission denied' >&2; exit 255";
+
   it.skipIf(process.platform === 'win32').each([
-    ['denied', 'exit 126'],
-    ['available on POSIX', 'exit 0'],
-  ] as const)('uses the original POSIX command when uname is denied and PowerShell is %s', async (_name, powerShellResult) => {
+    ['both probes exit 126', 'exit 126', 'exit 126'],
+    ['PowerShell is available on POSIX', 'exit 126', 'exit 0'],
+    ['uname exits 255 with Permission denied', deniedWith255, deniedWith255],
+    ['PowerShell exits 255 with Permission denied', 'exit 126', deniedWith255],
+    ['uname exits 255 without a diagnostic', 'exit 255', 'exit 255'],
+  ] as const)('uses the original POSIX command when %s', async (_name, unameResult, powerShellResult) => {
     await withFakeSsh(
       `#!/bin/sh
 for command; do :; done
@@ -262,7 +267,8 @@ case "$command" in
     echo '{"type":"http.res","id":"1","status":200,"headers":{}}'
     ;;
   powershell*) ${powerShellResult} ;;
-  *) exit 126 ;;
+  'uname -s') ${unameResult} ;;
+  *) exit 1 ;;
 esac
 `,
       async (ssh) => {
@@ -300,6 +306,42 @@ echo '{"type":"http.res","id":"1","status":200,"headers":{}}'
         const bridge = new SshKapBridge({ host: 'dev' }, { sshProgram: ssh });
         try {
           await expect(bridge.connect()).rejects.toMatchObject({ failure: 'connection_refused' });
+          await vi.waitFor(() => expect(bridge.status).toBe('ready'), { timeout: 3_000 });
+          await expect(bridge.session?.request({ method: 'GET', path: '/healthz', headers: {} })).resolves.toMatchObject({ status: 200 });
+        } finally {
+          bridge.dispose();
+        }
+      },
+      'script-only',
+    );
+  });
+
+  it.skipIf(process.platform === 'win32')('recovers a Windows host after an unclassified SSH exit 255', async () => {
+    const bootstrap = remoteKimiCommand(undefined, 'server ensure-daemon', 'windows');
+    await withFakeSsh(
+      (dir) => `#!/bin/sh
+for command; do :; done
+case "$command" in
+  'uname -s')
+    if [ ! -f '${join(dir, 'first-probe')}' ]; then
+      touch '${join(dir, 'first-probe')}'
+      echo 'kex_exchange_identification: read: Connection reset by peer' >&2
+      exit 255
+    fi
+    echo Windows_NT
+    ;;
+  '${bootstrap}')
+    echo '__KIMI_ENSURE_DAEMON__{"protocol":${String(HOST_PROTOCOL_VERSION)},"api_level":${String(HOST_API_LEVEL)},"windows_ipc":true}'
+    read line
+    echo '{"type":"http.res","id":"1","status":200,"headers":{}}'
+    ;;
+  *) exit 127 ;;
+esac
+`,
+      async (ssh) => {
+        const bridge = new SshKapBridge({ host: 'dev' }, { sshProgram: ssh });
+        try {
+          await expect(bridge.connect()).rejects.toMatchObject({ failure: 'unknown' });
           await vi.waitFor(() => expect(bridge.status).toBe('ready'), { timeout: 3_000 });
           await expect(bridge.session?.request({ method: 'GET', path: '/healthz', headers: {} })).resolves.toMatchObject({ status: 200 });
         } finally {
