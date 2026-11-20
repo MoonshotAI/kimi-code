@@ -224,7 +224,7 @@ default_model = "kimi-code/kimi-for-coding-highspeed"
 
 在交互式 TUI 中，也可以用 [`/secondary-model`](../reference/slash-commands.md) 命令（别名 `/subagent-model`）打开模型选择器：选择后写入 `default_model`（已有 models 表而所选别名不在其中时，会一并补一条空描述条目），之后派生的 subagent 立即按新默认值绑定，无需重启会话。
 
-subagent 只会运行在模型池列出的模型上。单独一行 `default_model`（或只有一个条目的 `models` 表）会把所有 subagent 固定到该模型；Tower 的 reviewer 除外——它们默认继承 Tower 当前模型，显式传入池中别名才沿用池模型。池中有两个及以上条目时启用模型选择：`Agent` / `AgentSwarm` 工具会获得 `model` 参数，工具描述中列出模型池（默认模型标注 `[default]`），main agent 可按次派生选择模型。池 key 只能引用已配置的 [`[models]`](#models) 条目。下面的 `kimi-code/*` 别名由 `/login` 自动提供：
+配置 `[secondary_model]` 后，subagent 只会运行在模型池列出的模型上。单独一行 `default_model`（或只有一个条目的 `models` 表）会把所有 subagent 固定到该模型；Tower 的 reviewer 除外——它们默认继承 Tower 当前模型，显式传入池中别名才沿用池模型。池中有两个及以上条目时，main agent 可在每次派生时通过 `Agent`、`AgentSwarm` 和 `TowerSpawn` 的 `model` 参数选择模型：可选模型列表（默认模型标注 `[default]`）通过系统提醒注入上下文，因此会话运行中修改 `[secondary_model]` 不会改变工具定义。池 key 只能引用已配置的 [`[models]`](#models) 条目。下面的 `kimi-code/*` 别名由 `/login` 自动提供：
 
 ```toml
 [secondary_model]
@@ -242,10 +242,10 @@ default_model = "kimi-code/kimi-for-coding-highspeed"
 
 `model` 参数的取值规则：
 
-- 只接受池中别名。main agent 自己的模型不是隐含选项：如果希望难的子任务能用主模型，需要把主模型的别名显式写进模型池。
-- `default_model` 与 `models` 都未配置时该参数不存在，subagent 继承调用方模型；池中只有一个条目时 `Agent`/`AgentSwarm` 同样不提供该参数，而 `TowerSpawn` 在配置模型池后即提供 `model` 参数。
+- 配置 `[secondary_model]` 时只接受池中别名。main agent 自己的模型不是隐含选项：如果希望难的子任务能用主模型，需要把主模型的别名显式写进模型池。
+- `default_model` 与 `models` 都未配置时，省略 `model` 或传入调用方自身模型别名都会继承调用方的模型与 Thinking 设置；传入其他值会被拒绝。
 - 绑定池中别名时不继承调用方的 Thinking 档位，即使该别名就是调用方自己的模型。本节设置了 `default_effort` 时以它为准；否则，`[thinking].enabled = false` 会保持关闭 Thinking；开启 Thinking 时，再依次使用所绑定模型条目的 `default_effort`、全局 `[thinking].effort`、所绑定模型 `support_efforts` 的中间项。
-- 传入的值不是池中别名时，本次派生报错并列出可选值。
+- 传入不在可选列表中的值时，本次派生报错并列出可选值；恢复已有 subagent（或未传 `items` 调用 `AgentSwarm`）时传入 `model` 也会报错。
 
 原来的 `force` 字段已移除：单独一行 `default_model` 已经能把 Agent、AgentSwarm subagent 和 tower worker 固定到同一个模型。仍设置了 `force` 的配置会在加载时给出警告，该字段被忽略。
 

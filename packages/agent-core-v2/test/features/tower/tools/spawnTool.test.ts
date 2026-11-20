@@ -264,12 +264,13 @@ describe('TowerSpawnTool', () => {
     await expect(git(repo, 'rev-parse', '--verify', 'refs/heads/feat/build-gemm')).rejects.toThrow();
   }
 
-  it('updates the advertised model schema and descriptions with the current pool config', () => {
+  it('keeps model in the schema and omits Available models from the description across pool configs', () => {
     const tool = ix.get(ITowerSpawnTool);
     const properties = () =>
       tool.parameters['properties'] as Record<string, { type?: string; enum?: unknown }>;
 
-    expect(properties()).not.toHaveProperty('model');
+    expect(properties()['model']?.type).toBe('string');
+    expect(properties()['model']?.enum).toBeUndefined();
     expect(tool.description).not.toContain('Available models');
 
     secondaryModel = {
@@ -279,20 +280,12 @@ describe('TowerSpawnTool', () => {
 
     expect(properties()['model']?.type).toBe('string');
     expect(properties()['model']?.enum).toBeUndefined();
-    expect(tool.description).toContain('Available models (pass via model):');
-    expect(tool.description).toContain('- cheap/fast [default]: fast and cheap');
-    expect(tool.description).toContain('- smart/slow: careful and thorough');
-    expect(tool.description).not.toContain('- primary');
-
-    secondaryModel = undefined;
-    expect(properties()).not.toHaveProperty('model');
     expect(tool.description).not.toContain('Available models');
 
     secondaryModel = { model: 'cheap/fast' };
     expect(properties()['model']?.type).toBe('string');
     expect(properties()['model']?.enum).toBeUndefined();
-    expect(tool.description).toContain('Available models (pass via model):');
-    expect(tool.description).toContain('- cheap/fast [default]');
+    expect(tool.description).not.toContain('Available models');
   });
 
   it('refuses when tower mode is not active', async () => {
@@ -762,12 +755,23 @@ describe('TowerSpawnTool', () => {
     await expectNoWorkerSpawnSideEffects();
   });
 
-  it('rejects an explicit model without a secondary pool before any spawn side effect', async () => {
+  it('rejects a non-caller explicit model without a secondary pool before any spawn side effect', async () => {
     const result = await execute({ ...WORKER_ARGS, model: 'cheap/fast' });
 
     expect(result.isError).toBe(true);
-    expect(result.output).toContain('Invalid args for tool "TowerSpawn": must NOT have additional property \'model\'');
+    expect(result.output).toContain('Invalid model "cheap/fast". Available models: kimi-code.');
     await expectNoWorkerSpawnSideEffects();
+  });
+
+  it('accepts an explicit caller model when no secondary pool is configured', async () => {
+    const result = await execute({ ...WORKER_ARGS, model: 'kimi-code' });
+
+    expect(result.isError).toBeUndefined();
+    expect(result.output).toContain('model: kimi-code');
+    expect(createAgent).toHaveBeenCalledWith({
+      binding: { profile: 'tower-worker', model: 'kimi-code', thinking: 'off' },
+      labels: { parentAgentId: 'main' },
+    });
   });
 
   it('rejects an alias outside the pool before any spawn side effect', async () => {

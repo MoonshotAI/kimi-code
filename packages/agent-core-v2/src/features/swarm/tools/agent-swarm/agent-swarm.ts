@@ -52,12 +52,15 @@ export const AgentSwarmToolInputSchema = z
       .string()
       .optional()
       .describe(
-        'Which model to run the item-spawned subagents on: one of the aliases listed under "Available models" in this tool description. When omitted, the configured default model is used. Resumed subagents always keep their own model.',
+        'Model alias to run item-spawned subagents on, chosen from the available subagent models announced in <system-reminder>. When omitted, the default subagent model is used. Resumed subagents keep their own model; cannot be set when resuming without items.',
       ),
   })
   .strict();
 
 export type AgentSwarmToolInput = z.infer<typeof AgentSwarmToolInputSchema>;
+
+export const SWARM_RESUME_ONLY_WITH_MODEL_UNAVAILABLE =
+  'Cannot set model when resuming existing agents without items. Resumed subagents keep their existing model.';
 
 export interface IAgentSwarmTool extends AgentTool<AgentSwarmToolInput> { readonly _serviceBrand: undefined }
 export const IAgentSwarmTool = createDecorator<IAgentSwarmTool>('agentSwarmTool');

@@ -512,6 +512,31 @@ describe('SessionSubagentService planSpawn and spawn', () => {
     });
   });
 
+  it('accepts the caller model alias and rejects any other model when no pool is configured', async () => {
+    const svc = service({});
+
+    const inherited = await svc.planSpawn({
+      callerAgentId: CALLER_ID,
+      profileName: 'coder',
+      model: 'main-model',
+    });
+    expect(inherited).toEqual({
+      profileName: 'coder',
+      model: 'main-model',
+      modelSource: 'inherited',
+      thinking: 'high',
+      fork: false,
+    });
+
+    const error = await planSpawnError(svc, {
+      callerAgentId: CALLER_ID,
+      profileName: 'coder',
+      model: 'provider/fast',
+    });
+    expect(error.code).toBe(ErrorCodes.CONFIG_INVALID);
+    expect(error.message).toBe('Invalid model "provider/fast". Available models: main-model.');
+  });
+
   it('skips the allowlist check when forking', async () => {
     callerData = { ...callerData, profileName: 'coder', subagents: ['explore'] };
     const svc = service();

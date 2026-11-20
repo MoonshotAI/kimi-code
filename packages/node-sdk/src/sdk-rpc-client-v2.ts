@@ -243,7 +243,6 @@ import {
   ErrorCodes as V2ErrorCodes,
   resolveAgentTaskConfig,
   resolveConfigPath,
-  resolveSubagentModelPool,
   resolveKimiHome,
   resolveLoggingConfig,
   resolvePrintBackgroundMode,
@@ -257,7 +256,6 @@ import {
   type ServicesAccessor,
   type SessionSummary as V2SessionSummary,
   type WorkspaceInstance,
-  type SubagentModelPoolSnapshot,
 } from '@moonshot-ai/agent-core-v2';
 import {
   RPCError,
@@ -1817,7 +1815,6 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       const workspaceId =
         live?.accessor.get(ISessionContext).workspaceId ?? indexEntry?.workspaceId;
       let previousSubagentNames: readonly string[] | undefined;
-      let previousModelPool: SubagentModelPoolSnapshot | null | undefined;
       let staleNotifier: IAgentChangeNotifierService | undefined;
       if (live !== undefined) {
         const main = live.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID);
@@ -1826,11 +1823,6 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
             .get(ISessionAgentProfileCatalog)
             .list()
             .map((profile) => profile.name);
-          const pool = resolveSubagentModelPool(main.accessor.get(IConfigService));
-          previousModelPool =
-            pool === undefined
-              ? null
-              : { defaultModel: pool.defaultModel, models: { ...pool.models } };
           staleNotifier = main.accessor.get(IAgentChangeNotifierService);
           staleNotifier.mute();
         }
@@ -1864,7 +1856,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
         const notifier = main.accessor.get(IAgentChangeNotifierService);
         await notifier.notifyAgentsMdChanges();
         await notifier.notifySkillChanges();
-        await notifier.notifySubagentChanges({ previousSubagentNames, previousModelPool });
+        await notifier.notifySubagentChanges({ previousSubagentNames });
         await notifier.notifyWorkspaceDirsChanges();
       }
       this.wireSession(handle);

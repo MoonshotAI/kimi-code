@@ -70,19 +70,17 @@ import {
 } from '#/session/subagent/spawn';
 import { SUBAGENT_FORK_FLAG_ID } from '#/session/subagent/flag';
 import {
-  buildSubagentModelDescriptions,
-  exposesSubagentModelChoice,
   formatSubagentTimeoutDescription,
   resolveSubagentModelPool,
   resolveSubagentTimeoutMs,
   stripSubagentForkParameter,
-  stripSubagentModelParameter,
   type SubagentModelSource,
 } from '#/session/subagent/configSection';
 import {
   BACKGROUND_AGENT_UNAVAILABLE,
   DEFAULT_PROFILE_NAME,
   ISubagentTool,
+  RESUME_WITH_MODEL_UNAVAILABLE,
   RESUME_WITH_TYPE_UNAVAILABLE,
   RESUMED_LABEL,
   SUBAGENT_STOPPED_MESSAGE,
@@ -119,7 +117,7 @@ import AGENT_DESCRIPTION_BASE from './agent.md?raw';
 import AGENT_FORK_DESCRIPTION from './agent-fork.md?raw';
 
 const SUBAGENT_TOOL_PARAMETERS = toInputJsonSchema(SubagentToolInputSchema);
-const SUBAGENT_TOOL_PARAMETERS_NO_MODEL = stripSubagentModelParameter(SUBAGENT_TOOL_PARAMETERS);
+const SUBAGENT_TOOL_PARAMETERS_NO_FORK = stripSubagentForkParameter(SUBAGENT_TOOL_PARAMETERS);
 const READ_MEDIA_FILE_TOOL_NAME = 'ReadMediaFile';
 const MCP_GLOB_MAGIC = /[*?[\]{}!@+()]/;
 
@@ -132,12 +130,9 @@ export class SubagentTool implements ISubagentTool {
   readonly name: string = 'Agent';
 
   get parameters(): Record<string, unknown> {
-    const parameters = exposesSubagentModelChoice(this.config)
-      ? SUBAGENT_TOOL_PARAMETERS
-      : SUBAGENT_TOOL_PARAMETERS_NO_MODEL;
     return this.flags.enabled(SUBAGENT_FORK_FLAG_ID)
-      ? parameters
-      : stripSubagentForkParameter(parameters);
+      ? SUBAGENT_TOOL_PARAMETERS
+      : SUBAGENT_TOOL_PARAMETERS_NO_FORK;
   }
 
   private readonly callerAgentId: string;
@@ -204,10 +199,6 @@ export class SubagentTool implements ISubagentTool {
     );
     if (typeLines) {
       description += `\n\nAvailable agent types (pass via subagent_type):\n${typeLines}`;
-    }
-    const modelLines = buildSubagentModelDescriptions(this.config);
-    if (modelLines !== undefined) {
-      description += `\n\n${modelLines}`;
     }
     return description;
   }
@@ -281,12 +272,12 @@ export class SubagentTool implements ISubagentTool {
     const requestedProfileName = args.subagent_type?.length ? args.subagent_type : undefined;
     const resumeAgentId = args.resume?.trim();
 
-    if (
-      resumeAgentId !== undefined &&
-      resumeAgentId.length > 0 &&
-      requestedProfileName !== undefined
-    ) {
+    const isResume = resumeAgentId !== undefined && resumeAgentId.length > 0;
+    if (isResume && requestedProfileName !== undefined) {
       return { output: RESUME_WITH_TYPE_UNAVAILABLE, isError: true };
+    }
+    if (isResume && args.model !== undefined) {
+      return { output: RESUME_WITH_MODEL_UNAVAILABLE, isError: true };
     }
 
     if (args.fork === true) {
@@ -492,6 +483,9 @@ export class SubagentTool implements ISubagentTool {
 
       if (isResume && requestedProfileName !== undefined) {
         return { output: RESUME_WITH_TYPE_UNAVAILABLE, isError: true };
+      }
+      if (isResume && args.model !== undefined) {
+        return { output: RESUME_WITH_MODEL_UNAVAILABLE, isError: true };
       }
 
       if (args.fork === true) {

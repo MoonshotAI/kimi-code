@@ -224,7 +224,7 @@ Pool aliases reference the current `[models]` table: if a provider is later dele
 
 In the interactive TUI, the [`/secondary-model`](../reference/slash-commands.md) command (alias `/subagent-model`) opens a model selector: the choice is written to `default_model` (when a models table exists and the picked alias is not in it, an entry with an empty description is added), and newly spawned subagents pick up the new default immediately, no session restart needed.
 
-Subagents only run on models listed in the pool. A lone `default_model` (or a `models` table with a single entry) pins every subagent to that model, except Tower reviewers: they inherit Tower's current model by default, and passing the pool alias explicitly keeps the pool model. A pool with two or more entries enables model selection: the `Agent` / `AgentSwarm` tools gain a `model` parameter, and the tool description lists the pool (the default marked `[default]`) so the main agent can choose per spawn. Pool keys can only reference configured [`[models]`](#models) entries. The `kimi-code/*` aliases below are provisioned by `/login`:
+When `[secondary_model]` is configured, subagents only run on models listed in the pool. A lone `default_model` (or a `models` table with a single entry) pins every subagent to that model, except Tower reviewers: they inherit Tower's current model by default, and passing the pool alias explicitly keeps the pool model. A pool with two or more entries lets the main agent choose per spawn via the `model` parameter on `Agent`, `AgentSwarm`, and `TowerSpawn`: the available models (with the default marked `[default]`) are injected into context via a system reminder, keeping tool definitions static when `[secondary_model]` changes mid-session. Pool keys can only reference configured [`[models]`](#models) entries. The `kimi-code/*` aliases below are provisioned by `/login`:
 
 ```toml
 [secondary_model]
@@ -242,10 +242,10 @@ A spawn resolves the subagent's model in this order:
 
 Rules for the `model` parameter:
 
-- It accepts pool aliases only. The main agent's own model is not an implicit choice: to let it run hard subtasks on the main model, list that model's alias in the pool explicitly.
-- When neither `default_model` nor `models` is configured, the parameter is not advertised and subagents inherit the caller's model. With a single-entry pool it is not advertised for `Agent`/`AgentSwarm` either, while `TowerSpawn` advertises `model` for any configured pool.
+- When `[secondary_model]` is configured, it accepts pool aliases only. The main agent's own model is not an implicit choice: to let it run hard subtasks on the main model, list that model's alias in the pool explicitly.
+- When neither `default_model` nor `models` is configured, omitting `model` or passing the caller's own model alias inherits the caller's model and thinking; any other value is rejected.
 - Binding a pool alias does not inherit the caller's thinking effort, even when the alias is the caller's own model. The section's `default_effort` wins when set. Otherwise, `[thinking].enabled = false` keeps Thinking off; when Thinking is enabled, resolution continues with the bound model entry's `default_effort`, the global `[thinking].effort`, then the middle of the bound model's `support_efforts`.
-- A value that is not a pool alias fails the spawn with an error listing the available choices.
+- Any value outside the available subagent models fails the spawn with an error listing the available choices. Passing `model` when resuming an existing subagent (or calling `AgentSwarm` without `items`) also fails with an error.
 
 The former `force` key has been removed: a lone `default_model` already pins Agent and AgentSwarm subagents and tower workers to one model. A configuration that still sets `force` loads with a warning and the key is ignored.
 

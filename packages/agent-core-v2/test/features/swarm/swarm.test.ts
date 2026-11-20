@@ -1411,17 +1411,17 @@ describe('AgentSwarmTool', () => {
     );
   });
 
-  it('advertises the configured pool in the description only when configured', async () => {
+  it('keeps model in parameters and omits Available models from description whether or not a pool is configured', () => {
     const host = mockSwarmHost();
     const configured = new AgentSwarmTool(host.swarmService, makeAgentScopeContext({ agentId: host.callerAgentId, agentScope: '' }), mockSwarmMode(), stubConfig({ defaultModel: 'provider/fast', models: { 'provider/fast': 'fast and cheap', 'main-model': 'the main model' } }), stubFlag(true), realSubagents(stubSwarmCatalog(), stubConfig({ defaultModel: 'provider/fast', models: { 'provider/fast': 'fast and cheap', 'main-model': 'the main model' } }), stubCallerProfile({ modelAlias: 'main-model' })), stubCallerProfile({ modelAlias: 'main-model' }));
 
-    expect(configured.description).toContain(
-      'Available models (pass via model): provider/fast [default], main-model.',
-    );
+    expect(configured.description).not.toContain('Available models');
+    expect((configured.parameters['properties'] as Record<string, unknown>)['model']).toBeDefined();
 
     const unconfigured = new AgentSwarmTool(host.swarmService, makeAgentScopeContext({ agentId: host.callerAgentId, agentScope: '' }), mockSwarmMode(), stubConfig(), stubFlag(true), realSubagents(stubSwarmCatalog(), stubConfig(), stubCallerProfile({ modelAlias: 'main-model' })), stubCallerProfile({ modelAlias: 'main-model' }));
 
     expect(unconfigured.description).not.toContain('Available models');
+    expect((unconfigured.parameters['properties'] as Record<string, unknown>)['model']).toBeDefined();
   });
 
   it('omits resume hint when incomplete subagents have no agent ids', async () => {

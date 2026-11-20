@@ -7,7 +7,6 @@ export interface SubagentModelPoolSnapshot {
 
 export interface SubagentChangesInput {
   readonly previousSubagentNames?: readonly string[];
-  readonly previousModelPool?: SubagentModelPoolSnapshot | null;
 }
 
 export interface BeliefsSeed {
