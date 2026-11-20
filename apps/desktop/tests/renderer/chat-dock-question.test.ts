@@ -11,6 +11,8 @@ vi.mock('@moonshot-ai/app-client/client', async (importOriginal) => {
     ...actual,
     useKimiWebClient: () => ({
       goal: ref(null),
+      activeSessionId: ref(undefined),
+      activeSessionWorktree: ref(undefined),
       planMode: ref(false),
       planArmed: ref(false),
       controlGoal: vi.fn(),

@@ -35,7 +35,7 @@ import ForcedUpgradeDialog from './components/ForcedUpgradeDialog.vue';
 import { ErrorBoundary } from '@moonshot-ai/app-components';
 import SettingsDialog from './components/settings/SettingsDialog.vue';
 import { AddWorkspaceDialog, WorkspaceEditDialog } from '@moonshot-ai/app-components';
-import { ConfirmDialogHost, PastedTextDialog, openPastedTextDialog, usePastedTextStats } from '@moonshot-ai/app-components';
+import { ConfirmDialogHost, PastedTextDialog, WorktreeManageDialogHost, openPastedTextDialog, usePastedTextStats } from '@moonshot-ai/app-components';
 import BrowserOverlayConfirmHost from './components/browser-overlay/BrowserOverlayConfirmHost.vue';
 import { StatusPanel } from '@moonshot-ai/app-components';
 import { MobileTopBar } from '@moonshot-ai/app-components';
@@ -273,7 +273,7 @@ watch(terminalOpen, (isOpen) => {
   if (isOpen) terminalEverOpened.value = true;
 });
 const terminalCwd = computed(
-  () => client.visibleWorkspace.value?.root ?? client.status.value.cwd ?? null,
+  () => client.activeMainDirectory.value || (client.status.value.cwd ?? null),
 );
 function terminalBucketKey(sessionId: string, workspaceId: string | null): string {
   return sessionId === '' ? nativeTerminalDraftKey(workspaceId) : sessionId;
@@ -512,7 +512,7 @@ const openInService: OpenInService = {
 provide(OpenInServiceKey, openInService);
 
 async function openWorkspaceInDefaultApp(): Promise<void> {
-  const root = client.visibleWorkspace.value?.root ?? client.status.value.cwd;
+  const root = client.activeMainDirectory.value || client.status.value.cwd;
   if (!root) return;
   const apps = await openInService.catalog();
   const target = resolveOpenInTarget(
@@ -2316,6 +2316,10 @@ function handleSelectSession(selection: {
 
 function openPr(url: string): void {
   if (!url) return;
+  if (canOpenBrowserTab.value && panelTabsRef.value !== null) {
+    void panelTabsRef.value.openBrowserUrl(url);
+    return;
+  }
   window.open(url, '_blank', 'noopener');
 }
 </script>
@@ -2662,6 +2666,7 @@ function openPr(url: string): void {
     <!-- Global modal-confirmation host (driven by useConfirmDialog) -->
     <BrowserOverlayConfirmHost :active="browserConfirmUsesNativeSurface" />
     <ConfirmDialogHost v-if="!browserConfirmUsesNativeSurface" />
+    <WorktreeManageDialogHost />
     <PastedTextDialog />
 
     <!-- Mobile switcher bottom-sheet: workspace groups + sessions (mirrors the

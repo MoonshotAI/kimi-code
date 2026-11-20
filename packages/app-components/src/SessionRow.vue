@@ -7,6 +7,10 @@ import { Badge, Icon, IconButton, Menu, MenuItem, Spinner, Tooltip, useImeCompos
 import { applySessionEmoji, splitSessionEmoji } from '@moonshot-ai/app-core/lib';
 import SessionEmojiPicker from './SessionEmojiPicker.vue';
 import WorkspaceIcon from './WorkspaceIcon.vue';
+import SessionHoverCard from './worktree/SessionHoverCard.vue';
+import SessionWorktreeIcon from './worktree/SessionWorktreeIcon.vue';
+import { useOpenPullRequest } from './worktree/sessionPullRequest';
+import { useSessionHoverCard } from './sidebar/useSessionHoverCard';
 import { track } from '@moonshot-ai/app-client/contracts';
 import { configStore, sessionViewsStore } from '@moonshot-ai/app-client/stores';
 import { useSidebarTabs } from '@moonshot-ai/app-core';
@@ -67,12 +71,49 @@ const displayStatus = computed(() =>
 const showQuestionBadge = computed(() => displayStatus.value === 'awaiting-question');
 const showApprovalBadge = computed(() => displayStatus.value === 'awaiting-approval');
 const showAbortedBadge = computed(() => displayStatus.value === 'aborted');
-const showBusySpinner = computed(() => displayStatus.value === 'running');
-const showUnreadDot = computed(() => displayStatus.value === 'unread');
-const hasStatus = computed(() => displayStatus.value !== 'idle');
+const environment = computed(() => (renaming.value ? undefined : props.session.environment));
+const settingUp = computed(() => environment.value === 'settingUp');
+const environmentLabel = computed(() => {
+  if (environment.value === 'invalid') return t('worktreeSession.rowInvalid');
+  if (environment.value === 'settingUp') return t('worktreeSession.rowSettingUp');
+  return t('worktreeSession.rowWorktree');
+});
+const showBusySpinner = computed(
+  () =>
+    displayStatus.value === 'running' ||
+    (settingUp.value && (displayStatus.value === 'idle' || displayStatus.value === 'unread')),
+);
+const showUnreadDot = computed(() => displayStatus.value === 'unread' && !showBusySpinner.value);
+const hasStatus = computed(() => displayStatus.value !== 'idle' || showBusySpinner.value);
 const hasBadge = computed(
   () => showQuestionBadge.value || showApprovalBadge.value || showAbortedBadge.value,
 );
+
+const {
+  open: hoverCardOpen,
+  cardStyle: hoverCardStyle,
+  setCardEl: setHoverCardEl,
+  scheduleOpen: scheduleHoverCard,
+  cancelClose: cancelHoverCardClose,
+  scheduleClose: scheduleHoverCardClose,
+  close: closeHoverCard,
+} = useSessionHoverCard();
+
+function onRowEnter(event: MouseEvent): void {
+  onTitleEnter();
+  if (renaming.value || menuOpen.value || pickerOpen.value) return;
+  scheduleHoverCard(event.currentTarget as HTMLElement);
+}
+
+function onRowSelect(): void {
+  closeHoverCard();
+  emit('select', props.session.id);
+}
+
+function onRowDragStart(event: DragEvent): void {
+  closeHoverCard();
+  emit('dragstart', props.session.id, event);
+}
 
 const menuOpen = ref(false);
 const menuRef = ref<InstanceType<typeof Menu> | null>(null);
@@ -86,6 +127,7 @@ function onDocClick(e: MouseEvent): void {
 
 async function openMenu(): Promise<void> {
   closePicker();
+  closeHoverCard();
   menuOpen.value = true;
   setTimeout(() => document.addEventListener('mousedown', onDocClick), 0);
   window.addEventListener('resize', closeMenu);
@@ -170,6 +212,7 @@ async function openPicker(
     return;
   }
   closeMenu();
+  closeHoverCard();
   pickerAnchor = anchor ?? null;
   pickerOpen.value = true;
   setTimeout(() => document.addEventListener('mousedown', onPickerDocClick), 0);
@@ -246,6 +289,7 @@ const { handleCompositionStart, handleCompositionEnd, isComposingKeyEvent } = us
 async function startRename(): Promise<void> {
   closeMenu();
   closePicker();
+  closeHoverCard();
   renaming.value = true;
   renameValue.value = props.session.title;
   await nextTick();
@@ -414,9 +458,9 @@ function startDelete(): void {
 
 defineExpose({ closeMenu });
 
+const openPullRequestUrl = useOpenPullRequest();
 function openPullRequest(): void {
-  const url = props.session.pullRequest?.url;
-  if (url) window.open(url, '_blank', 'noopener');
+  openPullRequestUrl(props.session.pullRequest?.url);
 }
 </script>
 
@@ -428,11 +472,13 @@ function openPullRequest(): void {
       flat: isFlat,
       'compact-pinned': compactPinned,
       'has-badge': hasBadge,
+      'env-invalid': environment === 'invalid',
     }"
-    @click="emit('select', session.id)"
+    @click="onRowSelect"
     @contextmenu="onRowContextMenu"
-    @dragstart="emit('dragstart', session.id, $event)"
-    @mouseenter="onTitleEnter"
+    @dragstart="onRowDragStart"
+    @mouseenter="onRowEnter"
+    @mouseleave="scheduleHoverCardClose"
   >
     <div class="row">
       <Tooltip :text="compactWorkspaceTooltip">
@@ -526,6 +572,14 @@ function openPullRequest(): void {
             {{ t('workspace.aborted') }}
           </Badge>
         </Tooltip>
+        <SessionWorktreeIcon
+          v-if="environment"
+          class="wt"
+          size="sm"
+          :slashed="environment === 'invalid'"
+          :label="environmentLabel"
+          :data-environment="environment"
+        />
         <span v-if="!hasStatus" class="ts">{{ session.time }}</span>
         <span v-else-if="showBusySpinner || showUnreadDot" class="st">
           <Spinner v-if="showBusySpinner" size="sm" />
@@ -650,6 +704,17 @@ function openPullRequest(): void {
       </Transition>
     </Teleport>
 
+    <Teleport to="body">
+      <SessionHoverCard
+        v-if="hoverCardOpen"
+        :ref="setHoverCardEl"
+        :session="session"
+        :style="hoverCardStyle"
+        @mouseenter="cancelHoverCardClose"
+        @mouseleave="scheduleHoverCardClose"
+      />
+    </Teleport>
+
     <!-- Emoji picker — teleported like the right-click menu so the collapsing
          `.group-sessions` list's `overflow: hidden` can't clip it. -->
     <Teleport to="body">
@@ -721,6 +786,20 @@ function openPullRequest(): void {
 }
 .se.compact-pinned:hover .act {
   min-width: calc(2 * var(--icon-button-sm) + 2px - (var(--se-pad-x) - var(--sb-action-inset, 3px)));
+}
+.se.env-invalid .t {
+  color: var(--color-text-faint);
+}
+.act .wt {
+  color: var(--color-text-faint);
+  transition: opacity var(--duration-fast) var(--ease-out);
+}
+.se:hover .act .wt {
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    opacity var(--duration-fast) var(--ease-out),
+    visibility 0s linear var(--duration-fast);
 }
 .unread-dot {
   width: 7px;

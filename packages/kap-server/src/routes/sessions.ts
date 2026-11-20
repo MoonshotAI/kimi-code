@@ -40,6 +40,7 @@ import {
   type ISessionScopeHandle,
   type Scope,
   type SubagentModelPoolSnapshot,
+  type Workspace,
 } from '@moonshot-ai/agent-core-v2';
 import type { ServerResponse } from 'node:http';
 import { ISessionLockService } from '@moonshot-ai/agent-core-v2/persistence/interface/sessionLock';
@@ -54,6 +55,7 @@ import { ErrorCode } from '../protocol/error-codes';
 import { listPendingInteractions } from '../protocol/interaction-wire';
 import type { PendingInteraction } from '../protocol/interaction';
 import type { ConversationService } from '../services/conversation/conversationService';
+import { deleteSessionRequestSchema } from '../protocol/rest-worktree';
 import { findOnHosts, hostGet, HostSourceError, type HostSources } from '../services/hosts/hostFanout';
 import {
   archiveSessionResponseSchema,
@@ -102,6 +104,13 @@ import {
   creationMainAgentBinding,
 } from './sessionAgentConfig';
 import { customSessionMetadata, updateSessionProfile } from './sessionProfile';
+import type { SessionWorktreeService } from '../services/worktrees/sessionWorktreeService';
+import {
+  SESSION_WORKTREE_METADATA_KEY,
+  sessionWorktreeWire,
+  withStoredSessionWorktree,
+} from '../services/worktrees/sessionWorktreeState';
+import { WorktreeError } from '../services/worktrees/worktreeError';
 
 interface SessionRouteHost {
   post(
@@ -158,6 +167,8 @@ const sessionActionRequestSchema = z.preprocess(
     timeout_ms: z.number().int().min(0).max(MAX_SESSION_WAIT_TIMEOUT_MS).optional(),
     count: z.number().int().positive().optional(),
     page_size: z.number().int().min(1).max(100).optional(),
+    remove_worktree: z.boolean().optional(),
+    delete_branch: z.boolean().optional(),
   }),
 );
 
@@ -167,6 +178,7 @@ export function registerSessionsRoutes(
   app: SessionRouteHost,
   core: Scope,
   conversations: ConversationService,
+  worktrees: SessionWorktreeService,
   hosts?: HostSources,
 ): void {
   const createRoute = defineRoute(
@@ -181,9 +193,11 @@ export function registerSessionsRoutes(
         [ErrorCode.FS_PATH_NOT_FOUND]: {},
         [ErrorCode.ENVIRONMENT_NOT_FOUND]: {},
         [ErrorCode.ENVIRONMENT_UNAVAILABLE]: {},
+        [ErrorCode.WORKTREE_UNSUPPORTED]: {},
         ...agentConfigErrors,
       },
-      description: 'Create a new session',
+      description:
+        'Create a new session. With worktree, the session is returned at once at the workspace root with worktree.setup.status "running"; the setup continues in the background and each change is published as a session "updated" event',
       tags: ['sessions'],
     },
     async (req, reply) => {
@@ -214,7 +228,7 @@ export function registerSessionsRoutes(
 
       const registry = core.accessor.get(IWorkspaceService);
       let workDir: string;
-      let bucket: { readonly id: string; readonly root: string } | undefined;
+      let bucket: Workspace | undefined;
       if (workspaceId !== undefined) {
         const workspace = await registry.get(workspaceId);
         if (workspace === undefined) {
@@ -252,7 +266,15 @@ export function registerSessionsRoutes(
           bucket === undefined
             ? await registry.createOrTouch(workDir)
             : ((await registry.touch(bucket.id)) ?? bucket);
-        const custom = customSessionMetadata(body.metadata);
+        const planned =
+          body.worktree === undefined
+            ? undefined
+            : await worktrees.planCreate(resolved, body.worktree);
+        const clientCustom = customSessionMetadata(body.metadata);
+        const custom =
+          planned === undefined
+            ? clientCustom
+            : withStoredSessionWorktree(clientCustom, planned.stored);
         const agentConfig = body.agent_config ?? {};
         const mainAgentBinding = await creationMainAgentBinding(core, agentConfig);
         const { profile: _profile, model: _model, thinking: _thinking, ...settings } = agentConfig;
@@ -283,6 +305,7 @@ export function registerSessionsRoutes(
         core.accessor.get(IEventService).publish(
           new SessionCreated({ payload: { agentId: 'main', sessionId: session.id, session } }),
         );
+        if (planned !== undefined) worktrees.start(sessionId, planned);
         reply.send(okEnvelope(session, req.id));
       } catch (error) {
         sendMappedError(reply, req, error);
@@ -337,9 +360,8 @@ export function registerSessionsRoutes(
         );
         return;
       }
-      const cwd =
-        summary.cwd ?? (await core.accessor.get(IWorkspaceService).get(summary.workspaceId))?.root;
-      if (cwd === undefined) {
+      const session = await readWireSession(core, worktrees, session_id);
+      if (session === undefined) {
         reply.send(
           errEnvelope(
             ErrorCode.SESSION_NOT_FOUND,
@@ -349,9 +371,7 @@ export function registerSessionsRoutes(
         );
         return;
       }
-      reply.send(
-        okEnvelope(toWireSession(summary, cwd, resolveSessionFacts(core, session_id)), req.id),
-      );
+      reply.send(okEnvelope(session, req.id));
     },
   );
   app.get(
@@ -512,7 +532,7 @@ export function registerSessionsRoutes(
           tail: req.params.tail,
           actions: sessionActions,
           resourceLabel: 'session',
-          extra: { core, conversations, req, reply },
+          extra: { core, conversations, worktrees, req, reply },
           body: req.body,
           onUnsupported: (message) => {
             reply.send(buildValidationEnvelope([{ path: 'session_id', message }], req.id));
@@ -594,6 +614,7 @@ type SessionAction =
 interface SessionActionExtra {
   readonly core: Scope;
   readonly conversations: ConversationService;
+  readonly worktrees: SessionWorktreeService;
   readonly req: {
     readonly id: string;
   };
@@ -617,7 +638,7 @@ const sessionActions: ActionTable<SessionAction, SessionActionExtra> = {
   btw: { handle: btwSessionAction },
   restore: { handle: restoreSessionAction },
   archive: { handle: archiveSessionAction },
-  delete: { handle: deleteSessionAction },
+  delete: { body: deleteSessionRequestSchema, handle: deleteSessionAction },
   reload: { handle: reloadSessionAction },
   takeover: { handle: takeoverSessionAction },
 };
@@ -999,11 +1020,24 @@ async function takeoverSessionAction(ctx: SessionActionCtx): Promise<void> {
   reply.send(okEnvelope({ taken_over: true }, req.id));
 }
 
-async function deleteSessionAction(ctx: SessionActionCtx): Promise<void> {
-  const { core, req, reply, id } = ctx;
+async function deleteSessionAction(
+  ctx: SessionActionCtx<z.infer<typeof deleteSessionRequestSchema>>,
+): Promise<void> {
+  const { core, worktrees, req, reply, id, body } = ctx;
+  const directory =
+    body.remove_worktree === true
+      ? (await core.accessor.get(ISessionIndex).get(id))?.cwd
+      : undefined;
   await core.accessor.get(ISessionManager).delete(id);
-  requestLog(req)?.info({ session_id: id, action: 'delete' }, 'session action completed');
-  reply.send(okEnvelope({ deleted: true }, req.id));
+  const worktree =
+    directory === undefined
+      ? undefined
+      : await worktrees.inventory.removeAfterSessionDeletion(directory, body.delete_branch === true);
+  requestLog(req)?.info(
+    { session_id: id, action: 'delete', worktree: worktree?.outcome },
+    'session action completed',
+  );
+  reply.send(okEnvelope({ deleted: true, worktree }, req.id));
 }
 
 async function reloadSessionAction(ctx: SessionActionCtx): Promise<void> {
@@ -1161,7 +1195,22 @@ export function toWireSession(
     last_prompt: fields.lastPrompt,
     metadata: buildWireMetadata(fields.custom),
     git,
+    worktree: sessionWorktreeWire(fields.custom),
   };
+}
+
+export async function readWireSession(
+  core: Scope,
+  worktrees: Pick<SessionWorktreeService, 'refreshFacts'>,
+  sessionId: string,
+): Promise<Session | undefined> {
+  const summary = await core.accessor.get(ISessionIndex).get(sessionId);
+  if (summary === undefined) return undefined;
+  const cwd =
+    summary.cwd ?? (await core.accessor.get(IWorkspaceService).get(summary.workspaceId))?.root;
+  if (cwd === undefined) return undefined;
+  await worktrees.refreshFacts([summary]);
+  return toWireSession(summary, cwd, resolveSessionFacts(core, sessionId));
 }
 
 export interface SessionFacts {
@@ -1217,7 +1266,11 @@ function buildWireMetadata(
   custom: Record<string, unknown> | undefined,
 ): Record<string, unknown> | undefined {
   if (custom === undefined) return undefined;
-  const { goal: _drop, ...rest } = custom as { goal?: unknown; [key: string]: unknown };
+  const {
+    goal: _goal,
+    [SESSION_WORKTREE_METADATA_KEY]: _worktree,
+    ...rest
+  } = custom as { goal?: unknown; [key: string]: unknown };
   return Object.keys(rest).length === 0 ? undefined : rest;
 }
 
@@ -1252,6 +1305,10 @@ function sendMappedError(
   req: { id: string },
   error: unknown,
 ): void {
+  if (error instanceof WorktreeError) {
+    reply.send(errEnvelope(error.code, error.message, req.id, error.details));
+    return;
+  }
   if (sendEnvironmentError(reply, req.id, error)) return;
   sendSessionMappedError(reply, req, error);
 }

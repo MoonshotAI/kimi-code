@@ -17,6 +17,7 @@ vi.mock('@moonshot-ai/app-client/client', async (importOriginal) => {
       activeWorkspaceId: vue.ref('ws-1'),
       activity: vue.ref('idle'),
       working: vue.ref(false),
+      activeSessionEnvironment: vue.ref('local'),
       isStartingFirstPrompt: vue.ref(false),
       queued: vue.ref([]),
       searchFiles: vi.fn(async () => []),

@@ -7,6 +7,7 @@ import {
 } from '@moonshot-ai/agent-core-v2/app/sessionLegacy/sessionProtocol';
 
 import { workspaceIdSchema } from './workspace';
+import { sessionWorktreeSchema, worktreeSetupRequestSchema } from './worktree';
 
 export const sessionPendingInteractionSchema = z.enum(['none', 'approval', 'question']);
 export type SessionPendingInteraction = z.infer<typeof sessionPendingInteractionSchema>;
@@ -45,6 +46,7 @@ export const sessionSchema = z.object({
   last_prompt: z.string().optional(),
   metadata: z.record(z.string(), z.unknown()).optional(),
   git: sessionGitSchema.optional(),
+  worktree: sessionWorktreeSchema.optional(),
   host_id: z.string().optional(),
 });
 
@@ -65,8 +67,16 @@ export const sessionCreateSchema = z
     workspace_id: workspaceIdSchema.optional(),
     environment_id: z.string().min(1).optional(),
     environment_cwd: z.string().min(1).optional(),
+    worktree: worktreeSetupRequestSchema.optional(),
   })
   .superRefine((value, ctx) => {
+    if (value.worktree !== undefined && value.environment_id !== undefined) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'worktree cannot be combined with environment_id',
+        path: ['worktree'],
+      });
+    }
     if (value.environment_cwd !== undefined && value.environment_id === undefined) {
       ctx.addIssue({
         code: 'custom',

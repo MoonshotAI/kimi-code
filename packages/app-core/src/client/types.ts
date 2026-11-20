@@ -1,6 +1,7 @@
 
 import type { AppTask, SessionPlan } from '../api/types';
 import type { ConversationRequestDebug } from '../conversation/types';
+import type { SessionEnvironmentKind } from '../lib/sessionWorktree';
 
 export interface FileData {
   path: string;
@@ -40,6 +41,7 @@ export interface Session {
   cwd?: string;
   cwdLabel?: string;
   pullRequest?: { number: number; state: 'open' | 'closed' | 'merged'; url: string } | null;
+  environment?: Exclude<SessionEnvironmentKind, 'local'>;
 }
 
 export interface Workspace {

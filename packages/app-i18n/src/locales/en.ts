@@ -39,6 +39,9 @@ import browser from './en/browser';
 import browserReference from './en/browserReference';
 import serverAuth from './en/serverAuth';
 import remoteControl from './en/remoteControl';
+import worktreeCreate from './en/worktreeCreate';
+import worktreeSession from './en/worktreeSession';
+import worktreeManage from './en/worktreeManage';
 import inspector from './en/inspector';
 
 export default {
@@ -83,5 +86,8 @@ export default {
   browserReference,
   serverAuth,
   remoteControl,
+  worktreeCreate,
+  worktreeSession,
+  worktreeManage,
   inspector,
 };

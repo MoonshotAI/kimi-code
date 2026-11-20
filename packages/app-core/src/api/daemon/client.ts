@@ -75,6 +75,19 @@ import type {
   GitStatusQuery,
   GitStatusBatchResult,
   PullRequestBatchResult,
+  PullRequestResult,
+  AppWorktreeSetupRequest,
+  DeleteSessionInput,
+  DeleteSessionResult,
+  RemoveWorktreeInput,
+  RemoveWorktreeResult,
+  SessionWorktreeAction,
+  SessionWorktreeRetryInput,
+  WorkspaceGitBranches,
+  WorktreeInspection,
+  WorktreeList,
+  WorktreeLookup,
+  WorktreeSetupScript,
 } from '../types';
 import type { RcDeviceList } from '../../lib/rcDevicesApi';
 import { DaemonHttpClient, FORK_TIMEOUT_MS, type RestQuery } from './http';
@@ -85,6 +98,8 @@ const HOST_READ_MAX_BYTES = 10_485_760;
 const OAUTH_REGION_PROBE_TIMEOUT_MS = 5_000;
 
 const AGENT_TURNS_TIMEOUT_MS = 2 * 60_000;
+
+const WORKTREE_SLOW_REQUEST_TIMEOUT_MS = 2 * 60_000;
 
 const VALIDATION_FAILED_CODE = 40001;
 import {
@@ -115,6 +130,19 @@ import {
   toAppWorkspace,
   toAppHost,
   wireEventSessionId,
+  sessionWorktreeActionSegment,
+  toDeleteSessionResult,
+  toGitStatusBatchResult,
+  toGitStatusEntry,
+  toPullRequestBatchResult,
+  toPullRequestResult,
+  toWireSessionWorktreeRetry,
+  toWireWorktreeSetupRequest,
+  toWorkspaceGitBranches,
+  toWorktreeInspection,
+  toWorktreeList,
+  toWorktreeLookup,
+  toWorktreeSetupScript,
 } from './mappers';
 import type {
   WireAuthResult,
@@ -166,6 +194,17 @@ import type {
   WireWorkspace,
   WireLogoutResult,
   WireSessionRatingResult,
+  WireDeleteSessionResponse,
+  WireGitStatusBatchResult,
+  WireGitStatusResult,
+  WireInspectWorktreesResponse,
+  WireListWorktreesResponse,
+  WireLookupWorktreeResponse,
+  WirePullRequest,
+  WirePullRequestBatchResult,
+  WireWorktreeSetupScript,
+  WireRemoveWorktreeResponse,
+  WireWorkspaceGitBranches,
 } from './wire';
 import { DaemonEventSocket } from './ws';
 import type { ConversationTurnsPage } from '../../conversation/types';
@@ -259,10 +298,6 @@ interface WireArchiveResult {
   archived: true;
 }
 
-interface WireDeleteResult {
-  deleted: true;
-}
-
 interface WireListDirectoryResult {
   items: WireFsEntry[];
   children_by_path?: Record<string, WireFsEntry[]>;
@@ -307,16 +342,6 @@ interface WireGrepFilesResult {
   files_scanned: number;
   truncated: boolean;
   elapsed_ms: number;
-}
-
-interface WireGitStatusResult {
-  branch: string;
-  ahead: number;
-  behind: number;
-  entries: Record<string, string>;
-  additions: number;
-  deletions: number;
-  pullRequest?: { number: number; state: string; url: string } | null;
 }
 
 interface WireDiffResult {
@@ -515,12 +540,14 @@ export class DaemonKimiWebApi implements KimiWebApi {
     model?: string;
     workspaceId?: string;
     planMode?: boolean;
+    worktree?: AppWorktreeSetupRequest;
   }): Promise<AppSession> {
     const body: Record<string, unknown> = {
       metadata: input.cwd !== undefined ? { cwd: input.cwd } : {},
     };
     if (input.workspaceId !== undefined) body['workspace_id'] = input.workspaceId;
     if (input.title !== undefined) body['title'] = input.title;
+    if (input.worktree !== undefined) body['worktree'] = toWireWorktreeSetupRequest(input.worktree);
     const agentConfig: Record<string, unknown> = {};
     if (input.model !== undefined) agentConfig['model'] = input.model;
     if (input.planMode !== undefined) agentConfig['plan_mode'] = input.planMode;
@@ -665,12 +692,27 @@ export class DaemonKimiWebApi implements KimiWebApi {
     );
   }
 
-  async deleteSession(sessionId: string): Promise<{ deleted: true }> {
-    const data = await this.http.post<WireDeleteResult>(
+  async deleteSession(sessionId: string, input?: DeleteSessionInput): Promise<DeleteSessionResult> {
+    const body: Record<string, unknown> = {};
+    if (input?.removeWorktree !== undefined) body['remove_worktree'] = input.removeWorktree;
+    if (input?.deleteBranch !== undefined) body['delete_branch'] = input.deleteBranch;
+    const data = await this.http.post<WireDeleteSessionResponse>(
       `/sessions/${encodeURIComponent(sessionId)}:delete`,
-      {},
+      body,
     );
-    return data;
+    return toDeleteSessionResult(data);
+  }
+
+  async sessionWorktreeAction(
+    sessionId: string,
+    action: SessionWorktreeAction,
+    input?: SessionWorktreeRetryInput,
+  ): Promise<AppSession> {
+    const data = await this.http.post<WireSession>(
+      `/sessions/${encodeURIComponent(sessionId)}/worktree:${sessionWorktreeActionSegment(action)}`,
+      action === 'retry' ? toWireSessionWorktreeRetry(input) : {},
+    );
+    return toAppSession(data);
   }
 
   async archiveSessions(ids: string[]): Promise<BatchSessionResponse> {
@@ -1373,48 +1415,44 @@ export class DaemonKimiWebApi implements KimiWebApi {
     if (input?.root !== undefined) body['root'] = input.root;
     if (input?.paths !== undefined) body['paths'] = input.paths;
     if (input?.includePullRequest !== undefined) body['include_pull_request'] = input.includePullRequest;
+    if (input?.includeUntracked !== undefined) body['include_untracked'] = input.includeUntracked;
     const data = await this.http.post<WireGitStatusResult>(
       `/sessions/${encodeURIComponent(sessionId)}/fs:git_status`,
       body,
       { ...options, background: options?.background ?? true },
     );
-    return {
-      branch: data.branch,
-      ahead: data.ahead,
-      behind: data.behind,
-      entries: data.entries,
-      additions: data.additions,
-      deletions: data.deletions,
-      pullRequest: data.pullRequest ?? null,
-    };
+    return toGitStatusEntry(data);
   }
 
   async getPullRequest(
     sessionId: string,
     input?: { root?: string },
     options?: ReadRequestOptions,
-  ): Promise<GitStatusEntry['pullRequest']> {
+  ): Promise<PullRequestResult> {
     const body: Record<string, unknown> = {};
     if (input?.root !== undefined) body['root'] = input.root;
-    return this.http.post<GitStatusEntry['pullRequest']>(
+    const { data, details } = await this.http.postWithDetails<WirePullRequest | null>(
       `/sessions/${encodeURIComponent(sessionId)}/fs:pull_request`,
       body,
       { ...options, background: options?.background ?? true },
     );
+    return toPullRequestResult(data, details);
   }
 
   async getGitStatusBatch(
     sessionId: string,
-    input: { roots: string[]; includePullRequest?: boolean },
+    input: { roots: string[]; includePullRequest?: boolean; includeUntracked?: boolean },
     options?: ReadRequestOptions,
   ): Promise<GitStatusBatchResult> {
     const body: Record<string, unknown> = { roots: input.roots };
     if (input.includePullRequest !== undefined) body['include_pull_request'] = input.includePullRequest;
-    return this.http.post<GitStatusBatchResult>(
+    if (input.includeUntracked !== undefined) body['include_untracked'] = input.includeUntracked;
+    const data = await this.http.post<WireGitStatusBatchResult>(
       `/sessions/${encodeURIComponent(sessionId)}/fs:git_status:batch`,
       body,
       { ...options, background: options?.background ?? true },
     );
+    return toGitStatusBatchResult(data);
   }
 
   async getPullRequestBatch(
@@ -1422,11 +1460,12 @@ export class DaemonKimiWebApi implements KimiWebApi {
     input: { roots: string[] },
     options?: ReadRequestOptions,
   ): Promise<PullRequestBatchResult> {
-    return this.http.post<PullRequestBatchResult>(
+    const data = await this.http.post<WirePullRequestBatchResult>(
       `/sessions/${encodeURIComponent(sessionId)}/fs:pull_request:batch`,
       { roots: input.roots },
       { ...options, background: options?.background ?? true },
     );
+    return toPullRequestBatchResult(data);
   }
 
   async getFileDiff(
@@ -1581,6 +1620,61 @@ export class DaemonKimiWebApi implements KimiWebApi {
       `/workspaces/${encodeURIComponent(workspaceId)}/trust`,
       {},
     );
+  }
+
+  async getWorkspaceGitBranches(workspaceId: string, options?: ReadRequestOptions): Promise<WorkspaceGitBranches> {
+    const data = await this.http.get<WireWorkspaceGitBranches>(
+      `/workspaces/${encodeURIComponent(workspaceId)}/git/branches`,
+      undefined,
+      options,
+    );
+    return toWorkspaceGitBranches(data);
+  }
+
+  async listWorktrees(input?: { refreshSizes?: boolean }, options?: ReadRequestOptions): Promise<WorktreeList> {
+    const refresh = input?.refreshSizes === true;
+    const data = await this.http.get<WireListWorktreesResponse>(
+      '/worktrees',
+      refresh ? { refresh: 'sizes' } : undefined,
+      refresh ? { ...options, timeoutMs: WORKTREE_SLOW_REQUEST_TIMEOUT_MS } : options,
+    );
+    return toWorktreeList(data);
+  }
+
+  async inspectWorktrees(paths: string[]): Promise<WorktreeInspection> {
+    const data = await this.http.post<WireInspectWorktreesResponse>('/worktrees:inspect', { paths });
+    return toWorktreeInspection(data);
+  }
+
+  async removeWorktree(input: RemoveWorktreeInput): Promise<RemoveWorktreeResult> {
+    const body: Record<string, unknown> = { path: input.path };
+    if (input.deleteBranch !== undefined) body['delete_branch'] = input.deleteBranch;
+    const data = await this.http.post<WireRemoveWorktreeResponse>('/worktrees:remove', body, {
+      timeoutMs: WORKTREE_SLOW_REQUEST_TIMEOUT_MS,
+    });
+    return { removed: true, branchDeleted: data.branch_deleted };
+  }
+
+  async lookupWorktree(path: string): Promise<WorktreeLookup | null> {
+    const data = await this.http.post<WireLookupWorktreeResponse>('/worktrees:lookup', { path });
+    return toWorktreeLookup(data);
+  }
+
+  async getWorktreeSetupScript(workspaceId: string, options?: ReadRequestOptions): Promise<WorktreeSetupScript> {
+    const data = await this.http.get<WireWorktreeSetupScript>(
+      `/workspaces/${encodeURIComponent(workspaceId)}/worktree-setup-script`,
+      undefined,
+      options,
+    );
+    return toWorktreeSetupScript(data);
+  }
+
+  async saveWorktreeSetupScript(workspaceId: string, content: string): Promise<WorktreeSetupScript> {
+    const data = await this.http.put<WireWorktreeSetupScript>(
+      `/workspaces/${encodeURIComponent(workspaceId)}/worktree-setup-script`,
+      { content },
+    );
+    return toWorktreeSetupScript(data);
   }
 
   async browseFs(path: string | undefined, signal?: AbortSignal): Promise<FsBrowseResult> {

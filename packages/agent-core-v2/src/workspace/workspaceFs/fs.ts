@@ -12,6 +12,7 @@ import {
   type FsGitStatusBatchResponse,
   type FsBatchError,
   type FsPullRequest,
+  type FsPullRequestLookup,
   type FsPullRequestRequest,
   type FsPullRequestBatchRequest,
   type FsPullRequestBatchResponse,
@@ -38,6 +39,7 @@ export type {
   FsGitStatusBatchResponse,
   FsBatchError,
   FsPullRequest,
+  FsPullRequestLookup,
   FsPullRequestRequest,
   FsPullRequestBatchRequest,
   FsPullRequestBatchResponse,
@@ -294,6 +296,7 @@ export interface IWorkspaceFsService {
   gitStatus(req: FsGitStatusRequest): Promise<FsGitStatusResponse>;
   gitStatusBatch(req: FsGitStatusBatchRequest): Promise<FsGitStatusBatchResponse>;
   pullRequest(req: FsPullRequestRequest): Promise<FsPullRequest | null>;
+  pullRequestLookup(req: FsPullRequestRequest): Promise<FsPullRequestLookup>;
   pullRequestBatch(req: FsPullRequestBatchRequest): Promise<FsPullRequestBatchResponse>;
   diff(req: FsDiffRequest): Promise<FsDiffResponse>;
   resolvePath(relPath: string): Promise<FsPathResolved>;

@@ -72,7 +72,7 @@ onBeforeUnmount(() => {
 .ui-spinner--md { width: 18px; height: 18px; }
 .ui-spinner--lg { width: 28px; height: 28px; }
 
-.ui-spinner__svg { width: 100%; height: 100%; }
+.ui-spinner > .ui-spinner__svg { display: block; width: 100%; height: 100%; }
 .ui-spinner__track { fill: none; stroke: var(--color-line); stroke-width: 2.2; }
 .ui-spinner__arc {
   fill: none;

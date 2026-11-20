@@ -7,10 +7,13 @@ import type { PanelTab } from '@moonshot-ai/app-client/composables';
 import type { PanelLauncherType } from '@moonshot-ai/app-client/panel';
 import type { PanelLauncherItem } from '../../lib/panelLauncher';
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   tabs: PanelTab[];
   available: PanelLauncherItem[];
-}>();
+  browserOnly?: boolean;
+}>(), {
+  browserOnly: false,
+});
 
 const emit = defineEmits<{
   activate: [id: string];
@@ -20,7 +23,9 @@ const emit = defineEmits<{
 
 const { t } = useI18n();
 const visibleTabs = computed(() => props.tabs.slice(0, 5));
-const availableItems = computed(() => props.available.filter(item => item.type !== 'diff' && item.type !== 'inspector'));
+const availableItems = computed(() => props.available.filter(item =>
+  props.browserOnly ? item.type === 'browser' : item.type !== 'diff' && item.type !== 'inspector',
+));
 </script>
 
 <template>

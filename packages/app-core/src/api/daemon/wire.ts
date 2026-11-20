@@ -83,6 +83,195 @@ export interface WireSession {
   host_id?: string;
   metadata?: Record<string, unknown>;
   git?: WireSessionGit;
+  worktree?: WireSessionWorktree;
+}
+
+export interface WireWorktreeBase {
+  ref: string;
+  remote: boolean;
+  commit?: string;
+}
+
+export interface WireWorktreeSetupRequest {
+  source_branch: string;
+  include_local_changes?: boolean;
+  use_remote?: boolean;
+  run_setup_script?: boolean;
+}
+
+export type WireWorktreeSetupStepKind = 'fetch' | 'prune' | 'create' | 'changes' | 'script';
+
+export interface WireWorktreeSetupStep {
+  kind: WireWorktreeSetupStepKind;
+  state: 'pending' | 'running' | 'done' | 'failed' | 'stopped' | 'skipped';
+  ref?: string;
+  command?: string;
+  output?: string;
+  timed_out?: boolean;
+}
+
+export interface WireWorktreeSetupFailure {
+  kind:
+    | 'fetch_failed'
+    | 'fetch_timeout'
+    | 'conflict'
+    | 'disk_full'
+    | 'create_failed'
+    | 'script_failed'
+    | 'script_timeout';
+  remote_ref?: string;
+  conflict_files?: string[];
+  exit_code?: number;
+  timeout_seconds?: number;
+}
+
+export interface WireWorktreeSetup {
+  status: 'running' | 'ready' | 'failed' | 'stopped' | 'awaiting_script_confirmation' | 'local';
+  purpose: 'create' | 'recreate';
+  request: WireWorktreeSetupRequest;
+  steps: WireWorktreeSetupStep[];
+  commands_ran: number;
+  started_at: string;
+  ended_at?: string;
+  stopped_step?: WireWorktreeSetupStepKind;
+  failure?: WireWorktreeSetupFailure;
+  script: 'none' | 'ran' | 'skipped' | 'pending';
+  script_content?: string;
+}
+
+export interface WireSessionWorktree {
+  path?: string;
+  branch?: string;
+  base?: WireWorktreeBase;
+  included_local_changes?: boolean;
+  missing?: boolean;
+  branch_missing?: boolean;
+  setup: WireWorktreeSetup;
+}
+
+export interface WireWorktreeSessionRef {
+  id: string;
+  title: string;
+  archived: boolean;
+  busy: boolean;
+}
+
+export interface WireWorktree {
+  path: string;
+  name: string;
+  repo_root: string;
+  workspace_id?: string;
+  workspace_name?: string;
+  branch?: string;
+  origin: 'product' | 'external';
+  created_at?: string;
+  size_bytes?: number;
+  sessions: WireWorktreeSessionRef[];
+}
+
+export interface WireWorktreeRisk {
+  path: string;
+  branch?: string;
+  uncommitted_files: number;
+  unpushed_commits: number;
+  sessions: WireWorktreeSessionRef[];
+}
+
+export interface WireGitBranch {
+  name: string;
+  committed_at: string;
+  remote_ref?: string;
+  remote?: string;
+  remote_source?: 'upstream' | 'same_name';
+}
+
+export interface WireWorkspaceGitBranches {
+  is_repo: boolean;
+  head_branch?: string;
+  dirty: boolean;
+  remotes: string[];
+  branches: WireGitBranch[];
+}
+
+export interface WireListWorktreesResponse {
+  items: WireWorktree[];
+  total_size_bytes?: number;
+}
+
+export interface WireInspectWorktreesResponse {
+  items: WireWorktreeRisk[];
+  errors: Record<string, { code: number; msg: string }>;
+}
+
+export interface WireRemoveWorktreeResponse {
+  removed: true;
+  branch_deleted: boolean;
+}
+
+export interface WireLookupWorktreeResponse {
+  worktree: {
+    repo_root: string;
+    branch?: string;
+    workspace?: WireWorkspace;
+    session_count: number;
+  } | null;
+}
+
+export interface WireDeleteSessionResponse {
+  deleted: true;
+  worktree?: {
+    outcome: 'removed' | 'kept_in_use' | 'missing' | 'failed';
+    branch_deleted?: boolean;
+    other_sessions?: number;
+    output?: string;
+  };
+}
+
+export interface WirePullRequest {
+  number: number;
+  state: string;
+  url: string;
+}
+
+export type WirePullRequestStatus = 'found' | 'none' | 'unavailable' | 'failed';
+
+export interface WireGitStatusResult {
+  branch: string;
+  ahead: number;
+  behind: number;
+  entries: Record<string, string>;
+  additions: number;
+  deletions: number;
+  pullRequest?: WirePullRequest | null;
+  upstream?: string;
+  head?: string;
+  detached?: boolean;
+  stats_error?: string;
+  pull_request_status?: WirePullRequestStatus;
+  pull_request_error?: string;
+}
+
+export interface WireGitStatusBatchResult {
+  results: Record<string, WireGitStatusResult>;
+  errors: Record<string, { code: number; msg: string }>;
+}
+
+export interface WirePullRequestLookupStatus {
+  pull_request_status: WirePullRequestStatus;
+  pull_request_error?: string;
+}
+
+export interface WirePullRequestBatchResult {
+  results: Record<string, WirePullRequest | null>;
+  errors: Record<string, { code: number; msg: string }>;
+  statuses?: Record<string, WirePullRequestLookupStatus>;
+}
+
+export interface WireWorktreeSetupScript {
+  path: string;
+  exists: boolean;
+  content?: string;
+  needs_confirmation?: boolean;
 }
 
 export interface WireSessionRatingResult {

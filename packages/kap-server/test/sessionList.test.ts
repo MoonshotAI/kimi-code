@@ -208,6 +208,10 @@ const gitStub: IGitService = {
     };
   },
   pullRequest: async (cwd: string) => gitState.responses.get(cwd)?.pullRequest ?? null,
+  pullRequestLookup: async (cwd: string) => {
+    const pullRequest = gitState.responses.get(cwd)?.pullRequest ?? null;
+    return { pullRequest, status: pullRequest === null ? ('none' as const) : ('found' as const) };
+  },
   diff: async () => {
     throw new Error2(ErrorCodes.FS_GIT_UNAVAILABLE, 'not used in these tests');
   },

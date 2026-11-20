@@ -81,10 +81,7 @@ export function panelTabProps(tab: PanelTab, ctx: PanelAdapterCtx): Record<strin
       const payload = tab.payload as FileTabPayload;
       const sessionId = client.activeSessionId.value;
       const workspaceId = client.activeWorkspaceId.value;
-      const workspace = workspaceId === null
-        ? undefined
-        : workspacesStore().mergedWorkspaces.find((item) => item.id === workspaceId);
-      const roots = workspace === undefined ? [] : [workspace.root, ...workspace.additionalDirs];
+      const roots = workspacesStore().directoryRootsFor(sessionId, workspaceId);
       const root = filesStore().resolveFileTreeRoot(workspaceId, roots, client.status.value.cwd);
       return {
         preview: {
@@ -138,10 +135,8 @@ export function panelTabProps(tab: PanelTab, ctx: PanelAdapterCtx): Record<strin
       const root = (tab.payload as DiffTabPayload | undefined)?.root;
       const sessionId = client.activeSessionId.value;
       const workspaceId = client.activeWorkspaceId.value;
-      const workspace = workspaceId === null
-        ? undefined
-        : workspacesStore().mergedWorkspaces.find((item) => item.id === workspaceId);
-      const roots = workspace === undefined ? [client.status.value.cwd] : [workspace.root, ...workspace.additionalDirs];
+      const sessionRoots = workspacesStore().directoryRootsFor(sessionId, workspaceId);
+      const roots = sessionRoots.length > 0 ? sessionRoots : [client.status.value.cwd];
       const status = root === undefined || sessionId === null ? undefined : filesStore().gitStatusForRoot(sessionId, root);
       const changes = root === undefined
         ? client.changes.value

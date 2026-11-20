@@ -11,7 +11,7 @@ import { shortcutTooltip } from '../../composables/useShortcuts';
 const { t } = useI18n();
 
 const client = useKimiWebClient();
-const workspaceRoot = computed(() => client.visibleWorkspace.value?.root ?? client.status.value.cwd);
+const workspaceRoot = computed(() => client.activeMainDirectory.value || client.status.value.cwd);
 
 const terminalStore = useNativeTerminal();
 

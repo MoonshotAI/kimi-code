@@ -37,7 +37,7 @@ const emit = defineEmits<{
 
 const sessionId = computed(() => client.activeSessionId.value);
 const workspaceName = computed(() => client.visibleWorkspace.value?.name);
-const workspaceRoot = computed(() => client.visibleWorkspace.value?.root ?? client.status.value.cwd);
+const workspaceRoot = computed(() => client.activeMainDirectory.value || client.status.value.cwd);
 const sessionTitle = computed(() => sessionViews.activeSessionTitle);
 const archived = client.activeSessionArchived;
 const pinned = computed(() => sessionViews.activeSessionPinned);
@@ -399,7 +399,10 @@ const isDev = import.meta.env.DEV;
 
     <!-- Open workspace in editor/terminal; the pill self-hides on an empty
          service catalog (the no-bridge degradation). -->
-    <OpenInMenu v-if="workspaceRoot && workspacesStore().isLocalWorkspace" :work-dir="workspaceRoot" />
+    <OpenInMenu
+      v-if="workspaceRoot && workspacesStore().isLocalWorkspace && client.activeSessionEnvironment.value !== 'invalid'"
+      :work-dir="workspaceRoot"
+    />
 
     <IconButton
       class="ch-session-info"

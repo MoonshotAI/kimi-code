@@ -2,7 +2,7 @@
 import { computed, ref, watch } from 'vue';
 import { defineStore } from 'pinia';
 import { v4 as uuidv4 } from 'uuid';
-import type { AppSession, AppWorkspace, FsBrowseResult, ReadRequestOptions } from '@moonshot-ai/app-core/api';
+import type { AppSession, AppWorkspace, FsBrowseResult, ReadRequestOptions, WorktreeLookup } from '@moonshot-ai/app-core/api';
 import { isDaemonApiError, isDaemonNetworkError } from '@moonshot-ai/app-core/api';
 import type { WorkspaceView } from '@moonshot-ai/app-core/client/types';
 import { createRowMemo, errorInfo } from '@moonshot-ai/app-core/client';
@@ -32,6 +32,7 @@ import {
   saveWorkspaceOrder,
   saveWorkspaceRecencyFloor,
   saveWorkspaceSort,
+  sessionDirectoryRoots,
   sortByWorkspaceOrder,
   sortWorkspacesByRecent,
   STORAGE_KEYS,
@@ -42,6 +43,8 @@ import {
   type WorkspaceSortMode,
 } from '@moonshot-ai/app-core/lib';
 import { getDeviceApi, getKimiWebApi, t } from '../client/deps';
+import { toast } from '../client/toast';
+import { WORKTREE_RESULT_TOAST_MS, askExistingWorktreeProject } from '../composables/worktreeProjectPrompt';
 import { track } from '../contracts';
 import { sessionsStore } from './sessions';
 import { pinnedOrderStore } from './pinnedOrder';
@@ -186,6 +189,7 @@ export const useWorkspacesStore = defineStore('kimi.workspaces', () => {
   const trustInflight = new Map<string, { signal?: AbortSignal; promise: Promise<WorkspaceTrustResult> }>();
   const trustErrorNotificationSignatures = new Map<string, Set<string>>();
   let createAttempt: { fingerprint: string; idempotencyKey: string } | undefined;
+  let addWorkspaceCancelled = false;
 
   function trustErrorSignature(error: WorkspaceTrustError): string {
     const cause = errorInfo(error.cause);
@@ -237,6 +241,21 @@ export const useWorkspacesStore = defineStore('kimi.workspaces', () => {
 
   function workspaceIdForSession(s: { workspaceId?: string; cwd: string }): string {
     return s.workspaceId ?? workspaceIdByRoot.value.get(workspaceRootKey(s.cwd)) ?? s.cwd;
+  }
+
+  function directoryRootsFor(sessionId: string | null | undefined, workspaceId?: string | null): string[] {
+    const session =
+      sessionId === null || sessionId === undefined
+        ? undefined
+        : sessionsStore().sessions.find((item) => item.id === sessionId);
+    const id = workspaceId ?? (session === undefined ? undefined : workspaceIdForSession(session));
+    const workspace =
+      id === null || id === undefined ? undefined : mergedWorkspaces.value.find((item) => item.id === id);
+    return sessionDirectoryRoots(session, workspace);
+  }
+
+  function mainDirectoryFor(sessionId: string | null | undefined, workspaceId?: string | null): string {
+    return directoryRootsFor(sessionId, workspaceId)[0] ?? '';
   }
 
   function sessionBelongsToWorkspace(
@@ -695,9 +714,54 @@ export const useWorkspacesStore = defineStore('kimi.workspaces', () => {
     return existing;
   }
 
+  async function resolveWorktreeProject(root: string): Promise<AppWorkspace | 'proceed' | 'cancelled'> {
+    const rootKey = workspaceRootKey(root);
+    if (mergedWorkspaces.value.some((workspace) => workspace.hostId === undefined && workspaceRootKey(workspace.root) === rootKey)) {
+      return 'proceed';
+    }
+    let lookup: WorktreeLookup | null;
+    try {
+      lookup = await getKimiWebApi().lookupWorktree(root);
+    } catch {
+      return 'proceed';
+    }
+    const existing = lookup?.workspace;
+    if (lookup === null || existing === undefined || workspaceRootKey(existing.root) === rootKey) return 'proceed';
+    const project = workspaceById.value.get(existing.id)?.name ?? existing.name;
+    const choice = await askExistingWorktreeProject({
+      project,
+      sessionCount: lookup.sessionCount,
+      ...(lookup.branch === undefined ? {} : { branch: lookup.branch }),
+    });
+    if (choice === 'create') return 'proceed';
+    if (choice === 'dismiss') return 'cancelled';
+    upsertWorkspacePreserveOrder(existing);
+    openWorkspaceDraft(existing.id, { entry: 'workspace' });
+    toast({
+      layout: 'bar',
+      mode: 'replace',
+      title: t('worktreeManage.switchedToProject', { project: workspaceById.value.get(existing.id)?.name ?? project }),
+      duration: WORKTREE_RESULT_TOAST_MS,
+    });
+    return existing;
+  }
+
+  function takeAddWorkspaceCancelled(): boolean {
+    const cancelled = addWorkspaceCancelled;
+    addWorkspaceCancelled = false;
+    return cancelled;
+  }
+
   async function addWorkspaceByPath(root: string): Promise<boolean> {
     const trimmed = stripSurroundingQuotes(root);
     if (!trimmed) return false;
+    addWorkspaceCancelled = false;
+    const resolution = await resolveWorktreeProject(trimmed);
+    if (resolution === 'cancelled') {
+      addWorkspaceCancelled = true;
+      return false;
+    }
+    if (resolution !== 'proceed') return true;
     const fingerprint = JSON.stringify({ paths: [trimmed], name: null });
     const attempt =
       createAttempt?.fingerprint === fingerprint
@@ -752,6 +816,11 @@ export const useWorkspacesStore = defineStore('kimi.workspaces', () => {
   }): Promise<AppWorkspace | undefined> {
     const [root, ...additionalDirs] = input.paths;
     if (root === undefined) return undefined;
+    if (input.hostId === undefined) {
+      const resolution = await resolveWorktreeProject(root);
+      if (resolution === 'cancelled') return undefined;
+      if (resolution !== 'proceed') return resolution;
+    }
     const fingerprint = JSON.stringify({ paths: input.paths, name: input.name ?? null, hostId: input.hostId ?? null });
     const attempt =
       createAttempt?.fingerprint === fingerprint
@@ -997,6 +1066,8 @@ export const useWorkspacesStore = defineStore('kimi.workspaces', () => {
     sessionsInitialCountByWorkspace,
     workspaceIdByRoot,
     workspaceIdForSession,
+    directoryRootsFor,
+    mainDirectoryFor,
     sessionBelongsToWorkspace,
     mergedWorkspaces,
     workspaceRecencyKeys,
@@ -1036,6 +1107,7 @@ export const useWorkspacesStore = defineStore('kimi.workspaces', () => {
     removeWorkspaceMessage,
     openMostRecentWorkspaceByRoot,
     addWorkspaceByPath,
+    takeAddWorkspaceCancelled,
     browseFs,
     searchFs,
     getFsHome,

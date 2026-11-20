@@ -290,6 +290,10 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "GET",
+      "/api/v1/workspaces/{workspace_id}/git/branches",
+    ],
+    [
+      "GET",
       "/api/v1/workspaces/{workspace_id}/skills",
     ],
     [
@@ -298,7 +302,15 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "GET",
+      "/api/v1/workspaces/{workspace_id}/worktree-setup-script",
+    ],
+    [
+      "GET",
       "/api/v1/workspaces/project-config-dirs",
+    ],
+    [
+      "GET",
+      "/api/v1/worktrees",
     ],
     [
       "GET",
@@ -542,6 +554,30 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "POST",
+      "/api/v1/sessions/{session_id}/worktree:cancel",
+    ],
+    [
+      "POST",
+      "/api/v1/sessions/{session_id}/worktree:recreate",
+    ],
+    [
+      "POST",
+      "/api/v1/sessions/{session_id}/worktree:retry",
+    ],
+    [
+      "POST",
+      "/api/v1/sessions/{session_id}/worktree:run_script",
+    ],
+    [
+      "POST",
+      "/api/v1/sessions/{session_id}/worktree:skip_script",
+    ],
+    [
+      "POST",
+      "/api/v1/sessions/{session_id}/worktree:use_local",
+    ],
+    [
+      "POST",
       "/api/v1/shutdown",
     ],
     [
@@ -573,6 +609,18 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
       "/api/v1/workspaces/{workspace_id}/untrust",
     ],
     [
+      "POST",
+      "/api/v1/worktrees:inspect",
+    ],
+    [
+      "POST",
+      "/api/v1/worktrees:lookup",
+    ],
+    [
+      "POST",
+      "/api/v1/worktrees:remove",
+    ],
+    [
       "PUT",
       "/api/v1/hosts/{id}",
     ],
@@ -591,6 +639,10 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     [
       "PUT",
       "/api/v1/providers/{provider_id}",
+    ],
+    [
+      "PUT",
+      "/api/v1/workspaces/{workspace_id}/worktree-setup-script",
     ],
   ],
 }

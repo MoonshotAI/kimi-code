@@ -61,6 +61,7 @@ import type { AgentFeedMessage } from '../../../protocol/ws-agent';
 import type { TaskEventMessage, TaskListMessage } from '../../../protocol/ws-task';
 import { toConfigResponse } from '../../../routes/config';
 import { resolveSessionFacts, toWireSession, type SessionFacts, type SessionWireFields } from '../../../routes/sessions';
+import type { SessionWorktreeService } from '../../../services/worktrees/sessionWorktreeService';
 import { toWireWorkspace } from '../../../routes/workspaces';
 import type { ConversationEvent, ConversationFeed } from '../../../services/conversation/conversationFeed';
 import type {
@@ -153,6 +154,7 @@ export class SessionEventBroadcaster {
       readonly core: Scope;
       readonly logger?: BroadcastLogger;
       readonly conversations: ConversationService;
+      readonly worktrees?: Pick<SessionWorktreeService, 'refreshFacts'>;
     },
   ) {
     const sessionManager = opts.core.accessor.get(ISessionManager);
@@ -600,6 +602,7 @@ export class SessionEventBroadcaster {
       if (summary === undefined) return undefined;
       const cwd = summary.cwd ?? (await this.opts.core.accessor.get(IWorkspaceService).get(summary.workspaceId))?.root;
       if (cwd === undefined) return undefined;
+      await this.opts.worktrees?.refreshFacts([summary]);
       session = toWireSession(summary, cwd, factsOverride ?? resolveSessionFacts(this.opts.core, sessionId));
     }
     if (change === 'archived') {

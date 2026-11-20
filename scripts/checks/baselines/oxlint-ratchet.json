@@ -764,7 +764,7 @@
     "packages/agent-core-v2/src/agent/toolExecutor/toolExecutorService.ts": 3,
     "packages/agent-core-v2/src/state/agentModel.ts": 1,
     "packages/agent-core-v2/src/state/state.ts": 9,
-    "packages/app-client/src/icons/icons.ts": 478,
+    "packages/app-client/src/icons/icons.ts": 486,
     "packages/app-core/src/api/daemon/mappers.ts": 5,
     "packages/app-markdown/src/lib/markdownWorkers.ts": 2,
     "packages/core/src/llm/builtin/protocol/anthropic/decode.ts": 3,

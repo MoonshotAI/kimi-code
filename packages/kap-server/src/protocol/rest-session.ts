@@ -10,6 +10,7 @@ import {
 
 import { ErrorCode } from './error-codes';
 import { pendingInteractionSchema } from './interaction';
+import { deleteSessionWorktreeOutcomeSchema } from './rest-worktree';
 import {
   creationOnlyProfileSchema,
   sessionActivitySchema,
@@ -379,6 +380,7 @@ export type RestoreSessionResponse = z.infer<typeof restoreSessionResponseSchema
 
 export const deleteSessionResponseSchema = z.object({
   deleted: z.literal(true),
+  worktree: deleteSessionWorktreeOutcomeSchema.optional(),
 });
 export type DeleteSessionResponse = z.infer<typeof deleteSessionResponseSchema>;
 

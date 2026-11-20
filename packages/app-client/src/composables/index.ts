@@ -39,3 +39,4 @@ export * from './useWrapReorderDrag';
 export * from './usePanelSlide';
 export * from './useFontMetadata';
 export * from './useTerminalFonts';
+export * from './useWorktreeManageDialogs';

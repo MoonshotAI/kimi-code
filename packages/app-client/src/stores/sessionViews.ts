@@ -10,6 +10,7 @@ import {
   reconcilePinnedOrder,
   saveUnread,
   sessionDisplayStatus,
+  sessionEnvironmentTag,
 } from '@moonshot-ai/app-core/lib';
 import type { PinnedEntry, Session, WorkspaceGroup } from '@moonshot-ai/app-core/client/types';
 import { createSessionRowMemo, createWorkspaceGroupMemo } from '@moonshot-ai/app-core/client';
@@ -226,7 +227,7 @@ export const useSessionViewsStore = defineStore('kimi.sessionViews', () => {
           const ws = workspaceById.get(workspaceId);
           return {
             id: s.id,
-            title: s.title,
+            title: rowTitle(s),
             time: formatTime(s.updatedAt),
             busy: isMainTurnActive(s.id, s.mainTurnActive),
             pendingInteraction: s.pendingInteraction,
@@ -235,6 +236,7 @@ export const useSessionViewsStore = defineStore('kimi.sessionViews', () => {
             workspaceId,
             workspaceName: ws?.name,
             hostId: ws?.hostId,
+            environment: sessionEnvironmentTag(s),
           };
         }),
     );
@@ -276,7 +278,7 @@ export const useSessionViewsStore = defineStore('kimi.sessionViews', () => {
         const ws = workspaceById.get(workspaceId);
         return {
           id: s.id,
-          title: s.title,
+          title: rowTitle(s),
           time: formatTime(s.updatedAt),
           busy: isMainTurnActive(s.id, s.mainTurnActive),
           pendingInteraction: s.pendingInteraction,
@@ -288,6 +290,7 @@ export const useSessionViewsStore = defineStore('kimi.sessionViews', () => {
           hostId: ws?.hostId,
           cwdLabel: s.cwd ? basename(s.cwd) : '-',
           pullRequest: s.pullRequest,
+          environment: sessionEnvironmentTag(s),
         };
       }),
     );
@@ -298,6 +301,17 @@ export const useSessionViewsStore = defineStore('kimi.sessionViews', () => {
     if (pinned.size === 0) return flatSessionsAll.value;
     return flatSessionsAll.value.filter((s) => !pinned.has(s.workspaceId ?? ''));
   });
+
+  function rowTitle(s: { id: string; title: string }): string {
+    if (s.title !== '') return s.title;
+    const held = promptStore().heldFirstPromptBySession[s.id];
+    if (held === undefined) return s.title;
+    const text = held.content
+      .map((part) => (part.type === 'text' ? part.text : ''))
+      .join(' ')
+      .trim();
+    return text.split('\n')[0]?.slice(0, 80) ?? s.title;
+  }
 
   function buildWorkspaceGroups(excludePinned: boolean): WorkspaceGroup[] {
     void sessionTimeClock.value;
@@ -316,12 +330,13 @@ export const useSessionViewsStore = defineStore('kimi.sessionViews', () => {
       }
       const view: Session = {
         id: s.id,
-        title: s.title,
+        title: rowTitle(s),
         time: formatTime(s.updatedAt),
         busy: isMainTurnActive(s.id, s.mainTurnActive),
         pendingInteraction: s.pendingInteraction,
         lastTurnReason: s.lastTurnReason,
         updatedAt: s.updatedAt,
+        environment: sessionEnvironmentTag(s),
       };
       const list = byId.get(wid) ?? [];
       list.push(view);
@@ -371,7 +386,7 @@ export const useSessionViewsStore = defineStore('kimi.sessionViews', () => {
         const ws = workspaceById.get(workspaceId);
         return {
           id: s.id,
-          title: s.title,
+          title: rowTitle(s),
           time: formatTime(s.updatedAt),
           busy: isMainTurnActive(s.id, s.mainTurnActive),
           pendingInteraction: s.pendingInteraction,
@@ -383,6 +398,7 @@ export const useSessionViewsStore = defineStore('kimi.sessionViews', () => {
           pinned: true,
           cwdLabel: s.cwd ? basename(s.cwd) : '-',
           pullRequest: s.pullRequest,
+          environment: sessionEnvironmentTag(s),
         };
       }),
     );
@@ -458,7 +474,7 @@ export const useSessionViewsStore = defineStore('kimi.sessionViews', () => {
     if (hostsStore().unavailable(ws?.hostId)) return [];
     const toRow = (s: AppSession, doneAt?: string): Session => ({
       id: s.id,
-      title: s.title,
+      title: rowTitle(s),
       time: formatTime(doneAt ?? s.updatedAt),
       busy: doneAt === undefined && isMainTurnActive(s.id, s.mainTurnActive),
       pendingInteraction: doneAt === undefined ? s.pendingInteraction : undefined,
@@ -471,6 +487,7 @@ export const useSessionViewsStore = defineStore('kimi.sessionViews', () => {
       archived: doneAt !== undefined,
       cwdLabel: s.cwd ? basename(s.cwd) : '-',
       pullRequest: s.pullRequest,
+      environment: sessionEnvironmentTag(s),
     });
     const open = sessionsStore().sessions
       .filter(

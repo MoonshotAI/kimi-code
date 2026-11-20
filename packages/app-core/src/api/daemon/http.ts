@@ -16,6 +16,11 @@ const ERROR_ENVELOPE_MAX_BYTES = 64 * 1024;
 
 export const SERVER_AUTH_UNAUTHORIZED_CODE = 40101;
 
+export interface DaemonEnvelope<T> {
+  data: T;
+  details: unknown;
+}
+
 export interface DaemonHttpClientOptions {
   origin: string;
   identity?: ClientIdentity;
@@ -323,6 +328,14 @@ export class DaemonHttpClient {
     opts?: DaemonRequestOptions,
   ): Promise<T> {
     return this.request<T>('POST', path, body, undefined, opts);
+  }
+
+  async postWithDetails<T>(
+    path: string,
+    body?: unknown,
+    opts?: DaemonRequestOptions,
+  ): Promise<DaemonEnvelope<T>> {
+    return this.requestEnvelope<T>('POST', path, body, undefined, opts);
   }
 
   async postZip(
@@ -735,6 +748,16 @@ export class DaemonHttpClient {
     query?: RestQuery,
     opts: DaemonRequestOptions = {},
   ): Promise<T> {
+    return (await this.requestEnvelope<T>(method, path, body, query, opts)).data;
+  }
+
+  private async requestEnvelope<T>(
+    method: string,
+    path: string,
+    body?: unknown,
+    query?: RestQuery,
+    opts: DaemonRequestOptions = {},
+  ): Promise<DaemonEnvelope<T>> {
     const allowCodes = opts.allowCodes ?? [];
     const timeoutMs = opts.timeoutMs ?? REQUEST_TIMEOUT_MS;
     const callerSignal = opts.signal;
@@ -873,7 +896,7 @@ export class DaemonHttpClient {
         });
       }
 
-      return envelope.data as T;
+      return { data: envelope.data as T, details: envelope.details };
     } finally {
       release?.();
     }

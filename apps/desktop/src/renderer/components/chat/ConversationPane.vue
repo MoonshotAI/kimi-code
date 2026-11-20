@@ -24,6 +24,7 @@ import { WorkspaceRecentSessions } from '@moonshot-ai/app-components';
 import { ConversationToc, type ConversationTocItem } from '@moonshot-ai/app-components';
 import TranscriptSearch from './TranscriptSearch.vue';
 import { KimiCodeWordmark, KimiMascotPeek } from '@moonshot-ai/app-components';
+import { CreateEnvironmentPicker, CreateSourceBranchPicker } from '@moonshot-ai/app-components';
 import { Icon, Spinner, Tooltip, trackMenuSurface, useImeComposition } from '@moonshot-ai/app-ui';
 import { filterWorkspaces } from '@moonshot-ai/app-core/lib';
 import { safeRemove, STORAGE_KEYS } from '@moonshot-ai/app-core/lib';
@@ -124,13 +125,17 @@ const draftEntry = client.draftEntry;
 const workspaceName = computed(() => client.visibleWorkspace.value?.name);
 const activeHostId = computed(() => client.visibleWorkspace.value?.hostId);
 const hostBlocked = computed(() => hostsStore().blocked(activeHostId.value));
-const workspaceRoot = computed(() => client.visibleWorkspace.value?.root ?? client.status.value.cwd);
+const workspaceRoot = computed(() => client.activeMainDirectory.value || client.status.value.cwd);
 const workspaceDirs = computed(() => {
   const root = workspaceRoot.value;
   if (!root) return [];
   const registered = workspacesStore().workspaces.find((ws) => ws.id === activeWorkspaceId.value);
   return [root, ...(registered?.additionalDirs ?? [])];
 });
+const sessionWorktree = client.activeSessionWorktree;
+const interruptible = computed(
+  () => props.working === true || client.activeSessionEnvironment.value === 'settingUp',
+);
 const turnError = computed(() => client.activeTurnError.value ?? null);
 const turnRetry = computed(() => client.activeTurnRetry.value ?? null);
 const turnEnd = client.activeTurnEnd;
@@ -1673,7 +1678,7 @@ const forkPending = computed(
 
 const { armed: escInterruptArmed, press: pressEscInterrupt, reset: resetEscInterrupt } = useEscInterrupt({
   sessionId: () => props.sessionId,
-  working: () => props.working,
+  working: () => interruptible.value,
   interrupt: handleInterrupt,
 });
 
@@ -1735,7 +1740,7 @@ function onKeyDown(event: KeyboardEvent): void {
     !event.repeat &&
     !isComposingKeyEvent(event)
   ) {
-    if (props.working) {
+    if (interruptible.value) {
       event.preventDefault();
       pressEscInterrupt();
     }
@@ -1980,6 +1985,10 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
                 <Icon name="folder-plus" />
                 <span>{{ t('conversation.addWorkspace') }}</span>
               </button>
+              <template v-if="hasWorkspaces">
+                <CreateEnvironmentPicker :workspace-id="activeWorkspaceId" />
+                <CreateSourceBranchPicker :workspace-id="activeWorkspaceId" :workspace-name="activeWorkspaceLabel" />
+              </template>
               <HostNotice class="empty-host-notice" :host-id="activeHostId" />
               <KimiMascotPeek ref="mascotRef" class="ws-mascot" />
             </div>
@@ -2029,6 +2038,7 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
               :history-state="historyState"
               :render-all-history="(!mobile && !hasMoreMessages && !activeSessionPaged && historyRenderAllAffordable(turns)) || transcriptSearchOpen || historySelection"
               :cwd="status.cwd"
+              :worktree="sessionWorktree"
               :approvals="approvals"
               :questions="questions"
               :turn-active="turnActive"
@@ -2313,6 +2323,7 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
   box-sizing: border-box;
   display: flex;
   align-items: flex-end;
+  gap: var(--space-1);
   height: 36px;
   padding: 0 var(--dock-inline-right, 16px) 0 calc(var(--dock-inline-left, 16px) + var(--space-4));
   font-family: var(--font-ui);

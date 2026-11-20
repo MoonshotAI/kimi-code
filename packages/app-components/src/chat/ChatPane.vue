@@ -7,7 +7,7 @@ import { composerSnapshotFromMetadata, rebindComposerSnapshotMedia } from '@moon
 import { computed, inject, nextTick, onMounted, onUnmounted, provide, reactive, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { ChatTurn, ApprovalBlock, OpenMediaRequest, ToolMedia, QueuedPromptView, TurnAttachment, UIQuestion } from '@moonshot-ai/app-core/client/types';
-import type { AppSessionRatingResponse } from '@moonshot-ai/app-core/api';
+import type { AppSessionRatingResponse, AppSessionWorktree } from '@moonshot-ai/app-core/api';
 import { collectTurnImages, formatProviderErrorMessage, turnAttachmentToMedia } from '@moonshot-ai/app-core/client';
 import ToolCall from './ToolCall.vue';
 import { BrowserToolContextKey } from './tool-calls/browserToolContext';
@@ -17,6 +17,7 @@ import HistoryWindow from './HistoryWindow.vue';
 import { settledSteerTurnIdsFor, syncSettledSteerTurnIds } from './steerContinuationState';
 import { HistoryAllKey } from '@moonshot-ai/app-core/contracts';
 import ActivityRun from './ActivityRun.vue';
+import CreateProgressBlock from '../worktree/CreateProgressBlock.vue';
 import TurnFold from './TurnFold.vue';
 import RequestDebugRow from './RequestDebugRow.vue';
 import TurnFilesSummary from './TurnFilesSummary.vue';
@@ -43,7 +44,7 @@ import TableSelectionContextMenu from './TableSelectionContextMenu.vue';
 import { Icon, Spinner, Button, Tooltip } from '@moonshot-ai/app-ui';
 import { useActivityRunFolding, useConfirmDialog, useIsMobile, useTurnFolding } from '@moonshot-ai/app-client/composables';
 import { panelApiKey } from '@moonshot-ai/app-client/panel';
-import { copyTextToClipboard, formatMessageTime } from '@moonshot-ai/app-core/lib';
+import { copyTextToClipboard, formatMessageTime, sessionWorktreeHoldsPrompts } from '@moonshot-ai/app-core/lib';
 import { editRefillAttachments } from '@moonshot-ai/app-client/lib';
 import { SELECTION_QUOTE_ENABLED, isContextClick, selectionHitByPointer, selectionOwnedByRoot, selectionQuoteAnchor, type SelectionActionPayload, type SelectionQuoteAnchor } from '@moonshot-ai/app-client/lib';
 import { parseAttachmentLinks, serializeMention, stripAttachmentLinks } from '@moonshot-ai/app-composer/model';
@@ -112,6 +113,7 @@ const props = withDefaults(
     forkEnabled?: boolean;
     forkPending?: boolean;
     cwd?: string;
+    worktree?: AppSessionWorktree | null;
     turnFilesInteractive?: boolean;
     approvals?: { approvalId: string; block: ApprovalBlock; agentName?: string; toolCallId?: string }[];
     questions?: UIQuestion[];
@@ -139,6 +141,7 @@ const props = withDefaults(
   {
     approvals: () => [],
     questions: () => [],
+    worktree: null,
     turnFilesInteractive: true,
     turnActive: false,
     working: false,
@@ -161,6 +164,14 @@ const props = withDefaults(
     turnError: null,
     turnRetry: null,
   },
+);
+
+const worktreeAnchorTurnId = computed<string | null>(() => {
+  if (props.worktree === null || props.hasMoreMessages) return null;
+  return props.turns.find((turn) => turn.role === 'user')?.id ?? null;
+});
+const worktreeHoldsPrompts = computed(() =>
+  sessionWorktreeHoldsPrompts({ worktree: props.worktree ?? undefined }),
 );
 
 const topSentinelRef = ref<HTMLElement | null>(null);
@@ -1414,6 +1425,11 @@ function streamingTailIndex(turn: ChatTurn): number | null {
             </div>
             <MessageTime v-if="turn.createdAt" :time="turn.createdAt" />
           </div>
+          <CreateProgressBlock
+            v-if="worktree && turn.id === worktreeAnchorTurnId"
+            :worktree="worktree"
+            :session-id="sessionId"
+          />
         </div>
       </template>
 
@@ -1609,7 +1625,7 @@ function streamingTailIndex(turn: ChatTurn): number | null {
         @dragover="onQueueDragOver(qi, $event)"
         @drop="onQueueDrop(qi, $event)"
       >
-        <Tooltip v-if="qi === 0 && item.kind !== 'compact'" :text="queueSteerLabel">
+        <Tooltip v-if="qi === 0 && item.kind !== 'compact' && !worktreeHoldsPrompts" :text="queueSteerLabel">
           <button
             type="button"
             class="q-send"

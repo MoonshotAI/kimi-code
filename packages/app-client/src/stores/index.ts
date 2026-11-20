@@ -27,5 +27,8 @@ export {
   type SessionContextInfoState,
   type SessionFolderGitState,
   type SessionFolderInfoRow,
+  type SessionInfoRefreshError,
 } from './sessionInfo';
+export { useNewSessionEnvironmentStore, newSessionEnvironmentStore, type NewSessionEnvironmentView, type WorkspaceBranchesState } from './newSessionEnvironment';
+export { useWorktreesStore, worktreesStore, type WorktreeRemovalItem, type WorktreeRemovalRequest, type WorktreeRemovalState, type WorktreeRemovalSummary, type WorktreeSessionRemovalFailure } from './worktrees';
 export { usePinnedOrderStore, pinnedOrderStore } from './pinnedOrder';

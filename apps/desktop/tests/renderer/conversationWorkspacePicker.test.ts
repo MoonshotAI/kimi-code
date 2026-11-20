@@ -3,14 +3,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createApp, h, nextTick, ref, type App } from 'vue';
 import { createKimiI18n } from '@moonshot-ai/app-i18n';
 import { IconResolverKey } from '@moonshot-ai/app-ui';
-import type { AppHost } from '@moonshot-ai/app-core/api';
+import type { AppHost, AppWorkspace, WorkspaceGitBranches } from '@moonshot-ai/app-core/api';
 import type { WorkspaceView } from '@moonshot-ai/app-core/client/types';
 import { ModelDisplayKey, SubagentEffortKey } from '@moonshot-ai/app-client/contracts';
-import { hostsStore, workspacesStore } from '@moonshot-ai/app-client/stores';
+import { hostsStore, newSessionEnvironmentStore, workspacesStore } from '@moonshot-ai/app-client/stores';
 
 const mockWorkspacesView = ref<WorkspaceView[]>([]);
 const mockActiveWorkspaceId = ref<string | null>(null);
 const mockVisibleWorkspace = ref<WorkspaceView | null>(null);
+const mockEnvironment = ref<'local' | 'worktree' | 'settingUp' | 'invalid'>('local');
 
 vi.mock('@moonshot-ai/app-client/client', () => ({
   sessionObservationOptions: () => ({}),
@@ -43,6 +44,9 @@ vi.mock('@moonshot-ai/app-client/client', () => ({
     activeTurnEnd: ref(null),
     recentSessionsForWorkspace: () => [],
     activeSessionId: ref(undefined),
+    activeSessionWorktree: ref(undefined),
+    activeSessionEnvironment: mockEnvironment,
+    activeMainDirectory: ref(''),
     sessionById: () => undefined,
     loadOlderMessages: vi.fn(),
     reorderQueuedPrompts: vi.fn(),
@@ -56,7 +60,6 @@ vi.mock('@moonshot-ai/app-client/composables', async (importOriginal) => {
   return {
     ...actual,
     useComposerAutoFocus: vi.fn(),
-    useEscInterrupt: () => ({ armed: ref(false), reset: vi.fn() }),
     useWorkspaceTrust: () => ({
       trustDenied: ref(false),
       trustRejected: ref(false),
@@ -98,7 +101,9 @@ beforeEach(() => {
   mockWorkspacesView.value = [];
   mockActiveWorkspaceId.value = null;
   mockVisibleWorkspace.value = null;
+  mockEnvironment.value = 'local';
   workspacesStore().workspaces = [];
+  newSessionEnvironmentStore().reset();
   hostsStore().byId = {};
   hostsStore().loaded = true;
   hostsStore().connecting = {};
@@ -119,14 +124,17 @@ function sshHost(id: string, extra: Partial<AppHost> = {}): AppHost {
 function mountPane(component: unknown) {
   const onSelectWorkspace = vi.fn();
   const onAddWorkspace = vi.fn();
+  const onInterrupt = vi.fn();
   host = document.createElement('div');
   document.body.append(host);
   app = createApp({
     render: () =>
       h(component as never, {
         status: { cwd: '/work/local', modelId: 'k2', contextUsage: 0, tokenUsage: { input: 0, output: 0 } },
+        working: false,
         onSelectWorkspace,
         onAddWorkspace,
+        onInterrupt,
       }),
   });
   app.use(createKimiI18n({ locale: 'zh' }));
@@ -134,16 +142,36 @@ function mountPane(component: unknown) {
   app.provide(ModelDisplayKey, (alias: string | undefined) => alias);
   app.provide(SubagentEffortKey, () => undefined);
   app.mount(host);
-  return { el: host, onSelectWorkspace, onAddWorkspace };
+  return { el: host, onSelectWorkspace, onAddWorkspace, onInterrupt };
 }
 
 const localWs: WorkspaceView = { id: 'ws-local', name: 'local-app', root: '/Users/me/local-app', shortPath: '~/local-app', additionalDirs: [], sessionCount: 1 };
 const remoteWs: WorkspaceView = { id: 'ws-remote', name: 'trainer', root: '/home/ubuntu/trainer', shortPath: '/home/ubuntu/trainer', hostId: 'host-gpu', additionalDirs: [], sessionCount: 1 };
 
+const registeredLocalWs: AppWorkspace = { id: 'ws-local', name: 'local-app', root: '/Users/me/local-app', kind: 'managed', additionalDirs: [], sessionCount: 1 };
+const repo: WorkspaceGitBranches = {
+  isRepo: true,
+  remotes: ['origin'],
+  headBranch: 'main',
+  dirty: false,
+  branches: [{ name: 'main', committedAt: '2026-11-18T00:00:00.000Z', remoteRef: 'origin/main' }],
+};
+
 function showProjects(): void {
   mockWorkspacesView.value = [localWs, remoteWs];
   mockActiveWorkspaceId.value = 'ws-local';
   mockVisibleWorkspace.value = localWs;
+}
+
+function showLocalProject(): void {
+  mockWorkspacesView.value = [localWs];
+  mockActiveWorkspaceId.value = 'ws-local';
+  mockVisibleWorkspace.value = localWs;
+  workspacesStore().workspaces = [registeredLocalWs];
+}
+
+function pressEscape(): void {
+  document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
 }
 
 describe.each([['desktop', DesktopConversationPane]])('%s ConversationPane project picker with SSH hosts', (_platform, Pane) => {
@@ -210,5 +238,51 @@ describe.each([['desktop', DesktopConversationPane]])('%s ConversationPane proje
     await nextTick();
     expect(onAddWorkspace).toHaveBeenCalledOnce();
     expect(el.querySelector('.ws-panel')).toBeNull();
+  });
+});
+
+describe('desktop ConversationPane worktree create flow', () => {
+  it('places the Environment button right of the project selector and the branch button after it', async () => {
+    showLocalProject();
+    const store = newSessionEnvironmentStore();
+    store.branchesByWorkspace = { 'ws-local': { status: 'ready', info: repo } };
+
+    const { el } = mountPane(DesktopConversationPane);
+    await nextTick();
+
+    const row = el.querySelector<HTMLElement>('.ws-pill-row')!;
+    expect([...row.children].map((child) => child.className.split(' ')[0])).toEqual(['ws-anchor', 'wce']);
+    expect(row.querySelector('.wce-chip-name')?.textContent).toBe('本地');
+    expect(row.querySelector('.wsb')).toBeNull();
+
+    store.selectEnvironment('worktree');
+    await nextTick();
+    expect([...row.children].map((child) => child.className.split(' ')[0])).toEqual(['ws-anchor', 'wce', 'wsb']);
+    expect(row.querySelector('.wce-chip-name')?.textContent).toBe('Worktree');
+    expect(row.querySelector('.wsb-chip-name')?.textContent).toBe('main');
+  });
+
+  it('hides both buttons when there is no project', async () => {
+    const { el } = mountPane(DesktopConversationPane);
+    await nextTick();
+    expect(el.querySelector('.wce')).toBeNull();
+    expect(el.querySelector('.wsb')).toBeNull();
+  });
+
+  it('stops worktree creation on a double Esc even though no turn is running', async () => {
+    showLocalProject();
+    const { onInterrupt } = mountPane(DesktopConversationPane);
+    await nextTick();
+
+    pressEscape();
+    pressEscape();
+    expect(onInterrupt).not.toHaveBeenCalled();
+
+    mockEnvironment.value = 'settingUp';
+    await nextTick();
+    pressEscape();
+    expect(onInterrupt).not.toHaveBeenCalled();
+    pressEscape();
+    expect(onInterrupt).toHaveBeenCalledTimes(1);
   });
 });

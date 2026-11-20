@@ -5,6 +5,7 @@ import type { PanelTab } from '@moonshot-ai/app-client/composables';
 import { resetKimiClientDeps, setKimiClientDeps } from '@moonshot-ai/app-client/client';
 import { filesStore, sessionsStore, workspacesStore } from '@moonshot-ai/app-client/stores';
 import { noopProductTracker, setProductTracker } from '@moonshot-ai/app-client/contracts';
+import { appSession, sessionWorktree } from '@moonshot-ai/app-client/testing';
 import { panelTabProps, type PanelAdapterCtx } from '../../src/renderer/components/panel/panelAdapters';
 
 interface TreeProps {
@@ -113,6 +114,36 @@ describe('desktop file preview panel adapter workspace roots', () => {
 
     treeProps(tab, ctx).onSelectFile('/a/next.ts');
     expect(panel.updateTabPayload).toHaveBeenCalledWith('file-1', { path: '/a/next.ts' });
+  });
+
+  it('roots a worktree session at its worktree directory instead of the project root', () => {
+    sessionsStore().setSessions([
+      appSession({ id: 's1', cwd: '/wt/a', workspaceId: 'wm_1', worktree: sessionWorktree('ready', { path: '/wt/a' }) }),
+    ]);
+    const { tab, client, ctx } = makeCtx();
+    client.status.value = { cwd: '/wt/a' };
+
+    const tree = treeProps(tab, ctx);
+    expect(tree.roots).toEqual(['/wt/a', '/b']);
+    expect(tree.root).toBe('/wt/a');
+
+    const diffTab = { id: 'diff-1', type: 'diff', payload: {} } as PanelTab;
+    const diffCtx = {
+      panel: { detailDiffMode: ref('list'), detailDiffPath: ref(null) },
+      client: {
+        ...client,
+        changes: ref([]),
+        gitInfo: ref(null),
+        fileDiff: ref([]),
+        fileDiffTexts: ref(null),
+        fileDiffEmptyFile: ref(false),
+        selectedDiffPath: ref(null),
+        fileDiffLoading: ref(false),
+        fileDiffRefreshing: ref(false),
+      },
+      diffStale: ref(false),
+    } as unknown as PanelAdapterCtx;
+    expect((panelTabProps(diffTab, diffCtx) as { roots: string[] }).roots).toEqual(['/wt/a', '/b']);
   });
 
   it('falls back for a single root and no registered workspace', () => {

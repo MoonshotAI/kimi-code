@@ -6,6 +6,7 @@ const clientState = vi.hoisted(() => ({
   activeSessionId: null as null | { value: string | null },
   activity: null as null | { value: string },
   working: null as null | { value: boolean },
+  environment: null as null | { value: string },
   visibleWorkspace: null as null | { value: { hostId?: string } | null },
 }));
 
@@ -15,6 +16,7 @@ vi.mock('@moonshot-ai/app-client/client', async (importOriginal) => {
   clientState.activeSessionId = vue.ref<string | null>('sess-1');
   clientState.activity = vue.ref('idle');
   clientState.working = vue.ref(false);
+  clientState.environment = vue.ref('local');
   clientState.visibleWorkspace = vue.ref<{ hostId?: string } | null>(null);
   return {
     ...actual,
@@ -24,6 +26,7 @@ vi.mock('@moonshot-ai/app-client/client', async (importOriginal) => {
       visibleWorkspace: clientState.visibleWorkspace!,
       activity: clientState.activity!,
       working: clientState.working!,
+      activeSessionEnvironment: clientState.environment!,
       isStartingFirstPrompt: vue.ref(false),
       queued: vue.ref([]),
       searchFiles: vi.fn(async () => []),
@@ -338,6 +341,33 @@ describe('Composer running send mode and first-time steer tip', () => {
     });
     expect(submits).toHaveLength(0);
     expect(steers).toHaveLength(0);
+  });
+
+  it('offers stop while the session worktree is being set up and still submits new messages', async () => {
+    const { setDraft, submits, steers } = await mountFreshComposer('en');
+    clientState.activity!.value = 'idle';
+    clientState.working!.value = false;
+    clientState.environment!.value = 'local';
+    await nextTick();
+    expect(host.querySelector('button.stop')).toBeNull();
+
+    clientState.environment!.value = 'settingUp';
+    await nextTick();
+    expect(host.querySelector('button.stop')?.getAttribute('aria-label')).toBe('Interrupt');
+
+    const input = host.querySelector('[aria-label="Message input"]')!;
+    setDraft('one more thing');
+    await nextTick();
+    pressKey(input, { key: 'Enter' });
+    await nextTick();
+    expect(steers).toHaveLength(0);
+    expect(submits).toHaveLength(1);
+    expect(submits[0]).toMatchObject({ text: 'one more thing' });
+    expect(submits[0]?.forceQueue).toBeUndefined();
+
+    clientState.environment!.value = 'local';
+    await nextTick();
+    expect(host.querySelector('button.stop')).toBeNull();
   });
 
   it('shows the host model setup pill and gates submit when the ready SSH host has no models', async () => {
