@@ -56,21 +56,18 @@ function measure(): void {
   };
 }
 
-function outside(event: PointerEvent): void {
+function outside(event: Event): void {
   const panel = menu.value?.el;
   const path = event.composedPath();
-  if (!path.includes(props.anchor) && panel && !path.includes(panel)) emit('close');
+  if (!panel || path.includes(panel) || path.includes(props.anchor)) return;
+  if (path.some(node => node instanceof HTMLElement && node.hasAttribute('data-kimi-toast-host'))) return;
+  emit('close');
 }
 
 function escape(event: KeyboardEvent): void {
   if (event.key !== 'Escape' || event.isComposing) return;
   event.preventDefault();
   event.stopImmediatePropagation();
-  emit('close');
-}
-
-function scrollOutside(event: Event): void {
-  if (event.target instanceof Node && menu.value?.el?.contains(event.target)) return;
   emit('close');
 }
 
@@ -84,7 +81,7 @@ onMounted(() => {
   observer.observe(props.anchor);
   if (editor.value?.el) observer.observe(editor.value.el);
   document.addEventListener('pointerdown', outside, true);
-  document.addEventListener('scroll', scrollOutside, true);
+  document.addEventListener('scroll', outside, true);
   window.addEventListener('keydown', escape, true);
   window.addEventListener('resize', measure);
   void loadFeedbackReasons().then(reasons => {
@@ -95,7 +92,7 @@ onMounted(() => {
 onBeforeUnmount(() => {
   observer?.disconnect();
   document.removeEventListener('pointerdown', outside, true);
-  document.removeEventListener('scroll', scrollOutside, true);
+  document.removeEventListener('scroll', outside, true);
   window.removeEventListener('keydown', escape, true);
   window.removeEventListener('resize', measure);
   if (menu.value?.el?.contains(document.activeElement) && !props.anchor.disabled) props.anchor.focus({ preventScroll: true });
