@@ -8,18 +8,16 @@ import { Disposable } from '#/_base/di/lifecycle';
 import type { IConfigService } from '#/app/config/config';
 import { THINKING_SECTION } from '#/app/kosongConfig/configSection';
 import type { IAgentProfileService, ProfileBindingSnapshot } from '#/agent/profile/profile';
-import type { IModelCatalog } from '#/provider-catalog/model/catalog';
-import { IProviderCatalogRuntime } from '#/provider-catalog/model/catalog-runtime';
 import { resolveCompletionBudget } from '#/provider-catalog/model/completion-budget';
 import type { ModelOverrides } from '#/provider-catalog/model/model.types';
 import { getProviderDefinition } from '#/provider-catalog/provider/provider-definition';
-import type { ProviderRequesterFactory } from '#/provider-catalog/requester';
 import { LOOP_CONTROL_SECTION } from './configSection';
 import type {
   RequesterOptions,
   RequestConfigSnapshot,
   RequesterBinding,
 } from './requesterContract';
+import type { IProviderCatalogService } from '#/provider-catalog/providerCatalogService';
 
 const REQUEST_CONFIG_SECTIONS: ReadonlySet<string> = new Set([
   LOOP_CONTROL_SECTION,
@@ -46,10 +44,8 @@ export interface AgentRequesterBinderOptions {
   readonly config: IConfigService;
   readonly profile: IAgentProfileService;
   readonly profileSnapshot: () => ProfileBindingSnapshot;
-  readonly modelCatalog: IModelCatalog;
-  readonly requesterFactory: Pick<ProviderRequesterFactory, 'request'>;
+  readonly providerCatalog: Pick<IProviderCatalogService, 'get' | 'createRequester' | 'onChanged'>;
   readonly requesterExecution: LlmRequesterExecution;
-  readonly runtime: IProviderCatalogRuntime;
 }
 
 export class AgentRequesterBinder extends Disposable {
@@ -60,7 +56,7 @@ export class AgentRequesterBinder extends Disposable {
     this._register(this.options.config.onDidSectionChange(({ domain }) => {
       if (REQUEST_CONFIG_SECTIONS.has(domain)) this.refresh();
     }));
-    this._register(this.options.runtime.onChanged(() => this.refresh()));
+    this._register(this.options.providerCatalog.onChanged(() => this.refresh()));
   }
 
   invalidate(): void {
@@ -117,7 +113,7 @@ export class AgentRequesterBinder extends Disposable {
     config: RequestConfigSnapshot,
   ): RequesterBinding {
     const resolved = config.resolved;
-    const model = this.options.modelCatalog.get(resolved.modelAlias);
+    const model = this.options.providerCatalog.get(resolved.modelAlias);
     const maxOutputTokens = this.maxOutputTokens(options.maxOutputSize, config);
     const params: InitializedLlmRequestPart = {
       ...config.params,
@@ -135,7 +131,7 @@ export class AgentRequesterBinder extends Disposable {
       ? undefined
       : getProviderDefinition(model.providerType, model.protocol);
     return {
-      request: this.options.requesterFactory.request(
+      request: this.options.providerCatalog.createRequester(
         model,
         params,
         this.options.requesterExecution,

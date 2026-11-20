@@ -10,20 +10,20 @@ import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
-import { IProviderService } from '#/provider-catalog/provider/provider';
 import { isOAuthCatalogVendor } from '#/provider-catalog/provider/provider-definition';
 
 import { LocalFetchURLProvider } from './providers/local-fetch-url';
 import { MoonshotFetchURLProvider } from './providers/moonshot-fetch-url';
 import type { UrlFetcher } from './tools/fetch-url-types';
 import { IWebFetchService } from './web';
+import { IProviderCatalogService } from '#/provider-catalog/providerCatalogService';
 
 export class WebFetchService implements IWebFetchService {
   declare readonly _serviceBrand: undefined;
   private readonly localFetcher: UrlFetcher;
 
   constructor(
-    @IProviderService private readonly providers: IProviderService,
+    @IProviderCatalogService private readonly providers: IProviderCatalogService,
     @IOAuthService private readonly oauth: IOAuthService,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
     @IConfigService private readonly config: IConfigService,
@@ -58,7 +58,7 @@ export class WebFetchService implements IWebFetchService {
   }
 
   private fromManagedOAuth(): UrlFetcher | undefined {
-    const provider = this.providers.get(KIMI_CODE_PROVIDER_NAME);
+    const provider = this.providers.getProviderConfig(KIMI_CODE_PROVIDER_NAME);
     if (provider === undefined || !isOAuthCatalogVendor(provider.type) || provider.oauth === undefined) {
       return undefined;
     }

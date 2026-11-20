@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 
-import { ProtocolAdapterRegistry } from '#/provider-catalog/protocol/protocolAdapterRegistry';
 import {
   drivesThinkingThroughTraits,
   requiresStrictThinkingValidation,
@@ -15,8 +14,9 @@ import {
   resolveThinkingKeep,
 } from '@moonshot-ai/core/llm/thinking';
 import type { LlmModelSpec } from '@moonshot-ai/core/llm/request';
+import { ProviderCatalogService } from '#/provider-catalog/providerCatalogService';
 
-const registry = new ProtocolAdapterRegistry();
+const registry = new ProviderCatalogService();
 
 function spec(input: {
   readonly capabilities?: readonly string[];
@@ -44,7 +44,6 @@ function spec(input: {
     },
   };
 }
-
 
 describe('registry-driven vendor verdicts', () => {
   it('drivesThinkingThroughTraits: trait-driven vendors only, no string branches', () => {

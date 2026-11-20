@@ -14,7 +14,6 @@ import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { Error2 } from '#/_base/errors/errors';
 import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
 import { IConfigService } from '#/app/config/config';
-import { IModelCatalog } from '#/provider-catalog/model/catalog';
 import { type ModelsSection } from '#/provider-catalog/model/model';
 import { type ProviderConfig, type ProvidersSection } from '#/provider-catalog/provider/provider';
 import { modelsDevProviderModels, resolveModelsDevImport } from './modelsDev';
@@ -45,6 +44,7 @@ import {
   upstreamFetch,
   UPSTREAM_FETCH_TIMEOUT_MS,
 } from './modelsDevUpstream';
+import { IProviderCatalogService } from '#/provider-catalog/providerCatalogService';
 
 const codes = ModelsDevImportErrors.codes;
 
@@ -56,7 +56,7 @@ export class ModelsDevImportService implements IModelsDevImportService {
   constructor(
     @IConfigService private readonly config: IConfigService,
     @IKosongConfigService private readonly kosongConfig: IKosongConfigService,
-    @IModelCatalog private readonly modelCatalog: IModelCatalog,
+    @IProviderCatalogService private readonly modelCatalog: IProviderCatalogService,
     @IAgentIdentity private readonly identity: IAgentIdentity,
   ) {}
 

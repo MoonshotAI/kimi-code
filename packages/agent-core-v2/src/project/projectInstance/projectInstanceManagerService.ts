@@ -23,8 +23,7 @@ import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { LifecycleScope } from '#/app/scopes';
 import { IProjectService, type Project } from '#/app/project/project';
 import { IProjectPersistence } from '#/app/project/projectPersistence';
-import { IModelService } from '#/provider-catalog/model/model';
-import { IProviderService } from '#/provider-catalog/provider/provider';
+
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { ISessionLockService } from '#/persistence/interface/sessionLock';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
@@ -39,6 +38,7 @@ import { IProjectTrustStore } from '#/project/projectTrust/projectTrustStore';
 
 import { ProjectInstance } from './projectInstance';
 import { IProjectInstanceManager, type ProjectInstanceLease, type ProjectInstanceRef } from './projectInstanceManager';
+import { IProviderCatalogService } from '#/provider-catalog/providerCatalogService';
 
 export class ProjectInstanceManager implements IProjectInstanceManager {
   declare readonly _serviceBrand: undefined;
@@ -66,11 +66,11 @@ export class ProjectInstanceManager implements IProjectInstanceManager {
     @ISessionIndex private readonly index: ISessionIndex,
     @ISessionIndexMirror private readonly indexMirror: ISessionIndexMirror,
     @ILogService private readonly log: ILogService,
-    @IModelService private readonly models: IModelService,
+    @IProviderCatalogService private readonly models: IProviderCatalogService,
     @IMcpOAuthService private readonly oauth: McpOAuthService,
     @IMcpConfigStore private readonly configStore: IMcpConfigStore,
     @IPluginService private readonly plugins: IPluginService,
-    @IProviderService private readonly modelProviders: IProviderService,
+    @IProviderCatalogService private readonly modelProviders: IProviderCatalogService,
     @ref(ISessionManager) private readonly sessionManager: LiveRef<ISessionManager>,
     @IAgentProfileRegistry private readonly agentProfiles: IAgentProfileRegistry,
     @IBuiltinAgentProfileLoader private readonly builtinAgentProfiles: IBuiltinAgentProfileLoader,

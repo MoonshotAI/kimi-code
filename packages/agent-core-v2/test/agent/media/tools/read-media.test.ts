@@ -35,7 +35,6 @@ import { AgentMediaResolverService } from '#/agent/media/mediaResolverService';
 import type { IFileService } from '#/app/file/fileService';
 import type { IBlobStore } from '#/persistence/interface/blobStore';
 import { makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import { ProviderRequesterFactory } from '#/provider-catalog/requester';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { JsonAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDocumentStore';
 import { makeSessionContext } from '#/session/sessionContext/sessionContext';
@@ -54,6 +53,7 @@ import type { ISessionWorkspaceContext } from '#/session/workspaceContext/worksp
 import type { WorkspaceConfig } from '#/tool/path-access';
 import { sniffImageDimensions } from '#/agent/media/file-type';
 import { stubAgentContext } from '../../agentContext/stubs';
+import { ProviderCatalogService } from '#/provider-catalog/providerCatalogService';
 
 const WORKSPACE: WorkspaceConfig = { workspaceDir: '/workspace', additionalDirs: [] };
 
@@ -806,7 +806,7 @@ describe('ReadMediaFileTool', () => {
     const resolved = await resolver.resolve(
       [{ role: 'tool', toolCallId: 'call_media', content: outputParts(result) }],
       model,
-      new ProviderRequesterFactory().request(model).with({ endpoint: { files } }),
+      new ProviderCatalogService().createRequester(model).with({ endpoint: { files } }),
     );
 
     expect(upload).toHaveBeenCalledOnce();

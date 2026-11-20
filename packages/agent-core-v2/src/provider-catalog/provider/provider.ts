@@ -1,6 +1,3 @@
-import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
-import type { Event, IWaitUntil } from '#/_base/event';
-
 export type ProviderType = string;
 
 export interface OAuthRef {
@@ -40,21 +37,3 @@ export interface DefaultProviderChangedEvent {
   readonly id: string | undefined;
 }
 
-export interface IProviderService {
-  readonly _serviceBrand: undefined;
-
-  readonly ready: Promise<void>;
-  readonly onDidChangeProviders: Event<ProvidersChangedEvent & IWaitUntil>;
-  readonly onDidChangeDefaultProvider: Event<DefaultProviderChangedEvent & IWaitUntil>;
-  get(name: string): ProviderConfig | undefined;
-  list(): Readonly<Record<string, ProviderConfig>>;
-  getDefaultProvider(): string | undefined;
-  set(name: string, config: ProviderConfig): Promise<void>;
-  delete(name: string): Promise<void>;
-  loadAll(providers: ProvidersSection, defaultProvider: string | undefined): void;
-  replaceAll(providers: ProvidersSection): Promise<void>;
-  setDefaultProvider(id: string | undefined): Promise<void>;
-}
-
-export const IProviderService: ServiceIdentifier<IProviderService> =
-  createDecorator<IProviderService>('providerService');

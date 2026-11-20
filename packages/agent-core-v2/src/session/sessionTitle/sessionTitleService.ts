@@ -16,7 +16,6 @@ import { IOAuthService } from '#/app/auth/auth';
 import { IEventService } from '#/app/event/event';
 import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { IHostRequestHeaders } from '#/provider-catalog/model/host-request-headers';
-import { IProviderService } from '#/provider-catalog/provider/provider';
 import { isOAuthCatalogVendor } from '#/provider-catalog/provider/provider-definition';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
@@ -24,6 +23,7 @@ import { SessionMetaUpdated } from '#/session/sessionMetadata/sessionMetaEvents'
 
 import { IAgentTitlePromptSource } from './agentTitlePromptSource';
 import { ISessionTitleService, type SessionTitleSource } from './sessionTitle';
+import { IProviderCatalogService } from '#/provider-catalog/providerCatalogService';
 
 const MAX_GENERATED_TITLE_LENGTH = 200;
 
@@ -55,7 +55,7 @@ export class SessionTitleService implements ISessionTitleService {
     @ISessionMetadata private readonly metadata: ISessionMetadata,
     @IAgentLifecycleService private readonly agentLifecycle: IAgentLifecycleService,
     @IEventService private readonly eventService: IEventService,
-    @IProviderService private readonly providers: IProviderService,
+    @IProviderCatalogService private readonly providers: IProviderCatalogService,
     @IOAuthService private readonly oauth: IOAuthService,
     @IHostRequestHeaders private readonly hostHeaders: IHostRequestHeaders,
     @ITelemetryService private readonly telemetry: ITelemetryService,
@@ -137,7 +137,7 @@ export class SessionTitleService implements ISessionTitleService {
   ): Promise<TitleGenerationResult> {
     const current = await this.metadata.read();
     if (!force && current.titleKind === 'custom') return { reason: 'custom_title' };
-    const provider = this.providers.get(KIMI_CODE_PROVIDER_NAME);
+    const provider = this.providers.getProviderConfig(KIMI_CODE_PROVIDER_NAME);
     if (
       provider === undefined ||
       !isOAuthCatalogVendor(provider.type) ||

@@ -23,7 +23,6 @@ import {
 import { IAgentTowerService, TOWER_WORKER_PROFILE } from '#/features/tower/tower';
 import { ITowerRateLimitService } from '#/features/tower/towerRateLimit';
 import { IConfigService } from '#/app/config/config';
-import { IModelCatalog } from '#/provider-catalog/model/catalog';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import {
   type ExecutableToolContext,
@@ -47,6 +46,7 @@ import type { SubagentHandle } from '#/agent/tools/agent/agentTool';
 import { newTowerStore, TOWER_MAIN_AGENT_ONLY, TOWER_MODE_USER_ENABLED_ONLY } from '../support';
 import { ITowerSpawnTool, TowerSpawnToolInputSchema, type TowerSpawnToolInput } from './spawn';
 import DESCRIPTION from './spawn.md?raw';
+import { IProviderCatalogService } from '#/provider-catalog/providerCatalogService';
 
 type SubagentBinding = ReturnType<typeof resolveSubagentBinding>;
 
@@ -109,7 +109,7 @@ export class TowerSpawnTool implements ITowerSpawnTool {
     @ISessionSubagentService private readonly subagents: ISessionSubagentService,
     @IAgentLoopService private readonly profile: IAgentLoopService,
     @IConfigService private readonly config: IConfigService,
-    @IModelCatalog private readonly modelCatalog: IModelCatalog,
+    @IProviderCatalogService private readonly modelCatalog: IProviderCatalogService,
   ) {
     this.callerAgentId = scopeContext.agentId;
   }

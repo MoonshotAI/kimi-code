@@ -79,7 +79,6 @@ import {
   ISessionAgentProfileCatalog,
 } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
-import { IModelService } from '#/provider-catalog/model/model';
 
 import { createTestAgent } from '../../harness';
 import { stubBootstrap } from '../../app/bootstrap/stubs';
@@ -90,6 +89,7 @@ import { registerTestAgentWireServices, stubAgentWire } from '../../wire/stubs';
 import { IWireService } from '#/wire/wire';
 import { IAgentToolResultTruncationService } from '#/agent/toolResultTruncation/toolResultTruncation';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import { IProviderCatalogService } from '#/provider-catalog/providerCatalogService';
 
 function nodeCommand(source: string): string {
   return `node -e ${JSON.stringify(source.replaceAll(/\s*\n\s*/g, ' '))}`;
@@ -174,11 +174,11 @@ function stubProfileCatalog(name = 'default'): ISessionAgentProfileCatalog {
   } as unknown as ISessionAgentProfileCatalog;
 }
 
-function stubModelService(model = 'kimi-test'): IModelService {
+function stubModelService(model = 'kimi-test'): IProviderCatalogService {
   return {
     _serviceBrand: undefined,
-    getDefaultModel: () => model,
-  } as unknown as IModelService;
+    getDefaultModelId: () => model,
+  } as unknown as IProviderCatalogService;
 }
 
 function hookLogPath(): string {
@@ -639,7 +639,7 @@ describe('IExternalHooksRunnerService integration', () => {
           reg.definePartialInstance(ISessionManager, stubSessionLifecycle().service);
           reg.defineInstance(ISessionMetadata, stubSessionMetadata());
           reg.defineInstance(ISessionAgentProfileCatalog, stubProfileCatalog());
-          reg.defineInstance(IModelService, stubModelService());
+          reg.defineInstance(IProviderCatalogService, stubModelService());
           reg.definePartialInstance(IAgentLifecycleService, { handleOf: () => undefined });
           reg.definePartialInstance(ISessionSubagentService, {
             hooks: createHooks<AgentTaskHooks, keyof AgentTaskHooks>(['onWillStartAgentTask']),
@@ -1000,7 +1000,7 @@ describe('IExternalHooksRunnerService integration', () => {
           reg.definePartialInstance(ISessionManager, lifecycle.service);
           reg.defineInstance(ISessionMetadata, stubSessionMetadata(undefined, () => effectiveCwd));
           reg.defineInstance(ISessionAgentProfileCatalog, stubProfileCatalog());
-          reg.defineInstance(IModelService, stubModelService());
+          reg.defineInstance(IProviderCatalogService, stubModelService());
           reg.definePartialInstance(IAgentLifecycleService, { handleOf: () => undefined });
           reg.definePartialInstance(ISessionSubagentService, {
             hooks: createHooks<AgentTaskHooks, keyof AgentTaskHooks>(['onWillStartAgentTask']),
@@ -1097,7 +1097,7 @@ describe('IExternalHooksRunnerService integration', () => {
           reg.definePartialInstance(ISessionManager, lifecycle.service);
           reg.defineInstance(ISessionMetadata, stubSessionMetadata());
           reg.defineInstance(ISessionAgentProfileCatalog, stubProfileCatalog());
-          reg.defineInstance(IModelService, stubModelService());
+          reg.defineInstance(IProviderCatalogService, stubModelService());
           reg.definePartialInstance(IAgentLifecycleService, {
             handleOf: (agentId: string) => (agentId === 'main' ? mainHandle : undefined),
           });
@@ -1317,7 +1317,7 @@ describe('IExternalHooksRunnerService integration', () => {
           reg.definePartialInstance(ISessionManager, lifecycle.service);
           reg.defineInstance(ISessionMetadata, stubSessionMetadata('My Session'));
           reg.defineInstance(ISessionAgentProfileCatalog, stubProfileCatalog('coder'));
-          reg.defineInstance(IModelService, stubModelService('kimi-k2'));
+          reg.defineInstance(IProviderCatalogService, stubModelService('kimi-k2'));
           reg.definePartialInstance(IAgentLifecycleService, { handleOf: () => undefined });
           reg.definePartialInstance(ISessionSubagentService, {
             hooks: createHooks<AgentTaskHooks, keyof AgentTaskHooks>(['onWillStartAgentTask']),
@@ -1609,7 +1609,7 @@ describe('IExternalHooksRunnerService integration', () => {
           reg.definePartialInstance(ISessionManager, stubSessionLifecycle().service);
           reg.defineInstance(ISessionMetadata, stubSessionMetadata());
           reg.defineInstance(ISessionAgentProfileCatalog, stubProfileCatalog());
-          reg.defineInstance(IModelService, stubModelService());
+          reg.defineInstance(IProviderCatalogService, stubModelService());
           reg.definePartialInstance(IAgentLifecycleService, { handleOf: () => undefined });
           reg.definePartialInstance(ISessionSubagentService, {
             hooks: createHooks<AgentTaskHooks, keyof AgentTaskHooks>(['onWillStartAgentTask']),
@@ -1655,7 +1655,7 @@ describe('IExternalHooksRunnerService integration', () => {
           reg.definePartialInstance(ISessionManager, stubSessionLifecycle().service);
           reg.defineInstance(ISessionMetadata, stubSessionMetadata());
           reg.defineInstance(ISessionAgentProfileCatalog, stubProfileCatalog());
-          reg.defineInstance(IModelService, stubModelService());
+          reg.defineInstance(IProviderCatalogService, stubModelService());
           reg.definePartialInstance(IAgentLifecycleService, { handleOf: () => undefined });
           reg.definePartialInstance(ISessionSubagentService, {
             hooks: createHooks<AgentTaskHooks, keyof AgentTaskHooks>(['onWillStartAgentTask']),
@@ -1703,7 +1703,7 @@ describe('IExternalHooksRunnerService integration', () => {
           reg.definePartialInstance(ISessionManager, stubSessionLifecycle().service);
           reg.defineInstance(ISessionMetadata, stubSessionMetadata());
           reg.defineInstance(ISessionAgentProfileCatalog, stubProfileCatalog());
-          reg.defineInstance(IModelService, stubModelService());
+          reg.defineInstance(IProviderCatalogService, stubModelService());
           reg.definePartialInstance(IAgentLifecycleService, { handleOf: () => undefined });
           reg.definePartialInstance(ISessionSubagentService, {
             hooks: createHooks<AgentTaskHooks, keyof AgentTaskHooks>(['onWillStartAgentTask']),

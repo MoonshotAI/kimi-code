@@ -48,8 +48,6 @@ import { IEventBus } from '#/app/event/eventBus';
 import { IPluginService } from '#/app/plugin/plugin';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { abortedToolOutput, isUserCancellation, userCancellationReason } from '#/_base/utils/abort';
-import { IProviderRequesterFactory } from '#/provider-catalog/requester';
-import { IProviderCatalogRuntime } from '#/provider-catalog/model/catalog-runtime';
 import { IConfigService } from '#/app/config/config';
 import type { ProviderConfig } from '#/provider-catalog/provider/provider';
 
@@ -72,6 +70,7 @@ import {
 import { stubPluginService } from '../../app/plugin/stubs';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 import { submitPromptTurn } from './stubs';
+import { IProviderCatalogService } from '#/provider-catalog/providerCatalogService';
 
 type GenerateFn = NonNullable<TestAgentOptions['generate']>;
 
@@ -570,7 +569,7 @@ describe('Agent loop', () => {
         onTrace: (trace) => operationTraces.push(trace),
         onOutcome: (_outcome, source) => operationOutcomeSources.push(source),
       };
-      const registryRequest = vi.spyOn(local.get(IProviderRequesterFactory), 'request');
+      const registryRequest = vi.spyOn(local.get(IProviderCatalogService), 'createRequester');
       expect(registryRequest).toHaveBeenCalledTimes(0);
       expect(localLoop.requester).toBe(coreLoop.requester);
       const operation = localLoop.operationRequester(localLoop.requester, operationOptions);
@@ -827,7 +826,7 @@ describe('Agent loop', () => {
 
       const frozenBase = coreLoop.baseRequester;
       await local.get(IConfigService).replace('providers', { kimi: firstProvider });
-      local.get(IProviderCatalogRuntime).resync();
+      local.get(IProviderCatalogService).resync();
       expect(coreLoop.baseRequester).not.toBe(frozenBase);
       expect(coreLoop.baseRequester).toHaveProperty('with');
       const invalidProviderMessage = 'Provider "other" referenced by model "second-model" is not configured.';
@@ -1360,7 +1359,7 @@ describe('Agent loop', () => {
       }),
     };
 
-    const registryRequest = vi.spyOn(ctx.get(IProviderRequesterFactory), 'request');
+    const registryRequest = vi.spyOn(ctx.get(IProviderCatalogService), 'createRequester');
     profile.update({ activeToolNames: ['Lookup'] });
     ctx.get(IAgentToolRegistryService).register(lookupTool);
     const reasons = trackStepReasons(ctx);
@@ -1663,7 +1662,6 @@ describe('Agent loop', () => {
       await local.dispose();
     }
   });
-
 
   it('preserves tool call extras (Gemini thought_signature) through to context', async () => {
     const sigCall: ToolCall = {

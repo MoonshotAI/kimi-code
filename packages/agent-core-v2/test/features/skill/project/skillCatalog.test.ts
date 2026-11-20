@@ -20,7 +20,7 @@ import { IPluginService } from '#/app/plugin/plugin';
 import { PluginService } from '#/app/plugin/pluginService';
 import type { PluginReloadEvent } from '#/app/plugin/types';
 import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemetry';
-import { IProviderService } from '#/provider-catalog/provider/provider';
+
 import type { McpOAuthService } from '#/mcpCore/oauth/service';
 import { IAppStateService } from '#/app/state/appState';
 import { AppStateService } from '#/app/state/appStateService';
@@ -59,6 +59,7 @@ import { stubFlag } from '../../../app/flag/stubs';
 import { stubSkill } from '../catalog/stubs';
 import { stubProviderService } from '../../../app/provider/stubs';
 import { stubLog } from '../../../_base/log/stubs';
+import { IProviderCatalogService } from '#/provider-catalog/providerCatalogService';
 
 const watchMockState = vi.hoisted(() => ({
   calls: [] as { path: string; options?: WatchOptions }[],
@@ -1243,7 +1244,7 @@ describe('WorkspaceSkillCatalogService', () => {
       stubPair(IBootstrapService, stubBootstrap(homeDir)),
       stubPair(IConfigService, configStub()),
       stubPair(ILogService, stubLog()),
-      stubPair(IProviderService, stubProviderService()),
+      stubPair(IProviderCatalogService, stubProviderService()),
       stubPair(IRegionService, {
         _serviceBrand: undefined,
         current: () => ({ region: 'mainland-cn', source: 'default' }),

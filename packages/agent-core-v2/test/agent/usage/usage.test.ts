@@ -18,7 +18,7 @@ import type { Event2 } from '#/app/event/event2';
 import { IEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
-import { IModelCatalog, type Model } from '#/provider-catalog/model/catalog';
+import { type Model } from '#/provider-catalog/model/catalog';
 import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
@@ -32,6 +32,7 @@ import {
   restoreTestEventDispatcher,
   testWireScope,
 } from '../../wire/stubs';
+import { IProviderCatalogService } from '#/provider-catalog/providerCatalogService';
 
 const SCOPE = 'wire';
 const KEY = 'usage-test';
@@ -329,13 +330,13 @@ describe('AgentCacheProbeService', () => {
       _serviceBrand: undefined,
       track2,
     } as unknown as ITelemetryService);
-    ix.stub(IModelCatalog, {
+    ix.stub(IProviderCatalogService, {
       _serviceBrand: undefined,
       get: (alias: string) => {
         if (alias !== 'model-a') throw new Error(`unknown model "${alias}"`);
         return { id: alias, protocol: 'anthropic', providerType: 'kimi' } as unknown as Model;
       },
-    } as unknown as IModelCatalog);
+    } as unknown as IProviderCatalogService);
     ix.stub(
       IAgentScopeContext,
       makeAgentScopeContext({ agentId: 'test-agent', agentScope: '', forkedFrom }),

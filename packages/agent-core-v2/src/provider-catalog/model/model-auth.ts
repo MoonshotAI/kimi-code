@@ -17,12 +17,13 @@ import {
 
 import { CONFIG_INVALID_ERROR_CODE } from '#/provider-catalog/errors';
 import { ProtocolSchema, type Protocol } from '#/provider-catalog/protocol/protocol';
-import type { IProviderService, ProviderConfig, ProvidersSection } from '../provider/provider';
+import type { ProviderConfig, ProvidersSection } from '../provider/provider';
 import { explainProviderEndpoint, getProviderDefinition } from '../provider/provider-definition';
 
-import type { IModelService, ModelRecord, ModelsSection } from './model';
+import type { ModelRecord, ModelsSection } from './model';
 import type { ResolvedModelAuthMaterial } from './model.types';
 import { drivesThinkingThroughTraits } from './thinking';
+import type { IProviderCatalogService } from '#/provider-catalog/providerCatalogService';
 
 export function resolveModelAuthMaterial(args: {
   readonly modelId: string;
@@ -280,8 +281,10 @@ export function resolveModelForReady(
 
 export function resolveActiveModelProvider(
   modelAlias: string | undefined,
-  models: Pick<IModelService, 'get'> & Partial<Pick<IModelService, 'getDefaultModel'>>,
-  providers: Pick<IProviderService, 'get'> & Partial<Pick<IProviderService, 'getDefaultProvider'>>,
+  models: Pick<IProviderCatalogService, 'getModelRecord'> &
+    Partial<Pick<IProviderCatalogService, 'getDefaultModelId'>>,
+  providers: Pick<IProviderCatalogService, 'getProviderConfig'> &
+    Partial<Pick<IProviderCatalogService, 'getDefaultProviderId'>>,
   config?: { get<T>(domain: string): T | undefined },
 ):
   | {
@@ -293,19 +296,19 @@ export function resolveActiveModelProvider(
   | undefined {
   const modelId =
     nonEmpty(modelAlias) ??
-    nonEmpty(models.getDefaultModel?.()) ??
+    nonEmpty(models.getDefaultModelId?.()) ??
     nonEmpty(config?.get<string>('defaultModel'));
   if (modelId === undefined) return undefined;
-  const model = models.get(modelId) ?? config?.get<ModelsSection>('models')?.[modelId];
+  const model = models.getModelRecord(modelId) ?? config?.get<ModelsSection>('models')?.[modelId];
   if (model === undefined) return undefined;
   const providerName =
     nonEmpty(model.providerId) ??
     nonEmpty(model.provider) ??
-    nonEmpty(providers.getDefaultProvider?.()) ??
+    nonEmpty(providers.getDefaultProviderId?.()) ??
     nonEmpty(config?.get<string>('defaultProvider'));
   if (providerName === undefined) return undefined;
   const provider =
-    providers.get(providerName) ?? config?.get<ProvidersSection>('providers')?.[providerName];
+    providers.getProviderConfig(providerName) ?? config?.get<ProvidersSection>('providers')?.[providerName];
   if (provider === undefined) return undefined;
   return { modelId, model, providerName, provider };
 }

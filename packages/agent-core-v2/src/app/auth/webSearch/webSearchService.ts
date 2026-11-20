@@ -12,30 +12,30 @@ import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import { CONFIG_INVALID_ERROR_CODE } from '#/provider-catalog/errors';
-import { IModelService, type ModelRecord } from '#/provider-catalog/model/model';
+import { type ModelRecord } from '#/provider-catalog/model/model';
 import {
   resolveActiveModelProvider,
   resolveModelAuthMaterial,
 } from '#/provider-catalog/model/model-auth';
 import type { ResolvedModelAuthMaterial } from '#/provider-catalog/model/model.types';
-import { IProviderService, type ProviderConfig } from '#/provider-catalog/provider/provider';
+import { type ProviderConfig } from '#/provider-catalog/provider/provider';
 import { isOAuthCatalogVendor } from '#/provider-catalog/provider/provider-definition';
 
 import { SERVICES_SECTION, type ServicesConfig } from '../configSection';
 import { MoonshotWebSearchProvider } from './providers/moonshot-web-search';
 import type { WebSearchProvider } from '#/agent/tools/web-search/web-search';
 import { IWebSearchProviderService } from './webSearch';
+import { IProviderCatalogService } from '#/provider-catalog/providerCatalogService';
 
 export class WebSearchProviderService implements IWebSearchProviderService {
   declare readonly _serviceBrand: undefined;
 
   constructor(
-    @IProviderService private readonly providers: IProviderService,
+    @IProviderCatalogService private readonly providerCatalog: IProviderCatalogService,
     @IOAuthService private readonly oauth: IOAuthService,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
     @IConfigService private readonly config: IConfigService,
     @IAgentIdentity private readonly identity: IAgentIdentity,
-    @IModelService private readonly models: IModelService,
   ) {}
 
   getWebSearchProvider(modelAlias?: string): WebSearchProvider | undefined {
@@ -74,8 +74,8 @@ export class WebSearchProviderService implements IWebSearchProviderService {
     | undefined {
     const resolved = resolveActiveModelProvider(
       modelAlias,
-      this.models,
-      this.providers,
+      this.providerCatalog,
+      this.providerCatalog,
       this.config,
     );
     const searchUrl = nonEmptyString(resolved?.provider.searchUrl);
@@ -125,7 +125,7 @@ export class WebSearchProviderService implements IWebSearchProviderService {
   private managedTokenProvider():
     | { provider: ProviderConfig; tokenProvider: BearerTokenProvider }
     | undefined {
-    const provider = this.providers.get(KIMI_CODE_PROVIDER_NAME);
+    const provider = this.providerCatalog.getProviderConfig(KIMI_CODE_PROVIDER_NAME);
     if (provider === undefined || !isOAuthCatalogVendor(provider.type) || provider.oauth === undefined) {
       return undefined;
     }

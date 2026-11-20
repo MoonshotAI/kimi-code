@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { modelsFromToml, modelsToToml } from '#/app/kosongConfig/configSection';
 import { type ModelRecord } from '#/provider-catalog/model/model';
-import { ModelService } from '#/provider-catalog/model/model-service';
+import { ProviderCatalogService } from '#/provider-catalog/providerCatalogService';
 
 describe('models TOML transforms', () => {
   it('converts snake_case entries to camelCase and back', () => {
@@ -52,15 +52,16 @@ describe('models TOML transforms', () => {
   });
 });
 
-describe('ModelService', () => {
-  function createService(models: Readonly<Record<string, ModelRecord>> = {}): ModelService {
-    const service = new ModelService();
-    service.loadAll({ ...models }, undefined);
+describe('ProviderCatalogService', () => {
+  function createService(models: Readonly<Record<string, ModelRecord>> = {}): ProviderCatalogService {
+    const service = new ProviderCatalogService();
+    service.loadModelRecords({ ...models }, undefined);
+    service.loadProviderConfigs({}, undefined);
     return service;
   }
 
   it('resolves ready on the first loadAll and exposes the default pointer', async () => {
-    const service = new ModelService();
+    const service = new ProviderCatalogService();
     let ready = false;
     void service.ready.then(() => {
       ready = true;
@@ -68,10 +69,13 @@ describe('ModelService', () => {
     await Promise.resolve();
     expect(ready).toBe(false);
 
-    service.loadAll({ k1: { model: 'kimi-k2', maxContextSize: 262144 } }, 'k1');
+    service.loadModelRecords({ k1: { model: 'kimi-k2', maxContextSize: 262144 } }, 'k1');
+    await Promise.resolve();
+    expect(ready).toBe(false);
+    service.loadProviderConfigs({}, undefined);
     await service.ready;
     expect(ready).toBe(true);
-    expect(service.getDefaultModel()).toBe('k1');
+    expect(service.getDefaultModelId()).toBe('k1');
   });
 
   it('supports CRUD and diffs state changes into onDidChangeModels', async () => {
@@ -86,30 +90,30 @@ describe('ModelService', () => {
     );
 
     const k1: ModelRecord = { provider: 'moonshot', model: 'kimi-k2', maxContextSize: 262144 };
-    await service.set('k1', k1);
-    expect(service.get('k1')).toEqual(k1);
-    expect(service.list()).toEqual({ k1 });
+    await service.setModelRecord('k1', k1);
+    expect(service.getModelRecord('k1')).toEqual(k1);
+    expect(service.listModelRecords()).toEqual({ k1 });
     expect(events).toEqual([{ added: ['k1'], removed: [], changed: [] }]);
 
     const updated: ModelRecord = { ...k1, displayName: 'K2' };
-    await service.set('k1', updated);
+    await service.setModelRecord('k1', updated);
     expect(events.at(-1)).toEqual({ added: [], removed: [], changed: ['k1'] });
 
-    await service.set('k1', updated);
+    await service.setModelRecord('k1', updated);
     expect(events).toHaveLength(2);
 
-    await service.delete('k1');
-    expect(service.get('k1')).toBeUndefined();
+    await service.deleteModelRecord('k1');
+    expect(service.getModelRecord('k1')).toBeUndefined();
     expect(events.at(-1)).toEqual({ added: [], removed: ['k1'], changed: [] });
   });
 
   it('replaceAll replaces the records and keeps the default pointer', async () => {
     const service = createService({ a: { model: 'm-a' }, b: { model: 'm-b' } });
-    await service.setDefaultModel('a');
+    await service.setDefaultModelId('a');
 
-    await service.replaceAll({ c: { model: 'm-c' } });
-    expect(service.list()).toEqual({ c: { model: 'm-c' } });
-    expect(service.getDefaultModel()).toBe('a');
+    await service.replaceModelRecords({ c: { model: 'm-c' } });
+    expect(service.listModelRecords()).toEqual({ c: { model: 'm-c' } });
+    expect(service.getDefaultModelId()).toBe('a');
   });
 
   it('fires the pointer event only on real pointer changes', async () => {
@@ -117,11 +121,11 @@ describe('ModelService', () => {
     const pointerEvents: Array<string | undefined> = [];
     service.onDidChangeDefaultModel((e) => pointerEvents.push(e.id));
 
-    await service.setDefaultModel('k1');
-    await service.setDefaultModel('k1');
+    await service.setDefaultModelId('k1');
+    await service.setDefaultModelId('k1');
     expect(pointerEvents).toEqual(['k1']);
 
-    await service.setDefaultModel(undefined);
+    await service.setDefaultModelId(undefined);
     expect(pointerEvents).toEqual(['k1', undefined]);
   });
 });

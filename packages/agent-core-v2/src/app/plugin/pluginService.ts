@@ -14,7 +14,6 @@ import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { ISkillDiscovery } from '#/features/skill/catalog/skillDiscovery';
 import type { SkillRoot } from '#/features/skill/catalog/types';
 import { BugIndicatingError, Error2, ErrorCodes, PluginErrors } from '#/errors';
-import { IProviderService } from '#/provider-catalog/provider/provider';
 import type { McpServerConfig } from '#/mcpCore/config-schema';
 import type { McpOAuthService } from '#/mcpCore/oauth/service';
 
@@ -54,6 +53,7 @@ import type {
   PluginUpdateStatus,
   ReloadSummary,
 } from './types';
+import { IProviderCatalogService } from '#/provider-catalog/providerCatalogService';
 
 const KIMI_CODE_BASE_URL_ENV = 'KIMI_CODE_BASE_URL';
 const KIMI_CODE_OAUTH_HOST_ENV = 'KIMI_CODE_OAUTH_HOST';
@@ -101,7 +101,7 @@ export class PluginService extends Service implements IPluginService {
   constructor(
     @IBootstrapService bootstrap: IBootstrapService,
     @ISkillDiscovery discovery: ISkillDiscovery,
-    @IProviderService private readonly providers: IProviderService,
+    @IProviderCatalogService private readonly providers: IProviderCatalogService,
     @IRegionService regions: IRegionService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IMcpOAuthService private readonly oauth: McpOAuthService,
@@ -499,7 +499,7 @@ export class PluginService extends Service implements IPluginService {
 
   private async managedKimiCodeEnvForPlugins(): Promise<Record<string, string>> {
     await this.providers.ready;
-    const provider = this.providers.get(KIMI_CODE_PROVIDER_NAME);
+    const provider = this.providers.getProviderConfig(KIMI_CODE_PROVIDER_NAME);
     const envBaseUrl = this.envBaseUrl;
     const envOAuthHost = this.envOAuthHost;
     const hasEnvOverride = envBaseUrl !== undefined || envOAuthHost !== undefined;

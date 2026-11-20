@@ -1,7 +1,5 @@
 import { z } from 'zod';
 
-import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
-
 import type { LlmEndpoint, LlmModelSpec } from '@moonshot-ai/core/llm/request';
 import type { Protocol, ProtocolProviderOptions } from '#/provider-catalog/protocol/protocol';
 import type { ProviderConfig } from '../provider/provider';
@@ -165,17 +163,3 @@ export function globalDefaultForProvider(
   return record?.provider === providerId ? globalDefaultModel : undefined;
 }
 
-export interface IModelCatalog {
-  readonly _serviceBrand: undefined;
-
-  get(id: string): Model;
-  findByName(name: string): readonly string[];
-
-  listModels(): Promise<readonly ModelCatalogItem[]>;
-  listProviders(): Promise<readonly ProviderCatalogItem[]>;
-  getProvider(providerId: string): Promise<ProviderCatalogItem>;
-  setDefaultModel(modelId: string): Promise<SetDefaultModelResponse>;
-}
-
-export const IModelCatalog: ServiceIdentifier<IModelCatalog> =
-  createDecorator<IModelCatalog>('modelResolver');

@@ -5,8 +5,6 @@ import { contentsOf } from '@moonshot-ai/core/llm/requester';
 import { streamLlmRequest } from '@moonshot-ai/core/llm/stream';
 import { supportsLlmUpload } from '#/provider-catalog/model/media';
 import type { Model } from '#/provider-catalog/model/catalog';
-import { ProtocolAdapterRegistry } from '#/provider-catalog/protocol/protocolAdapterRegistry';
-import { ProviderRequesterFactory } from '#/provider-catalog/requester';
 import {
   getProviderDefinition,
   getProviderDefinitions,
@@ -14,6 +12,7 @@ import {
   registerProviderDefinition,
   resolveProviderEndpoint,
 } from '#/provider-catalog/provider/provider-definition';
+import { ProviderCatalogService } from '#/provider-catalog/providerCatalogService';
 
 const ENV_KEYS = [
   'OPENAI_API_KEY',
@@ -60,8 +59,8 @@ registerProviderDefinition({
       : undefined,
 });
 
-const registry = new ProtocolAdapterRegistry();
-const requesterFactory = new ProviderRequesterFactory();
+const registry = new ProviderCatalogService();
+const requesterFactory = new ProviderCatalogService();
 
 function modelWith(spec: {
   readonly protocol: Model['protocol'];
@@ -173,9 +172,9 @@ describe('resolveCapability', () => {
   });
 });
 
-describe('ProviderRequesterFactory routes', () => {
+describe('ProviderCatalogService routes', () => {
   it('routes kimi+openai to the kimi trait with the video upload media', () => {
-    const resolved = requesterFactory.request(modelWith({ protocol: 'openai', providerType: 'kimi' }));
+    const resolved = requesterFactory.createRequester(modelWith({ protocol: 'openai', providerType: 'kimi' }));
     expect(contentsOf(resolved).model?.spec?.provider).toBe('openai');
     expect(contentsOf(resolved).model?.spec?.name).toBe('wire-model');
     expect(supportsLlmUpload(resolved, 'video')).toBe(true);
@@ -183,7 +182,7 @@ describe('ProviderRequesterFactory routes', () => {
   });
 
   it('routes plain openai without the upload media', () => {
-    const resolved = requesterFactory.request(modelWith({ protocol: 'openai' }));
+    const resolved = requesterFactory.createRequester(modelWith({ protocol: 'openai' }));
     expect(contentsOf(resolved).model?.spec?.provider).toBe('openai');
     expect(supportsLlmUpload(resolved, 'video')).toBe(false);
     expect(supportsLlmUpload(resolved, 'image')).toBe(false);
@@ -194,7 +193,7 @@ describe('ProviderRequesterFactory routes', () => {
     expect(options.detectedReasoningKey?.()).toBeUndefined();
     options.onReasoningKey?.('reasoning_content');
     expect(options.detectedReasoningKey?.()).toBe('reasoning_content');
-    const next = requesterFactory.request(modelWith({ protocol: 'openai' }));
+    const next = requesterFactory.createRequester(modelWith({ protocol: 'openai' }));
     const nextOptions = contentsOf(next).protocol?.options as {
       detectedReasoningKey?: () => string | undefined;
     };
@@ -202,7 +201,7 @@ describe('ProviderRequesterFactory routes', () => {
   });
 
   it('keeps stream business codes out of the real HTTP status at the registry boundary', () => {
-    const resolved = requesterFactory.request(modelWith({ protocol: 'openai', providerType: 'kimi' }));
+    const resolved = requesterFactory.createRequester(modelWith({ protocol: 'openai', providerType: 'kimi' }));
     const decodeError = contentsOf(resolved).protocol?.base?.decodeError;
     const rawError = new RawOpenAISDKAPIError(
       429,
@@ -226,12 +225,12 @@ describe('ProviderRequesterFactory routes', () => {
   });
 
   it('reports the wire protocol regardless of beta or vertex provider options', () => {
-    const beta = requesterFactory.request(
+    const beta = requesterFactory.createRequester(
       modelWith({ protocol: 'anthropic', providerOptions: { betaApi: true } }),
     );
     expect(contentsOf(beta).model?.spec?.provider).toBe('anthropic');
     expect(contentsOf(beta).protocol?.options).toMatchObject({ betaApi: true });
-    const vertex = requesterFactory.request(
+    const vertex = requesterFactory.createRequester(
       modelWith({
         protocol: 'google-genai',
         providerOptions: { vertexai: true, project: 'p', location: 'l' },
@@ -246,7 +245,7 @@ describe('ProviderRequesterFactory routes', () => {
   });
 
   it('routes kimi+anthropic with media and explicit beta opt-in', async () => {
-    const resolved = requesterFactory.request(modelWith({ protocol: 'anthropic', providerType: 'kimi' }));
+    const resolved = requesterFactory.createRequester(modelWith({ protocol: 'anthropic', providerType: 'kimi' }));
     expect(contentsOf(resolved).model?.spec?.provider).toBe('anthropic');
     expect(supportsLlmUpload(resolved, 'video')).toBe(true);
     expect(supportsLlmUpload(resolved, 'image')).toBe(true);
@@ -287,7 +286,7 @@ describe('ProviderRequesterFactory routes', () => {
       );
     }) as typeof fetch);
     const generate = async (providerOptions?: Model['providerOptions']) => {
-      const routed = requesterFactory.request(
+      const routed = requesterFactory.createRequester(
         modelWith({ protocol: 'anthropic', providerType: 'kimi', providerOptions }),
       );
       try {
@@ -316,7 +315,7 @@ describe('ProviderRequesterFactory routes', () => {
   });
 
   it('carries thinking metadata and model limits onto the resolved LlmModel', () => {
-    const resolved = requesterFactory.request(
+    const resolved = requesterFactory.createRequester(
       modelWith({
         protocol: 'anthropic',
         supportEfforts: ['low', 'high'],

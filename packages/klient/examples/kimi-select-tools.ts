@@ -12,16 +12,12 @@ import { renderLoadableToolsAnnouncement } from '@moonshot-ai/agent-core-v2/agen
 import type { Message, ToolDescription as Tool } from '@moonshot-ai/core/llm/message';
 import { createStaticCredentialProvider } from '@moonshot-ai/agent-core-v2/human/credentials/credentials';
 import type { Model } from '@moonshot-ai/agent-core-v2/provider-catalog/model/catalog';
-import { IModelCatalog } from '@moonshot-ai/agent-core-v2/provider-catalog/model/catalog';
 import type { LlmRequestContent, LlmRequestModel, LlmRequestProfile } from '@moonshot-ai/core/llm/request';
 import type { InitializedLlmRequestPart } from '@moonshot-ai/core/llm/requester';
 import type { LlmRunEvent } from '@moonshot-ai/core/llm/response';
 import { streamLlmRequest } from '@moonshot-ai/core/llm/stream';
 import { credentialRecovery } from '@moonshot-ai/core/llm/policy/credentials';
-import {
-  IProviderRequesterFactory,
-  ProviderRequesterFactory,
-} from '@moonshot-ai/agent-core-v2/provider-catalog/requester';
+import { IProviderCatalogService, ProviderCatalogService } from '@moonshot-ai/agent-core-v2/provider-catalog/providerCatalogService';
 
 type RequestInput = LlmRequestProfile & LlmRequestContent & Pick<LlmRequestModel, 'responseFormat'>;
 
@@ -34,11 +30,11 @@ interface Requester {
   ): AsyncIterable<LlmRunEvent>;
 }
 
-function createRequester(model: Model, registry: Pick<ProviderRequesterFactory, 'request'>): Requester {
+function createRequester(model: Model, registry: Pick<ProviderCatalogService, 'createRequester'>): Requester {
   return {
     model,
     request: (input, signal, params) => {
-      const initialized = registry.request(model, params);
+      const initialized = registry.createRequester(model, params);
       return streamLlmRequest(
         initialized.request({
           model: { responseFormat: input.responseFormat },
@@ -248,7 +244,7 @@ async function probeWireEncoding(): Promise<void> {
   });
   const port = (server.address() as AddressInfo).port;
 
-  const registry = new ProviderRequesterFactory();
+  const registry = new ProviderCatalogService();
   const makeRequester = (providerType?: string): Requester => {
     const model: Model = {
       id: 'probe',
@@ -472,8 +468,8 @@ async function probeLiveKimiProviders(): Promise<void> {
   ]);
   try {
     await app.accessor.get(IConfigService).ready;
-    const catalog = app.accessor.get(IModelCatalog);
-    const registry = app.accessor.get(IProviderRequesterFactory);
+    const catalog = app.accessor.get(IProviderCatalogService);
+    const registry = app.accessor.get(IProviderCatalogService);
 
     const filter = process.env['KIMI_SELECT_TOOLS_MODELS']?.split(',').map((s) => s.trim());
     const models = await catalog.listModels();
@@ -575,8 +571,8 @@ async function probeTappedContext(): Promise<void> {
   ]);
   try {
     await app.accessor.get(IConfigService).ready;
-    const catalog = app.accessor.get(IModelCatalog);
-    const registry = app.accessor.get(IProviderRequesterFactory);
+    const catalog = app.accessor.get(IProviderCatalogService);
+    const registry = app.accessor.get(IProviderCatalogService);
 
     const filter = process.env['KIMI_SELECT_TOOLS_MODELS']?.split(',').map((s) => s.trim());
     const models = await catalog.listModels();

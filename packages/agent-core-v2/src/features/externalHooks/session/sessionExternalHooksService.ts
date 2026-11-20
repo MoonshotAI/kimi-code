@@ -2,7 +2,6 @@ import { Service } from '#/_base/di/service';
 import { IntervalTimer } from '#/_base/utils/timer';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { ISessionManager } from '#/app/sessionManager/sessionManager';
-import { IModelService } from '#/provider-catalog/model/model';
 import {
   IAgentLifecycleService,
   MAIN_AGENT_ID,
@@ -26,6 +25,7 @@ import { IExternalHooksRunnerService } from '../app/externalHooksRunner';
 import { collectAdditionalContext } from '../internal/matchHooks';
 import { sessionStartHookEntry } from '../internal/sessionStart';
 import { ISessionExternalHooksService } from './sessionExternalHooks';
+import { IProviderCatalogService } from '#/provider-catalog/providerCatalogService';
 
 type SessionStartHookSource = Exclude<SessionCreateSource, 'fork' | 'reclaimed'>;
 type SessionEndHookReason = Exclude<SessionCloseReason, 'reclaim'>;
@@ -47,7 +47,7 @@ export class SessionExternalHooksService
     @ISessionSubagentService subagents: ISessionSubagentService,
     @ISessionMetadata private readonly metadata: ISessionMetadata,
     @ISessionAgentProfileCatalog private readonly profiles: ISessionAgentProfileCatalog,
-    @IModelService private readonly models: IModelService,
+    @IProviderCatalogService private readonly models: IProviderCatalogService,
     @IAgentLifecycleService private readonly agents: IAgentLifecycleService,
     @IExternalHooksRunnerService private readonly runner: IExternalHooksRunnerService,
   ) {
@@ -158,7 +158,7 @@ export class SessionExternalHooksService
       inputData: {
         source,
         sessionTitle: this.sessionTitle,
-        model: this.models.getDefaultModel(),
+        model: this.models.getDefaultModelId(),
         profile: await this.defaultProfileName(),
       },
     });

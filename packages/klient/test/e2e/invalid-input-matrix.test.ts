@@ -17,13 +17,13 @@ import {
 
 import { TEST_CLIENT_IDENTITY } from '../helpers/engine.js';
 import type { ContentPart } from '@moonshot-ai/agent-core-v2/human/message';
-import { IModelService } from '@moonshot-ai/agent-core-v2/provider-catalog/model/model';
 
 import type { Klient } from '../../src/index.js';
 import type { AgentHandle } from '../../src/core/klient.js';
 import type { KlientEvents } from '../../src/core/events/hub.js';
 import { KlientValidationError } from '../../src/core/validation.js';
 import { createKlient as createMemoryKlient } from '../../src/transports/memory/index.js';
+import { IProviderCatalogService } from '@moonshot-ai/agent-core-v2/provider-catalog/providerCatalogService';
 
 async function waitFor(
   predicate: () => Promise<boolean> | boolean,
@@ -109,7 +109,7 @@ async function registerModel(kind: ProviderKind, id: string, origin: string): Pr
     case 'kimi': {
       const provider = `${id}-provider`;
       await kosong.addProvider(provider, { type: 'kimi', auth: API_AUTH, baseUrl: `${origin}/v1` });
-      await app!.accessor.get(IModelService).set(id, {
+      await app!.accessor.get(IProviderCatalogService).setModelRecord(id, {
         model: 'kimi-k2-matrix',
         provider,
         protocol: 'openai',

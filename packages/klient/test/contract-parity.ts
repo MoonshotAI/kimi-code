@@ -100,7 +100,6 @@ import type {
   FsHomeResponse,
 } from '@moonshot-ai/agent-core-v2/app/hostFolderBrowser/hostFolderBrowser';
 import type { ModelRecord } from '@moonshot-ai/agent-core-v2/provider-catalog/model/model';
-import type { IModelCatalog } from '@moonshot-ai/agent-core-v2/provider-catalog/model/catalog';
 import type { IProviderDiscoveryService } from '@moonshot-ai/agent-core-v2/app/kosongConfig/discovery';
 import type {
   ImportCustomRegistryOptions,
@@ -330,6 +329,7 @@ import {
 
 import type { AssertWire, MutableDeep } from './helpers/typeAssert.js';
 import type { AgentFacade, AgentSteerEntry } from '../src/core/facade/agent.js';
+import { IProviderCatalogService } from '@moonshot-ai/agent-core-v2/provider-catalog/providerCatalogService';
 
 type AssertEngineToWire<TSchema extends z.ZodType, TEngine> = [MutableDeep<TEngine>] extends [
   z.infer<TSchema>,
@@ -404,9 +404,9 @@ const _fsHomeResponse: AssertWire<typeof fsHomeResponseSchema, FsHomeResponse> =
 const _fileMeta: AssertWire<typeof fileMetaSchema, FileMeta> = true;
 const _fileSaveOptions: AssertWire<typeof fileSaveOptionsSchema, SaveOptions> = true;
 
-type ModelCatalogItem = Awaited<ReturnType<IModelCatalog['listModels']>>[number];
-type ProviderCatalogItem = Awaited<ReturnType<IModelCatalog['listProviders']>>[number];
-type SetDefaultModelResponse = Awaited<ReturnType<IModelCatalog['setDefaultModel']>>;
+type ModelCatalogItem = Awaited<ReturnType<IProviderCatalogService['listModels']>>[number];
+type ProviderCatalogItem = Awaited<ReturnType<IProviderCatalogService['listProviders']>>[number];
+type SetDefaultModelResponse = Awaited<ReturnType<IProviderCatalogService['setDefaultModel']>>;
 type RefreshProviderModelsOptions = NonNullable<
   Parameters<IProviderDiscoveryService['refreshProviderModels']>[0]
 >;

@@ -31,8 +31,7 @@ import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalo
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import { IProviderDiscoveryService } from '#/app/kosongConfig/discovery';
-import { IModelCatalog, type Model } from '#/provider-catalog/model/catalog';
-import { IProtocolAdapterRegistry, type Protocol } from '#/provider-catalog/protocol/protocol';
+import { type Model } from '#/provider-catalog/model/catalog';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
@@ -51,7 +50,6 @@ import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceCo
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
 
-
 import {
   registerTestAgentWire,
   registerTestEventDispatcher,
@@ -59,12 +57,16 @@ import {
 } from '../../wire/stubs';
 import { stubProviderDiscovery, type StubProviderDiscovery } from '../../stubs';
 import {
-  agentService,
   appService,
   createTestAgent,
   hostEnvironmentServices,
   InMemoryWireRecordPersistence,
+  modelProviderServices,
 } from '../../harness';
+import {
+  IProviderCatalogService,
+  ProviderCatalogService,
+} from '#/provider-catalog/providerCatalogService';
 
 const SCOPE = 'wire';
 const KEY = 'profile-test';
@@ -121,56 +123,20 @@ function createTestModel(
   };
 }
 
-function createModelCatalogStub(models: Readonly<Record<string, Model>> = {}): IModelCatalog {
-  return {
-    _serviceBrand: undefined,
-    get: (id) => {
-      const model = models[id];
-      if (model === undefined) throw new Error(`Unknown model: ${id}`);
-      return model;
-    },
-    findByName: () => [],
-    listModels: () => {
-      throw new Error('not exercised');
-    },
-    listProviders: () => {
-      throw new Error('not exercised');
-    },
-    getProvider: () => {
-      throw new Error('not exercised');
-    },
-    setDefaultModel: () => {
-      throw new Error('not exercised');
-    },
-  };
+class TestProviderCatalog extends ProviderCatalogService {
+  constructor(private readonly models: Readonly<Record<string, Model>>) {
+    super();
+  }
+
+  override get(id: string): Model {
+    const model = this.models[id];
+    if (model === undefined) throw new Error(`Unknown model: ${id}`);
+    return model;
+  }
 }
 
-function createProtocolRegistryStub(): IProtocolAdapterRegistry {
-  return {
-    _serviceBrand: undefined,
-    supportedProtocols: () => ['anthropic', 'openai', 'openai_responses', 'google-genai'],
-    resolveAdapterIdentity: (protocol: Protocol, providerType?: string) => ({
-      baseId: protocol,
-      traits:
-        providerType === 'kimi' && protocol === 'openai'
-          ? [
-              {
-                trait: { withThinking: () => undefined, strictThinkingValidation: true },
-                context: {},
-              },
-            ]
-          : providerType === 'kimi' && protocol === 'anthropic'
-            ? [{ trait: { withThinking: () => undefined }, context: {} }]
-            : [],
-    }),
-    resolveProviderBaseId: (protocol: Protocol) => protocol,
-    resolveCapability: () => {
-      throw new Error('not exercised');
-    },
-    createChatProvider: () => {
-      throw new Error('not exercised');
-    },
-  } as unknown as IProtocolAdapterRegistry;
+function createModelCatalogStub(models: Readonly<Record<string, Model>> = {}): IProviderCatalogService {
+  return new TestProviderCatalog(models);
 }
 
 function stubUnused<T>(): T {
@@ -289,7 +255,7 @@ let dispatcher: IEventDispatcher;
 let agentState: IAgentStateService;
 let svc: TestLoopProfileReader;
 let configValues: Record<string, unknown>;
-let modelCatalog: IModelCatalog;
+let modelCatalog: IProviderCatalogService;
 let discovery: StubProviderDiscovery;
 
 function buildHost(key: string): {
@@ -305,8 +271,7 @@ function buildHost(key: string): {
   host.stub(ITelemetryService, createTelemetryStub());
   host.stub(IAgentScopeContext, makeAgentScopeContext({ agentId: 'main', agentScope: '' }));
   host.stub(IConfigService, createConfigStub());
-  host.stub(IModelCatalog, modelCatalog);
-  host.stub(IProtocolAdapterRegistry, createProtocolRegistryStub());
+  host.stub(IProviderCatalogService, modelCatalog);
   host.stub(IHostEnvironment, stubUnused());
   host.stub(IHostFileSystem, stubUnused());
   host.stub(IBootstrapService, stubUnused());
@@ -640,7 +605,7 @@ describe('AgentProfileService (wire-backed config.update)', () => {
     function createRetiredAgent(persistence = new InMemoryWireRecordPersistence()) {
       const ctx = createTestAgent(
         { persistence, autoConfigure: false, initialConfig: { defaultModel: 'acme/current' } },
-        agentService(IModelCatalog, modelCatalog),
+        modelProviderServices(modelCatalog),
         appService(IProviderDiscoveryService, discovery),
       );
       realAgents.push(ctx);

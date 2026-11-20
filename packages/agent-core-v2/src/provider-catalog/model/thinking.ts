@@ -1,5 +1,6 @@
-import type { IProtocolAdapterRegistry, Protocol } from '#/provider-catalog/protocol/protocol';
+import type { Protocol } from '#/provider-catalog/protocol/protocol';
 import { getProviderDefinitions } from '../provider/provider-definition';
+import type { IProviderCatalogService } from '#/provider-catalog/providerCatalogService';
 
 export interface ThinkingConfig {
   enabled?: boolean;
@@ -16,7 +17,7 @@ export function drivesThinkingThroughTraits(providerType: string | undefined): b
 }
 
 export function usesTraitDrivenThinking(
-  registry: IProtocolAdapterRegistry,
+  registry: IProviderCatalogService,
   protocol: Protocol,
   providerType?: string,
 ): boolean {
@@ -24,7 +25,7 @@ export function usesTraitDrivenThinking(
 }
 
 export function requiresStrictThinkingValidation(
-  registry: IProtocolAdapterRegistry,
+  registry: IProviderCatalogService,
   protocol: Protocol,
   providerType?: string,
 ): boolean {

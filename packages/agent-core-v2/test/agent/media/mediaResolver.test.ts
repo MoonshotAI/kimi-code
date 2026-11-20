@@ -24,7 +24,6 @@ import { IAgentMediaResolverService } from '#/agent/media/mediaResolver';
 import { mcpResultToExecutableOutput } from '#/agent/mcp/output';
 import type { ImageUploader, VideoUploader } from '#/provider-catalog/model/media';
 import type { Model } from '#/provider-catalog/model/catalog';
-import { ProviderRequesterFactory } from '#/provider-catalog/requester';
 import type { LlmFiles, LlmCredentialProvider } from '@moonshot-ai/core/llm/request';
 import type { InitializedLlmRequester } from '@moonshot-ai/core/llm/requester';
 import { streamLlmRequest } from '@moonshot-ai/core/llm/stream';
@@ -52,6 +51,7 @@ import { makeSessionContext } from '#/session/sessionContext/sessionContext';
 import { registerStateServices } from '../../state/stubs';
 import { createStaticCredentialProvider } from '#human/credentials/credentials';
 import { ImageUploadUnsupportedError } from '#/provider-catalog/errors';
+import { ProviderCatalogService } from '#/provider-catalog/providerCatalogService';
 
 const FILE_ID = 'file_abc';
 const VIDEO_BYTES = Buffer.from('tiny fake mp4 bytes');
@@ -269,7 +269,7 @@ function requester(opts: {
     },
     ...(hasFailed === undefined ? {} : { hasFailed: (id: string) => hasFailed(id) }),
   };
-  const initial = new ProviderRequesterFactory().request(model);
+  const initial = new ProviderCatalogService().createRequester(model);
   return {
     model,
     requester: initial.with({ endpoint: { files } }),
@@ -1078,8 +1078,8 @@ describe('AgentMediaResolverService image upload', () => {
       baseUrl: 'https://example.test/v1',
       credentialProvider: createStaticCredentialProvider('YOUR_API_KEY'),
     });
-    const routed = new ProviderRequesterFactory()
-      .request(model, { protocol: { stream: false } })
+    const routed = new ProviderCatalogService()
+      .createRequester(model, { protocol: { stream: false } })
       .with({ endpoint: { fetch: mockFetch } });
     const media = createAgentMediaPolicy(resolver(new Map(), sessionDir, mediaStore), model, routed);
     for (const history of [

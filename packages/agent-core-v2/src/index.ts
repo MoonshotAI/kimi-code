@@ -187,10 +187,8 @@ export * from '#/app/config/configService';
 export * from '#/app/config/configSectionContributions';
 import '#/app/kosongConfig/configSection';
 export * from '#/provider-catalog/provider/provider';
-export * from '#/provider-catalog/provider/provider-service';
 export * from '#/provider-catalog/provider/provider-definition';
-export * from '#/provider-catalog/requester';
-export * from '#/provider-catalog/protocol/protocolAdapterRegistry';
+export * from '#/provider-catalog/providerCatalogService';
 import '#/features/skill/catalog/configSection';
 import '#/app/agentIdentity/configSection';
 export * from '#/app/agentIdentity/configSection';
@@ -205,10 +203,8 @@ export * from '#/provider-catalog/model/completion-budget';
 export * from '#/provider-catalog/model/host-request-headers';
 export * from '#/provider-catalog/model/model';
 export * from '#/provider-catalog/model/model.types';
-export * from '#/provider-catalog/model/model-service';
 export * from '#/provider-catalog/model/thinking';
 export * from '#/provider-catalog/model/catalog';
-export * from '#/provider-catalog/model/catalog-service';
 import '#/provider-catalog/model/errors';
 export {
   MODEL_CATALOG_SECTION,

@@ -13,9 +13,8 @@ import {
   resolveThinkingEffortForModel,
   resolveThinkingKeep,
 } from '@moonshot-ai/core/llm/thinking';
-import { IModelCatalog, type Model } from '#/provider-catalog/model/catalog';
+import { type Model } from '#/provider-catalog/model/catalog';
 import { type ModelOverrides } from '#/provider-catalog/model/model.types';
-import { IProtocolAdapterRegistry } from '#/provider-catalog/protocol/protocol';
 import {
   drivesThinkingThroughTraits,
   requiresStrictThinkingValidation,
@@ -88,6 +87,7 @@ import {
 } from './profileOps';
 
 import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
+import { IProviderCatalogService } from '#/provider-catalog/providerCatalogService';
 
 export type { WarningEvent } from '#/errors';
 
@@ -140,8 +140,8 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IConfigService private readonly config: IConfigService,
-    @IModelCatalog private readonly modelCatalog: IModelCatalog,
-    @IProtocolAdapterRegistry private readonly protocolAdapters: IProtocolAdapterRegistry,
+    @IProviderCatalogService private readonly modelCatalog: IProviderCatalogService,
+    @IProviderCatalogService private readonly protocolAdapters: IProviderCatalogService,
     @IAgentEnvironmentService private readonly environment: IAgentEnvironmentService,
     @ISessionContext private readonly sessionContext: ISessionContext,
     @IBootstrapService private readonly bootstrap: IBootstrapService,

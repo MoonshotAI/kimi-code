@@ -12,7 +12,8 @@ import { userCancellationReason } from '#/_base/utils/abort';
 import { createHooks } from '#/hooks';
 import type { ToolCall } from '#human/message';
 import type { TokenUsage } from '@moonshot-ai/core/llm/usage';
-import { IModelCatalog, type Model } from '#/provider-catalog/model/catalog';
+import type { FullLoopLlmRequester, Loop } from '@moonshot-ai/core/loop/index';
+import { type Model } from '#/provider-catalog/model/catalog';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { applyPrintModeConfigDefaults } from '#/agent/task/printDefaults';
@@ -109,6 +110,7 @@ import {
 import { executeTool } from '../tools/fixtures/execute-tool';
 import { stubAgentContext } from '../agent/agentContext/stubs';
 import { TOWER_WORKER_PROFILE } from '#/features/tower/tower';
+import { IProviderCatalogService } from '#/provider-catalog/providerCatalogService';
 
 const signal = new AbortController().signal;
 
@@ -188,7 +190,7 @@ function noopDisposable() {
   return { dispose: () => {} };
 }
 
-function modelCatalogResolving(...aliases: readonly string[]): IModelCatalog {
+function modelCatalogResolving(...aliases: readonly string[]): IProviderCatalogService {
   return {
     _serviceBrand: undefined,
     get: (alias: string) => {
@@ -215,7 +217,7 @@ function modelCatalogResolving(...aliases: readonly string[]): IModelCatalog {
       request: async function* () {},
     }),
     notifyConfigChanged: () => {},
-  } as unknown as IModelCatalog;
+  } as unknown as IProviderCatalogService;
 }
 
 interface AgentLifecycleStubOptions {
@@ -1066,6 +1068,7 @@ describe('Agent tool description', () => {
         ...loop,
         data: () => callerData,
         getModelCapabilities: () => ({}),
+        decorateTurnRequester: (_loop: Loop, requester: FullLoopLlmRequester) => requester,
         onDidChange: Event.None,
       } as unknown as IAgentLoopService),
       configServices(() => ({

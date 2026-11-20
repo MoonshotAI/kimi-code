@@ -93,8 +93,7 @@ import {
 import { normalizeLegacyTurnSteerRecords } from '#/wire/human';
 import { repairWireJournal } from '#/wire/repair';
 import { flattenChain } from '#/wire/tree/index';
-import { IModelService } from '#/provider-catalog/model/model';
-import { IProviderService } from '#/provider-catalog/provider/provider';
+
 import { IProjectContext } from '#/project/projectContext/projectContext';
 import { IProjectTrust } from '#/project/projectTrust/projectTrust';
 import { IUserAgentProfileLoader } from '#/project/projectAgentProfileLoader/userAgentProfileLoader';
@@ -126,6 +125,7 @@ import {
   type SessionWillCreateEvent,
   ISessionLifecycleService,
 } from './sessionLifecycle';
+import { IProviderCatalogService } from '#/provider-catalog/providerCatalogService';
 
 type MaterializeSessionOptions = Omit<CreateSessionOptions, 'sessionId'> & {
   readonly sessionId: string;
@@ -203,8 +203,8 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     @IPluginAgentProfileLoader
     private readonly pluginAgentProfileLoader: IPluginAgentProfileLoader,
     private readonly acquireMcp: (workDir?: string) => Promise<ProgramMcpLease>,
-    @IModelService private readonly models: IModelService,
-    @IProviderService private readonly providers: IProviderService,
+    @IProviderCatalogService private readonly models: IProviderCatalogService,
+    @IProviderCatalogService private readonly providers: IProviderCatalogService,
     private readonly environments: IEnvironmentService,
     private readonly trust: IProjectTrust,
     private readonly acquireWorkdir: (environmentId: string, cwd: string, followsPrimary?: boolean, launchDir?: string) => Promise<ProgramWorkdir>,

@@ -1,10 +1,10 @@
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IConfigService } from '#/app/config/config';
-import { IModelCatalog } from '#/provider-catalog/model/catalog';
 
 import { assertValidSubagentModelConfig } from './configSection';
 import { ISessionSubagentModelsValidationService } from './subagentModelsValidation';
+import { IProviderCatalogService } from '#/provider-catalog/providerCatalogService';
 
 export class SessionSubagentModelsValidationService
   implements ISessionSubagentModelsValidationService
@@ -13,7 +13,7 @@ export class SessionSubagentModelsValidationService
 
   constructor(
     @IConfigService config: IConfigService,
-    @IModelCatalog modelCatalog: IModelCatalog,
+    @IProviderCatalogService modelCatalog: IProviderCatalogService,
   ) {
     assertValidSubagentModelConfig(config, modelCatalog);
   }

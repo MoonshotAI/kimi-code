@@ -13,7 +13,6 @@ import {
 import { type ModelRecord } from '#/provider-catalog/model/model';
 import { effectiveModelConfig } from '#/provider-catalog/model/model-auth';
 
-
 describe('effectiveModelConfig', () => {
   it('clamps the input cap to the effective total window without mutating the source', () => {
     const record = {
@@ -501,7 +500,7 @@ describe('kimiModelEnvOverlay', () => {
     expect(kimiModelEnvOverlay.strip?.('modelOverrides', { temperature: 0.3 }, {})).toBeUndefined();
   });
 
-  it('self-registers into ConfigRegistry without ModelService instantiation', () => {
+  it('self-registers into ConfigRegistry without ProviderCatalogService instantiation', () => {
     const freshRegistry = new ConfigRegistry();
     expect(freshRegistry.listEffectiveOverlays()).toContain(kimiModelEnvOverlay);
   });

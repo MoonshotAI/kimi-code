@@ -42,10 +42,8 @@ import { agentContextOf, IAgentScopeContext } from '#/agent/scopeContext/scopeCo
 import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
 import { IBuiltinAgentProfileLoader } from '#/app/agentProfileCatalog/builtinAgentProfileLoader';
 import { DEFAULT_AGENT_PROFILE_NAME } from '#/app/agentProfileCatalog/agentProfileCatalog';
-import { IModelCatalog } from '#/provider-catalog/model/catalog';
 import { UNKNOWN_CAPABILITY } from '#/provider-catalog/capability';
 import type { ToolCall } from '#human/message';
-import { IProtocolAdapterRegistry } from '#/provider-catalog/protocol/protocol';
 import { IHostClock } from '#/os/interface/hostClock';
 import { ISessionStateService } from '#/session/state/sessionState';
 import { SessionStateService } from '#/session/state/sessionStateService';
@@ -134,6 +132,7 @@ import type { OAuthTokens } from '@modelcontextprotocol/sdk/shared/auth.js';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 import { stubAgentContext } from '../../agent/agentContext/stubs';
 import { stubProviderDiscovery } from '../../stubs';
+import { IProviderCatalogService } from '#/provider-catalog/providerCatalogService';
 
 const noopLog = {
   _serviceBrand: undefined,
@@ -510,19 +509,19 @@ describe('AgentLifecycleService', () => {
     ix.stub(IHostEnvironment, { _serviceBrand: undefined } as IHostEnvironment);
     ix.stub(IHostFileSystem, { _serviceBrand: undefined } as IHostFileSystem);
     ix.stub(IHostClock, { _serviceBrand: undefined } as IHostClock);
-    ix.stub(IModelCatalog, {
+    ix.stub(IProviderCatalogService, {
       _serviceBrand: undefined,
       get: () => ({ spec: { provider: 'stub', name: 'stub', capability: {} } }),
-    } as unknown as IModelCatalog);
+    } as unknown as IProviderCatalogService);
     ix.stub(ISessionTokenCountingService, {
       estimateText: () => 0,
       estimateMessage: () => 0,
       estimateMessages: () => 0,
       recordTruncation: () => {},
     } as unknown as ISessionTokenCountingService);
-    ix.stub(IProtocolAdapterRegistry, {
+    ix.stub(IProviderCatalogService, {
       _serviceBrand: undefined,
-    } as IProtocolAdapterRegistry);
+    } as IProviderCatalogService);
     ix.stub(IBuiltinAgentProfileLoader, {
       _serviceBrand: undefined,
       list: () => [],

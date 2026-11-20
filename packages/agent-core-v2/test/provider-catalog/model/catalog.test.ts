@@ -7,31 +7,22 @@ import { IConfigService } from '#/app/config/config';
 import { ConfigErrors } from '#/app/config/errors';
 import { emptyUsage } from '@moonshot-ai/core/llm/usage';
 import { streamLlmRequest } from '@moonshot-ai/core/llm/stream';
-import { IProtocolAdapterRegistry } from '#/provider-catalog/protocol/protocol';
-import '#/provider-catalog/protocol/protocolAdapterRegistry';
-import { ProviderRequesterFactory } from '#/provider-catalog/requester';
 import {
-  IProviderService,
   type ProviderConfig,
   type ProvidersSection,
 } from '#/provider-catalog/provider/provider';
-import '#/provider-catalog/provider/provider-service';
 import {
   globalDefaultForProvider,
-  IModelCatalog,
   type Model,
   modelIdsForProvider,
   toProtocolModel,
   toProtocolModelFallback,
   toProtocolProvider,
 } from '#/provider-catalog/model/catalog';
-import { ModelCatalog } from '#/provider-catalog/model/catalog-service';
 import { createMockProvider, withMockProvider } from '../../harness/scripted-generate';
-import { ProviderCatalogRuntimeService } from '#/provider-catalog/model/catalog-runtime';
 import '#/provider-catalog/model/errors';
 import { IHostRequestHeaders } from '#/provider-catalog/model/host-request-headers';
-import { IModelService, type ModelRecord, type ModelsSection } from '#/provider-catalog/model/model';
-import '#/provider-catalog/model/model-service';
+import { type ModelRecord, type ModelsSection } from '#/provider-catalog/model/model';
 import { IModelOAuthTokens } from '#/provider-catalog/model/model-oauth';
 
 import { HostRequestHeadersAdapter } from '#/app/kosongConfig/hostRequestHeadersAdapter';
@@ -39,6 +30,7 @@ import { HostRequestHeadersAdapter } from '#/app/kosongConfig/hostRequestHeaders
 import { StubConfigService, stubModelOAuthTokens, stubTokenProvider } from '../../stubs';
 import { stubAgentIdentity } from '../../app/agentIdentity/stubs';
 import { stubBootstrap } from '../../app/bootstrap/stubs';
+import { IProviderCatalogService, ProviderCatalogService } from '#/provider-catalog/providerCatalogService';
 
 const HOST_HEADERS = { 'User-Agent': 'kimi-test/1.0', 'X-Msh-Device-Id': 'device-1' };
 
@@ -61,9 +53,9 @@ function createHost(
 ): {
   host: ReturnType<typeof createScopedTestHost>;
   config: StubConfigService;
-  catalog: ModelCatalog;
-  models: IModelService;
-  providers: IProviderService;
+  catalog: ProviderCatalogService;
+  models: IProviderCatalogService;
+  providers: IProviderCatalogService;
 } {
   const config = new StubConfigService(sections);
   const host = createScopedTestHost([
@@ -71,20 +63,20 @@ function createHost(
     [IModelOAuthTokens, oauthTokens],
     [IHostRequestHeaders, hostHeadersPort(hostHeaders)],
   ]);
-  const providers = host.app.accessor.get(IProviderService);
-  providers.loadAll(
+  const providers = host.app.accessor.get(IProviderCatalogService);
+  providers.loadProviderConfigs(
     (sections['providers'] ?? {}) as ProvidersSection,
     sections['defaultProvider'] as string | undefined,
   );
-  const models = host.app.accessor.get(IModelService);
-  models.loadAll(
+  const models = host.app.accessor.get(IProviderCatalogService);
+  models.loadModelRecords(
     (sections['models'] ?? {}) as ModelsSection,
     sections['defaultModel'] as string | undefined,
   );
   return {
     host,
     config,
-    catalog: host.app.accessor.get(IModelCatalog) as ModelCatalog,
+    catalog: host.app.accessor.get(IProviderCatalogService) as ProviderCatalogService,
     models,
     providers,
   };
@@ -99,8 +91,8 @@ const kimiSections: Record<string, unknown> = {
   },
 };
 
-function silentModelWrite(models: IModelService, records: Record<string, ModelRecord>): void {
-  (models as unknown as { models: Record<string, ModelRecord> }).models = records;
+function silentModelWrite(models: IProviderCatalogService, records: Record<string, ModelRecord>): void {
+  (models as unknown as { modelStore: { records: Record<string, ModelRecord> } }).modelStore.records = records;
 }
 
 let savedCustomHeaders: string | undefined;
@@ -556,7 +548,7 @@ describe('Model assembly (pure data)', () => {
   });
 });
 
-describe('ModelCatalog caching and config-event invalidation', () => {
+describe('ProviderCatalogService caching and config-event invalidation', () => {
   it('caches per id and returns the same model metadata', () => {
     const { host, catalog } = createHost(kimiSections);
     try {
@@ -581,12 +573,12 @@ describe('ModelCatalog caching and config-event invalidation', () => {
     try {
       const k1Before = catalog.get('k1');
       const gptBefore = catalog.get('gpt');
-      await models.set('k1', { provider: 'kimi', model: 'kimi-k2', maxContextSize: 262144, displayName: 'K2' });
+      await models.setModelRecord('k1', { provider: 'kimi', model: 'kimi-k2', maxContextSize: 262144, displayName: 'K2' });
       expect(catalog.get('k1')).not.toBe(k1Before);
       expect(catalog.get('k1').displayName).toBe('K2');
       expect(catalog.get('gpt')).toBe(gptBefore);
 
-      await providers.set('kimi', { type: 'kimi', apiKey: 'sk-2', baseUrl: 'https://other.example.test/v1' });
+      await providers.setProviderConfig('kimi', { type: 'kimi', apiKey: 'sk-2', baseUrl: 'https://other.example.test/v1' });
       expect(catalog.get('k1').endpoint.baseUrl).toBe('https://other.example.test/v1');
       expect(catalog.get('gpt')).toBe(gptBefore);
     } finally {
@@ -653,7 +645,7 @@ describe('direct generate', () => {
       }));
       const model = catalog.get('k1');
       const requester = withMockProvider(
-        new ProviderRequesterFactory().request(model, { model: { maxOutputTokens: 512 } }),
+        new ProviderCatalogService().createRequester(model, { model: { maxOutputTokens: 512 } }),
         fakeRequester,
       );
       const events = [];
@@ -703,7 +695,7 @@ describe('direct generate', () => {
     try {
       const model = catalog.get('flat');
       const failure = await (async () => {
-        const requester = new ProviderRequesterFactory().request(model);
+        const requester = new ProviderCatalogService().createRequester(model);
         for await (const event of streamLlmRequest(
           requester.request({
             profile: { systemPrompt: 'ping', tools: [] },
@@ -870,7 +862,7 @@ describe('wire projection (pure)', () => {
   });
 });
 
-describe('ModelCatalog enumeration', () => {
+describe('ProviderCatalogService enumeration', () => {
   it('lists configured models as selectable aliases', async () => {
     const { host, catalog } = createHost(catalogSections);
     try {
@@ -1187,7 +1179,7 @@ describe('ModelCatalog enumeration', () => {
   });
 });
 
-describe('ModelCatalog setDefaultModel', () => {
+describe('ProviderCatalogService setDefaultModel', () => {
   it('moves the registry default pointer and returns the wire model', async () => {
     const { host, models, catalog } = createHost(catalogSections);
     try {
@@ -1200,7 +1192,7 @@ describe('ModelCatalog setDefaultModel', () => {
           max_context_size: 32768,
         },
       });
-      expect(models.getDefaultModel()).toBe('turbo');
+      expect(models.getDefaultModelId()).toBe('turbo');
     } finally {
       host.dispose();
     }
@@ -1231,7 +1223,7 @@ describe('ModelCatalog setDefaultModel', () => {
     });
     try {
       await expect(catalog.setDefaultModel('bad')).rejects.toThrow();
-      expect(models.getDefaultModel()).toBeUndefined();
+      expect(models.getDefaultModelId()).toBeUndefined();
     } finally {
       host.dispose();
     }

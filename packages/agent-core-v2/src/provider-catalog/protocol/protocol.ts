@@ -1,11 +1,6 @@
 import { z } from 'zod';
 
-import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
-
 import type { ProtocolName } from '@moonshot-ai/core/llm/protocol/protocol';
-import type { ModelCapability } from '@moonshot-ai/core/llm/request';
-
-import type { ProtocolBaseId, ResolvedAdapterIdentity } from './protocol-base';
 
 export const ProtocolSchema = z.enum(['anthropic', 'openai', 'openai_responses', 'google-genai']);
 
@@ -34,21 +29,3 @@ export interface ProtocolAdapterConfig {
   readonly providerOptions?: ProtocolProviderOptions;
 }
 
-export interface IProtocolAdapterRegistry {
-  readonly _serviceBrand: undefined;
-
-  supportedProtocols(): readonly Protocol[];
-
-  resolveAdapterIdentity(protocol: Protocol, providerType?: string): ResolvedAdapterIdentity;
-
-  resolveProviderBaseId(protocol: Protocol, providerType?: string): ProtocolBaseId;
-
-  resolveCapability(
-    protocol: Protocol,
-    modelName: string,
-    providerType?: string,
-  ): ModelCapability | undefined;
-}
-
-export const IProtocolAdapterRegistry: ServiceIdentifier<IProtocolAdapterRegistry> =
-  createDecorator<IProtocolAdapterRegistry>('protocolAdapterRegistry');

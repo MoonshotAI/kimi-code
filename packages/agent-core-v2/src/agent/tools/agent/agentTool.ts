@@ -14,7 +14,6 @@ import { toInputJsonSchema } from '#/tool/input-schema';
 import { matchesGlobRuleSubject } from '#/tool/rule-match';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { resolveAgentTaskConfig } from '#/agent/task/configSection';
-import { IModelCatalog } from '#/provider-catalog/model/catalog';
 import type { ModelCapability } from '@moonshot-ai/core/llm/request';
 import {
   isToolActive as evaluateToolActive,
@@ -108,6 +107,7 @@ export type SubagentHandle = {
 import AGENT_BACKGROUND_DISABLED_DESCRIPTION from './agent-background-disabled.md?raw';
 import AGENT_BACKGROUND_DESCRIPTION from './agent-background-enabled.md?raw';
 import AGENT_DESCRIPTION_BASE from './agent.md?raw';
+import { IProviderCatalogService } from '#/provider-catalog/providerCatalogService';
 
 const SUBAGENT_TOOL_PARAMETERS = toInputJsonSchema(SubagentToolInputSchema);
 const READ_MEDIA_FILE_TOOL_NAME = 'ReadMediaFile';
@@ -139,7 +139,7 @@ export class SubagentTool implements ISubagentTool {
     @IAgentEnvironmentService private readonly environment: IAgentEnvironmentService,
     @IAgentToolExecutorService private readonly toolExecutor: IAgentToolExecutorService,
     @IAgentLoopService private readonly loop: IAgentLoopService,
-    @IModelCatalog private readonly modelCatalog: IModelCatalog,
+    @IProviderCatalogService private readonly modelCatalog: IProviderCatalogService,
     @IAgentToolPolicyService private readonly toolPolicy: IAgentToolPolicyService,
     @IAgentToolRegistryService private readonly toolRegistry: IAgentToolRegistryService,
     @IAgentPermissionModeService private readonly permissionMode: IAgentPermissionModeService,

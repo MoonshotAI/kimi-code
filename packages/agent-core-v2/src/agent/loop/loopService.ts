@@ -25,9 +25,7 @@ import { RequestMetadataTracker, requestMetadataHeaders } from './requestMetadat
 import { IAgentMediaResolverService } from '#/agent/media/mediaResolver';
 import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
 import { IAgentToolSelectService } from '#/agent/toolSelect/toolSelect';
-import { IModelCatalog } from '#/provider-catalog/model/catalog';
-import { IProviderCatalogRuntime } from '#/provider-catalog/model/catalog-runtime';
-import { IProviderRequesterFactory, type ProviderRequesterFactory } from '#/provider-catalog/requester';
+
 import { ISessionRequestAttributionService } from '#/session/requestAttribution/requestAttribution';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { credentialRecovery } from '@moonshot-ai/core/llm/policy/credentials';
@@ -148,6 +146,7 @@ import { AgentTurnProjection, loopLastRequestIdKey } from './turnProjection';
 import { AgentNotificationProjection } from './notificationProjection';
 import { AgentLoopProfileAdapter } from './profileAdapter';
 import { AgentRequesterBinder } from './requesterBinder';
+import { IProviderCatalogService } from '#/provider-catalog/providerCatalogService';
 
 export type LoopInterruptReason = 'aborted' | 'max_steps' | 'error' | 'steered';
 
@@ -215,9 +214,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     @IWireService private readonly wire: IWireService,
     @IInstantiationService private readonly instantiation: IInstantiationService,
     @ISessionTokenCountingService private readonly tokenCounting: ISessionTokenCountingService,
-    @IModelCatalog modelCatalog: IModelCatalog,
-    @IProviderCatalogRuntime providerCatalogRuntime: IProviderCatalogRuntime,
-    @IProviderRequesterFactory requesterFactory: ProviderRequesterFactory,
+    @IProviderCatalogService providerCatalog: IProviderCatalogService,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
     @ISessionRequestAttributionService attribution: ISessionRequestAttributionService,
     @IAgentProfileService private readonly profile: IAgentProfileService,
@@ -240,10 +237,8 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       config,
       profile,
       profileSnapshot: () => this.profileAdapter.snapshot(),
-      modelCatalog,
-      requesterFactory,
+      providerCatalog,
       requesterExecution: this.requesterExecution,
-      runtime: providerCatalogRuntime,
     });
     this._register(this.requesterBinder);
 

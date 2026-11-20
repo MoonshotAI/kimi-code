@@ -34,15 +34,15 @@ import { IRegionService } from '#/app/region/region';
 import { RegionService } from '#/app/region/regionService';
 import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
-import { IModelService, type ModelRecord } from '#/provider-catalog/model/model';
+import { type ModelRecord } from '#/provider-catalog/model/model';
 import { MODELS_SECTION } from '#/app/kosongConfig/configSection';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
-import { IProviderService, type ProviderConfig, type ProvidersChangedEvent } from '#/provider-catalog/provider/provider';
-
+import { type ProviderConfig, type ProvidersChangedEvent } from '#/provider-catalog/provider/provider';
 
 import { registerBootstrapServices } from '../bootstrap/stubs';
 import { registerTelemetryServices } from '../telemetry/stubs';
 import { stubAgentIdentity } from '../../app/agentIdentity/stubs';
+import { IProviderCatalogService } from '#/provider-catalog/providerCatalogService';
 
 const OAUTH_PROVIDER = 'managed:kimi-code';
 const NON_OAUTH_PROVIDER = 'openai-main';
@@ -170,12 +170,12 @@ describe('OAuthService', () => {
     ix = createServices(disposables, {
       base: [registerBootstrapServices, registerTelemetryServices],
       additionalServices: (reg) => {
-        reg.definePartialInstance(IProviderService, {
+        reg.definePartialInstance(IProviderCatalogService, {
           ready: Promise.resolve(),
-          get: ((name: string) => providers[name]) as IProviderService['get'],
-          list: (() => providers) as IProviderService['list'],
-          set: providerSet as unknown as IProviderService['set'],
-          onDidChangeProviders: providerChangedEmitter.event as IProviderService['onDidChangeProviders'],
+          getProviderConfig: ((name: string) => providers[name]) as IProviderCatalogService['getProviderConfig'],
+          listProviderConfigs: (() => providers) as IProviderCatalogService['listProviderConfigs'],
+          setProviderConfig: providerSet as unknown as IProviderCatalogService['setProviderConfig'],
+          onDidChangeProviders: providerChangedEmitter.event as IProviderCatalogService['onDidChangeProviders'],
         });
         reg.definePartialInstance(IConfigService, {
           get: ((domain: string) => configBacking()[domain]) as IConfigService['get'],
@@ -504,7 +504,7 @@ describe('OAuthService', () => {
       expect(await createService().getRegionAsync()).toBe('global');
 
       vi.stubEnv('KIMI_CODE_REGION_MARKER', 'off');
-      const offRegions = new RegionService(ix.get(IProviderService), ix.get(IBootstrapService));
+      const offRegions = new RegionService(ix.get(IProviderCatalogService), ix.get(IBootstrapService));
       try {
         expect(await offRegions.getRegionAsync()).toBe('mainland-cn');
       } finally {
@@ -1234,13 +1234,11 @@ describe('WebSearchProviderService', () => {
       .mockReturnValue({ getAccessToken: async () => 'access-token' });
     ix = createServices(disposables, {
       additionalServices: (reg) => {
-        reg.definePartialInstance(IProviderService, {
-          get: ((name: string) => providers[name]) as IProviderService['get'],
-          getDefaultProvider: (() => defaultProvider) as IProviderService['getDefaultProvider'],
-        });
-        reg.definePartialInstance(IModelService, {
-          get: ((id: string) => models[id]) as IModelService['get'],
-          getDefaultModel: (() => defaultModel) as IModelService['getDefaultModel'],
+        reg.definePartialInstance(IProviderCatalogService, {
+          getProviderConfig: ((name: string) => providers[name]) as IProviderCatalogService['getProviderConfig'],
+          getDefaultProviderId: (() => defaultProvider) as IProviderCatalogService['getDefaultProviderId'],
+          getModelRecord: ((id: string) => models[id]) as IProviderCatalogService['getModelRecord'],
+          getDefaultModelId: (() => defaultModel) as IProviderCatalogService['getDefaultModelId'],
         });
         reg.definePartialInstance(IOAuthService, {
           resolveTokenProvider:
@@ -1455,7 +1453,11 @@ describe('WebSearchProviderService', () => {
       moonshotSearch: { baseUrl: 'https://search.example.com/search', apiKey: 'k' },
     };
     const svc = new WebSearchProviderService(
-      { get: ((name: string) => providers[name]) as IProviderService['get'] } as IProviderService,
+      {
+        getProviderConfig: ((name: string) => providers[name]) as IProviderCatalogService['getProviderConfig'],
+        getModelRecord: ((id: string) => models[id]) as IProviderCatalogService['getModelRecord'],
+        getDefaultModelId: (() => defaultModel) as IProviderCatalogService['getDefaultModelId'],
+      } as unknown as IProviderCatalogService,
       {
         resolveTokenProvider:
           resolveTokenProvider as unknown as IOAuthService['resolveTokenProvider'],
@@ -1466,10 +1468,6 @@ describe('WebSearchProviderService', () => {
           domain === SERVICES_SECTION ? servicesConfig : undefined) as IConfigService['get'],
       } as IConfigService,
       notFrozen,
-      {
-        get: ((id: string) => models[id]) as IModelService['get'],
-        getDefaultModel: (() => defaultModel) as IModelService['getDefaultModel'],
-      } as IModelService,
     );
 
     expect(svc.hasWebSearchProvider()).toBe(true);
@@ -1739,15 +1737,13 @@ describe('AuthSummaryService', () => {
     reload = vi.fn().mockResolvedValue(undefined);
     ix = createServices(disposables, {
       additionalServices: (reg) => {
-        reg.definePartialInstance(IProviderService, {
-          get: ((name: string) => providers[name]) as IProviderService['get'],
-          list: (() => providers) as IProviderService['list'],
-          getDefaultProvider: (() => defaultProvider) as IProviderService['getDefaultProvider'],
-        });
-        reg.definePartialInstance(IModelService, {
-          get: ((id: string) => models[id]) as IModelService['get'],
-          list: (() => models) as IModelService['list'],
-          getDefaultModel: (() => defaultModel) as IModelService['getDefaultModel'],
+        reg.definePartialInstance(IProviderCatalogService, {
+          getProviderConfig: ((name: string) => providers[name]) as IProviderCatalogService['getProviderConfig'],
+          listProviderConfigs: (() => providers) as IProviderCatalogService['listProviderConfigs'],
+          getDefaultProviderId: (() => defaultProvider) as IProviderCatalogService['getDefaultProviderId'],
+          getModelRecord: ((id: string) => models[id]) as IProviderCatalogService['getModelRecord'],
+          listModelRecords: (() => models) as IProviderCatalogService['listModelRecords'],
+          getDefaultModelId: (() => defaultModel) as IProviderCatalogService['getDefaultModelId'],
         });
         reg.definePartialInstance(IConfigService, {
           get: ((domain: string) => {

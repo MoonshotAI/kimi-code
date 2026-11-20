@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  IProtocolAdapterRegistry,
   ProtocolSchema,
   type ProtocolAdapterConfig,
 } from '#/provider-catalog/protocol/protocol';
+import { IProviderCatalogService } from '#/provider-catalog/providerCatalogService';
 
 describe('ProtocolSchema', () => {
   it('accepts the four real wire protocols', () => {
@@ -44,8 +44,8 @@ describe('ProtocolAdapterConfig', () => {
   });
 });
 
-describe('IProtocolAdapterRegistry', () => {
+describe('IProviderCatalogService', () => {
   it('keeps the established DI identity', () => {
-    expect(IProtocolAdapterRegistry.toString()).toBe('protocolAdapterRegistry');
+    expect(IProviderCatalogService.toString()).toBe('providerCatalogService');
   });
 });

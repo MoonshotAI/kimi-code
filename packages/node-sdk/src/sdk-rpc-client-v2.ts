@@ -196,8 +196,6 @@ import {
   IHostFileSystem,
   IMcpManagementService,
   IMcpOAuthService,
-  IModelService,
-  IProviderService,
   ISessionBtwService,
   ISessionContext,
   ISessionWorkdir,
@@ -401,6 +399,7 @@ import type {
   WorktreeListing,
   WorktreeRemovalCheck,
 } from '#/worktree';
+import { IProviderCatalogService } from '@moonshot-ai/agent-core-v2/provider-catalog/providerCatalogService';
 
 export interface SDKRpcClientV2Options {
   readonly homeDir?: string;
@@ -485,11 +484,10 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    */
   private readonly printSteerStates = new Map<string, { deadline?: number; turns: number }>();
   /**
-   * The model/provider registries (`IModelService` / `IProviderService`)
-   * share the config service's ready trap: their `get`/`list` reads are
-   * synchronous over state that only exists after hydration, and every
-   * agent-side model operation (profile bind, `setModel`, capability reads)
-   * flows through them. Agent-interaction overrides await this before
+   * The provider catalog shares the config service's ready trap: its record
+   * reads are synchronous over state that only exists after hydration, and
+   * every agent-side model operation (profile bind, `setModel`, capability
+   * reads) flows through it. Agent-interaction overrides await this before
    * touching a profile.
    */
   private readonly modelReady: Promise<void>;
@@ -568,8 +566,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     this.installEngineTelemetry(options.telemetry);
     this.modelReady = Promise.all([
       this.configReady,
-      app.accessor.get(IModelService).ready,
-      app.accessor.get(IProviderService).ready,
+      app.accessor.get(IProviderCatalogService).ready,
     ]).then(() => undefined);
     this.appSubscriptions.push(
       this.app.accessor.get(IEventService).subscribe((event) => {

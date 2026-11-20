@@ -6,7 +6,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { AgentRequesterBinder } from '#/agent/loop/requesterBinder';
 import { IConfigService } from '#/app/config/config';
-import { IProviderCatalogRuntime } from '#/provider-catalog/model/catalog-runtime';
 import { errorFromLlmMessage } from '#/provider-catalog/errors';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
@@ -23,6 +22,7 @@ import {
   type TestAgentContext,
 } from '../../harness';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
+import { IProviderCatalogService } from '#/provider-catalog/providerCatalogService';
 
 type TestKimiConfig = ReturnType<Parameters<typeof configServices>[0]>;
 type TestProtocolModelConfig = NonNullable<TestKimiConfig['models']>[string] &
@@ -294,7 +294,7 @@ describe('ConfigState model capabilities', () => {
           supportEfforts: ['low', 'high'],
         },
       });
-      resumed.get(IProviderCatalogRuntime).resync();
+      resumed.get(IProviderCatalogService).resync();
       expect(setRequester).toHaveBeenCalledTimes(5);
 
       const resumedProfile = resumed.get(IAgentLoopService);
