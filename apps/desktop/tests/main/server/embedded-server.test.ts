@@ -1,5 +1,4 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { fileURLToPath } from 'node:url';
 
 const {
   startServerMock,
@@ -7,7 +6,6 @@ const {
   createKimiDeviceIdMock,
   wireDesktopTelemetryMock,
   startDesktopBrowserMcpMock,
-  configureSearchWorkerRuntimeMock,
   browserMcpCloseMock,
   registerBrowserMcpMock,
   registrationDisposeMock,
@@ -18,7 +16,6 @@ const {
   createKimiDeviceIdMock: vi.fn(() => 'device-1'),
   wireDesktopTelemetryMock: vi.fn(),
   startDesktopBrowserMcpMock: vi.fn(),
-  configureSearchWorkerRuntimeMock: vi.fn(),
   browserMcpCloseMock: vi.fn().mockResolvedValue(undefined),
   registerBrowserMcpMock: vi.fn(),
   registrationDisposeMock: vi.fn(),
@@ -27,9 +24,6 @@ const {
 
 vi.mock('electron', () => ({
   app: { getVersion: vi.fn(() => '1.2.3') },
-}));
-vi.mock('@moonshot-ai/kap-server/search-worker-runtime', () => ({
-  configureSearchWorkerRuntime: configureSearchWorkerRuntimeMock,
 }));
 vi.mock('@moonshot-ai/kap-server', () => ({
   startServer: startServerMock,
@@ -123,7 +117,6 @@ describe('startDesktopServer', () => {
     expect(installProxyMock).toHaveBeenCalledOnce();
     expect(startDesktopBrowserMcpMock).toHaveBeenCalledWith({ access: browserAccess, token: undefined });
     expect(startServerMock).toHaveBeenCalledOnce();
-    expect(configureSearchWorkerRuntimeMock).toHaveBeenCalledWith(fileURLToPath(new URL('../../../src/main/server/search-worker.cjs', import.meta.url)));
     const args = startServerMock.mock.calls[0]![0];
     expect(args.host).toBe('127.0.0.1');
     expect(args.port).toBe(0);

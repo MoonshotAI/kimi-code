@@ -94,7 +94,7 @@ importers:
         version: 1.11.1
       tsdown:
         specifier: 0.23.1
-        version: 0.23.1(@arethetypeswrong/core@0.18.2)(@volar/typescript@2.4.28)(@vue/language-core@3.2.9)(publint@0.3.18)(tsx@4.21.0)(typescript@7.0.2)(unrun@0.2.34(@emnapi/core@1.9.2)(@emnapi/runtime@1.9.2))(vue-tsc@3.2.9(typescript@7.0.2))
+        version: 0.23.1(@arethetypeswrong/core@0.18.2)(@volar/typescript@2.4.28)(@vue/language-core@3.2.9)(publint@0.3.18)(tsx@4.21.0)(typescript@7.0.2)(unrun@0.2.34(@emnapi/core@1.10.0)(@emnapi/runtime@1.10.0))(vue-tsc@3.2.9(typescript@7.0.2))
       tsx:
         specifier: ^4.21.0
         version: 4.21.0
@@ -195,6 +195,9 @@ importers:
       '@rive-app/canvas':
         specifier: 2.38.5
         version: 2.38.5
+      '@types/better-sqlite3':
+        specifier: ^9.6.0
+        version: 9.6.0
       '@types/qrcode':
         specifier: ^1.5.6
         version: 1.5.6
@@ -279,6 +282,10 @@ importers:
       zod:
         specifier: 4.3.6
         version: 4.3.6
+    optionalDependencies:
+      better-sqlite3:
+        specifier: ^13.0.3
+        version: 13.2.0
 
   apps/kimi-code:
     dependencies:
@@ -316,9 +323,6 @@ importers:
       '@moonshot-ai/migration-legacy':
         specifier: workspace:^
         version: link:../../packages/migration-legacy
-      '@moonshot-ai/minidb':
-        specifier: workspace:^
-        version: link:../../packages/minidb
       '@moonshot-ai/pi-tui':
         specifier: workspace:^
         version: link:../../packages/pi-tui
@@ -340,6 +344,9 @@ importers:
       '@moonshot-ai/vis-web':
         specifier: workspace:*
         version: link:../vis/web
+      '@types/better-sqlite3':
+        specifier: ^9.6.0
+        version: 9.6.0
       '@types/qrcode':
         specifier: ^1.5.6
         version: 1.5.6
@@ -392,6 +399,9 @@ importers:
       '@mariozechner/clipboard':
         specifier: ^0.3.9
         version: 0.3.9
+      better-sqlite3:
+        specifier: ^13.0.3
+        version: 13.2.0
 
   apps/vis:
     devDependencies:
@@ -632,6 +642,9 @@ importers:
       acorn:
         specifier: 8.17.0
         version: 8.17.0
+      better-sqlite3:
+        specifier: ^13.0.3
+        version: 13.2.0
       jsdom:
         specifier: ^30.0.1
         version: 30.0.1(@noble/hashes@2.4.0)
@@ -730,6 +743,9 @@ importers:
       ajv-formats:
         specifier: ^3.0.1
         version: 3.0.1(ajv@8.18.0)
+      better-sqlite3:
+        specifier: ^13.0.3
+        version: 13.2.0
       chokidar:
         specifier: ^4.0.3
         version: 4.0.3
@@ -803,6 +819,9 @@ importers:
       '@moonshot-ai/testkit':
         specifier: workspace:^
         version: link:../testkit
+      '@types/better-sqlite3':
+        specifier: ^9.6.0
+        version: 9.6.0
       '@types/cross-spawn':
         specifier: ^6.0.6
         version: 6.0.6
@@ -1198,9 +1217,6 @@ importers:
       '@moonshot-ai/kimi-code-product':
         specifier: workspace:^
         version: link:../product
-      '@moonshot-ai/minidb':
-        specifier: workspace:*
-        version: link:../minidb
       '@moonshot-ai/remote-control':
         specifier: workspace:^
         version: link:../remote-control
@@ -1329,6 +1345,10 @@ importers:
       openai:
         specifier: ^6.34.0
         version: 6.34.0(ws@8.20.0)(zod@4.3.6)
+    optionalDependencies:
+      better-sqlite3:
+        specifier: ^13.0.3
+        version: 13.2.0
 
   packages/oauth:
     dependencies:
@@ -5515,6 +5535,9 @@ packages:
   '@types/bcryptjs@2.4.6':
     resolution: {integrity: sha512-9xlo6R2qDs5uixm0bcIqCeMCE6HiQsIyel9KQySStiyqNl2tnj2mP3DX1Nf56MD6KMenNNlBBsy3LJ7gUEQPXQ==}
 
+  '@types/better-sqlite3@9.6.0':
+    resolution: {integrity: sha512-ZEEwBSgMu7GYJOynoagg5X9JbxfL6dTJDsgViJIqh67jV44kyOr9RXfmFjLK5rzC4MWssP06t9hu/JwGDnUbCg==}
+
   '@types/cacheable-request@6.0.3':
     resolution: {integrity: sha512-IQ3EbTzGxIigb1I3qPZc1rWJnH0BmSKv5QYTalEwweFvyBDLSAe24zP0le/hyi7ecGfZVlIVAg4BZqb8WBwKqw==}
 
@@ -6436,6 +6459,10 @@ packages:
   better-path-resolve@1.0.0:
     resolution: {integrity: sha512-pbnl5XzGBdrFU/wT4jqmJVPn2B6UHPBOhzMQkY/SPUPB6QtUXtmBHBIwCbXJol93mOpGMnQyP/+BB19q04xj7g==}
     engines: {node: '>=4'}
+
+  better-sqlite3@13.2.0:
+    resolution: {integrity: sha512-Z8Q/9x/uNyKxA1v4FNodyItRVRw1TeKBrmj32JhxhR0ceNcBY+wMobt/Bv7M7TzwPAXjnZRtNaEsATnUZSKWZQ==}
+    engines: {node: '>=22'}
 
   bidi-js@1.0.3:
     resolution: {integrity: sha512-RKshQI1R3YQ+n9YJz2QQ147P66ELpa1FQEg20Dk8oW9t2KgLbpDLLp9aGZ7y8WHSshDknG0bknqGw5/tyCs5tw==}
@@ -15227,14 +15254,6 @@ snapshots:
       - '@emnapi/runtime'
     optional: true
 
-  '@rolldown/binding-wasm32-wasi@1.0.0-rc.12(@emnapi/core@1.9.2)(@emnapi/runtime@1.9.2)':
-    dependencies:
-      '@napi-rs/wasm-runtime': 1.1.4(@emnapi/core@1.9.2)(@emnapi/runtime@1.9.2)
-    transitivePeerDependencies:
-      - '@emnapi/core'
-      - '@emnapi/runtime'
-    optional: true
-
   '@rolldown/binding-wasm32-wasi@1.0.0-rc.15':
     dependencies:
       '@emnapi/core': 1.9.2
@@ -15967,6 +15986,10 @@ snapshots:
 
   '@types/bcryptjs@2.4.6': {}
 
+  '@types/better-sqlite3@9.6.0':
+    dependencies:
+      '@types/node': 22.19.17
+
   '@types/cacheable-request@6.0.3':
     dependencies:
       '@types/http-cache-semantics': 4.2.0
@@ -16381,7 +16404,7 @@ snapshots:
       obug: 2.1.1
       std-env: 4.0.0
       tinyrainbow: 3.1.0
-      vitest: 4.1.4(@types/node@22.19.17)(@vitest/coverage-v8@4.1.4)(jsdom@26.1.0)(msw@2.15.0(@types/node@22.19.17)(typescript@7.0.2))(vite@8.0.8(@types/node@22.19.17)(esbuild@0.27.7)(jiti@2.6.1)(tsx@4.21.0)(yaml@2.9.1))
+      vitest: 4.1.4(@types/node@24.19.2)(@vitest/coverage-v8@4.1.4)(jsdom@30.0.1(@noble/hashes@2.4.0))(msw@2.15.0(@types/node@24.19.2)(typescript@6.0.2))(vite@6.4.2(@types/node@24.19.2)(jiti@2.6.1)(lightningcss@1.32.0)(tsx@4.21.0)(yaml@2.9.1))
 
   '@vitest/expect@4.1.4':
     dependencies:
@@ -16980,6 +17003,10 @@ snapshots:
   better-path-resolve@1.0.0:
     dependencies:
       is-windows: 1.0.2
+
+  better-sqlite3@13.2.0:
+    dependencies:
+      node-addon-api: 8.9.0
 
   bidi-js@1.0.3:
     dependencies:
@@ -21426,31 +21453,6 @@ snapshots:
       - '@emnapi/runtime'
     optional: true
 
-  rolldown@1.0.0-rc.12(@emnapi/core@1.9.2)(@emnapi/runtime@1.9.2):
-    dependencies:
-      '@oxc-project/types': 0.122.0
-      '@rolldown/pluginutils': 1.0.0-rc.12
-    optionalDependencies:
-      '@rolldown/binding-android-arm64': 1.0.0-rc.12
-      '@rolldown/binding-darwin-arm64': 1.0.0-rc.12
-      '@rolldown/binding-darwin-x64': 1.0.0-rc.12
-      '@rolldown/binding-freebsd-x64': 1.0.0-rc.12
-      '@rolldown/binding-linux-arm-gnueabihf': 1.0.0-rc.12
-      '@rolldown/binding-linux-arm64-gnu': 1.0.0-rc.12
-      '@rolldown/binding-linux-arm64-musl': 1.0.0-rc.12
-      '@rolldown/binding-linux-ppc64-gnu': 1.0.0-rc.12
-      '@rolldown/binding-linux-s390x-gnu': 1.0.0-rc.12
-      '@rolldown/binding-linux-x64-gnu': 1.0.0-rc.12
-      '@rolldown/binding-linux-x64-musl': 1.0.0-rc.12
-      '@rolldown/binding-openharmony-arm64': 1.0.0-rc.12
-      '@rolldown/binding-wasm32-wasi': 1.0.0-rc.12(@emnapi/core@1.9.2)(@emnapi/runtime@1.9.2)
-      '@rolldown/binding-win32-arm64-msvc': 1.0.0-rc.12
-      '@rolldown/binding-win32-x64-msvc': 1.0.0-rc.12
-    transitivePeerDependencies:
-      - '@emnapi/core'
-      - '@emnapi/runtime'
-    optional: true
-
   rolldown@1.0.0-rc.15:
     dependencies:
       '@oxc-project/types': 0.124.0
@@ -22312,7 +22314,7 @@ snapshots:
       - oxc-resolver
       - vue-tsc
 
-  tsdown@0.23.1(@arethetypeswrong/core@0.18.2)(@volar/typescript@2.4.28)(@vue/language-core@3.2.9)(publint@0.3.18)(tsx@4.21.0)(typescript@7.0.2)(unrun@0.2.34(@emnapi/core@1.9.2)(@emnapi/runtime@1.9.2))(vue-tsc@3.2.9(typescript@7.0.2)):
+  tsdown@0.23.1(@arethetypeswrong/core@0.18.2)(@volar/typescript@2.4.28)(@vue/language-core@3.2.9)(publint@0.3.18)(tsx@4.21.0)(typescript@7.0.2)(unrun@0.2.34(@emnapi/core@1.10.0)(@emnapi/runtime@1.10.0))(vue-tsc@3.2.9(typescript@7.0.2)):
     dependencies:
       cac: 7.1.0
       defu: 6.1.7
@@ -22333,7 +22335,7 @@ snapshots:
       publint: 0.3.18
       tsx: 4.21.0
       typescript: 7.0.2
-      unrun: 0.2.34(@emnapi/core@1.9.2)(@emnapi/runtime@1.9.2)
+      unrun: 0.2.34(@emnapi/core@1.10.0)(@emnapi/runtime@1.10.0)
     transitivePeerDependencies:
       - '@typescript/native-preview'
       - '@volar/typescript'
@@ -22535,14 +22537,6 @@ snapshots:
   unrun@0.2.34(@emnapi/core@1.10.0)(@emnapi/runtime@1.10.0):
     dependencies:
       rolldown: 1.0.0-rc.12(@emnapi/core@1.10.0)(@emnapi/runtime@1.10.0)
-    transitivePeerDependencies:
-      - '@emnapi/core'
-      - '@emnapi/runtime'
-    optional: true
-
-  unrun@0.2.34(@emnapi/core@1.9.2)(@emnapi/runtime@1.9.2):
-    dependencies:
-      rolldown: 1.0.0-rc.12(@emnapi/core@1.9.2)(@emnapi/runtime@1.9.2)
     transitivePeerDependencies:
       - '@emnapi/core'
       - '@emnapi/runtime'

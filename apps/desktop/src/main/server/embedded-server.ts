@@ -1,5 +1,3 @@
-import { fileURLToPath } from 'node:url';
-import { configureSearchWorkerRuntime } from '@moonshot-ai/kap-server/search-worker-runtime';
 import {
   startServer,
   createServerLogger,
@@ -41,7 +39,6 @@ export interface StartDesktopServerOptions {
 export async function startDesktopServer(
   opts: StartDesktopServerOptions,
 ): Promise<DesktopServerHandle> {
-  configureSearchWorkerRuntime(fileURLToPath(new URL('./search-worker.cjs', import.meta.url)));
   installGlobalProxyDispatcher();
   const homeDir = resolveKimiHome();
   const host = resolveDesktopHostIdentity(homeDir);

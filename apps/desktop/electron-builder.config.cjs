@@ -121,6 +121,7 @@ module.exports = {
   },
   asarUnpack: [
     'node_modules/node-pty/**',
+    'out/better-sqlite3/**',
   ],
 
   files: ['out/**', 'package.json'],

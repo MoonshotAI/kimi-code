@@ -29,7 +29,7 @@
 - `packages/remote-control`：Kimi Remote Control 隧道客户端，把本机注册到中继并转发本地服务的流量，带全机范围的单实例锁；由 kap-server（`/api/v1/remote-control` 开关）和 CLI（`kimi web --remote-control`）使用。
 - `packages/klient`：客户端 SDK，以契约驱动的 agent-core-v2 门面，按子路径（`@moonshot-ai/klient/ipc|memory`）选择传输方式；e2e 测试套件也放在这里。
 - `packages/tree-sitter-bash`：纯 TypeScript 的 bash 解析器，只负责解析，不做安全判断；调用方必须把中止或 `hasError` 的语法树当作「无法分析」并降级处理，和 tree-sitter-bash 原版的差异见该包 README 的「Known differences from tree-sitter-bash」一节。
-- `packages/minidb`：kap-server 搜索索引背后的嵌入式 JSON 文档库（`MiniDb`）。
+- `packages/minidb`：嵌入式 JSON 文档库（`MiniDb`），在 SQLite 主读的双写观察期作为 agent-core-v2 session 读模型的备用写后端。详见 `packages/minidb/AGENTS.md`。
 - `packages/app-core`：桌面端和 Web 端共用的 KAP 客户端与会话逻辑。
 - `packages/app-client`：渲染端的状态、面板与 Vue 组合式函数。
 - `packages/app-components`：聊天、设置等产品界面组件。

@@ -11,7 +11,7 @@
     "predev": "npm run build:native:screenshot && npm run build:native:clamshell",
     "build:native:screenshot": "node native/screenshot-window-list/build.mjs",
     "build:native:clamshell": "node native/clamshell-tool/build.mjs",
-    "build": "npm run build:native:screenshot && npm run build:native:clamshell && tsdown",
+    "build": "npm run build:native:screenshot && npm run build:native:clamshell && tsdown && node ../../build/copy-sqlite-prebuilds.mjs out/better-sqlite3",
     "build:renderer": "vite build --config vite.renderer.config.ts",
     "build:web": "vite build --config vite.web.config.ts",
     "dev:web": "vite --config vite.web.config.ts",
@@ -24,7 +24,10 @@
     "e2e": "node e2e/run.mjs",
     "e2e:headless": "node e2e/run.mjs",
     "postinstall": "node scripts/rebuild-native.mjs",
-    "dist": "npm run build:renderer && npm run build:native:screenshot && npm run build:native:clamshell && tsdown && electron-builder --config electron-builder.config.cjs"
+    "dist": "npm run build:renderer && npm run build:native:screenshot && npm run build:native:clamshell && tsdown && node ../../build/copy-sqlite-prebuilds.mjs out/better-sqlite3 && electron-builder --config electron-builder.config.cjs"
+  },
+  "optionalDependencies": {
+    "better-sqlite3": "^13.0.3"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
@@ -56,6 +59,7 @@
     "@moonshot-ai/vite-preset": "workspace:*",
     "@playwright/test": "1.63.0",
     "@rive-app/canvas": "2.38.5",
+    "@types/better-sqlite3": "^9.6.0",
     "@types/qrcode": "^1.5.6",
     "@types/semver": "^7.7.0",
     "@types/yauzl": "^2.10.3",

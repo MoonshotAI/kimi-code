@@ -307,8 +307,8 @@ describe('SDKRpcClientV2.listSessionsPage', () => {
   });
 });
 
-describe('SDKRpcClientV2 search-index separation', () => {
-  it('listSessions / resumeSession never open the global search index (read model off)', async () => {
+describe('SDKRpcClientV2 session index read model', () => {
+  it('listSessions / resumeSession do not open the query store (read model off)', async () => {
     vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', '0');
     vi.stubEnv('KIMI_CODE_PERSISTENCE_MINIDB_READMODEL', '0');
     const homeDir = await makeTempDir();
@@ -316,7 +316,7 @@ describe('SDKRpcClientV2 search-index separation', () => {
     const client = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
 
     try {
-      const created = await client.createSession({ id: 'ses_search_sep_off', workDir });
+      const created = await client.createSession({ id: 'ses_read_model_off', workDir });
       await client.closeSession({ sessionId: created.id });
 
       const sessions = await client.listSessions({ workDir });
@@ -324,7 +324,7 @@ describe('SDKRpcClientV2 search-index separation', () => {
       const resumed = await client.resumeSession({ id: created.id });
       expect(resumed.id).toBe(created.id);
 
-      expect(existsSync(join(homeDir, 'search-index'))).toBe(false);
+      expect(existsSync(join(homeDir, 'cache', 'query-store.sqlite'))).toBe(false);
       expect(existsSync(join(homeDir, 'cache', 'query-store'))).toBe(false);
     } finally {
       await client.close();
@@ -332,7 +332,7 @@ describe('SDKRpcClientV2 search-index separation', () => {
     }
   });
 
-  it('listSessions / resumeSession never open the global search index (read model on)', async () => {
+  it('listSessions / resumeSession work while the read model is preparing', async () => {
     vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', '0');
     vi.stubEnv('KIMI_CODE_PERSISTENCE_MINIDB_READMODEL', '1');
     const homeDir = await makeTempDir();
@@ -340,7 +340,7 @@ describe('SDKRpcClientV2 search-index separation', () => {
     const client = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
 
     try {
-      const created = await client.createSession({ id: 'ses_search_sep_on', workDir });
+      const created = await client.createSession({ id: 'ses_read_model_on', workDir });
       await client.closeSession({ sessionId: created.id });
 
       const sessions = await client.listSessions({ workDir });
@@ -348,12 +348,10 @@ describe('SDKRpcClientV2 search-index separation', () => {
       const resumed = await client.resumeSession({ id: created.id });
       expect(resumed.id).toBe(created.id);
 
-      expect(existsSync(join(homeDir, 'search-index'))).toBe(false);
-
       const status = await client.engineAccessor.get(ISessionIndex).prepare();
       expect(status.state).toBe('ready');
+      expect(existsSync(join(homeDir, 'cache', 'query-store.sqlite'))).toBe(true);
       expect(existsSync(join(homeDir, 'cache', 'query-store'))).toBe(true);
-      expect(existsSync(join(homeDir, 'search-index'))).toBe(false);
     } finally {
       await client.close();
       await drainSessionIndexMirror();

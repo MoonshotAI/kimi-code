@@ -93,7 +93,6 @@ Other CLI commands have point-and-click equivalents in the UI (settings, model p
 | Background tasks | ✓ | ✓ | Live progress in the task panel |
 | Files and changes | ✓ | ✓ | Changed-files summary card and per-file diffs |
 | Settings | ✓ | ✓ | Graphical settings UI (providers, account & usage, Lab experiments) |
-| Global search | — | ✓ | Set `[database] global_search = true` in `config.toml` first to search across sessions and workspaces |
 | Mobile layout | — | ✓ | Works in mobile browsers over LAN (`--host`) or Remote Control (`kimi rc`) |
 
 </div>
