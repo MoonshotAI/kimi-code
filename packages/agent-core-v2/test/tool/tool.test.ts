@@ -563,6 +563,7 @@ function sessionMetadataStub(agents: Readonly<Record<string, AgentMeta>>): ISess
     setGeneratedTitleIfUncustomized: async () => false,
     setArchived: async () => {},
     registerAgent: async () => {},
+    unregisterAgent: async () => {},
   };
 }
 

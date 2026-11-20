@@ -915,6 +915,15 @@ export class DaemonKimiWebApi implements KimiWebApi {
     return { agentId: data.agent_id };
   }
 
+  async closeAgent(sessionId: string, agentId: string): Promise<{ closed: true }> {
+    await this.http.post<{ closed: true }>(
+      `/sessions/${encodeURIComponent(sessionId)}/agents/${encodeURIComponent(agentId)}:close`,
+      {},
+      { allowCodes: [40401] },
+    );
+    return { closed: true };
+  }
+
   respondApproval(
     sessionId: string,
     approvalId: string,

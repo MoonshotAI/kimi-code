@@ -1518,4 +1518,17 @@ describe('DaemonKimiWebApi.mkdirFs', () => {
       code: 40919,
     });
   });
+
+  it('posts closeAgent to /sessions/{id}/agents/{agentId}:close and treats 40401 as closed', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({ code: 40401, msg: 'agent not found', data: null, request_id: 'r1' }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      ),
+    );
+    await expect(createApi().closeAgent('sess/1', 'btw/2')).resolves.toEqual({ closed: true });
+    expect(vi.mocked(fetch).mock.calls[0]?.[0]).toBe(
+      'http://daemon.test/api/v1/sessions/sess%2F1/agents/btw%2F2:close',
+    );
+  });
 });
