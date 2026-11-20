@@ -61,7 +61,7 @@ export class TowerRebaseTool implements ITowerRebaseTool {
                 `rebase of mission ${mission.id} (${mission.branch}) onto "${state.base}" conflicted and was aborted — the mission is marked blocked.`,
                 `conflicted files: ${result.files?.join(', ') || '(none reported)'}`,
                 mission.kind === 'artifact'
-                  ? `resume the worker in the background (foreground only when background task tools are unavailable) so it resolves the conflicts in its worktree; the moved tip then needs fresh explicit human acceptance.`
+                  ? `resume the worker in the background (foreground only when background task tools are unavailable) so it resolves the conflicts in its worktree; the moved tip then needs fresh artifact acceptance.`
                   : `resume the worker in the background (foreground only when background task tools are unavailable) so it resolves the conflicts in its worktree and requests a fresh review.`,
               ].join('\n'),
             };
@@ -70,7 +70,7 @@ export class TowerRebaseTool implements ITowerRebaseTool {
             output: [
               `rebased mission ${mission.id} (${mission.branch}) onto "${state.base}": ${result.fromCommit!.slice(0, 7)} → ${result.toCommit!.slice(0, 7)}.`,
               mission.kind === 'artifact'
-                ? 'The pre-rebase human acceptance does not carry over — have the worker run TowerComplete with the current report and key_artifacts at the rebased tip, present that new request for fresh explicit human acceptance of the entire tip, record it with TowerReview, then retry TowerMerge.'
+                ? 'The pre-rebase acceptance does not carry over — have the worker run TowerComplete with the current report and key_artifacts at the rebased tip, present that new request for fresh artifact acceptance of the entire tip, record it with TowerReview, then retry TowerMerge.'
                 : 'The pre-rebase review keeps its exact-tip binding, but merge approval still requires a clean review with merge verdict "merge" — retry TowerMerge.',
             ].join('\n'),
           };

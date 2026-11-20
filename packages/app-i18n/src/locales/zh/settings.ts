@@ -82,6 +82,10 @@ export default {
     sidebarTabsHint: '侧边栏显示「进行中 / 已完成 / 项目」三个标签页',
     notifyUser: '进展更新',
     notifyUserHint: '让 agent 在对话中发布进展更新，仅对之后新建的会话生效',
+    sessionMentions: '引用会话',
+    sessionMentionsHint: "在 {'@'} 菜单中搜索并引用其他会话，agent 会自行读取被引用会话的记录",
+    contextInspector: '上下文用量',
+    contextInspectorHint: '在输入框圆环和会话信息中显示上下文的用量和组成，并可逐条查看模型收到的内容',
   },
   plugins: {
     localOnlyHint: '插件和 MCP 服务器仅对本机项目生效，SSH 主机上的项目使用各主机自己的配置',

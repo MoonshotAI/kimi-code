@@ -2,6 +2,8 @@ export default {
   searching: '搜索中…',
   noMatch: '无匹配',
   skills: '技能',
+  sessions: '会话',
+  backToMentions: '返回',
   global: '全局',
   builtin: '内置',
   openSkill: '打开技能文件',

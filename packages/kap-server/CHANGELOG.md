@@ -1,5 +1,11 @@
 # @moonshot-ai/kap-server
 
+## 0.3.1
+
+### Patch Changes
+
+- [#5102](https://github.com/MoonshotAI/kimi-code/pull/5102) [`0b73b62`](https://github.com/MoonshotAI/kimi-code/commit/0b73b629dea1a8918813d2e3eb46bb597a5dad32) Thanks [@7Sageer](https://github.com/7Sageer)! - Limit SSH project discovery to five seconds per host when aggregating workspace and session lists.
+
 ## 0.3.0
 
 ### Minor Changes

@@ -12,6 +12,7 @@ export const metaCapabilitiesSchema = z.object({
   tasks: z.literal(true),
   interactions_list: z.literal(true),
   session_wait: z.literal(true),
+  agent_close: z.literal(true),
 });
 
 export type MetaCapabilities = z.infer<typeof metaCapabilitiesSchema>;
@@ -39,6 +40,7 @@ export const metaResponseSchema = z.object({
   capabilities: metaCapabilitiesSchema,
   server_id: z.string().min(1),
   started_at: isoDateTimeSchema,
+  home_dir: z.string().min(1),
   open_in_apps: z.array(fsOpenInAppIdSchema),
   dangerous_bypass_auth: z.boolean(),
   experimental_flags: z.record(z.string(), z.boolean()).optional(),

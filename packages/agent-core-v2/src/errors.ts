@@ -139,6 +139,7 @@ export type KimiErrorCode =
   | 'agent.not_a_subagent'
   | 'agent.not_owned'
   | 'agent.type_not_allowed'
+  | 'agent.not_closable'
   | 'agent.max_tokens_exceeded'
   | 'turn.agent_busy'
   | 'goal.already_exists'

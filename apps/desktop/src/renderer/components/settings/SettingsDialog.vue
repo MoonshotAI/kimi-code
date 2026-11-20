@@ -32,7 +32,7 @@ import { track } from '../../lib/track';
 import DockIconPicker from './DockIconPicker.vue';
 import BrowserSettingsTab from '../browser/BrowserSettingsTab.vue';
 import { copyTextToClipboard, hasDesktopBridge, isLinuxDesktop, isMacosDesktop, isRcLocation, prefersNativeTitleBar, providerDisplayName } from '@moonshot-ai/app-core/lib';
-import { useSidebarTabs } from '@moonshot-ai/app-core';
+import { useContextInspector, useSessionMentions, useSidebarTabs } from '@moonshot-ai/app-core';
 import { configStore, hostsStore } from '@moonshot-ai/app-client/stores';
 import { useActivityRunFolding, usePasteImageAutoMention, useRunningSendMode, useTurnFolding, type RunningSendMode, type SettingsHighlightKey } from '@moonshot-ai/app-client';
 import { useVibrancy } from '../../composables/useVibrancy';
@@ -64,6 +64,7 @@ const { vibrancy, setVibrancy } = useVibrancy();
 const { preventSleepState, lidSleepStopped, setPreventSystemSleep, setPreventLidSleep } = usePreventSystemSleep();
 
 const { sidebarTabs, setSidebarTabs } = useSidebarTabs();
+const { contextInspectorEnabled, setContextInspectorEnabled } = useContextInspector();
 
 const { turnFolding, setTurnFolding } = useTurnFolding();
 const { activityRunFolding, setActivityRunFolding } = useActivityRunFolding();
@@ -79,6 +80,13 @@ function onRunningSendModeChange(mode: RunningSendMode): void {
 function onSidebarTabsChange(on: boolean): void {
   setSidebarTabs(on);
   track('settings_changed', { key: 'sidebar-multi-tab', value: on ? 'on' : 'off', source_panel: 'settings' });
+}
+
+const { sessionMentions, setSessionMentions } = useSessionMentions();
+
+function onSessionMentionsChange(on: boolean): void {
+  setSessionMentions(on);
+  track('settings_changed', { key: 'session-mentions', value: on ? 'on' : 'off', source_panel: 'settings' });
 }
 
 const notifyUserEnabled = computed(() => configStore().experimentalFlags['notify_user'] === true);
@@ -1431,6 +1439,28 @@ function archiveTime(iso: string): string {
                 :model-value="notifyUserEnabled"
                 :label="t('settings.lab.notifyUser')"
                 @update:model-value="onNotifyUserChange"
+              />
+            </div>
+            <div class="row">
+              <span class="rlabel">
+                {{ t('settings.lab.sessionMentions') }}
+                <span class="hint">{{ t('settings.lab.sessionMentionsHint') }}</span>
+              </span>
+              <Switch
+                :model-value="sessionMentions"
+                :label="t('settings.lab.sessionMentions')"
+                @update:model-value="onSessionMentionsChange"
+              />
+            </div>
+            <div class="row">
+              <span class="rlabel">
+                {{ t('settings.lab.contextInspector') }}
+                <span class="hint">{{ t('settings.lab.contextInspectorHint') }}</span>
+              </span>
+              <Switch
+                :model-value="contextInspectorEnabled"
+                :label="t('settings.lab.contextInspector')"
+                @update:model-value="setContextInspectorEnabled"
               />
             </div>
             </div>

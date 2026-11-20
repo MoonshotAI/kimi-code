@@ -18,10 +18,54 @@ const PREFIX = 'kimi-web.panel-tabs.v1:';
 const GLOBAL_STORAGE_LIMIT = 1024 * 1024;
 const SNAPSHOT_COUNT_LIMIT = 100;
 const destroyedListeners = new Set<(key: string) => void>();
+const btwDestroyedListeners = new Set<(sessionId: string, agentId: string) => boolean>();
 
 export function onPanelContextDestroyed(listener: (key: string) => void): () => void {
   destroyedListeners.add(listener);
   return () => { destroyedListeners.delete(listener); };
+}
+
+export function onPanelBtwDestroyed(listener: (sessionId: string, agentId: string) => boolean): () => void {
+  btwDestroyedListeners.add(listener);
+  return () => { btwDestroyedListeners.delete(listener); };
+}
+
+export function removeStoredBtwTab(storage: PanelStorage | undefined, sessionId: string, agentId: string): boolean {
+  if (!storage) return false;
+  const current = readPanelSnapshot(storage, sessionId);
+  if (!current) return false;
+  const kept: StoredPanelTab[] = [];
+  let activeIndex: number | null = null;
+  let removed = false;
+  for (const [index, tab] of current.tabs.entries()) {
+    if (tab.type === 'btw' && object(tab.payload) && tab.payload['agentId'] === agentId) {
+      removed = true;
+      continue;
+    }
+    if (current.activeIndex === index) activeIndex = kept.length;
+    kept.push(tab);
+  }
+  if (!removed) return false;
+  if (activeIndex === null && current.activeIndex !== null && kept.length > 0) {
+    activeIndex = Math.min(current.activeIndex, kept.length - 1);
+  }
+  const visible = kept.length > 0 && current.visible;
+  writePanelSnapshot(storage, sessionId, {
+    ...(current.workspaceId !== undefined ? { workspaceId: current.workspaceId } : {}),
+    tabs: kept,
+    activeIndex,
+    visible,
+    expanded: visible && current.expanded,
+  });
+  return true;
+}
+
+export function destroyPanelBtwTab(sessionId: string, agentId: string): boolean {
+  let removed = removeStoredBtwTab(defaultPanelStorage(), sessionId, agentId);
+  for (const listener of btwDestroyedListeners) {
+    if (listener(sessionId, agentId)) removed = true;
+  }
+  return removed;
 }
 
 export function destroyPanelContext(key: string): void {
@@ -84,6 +128,7 @@ function payloadOf(type: PanelTabType, value: unknown): Record<string, unknown> 
     case 'diff': return {};
     case 'files': return {};
     case 'inspector': return {};
+    case 'context': return {};
     case 'browser': return string('browserId') && /^[A-Za-z0-9:_-]{1,128}$/.test(value['browserId'] as string) ? { browserId: value['browserId'], ...(string('title') ? { title: (value['title'] as string).slice(0, 512) } : {}), ...(string('customTitle') ? { customTitle: (value['customTitle'] as string).slice(0, 512) } : {}) } : null;
     case 'file':
       return string('path') && (value['content'] === undefined || string('content')) &&

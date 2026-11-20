@@ -2,6 +2,7 @@ import { notifySessionDestroyed, notifyWorkspaceDestroyed } from '../src/client/
 import { effectScope, nextTick, ref } from 'vue';
 import { describe, expect, it, vi } from 'vitest';
 
+import { destroyPanelBtwTab } from '../src/panel/panelPersistence';
 import { destroyPanelSessionSnapshot, panelDraftContextKey, forkPanelBrowserTabs, usePanelTabs } from '../src/composables';
 import { sideChatDrafts } from '../src/client/sideChatDrafts';
 import type {
@@ -205,7 +206,7 @@ describe('usePanelTabs close / hide', () => {
     const panel = createPanel(client);
     const tab = panel.openTab('btw', { parentId: 'session-1', agentId: 'btw-1', seq: 1 });
     panel.closeTab(tab.id);
-    expect(client.closeSideChat).toHaveBeenCalledWith('btw-1');
+    expect(client.closeSideChat).toHaveBeenCalledWith('btw-1', 'session-1');
   });
 
   it('addTabInBackground appends without activating or revealing the panel', () => {
@@ -1865,6 +1866,36 @@ describe('panel tab persistence', () => {
     expect(panel.panelTabs.value).toHaveLength(1);
     expect(panel.activeTab.value?.payload).toEqual({ path: '/valid' });
     expect(panel.panelVisible.value).toBe(true);
+  });
+
+  it('purges persisted btw tab when closed before its session is hydrated', async () => {
+    const storage = memoryStorage();
+    storage.setItem('kimi-web.panel-tabs.v1:session-2', JSON.stringify({
+      tabs: [{ type: 'btw', payload: { parentId: 'session-2', agentId: 'btw-closed', seq: 1 } }],
+      activeIndex: 0,
+      visible: true,
+      expanded: false,
+    }));
+    const client = createClient();
+    const restore = vi.fn();
+    const scope = effectScope();
+    const panel = scope.run(() => usePanelTabs({
+      client: { ...client, restoreSideChatTarget: restore },
+      sideWidth: ref(280),
+      t,
+      storage,
+    }))!;
+
+    expect(destroyPanelBtwTab('session-2', 'btw-closed')).toBe(true);
+    expect(destroyPanelBtwTab('session-2', 'ordinary-subagent')).toBe(false);
+
+    client.activeSessionId.value = 'session-2';
+    await nextTick();
+
+    expect(restore).not.toHaveBeenCalled();
+    expect(panel.panelTabs.value).toEqual([]);
+    expect(panel.panelVisible.value).toBe(false);
+    scope.stop();
   });
 });
 

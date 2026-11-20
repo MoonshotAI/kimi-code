@@ -2,6 +2,8 @@ export default {
   searching: 'Searching…',
   noMatch: 'No matches',
   skills: 'Skills',
+  sessions: 'Sessions',
+  backToMentions: 'Back',
   global: 'Global',
   builtin: 'Built-in',
   openSkill: 'Open skill file',

@@ -203,12 +203,12 @@ export class AgentLoopRequestObserver {
     infiniteRetry: boolean,
   ): void {
     const request = observation.requireContext();
-    if (event.type === 'llm.streaming.request_id') {
+    if (event.type === 'llm.delta.request_id') {
       observation.setRequestId(event.requestId);
       return;
     }
-    if (event.type === 'llm.streaming.headers') return;
-    if (event.type !== 'llm.retrying') return;
+    if (event.type === 'llm.delta.response_header') return;
+    if (event.type !== 'llm.retry') return;
     if (event.reason === 'backoff') {
       if (infiniteRetry) {
         this.log.warn('llm request failed; retrying indefinitely (KIMI_CODE_INFINITE_RETRY)', {

@@ -493,7 +493,10 @@ export class StreamingUIController {
   finalizeTurn(sendQueued: (item: QueuedMessage) => void): void {
     this.timeline.turnEnded();
     const { state } = this.host;
-    if (state.appState.streamingPhase === 'idle') return;
+    if (state.appState.streamingPhase === 'idle') {
+      this._currentTurnId = undefined;
+      return;
+    }
     this.host.deferUserMessages = false;
     const completedTurnKey =
       this._currentTurnId ?? `local:${String(state.appState.streamingStartTime)}`;

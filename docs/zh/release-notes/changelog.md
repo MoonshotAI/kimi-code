@@ -6,6 +6,23 @@ outline: 2
 
 本页记录 Kimi Code CLI 每个版本的变更内容。
 
+## 2.7.0（2026-11-19）
+
+### 功能
+
+- `/settings` 新增 Follow-up 行为设置，选择 Steer 后 Enter 可将消息即时送入当前运行回合。
+- 可在 `/tasks` 查看前台运行中的 Agent 及其活动。
+- Web 端：支持浏览器标签页标题显示项目与会话标题。
+- 支持为项目配置 SSH 主机，各主机独立登录，并可复制自定义模型提供商。
+- 允许恢复已在其他客户端打开的会话。
+- 支持接入 Amazon Bedrock 模型服务。详见 [Amazon Bedrock 配置文档](https://moonshotai.github.io/kimi-code/zh/configuration/providers.html#bedrock)
+- TUI 新增实验性下一提示词预测，设置 `KIMI_CODE_EXPERIMENTAL_PROMPT_PREDICTION=1` 后按 Tab 或右方向键采纳。
+
+### 修复
+
+- 修复 `kimi -p` 及 `[subagent] timeout_ms = 0` 配置下子 Agent 立即超时的问题。
+- 修复了一些已知问题，并做了若干细节优化。更详细的变更记录见 [GitHub](https://github.com/MoonshotAI/kimi-code/blob/main/apps/kimi-code/CHANGELOG.md)。
+
 ## 2.6.3（2026-11-17）
 
 ### 修复

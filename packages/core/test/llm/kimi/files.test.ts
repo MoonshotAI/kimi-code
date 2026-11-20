@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { kimiFiles } from '#/llm/builtin/provider/kimi/files';
 
 describe('Kimi file uploads', () => {
-  it('rejects failed or incomplete extraction and returns ready file references', async () => {
+  it('as a Kimi user, I want failed or incomplete file extraction rejected and ready file references returned', async () => {
     const failures = [
       {
         body: {
