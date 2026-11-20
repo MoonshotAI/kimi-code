@@ -241,6 +241,25 @@ describe('active workspace resolution', () => {
     expect(workspacesStore().visibleWorkspace).toBeNull();
   });
 
+  it('roots the active panels at the selected session working directory and at the project root on the draft page', () => {
+    const store = workspacesStore();
+    store.workspaces = [makeWorkspace('wd_repo', '/repo', { additionalDirs: ['/shared'] })];
+    store.storedActiveWorkspaceId = 'wd_repo';
+    sessionsStore().setSessions([
+      makeSession('wt', '2026-01-02T00:00:00.000Z', { workspaceId: 'wd_repo', cwd: '/repo-wt' }),
+      makeSession('main', '2026-01-01T00:00:00.000Z', { workspaceId: 'wd_repo', cwd: '/repo' }),
+    ]);
+    sessionsStore().setActiveSessionId(undefined);
+    expect(store.activePanelRoot).toBe('/repo');
+
+    sessionsStore().setActiveSessionId('wt');
+    expect(store.activePanelRoot).toBe('/repo-wt');
+
+    sessionsStore().setActiveSessionId('main');
+    expect(store.activePanelRoot).toBe('/repo');
+    sessionsStore().setActiveSessionId(undefined);
+  });
+
   it('treats only a workspace on an SSH host as non-local', () => {
     const store = workspacesStore();
     expect(store.isLocalWorkspace).toBe(true);

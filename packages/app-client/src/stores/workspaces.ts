@@ -20,6 +20,7 @@ import {
   logWarn,
   mergeWorkspaces,
   migrateWorkspaceLocalOverrides,
+  panelRoots,
   pruneRecencyFloor,
   pinnedWorkspaceKey,
   reconcileRecencyFloor,
@@ -304,6 +305,13 @@ export const useWorkspacesStore = defineStore('kimi.workspaces', () => {
   });
 
   const isLocalWorkspace = computed<boolean>(() => visibleWorkspace.value?.hostId === undefined);
+
+  const activePanelRoot = computed<string>(() => {
+    const sessionId = sessionsStore().activeSessionId;
+    const session = sessionId === undefined ? undefined : sessionsStore().sessions.find((s) => s.id === sessionId);
+    const workspace = visibleWorkspace.value;
+    return workspace === null ? (session?.cwd ?? '') : panelRoots(session, workspace).root;
+  });
 
   function clearWorkspaceTrustState(workspaceIds: readonly string[], clearCached = false): void {
     let trustChanged = false;
@@ -1016,6 +1024,7 @@ export const useWorkspacesStore = defineStore('kimi.workspaces', () => {
     activeWorkspaceId,
     visibleWorkspace,
     isLocalWorkspace,
+    activePanelRoot,
     selectWorkspace,
     setWorkspaceSortMode,
     reorderWorkspaces,

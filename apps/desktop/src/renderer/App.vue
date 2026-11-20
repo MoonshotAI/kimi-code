@@ -273,9 +273,7 @@ const terminalEverOpened = ref(terminalOpen.value);
 watch(terminalOpen, (isOpen) => {
   if (isOpen) terminalEverOpened.value = true;
 });
-const terminalCwd = computed(
-  () => client.visibleWorkspace.value?.root ?? client.status.value.cwd ?? null,
-);
+const terminalCwd = computed(() => workspaces.activePanelRoot);
 function terminalBucketKey(sessionId: string, workspaceId: string | null): string {
   return sessionId === '' ? nativeTerminalDraftKey(workspaceId) : sessionId;
 }
@@ -516,7 +514,7 @@ const openInService: OpenInService = {
 provide(OpenInServiceKey, openInService);
 
 async function openWorkspaceInDefaultApp(): Promise<void> {
-  const root = client.visibleWorkspace.value?.root ?? client.status.value.cwd;
+  const root = workspaces.activePanelRoot;
   if (!root) return;
   const apps = await openInService.catalog();
   const target = resolveOpenInTarget(
