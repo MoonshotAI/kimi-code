@@ -599,8 +599,12 @@ describe('server-v2 /api/v1/sessions', () => {
     expect(relative.body).toMatchObject({ code: 0, data: { cwd: process.cwd() } });
     const project = await postJson<{ id: string }>('/api/v1/workspaces', { root: process.cwd() });
     expect(project.body.code).toBe(0);
-    const again = await postJson<SessionWire>('/api/v1/sessions', { workspace_id: project.body.data.id, cwd: '.' });
-    expect(again.body).toMatchObject({ code: 0, data: { cwd: process.cwd(), workspace_id: project.body.data.id } });
+    const spellings = ['.', process.cwd() + sep + '.'];
+    if (process.platform === 'win32') spellings.push(process.cwd().replace(/^[a-z]:/i, ''));
+    for (const requested of spellings) {
+      const again = await postJson<SessionWire>('/api/v1/sessions', { workspace_id: project.body.data.id, cwd: requested });
+      expect(again.body).toMatchObject({ code: 0, data: { cwd: process.cwd(), workspace_id: project.body.data.id } });
+    }
     const cwd = await mkdtemp(join(home!, 'cwd-spelling-'));
     const spelling = cwd + sep + '.';
     const explicit = await postJson<SessionWire>('/api/v1/sessions', { cwd: spelling });
