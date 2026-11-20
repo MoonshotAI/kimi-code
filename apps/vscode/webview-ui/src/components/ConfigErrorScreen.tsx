@@ -13,6 +13,8 @@ import {
 
 import { bridge } from "@/services";
 import { Button } from "@/components/ui/button";
+import { toast } from "@/components/ui/sonner";
+import { copyToClipboard } from "@/lib/clipboard";
 import { KimiMascot } from "./KimiMascot";
 
 interface Props {
@@ -28,9 +30,17 @@ function ErrorDetails({ message }: { message?: string | null }) {
   if (!message) return null;
 
   const copyError = async () => {
-    await navigator.clipboard.writeText(message);
-    setCopied(true);
-    window.setTimeout(() => setCopied(false), 2_000);
+    try {
+      const success = await copyToClipboard(message);
+      if (success) {
+        setCopied(true);
+        window.setTimeout(() => setCopied(false), 2_000);
+      } else {
+        toast.error("Failed to copy error details");
+      }
+    } catch {
+      toast.error("Failed to copy error details");
+    }
   };
 
   return (
