@@ -61,7 +61,9 @@ export const STORAGE_KEYS = {
   notifyOnApproval: 'kimi-web.notify-on-approval',
   soundOnComplete: 'kimi-web.sound-on-complete',
   sessionInfoPanel: 'kimi-web.session-info-panel',
+  contextInspector: 'kimi-web.context-inspector',
   browserTabTitle: 'kimi-web.browser-tab-title',
+  sessionMentions: 'kimi-web.session-mentions',
 } as const;
 
 export const NEW_SESSION_SCOPE = '__new__';

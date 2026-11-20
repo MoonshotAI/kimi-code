@@ -1000,4 +1000,52 @@ describe('conversation contract e2e', () => {
 
     channel.close();
   });
+
+  it('S12: agents/{agent_id}:close closes a btw side agent, emits status ended, and rejects non-btw agents with 40939', async () => {
+    await boot([{ match: () => true, respond: () => sseText('side answer') }]);
+    const sid = await createSession(server!, base);
+    const btw = await rest<{ agent_id: string }>(
+      server!,
+      base,
+      `/api/v1/sessions/${encodeURIComponent(sid)}:btw`,
+      { method: 'POST', body: {} },
+    );
+    const channel = await subscribeConversation(server!, sid, btw.agent_id);
+    await until('btw initial agent frame', () => channel.agents.length > 0);
+
+    const closeMainRes = await fetch(
+      `${base}/api/v1/sessions/${encodeURIComponent(sid)}/agents/main:close`,
+      { method: 'POST', headers: authHeaders(server!), body: '{}' },
+    );
+    expect(((await closeMainRes.json()) as { code: number }).code).toBe(40939);
+
+    const closed = await rest<{ closed: true }>(
+      server!,
+      base,
+      `/api/v1/sessions/${encodeURIComponent(sid)}/agents/${encodeURIComponent(btw.agent_id)}:close`,
+      { method: 'POST', body: {} },
+    );
+    expect(closed).toEqual({ closed: true });
+    await until('btw ended agent frame', () => channel.agents.at(-1)?.status === 'ended');
+    expect(channel.agents.at(-1)).toMatchObject({
+      type: 'agent',
+      session_id: sid,
+      agent_id: btw.agent_id,
+      status: 'ended',
+      compacting: false,
+    });
+
+    const closeAgainRes = await fetch(
+      `${base}/api/v1/sessions/${encodeURIComponent(sid)}/agents/${encodeURIComponent(btw.agent_id)}:close`,
+      { method: 'POST', headers: authHeaders(server!), body: '{}' },
+    );
+    expect(((await closeAgainRes.json()) as { code: number }).code).toBe(40401);
+
+    const turnsAfterCloseRes = await fetch(
+      `${base}/api/v1/sessions/${encodeURIComponent(sid)}/agents/${encodeURIComponent(btw.agent_id)}/turns`,
+      { headers: authHeaders(server!) },
+    );
+    expect(((await turnsAfterCloseRes.json()) as { code: number }).code).toBe(40401);
+    channel.close();
+  });
 }, 90000);

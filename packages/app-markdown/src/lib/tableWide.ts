@@ -56,6 +56,26 @@ export function isTableWideHost(wrapper: HTMLElement): boolean {
   return wrapper.closest('.a-msg .msg') !== null;
 }
 
+function tableActionsClippingAncestors(host: HTMLElement): HTMLElement[] {
+  const ancestors: HTMLElement[] = [];
+  for (let ancestor = host.parentElement; ancestor; ancestor = ancestor.parentElement) {
+    const overflowX = getComputedStyle(ancestor).overflowX;
+    if (overflowX === 'auto' || overflowX === 'hidden' || overflowX === 'scroll' || overflowX === 'clip') {
+      ancestors.push(ancestor);
+    }
+  }
+  return ancestors;
+}
+
+function tableActionsClipRight(host: HTMLElement): number {
+  let right = Number.POSITIVE_INFINITY;
+  for (const ancestor of tableActionsClippingAncestors(host)) {
+    const rect = ancestor.getBoundingClientRect();
+    right = Math.min(right, rect.left + ancestor.clientWidth);
+  }
+  return right;
+}
+
 export function positionTableActions(wrapper: HTMLElement): void {
   const host = wrapper.parentElement;
   const actions = findActions(wrapper);
@@ -63,7 +83,16 @@ export function positionTableActions(wrapper: HTMLElement): void {
   const wrapperRect = wrapper.getBoundingClientRect();
   const hostRect = host.getBoundingClientRect();
   const gap = parseFloat(getComputedStyle(actions).columnGap) || 0;
-  actions.style.left = `${wrapperRect.right - hostRect.left + gap}px`;
+  let left = wrapperRect.right - hostRect.left + gap;
+  const actionsWidth = actions.getBoundingClientRect().width;
+  const clipRight = tableActionsClipRight(host);
+  if (actionsWidth > 0 && left + hostRect.left + actionsWidth + gap > clipRight) {
+    left = Math.min(
+      wrapperRect.right - hostRect.left - actionsWidth - gap,
+      clipRight - hostRect.left - actionsWidth - gap,
+    );
+  }
+  actions.style.left = `${left}px`;
   actions.style.top = `${wrapperRect.top - hostRect.top}px`;
 }
 
@@ -199,6 +228,7 @@ export function ensureTableWideToggle(
   const observer = new ResizeObserver(() => positionTableActions(wrapper));
   observer.observe(wrapper);
   observer.observe(host);
+  for (const ancestor of tableActionsClippingAncestors(host)) observer.observe(ancestor);
   actionsObservers.set(wrapper, observer);
 
   positionTableActions(wrapper);

@@ -375,6 +375,21 @@ describe('composerTextDoc — classifyMentionHref (message-side pill routing)', 
   it('rejects a skill link with an empty name (no round-trip, dead pill)', () => {
     expect(classifyMentionHref('kimi-code://skill/')).toBeNull();
   });
+  it('classifies session links that carry a workspace and a session segment', () => {
+    expect(classifyMentionHref('kimi-code://session/wd_app_0123456789ab/session_1')).toBe('session');
+  });
+  it('rejects session links without exactly two non-empty segments', () => {
+    for (const href of [
+      'kimi-code://session/',
+      'kimi-code://session/session_1',
+      'kimi-code://session/wd_app_0123456789ab/',
+      'kimi-code://session//session_1',
+      'kimi-code://session/wd/a/b',
+      'kimi-code://session/wd%2Fa/b',
+    ]) {
+      expect(classifyMentionHref(href), href).toBeNull();
+    }
+  });
   it('classifies folder links by trailing slash (no query/fragment stripping — folder names may contain them)', () => {
     expect(classifyMentionHref('apps/')).toBe('folder');
     expect(classifyMentionHref('my#dir/')).toBe('folder');
@@ -540,6 +555,24 @@ describe('composerTextDoc — mention revival (textToDoc reviveMentions)', () =>
     expect(pill?.attrs).toEqual({ kind: 'skill', name: 'deploy', path: '' });
     expect(docToText(doc)).toBe('[deploy](kimi-code://skill/deploy)');
     expect(collectSkillMentions(doc)[0]?.name).toBe('deploy');
+  });
+
+  it('round-trips a session mention: the label is the title and the path is <workspaceId>/<sessionId>', () => {
+    const attrs = { kind: 'session', name: '修复 [登录] 跳转', path: 'wd_app_0123456789ab/session_1' } as const;
+    const wire = serializeMention(attrs);
+    expect(wire).toBe('[修复 \\[登录\\] 跳转](kimi-code://session/wd_app_0123456789ab/session_1)');
+    const doc = textToDoc(`see ${wire} now`, { reviveMentions: true });
+    expect(doc.firstChild?.child(1).attrs).toEqual(attrs);
+    expect(docToText(doc)).toBe(`see ${wire} now`);
+    expect(parseMentionLinks(wire)[0]?.attrs).toEqual(attrs);
+  });
+
+  it('leaves session links with a malformed target as literal text', () => {
+    for (const bad of ['[x](kimi-code://session/session_1)', '[x](kimi-code://session/wd/a/b)']) {
+      const doc = textToDoc(bad, { reviveMentions: true });
+      expect(doc.firstChild?.firstChild?.isText).toBe(true);
+      expect(docToText(doc)).toBe(bad);
+    }
   });
 
   it('decodes url-encoded skill names from the target', () => {

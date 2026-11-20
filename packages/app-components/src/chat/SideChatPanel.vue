@@ -15,7 +15,7 @@ import JumpToBottomPill from './JumpToBottomPill.vue';
 import { EmptyState, Icon } from '@moonshot-ai/app-ui';
 import { sideChatDrafts } from '@moonshot-ai/app-client/client';
 import { persistComposerDraftSnapshot } from '@moonshot-ai/app-client/lib';
-import { usePanelScroll } from '@moonshot-ai/app-client/composables';
+import { useEscInterrupt, usePanelScroll } from '@moonshot-ai/app-client/composables';
 import { draftAttachmentsStorageKey, draftStorageKey, safeGetJson, safeGetString, type TranscriptLayout } from '@moonshot-ai/app-core/lib';
 import { FetchTurnFileChangesKey, PinScrollKey } from '@moonshot-ai/app-client/contracts';
 import type { ChatTurn, OpenMediaRequest } from '@moonshot-ai/app-core/client/types';
@@ -32,6 +32,7 @@ const props = defineProps<{
   turnError?: SideChatTurnError | null;
   cwd?: string;
   onSend: (text: string, attachments?: PromptAttachment[], snapshot?: ComposerDocumentSnapshot) => Promise<boolean>;
+  onInterrupt?: () => Promise<unknown> | void;
 }>();
 
 const emit = defineEmits<{
@@ -66,6 +67,33 @@ function applyDockLayout(layout: TranscriptLayout): void {
 const composerEl = panelScroll.dock;
 
 const submitting = computed(() => sideChatInflight.has(props.agentId));
+const sideChatWorking = computed(() => props.running || props.sending);
+
+const { armed: escInterruptArmed, press: pressEscInterrupt, reset: resetEscInterrupt } = useEscInterrupt({
+  sessionId: () => props.agentId,
+  working: () => sideChatWorking.value,
+  interrupt: handleInterrupt,
+});
+
+function handleInterrupt(): void {
+  resetEscInterrupt();
+  void props.onInterrupt?.();
+}
+
+function onRootKeydown(event: KeyboardEvent): void {
+  if (
+    event.key !== 'Escape' ||
+    event.defaultPrevented ||
+    event.isComposing ||
+    !sideChatWorking.value ||
+    composerRef.value?.anyPopupOpen === true
+  ) {
+    return;
+  }
+  event.preventDefault();
+  event.stopPropagation();
+  pressEscInterrupt();
+}
 
 type ComposerSubmitPayload = {
   text: string;
@@ -146,7 +174,7 @@ defineExpose({ focusInput });
 </script>
 
 <template>
-  <div class="sc">
+  <div class="sc" @keydown="onRootKeydown">
     <div ref="bodyRef" class="sc-body" @scroll.passive="onBodyScroll">
       <EmptyState v-if="turns.length === 0" class="sc-empty" :title="t('sideChat.title')" :hint="t('sideChat.empty')">
         <template #icon>
@@ -175,10 +203,13 @@ defineExpose({ focusInput });
       <Composer
         ref="composerRef"
         variant="side-chat"
+        :working-override="sideChatWorking"
+        :interrupt-armed="escInterruptArmed"
         :draft-scope-key="`sidechat:${agentId}`"
         :placeholder-text="t('sideChat.placeholder')"
         :submit-disabled="running || sending"
         @submit="onComposerSubmit"
+        @interrupt="handleInterrupt"
       />
     </div>
 

@@ -116,9 +116,18 @@ describe('DaemonKimiWebApi.getMeta experimental_flags', () => {
     server_version: '1.0.0',
     server_id: 'srv_t',
     started_at: '2026-01-01T00:00:00Z',
+    home_dir: '/home/me/.kimi-code',
     capabilities: { websocket: true },
     backend: 'v2',
   };
+
+  it('maps home_dir to the server data directory', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(envelope(wireMeta)));
+
+    const meta = await makeApi().getMeta();
+
+    expect(meta.homeDir).toBe('/home/me/.kimi-code');
+  });
 
   it('maps experimental_flags when the server reports it', async () => {
     vi.stubGlobal(

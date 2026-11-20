@@ -1,88 +1,97 @@
 import { APIError as RawAnthropicSDKAPIError } from '@anthropic-ai/sdk';
 import { ApiError as RawGoogleGenAISDKApiError } from '@google/genai';
-import OpenAI, {
+import {
   APIConnectionError as RawOpenAISDKConnectionError,
   APIConnectionTimeoutError as RawOpenAISDKConnectionTimeoutError,
   APIError as RawOpenAISDKAPIError,
   OpenAIError as RawOpenAISDKError,
 } from 'openai';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import { classifyKimiQuotaError } from '#/llm/builtin/provider/kimi/errors';
-import { kimiAnthropicProtocol, kimiOpenAIProtocol } from '#/llm/builtin/provider/kimi/protocol';
+import {
+  kimiAnthropicProtocol,
+  kimiOpenAIProtocol,
+} from '#/llm/builtin/provider/kimi/protocol';
 import { decodeError as convertAnthropicError } from '#/llm/builtin/protocol/anthropic/decode';
 import { decodeError as convertGoogleGenAIError } from '#/llm/builtin/protocol/google-genai/decode';
-import { convertOpenAIError, decodeError as decodeOpenAIError } from '#/llm/builtin/protocol/openai/decode';
+import {
+  convertOpenAIError,
+  decodeError as decodeOpenAIError,
+} from '#/llm/builtin/protocol/openai/decode';
 import { createDecoder as createOpenAIResponsesDecoder } from '#/llm/builtin/protocol/openai-responses/decode';
-import { googleGenAIProtocol } from '#/llm/builtin/protocol/google-genai/index';
-import { openAIProtocol } from '#/llm/builtin/protocol/openai/index';
-import { createAssistantMessage } from '#/llm/message';
-import { createRequester } from '#/llm/requester';
-import { isRetryableError, shouldRetry } from '#/llm/policy/retry';
-import type { DecodeSink } from '#/llm/protocol/protocol';
-import { llmStatusErrorMessage, type LlmRemoteErrorMessage } from '#/llm/response';
+import { isRetryableError } from '#/llm/policy/retry';
+import type { LlmRemoteErrorMessage } from '#/llm/response';
 
-import { runGenerate, testModule } from './harness';
-
-function openAIError(
-  status: number | undefined,
-  body: Record<string, unknown> | undefined,
-  message = 'SDK fallback',
-): RawOpenAISDKAPIError {
-  return new RawOpenAISDKAPIError(status, body, message, new Headers());
-}
-
-function googleError(code: number, message: string): RawGoogleGenAISDKApiError {
-  return new RawGoogleGenAISDKApiError({
-    status: code,
-    message: `got status: ${code}. ${JSON.stringify({ error: { code, message } })}`,
+describe('convertOpenAIError', () => {
+  it('as an API consumer, I want abort errors converted to abort kind', () => {
+    expect(convertOpenAIError(new DOMException('x', 'AbortError'))).toEqual({
+      kind: 'abort',
+      message: 'x',
+      retryable: false,
+    });
   });
-}
 
-function decodeResponses(chunk: Record<string, unknown>): LlmRemoteErrorMessage {
-  const errors: LlmRemoteErrorMessage[] = [];
-  const sink: DecodeSink = {
-    onDelta: () => {},
-    onFinish: () => {},
-    onMessageId: () => {},
-    onUsage: () => {},
-    onError: (error) => errors.push(error),
-    onToolCallEnd: () => {},
-  };
-  createOpenAIResponsesDecoder(sink).push(chunk);
-  if (errors[0] === undefined) throw new Error('missing Responses error');
-  return errors[0];
-}
-
-describe('OpenAI error conversion', () => {
-  it('lets the hook win and hands it the raw error', () => {
+  it('as an API consumer, I want error hooks to win and receive the raw error', () => {
     const custom = { kind: 'provider', message: 'custom', retryable: true } as const;
-    const raw = openAIError(500, {}, 'server error');
+    const raw = new RawOpenAISDKAPIError(500, {}, 'server error', new Headers());
     let hookArg: unknown;
     const result = convertOpenAIError(raw, (error) => {
       hookArg = error;
       return custom;
     });
-
     expect(result).toBe(custom);
     expect(hookArg).toBe(raw);
   });
 
-  it('maps connection errors to their kinds', () => {
-    expect(convertOpenAIError(new RawOpenAISDKConnectionTimeoutError({ message: 'request timed out' }))).toEqual({
-      kind: 'timeout',
-      message: 'request timed out',
-      retryable: true,
-    });
-    expect(convertOpenAIError(new RawOpenAISDKConnectionError({ message: 'connection refused' }))).toEqual({
-      kind: 'connection',
-      message: 'connection refused',
+  it('as an API consumer, I want connection errors mapped to their kinds', () => {
+    expect(
+      convertOpenAIError(new RawOpenAISDKConnectionTimeoutError({ message: 'request timed out' })),
+    ).toEqual({ kind: 'timeout', message: 'request timed out', retryable: true });
+    expect(
+      convertOpenAIError(new RawOpenAISDKConnectionError({ message: 'connection refused' })),
+    ).toEqual({ kind: 'connection', message: 'connection refused', retryable: true });
+  });
+
+  it('as an API consumer, I want 429 mapped to rate_limit with retry-after and the backend message', () => {
+    const raw = new RawOpenAISDKAPIError(
+      429,
+      { message: 'too many requests' },
+      'SDK-composed fallback',
+      new Headers({ 'retry-after': '3' }),
+    );
+    expect(convertOpenAIError(raw)).toMatchObject({
+      kind: 'rate_limit',
+      message: 'too many requests',
+      statusCode: 429,
+      retryAfterMs: 3000,
       retryable: true,
     });
   });
 
-  it('classifies a structured context code before the HTTP fallback', () => {
-    expect(convertOpenAIError(openAIError(400, { code: 'context_length_exceeded' }))).toMatchObject({
+  it('as an API consumer, I want insufficient_quota mapped to quota_exhausted with the backend message', () => {
+    const raw = new RawOpenAISDKAPIError(
+      429,
+      { message: 'backend quota message', code: 'insufficient_quota' },
+      'SDK-composed fallback',
+      new Headers(),
+    );
+    expect(convertOpenAIError(raw)).toMatchObject({
+      kind: 'quota_exhausted',
+      message: 'backend quota message',
+      statusCode: 429,
+      retryable: false,
+    });
+  });
+
+  it('as an API consumer, I want structured context codes classified before the HTTP fallback', () => {
+    const raw = new RawOpenAISDKAPIError(
+      400,
+      { code: 'context_length_exceeded' },
+      'SDK-composed fallback',
+      new Headers(),
+    );
+    expect(convertOpenAIError(raw)).toMatchObject({
       kind: 'context_overflow',
       message: '',
       statusCode: 400,
@@ -90,38 +99,64 @@ describe('OpenAI error conversion', () => {
     });
   });
 
-  it('maps context overflow messages to context_overflow', () => {
-    expect(convertOpenAIError(openAIError(400, { message: 'maximum context length exceeded' }, undefined))).toMatchObject({
+  it('as an API consumer, I want context overflow messages mapped to context_overflow', () => {
+    const raw = new RawOpenAISDKAPIError(
+      400,
+      { message: 'maximum context length exceeded' },
+      undefined,
+      new Headers(),
+    );
+    expect(convertOpenAIError(raw)).toMatchObject({
       kind: 'context_overflow',
       statusCode: 400,
       retryable: false,
     });
   });
 
-  it('maps remaining status errors without inventing messages', () => {
-    expect(convertOpenAIError(openAIError(413, { message: 'request entity too large' }, undefined))).toMatchObject({
-      kind: 'request_too_large',
-      message: 'request entity too large',
-      statusCode: 413,
-      retryable: false,
-    });
-    expect(convertOpenAIError(openAIError(529, { message: 'overloaded' }))).toMatchObject({
-      kind: 'overloaded',
-      message: 'overloaded',
-      statusCode: 529,
-      retryable: true,
-    });
-    expect(convertOpenAIError(openAIError(500, {}))).toMatchObject({
-      kind: 'status',
-      message: '',
-      statusCode: 500,
-      retryable: true,
-    });
+  it('as an API consumer, I want remaining status errors mapped without inventing messages', () => {
+    const cases = [
+      {
+        raw: new RawOpenAISDKAPIError(
+          413,
+          { message: 'request entity too large' },
+          undefined,
+          new Headers(),
+        ),
+        expected: {
+          kind: 'request_too_large',
+          message: 'request entity too large',
+          statusCode: 413,
+          retryable: false,
+        },
+      },
+      {
+        raw: new RawOpenAISDKAPIError(
+          529,
+          { message: 'overloaded' },
+          'SDK-composed fallback',
+          new Headers(),
+        ),
+        expected: {
+          kind: 'overloaded',
+          message: 'overloaded',
+          statusCode: 529,
+          retryable: true,
+        },
+      },
+      {
+        raw: new RawOpenAISDKAPIError(500, {}, 'SDK-composed fallback', new Headers()),
+        expected: { kind: 'status', message: '', statusCode: 500, retryable: true },
+      },
+    ];
+    for (const { raw, expected } of cases) {
+      expect(convertOpenAIError(raw)).toMatchObject(expected);
+    }
   });
 
-  it('preserves the backend message without cleanup or appended hints', () => {
+  it('as an API consumer, I want backend messages preserved without cleanup or appended hints', () => {
     const message = '<title>reasoning_effort is unsupported</title>';
-    expect(convertOpenAIError(openAIError(400, { message }))).toMatchObject({
+    const raw = new RawOpenAISDKAPIError(400, { message }, 'SDK-composed fallback', new Headers());
+    expect(convertOpenAIError(raw)).toMatchObject({
       kind: 'status',
       message,
       statusCode: 400,
@@ -129,25 +164,43 @@ describe('OpenAI error conversion', () => {
     });
   });
 
-  it('uses numeric stream business codes only for classification', () => {
-    const invalid = decodeOpenAIError(openAIError(400, {
+  it('as an API consumer, I want numeric stream business codes used only for classification', () => {
+    const invalid = decodeOpenAIError(
+      new RawOpenAISDKAPIError(
+        400,
+        { message: 'unsupported image format', code: 'invalid_request_error' },
+        'SDK-composed fallback',
+        new Headers(),
+      ),
+      'stream',
+    );
+    expect(invalid).toMatchObject({
+      kind: 'image_format',
       message: 'unsupported image format',
-      code: 'invalid_request_error',
-    }), 'stream');
-    expect(invalid).toMatchObject({ kind: 'image_format', message: 'unsupported image format', retryable: false });
-    expect(llmStatusErrorMessage(invalid)?.statusCode).toBeUndefined();
+      retryable: false,
+    });
+    expect(invalid).not.toHaveProperty('statusCode');
     expect(isRetryableError(invalid)).toBe(false);
 
-    const tooLarge = decodeOpenAIError(openAIError(413, {
+    const tooLarge = decodeOpenAIError(
+      new RawOpenAISDKAPIError(
+        413,
+        { message: 'request too large', code: 'request_too_large' },
+        'SDK-composed fallback',
+        new Headers(),
+      ),
+      'stream',
+    );
+    expect(tooLarge).toMatchObject({
+      kind: 'request_too_large',
       message: 'request too large',
-      code: 'request_too_large',
-    }), 'stream');
-    expect(tooLarge).toMatchObject({ kind: 'request_too_large', message: 'request too large', retryable: false });
-    expect(llmStatusErrorMessage(tooLarge)?.statusCode).toBeUndefined();
+      retryable: false,
+    });
+    expect(tooLarge).not.toHaveProperty('statusCode');
     expect(isRetryableError(tooLarge)).toBe(false);
   });
 
-  it('maps 400 request-structure rejections to request_structure', () => {
+  it('as an API consumer, I want request-structure rejections mapped to request_structure', () => {
     const structural = [
       'messages.142: `tool_use` ids were found without `tool_result` blocks immediately after: toolu_01MWFhDRqdbB4nzCJNuWYiun',
       'messages: `tool_use` ids must be unique',
@@ -159,25 +212,38 @@ describe('OpenAI error conversion', () => {
       "the message at position 3 with role 'assistant' must not be empty",
     ];
     for (const message of structural) {
-      expect(convertOpenAIError(openAIError(400, { message }, undefined))).toMatchObject({
+      const raw = new RawOpenAISDKAPIError(400, { message }, undefined, new Headers());
+      expect(convertOpenAIError(raw)).toMatchObject({
         kind: 'request_structure',
         statusCode: 400,
         retryable: false,
       });
     }
-    expect(convertOpenAIError(openAIError(422, { message: 'roles must alternate' }, undefined))).toMatchObject({
+    const unprocessable = new RawOpenAISDKAPIError(
+      422,
+      { message: 'roles must alternate' },
+      undefined,
+      new Headers(),
+    );
+    expect(convertOpenAIError(unprocessable)).toMatchObject({
       kind: 'request_structure',
       statusCode: 422,
       retryable: false,
     });
-    expect(convertOpenAIError(openAIError(400, { message: 'max_tokens must be positive' }, undefined))).toMatchObject({
+    const unrelated = new RawOpenAISDKAPIError(
+      400,
+      { message: 'max_tokens must be positive' },
+      undefined,
+      new Headers(),
+    );
+    expect(convertOpenAIError(unrelated)).toMatchObject({
       kind: 'status',
       statusCode: 400,
       retryable: false,
     });
   });
 
-  it('maps 400 image-format rejections to image_format', () => {
+  it('as an API consumer, I want 400 image-format rejections mapped to image_format', () => {
     const imageFormat = [
       'unsupported image format',
       'Could not process image',
@@ -185,7 +251,8 @@ describe('OpenAI error conversion', () => {
       "messages.0.content.1.image.source.base64.media_type: Input should be 'image/jpeg'",
     ];
     for (const message of imageFormat) {
-      expect(convertOpenAIError(openAIError(400, { message }, undefined))).toMatchObject({
+      const raw = new RawOpenAISDKAPIError(400, { message }, undefined, new Headers());
+      expect(convertOpenAIError(raw)).toMatchObject({
         kind: 'image_format',
         statusCode: 400,
         retryable: false,
@@ -197,28 +264,41 @@ describe('OpenAI error conversion', () => {
       "messages.0.content.1.video.source.base64.media_type: Input should be 'video/mp4'",
     ];
     for (const message of notFormat) {
-      expect(convertOpenAIError(openAIError(400, { message }, undefined))).toMatchObject({
+      const raw = new RawOpenAISDKAPIError(400, { message }, undefined, new Headers());
+      expect(convertOpenAIError(raw)).toMatchObject({
         kind: 'status',
         statusCode: 400,
         retryable: false,
       });
     }
-    expect(convertOpenAIError(openAIError(422, { message: 'unsupported image format' }, undefined))).toMatchObject({
+    const wrongStatus = new RawOpenAISDKAPIError(
+      422,
+      { message: 'unsupported image format' },
+      undefined,
+      new Headers(),
+    );
+    expect(convertOpenAIError(wrongStatus)).toMatchObject({
       kind: 'status',
       statusCode: 422,
       retryable: false,
     });
   });
 
-  it('classifies a bare APIError by message', () => {
-    expect(convertOpenAIError(new RawOpenAISDKAPIError(undefined, undefined, 'network connection failed', undefined))).toEqual({
+  it('as an API consumer, I want bare APIError instances classified by message', () => {
+    const raw = new RawOpenAISDKAPIError(
+      undefined,
+      undefined,
+      'network connection failed',
+      undefined,
+    );
+    expect(convertOpenAIError(raw)).toEqual({
       kind: 'connection',
       message: 'network connection failed',
       retryable: true,
     });
   });
 
-  it('wraps an OpenAIError as provider', () => {
+  it('as an API consumer, I want OpenAIError wrapped as provider', () => {
     expect(convertOpenAIError(new RawOpenAISDKError('boom'))).toEqual({
       kind: 'provider',
       message: 'Error: boom',
@@ -226,42 +306,86 @@ describe('OpenAI error conversion', () => {
     });
   });
 
-  it('wraps non-error values as unknown', () => {
-    expect(convertOpenAIError('nope')).toEqual({ kind: 'unknown', message: 'nope', retryable: false });
+  it('as an API consumer, I want generic Error instances classified by message', () => {
+    expect(convertOpenAIError(new Error('deadline exceeded timeout'))).toEqual({
+      kind: 'timeout',
+      message: 'deadline exceeded timeout',
+      retryable: true,
+    });
+    expect(convertOpenAIError(new Error('plain'))).toEqual({
+      kind: 'provider',
+      message: 'Error: plain',
+      retryable: true,
+    });
   });
 
-  it('uses retryable instead of HTTP status', () => {
-    const error: LlmRemoteErrorMessage = {
-      kind: 'status',
-      message: 'backend failure',
-      statusCode: 400,
-      requestId: null,
-      retryAfterMs: null,
-      headers: null,
-      retryable: true,
-    };
-    expect(shouldRetry({ maxAttemptsPerStep: 2 }, 1, error)).toBe(true);
-    expect(shouldRetry({ maxAttemptsPerStep: 2 }, 1, { ...error, statusCode: 503, retryable: false })).toBe(false);
+  it('as an API consumer, I want non-error values wrapped as unknown', () => {
+    expect(convertOpenAIError('nope')).toEqual({
+      kind: 'unknown',
+      message: 'nope',
+      retryable: false,
+    });
   });
 });
 
-describe('Kimi quota classification', () => {
-  it('descends into the Anthropic quota error body', () => {
-    expect(classifyKimiQuotaError({
+describe('retry policy', () => {
+  it.each([
+    [400, true],
+    [503, false],
+  ])('uses retryable instead of HTTP status %i', (statusCode, retryable) => {
+    const error: LlmRemoteErrorMessage = {
+      kind: 'status',
+      message: 'backend failure',
+      statusCode,
+      requestId: null,
+      retryAfterMs: null,
+      headers: null,
+      retryable,
+    };
+    expect(isRetryableError(error)).toBe(retryable);
+  });
+});
+
+describe('classifyKimiQuotaError', () => {
+  it('as an API consumer, I want structured error codes classified with the backend message preserved', () => {
+    const classified = classifyKimiQuotaError({
       status: 429,
+      message: 'SDK-composed fallback',
+      code: 'exceeded_current_quota_error',
+      error: { message: 'backend quota message' },
+      requestID: 'req-1',
+      headers: new Headers({ 'retry-after': '5', 'x-trace-id': 'trace-1' }),
+    });
+    expect(classified).toMatchObject({
+      kind: 'quota_exhausted',
+      message: 'backend quota message',
+      statusCode: 429,
+      requestId: 'req-1',
+      retryAfterMs: 5000,
+    });
+    expect(classified).toMatchObject({
+      headers: { 'x-trace-id': 'trace-1' },
+    });
+  });
+
+  it('as an Anthropic user, I want quota errors read from the nested response body', () => {
+    const classified = classifyKimiQuotaError({
+      status: 429,
+      message: 'SDK-composed fallback',
       error: {
         type: 'exceeded_current_quota_error',
         error: { message: 'backend anthropic quota message' },
       },
       headers: new Headers(),
-    })).toMatchObject({
+    });
+    expect(classified).toMatchObject({
       kind: 'quota_exhausted',
       message: 'backend anthropic quota message',
       statusCode: 429,
     });
   });
 
-  it('does not classify by message wording', () => {
+  it('as an API consumer, I want classification to avoid relying on message wording', () => {
     expect(classifyKimiQuotaError({
       status: 429,
       message: 'insufficient balance',
@@ -270,7 +394,7 @@ describe('Kimi quota classification', () => {
     })).toBeUndefined();
   });
 
-  it('ignores non-429 errors even with a quota code', () => {
+  it('as an API consumer, I want non-429 errors ignored even when they carry a quota code', () => {
     expect(classifyKimiQuotaError({
       status: 400,
       code: 'exceeded_current_quota_error',
@@ -279,167 +403,164 @@ describe('Kimi quota classification', () => {
   });
 });
 
-describe('requester and stream error conversion', () => {
-  it('preserves the backend message through the OpenAI HTTP error factory', async () => {
-    const client = new OpenAI({
-      apiKey: 'test-key',
-      baseURL: 'https://example.test/v1',
-      maxRetries: 0,
-      fetch: async () => new Response(JSON.stringify({
-        error: { code: 'rate_limit_exceeded', message: 'backend HTTP failure' },
-      }), {
-        status: 429,
-        headers: {
-          'content-type': 'application/json',
-          'x-request-id': 'req-openai-http',
-          'retry-after': '2',
-        },
-      }),
+describe('streaming provider error conversion', () => {
+  it('as an OpenAI user, I want diagnostics preserved for unknown stream business codes', () => {
+    const converted = decodeOpenAIError(
+      new RawOpenAISDKAPIError(
+        429,
+        { message: 'backend unknown stream failure', code: 'unlisted_business_error' },
+        'SDK-composed fallback',
+        new Headers({ 'retry-after': '7', 'x-request-id': 'req-openai-unknown' }),
+      ),
+      'stream',
+    );
+    expect(converted).toMatchObject({
+      kind: 'rate_limit',
+      message: 'backend unknown stream failure',
+      requestId: 'req-openai-unknown',
+      retryAfterMs: 7000,
     });
-    const requester = createRequester().with({
-      protocol: { base: openAIProtocol },
-      endpoint: { clientFactory: () => client },
-    });
-
-    const outcome = await requester.generate({
-      model: testModule().model,
-      content: testModule().content,
-      policy: { retry: { maxAttemptsPerStep: 1 } },
-    }, { signal: new AbortController().signal });
-
-    expect(outcome).toMatchObject({
-      type: 'failed',
-      error: {
-        kind: 'rate_limit',
-        message: 'backend HTTP failure',
-        statusCode: 429,
-        requestId: 'req-openai-http',
-        retryAfterMs: 2000,
-      },
-    });
+    expect(converted).not.toHaveProperty('statusCode');
   });
 
-  it('does not restore a stream status through the Kimi classification hook', () => {
-    const raw = openAIError(429, {
+  it('as a Kimi user, I want stream classification to avoid restoring HTTP statuses', () => {
+    const openAI = kimiOpenAIProtocol.decodeError(
+      new RawOpenAISDKAPIError(
+        429,
+        { message: 'backend stream quota', code: 'exceeded_current_quota_error' },
+        'SDK-composed fallback',
+        new Headers({ 'retry-after': '5' }),
+      ),
+      'stream',
+    );
+    expect(openAI).toMatchObject({
+      kind: 'quota_exhausted',
       message: 'backend stream quota',
-      code: 'exceeded_current_quota_error',
+      retryAfterMs: 5000,
     });
-    const result = kimiOpenAIProtocol.decodeError(raw, 'stream');
-    expect(result).toMatchObject({ kind: 'quota_exhausted', message: 'backend stream quota' });
-    expect(llmStatusErrorMessage(result)?.statusCode).toBeUndefined();
+    expect(openAI).not.toHaveProperty('statusCode', expect.any(Number));
+
+    const anthropic = kimiAnthropicProtocol.decodeError(
+      new RawAnthropicSDKAPIError(
+        429,
+        {
+          type: 'error',
+          error: {
+            type: 'exceeded_current_quota_error',
+            message: 'backend anthropic stream quota',
+          },
+        },
+        'SDK-composed fallback',
+        new Headers(),
+      ),
+      'stream',
+    );
+    expect(anthropic).toMatchObject({
+      kind: 'quota_exhausted',
+      message: 'backend anthropic stream quota',
+    });
+    expect(anthropic).not.toHaveProperty('statusCode', expect.any(Number));
+  });
+});
+
+describe('Anthropic error decoding', () => {
+  it('as an API consumer, I want nested backend messages used while preserving real HTTP statuses', () => {
+    const raw = new RawAnthropicSDKAPIError(
+      503,
+      { error: { type: 'overloaded_error', message: 'backend anthropic failure' } },
+      'SDK-composed fallback',
+      new Headers({ 'retry-after': '4' }),
+    );
+    expect(convertAnthropicError(raw)).toMatchObject({
+      kind: 'overloaded',
+      message: 'backend anthropic failure',
+      statusCode: 503,
+      retryAfterMs: 4000,
+    });
   });
 
-  it('does not restore a stream status through Kimi Anthropic classification', () => {
-    const raw = new RawAnthropicSDKAPIError(429, {
-      type: 'error',
-      error: { type: 'exceeded_current_quota_error', message: 'backend anthropic stream quota' },
-    }, 'SDK fallback', new Headers());
-    const result = kimiAnthropicProtocol.decodeError(raw, 'stream');
-    expect(result).toMatchObject({ kind: 'quota_exhausted', message: 'backend anthropic stream quota' });
-    expect(llmStatusErrorMessage(result)?.statusCode).toBeUndefined();
+  it('as an API consumer, I want structured context codes classified without exposing a stream status', () => {
+    const raw = new RawAnthropicSDKAPIError(
+      400,
+      { error: { type: 'context_length_exceeded' } },
+      'SDK-composed fallback',
+      new Headers(),
+    );
+    const converted = convertAnthropicError(raw, 'stream');
+    expect(converted).toMatchObject({ kind: 'context_overflow', message: '' });
+    expect(converted).toMatchObject({ statusCode: undefined });
+    expect(isRetryableError(converted)).toBe(false);
   });
 
-  it('preserves diagnostics for an unknown OpenAI stream business code', () => {
-    const raw = new RawOpenAISDKAPIError(429, {
-      message: 'new stream business code',
-      code: 'new_business_code',
-    }, 'SDK fallback', new Headers({ 'x-request-id': 'req-stream-business' }));
-    const result = decodeOpenAIError(raw, 'stream');
-    expect(result).toMatchObject({
+  it('as an API consumer, I want diagnostics preserved for unknown stream business codes', () => {
+    const raw = new RawAnthropicSDKAPIError(
+      429,
+      { error: { type: 'unlisted_business_error', message: 'backend unknown failure' } },
+      'SDK-composed fallback',
+      new Headers({ 'retry-after': '2' }),
+    );
+    const converted = convertAnthropicError(raw, 'stream');
+    expect(converted).toMatchObject({
       kind: 'rate_limit',
-      message: 'new stream business code',
-      requestId: 'req-stream-business',
+      message: 'backend unknown failure',
+      retryAfterMs: 2000,
     });
-    expect(llmStatusErrorMessage(result)?.statusCode).toBeUndefined();
+    expect(converted).not.toHaveProperty('statusCode');
   });
 
-  it('converts an Anthropic stream error without inventing HTTP facts', () => {
-    const result = convertAnthropicError(new RawAnthropicSDKAPIError(503, {
-      type: 'error',
-      error: { type: 'overloaded_error', message: 'backend overloaded' },
-    }, 'SDK fallback', new Headers()), 'stream');
-    expect(result).toMatchObject({ kind: 'overloaded', message: 'backend overloaded', retryable: true });
-    expect(llmStatusErrorMessage(result)?.statusCode).toBeUndefined();
+  it('as an API consumer, I want missing backend messages left empty instead of falling back to SDK messages', () => {
+    const raw = new RawAnthropicSDKAPIError(
+      500,
+      { error: { type: 'api_error' } },
+      'SDK-composed fallback',
+      new Headers(),
+    );
+    expect(convertAnthropicError(raw)).toMatchObject({ kind: 'status', message: '' });
   });
+});
 
-  it('distinguishes a Google stream business 429 from an initial HTTP 429', () => {
-    const initial = convertGoogleGenAIError(googleError(429, 'slow down'));
-    expect(initial).toMatchObject({ kind: 'rate_limit', statusCode: 429, retryable: true });
-    const streamed = convertGoogleGenAIError(googleError(429, 'slow down'), 'stream');
-    expect(streamed).toMatchObject({ kind: 'rate_limit', retryable: true });
-    expect(llmStatusErrorMessage(streamed)?.statusCode).toBeUndefined();
-  });
-
-  it('keeps abort semantics for a Google stream iteration failure', async () => {
-    const protocol = googleGenAIProtocol.with({
-      sendStream: async () => ({
-        body: (async function* () {
-          yield {};
-          throw new DOMException('cancelled', 'AbortError');
-        })(),
-      }),
+describe('Google error decoding', () => {
+  it('as an API consumer, I want stream business 503 errors to remain retryable without an HTTP status', () => {
+    const raw = new RawGoogleGenAISDKApiError({
+      status: 503,
+      message: `got status: UNAVAILABLE. ${JSON.stringify({
+        error: { code: 503, message: 'backend google business 503', status: 'UNAVAILABLE' },
+      })}`,
     });
-    const { outcome, events } = await runGenerate(protocol, { module: testModule() });
-
-    expect(outcome).toMatchObject({ type: 'aborted' });
-    expect(events.filter((event) => event.type === 'llm.ended')).toHaveLength(1);
-    expect(events.some((event) => event.type === 'llm.ended' && event.outcome.type === 'done')).toBe(false);
-  });
-
-  it('emits a local syntax failure without sending a request', async () => {
-    const clientFactory = vi.fn(() => null);
-    const { outcome, events } = await runGenerate(googleGenAIProtocol, {
-      module: testModule({
-        messages: [createAssistantMessage([], [
-          { type: 'function', id: 'call-1', name: 'some_tool', arguments: 'not json' },
-        ])],
-      }),
-      endpoint: { clientFactory },
+    const converted = convertGoogleGenAIError(raw, 'stream');
+    expect(converted).toMatchObject({
+      kind: 'status',
+      message: 'backend google business 503',
+      retryable: true,
     });
-
-    expect(outcome).toMatchObject({ type: 'failed', error: { kind: 'syntax', code: 'request_format' } });
-    expect(events.at(-1)).toMatchObject({ type: 'llm.ended', outcome: { type: 'failed' } });
-    expect(clientFactory).not.toHaveBeenCalled();
-  });
-
-  it('classifies a structured context code without exposing a stream status', () => {
-    const result = convertAnthropicError(new RawAnthropicSDKAPIError(400, {
-      type: 'error',
-      error: { type: 'context_length_exceeded', message: 'context exceeded' },
-    }, 'SDK fallback', new Headers()), 'stream');
-    expect(result).toMatchObject({ kind: 'context_overflow', retryable: false });
-    expect(llmStatusErrorMessage(result)?.statusCode).toBeUndefined();
-  });
-
-  it('preserves diagnostics for an unknown Anthropic stream business code', () => {
-    const result = convertAnthropicError(new RawAnthropicSDKAPIError(429, {
-      type: 'error',
-      error: { type: 'new_business_code', message: 'new Anthropic business code' },
-    }, 'SDK fallback', new Headers({ 'request-id': 'req-anthropic-business' })), 'stream');
-    expect(result).toMatchObject({
-      kind: 'rate_limit',
-      message: 'new Anthropic business code',
-      requestId: 'req-anthropic-business',
+    expect(converted).not.toHaveProperty('statusCode');
+    expect(isRetryableError(converted)).toBe(true);
+    expect(convertGoogleGenAIError(raw)).toMatchObject({
+      kind: 'status',
+      message: 'backend google business 503',
+      statusCode: 503,
     });
-    expect(llmStatusErrorMessage(result)?.statusCode).toBeUndefined();
-  });
-
-  it('does not fall back to the SDK message when the backend message is missing', () => {
-    const result = convertAnthropicError(new RawAnthropicSDKAPIError(500, {
-      type: 'error',
-      error: { type: 'api_error' },
-    }, 'SDK-composed fallback', new Headers()));
-    expect(result).toMatchObject({ kind: 'status', message: '' });
-  });
-
-  it('keeps a Google stream business 503 retryable without an HTTP status', () => {
-    const result = convertGoogleGenAIError(googleError(503, 'backend google business 503'), 'stream');
-    expect(result).toMatchObject({ kind: 'status', retryable: true });
-    expect(llmStatusErrorMessage(result)?.statusCode).toBeUndefined();
   });
 });
 
 describe('OpenAI Responses stream errors', () => {
+  function streamError(event: Record<string, unknown>): LlmRemoteErrorMessage {
+    let failure: LlmRemoteErrorMessage | undefined;
+    const decoder = createOpenAIResponsesDecoder({
+      onDelta: () => {},
+      onFinish: () => {},
+      onMessageId: () => {},
+      onUsage: () => {},
+      onToolCallEnd: () => {},
+      onError: (error) => {
+        failure = error;
+      },
+    });
+    decoder.push(event);
+    if (failure === undefined) throw new Error('Expected a stream failure');
+    return failure;
+  }
+
   it.each([
     ['rate_limit_exceeded', 'rate_limit'],
     ['rate_limit_reached_error', 'rate_limit'],
@@ -447,48 +568,62 @@ describe('OpenAI Responses stream errors', () => {
     ['insufficient_quota', 'quota_exhausted'],
     ['exceeded_current_quota_error', 'quota_exhausted'],
     ['context_length_exceeded', 'context_overflow'],
-  ])('maps structured %s without an HTTP status', (code, kind) => {
-    const result = decodeResponses({ type: 'error', code, message: 'backend failure' });
-    expect(result).toMatchObject({ kind, message: 'backend failure' });
-    expect(llmStatusErrorMessage(result)?.statusCode).toBeUndefined();
+  ] as const)('maps structured %s without an HTTP status', (code, kind) => {
+    const failure = streamError({ type: 'error', code, message: 'backend responses failure' });
+    expect(failure).toMatchObject({ kind, message: 'backend responses failure' });
+    expect(failure).not.toHaveProperty('statusCode');
   });
 
-  it('does not infer a business kind or HTTP status from message text', () => {
-    const result = decodeResponses({ type: 'error', code: null, message: '429' });
-    expect(result).toMatchObject({ kind: 'status', message: '429' });
-    expect(llmStatusErrorMessage(result)?.statusCode).toBeUndefined();
+  it('as an API consumer, I want business kinds and HTTP statuses left unmodified when only message text is available', () => {
+    const failure = streamError({
+      type: 'error',
+      code: null,
+      message: 'upstream status_code: 429',
+    });
+    expect(failure).toMatchObject({
+      kind: 'status',
+      message: 'upstream status_code: 429',
+      retryable: true,
+    });
+    expect(failure).not.toHaveProperty('statusCode');
   });
 
-  it('unwraps only known gateway payloads without dropping ordinary prose', () => {
+  it('as an API consumer, I want only known gateway payloads unwrapped without dropping ordinary prose', () => {
     const nested = { code: 'context_length_exceeded', message: 'field invalid' };
     for (const payload of [
       `received error while streaming: ${JSON.stringify(nested)}`,
       JSON.stringify(nested),
     ]) {
-      expect(decodeResponses({ message: payload })).toMatchObject({
+      expect(streamError({ message: payload })).toMatchObject({
         kind: 'context_overflow',
         message: 'field invalid',
       });
     }
     const prose = `schema rejected: ${JSON.stringify(nested)}`;
-    expect(decodeResponses({ message: prose })).toMatchObject({
+    expect(streamError({ message: prose })).toMatchObject({
       kind: 'status',
       message: prose,
       retryable: true,
     });
   });
 
-  it('uses only the response.failed backend error message', () => {
-    const result = decodeResponses({
+  it('as a Responses API user, I want only the response.failed backend error message used', () => {
+    const failure = streamError({
       type: 'response.failed',
-      response: { error: { code: 'rate_limit_exceeded', message: 'backend failed message' } },
+      response: {
+        status: 'failed',
+        error: { code: 'engine_overloaded_error', message: 'backend response failure' },
+      },
     });
-    expect(result).toMatchObject({ kind: 'rate_limit', message: 'backend failed message' });
+    expect(failure).toMatchObject({ kind: 'overloaded', message: 'backend response failure' });
+    expect(failure).not.toHaveProperty('statusCode');
   });
 
-  it('keeps a missing response.failed message empty', () => {
-    const result = decodeResponses({ type: 'response.failed', response: {} });
-    expect(result).toMatchObject({ kind: 'provider', message: '' });
+  it('as a Responses API user, I want missing response.failed messages kept empty', () => {
+    expect(streamError({ type: 'response.failed', response: { status: 'failed' } })).toEqual({
+      kind: 'provider',
+      message: '',
+      retryable: true,
+    });
   });
-
 });

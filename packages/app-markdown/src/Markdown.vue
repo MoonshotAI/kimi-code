@@ -14,8 +14,8 @@ import { ensureMarkdownWorkers } from './lib/markdownWorkers';
 import { useIsDark } from '@moonshot-ai/app-core';
 import { PinScrollKey } from '@moonshot-ai/app-client/contracts';
 import { HistoryStateKey, OpenFileLinkKey, OpenLocalHtmlFileKey, OpenSidebarBrowserUrlKey, ResolveImageKey } from '@moonshot-ai/app-core/contracts';
-import { classifyMentionHref, decodeSkillMention, mentionActionLine, mentionActionPath, mentionActionSuffix, unescapeLinkDest, unescapeRenderedLinkText } from '@moonshot-ai/app-composer/model';
-import { fileMentionIconSvg, mentionHrefToPath, mentionIconSvg, truncateMentionName } from '@moonshot-ai/app-composer/features/mention';
+import { classifyMentionHref, decodeSessionMention, decodeSkillMention, mentionActionLine, mentionActionPath, mentionActionSuffix, sessionMentionPath, unescapeLinkDest, unescapeRenderedLinkText } from '@moonshot-ai/app-composer/model';
+import { mentionHrefToPath, mentionIconSvg, truncateMentionName } from '@moonshot-ai/app-composer/features/mention';
 import { collectFilePathAliases, findFilePathLinks, isRelativeLinkCandidate, type FilePathResolution } from './lib/filePathLinks';
 import { splitFrontmatter } from './lib/frontmatter';
 import Frontmatter from './Frontmatter.vue';
@@ -388,20 +388,22 @@ function processMarkdownLinks(): void {
     if (link.querySelector('img')) continue;
     link.dataset.mdLinkHandled = 'true';
     link.removeAttribute('title');
+    const pathLike = kind === 'file' || kind === 'folder';
     const skill = kind === 'skill' ? decodeSkillMention(href) : undefined;
-    const path = skill?.path ?? mentionHrefToPath(href);
+    const session = kind === 'session' ? decodeSessionMention(href) : null;
+    const path = skill?.path ?? (session === null ? mentionHrefToPath(href) : sessionMentionPath(session));
     const name = unescapeRenderedLinkText(link.textContent ?? '');
     link.classList.add('mention-pill', `mention-${kind}`);
     link.dataset.mentionKind = kind;
     link.dataset.mentionName = skill?.name ?? name;
-    link.dataset.mentionPath = skill?.path ?? (props.resolveMentionPath?.(path) ?? path);
-    if (kind !== 'skill') {
+    link.dataset.mentionPath = pathLike ? (props.resolveMentionPath?.(path) ?? path) : path;
+    if (pathLike) {
       const actionPath =
         props.resolveMentionPath?.(unescapeLinkDest(mentionActionPath(href), false)) ??
         unescapeLinkDest(mentionActionPath(href), false);
       if (actionPath !== link.dataset.mentionPath) link.dataset.mentionActionPath = actionPath;
     }
-    if (kind === 'skill' || props.openFile) link.removeAttribute('href');
+    if (!pathLike || props.openFile) link.removeAttribute('href');
     if (kind === 'skill' || (kind === 'file' && props.openFile)) {
       link.tabIndex = 0;
       link.setAttribute('role', 'button');
@@ -415,10 +417,7 @@ function processMarkdownLinks(): void {
       const icon = document.createElement('span');
       icon.className = 'mention-pill-icon';
       icon.setAttribute('aria-hidden', 'true');
-      icon.innerHTML =
-        kind === 'skill'
-          ? mentionIconSvg('skill', '', name)
-          : fileMentionIconSvg(path, name, kind === 'folder');
+      icon.innerHTML = mentionIconSvg(kind, path, name);
       link.prepend(icon);
     }
     const actionLine = mentionActionLine(href);

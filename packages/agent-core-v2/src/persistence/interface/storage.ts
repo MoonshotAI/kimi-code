@@ -1,6 +1,9 @@
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import { registerErrorDomain, type ErrorDomain } from '#/_base/errors/codes';
 import { Error2, type Error2Options } from '#/_base/errors/errors';
+import type { Storage } from '@moonshot-ai/core/store/storage';
+
+export type { StorageAppendOptions, StorageReadRange, StorageWriteOptions } from '@moonshot-ai/core/store/storage';
 
 export const StorageErrors = {
   codes: {
@@ -62,6 +65,8 @@ registerErrorDomain(StorageErrors);
 export type StorageErrorCode = (typeof StorageErrors.codes)[keyof typeof StorageErrors.codes];
 
 export class StorageError extends Error2 {
+  declare readonly code: StorageErrorCode;
+
   constructor(code: StorageErrorCode, message: string, options?: Error2Options) {
     super(code, message, options);
     this.name = 'StorageError';
@@ -115,41 +120,8 @@ export function toStorageIoError(error: unknown, ctx: { path: string; op: string
   });
 }
 
-export interface StorageWriteOptions {
-  readonly atomic?: boolean;
-  readonly signal?: AbortSignal;
-}
-
-export interface StorageAppendOptions {
-  readonly durable?: boolean;
-}
-
-export interface StorageReadRange {
-  readonly start: number;
-  readonly end: number;
-}
-
-export interface IFileSystemStorageService {
+export interface IFileSystemStorageService extends Storage {
   readonly _serviceBrand: undefined;
-
-  read(scope: string, key: string): Promise<Uint8Array | undefined>;
-  readStream(scope: string, key: string, range?: StorageReadRange): AsyncIterable<Uint8Array>;
-  write(scope: string, key: string, data: Uint8Array, options?: StorageWriteOptions): Promise<void>;
-  writeStream(
-    scope: string,
-    key: string,
-    source: AsyncIterable<Uint8Array>,
-    options?: StorageWriteOptions,
-  ): Promise<void>;
-  append(scope: string, key: string, data: Uint8Array, options?: StorageAppendOptions): Promise<void>;
-  list(scope: string, prefix?: string): Promise<readonly string[]>;
-  delete(scope: string, key: string): Promise<void>;
-  size(scope: string, key: string): Promise<number | undefined>;
-  sizeSync(scope: string, key: string): number | undefined;
-  mtime(scope: string, key: string): Promise<number | undefined>;
-  pathFor(scope: string, key: string): string | undefined;
-  flush(): Promise<void>;
-  close(): Promise<void>;
 }
 
 export const IFileSystemStorageService: ServiceIdentifier<IFileSystemStorageService> =

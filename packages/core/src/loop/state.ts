@@ -8,7 +8,7 @@ import type { LoopAck, LoopEmitted } from './contract/emitted';
 import type { Inbox, MessageSource, QueuedItem, TurnTrigger } from './contract/inbox';
 import { CRASHED, type AsyncToolOutcome, type Cause, type StepOutcome, type ToolCallOutcome, type TurnOutcome } from './contract/outcome';
 import type { LoopProfile } from './contract/profile';
-import type { HookFailure } from './hook/failure';
+import type { HookFailure } from '#/hook/loop/failure';
 import { loopProjection, type LoopRecord, type LoopRecordState } from './record';
 import { abortedToolOutcome, type ToolCompletionFactory } from './tool/outcome';
 

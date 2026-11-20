@@ -55,6 +55,7 @@ export const steerEntrySchema = z.object({
   content: z.array(promptPartSchema),
   attributes: z.object({
     origin: z.object({ kind: z.literal('user') }),
+    promptId: z.string().min(1).optional(),
   }),
 });
 

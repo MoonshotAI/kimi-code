@@ -14,6 +14,7 @@ vi.mock('@moonshot-ai/app-client/composables', async () => {
   const { ref } = await import('vue');
   return {
     usePanelScroll: () => ({ scroller: ref(null), dock: ref(null), showJump: ref(false), following: ref(true), onScroll: vi.fn(), follow: panelScroll.follow, hold: panelScroll.hold }),
+    useEscInterrupt: () => ({ armed: ref(false), press: vi.fn(), reset: vi.fn() }),
   };
 });
 const renderer = createRenderer<any, any>({ patchProp() {}, insert() {}, remove() {}, createElement: () => ({}), createText: () => ({}), createComment: () => ({}), setText() {}, setElementText() {}, parentNode: () => null, nextSibling: () => null });

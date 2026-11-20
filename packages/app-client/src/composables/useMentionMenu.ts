@@ -3,7 +3,9 @@ import type { FileItem } from '@moonshot-ai/app-core/client';
 import type { AppSkill } from '@moonshot-ai/app-core/api';
 import { skillIdentity } from '@moonshot-ai/app-core/lib';
 import type { AttachmentEntry } from '@moonshot-ai/app-composer/features/attachment';
+import { sessionMentionPath } from '@moonshot-ai/app-composer/model';
 import type { TextFieldLike } from '@moonshot-ai/app-composer/runtime';
+import type { SessionMentionCandidate } from '../lib/sessionReferences';
 
 export interface AttachmentMentionCandidate {
   entry: AttachmentEntry;
@@ -31,6 +33,12 @@ export type MentionItem =
       kind: 'skill';
       skill: AppSkill;
       matchPositions?: number[];
+    }
+  | { kind: 'session-group' }
+  | {
+      kind: 'session';
+      session: SessionMentionCandidate;
+      matchPositions?: number[];
     };
 
 export type MentionEntry =
@@ -42,7 +50,8 @@ export type MentionEntry =
       attachmentKind: AttachmentEntry['kind'];
     }
   | { kind: 'file' | 'folder'; path: string; name: string }
-  | { kind: 'skill'; name: string; path: string };
+  | { kind: 'skill'; name: string; path: string }
+  | { kind: 'session'; name: string; path: string };
 
 export interface FileSearchOptions {
   signal?: AbortSignal;
@@ -54,6 +63,11 @@ export type FileSearch = (
   options?: FileSearchOptions,
 ) => Promise<FileItem[]>;
 
+export type SessionSearch = (
+  query: string,
+  options: { signal: AbortSignal },
+) => Promise<SessionMentionCandidate[]>;
+
 export interface MentionMenuDeps {
   text: Ref<string>;
   editorRef: Ref<TextFieldLike | null>;
@@ -61,6 +75,8 @@ export interface MentionMenuDeps {
   skills?: () => AppSkill[];
   attachments?: () => AttachmentMentionCandidate[];
   browsers?: () => BrowserMentionCandidate[];
+  sessions?: () => SessionMentionCandidate[];
+  searchSessions?: SessionSearch;
   insertMention?: (entry: MentionEntry, range: { start: number; end: number }) => void;
   completeMention?: (text: string, range: { start: number; end: number }) => void;
 }
@@ -176,8 +192,42 @@ function rankAttachments(
     }));
 }
 
+const SESSION_MENU_LIMIT = 50;
+const SESSION_SEARCH_DELAY_MS = 150;
+
+function sessionMatchTier(session: SessionMentionCandidate, query: string): number {
+  const title = session.title.toLowerCase();
+  if (session.id.toLowerCase() === query) return 5;
+  if (title.startsWith(query)) return 4;
+  if (title.includes(query)) return 3;
+  if (session.lastPrompt?.toLowerCase().includes(query) === true) return 2;
+  return session.workspaceName?.toLowerCase().includes(query) === true ? 1 : 0;
+}
+
+function mergeSessions(
+  loaded: readonly SessionMentionCandidate[],
+  found: readonly SessionMentionCandidate[],
+): SessionMentionCandidate[] {
+  const loadedIds = new Set(loaded.map((session) => session.id));
+  return [...loaded, ...found.filter((session) => !loadedIds.has(session.id))];
+}
+
+function rankSessions(sessions: readonly SessionMentionCandidate[], token: string): MentionItem[] {
+  const query = token.toLowerCase();
+  return sessions
+    .map((session, index) => ({ session, index, tier: sessionMatchTier(session, query) }))
+    .filter(({ tier }) => tier > 0)
+    .toSorted((left, right) => right.tier - left.tier || left.index - right.index)
+    .slice(0, SESSION_MENU_LIMIT)
+    .map(({ session }) => ({
+      kind: 'session' as const,
+      session,
+      matchPositions: contiguousMatchPositions(session.title, token),
+    }));
+}
+
 export function useMentionMenu(deps: MentionMenuDeps) {
-  const { text, editorRef, searchFiles, skills, attachments, browsers, insertMention, completeMention } = deps;
+  const { text, editorRef, searchFiles, skills, attachments, browsers, sessions, searchSessions, insertMention, completeMention } = deps;
 
   const open = ref(false);
   const fileItems = ref<FileItem[]>([]);
@@ -188,11 +238,19 @@ export function useMentionMenu(deps: MentionMenuDeps) {
   const active = ref(0);
   const loading = ref(false);
   const localItemsEnabled = ref(false);
+  const sessionMenuOpen = ref(false);
+  const foundSessions = ref<SessionMentionCandidate[]>([]);
+  const sessionSearching = ref(false);
   const attachmentItems = computed<MentionItem[]>(() =>
     localItemsEnabled.value ? rankAttachments(attachments?.() ?? [], query.value) : [],
   );
+  const sessionItems = computed<MentionItem[]>(() =>
+    localItemsEnabled.value ? rankSessions(mergeSessions(sessions?.() ?? [], foundSessions.value), query.value) : [],
+  );
+  const menuLoading = computed(() => (sessionMenuOpen.value ? sessionSearching.value : loading.value));
 
   const items = computed<MentionItem[]>(() => {
+    if (sessionMenuOpen.value) return sessionItems.value;
     const q = fileQuery.value;
     const strongFiles: MentionItem[] = [];
     const weakFiles: MentionItem[] = [];
@@ -240,7 +298,10 @@ export function useMentionMenu(deps: MentionMenuDeps) {
     const browserItems: MentionItem[] = localItemsEnabled.value
       ? (browsers?.() ?? []).filter((browser) => [browser.label, browser.title, browser.url].some((value) => value.toLowerCase().includes(query.value.toLowerCase()))).map((browser) => ({ kind: 'browser', browser }))
       : [];
-    return [...mediaAttachments, ...browserItems, ...groupedLocalItems];
+    const sessionGroup: MentionItem[] = sessionItems.value.length > 0 ? [{ kind: 'session-group' }] : [];
+    return query.value === ''
+      ? [...mediaAttachments, ...browserItems, ...sessionGroup, ...groupedLocalItems]
+      : [...mediaAttachments, ...browserItems, ...groupedLocalItems, ...sessionGroup];
   });
 
   let searchSeq = 0;
@@ -266,6 +327,8 @@ export function useMentionMenu(deps: MentionMenuDeps) {
   function itemKey(item: MentionItem): string {
     if (item.kind === 'browser') return `browser:${item.browser.captureId}`;
     if (item.kind === 'attachment') return `attachment:${item.attachment.entry.attId}`;
+    if (item.kind === 'session-group') return 'session-group';
+    if (item.kind === 'session') return `session:${item.session.id}`;
     return item.kind === 'skill' ? `skill:${skillIdentity(item.skill)}` : `${item.kind}:${item.file.path}`;
   }
 
@@ -337,17 +400,25 @@ export function useMentionMenu(deps: MentionMenuDeps) {
     if (!mt) {
       lastToken = null;
       localItemsEnabled.value = false;
+      sessionMenuOpen.value = false;
       query.value = '';
       open.value = false;
       loading.value = false;
       fileStale.value = false;
       searchAbort?.abort();
       searchAbort = null;
+      resetSessionSearch();
       return;
     }
     const token = mt.token;
     localItemsEnabled.value = true;
     query.value = token;
+    scheduleSessionSearch(token);
+    if (sessionMenuOpen.value) {
+      setActive(0);
+      open.value = true;
+      return;
+    }
     if (token !== lastToken) {
       if (fileItems.value.length > 0) fileStale.value = true;
       searchSeq += 1;
@@ -370,6 +441,74 @@ export function useMentionMenu(deps: MentionMenuDeps) {
     }
     if (attachmentItems.value.length > 0 || skillItems.value.length > 0) open.value = true;
     void runSearch(search, token);
+  }
+
+  let sessionSearchToken: string | null = null;
+  let sessionSearchTimer: ReturnType<typeof setTimeout> | undefined;
+  let sessionSearchAbort: AbortController | null = null;
+
+  function stopSessionSearch(): void {
+    clearTimeout(sessionSearchTimer);
+    sessionSearchTimer = undefined;
+    sessionSearchAbort?.abort();
+    sessionSearchAbort = null;
+    sessionSearching.value = false;
+  }
+
+  function resetSessionSearch(): void {
+    stopSessionSearch();
+    sessionSearchToken = null;
+    foundSessions.value = [];
+  }
+
+  function scheduleSessionSearch(token: string): void {
+    if (token === sessionSearchToken) return;
+    stopSessionSearch();
+    sessionSearchToken = token;
+    if (searchSessions === undefined || token === '') {
+      foundSessions.value = [];
+      return;
+    }
+    sessionSearching.value = true;
+    sessionSearchTimer = setTimeout(() => void runSessionSearch(searchSessions, token), SESSION_SEARCH_DELAY_MS);
+  }
+
+  async function runSessionSearch(search: SessionSearch, token: string): Promise<void> {
+    sessionSearchTimer = undefined;
+    const controller = new AbortController();
+    sessionSearchAbort = controller;
+    let found: SessionMentionCandidate[];
+    try {
+      found = await search(token, { signal: controller.signal });
+    } catch {
+      found = [];
+    }
+    if (sessionSearchAbort !== controller) return;
+    sessionSearchAbort = null;
+    sessionSearching.value = false;
+    const current = items.value[active.value];
+    const key = current ? itemKey(current) : null;
+    foundSessions.value = found;
+    restoreActive(key);
+    if (!dismissed && items.value.length > 0) open.value = true;
+  }
+
+  function openSessionMenu(): void {
+    sessionMenuOpen.value = true;
+    searchSeq += 1;
+    searchAbort?.abort();
+    searchAbort = null;
+    loading.value = false;
+    fileStale.value = false;
+    userNavigated = false;
+    setActive(0);
+    open.value = true;
+  }
+
+  function leaveSessionMenu(): void {
+    if (!sessionMenuOpen.value) return;
+    sessionMenuOpen.value = false;
+    update();
   }
 
   function refreshSkillItems(): void {
@@ -399,12 +538,16 @@ export function useMentionMenu(deps: MentionMenuDeps) {
       const key = current ? itemKey(current) : null;
       query.value = mt.token;
       restoreActive(key);
-      open.value = items.value.length > 0 || loading.value;
+      open.value = sessionMenuOpen.value || items.value.length > 0 || loading.value;
     },
   );
 
-  function toEntry(item: MentionItem): MentionEntry {
+  function toEntry(item: Exclude<MentionItem, { kind: 'session-group' }>): MentionEntry {
     if (item.kind === 'browser') return { kind: 'browser', captureId: item.browser.captureId, name: item.browser.label };
+    if (item.kind === 'session') {
+      const path = sessionMentionPath({ workspaceId: item.session.workspaceId, sessionId: item.session.id });
+      return { kind: 'session', name: item.session.title, path };
+    }
     if (item.kind === 'attachment') {
       return {
         kind: 'attachment',
@@ -430,23 +573,29 @@ export function useMentionMenu(deps: MentionMenuDeps) {
     fileQuery.value = '';
     query.value = '';
     localItemsEnabled.value = false;
+    sessionMenuOpen.value = false;
     skillItems.value = [];
     lastToken = null;
     searchSeq += 1;
     searchAbort?.abort();
     searchAbort = null;
+    resetSessionSearch();
   }
 
   function select(item: MentionItem): void {
     const mt = getMentionToken();
     if (!mt) return;
+    if (item.kind === 'session-group') {
+      openSessionMenu();
+      return;
+    }
     if ((item.kind === 'file' || item.kind === 'folder') && fileStale.value) return;
     close();
     if (insertMention) {
       insertMention(toEntry(item), { start: mt.start, end: mt.end });
       return;
     }
-    if (item.kind === 'skill' || item.kind === 'attachment' || item.kind === 'browser') return;
+    if (item.kind === 'skill' || item.kind === 'attachment' || item.kind === 'browser' || item.kind === 'session') return;
     const val = text.value;
     text.value = val.slice(0, mt.start) + item.file.path + val.slice(mt.end);
     void nextTick(() => {
@@ -458,9 +607,7 @@ export function useMentionMenu(deps: MentionMenuDeps) {
     });
   }
 
-  function alreadyCompleted(item: MentionItem, tokenQuery: string): boolean {
-    if (item.kind === 'browser') return item.browser.label === tokenQuery;
-    if (item.kind === 'attachment') return item.attachment.label === tokenQuery;
+  function alreadyCompleted(item: Extract<MentionItem, { kind: 'skill' | 'file' | 'folder' }>, tokenQuery: string): boolean {
     if (item.kind === 'skill') return item.skill.name === tokenQuery;
     const path = item.file.path.replace(/\/+$/, '');
     const query = tokenQuery.replace(/\/+$/, '');
@@ -473,7 +620,7 @@ export function useMentionMenu(deps: MentionMenuDeps) {
     const mt = getMentionToken();
     if (!mt) return;
     if ((item.kind === 'file' || item.kind === 'folder') && fileStale.value) return;
-    if (item.kind === 'attachment' || item.kind === 'browser') {
+    if (item.kind === 'attachment' || item.kind === 'browser' || item.kind === 'session-group' || item.kind === 'session') {
       select(item);
       return;
     }
@@ -503,7 +650,12 @@ export function useMentionMenu(deps: MentionMenuDeps) {
     });
   }
 
-  if (getCurrentScope()) onScopeDispose(() => searchAbort?.abort());
+  if (getCurrentScope()) {
+    onScopeDispose(() => {
+      searchAbort?.abort();
+      stopSessionSearch();
+    });
+  }
 
-  return { open, items, fileItems, fileStale, skillItems, active, loading, update, close, select, complete, navigate, getToken: getMentionToken };
+  return { open, items, fileItems, fileStale, skillItems, active, loading: menuLoading, sessionMenuOpen, update, close, select, complete, navigate, leaveSessionMenu, getToken: getMentionToken };
 }

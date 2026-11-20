@@ -1,6 +1,6 @@
 import { parse, postprocess, preprocess } from 'micromark';
 import { decodeURIComponentOrRaw, unescapeLinkDest, unescapeLinkText } from './linkCodec';
-import { ATTACHMENT_LINK_BASE, COMPOSER_LINK_SCHEME, QUOTE_LINK_BASE, classifyMentionHref, decodeQuoteAttrs, decodeSkillMention, serializeAttachment, serializeMention, type AttachmentAttrs, type AttachmentKind, type MentionAttrs, type QuoteAttrs } from './wireCodec';
+import { ATTACHMENT_LINK_BASE, COMPOSER_LINK_SCHEME, QUOTE_LINK_BASE, classifyMentionHref, decodeQuoteAttrs, decodeSessionMention, decodeSkillMention, serializeAttachment, serializeMention, sessionMentionPath, type AttachmentAttrs, type AttachmentKind, type MentionAttrs, type QuoteAttrs } from './wireCodec';
 import { BROWSER_REFERENCE_LINK_BASE, PASTED_TEXT_LINK_BASE, type BrowserReferenceAttrs, type PastedTextAttrs } from './wireCodec';
 import { isBrowserReferenceId } from '@moonshot-ai/app-core/browser-reference';
 import { replaceWithSourceMap, trimSpans, type SourceMappedText, type TextReplacement } from '@moonshot-ai/app-core/lib';
@@ -178,6 +178,10 @@ function classifyLinkCandidate(candidate: LinkCandidate, attachmentKindFor?: Att
   if (kind === null) return null;
   if (kind === 'skill') {
     return { type: 'mention', start, end, attrs: { kind, ...decodeSkillMention(rawDest) }, rawDest };
+  }
+  if (kind === 'session') {
+    const path = sessionMentionPath(decodeSessionMention(rawDest)!);
+    return { type: 'mention', start, end, attrs: { kind, name: unescapeLinkText(rawText), path }, rawDest };
   }
   return {
     type: 'mention',

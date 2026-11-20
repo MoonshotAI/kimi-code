@@ -199,7 +199,7 @@ describe('LLM tool call id normalization', () => {
       {
         signal: new AbortController().signal,
         onEvent: (event) => {
-          if (event.type === 'llm.streaming.part') parts.push(event.part);
+          if (event.type === 'llm.delta.part') parts.push(event.part);
         },
       },
     );

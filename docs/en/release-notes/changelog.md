@@ -6,6 +6,23 @@ outline: 2
 
 This page documents the changes in each Kimi Code CLI release.
 
+## 2.7.0 (2026-11-19)
+
+### Features
+
+- Add a Follow-up behavior setting under `/settings`; choose Steer to make Enter steer your message into the running turn instead of queueing it.
+- View running foreground agents and their activity in `/tasks`.
+- Web: Show project and session titles in browser tab titles.
+- Support configuring SSH hosts for Kimi Code projects, with each host using its own Kimi login and optional copied custom model providers.
+- Allow resuming sessions that are open in another client.
+- Support Amazon Bedrock models. See the [Amazon Bedrock configuration guide](https://moonshotai.github.io/kimi-code/en/configuration/providers.html#bedrock).
+- Add experimental next-prompt predictions in the TUI after completed turns. Enable with `KIMI_CODE_EXPERIMENTAL_PROMPT_PREDICTION=1` and press Tab or Right Arrow to accept.
+
+### Bug Fixes
+
+- Fix subagents timing out immediately in `kimi -p` and when `[subagent] timeout_ms = 0` is set.
+- Fix several known issues and make various refinements. See the [changelog on GitHub](https://github.com/MoonshotAI/kimi-code/blob/main/apps/kimi-code/CHANGELOG.md) for more technical entries.
+
 ## 2.6.3 (2026-11-17)
 
 ### Bug Fixes
