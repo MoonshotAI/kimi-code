@@ -260,6 +260,25 @@ it('ignores old close acknowledgements and actions after reopening a menu', asyn
   scope.stop();
 });
 
+it('marks refreshes of the open menu so a late one cannot reopen it after the main process closed it', async () => {
+  const { registerBrowserOverlayMenu } = await import('../../src/renderer/lib/browserOverlayMenu');
+  const scope = effectScope();
+  const menu = scope.run(() => registerBrowserOverlayMenu({ id: 'refresh-marker', items: () => [{ kind: 'item', id: 'one', label: 'One' }], onSelect: vi.fn() }))!;
+  menu.showAt({ x: 0, y: 0, width: 20, height: 20 });
+  const opened = openMenu.mock.lastCall![0];
+  expect(opened).not.toHaveProperty('refresh');
+  menu.refresh();
+  expect(openMenu.mock.lastCall![0]).toMatchObject({ menuId: opened.menuId, refresh: true });
+  closedListener?.({ menuId: opened.menuId, reason: 'escape' });
+  menu.refresh();
+  expect(openMenu).toHaveBeenCalledTimes(2);
+  menu.showAt({ x: 0, y: 0, width: 20, height: 20 });
+  const reopened = openMenu.mock.lastCall![0];
+  expect(reopened.menuId).not.toBe(opened.menuId);
+  expect(reopened).not.toHaveProperty('refresh');
+  scope.stop();
+});
+
 it('does not reopen a closing menu when an asynchronous action refreshes it', async () => {
   const { registerBrowserOverlayMenu } = await import('../../src/renderer/lib/browserOverlayMenu');
   const scope = effectScope();

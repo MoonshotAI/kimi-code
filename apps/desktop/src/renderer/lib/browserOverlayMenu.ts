@@ -197,7 +197,8 @@ export function registerBrowserOverlayMenu(
     refreshOpening = false,
   ): void {
     if (bridge === null || disposed) return;
-    if (!refreshOpening || !open.value || closePending.value) { nativeMenuId = randomUUID(); actionConsumed = false; }
+    const refreshing = refreshOpening && open.value && !closePending.value;
+    if (!refreshing) { nativeMenuId = randomUUID(); actionConsumed = false; }
     closePending.value = false;
     focusReturn.cancel();
     currentAnchor = { ...anchor };
@@ -212,6 +213,7 @@ export function registerBrowserOverlayMenu(
     }
     bridge.browserOverlayOpenMenu({
       menuId: nativeMenuId,
+      ...(refreshing ? { refresh: true } : {}),
       anchor,
       placement: options?.placement ?? registration.placement ?? 'bottom-end',
       offset: options?.offset ?? registration.offset ?? 4,

@@ -63,7 +63,7 @@ L0 表示维护者选择长期保护的一条行为。按入选理由分三类�
 | **重大回归（regression）** | 有可追溯的缺陷和修复，能说清用户损失、触发顺序和预期结果。用同一验收在修复前后对照，确认旧版因原故障失败、修复版通过。 | 长对话先遇限流，重试又遇上下文超限，原回合曾直接失败。保护自动压缩后继续完成这一问的行为。[core #4950 修复](https://github.com/MoonshotAI/kimi-code/pull/4950) · [现有引擎用例](../packages/agent-core-v2/test/agent/fullCompaction/fullCompaction.test.ts) |
 | **对外契约（contract）** | 客户端、外部 agent 或旧版本数据依赖的约定：协议文档、录制回放、冷恢复、KAP 与 ACP 共有行为。删掉或放宽它，使用方不会立刻察觉。 | [协议字段检查](../packages/kap-server/test/apiSurface.test.ts)、[首轮录制](scenarios/replay.test.ts)及其[客户端回放](../packages/app-core/test/replay/first-turn.test.ts)、[冷恢复](scenarios/cold-recovery.test.ts) |
 
-已登记的是四条首轮 smoke、表中的一条 regression 和四条 contract，全部条目见[清单](protected.yaml)。新增时在清单里写明 ID、`kind`、`runner`（`vitest` 或 `playwright`）、项目、文件、行为、来源和负责人，在单条测试标题开头写 `[L0:同一ID]`；smoke 还要保留 smoke 标签，其他两类不需要。`require_smoke` 列出必须各有一条 smoke 的项目。
+已登记的是四条首轮 smoke、两条 regression 和四条 contract，全部条目见[清单](protected.yaml)。新增时在清单里写明 ID、`kind`、`runner`（`vitest` 或 `playwright`）、项目、文件、行为、来源和负责人，在单条测试标题开头写 `[L0:同一ID]`；smoke 还要保留 smoke 标签，其他两类不需要。`require_smoke` 列出必须各有一条 smoke 的项目。
 
 两个检查核对实际通过记录，其他用例通过也无法代替该 ID：
 
@@ -98,13 +98,12 @@ pnpm --filter kimi-code-app run e2e --project=smoke
 - **每晚**：另外不重试地跑一次隔离用例，结果只作参考。
 - **分片**：旅程最多分成 4 片，在不同的 macOS 机器上并行跑；只改了 spec 时，片数不超过改动的文件数。每次推送都会同时启动 L0 smoke gate，4 片加上它正好占满 5 台；实测分成 5 片时，总有一片要排队，整体反而更慢。每片都会先跑一遍被依赖的首轮 smoke，`Desktop E2E journeys (optional)` 汇总各片的结果。
 
-当前隔离十一条：
+当前隔离十条：
 
 - **九条**：在基线 `0ee6dff5f` 上用同一 Electron 构建逐条复现，涉及断流恢复、侧聊与压缩、后台命令、失败转录、插话、审批中停止、附件、默认设置和外观。
 - **重启后恢复面板、侧栏和窗口尺寸**：只在 CI 的 macOS runner 上失败，窗口尺寸回到了默认值，本地通过。
-- **按会话保存草稿和选择模型**：合入 main 的 #5048 之后在 CI 上偶发失败，本地通过。在模型菜单里选「Off」后按 Escape，菜单开始关闭，随后又被应用自己重新显示。
 
-隔离期间，默认运行的绿灯不涵盖这十一个场景。
+隔离期间，默认运行的绿灯不涵盖这十个场景。
 
 每条隔离用例都登记在[隔离清单](quarantine.yaml)，写明原因、负责人、开始日期和到期日。`pnpm lint` 里的 `scripts/checks/quarantine.mjs` 用当前提交的日期核对，以下情况都会失败：打了标签却没登记、登记了却找不到用例、已过期、到期日比提交日期晚 60 天以上，以及隔离 L0 或 smoke 用例。用提交日期而不是运行当天的日期，是为了让同一个提交的检查结果不随时间改变。到期前修好用例并去掉标签，或者写明新原因、改到期日续期。
 
