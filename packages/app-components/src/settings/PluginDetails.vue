@@ -109,7 +109,7 @@ async function refreshAuthorizationStatuses(): Promise<void> {
   authorizationRefreshError.value = undefined;
   if (pluginId.value === undefined) return;
   try {
-    await refreshAuthorization();
+    await refreshAuthorization(pluginId.value);
   } catch (error) {
     authorizationRefreshError.value = error instanceof Error ? error.message : String(error);
   }
