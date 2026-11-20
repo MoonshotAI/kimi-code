@@ -1,3 +1,4 @@
+import { v4 as randomUUID } from 'uuid';
 import type { PromptEnvelopeContent } from '../client/types';
 
 import { computed, getCurrentScope, onScopeDispose, shallowRef, shallowReactive, ref, readonly, watch, watchEffect, type Ref } from 'vue';
@@ -477,7 +478,7 @@ export function usePanelTabs({ client, sideWidth, t, locale, onTabRemoved, onBro
       if (tab.type !== 'browser' || tab.payload === undefined) return tab;
       const payload = tab.payload as BrowserTabPayload;
       const controlled = tab.id === id
-        ? { leaseId: crypto.randomUUID(), turnId, status: 'running' as const, ...(controller === undefined ? {} : { controller }) }
+        ? { leaseId: randomUUID(), turnId, status: 'running' as const, ...(controller === undefined ? {} : { controller }) }
         : undefined;
       if (controlled !== undefined) suspendedBrowsers.delete(payload.browserId);
       return { ...tab, payload: { ...payload, controlled } };

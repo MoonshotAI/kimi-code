@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { v4 as randomUUID } from 'uuid';
 import { computed, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Icon, IconButton } from '@moonshot-ai/app-ui';
@@ -24,7 +25,7 @@ let revision = 0;
 const permissionIcons = { location: 'map-pin', camera: 'camera', microphone: 'microphone', notifications: 'bell', clipboard: 'copy', clipboardWrite: 'copy', fullscreen: 'expand', midi: 'music', midiSysex: 'music' } as const;
 
 const menu = registerBrowserOverlayMenu({
-  id: `browser.site.${crypto.randomUUID()}`,
+  id: `browser.site.${randomUUID()}`,
   width: 180,
   autoWidth: true,
   placement: 'bottom-start',

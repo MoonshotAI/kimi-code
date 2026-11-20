@@ -30,8 +30,8 @@ export default {
   requiredTitle: '请先选择工作空间',
   requiredMessage: '发送消息前，需要先选择一个文件夹作为工作区。',
   openThisFolder: '打开此文件夹',
-  selectThisFolder: '选择此文件夹',
-  addSelected: '添加所选（{n}）',
+  addCurrentFolder: '添加当前文件夹',
+  addFolders: '添加文件夹（{n}）',
   deletedHost: '已删除的主机',
   hostState: {
     ready: '已连接',

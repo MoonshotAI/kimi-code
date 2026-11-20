@@ -23,7 +23,9 @@ import {
   ISessionManager,
   IWorkspaceInstanceManager,
   IWorkspaceService,
+  IWireService,
   closeSessionById,
+  drainSessionMetadataWrites,
   followSessionLifecycles,
   getLiveSessionById,
   getOrRestoreAgent,
@@ -665,6 +667,15 @@ async function readWaitSnapshot(
   return { session, pendingInteractions, settled, live };
 }
 
+async function persistSessionWrites(live: ISessionScopeHandle | undefined): Promise<void> {
+  if (live === undefined) return;
+  const agents = live.accessor.get(IAgentLifecycleService);
+  for (const agent of agents.list()) {
+    await agents.handleOf(agent.agentId)?.accessor.get(IWireService).flush();
+  }
+  await drainSessionMetadataWrites();
+}
+
 async function waitSessionAction(
   ctx: SessionActionCtx<z.infer<typeof waitSessionRequestSchema>>,
 ): Promise<void> {
@@ -672,6 +683,7 @@ async function waitSessionAction(
   const timeoutMs = body.timeout_ms ?? DEFAULT_SESSION_WAIT_TIMEOUT_MS;
   const initial = await readWaitSnapshot(core, id);
   if (initial.settled) {
+    await persistSessionWrites(initial.live);
     reply.send(
       okEnvelope(
         {
@@ -780,6 +792,7 @@ async function waitSessionAction(
   }
 
   const after = await readWaitSnapshot(core, id);
+  if (after.settled) await persistSessionWrites(after.live);
   reply.send(
     okEnvelope(
       {

@@ -306,6 +306,10 @@ function isComposerEmpty(): boolean {
   return composer ? (composer.isEmpty?.() ?? true) : true;
 }
 
+function clearComposerAfterDispatch(expectedSnapshot?: ComposerDocumentSnapshot): void {
+  (dockedComposerRef.value ?? emptyComposerRef.value)?.clearAfterDispatch(expectedSnapshot);
+}
+
 const backgroundTasks = computed(() => tasks.value.filter((t) => t.runInBackground === true));
 const bashTasks = computed(() =>
   backgroundTasks.value.filter(
@@ -523,6 +527,7 @@ type ComposerHandle = {
   loadAttachmentsForEdit: (atts: TurnAttachment[]) => void;
   restoreDraftEntries?: (entries: AttachmentEntry[]) => void;
   focus: () => void;
+  clearAfterDispatch: (expectedSnapshot?: ComposerDocumentSnapshot) => void;
   anyPopupOpen?: boolean;
   isEmpty?: () => boolean;
 };
@@ -567,6 +572,10 @@ function bindChatDock(el: RefArg): void {
           ? el.restoreDraftEntries.bind(el)
           : undefined,
       focus: el.focus.bind(el),
+      clearAfterDispatch:
+        'clearAfterDispatch' in el && typeof el.clearAfterDispatch === 'function'
+          ? el.clearAfterDispatch.bind(el)
+          : () => {},
       get anyPopupOpen(): boolean {
         return 'anyPopupOpen' in el && el.anyPopupOpen === true;
       },
@@ -771,7 +780,7 @@ const showEmptyToggles = computed(
   () => !props.mobile && turns.value.length === 0 && !sessionLoading.value,
 );
 
-defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMention, insertScreenshotAnnotation, addComposerFiles, hasInsertableComposer, isComposerEmpty, focusComposer, notifyUndone, selectAllRegion, focusGoal, closeDockPanel, composerPopupOpen });
+defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMention, insertScreenshotAnnotation, addComposerFiles, hasInsertableComposer, isComposerEmpty, clearComposerAfterDispatch, focusComposer, notifyUndone, selectAllRegion, focusGoal, closeDockPanel, composerPopupOpen });
 </script>
 
 <template>
@@ -919,6 +928,7 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
               class="empty-composer"
               hide-context
               :before-submit="gateSubmit"
+              :defer-submit-reset="true"
               :on-capture-screenshot="captureScreenshotAction"
               :screenshot-shortcut-keys="screenshotShortcutKeys"
               :screenshot-shortcut-unavailable="!!osGlobalFailures.captureScreenshot"
@@ -1008,6 +1018,7 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
         :approval-busy="approvalBusy"
         :mobile="mobile"
         :before-submit="gateSubmit"
+        :defer-submit-reset="true"
         :on-capture-screenshot="captureScreenshotAction"
         :screenshot-shortcut-keys="screenshotShortcutKeys"
         :screenshot-shortcut-unavailable="!!osGlobalFailures.captureScreenshot"

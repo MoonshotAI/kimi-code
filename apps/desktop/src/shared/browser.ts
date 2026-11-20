@@ -1,3 +1,4 @@
+import { v4 as randomUUID } from 'uuid';
 import { defineBrowserValidator } from './browser-validator';
 import { Type, type Static } from 'typebox';
 import { BrowserZoomFactorSchema } from './browser-zoom';
@@ -8,15 +9,8 @@ export const BrowserBoundsSchema = Type.Object({ x: BrowserNonnegativeNumberSche
 export type BrowserBounds = Static<typeof BrowserBoundsSchema>;
 export type BrowserId = Static<typeof BrowserIdSchema>;
 
-let browserIdSequence = 0;
-
-
-
-
 export function createBrowserId(): BrowserId {
-  browserIdSequence += 1;
-  const randomId = globalThis.crypto?.randomUUID?.();
-  return `browser-${randomId ?? `${Date.now().toString(36)}-${browserIdSequence}`}`;
+  return `browser-${randomUUID()}`;
 }
 
 export const BROWSER_STATE_URL_MAX = 4_096;

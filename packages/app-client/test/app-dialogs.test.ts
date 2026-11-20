@@ -9,7 +9,7 @@ import type { PromptEnvelope } from '../src/client';
 const client = vi.hoisted(() => ({
   onboarded: { value: true },
   activeWorkspaceId: { value: 'workspace:new' },
-  activeSessionId: { value: null as string | null },
+  activeSessionId: { value: '' as string },
   activeWorkspaceTrust: { value: undefined as boolean | undefined },
   addWorkspaceByPath: vi.fn(),
   ensureWorkspaceTrust: vi.fn(),
@@ -21,7 +21,7 @@ vi.mock('../src/composables/useIsMobile', () => ({ useIsMobile: () => ref(false)
 
 beforeEach(() => {
   vi.resetAllMocks();
-  client.activeSessionId.value = null;
+  client.activeSessionId.value = '';
   client.activeWorkspaceId.value = 'workspace:new';
   client.activeWorkspaceTrust.value = undefined;
 });
@@ -84,8 +84,9 @@ it('sends the pending prompt after a project is created and confirmed trusted', 
   client.activeWorkspaceTrust.value = true;
   client.startSessionAndSendPrompt.mockResolvedValue({ sessionId: 'session:new', promptRejected: false });
   const restore = vi.fn();
+  const beforePendingPromptSend = vi.fn();
   const onWorkspaceAdded = vi.fn();
-  const dialogs = useAppDialogs({ restorePendingComposer: restore, onWorkspaceAdded });
+  const dialogs = useAppDialogs({ restorePendingComposer: restore, beforePendingPromptSend, onWorkspaceAdded });
   const prompt = { text: 'hello', attachments: [] } as unknown as PromptEnvelope;
   dialogs.pendingWorkspaceSubmit.value = { prompt };
 
@@ -93,6 +94,7 @@ it('sends the pending prompt after a project is created and confirmed trusted', 
 
   expect(client.addWorkspaceByPath).not.toHaveBeenCalled();
   expect(onWorkspaceAdded).toHaveBeenCalledOnce();
+  expect(beforePendingPromptSend).toHaveBeenCalledOnce();
   expect(client.startSessionAndSendPrompt).toHaveBeenCalledWith('workspace:new', prompt);
   expect(restore).not.toHaveBeenCalled();
 });
@@ -112,7 +114,7 @@ it.each(['trust', 'send'] as const)('restores to the original draft after switch
   const dialogs = useAppDialogs({
     restorePendingComposer: (pending, sessionId) => {
       restoreSendDraftAtOrigin(sessionId, { text: pending.prompt.text }, {
-        activeSessionId: () => client.activeSessionId.value ?? undefined,
+        activeSessionId: () => client.activeSessionId.value || undefined,
         composer: () => ({ isComposerEmpty: () => true, loadRecoveredDraft }),
         persistDraft,
         hasPersistedDraft: () => false,

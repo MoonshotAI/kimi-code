@@ -2224,6 +2224,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       planMode: plan !== null,
       swarmMode: agent.accessor.get(IAgentSwarmService).isActive,
       towerMode: agent.accessor.get(IAgentTowerService).isActive,
+      loopLifecycleEvents: true,
       contextTokens,
       maxContextTokens,
       contextUsage,
