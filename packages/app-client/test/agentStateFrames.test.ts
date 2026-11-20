@@ -243,6 +243,51 @@ describe('agent state frames', () => {
     expect(modelOf()).toBe('model-3');
   });
 
+  it('keeps a successful thinking write when its agent frame arrives after the response', async () => {
+    vi.stubGlobal('WebSocket', class {});
+    vi.resetModules();
+
+    const connection = makeConnection();
+    const handlersRef: { handlers?: KimiEventHandlers } = {};
+    for (const key of Object.keys(clientApiMock)) delete clientApiMock[key];
+    Object.assign(clientApiMock, baseApi([session('s_1')], connection, handlersRef));
+    let releaseWrite!: () => void;
+    clientApiMock.updateSession = vi.fn(
+      () => new Promise((resolve) => { releaseWrite = () => resolve(session('s_1')); }),
+    );
+
+    const { useKimiWebClient } = await import('../src/client/useKimiWebClient');
+    const { modeStore } = await import('../src/stores/mode');
+    const client = useKimiWebClient();
+    await client.load();
+    await client.selectSession('s_1');
+    await flush();
+    const frame = (thinking: string) => ({
+      status: 'idle' as const,
+      model: 'model-1',
+      thinking,
+      planMode: false,
+      swarmMode: false,
+      towerMode: false,
+    });
+
+    handlersRef.handlers?.onAgentState?.('s_1', 'main', frame('high'));
+    await flush();
+    expect(modeStore().thinkingBySession['s_1']).toBe('high');
+
+    client.setThinking('max');
+    await flush();
+    expect(modeStore().thinkingBySession['s_1']).toBe('max');
+
+    releaseWrite();
+    await flush();
+    expect(modeStore().thinkingBySession['s_1']).toBe('max');
+
+    handlersRef.handlers?.onAgentState?.('s_1', 'main', frame('low'));
+    await flush();
+    expect(modeStore().thinkingBySession['s_1']).toBe('low');
+  });
+
   it('falls back to the latest agent frame when a model switch fails', async () => {
     vi.stubGlobal('WebSocket', class {});
     vi.resetModules();
