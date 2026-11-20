@@ -227,7 +227,8 @@ export class PromptPredictionController {
     if (this.active !== undefined) {
       return this.active.parked ? 'Type a message… Tab to predict' : 'Predicting next prompt…';
     }
-    if (this.suggestion?.accepted === false) {
+    if (this.suggestion !== undefined) {
+      if (this.suggestion.accepted) return 'Tab to predict';
       return this.suggestion.parked ? 'Type a message… Tab to predict' : this.suggestion.prediction;
     }
     if (this.latestTurn === undefined) return undefined;
