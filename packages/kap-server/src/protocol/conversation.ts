@@ -158,7 +158,7 @@ export const reasoningItemSchema = z.object({
 });
 export type ReasoningItem = z.infer<typeof reasoningItemSchema>;
 
-export const toolStageSchema = z.enum(['input', 'awaiting_approval', 'executing']);
+export const toolStageSchema = z.enum(['input', 'auto_review', 'awaiting_approval', 'executing']);
 export type ToolStage = z.infer<typeof toolStageSchema>;
 
 export const toolFieldsSchema = z.record(z.string(), z.unknown());

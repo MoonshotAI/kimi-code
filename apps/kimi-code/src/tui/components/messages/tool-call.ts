@@ -752,6 +752,7 @@ export class ToolCallComponent extends Container {
   private progressLines: string[] = [];
   private progressStatusRows = 0;
   private static readonly MAX_PROGRESS_LINES = 24;
+  private autoReviewing = false;
   private liveOutput = '';
 
   private detachHintTimer: ReturnType<typeof setTimeout> | undefined;
@@ -1050,6 +1051,7 @@ export class ToolCallComponent extends Container {
     this.projectionVersion += 1;
     this.progressLines = [];
     this.progressStatusRows = 0;
+    this.autoReviewing = false;
     this.liveOutput = '';
     this.detachHintVisible = false;
     this.stopDetachHintTimer();
@@ -1092,6 +1094,18 @@ export class ToolCallComponent extends Container {
     this.ui?.requestRender();
   }
 
+  get isAutoReviewing(): boolean {
+    return this.autoReviewing;
+  }
+
+  setAutoReviewing(reviewing: boolean): void {
+    if (this.autoReviewing === reviewing) return;
+    this.autoReviewing = reviewing;
+    this.projectionVersion += 1;
+    this.rebuildBody();
+    this.ui?.requestRender();
+  }
+
   appendLiveOutput(text: string): void {
     if (this.result !== undefined || text.length === 0) return;
     this.liveOutput += text;
@@ -1110,6 +1124,7 @@ export class ToolCallComponent extends Container {
     this.stopStreamingProgressTimer();
     this.stopSubagentElapsedTimer();
     this.stopDetachHintTimer();
+    this.setAutoReviewing(false);
   }
 
   setPlanInfo(info: { plan?: string; path?: string }): void {
@@ -1828,8 +1843,10 @@ export class ToolCallComponent extends Container {
   }
 
   private buildProgressBlock(): void {
-    if (this.progressLines.length === 0) return;
     if (this.result !== undefined) return;
+    if (this.autoReviewing) {
+      this.addChild(new Text(currentTheme.dim('Reviewing…'), 2, 0));
+    }
     for (const raw of this.progressLines) {
       if (raw.length === 0) {
         this.addChild(new Text('', 2, 0));

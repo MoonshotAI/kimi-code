@@ -388,6 +388,11 @@ onUpdated(updateScrollSeams);
 
     <div v-if="paneMounted" ref="paneEl" class="apane" :inert="minimized">
       <div class="ab">
+        <div v-if="block.review" class="review-detail">
+          <div class="review-title">{{ block.review.title }}</div>
+          <div class="review-body">{{ block.review.detail }}</div>
+        </div>
+
         <button
           v-if="block.kind === 'plan_review' && block.path"
           type="button"
@@ -715,6 +720,22 @@ onUpdated(updateScrollSeams);
   background: var(--color-danger-soft);
 }
 .shell-danger-ic { flex: none; }
+.review-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  color: var(--color-danger);
+  font: var(--text-sm)/var(--leading-normal) var(--font-ui);
+  background: var(--color-danger-soft);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.review-title {
+  font-weight: var(--weight-medium);
+}
 
 .body-fields {
   display: flex;

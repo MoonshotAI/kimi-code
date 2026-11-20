@@ -654,4 +654,25 @@ describe('conversationToTurns', () => {
     expect(after[1]).toBe(before[1]);
     expect(after[3]).not.toBe(before[3]);
   });
+
+  it('projects a tool call in the auto_review stage with its streamed input_text', () => {
+    const reviewing = tool('c1', {
+      status: 'running',
+      outcome: undefined,
+      stage: 'auto_review',
+      input: undefined,
+      input_text: '{"command":"echo hi"}',
+      output: undefined,
+    });
+    const projected = toolsOf(project([turn(0, [opener('p0', 'run'), reviewing], running)]));
+    expect(projected).toEqual([
+      expect.objectContaining({
+        id: 'c1',
+        name: 'Bash',
+        arg: '{"command":"echo hi"}',
+        status: 'running',
+        autoReviewing: true,
+      }),
+    ]);
+  });
 });

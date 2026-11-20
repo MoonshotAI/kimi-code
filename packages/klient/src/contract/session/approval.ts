@@ -12,6 +12,7 @@ export const approvalRequestSchema = z.object({
   toolName: z.string(),
   action: z.string(),
   display: z.unknown(),
+  approvalDetail: z.object({ title: z.string(), detail: z.string() }).optional(),
 });
 
 export const approvalResponseSchema = z.object({

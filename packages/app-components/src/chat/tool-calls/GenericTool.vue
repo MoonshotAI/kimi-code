@@ -47,7 +47,8 @@ watch(
     <template #leading><span class="gl" v-html="glyph" /></template>
     <span class="tl-name">{{ label }}</span>
     <span v-if="summary" class="tl-dim">{{ summary }}</span>
-    <span v-if="chip" class="tl-faint">{{ chip }}</span>
+    <span v-if="tool.autoReviewing" class="tl-faint">{{ t('tools.activity.autoReviewing') }}</span>
+    <span v-else-if="chip" class="tl-faint">{{ chip }}</span>
     <span v-else-if="tool.timing" class="tl-faint">{{ tool.timing }}</span>
     <template #body>
       <ToolPanel scroll>
@@ -60,7 +61,7 @@ watch(
         <div v-if="summaryFull && summaryFull !== summary" class="gt-args">{{ summaryFull }}</div>
         <OutputPanel
           :lines="tool.output"
-          :empty-text="status === 'running' ? t('tools.output.waiting') : t('tools.output.empty')"
+          :empty-text="tool.autoReviewing ? t('tools.activity.autoReviewing') : status === 'running' ? t('tools.output.waiting') : t('tools.output.empty')"
         />
       </ToolPanel>
     </template>

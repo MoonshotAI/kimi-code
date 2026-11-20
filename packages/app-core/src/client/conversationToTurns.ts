@@ -529,13 +529,14 @@ function toolCallOf(item: ToolCallItem, options: ConversationProjectionOptions):
   const result = ended ? (completed ? item.output : item.error ?? item.output) ?? '' : undefined;
   const output = normalizeToolOutput(ended ? result : item.output);
   const refs = item.agent_refs;
-  const input = item.input ?? (item.stage === 'input' ? item.input_text : undefined) ?? item.display ?? {};
+  const input = item.input ?? (item.stage === 'input' || item.stage === 'auto_review' ? item.input_text : undefined) ?? item.display ?? {};
   const plan = item.name === 'ExitPlanMode' ? planOf(item) : undefined;
   const tool: ToolCall = {
     id: item.item_id,
     name: item.name,
     arg: typeof input === 'string' ? input : JSON.stringify(input),
     status: !ended ? 'running' : item.outcome === 'failed' ? 'error' : item.outcome === 'interrupted' ? 'cancelled' : 'ok',
+    autoReviewing: !ended && item.stage === 'auto_review' ? true : undefined,
     agentId:
       (normalizeToolName(item.name) === 'task' ? (refs?.find((ref) => ref.role !== 'member') ?? refs?.[0])?.agent_id : undefined) ??
       agentIdFromOutput(item.name, output),

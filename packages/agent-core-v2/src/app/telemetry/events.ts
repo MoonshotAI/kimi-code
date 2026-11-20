@@ -203,6 +203,17 @@ export interface PermissionPolicyDecisionEvent {
   [key: string]: TelemetryPrimitive;
 }
 
+export interface AutoReviewDecisionEvent {
+  turn_id: number;
+  tool_call_id: string;
+  tool_name: string;
+  trigger_policy: string;
+  model: string;
+  decision: 'allow' | 'deny' | 'failed';
+  risk?: 'low' | 'medium' | 'high';
+  duration_ms: number;
+}
+
 export interface PermissionApprovalResultEvent {
   turn_id: number;
   tool_call_id: string;
@@ -937,6 +948,20 @@ export const telemetryEventDefinitions = {
       tool_name: 'Tool being gated',
       permission_mode: 'Active permission mode',
       decision: 'Policy decision',
+    },
+  }),
+  auto_review_decision: defineAgentTelemetryEvent<AutoReviewDecisionEvent>({
+    owner: 'kimi-code',
+    comment: 'An LLM auto review of a pending tool call finishes.',
+    properties: {
+      turn_id: 'Per-agent turn index; pair with agent_id to locate a turn within a session',
+      tool_call_id: 'Provider-assigned tool call id',
+      tool_name: 'Tool being reviewed',
+      trigger_policy: 'Policy that would have asked the user without the mode-level approval',
+      model: 'Reviewer model alias',
+      decision: 'Whether the reviewer allowed, denied, or failed to decide',
+      risk: 'Reviewer risk classification; absent when review failed',
+      duration_ms: 'Total review time in milliseconds',
     },
   }),
   permission_approval_result: defineAgentTelemetryEvent<PermissionApprovalResultEvent>({

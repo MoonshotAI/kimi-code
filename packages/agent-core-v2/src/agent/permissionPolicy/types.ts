@@ -12,6 +12,10 @@ export interface ApprovalRequest {
   toolName: string;
   action: string;
   display: ToolInputDisplay;
+  approvalDetail?: {
+    title: string;
+    detail: string;
+  };
 }
 
 export interface ApprovalResponse {
@@ -52,6 +56,10 @@ export type PermissionPolicyResult =
   | {
       readonly kind: 'ask';
       readonly reason?: PermissionDecisionReason;
+      readonly approvalDetail?: {
+        readonly title: string;
+        readonly detail: string;
+      };
       readonly resolveApproval?: (
         result: ApprovalResponse,
       ) => PermissionPolicyResolution | undefined;
@@ -64,6 +72,7 @@ export type PermissionPolicyResult =
 
 export interface PermissionPolicy {
   readonly name: string;
+  readonly modeApproval?: boolean;
   evaluate(
     context: PermissionPolicyContext,
   ): PermissionPolicyResult | undefined | Promise<PermissionPolicyResult | undefined>;

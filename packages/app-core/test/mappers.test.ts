@@ -135,8 +135,18 @@ describe('toAppInteractionEvent', () => {
         toolName: 'Bash',
         action: 'run',
         display: { kind: 'command' },
+        approvalDetail: undefined,
       },
     });
+  });
+
+  it('maps approval_detail on a pending approval', () => {
+    const detail = { title: 'Auto Review: denied (medium risk)', detail: 'Not authorized.' };
+    const event = toAppInteractionEvent({
+      ...approval,
+      request: { ...approval.request, approval_detail: detail },
+    });
+    expect(event.type === 'approvalRequested' && event.approval.approvalDetail).toEqual(detail);
   });
 
   it('falls back to the interaction id when an approval has no tool call id', () => {

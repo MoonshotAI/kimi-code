@@ -311,41 +311,42 @@ export function toAgentMember(task: AppTask, recoveredCommand?: string): AgentMe
 }
 
 export function buildApprovalBlock(a: AppApprovalRequest): ApprovalBlock {
+  const review = a.approvalDetail === undefined ? {} : { review: a.approvalDetail };
   const d = (a.display ?? {}) as Record<string, unknown>;
   const kind = typeof d['kind'] === 'string' ? d['kind'] : '';
-  if (a.toolName === BROWSER_TOOL_NAME) {
+  if (a.toolName === BROWSER_TOOL_NAME && kind === 'generic') {
     const detail = d['detail'];
     const input = detail !== null && typeof detail === 'object' && !Array.isArray(detail)
       ? detail as Record<string, unknown> : {};
-    return { kind: 'browser', input };
+    return { kind: 'browser', input, ...review };
   }
 
   if (kind === 'diff') {
     const path = typeof d['path'] === 'string' ? d['path'] : '';
     if (Array.isArray(d['diff'])) {
-      return { kind: 'diff', path, diff: d['diff'] as DiffViewLine[] };
+      return { kind: 'diff', path, diff: d['diff'] as DiffViewLine[], ...review };
     }
     const before = typeof d['old_text'] === 'string' ? d['old_text'] : (typeof d['before'] === 'string' ? d['before'] : undefined);
     const after = typeof d['new_text'] === 'string' ? d['new_text'] : (typeof d['after'] === 'string' ? d['after'] : undefined);
     if (before !== undefined && after !== undefined) {
       const diff = buildWholeFileDiffLines(before, after) ?? buildVerbatimDiffLines(before, after);
-      return { kind: 'diff', path, diff };
+      return { kind: 'diff', path, diff, ...review };
     }
-    return { kind: 'diff', path, diff: [] };
+    return { kind: 'diff', path, diff: [], ...review };
   }
 
   if (kind === 'file_io') {
     const path = typeof d['path'] === 'string' ? d['path'] : '';
     const operation = typeof d['operation'] === 'string' ? d['operation'] : '';
     if (operation === 'write' && typeof d['content'] === 'string') {
-      return { kind: 'file', path, content: d['content'] };
+      return { kind: 'file', path, content: d['content'], ...review };
     }
     if (operation === 'edit' && typeof d['before'] === 'string' && typeof d['after'] === 'string') {
       const diff = buildDiffLines(d['before'], d['after']) ?? buildVerbatimDiffLines(d['before'], d['after']);
-      return { kind: 'diff', path, diff };
+      return { kind: 'diff', path, diff, ...review };
     }
     const detail = typeof d['detail'] === 'string' ? d['detail'] : undefined;
-    return { kind: 'fileop', op: operation || kind, path, detail, tool: a.toolName || undefined };
+    return { kind: 'fileop', op: operation || kind, path, detail, tool: a.toolName || undefined, ...review };
   }
 
   if (kind === 'shell' || kind === 'command') {
@@ -355,6 +356,7 @@ export function buildApprovalBlock(a: AppApprovalRequest): ApprovalBlock {
       command,
       cwd: typeof d['cwd'] === 'string' ? d['cwd'] : undefined,
       danger: typeof d['danger'] === 'string' ? d['danger'] : detectShellDanger(command),
+      ...review,
     };
   }
 
@@ -364,6 +366,7 @@ export function buildApprovalBlock(a: AppApprovalRequest): ApprovalBlock {
       path: typeof d['path'] === 'string' ? d['path'] : '',
       content: typeof d['content'] === 'string' ? d['content'] : '',
       language: typeof d['language'] === 'string' ? d['language'] : undefined,
+      ...review,
     };
   }
 
@@ -380,6 +383,7 @@ export function buildApprovalBlock(a: AppApprovalRequest): ApprovalBlock {
       path: typeof d['path'] === 'string' ? d['path'] : '',
       detail: typeof d['detail'] === 'string' ? d['detail'] : undefined,
       tool: a.toolName || undefined,
+      ...review,
     };
   }
 
@@ -388,6 +392,7 @@ export function buildApprovalBlock(a: AppApprovalRequest): ApprovalBlock {
       kind: 'url',
       method: typeof d['method'] === 'string' ? d['method'] : undefined,
       url: typeof d['url'] === 'string' ? d['url'] : a.action,
+      ...review,
     };
   }
 
@@ -396,6 +401,7 @@ export function buildApprovalBlock(a: AppApprovalRequest): ApprovalBlock {
       kind: 'search',
       query: typeof d['query'] === 'string' ? d['query'] : a.action,
       scope: typeof d['scope'] === 'string' ? d['scope'] : undefined,
+      ...review,
     };
   }
 
@@ -405,6 +411,7 @@ export function buildApprovalBlock(a: AppApprovalRequest): ApprovalBlock {
       kind2: typeof d['kind'] === 'string' ? d['kind'] : kind,
       name: typeof d['name'] === 'string' ? d['name'] : a.toolName,
       description: typeof d['description'] === 'string' ? d['description'] : undefined,
+      ...review,
     };
   }
 
@@ -417,7 +424,7 @@ export function buildApprovalBlock(a: AppApprovalRequest): ApprovalBlock {
         status: typeof it['status'] === 'string' ? it['status'] : 'pending',
       };
     });
-    return { kind: 'todo', items };
+    return { kind: 'todo', items, ...review };
   }
 
   if (kind === 'plan_review') {
@@ -433,10 +440,10 @@ export function buildApprovalBlock(a: AppApprovalRequest): ApprovalBlock {
         return { label, description };
       })
       .filter((o): o is { label: string; description?: string } => o !== null);
-    return { kind: 'plan_review', plan, path, options: options.length > 0 ? options : undefined };
+    return { kind: 'plan_review', plan, path, options: options.length > 0 ? options : undefined, ...review };
   }
 
-  return { kind: 'generic', summary: a.action };
+  return { kind: 'generic', summary: a.action, ...review };
 }
 
 export function parsePlanSavedPath(output: string[] | undefined): string | undefined {

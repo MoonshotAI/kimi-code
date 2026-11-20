@@ -11,4 +11,3 @@ export function resolveCompletionBudget(args: {
   }
   return undefined;
 }
-

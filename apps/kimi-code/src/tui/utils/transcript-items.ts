@@ -89,6 +89,7 @@ export interface LogicalTranscriptItem {
   readonly fold: FoldTraits;
   readonly callId?: ToolCallId;
   readonly current: boolean;
+  readonly autoReviewing?: boolean;
   readonly detailWhile?: readonly ItemStatus['kind'][];
   readonly event: SummaryEvent;
   readonly label: ItemLabel;
@@ -355,6 +356,7 @@ export class TranscriptItemInspector {
       fold: foldTraits(toolCall, profile),
       callId: isToolCallId(toolCall.id) ? toolCall.id : undefined,
       current,
+      autoReviewing: component.isAutoReviewing,
       detailWhile: profile.detailWhile,
       event,
       label: toolLabel(component),

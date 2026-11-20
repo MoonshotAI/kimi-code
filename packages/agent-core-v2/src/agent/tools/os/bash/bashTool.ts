@@ -1,5 +1,8 @@
 import type { Readable } from 'node:stream';
 
+import { IBashParserService } from '#/app/bashParser/bashParser';
+import { analyzeBashReadOnly } from '#/agent/permissionPolicy/policies/bash-read-only';
+
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IAgentTaskOutputService } from '#/agent/task/taskOutput';
 import { resolveAgentTaskConfig } from '#/agent/task/configSection';
@@ -82,6 +85,7 @@ export class BashTool implements IBashTool {
     @IAgentTaskOutputService private readonly taskOutputs: IAgentTaskOutputService,
     @IAgentToolPolicyService private readonly toolPolicy: IAgentToolPolicyService,
     @IConfigService private readonly config: IConfigService,
+    @IBashParserService private readonly bashParser?: IBashParserService,
   ) {}
 
   private allowBackground(): boolean {
@@ -118,6 +122,9 @@ export class BashTool implements IBashTool {
   resolveExecution(args: BashInput): ToolExecution {
     const expectedGeneration = this.reviewedGeneration();
     const preview = args.command.length > 50 ? `${args.command.slice(0, 50)}…` : args.command;
+    const readOnly = this.bashParser === undefined
+      ? undefined
+      : analyzeBashReadOnly(this.bashParser.parse(args.command));
     let stop = ({ abandon }: {
       readonly reason: unknown;
       readonly abandon: (result?: ExecutableToolResult) => void;
@@ -125,6 +132,7 @@ export class BashTool implements IBashTool {
       abandon({ isError: true, output: 'Aborted before command started' });
     };
     return {
+      accesses: readOnly?.paths.map((path) => ({ kind: 'file', operation: 'read', path })),
       description: args.run_in_background
         ? `Starting background: ${preview}`
         : `Running: ${preview}`,

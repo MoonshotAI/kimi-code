@@ -112,6 +112,8 @@ describe('Event public types', () => {
         case 'tool.call.delta':
         case 'tool.call.started':
         case 'tool.updated':
+        case 'auto_review.started':
+        case 'auto_review.decision':
         case 'shell.output':
         case 'shell.started':
         case 'shell.completed':

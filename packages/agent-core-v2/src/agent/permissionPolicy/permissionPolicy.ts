@@ -8,6 +8,12 @@ import type { PermissionPolicyResult } from './types';
 export interface PermissionPolicyEvaluation {
   readonly policyName: string;
   readonly result: PermissionPolicyResult;
+  readonly underlying?: PermissionPolicyEvaluation;
+}
+
+export interface PermissionPolicyEvaluateOptions {
+  readonly includeUnderlying?: boolean;
+  readonly skipDangerousCommand?: boolean;
 }
 
 export interface IAgentPermissionPolicyService {
@@ -15,6 +21,7 @@ export interface IAgentPermissionPolicyService {
 
   evaluate(
     context: ResolvedToolExecutionHookContext,
+    options?: PermissionPolicyEvaluateOptions,
   ): Promise<PermissionPolicyEvaluation | undefined>;
 }
 

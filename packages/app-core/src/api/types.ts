@@ -357,6 +357,7 @@ export interface AppApprovalRequest {
   toolName: string;
   action: string;
   display: unknown;
+  approvalDetail?: { title: string; detail: string };
 }
 
 export interface QuestionOption {

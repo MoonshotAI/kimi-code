@@ -28,7 +28,7 @@ import type { FinishReason } from '@moonshot-ai/core/llm/response';
 import type { TokenUsage } from '@moonshot-ai/core/llm/usage';
 import { isError2 } from '#/_base/errors/errors';
 import { estimateTokensForMessages } from '#/llm-adapter/contract/tokens';
-import { ChatProviderError, errorFromLlmMessage, llmMessageFromError } from '#/llm-adapter/contract/errors';
+import { errorFromLlmMessage, llmMessageFromError } from '#/llm-adapter/contract/errors';
 
 import {
   generateInputSnapshot,
@@ -297,7 +297,7 @@ export function withMockProvider(
         try {
           return await provider.fetch(input, init);
         } catch (error) {
-          if (isError2(error) && !(error instanceof ChatProviderError)) {
+          if (isError2(error)) {
             directError = error;
             directAbort.abort(error);
           }
@@ -753,7 +753,12 @@ function anthropicChunks(
   for (const [index, part] of attempt.parts.entries()) {
     const block = anthropicBlock(part);
     if (block === undefined) continue;
-    chunks.push({ type: 'content_block_start', index, content_block: block });
+    const startBlock = block['type'] === 'text'
+      ? { ...block, text: '' }
+      : block['type'] === 'thinking'
+        ? { ...block, thinking: '' }
+        : block;
+    chunks.push({ type: 'content_block_start', index, content_block: startBlock });
     const delta = anthropicDelta(part);
     if (delta !== undefined) chunks.push({ type: 'content_block_delta', index, delta });
     chunks.push({ type: 'content_block_stop', index });

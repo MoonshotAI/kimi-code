@@ -99,7 +99,8 @@ watch(
           <Icon name="pip" size="sm" aria-hidden="true" />
         </button>
       </Tooltip>
-      <span v-if="tool.timing" class="tl-chip">{{ tool.timing }}</span>
+      <span v-if="tool.autoReviewing" class="tl-chip">{{ t('tools.activity.autoReviewing') }}</span>
+      <span v-else-if="tool.timing" class="tl-chip">{{ tool.timing }}</span>
     </template>
     <template #body>
       <div ref="boxesEl" class="bash-boxes" :class="{ 'bash-out-nowrap': !outputWrap }">
@@ -133,7 +134,7 @@ watch(
           </template>
           <OutputPanel
             :lines="tool.output"
-            :empty-text="isRunning ? t('tools.output.waiting') : t('tools.output.empty')"
+            :empty-text="tool.autoReviewing ? t('tools.activity.autoReviewing') : isRunning ? t('tools.output.waiting') : t('tools.output.empty')"
           />
         </ToolPanel>
       </div>

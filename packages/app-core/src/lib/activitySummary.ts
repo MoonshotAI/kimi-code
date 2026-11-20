@@ -9,6 +9,7 @@ export interface ActivitySummaryTool {
   name: string;
   arg: string;
   status: 'ok' | 'running' | 'error' | 'cancelled';
+  autoReviewing?: boolean;
   id?: string;
   output?: readonly string[];
 }
@@ -153,6 +154,9 @@ function currentClause(
 ): SummaryClause {
   if (current.kind === 'thinking') {
     return { fragments: [{ text: t('thinking.streaming'), tone: 'normal' }] };
+  }
+  if (current.tool.autoReviewing) {
+    return { fragments: [{ text: t('tools.activity.autoReviewing'), tone: 'normal' }] };
   }
   const kind = clauseKind(current.tool.name);
   const provided = providerFor(providers, kind)?.doing?.(current.tool, finished.get(kind)?.tools ?? []);

@@ -12,8 +12,19 @@ import {
 const i18n = createKimiI18n({ locale: 'zh' });
 const t: Translator = (key, params) => (params === undefined ? i18n.global.t(key) : i18n.global.t(key, params));
 
-function tool(name: string, over: Partial<{ arg: string; status: 'ok' | 'running' | 'error' }> = {}): ActivitySummaryItem {
-  return { kind: 'tool', tool: { name, arg: over.arg ?? '{}', status: over.status ?? 'ok' } };
+function tool(
+  name: string,
+  over: Partial<{ arg: string; status: 'ok' | 'running' | 'error'; autoReviewing: boolean }> = {},
+): ActivitySummaryItem {
+  return {
+    kind: 'tool',
+    tool: {
+      name,
+      arg: over.arg ?? '{}',
+      status: over.status ?? 'ok',
+      autoReviewing: over.autoReviewing,
+    },
+  };
 }
 
 const thinking: ActivitySummaryItem = { kind: 'thinking' };
@@ -217,6 +228,17 @@ describe('summarizeLive', () => {
       expect(render(summarizeActivity(t, [tool('read')]).clauses)).toBe('Read 1 file');
       expect(render(summarizeActivity(t, [tool('read'), tool('read')]).clauses)).toBe('Read 2 files');
       expect(render(summarizeActivity(t, [tool('edit'), tool('multi_edit')]).clauses)).toBe('Made 2 edits');
+    } finally {
+      i18n.global.locale.value = 'zh';
+    }
+  });
+
+  it('shows the auto-review status for a tool awaiting review', () => {
+    const current = tool('bash', { arg: '{"command":"echo hi"}', status: 'running', autoReviewing: true });
+    expect(render([summarizeLive(t, [tool('read'), current], current).current!])).toBe('正在自动复核…');
+    i18n.global.locale.value = 'en';
+    try {
+      expect(render([summarizeLive(t, [tool('read'), current], current).current!])).toBe('Auto Review in progress…');
     } finally {
       i18n.global.locale.value = 'zh';
     }

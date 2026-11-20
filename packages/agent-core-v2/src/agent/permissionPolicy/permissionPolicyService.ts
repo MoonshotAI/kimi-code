@@ -4,6 +4,7 @@ import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
 import { AutoModeApprovePermissionPolicyService } from '#/agent/permissionPolicy/policies/auto-mode-approve';
 import { AutoModeAskUserQuestionDenyPermissionPolicyService } from '#/agent/permissionPolicy/policies/auto-mode-ask-user-question-deny';
+import { BashReadOnlyApprovePermissionPolicyService } from '#/agent/permissionPolicy/policies/bash-read-only';
 import { DangerousCommandAskPermissionPolicyService } from '#/agent/permissionPolicy/policies/dangerous-command-ask';
 import { DefaultToolApprovePermissionPolicyService } from '#/agent/permissionPolicy/policies/default-tool-approve';
 import { FallbackAskPermissionPolicyService } from '#/agent/permissionPolicy/policies/fallback-ask';
@@ -17,6 +18,7 @@ import { UserConfiguredDenyPermissionPolicyService } from '#/agent/permissionPol
 import { YoloModeApprovePermissionPolicyService } from '#/agent/permissionPolicy/policies/yolo-mode-approve';
 import {
   IAgentPermissionPolicyService,
+  type PermissionPolicyEvaluateOptions,
   type PermissionPolicyEvaluation,
 } from './permissionPolicy';
 import type { PermissionPolicy } from "./types";
@@ -51,18 +53,30 @@ export class AgentPermissionPolicyService
       this.instantiation.createInstance(YoloModeApprovePermissionPolicyService),
       this.instantiation.createInstance(DefaultToolApprovePermissionPolicyService),
       this.instantiation.createInstance(GitCwdWriteApprovePermissionPolicyService),
+      this.instantiation.createInstance(BashReadOnlyApprovePermissionPolicyService),
       this.instantiation.createInstance(FallbackAskPermissionPolicyService),
     ];
   }
 
   async evaluate(
     context: ResolvedToolExecutionHookContext,
+    options?: PermissionPolicyEvaluateOptions,
   ): Promise<PermissionPolicyEvaluation | undefined> {
+    let modeHit: PermissionPolicyEvaluation | undefined;
     for (const policy of this.policies) {
+      if (options?.skipDangerousCommand === true && policy.name === 'dangerous-command-ask') {
+        continue;
+      }
       const result = await policy.evaluate(context);
-      if (result !== undefined) return { policyName: policy.name, result };
+      if (result === undefined) continue;
+      const evaluation = { policyName: policy.name, result };
+      if (options?.includeUnderlying === true && policy.modeApproval === true) {
+        modeHit = evaluation;
+        continue;
+      }
+      return modeHit === undefined ? evaluation : { ...modeHit, underlying: evaluation };
     }
-    return undefined;
+    return modeHit;
   }
 }
 

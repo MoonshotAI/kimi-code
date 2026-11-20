@@ -76,7 +76,7 @@ Approvals are not triggered for regular tool calls in Ask When Needed mode, nor 
 
 **Ask When Needed mode** (formerly YOLO), enabled with `/yolo`, auto-approves regular tool calls, making it suitable for batch tasks you know are safe. It still asks before sensitive actions — accessing sensitive files such as `.env` or SSH keys, running dangerous commands such as `shutdown` or `rm -rf`, or exiting Plan mode — and the agent can still ask you questions.
 
-**Never Ask mode** (formerly Auto), enabled with `/auto`, is the fully unattended mode: every tool approval is handled automatically, including sensitive files, and the agent never asks you questions — it decides everything on its own. The one exception is Plan mode: a plan still waits for your review before the agent carries it out. The built-in dangerous-command guard asks for your confirmation before commands such as `shutdown`, `reboot`, or `rm -rf` in Always Ask and Ask When Needed mode; in Never Ask mode these commands run without interruption.
+**Never Ask mode** (formerly Auto), enabled with `/auto`, is the fully unattended mode: every tool approval is handled automatically, including sensitive files, and the agent never asks you questions — it decides everything on its own. The one exception is Plan mode: a plan still waits for your review before the agent carries it out. The built-in dangerous-command guard asks for your confirmation before commands such as `shutdown`, `reboot`, or `rm -rf` in Always Ask and Ask When Needed mode; in Never Ask mode these commands run without interruption. With experimental Auto Review enabled, Ask When Needed mode skips that detection: a command matched by an `allow` rule or approved for this session runs, and the rest go to review.
 
 
 ## Mode switching

@@ -30,10 +30,13 @@ export interface BeforeExecuteDecision {
 }
 
 export interface BeforeToolExecuteEvent extends ResolvedToolExecutionHookContext {
+  readonly reviewSignal: AbortSignal;
   veto(result: ExecutableToolResult): void;
   allow(): void;
   pass(metadata?: unknown): void;
   waitUntil(factory: () => Promise<BeforeExecuteDecision | undefined>): void;
+  deferReview(start: () => void): void;
+  cancelReview(): void;
 }
 
 export interface WillExecuteToolEvent extends IWaitUntil {

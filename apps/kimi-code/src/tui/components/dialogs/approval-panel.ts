@@ -39,6 +39,7 @@ function truncateOneLine(text: string, max: number): string {
 
 const DIFF_SUMMARY_MAX_LINES = 10;
 const DESCRIPTION_AREA_MAX_ROWS = 3;
+const REVIEW_DETAIL_MAX_LINES = 2;
 const CONTENT_SUMMARY_MAX_LINES = 10;
 
 interface BlockStyles {
@@ -47,6 +48,7 @@ interface BlockStyles {
   accent: (s: string) => string;
   gutter: (s: string) => string;
   errorBold: (s: string) => string;
+  warning: (s: string) => string;
 }
 
 function makeBlockStyles(): BlockStyles {
@@ -56,6 +58,7 @@ function makeBlockStyles(): BlockStyles {
     accent: (s) => currentTheme.fg('accent', s),
     gutter: (s) => currentTheme.fg('diffGutter', s),
     errorBold: (s) => currentTheme.boldFg('error', s),
+    warning: (s) => currentTheme.fg('warning', s),
   };
 }
 
@@ -159,6 +162,8 @@ function renderDisplayBlock(
       }
       return lines;
     }
+    case 'review':
+      return [s.warning(block.title), ...reviewDetail(block.detail, contentWidth, s.dim)];
     case 'brief':
       return block.text
         ? block.text.split('\n').map((line) => (line.length > 0 ? s.strong(line) : ''))
@@ -172,6 +177,17 @@ function renderDisplayBlock(
     default:
       return [];
   }
+}
+
+function reviewDetail(detail: string, contentWidth: number, dim: (text: string) => string): string[] {
+  const width = Math.max(1, contentWidth);
+  const wrapped = wrapTextWithAnsi(detail, width);
+  const shown = wrapped.slice(0, REVIEW_DETAIL_MAX_LINES);
+  if (wrapped.length > REVIEW_DETAIL_MAX_LINES && shown.length > 0) {
+    const last = shown.length - 1;
+    shown[last] = `${truncateToWidth(shown[last] ?? '', width - 1, '')}…`;
+  }
+  return shown.map((line) => dim(line));
 }
 
 function normalizeApprovalText(text: string): string {

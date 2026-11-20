@@ -6,6 +6,7 @@ import type {
 
 export class YoloModeApprovePermissionPolicyService implements PermissionPolicy {
   readonly name = 'yolo-mode-approve';
+  readonly modeApproval = true;
 
   constructor(
     @IAgentPermissionModeService private readonly modeService: IAgentPermissionModeService,
