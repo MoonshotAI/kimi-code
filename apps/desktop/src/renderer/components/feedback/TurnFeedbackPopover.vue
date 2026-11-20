@@ -296,11 +296,11 @@ async function submit(): Promise<void> {
 .feedback-consent { min-width: 0; gap: 6px; }
 .feedback-consent .ui-check { min-width: 0; gap: 6px; }
 .feedback-consent :deep(.ui-check__box) {
+  --ui-check-background: transparent;
   position: relative;
   width: 16px;
   height: 16px;
   border: 0;
-  background: transparent;
 }
 .feedback-consent :deep(.ui-check__box::before) {
   position: absolute;

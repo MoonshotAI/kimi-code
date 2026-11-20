@@ -288,11 +288,11 @@
 }
 
 .global-feedback-options .ui-check__box {
+  --ui-check-background: transparent;
   position: relative;
   width: 16px;
   height: 16px;
   border: 0;
-  background: none;
 }
 
 .global-feedback-options .ui-check__box::before {
