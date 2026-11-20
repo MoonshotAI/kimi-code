@@ -111,6 +111,7 @@ export { default as AddProviderPage } from './settings/AddProviderPage.vue';
 export { default as BrowserTabTitleSetting } from './settings/BrowserTabTitleSetting.vue';
 export { default as FontSettingsPage } from './settings/FontSettingsPage.vue';
 export { default as FontSettingsRow } from './settings/FontSettingsRow.vue';
+export { default as RunningSendModeSetting } from './settings/RunningSendModeSetting.vue';
 export { default as SettingsSubpage } from './settings/SettingsSubpage.vue';
 export {
   SettingsSubpageHostKey,

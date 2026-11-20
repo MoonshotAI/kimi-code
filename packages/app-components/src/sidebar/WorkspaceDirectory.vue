@@ -84,7 +84,7 @@ function onWorkspaceMouseLeave(): void {
         @blur="confirmRenameWorkspace()"
         @click.stop
       />
-      <span v-else class="ws-dir-name">{{ g.workspace.name }}</span>
+      <span v-else class="ws-dir-name text-row-label text-fade-clip">{{ g.workspace.name }}</span>
       <Badge v-if="g.workspace.kind === 'implicit'" class="ws-dir-kind" size="sm" variant="neutral">
         {{ t('workspace.cliBadge') }}
       </Badge>
@@ -104,7 +104,7 @@ function onWorkspaceMouseLeave(): void {
         </IconButton>
       </span>
     </div>
-    <div class="ws-dir-sub">{{ g.workspace.root }}</div>
+    <div class="ws-dir-sub text-fade-clip">{{ g.workspace.root }}</div>
   </div>
   <div v-if="groups.length === 0" class="empty">
     {{ t('workspace.noWorkspace') }}
@@ -141,17 +141,7 @@ function onWorkspaceMouseLeave(): void {
 }
 .ws-dir.host-unavailable .ws-dir-name { color: var(--color-text-faint); }
 .ws-dir-name {
-  flex: 1;
   min-width: 0;
-  font-size: var(--ui-font-size-sm);
-  font-weight: var(--weight-caption);
-  line-height: var(--leading-tight);
-  color: var(--color-text);
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: clip;
-  -webkit-mask-image: linear-gradient(to right, var(--color-text-strong) calc(100% - 16px), transparent);
-  mask-image: linear-gradient(to right, var(--color-text-strong) calc(100% - 16px), transparent);
 }
 .ws-dir-kind {
   flex: none;
@@ -197,11 +187,6 @@ function onWorkspaceMouseLeave(): void {
   color: var(--color-text-faint);
   font-size: var(--text-xs);
   line-height: var(--leading-tight);
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: clip;
-  -webkit-mask-image: linear-gradient(to right, var(--color-text-strong) calc(100% - 16px), transparent);
-  mask-image: linear-gradient(to right, var(--color-text-strong) calc(100% - 16px), transparent);
 }
 .ws-dir:hover .ws-dir-name,
 .ws-dir:focus-within .ws-dir-name,

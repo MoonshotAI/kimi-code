@@ -925,7 +925,7 @@ defineExpose({
               <WorkspaceIcon v-if="g.workspace.hostId !== undefined" class="done-gh-folder" :host-id="g.workspace.hostId" status="all" />
               <Icon v-else-if="isCollapsed(g.workspace.id)" class="done-gh-folder" name="folder-closed" />
               <Icon v-else class="done-gh-folder" name="folder" />
-              <span class="done-gh-name">{{ g.workspace.name }}</span>
+              <span class="done-gh-name text-fade-clip">{{ g.workspace.name }}</span>
               <Badge v-if="g.workspace.kind === 'implicit'" class="done-gh-kind" size="sm" variant="neutral">
                 {{ t('workspace.cliBadge') }}
               </Badge>
@@ -1247,11 +1247,6 @@ defineExpose({
   font-weight: var(--weight-medium);
   line-height: var(--leading-tight);
   color: var(--color-text-muted);
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: clip;
-  -webkit-mask-image: linear-gradient(to right, var(--color-text-strong) calc(100% - 16px), transparent);
-  mask-image: linear-gradient(to right, var(--color-text-strong) calc(100% - 16px), transparent);
 }
 .done-gh-kind {
   flex: none;

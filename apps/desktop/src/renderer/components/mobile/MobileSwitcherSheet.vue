@@ -13,6 +13,7 @@ import { SESSIONS_EXPAND_BATCH } from '@moonshot-ai/app-client/client';
 import { BottomSheet, RcDeviceSwitcher } from '@moonshot-ai/app-components';
 import { Badge, Icon, IconButton, Menu, MenuItem, SegmentedControl, Tooltip } from '@moonshot-ai/app-ui';
 import { WorkspaceIcon } from '@moonshot-ai/app-components/support';
+import MobileSessionRow from './MobileSessionRow.vue';
 
 const { t } = useI18n();
 
@@ -290,32 +291,19 @@ function onDeleteWorkspace(ws: WorkspaceView): void {
 
         <div v-show="!isCollapsed(g.workspace.id)">
           <div v-if="g.sessions.length === 0" class="mempty small">{{ t('sidebar.noSessions') }}</div>
-          <div
+          <MobileSessionRow
             v-for="s in visibleSessions(g)"
             :key="s.id"
-            class="srow"
-            :class="{ cur: s.id === activeId }"
-            @click="onSelectSession(s.id)"
-          >
-            <span class="t" :class="{ run: s.busy, aborted: !s.busy && (attentionBySession[s.id] ?? 0) === 0 && s.lastTurnReason === 'failed' }">{{ s.title }}</span>
-            <span v-if="(attentionBySession[s.id] ?? 0) > 0" class="att">{{ attentionBySession[s.id] }}</span>
-            <span class="time">{{ s.time }}</span>
-            <IconButton
-              size="lg"
-              class="kb"
-              :label="t('sidebar.options')"
-              @click.stop="toggleMenu(s.id)"
-            >
-              <Icon name="dots-horizontal" size="md" />
-            </IconButton>
-
-            <Menu v-if="menuFor === s.id" class="kmenu" @click.stop>
-              <MenuItem size="lg" @click="onRename(s)">{{ t('sidebar.rename') }}</MenuItem>
-              <MenuItem size="lg" @click="onArchive(s.id)">{{ t('sidebar.archive') }}</MenuItem>
-              <MenuItem separator />
-              <MenuItem size="lg" danger @click="onDelete(s.id)"><Icon name="trash" size="sm" /> {{ t('sidebar.delete') }}</MenuItem>
-            </Menu>
-          </div>
+            :session="s"
+            :active="s.id === activeId"
+            :attention="attentionBySession[s.id] ?? 0"
+            :menu-open="menuFor === s.id"
+            @select="onSelectSession"
+            @toggle-menu="toggleMenu"
+            @rename="onRename"
+            @archive="onArchive"
+            @delete="onDelete"
+          />
           <div v-if="canExpand(g) || canCollapse(g)" class="mshow-more-row">
             <button
               v-if="canExpand(g)"
@@ -344,35 +332,20 @@ function onDeleteWorkspace(ws: WorkspaceView): void {
 
     <div v-else class="mlist">
       <div v-if="flatRows.length === 0" class="mempty">{{ t('sidebar.noSessions') }}</div>
-      <div
+      <MobileSessionRow
         v-for="s in flatRows"
         :key="s.id"
-        class="srow srow-flat"
-        :class="{ cur: s.id === activeId }"
-        @click="onSelectSession(s.id)"
-      >
-        <span class="srow-main">
-          <span class="t" :class="{ run: s.busy, aborted: !s.busy && (attentionBySession[s.id] ?? 0) === 0 && s.lastTurnReason === 'failed' }">{{ s.title }}</span>
-          <span class="srow-sub">{{ s.workspaceName ?? s.cwdLabel ?? '-' }}</span>
-        </span>
-        <span v-if="(attentionBySession[s.id] ?? 0) > 0" class="att">{{ attentionBySession[s.id] }}</span>
-        <span class="time">{{ s.time }}</span>
-        <IconButton
-          size="lg"
-          class="kb"
-          :label="t('sidebar.options')"
-          @click.stop="toggleMenu(s.id)"
-        >
-          <Icon name="dots-horizontal" size="md" />
-        </IconButton>
-
-        <Menu v-if="menuFor === s.id" class="kmenu" @click.stop>
-          <MenuItem size="lg" @click="onRename(s)">{{ t('sidebar.rename') }}</MenuItem>
-          <MenuItem size="lg" @click="onArchive(s.id)">{{ t('sidebar.archive') }}</MenuItem>
-          <MenuItem separator />
-          <MenuItem size="lg" danger @click="onDelete(s.id)"><Icon name="trash" size="sm" /> {{ t('sidebar.delete') }}</MenuItem>
-        </Menu>
-      </div>
+        :session="s"
+        :active="s.id === activeId"
+        :attention="attentionBySession[s.id] ?? 0"
+        :menu-open="menuFor === s.id"
+        flat
+        @select="onSelectSession"
+        @toggle-menu="toggleMenu"
+        @rename="onRename"
+        @archive="onArchive"
+        @delete="onDelete"
+      />
       <div v-if="flatHasMore" class="mshow-more-row">
         <button
           type="button"
@@ -479,108 +452,6 @@ function onDeleteWorkspace(ws: WorkspaceView): void {
 .mgh-add { margin: 0 calc(-1 * var(--space-2)) 0 0; }
 .mgh-add:active { color: var(--color-text); background: var(--color-hover); }
 .mgh-more:active { color: var(--color-text); background: var(--color-hover); }
-
-.srow {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  min-height: 44px;
-  margin: 1px var(--space-2);
-  padding: 0 calc(var(--m-pad) - var(--space-2)) 0 calc(var(--m-indent) - var(--space-2));
-  border-radius: var(--radius-md);
-  cursor: pointer;
-  -webkit-user-select: none;
-  user-select: none;
-  position: relative;
-}
-.srow:hover { background: var(--color-hover); }
-.srow:active { background: var(--color-surface-sunken); }
-.srow.cur { background: var(--color-accent-soft); box-shadow: inset 0 0 0 1px var(--color-accent-bd); }
-.srow .t {
-  flex: 1;
-  min-width: 0;
-  font-size: var(--ui-font-size-sm);
-  font-weight: var(--weight-caption);
-  line-height: var(--leading-tight);
-  color: var(--color-text);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.srow.cur .t { color: var(--color-accent-hover); }
-
-.srow .t.run { position: relative; }
-.srow .t.run::before {
-  content: '';
-  position: absolute;
-  left: -14px;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 6px;
-  height: 6px;
-  border-radius: var(--radius-full);
-  background: var(--color-accent);
-  animation: mRunPulse 1.4s ease-in-out infinite;
-}
-@keyframes mRunPulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.35; }
-}
-.srow .t.aborted { position: relative; }
-.srow .t.aborted::before {
-  content: '';
-  position: absolute;
-  left: -14px;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 6px;
-  height: 6px;
-  border-radius: var(--radius-full);
-  background: var(--color-danger);
-}
-.srow .time {
-  flex: none;
-  font-size: var(--text-xs);
-  font-variant-numeric: tabular-nums;
-  color: var(--color-text-faint);
-}
-.att {
-  flex: none;
-  font-family: var(--font-mono);
-  font-size: max(9px, calc(var(--ui-font-size) - 4px));
-  color: var(--color-text-on-accent);
-  background: var(--color-warning);
-  border-radius: var(--radius-full);
-  padding: 1px 7px;
-}
-.srow .kb { flex: none; margin: 0 calc(-1 * var(--space-2)) 0 0; }
-.srow .kb:active { color: var(--color-text); background: var(--color-hover); }
-
-.srow-flat { min-height: 52px; }
-.srow-main {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-}
-.srow-main .t { flex: none; }
-.srow-sub {
-  font-size: var(--text-xs);
-  color: var(--color-text-faint);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.kmenu {
-  position: absolute;
-  right: 12px;
-  top: 44px;
-  z-index: var(--z-dropdown);
-  min-width: 96px;
-  overflow: hidden;
-}
 
 .wsmenu {
   top: calc(100% - 4px);

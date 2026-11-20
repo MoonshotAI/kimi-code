@@ -27,6 +27,7 @@ export * from './useSelectionQuoteBubble';
 export * from './useTurnFolding';
 export * from './usePasteImageAutoMention';
 export * from './useRunningSendMode';
+export * from './useSettingHighlight';
 export * from './useActivityRunFolding';
 export * from './useWorkspaceTrust';
 export * from './useWorkspaceFolderPicker';

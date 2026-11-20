@@ -572,7 +572,7 @@ function openPullRequest(): void {
 
     <div v-if="showSubRow" class="sub">
       <WorkspaceIcon class="sub-icon" :host-id="session.hostId" size="sm" status="none" />
-      <span class="sub-text">{{ session.workspaceName ?? session.cwdLabel }}</span>
+      <span class="sub-text text-fade-clip">{{ session.workspaceName ?? session.cwdLabel }}</span>
       <!-- PR association (v2 git domain): a small tag at the second line's
            right edge; click opens the PR (system browser / new tab). Open PRs
            stand out in success green, merged in purple, closed stays neutral. -->
@@ -840,11 +840,6 @@ function openPullRequest(): void {
 .sub-text {
   flex: 1;
   min-width: 0;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: clip;
-  -webkit-mask-image: linear-gradient(to right, var(--color-text-strong) calc(100% - 16px), transparent);
-  mask-image: linear-gradient(to right, var(--color-text-strong) calc(100% - 16px), transparent);
 }
 
 .ts {
