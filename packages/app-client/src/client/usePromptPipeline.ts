@@ -315,7 +315,7 @@ export function usePromptPipeline(rawState: ExtendedState, deps: PromptPipelineD
     const current = sessionsStore().sessions.find((s) => s.id === sid)?.model;
     const sendable = modelsStore().resolveSendModel(current);
     if (sendable !== null && sendable !== current) {
-      void modelProvider.setSessionModel(sid, sendable);
+      void modelProvider.normalizeSessionModel(sid, sendable);
     }
     return deps.whenSessionProfileSettled(sid);
   }

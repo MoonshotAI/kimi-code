@@ -475,6 +475,23 @@ describe('useModelProviderState thinking on model selection', () => {
     expect(state.thinking).toBe('high');
   });
 
+  it('preserves the session thinking level when normalizing a bare model name to its catalog id', async () => {
+    const state = createState({
+      activeSession: { id: 'session-1', model: effortAppModel.model },
+      defaultModel: effortAppModel.id,
+    });
+    state.thinkingBySession = { 'session-1': 'max' };
+    const provider = createModelProvider(state);
+
+    await provider.normalizeSessionModel('session-1', effortAppModel.id);
+
+    expect(state.thinkingBySession['session-1']).toBe('max');
+    expect(persistSessionProfileMock).toHaveBeenCalledWith(
+      { model: effortAppModel.id, thinking: 'max' },
+      'session-1',
+    );
+  });
+
   it('reports a network-failed skill as unsuccessful so the caller restores its draft', async () => {
     const state = createState({ activeSession: { id: 'session-1', model: effortAppModel.id }, defaultModel: booleanAppModel.id });
     const provider = createModelProvider(state);

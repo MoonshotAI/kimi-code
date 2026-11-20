@@ -197,6 +197,12 @@ function createWorkspaceState() {
     ),
     activateSkill: vi.fn(async () => true),
     setSessionModel: vi.fn(async () => true),
+    normalizeSessionModel: vi.fn(async (sessionId: string, model: string) => {
+      rawState.sessions = rawState.sessions.map((session) =>
+        session.id === sessionId ? { ...session, model } : session,
+      );
+      return persistSessionProfile({ model, thinking: rawState.thinkingBySession[sessionId] }, sessionId);
+    }),
   };
 
   const deps = {
@@ -410,6 +416,28 @@ describe('startSessionAndActivateSkill', () => {
     );
     expect(rawState.thinkingBySession['session-1']).toBe(DRAFT_PICK_LEVEL);
     expect(rawState.pendingThinkingBySession['session-1']).toBeUndefined();
+  });
+
+  it('preserves the draft thinking level when the first prompt normalizes the session model id', async () => {
+    const { rawState, api, modelProvider, persistSessionProfile, ws } = createWorkspaceState();
+    modelsStore().setDefaultModel('kimi-k3');
+    const session = { ...createdSession('session-1'), model: 'legacy-k3' };
+    api.createSession.mockResolvedValue(session);
+    api.getSession.mockResolvedValue(session);
+
+    const started = await ws.startSessionAndSendPrompt(
+      'workspace',
+      ws.createPromptEnvelope({ text: 'hello' }),
+    );
+
+    expect(started).toEqual({ sessionId: 'session-1', promptRejected: false });
+    expect(modelProvider.normalizeSessionModel).toHaveBeenCalledWith('session-1', 'kimi-k3');
+    expect(modelProvider.setSessionModel).not.toHaveBeenCalled();
+    expect(persistSessionProfile).toHaveBeenCalledWith(
+      { model: 'kimi-k3', thinking: DRAFT_PICK_LEVEL },
+      'session-1',
+    );
+    expect(rawState.thinkingBySession['session-1']).toBe(DRAFT_PICK_LEVEL);
   });
 
   it('rejects the first prompt when the draft settings write fails', async () => {
