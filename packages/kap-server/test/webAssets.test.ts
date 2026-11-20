@@ -42,12 +42,12 @@ describe('web asset cache policy', () => {
     '/favicon.svg',
     '/assets/application-configuration.json',
   ])(
-    'requires revalidation for %s',
+    'does not store non-hashed asset %s',
     async (url) => {
       const response = await app.inject({ method: 'GET', url });
 
       expect(response.statusCode).toBe(200);
-      expect(response.headers['cache-control']).toBe('no-cache');
+      expect(response.headers['cache-control']).toBe('no-store');
     },
   );
 });
