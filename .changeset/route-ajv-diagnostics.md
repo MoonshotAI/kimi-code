@@ -2,4 +2,4 @@
 '@moonshot-ai/core': patch
 ---
 
-Route AJV diagnostics through the shared logging utility.
+Prevent AJV diagnostic logs from polluting the TUI input area.
