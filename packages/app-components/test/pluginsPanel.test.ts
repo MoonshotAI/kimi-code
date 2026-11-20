@@ -1191,7 +1191,7 @@ describe('PluginsPanel', () => {
     });
   });
 
-  it('renders MCP authorization controls without authorization notes', async () => {
+  it('renders MCP authorization controls and errors', async () => {
     rowData.push(row('vercel', {
       catalogEntry: entry('vercel', 'Vercel'),
       installedPlugin: installed('vercel', 'marketplace'),
@@ -1244,10 +1244,12 @@ describe('PluginsPanel', () => {
     authorization.states['plugin-vercel:vercel'] = {
       status: 'oauth-required',
       phase: 'idle',
-      error: 'OAuth expired',
+      error: 'failed to start OAuth flow: software statement is invalid',
     };
     await nextTick();
-    expect(details.textContent).not.toContain('OAuth expired');
+    const authorizationError = details.querySelector('.plugin-capabilities__authorization-error');
+    expect(authorizationError?.textContent).toContain('Authorization failed. Please try again later');
+    expect(authorizationError?.getAttribute('title')).toContain('software statement is invalid');
     expect(details.querySelector('.plugin-capabilities__actions button')?.textContent).toBe('Retry authorization');
 
     authorization.states['plugin-vercel:vercel'] = {
@@ -1390,7 +1392,39 @@ describe('PluginsPanel', () => {
     expect(host.querySelector('.plugin-details__tagline')).toBeNull();
   });
 
-  it('hides reset failures and keeps the authorized badge control', async () => {
+  it('shows a localized authorization failure message', async () => {
+    rowData.push(row('jira-composio', {
+      catalogEntry: entry('jira-composio', 'Jira'),
+      installedPlugin: installed('jira-composio', 'marketplace'),
+      displayName: 'Jira',
+    }));
+    await mountPanel('zh');
+    authorization.states['plugin-jira-composio:jira-composio'] = {
+      status: 'oauth-required',
+      phase: 'idle',
+      error: 'invalid_software_statement',
+    };
+    vi.mocked(plugins.loadPluginCapabilities).mockResolvedValue({
+      skills: [],
+      mcpServers: [{
+        name: 'jira-composio',
+        runtimeName: 'plugin-jira-composio:jira-composio',
+        enabled: true,
+        transport: 'http',
+      }],
+    });
+
+    clickButton('我的插件');
+    await nextTick();
+    clickButton('Jira');
+    await settle();
+
+    const error = host.querySelector('.plugin-capabilities__authorization-error');
+    expect(error?.textContent?.trim()).toBe('授权失败，请稍后重试');
+    expect(error?.getAttribute('title')).toBe('invalid_software_statement');
+  });
+
+  it('shows reset failures and keeps the authorized badge control', async () => {
     rowData.push(row('vercel', {
       catalogEntry: entry('vercel', 'Vercel'),
       installedPlugin: installed('vercel', 'marketplace'),
@@ -1417,8 +1451,9 @@ describe('PluginsPanel', () => {
     clickButton('Vercel');
     await settle();
 
-    expect(host.querySelector('.plugin-capabilities__authorization-note')).toBeNull();
-    expect(host.querySelector('.plugin-details')?.textContent).not.toContain('reset failed');
+    const resetError = host.querySelector('.plugin-capabilities__authorization-error');
+    expect(resetError?.textContent).toContain('Authorization failed. Please try again later');
+    expect(resetError?.getAttribute('title')).toBe('reset failed');
     expect(host.querySelector('.plugin-capabilities__actions')).not.toBeNull();
   });
 

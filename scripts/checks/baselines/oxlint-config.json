@@ -24,6 +24,7 @@
     "*.generated.ts"
   ],
   "jsPlugins": [
+    "./scripts/no-crypto-random-uuid-lint-plugin.mjs",
     "./apps/desktop/scripts/e2e-lint-plugin.mjs"
   ],
   "options": {
@@ -307,6 +308,7 @@
     "import/no-duplicates": "deny",
     "import/no-empty-named-blocks": "deny",
     "import/no-self-import": "deny",
+    "kimi/no-crypto-random-uuid": "deny",
     "no-array-constructor": "deny",
     "no-async-promise-executor": "deny",
     "no-caller": "deny",

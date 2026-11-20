@@ -1,3 +1,4 @@
+import { v4 as randomUUID } from 'uuid';
 import {
   NO_FINISH,
   type FinishInfo,
@@ -163,7 +164,7 @@ function requireFunctionCallName(item: { name?: string }): string {
 }
 
 function functionCallId(callId: string | undefined): string {
-  return callId === undefined || callId.length === 0 ? crypto.randomUUID() : callId;
+  return callId === undefined || callId.length === 0 ? randomUUID() : callId;
 }
 
 function errorFromOpenAIResponsesEvent(

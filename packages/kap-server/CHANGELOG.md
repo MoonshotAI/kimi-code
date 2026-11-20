@@ -1,5 +1,14 @@
 # @moonshot-ai/kap-server
 
+## 0.3.2
+
+### Patch Changes
+
+- [#5176](https://github.com/MoonshotAI/kimi-code/pull/5176) [`07e6120`](https://github.com/MoonshotAI/kimi-code/commit/07e61204e5c08509b7957f0c473c981d0eb6865e) Thanks [@wbxl2000](https://github.com/wbxl2000)! - `POST /api/v1/sessions/{session_id}:wait` replies that a session is settled only after the records it wrote so far are on disk, so a server that crashes right after the reply restarts with the same turns.
+
+- Updated dependencies [[`7b20daf`](https://github.com/MoonshotAI/kimi-code/commit/7b20daf7ce8c734ad6150c5f56a9c107e0ecb44f), [`129b224`](https://github.com/MoonshotAI/kimi-code/commit/129b2247f53edd6172144e10d8c339156be96548)]:
+  - @moonshot-ai/core@0.1.1
+
 ## 0.3.1
 
 ### Patch Changes

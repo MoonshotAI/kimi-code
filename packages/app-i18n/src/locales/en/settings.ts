@@ -120,6 +120,7 @@ export default {
     resettingAuthorization: 'Cancelling authorization…',
     resetAuthorizationConfirmMessage: 'Cancel authorization for {name}? This removes the OAuth credentials saved on this device. You will need to authorize again to continue.',
     retryAuthorization: 'Retry authorization',
+    authorizationFailed: 'Authorization failed. Please try again later',
     retryAuthorizationStatus: 'Retry loading authorization status',
     authorized: 'Connected',
     openAuthorizationLink: 'Open authorization link',

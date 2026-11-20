@@ -111,29 +111,66 @@ kimi -p --agent reviewer "审查这个分支上的改动"
 
 `--agent-file` 以最高优先级注册单个 Agent 文件（仅本次启动）并选中它；该 flag 不可重复传入，`--agent` 与 `--agent-file` 互斥。两个 flag 都仅在新建会话时有效——都不能与 `--session`/`--continue` 组合，因为 Agent 在会话创建时绑定，恢复会话时会自动还原已绑定的 Agent。选择在会话首次绑定后即固定，之后不可切换；在 TUI 中，这些 flag 只绑定启动时的会话，之后在同一进程内新建的会话（例如通过 `/new`）使用默认 Agent。Agent 文件格式与发现目录详见 [Agent 与 subagent](../customization/agents.md#自定义-agent)。
 
-## 非交互执行
+## print 模式
 
-在脚本或 CI 中运行单次 prompt 时，使用 `-p`：
+使用 `-p` 或 `--prompt` 可以不进入终端交互界面，直接执行单次任务、输出结果并自动退出，适合 Shell 脚本、Git Hooks 和 CI 流水线。
 
-```sh
-kimi -p "Summarize the current repository status"
-```
+### 基本用法
 
-输出采用 transcript 样式：thinking 内容和 Assistant 正文都以 `• ` 开头，换行后两个空格缩进。Assistant 正文输出到 stdout；thinking、工具进度和 "恢复会话" 提示输出到 stderr。`-p` 模式不会请求人工审批，普通工具调用按 `auto` 权限策略处理，静态 deny 规则仍然生效。
-
-临时切换模型：
+传入任务描述即可执行，需要时可通过 `-m` 临时指定模型。
 
 ```sh
-kimi -m kimi-code/kimi-for-coding -p "Explain the latest diff"
+# 执行单次任务
+kimi -p "总结当前仓库的改动"
+
+# 临时指定本次使用的模型
+kimi -m kimi-code/kimi-for-coding -p "解释最近一次提交的 diff"
 ```
 
-需要结构化读取输出时，使用 `stream-json` 格式——stdout 每行都是一个 JSON 对象：
+默认以纯文本输出，且输出与进度自动分离。最终回复正文写入 `stdout`，每段以 `• ` 开头，可直接重定向到文件或传给下游管道；思考过程、工具执行进度和结尾的会话恢复提示写入 `stderr`，不会混入结果文件。
+
+::: warning 无人值守自动放行
+`-p` 模式不弹出交互式审批确认，常规文件读写与命令执行默认自动放行；配置文件中的 `deny` 规则仍会照常拦截。
+:::
+
+### 结构化输出
+
+需要在脚本或 CI 中按字段解析结果时，加上 `--output-format stream-json`。此时 `stdout` 每行输出一个 JSON 对象，按发生顺序记录模型回复、工具调用、工具返回结果和结尾的会话提示；思考过程和工具进度仍只输出到 `stderr`。
 
 ```sh
-kimi -p "List changed files" --output-format stream-json
+# 输出完整 JSON 事件流
+kimi -p "列出本次修改的文件" --output-format stream-json
+
+# 配合 jq 提取最终回复正文
+kimi -p "生成本次变更的 commit message" --output-format stream-json \
+  | jq -r 'select(.role == "assistant" and .content != null and (.tool_calls | not)) | .content' \
+  | tail -n 1
 ```
 
-`stream-json` 模式下，普通回复输出 Assistant 消息；模型调用工具时，先输出带 `tool_calls` 的 Assistant 消息，再输出对应的 Tool 消息，最后继续输出后续 Assistant 消息。thinking 内容不会写入 JSONL；工具进度和恢复会话提示仍写到 stderr。常见脚本模式见[在脚本与 CI 中使用](../guides/print.md)。
+### 接续会话
+
+每次 `-p` 执行都会自动保存会话，并在结束时输出 `session_id`。纯文本模式下它打印在 `stderr` 末尾，`stream-json` 模式下则作为 `stdout` 中的 `session.resume_hint` 行输出。
+
+需要分步追问时，可以按场景选择续接方式。在当前目录快速延续最近一次会话时用 `-c`，在脚本或 CI 中精确指定会话时先提取 `session_id` 再传给 `-S`。
+
+```sh
+# 同一目录下续接最近一次会话
+kimi -p "给 src/retry.ts 补齐参数校验"
+kimi -c -p "运行单测，如果有失败请一并修掉"
+
+# 在脚本中提取 session_id 并精确续接
+RUN=$(kimi -p "给 src/retry.ts 补齐参数校验" --output-format stream-json)
+SID=$(printf '%s\n' "$RUN" | jq -r 'select(.type == "session.resume_hint") | .session_id')
+kimi -S "$SID" -p "运行单测，如果有失败请一并修掉"
+```
+
+### 退出码
+
+| 退出码 | 含义 |
+| --- | --- |
+| `0` | 任务正常完成 |
+| `1` | 命令行参数错误、模型鉴权未就绪或执行出错 |
+| `4` | `-S` / `-c` 指定的会话正被另一个进程占用 |
 
 ## 子命令
 

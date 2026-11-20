@@ -1,3 +1,4 @@
+import { v4 as randomUUID } from 'uuid';
 import { collectStoredBrowserAssetIds } from './browserAnnotationAssets';
 import type { BrowserAnnotationCaptureAction } from '../../shared/browser-annotation';
 import { ANNOTATION_DETAIL_LABELS, type BrowserAnnotationDetails } from '../../shared/browser-annotation-details';
@@ -63,7 +64,7 @@ export function createBrowserAnnotationHost(options: {
       const cancel = (): void => finish(null);
       const retryScreenshot = !readOnly && screenshotState === 'failed';
       const native = registerBrowserOverlayDialog({
-        id: `browser-annotation-${crypto.randomUUID()}`,
+        id: `browser-annotation-${randomUUID()}`,
         onConfirm: (value, checked) => finish({ comment: value ?? comment, locate: false, includeScreenshot: capture.screenshot === undefined ? undefined : capture.target.kind === 'region' || (checked ?? includeScreenshot) }),
         onAuxiliary: (value, checked) => finish({ comment: value ?? comment, locate: !retryScreenshot, retryScreenshot, includeScreenshot: capture.screenshot === undefined ? undefined : capture.target.kind === 'region' || (checked ?? includeScreenshot) }),
         onCancel: cancel,

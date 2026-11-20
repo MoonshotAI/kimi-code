@@ -209,7 +209,9 @@ jobs:
         if: github.event_name == 'pull_request'
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
-        run: pnpm run check:duplication "$BASE_SHA"
+        run: |
+          git fetch --no-tags --depth=1 origin "$BASE_SHA"
+          pnpm run check:duplication "$BASE_SHA"
       - name: Show new duplicate locations
         if: failure() && steps.duplication.outcome == 'failure' && hashFiles('.tmp/jscpd/jscpd-report.json') != ''
         run: |

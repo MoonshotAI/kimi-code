@@ -132,6 +132,7 @@ import {
   type TurnResult,
 } from './loop';
 import { TurnCancel, turnKey } from './turnOps';
+import { LoopDrained, LoopIdle } from './loopOps';
 import { EMPTY_LOOP_PROMPT, historyEntryFromContext } from './history';
 import {
   createLoop,
@@ -192,6 +193,10 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   private taskReconciliation: Promise<void> | undefined;
   private loop: Loop | undefined;
   private initialized = false;
+  private settlementGeneration = 0;
+  private macroGeneration = 0;
+  private lifecycleDrained = true;
+  private lifecycleIdle = true;
   private startPromise: Promise<void> | undefined;
   private closePromise: Promise<void> | undefined;
   private readonly loopHooks = createLoopHookRegistry();
@@ -206,7 +211,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     @IAgentToolRegistryService _toolRegistry: IAgentToolRegistryService,
     @IConfigService private readonly config: IConfigService,
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
-    @IEventBus events: IEventBus,
+    @IEventBus private readonly events: IEventBus,
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @ISessionMetadata private readonly metadata: ISessionMetadata,
@@ -1390,8 +1395,10 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     return (
       this.pendingSubmissions.length > 0 ||
       this.pendingNotifications.length > 0 ||
+      this.pendingReminders.length > 0 ||
       (this.loop?.state.inbox.normal.length ?? 0) > 0 ||
       (this.loop?.state.inbox.notify.length ?? 0) > 0 ||
+      (this.loop?.state.inbox.remind.length ?? 0) > 0 ||
       (this.loop?.state.completionPending ?? false) ||
       (this.loop?.state.resetting ?? false) ||
       (this.loop !== undefined && this.loop.state.status !== 'idle')
@@ -1421,7 +1428,38 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     return result === previous ? undefined : result;
   }
 
+  private hasActiveBackgroundTasks(): boolean {
+    return this.loop?.state.calls.some((call) => call.detached) ?? false;
+  }
+
   private maybeSettle(): void {
+    const generation = ++this.settlementGeneration;
+    const drained = !this.disposing && this.quiescenceDepth === 0 && !this.hasPendingRequests();
+    const idle = drained && !this.hasActiveBackgroundTasks();
+    if (!drained && this.lifecycleDrained) this.macroGeneration += 1;
+    if (!drained) this.lifecycleDrained = false;
+    if (!idle) this.lifecycleIdle = false;
+    if (drained && (!this.lifecycleDrained || !this.lifecycleIdle)) {
+      void this.turns.drain().then(() => {
+        if (generation !== this.settlementGeneration) return;
+        const currentDrained = !this.disposing && this.quiescenceDepth === 0 && !this.hasPendingRequests();
+        if (currentDrained && !this.lifecycleDrained) {
+          this.lifecycleDrained = true;
+          this.events.publish(new LoopDrained({ agentId: this.scopeContext.agentId, generation: this.macroGeneration }));
+        }
+        if (generation !== this.settlementGeneration) return;
+        const currentIdle =
+          !this.disposing &&
+          this.quiescenceDepth === 0 &&
+          !this.hasPendingRequests() &&
+          !this.hasActiveBackgroundTasks() &&
+          this.lifecycleDrained;
+        if (currentIdle && !this.lifecycleIdle) {
+          this.lifecycleIdle = true;
+          this.events.publish(new LoopIdle({ agentId: this.scopeContext.agentId, generation: this.macroGeneration }));
+        }
+      });
+    }
     if (this.hasPendingRequests() || this.settleWaiters.length === 0) return;
     const waiters = this.settleWaiters.splice(0);
     for (const resolve of waiters) resolve();
