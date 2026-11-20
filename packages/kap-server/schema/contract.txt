@@ -312,6 +312,7 @@ GET /api/v1/mcp/servers/{name} response 200<code=40408>: shape 6c14572c
 GET /api/v1/mcp/servers/{name}: operation
 GET /api/v1/mcp/servers: operation
 GET /api/v1/meta response 200.code: enum 0
+GET /api/v1/meta response 200.data.capabilities.agent_close: enum true
 GET /api/v1/meta response 200.data.capabilities.file_upload: enum true
 GET /api/v1/meta response 200.data.capabilities.fs_query: enum true
 GET /api/v1/meta response 200.data.capabilities.interactions_list: enum true
@@ -2313,6 +2314,28 @@ POST /api/v1/sessions response 200<code=40920>.msg: string
 POST /api/v1/sessions response 200<code=40920>.request_id: string
 POST /api/v1/sessions response 200<code=40920>: object closed
 POST /api/v1/sessions response 200<code=40926>: shape 6367494b
+POST /api/v1/sessions/{session_id}/agents/{agent_id}:close param path:agent_id: string minLength=1
+POST /api/v1/sessions/{session_id}/agents/{agent_id}:close param path:session_id: string minLength=1
+POST /api/v1/sessions/{session_id}/agents/{agent_id}:close response 200: oneOf
+POST /api/v1/sessions/{session_id}/agents/{agent_id}:close response 200<code=0>.code: enum 0
+POST /api/v1/sessions/{session_id}/agents/{agent_id}:close response 200<code=0>.data.closed: enum true
+POST /api/v1/sessions/{session_id}/agents/{agent_id}:close response 200<code=0>.data: object closed
+POST /api/v1/sessions/{session_id}/agents/{agent_id}:close response 200<code=0>.details: any optional
+POST /api/v1/sessions/{session_id}/agents/{agent_id}:close response 200<code=0>.msg: string
+POST /api/v1/sessions/{session_id}/agents/{agent_id}:close response 200<code=0>.request_id: string
+POST /api/v1/sessions/{session_id}/agents/{agent_id}:close response 200<code=0>: object closed
+POST /api/v1/sessions/{session_id}/agents/{agent_id}:close response 200<code=40001>: shape d4845858
+POST /api/v1/sessions/{session_id}/agents/{agent_id}:close response 200<code=40401>: shape 2bda561c
+POST /api/v1/sessions/{session_id}/agents/{agent_id}:close response 200<code=40930>: shape 9d70335c
+POST /api/v1/sessions/{session_id}/agents/{agent_id}:close response 200<code=40931>: shape 212b52bd
+POST /api/v1/sessions/{session_id}/agents/{agent_id}:close response 200<code=40932>: shape e9b3b59d
+POST /api/v1/sessions/{session_id}/agents/{agent_id}:close response 200<code=40939>.code: enum 40939
+POST /api/v1/sessions/{session_id}/agents/{agent_id}:close response 200<code=40939>.data: enum null nullable
+POST /api/v1/sessions/{session_id}/agents/{agent_id}:close response 200<code=40939>.details: any optional
+POST /api/v1/sessions/{session_id}/agents/{agent_id}:close response 200<code=40939>.msg: string
+POST /api/v1/sessions/{session_id}/agents/{agent_id}:close response 200<code=40939>.request_id: string
+POST /api/v1/sessions/{session_id}/agents/{agent_id}:close response 200<code=40939>: object closed
+POST /api/v1/sessions/{session_id}/agents/{agent_id}:close: operation
 POST /api/v1/sessions/{session_id}/export param path:session_id: string minLength=1
 POST /api/v1/sessions/{session_id}/export request.desktop: boolean optional
 POST /api/v1/sessions/{session_id}/export request.web_log: string optional
