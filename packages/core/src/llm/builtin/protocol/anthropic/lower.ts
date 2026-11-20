@@ -11,7 +11,6 @@ import type { NativeModule, PipelineSpec } from '#/llm/protocol/pipeline';
 import type { LlmModule } from '#/llm/protocol/protocol';
 import type { Pattern } from '#/llm/protocol/pattern';
 import type { MediaSupport } from '#/llm/protocol/rules/media';
-import { parseLlmToolArguments } from '#/llm/tool-arguments';
 
 import { sanitizeToolCallId } from '../tool-call-id';
 import { CONTEXT_MANAGEMENT_BETA } from './contract';
@@ -125,6 +124,17 @@ function videoUrlPartToAnthropic(url: string): AnthropicWireVideoBlock {
   };
 }
 
+function parseToolArguments(args: string | null): unknown {
+  if (args === null || args.trim() === '') {
+    return {};
+  }
+  try {
+    return JSON.parse(args);
+  } catch {
+    return {};
+  }
+}
+
 function messageContent(message: NativeMessage): NativePart[] {
   return Array.isArray(message.content) ? message.content : [];
 }
@@ -136,7 +146,6 @@ function isEmpty(message: NativeMessage): boolean {
 export function lowerMessage(
   message: Message,
   acceptedMimes: ReadonlySet<string> = DEFAULT_ACCEPTED_IMAGE_MIMES,
-  tools: readonly ToolDescription[] = [],
 ): NativeMessage[] {
   const content: NativePart[] = [];
   if (message.role === 'system') {
@@ -183,20 +192,11 @@ export function lowerMessage(
     }
     if (message.role === 'assistant') {
       for (const toolCall of message.toolCalls) {
-        const parsed = parseLlmToolArguments(
-          toolCall.arguments,
-          tools.find((tool) => tool.name === toolCall.name),
-        );
-        if (parsed.issue !== undefined) {
-          throw new SyntaxRequestFormatError(
-            `Invalid arguments for tool call "${toolCall.name}": ${parsed.issue.message}`,
-          );
-        }
         content.push({
           type: 'tool_use',
           id: toolCall.id,
           name: toolCall.name,
-          input: parsed.value,
+          input: parseToolArguments(toolCall.arguments),
         });
       }
     }
@@ -418,7 +418,7 @@ export const anthropicPipeline: PipelineSpec<
   maxOutputTokens: (cap) => ({ max_tokens: cap }),
   sampling: encodeSampling,
   tool: defaultTool,
-  message: (message, module) => lowerMessage(message, DEFAULT_ACCEPTED_IMAGE_MIMES, module.profile.tools ?? []),
+  message: (message) => lowerMessage(message),
   mergeTurns: mergeTurnPatterns,
   annotate: annotateCache,
   finalize: finalizeParams,

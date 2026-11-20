@@ -1,9 +1,8 @@
 import { estimateUsedContextTokens } from '#/llm/context-usage';
-import { createAssistantMessage, type AssistantMessage, type ToolDescription } from '#/llm/message';
+import { createSystemMessage, type SystemMessage, type ToolDescription } from '#/llm/message';
 import { isAbortError, toLlmErrorMessage } from '#/llm/protocol/errors';
 import type { LlmRequest } from '#/llm/request';
 import type { LlmOutcome, LlmRunEvent, LlmRunRequested, LlmRunStarted } from '#/llm/response';
-import { cleanToolCallHistory } from '#/llm/tool-arguments';
 import { addUsage, type TokenUsage } from '#/llm/usage';
 import { sha256Hex } from '#/utils/hash';
 import { log } from '#/utils/log';
@@ -197,14 +196,19 @@ async function runAttempts(
   const policy = request.policy ?? {};
   const ledger = createRecoveryLedger(recoveries.read(request));
   let attempt = 1;
-  let retryMessage: AssistantMessage | undefined;
+  let retryMessage: SystemMessage | undefined;
   const maxAttempts = resolveMaxAttempts(policy.retry);
   let rejectedUsage: TokenUsage | undefined;
   const withRejectedUsage = (outcome: LlmOutcome): LlmOutcome => {
     if (rejectedUsage === undefined) return outcome;
+    const usage = outcome.usage === undefined ? rejectedUsage : addUsage(rejectedUsage, outcome.usage);
+    const message = outcome.message;
     return {
       ...outcome,
-      usage: outcome.usage === undefined ? rejectedUsage : addUsage(rejectedUsage, outcome.usage),
+      usage,
+      ...(message === null || message === undefined
+        ? {}
+        : { message: { ...message, attributes: { ...message.attributes, usage } } }),
     };
   };
 
@@ -218,11 +222,9 @@ async function runAttempts(
             messages: [...request.content.messages, retryMessage],
           },
         };
-    retryMessage = undefined;
     const recoveredRequest = ledger.apply(requestForAttempt);
     let resolvedRequest = recoveredRequest;
     let recoveryRequest = recoveredRequest;
-    let recoveryUsesResolved = false;
     for (const resolver of listOf(policy.resolvers)) {
       resolvedRequest = await resolver.resolve(resolvedRequest, {
         signal,
@@ -236,71 +238,12 @@ async function runAttempts(
           onEvent?.(event);
         },
       });
-      const cleaned = cleanToolCallHistory(
-        resolvedRequest.content.messages,
-        resolvedRequest.profile?.tools ?? [],
-      );
-      if (cleaned.messages !== resolvedRequest.content.messages) {
-        resolvedRequest = {
-          ...resolvedRequest,
-          content: { ...resolvedRequest.content, messages: cleaned.messages },
-        };
-      }
-      for (const { call, issue } of cleaned.invalid) {
-        onEvent?.({
-          type: 'llm.notice',
-          notice: {
-            source: 'tool-call-arguments',
-            code: 'invalid_tool_call_dropped',
-            message: `Removed invalid historical tool call "${call.name}" and its paired result.`,
-            data: { toolCallId: call.id, toolName: call.name, reason: issue.reason },
-          },
-        });
-      }
-      if (resolver.recoveryRequest === 'resolved') {
-        recoveryRequest = resolvedRequest;
-        recoveryUsesResolved = true;
-      }
+      if (resolver.recoveryRequest === 'resolved') recoveryRequest = resolvedRequest;
       if (signal.aborted) {
-        return { type: 'aborted', message: null, usage: undefined };
+        return withRejectedUsage({ type: 'aborted', message: null, usage: undefined });
       }
     }
 
-    const cleaned = cleanToolCallHistory(
-      resolvedRequest.content.messages,
-      resolvedRequest.profile?.tools ?? [],
-    );
-    if (cleaned.messages !== resolvedRequest.content.messages) {
-      resolvedRequest = {
-        ...resolvedRequest,
-        content: { ...resolvedRequest.content, messages: cleaned.messages },
-      };
-    }
-    for (const { call, issue } of cleaned.invalid) {
-      onEvent?.({
-        type: 'llm.notice',
-        notice: {
-          source: 'tool-call-arguments',
-          code: 'invalid_tool_call_dropped',
-          message: `Removed invalid historical tool call "${call.name}" and its paired result.`,
-          data: { toolCallId: call.id, toolName: call.name, reason: issue.reason },
-        },
-      });
-    }
-    if (recoveryUsesResolved) {
-      recoveryRequest = resolvedRequest;
-    } else {
-      const cleanedRecovery = cleanToolCallHistory(
-        recoveryRequest.content.messages,
-        recoveryRequest.profile?.tools ?? [],
-      );
-      if (cleanedRecovery.messages !== recoveryRequest.content.messages) {
-        recoveryRequest = {
-          ...recoveryRequest,
-          content: { ...recoveryRequest.content, messages: cleanedRecovery.messages },
-        };
-      }
-    }
     control.onAttempt?.(resolvedRequest, { appliedRecoveries: ledger.applied });
     const requested: LlmRunEvent = llmRequestedEvent(resolvedRequest, attempt);
     log.info({ ...requested }, 'llm event');
@@ -323,9 +266,7 @@ async function runAttempts(
       if (result.usage !== undefined) {
         rejectedUsage = rejectedUsage === undefined ? result.usage : addUsage(rejectedUsage, result.usage);
       }
-      retryMessage = result.message ?? createAssistantMessage([
-        { type: 'text', text: result.error.message },
-      ]);
+      retryMessage = createSystemMessage(result.error.message);
     } else if (result.message !== undefined) {
       retryMessage = undefined;
     }
@@ -405,5 +346,5 @@ async function runAttempts(
     return withRejectedUsage(result);
   }
 
-  return { type: 'aborted', message: null, usage: undefined };
+  return withRejectedUsage({ type: 'aborted', message: null, usage: undefined });
 }

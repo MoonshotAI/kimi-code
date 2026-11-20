@@ -1,10 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  createAssistantMessage,
-  createSystemMessage,
-  createToolMessage,
-  createUserMessage,
   type Message,
   type StreamedMessagePart,
   type ToolCall,
@@ -127,7 +123,7 @@ describe('tool argument settlement', () => {
       error: { kind: 'invalid_tool_arguments', retryable: true },
     });
     expect(encoded).toHaveLength(2);
-    expect(encoded[1]?.at(-1)).toMatchObject({ role: 'assistant', toolCalls: [] });
+    expect(encoded[1]?.at(-1)).toMatchObject({ role: 'system' });
     expect(JSON.stringify(encoded[1]?.at(-1))).toContain('not executed');
   });
 
@@ -166,11 +162,7 @@ describe('tool argument settlement', () => {
       const generated = await run(args);
       const failed = failedOutcome(generated.outcome);
       expect(failed.error).toMatchObject({ kind: 'invalid_tool_arguments', retryable: true });
-      expect(failed.message?.toolCalls).toEqual([]);
-      expect(failed.message?.content.at(-1)).toMatchObject({
-        type: 'text',
-        text: expect.stringContaining('not executed'),
-      });
+      expect(failed.message).toBeUndefined();
       expect(generated.events.some((event) => event.type === 'llm.delta.tool_call_end')).toBe(false);
     }
 
@@ -179,71 +171,6 @@ describe('tool argument settlement', () => {
 
     const empty = doneOutcome((await run('', false)).outcome);
     expect(empty.message.toolCalls[0]?.arguments).toBe('');
-  });
-
-  it('drops invalid historical calls and paired results while preserving valid content', async () => {
-    const encoded: (readonly Message[])[] = [];
-    const history: Message[] = [
-      createAssistantMessage(
-        [{ type: 'text', text: 'checking' }],
-        [
-          { type: 'function', id: 'good', name: 'weather', arguments: '{}' },
-          { type: 'function', id: 'bad-wire', name: 'weather', arguments: 'null' },
-          { type: 'function', id: 'bad-schema', name: 'required', arguments: '{}' },
-        ],
-      ),
-      createToolMessage('good', 'sunny'),
-      createToolMessage('bad-wire', 'invalid'),
-      createToolMessage('bad-schema', 'invalid'),
-      createUserMessage('continue'),
-    ];
-    const protocol = fakeProtocol({
-      encode: (module) => {
-        encoded.push(module.content.messages);
-        return module.content.messages;
-      },
-      chunks: [
-        { part: { type: 'text', text: 'done' }, finish: { finishReason: 'completed', rawFinishReason: 'stop' } },
-      ],
-    });
-    await runGenerate(protocol, {
-      module: testModule({
-        messages: history,
-        profile: {
-          tools: [
-            {
-              name: 'weather',
-              description: 'Get weather',
-              parameters: { type: 'object', properties: { city: { type: 'string' } } },
-            },
-            {
-              name: 'required',
-              description: 'Requires city',
-              parameters: {
-                type: 'object',
-                properties: { city: { type: 'string' } },
-                required: ['city'],
-              },
-            },
-          ],
-        },
-      }),
-    });
-
-    const messages = encoded[0]!;
-    expect(messages[0]).toMatchObject({
-      role: 'assistant',
-      content: [
-        { type: 'text', text: 'checking' },
-        { type: 'text', text: expect.stringContaining('A previous call') },
-        { type: 'text', text: expect.stringContaining('A previous call') },
-      ],
-      toolCalls: [{ id: 'good', arguments: '{}' }],
-    });
-    expect(messages.filter((message) => message.role === 'tool')).toMatchObject([
-      { toolCallId: 'good' },
-    ]);
-    expect(messages.at(-1)).toMatchObject({ role: 'user' });
   });
 
   it('preserves correction feedback and rejected usage across transient retries', async () => {
@@ -291,11 +218,12 @@ describe('tool argument settlement', () => {
 
     expect(attempts).toBe(3);
     expect(doneOutcome(generated.outcome).usage).toMatchObject({ inputOther: 6, output: 4 });
+    expect(doneOutcome(generated.outcome).message.attributes?.usage).toMatchObject({ inputOther: 6, output: 4 });
     expect(generated.events.filter((event) => event.type === 'llm.retry').map((event) => event.reason)).toEqual([
       'invalid_tool_arguments',
       'backoff',
     ]);
-    expect(encoded[2]?.at(-1)).toMatchObject({ role: 'assistant', toolCalls: [] });
+    expect(encoded[2]?.at(-1)).toMatchObject({ role: 'system' });
     expect(JSON.stringify(encoded[2]?.at(-1))).toContain('not executed');
   });
 
@@ -329,109 +257,6 @@ describe('tool argument settlement', () => {
     }), { module: testModule({ profile }) })).outcome);
     expect(completed.message.toolCalls).toMatchObject([
       { id: 'call-interleaved', arguments: '{"city":"sf"}' },
-    ]);
-  });
-
-  it('uses historical schema snapshots when validating old tool calls', async () => {
-    const encoded: (readonly Message[])[] = [];
-    const history: Message[] = [
-      createSystemMessage('old schemas', undefined, [
-        {
-          name: 'Write',
-          description: 'Old Write',
-          parameters: { type: 'object', properties: { path: { type: 'string' } } },
-        },
-        {
-          name: 'Ping',
-          description: 'Old Ping',
-          parameters: { type: 'object' },
-        },
-      ]),
-      createAssistantMessage([], [
-        { type: 'function', id: 'old-write', name: 'Write', arguments: '{"path":"result.txt"}' },
-        { type: 'function', id: 'old-ping', name: 'Ping', arguments: '' },
-      ]),
-      createToolMessage('old-write', 'wrote'),
-      createToolMessage('old-ping', 'pong'),
-      createUserMessage('continue'),
-    ];
-    const protocol = fakeProtocol({
-      encode: (module) => {
-        encoded.push(module.content.messages);
-        return module.content.messages;
-      },
-      chunks: [{ part: { type: 'text', text: 'done' }, finish: { finishReason: 'completed', rawFinishReason: 'stop' } }],
-    });
-    await runGenerate(protocol, {
-      module: testModule({
-        messages: history,
-        profile: {
-          tools: [{
-            name: 'Write',
-            description: 'New Write',
-            parameters: {
-              type: 'object',
-              properties: { path: { type: 'string' }, content: { type: 'string' } },
-              required: ['content'],
-            },
-          }],
-        },
-      }),
-    });
-
-    const messages = encoded[0]!;
-    expect(messages[1]).toMatchObject({
-      role: 'assistant',
-      toolCalls: [
-        { id: 'old-write', arguments: '{"path":"result.txt"}' },
-        { id: 'old-ping', arguments: '' },
-      ],
-    });
-    expect(messages.filter((message) => message.role === 'tool')).toHaveLength(2);
-    expect(JSON.stringify(messages)).not.toContain('was removed from this request');
-  });
-
-  it('pairs reused tool-call IDs by occurrence instead of deleting valid results', async () => {
-    const encoded: (readonly Message[])[] = [];
-    const history: Message[] = [
-      createAssistantMessage([], [
-        { type: 'function', id: 'shared', name: 'weather', arguments: 'null' },
-      ]),
-      createToolMessage('shared', 'invalid occurrence'),
-      createAssistantMessage([], [
-        { type: 'function', id: 'shared', name: 'weather', arguments: '{}' },
-      ]),
-      createToolMessage('shared', 'valid occurrence'),
-      createUserMessage('continue'),
-    ];
-    const protocol = fakeProtocol({
-      encode: (module) => {
-        encoded.push(module.content.messages);
-        return module.content.messages;
-      },
-      chunks: [{ part: { type: 'text', text: 'done' }, finish: { finishReason: 'completed', rawFinishReason: 'stop' } }],
-    });
-    await runGenerate(protocol, {
-      module: testModule({
-        messages: history,
-        profile: {
-          tools: [{
-            name: 'weather',
-            description: 'Get weather',
-            parameters: { type: 'object' },
-          }],
-        },
-      }),
-    });
-
-    const messages = encoded[0]!;
-    expect(messages[0]).toMatchObject({ role: 'assistant', toolCalls: [] });
-    expect(messages[1]).toMatchObject({
-      role: 'assistant',
-      toolCalls: [{ id: 'shared', arguments: '{}' }],
-    });
-    expect(messages.filter((message) => message.role === 'tool')).toMatchObject([
-      { toolCallId: 'shared', content: [{ text: 'valid occurrence' }] },
     ]);
   });
 

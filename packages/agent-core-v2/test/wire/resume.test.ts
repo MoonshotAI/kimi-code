@@ -563,7 +563,7 @@ describe('Agent resume', () => {
         tools: Agent, AgentSwarm, AskUserQuestion, Bash, CreateGoal, CronCreate, CronDelete, CronList, Edit, ExitPlanMode, FetchURL, GetGoal, Glob, Grep, Read, SetGoalBudget, Skill, TaskList, TaskOutput, TaskStop, TodoList, UpdateGoal, WaitFor, Write
         messages:
           user: text "Historical prompt before skill"
-          assistant: []  calls call_resume_write:Write { "path": "result.txt", "content": "resume result" }, call_resume_skill:Skill { "skill": "review" }
+          assistant: []  calls call_resume_write:Write { "path": "result.txt" }, call_resume_skill:Skill { "skill": "review" }
           tool[call_resume_write]: text "wrote file"
           tool[call_resume_skill]: text "skill loaded"
           user: text "<system-reminder>\\nresume skill body\\n</system-reminder>"
@@ -1347,7 +1347,7 @@ function resumeDeferredSystemReminderHistory(): WireRecord[] {
             type: 'function',
             id: 'call_resume_write',
             name: 'Write',
-            arguments: JSON.stringify({ path: 'result.txt', content: 'resume result' }),
+            arguments: JSON.stringify({ path: 'result.txt' }),
           },
           {
             type: 'function',

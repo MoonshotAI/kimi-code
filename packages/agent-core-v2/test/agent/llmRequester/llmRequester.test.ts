@@ -27,7 +27,7 @@ import {
   telemetryServices,
   type TestAgentContext,
 } from '../../harness';
-import { promptCacheComparisons } from '../../harness/prompt-cache-guard';
+import { drainPromptCacheViolations, promptCacheComparisons } from '../../harness/prompt-cache-guard';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 
 interface CapturedLogEntry {
@@ -459,7 +459,7 @@ describe('LLMRequester service migration coverage', () => {
       await ctx.untilTurnEnd();
     });
 
-    it('retries invalid arguments without executing them and keeps a visible clean failure', async () => {
+    it('retries invalid arguments with a temporary system correction', async () => {
       await ctx.rpc.setPermission({ mode: 'auto' });
       await ctx.rpc.registerTool({
         name: 'Lookup',
@@ -495,17 +495,12 @@ describe('LLMRequester service migration coverage', () => {
       expect(protocolEvents(ctx, 'turn.step.stream_reset')).toHaveLength(1);
       expect(protocolEvents(ctx, 'toolCall')).toHaveLength(1);
       expect(ctx.llmCalls).toHaveLength(3);
-      expect(ctx.llmCalls[1]?.history.at(-1)).toMatchObject({ role: 'assistant', toolCalls: [] });
+      expect(ctx.llmCalls[1]?.history.at(-1)).toMatchObject({ role: 'system' });
       expect(JSON.stringify(ctx.llmCalls[1]?.history.at(-1))).toContain('not executed');
-      expect(ctx.context.history()).toEqual(expect.arrayContaining([
-        expect.objectContaining({
-          role: 'assistant',
-          toolCalls: [],
-          content: expect.arrayContaining([
-            expect.objectContaining({ type: 'text', text: expect.stringContaining('not executed') }),
-          ]),
-        }),
-      ]));
+      expect(JSON.stringify(ctx.context.history())).not.toContain('was not executed because its arguments were invalid');
+      expect(drainPromptCacheViolations()).toEqual([
+        expect.stringContaining('next step request does not extend the last turn request'),
+      ]);
     });
   });
 

@@ -25,7 +25,6 @@ import {
   type LoopRecordedEvent,
 } from '#/agent/contextMemory/loopEventFold';
 import type { AssistantMessage, Message, UserMessage } from '@moonshot-ai/core/llm/message';
-import { llmToolArgumentsIssue } from '@moonshot-ai/core/llm/tool-arguments';
 
 import { contextFromHistoryEntry, historyFromContext } from './history';
 import { TurnPrompt } from './turnOps';
@@ -297,17 +296,13 @@ function turnReason(outcome: TurnOutcome): 'completed' | 'cancelled' | 'failed' 
   }
 }
 
-function toolArguments(entry: AssistantMessage, toolCallId: string): {
-  readonly args?: unknown;
-  readonly argsError?: string;
-} {
-  const raw = entry.toolCalls.find((call) => call.id === toolCallId)?.arguments;
-  if (raw === undefined || raw === null) return {};
-  const argsError = llmToolArgumentsIssue(raw)?.message;
+function toolArguments(entry: AssistantMessage, toolCallId: string): unknown {
+  const args = entry.toolCalls.find((call) => call.id === toolCallId)?.arguments;
+  if (args === undefined || args === null) return undefined;
   try {
-    return { args: JSON.parse(raw) as unknown, argsError };
+    return JSON.parse(args) as unknown;
   } catch {
-    return { args: raw, argsError };
+    return args;
   }
 }
 
@@ -435,7 +430,7 @@ export class LoopJournal {
           toolCallId: event.toolCall.id,
           rawId: event.toolCall.rawId,
           name: event.toolCall.name,
-          ...toolArguments(assistant, event.toolCall.id),
+          args: toolArguments(assistant, event.toolCall.id),
           extras: event.toolCall.extras,
           display: event.display as ToolInputDisplay | undefined,
         });
@@ -574,7 +569,7 @@ export class LoopJournal {
           toolCallId,
           rawId: toolCall?.rawId,
           name: toolCall?.name ?? toolCallId,
-          ...toolArguments(assistant, toolCallId),
+          args: toolArguments(assistant, toolCallId),
           extras: toolCall?.extras,
         });
       }

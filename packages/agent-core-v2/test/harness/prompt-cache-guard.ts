@@ -51,6 +51,10 @@ export function promptCacheComparisons(): number {
   return comparisons;
 }
 
+export function drainPromptCacheViolations(): readonly string[] {
+  return violations.splice(0);
+}
+
 export class PromptCacheGuardedLoopRequester implements LoopRequester {
   constructor(
     private readonly inner: LoopRequester,

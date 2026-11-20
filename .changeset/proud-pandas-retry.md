@@ -3,4 +3,4 @@
 '@moonshot-ai/kimi-code-sdk': patch
 ---
 
-Prevent invalid tool-call arguments from executing tools or repeatedly breaking sessions with provider 400 errors.
+Retry when a provider returns an invalid tool call.

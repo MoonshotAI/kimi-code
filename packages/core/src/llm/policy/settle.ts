@@ -205,10 +205,7 @@ export async function settleLlmRequest(
     failure: { error: LlmErrorMessage; rawError?: unknown },
     message: AssistantMessage,
   ): LlmOutcome => {
-    const content = failure.error.kind === 'invalid_tool_arguments'
-      ? [...message.content, { type: 'text' as const, text: failure.error.message }]
-      : message.content;
-    const usable = usableOutputOf({ ...message, content });
+    const usable = usableOutputOf(message);
     return {
       type: 'failed',
       ...failure,

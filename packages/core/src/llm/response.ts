@@ -29,6 +29,7 @@ export type LlmErrorKind =
   | 'image_format'
   | 'empty_response'
   | 'provider'
+  | 'invalid_tool_arguments'
   | 'unknown';
 
 export type LlmRemoteErrorKind = Exclude<LlmErrorKind, 'syntax'>;

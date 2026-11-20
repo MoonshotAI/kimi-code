@@ -1588,47 +1588,6 @@ describe('FullCompaction', () => {
     await ctx.expectResumeMatches();
   });
 
-  it('removes invalid tool calls and paired results from compaction requests', async () => {
-    const ctx = testAgent();
-    ctx.configure({
-      provider: CATALOGUED_PROVIDER,
-      modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
-    });
-    appendContext(
-      ctx.context,
-      { role: 'user', content: [{ type: 'text', text: 'old question' }] },
-      {
-        role: 'assistant',
-        content: [{ type: 'text', text: 'checking' }],
-        toolCalls: [
-          { type: 'function', id: 'call_good', name: 'GoodTool', arguments: '{}' },
-          { type: 'function', id: 'call_bad', name: 'BadTool', arguments: 'null' },
-        ],
-      },
-      { role: 'tool', toolCallId: 'call_good', content: [{ type: 'text', text: 'good result' }] },
-      { role: 'tool', toolCallId: 'call_bad', content: [{ type: 'text', text: 'bad result' }] },
-      { role: 'user', content: [{ type: 'text', text: 'recent question' }] },
-    );
-    const compacted = ctx.once('full_compaction.complete');
-    ctx.mockNextResponse({ type: 'text', text: 'Compacted without invalid calls.' });
-    await ctx.rpc.beginCompaction({});
-    await compacted;
-
-    const history = ctx.lastLlmInput().input.history;
-    expect(history.find((message) => message.role === 'assistant')).toMatchObject({
-      content: [
-        { type: 'text', text: 'checking' },
-        { type: 'text', text: expect.stringContaining('arguments were invalid') },
-      ],
-      toolCalls: [{ id: 'call_good' }],
-    });
-    expect(history.filter((message) => message.role === 'tool')).toMatchObject([
-      { toolCallId: 'call_good', content: [{ type: 'text', text: 'good result' }] },
-    ]);
-    expect(JSON.stringify(history)).not.toContain('call_bad');
-    expect(JSON.stringify(history)).not.toContain('bad result');
-  });
-
   it('keeps messages appended while compacting an unchanged prefix', async () => {
     const ctx = testAgent();
     ctx.configure({
