@@ -848,12 +848,21 @@ export async function applyPrintBackgroundPolicy(
           );
         } else {
           if (fireAt <= input.now()) lastPastFireAt = fireAt;
+          const remainingMs = deadline - input.now();
+          if (remainingMs <= 0) {
+            input.warn(`print cron wait ceiling reached (${input.ceilingS}s), finishing`);
+            return;
+          }
           const ended = await input.turnEndings.next(
-            Math.max(fireAt - input.now(), 0) + CRON_FIRE_GRACE_MS,
+            Math.min(Math.max(fireAt - input.now(), 0) + CRON_FIRE_GRACE_MS, remainingMs),
             input.skipTurnId,
           );
           if (ended !== null && ended.reason !== 'completed') {
             throw new PrintSteeredTurnFailedError(formatTurnEndingFailure(ended));
+          }
+          if (ended === null && input.now() >= deadline) {
+            input.warn(`print cron wait ceiling reached (${input.ceilingS}s), finishing`);
+            return;
           }
           continue;
         }
