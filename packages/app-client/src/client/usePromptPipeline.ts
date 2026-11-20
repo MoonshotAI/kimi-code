@@ -146,7 +146,7 @@ export function usePromptPipeline(rawState: ExtendedState, deps: PromptPipelineD
     modelsStore().setDraftModel(null);
     const sid = session.id;
     sessionListStore().notePoolInsert(sid);
-    upsertSessionSorted(session);
+    upsertSessionSorted(session.model === '' && draftPick !== undefined ? { ...session, model: draftPick } : session);
     const draftThinkingWrite = draftThinkingExplicit ? draftThinking : undefined;
     if (draftThinkingWrite !== undefined) {
       modeStore().thinkingBySession = { ...modeStore().thinkingBySession, [sid]: draftThinkingWrite };

@@ -443,6 +443,26 @@ describe('startSessionAndActivateSkill', () => {
     expect(rawState.thinkingBySession['session-1']).toBe(DRAFT_PICK_LEVEL);
   });
 
+  it('keeps the config-derived draft thinking level when the created session reports no model yet', async () => {
+    const { rawState, api, modelProvider, persistSessionProfile, ws } = createWorkspaceState();
+    modeStore().draftThinkingExplicit = false;
+    modelsStore().setDefaultModel('kimi-k3');
+    api.createSession.mockResolvedValue({ ...createdSession('session-1'), model: '' });
+
+    const started = await ws.startSessionAndSendPrompt(
+      'workspace',
+      ws.createPromptEnvelope({ text: 'hello' }),
+    );
+
+    expect(started).toEqual({ sessionId: 'session-1', promptRejected: false });
+    expect(api.createSession.mock.calls[0]?.[0]).toMatchObject({ model: 'kimi-k3' });
+    expect(rawState.sessions.find((s) => s.id === 'session-1')?.model).toBe('kimi-k3');
+    expect(modelProvider.setSessionModel).not.toHaveBeenCalled();
+    expect(persistSessionProfile.mock.calls.map(([patch]) => patch.thinking)).toEqual(
+      persistSessionProfile.mock.calls.map(() => undefined),
+    );
+  });
+
   it('rejects the first prompt when the draft settings write fails', async () => {
     const { api, persistControl, ws } = createWorkspaceState();
     persistControl.fail = true;
