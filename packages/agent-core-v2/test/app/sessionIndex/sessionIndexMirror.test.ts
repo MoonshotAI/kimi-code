@@ -26,7 +26,7 @@ import {
   drainSessionIndexMirror,
   SessionIndexMirror,
 } from '#/app/sessionIndex/sessionIndexMirrorService';
-import { drainQueryStoreDisposals, MiniDbQueryStore } from '#/persistence/backends/minidb/miniDbQueryStore';
+import { drainQueryStoreDisposals, DualWriteQueryStore } from '#/persistence/backends/dualWriteQueryStore';
 import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
 import { DATABASE_SECTION } from '#/persistence/configSection';
 import { IQueryStore } from '#/persistence/interface/queryStore';
@@ -69,7 +69,7 @@ describe('SessionIndexMirror', () => {
     registerScopedService(
       LifecycleScope.App,
       IQueryStore,
-      MiniDbQueryStore,
+      DualWriteQueryStore,
       ScopeActivation.OnDemand,
       'storage',
     );
@@ -187,6 +187,7 @@ describe('SessionIndexMirror', () => {
     const elapsed = performance.now() - t0;
     expect(elapsed).toBeLessThan(500);
     expect(mirror.pending().length).toBe(600);
+    await mirror.drain();
   }, 10_000);
 
   it('keeps entries queued when no generation is published yet', async () => {

@@ -4,8 +4,6 @@ import { classifyStorageError, type QueryOptions } from '@moonshot-ai/minidb';
 import { ClusterDb, wipeCluster } from '@moonshot-ai/minidb/cluster';
 
 import { Disposable, toDisposable } from '#/_base/di/lifecycle';
-import { LifecycleScope } from '#/app/scopes';
-import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { ILogService } from '#/_base/log/log';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import {
@@ -247,7 +245,7 @@ export class MiniDbQueryStore extends Disposable implements IQueryStore {
   async ensureIndex(collection: string, def: IndexDef): Promise<void> {
     if (def.kind === 'text') {
       throw new Error(
-        `minidb query-store is a structural read model: text index "${def.name}" on collection "${collection}" is rejected; full-text search lives in the kap-server search-index database`,
+        `minidb query-store is a structural read model: text index "${def.name}" on collection "${collection}" is rejected`,
       );
     }
     const guard = `${collection}:${def.kind}:${def.name}`;
@@ -352,11 +350,3 @@ class MiniDbQuery<T> implements IQuery<T> {
     return { items, nextCursor };
   }
 }
-
-registerScopedService(
-  LifecycleScope.App,
-  IQueryStore,
-  MiniDbQueryStore,
-  ScopeActivation.OnScopeCreated,
-  'storage',
-);

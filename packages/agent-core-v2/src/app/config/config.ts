@@ -24,7 +24,10 @@ export interface ConfigKeyDeprecation {
   readonly message?: string;
 }
 
-export type ConfigCollectDiagnostics = (rawSection: unknown) => readonly ConfigDiagnostic[];
+export type ConfigCollectDiagnostics = (
+  rawSection: unknown,
+  getEnv: (name: string) => string | undefined,
+) => readonly ConfigDiagnostic[];
 
 export type EnvBindings<T> = EnvBinding | { [K in keyof T]?: EnvBinding | EnvBindings<T[K]> };
 

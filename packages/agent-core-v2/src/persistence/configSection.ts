@@ -1,28 +1,29 @@
 import { z } from 'zod';
 
-import { parseBooleanEnv, parseNumberEnv } from '#/_base/utils/env';
+import { parseBooleanEnv } from '#/_base/utils/env';
 import {
+  type ConfigDiagnostic,
   type EnvBindings,
   envBindings,
   type IConfigService,
   stripEnvBoundFields,
 } from '#/app/config/config';
 import { registerConfigSection } from '#/app/config/configSectionContributions';
+import { isPlainObject } from '#/app/config/toml';
 
 export const DATABASE_SECTION = 'database';
 
 export const PERSISTENCE_MINIDB_READMODEL_ENV = 'KIMI_CODE_PERSISTENCE_MINIDB_READMODEL';
-export const GLOBAL_SEARCH_ENV = 'KIMI_CODE_GLOBAL_SEARCH';
-export const SEARCH_WORKER_ENV = 'KIMI_CODE_SEARCH_WORKER';
-export const SEARCH_SYNC_SESSION_CAP_ENV = 'KIMI_CODE_SEARCH_SYNC_SESSION_CAP';
-export const SEARCH_SYNC_DEBOUNCE_MS_ENV = 'KIMI_CODE_SEARCH_SYNC_DEBOUNCE_MS';
+
+const REMOVED_GLOBAL_SEARCH_CONFIG = [
+  { key: 'global_search', env: 'KIMI_CODE_GLOBAL_SEARCH' },
+  { key: 'search', env: 'KIMI_CODE_SEARCH_WORKER' },
+  { key: 'search_sync_session_cap', env: 'KIMI_CODE_SEARCH_SYNC_SESSION_CAP' },
+  { key: 'search_sync_debounce_ms', env: 'KIMI_CODE_SEARCH_SYNC_DEBOUNCE_MS' },
+] as const;
 
 export const DatabaseConfigSchema = z.object({
   base: z.boolean().optional(),
-  globalSearch: z.boolean().optional(),
-  search: z.boolean().optional(),
-  searchSyncSessionCap: z.number().int().min(1).optional(),
-  searchSyncDebounceMs: z.number().int().min(0).optional(),
 });
 
 export type DatabaseConfig = z.infer<typeof DatabaseConfigSchema>;
@@ -31,39 +32,41 @@ export const databaseEnvBindings: EnvBindings<DatabaseConfig> = envBindings(
   DatabaseConfigSchema,
   {
     base: { env: PERSISTENCE_MINIDB_READMODEL_ENV, parse: parseBooleanEnv },
-    globalSearch: { env: GLOBAL_SEARCH_ENV, parse: parseBooleanEnv },
-    search: { env: SEARCH_WORKER_ENV, parse: parseBooleanEnv },
-    searchSyncSessionCap: { env: SEARCH_SYNC_SESSION_CAP_ENV, parse: parseNumberEnv },
-    searchSyncDebounceMs: { env: SEARCH_SYNC_DEBOUNCE_MS_ENV, parse: parseNumberEnv },
   },
 );
 
 export const stripDatabaseEnv = stripEnvBoundFields(databaseEnvBindings);
 
+function collectRemovedGlobalSearchDiagnostics(
+  rawSection: unknown,
+  getEnv: (name: string) => string | undefined,
+): ConfigDiagnostic[] {
+  const diagnostics: ConfigDiagnostic[] = [];
+  for (const { key, env } of REMOVED_GLOBAL_SEARCH_CONFIG) {
+    if (isPlainObject(rawSection) && rawSection[key] !== undefined) {
+      diagnostics.push({
+        domain: DATABASE_SECTION,
+        severity: 'warning',
+        message: `[database] '${key}' has been removed with global search and is ignored. Remove the key from config.toml.`,
+      });
+    }
+    if (getEnv(env) !== undefined) {
+      diagnostics.push({
+        domain: DATABASE_SECTION,
+        severity: 'warning',
+        message: `Environment variable ${env} has been removed with global search and is ignored. Unset it.`,
+      });
+    }
+  }
+  return diagnostics;
+}
+
 registerConfigSection(DATABASE_SECTION, DatabaseConfigSchema, {
   env: databaseEnvBindings,
   stripEnv: stripDatabaseEnv,
+  collectDiagnostics: collectRemovedGlobalSearchDiagnostics,
 });
 
 export function databaseBaseEnabled(config: IConfigService): boolean {
   return config.get<DatabaseConfig | undefined>(DATABASE_SECTION)?.base ?? true;
-}
-
-export function databaseGlobalSearchEnabled(config: IConfigService): boolean {
-  return config.get<DatabaseConfig | undefined>(DATABASE_SECTION)?.globalSearch ?? false;
-}
-
-export function databaseSearchEnabled(config: IConfigService): boolean {
-  return config.get<DatabaseConfig | undefined>(DATABASE_SECTION)?.search ?? true;
-}
-
-export function databaseSearchSyncTuning(config: IConfigService): {
-  readonly sessionCap?: number;
-  readonly debounceMs?: number;
-} {
-  const section = config.get<DatabaseConfig | undefined>(DATABASE_SECTION);
-  return {
-    sessionCap: section?.searchSyncSessionCap,
-    debounceMs: section?.searchSyncDebounceMs,
-  };
 }

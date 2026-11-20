@@ -18,6 +18,8 @@ import {
 import { isError2 } from '#/errors';
 import { databaseBaseEnabled } from '#/persistence/configSection';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
+import { ISessionLockService } from '#/persistence/interface/sessionLock';
+import { SessionErrors } from '#/session/errors';
 import {
   IQueryStore,
   type Checkpoint,
@@ -43,6 +45,7 @@ import { markSessionDirty, listDirtyMarks } from './sessionIndexDirtyJournal';
 import {
   PARENT_INDEX_NAME,
   SESSION_INDEX_MANIFEST,
+  SESSION_INDEX_PROJECTION_LOCK_ID,
   SESSION_INDEX_SCHEMA_VERSION,
   recencyColumn,
   sessionCollection,
@@ -107,6 +110,7 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
     @IQueryStore private readonly queryStore: IQueryStore,
     @IConfigService private readonly config: IConfigService,
     @ISessionIndexMirror private readonly mirror: ISessionIndexMirror,
+    @ISessionLockService private readonly sessionLocks: ISessionLockService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @ILogService private readonly log: ILogService,
     @ref(IWorkspaceService) private readonly workspaces: LiveRef<IWorkspaceService>,
@@ -268,19 +272,56 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
     }
   }
 
-  private ensureProjection(): Promise<void> {
-    this.projectFlight ??= this.runProjection().finally(() => {
+  private ensureProjection(force = false): Promise<void> {
+    this.projectFlight ??= this.runProjection(force).finally(() => {
       this.projectFlight = undefined;
     });
     return this.projectFlight;
   }
 
-  private async runProjection(): Promise<void> {
+  private async withProjectionLock<T>(operation: () => Promise<T>): Promise<T> {
+    for (;;) {
+      try {
+        this.sessionLocks.hold(SESSION_INDEX_PROJECTION_LOCK_ID);
+        break;
+      } catch (error) {
+        if (!isError2(error) || error.code !== SessionErrors.codes.SESSION_OCCUPIED) throw error;
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+    }
+    try {
+      return await operation();
+    } finally {
+      this.sessionLocks.release(SESSION_INDEX_PROJECTION_LOCK_ID);
+    }
+  }
+
+  private async runProjection(force = false): Promise<void> {
     const startedAt = Date.now();
     try {
-      const manifest = await this.queryStore.getCheckpoint(SESSION_INDEX_MANIFEST);
-      const next = (manifest?.seq ?? 0) + 1;
-      const result = await this.projector.project(next);
+      const result = await this.withProjectionLock(async () => {
+        const manifest = await this.queryStore.getCheckpoint(SESSION_INDEX_MANIFEST);
+        if (
+          !force &&
+          manifest !== undefined &&
+          manifest.schemaVersion === SESSION_INDEX_SCHEMA_VERSION &&
+          (await this.manifestFresh(manifest))
+        ) {
+          return undefined;
+        }
+        const next = (manifest?.seq ?? 0) + 1;
+        return this.projector.project(next);
+      });
+      if (result === undefined) {
+        const published = await this.queryStore.getCheckpoint(SESSION_INDEX_MANIFEST);
+        if (published !== undefined) {
+          this.generation = published.seq;
+          this.markReady();
+        } else {
+          this.markDegraded('published generation lost');
+        }
+        return;
+      }
       this.generation = result.generation;
       this.markReady();
       this.telemetry.track2('session_index_projected', {
@@ -315,7 +356,7 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
 
   async reprojectNow(): Promise<void> {
     if (!this.readModelEnabled()) return;
-    await this.ensureProjection();
+    await this.ensureProjection(true);
   }
 
   stopReconcileLoop(): void {

@@ -102,8 +102,6 @@ import { createCredentialValidator } from './services/auth/credentials';
 import { resolvePasswordHash } from './services/auth/password';
 import { createTokenStore } from './services/auth/tokenStore';
 
-import { drainGlobalSearchDisposals, IGlobalSearchService } from './search/searchService';
-
 export interface ServerHostIdentity extends KimiHostIdentity {
   readonly displayName?: string;
   readonly replyStyleGuide?: string;
@@ -406,7 +404,6 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
       await core.instantiation.disposeAsync();
       await appendLogStore.drainRetirements();
       await drainSessionIndexMirror();
-      await drainGlobalSearchDisposals();
       await drainQueryStoreDisposals();
       await drainSessionMetadataWrites();
       await drainLogCloses();
@@ -444,7 +441,6 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
         );
   const conversations = new ConversationService(core);
   const sessionRating = createServerSessionRating(core, { debugEndpoints, logger });
-  core.accessor.get(IGlobalSearchService);
   const broadcaster = new SessionEventBroadcaster({
     core,
     logger,
@@ -510,7 +506,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
           { name: 'sessions', description: 'Session lifecycle' },
           { name: 'workspaces', description: 'Workspace registry + folder picker' },
           { name: 'messages', description: 'Message history' },
-          { name: 'search', description: 'Global message search' },
+          { name: 'transcript', description: 'Turn-granular session transcript' },
           { name: 'prompts', description: 'Prompt submission & abort' },
           { name: 'interactions', description: 'Approval and question responses' },
           { name: 'tools', description: 'Tool listing' },

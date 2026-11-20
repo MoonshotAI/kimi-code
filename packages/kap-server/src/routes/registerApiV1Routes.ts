@@ -27,7 +27,6 @@ import { registerPluginsRoutes } from './plugins';
 import { registerPromptsRoutes } from './prompts';
 import { registerRemoteControlRoutes, type RemoteControlRouteOptions } from './remoteControl';
 import { registerEnvironmentRoutes } from './environment';
-import { registerSearchRoutes } from './search';
 import { registerSessionMediaRoutes } from './sessionMedia';
 import { registerSessionRatingRoutes } from './sessionRating';
 import { registerSessionExportRoute } from './sessionExport';
@@ -165,7 +164,6 @@ export async function registerApiV1Routes(
         core,
       );
       registerPluginsRoutes(apiV1 as unknown as Parameters<typeof registerPluginsRoutes>[0], core);
-      registerSearchRoutes(apiV1 as unknown as Parameters<typeof registerSearchRoutes>[0], core);
       registerInteractionsRoutes(
         apiV1 as unknown as Parameters<typeof registerInteractionsRoutes>[0],
         core,

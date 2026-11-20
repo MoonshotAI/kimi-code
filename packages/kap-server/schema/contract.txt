@@ -2204,50 +2204,6 @@ POST /api/v1/remote-control/devices/{id}/deactivate response 200<code=40001>: sh
 POST /api/v1/remote-control/devices/{id}/deactivate response 200<code=50001>: shape c8fef53e
 POST /api/v1/remote-control/devices/{id}/deactivate: operation
 POST /api/v1/remote-control: operation
-POST /api/v1/search request.container.agent_id: string minLength=1 optional
-POST /api/v1/search request.container.session_id: string minLength=1 optional
-POST /api/v1/search request.container: object optional
-POST /api/v1/search request.end_time: integer minimum=0 maximum=9007199254740991 optional
-POST /api/v1/search request.mode: enum "literal"|"terms" optional
-POST /api/v1/search request.op: enum "AND"|"OR" optional
-POST /api/v1/search request.page_size: integer minimum=1 maximum=50 optional
-POST /api/v1/search request.page_token: string minLength=1 optional
-POST /api/v1/search request.query: string minLength=1
-POST /api/v1/search request.role: enum "assistant"|"title"|"user" optional
-POST /api/v1/search request.sort: enum "score"|"time_asc"|"time_desc" optional
-POST /api/v1/search request.start_time: integer minimum=0 maximum=9007199254740991 optional
-POST /api/v1/search request: object
-POST /api/v1/search response 200: oneOf
-POST /api/v1/search response 200<code=0>.code: enum 0
-POST /api/v1/search response 200<code=0>.data.has_more: boolean
-POST /api/v1/search response 200<code=0>.data.incomplete: enum "candidate_cap"|"deadline"|"postings_budget" optional
-POST /api/v1/search response 200<code=0>.data.index_state.degraded: string optional
-POST /api/v1/search response 200<code=0>.data.index_state.documents: number
-POST /api/v1/search response 200<code=0>.data.index_state.indexed_sessions: number
-POST /api/v1/search response 200<code=0>.data.index_state.stale: boolean optional
-POST /api/v1/search response 200<code=0>.data.index_state.state: enum "building"|"readonly"|"ready"
-POST /api/v1/search response 200<code=0>.data.index_state.total_sessions: number
-POST /api/v1/search response 200<code=0>.data.index_state: object closed
-POST /api/v1/search response 200<code=0>.data.items: array
-POST /api/v1/search response 200<code=0>.data.items[].agent_id: string
-POST /api/v1/search response 200<code=0>.data.items[].role: enum "assistant"|"title"|"user"
-POST /api/v1/search response 200<code=0>.data.items[].score: number
-POST /api/v1/search response 200<code=0>.data.items[].session_id: string
-POST /api/v1/search response 200<code=0>.data.items[].session_title: string
-POST /api/v1/search response 200<code=0>.data.items[].snippet: string
-POST /api/v1/search response 200<code=0>.data.items[].step_id: string optional
-POST /api/v1/search response 200<code=0>.data.items[].time: number
-POST /api/v1/search response 200<code=0>.data.items[].turn: integer minimum=0 maximum=9007199254740991 optional
-POST /api/v1/search response 200<code=0>.data.items[].workspace_id: string
-POST /api/v1/search response 200<code=0>.data.items[]: object closed
-POST /api/v1/search response 200<code=0>.data.page_token: string optional
-POST /api/v1/search response 200<code=0>.data: object closed
-POST /api/v1/search response 200<code=0>.details: any optional
-POST /api/v1/search response 200<code=0>.msg: string
-POST /api/v1/search response 200<code=0>.request_id: string
-POST /api/v1/search response 200<code=0>: object closed
-POST /api/v1/search response 200<code=40001>: shape d4845858
-POST /api/v1/search: operation
 POST /api/v1/sessions request.agent_config.goal_control: enum "cancel"|"edit"|"pause"|"resume" optional
 POST /api/v1/sessions request.agent_config.goal_objective: string optional
 POST /api/v1/sessions request.agent_config.model: string optional
