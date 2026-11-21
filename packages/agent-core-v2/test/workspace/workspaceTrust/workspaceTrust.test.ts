@@ -152,7 +152,7 @@ describe('WorkspaceTrustService', () => {
     };
   }
 
-  it('decides project trust from the primary record alone and never migrates records', async () => {
+  it('decides project trust from the primary record alone and clears every directory record on untrust', async () => {
     const other = mkdtempSync(join(tmpdir(), 'kimi-workspace-trust-other-'));
     try {
       const first = createService(cwd);
@@ -170,12 +170,13 @@ describe('WorkspaceTrustService', () => {
       const restarted = createService(other, undefined, undefined, first.trustStore, [cwd]);
       await restarted.service.ready;
       expect(restarted.service.isTrusted()).toBe(false);
+      expect(await restarted.service.get()).toBe(false);
 
       await restarted.service.trust();
       expect(await first.trustStore.forRoot(other).get()).toBe(true);
       await restarted.service.untrust();
       expect(await first.trustStore.forRoot(other).get()).toBe(false);
-      expect(await first.trustStore.forRoot(cwd).get()).toBe(true);
+      expect(await first.trustStore.forRoot(cwd).get()).toBe(false);
     } finally {
       await rm(other, { recursive: true, force: true });
     }
@@ -210,9 +211,9 @@ describe('WorkspaceTrustService', () => {
       await trustStore.carry(cwd, other);
       await trustStore.carry(third, cwd);
 
-      expect(await trustStore.forProject({ root: other }).get()).toBe(true);
-      expect(await trustStore.forProject({ root: cwd }).get()).toBe(true);
-      expect(await trustStore.forProject({ root: third }).get()).toBe(false);
+      expect(await trustStore.forProject({ root: other, additionalDirs: [] }).get()).toBe(true);
+      expect(await trustStore.forProject({ root: cwd, additionalDirs: [] }).get()).toBe(true);
+      expect(await trustStore.forProject({ root: third, additionalDirs: [] }).get()).toBe(false);
     } finally {
       await rm(other, { recursive: true, force: true });
       await rm(third, { recursive: true, force: true });

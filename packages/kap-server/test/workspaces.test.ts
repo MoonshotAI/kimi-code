@@ -566,7 +566,7 @@ describe('server-v2 /api/v1/workspaces', () => {
     }
   });
 
-  it('reports a project trusted only through the record of its primary directory', async () => {
+  it('reports a project trusted only through its primary record and clears every directory record on untrust', async () => {
     const root = await mkdtemp(join(tmpdir(), 'kimi-server-v2-workspaces-trust-primary-'));
     const extra = await mkdtemp(join(tmpdir(), 'kimi-server-v2-workspaces-trust-extra-'));
     try {
@@ -583,7 +583,7 @@ describe('server-v2 /api/v1/workspaces', () => {
       const revoked = await postJson<{ trusted: boolean }>(`/api/v1/workspaces/${id}/untrust`);
       expect(revoked.body.data.trusted).toBe(false);
       const neighbourAfter = await getJson<{ trusted: boolean }>(`/api/v1/workspaces/${neighbour.body.data.id}/trust`);
-      expect(neighbourAfter.body.data.trusted).toBe(true);
+      expect(neighbourAfter.body.data.trusted).toBe(false);
     } finally {
       await rm(root, { recursive: true, force: true });
       await rm(extra, { recursive: true, force: true });

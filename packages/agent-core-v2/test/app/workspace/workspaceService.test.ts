@@ -822,12 +822,32 @@ describe('WorkspaceService (file-backed)', () => {
     await store.forRoot(homeDir).trust();
 
     await registry.setPrimary(trusted.id, extra);
-    expect(await trustStoreFor(new FileStorageService(homeDir)).forProject({ root: extra }).get()).toBe(true);
+    expect(await trustStoreFor(new FileStorageService(homeDir)).forProject({ root: extra, additionalDirs: [] }).get()).toBe(true);
     expect(await trustStoreFor(new FileStorageService(homeDir)).forRoot(homeDir).get()).toBe(true);
 
     await trustStoreFor(new FileStorageService(homeDir)).forRoot(extra).untrust();
     await registry.setPrimary(untrusted.id, extra);
-    expect(await trustStoreFor(new FileStorageService(homeDir)).forProject({ root: extra }).get()).toBe(false);
+    expect(await trustStoreFor(new FileStorageService(homeDir)).forProject({ root: extra, additionalDirs: [] }).get()).toBe(false);
+  });
+
+  it('untrusting a project after a primary swap keeps it untrusted when the primary swaps back', async () => {
+    const original = join(homeDir, 'original');
+    const promoted = join(homeDir, 'promoted');
+    await fsp.mkdir(original, { recursive: true });
+    await fsp.mkdir(promoted, { recursive: true });
+    const registry = build();
+    const project = await registry.create({ root: original, additionalDirs: [promoted] });
+    await trustStoreFor(new FileStorageService(homeDir)).forProject(project).trust();
+
+    const swapped = await registry.setPrimary(project.id, promoted);
+    await trustStoreFor(new FileStorageService(homeDir)).forProject(swapped!).untrust();
+    const restored = await registry.setPrimary(project.id, original);
+
+    expect(restored?.root).toBe(original);
+    expect(await trustStoreFor(new FileStorageService(homeDir)).forProject(restored!).get()).toBe(false);
+    const implicit = (await registry.resolveImplicit(original)).project;
+    expect(implicit.root).toBe(original);
+    expect(await trustStoreFor(new FileStorageService(homeDir)).forProject(implicit).get()).toBe(false);
   });
 
   it('setPrimary refuses to move the primary directory of an implicit project', async () => {

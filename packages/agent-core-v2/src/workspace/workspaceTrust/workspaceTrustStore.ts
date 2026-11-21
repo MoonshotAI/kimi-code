@@ -1,7 +1,7 @@
 import { Disposable } from '#/_base/di/lifecycle';
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
-import { Emitter } from '#/_base/event';
+import { Emitter, type Event } from '#/_base/event';
 import { canonicalWorkspaceRoot } from '#/_base/utils/paths';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
@@ -27,7 +27,7 @@ export interface IWorkspaceTrustStore {
   readonly _serviceBrand: undefined;
 
   forRoot(root: string): IWorkspaceTrustEntry;
-  forProject(project: Pick<Workspace, 'root'>): IWorkspaceTrustEntry;
+  forProject(project: Pick<Workspace, 'root' | 'additionalDirs'>): IWorkspaceTrustEntry;
   carry(fromRoot: string, toRoot: string): Promise<void>;
 }
 
@@ -144,6 +144,47 @@ class WorkspaceTrustEntry extends Disposable implements IWorkspaceTrustEntry {
   }
 }
 
+class ProjectTrust implements IWorkspaceTrustEntry {
+  declare readonly _serviceBrand: undefined;
+
+  constructor(
+    private readonly primary: IWorkspaceTrustEntry,
+    private readonly directories: readonly IWorkspaceTrustEntry[],
+  ) {}
+
+  get ready(): Promise<void> {
+    return this.primary.ready;
+  }
+
+  get onDidChange(): Event<WorkspaceTrustChange> {
+    return this.primary.onDidChange;
+  }
+
+  isPersistedTrusted(): boolean {
+    return this.primary.isPersistedTrusted();
+  }
+
+  isTrusted(): boolean {
+    return this.primary.isTrusted();
+  }
+
+  get(): Promise<boolean> {
+    return this.primary.get();
+  }
+
+  refresh(): Promise<boolean> {
+    return this.primary.refresh();
+  }
+
+  trust(): Promise<void> {
+    return this.primary.trust();
+  }
+
+  async untrust(): Promise<void> {
+    await Promise.all(this.directories.map((entry) => entry.untrust()));
+  }
+}
+
 export class WorkspaceTrustStore extends Disposable implements IWorkspaceTrustStore {
   declare readonly _serviceBrand: undefined;
 
@@ -171,8 +212,9 @@ export class WorkspaceTrustStore extends Disposable implements IWorkspaceTrustSt
     return entry;
   }
 
-  forProject(project: Pick<Workspace, 'root'>): IWorkspaceTrustEntry {
-    return this.forRoot(project.root);
+  forProject(project: Pick<Workspace, 'root' | 'additionalDirs'>): IWorkspaceTrustEntry {
+    const directories = new Set([project.root, ...project.additionalDirs].map((dir) => this.forRoot(dir)));
+    return new ProjectTrust(this.forRoot(project.root), [...directories]);
   }
 
   async carry(fromRoot: string, toRoot: string): Promise<void> {

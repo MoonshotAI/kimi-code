@@ -43,7 +43,7 @@ export class WorkspaceTrustService extends Disposable implements IWorkspaceTrust
 
   private bindTrust(onDidChange?: () => void): IWorkspaceTrustEntry {
     this.innerSubscription?.dispose();
-    const inner = this.trustStore.forProject({ root: this.dirs.primary });
+    const inner = this.trustStore.forProject({ root: this.dirs.primary, additionalDirs: this.dirs.additionalDirs });
     this.innerSubscription = inner.onDidChange((change) => {
       onDidChange?.();
       this.trusted = change.trusted;
