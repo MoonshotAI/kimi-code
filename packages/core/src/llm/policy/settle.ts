@@ -4,6 +4,7 @@ import {
   createMessageAccumulator,
   isVacuousContentPart,
   type AssistantMessage,
+  type ToolCall,
 } from '#/llm/message';
 import { isAbortError, toLlmErrorMessage } from '#/llm/protocol/errors';
 import { parseRetryAfterMs } from '#/llm/protocol/kit/http';
@@ -114,6 +115,13 @@ export async function runAttempt(
   let requestId: string | undefined;
   let timing: LlmTiming | undefined;
   let failure: { error: LlmErrorMessage; rawError?: unknown } | undefined;
+  const toolCallIndexes = new Map<string, number | string>();
+  const emittedToolCallIds = new Set<string>();
+  const emitToolCallEnd = (toolCall: ToolCall, index = toolCallIndexes.get(toolCall.id) ?? toolCall._streamIndex): void => {
+    if (emittedToolCallIds.has(toolCall.id)) return;
+    emittedToolCallIds.add(toolCall.id);
+    onEvent?.({ type: 'llm.delta.tool_call_end', index, toolCall });
+  };
 
   const captureFailure = (result: LlmGenerateFailure): void => {
     const statusError = llmStatusErrorMessage(result.error);
@@ -241,9 +249,10 @@ export async function runAttempt(
       onToolCallEnd: (index) => {
         const toolCall = inner.toolCallEnd(index);
         if (toolCall !== undefined) {
+          if (index !== undefined) toolCallIndexes.set(toolCall.id, index);
           const error = invalidToolArgumentsError(toolCall, request.profile?.tools ?? []);
           if (error === null) {
-            onEvent?.({ type: 'llm.delta.tool_call_end', index, toolCall });
+            emitToolCallEnd(toolCall, index);
           }
         }
       },
@@ -270,6 +279,7 @@ export async function runAttempt(
   for (const toolCall of message.toolCalls) {
     const error = invalidToolArgumentsError(toolCall, request.profile?.tools ?? []);
     if (error !== null) return failed({ error }, message);
+    emitToolCallEnd(toolCall);
   }
   const empty = emptyResponseError(message, request.model.spec, finish ?? NO_FINISH);
   if (empty !== null) {

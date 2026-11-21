@@ -113,6 +113,7 @@ describe('tool argument settlement', () => {
     });
 
     expect(attempts).toBe(2);
+    expect(generated.events.filter((event) => event.type === 'llm.delta.tool_call_end')).toHaveLength(1);
     expect(doneOutcome(generated.outcome).message.toolCalls).toMatchObject([
       { name: 'weather', arguments: '{"city":"sf"}' },
     ]);
@@ -275,15 +276,32 @@ describe('tool argument settlement', () => {
     }), { module: testModule({ profile }) })).outcome);
     expect(missingBoundary.error.kind).toBe('invalid_tool_arguments');
 
-    const completed = doneOutcome((await runGenerate(fakeProtocol({
+    const completed = await runGenerate(fakeProtocol({
       chunks: [
         { tool: { type: 'function', id: 'call-interleaved', name: 'weather', arguments: '{"city":', _streamIndex: 0 } },
         { part: { type: 'tool_call_part', argumentsPart: '"sf"}', index: 0 } },
         { finish: { finishReason: 'tool_calls', rawFinishReason: 'stop' } },
       ],
-    }), { module: testModule({ profile }) })).outcome);
-    expect(completed.message.toolCalls).toMatchObject([
+    }), { module: testModule({ profile }) });
+    expect(doneOutcome(completed.outcome).message.toolCalls).toMatchObject([
       { id: 'call-interleaved', arguments: '{"city":"sf"}' },
+    ]);
+    expect(completed.events.filter((event) => event.type === 'llm.delta.tool_call_end')).toMatchObject([
+      { index: 0, toolCall: { id: 'call-interleaved' } },
+    ]);
+
+    const missingCompletion = await runGenerate(fakeProtocol({
+      emitToolCallEnd: false,
+      chunks: [
+        { tool: { type: 'function', id: 'call-missing-valid', name: 'weather', arguments: '{"city":"sf"}' } },
+        { finish: { finishReason: 'tool_calls', rawFinishReason: 'stop' } },
+      ],
+    }), { module: testModule({ profile }) });
+    expect(doneOutcome(missingCompletion.outcome).message.toolCalls).toMatchObject([
+      { id: 'call-missing-valid', arguments: '{"city":"sf"}' },
+    ]);
+    expect(missingCompletion.events.filter((event) => event.type === 'llm.delta.tool_call_end')).toMatchObject([
+      { toolCall: { id: 'call-missing-valid' } },
     ]);
   });
 
