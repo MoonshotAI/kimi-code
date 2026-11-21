@@ -1785,16 +1785,20 @@ key = "${titleOAuthRef.key}"
       }
     });
 
-    it('loads registry directories without a session', async () => {
+    it('loads the implicit project registry directories without a session and skips managed projects', async () => {
       const { harness } = await makeHarness();
       const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
       const extraDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-extra-'));
-      tempDirs.push(workDir, extraDir);
+      const managedDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-managed-'));
+      tempDirs.push(workDir, extraDir, managedDir);
       const client = harness['rpc'] as SDKRpcClientV2;
       const workspaces = client.engineAccessor.get(IWorkspaceService);
       try {
         await expect(harness.getWorkspaceAdditionalDirs(workDir)).resolves.toEqual([]);
-        await workspaces.create({ root: workDir, additionalDirs: [extraDir] });
+        await workspaces.create({ root: workDir, additionalDirs: [managedDir] });
+        await expect(harness.getWorkspaceAdditionalDirs(workDir)).resolves.toEqual([]);
+        const { project } = await workspaces.resolveImplicit(workDir);
+        await workspaces.update(project.id, { additionalDirs: [extraDir] });
         await expect(harness.getWorkspaceAdditionalDirs(workDir)).resolves.toEqual([extraDir]);
         expect(harness.sessions.size).toBe(0);
       } finally {

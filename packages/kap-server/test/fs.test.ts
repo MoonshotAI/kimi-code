@@ -718,6 +718,73 @@ describe('server-v2 /api/v1 fs routes', () => {
     }
   }, 20000);
 
+  it('serves project additional dirs but not the main checkout to a session pinned in a worktree', async () => {
+    const lab = await mkdtemp(join(tmpdir(), 'kimi-server-v2-fs-worktree-'));
+    try {
+      const main = join(lab, 'app');
+      const worktree = join(lab, 'app-fix');
+      const extra = join(lab, 'shared');
+      for (const dir of [main, extra]) {
+        await mkdir(dir, { recursive: true });
+        git(dir, 'init', '-b', 'main');
+        git(dir, 'config', 'user.email', 'test@example.com');
+        git(dir, 'config', 'user.name', 'Test');
+        await writeFile(join(dir, 'tracked.txt'), 'one\n');
+        git(dir, 'add', '-A');
+        git(dir, 'commit', '-m', 'init');
+      }
+      git(main, 'worktree', 'add', '-b', 'fix', worktree);
+      await writeFile(join(extra, 'tracked.txt'), 'one\ntwo\n');
+      const headers = authHeaders(server as RunningServer, { 'content-type': 'application/json' });
+      const first = (await (await fetch(`${base}/api/v1/sessions`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ cwd: main }),
+      } as never)).json()) as Envelope<{ workspace_id: string }>;
+      expect(first.code).toBe(0);
+      const workspaceId = first.data.workspace_id;
+      const patched = (await (await fetch(`${base}/api/v1/workspaces/${workspaceId}`, {
+        method: 'PATCH',
+        headers,
+        body: JSON.stringify({ additional_dirs: [extra] }),
+      } as never)).json()) as Envelope<unknown>;
+      expect(patched.code).toBe(0);
+      const pinned = (await (await fetch(`${base}/api/v1/sessions`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ workspace_id: workspaceId, environment_id: 'local', environment_cwd: worktree }),
+      } as never)).json()) as Envelope<{ id: string }>;
+      expect(pinned.code).toBe(0);
+      const id = pinned.data.id;
+
+      const extraList = await postFs<{ items: FsEntryWire[] }>(id, 'list', { path: extra });
+      const extraStatus = await postFs<{ results: Record<string, { entries: Record<string, string> }> }>(
+        id,
+        'git_status:batch',
+        { roots: [extra], include_pull_request: false },
+      );
+      const mainList = await postFs<null>(id, 'list', { path: main });
+      const mainStatus = await postFs<{ results: Record<string, unknown>; errors: Record<string, { code: number }> }>(
+        id,
+        'git_status:batch',
+        { roots: [main], include_pull_request: false },
+      );
+      const ownList = await postFs<{ items: FsEntryWire[] }>(id, 'list', {});
+
+      expect(extraList.code).toBe(0);
+      expect(extraList.data.items.map((entry) => entry.name)).toContain('tracked.txt');
+      expect(extraStatus.code).toBe(0);
+      expect(extraStatus.data.results[extra]?.entries).toEqual({ 'tracked.txt': 'modified' });
+      expect(mainList.code).toBe(ErrorCode.FS_PATH_ESCAPES_SESSION);
+      expect(mainStatus.data.results).toEqual({});
+      expect(mainStatus.data.errors[main]?.code).toBe(ErrorCode.FS_PATH_ESCAPES_SESSION);
+      expect(ownList.code).toBe(0);
+      expect(ownList.data.items.map((entry) => entry.name)).toContain('tracked.txt');
+    } finally {
+      await rm(lab, { recursive: true, force: true });
+    }
+  }, 20000);
+
   it('rejects an unknown action with VALIDATION_FAILED', async () => {
     const id = await createSession();
     const body = await postFs<null>(id, 'bogus', {});

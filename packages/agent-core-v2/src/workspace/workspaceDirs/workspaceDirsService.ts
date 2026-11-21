@@ -4,7 +4,7 @@ import { ILogService } from '#/_base/log/log';
 import { defineState } from '#/state/state';
 import { TimeoutTimer } from '#/_base/utils/timer';
 import { subtreeWatchFilter } from '#/_base/utils/paths';
-import { workspaceRootKey } from '#/_base/utils/workdir-slug';
+import { sameDir } from '#/_base/utils/workdir-slug';
 import { IProjectLocalConfigService } from '#/app/projectLocalConfig/projectLocalConfig';
 import { LOCAL_ENVIRONMENT_ID } from '#/environment/environment';
 import { IWorkspaceService } from '#/app/workspace/workspace';
@@ -14,6 +14,7 @@ import { IWorkspaceStateService } from '#/workspace/state/workspaceState';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
 import { watchCandidates } from '#human/utils/watch';
 
+import { registryDirSet } from './registryDirSet';
 import {
   IWorkspaceDirs,
   type WorkspaceAddDirInput,
@@ -196,10 +197,7 @@ export class WorkspaceDirsService implements IWorkspaceDirs {
       }
       const existing = await this.workspaces.get(this.workspace.workspaceId);
       const target = existing ?? (await this.workspaces.reviveImplicit(this.workspace.workspaceId, this.workspace.cwd));
-      const dirKey = workspaceRootKey(dir);
-      const inSet =
-        workspaceRootKey(target.root) === dirKey ||
-        target.additionalDirs.some((kept) => workspaceRootKey(kept) === dirKey);
+      const inSet = [target.root, ...target.additionalDirs].some((kept) => sameDir(kept, dir));
       if (!inSet) {
         await this.workspaces.update(target.id, {
           additionalDirs: [...target.additionalDirs, dir],
@@ -242,42 +240,23 @@ export class WorkspaceDirsService implements IWorkspaceDirs {
 
   private async reloadFromRegistry(): Promise<void> {
     const registered = await this.workspaces.list();
-    const current = this.workspace.meta.kind === 'managed'
-      ? undefined
-      : await this.workspaces.get(this.workspace.workspaceId);
-    const entries =
-      this.workspace.meta.kind === 'managed'
-        ? registered.filter((entry) => entry.id === this.workspace.workspaceId)
-        : current === undefined
-          ? registered
-          : [current, ...registered.filter((entry) => entry.id !== current.id)];
-    const cwdKey = workspaceRootKey(this.workspace.cwd);
-    const dirs: string[] = [];
-    const primary: Record<string, string> = {};
-    for (const entry of entries) {
-      const set = [entry.root, ...entry.additionalDirs];
-      const currentEntry =
-        this.followsPrimary &&
-        this.environmentId === LOCAL_ENVIRONMENT_ID &&
-        entry.id === this.workspace.workspaceId;
-      if (!currentEntry && !set.some((dir) => workspaceRootKey(dir) === cwdKey)) continue;
-      primary[entry.id] = entry.root;
-      const primaryKey = workspaceRootKey(entry.root);
-      for (const dir of set) {
-        const key = workspaceRootKey(dir);
-        if (this.followsPrimary && currentEntry && key === primaryKey) continue;
-        if ((!this.followsPrimary || !currentEntry) && key === cwdKey) continue;
-        if (dirs.some((kept) => workspaceRootKey(kept) === key)) continue;
-        dirs.push(dir);
-      }
-    }
+    const managed = this.workspace.meta.kind === 'managed';
+    const next = registryDirSet({
+      project: managed
+        ? registered.find((entry) => entry.id === this.workspace.workspaceId)
+        : await this.workspaces.get(this.workspace.workspaceId),
+      others: managed ? [] : registered,
+      cwd: this.workspace.cwd,
+      local: this.environmentId === LOCAL_ENVIRONMENT_ID,
+      followsPrimary: this.followsPrimary,
+    });
     const beforeDirs = this.sharedAdditionalDirs;
     const beforePrimary = this.primaryByWorkspace;
-    this.registryDirs = dirs;
-    this.primaryByWorkspace = primary;
+    this.registryDirs = next.registryDirs;
+    this.primaryByWorkspace = next.primaryByWorkspace;
     if (
       !sameStringList(beforeDirs, this.sharedAdditionalDirs) ||
-      !samePrimaryByWorkspace(beforePrimary, primary)
+      !samePrimaryByWorkspace(beforePrimary, next.primaryByWorkspace)
     ) {
       this.fireChange();
     }
@@ -372,7 +351,7 @@ function samePrimaryByWorkspace(
       return (
         bRoot !== undefined &&
         aRoot !== undefined &&
-        workspaceRootKey(aRoot) === workspaceRootKey(bRoot)
+        sameDir(aRoot, bRoot)
       );
     })
   );
