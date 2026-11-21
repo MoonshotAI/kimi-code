@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { createUserMessage, extractText, type Message, type ToolCall, type ToolMessage } from '@moonshot-ai/core/llm/message';
+import { createUserMessage, extractText, type ToolCall, type ToolMessage } from '@moonshot-ai/core/llm/message';
 import type {
   Loop,
   LoopEmitted,
@@ -103,33 +103,7 @@ describe('step.starting', () => {
     await loop.close();
   });
 
-  it('applies history rewrites during step start and an in-flight request', async () => {
-    let sent: Message[] = [];
-    const capturing = createMockProviderRequester((request) => {
-      sent = [...request.content.messages];
-      return done('ok');
-    });
-    const rewritten = prompt('rewritten');
-    const events: LoopEmitted[] = [];
-    const loop = createLoop({
-      requester: capturing,
-      executor: successfulExecutor(['lookup', 'alpha', 'beta', 'work'], ''),
-      hooks: [
-        {
-          point: 'step.starting',
-          id: 'compaction',
-          hook: (event) => ({ messages: [...event.messages.slice(0, -1), rewritten] }),
-        },
-      ],
-    });
-    loop.subscribe((event) => events.push(event));
-    expect((await loop.runTurn(prompt('original'))).type).toBe('done');
-    const settled = events.find((event) => event.type === 'context.settled');
-    expect(settled).toMatchObject({ messages: [rewritten], reason: 'compaction' });
-    expect(sent.map((message) => extractText(message))).toEqual(['rewritten']);
-    expect(loop.state.messages[0]).toBe(rewritten);
-    await loop.close();
-
+  it('applies history replacement during an in-flight request', async () => {
     let requestStarted!: () => void;
     const started = new Promise<void>((resolve) => { requestStarted = resolve; });
     let finishRequest!: () => void;

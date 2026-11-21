@@ -320,9 +320,6 @@ class ActorTurn implements Turn {
     const starting = await proc.step(() => this.stepStarting(step));
     if (!this.accepts(step) || this.finishSteeredStep(proc, step)) return false;
     this.runtime.transition(() => {
-      if (starting.rewrittenBy !== undefined) {
-        this.emit({ type: 'context.settled', messages: [...starting.messages], reason: starting.rewrittenBy });
-      }
       this.runtime.report(
         'step.starting',
         this.point,
@@ -407,7 +404,7 @@ class ActorTurn implements Turn {
         step.scope.signal,
       );
     } catch (error) {
-      return { messages: this.runtime.read().messages, failures: [runtimeFailure(error)] };
+      return { failures: [runtimeFailure(error)] };
     }
   }
 

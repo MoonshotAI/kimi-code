@@ -53,10 +53,7 @@ export type TurnStartingVerdict = { readonly type: 'blocked'; readonly cause: Ca
 
 export type MessageAppendingDecision = { readonly message?: Message; readonly blocked?: Cause };
 
-export type StepStartingDecision = {
-  readonly messages?: readonly Message[];
-  readonly blocked?: Cause;
-};
+export type StepStartingDecision = { readonly blocked?: Cause };
 
 export type ToolBatchStartingDecision = { readonly blocked: Cause; readonly result?: HookToolResult };
 

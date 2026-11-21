@@ -2,7 +2,6 @@ import type { Message } from '#/llm/message';
 import type {
   HookPoint,
   LoopHooks,
-  StepStartingDecision,
   StepStoppingVerdict,
   ToolBatchStartingDecision,
 } from '#/loop/contract/hook';
@@ -146,27 +145,16 @@ const chains: HookChains<LoopHooks> = {
   },
   'step.starting': async (items, [event, signal], control) => {
     const failures: HookFailure[] = [];
-    let messages = event.messages;
-    let rewrittenBy: string | undefined;
     for (const item of items) {
-      const current = { ...event, messages };
-      const run = await runItem(item, control, [current, signal], isStepStartingDecision);
+      const run = await runItem(item, control, [event, signal], isStepStartingDecision);
       if (run.failure !== undefined) failures.push(run.failure);
-      if (run.decision?.messages !== undefined) {
-        messages = run.decision.messages;
-        rewrittenBy = item.id;
-      }
       const decided = run.decision?.blocked;
       const blocked = decided === undefined ? run.blocked : signed(decided, item);
       if (blocked !== undefined) {
-        return wrapHookChainResult({ decision: { messages, blocked }, failures, rewrittenBy });
+        return wrapHookChainResult({ decision: { blocked }, failures });
       }
     }
-    return wrapHookChainResult<StepStartingDecision | void>({
-      decision: rewrittenBy === undefined ? undefined : { messages },
-      failures,
-      rewrittenBy,
-    });
+    return wrapHookChainResult({ failures });
   },
   'tool.batch-starting': async (items, [event, signal], control) => {
     const failures: HookFailure[] = [];

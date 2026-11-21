@@ -31,12 +31,7 @@ export function isMessageAppendingDecision(value: unknown): value is MessageAppe
 }
 
 export function isStepStartingDecision(value: unknown): value is StepStartingDecision {
-  return (
-    isObject(value) &&
-    (value['messages'] === undefined ||
-      (Array.isArray(value['messages']) && value['messages'].every(isMessage))) &&
-    (value['blocked'] === undefined || isCause(value['blocked']))
-  );
+  return isObject(value) && (value['blocked'] === undefined || isCause(value['blocked']));
 }
 
 export function isToolBatchStartingDecision(value: unknown): value is ToolBatchStartingDecision {
@@ -59,7 +54,6 @@ export interface HookRun<D> {
   decision?: D;
   blocked?: Cause;
   failures: HookFailure[];
-  rewrittenBy?: string;
 }
 
 function runItem<D>(
@@ -79,8 +73,8 @@ function runItem<D>(
       const blocked = chained?.blocked;
       if (blocked !== undefined && !isCause(blocked)) throw new Error(`invalid ${point} hook blocked cause`);
       const value = chained === undefined ? returned : chained.decision;
-      if (value === undefined) return { failures, rewrittenBy: chained?.rewrittenBy, blocked };
-      if (isValid(value)) return { decision: value, failures, rewrittenBy: chained?.rewrittenBy, blocked };
+      if (value === undefined) return { failures, blocked };
+      if (isValid(value)) return { decision: value, failures, blocked };
       throw new Error(`invalid ${point} hook result`);
     } catch (error) {
       return fail(error);
@@ -133,8 +127,6 @@ export async function runMessageAppending(
 }
 
 export interface StepStartingRun {
-  messages: readonly Message[];
-  rewrittenBy?: string;
   blocked?: Cause;
   failures: HookFailure[];
 }
@@ -145,11 +137,9 @@ export async function runStepStarting(
   signal: AbortSignal,
 ): Promise<StepStartingRun> {
   const hook = hooks['step.starting'];
-  if (hook === undefined) return { messages: event.messages, failures: [] };
+  if (hook === undefined) return { failures: [] };
   const run = await runItem('step.starting', () => hook(event, signal), isStepStartingDecision);
   return {
-    messages: run.decision?.messages ?? event.messages,
-    rewrittenBy: run.rewrittenBy,
     blocked: run.decision?.blocked ?? run.blocked,
     failures: run.failures,
   };
