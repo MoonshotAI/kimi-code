@@ -25,7 +25,7 @@ import {
   type HookRegistrar,
   type HookRegistry,
 } from '#/hook/registry';
-import { isPromiseLike, wrapHookChainResult, type HookFailure } from '#/hook/result';
+import { wrapHookChainResult, type HookFailure } from '#/hook/result';
 
 interface ItemRun<D> {
   decision?: D;
@@ -62,54 +62,41 @@ function itemDecision<D>(
   }
 }
 
-function runItem<D>(
+async function runItem<D>(
   item: HookItem,
   control: HookChainControl,
   args: readonly unknown[],
   isValid: (value: unknown) => value is D,
-): ItemRun<D> | Promise<ItemRun<D>> {
-  let value: unknown;
+): Promise<ItemRun<D>> {
   try {
-    value = control.invoke(item, args);
+    const value = await control.invoke(item, args);
+    return itemDecision(item, control, value, isValid);
   } catch (error) {
     return itemFailure(item, control, error);
   }
-  if (isPromiseLike(value)) {
-    return Promise.resolve(value).then(
-      (resolved) => itemDecision(item, control, resolved, isValid),
-      (error: unknown) => itemFailure(item, control, error),
-    );
-  }
-  return itemDecision(item, control, value, isValid);
 }
 
 function signed(cause: Cause, item: HookItem): Cause {
   return cause.by === undefined ? { ...cause, by: item.id } : cause;
 }
 
-function runFirst<D extends { readonly cause: Cause }, R>(
+async function runFirst<D extends { readonly cause: Cause }, R>(
   items: readonly HookItem[],
   args: readonly unknown[],
   control: HookChainControl,
   isValid: (value: unknown) => value is D,
   map: (run: HookRun<D>) => R,
-): R | Promise<R> {
+): Promise<R> {
   const failures: HookFailure[] = [];
-  const visit = (index: number): R | Promise<R> => {
-    if (index >= items.length) return map({ failures });
-    const item = items[index]!;
-    const advance = (run: ItemRun<D>): R | Promise<R> => {
-      if (run.failure !== undefined) failures.push(run.failure);
-      if (run.decision !== undefined) {
-        return map({ decision: { ...run.decision, cause: signed(run.decision.cause, item) }, failures });
-      }
-      if (run.blocked !== undefined) return map({ blocked: run.blocked, failures });
-      return visit(index + 1);
-    };
-    const run = runItem(item, control, args, isValid);
-    return isPromiseLike(run) ? run.then(advance) : advance(run);
-  };
-  return visit(0);
+  for (const item of items) {
+    const run = await runItem(item, control, args, isValid);
+    if (run.failure !== undefined) failures.push(run.failure);
+    if (run.decision !== undefined) {
+      return map({ decision: { ...run.decision, cause: signed(run.decision.cause, item) }, failures });
+    }
+    if (run.blocked !== undefined) return map({ blocked: run.blocked, failures });
+  }
+  return map({ failures });
 }
 
 function firstResult<D extends { readonly cause: Cause }>(

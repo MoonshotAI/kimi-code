@@ -190,7 +190,7 @@ describe('loop.wait', () => {
       },
       abortBatch: () => ({ outcomes: [] }),
       hooks: {
-        starting: () => {
+        starting: async () => {
           startingCount += 1;
         },
       },
@@ -268,7 +268,7 @@ describe('loop.wait', () => {
       },
       abortBatch: () => undefined,
       hooks: {
-        ending: (event) => {
+        ending: async (event) => {
           order.push(`owner.ending:${event.at}`);
         },
       },
@@ -338,6 +338,11 @@ describe('loop.wait', () => {
     const endingStarted = new Promise<void>((resolve) => { announceEnding = resolve; });
     let releaseEnding!: () => void;
     const endingRelease = new Promise<void>((resolve) => { releaseEnding = resolve; });
+    let announceOwnerEnding!: () => void;
+    const ownerEndingStarted = new Promise<void>((resolve) => { announceOwnerEnding = resolve; });
+    let releaseOwnerEnding!: () => void;
+    const ownerEndingRelease = new Promise<void>((resolve) => { releaseOwnerEnding = resolve; });
+    let lateEndingAppend!: () => void;
     let endingStoppingCount = 0;
     let endingContinuingCount = 0;
     const endingOrder: string[] = [];
@@ -347,8 +352,12 @@ describe('loop.wait', () => {
       executeBatch: () => ({ outcomes: [] }),
       abortBatch: () => undefined,
       hooks: {
-        ending: (event) => {
+        ending: async (event, ctx) => {
           endingOrder.push(`owner.ending:${event.at}`);
+          ctx.append({ kind: 'remind', message: prompt('async ending') });
+          lateEndingAppend = () => ctx.append({ kind: 'remind', message: prompt('late ending') });
+          announceOwnerEnding();
+          await ownerEndingRelease;
         },
       },
       extensions: {
@@ -388,10 +397,16 @@ describe('loop.wait', () => {
     endingTurn.abort('ending-abort');
     expect(endingTurn.state.phase).toBe('finishing');
     releaseEnding();
+    await ownerEndingStarted;
+    expect(endingTurn.state.phase).toBe('finished');
+    expect(endingOrder).toEqual(['step.stopping', 'step.ended', 'owner.ending:ending']);
+    endingTurn.abort('late-ending-abort');
+    releaseOwnerEnding();
     await expect(endingTurn.done).resolves.toMatchObject({ type: 'aborted', reason: 'ending-abort' });
     expect(endingStoppingCount).toBe(1);
     expect(endingContinuingCount).toBe(0);
     expect(endingOrder).toEqual(['step.stopping', 'step.ended', 'owner.ending:ending', 'turn.ended']);
+    expect(lateEndingAppend).toThrow('turn hook context is no longer active');
   });
 });
 

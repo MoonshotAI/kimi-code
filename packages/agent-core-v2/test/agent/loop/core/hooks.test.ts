@@ -42,9 +42,14 @@ const done = (text: string, toolCalls: ToolCall[] = []): MockProviderResponse =>
 const call = (id: string, name: string): ToolCall => ({ type: 'function', id, name, arguments: '{}' });
 
 describe('step.starting', () => {
-  it('fires once per step with the current messages and profile', async () => {
+  it('fires once per step with current input and awaits blocking hooks in order', async () => {
     const tool = { name: 'lookup', description: 'Find things', parameters: { type: 'object', properties: {} } };
     const seen: StepStartingEvent[] = [];
+    const order: string[] = [];
+    let announceFirst!: () => void;
+    const firstStarted = new Promise<void>((resolve) => { announceFirst = resolve; });
+    let releaseFirst!: () => void;
+    const firstRelease = new Promise<void>((resolve) => { releaseFirst = resolve; });
     const scripted = requester([done('', [call('c1', 'lookup')]), done('end')]);
     const loop = createLoop({
       requester: scripted,
@@ -53,15 +58,32 @@ describe('step.starting', () => {
       hooks: [
         {
           point: 'step.starting',
-          hook: (event) => {
+          id: 'first',
+          hook: async (event) => {
             seen.push(event);
+            order.push(`first:${event.step}`);
+            if (event.step !== 1) return;
+            announceFirst();
+            await firstRelease;
+          },
+        },
+        {
+          point: 'step.starting',
+          id: 'second',
+          hook: (event) => {
+            order.push(`second:${event.step}`);
           },
         },
       ],
     });
     loop.setSystemPrompt('sp');
     const entry = prompt('hello');
-    expect((await loop.runTurn(entry)).type).toBe('done');
+    const running = loop.runTurn(entry);
+    await firstStarted;
+    expect(order).toEqual(['first:1']);
+    releaseFirst();
+    expect((await running).type).toBe('done');
+    expect(order).toEqual(['first:1', 'second:1', 'first:2', 'second:2']);
     expect(seen.map((event) => [event.turnId, event.step])).toEqual([
       [0, 1],
       [0, 2],
@@ -844,10 +866,10 @@ describe('turn host hooks', () => {
   it('registers once and rejects any further registration', () => {
     const registry = createTurnHookRegistry();
     const hooks: TurnHooks = {
-      starting: () => undefined,
-      requesting: () => undefined,
-      continuing: () => undefined,
-      ending: () => undefined,
+      starting: async () => undefined,
+      requesting: async () => undefined,
+      continuing: async () => undefined,
+      ending: async () => undefined,
     };
     registry.registerTurnHooks(hooks);
     expect(registry.list()).toHaveLength(4);

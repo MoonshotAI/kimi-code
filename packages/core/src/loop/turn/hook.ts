@@ -5,37 +5,26 @@ import {
   type HookItem,
   type HookRegistry,
 } from '#/hook/registry';
-import { isPromiseLike } from '#/hook/result';
 import type { TurnHooks } from './contract';
 
-function firstDecision<F extends (...args: never[]) => unknown>(
+async function firstDecision<F extends (...args: never[]) => unknown>(
   items: readonly HookItem<F>[],
   args: Parameters<F>,
   control: HookChainControl,
-): ReturnType<F> | Promise<Awaited<ReturnType<F>>> {
-  const visit = (index: number): unknown => {
-    if (index >= items.length) return undefined;
-    const item = items[index]!;
-    const value = control.invoke(item, args);
-    if (isPromiseLike(value)) {
-      return Promise.resolve(value).then((resolved) => resolved === undefined ? visit(index + 1) : resolved);
-    }
-    return value === undefined ? visit(index + 1) : value;
-  };
-  return visit(0) as ReturnType<F> | Promise<Awaited<ReturnType<F>>>;
+): Promise<Awaited<ReturnType<F>>> {
+  for (const item of items) {
+    const value = await control.invoke(item, args);
+    if (value !== undefined) return value as Awaited<ReturnType<F>>;
+  }
+  return undefined as Awaited<ReturnType<F>>;
 }
 
 const chains: HookChains<TurnHooks> = {
   starting: firstDecision,
   requesting: firstDecision,
   continuing: firstDecision,
-  ending: (items, args, control) => {
-    const visit = (index: number): void | Promise<void> => {
-      if (index >= items.length) return;
-      const value = control.invoke(items[index]!, args);
-      return isPromiseLike(value) ? Promise.resolve(value).then(() => visit(index + 1)) : visit(index + 1);
-    };
-    return visit(0);
+  ending: async (items, args, control) => {
+    for (const item of items) await control.invoke(item, args);
   },
 };
 

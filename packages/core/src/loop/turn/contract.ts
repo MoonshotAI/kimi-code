@@ -48,16 +48,16 @@ export interface TurnHooks {
   readonly starting: (
     turn: TurnState,
     ctx: TurnHookContext,
-  ) => Extract<TurnOutcome, { type: 'done' | 'blocked' }> | void | Promise<Extract<TurnOutcome, { type: 'done' | 'blocked' }> | void>;
+  ) => Promise<Extract<TurnOutcome, { type: 'done' | 'blocked' }> | void>;
   readonly requesting: (
     turn: TurnState,
     ctx: TurnHookContext,
-  ) => Extract<TurnOutcome, { type: 'done' }> | void | Promise<Extract<TurnOutcome, { type: 'done' }> | void>;
+  ) => Promise<Extract<TurnOutcome, { type: 'done' }> | void>;
   readonly continuing: (
     turn: TurnState,
     ctx: TurnHookContext,
-  ) => Extract<TurnOutcome, { type: 'done' }> | void | Promise<Extract<TurnOutcome, { type: 'done' }> | void>;
-  readonly ending: (event: TurnEnding, ctx: Pick<TurnHookContext, 'append'>) => void;
+  ) => Promise<Extract<TurnOutcome, { type: 'done' }> | void>;
+  readonly ending: (event: TurnEnding, ctx: Pick<TurnHookContext, 'append'>) => Promise<void>;
 }
 
 type TurnOnlyEvent = {
@@ -145,6 +145,6 @@ export interface TurnStep {
   steerRequested: boolean;
   toolCallStreaming: boolean;
   llm?: LlmOutcome;
-  ending?: StepEndingRun | Promise<StepEndingRun>;
+  ending?: Promise<StepEndingRun>;
   outcome?: StepOutcome;
 }

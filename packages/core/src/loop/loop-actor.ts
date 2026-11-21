@@ -19,7 +19,6 @@ import {
   type TurnOutcome,
 } from './contract/outcome';
 import { isMessage, isObject } from './guards';
-import { isPromiseLike } from '#/hook/result';
 import {
   hookFailedEvent,
   hookFailureMessage,
@@ -1042,46 +1041,41 @@ class LoopActor implements Loop {
     return appended;
   }
 
-  private ownerRequesting(
+  private async ownerRequesting(
     state: TurnState,
     ctx: TurnHookContext,
-  ): Extract<TurnOutcome, { type: 'done' }> | void | Promise<Extract<TurnOutcome, { type: 'done' }> | void> {
+  ): Promise<Extract<TurnOutcome, { type: 'done' }> | void> {
     if (this.turn?.machine.id !== state.id) return;
-    const settled = this.settleCompletions();
-    const complete = (): Extract<TurnOutcome, { type: 'done' }> | void => {
-      if (this.turn?.machine.id !== state.id || ctx.signal.aborted) return;
-      if (this.completionHandoff) {
-        this.completionHandoff = false;
-        return { type: 'done', cause: { by: 'loop', reason: 'notify' } };
-      }
-      ctx.append(...this.mailbox.drainReminders().map((message) => ({ kind: 'remind' as const, message })));
-    };
-    return isPromiseLike(settled) ? settled.then(complete) : complete();
+    await this.settleCompletions();
+    if (this.turn?.machine.id !== state.id || ctx.signal.aborted) return;
+    if (this.completionHandoff) {
+      this.completionHandoff = false;
+      return { type: 'done', cause: { by: 'loop', reason: 'notify' } };
+    }
+    ctx.append(...this.mailbox.drainReminders().map((message) => ({ kind: 'remind' as const, message })));
   }
 
-  private ownerContinuing(
+  private async ownerContinuing(
     state: TurnState,
     _ctx: TurnHookContext,
-  ): Extract<TurnOutcome, { type: 'done' }> | void | Promise<Extract<TurnOutcome, { type: 'done' }> | void> {
+  ): Promise<Extract<TurnOutcome, { type: 'done' }> | void> {
     if (this.turn?.machine.id !== state.id) return;
-    const settled = this.settleCompletions();
-    const complete = (): Extract<TurnOutcome, { type: 'done' }> | void => {
-      if (this.turn?.machine.id !== state.id) return;
-      if (this.mailbox.hasNotify) return { type: 'done', cause: { by: 'loop', reason: 'notify' } };
-    };
-    return isPromiseLike(settled) ? settled.then(complete) : complete();
+    await this.settleCompletions();
+    if (this.turn?.machine.id !== state.id) return;
+    if (this.mailbox.hasNotify) return { type: 'done', cause: { by: 'loop', reason: 'notify' } };
   }
 
-  private settleCompletions(): void | Promise<void> {
-    this.drainDetachedCompletions();
-    if (!this.hasPendingCompletions) return;
-    const waiting = new Promise<void>((resolve) => {
-      this.completionWaiters.add(resolve);
-    });
-    return waiting.then(() => this.settleCompletions() as void);
+  private async settleCompletions(): Promise<void> {
+    while (true) {
+      this.drainDetachedCompletions();
+      if (!this.hasPendingCompletions) return;
+      await new Promise<void>((resolve) => {
+        this.completionWaiters.add(resolve);
+      });
+    }
   }
 
-  private ownerEnding(event: TurnEnding, ctx: Pick<TurnHookContext, 'append'>): void {
+  private async ownerEnding(event: TurnEnding, ctx: Pick<TurnHookContext, 'append'>): Promise<void> {
     const turn = this.turn;
     if (turn === undefined || turn.machine.id !== event.turn.id) return;
     if (event.turn.outcome.type === 'blocked' && event.turn.outcome.at === 'turn.starting') {
