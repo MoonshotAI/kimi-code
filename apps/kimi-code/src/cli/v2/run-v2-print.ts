@@ -486,8 +486,8 @@ export function formatTrustGatedMcpWarning(servers: readonly TrustGatedMcpServer
   const noun = servers.length === 1 ? 'server' : 'servers';
   const list = servers.map((server) => `${server.name} (${server.target})`).join(', ');
   return (
-    `Warning: this folder is not trusted; skipped ${servers.length} project-level MCP ${noun}: ${list}.\n` +
-    '  Run `kimi` here and choose "Trust this folder", or set KIMI_CODE_TRUST_WORKSPACE=1, to enable them.\n\n'
+    `Warning: this project is not trusted; skipped ${servers.length} project-level MCP ${noun}: ${list}.\n` +
+    '  Run `kimi` here and choose "Trust and continue", or set KIMI_CODE_TRUST_WORKSPACE=1, to enable them.\n\n'
   );
 }
 

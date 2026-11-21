@@ -1236,10 +1236,10 @@ describe('runV2Print', () => {
     await runV2Print(opts() as never, '1.2.3-test', { stdout, stderr });
 
     expect(stderr.text()).toContain(
-      'Warning: this folder is not trusted; skipped 2 project-level MCP servers: ' +
+      'Warning: this project is not trusted; skipped 2 project-level MCP servers: ' +
         'api (http: https://example.com/mcp), fs (stdio: node server.js).',
     );
-    expect(stderr.text()).toContain('"Trust this folder"');
+    expect(stderr.text()).toContain('"Trust and continue"');
     expect(stdout.text()).toContain('hello world');
   });
 

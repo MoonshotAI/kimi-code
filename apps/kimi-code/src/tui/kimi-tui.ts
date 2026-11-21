@@ -4796,7 +4796,6 @@ export class KimiTUI {
         this.state.activeDialog = 'trust-prompt';
         this.mountEditorReplacement(
           new TrustPromptComponent({
-            workDir,
             info,
             getAvailableRows: () =>
               this.state.terminal.rows - (this.state.ui instanceof TuiAltScreen ? 1 : 0),

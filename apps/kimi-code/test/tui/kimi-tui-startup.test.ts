@@ -3668,6 +3668,45 @@ describe('KimiTUI startup', () => {
     expect(onExit).toHaveBeenCalledWith(0);
   });
 
+  it('asks to trust the project of the startup directory and shows its primary directory', async () => {
+    const getWorkspaceTrustInfo = vi.fn(async () => ({
+      trusted: false,
+      projectRoot: '/tmp/app',
+      gatedMcpServers: [],
+      gatedAdditionalDirs: [], additionalDirSources: [], warnings: [],
+      instructionSources: { agentsMdPaths: [], skills: [], agentProfiles: [], paths: [] },
+    }));
+    const trustWorkspace = vi.fn(async () => {});
+    const harness = makeHarness(makeSession(), { getWorkspaceTrustInfo, trustWorkspace });
+    const driver = makeDriver(harness, {
+      ...makeStartupInput(),
+      migrationPlan: MIGRATION_PLAN,
+      migrateOnly: true,
+    }) as unknown as MigrateExitDriver & {
+      mountEditorReplacement(panel: { handleInput(data: string): void; render(width: number): string[] }): void;
+    };
+    vi.spyOn(driver.state.ui, 'start').mockImplementation(() => {});
+    vi.spyOn(driver.state.ui, 'stop').mockImplementation(() => {});
+    vi.spyOn(driver.state.terminal, 'write').mockImplementation(() => {});
+    vi.spyOn(driver, 'runMigrationScreen').mockResolvedValue({ decision: 'later' });
+    const mountSpy = vi.spyOn(driver, 'mountEditorReplacement');
+    driver.onExit = vi.fn(async () => {});
+
+    const startPromise = driver.start();
+    await vi.waitFor(() => {
+      expect(mountSpy).toHaveBeenCalled();
+    });
+    const prompt = mountSpy.mock.calls[0]![0];
+    const text = prompt.render(80).join('\n').replaceAll(/\u001B\[[0-9;]*m/g, '');
+    prompt.handleInput('\r');
+    await startPromise;
+
+    expect(text).toContain('Trust this project?');
+    expect(text).toContain('/tmp/app');
+    expect(text).not.toContain('/tmp/proj-a');
+    expect(trustWorkspace).toHaveBeenCalledWith('/tmp/proj-a');
+  });
+
   it('prompts for workspace trust when trust info cannot be read', async () => {
     const getWorkspaceTrustInfo = vi.fn(async () => {
       throw new Error('unavailable');
