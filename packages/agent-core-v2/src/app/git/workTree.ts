@@ -159,11 +159,11 @@ export async function locateCheckout(fs: IHostFileSystem, dir: AbsoluteDir): Pro
 
   const mainCheckout = dirname(common);
   if (await pointsTo(fs, mainCheckout, common)) {
-    return grouped('linked', checkoutRoot, await writtenOr(fs, writtenCommon(marker.gitDir, 1), mainCheckout), mainCheckout);
+    return grouped('linked', checkoutRoot, await writtenOr(fs, writtenMainCheckout(marker.gitDir), mainCheckout), mainCheckout);
   }
   const core = await readCoreConfig(fs, join(common, 'config'));
   if (core.bare === true) {
-    return grouped('bare', checkoutRoot, await writtenOr(fs, writtenCommon(marker.gitDir, 0), common), common);
+    return grouped('bare', checkoutRoot, await writtenOr(fs, writtenCommonDir(marker.gitDir), common), common);
   }
   if (core.worktree === undefined) return { kind: 'own', reason: 'main-unknown', checkoutRoot };
   const coreWorktree = await realpathOrEmpty(fs, resolve(common, core.worktree));
@@ -188,10 +188,13 @@ function grouped(layout: CheckoutLayout, checkoutRoot: AbsoluteDir, mainDir: str
   };
 }
 
-function writtenCommon(gitDir: string, parents: 0 | 1): string | undefined {
-  if (basename(dirname(gitDir)) !== 'worktrees') return undefined;
-  const common = dirname(dirname(gitDir));
-  return parents === 0 ? common : dirname(common);
+function writtenCommonDir(gitDir: string): string | undefined {
+  return basename(dirname(gitDir)) === 'worktrees' ? dirname(dirname(gitDir)) : undefined;
+}
+
+function writtenMainCheckout(gitDir: string): string | undefined {
+  const common = writtenCommonDir(gitDir);
+  return common === undefined ? undefined : dirname(common);
 }
 
 async function writtenOr(fs: IHostFileSystem, written: string | undefined, canonical: string): Promise<string> {
