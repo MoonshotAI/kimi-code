@@ -115,7 +115,6 @@ export class AgentPluginService extends Service implements IAgentPluginService {
     if (this.scopeContext.agentId !== MAIN_AGENT_ID) return;
     this.refreshPending = true;
     await this.skillCatalog.ready;
-    await this.reminder.reconcileWhenIdle(SESSION_START_INJECTION_VARIANT);
   }
 
   private async renderSessionStartReminder(): Promise<string | undefined> {
