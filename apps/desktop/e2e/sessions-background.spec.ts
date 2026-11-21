@@ -76,6 +76,10 @@ test('a session keeps working in the background while another is used, and searc
   });
 
   await test.step('Mod+K finds sessions by title and by workspace and opens one from the keyboard', async () => {
+    await sidebar().getByRole('button', { name: 'List options' }).click();
+    await app.window.getByRole('menuitem', { name: 'Flat list' }).click();
+    await expect(sidebar().locator('[data-ws-id]')).toHaveCount(0);
+    await app.snapshot('flat-before-search');
     await app.window.keyboard.press('ControlOrMeta+k');
     const dialog = app.window.getByRole('dialog', { name: 'Search sessions and projects' });
     const query = dialog.getByRole('textbox', { name: 'Search sessions and projects' });
@@ -100,6 +104,9 @@ test('a session keeps working in the background while another is used, and searc
     await expect(dialog).toBeHidden();
     await expect.poll(() => app.sessionId()).toBe(b);
     await expect(transcriptOf(app).getByText(B_REPLY, { exact: true })).toBeVisible();
+    expect(await app.window.evaluate(() => globalThis.localStorage.getItem('kimi-web.sidebar-view-mode'))).toBe('flat');
+    await expect(sidebar().locator('[data-ws-id]')).toHaveCount(0);
+    await app.snapshot('flat-after-search');
   });
 
   await test.step('Shift+Mod+[ and ] move to the sibling sessions', async () => {
