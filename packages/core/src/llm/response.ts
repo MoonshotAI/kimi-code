@@ -29,6 +29,7 @@ export type LlmErrorKind =
   | 'image_format'
   | 'empty_response'
   | 'provider'
+  | 'invalid_tool_arguments'
   | 'unknown';
 
 export type LlmRemoteErrorKind = Exclude<LlmErrorKind, 'syntax'>;
@@ -174,7 +175,7 @@ export type LlmDeltaEvent =
 export type LlmRetry =
   | {
       readonly type: 'llm.retry';
-      readonly reason: 'backoff';
+      readonly reason: 'backoff' | 'invalid_tool_arguments';
       readonly error: LlmErrorMessage;
       readonly message?: AssistantMessage | null;
       readonly usage?: TokenUsage;

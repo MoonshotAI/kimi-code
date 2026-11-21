@@ -140,6 +140,7 @@ function llmErrorCode(error: LlmErrorMessage): ErrorCode | undefined {
     case 'request_too_large':
     case 'request_structure':
     case 'image_format':
+    case 'invalid_tool_arguments':
     case 'provider':
     case 'quota_exhausted':
     case 'syntax':
