@@ -200,17 +200,14 @@ describe('context routes on restored sessions and dynamic tools', () => {
       thinkingLevel: 'high',
       systemPrompt: 'You are Kimi Code.',
     });
-    loop.replaceHistory(
-      [
-        { role: 'user', content: [{ type: 'text', text: 'summarize the repository layout' }] },
-        {
-          role: 'assistant',
-          content: [{ type: 'text', text: 'It is a TypeScript monorepo with apps and packages.' }],
-          toolCalls: [],
-        },
-      ],
-      'fork',
-    );
+    await loop.initializeHistory([
+      { role: 'user', content: [{ type: 'text', text: 'summarize the repository layout' }] },
+      {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'It is a TypeScript monorepo with apps and packages.' }],
+        toolCalls: [],
+      },
+    ]);
     await main.accessor.get(IEventDispatcher).flush();
     return main;
   }
@@ -260,13 +257,10 @@ describe('context routes on restored sessions and dynamic tools', () => {
       ],
       origin: { kind: 'injection', variant: DYNAMIC_TOOL_SCHEMA_VARIANT },
     };
-    loop.replaceHistory(
-      [
-        { role: 'user', content: [{ type: 'text', text: 'hello' }] },
-        historyEntryFromContext(dynamicSchema),
-      ],
-      'fork',
-    );
+    await loop.initializeHistory([
+      { role: 'user', content: [{ type: 'text', text: 'hello' }] },
+      historyEntryFromContext(dynamicSchema),
+    ]);
     await main.accessor.get(IEventDispatcher).flush();
     await main.accessor.get(IWireService).flush();
 
@@ -344,18 +338,15 @@ describe('context routes on restored sessions and dynamic tools', () => {
       Object.fromEntries(Array.from({ length: 80 }, (_, index) => [`key${index}`, index])),
     );
     const imageData = `data:image/png;base64,${'A'.repeat(800)}`;
-    main.accessor.get(IAgentLoopService).replaceHistory(
-      [
-        {
-          role: 'user',
-          content: [
-            { type: 'text', text: minified },
-            { type: 'image_url', imageUrl: { url: imageData } },
-          ],
-        },
-      ],
-      'fork',
-    );
+    await main.accessor.get(IAgentLoopService).initializeHistory([
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: minified },
+          { type: 'image_url', imageUrl: { url: imageData } },
+        ],
+      },
+    ]);
     await main.accessor.get(IEventDispatcher).flush();
     await main.accessor.get(IWireService).flush();
 
@@ -381,7 +372,7 @@ describe('context routes on restored sessions and dynamic tools', () => {
       thinkingLevel: 'high',
       systemPrompt: 'You are a subagent.',
     });
-    loop.replaceHistory([{ role: 'user', content: [{ type: 'text', text: 'inspect me' }] }], 'fork');
+    await loop.initializeHistory([{ role: 'user', content: [{ type: 'text', text: 'inspect me' }] }]);
     await sub.accessor.get(IEventDispatcher).flush();
     await sub.accessor.get(IWireService).flush();
 
@@ -411,29 +402,26 @@ describe('context routes on restored sessions and dynamic tools', () => {
       systemPrompt: 'You are Kimi Code.',
     });
     const call = (id: string, name: string): ToolCall => ({ type: 'function', id, name, arguments: '{}' });
-    loop.replaceHistory(
-      [
-        { role: 'user', content: [{ type: 'text', text: 'run it' }] },
-        { role: 'assistant', content: [], toolCalls: [call('call_1', 'Bash')] },
-        { role: 'user', content: [{ type: 'text', text: 'reminder sent while the tool ran' }] },
-        {
-          role: 'tool',
-          toolCallId: 'call_1',
-          content: [{ type: 'text', text: 'ok' }],
-          attributes: { durationMs: 1500, note: 'Output truncated.' },
-        },
-        { role: 'assistant', content: [], toolCalls: [call('call_2', 'Read')] },
-        {
-          role: 'tool',
-          toolCallId: 'call_2',
-          content: [{ type: 'text', text: 'missing file' }],
-          attributes: { isError: true },
-        },
-        { role: 'assistant', content: [], toolCalls: [call('call_3', 'Bash')] },
-        { role: 'user', content: [{ type: 'text', text: 'continue' }] },
-      ],
-      'fork',
-    );
+    await loop.initializeHistory([
+      { role: 'user', content: [{ type: 'text', text: 'run it' }] },
+      { role: 'assistant', content: [], toolCalls: [call('call_1', 'Bash')] },
+      { role: 'user', content: [{ type: 'text', text: 'reminder sent while the tool ran' }] },
+      {
+        role: 'tool',
+        toolCallId: 'call_1',
+        content: [{ type: 'text', text: 'ok' }],
+        attributes: { durationMs: 1500, note: 'Output truncated.' },
+      },
+      { role: 'assistant', content: [], toolCalls: [call('call_2', 'Read')] },
+      {
+        role: 'tool',
+        toolCallId: 'call_2',
+        content: [{ type: 'text', text: 'missing file' }],
+        attributes: { isError: true },
+      },
+      { role: 'assistant', content: [], toolCalls: [call('call_3', 'Bash')] },
+      { role: 'user', content: [{ type: 'text', text: 'continue' }] },
+    ]);
     await main.accessor.get(IEventDispatcher).flush();
 
     const page = await getJson<ContextItemsResponse>(`/api/v1/sessions/${sid}/context/items`);

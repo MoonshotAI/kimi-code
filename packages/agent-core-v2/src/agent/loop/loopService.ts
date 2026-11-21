@@ -197,7 +197,6 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   private macroGeneration = 0;
   private lifecycleDrained = true;
   private lifecycleIdle = true;
-  private startRequested = false;
   private startPromise: Promise<void> | undefined;
   private closePromise: Promise<void> | undefined;
   private readonly loopHooks = createLoopHookRegistry();
@@ -335,7 +334,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   }
 
   get started(): boolean {
-    return this.startRequested;
+    return this.loop !== undefined || this.startPromise !== undefined;
   }
 
   get hasPersistedState(): boolean {
@@ -353,8 +352,6 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   }
 
   async start(tools?: readonly Tool[]): Promise<void> {
-    if (this.startRequested) return this.startPromise;
-    this.startRequested = true;
     if (this.loop !== undefined) return;
     this.startPromise ??= this.initializeLoop(undefined, tools).finally(() => {
       this.startPromise = undefined;
@@ -931,11 +928,13 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
 
   async resetLoop(seededMessages?: readonly Message[]): Promise<void> {
     if (this.disposing) return;
-    this.startRequested = true;
     const loop = this.loop;
     if (loop === undefined) {
       this.initialized = false;
-      await this.initializeLoop(seededMessages);
+      this.startPromise ??= this.initializeLoop(seededMessages).finally(() => {
+        this.startPromise = undefined;
+      });
+      await this.startPromise;
       this.requesterExecution.recoveries.clear();
       return;
     }

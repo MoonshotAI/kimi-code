@@ -1090,12 +1090,14 @@ describe('AgentLifecycleService', () => {
     });
     expect(log.appended.filter((record) => record.type === 'profile.bind')).toHaveLength(1);
     expect(loopSetProfile).toHaveBeenCalledOnce();
-    loopHasPersistedState = true;
-    await svc.create({ agentId: 'restored' });
     expect(loopStart).toHaveBeenCalledOnce();
     expect(loopSetProfile.mock.invocationCallOrder[0]).toBeLessThan(
       loopStart.mock.invocationCallOrder[0]!,
     );
+    loopStart.mockClear();
+    loopHasPersistedState = true;
+    await svc.create({ agentId: 'restored' });
+    expect(loopStart).toHaveBeenCalledOnce();
   });
 
   it('does not re-seal a wire log that already has records', async () => {
