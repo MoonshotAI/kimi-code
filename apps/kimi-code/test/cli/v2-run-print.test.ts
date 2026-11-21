@@ -1,4 +1,4 @@
-import { mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -38,6 +38,8 @@ import {
   ISessionManager,
   ITelemetryService,
   IWorkspaceInstanceManager,
+  IWorkspaceService,
+  IWorkspaceSessions,
   InMemorySessionLockService,
   Error2,
   ErrorCodes,
@@ -318,6 +320,8 @@ function makeFakeHarness(toolUpdates = false) {
       },
     ],
     [ISessionIndex, { get: vi.fn(async () => undefined), listRecent: vi.fn(async () => ({ items: [] })) }],
+    [IWorkspaceService, { get: vi.fn(async () => undefined) }],
+    [IWorkspaceSessions, { listForWorkdir: vi.fn(async () => ({ items: [] })) }],
     [ISessionLockService, new InMemorySessionLockService()],
     [
       IAppendLogStore,
@@ -857,8 +861,8 @@ describe('runV2Print', () => {
     const { app, agentServices, appServices, planState } = makeFakeHarness();
     planState.active = true;
 
-    const index = appServices.get(ISessionIndex) as { listRecent: ReturnType<typeof vi.fn> };
-    index.listRecent.mockResolvedValue({ items: [{ id: 'ses_9', cwd: process.cwd() }] });
+    const workdirSessions = appServices.get(IWorkspaceSessions) as { listForWorkdir: ReturnType<typeof vi.fn> };
+    workdirSessions.listForWorkdir.mockResolvedValue({ items: [{ id: 'ses_9', cwd: process.cwd() }] });
 
     mocks.bootstrap.mockReturnValue({ app });
     mocks.ensureMainAgent.mockResolvedValue({ agentId: 'main', generation: 1 });
@@ -869,6 +873,138 @@ describe('runV2Print', () => {
     expect(planState.active).toBe(true);
     const loop = agentServices.get(IAgentLoopService) as { submit: ReturnType<typeof vi.fn> };
     expect(loop.submit).toHaveBeenCalledTimes(1);
+  });
+
+  it('continues the newest session of the working directory from its implicit project', async () => {
+    const stdout = writer();
+    const stderr = writer();
+    const { app, appServices } = makeFakeHarness();
+    const workdirSessions = appServices.get(IWorkspaceSessions) as { listForWorkdir: ReturnType<typeof vi.fn> };
+    workdirSessions.listForWorkdir.mockResolvedValue({ items: [{ id: 'ses_here', cwd: process.cwd() }] });
+    const index = appServices.get(ISessionIndex) as { listRecent: ReturnType<typeof vi.fn> };
+    const sessions = appServices.get(ISessionManager) as {
+      create: ReturnType<typeof vi.fn>;
+      resume: ReturnType<typeof vi.fn>;
+    };
+
+    mocks.bootstrap.mockReturnValue({ app });
+    mocks.ensureMainAgent.mockResolvedValue({ agentId: 'main', generation: 1 });
+
+    await runV2Print(opts({ continue: true }) as never, '1.2.3-test', { stdout, stderr });
+
+    expect(workdirSessions.listForWorkdir).toHaveBeenCalledWith(process.cwd(), { limit: 1 });
+    expect(index.listRecent).not.toHaveBeenCalled();
+    expect(sessions.resume.mock.calls.map(([id]) => id)).toEqual(['ses_here']);
+    expect(sessions.create).not.toHaveBeenCalled();
+  });
+
+  it('starts a fresh session when the working directory has no session to continue', async () => {
+    const stdout = writer();
+    const stderr = writer();
+    const { app, appServices } = makeFakeHarness();
+    const sessions = appServices.get(ISessionManager) as { create: ReturnType<typeof vi.fn> };
+
+    mocks.bootstrap.mockReturnValue({ app });
+    mocks.ensureMainAgent.mockResolvedValue({ agentId: 'main', generation: 1 });
+
+    await runV2Print(opts({ continue: true }) as never, '1.2.3-test', { stdout, stderr });
+
+    expect(stderr.text()).toContain(`No sessions to continue under "${process.cwd()}"; starting a fresh session.`);
+    expect(sessions.create).toHaveBeenCalledWith(expect.objectContaining({ workDir: process.cwd() }));
+  });
+
+  it('refuses to resume a session pinned in another directory and names that directory', async () => {
+    const stdout = writer();
+    const stderr = writer();
+    const otherDir = await mkdtemp(join(tmpdir(), 'kimi-print-app-fix-'));
+    const { app, appServices } = makeFakeHarness();
+    const index = appServices.get(ISessionIndex) as { get: ReturnType<typeof vi.fn> };
+    index.get.mockResolvedValue({
+      id: 'ses_other',
+      workspaceId: 'wd_v2',
+      cwd: otherDir,
+      environmentCwd: otherDir,
+      createdAt: 1,
+      updatedAt: 1,
+      archived: false,
+    });
+    const sessions = appServices.get(ISessionManager) as { resume: ReturnType<typeof vi.fn> };
+
+    mocks.bootstrap.mockReturnValue({ app });
+
+    try {
+      await expect(
+        runV2Print(opts({ session: 'ses_other' }) as never, '1.2.3-test', { stdout, stderr }),
+      ).rejects.toThrow('Session "ses_other" was created under a different directory.');
+    } finally {
+      await rm(otherDir, { recursive: true, force: true });
+    }
+
+    expect(stderr.text()).toContain(`  cd "${otherDir}" && kimi -r ses_other`);
+    expect(sessions.resume).not.toHaveBeenCalled();
+  });
+
+  it('refuses to resume a session whose directory no longer exists and gives no cd hint', async () => {
+    const stdout = writer();
+    const stderr = writer();
+    const removed = await mkdtemp(join(tmpdir(), 'kimi-print-removed-'));
+    const missing = join(removed, 'app-fix');
+    const { app, appServices } = makeFakeHarness();
+    const index = appServices.get(ISessionIndex) as { get: ReturnType<typeof vi.fn> };
+    index.get.mockResolvedValue({
+      id: 'ses_gone',
+      workspaceId: 'wd_v2',
+      cwd: missing,
+      environmentCwd: missing,
+      createdAt: 1,
+      updatedAt: 1,
+      archived: false,
+    });
+    const sessions = appServices.get(ISessionManager) as { resume: ReturnType<typeof vi.fn> };
+
+    mocks.bootstrap.mockReturnValue({ app });
+
+    try {
+      await expect(
+        runV2Print(opts({ session: 'ses_gone' }) as never, '1.2.3-test', { stdout, stderr }),
+      ).rejects.toThrow('Session "ses_gone" was created in a directory that no longer exists.');
+    } finally {
+      await rm(removed, { recursive: true, force: true });
+    }
+
+    expect(stderr.text()).toContain(`  ${missing}`);
+    expect(stderr.text()).not.toContain('kimi -r');
+    expect(sessions.resume).not.toHaveBeenCalled();
+  });
+
+  it('resumes a session whose Windows working directory differs only in case and separators', async () => {
+    const stdout = writer();
+    const stderr = writer();
+    const { app, appServices } = makeFakeHarness();
+    vi.spyOn(process, 'cwd').mockReturnValue('c:/work/app');
+    const index = appServices.get(ISessionIndex) as { get: ReturnType<typeof vi.fn> };
+    index.get.mockResolvedValue({
+      id: 'ses_win',
+      workspaceId: 'wd_v2',
+      cwd: String.raw`C:\Work\App`,
+      environmentCwd: String.raw`C:\Work\App`,
+      createdAt: 1,
+      updatedAt: 1,
+      archived: false,
+    });
+    const sessions = appServices.get(ISessionManager) as { resume: ReturnType<typeof vi.fn> };
+
+    mocks.bootstrap.mockReturnValue({ app });
+    mocks.ensureMainAgent.mockResolvedValue({ agentId: 'main', generation: 1 });
+
+    try {
+      await runV2Print(opts({ session: 'ses_win' }) as never, '1.2.3-test', { stdout, stderr });
+    } finally {
+      vi.mocked(process.cwd).mockRestore();
+    }
+
+    expect(stderr.text()).not.toContain('different directory');
+    expect(sessions.resume.mock.calls.map(([id]) => id)).toEqual(['ses_win']);
   });
 
   it('says nothing about Plan mode when the resumed session is not in Plan mode', async () => {
@@ -1236,10 +1372,10 @@ describe('runV2Print', () => {
     await runV2Print(opts() as never, '1.2.3-test', { stdout, stderr });
 
     expect(stderr.text()).toContain(
-      'Warning: this folder is not trusted; skipped 2 project-level MCP servers: ' +
+      'Warning: this project is not trusted; skipped 2 project-level MCP servers: ' +
         'api (http: https://example.com/mcp), fs (stdio: node server.js).',
     );
-    expect(stderr.text()).toContain('"Trust this folder"');
+    expect(stderr.text()).toContain('"Trust and continue"');
     expect(stdout.text()).toContain('hello world');
   });
 
@@ -1274,7 +1410,8 @@ describe('runV2Print', () => {
 
   it.each([
     ['a session pinned to a local cwd', { environment: 'local', environmentCwd: '/tmp/project/worktree' }, '/tmp/project/worktree'],
-    ['a session following the project root', {}, undefined],
+    ['a new session pinned at the startup directory', {}, process.cwd()],
+    ['a new session on the local environment without a cwd', { environment: 'local' }, process.cwd()],
     ['a session on another environment', { environment: 'box', environmentCwd: '/srv/project' }, undefined],
   ] as const)('previews the project MCP servers %s would load', async (_label, overrides, pinnedWorkDir) => {
     const stdout = writer();

@@ -1,5 +1,5 @@
 
-import type { AppTask, SessionPlan } from '../api/types';
+import type { AppTask, AppWorkspace, SessionPlan } from '../api/types';
 import type { ConversationRequestDebug } from '../conversation/types';
 
 export interface FileData {
@@ -50,6 +50,7 @@ export interface Workspace {
 export interface WorkspaceView {
   id: string;
   name: string;
+  kind: AppWorkspace['kind'];
   root: string;
   hostId?: string;
   shortPath: string;

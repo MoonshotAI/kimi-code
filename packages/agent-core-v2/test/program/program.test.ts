@@ -26,6 +26,7 @@ import { UserFileSkillSource } from '#/features/skill/catalog/userFileSkillSourc
 import { fakeEnvironment } from '../environment/stubs';
 import { cwdStdioFixture } from '../mcpCore/stubs';
 import { noopLogger } from '../wire/stubs';
+import type { WorkspaceKind } from '#/app/workspace/workspace';
 import type { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
 import { writeWorkspaceTrust } from '#/workspace/workspaceTrust/trustRecord';
 import { WorkspaceTrustStore } from '#/workspace/workspaceTrust/workspaceTrustStore';
@@ -53,7 +54,7 @@ function deferred(): { readonly promise: Promise<void>; resolve(): void; reject(
   return { promise, resolve, reject };
 }
 
-function programWorkspace(cwd: string): IWorkspaceContext {
+function programWorkspace(cwd: string, kind: WorkspaceKind = 'implicit'): IWorkspaceContext {
   return {
     _serviceBrand: undefined,
     workspaceId: 'workspace',
@@ -63,7 +64,7 @@ function programWorkspace(cwd: string): IWorkspaceContext {
       id: 'workspace',
       name: 'workspace',
       root: cwd,
-      kind: 'implicit',
+      kind,
       createdAt: 0,
       lastOpenedAt: 0,
     },
@@ -362,7 +363,7 @@ function scopedFs(base: string, realBase: string, inner: IHostFileSystem, additi
   };
 }
 
-async function localityFixture(options: { readonly remoteCwd?: string } = {}): Promise<LocalityFixture> {
+async function localityFixture(options: { readonly remoteCwd?: string; readonly kind?: WorkspaceKind } = {}): Promise<LocalityFixture> {
   const base = await mkdtemp(join(tmpdir(), 'kimi-program-locality-'));
   const localRoot = join(base, 'local');
   const remoteRoot = join(base, 'target');
@@ -462,7 +463,7 @@ async function localityFixture(options: { readonly remoteCwd?: string } = {}): P
   const program = new Program(
     'workspace',
     registry as unknown as IEnvironmentService,
-    programWorkspace(localRoot),
+    programWorkspace(localRoot, options.kind),
     {
       appState: undefined,
       bootstrap,
@@ -511,7 +512,7 @@ async function localityFixture(options: { readonly remoteCwd?: string } = {}): P
         get: async () => registeredDirs.length === 0
           ? undefined
           : { id: 'workspace', root: localRoot, additionalDirs: registeredDirs },
-        createOrTouch: async () => { throw new Error('unexpected workspace create'); },
+        resolveImplicit: async () => { throw new Error('unexpected workspace create'); },
       },
       workspaceStore: { onDidChange: registryChanges.event },
       trustStore,
@@ -839,6 +840,68 @@ describe('Program local generation and remote workdirs', () => {
 
       expect(pinned.mcp.anchor).toBe(fixture.localRoot);
       expect([...pinned.mcp.configuredNames()].toSorted()).toEqual(['local-project-server', 'user-server']);
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
+  it('reuses the root view, its MCP and its trust disclosure for a local workdir pinned at the implicit project root', async () => {
+    const fixture = await localityFixture();
+    try {
+      const following = await fixture.workdir(fixture.localRoot, 'local', true);
+      const pinned = await fixture.workdir(fixture.localRoot, 'local', false);
+      const pinnedWithSlash = await fixture.workdir(`${fixture.localRoot}/`, 'local', false);
+
+      expect(pinned.contextKey).toBe(following.contextKey);
+      expect(pinnedWithSlash.contextKey).toBe(following.contextKey);
+      expect(pinned.dirs).toBe(fixture.local().dirs);
+      expect(pinned.instructions).toBe(fixture.local().instructions);
+      expect(pinned.mcp).toBe(fixture.program.mcp);
+      expect(pinned.trustDisclosure).toBe(fixture.program.trustDisclosure);
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
+  it('keeps a separate view for a local workdir pinned at the root of a managed project', async () => {
+    const fixture = await localityFixture({ kind: 'managed' });
+    try {
+      const following = await fixture.workdir(fixture.localRoot, 'local', true);
+      const pinned = await fixture.workdir(fixture.localRoot, 'local', false);
+      await awaitWorkdir(pinned);
+
+      expect(pinned.contextKey).not.toBe(following.contextKey);
+      expect(pinned.dirs).not.toBe(fixture.local().dirs);
+      expect(pinned.mcp).not.toBe(fixture.program.mcp);
+      expect(pinned.trustDisclosure).not.toBe(fixture.program.trustDisclosure);
+      expect(pinned.dirs.primary).toBe(fixture.localRoot);
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
+  it('discloses what trusting would activate for a pinned workdir from its own directory', async () => {
+    const fixture = await localityFixture();
+    try {
+      const checkout = join(fixture.localRoot, 'worktrees', 'feature');
+      await mkdir(join(checkout, '.kimi-code'), { recursive: true });
+      await writeFile(join(checkout, '.git'), `gitdir: ${join(fixture.localRoot, '.git', 'worktrees', 'feature')}\n`);
+      await writeFile(join(checkout, 'AGENTS.md'), 'checkout instructions');
+      await writeFile(
+        join(checkout, '.kimi-code', 'mcp.json'),
+        JSON.stringify({ mcpServers: { 'checkout-server': { command: 'echo' } } }),
+      );
+      await fixture.program.trust.untrust();
+      const pinned = await fixture.workdir(checkout, 'local', false);
+      await awaitWorkdir(pinned);
+
+      const fromPinned = await pinned.trustDisclosure.describeGatedActivation();
+      const fromRoot = await fixture.program.trustDisclosure.describeGatedActivation();
+
+      expect(fromPinned.mcpServers.map((server) => server.name)).toEqual(['checkout-server']);
+      expect(fromPinned.instructionSources.agentsMdPaths).toEqual([await realpath(join(checkout, 'AGENTS.md'))]);
+      expect(fromRoot.mcpServers.map((server) => server.name)).toEqual(['local-project-server']);
+      expect(fromRoot.instructionSources.agentsMdPaths).toEqual([await realpath(join(fixture.localRoot, 'AGENTS.md'))]);
     } finally {
       await fixture.cleanup();
     }

@@ -23,15 +23,17 @@ Kimi Code CLI supports three MCP server connection methods:
 MCP server configuration is written in `mcp.json`, at two levels:
 
 - **User level**: `~/.kimi-code/mcp.json` (or `$KIMI_CODE_HOME/mcp.json`), shared across projects
-- **Project level**: `.kimi-code/mcp.json` in the working directory, effective only for the current repository
+- **Project level**: `.kimi-code/mcp.json` at the root of the current checkout (a folder that holds the repository's files: the repository's original folder, or a worktree, which is an extra working folder of the same repository created with `git worktree add`), effective only for that checkout. In a Git repository this is the repository root, even when you start Kimi Code in a subdirectory, and each Git worktree reads the file at its own root. Outside a Git repository it is the directory you start in
 
 Entries with the same name: the project-level entry takes precedence and overrides the user-level entry.
+
+Earlier versions read the project-level file from the directory you started in. A `.kimi-code/mcp.json` placed in a subdirectory of a repository is no longer loaded for sessions that join the repository's project; move it to the repository root, or to the root of the worktree that should use it. A subdirectory that already has its own project with sessions, for example one created by an earlier version, keeps that project and keeps reading the file in that subdirectory. After you delete that project in the desktop app, new sessions started there join the repository's project and read the file at the root of their checkout.
 
 Run `/mcp-config` in the TUI to interactively add, edit, or delete servers without manually editing the JSON file. Run `/mcp` to view the connection status of all current servers.
 
 Deleting a server from the configuration does not interrupt open sessions: the server stays listed in `/mcp` as `removed`, its tools remain visible there, and calls to them fail with a removal notice, while new sessions do not register the tools at all. Conversely, a server added mid-session by editing `mcp.json` or installing a plugin is not registered in already-open sessions; it only joins sessions created later.
 
-When Kimi Code finds project-level MCP servers in an untrusted folder, it shows each server's transport and launch target in the workspace trust prompt. The prompt defaults to `Trust this folder`; review the listed command and arguments or remote URL before confirming. Trusting the folder enables the project-level MCP servers for that workspace.
+When Kimi Code finds project-level MCP servers in an untrusted project, it shows each server's transport and launch target in the trust prompt (`Trust this project?`). The prompt defaults to `Trust and continue`; review the listed command and arguments or remote URL before confirming, or choose `Exit` to quit without enabling them. Trusting the project enables its project-level MCP servers, including those of its worktrees (see [workspace trust](../configuration/config-files.md#workspace-trust)).
 
 Headless runs (for example `kimi -p` in CI) cannot show the trust prompt, so project-level MCP servers stay disabled there unless the workspace is already trusted. Set [`KIMI_CODE_TRUST_WORKSPACE`](../configuration/env-vars.md#runtime-switches) to `1` to trust the workspace for that process. To disable workspace trust globally and load project-level MCP servers without confirmation, set [`[workspace] require_trust = false`](../configuration/config-files.md#workspace-trust) in `config.toml`; use that setting only when every workspace is already trusted.
 

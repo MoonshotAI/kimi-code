@@ -9,6 +9,7 @@ import { createRowMemo, errorInfo } from '@moonshot-ai/app-core/client';
 import {
   buildWorkspaceRecencyKeys,
   currentActivityKeys,
+  isPrimaryImmutable,
   loadActiveWorkspace,
   loadHiddenWorkspaceIds,
   loadPinnedWorkspaces,
@@ -19,6 +20,7 @@ import {
   logWarn,
   mergeWorkspaces,
   migrateWorkspaceLocalOverrides,
+  panelRoots,
   pruneRecencyFloor,
   pinnedWorkspaceKey,
   reconcileRecencyFloor,
@@ -37,6 +39,7 @@ import {
   STORAGE_KEYS,
   stripSurroundingQuotes,
   workspaceRootKey,
+  type PanelRoots,
   type PinnedInsertTarget,
   type SessionUrlMode,
   type WorkspaceSortMode,
@@ -270,6 +273,7 @@ export const useWorkspacesStore = defineStore('kimi.workspaces', () => {
     const views = mergedWorkspaces.value.map((w) => ({
       id: w.id,
       name: w.name,
+      kind: w.kind,
       root: w.root,
       hostId: w.hostId,
       shortPath: w.hostId === undefined ? shortenHome(w.root, fsHome.value) : w.root,
@@ -302,6 +306,14 @@ export const useWorkspacesStore = defineStore('kimi.workspaces', () => {
   });
 
   const isLocalWorkspace = computed<boolean>(() => visibleWorkspace.value?.hostId === undefined);
+
+  const activePanelRoots = computed<PanelRoots>(() => {
+    const sessionId = sessionsStore().activeSessionId;
+    const session = sessionId === undefined ? undefined : sessionsStore().sessions.find((s) => s.id === sessionId);
+    return panelRoots(session, visibleWorkspace.value ?? undefined);
+  });
+
+  const activePanelRoot = computed<string>(() => activePanelRoots.value.root);
 
   function clearWorkspaceTrustState(workspaceIds: readonly string[], clearCached = false): void {
     let trustChanged = false;
@@ -787,6 +799,7 @@ export const useWorkspacesStore = defineStore('kimi.workspaces', () => {
     const current = workspaces.value.find((w) => w.id === input.id);
     const primary = input.primary;
     if (primary !== undefined && current !== undefined && primary !== current.root) {
+      if (primaryChangeRefused(current)) return false;
       if (!current.additionalDirs.includes(primary)) {
         const added = await saveWorkspace({
           id: input.id,
@@ -850,8 +863,15 @@ export const useWorkspacesStore = defineStore('kimi.workspaces', () => {
     }
   }
 
+  function primaryChangeRefused(workspace: AppWorkspace | undefined): boolean {
+    if (workspace === undefined || !isPrimaryImmutable(workspace)) return false;
+    logWarn('[kimi-code] refused to move the primary directory of implicit project', workspace.id);
+    return true;
+  }
+
   async function setWorkspacePrimary(input: { id: string; path: string }): Promise<boolean> {
     const previousWorkspace = workspaces.value.find((w) => w.id === input.id);
+    if (primaryChangeRefused(previousWorkspace)) return false;
     try {
       const ws = await getKimiWebApi().setWorkspacePrimary(input.id, input.path);
       upsertWorkspacePreserveOrder(ws);
@@ -1006,6 +1026,8 @@ export const useWorkspacesStore = defineStore('kimi.workspaces', () => {
     activeWorkspaceId,
     visibleWorkspace,
     isLocalWorkspace,
+    activePanelRoots,
+    activePanelRoot,
     selectWorkspace,
     setWorkspaceSortMode,
     reorderWorkspaces,

@@ -1,4 +1,4 @@
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, realpathSync } from 'node:fs';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, relative } from 'pathe';
@@ -16,7 +16,10 @@ import {
   McpConfigStore,
   type GlobalMcpServerConfig,
 } from '#/app/mcpConfig/configStore';
+import { locateCheckout } from '#/app/git/workTree';
 import { IPluginService } from '#/app/plugin/plugin';
+import { decideImplicitProject } from '#/app/workspace/implicitProject';
+import { IWorkspaceService } from '#/app/workspace/workspace';
 import type { PluginMcpServerEntry } from '#/app/plugin/types';
 import { IMcpRegistryService, mcpServerConfigsEqual } from '#/app/mcpRegistry/mcpRegistry';
 import { McpRegistryService } from '#/app/mcpRegistry/mcpRegistryService';
@@ -33,6 +36,8 @@ import {
   IWorkspaceTrustStore,
   WorkspaceTrustStore,
 } from '#/workspace/workspaceTrust/workspaceTrustStore';
+
+import { linkedWorktree, mainCheckout } from '../git/checkoutLayouts';
 
 function stdioServer(name: string, command = 'npx'): GlobalMcpServerConfig {
   return { name, transport: 'stdio', command };
@@ -109,6 +114,18 @@ describe('McpRegistryService', () => {
               : undefined) as T) as IConfigService['get'],
         });
         reg.define(IWorkspaceTrustStore, WorkspaceTrustStore);
+        const hostFs = new HostFileSystem();
+        reg.definePartialInstance(IWorkspaceService, {
+          peekImplicit: async (dir: string) =>
+            (
+              await decideImplicitProject(dir, { implicit: [] }, {
+                occupied: async () => false,
+                locate: (target) => locateCheckout(hostFs, target),
+                realpath: async (target) => hostFs.realpath(target).catch(() => undefined),
+                homeDirs: [home],
+              })
+            ).decision,
+        });
         reg.define(IMcpRegistryService, McpRegistryService);
       },
     });
@@ -160,7 +177,7 @@ describe('McpRegistryService', () => {
       });
     });
 
-    it('merges the three file layers with origin and mutability tracking when a cwd is given', async () => {
+    it('merges the user and anchor file layers with origin tracking and skips a subdirectory .kimi-code', async () => {
       await writeJson(join(home, 'mcp.json'), {
         mcpServers: {
           shared: { command: 'user-version' },
@@ -174,8 +191,11 @@ describe('McpRegistryService', () => {
           repoOnly: { command: 'repo-only' },
         },
       });
-      await writeJson(join(sub, '.kimi-code', 'mcp.json'), {
+      await writeJson(join(project, '.kimi-code', 'mcp.json'), {
         mcpServers: { localOnly: { command: 'local-only' } },
+      });
+      await writeJson(join(sub, '.kimi-code', 'mcp.json'), {
+        mcpServers: { subdirectoryOnly: { command: 'ignored' } },
       });
 
       const entries = await registry.list({ cwd: sub });
@@ -207,7 +227,7 @@ describe('McpRegistryService', () => {
       });
       expect(byName.get('localOnly')).toMatchObject({
         mutable: false,
-        origin: join(sub, '.kimi-code', 'mcp.json'),
+        origin: join(project, '.kimi-code', 'mcp.json'),
       });
     });
 
@@ -220,7 +240,7 @@ describe('McpRegistryService', () => {
       await writeJson(join(project, '.mcp.json'), {
         mcpServers: { repoOnly: { command: 'repo-only' } },
       });
-      await writeJson(join(sub, '.kimi-code', 'mcp.json'), {
+      await writeJson(join(project, '.kimi-code', 'mcp.json'), {
         mcpServers: { localOnly: { command: 'local-only' } },
       });
       pluginEntries = [
@@ -254,7 +274,7 @@ describe('McpRegistryService', () => {
       await writeJson(join(project, '.mcp.json'), {
         mcpServers: { repoOnly: { command: 'repo-only' } },
       });
-      await writeJson(join(sub, '.kimi-code', 'mcp.json'), {
+      await writeJson(join(project, '.kimi-code', 'mcp.json'), {
         mcpServers: { localOnly: { command: 'local-only' } },
       });
       trusted = false;
@@ -270,7 +290,7 @@ describe('McpRegistryService', () => {
       expect(configEntries.map((entry) => entry.name).toSorted()).toEqual(expected);
     });
 
-    it('checks trust at the queried cwd rather than the canonical git root', async () => {
+    it('checks trust at the project a queried subdirectory belongs to', async () => {
       const { project, sub } = await makeProject();
       await writeJson(join(project, '.mcp.json'), {
         mcpServers: { projectOnly: { command: 'project-only' } },
@@ -279,24 +299,36 @@ describe('McpRegistryService', () => {
 
       const entries = await registry.list({ cwd: sub });
 
-      expect(entries.map((entry) => entry.name)).not.toContain('projectOnly');
+      expect(entries.map((entry) => entry.name)).toContain('projectOnly');
     });
 
-    it('lists project layers when the queried subdirectory cwd itself is trusted', async () => {
+    it('ignores a trust record on the queried subdirectory of a project', async () => {
       const { project, sub } = await makeProject();
       await writeJson(join(project, '.mcp.json'), {
         mcpServers: { projectOnly: { command: 'project-only' } },
-      });
-      await writeJson(join(sub, '.kimi-code', 'mcp.json'), {
-        mcpServers: { localOnly: { command: 'local-only' } },
       });
       trustedKey = sub;
 
       const entries = await registry.list({ cwd: sub });
 
-      expect(entries.map((entry) => entry.name)).toEqual(
-        expect.arrayContaining(['projectOnly', 'localOnly']),
-      );
+      expect(entries.map((entry) => entry.name)).not.toContain('projectOnly');
+    });
+
+    it('reads a worktree from its own root under the trust of the main checkout', async () => {
+      const base = mkdtempSync(join(tmpdir(), 'kimi-mcp-registry-repo-'));
+      tempDirs.push(base);
+      const main = mainCheckout(join(base, 'app'));
+      const worktree = linkedWorktree(join(main, '.git'), join(base, 'app-fix'));
+      await writeJson(join(main, '.mcp.json'), { mcpServers: { mainOnly: { command: 'main-only' } } });
+      await writeJson(join(worktree, '.mcp.json'), { mcpServers: { worktreeOnly: { command: 'worktree-only' } } });
+      trustedKey = realpathSync(main);
+
+      const names = (await registry.list({ cwd: worktree })).map((entry) => entry.name);
+
+      expect(names).toContain('worktreeOnly');
+      expect(names).not.toContain('mainOnly');
+      trustedKey = worktree;
+      expect((await registry.list({ cwd: worktree })).map((entry) => entry.name)).not.toContain('worktreeOnly');
     });
 
     it('resolves a relative non-git cwd before checking workspace trust', async () => {

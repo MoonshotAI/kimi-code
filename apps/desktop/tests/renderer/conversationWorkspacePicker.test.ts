@@ -138,8 +138,8 @@ function mountPane(component: unknown) {
   return { el: host, onSelectWorkspace, onAddWorkspace };
 }
 
-const localWs: WorkspaceView = { id: 'ws-local', name: 'local-app', root: '/Users/me/local-app', shortPath: '~/local-app', additionalDirs: [], sessionCount: 1 };
-const remoteWs: WorkspaceView = { id: 'ws-remote', name: 'trainer', root: '/home/ubuntu/trainer', shortPath: '/home/ubuntu/trainer', hostId: 'host-gpu', additionalDirs: [], sessionCount: 1 };
+const localWs: WorkspaceView = { id: 'ws-local', name: 'local-app', kind: 'managed', root: '/Users/me/local-app', shortPath: '~/local-app', additionalDirs: [], sessionCount: 1 };
+const remoteWs: WorkspaceView = { id: 'ws-remote', name: 'trainer', kind: 'managed', root: '/home/ubuntu/trainer', shortPath: '/home/ubuntu/trainer', hostId: 'host-gpu', additionalDirs: [], sessionCount: 1 };
 
 function showProjects(): void {
   mockWorkspacesView.value = [localWs, remoteWs];

@@ -36,6 +36,8 @@ export async function handleAddDirCommand(host: SlashCommandHost, args: string):
     new ChoicePickerComponent({
       title: `Add directory to workspace: ${input}`,
       hint: '↑↓ navigate · Enter confirm · Esc cancel',
+      notice: "This directory joins the project's trust scope.",
+      noticeTone: 'warning',
       options: [
         {
           value: 'session',

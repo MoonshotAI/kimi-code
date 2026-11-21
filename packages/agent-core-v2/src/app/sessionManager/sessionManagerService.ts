@@ -15,6 +15,7 @@ import type { SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
 import { ISessionLockService, type SessionLockLease } from '#/persistence/interface/sessionLock';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionActivityView } from '#/session/sessionActivity/sessionActivity';
+import { sessionWorkDir } from '#/session/workspaceContext/workspaceRoots';
 import {
   type CreateChildSessionOptions,
   type ForkSessionOptions,
@@ -93,14 +94,14 @@ export class SessionManager implements ISessionManager {
   async create(options: CreateManagedSessionOptions): Promise<ISessionScopeHandle> {
     const opened = await this.openCreation(options);
     try {
-      const effective = opened.environmentId === undefined && opened.environmentCwd === undefined
-        ? options
-        : { ...options, environmentId: opened.environmentId, environmentCwd: opened.environmentCwd };
+      const effective = {
+        ...options,
+        environmentId: opened.environmentId,
+        environmentCwd: opened.environmentCwd,
+        ensureMainAgent: options.ensureMainAgent === true || opened.environmentRequested,
+      };
       const create = async () => {
-        const entry = await this.controllerForWorkspace({
-          workspaceId: opened.workspaceId,
-          root: options.workDir,
-        });
+        const entry = await this.controllerForWorkspace({ workspaceId: opened.workspaceId });
         return this.runControllerOperation(entry, (controller) => controller.create(effective));
       };
       if (options.sessionId === undefined) return await create();
@@ -119,16 +120,15 @@ export class SessionManager implements ISessionManager {
     const remote = environmentId !== undefined && environmentId !== LOCAL_ENVIRONMENT_ID;
     if (options.workDir !== undefined && !remote) await this.assertUsableWorkDir(options.workDir);
     const lease = await this.workspaces.acquire(
-      options.workspaceId === undefined
-        ? { root: options.workDir }
-        : { workspaceId: options.workspaceId, root: options.workDir },
+      options.workspaceId === undefined ? { cwd: options.workDir } : { workspaceId: options.workspaceId },
     );
     try {
       if (!remote) {
         return {
           workspaceId: lease.instance.id,
           environmentId,
-          environmentCwd: options.environmentCwd,
+          environmentCwd: options.environmentCwd ?? options.workDir,
+          environmentRequested: options.environmentCwd !== undefined,
           lease,
         };
       }
@@ -154,6 +154,7 @@ export class SessionManager implements ISessionManager {
         workspaceId: lease.instance.id,
         environmentId,
         environmentCwd: declared === undefined ? cwd : normalizeRemoteCwd(cwd),
+        environmentRequested: true,
         lease,
       };
     } catch (error) {
@@ -507,7 +508,10 @@ export class SessionManager implements ISessionManager {
     const summary = await this.index.get(sessionId);
     if (summary === undefined) return undefined;
     await this.environments.ready;
-    return this.controllerForWorkspace({ workspaceId: summary.workspaceId, root: summary.cwd });
+    return this.controllerForWorkspace({
+      workspaceId: summary.workspaceId,
+      reviveFrom: sessionWorkDir(summary, undefined),
+    });
   }
 }
 

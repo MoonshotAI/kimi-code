@@ -19,6 +19,8 @@ import {
   ISessionRunGate,
   ITelemetryService,
   IWorkspaceInstanceManager,
+  IWorkspaceService,
+  IWorkspaceSessions,
   PRINT_MAX_TURNS_DEFAULT,
   PRINT_WAIT_CEILING_S_DEFAULT,
   applyPrintModeConfigDefaults,
@@ -71,7 +73,10 @@ import type {
   ToolUpdated,
   ToolResultEvent,
 } from '@moonshot-ai/agent-core-v2/agent/toolExecutor/toolExecutorEvents';
-import { resolve } from 'pathe';
+import { sameDir } from '@moonshot-ai/agent-core-v2/_base/utils/workdir-slug';
+import {
+  sessionWorkDir,
+} from '@moonshot-ai/agent-core-v2/session/workspaceContext/workspaceRoots';
 
 import {
   CLI_SHUTDOWN_TIMEOUT_MS,
@@ -79,6 +84,7 @@ import {
   PROMPT_CLEANUP_TIMEOUT_MS,
 } from '#/constant/app';
 import { currentKimiProfile, currentKimiRegionResolution } from '#/utils/region';
+import { resumeElsewhereHint } from '#/utils/session-directory';
 
 import {
   formatGoalSummaryText,
@@ -225,7 +231,9 @@ export async function runV2Print(
       const gated = await listTrustGatedMcpServers(
         services,
         workDir,
-        opts.environment === 'local' ? opts.environmentCwd : undefined,
+        opts.environment === undefined || opts.environment === 'local'
+          ? (opts.environmentCwd ?? workDir)
+          : undefined,
       );
       if (gated.length > 0) stderr.write(formatTrustGatedMcpWarning(gated));
     } catch {}
@@ -385,12 +393,12 @@ async function resolveNativeSession(
     if (target === undefined) {
       throw new Error(`Session "${opts.session}" not found.`);
     }
-    if (target.cwd !== undefined && resolve(target.cwd) !== resolve(workDir)) {
-      stderr.write(
-        `Session "${opts.session}" was created under a different directory.\n` +
-          `  cd "${target.cwd}" && kimi -r ${opts.session}\n\n`,
-      );
-      throw new Error(`Session "${opts.session}" was created under a different directory.`);
+    const project = await services.get(IWorkspaceService).get(target.workspaceId);
+    const targetDir = sessionWorkDir(target, project?.root);
+    if (targetDir !== undefined && !sameDir(targetDir, workDir)) {
+      const hint = resumeElsewhereHint(opts.session, targetDir);
+      stderr.write(`${hint.summary}\n${hint.detail}\n\n`);
+      throw new Error(hint.summary);
     }
     const session = await resumeById(opts.session);
     const agentContext = await ensureMainAgent(session);
@@ -410,8 +418,7 @@ async function resolveNativeSession(
   }
 
   if (opts.continue) {
-    const page = await index.listRecent({});
-    const previous = page.items.find((summary) => summary.cwd === workDir);
+    const [previous] = (await services.get(IWorkspaceSessions).listForWorkdir(workDir, { limit: 1 })).items;
     if (previous !== undefined) {
       const session = await resumeById(previous.id);
       const agentContext = await ensureMainAgent(session);
@@ -471,7 +478,7 @@ export async function listTrustGatedMcpServers(
 ): Promise<readonly TrustGatedMcpServer[]> {
   const lease = await services
     .get(IWorkspaceInstanceManager)
-    .acquire({ root: workDir });
+    .acquire({ cwd: workDir });
   try {
     if (await lease.instance.program.trust.get()) return [];
     return (await lease.instance.program.previewProjectMcp(pinnedWorkDir))
@@ -486,8 +493,8 @@ export function formatTrustGatedMcpWarning(servers: readonly TrustGatedMcpServer
   const noun = servers.length === 1 ? 'server' : 'servers';
   const list = servers.map((server) => `${server.name} (${server.target})`).join(', ');
   return (
-    `Warning: this folder is not trusted; skipped ${servers.length} project-level MCP ${noun}: ${list}.\n` +
-    '  Run `kimi` here and choose "Trust this folder", or set KIMI_CODE_TRUST_WORKSPACE=1, to enable them.\n\n'
+    `Warning: this project is not trusted; skipped ${servers.length} project-level MCP ${noun}: ${list}.\n` +
+    '  Run `kimi` here and choose "Trust and continue", or set KIMI_CODE_TRUST_WORKSPACE=1, to enable them.\n\n'
   );
 }
 

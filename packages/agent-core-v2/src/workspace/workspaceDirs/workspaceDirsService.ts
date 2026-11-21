@@ -2,9 +2,10 @@ import { DisposableStore, MutableDisposable, type IDisposable } from '#/_base/di
 import { Emitter, type Event } from '#/_base/event';
 import { ILogService } from '#/_base/log/log';
 import { defineState } from '#/state/state';
+import { SerialQueue } from '#/_base/utils/serialQueue';
 import { TimeoutTimer } from '#/_base/utils/timer';
 import { subtreeWatchFilter } from '#/_base/utils/paths';
-import { workspaceRootKey } from '#/_base/utils/workdir-slug';
+import { sameDir } from '#/_base/utils/workdir-slug';
 import { IProjectLocalConfigService } from '#/app/projectLocalConfig/projectLocalConfig';
 import { LOCAL_ENVIRONMENT_ID } from '#/environment/environment';
 import { IWorkspaceService } from '#/app/workspace/workspace';
@@ -14,6 +15,7 @@ import { IWorkspaceStateService } from '#/workspace/state/workspaceState';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
 import { watchCandidates } from '#human/utils/watch';
 
+import { registryDirSet } from './registryDirSet';
 import {
   IWorkspaceDirs,
   type WorkspaceAddDirInput,
@@ -51,7 +53,7 @@ export class WorkspaceDirsService implements IWorkspaceDirs {
   readonly onDidChange: Event<void> = this.onDidChangeEmitter.event;
   private readonly watchDebounce = this._register(new TimeoutTimer());
   private readonly localConfigWatcher = this._register(new MutableDisposable<IDisposable>());
-  private mutationTail: Promise<void> = Promise.resolve();
+  private readonly mutations = new SerialQueue();
   private registryReloadQueued = false;
   private changeBatchDepth = 0;
   private changePending = false;
@@ -73,12 +75,12 @@ export class WorkspaceDirsService implements IWorkspaceDirs {
     this.projectRoot = workspace.cwd;
     this.configPath = '';
     this.legacyProjectConfig = workspace.meta.kind !== 'managed';
-    this.ready = this.enqueue(() => this.reloadWorkspace(true));
+    this.ready = this.mutations.run(() => this.reloadWorkspace(true));
     this._register(
       this.workspaceStore.onDidChange(() => {
         if (this.registryReloadQueued) return;
         this.registryReloadQueued = true;
-        void this.enqueue(async () => {
+        void this.mutations.run(async () => {
           this.registryReloadQueued = false;
           await this.reloadWorkspace();
         }).catch((error) => {
@@ -134,19 +136,19 @@ export class WorkspaceDirsService implements IWorkspaceDirs {
   }
 
   addDir(input: WorkspaceAddDirInput): Promise<WorkspaceAdditionalDirsResult> {
-    return this.enqueue(() => this.applyAddDir(input));
+    return this.mutations.run(() => this.applyAddDir(input));
   }
 
   mergeAdditionalDirs(baseDir: string, dirs: readonly string[]): Promise<void> {
     if (dirs.length === 0) return Promise.resolve();
-    return this.enqueue(async () => {
+    return this.mutations.run(async () => {
       const resolved = await this.localConfig.resolveAdditionalDirs(baseDir, dirs);
       if (this.unionEphemeral(resolved)) this.fireChange();
     });
   }
 
   reload(): Promise<void> {
-    return this.enqueue(() => this.reloadWorkspace(true));
+    return this.mutations.run(() => this.reloadWorkspace(true));
   }
 
   private async reloadWorkspace(reloadLocal = false): Promise<void> {
@@ -195,11 +197,8 @@ export class WorkspaceDirsService implements IWorkspaceDirs {
         throw new Error(`additional dir ${input.path} did not resolve`);
       }
       const existing = await this.workspaces.get(this.workspace.workspaceId);
-      const target = existing ?? (await this.workspaces.createOrTouch(this.workspace.cwd));
-      const dirKey = workspaceRootKey(dir);
-      const inSet =
-        workspaceRootKey(target.root) === dirKey ||
-        target.additionalDirs.some((kept) => workspaceRootKey(kept) === dirKey);
+      const target = existing ?? (await this.workspaces.reviveImplicit(this.workspace.workspaceId, this.workspace.cwd));
+      const inSet = [target.root, ...target.additionalDirs].some((kept) => sameDir(kept, dir));
       if (!inSet) {
         await this.workspaces.update(target.id, {
           additionalDirs: [...target.additionalDirs, dir],
@@ -242,42 +241,23 @@ export class WorkspaceDirsService implements IWorkspaceDirs {
 
   private async reloadFromRegistry(): Promise<void> {
     const registered = await this.workspaces.list();
-    const current = this.workspace.meta.kind === 'managed'
-      ? undefined
-      : await this.workspaces.get(this.workspace.workspaceId);
-    const entries =
-      this.workspace.meta.kind === 'managed'
-        ? registered.filter((entry) => entry.id === this.workspace.workspaceId)
-        : current === undefined
-          ? registered
-          : [current, ...registered.filter((entry) => entry.id !== current.id)];
-    const cwdKey = workspaceRootKey(this.workspace.cwd);
-    const dirs: string[] = [];
-    const primary: Record<string, string> = {};
-    for (const entry of entries) {
-      const set = [entry.root, ...entry.additionalDirs];
-      const currentEntry =
-        this.followsPrimary &&
-        this.environmentId === LOCAL_ENVIRONMENT_ID &&
-        entry.id === this.workspace.workspaceId;
-      if (!currentEntry && !set.some((dir) => workspaceRootKey(dir) === cwdKey)) continue;
-      primary[entry.id] = entry.root;
-      const primaryKey = workspaceRootKey(entry.root);
-      for (const dir of set) {
-        const key = workspaceRootKey(dir);
-        if (this.followsPrimary && currentEntry && key === primaryKey) continue;
-        if ((!this.followsPrimary || !currentEntry) && key === cwdKey) continue;
-        if (dirs.some((kept) => workspaceRootKey(kept) === key)) continue;
-        dirs.push(dir);
-      }
-    }
+    const managed = this.workspace.meta.kind === 'managed';
+    const next = registryDirSet({
+      project: managed
+        ? registered.find((entry) => entry.id === this.workspace.workspaceId)
+        : await this.workspaces.get(this.workspace.workspaceId),
+      others: managed ? [] : registered,
+      cwd: this.workspace.cwd,
+      local: this.environmentId === LOCAL_ENVIRONMENT_ID,
+      followsPrimary: this.followsPrimary,
+    });
     const beforeDirs = this.sharedAdditionalDirs;
     const beforePrimary = this.primaryByWorkspace;
-    this.registryDirs = dirs;
-    this.primaryByWorkspace = primary;
+    this.registryDirs = next.registryDirs;
+    this.primaryByWorkspace = next.primaryByWorkspace;
     if (
       !sameStringList(beforeDirs, this.sharedAdditionalDirs) ||
-      !samePrimaryByWorkspace(beforePrimary, primary)
+      !samePrimaryByWorkspace(beforePrimary, next.primaryByWorkspace)
     ) {
       this.fireChange();
     }
@@ -317,7 +297,7 @@ export class WorkspaceDirsService implements IWorkspaceDirs {
       });
       const subscription = handle.onDidChange(() => {
         this.watchDebounce.cancelAndSet(() => {
-          void this.enqueue(() => this.reloadFromDisk()).catch((error) => {
+          void this.mutations.run(() => this.reloadFromDisk()).catch((error) => {
             this.log.warn(`local.toml reload failed: ${String(error)}`);
           });
         }, WATCH_DEBOUNCE_MS);
@@ -337,20 +317,7 @@ export class WorkspaceDirsService implements IWorkspaceDirs {
 
   async dispose(): Promise<void> {
     this.disposables.dispose();
-    let pending: Promise<void>;
-    do {
-      pending = this.mutationTail;
-      await pending;
-    } while (pending !== this.mutationTail);
-  }
-
-  private enqueue<T>(work: () => Promise<T>): Promise<T> {
-    const run = this.mutationTail.then(work, work);
-    this.mutationTail = run.then(
-      () => undefined,
-      () => undefined,
-    );
-    return run;
+    await this.mutations.drain();
   }
 }
 
@@ -372,7 +339,7 @@ function samePrimaryByWorkspace(
       return (
         bRoot !== undefined &&
         aRoot !== undefined &&
-        workspaceRootKey(aRoot) === workspaceRootKey(bRoot)
+        sameDir(aRoot, bRoot)
       );
     })
   );

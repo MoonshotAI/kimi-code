@@ -1,3 +1,4 @@
+import type { DegradedLocation } from '#/app/git/workTree';
 import type { PromptPredictionCancelReason } from '#/features/promptPrediction/promptPrediction';
 import type { TowerExitReason } from '#/features/tower/tower';
 import type { SessionCloseReason } from '#/workspace/sessionLifecycle/sessionLifecycle';
@@ -697,6 +698,10 @@ export interface SessionIndexProjectedEvent {
 export interface SessionIndexMirrorGiveUpEvent {
   pending_count: number;
   consecutive_failures: number;
+}
+
+export interface ProjectLocateDegradedEvent {
+  reason: DegradedLocation['reason'];
 }
 
 export interface WorkspaceTrustChangedEvent {
@@ -1610,6 +1615,11 @@ export const telemetryEventDefinitions = {
       pending_count: 'Number of queued mirror writes left pending',
       consecutive_failures: 'Number of consecutive write failures that triggered the give-up',
     },
+  }),
+  project_locate_degraded: defineTelemetryEvent<ProjectLocateDegradedEvent>({
+    owner: 'kimi-code',
+    comment: 'Resolving the implicit project for a directory found a .git entry it could not verify, so the directory stays its own project.',
+    properties: { reason: 'Why the checkout was not grouped: unreadable git metadata or a pointer that fails verification' },
   }),
   workspace_trust_changed: defineTelemetryEvent<WorkspaceTrustChangedEvent>({
     owner: 'kimi-code',

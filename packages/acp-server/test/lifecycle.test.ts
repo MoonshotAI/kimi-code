@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -6,6 +6,8 @@ import { fileURLToPath } from 'node:url';
 import {
   IOAuthToolkit,
   IAgentEnvironmentBindingService,
+  ISessionContext,
+  IWorkspaceService,
   IAgentLifecycleService,
   ensureMainAgent,
   ISessionManager,
@@ -15,6 +17,7 @@ import {
 import { afterEach, describe, expect, it } from 'vitest';
 
 import type { SessionSummary } from '@moonshot-ai/klient';
+import { createGitWorktree } from '@moonshot-ai/testkit/fixtures';
 
 import { filterSessionSummariesByCwd } from '../src/server';
 import { createTestClient, type TestClient } from './_helpers/acpClient';
@@ -84,7 +87,7 @@ describe('acp-server session lifecycle', () => {
   ): Promise<readonly { readonly name: string; readonly status: string; readonly error?: string }[]> {
     const lease = await c.server.core.accessor
       .get(IWorkspaceInstanceManager)
-      .acquire({ root: homeDir! });
+      .acquire({ cwd: homeDir! });
     try {
       const handle = c.server.core.accessor.get(ISessionManager).get(sessionId);
       expect(handle).toBeDefined();
@@ -393,7 +396,7 @@ describe('acp-server session lifecycle', () => {
 
       const lease = await c.server.core.accessor
         .get(IWorkspaceInstanceManager)
-        .acquire({ root: homeDir! });
+        .acquire({ cwd: homeDir! });
       try {
         const dirs = lease.instance.program.dirs;
         await dirs.ready;
@@ -511,6 +514,35 @@ describe('acp-server session lifecycle', () => {
     },
     30_000,
   );
+
+  it(
+    'session/new in a worktree joins the repository project, pins the worktree and lists it there',
+    async () => {
+      const c = await boot();
+      const repos = join(homeDir!, 'repos');
+      const { main, worktree } = await createGitWorktree({ main: join(repos, 'app'), worktree: join(repos, 'app-fix') });
+      const created = (await c.send('session/new', { cwd: worktree, mcpServers: [] })) as {
+        sessionId: string;
+      };
+
+      const handle = c.server.core.accessor.get(ISessionManager).get(created.sessionId)!;
+      const context = handle.accessor.get(ISessionContext);
+      const project = await c.server.core.accessor.get(IWorkspaceService).get(context.workspaceId);
+      expect(await realpath(project!.root)).toBe(await realpath(main));
+      expect(context.cwd).toBe(worktree);
+      const inWorktree = (await c.send('session/list', { cwd: worktree })) as {
+        sessions: { sessionId: string; cwd: string }[];
+      };
+      const inMain = (await c.send('session/list', { cwd: main })) as {
+        sessions: { sessionId: string }[];
+      };
+      expect(inWorktree.sessions).toContainEqual(
+        expect.objectContaining({ sessionId: created.sessionId, cwd: worktree }),
+      );
+      expect(inMain.sessions.map((s) => s.sessionId)).not.toContain(created.sessionId);
+    },
+    30_000,
+  );
 });
 
 describe('filterSessionSummariesByCwd', () => {
@@ -532,5 +564,24 @@ describe('filterSessionSummariesByCwd', () => {
     const items = [summary('a', '/x'), summary('b'), summary('c', '/y')];
     expect(filterSessionSummariesByCwd(items, '/x').map((s) => s.id)).toEqual(['a', 'b']);
     expect(filterSessionSummariesByCwd(items, '/y').map((s) => s.id)).toEqual(['b', 'c']);
+  });
+
+  it('filters by the pinned directory, or the current project root for a session that follows it', () => {
+    const pinned = { ...summary('pinned', '/repo-wt'), workspaceId: 'ws-repo', environmentCwd: '/repo-wt' };
+    const following = { ...summary('following', '/old-root'), workspaceId: 'ws-moved' };
+    const roots = new Map([
+      ['ws-repo', '/repo'],
+      ['ws-moved', '/new-root'],
+    ]);
+    const ids = (cwd: string) => filterSessionSummariesByCwd([pinned, following], cwd, roots).map((s) => s.id);
+    expect(ids('/repo-wt')).toEqual(['pinned']);
+    expect(ids('/repo')).toEqual([]);
+    expect(ids('/new-root')).toEqual(['following']);
+    expect(ids('/old-root')).toEqual([]);
+  });
+
+  it('compares Windows-shaped directories without regard to drive case or separators', () => {
+    const pinned = { ...summary('win', String.raw`C:\Work\App`), environmentCwd: String.raw`C:\Work\App` };
+    expect(filterSessionSummariesByCwd([pinned], 'c:/work/app').map((s) => s.id)).toEqual(['win']);
   });
 });

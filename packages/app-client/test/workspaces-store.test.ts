@@ -127,6 +127,22 @@ describe('workspacesView ordering', () => {
     store.fsHome = '/Users/x';
     expect(store.workspacesView[0]!.shortPath).toBe('/home/x/code/app');
   });
+
+  it('carries the project kind for projects on this machine and on SSH hosts', () => {
+    const store = workspacesStore();
+    store.workspaces = [
+      makeWorkspace('wd_repo', '/Users/x/repo'),
+      makeWorkspace('wm_team', '/Users/x/team'),
+      makeWorkspace('wd_remote', '/home/x/repo', { hostId: 'devbox' }),
+      makeWorkspace('wm_remote', '/home/x/team', { hostId: 'devbox' }),
+    ];
+    expect(Object.fromEntries(store.workspacesView.map((w) => [w.id, w.kind]))).toEqual({
+      wd_repo: 'implicit',
+      wm_team: 'managed',
+      wd_remote: 'implicit',
+      wm_remote: 'managed',
+    });
+  });
 });
 
 describe('ordering actions', () => {
@@ -223,6 +239,41 @@ describe('active workspace resolution', () => {
   it('resolves to null when no workspace exists', () => {
     expect(workspacesStore().activeWorkspaceId).toBeNull();
     expect(workspacesStore().visibleWorkspace).toBeNull();
+  });
+
+  it('roots the active panels at the selected session working directory and at the project root on the draft page', () => {
+    const store = workspacesStore();
+    store.workspaces = [makeWorkspace('wd_repo', '/repo', { additionalDirs: ['/shared'] })];
+    store.storedActiveWorkspaceId = 'wd_repo';
+    sessionsStore().setSessions([
+      makeSession('wt', '2026-01-02T00:00:00.000Z', { workspaceId: 'wd_repo', cwd: '/repo-wt' }),
+      makeSession('main', '2026-01-01T00:00:00.000Z', { workspaceId: 'wd_repo', cwd: '/repo' }),
+    ]);
+    sessionsStore().setActiveSessionId(undefined);
+    expect(store.activePanelRoot).toBe('/repo');
+    expect(store.activePanelRoots).toEqual({ root: '/repo', roots: ['/repo', '/shared'] });
+
+    sessionsStore().setActiveSessionId('wt');
+    expect(store.activePanelRoot).toBe('/repo-wt');
+    expect(store.activePanelRoots).toEqual({ root: '/repo-wt', roots: ['/repo-wt', '/shared'] });
+
+    sessionsStore().setActiveSessionId('main');
+    expect(store.activePanelRoot).toBe('/repo');
+    expect(store.activePanelRoots).toEqual({ root: '/repo', roots: ['/repo', '/shared'] });
+    sessionsStore().setActiveSessionId(undefined);
+  });
+
+  it('roots the active panels at the session working directory alone when no project is visible', () => {
+    const store = workspacesStore();
+    store.hiddenWorkspaceIds = ['wd_gone'];
+    sessionsStore().setSessions([makeSession('loose', '2026-01-01T00:00:00.000Z', { workspaceId: 'wd_gone', cwd: '/loose' })]);
+    expect(store.visibleWorkspace).toBeNull();
+    expect(store.activePanelRoots).toEqual({ root: '', roots: [] });
+
+    sessionsStore().setActiveSessionId('loose');
+    expect(store.activePanelRoots).toEqual({ root: '/loose', roots: ['/loose'] });
+    expect(store.activePanelRoot).toBe('/loose');
+    sessionsStore().setActiveSessionId(undefined);
   });
 
   it('treats only a workspace on an SSH host as non-local', () => {
@@ -1005,6 +1056,52 @@ describe('saveWorkspace', () => {
     });
     expect(setWorkspacePrimary).toHaveBeenCalledWith('wm_1', '/b');
     expect(setWorkspacePrimary.mock.invocationCallOrder[0]).toBeLessThan(updateWorkspace.mock.invocationCallOrder[0]!);
+  });
+
+  it('refuses to move the primary directory of an implicit project without contacting the server', async () => {
+    const updateWorkspace = vi.fn();
+    const setWorkspacePrimary = vi.fn();
+    apiMock.updateWorkspace = updateWorkspace;
+    apiMock.setWorkspacePrimary = setWorkspacePrimary;
+    const store = workspacesStore();
+    const repo = makeWorkspace('wd_repo', '/repo', { name: 'repo', additionalDirs: ['/repo-fix'] });
+    store.workspaces = [repo];
+
+    const promoteRegistered = await store.saveWorkspace({
+      id: 'wd_repo',
+      name: 'renamed',
+      additionalDirs: ['/repo'],
+      primary: '/repo-fix',
+    });
+    const promoteUnregistered = await store.saveWorkspace({ id: 'wd_repo', primary: '/elsewhere' });
+    const promoteDirectly = await store.setWorkspacePrimary({ id: 'wd_repo', path: '/repo-fix' });
+
+    expect([promoteRegistered, promoteUnregistered, promoteDirectly]).toEqual([false, false, false]);
+    expect(updateWorkspace).not.toHaveBeenCalled();
+    expect(setWorkspacePrimary).not.toHaveBeenCalled();
+    expect(store.workspaces).toEqual([repo]);
+  });
+
+  it('still saves the name and additional directories of an implicit project', async () => {
+    const updated = makeWorkspace('wd_repo', '/repo', { name: 'renamed', additionalDirs: ['/lib'] });
+    const updateWorkspace = vi.fn().mockResolvedValue(updated);
+    const setWorkspacePrimary = vi.fn();
+    apiMock.updateWorkspace = updateWorkspace;
+    apiMock.setWorkspacePrimary = setWorkspacePrimary;
+    const store = workspacesStore();
+    store.workspaces = [makeWorkspace('wd_repo', '/repo', { name: 'repo' })];
+
+    const ok = await store.saveWorkspace({
+      id: 'wd_repo',
+      name: 'renamed',
+      additionalDirs: ['/lib'],
+      primary: '/repo',
+    });
+
+    expect(ok).toBe(true);
+    expect(updateWorkspace).toHaveBeenCalledExactlyOnceWith('wd_repo', { name: 'renamed', additionalDirs: ['/lib'] });
+    expect(setWorkspacePrimary).not.toHaveBeenCalled();
+    expect(store.workspaces[0]).toEqual(updated);
   });
 
   it('falls back to an id-keyed local override on 40410 rename-only', async () => {

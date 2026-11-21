@@ -1,9 +1,11 @@
+import { Disposable } from '#/_base/di/lifecycle';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { ILogService } from '#/_base/log/log';
+import { SerialQueue } from '#/_base/utils/serialQueue';
 import { LifecycleScope } from '#/app/scopes';
 import { IProjectLocalConfigService } from '#/app/projectLocalConfig/projectLocalConfig';
 import { ErrorCodes, Error2 } from '#/errors';
 import { LOCAL_ENVIRONMENT_ID } from '#/environment/environment';
-import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionWorkdir } from '#/session/workdir/workdir';
 import { IWorkspaceTrust } from '#/workspace/workspaceTrust/workspaceTrust';
 
@@ -11,25 +13,29 @@ import { PersistedPermissionRuleSchema } from './configSection';
 import type { PermissionRule } from './permissionRules';
 import { IProjectPermissionRulesService } from './projectPermissionRules';
 
-export class ProjectPermissionRulesService implements IProjectPermissionRulesService {
+export class ProjectPermissionRulesService extends Disposable implements IProjectPermissionRulesService {
   declare readonly _serviceBrand: undefined;
 
-  private readonly cwd: string;
   private readonly local: boolean;
   private currentRules: readonly PermissionRule[] = [];
   private trusted = false;
   readonly ready: Promise<void>;
-  private mutationTail: Promise<void> = Promise.resolve();
+  private readonly mutations = new SerialQueue();
 
   constructor(
-    @ISessionContext session: ISessionContext,
-    @ISessionWorkdir workdir: ISessionWorkdir,
+    @ISessionWorkdir private readonly workdir: ISessionWorkdir,
     @IProjectLocalConfigService private readonly localConfig: IProjectLocalConfigService,
     @IWorkspaceTrust private readonly trust: IWorkspaceTrust,
+    @ILogService private readonly log: ILogService,
   ) {
-    this.cwd = workdir.cwd ?? session.cwd;
+    super();
     this.local = workdir.environmentId === LOCAL_ENVIRONMENT_ID;
-    this.ready = this.local ? this.enqueue(() => this.loadFromDisk()) : Promise.resolve();
+    this.ready = this.local ? this.mutations.run(() => this.loadFromDisk()) : Promise.resolve();
+    if (this.local) {
+      this._register(workdir.onDidChangeAnchor(() => {
+        this.reloadAtMovedAnchor();
+      }));
+    }
   }
 
   get rules(): readonly PermissionRule[] {
@@ -40,27 +46,28 @@ export class ProjectPermissionRulesService implements IProjectPermissionRulesSer
     if (!this.local) {
       return Promise.reject(new Error('Project permission rules are not supported in remote environments'));
     }
-    return this.enqueue(async () => {
+    return this.mutations.run(async () => {
       parseProjectPermissionRules(rules);
-      const appended = await this.localConfig.appendPermissionRules(this.cwd, rules);
+      const appended = await this.localConfig.appendPermissionRules(this.workdir.anchor, rules);
       if (this.trusted) this.currentRules = parseProjectPermissionRules(appended.rules);
     });
   }
 
   private async loadFromDisk(): Promise<void> {
     this.trusted = await this.trust.get();
-    if (!this.trusted) return;
-    const loaded = await this.localConfig.readPermissionRules(this.cwd);
-    this.currentRules = parseProjectPermissionRules(loaded.rules);
+    this.currentRules = this.trusted
+      ? parseProjectPermissionRules((await this.localConfig.readPermissionRules(this.workdir.anchor)).rules)
+      : [];
   }
 
-  private enqueue<T>(work: () => Promise<T>): Promise<T> {
-    const run = this.mutationTail.then(work, work);
-    this.mutationTail = run.then(
-      () => undefined,
-      () => undefined,
-    );
-    return run;
+  private reloadAtMovedAnchor(): void {
+    void this.mutations.run(async () => {
+      try {
+        await this.loadFromDisk();
+      } catch (error) {
+        this.log.warn('project permission rules reload failed; keeping the rules in effect', { anchor: this.workdir.anchor, error });
+      }
+    });
   }
 }
 

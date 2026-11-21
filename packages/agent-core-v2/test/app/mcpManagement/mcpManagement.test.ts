@@ -45,6 +45,9 @@ import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { FakeEnvironment } from '#/environment/fakeEnvironment';
 import type { WorkspaceInstance } from '#/workspace/workspaceInstance/workspaceInstance';
 import { IWorkspaceInstanceManager } from '#/workspace/workspaceInstance/workspaceInstanceManager';
+import { locateCheckout } from '#/app/git/workTree';
+import { decideImplicitProject } from '#/app/workspace/implicitProject';
+import { IWorkspaceService } from '#/app/workspace/workspace';
 import { IEnvironmentService, type EnvironmentResolver } from '#/app/environment/environment';
 import {
   IWorkspaceTrustStore,
@@ -83,7 +86,7 @@ describe('McpManagementService', () => {
   let identitySnapshot: AgentIdentitySnapshot;
   let trusted: boolean;
   let acquire: Mock<IWorkspaceInstanceManager['acquire']>;
-  let findContaining: Mock<IWorkspaceInstanceManager['findContaining']>;
+  let acquireWorkdir: Mock<IWorkspaceInstanceManager['acquireWorkdir']>;
   let management: IMcpManagementService;
 
   beforeEach(() => {
@@ -104,7 +107,9 @@ describe('McpManagementService', () => {
       instance: { id: 'test-workspace' } as unknown as WorkspaceInstance,
       dispose: () => {},
     }));
-    findContaining = vi.fn<IWorkspaceInstanceManager['findContaining']>(() => undefined);
+    acquireWorkdir = vi.fn<IWorkspaceInstanceManager['acquireWorkdir']>(async () => {
+      throw new Error('inline probes must not open a workdir');
+    });
     const hostProcess = new HostProcessService();
     const environment = Object.assign(
       new FakeEnvironment(
@@ -146,6 +151,18 @@ describe('McpManagementService', () => {
         });
         reg.defineInstance(ITelemetryService, noopTelemetryService);
         reg.define(IWorkspaceTrustStore, WorkspaceTrustStore);
+        const peekFs = new HostFileSystem();
+        reg.definePartialInstance(IWorkspaceService, {
+          peekImplicit: async (dir: string) =>
+            (
+              await decideImplicitProject(dir, { implicit: [] }, {
+                occupied: async () => false,
+                locate: (target) => locateCheckout(peekFs, target),
+                realpath: async (target) => peekFs.realpath(target).catch(() => undefined),
+                homeDirs: [home],
+              })
+            ).decision,
+        });
         reg.define(IMcpRegistryService, McpRegistryService);
         reg.defineInstance(IMcpOAuthService, oauth);
         reg.definePartialInstance(IConfigService, {
@@ -166,7 +183,7 @@ describe('McpManagementService', () => {
           acquire: () => ({ environment, track: (resource) => resource, dispose: () => {} }),
           acquireWhenReady: async () => ({ environment, track: (resource) => resource, dispose: () => {} }),
         });
-        reg.definePartialInstance(IWorkspaceInstanceManager, { findContaining, acquire });
+        reg.definePartialInstance(IWorkspaceInstanceManager, { acquireWorkdir, acquire });
         reg.defineInstance(ILogService, stubLog());
         reg.define(IMcpManagementService, McpManagementService);
       },
@@ -767,7 +784,7 @@ describe('McpManagementService', () => {
       expect(result.success).toBe(true);
       expect(result.output).toContain('Available tools: 4');
       expect(result.output).toContain('- echo: Echoes input text');
-      expect(findContaining).not.toHaveBeenCalled();
+      expect(acquireWorkdir).not.toHaveBeenCalled();
       expect(acquire).not.toHaveBeenCalled();
     }, 20000);
 
@@ -833,15 +850,15 @@ describe('McpManagementService', () => {
         cwd,
       });
       await Promise.resolve();
-      expect(findContaining).not.toHaveBeenCalled();
+      expect(acquireWorkdir).not.toHaveBeenCalled();
 
       releaseConfig();
       await Promise.resolve();
-      expect(findContaining).not.toHaveBeenCalled();
+      expect(acquireWorkdir).not.toHaveBeenCalled();
 
       releaseIdentity();
       await expect(probe).resolves.toMatchObject({ success: true });
-      expect(findContaining).not.toHaveBeenCalled();
+      expect(acquireWorkdir).not.toHaveBeenCalled();
       expect(acquire).not.toHaveBeenCalled();
     }, 20000);
 

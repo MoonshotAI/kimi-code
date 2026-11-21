@@ -5,6 +5,7 @@ import type {
 import type { SessionMeta } from '@moonshot-ai/agent-core-v2/session/sessionMetadata/sessionMetadata';
 import type { Page } from '@moonshot-ai/agent-core-v2/persistence/interface/queryStore';
 import type {
+  ImplicitProjectResult,
   Workspace,
   WorkspaceUpdate,
 } from '@moonshot-ai/agent-core-v2/app/workspace/workspace';
@@ -119,7 +120,7 @@ export interface GlobalSessionsFacade {
 export interface GlobalWorkspacesFacade {
   list(): Promise<readonly Workspace[]>;
   get(id: string): Promise<Workspace | undefined>;
-  createOrTouch(input: { root: string; name?: string }): Promise<Workspace>;
+  resolveImplicit(dir: string): Promise<ImplicitProjectResult>;
   update(input: { id: string; patch: WorkspaceUpdate }): Promise<Workspace | undefined>;
   delete(id: string): Promise<void>;
 }
@@ -339,8 +340,8 @@ export function createGlobalFacade(scoped: ScopedCaller, scopedStream: ScopedStr
     workspaces: {
       list: () => call('workspaceService', 'list', []) as Promise<readonly Workspace[]>,
       get: (id) => call('workspaceService', 'get', [id]) as Promise<Workspace | undefined>,
-      createOrTouch: ({ root, name }) =>
-        call('workspaceService', 'createOrTouch', [root, name]) as Promise<Workspace>,
+      resolveImplicit: (dir) =>
+        call('workspaceService', 'resolveImplicit', [dir]) as Promise<ImplicitProjectResult>,
       update: ({ id, patch }) =>
         call('workspaceService', 'update', [id, patch]) as Promise<Workspace | undefined>,
       delete: (id) => call('workspaceService', 'delete', [id]) as Promise<void>,

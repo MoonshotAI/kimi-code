@@ -1,0 +1,5 @@
+---
+"@moonshot-ai/kimi-code-sdk": minor
+---
+
+Answer directory queries (`listWorkspaceSkills`, `getWorkspaceAdditionalDirs`, `suggestFiles`, `listWorkspaceMcpServers` and the trust info) from the view a new session started in that directory would use, and reject directories that do not exist. `getWorkspaceTrustInfo` reports `projectRoot`, the primary directory that trust is recorded for, and `trustWorkspace` trusts the project the directory resolves to. `listSessions({ workDir })` now returns only sessions of the directory's implicit project whose working directory equals it, no longer including sessions of managed projects rooted or registered there; `listSessions({ sessionId })` finds a session of any project. Session summaries report the session's own working directory, `addAdditionalDir` adds to the view of a session pinned in a worktree or subdirectory, persisted MCP additions are checked against the project MCP files of the session's anchor, and `sameDir` is exported for comparing directories.

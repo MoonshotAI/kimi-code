@@ -385,6 +385,7 @@ class AnchorEntry {
 class AnchoredWorkdirMcp implements WorkdirMcp, IDisposable {
   private lease: McpAnchorLease;
   private readonly layersEmitter = new Emitter<void>();
+  readonly onDidChangeAnchor: Event<void> = this.layersEmitter.event;
   private readonly baseView: LayeredMcpConnectionView;
   private disposed = false;
 

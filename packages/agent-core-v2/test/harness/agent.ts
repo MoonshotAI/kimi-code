@@ -12,6 +12,7 @@ import type { IAgentScopeHandle } from '#/_base/di/scope';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
 import { IFeatureManager } from '#/app/feature/featureManager';
 import { IFlagService } from '#/app/flag/flag';
+import { rootAnchor } from '#/app/mcpConfig/configLoader';
 import { ISessionNotify } from '#/features/notify/sessionNotify';
 import { notifyUserAvailable } from '#/features/notify/notifyUserAvailability';
 import { getConfigSectionContributions } from '#/app/config/configSectionContributions';
@@ -1358,6 +1359,8 @@ export class AgentTestContext {
               _serviceBrand: undefined,
               environmentId: 'local',
               cwd: this.cwd,
+              anchor: rootAnchor(this.cwd),
+              onDidChangeAnchor: Event.None as Event<void>,
               fs: undefined as never,
             });
             reg.definePartialInstance(IWorkspaceTrust, {

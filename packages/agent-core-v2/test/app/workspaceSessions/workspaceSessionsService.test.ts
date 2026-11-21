@@ -13,7 +13,10 @@ import {
   type SessionListQuery,
   type SessionSummary,
 } from '#/app/sessionIndex/sessionIndex';
+import type { ImplicitDecision, ImplicitWorkspace } from '#/app/workspace/implicitProject';
+import { IWorkspaceService } from '#/app/workspace/workspace';
 import { IWorkspaceAliases } from '#/app/workspaceAliases/workspaceAliases';
+import type { ImplicitProjectId } from '#/_base/utils/workdir-slug';
 import {
   IWorkspaceSessions,
   RECENT_SESSIONS_LIMIT,
@@ -23,6 +26,7 @@ import { WorkspaceSessionsService } from '#/app/workspaceSessions/workspaceSessi
 class FakeSessionIndex implements ISessionIndex {
   readonly _serviceBrand: undefined;
   lastListQuery: SessionListQuery | undefined;
+  readonly listQueries: SessionListQuery[] = [];
   lastCountQuery: SessionCountQuery | undefined;
   items: readonly SessionSummary[] = [];
   countResult = 0;
@@ -37,7 +41,16 @@ class FakeSessionIndex implements ISessionIndex {
 
   async listRecent(query: SessionListQuery) {
     this.lastListQuery = query;
-    return { items: this.items };
+    this.listQueries.push(query);
+    const scoped = this.items.filter((item) =>
+      (query.workspaceIds === undefined || query.workspaceIds.includes(item.workspaceId)) &&
+      (query.includeArchived === true || !item.archived),
+    );
+    const start = query.before === undefined ? 0 : scoped.findIndex((item) => item.id === query.before) + 1;
+    const window = scoped.slice(start);
+    if (query.limit === undefined) return { items: window };
+    const kept = window.slice(0, query.limit);
+    return { items: kept, nextCursor: window.length > query.limit ? kept.at(-1)!.id : undefined };
   }
 
   async get(_id: string): Promise<SessionSummary | undefined> {
@@ -59,6 +72,21 @@ class FakeWorkspaceAliases implements IWorkspaceAliases {
   resolveAliasIds(id: string): Promise<readonly string[]> {
     return Promise.resolve(this.aliases[id] ?? [id]);
   }
+}
+
+class FakeWorkspaceService {
+  readonly _serviceBrand: undefined;
+  decision: ImplicitDecision = { kind: 'create', rule: 'own', id: 'wd_new' as ImplicitProjectId, root: '/new' };
+  readonly peeked: string[] = [];
+
+  peekImplicit(dir: string): Promise<ImplicitDecision> {
+    this.peeked.push(dir);
+    return Promise.resolve(this.decision);
+  }
+}
+
+function implicitProject(id: string, root: string): ImplicitWorkspace {
+  return { id, root, name: root, kind: 'implicit', additionalDirs: [], createdAt: 0, lastOpenedAt: 0 };
 }
 
 describe('WorkspaceSessionsService', () => {
@@ -84,15 +112,27 @@ describe('WorkspaceSessionsService', () => {
     sessions: IWorkspaceSessions;
     index: FakeSessionIndex;
     aliases: FakeWorkspaceAliases;
+    workspaces: FakeWorkspaceService;
   } {
     const index = new FakeSessionIndex();
     const aliases = new FakeWorkspaceAliases();
+    const workspaces = new FakeWorkspaceService();
     const host = createScopedTestHost([
       stubPair(ISessionIndex, index),
       stubPair(IWorkspaceAliases, aliases),
+      stubPair(IWorkspaceService, workspaces as unknown as IWorkspaceService),
     ]);
     currentHost = host;
-    return { sessions: host.app.accessor.get(IWorkspaceSessions), index, aliases };
+    return { sessions: host.app.accessor.get(IWorkspaceSessions), index, aliases, workspaces };
+  }
+
+  function placed(
+    id: string,
+    workspaceId: string,
+    updatedAt: number,
+    placement: { readonly cwd?: string; readonly environmentId?: string; readonly environmentCwd?: string },
+  ): SessionSummary {
+    return { ...summary(id, workspaceId, updatedAt), ...placement };
   }
 
   function summary(id: string, workspaceId: string, updatedAt: number): SessionSummary {
@@ -142,5 +182,78 @@ describe('WorkspaceSessionsService', () => {
     const { sessions } = build();
 
     await expect(sessions.count('wd_empty')).resolves.toBe(0);
+  });
+
+  it('lists the sessions of a directory from its implicit project and alias buckets, newest first', async () => {
+    const { sessions, index, aliases, workspaces } = build();
+    workspaces.decision = { kind: 'reuse', rule: 'repo', project: implicitProject('wd_repo', '/repo') };
+    aliases.aliases['wd_repo'] = ['wd_repo', 'wd_repo_alias'];
+    index.items = [
+      placed('other-worktree', 'wd_repo', 600, { cwd: '/repo-fix', environmentCwd: '/repo-fix' }),
+      placed('old-following', 'wd_repo_alias', 500, { cwd: '/created-elsewhere' }),
+      placed('pinned', 'wd_repo', 400, { cwd: '/repo', environmentCwd: '/repo' }),
+      placed('subdirectory', 'wd_repo', 300, { cwd: '/repo/src', environmentCwd: '/repo/src' }),
+      placed('remote-from-here', 'wd_repo', 200, { cwd: '/repo', environmentId: 'ssh', environmentCwd: '/srv/repo' }),
+      placed('managed', 'wm_repo', 100, { cwd: '/repo', environmentCwd: '/repo' }),
+    ];
+
+    const page = await sessions.listForWorkdir('/repo');
+
+    expect(workspaces.peeked).toEqual(['/repo']);
+    expect(index.lastListQuery?.workspaceIds).toEqual(['wd_repo', 'wd_repo_alias']);
+    expect(page).toEqual({ items: [index.items[1], index.items[2], index.items[4]] });
+  });
+
+  it('keeps the sessions of the main checkout and of a worktree apart', async () => {
+    const { sessions, index, workspaces } = build();
+    workspaces.decision = { kind: 'reuse', rule: 'repo', project: implicitProject('wd_repo', '/repo') };
+    index.items = [
+      placed('in-worktree', 'wd_repo', 200, { environmentCwd: '/repo-fix' }),
+      placed('in-main', 'wd_repo', 100, { environmentCwd: '/repo' }),
+    ];
+
+    expect((await sessions.listForWorkdir('/repo')).items.map((item) => item.id)).toEqual(['in-main']);
+    expect((await sessions.listForWorkdir('/repo-fix')).items.map((item) => item.id)).toEqual(['in-worktree']);
+  });
+
+  it('compares Windows-shaped working directories by drive and separator independent identity', async () => {
+    const { sessions, index, workspaces } = build();
+    workspaces.decision = { kind: 'reuse', rule: 'own', project: implicitProject('wd_app', 'C:\\Work\\App') };
+    index.items = [
+      placed('pinned', 'wd_app', 200, { environmentCwd: 'c:/work/app/' }),
+      placed('old-following', 'wd_app', 100, { cwd: 'C:\\Other' }),
+    ];
+
+    const page = await sessions.listForWorkdir('C:\\Work\\App');
+
+    expect(page.items.map((item) => item.id)).toEqual(['pinned', 'old-following']);
+  });
+
+  it('pages through the index until the limit fills and continues from the returned cursor', async () => {
+    const { sessions, index, workspaces } = build();
+    workspaces.decision = { kind: 'reuse', rule: 'own', project: implicitProject('wd_repo', '/repo') };
+    index.items = Array.from({ length: 250 }, (_unused, position) =>
+      placed(`s${String(position)}`, 'wd_repo', 1_000 - position, {
+        environmentCwd: position % 100 === 99 ? '/repo' : '/repo-fix',
+      }),
+    );
+
+    const first = await sessions.listForWorkdir('/repo', { limit: 1 });
+    const second = await sessions.listForWorkdir('/repo', { limit: 1, before: first.nextCursor });
+    const rest = await sessions.listForWorkdir('/repo', { limit: 5, before: second.nextCursor });
+
+    expect(first).toEqual({ items: [index.items[99]], nextCursor: 's99' });
+    expect(second).toEqual({ items: [index.items[199]], nextCursor: 's199' });
+    expect(rest).toEqual({ items: [] });
+    expect(index.listQueries.every((query) => query.limit !== undefined && query.limit > 1)).toBe(true);
+  });
+
+  it('reads the deterministic project of a directory that has no project yet and passes archived through', async () => {
+    const { sessions, index } = build();
+    index.items = [{ ...placed('archived', 'wd_new', 100, { environmentCwd: '/new' }), archived: true }];
+
+    expect((await sessions.listForWorkdir('/new')).items).toEqual([]);
+    expect((await sessions.listForWorkdir('/new', { includeArchived: true })).items.map((item) => item.id)).toEqual(['archived']);
+    expect(index.lastListQuery).toMatchObject({ workspaceIds: ['wd_new'], includeArchived: true });
   });
 });

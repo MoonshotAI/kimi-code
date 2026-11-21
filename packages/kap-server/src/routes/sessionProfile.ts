@@ -6,9 +6,10 @@ import {
   ISessionMetadata,
   PARENT_SESSION_ID_KEY,
   resumeSessionById,
+  type ISessionScopeHandle,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
-import type { SessionWireFields } from '@moonshot-ai/agent-core-v2/app/sessionLegacy/sessionLegacy';
+import type { SessionMeta } from '@moonshot-ai/agent-core-v2/session/sessionMetadata/sessionMetadata';
 import type { UpdateSessionProfileRequest } from '@moonshot-ai/agent-core-v2/app/sessionLegacy/sessionProtocol';
 
 const RESERVED_METADATA_KEYS: ReadonlySet<string> = new Set([
@@ -38,7 +39,7 @@ export async function updateSessionProfile(
   core: Scope,
   sessionId: string,
   body: Pick<UpdateSessionProfileRequest, 'title' | 'metadata'>,
-): Promise<SessionWireFields> {
+): Promise<SessionMeta & { readonly workspaceId: string }> {
   const session = await resumeSessionById(core.accessor, sessionId);
   if (session === undefined) {
     throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${sessionId} does not exist`);
@@ -56,18 +57,14 @@ export async function updateSessionProfile(
     });
   }
 
-  const meta = await metadata.read();
-  const ctx = session.accessor.get(ISessionContext);
+  return liveSessionFields(session);
+}
+
+export async function liveSessionFields(
+  session: ISessionScopeHandle,
+): Promise<SessionMeta & { readonly workspaceId: string }> {
   return {
-    id: meta.id,
-    workspaceId: ctx.workspaceId,
-    root: ctx.cwd,
-    title: meta.title,
-    lastPrompt: meta.lastPrompt,
-    createdAt: meta.createdAt,
-    updatedAt: meta.updatedAt,
-    archived: meta.archived,
-    archivedAt: meta.archivedAt,
-    custom: meta.custom,
+    ...(await session.accessor.get(ISessionMetadata).read()),
+    workspaceId: session.accessor.get(ISessionContext).workspaceId,
   };
 }

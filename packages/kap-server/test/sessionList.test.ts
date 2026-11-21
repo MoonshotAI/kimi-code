@@ -168,9 +168,16 @@ const workspaceStub: IWorkspaceService = {
   create: async () => {
     throw new Error('not used in these tests');
   },
-  createOrTouch: async () => {
+  resolveImplicit: async () => {
     throw new Error('not used in these tests');
   },
+  peekImplicit: async () => {
+    throw new Error('not used in these tests');
+  },
+  reviveImplicit: async () => {
+    throw new Error('not used in these tests');
+  },
+  contains: async () => false,
   touch: async () => {
     throw new Error('not used in these tests');
   },
@@ -694,6 +701,7 @@ describe('server /api/v1/sessions list', () => {
       id: 'local-shadow',
       workspaceId: WS_A,
       cwd: remoteRepo,
+      environmentCwd: remoteRepo,
       createdAt: 5_500,
       updatedAt: 5_500,
       archived: false,

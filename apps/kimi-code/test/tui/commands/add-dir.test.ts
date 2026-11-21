@@ -111,6 +111,21 @@ describe('handleAddDirCommand', () => {
     expect(rendered).not.toContain('Do not add this directory.');
   });
 
+  it('notes that the directory joins the project trust scope and adds it without a trust prompt', async () => {
+    const { host, session, getMountedPanel } = makeHost();
+
+    await handleAddDirCommand(host, '../shared');
+
+    const rendered = getMountedPanel()?.render(120).map(strip).join('\n') ?? '';
+    expect(rendered).toContain("This directory joins the project's trust scope.");
+    expect(rendered).not.toContain('Trust this');
+    getMountedPanel()?.handleInput(' ');
+    await vi.waitFor(() => {
+      expect(session.addAdditionalDir).toHaveBeenCalledWith('../shared', { persist: false });
+    });
+    expect(host.mountEditorReplacement).toHaveBeenCalledOnce();
+  });
+
   it('adds a workspace dir for this session only after confirmation', async () => {
     const { host, session, getMountedPanel } = makeHost();
 

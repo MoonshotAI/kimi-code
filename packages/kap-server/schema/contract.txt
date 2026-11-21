@@ -3326,6 +3326,12 @@ POST /api/v1/workspaces/{workspace_id}/primary response 200<code=0>: shape 7d1f9
 POST /api/v1/workspaces/{workspace_id}/primary response 200<code=40001>: shape d4845858
 POST /api/v1/workspaces/{workspace_id}/primary response 200<code=40409>: shape 197643f0
 POST /api/v1/workspaces/{workspace_id}/primary response 200<code=40410>: shape 3fb7704d
+POST /api/v1/workspaces/{workspace_id}/primary response 200<code=40941>.code: enum 40941
+POST /api/v1/workspaces/{workspace_id}/primary response 200<code=40941>.data: enum null nullable
+POST /api/v1/workspaces/{workspace_id}/primary response 200<code=40941>.details: any optional
+POST /api/v1/workspaces/{workspace_id}/primary response 200<code=40941>.msg: string
+POST /api/v1/workspaces/{workspace_id}/primary response 200<code=40941>.request_id: string
+POST /api/v1/workspaces/{workspace_id}/primary response 200<code=40941>: object closed
 POST /api/v1/workspaces/{workspace_id}/primary: operation
 POST /api/v1/workspaces/{workspace_id}/trust param path:workspace_id: string pattern="^wd_[a-z0-9._-]+_[0-9a-f]{12}$|^wm_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
 POST /api/v1/workspaces/{workspace_id}/trust response 200: oneOf

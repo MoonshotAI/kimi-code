@@ -223,18 +223,18 @@ describe('server-v2 /api/v1/debug RPC', () => {
 
   it('creates a workspace and reads it back', async () => {
     const cwd = home as string;
-    const created = await call<{ id: string; root: string }>(
+    const created = await call<{ project: { id: string; root: string }; rule: string }>(
       'POST',
-      rpc('core', IWorkspaceService, 'createOrTouch'),
+      rpc('core', IWorkspaceService, 'resolveImplicit'),
       cwd,
     );
     expect(created.body.code).toBe(0);
-    expect(created.body.data.root).toBe(cwd);
+    expect(created.body.data).toMatchObject({ project: { root: cwd }, rule: 'own' });
 
     const got = await call<{ id: string; root: string }>(
       'GET',
       rpc('core', IWorkspaceService, 'get'),
-      created.body.data.id,
+      created.body.data.project.id,
     );
     expect(got.body.code).toBe(0);
     expect(got.body.data.root).toBe(cwd);
@@ -288,20 +288,20 @@ describe('server-v2 /api/v1/debug RPC', () => {
     expect(legacy.status).toBe(404);
   });
 
-  it('createOrTouch registers a missing root directory (validity deferred to first binding)', async () => {
+  it('resolveImplicit registers a missing root directory (validity deferred to first binding)', async () => {
     const missing = join(home as string, 'never-created');
-    const created = await call<{ id: string; root: string }>(
+    const created = await call<{ project: { id: string; root: string } }>(
       'POST',
-      rpc('core', IWorkspaceService, 'createOrTouch'),
+      rpc('core', IWorkspaceService, 'resolveImplicit'),
       missing,
     );
     expect(created.body.code).toBe(0);
-    expect(created.body.data.root).toBe(missing);
+    expect(created.body.data.project.root).toBe(missing);
 
     const got = await call<{ id: string; root: string }>(
       'GET',
       rpc('core', IWorkspaceService, 'get'),
-      created.body.data.id,
+      created.body.data.project.id,
     );
     expect(got.body.code).toBe(0);
     expect(got.body.data.root).toBe(missing);
@@ -309,12 +309,12 @@ describe('server-v2 /api/v1/debug RPC', () => {
 
   it('renames a workspace via update', async () => {
     const cwd = home as string;
-    const created = await call<{ id: string; name: string }>(
+    const created = await call<{ project: { id: string; name: string } }>(
       'POST',
-      rpc('core', IWorkspaceService, 'createOrTouch'),
+      rpc('core', IWorkspaceService, 'resolveImplicit'),
       cwd,
     );
-    const id = created.body.data.id;
+    const id = created.body.data.project.id;
 
     const updated = await call<{ id: string; name: string }>(
       'POST',
@@ -334,12 +334,12 @@ describe('server-v2 /api/v1/debug RPC', () => {
 
   it('counts active sessions', async () => {
     const cwd = home as string;
-    const created = await call<{ id: string }>('POST', rpc('core', IWorkspaceService, 'createOrTouch'), cwd);
+    const created = await call<{ project: { id: string } }>('POST', rpc('core', IWorkspaceService, 'resolveImplicit'), cwd);
     await createSession(cwd);
     const { body } = await call<number>(
       'POST',
       rpc('core', ISessionIndex, 'count'),
-      [{ workspaceIds: [created.body.data.id] }],
+      [{ workspaceIds: [created.body.data.project.id] }],
     );
     expect(body.code).toBe(0);
     expect(body.data).toBeGreaterThanOrEqual(1);

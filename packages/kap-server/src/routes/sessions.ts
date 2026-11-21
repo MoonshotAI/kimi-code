@@ -52,6 +52,11 @@ import {
   workspacePersistenceScope,
 } from '@moonshot-ai/agent-core-v2/workspace/sessionLifecycle/internal/addressing';
 import { SessionMetaUpdated } from '@moonshot-ai/agent-core-v2/session/sessionMetadata/sessionMetaEvents';
+import {
+  sessionWorkDir,
+  type SessionPlacementFacts,
+  type SessionWorkDirPath,
+} from '@moonshot-ai/agent-core-v2/session/workspaceContext/workspaceRoots';
 import { ErrorCode } from '../protocol/error-codes';
 import { listPendingInteractions } from '../protocol/interaction-wire';
 import type { PendingInteraction } from '../protocol/interaction';
@@ -104,7 +109,7 @@ import {
   applySessionAgentConfig,
   creationMainAgentBinding,
 } from './sessionAgentConfig';
-import { customSessionMetadata, updateSessionProfile } from './sessionProfile';
+import { customSessionMetadata, liveSessionFields, updateSessionProfile } from './sessionProfile';
 
 interface SessionRouteHost {
   post(
@@ -217,7 +222,6 @@ export function registerSessionsRoutes(
 
       const registry = core.accessor.get(IWorkspaceService);
       let workDir: string;
-      let bucket: { readonly id: string; readonly root: string } | undefined;
       if (workspaceId !== undefined) {
         const workspace = await registry.get(workspaceId);
         if (workspace === undefined) {
@@ -230,13 +234,13 @@ export function registerSessionsRoutes(
           );
           return;
         }
-        if (callerCwd !== undefined && callerCwd !== workspace.root) {
+        if (callerCwd !== undefined && !(await registry.contains(workspace, callerCwd))) {
           reply.send(
             buildValidationEnvelope(
               [
                 {
                   path: cwdPath,
-                  message: `${cwdPath} (${callerCwd}) must equal workspace root (${workspace.root})`,
+                  message: `${cwdPath} (${callerCwd}) is outside workspace ${workspace.id}: it must be inside its root (${workspace.root}), one of its additional directories, or a checkout of the same repository`,
                 },
               ],
               req.id,
@@ -244,24 +248,20 @@ export function registerSessionsRoutes(
           );
           return;
         }
-        workDir = workspace.root;
-        bucket = workspace;
+        workDir = callerCwd ?? workspace.root;
       } else {
         workDir = callerCwd as string;
       }
 
       try {
-        const resolved =
-          bucket === undefined
-            ? await registry.createOrTouch(workDir)
-            : ((await registry.touch(bucket.id)) ?? bucket);
+        if (workspaceId !== undefined) await registry.touch(workspaceId);
         const custom = customSessionMetadata(body.metadata);
         const agentConfig = body.agent_config ?? {};
         const mainAgentBinding = await creationMainAgentBinding(core, agentConfig);
         const { profile: _profile, model: _model, thinking: _thinking, ...settings } = agentConfig;
         const appliesSettings = Object.keys(settings).some((key) => key !== 'tower_base');
         const handle = await core.accessor.get(ISessionManager).create({
-          workspaceId: resolved.id,
+          workspaceId,
           workDir,
           environmentId: body.environment_id,
           environmentCwd: body.environment_cwd,
@@ -274,15 +274,8 @@ export function registerSessionsRoutes(
             if (appliesSettings) await applyAgentConfigToSession(session, settings);
           },
         });
-        const metadata = handle.accessor.get(ISessionMetadata);
-        if (typeof body.title === 'string') await metadata.setTitle(body.title);
-        const meta = await metadata.read();
-        const sessionId = meta.id;
-        const session = toWireSession(
-          { ...meta, workspaceId: resolved.id },
-          resolved.root,
-          resolveSessionFacts(core, sessionId),
-        );
+        if (typeof body.title === 'string') await handle.accessor.get(ISessionMetadata).setTitle(body.title);
+        const session = await liveWireSession(core, handle);
         core.accessor.get(IEventService).publish(
           new SessionCreated({ payload: { agentId: 'main', sessionId: session.id, session } }),
         );
@@ -340,8 +333,7 @@ export function registerSessionsRoutes(
         );
         return;
       }
-      const cwd =
-        summary.cwd ?? (await core.accessor.get(IWorkspaceService).get(summary.workspaceId))?.root;
+      const cwd = await sessionCwd(core, summary);
       if (cwd === undefined) {
         reply.send(
           errEnvelope(
@@ -388,7 +380,11 @@ export function registerSessionsRoutes(
         if (agent_config !== undefined) {
           await applySessionAgentConfig(core, session_id, agent_config);
         }
-        const session = toWireSession(fields, fields.root, resolveSessionFacts(core, fields.id));
+        const session = toWireSession(
+          fields,
+          await requireSessionCwd(core, fields),
+          resolveSessionFacts(core, fields.id),
+        );
         const main =
           agent_config !== undefined
             ? await resolveMainAgent(core, session_id)
@@ -645,24 +641,13 @@ async function readWaitSnapshot(
   const pendingInteractions = listPendingInteractions(id);
   let baseSession: Session;
   if (live !== undefined) {
-    const meta = await live.accessor.get(ISessionMetadata).read();
-    const ctx = live.accessor.get(ISessionContext);
-    baseSession = toWireSession(
-      { ...meta, workspaceId: ctx.workspaceId },
-      ctx.cwd,
-      resolveSessionFacts(core, id),
-    );
+    baseSession = await liveWireSession(core, live);
   } else {
     const summary = await core.accessor.get(ISessionIndex).get(id);
     if (summary === undefined) {
       throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${id} does not exist`);
     }
-    const cwd =
-      summary.cwd ?? (await core.accessor.get(IWorkspaceService).get(summary.workspaceId))?.root;
-    if (cwd === undefined) {
-      throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${id} has no recoverable cwd`);
-    }
-    baseSession = toWireSession(summary, cwd, resolveSessionFacts(core, id));
+    baseSession = toWireSession(summary, await requireSessionCwd(core, summary), resolveSessionFacts(core, id));
   }
   const session =
     pendingInteractions.length > 0 && baseSession.pending_interaction === 'none'
@@ -830,7 +815,7 @@ async function forkSessionAction(
     });
     const session = toWireSession(
       { ...meta, workspaceId: lease.instance.program.workspaceId },
-      meta.cwd ?? '',
+      sessionWorkDir(meta, lease.instance.root),
       resolveSessionFacts(core, meta.id),
     );
     core.accessor
@@ -1089,13 +1074,7 @@ async function restoreSessionAction(ctx: SessionActionCtx): Promise<void> {
   if (restored === undefined) {
     throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${id} does not exist`);
   }
-  const meta = await restored.accessor.get(ISessionMetadata).read();
-  const sessionCtx = restored.accessor.get(ISessionContext);
-  const session = toWireSession(
-    { ...meta, workspaceId: sessionCtx.workspaceId },
-    sessionCtx.cwd,
-    resolveSessionFacts(core, meta.id),
-  );
+  const session = await liveWireSession(core, restored);
   requestLog(req)?.info({ session_id: id, action: 'restore' }, 'session action completed');
   reply.send(okEnvelope(session, req.id));
 }
@@ -1187,13 +1166,7 @@ async function reloadSessionAction(ctx: SessionActionCtx): Promise<void> {
       .notifyAllChanges({ previousSubagentNames: reloadGuard?.previousSubagentNames });
     main.accessor.get(IAgentLoopService).flushReminders();
   }
-  const meta = await handle.accessor.get(ISessionMetadata).read();
-  const sessionCtx = handle.accessor.get(ISessionContext);
-  const session = toWireSession(
-    { ...meta, workspaceId: sessionCtx.workspaceId },
-    sessionCtx.cwd,
-    resolveSessionFacts(core, meta.id),
-  );
+  const session = await liveWireSession(core, handle);
   requestLog(req)?.info({ session_id: id, action: 'reload' }, 'session action completed');
   reply.send(okEnvelope(session, req.id));
 }
@@ -1233,9 +1206,33 @@ export interface SessionWireFields {
   readonly lastTurnReason?: 'completed' | 'cancelled' | 'failed';
 }
 
+export async function sessionCwd(
+  core: Scope,
+  session: SessionPlacementFacts & { readonly workspaceId: string },
+): Promise<SessionWorkDirPath | undefined> {
+  const root = (await core.accessor.get(IWorkspaceService).get(session.workspaceId))?.root;
+  return sessionWorkDir(session, root);
+}
+
+async function requireSessionCwd(
+  core: Scope,
+  session: SessionPlacementFacts & { readonly workspaceId: string; readonly id: string },
+): Promise<SessionWorkDirPath> {
+  const cwd = await sessionCwd(core, session);
+  if (cwd === undefined) {
+    throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${session.id} has no recoverable cwd`);
+  }
+  return cwd;
+}
+
+async function liveWireSession(core: Scope, handle: ISessionScopeHandle): Promise<Session> {
+  const fields = await liveSessionFields(handle);
+  return toWireSession(fields, await requireSessionCwd(core, fields), resolveSessionFacts(core, fields.id));
+}
+
 export function toWireSession(
   fields: SessionWireFields,
-  cwd: string,
+  cwd: SessionWorkDirPath,
   facts: SessionFacts,
   git?: SessionGit,
 ): Session {

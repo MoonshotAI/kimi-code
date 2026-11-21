@@ -68,15 +68,18 @@ export function defineKlientConformance(
       expect(env.clientVersion.length).toBeGreaterThan(0);
     });
 
-    it('workspaces round-trip through create/get/update/list/delete', async () => {
+    it('workspaces round-trip through resolve/get/update/list/delete', async () => {
+      const root = await mkdtemp(join(tmpdir(), 'klient-workspace-root-'));
       const additionalDir = await mkdtemp(join(tmpdir(), 'klient-workspace-extra-'));
       try {
         const workspaces = target.klient.global.workspaces;
-        const created = await workspaces.createOrTouch({ root: process.cwd(), name: 'conformance' });
-        expect(created.id.length).toBeGreaterThan(0);
+        const resolved = await workspaces.resolveImplicit(root);
+        const created = resolved.project;
+        expect(resolved.rule).toBe('own');
+        expect(created).toMatchObject({ root, kind: 'implicit' });
 
         const fetched = await workspaces.get(created.id);
-        expect(fetched?.name).toBe('conformance');
+        expect(fetched).toEqual(created);
 
         const updated = await workspaces.update({ id: created.id, patch: { name: 'conformance-2' } });
         expect(updated?.name).toBe('conformance-2');
@@ -99,6 +102,7 @@ export function defineKlientConformance(
         await workspaces.delete(created.id);
         expect(await workspaces.get(created.id)).toBeUndefined();
       } finally {
+        await rm(root, { recursive: true, force: true });
         await rm(additionalDir, { recursive: true, force: true });
       }
     });
@@ -132,6 +136,24 @@ export function defineKlientConformance(
         expect(typeof context.tokenCount).toBe('number');
       } finally {
         await target.klient.session(created.id).close();
+      }
+    });
+
+    it('lists a new session with the directory it is pinned at', async () => {
+      const workDir = await mkdtemp(join(tmpdir(), 'klient-conf-pinned-'));
+      try {
+        const created = await target.klient.global.sessions.create({ workDir });
+        try {
+          const summary = { id: created.id, environmentCwd: workDir };
+          expect(await target.klient.global.sessions.get(created.id)).toMatchObject(summary);
+          expect((await target.klient.global.sessions.list({ sessionId: created.id })).items).toEqual([
+            expect.objectContaining(summary),
+          ]);
+        } finally {
+          await target.klient.session(created.id).close();
+        }
+      } finally {
+        await rm(workDir, { recursive: true, force: true });
       }
     });
 
@@ -773,7 +795,7 @@ export function defineKlientConformance(
         const agent = target.klient.session(created.id).agent('main');
         const binding = await agent.getEnvironment();
         expect(binding.environmentId).toBe('local');
-        expect(binding).toEqual({ environmentId: 'local' });
+        expect(binding).toEqual({ environmentId: 'local', cwd: process.cwd() });
         expect(await agent.getEnvironment()).toEqual(binding);
 
         const seen: unknown[] = [];

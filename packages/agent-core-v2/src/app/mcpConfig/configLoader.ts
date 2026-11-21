@@ -1,10 +1,11 @@
 import { dirname, join, normalize } from 'pathe';
 
 import { resolveKimiHome } from '#/app/bootstrap/bootstrap';
-import { findNearestGitMarker } from '#/app/git/workTree';
+import { findNearestGitMarker, locateCheckout } from '#/app/git/workTree';
+import { groupsInto } from '#/app/workspace/implicitProject';
 import type { Workspace } from '#/app/workspace/workspace';
 import { resolvePath } from '#/_base/utils/paths';
-import { workspaceRootKey } from '#/_base/utils/workdir-slug';
+import { toAbsoluteDir, workspaceRootKey } from '#/_base/utils/workdir-slug';
 import { ErrorCodes, Error2 } from '#/errors';
 import { McpServerConfigSchema, type McpServerConfig } from '#/mcpCore/config-schema';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
@@ -45,14 +46,15 @@ export async function findMcpAnchor(
   const nearest = [isSameOrInside(here, root) ? root : undefined, checkout]
     .filter((dir) => dir !== undefined)
     .toSorted((a, b) => b.key.length - a.key.length)[0];
-  if (
-    nearest === undefined ||
-    nearest.key === root.key ||
-    ![root, ...additional].some((scope) => isSameOrInside(nearest, scope))
-  ) {
-    return keyedRootAnchor(project.root);
-  }
-  return { anchor: nearest.dir as McpAnchor, key: nearest.key };
+  if (nearest === undefined || nearest.key === root.key) return keyedRootAnchor(project.root);
+  const inScope = [root, ...additional].some((scope) => isSameOrInside(nearest, scope)) ||
+    (await groupsIntoRoot(fs, nearest.dir, root));
+  return inScope ? { anchor: nearest.dir as McpAnchor, key: nearest.key } : keyedRootAnchor(project.root);
+}
+
+async function groupsIntoRoot(fs: IHostFileSystem, checkout: string, root: CanonicalDir): Promise<boolean> {
+  const absolute = toAbsoluteDir(checkout);
+  return absolute !== undefined && groupsInto(await locateCheckout(fs, absolute), root.key);
 }
 
 interface CanonicalDir {
@@ -105,6 +107,7 @@ export interface LoadMcpServersInput {
   readonly cwd: string;
   readonly homeDir?: string;
   readonly includeProject?: boolean;
+  readonly anchor?: McpAnchor;
 }
 
 export interface LoadMcpServersDetailedResult {
@@ -124,7 +127,7 @@ export async function loadMcpServersDetailed(
   if (input.includeProject === false) return loadUserMcpServers(input);
   const [user, anchor] = await Promise.all([
     loadUserMcpServers(input),
-    loadAnchorMcpServers({ fs: input.fs, anchor: rootAnchor(input.cwd) }),
+    loadAnchorMcpServers({ fs: input.fs, anchor: input.anchor ?? rootAnchor(input.cwd) }),
   ]);
   return mergeDetailed([user, anchor]);
 }

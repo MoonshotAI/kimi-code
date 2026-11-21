@@ -2,6 +2,8 @@ import { EnvironmentService } from '#/app/environment/environmentService';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { Workspace, IWorkspaceService } from '#/app/workspace/workspace';
+import type { ImplicitWorkspace } from '#/app/workspace/implicitProject';
+import { Error2, ErrorCodes } from '#/errors';
 import { FakeEnvironment } from '#/environment/fakeEnvironment';
 import type { Environment } from '#/environment/environment';
 import { WorkspaceInstanceManager } from '#/workspace/workspaceInstance/workspaceInstanceManagerService';
@@ -38,6 +40,7 @@ function manager(
   _events: string[] = [],
   customize?: (args: unknown[]) => void,
   environments = environmentService(ready),
+  revivable: readonly Workspace[] = [],
 ): WorkspaceInstanceManager {
   const byId = new Map(values.map((value) => [value.id, value]));
   const workspaces: IWorkspaceService = {
@@ -49,11 +52,20 @@ function manager(
       if (value === undefined) throw new Error(`unknown root ${input.root}`);
       return value;
     }),
-    createOrTouch: vi.fn(async (root: string) => {
-      const value = values.find((entry) => entry.root === root);
-      if (value === undefined) throw new Error(`unknown root ${root}`);
+    resolveImplicit: vi.fn(async (dir: string) => {
+      const value = values.find((entry) => entry.root === dir);
+      if (value === undefined) throw new Error(`unknown root ${dir}`);
+      return { project: value as ImplicitWorkspace, rule: 'own' as const };
+    }),
+    peekImplicit: vi.fn(async (dir: string) => {
+      throw new Error(`unexpected peek of ${dir}`);
+    }),
+    reviveImplicit: vi.fn(async (id: string, workDir: string) => {
+      const value = revivable.find((entry) => entry.id === id && entry.root === workDir);
+      if (value === undefined) throw new Error2(ErrorCodes.WORKSPACE_NOT_FOUND, `cannot revive ${id}`);
       return value;
     }),
+    contains: async () => false,
     touch: vi.fn(async (id: string) => byId.get(id)),
     update: async () => undefined,
     setPrimary: async () => undefined,
@@ -80,7 +92,7 @@ describe('WorkspaceInstanceManager', () => {
     const gate = deferred();
     const value = manager([workspace('one')], gate.promise);
     const firstPromise = value.acquire({ workspaceId: 'one' });
-    const secondPromise = value.acquire({ root: '/one' });
+    const secondPromise = value.acquire({ cwd: '/one' });
     gate.resolve();
 
     const [first, second] = await Promise.all([firstPromise, secondPromise]);
@@ -144,98 +156,17 @@ describe('WorkspaceInstanceManager', () => {
     await value.dispose();
   });
 
-  describe('findContaining', () => {
-    function rootedWorkspace(id: string, root: string): Workspace {
-      return { id, root, name: id, kind: 'implicit', additionalDirs: [], createdAt: 0, lastOpenedAt: 0 };
-    }
+  it('acquires only existing workspaces by id and revives a missing one only from a session directory', async () => {
+    const gone = workspace('gone');
+    const value = manager([], Promise.resolve(), [], undefined, environmentService(), [gone]);
 
-    function stubDirs(lease: { instance: { program: object } }, additionalDirs: readonly string[]): { additionalDirs: readonly string[] } {
-      const dirs = { additionalDirs };
-      Object.defineProperty(lease.instance.program, 'dirs', { value: dirs });
-      return dirs;
-    }
-
-    it('matches exact and nested cwds, preferring the longest containing root', async () => {
-      const value = manager([
-        rootedWorkspace('repo', '/repo'),
-        rootedWorkspace('sub', '/repo/sub'),
-      ]);
-      const repo = await value.acquire({ workspaceId: 'repo' });
-      const sub = await value.acquire({ workspaceId: 'sub' });
-      stubDirs(repo, []);
-      stubDirs(sub, []);
-
-      expect(value.findContaining('/repo')?.id).toBe('repo');
-      expect(value.findContaining('/repo/sub')?.id).toBe('sub');
-      expect(value.findContaining('/repo/sub/deep/pkg')?.id).toBe('sub');
-      expect(value.findContaining('/repo/other')?.id).toBe('repo');
-      expect(value.findContaining('/repo-other')).toBeUndefined();
-      expect(value.findContaining('/outside')).toBeUndefined();
-      repo.dispose();
-      sub.dispose();
-      await value.dispose();
+    await expect(value.acquire({ workspaceId: 'gone' })).rejects.toMatchObject({ code: ErrorCodes.WORKSPACE_NOT_FOUND });
+    await expect(value.acquire({ workspaceId: 'gone', reviveFrom: '/elsewhere' })).rejects.toMatchObject({
+      code: ErrorCodes.WORKSPACE_NOT_FOUND,
     });
-
-    it('matches exact and nested cwds under additional source roots', async () => {
-      const value = manager([
-        {
-          ...rootedWorkspace('multi', '/primary'),
-          additionalDirs: ['/extra'],
-        },
-      ]);
-      const lease = await value.acquire({ workspaceId: 'multi' });
-      stubDirs(lease, ['/extra']);
-
-      expect(value.findContaining('/extra')?.id).toBe('multi');
-      expect(value.findContaining('/extra/nested/pkg')?.id).toBe('multi');
-      expect(value.findContaining('/extra-other')).toBeUndefined();
-      expect(value.findContaining('/outside')).toBeUndefined();
-      lease.dispose();
-      await value.dispose();
-    });
-
-    it('uses current program dirs instead of the instance metadata snapshot', async () => {
-      const initial = rootedWorkspace('multi', '/primary');
-      const value = manager([initial]);
-      const lease = await value.acquire({ workspaceId: 'multi' });
-      const dirs = stubDirs(lease, []);
-
-      dirs.additionalDirs = ['/extra'];
-      expect(value.findContaining('/extra/nested')?.id).toBe('multi');
-      dirs.additionalDirs = [];
-      expect(value.findContaining('/extra/nested')).toBeUndefined();
-      lease.dispose();
-      await value.dispose();
-    });
-
-    it('matches across Windows spelling variants', async () => {
-      const value = manager([rootedWorkspace('win', 'C:\\Users\\Foo\\Repo')]);
-      const lease = await value.acquire({ workspaceId: 'win' });
-      stubDirs(lease, []);
-
-      expect(value.findContaining('c:/users/foo/repo')?.id).toBe('win');
-      expect(value.findContaining('C:/Users/Foo/Repo/sub')?.id).toBe('win');
-      expect(value.findContaining('D:/elsewhere')).toBeUndefined();
-      lease.dispose();
-      await value.dispose();
-    });
-
-    it('matches any absolute cwd against a workspace rooted at /', async () => {
-      const value = manager([
-        rootedWorkspace('root', '/'),
-        rootedWorkspace('repo', '/repo'),
-      ]);
-      const root = await value.acquire({ workspaceId: 'root' });
-      const repo = await value.acquire({ workspaceId: 'repo' });
-      stubDirs(root, []);
-      stubDirs(repo, []);
-
-      expect(value.findContaining('/')?.id).toBe('root');
-      expect(value.findContaining('/elsewhere')?.id).toBe('root');
-      expect(value.findContaining('/repo/sub')?.id).toBe('repo');
-      root.dispose();
-      repo.dispose();
-      await value.dispose();
-    });
+    const lease = await value.acquire({ workspaceId: 'gone', reviveFrom: '/gone' });
+    expect(lease.instance.id).toBe('gone');
+    lease.dispose();
+    await value.dispose();
   });
 });

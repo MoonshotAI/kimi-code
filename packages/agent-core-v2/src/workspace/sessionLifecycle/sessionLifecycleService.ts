@@ -71,7 +71,7 @@ import { ISessionSkillCatalogData } from '#/features/skill/session/skillCatalogD
 import { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
 import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
 import { ISessionWorkspaceInfo } from '#/session/workspaceInfo/workspaceInfo';
-import { resolveEffectiveWorkspaceRoots } from '#/session/workspaceContext/workspaceRoots';
+import { sessionWorkDir } from '#/session/workspaceContext/workspaceRoots';
 import { ISessionWorkdir } from '#/session/workdir/workdir';
 import {
   drainSessionMetadataWrites,
@@ -229,7 +229,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
   async create(opts: CreateSessionOptions): Promise<ISessionScopeHandle> {
     const sessionId = opts.sessionId ?? createSessionId();
     const environment = sessionEnvironment(opts.environmentId, opts.environmentCwd);
-    const workDir = this.sessionWorkDir(opts.workDir, environment);
+    const workDir = this.workDirOfBinding(opts.workDir, environment);
     const effective = { ...opts, workDir };
     const workdir = await this.openWorkdir(environment, workDir);
     await workdir.skills
@@ -251,7 +251,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       }
       const agents = handle.accessor.get(IAgentLifecycleService);
       const main =
-        opts.mainAgentBinding !== undefined || opts.ensureMainAgent === true || environment !== undefined
+        opts.mainAgentBinding !== undefined || opts.ensureMainAgent === true
           ? await agents.create({
               agentId: MAIN_AGENT_ID,
               binding: opts.mainAgentBinding,
@@ -340,6 +340,10 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
               _serviceBrand: undefined,
               environmentId: environment?.environmentId ?? LOCAL_ENVIRONMENT_ID,
               cwd: environment?.cwd,
+              get anchor() {
+                return workdir.mcp.anchor;
+              },
+              onDidChangeAnchor: workdir.mcp.onDidChangeAnchor,
               fs: workdir.fs,
             }],
             ...sessionEphemeralMcpServersSeed(opts.mcpServers ?? {}),
@@ -403,14 +407,11 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     return handle;
   }
 
-  private sessionWorkDir(fallbackCwd: string, environment: EnvironmentBinding | undefined): string {
-    if (environment !== undefined && environment.environmentId !== LOCAL_ENVIRONMENT_ID) return fallbackCwd;
-    const primary = this.workspaceContext.meta.root;
-    return resolveEffectiveWorkspaceRoots(
-      { workspaceId: this.workspaceId, cwd: fallbackCwd },
-      environment,
-      { primaryByWorkspace: { [this.workspaceId]: primary }, additionalDirs: [] },
-    ).workDir;
+  private workDirOfBinding(fallbackCwd: string, environment: EnvironmentBinding | undefined): string {
+    return sessionWorkDir(
+      { cwd: fallbackCwd, environmentId: environment?.environmentId, environmentCwd: environment?.cwd },
+      this.workspaceContext.meta.root,
+    );
   }
 
   private async openWorkdir(
@@ -513,7 +514,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     const persisted = await this.readMetaFromDisk(sessionId);
     const environment = sessionEnvironment(persisted?.environmentId, persisted?.environmentCwd);
     const fallbackCwd = persisted?.cwd ?? summary.cwd ?? this.workspaceContext.meta.root;
-    const workDir = this.sessionWorkDir(fallbackCwd, environment);
+    const workDir = this.workDirOfBinding(fallbackCwd, environment);
 
     const handle = await this.materializeSession({
       sessionId,
@@ -864,7 +865,10 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
           lastTurnReason: meta.lastTurnReason,
         }),
       );
-      await this.appendSessionIndexEntry(targetId, this.workspaceContext.cwd);
+      await this.appendSessionIndexEntry(
+        targetId,
+        sessionWorkDir(meta, this.workspaceContext.meta.root),
+      );
       this._onDidForkSession.fire({ sourceSessionId: sourceId, sessionId: targetId });
       return meta;
     } catch (error) {

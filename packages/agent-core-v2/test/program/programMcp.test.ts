@@ -24,6 +24,7 @@ import type { WatchChange } from '#human/utils/watch';
 
 import { stubLog } from '../_base/log/stubs';
 import { deferredAgentIdentityStub, stubAgentIdentity } from '../app/agentIdentity/stubs';
+import { linkedWorktree, mainCheckout } from '../app/git/checkoutLayouts';
 import {
   createMemoryMcpOAuthStore,
   cwdStdioFixture,
@@ -402,12 +403,15 @@ describe('ProgramMcp', () => {
     expect(pinned.anchor).toBe(wt);
     expect(names(pinned.view())).toEqual(['wtServer']);
     const wtManager = plainHandle(pinned).upsertTarget!('wtServer');
+    const anchorMoves: string[] = [];
+    pinned.onDidChangeAnchor(() => anchorMoves.push(pinned.anchor));
 
     projectDirs = [];
     projectChanges.fire();
     await vi.waitFor(() => {
       expect(pinned.anchor).toBe(primary);
     });
+    expect(anchorMoves).toEqual([primary]);
     await pinned.ready;
 
     expect(names(pinned.view())).toEqual(['rootServer']);
@@ -494,6 +498,50 @@ describe('ProgramMcp', () => {
     escaped.dispose();
   });
 
+  it('anchors and previews an unregistered worktree of the primary repository at its root, also after a project change', async () => {
+    const lab = temp('kimi-program-mcp-repo-');
+    primary = mainCheckout(join(lab, 'app'));
+    const wt = linkedWorktree(join(primary, '.git'), join(lab, 'app-fix'));
+    await mkdir(join(wt, 'src'));
+    await writeMcpJson(projectFile(primary), { rootServer: disabledStdio('root') });
+    await writeMcpJson(projectFile(wt), { wtServer: disabledStdio('wt') });
+    const program = createProgramMcp();
+    await program.root.ready;
+    const pinned = await program.workdir(join(wt, 'src'));
+    await pinned.ready;
+
+    expect(pinned.anchor).toBe(wt);
+    expect(names(pinned.view())).toEqual(['wtServer']);
+    expect((await program.previewProjectServers(join(wt, 'src'))).map(({ name }) => name)).toEqual(['wtServer']);
+
+    projectChanges.fire();
+    const second = await program.workdir(wt);
+
+    expect(pinned.anchor).toBe(wt);
+    expect(second.anchor).toBe(wt);
+    second.dispose();
+    pinned.dispose();
+  });
+
+  it('anchors a workdir pinned at a symlink to an outside checkout at the primary and never reads that checkout', async () => {
+    await mkdir(join(primary, '.git'));
+    const outside = temp('kimi-program-mcp-outside-');
+    await mkdir(join(outside, '.git'));
+    await writeMcpJson(projectFile(primary), { rootServer: disabledStdio('root') });
+    await writeMcpJson(join(outside, '.mcp.json'), { outsideServer: disabledStdio('outside') });
+    const link = join(primary, 'link');
+    await symlink(outside, link);
+    const program = createProgramMcp();
+    await program.root.ready;
+    const pinned = await program.workdir(link);
+    await pinned.ready;
+
+    expect(pinned.anchor).toBe(primary);
+    expect(names(pinned.view())).toEqual(['rootServer']);
+    expect((await program.previewProjectServers(link)).map(({ name }) => name)).toEqual(['rootServer']);
+    pinned.dispose();
+  });
+
   it('keeps a pinned workdir on its anchor when the project changes without moving it', async () => {
     const wt = await checkout();
     await writeMcpJson(projectFile(wt), { wtServer: disabledStdio('wt') });
@@ -503,11 +551,14 @@ describe('ProgramMcp', () => {
     await pinned.ready;
     const statuses: McpServerEntry[] = [];
     const unsubscribe = pinned.view().onStatusChange((entry) => statuses.push(entry));
+    const anchorMoves: string[] = [];
+    pinned.onDidChangeAnchor(() => anchorMoves.push(pinned.anchor));
 
     projectChanges.fire();
     const second = await program.workdir(wt);
 
     expect(pinned.anchor).toBe(wt);
+    expect(anchorMoves).toEqual([]);
     expect(statuses).toEqual([]);
     expect(names(pinned.view())).toEqual(['wtServer']);
     unsubscribe();
@@ -525,11 +576,14 @@ describe('ProgramMcp', () => {
     const handle = plainHandle(program.root);
     const statuses: McpServerEntry[] = [];
     const unsubscribe = handle.connectionManager.onStatusChange((entry) => statuses.push(entry));
+    const anchorMoves: string[] = [];
+    program.root.onDidChangeAnchor(() => anchorMoves.push(program.root.anchor));
 
     primary = next;
     dirsChanges.fire();
 
     expect(program.root.anchor).toBe(next);
+    expect(anchorMoves).toEqual([next]);
     await vi.waitFor(() => {
       expect(names(program.root.view())).toEqual(['second']);
     });

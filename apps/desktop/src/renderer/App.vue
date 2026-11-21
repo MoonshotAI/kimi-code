@@ -83,6 +83,7 @@ import TerminalDropZone from './components/terminal/TerminalDropZone.vue';
 import TerminalPanel from './components/terminal/TerminalPanel.vue';
 import TerminalResizeHandle from './components/terminal/TerminalResizeHandle.vue';
 import { selectContentsOf } from '@moonshot-ai/app-core/lib';
+import { isPrimaryImmutable } from '@moonshot-ai/app-core/lib';
 import { useFullscreen } from './composables/useFullscreen';
 import { useNativeTerminal, nativeTerminalDraftKey } from './composables/useNativeTerminal';
 import { runWhenInitialized, useTrayAttention } from './composables/useTrayAttention';
@@ -272,9 +273,7 @@ const terminalEverOpened = ref(terminalOpen.value);
 watch(terminalOpen, (isOpen) => {
   if (isOpen) terminalEverOpened.value = true;
 });
-const terminalCwd = computed(
-  () => client.visibleWorkspace.value?.root ?? client.status.value.cwd ?? null,
-);
+const terminalCwd = computed(() => workspaces.activePanelRoot);
 function terminalBucketKey(sessionId: string, workspaceId: string | null): string {
   return sessionId === '' ? nativeTerminalDraftKey(workspaceId) : sessionId;
 }
@@ -515,7 +514,7 @@ const openInService: OpenInService = {
 provide(OpenInServiceKey, openInService);
 
 async function openWorkspaceInDefaultApp(): Promise<void> {
-  const root = client.visibleWorkspace.value?.root ?? client.status.value.cwd;
+  const root = workspaces.activePanelRoot;
   if (!root) return;
   const apps = await openInService.catalog();
   const target = resolveOpenInTarget(
@@ -2206,7 +2205,7 @@ async function handleSubmitDispatch(payload: SubmitPayload, owner: number): Prom
 
 type WorkspaceDialogState =
   | { mode: 'create'; dirs: string[]; hostId?: string }
-  | { mode: 'edit'; id: string; name: string; dirs: string[]; hostId?: string };
+  | { mode: 'edit'; id: string; name: string; dirs: string[]; hostId?: string; primaryImmutable: boolean };
 
 const workspaceDialog = ref<WorkspaceDialogState | null>(null);
 const workspaceDialogBusy = ref(false);
@@ -2231,6 +2230,7 @@ function openWorkspaceEditor(ws: WorkspaceView): void {
     name: full?.name ?? ws.name,
     dirs: [ws.root, ...(full?.additionalDirs ?? [])],
     hostId: ws.hostId,
+    primaryImmutable: isPrimaryImmutable(ws),
   };
 }
 
@@ -2678,6 +2678,7 @@ function openPr(url: string): void {
       :manage-hosts="() => openHostSettings(undefined, { addIfEmpty: true })"
       :import-project-config="importProjectConfigDirs"
       :busy="workspaceDialogBusy"
+      :primary-immutable="workspaceDialog.mode === 'edit' && workspaceDialog.primaryImmutable"
       @submit="onWorkspaceDialogSubmit"
       @cancel="closeWorkspaceDialog"
     />

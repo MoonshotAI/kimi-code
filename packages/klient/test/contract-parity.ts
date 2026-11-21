@@ -134,6 +134,7 @@ import type {
   SessionSummary,
 } from '@moonshot-ai/agent-core-v2/app/sessionIndex/sessionIndex';
 import type {
+  ImplicitProjectResult,
   Workspace,
   WorkspaceUpdate,
 } from '@moonshot-ai/agent-core-v2/app/workspace/workspace';
@@ -324,6 +325,7 @@ import {
   sessionSummarySchema,
 } from '../src/contract/global/sessions.js';
 import {
+  implicitProjectResultSchema,
   workspaceSchema,
   workspaceUpdateSchema,
 } from '../src/contract/global/workspaces.js';
@@ -363,6 +365,7 @@ const _sessionSummary: AssertWire<typeof sessionSummarySchema, SessionSummary> =
 const _sessionListQuery: AssertWire<typeof sessionListQuerySchema, SessionListQuery> = true;
 
 const _workspace: AssertWire<typeof workspaceSchema, Workspace> = true;
+const _implicitProjectResult: AssertWire<typeof implicitProjectResultSchema, ImplicitProjectResult> = true;
 const _workspaceUpdate: AssertWire<typeof workspaceUpdateSchema, WorkspaceUpdate> = true;
 
 const _configInspectValue: AssertEngineToWire<typeof configInspectValueSchema, ConfigInspectValue> =

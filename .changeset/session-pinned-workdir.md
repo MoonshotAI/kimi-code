@@ -1,0 +1,5 @@
+---
+"@moonshot-ai/agent-core-v2": minor
+---
+
+Pin every new local session at its starting directory by recording it as the session's `environmentCwd`, and derive every session's working directory in one place: the pinned directory, otherwise the project's current primary directory, otherwise the recorded cwd. Sessions written by earlier versions keep following the primary directory. Pinned sessions outside the project's registered directories get the project's additional directories without the primary directory and read the primary directory's `local.toml` permission rules, project permission rules reload when a session's anchor moves and keep the rules in effect when the new anchor cannot be read, and resuming a pinned session whose directory no longer exists fails with `environment.invalid_cwd` while archive and delete still work. Add a per-directory session listing that returns the sessions of a directory's implicit project whose working directory equals it. Clients older than CLI 2.5.0 and desktop 1.4.0 do not read `environmentCwd` and run these sessions at the project's primary directory.

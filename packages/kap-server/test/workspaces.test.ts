@@ -12,6 +12,7 @@ import {
   IAgentToolRegistryService,
   IAtomicDocumentStore,
   ISessionMcpHandle,
+  ISessionMetadata,
   type ISessionScopeHandle,
   IWorkspaceInstanceManager,
   resumeSessionById,
@@ -114,6 +115,16 @@ describe('server-v2 /api/v1/workspaces', () => {
       headers: authHeaders(server as RunningServer),
     } as never);
     return { status: res.status, body: (await res.json()) as Envelope<T> };
+  }
+
+  async function createFollowingSession(workspaceId: string): Promise<string> {
+    const created = await postJson<{ id: string }>('/api/v1/sessions', { workspace_id: workspaceId });
+    expect(created.body.code).toBe(0);
+    const core = (server as RunningServer).core.accessor;
+    const live = getLiveSessionById(core, created.body.data.id)!;
+    await live.accessor.get(ISessionMetadata).update({ environmentCwd: undefined }, { touchUpdatedAt: false });
+    await closeSessionById(core, created.body.data.id);
+    return created.body.data.id;
   }
 
   it('creates a workspace with the full wire shape', async () => {
@@ -372,6 +383,29 @@ describe('server-v2 /api/v1/workspaces', () => {
     expect(session.body.data.cwd).toBe(extra);
   });
 
+  it('rejects promoting a folder of an implicit workspace with WORKSPACE_PRIMARY_IMMUTABLE (40941)', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'kimi-server-v2-workspaces-implicit-primary-'));
+    try {
+      const extra = join(root, 'candidate');
+      await mkdir(extra);
+      const session = await postJson<{ workspace_id: string }>('/api/v1/sessions', { cwd: root });
+      const id = session.body.data.workspace_id;
+      expect((await patchJson<WorkspaceWire>(`/api/v1/workspaces/${id}`, { additional_dirs: [extra] })).body.code).toBe(0);
+
+      const rejected = await postJson<null>(`/api/v1/workspaces/${id}/primary`, { path: extra });
+
+      expect(rejected.body.code).toBe(40941);
+      const listed = await getJson<{ items: WorkspaceWire[] }>('/api/v1/workspaces');
+      expect(listed.body.data.items.find((item) => item.id === id)).toMatchObject({
+        kind: 'implicit',
+        root,
+        additional_dirs: [extra],
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it('rejects invalid primary paths and unknown workspaces (40001/40409/40410)', async () => {
     const root = home as string;
     const created = await postJson<WorkspaceWire>('/api/v1/workspaces', { root });
@@ -495,7 +529,7 @@ describe('server-v2 /api/v1/workspaces', () => {
     await vi.waitFor(async () => {
       const { body } = await getJson<ListWire>('/api/v1/workspaces');
       expect(body.code).toBe(0);
-      const unions = body.data.items.filter((w) => [typedId, lowerId].includes(w.id));
+      const unions = body.data.items.filter((w) => w.id === typedId || w.id === lowerId);
       expect(unions).toHaveLength(1);
       expect(unions[0]?.session_count).toBe(2);
     });
@@ -529,6 +563,30 @@ describe('server-v2 /api/v1/workspaces', () => {
       }
     } finally {
       await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('reports a project trusted only through its primary record and clears every directory record on untrust', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'kimi-server-v2-workspaces-trust-primary-'));
+    const extra = await mkdtemp(join(tmpdir(), 'kimi-server-v2-workspaces-trust-extra-'));
+    try {
+      const neighbour = await postJson<WorkspaceWire>('/api/v1/workspaces', { root: extra });
+      const trustedNeighbour = await postJson<{ trusted: boolean }>(`/api/v1/workspaces/${neighbour.body.data.id}/trust`);
+      expect(trustedNeighbour.body.data.trusted).toBe(true);
+      const created = await postJson<WorkspaceWire>('/api/v1/workspaces', { root, additional_dirs: [extra] });
+      const id = created.body.data.id;
+
+      const initial = await getJson<{ trusted: boolean }>(`/api/v1/workspaces/${id}/trust`);
+      expect(initial.body.data.trusted).toBe(false);
+
+      await postJson<{ trusted: boolean }>(`/api/v1/workspaces/${id}/trust`);
+      const revoked = await postJson<{ trusted: boolean }>(`/api/v1/workspaces/${id}/untrust`);
+      expect(revoked.body.data.trusted).toBe(false);
+      const neighbourAfter = await getJson<{ trusted: boolean }>(`/api/v1/workspaces/${neighbour.body.data.id}/trust`);
+      expect(neighbourAfter.body.data.trusted).toBe(false);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+      await rm(extra, { recursive: true, force: true });
     }
   });
 
@@ -622,7 +680,7 @@ describe('server-v2 /api/v1/workspaces', () => {
       });
       let release: (() => void) | undefined;
       try {
-        const lease = await manager.acquire({ workspaceId: id, root });
+        const lease = await manager.acquire({ workspaceId: id });
         release = () => lease.dispose();
         const workspace = lease.instance;
         await workspace.program.mcp.ready;
@@ -676,7 +734,7 @@ describe('server-v2 /api/v1/workspaces', () => {
       });
       let release: (() => void) | undefined;
       try {
-        const lease = await manager.acquire({ workspaceId: id, root });
+        const lease = await manager.acquire({ workspaceId: id });
         release = () => lease.dispose();
         const workspace = lease.instance;
         await workspace.program.mcp.ready;
@@ -708,7 +766,7 @@ describe('server-v2 /api/v1/workspaces', () => {
     const manager = (server as RunningServer).core.accessor.get(IWorkspaceInstanceManager);
     let release: (() => void) | undefined;
     try {
-      const lease = await manager.acquire({ workspaceId: id, root });
+      const lease = await manager.acquire({ workspaceId: id });
       release = () => lease.dispose();
       const workspace = lease.instance;
       await workspace.program.trust.ready;
@@ -765,24 +823,24 @@ describe('server-v2 /api/v1/workspaces', () => {
     });
     expect(created.body.code).toBe(0);
     const workspaceId = created.body.data.id;
-    const createdSession = await postJson<{ id: string }>('/api/v1/sessions', {
-      workspace_id: workspaceId,
-    });
-    expect(createdSession.body.code).toBe(0);
-    const sessionId = createdSession.body.data.id;
+    const sessionId = await createFollowingSession(workspaceId);
     const explicitSession = await postJson<{ id: string }>('/api/v1/sessions', {
       workspace_id: workspaceId,
       environment_id: 'local',
       environment_cwd: dirA,
     });
     expect(explicitSession.body.code).toBe(0);
+    const pinnedSession = await postJson<{ id: string }>('/api/v1/sessions', {
+      workspace_id: workspaceId,
+    });
+    expect(pinnedSession.body.code).toBe(0);
 
     const ensureAgent = async (session: ISessionScopeHandle) => {
       const agents = session.accessor.get(IAgentLifecycleService);
       if (agents.handleOf('main') === undefined) await agents.create({ agentId: 'main' });
       return agents.handleOf('main')!;
     };
-    let session = getLiveSessionById((server as RunningServer).core.accessor, sessionId)!;
+    let session = (await resumeSessionById((server as RunningServer).core.accessor, sessionId))!;
     let agent = await ensureAgent(session);
     let registry = agent.accessor.get(IAgentToolRegistryService);
     let environment = agent.accessor.get(IAgentEnvironmentService);
@@ -805,7 +863,7 @@ describe('server-v2 /api/v1/workspaces', () => {
       return JSON.stringify(result.output);
     };
     const manager = (server as RunningServer).core.accessor.get(IWorkspaceInstanceManager);
-    const lease = await manager.acquire({ workspaceId, root: dirA });
+    const lease = await manager.acquire({ workspaceId });
     const instance = lease.instance;
     const program = instance.program;
 
@@ -832,6 +890,9 @@ describe('server-v2 /api/v1/workspaces', () => {
     const explicitLive = getLiveSessionById((server as RunningServer).core.accessor, explicitSession.body.data.id)!;
     const explicitAgent = await ensureAgent(explicitLive);
     expect(explicitAgent.accessor.get(IAgentEnvironmentService).workspaceRoots().workDir).toBe(dirA);
+    const pinnedLive = getLiveSessionById((server as RunningServer).core.accessor, pinnedSession.body.data.id)!;
+    const pinnedAgent = await ensureAgent(pinnedLive);
+    expect(pinnedAgent.accessor.get(IAgentEnvironmentService).workspaceRoots().workDir).toBe(dirA);
 
     const added = await patchJson<WorkspaceWire>(`/api/v1/workspaces/${workspaceId}`, {
       additional_dirs: [dirA, dirC],
@@ -909,13 +970,14 @@ describe('server-v2 /api/v1/workspaces', () => {
       });
       expect(created.body.code).toBe(0);
       const workspaceId = created.body.data.id;
-      const following = await postJson<{ id: string }>('/api/v1/sessions', { workspace_id: workspaceId });
+      const followingId = await createFollowingSession(workspaceId);
+      await resumeSessionById((server as RunningServer).core.accessor, followingId);
+      const following = { body: { data: { id: followingId } } };
       const pinned = await postJson<{ id: string }>('/api/v1/sessions', {
         workspace_id: workspaceId,
         environment_id: 'local',
         environment_cwd: join(dirB, '.kimi-code'),
       });
-      expect(following.body.code).toBe(0);
       expect(pinned.body.code).toBe(0);
       const mcpOf = (id: string) =>
         getLiveSessionById((server as RunningServer).core.accessor, id)!.accessor.get(ISessionMcpHandle);
