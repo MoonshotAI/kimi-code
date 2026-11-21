@@ -27,7 +27,7 @@ MCP server configuration is written in `mcp.json`, at two levels:
 
 Entries with the same name: the project-level entry takes precedence and overrides the user-level entry.
 
-Earlier versions read the project-level file from the directory you started in. A `.kimi-code/mcp.json` placed in a subdirectory of a repository is no longer loaded; move it to the repository root, or to the root of the worktree that should use it.
+Earlier versions read the project-level file from the directory you started in. A `.kimi-code/mcp.json` placed in a subdirectory of a repository is no longer loaded for sessions that join the repository's project; move it to the repository root, or to the root of the worktree that should use it. A subdirectory that already has its own project with sessions, for example one created by an earlier version, keeps that project and keeps reading the file in that subdirectory. After you delete that project in the desktop app, new sessions started there join the repository's project and read the file at the root of their checkout.
 
 Run `/mcp-config` in the TUI to interactively add, edit, or delete servers without manually editing the JSON file. Run `/mcp` to view the connection status of all current servers.
 
