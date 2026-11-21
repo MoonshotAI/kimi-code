@@ -8,6 +8,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { WebSocket, type RawData } from 'ws';
 import {
   IAgentLifecycleService,
+  IAgentLoopService,
   IAgentPermissionModeService,
   IAgentTaskOutputService,
   IAgentToolExecutorService,
@@ -297,6 +298,7 @@ interface ConversationChannel {
   readonly tasks: any[];
   readonly agents: any[];
   readonly todos: any[];
+  readonly notices: any[];
   snapshot(): any;
   turns(): any[];
   close(): void;
@@ -335,6 +337,7 @@ async function subscribeConversation(
   const tasks: any[] = [];
   const agents: any[] = [];
   const todos: any[] = [];
+  const notices: any[] = [];
   ws.on('message', (data) => {
     let frame: any;
     try {
@@ -347,6 +350,7 @@ async function subscribeConversation(
     if (frame.type === 'task') tasks.push(frame);
     if (frame.type === 'agent' && frame.agent_id === agentId) agents.push(frame);
     if (frame.type === 'todo' && frame.agent_id === agentId) todos.push(frame);
+    if (frame.type === 'notice' && frame.agent_id === agentId) notices.push(frame);
   });
   await new Promise<void>((resolve, reject) => {
     ws.once('open', () => {
@@ -362,6 +366,7 @@ async function subscribeConversation(
     tasks,
     agents,
     todos,
+    notices,
     snapshot: () => conversation.find((frame) => frame.type === 'turns'),
     turns: () => replayFrames(conversation),
     close: () => ws.close(),
@@ -720,6 +725,84 @@ describe('conversation contract e2e', () => {
     channel.close();
   });
 
+  it('a session whose saved model was removed opens with history and a model error notice', async () => {
+    await boot([]);
+    await writeFile(
+      join(home!, 'config.toml'),
+      `${configToml(llm!.port)}\n[models.old]\nprovider = "stub"\nmodel = "old"\nmax_context_size = 100000\n`,
+      'utf-8',
+    );
+    await server!.core.accessor.get(IConfigService).reload();
+    const { id: sid } = await rest<{ id: string }>(server!, base, '/api/v1/sessions', {
+      method: 'POST',
+      body: { metadata: { cwd: '/tmp' }, agent_config: { model: 'old' } },
+    });
+    await rest<{ prompt_id: string }>(server!, base, `/api/v1/sessions/${encodeURIComponent(sid)}/prompts`, {
+      method: 'POST',
+      body: { content: [{ type: 'text', text: 'history from removed model' }], model: 'old', permission_mode: 'yolo' },
+    });
+    await idle(server!, base, sid);
+    await server!.close();
+    await writeFile(join(home!, 'config.toml'), configToml(llm!.port), 'utf-8');
+    server = await startServer({ hostIdentity: TEST_HOST_IDENTITY, host: '127.0.0.1', port: 0, homeDir: home!, logLevel: 'silent' });
+    base = `http://127.0.0.1:${server.port}`;
+
+    const channel = await subscribeConversation(server, sid);
+
+    expect(channel.turns().flatMap((turn) => turn.items).map(textOf)).toContain('history from removed model');
+    expect(channel.agents.at(-1)!.model).toBeUndefined();
+    expect(channel.notices).toContainEqual(expect.objectContaining({ level: 'warning', code: 'model.not_configured', title: 'old' }));
+    expect(channel.conversation.findIndex((frame) => frame.type === 'turns')).toBeLessThan(channel.conversation.findIndex((frame) => frame.type === 'notice'));
+    const second = await subscribeConversation(server, sid);
+    expect(second.notices).toHaveLength(1);
+    expect(channel.notices).toHaveLength(1);
+    second.close();
+    const main = getLiveSessionById(server.core.accessor, sid)!.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID)!;
+    expect(main.accessor.get(IAgentLoopService).getModel()).toBe('old');
+    await submitPrompt(server, base, sid, 'after fallback');
+    await idleOrDump(server, base, sid);
+    expect(JSON.parse(llm!.hits.at(-1)!).model).toBe('stub');
+    channel.close();
+  }, 60000);
+
+  it('a session with no default model opens with no displayed model and a model error notice', async () => {
+    await boot([]);
+    await writeFile(
+      join(home!, 'config.toml'),
+      `${configToml(llm!.port)}\n[models.old]\nprovider = "stub"\nmodel = "old"\nmax_context_size = 100000\n`,
+      'utf-8',
+    );
+    await server!.core.accessor.get(IConfigService).reload();
+    const { id: sid } = await rest<{ id: string }>(server!, base, '/api/v1/sessions', {
+      method: 'POST',
+      body: { metadata: { cwd: '/tmp' }, agent_config: { model: 'old' } },
+    });
+    await rest<{ prompt_id: string }>(server!, base, `/api/v1/sessions/${encodeURIComponent(sid)}/prompts`, {
+      method: 'POST',
+      body: { content: [{ type: 'text', text: 'history without a default model' }], model: 'old', permission_mode: 'yolo' },
+    });
+    await idle(server!, base, sid);
+    await server!.close();
+    await writeFile(
+      join(home!, 'config.toml'),
+      `[providers.stub]\ntype = "openai"\nbase_url = "http://127.0.0.1:${String(llm!.port)}"\napi_key = "stub"\n`,
+      'utf-8',
+    );
+    server = await startServer({ hostIdentity: TEST_HOST_IDENTITY, host: '127.0.0.1', port: 0, homeDir: home!, logLevel: 'silent' });
+    base = `http://127.0.0.1:${server.port}`;
+
+    const channel = await subscribeConversation(server, sid);
+
+    expect(channel.turns().flatMap((turn) => turn.items).map(textOf)).toContain('history without a default model');
+    expect(channel.agents.at(-1)!.model).toBeUndefined();
+    expect(channel.agents.at(-1)!.thinking).toBeUndefined();
+    expect(channel.notices).toContainEqual(expect.objectContaining({ level: 'warning', code: 'model.not_configured', title: 'old' }));
+    expect(channel.conversation.findIndex((frame) => frame.type === 'turns')).toBeLessThan(channel.conversation.findIndex((frame) => frame.type === 'notice'));
+    const main = getLiveSessionById(server.core.accessor, sid)!.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID)!;
+    expect(main.accessor.get(IAgentLoopService).getModel()).toBe('old');
+    channel.close();
+  }, 60000);
+
   it('S10: a fresh session sends main agent frames on subscribe and a TodoList write reaches subscribers as a todo frame', async () => {
     const todos = '{"todos":[{"title":"write tests","status":"in_progress"},{"title":"ship","status":"pending"}]}';
     await boot([
@@ -731,6 +814,7 @@ describe('conversation contract e2e', () => {
     await until('main agent frames', () => channel.agents.length > 0 && channel.todos.length > 0);
     expect(channel.agents[0]).toMatchObject({ type: 'agent', session_id: sid, status: 'idle' });
     expect(channel.todos[0]).toMatchObject({ type: 'todo', session_id: sid, items: [] });
+    expect(channel.notices).toEqual([]);
     await submitPrompt(server!, base, sid, 'plan the work');
     await idleOrDump(server!, base, sid);
     await until('todo frame', () => (channel.todos.at(-1)?.items.length ?? 0) > 0);

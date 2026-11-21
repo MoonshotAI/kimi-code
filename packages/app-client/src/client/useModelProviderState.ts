@@ -99,7 +99,9 @@ export function useModelProviderState(
     const rawModel =
       activeSession === undefined
         ? store.draftModel ?? store.activeDefaultModel
-        : activeSession.model || store.activeDefaultModel;
+        : rawState.unavailableModelBySession?.[activeSession.id] !== undefined
+          ? null
+          : activeSession.model || store.activeDefaultModel;
     return modelById(rawModel)?.id ?? rawModel ?? undefined;
   }
 
@@ -219,10 +221,16 @@ export function useModelProviderState(
       rawState.thinkingBySession = { ...rawState.thinkingBySession, [sid]: nextThinking };
       markThinkingPending(rawState, sid);
     }
-    if (preserveDraftThinking) {
-      return persistSessionProfile({ model: modelId, thinking: nextThinking }, sid, true);
-    }
-    return persistSessionProfile({ model: modelId, thinking: nextThinking }, sid);
+    const persisted = preserveDraftThinking
+      ? persistSessionProfile({ model: modelId, thinking: nextThinking }, sid, true)
+      : persistSessionProfile({ model: modelId, thinking: nextThinking }, sid);
+    void persisted.then((ok) => {
+      if (!ok) return;
+      const nextUnavailable = { ...rawState.unavailableModelBySession };
+      delete nextUnavailable[sid];
+      rawState.unavailableModelBySession = nextUnavailable;
+    });
+    return persisted;
   }
 
   async function setModel(modelId: string): Promise<boolean> {

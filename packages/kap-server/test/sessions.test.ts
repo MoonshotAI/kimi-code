@@ -3219,6 +3219,33 @@ describe('server-v2 /api/v1/sessions status context window', () => {
     expect(context?.max_context_tokens).toBe(131072);
     expect(context?.context_tokens).toBe(0);
   });
+
+  it('keeps rejecting model configuration errors other than a removed alias', async () => {
+    const cwd = home as string;
+    const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
+    const session = getLiveSessionById((server as RunningServer).core.accessor, created.body.data.id)!;
+    const agent = await ensureMainAgent(session);
+    const loop = agent.accessor.get(IAgentLoopService);
+    vi.spyOn(loop, 'resolveModelContext').mockImplementation(() => {
+      throw new Error2(ErrorCodes.CONFIG_INVALID, 'provider settings are invalid', { details: { model: 'stub' } });
+    });
+    expect(() => readContextState(agent)).toThrow('provider settings are invalid');
+  });
+
+  it('keeps rejecting a removed model alias for a subagent', async () => {
+    const cwd = home as string;
+    const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
+    const session = getLiveSessionById((server as RunningServer).core.accessor, created.body.data.id)!;
+    const lifecycle = session.accessor.get(IAgentLifecycleService);
+    const child = await lifecycle.create({ agentId: 'agent-removed-model' });
+    const handle = lifecycle.handleOf(child.agentId)!;
+    const loop = handle.accessor.get(IAgentLoopService);
+    vi.spyOn(loop, 'getModel').mockReturnValue('removed');
+    vi.spyOn(loop, 'resolveModelContext').mockImplementation(() => {
+      throw new Error2(ErrorCodes.CONFIG_INVALID, 'Model "removed" is not configured in config.toml.', { details: { model: 'removed' } });
+    });
+    expect(() => readContextState(handle)).toThrow('Model "removed" is not configured in config.toml.');
+  });
 });
 
 describe('server-v2 /api/v1/sessions (minidb read model)', () => {
