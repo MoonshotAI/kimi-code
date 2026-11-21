@@ -318,6 +318,43 @@ describe('ProgramMcp', () => {
     pinned.dispose();
   }, 20000);
 
+  it('hands a session the user server when its anchor drops an override another live anchor never defined', async () => {
+    const wt = await checkout();
+    await writeMcpJson(userFile(), { shared: stdioServer() });
+    await writeMcpJson(projectFile(primary), {
+      shared: { transport: 'stdio', command: process.execPath, args: [cwdStdioFixture] },
+    });
+    await writeMcpJson(projectFile(wt), { other: disabledStdio('wt') });
+    const program = createProgramMcp();
+    const pinned = await program.workdir(wt);
+    const handle = plainHandle(program.root, 'root-session');
+    await Promise.all([handle.ready, pinned.ready]);
+    const user = handle.upsertTarget!('userOnly');
+    const anchor = handle.upsertTarget!('shared');
+    expect(user.get('shared')?.status).toBe('connected');
+    expect(handle.connectionManager.resolved('shared')?.client).toBe(anchor.resolved('shared')?.client);
+    const statuses: McpServerEntry[] = [];
+    const unsubscribe = handle.connectionManager.onStatusChange((entry) => statuses.push(entry));
+    const overrideRemoved = new Promise<void>((resolve) => {
+      const stop = anchor.onStatusChange((entry) => {
+        if (entry.name !== 'shared' || entry.status !== 'removed') return;
+        stop();
+        resolve();
+      });
+    });
+
+    await writeMcpJson(projectFile(primary), {});
+    watchFires.get(primary)?.fire({ path: projectFile(primary), action: 'modified', kind: 'file' });
+    await overrideRemoved;
+    unsubscribe();
+
+    expect(statuses.map((entry) => [entry.name, entry.status, entry.toolCount])).toEqual([['shared', 'connected', 4]]);
+    const resolved = handle.connectionManager.resolved('shared');
+    expect(resolved?.client).toBe(user.resolved('shared')?.client);
+    expect(resolved?.tools.map((tool) => tool.name).toSorted()).toEqual(['boom', 'echo', 'read_env', 'whoami']);
+    pinned.dispose();
+  }, 20000);
+
   it('moves a pinned workdir to the root anchor when its directory leaves the project and stops watching it', async () => {
     const wt = await checkout();
     await writeMcpJson(projectFile(primary), { rootServer: disabledStdio('root') });

@@ -84,17 +84,17 @@ export class LayeredMcpConnectionView implements McpConnectionView {
 
   onStatusChange(listener: McpStatusListener): () => void {
     let stack = this.stack();
-    let unsubscribe = subscribeOwnedStatus(stack, listener);
+    const subscription = new StatusSubscription(listener, visibleEntries(stack));
+    let detach = subscription.attach(stack);
     const relayering = this.onDidChangeLayers(() => {
-      const before = visibleEntries(stack);
-      unsubscribe();
+      detach();
       stack = this.stack();
-      unsubscribe = subscribeOwnedStatus(stack, listener);
-      replayOwnerChanges(before, visibleEntries(stack), listener);
+      detach = subscription.attach(stack);
+      subscription.replay(visibleEntries(stack));
     });
     return () => {
       relayering.dispose();
-      unsubscribe();
+      detach();
     };
   }
 
@@ -125,12 +125,6 @@ function isLive(entry: McpServerEntry | undefined): boolean {
   return entry !== undefined && entry.status !== 'removed';
 }
 
-function forwardsStatus(stack: LayerStack, layer: McpViewLayer, entry: McpServerEntry): boolean {
-  const owner = ownerOf(stack, entry.name);
-  if (owner === layer) return true;
-  return entry.status === 'removed' && !owner.owns(entry.name) && !isLive(owner.manager.get(entry.name));
-}
-
 function visibleEntries(stack: LayerStack): VisibleEntry[] {
   return layersOf(stack)
     .toReversed()
@@ -142,30 +136,57 @@ function visibleEntries(stack: LayerStack): VisibleEntry[] {
     );
 }
 
-function subscribeOwnedStatus(stack: LayerStack, listener: McpStatusListener): () => void {
-  const unsubscribes = layersOf(stack).map((layer) =>
-    layer.manager.onStatusChange((entry) => {
-      if (forwardsStatus(stack, layer, entry)) listener(entry);
-    }),
-  );
-  return () => {
-    for (const unsubscribe of unsubscribes) unsubscribe();
-  };
-}
+class StatusSubscription {
+  private readonly delivered: Map<string, VisibleEntry>;
 
-function replayOwnerChanges(
-  before: readonly VisibleEntry[],
-  after: readonly VisibleEntry[],
-  listener: McpStatusListener,
-): void {
-  const afterNames = new Set(after.map(({ entry }) => entry.name));
-  const managerBefore = new Map(before.map(({ manager, entry }) => [entry.name, manager]));
-  for (const { entry } of before) {
-    if (afterNames.has(entry.name)) continue;
-    listener({ name: entry.name, transport: entry.transport, status: 'removed', toolCount: 0 });
+  constructor(
+    private readonly listener: McpStatusListener,
+    visible: readonly VisibleEntry[],
+  ) {
+    this.delivered = new Map(visible.map((item) => [item.entry.name, item]));
   }
-  for (const { manager, entry } of after) {
-    if (managerBefore.get(entry.name) === manager) continue;
-    listener(entry);
+
+  attach(stack: LayerStack): () => void {
+    const unsubscribes = layersOf(stack).map((layer) =>
+      layer.manager.onStatusChange((entry) => {
+        const next = this.nextDelivery(stack, layer, entry);
+        if (next !== undefined) this.deliver(next);
+      }),
+    );
+    return () => {
+      for (const unsubscribe of unsubscribes) unsubscribe();
+    };
+  }
+
+  replay(visible: readonly VisibleEntry[]): void {
+    const visibleNames = new Set(visible.map(({ entry }) => entry.name));
+    for (const [name, { entry }] of this.delivered) {
+      if (visibleNames.has(name)) continue;
+      this.delivered.delete(name);
+      this.listener({ name, transport: entry.transport, status: 'removed', toolCount: 0 });
+    }
+    for (const item of visible) {
+      if (this.delivered.get(item.entry.name)?.manager !== item.manager) this.deliver(item);
+    }
+  }
+
+  private nextDelivery(
+    stack: LayerStack,
+    layer: McpViewLayer,
+    entry: McpServerEntry,
+  ): VisibleEntry | undefined {
+    const owner = ownerOf(stack, entry.name);
+    if (owner === layer) return { manager: layer.manager, entry };
+    if (this.delivered.get(entry.name)?.manager !== layer.manager) return undefined;
+    const revealed = owner.manager.get(entry.name);
+    if (revealed !== undefined && isLive(revealed)) return { manager: owner.manager, entry: revealed };
+    return entry.status === 'removed' && !owner.owns(entry.name)
+      ? { manager: layer.manager, entry }
+      : undefined;
+  }
+
+  private deliver(item: VisibleEntry): void {
+    this.delivered.set(item.entry.name, item);
+    this.listener(item.entry);
   }
 }

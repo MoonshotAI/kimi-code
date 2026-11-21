@@ -127,6 +127,46 @@ describe('LayeredMcpConnectionView', () => {
     expect(view.list().map((entry) => [entry.name, entry.transport])).toEqual([['tool', 'stdio']]);
   });
 
+  it('replays the lower owner entry when an upper layer stops defining a name the lower layer serves', async () => {
+    const anchorLayer = layer(anchor, ['tool']);
+    const view = new LayeredMcpConnectionView(() => [anchorLayer], layer(base, ['tool']));
+    await base.connect('tool', disabledStdio('user'));
+    await anchor.connect('tool', { transport: 'http', url: 'https://example.com/mcp', enabled: false });
+    const seen: Array<[string, string, string]> = [];
+    const unsubscribe = view.onStatusChange((entry) => seen.push([entry.name, entry.status, entry.transport]));
+
+    anchorLayer.names.delete('tool');
+    await anchor.markRemoved('tool');
+    unsubscribe();
+
+    expect(seen).toEqual([['tool', 'disabled', 'stdio']]);
+    expect(view.get('tool')).toMatchObject({ transport: 'stdio', status: 'disabled' });
+  });
+
+  it('replays the entry a subscriber has not seen when ownership moved before the layer stack changes', async () => {
+    const next = new McpConnectionManager();
+    try {
+      await base.connect('tool', disabledStdio('user'));
+      await anchor.connect('tool', { transport: 'http', url: 'https://example.com/mcp', enabled: false });
+      const relayered = new Emitter<void>();
+      const anchorLayer = layer(anchor, ['tool']);
+      let current = anchorLayer;
+      const view = new LayeredMcpConnectionView(() => [current], layer(base, ['tool']), relayered.event);
+      const seen: Array<[string, string, string]> = [];
+      const unsubscribe = view.onStatusChange((entry) => seen.push([entry.name, entry.status, entry.transport]));
+
+      anchorLayer.names.delete('tool');
+      current = layer(next, []);
+      relayered.fire();
+      unsubscribe();
+      relayered.dispose();
+
+      expect(seen).toEqual([['tool', 'disabled', 'stdio']]);
+    } finally {
+      await next.shutdown();
+    }
+  });
+
   it('forwards a removal from a layer that stopped defining a name no other layer defines', async () => {
     const anchorLayer = layer(anchor, ['solo']);
     const view = new LayeredMcpConnectionView(() => [anchorLayer], layer(base, []));
