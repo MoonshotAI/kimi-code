@@ -27,9 +27,7 @@ import type { ProcessTaskInfo } from '#/agent/task/types';
 
 import {
   createTestAgent,
-  findGenerateCallPrefixBreak,
   InMemoryWireRecordPersistence,
-  normalizeGenerateInput,
   testkitAgentFixtures,
   wireRecordPersistenceServices,
   type TestAgentContext,
@@ -84,7 +82,7 @@ describe('core LoopService integration', () => {
     expect(ctx.llmCalls[1]!.tools).toEqual(firstTools);
   });
 
-  it('previews the request content that the next turn sends to the provider', async () => {
+  it('previews unresolved request content while the real request applies resolvers', async () => {
     await ctx.dispose();
     ctx = createTestAgent();
     vi.stubEnv(TOOL_SELECT_FLAG_ENV, '1');
@@ -142,12 +140,13 @@ describe('core LoopService integration', () => {
       ], 'fork');
       const preview = loop.previewRequestContent();
 
-      expect(loop.baselineTools().find((tool) => tool.name === 'DeferredPreview')?.deferred).toBe(true);
-      expect(preview.tools.some((tool) => tool.name === 'DeferredPreview')).toBe(false);
-      expect(preview.messages[0]).toMatchObject({ role: 'user' });
-      expect(preview.messages[0]?.content).toContainEqual({
-        type: 'text',
-        text: expect.stringContaining('<tools_added>\nDeferredPreview\n</tools_added>'),
+      expect(preview.systemPrompt).toBe(loop.getSystemPrompt());
+      expect(preview.tools).toBe(loop.baselineTools());
+      expect(preview.tools.find((tool) => tool.name === 'DeferredPreview')?.deferred).toBe(true);
+      expect(preview.tools.some((tool) => tool.name === 'ReadMediaFile')).toBe(true);
+      expect(preview.messages[0]).toMatchObject({
+        role: 'user',
+        content: [{ type: 'text', text: 'run it' }],
       });
 
       ctx.mockNextResponse({ type: 'text', text: 'done' });
@@ -155,15 +154,14 @@ describe('core LoopService integration', () => {
       await ctx.untilTurnEnd();
 
       const sent = ctx.llmCalls.at(-1)!;
-      const previewed = normalizeGenerateInput({
-        systemPrompt: preview.systemPrompt,
-        tools: preview.tools
-          .filter((tool) => tool.deferred !== true)
-          .map(({ name, description, parameters }) => ({ name, description, parameters })),
-        history: preview.messages.map(({ attributes: _attributes, ...message }) => message),
+      const sentToolNames = sent.tools.map((tool) => tool.name);
+      expect(sentToolNames).not.toContain('DeferredPreview');
+      expect(sentToolNames).not.toContain('ReadMediaFile');
+      expect(sent.history[0]?.content).toContainEqual({
+        type: 'text',
+        text: expect.stringContaining('<tools_added>\nDeferredPreview\n</tools_added>'),
       });
-      expect(findGenerateCallPrefixBreak(previewed, sent)).toBeUndefined();
-      expect(sent.history.length).toBeGreaterThan(previewed.history.length);
+      expect(sent.history.length).toBeGreaterThan(preview.messages.length);
     } finally {
       vi.unstubAllEnvs();
     }

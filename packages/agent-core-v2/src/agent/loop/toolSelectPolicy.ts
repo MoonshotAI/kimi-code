@@ -4,7 +4,7 @@ import { withProtocolCapabilities } from '@moonshot-ai/core/llm/protocol/rules/m
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentToolSelectService } from '#/agent/toolSelect/toolSelect';
 
-export function shapeToolSelectRequest(
+function shapeToolSelectRequest(
   toolSelect: IAgentToolSelectService,
   base: readonly ToolDescription[] | undefined,
   messages: readonly ContextMessage[],

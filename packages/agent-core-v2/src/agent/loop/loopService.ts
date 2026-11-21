@@ -10,7 +10,7 @@ import { abortError, isUserCancellation, userCancellationReason } from '#/_base/
 import { toErrorMessage } from '#/_base/errors/errorMessage';
 import { parseBooleanEnv } from '#/_base/utils/env';
 import { AgentLoopRequestObserver } from './requestObservation';
-import { createAgentMediaPolicy, hideReadMediaFile, type AgentMediaPolicy, type AgentMediaPolicyFactory } from './mediaPolicy';
+import { createAgentMediaPolicy, type AgentMediaPolicy, type AgentMediaPolicyFactory } from './mediaPolicy';
 import {
   agentLLMRequestLogFields,
   type CoreLoopRequester,
@@ -21,9 +21,8 @@ import {
   type ResolvedRequestContext,
 } from './requesterContract';
 import { AgentLoopProjector } from './projector';
-import { project } from './projection';
 import { createStructureRecovery, createStructureResolver } from './projectionPolicy';
-import { createToolSelectResolver, shapeToolSelectRequest } from './toolSelectPolicy';
+import { createToolSelectResolver } from './toolSelectPolicy';
 import { RequestMetadataTracker, requestMetadataHeaders } from './requestMetadata';
 import { IAgentMediaResolverService } from '#/agent/media/mediaResolver';
 import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
@@ -243,11 +242,11 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     this.mediaPolicyFactory = (model, request) => createAgentMediaPolicy(mediaResolver, model, request);
     this.requester = {
       coreRequester: (options) => this.coreRequester(options),
-      prepareOperation: async (options, signal) => {
+      prepareOperation: async (options, _signal) => {
         if (this.loop === undefined) throw new BugIndicatingError('Agent loop is not started');
         const config = this.requestConfigSnapshot();
-        const baseline = options.tools ?? this.loop.state.profile.tools;
-        const tools = await this.prepareTools(signal, config.resolved.model.capability, baseline);
+        const baseline = options.tools ?? this.baselineTools();
+        const tools = this.toolsForCapabilities(config.resolved.model.capability, baseline);
         return this.loop.operation((runtime) => {
           const requester = this.coreRequester({ ...options, runtime, tools, config });
           return requester.snapshot?.() ?? requester;
@@ -455,15 +454,10 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   }
 
   previewRequestContent(): LoopRequestContent {
-    const capabilities = this.data().modelCapabilities;
-    const disclosure = this.toolSelect.enabled(capabilities);
-    const source = this.loop?.state.messages ?? this.journal.snapshot().input.messages ?? [];
-    const view = shapeToolSelectRequest(this.toolSelect, this.baselineTools(), source, disclosure);
-    const mediaInput = capabilities.image_in || capabilities.video_in;
     return {
       systemPrompt: this.loop?.state.profile.systemPrompt || this.getSystemPrompt(),
-      tools: mediaInput ? view.tools : view.tools.filter((tool) => tool.name !== READ_MEDIA_FILE_TOOL_NAME),
-      messages: project(mediaInput ? view.messages : hideReadMediaFile(view.messages)),
+      tools: this.baselineTools(),
+      messages: this.loop?.state.messages ?? this.journal.snapshot().input.messages ?? [],
     };
   }
 
@@ -650,23 +644,12 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     };
   }
 
-  private async prepareTools(
-    signal: AbortSignal,
-    capabilities: LlmModelCapability | undefined,
-    base?: readonly Tool[],
-  ): Promise<readonly Tool[]> {
-    await this.toolSelect.prepareForRequest(signal);
-    return this.toolsForCapabilities(capabilities, base);
-  }
-
   private toolsForCapabilities(
     capabilities: LlmModelCapability | undefined,
-    base?: readonly Tool[],
+    base: readonly Tool[],
   ): readonly Tool[] {
-    const disclosure = this.toolSelect.enabled(capabilities);
-    const tools = base ?? this.toolSelect.defaultTools(disclosure);
-    if (capabilities?.image_in === true || capabilities?.video_in === true) return tools;
-    return tools.filter((tool) => tool.name !== READ_MEDIA_FILE_TOOL_NAME);
+    if (capabilities?.image_in === true || capabilities?.video_in === true) return base;
+    return base.filter((tool) => tool.name !== READ_MEDIA_FILE_TOOL_NAME);
   }
 
   private coreRequester(options: CoreLoopRequesterOptions): CoreLoopRequester {
