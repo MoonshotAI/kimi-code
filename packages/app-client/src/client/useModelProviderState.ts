@@ -99,7 +99,7 @@ export function useModelProviderState(
     const rawModel =
       activeSession === undefined
         ? store.draftModel ?? store.activeDefaultModel
-        : rawState.unavailableModelBySession[activeSession.id] !== undefined
+        : rawState.unavailableModelBySession?.[activeSession.id] !== undefined
           ? null
           : activeSession.model || store.activeDefaultModel;
     return modelById(rawModel)?.id ?? rawModel ?? undefined;
@@ -216,18 +216,21 @@ export function useModelProviderState(
     preserveDraftThinking = false,
   ): Promise<boolean> {
     updateSession(sid, (s) => ({ ...s, model: modelId }));
-    const nextUnavailable = { ...rawState.unavailableModelBySession };
-    delete nextUnavailable[sid];
-    rawState.unavailableModelBySession = nextUnavailable;
     sessionRuntimeStore().markModelPending(sid);
     if (nextThinking !== undefined) {
       rawState.thinkingBySession = { ...rawState.thinkingBySession, [sid]: nextThinking };
       markThinkingPending(rawState, sid);
     }
-    if (preserveDraftThinking) {
-      return persistSessionProfile({ model: modelId, thinking: nextThinking }, sid, true);
-    }
-    return persistSessionProfile({ model: modelId, thinking: nextThinking }, sid);
+    const persisted = preserveDraftThinking
+      ? persistSessionProfile({ model: modelId, thinking: nextThinking }, sid, true)
+      : persistSessionProfile({ model: modelId, thinking: nextThinking }, sid);
+    void persisted.then((ok) => {
+      if (!ok) return;
+      const nextUnavailable = { ...rawState.unavailableModelBySession };
+      delete nextUnavailable[sid];
+      rawState.unavailableModelBySession = nextUnavailable;
+    });
+    return persisted;
   }
 
   async function setModel(modelId: string): Promise<boolean> {

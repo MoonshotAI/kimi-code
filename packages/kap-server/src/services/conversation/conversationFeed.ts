@@ -472,7 +472,7 @@ export class ConversationFeed implements IDisposable {
     this.emit({ type: 'item.delta', turn_id: target.turn.turn_id, item_id: event.toolCallId, field: 'output', delta: text });
   }
 
-  notify(notice: Notice): void {
+  private notify(notice: Notice): void {
     this.flushPending();
     this.emit({ type: 'notice', ...notice });
   }

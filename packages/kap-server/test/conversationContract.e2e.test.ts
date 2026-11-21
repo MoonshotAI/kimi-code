@@ -753,6 +753,10 @@ describe('conversation contract e2e', () => {
     expect(channel.agents.at(-1)!.model).toBeUndefined();
     expect(channel.notices).toContainEqual(expect.objectContaining({ level: 'warning', code: 'model.not_configured', title: 'old' }));
     expect(channel.conversation.findIndex((frame) => frame.type === 'turns')).toBeLessThan(channel.conversation.findIndex((frame) => frame.type === 'notice'));
+    const second = await subscribeConversation(server, sid);
+    expect(second.notices).toHaveLength(1);
+    expect(channel.notices).toHaveLength(1);
+    second.close();
     const main = getLiveSessionById(server.core.accessor, sid)!.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID)!;
     expect(main.accessor.get(IAgentLoopService).getModel()).toBe('old');
     await submitPrompt(server, base, sid, 'after fallback');

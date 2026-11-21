@@ -321,7 +321,12 @@ export class SessionEventBroadcaster {
     if (main === undefined) return;
     const previous = missingConfiguredModelAlias(main);
     if (previous !== undefined) {
-      feed.notify({ level: 'warning', title: previous, code: 'model.not_configured' });
+      this.sendConversation(target, state.sessionId, agentId, {
+        type: 'notice',
+        level: 'warning',
+        title: previous,
+        code: 'model.not_configured',
+      });
     }
   }
 

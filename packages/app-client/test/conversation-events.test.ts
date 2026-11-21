@@ -176,8 +176,8 @@ async function boot(opts: { deferPages?: boolean; sessionIds?: string[] } = {}) 
   if (opts.deferPages !== true) await vi.waitFor(() => expect(client.sessionLoading.value).toBe(false));
 
   const frame = (sid: string, next: ConversationFrame) => handlers!.onConversation?.(sid, 'main', next);
-  const agentStatus = (sid: string, status: AppAgentState['status'] | 'compacting') =>
-    handlers!.onAgentState?.(sid, 'main', status === 'compacting' ? agentState('idle', { compacting: true }) : agentState(status));
+  const agentStatus = (sid: string, status: AppAgentState['status'] | 'compacting', extra: Partial<AppAgentState> = {}) =>
+    handlers!.onAgentState?.(sid, 'main', status === 'compacting' ? agentState('idle', { ...extra, compacting: true }) : agentState(status, extra));
   const header = (ordinal: number, outcome?: ConversationOutcome): ConversationTurnHeader => ({
     turn_id: `t${ordinal}`,
     ordinal,
@@ -529,6 +529,31 @@ describe('model availability notices', () => {
     expect(open).toHaveBeenCalledWith('s1');
     expect(current.value).toBeNull();
     expect(h.warningsStore().warnings).toEqual([]);
+  });
+
+  it('keeps unavailable state after a failed profile write', async () => {
+    const h = await boot();
+    h.frame('s1', { type: 'notice', level: 'warning', code: 'model.not_configured', title: 'old-model' });
+    expect(h.client.status.value.model).toBe('—');
+
+    clientApiMock['updateSession'] = vi.fn(async () => {
+      throw new Error('offline');
+    });
+    await h.client.selectModel('stub');
+    expect(h.client.unavailableModelBySession.value['s1']).toBe('old-model');
+  });
+
+  it('clears unavailable state after a successful write or a valid agent state', async () => {
+    const h = await boot();
+    h.frame('s1', { type: 'notice', level: 'warning', code: 'model.not_configured', title: 'old-model' });
+    clientApiMock['updateSession'] = vi.fn(async () => ({ id: 's1' }));
+    await h.client.selectModel('stub');
+    expect(h.client.unavailableModelBySession.value['s1']).toBeUndefined();
+
+    h.frame('s1', { type: 'notice', level: 'warning', code: 'model.not_configured', title: 'old-model' });
+    expect(h.client.status.value.model).toBe('—');
+    h.agentStatus('s1', 'idle', { model: 'stub' });
+    expect(h.client.unavailableModelBySession.value['s1']).toBeUndefined();
   });
 });
 

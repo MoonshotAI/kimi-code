@@ -562,6 +562,11 @@ function whenSessionStatusSettled(sessionId: string): Promise<void> {
 }
 
 function applyMainAgentState(sessionId: string, state: AppAgentState): void {
+  if (state.model !== undefined && state.model !== '' && rawState.unavailableModelBySession?.[sessionId] !== undefined) {
+    const nextUnavailable = { ...rawState.unavailableModelBySession };
+    delete nextUnavailable[sessionId];
+    rawState.unavailableModelBySession = nextUnavailable;
+  }
   foldDaemonPlanMode(rawState, sessionId, state.planMode);
   foldDaemonSwarmMode(rawState, sessionId, state.swarmMode);
   foldDaemonTowerMode(rawState, sessionId, state.towerMode);
@@ -2075,7 +2080,7 @@ const status = computed<ConversationStatus>(() => {
   const branch =
     gitInfo.value?.branch ??
     (activeSession ? activeSession.cwd.split('/').pop() ?? activeSession.cwd : 'main');
-  const unavailable = activeSession !== undefined && rawState.unavailableModelBySession[activeSession.id] !== undefined;
+  const unavailable = activeSession !== undefined && rawState.unavailableModelBySession?.[activeSession.id] !== undefined;
   const rawModel = unavailable ? '—' : modelsStore().resolveSendModel(activeSession?.model, { includeDraft: activeSession === undefined }) ?? '—';
 
   const matched =
@@ -2140,7 +2145,7 @@ function gateVerdictInput(): ChatGateInput {
     : undefined;
   return {
     ...resolveGateChatModel(
-      activeSession !== undefined && rawState.unavailableModelBySession[activeSession.id] !== undefined ? null : activeSession?.model,
+      activeSession !== undefined && rawState.unavailableModelBySession?.[activeSession.id] !== undefined ? null : activeSession?.model,
       { includeDraft: activeSession === undefined },
     ),
     modelsReady: modelsStore().modelsReady,
@@ -3222,6 +3227,7 @@ export function useKimiWebClient() {
     activationBadges,
     compaction,
     status,
+    unavailableModelBySession: computed(() => rawState.unavailableModelBySession),
     sessionCost,
     fileDiff,
     selectedDiffPath: computed(() => filesStore().selectedDiffPath),
