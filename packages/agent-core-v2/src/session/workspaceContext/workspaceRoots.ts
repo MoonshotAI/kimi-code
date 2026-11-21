@@ -11,9 +11,9 @@ export interface EffectiveWorkspaceRoots {
   readonly followsPrimary: boolean;
 }
 
-declare const sessionWorkdirBrand: unique symbol;
+declare const sessionWorkDirPathBrand: unique symbol;
 
-export type SessionWorkdir = string & { readonly [sessionWorkdirBrand]: true };
+export type SessionWorkDirPath = string & { readonly [sessionWorkDirPathBrand]: true };
 
 export interface SessionPlacementFacts {
   readonly cwd?: string;
@@ -35,19 +35,19 @@ export function sessionPlacementOf(facts: SessionPlacementFacts): SessionPlaceme
     : { kind: 'pinned', workDir: facts.environmentCwd };
 }
 
-export function sessionWorkDir(placement: SessionPlacement, projectRoot: string): SessionWorkdir;
-export function sessionWorkDir(placement: SessionPlacement, projectRoot: string | undefined): SessionWorkdir | undefined;
+export function sessionWorkDir(placement: SessionPlacement, projectRoot: string): SessionWorkDirPath;
+export function sessionWorkDir(placement: SessionPlacement, projectRoot: string | undefined): SessionWorkDirPath | undefined;
 export function sessionWorkDir(
   placement: SessionPlacement,
   projectRoot: string | undefined,
-): SessionWorkdir | undefined {
+): SessionWorkDirPath | undefined {
   switch (placement.kind) {
     case 'pinned':
-      return placement.workDir as SessionWorkdir;
+      return placement.workDir as SessionWorkDirPath;
     case 'follows-project-root':
-      return (projectRoot ?? placement.createdIn) as SessionWorkdir | undefined;
+      return (projectRoot ?? placement.createdIn) as SessionWorkDirPath | undefined;
     case 'remote':
-      return (placement.hostCwd ?? projectRoot) as SessionWorkdir | undefined;
+      return (placement.hostCwd ?? projectRoot) as SessionWorkDirPath | undefined;
   }
 }
 

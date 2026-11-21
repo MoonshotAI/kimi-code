@@ -56,7 +56,7 @@ import {
   sessionPlacementOf,
   sessionWorkDir,
   type SessionPlacementFacts,
-  type SessionWorkdir,
+  type SessionWorkDirPath,
 } from '@moonshot-ai/agent-core-v2/session/workspaceContext/workspaceRoots';
 import { ErrorCode } from '../protocol/error-codes';
 import { listPendingInteractions } from '../protocol/interaction-wire';
@@ -1210,7 +1210,7 @@ export interface SessionWireFields {
 export async function sessionCwd(
   core: Scope,
   session: SessionPlacementFacts & { readonly workspaceId: string },
-): Promise<SessionWorkdir | undefined> {
+): Promise<SessionWorkDirPath | undefined> {
   const root = (await core.accessor.get(IWorkspaceService).get(session.workspaceId))?.root;
   return sessionWorkDir(sessionPlacementOf(session), root);
 }
@@ -1218,7 +1218,7 @@ export async function sessionCwd(
 async function requireSessionCwd(
   core: Scope,
   session: SessionPlacementFacts & { readonly workspaceId: string; readonly id: string },
-): Promise<SessionWorkdir> {
+): Promise<SessionWorkDirPath> {
   const cwd = await sessionCwd(core, session);
   if (cwd === undefined) {
     throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${session.id} has no recoverable cwd`);
@@ -1233,7 +1233,7 @@ async function liveWireSession(core: Scope, handle: ISessionScopeHandle): Promis
 
 export function toWireSession(
   fields: SessionWireFields,
-  cwd: SessionWorkdir,
+  cwd: SessionWorkDirPath,
   facts: SessionFacts,
   git?: SessionGit,
 ): Session {

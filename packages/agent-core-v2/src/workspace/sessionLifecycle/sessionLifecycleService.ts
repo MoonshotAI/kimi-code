@@ -229,7 +229,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
   async create(opts: CreateSessionOptions): Promise<ISessionScopeHandle> {
     const sessionId = opts.sessionId ?? createSessionId();
     const environment = sessionEnvironment(opts.environmentId, opts.environmentCwd);
-    const workDir = this.sessionWorkDir(opts.workDir, environment);
+    const workDir = this.workDirOfBinding(opts.workDir, environment);
     const effective = { ...opts, workDir };
     const workdir = await this.openWorkdir(environment, workDir);
     await workdir.skills
@@ -407,7 +407,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     return handle;
   }
 
-  private sessionWorkDir(fallbackCwd: string, environment: EnvironmentBinding | undefined): string {
+  private workDirOfBinding(fallbackCwd: string, environment: EnvironmentBinding | undefined): string {
     const placement = sessionPlacementOf({
       cwd: fallbackCwd,
       environmentId: environment?.environmentId,
@@ -516,7 +516,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     const persisted = await this.readMetaFromDisk(sessionId);
     const environment = sessionEnvironment(persisted?.environmentId, persisted?.environmentCwd);
     const fallbackCwd = persisted?.cwd ?? summary.cwd ?? this.workspaceContext.meta.root;
-    const workDir = this.sessionWorkDir(fallbackCwd, environment);
+    const workDir = this.workDirOfBinding(fallbackCwd, environment);
 
     const handle = await this.materializeSession({
       sessionId,

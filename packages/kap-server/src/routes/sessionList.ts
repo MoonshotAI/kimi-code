@@ -17,7 +17,7 @@ import { GitService } from '@moonshot-ai/agent-core-v2/app/git/gitService';
 import {
   sessionPlacementOf,
   sessionWorkDir,
-  type SessionWorkdir,
+  type SessionWorkDirPath,
 } from '@moonshot-ai/agent-core-v2/session/workspaceContext/workspaceRoots';
 import { z } from 'zod';
 
@@ -198,7 +198,7 @@ interface GitTarget {
   readonly cwd: string;
 }
 
-function gitTarget(summary: SessionSummary, workspaceCwd: SessionWorkdir): GitTarget | undefined {
+function gitTarget(summary: SessionSummary, workspaceCwd: SessionWorkDirPath): GitTarget | undefined {
   const environmentId = summary.environmentId ?? LOCAL_ENVIRONMENT_ID;
   const cwd = environmentId === LOCAL_ENVIRONMENT_ID ? workspaceCwd : summary.environmentCwd;
   if (cwd === undefined || cwd.length === 0) return undefined;
@@ -213,7 +213,7 @@ class GitDomainResolver {
 
   async resolveAll(
     summaries: readonly SessionSummary[],
-    cwdOf: (summary: SessionSummary) => SessionWorkdir,
+    cwdOf: (summary: SessionSummary) => SessionWorkDirPath,
   ): Promise<ReadonlyMap<string, SessionGit>> {
     const targets = summaries.flatMap((summary) => {
       const target = gitTarget(summary, cwdOf(summary));
@@ -380,7 +380,7 @@ async function listSessionsHere(
         return facts;
       };
 
-      const cwdOf = (summary: SessionSummary): SessionWorkdir | undefined => {
+      const cwdOf = (summary: SessionSummary): SessionWorkDirPath | undefined => {
         const candidate = sessionWorkDir(sessionPlacementOf(summary), roots.get(summary.workspaceId));
         return candidate !== undefined && candidate.length > 0 ? candidate : undefined;
       };
@@ -418,7 +418,7 @@ async function listSessionsHere(
       const sorted = filtered.toSorted(comparator);
       const keyOf = sortKeyOf(query.sort);
       const ascending = query.sort === 'updated_at_asc';
-      const requiredCwdOf = (summary: SessionSummary): SessionWorkdir => cwdOf(summary)!;
+      const requiredCwdOf = (summary: SessionSummary): SessionWorkDirPath => cwdOf(summary)!;
 
       const buildItems = async (summaries: readonly SessionSummary[]): Promise<Session[]> => {
         let gitBySession: ReadonlyMap<string, SessionGit> | undefined;
