@@ -7,6 +7,8 @@ export const sessionSummarySchema = z.object({
   id: z.string(),
   workspaceId: z.string(),
   cwd: z.string().optional(),
+  environmentId: z.string().optional(),
+  environmentCwd: z.string().optional(),
   title: z.string().optional(),
   lastPrompt: z.string().optional(),
   createdAt: z.number(),

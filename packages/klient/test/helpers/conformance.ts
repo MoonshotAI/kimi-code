@@ -139,6 +139,24 @@ export function defineKlientConformance(
       }
     });
 
+    it('lists a new session with the directory it is pinned at', async () => {
+      const workDir = await mkdtemp(join(tmpdir(), 'klient-conf-pinned-'));
+      try {
+        const created = await target.klient.global.sessions.create({ workDir });
+        try {
+          const summary = { id: created.id, environmentCwd: workDir };
+          expect(await target.klient.global.sessions.get(created.id)).toMatchObject(summary);
+          expect((await target.klient.global.sessions.list({ sessionId: created.id })).items).toEqual([
+            expect.objectContaining(summary),
+          ]);
+        } finally {
+          await target.klient.session(created.id).close();
+        }
+      } finally {
+        await rm(workDir, { recursive: true, force: true });
+      }
+    });
+
     it('session createChild tags child markers while fork stays untagged', async () => {
       const parent = await target.klient.global.sessions.create({
         workDir: process.cwd(),
