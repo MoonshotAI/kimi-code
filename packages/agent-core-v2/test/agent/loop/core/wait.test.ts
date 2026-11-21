@@ -21,6 +21,14 @@ function echoRequester() {
 
 const prompt = (text: string) => createUserMessage(text);
 
+function deferred() {
+  let resolve!: () => void;
+  const promise = new Promise<void>((yes) => {
+    resolve = yes;
+  });
+  return { promise, resolve };
+}
+
 const noopExecutor = successfulExecutor(['noop']);
 
 describe('loop.wait', () => {
@@ -407,6 +415,118 @@ describe('loop.wait', () => {
     expect(endingContinuingCount).toBe(0);
     expect(endingOrder).toEqual(['step.stopping', 'step.ended', 'owner.ending:ending', 'turn.ended']);
     expect(lateEndingAppend).toThrow('turn hook context is no longer active');
+  });
+
+  it('forces closing past unsettled ending hooks without duplicating terminal events', async () => {
+    const input = (id: number) => ({
+      id,
+      kind: 'continue' as const,
+      trigger: 'continue' as const,
+      initialPending: [],
+      promptOnly: false,
+      bypassMaxSteps: false,
+      step: 0,
+    });
+    const baseRuntime: TurnRuntime = {
+      requester: () => echoRequester(),
+      policy: createPolicyRegistry(),
+      executeBatch: () => ({ outcomes: [] }),
+      abortBatch: () => undefined,
+      hooks: {},
+      extensions: {},
+      read: () => ({ messages: [], profile: {} }),
+      emit: () => undefined,
+      transition: (run) => run(),
+      report: () => undefined,
+      committed: () => undefined,
+      signal: new AbortController().signal,
+    };
+
+    const stoppingStarted = deferred();
+    const stoppingRelease = deferred();
+    const stoppingEvents: TurnEmitted[] = [];
+    let stoppingOwnerCount = 0;
+    const stoppingTurn = createTurn(input(93), {
+      ...baseRuntime,
+      hooks: {
+        ending: async () => {
+          stoppingOwnerCount += 1;
+        },
+      },
+      extensions: {
+        'step.stopping': () => {
+          stoppingStarted.resolve();
+          return stoppingRelease.promise.then(() => ({
+            type: 'done' as const,
+            cause: { by: 'loop' as const, reason: 'prompt_only' as const },
+          }));
+        },
+      },
+      emit: (event) => {
+        stoppingEvents.push(event);
+      },
+    });
+    stoppingTurn.start();
+    await stoppingStarted.promise;
+    stoppingTurn.abort('stopping-abort');
+    expect(stoppingTurn.state.phase).toBe('finishing');
+    stoppingTurn.abort('stopping-force', { force: true });
+    await expect(stoppingTurn.done).resolves.toMatchObject({ type: 'aborted', reason: 'stopping-abort' });
+    expect(stoppingOwnerCount).toBe(1);
+    expect(stoppingEvents.filter((event) => event.type === 'step.ended')).toHaveLength(1);
+    expect(stoppingEvents.filter((event) => event.type === 'turn.ended')).toHaveLength(1);
+    stoppingRelease.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(stoppingEvents.filter((event) => event.type === 'step.ended')).toHaveLength(1);
+    expect(stoppingEvents.filter((event) => event.type === 'turn.ended')).toHaveLength(1);
+
+    const endingStarted = deferred();
+    const endingRelease = deferred();
+    const ownerStarted = deferred();
+    const ownerRelease = deferred();
+    const ownerEvents: TurnEmitted[] = [];
+    let lateAppend!: () => void;
+    const ownerTurn = createTurn(input(94), {
+      ...baseRuntime,
+      hooks: {
+        ending: async (_event, ctx) => {
+          ctx.append({ kind: 'remind', message: prompt('before force') });
+          lateAppend = () => ctx.append({ kind: 'remind', message: prompt('after force') });
+          ownerStarted.resolve();
+          await ownerRelease.promise;
+        },
+      },
+      extensions: {
+        'step.stopping': () => {
+          endingStarted.resolve();
+          return endingRelease.promise.then(() => ({
+            type: 'done' as const,
+            cause: { by: 'loop' as const, reason: 'prompt_only' as const },
+          }));
+        },
+      },
+      emit: (event) => {
+        ownerEvents.push(event);
+      },
+    });
+    ownerTurn.start();
+    await endingStarted.promise;
+    ownerTurn.abort('owner-abort');
+    endingRelease.resolve();
+    await ownerStarted.promise;
+    expect(ownerTurn.state.phase).toBe('finished');
+    ownerTurn.abort('owner-force', { force: true });
+    await expect(ownerTurn.done).resolves.toMatchObject({ type: 'aborted', reason: 'owner-abort' });
+    expect(lateAppend).toThrow('turn hook context is no longer active');
+    expect(ownerEvents.filter((event) => event.type === 'message.appended')).toHaveLength(2);
+    expect(ownerEvents.filter((event) => event.type === 'step.ended')).toHaveLength(1);
+    expect(ownerEvents.filter((event) => event.type === 'turn.ended')).toHaveLength(1);
+    ownerRelease.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(ownerEvents.filter((event) => event.type === 'step.ended')).toHaveLength(1);
+    expect(ownerEvents.filter((event) => event.type === 'turn.ended')).toHaveLength(1);
   });
 });
 

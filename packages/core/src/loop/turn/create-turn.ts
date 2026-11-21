@@ -74,6 +74,9 @@ class ActorTurn implements Turn {
   private readonly expireAbortCallback: () => void;
   private activeBuffer: { active: boolean; messages: TurnMessage[] } | undefined;
   private uncommitted: TurnMessage[];
+  private forceCloseRequested = false;
+  private bypassCloseWait: (() => void) | undefined;
+  private doneSettled = false;
   private resolveDone!: (outcome: TurnOutcome) => void;
 
   constructor(input: TurnInput, private readonly runtime: TurnRuntime) {
@@ -141,8 +144,13 @@ class ActorTurn implements Turn {
   }
 
   abort(reason?: unknown, options?: { readonly force?: boolean }): void {
-    if (this.closing || this.finished) return;
+    if (this.doneSettled || ((this.closing || this.finished) && options?.force !== true)) return;
     this.actor.act((ctrl) => {
+      if (this.doneSettled) return;
+      if (options?.force === true) {
+        this.forceCloseRequested = true;
+        this.bypassCloseWait?.();
+      }
       if (this.closing || this.finished) return;
       if (!this.started) {
         this.started = true;
@@ -715,6 +723,18 @@ class ActorTurn implements Turn {
     });
   }
 
+  private closeStep<T>(proc: TurnProcess, task: () => Promise<T> | T): Promise<T | undefined> {
+    return proc.step<T | undefined>((_signal, step) => {
+      const bypass = () => step.resolve(undefined);
+      this.bypassCloseWait = bypass;
+      step.onExit(() => {
+        if (this.bypassCloseWait === bypass) this.bypassCloseWait = undefined;
+      });
+      if (this.forceCloseRequested) bypass();
+      return task();
+    });
+  }
+
   private async closeTurn(
     proc: TurnProcess,
     at: TurnEnding['at'],
@@ -723,7 +743,7 @@ class ActorTurn implements Turn {
     let ending: StepEndingRun | undefined;
     if (step !== undefined && this.state.outcome?.type === 'aborted') {
       try {
-        ending = await proc.step(() => {
+        ending = await this.closeStep(proc, () => {
           step.ending ??= this.stepEnding(step);
           return step.ending;
         });
@@ -757,7 +777,7 @@ class ActorTurn implements Turn {
       uncommitted: this.uncommitted,
     };
     try {
-      await proc.step(async () => {
+      await this.closeStep(proc, async () => {
         await this.runtime.hooks.ending?.(turnEnding, {
           append: (...messages) => {
             if (!buffer.active) throw new Error('turn hook context is no longer active');
@@ -773,6 +793,7 @@ class ActorTurn implements Turn {
       this.activeBuffer = undefined;
     }
     this.runtime.transition(() => {
+      this.doneSettled = true;
       for (const message of appended) this.commit(message);
       this.uncommitted = [];
       this.emit({ type: 'turn.ended', turnId: this.id, outcome, requestId: this.requestId });

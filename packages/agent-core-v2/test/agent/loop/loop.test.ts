@@ -2632,8 +2632,10 @@ describe('interruption reminder', () => {
       expect(toolResults.filter((event) => event.toolCallId === 'call-work-2')).toEqual([
         expect.objectContaining({
           result: {
-            output:
-              'The user manually interrupted "Work" (and anything else running at the same time). This was a deliberate user action, not a system error, timeout, or capacity limit. Do not retry automatically or guess at the cause — wait for the user\'s next instruction.',
+            output: [{
+              type: 'text',
+              text: 'The user manually interrupted "Work" (and anything else running at the same time). This was a deliberate user action, not a system error, timeout, or capacity limit. Do not retry automatically or guess at the cause — wait for the user\'s next instruction.',
+            }],
             isError: true,
             durationMs: expect.any(Number),
           },

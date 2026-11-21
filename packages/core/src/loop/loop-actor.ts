@@ -1290,7 +1290,7 @@ class LoopActor implements Loop {
   private abortToolBatch(
     batch: TurnToolBatch,
     reason: unknown,
-    _options?: { readonly force?: boolean },
+    options?: { readonly force?: boolean },
   ): TurnToolBatchResult | undefined {
     const active = this.toolBatch;
     if (active === undefined || active.turnId !== batch.turnId || active.step !== batch.step) {
@@ -1305,8 +1305,31 @@ class LoopActor implements Loop {
           void slot.handler.stop(reason);
         }
       }
+      if (options?.force === true) {
+        for (const [index, call] of active.calls.entries()) {
+          if (active.outcomes[index] !== undefined) continue;
+          const slot = this.tools.get(call.key)!;
+          this.announceTool(slot);
+          slot.responded = true;
+          slot.done = true;
+          const outcome = abortedToolOutcome(call.toolCall, reason);
+          this.record({
+            type: 'tool.ended',
+            taskId: slot.handler.taskId,
+            toolCallId: call.toolCall.id,
+            outcome,
+            detached: false,
+          });
+          this.tools.delete(slot.key);
+          this.notifyTool(slot);
+          active.outcomes[index] = outcome;
+        }
+      }
       this.checkToolBatch(active);
     });
+    if (options?.force !== true) return undefined;
+    const completed = this.completedToolBatch;
+    if (completed?.turnId === batch.turnId && completed.step === batch.step) return completed.result;
     return undefined;
   }
 
