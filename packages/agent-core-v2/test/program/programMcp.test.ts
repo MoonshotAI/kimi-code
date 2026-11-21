@@ -18,12 +18,12 @@ import { McpOAuthService } from '#/mcpCore/oauth/service';
 import { FakeEnvironment } from '#/environment/fakeEnvironment';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { HostProcessService } from '#/os/backends/node-local/hostProcessService';
-import { ProgramMcp, suppressedUserServers } from '#/program/programMcp';
+import { ProgramMcp, suppressedUserServers, type ProgramMcpDeps } from '#/program/programMcp';
 import type { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
 import type { WatchChange } from '#human/utils/watch';
 
 import { stubLog } from '../_base/log/stubs';
-import { stubAgentIdentity } from '../app/agentIdentity/stubs';
+import { deferredAgentIdentityStub, stubAgentIdentity } from '../app/agentIdentity/stubs';
 import {
   createMemoryMcpOAuthStore,
   cwdStdioFixture,
@@ -132,7 +132,7 @@ describe('ProgramMcp', () => {
     return dir;
   }
 
-  function createProgramMcp(): ProgramMcp {
+  function createProgramMcp(overrides: Partial<ProgramMcpDeps> = {}): ProgramMcp {
     const environment = Object.assign(
       new FakeEnvironment({ environmentId: 'local', generation: 'test' }, { capabilities: ['process'] }),
       { process: new HostProcessService() },
@@ -182,6 +182,7 @@ describe('ProgramMcp', () => {
         isTrusted: () => true,
         onDidChange: Event.None,
       } as never,
+      ...overrides,
     });
     programs.push(program);
     return program;
@@ -353,6 +354,41 @@ describe('ProgramMcp', () => {
     expect(resolved?.client).toBe(user.resolved('shared')?.client);
     expect(resolved?.tools.map((tool) => tool.name).toSorted()).toEqual(['boom', 'echo', 'read_env', 'whoami']);
     pinned.dispose();
+  }, 20000);
+
+  it.each([
+    [
+      'its identity resolves',
+      () => {
+        const { identity, freeze } = deferredAgentIdentityStub();
+        return { overrides: { identity }, open: freeze };
+      },
+    ],
+    [
+      'its config loads',
+      () => {
+        let open: () => void = () => undefined;
+        const ready = new Promise<void>((resolve) => {
+          open = resolve;
+        });
+        const config = { ready, onDidSectionChange: Event.None, get: () => undefined } as never;
+        return { overrides: { config }, open };
+      },
+    ],
+  ])('starts no server of an anchor whose last lease is released before %s', async (_label, gate) => {
+    const spawn = vi.spyOn(HostProcessService.prototype, 'spawn');
+    const wt = await checkout();
+    await writeMcpJson(projectFile(wt), { wtServer: stdioServer() });
+    const { overrides, open } = gate();
+    const program = createProgramMcp(overrides);
+    const pinned = await program.workdir(wt);
+    const ready = pinned.ready;
+
+    pinned.dispose();
+    open();
+    await ready;
+
+    expect(spawn).not.toHaveBeenCalled();
   }, 20000);
 
   it('moves a pinned workdir to the root anchor when its directory leaves the project and stops watching it', async () => {
@@ -611,6 +647,23 @@ describe('ProgramMcp', () => {
       await lease.dispose();
       expect(view.get('eph')).toBeUndefined();
       expect(view.get('base')?.status).toBe('connected');
+    }, 20000);
+
+    it('start no ephemeral server when the lease is released before the first load', async () => {
+      const spawn = vi.spyOn(HostProcessService.prototype, 'spawn');
+      const { identity, freeze } = deferredAgentIdentityStub();
+      const program = createProgramMcp({ identity });
+      const lease = program.root.sessionHandle({
+        sessionId: 'session-1',
+        ephemeral: { eph: ephemeralStdio() },
+      });
+      const ready = lease.handle.ready;
+
+      await lease.dispose();
+      freeze();
+      await ready;
+
+      expect(spawn).not.toHaveBeenCalled();
     }, 20000);
 
     it('tag ephemeral stdio resources with the session id while layer servers stay untagged', async () => {

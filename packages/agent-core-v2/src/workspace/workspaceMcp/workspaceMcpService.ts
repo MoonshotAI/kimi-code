@@ -101,7 +101,7 @@ export class WorkspaceMcpService extends Disposable implements IWorkspaceMcpServ
       } catch (error) {
         disposalError = error;
       }
-      await this.manager.shutdown();
+      await this.manager.dispose();
       if (disposalError !== undefined) {
         throw disposalError instanceof Error
           ? disposalError

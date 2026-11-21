@@ -310,7 +310,7 @@ export class ProgramMcp implements ProjectMcpPreview {
       ready,
       dispose: () => {
         unsubscribeOAuth();
-        return manager.shutdown();
+        return manager.dispose();
       },
     };
   }

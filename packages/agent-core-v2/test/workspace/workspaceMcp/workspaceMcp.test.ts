@@ -185,6 +185,23 @@ describe('WorkspaceMcpService', () => {
     expect(manager.get('beta')?.status).toBe('connected');
   }, 20000);
 
+  it('connects nothing from a config change still queued when the service is disposed', async () => {
+    const service = createService();
+    manager = service.connectionManager();
+    await service.ready;
+    const spawn = vi.spyOn(HostProcessService.prototype, 'spawn');
+
+    const applied = configChanges.fireAsync(
+      { upsert: { beta: stdioServer() }, remove: [] },
+      new AbortController().signal,
+    );
+    await (service as WorkspaceMcpService).disposeAsync();
+    await applied;
+
+    expect(spawn).not.toHaveBeenCalled();
+    expect(manager.get('beta')).toBeUndefined();
+  }, 20000);
+
   it('reconnects only default-cwd baseline stdio servers when the stdio cwd changes', async () => {
     current = {
       defaulted: stdioServer(),
