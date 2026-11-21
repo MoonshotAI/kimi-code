@@ -12,7 +12,7 @@ function turnEnded(turnId: number): TurnEndedEvent {
 }
 
 describe('PromptPredictionController', () => {
-  it('accepts and submits ghost text while cancelling stale requests precisely', async () => {
+  it('accepts and submits ghost text while never cancelling requests', async () => {
     setExperimentalFeatures([{ id: 'prompt_prediction', enabled: true }]);
     onTestFinished(() => setExperimentalFeatures([]));
     const editor = new CustomEditor({ requestRender: vi.fn(), terminal: { rows: 40, cols: 80 } } as unknown as TUI);
@@ -68,26 +68,21 @@ describe('PromptPredictionController', () => {
     expect(controller.handlePreInput('\t')).toBe(true);
     expect(editor.getText()).toBe('请修复失败的测试\n并补充回归覆盖');
     expect(session.predictNextPrompt).toHaveBeenCalledTimes(1);
-    expect(track.mock.calls.filter(([event]) => event === 'prediction_dismissed')).toHaveLength(0);
     editor.handleInput('\r');
     expect(track).toHaveBeenCalledWith('prediction_submitted', expect.objectContaining({ edited: false }));
 
-    let resolveCancelled!: (value: string | null) => void;
+    let resolveLate!: (value: string | null) => void;
     nextPrediction = () => new Promise<string | null>((resolve) => {
-      resolveCancelled = resolve;
+      resolveLate = resolve;
     });
     controller.handleTurnStarted();
     editor.setText('');
     controller.handleTurnEnded(turnEnded(8));
     await vi.waitFor(() => expect(session.predictNextPrompt).toHaveBeenCalledTimes(2));
-    const cancelInput = (session.predictNextPrompt as ReturnType<typeof vi.fn>).mock.calls[1]?.[0] as {
-      predictionId: string;
-    };
-    expect(controller.handlePreInput(String.fromCodePoint(0x1b))).toBe(true);
-    expect(session.cancelPromptPrediction).toHaveBeenCalledWith(cancelInput.predictionId, 'escape');
-    resolveCancelled('晚到的预测');
-    await Promise.resolve();
-    expect(editor.getPromptPrediction()).toBeUndefined();
+    expect(controller.handlePreInput(String.fromCodePoint(0x1b))).toBe(false);
+    expect(session.cancelPromptPrediction).not.toHaveBeenCalled();
+    resolveLate('晚到的预测');
+    await vi.waitFor(() => expect(editor.getPromptPrediction()).toBe('晚到的预测'));
 
     nextPrediction = () => Promise.resolve('run the focused suite');
     controller.handleTurnEnded(turnEnded(9));
@@ -105,14 +100,9 @@ describe('PromptPredictionController', () => {
     editor.setText('');
     controller.handleTurnEnded(turnEnded(10));
     await vi.waitFor(() => expect(session.predictNextPrompt).toHaveBeenCalledTimes(4));
-    const pendingPrediction = (session.predictNextPrompt as ReturnType<typeof vi.fn>).mock.calls[3]?.[0] as {
-      predictionId: string;
-    };
     expect(editor.render(80).join('\n')).toContain('Tab to predict');
     expect(editor.render(80).join('\n')).not.toContain('Predicting next prompt…');
     editor.handleInput('x');
-    expect(session.cancelPromptPrediction).not.toHaveBeenCalledWith(pendingPrediction.predictionId, 'input');
-    expect(track).not.toHaveBeenCalledWith('prediction_dismissed', expect.objectContaining({ reason: 'input' }));
     editor.setText('');
     expect(editor.render(80).join('\n')).toContain('Type a message… Tab to predict');
     expect(controller.handlePreInput('\t')).toBe(true);
@@ -123,28 +113,24 @@ describe('PromptPredictionController', () => {
     editor.setText('');
     expect(editor.render(80).join('\n')).toContain('this suggestion is recalled');
 
-    nextPrediction = () => Promise.resolve('dismiss this parked suggestion');
+    nextPrediction = () => Promise.resolve('keep this parked suggestion');
     controller.handleTurnEnded(turnEnded(11));
     await vi.waitFor(() => expect(editor.getPromptPrediction()).toBeDefined());
     editor.handleInput('y');
-    expect(controller.handlePreInput(String.fromCodePoint(0x1b))).toBe(true);
+    expect(controller.handlePreInput(String.fromCodePoint(0x1b))).toBe(false);
     expect(editor.getText()).toBe('y');
-    expect(editor.getPromptPrediction()).toBeUndefined();
-    expect(track).toHaveBeenCalledWith('prediction_dismissed', expect.objectContaining({
-      reason: 'escape',
-      accepted: false,
-    }));
-
-    nextPrediction = () => Promise.resolve('do not show this in plan mode');
+    expect(editor.getPromptPrediction()).toBe('keep this parked suggestion');
     editor.setText('');
+    expect(editor.render(80).join('\n')).toContain('keep this parked suggestion');
+
+    nextPrediction = () => Promise.resolve('hide this in plan mode');
     controller.handleTurnEnded(turnEnded(12));
     await vi.waitFor(() => expect(editor.getPromptPrediction()).toBeDefined());
     state.appState.planMode = true;
-    controller.handlePlanModeChanged(true);
-    expect(editor.getPromptPrediction()).toBeUndefined();
-    expect(track).toHaveBeenCalledWith('prediction_dismissed', expect.objectContaining({ reason: 'plan' }));
-
+    expect(editor.render(80).join('\n')).not.toContain('hide this in plan mode');
     state.appState.planMode = false;
+    expect(editor.render(80).join('\n')).toContain('hide this in plan mode');
+
     nextPrediction = () => Promise.resolve('clear this accepted suggestion');
     controller.handleTurnEnded(turnEnded(13));
     await vi.waitFor(() => expect(editor.getPromptPrediction()).toBeDefined());
@@ -152,10 +138,7 @@ describe('PromptPredictionController', () => {
     editor.setText('');
     editor.handleInput('\r');
     expect(track.mock.calls.filter(([event]) => event === 'prediction_submitted')).toHaveLength(2);
-    expect(track).toHaveBeenCalledWith('prediction_dismissed', expect.objectContaining({
-      reason: 'submit',
-      accepted: true,
-    }));
+    expect(editor.render(80).join('\n')).not.toContain('clear this accepted suggestion');
 
     nextPrediction = () => Promise.resolve('git push');
     editor.terminalFocused = false;
@@ -188,6 +171,8 @@ describe('PromptPredictionController', () => {
     expect(editor.render(80).join('\n')).not.toContain('Tab to predict');
     expect(controller.handlePreInput('\t')).toBe(false);
 
+    expect(session.cancelPromptPrediction).not.toHaveBeenCalled();
+    expect(track.mock.calls.filter(([event]) => event === 'prediction_dismissed')).toHaveLength(0);
     for (const [, properties] of track.mock.calls) {
       expect(properties).not.toHaveProperty('text');
       expect(properties).not.toHaveProperty('prediction');

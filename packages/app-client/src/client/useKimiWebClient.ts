@@ -48,6 +48,10 @@ import { modelSwitchConfirmStore } from '../stores/modelSwitchConfirm';
 import { effortSwitchStore } from '../stores/effortSwitch';
 import { ackPlanPending, foldDaemonPlanMode } from '@moonshot-ai/app-core/lib';
 import {
+  composerSessionScope,
+  draftSnapshotStorageKey,
+  draftStorageKey,
+  safeGetJson,
   safeGetString,
   safeRemove,
   safeSetString,
@@ -481,12 +485,9 @@ function recoverStaleConnection(): void {
 
 if (typeof document !== 'undefined') {
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible') {
-      clearActiveUnread();
-      recoverStaleConnection();
-    } else {
-      promptPredictionController.dismiss('visibility');
-    }
+    if (document.visibilityState !== 'visible') return;
+    clearActiveUnread();
+    recoverStaleConnection();
   });
 }
 if (typeof window !== 'undefined') {
@@ -495,7 +496,6 @@ if (typeof window !== 'undefined') {
 }
 
 function setActiveSessionId(id: string | undefined): void {
-  if (rawState.activeSessionId !== id) promptPredictionController.dismiss('session', rawState.activeSessionId);
   sessionReadScope.activate(id);
   consumeDraftPromotionOnSessionChange(id);
   if (id === undefined) permissionsStore().enterDraft();
@@ -1832,7 +1832,6 @@ const working = computed<boolean>(
 watch(
   [() => rawState.activeSessionId, working],
   ([sid, isWorking]) => {
-    if (isWorking) promptPredictionController.dismiss('queue');
     if (sid !== undefined && isWorking) openSessionBusyWindow(sid);
     else closeSessionBusyWindow();
   },
@@ -3064,7 +3063,6 @@ const sessionAdmin = useSessionAdmin({
 watch(
   () => rawState.mainView,
   (view) => {
-    if (view !== 'chat') promptPredictionController.dismiss('dialog');
     if (view === 'sessionAdmin') sessionAdmin.ensureSeeded();
   },
 );
@@ -3463,7 +3461,8 @@ export function useKimiWebClient() {
       return current !== null && canUsePromptPrediction(current.sessionId) ? current : null;
     }),
     promptPredictionHasTurn: computed(() => {
-      if (promptPredictionController.predictionTarget.value === undefined) return false;
+      const target = promptPredictionController.predictionTarget.value;
+      if (target === undefined || target.sessionId !== rawState.activeSessionId) return false;
       if (promptPredictionController.active.value !== undefined || promptPredictionController.suggestion.value !== null) return true;
       return promptPredictionController.canAttemptPrediction();
     }),
@@ -3476,8 +3475,6 @@ export function useKimiWebClient() {
     acceptPromptPrediction: (key: 'tab' | 'right') => promptPredictionController.accept(key),
     handlePromptPredictionInput: () => promptPredictionController.handleInput(),
     handlePromptPredictionSubmit: (text: string) => promptPredictionController.handleSubmit(text),
-    dismissPromptPrediction: (reason: Parameters<typeof promptPredictionController.dismiss>[0], sessionId?: string) =>
-      promptPredictionController.dismiss(reason, sessionId),
     warnings,
     questions,
     activity,

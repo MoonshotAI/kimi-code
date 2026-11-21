@@ -50,7 +50,6 @@ vi.mock('@moonshot-ai/app-client/client', async (importOriginal) => {
       acceptPromptPrediction: vi.fn(() => null),
       handlePromptPredictionInput: vi.fn(),
       handlePromptPredictionSubmit: vi.fn(),
-      dismissPromptPrediction: vi.fn(() => false),
       notify: vi.fn(),
       toggleGoalMode: vi.fn(),
       togglePlanMode: vi.fn(),

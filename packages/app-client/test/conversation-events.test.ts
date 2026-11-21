@@ -423,9 +423,8 @@ describe('conversation events in the client', () => {
     h.startTurn('s1', 1, 'msg_next', 'next');
     h.endTurn('s1', 1);
     await vi.waitFor(() => expect(predict).toHaveBeenCalledTimes(2));
-    const predictionId = predict.mock.calls[1]![1].predictionId as string;
     h.client.handlePromptPredictionInput();
-    expect(cancel).not.toHaveBeenCalledWith('s1', predictionId, 'input');
+    expect(cancel).not.toHaveBeenCalled();
     resolvePrediction('late result');
     await vi.waitFor(() => expect(h.client.promptPrediction.value?.text).toBe('late result'));
     h.endTurn('s1', 1);
@@ -460,11 +459,9 @@ describe('conversation events in the client', () => {
     const directPredict = vi.fn((sessionId: string) => sessionId === 's1'
       ? new Promise<string>((resolve) => { resolveFirstSession = resolve; })
       : Promise.resolve(`${sessionId} result`));
-    const directCancel = vi.fn(async () => true);
     const directController = createPromptPrediction({
       api: () => ({
         predictNextPrompt: directPredict,
-        cancelPromptPrediction: directCancel,
       }),
       isActiveSession: (sessionId) => sessionId === activeSession,
       canPredict: (sessionId) => sessionId === activeSession,
@@ -496,14 +493,13 @@ describe('conversation events in the client', () => {
     expect(directController.accept('tab')).toBe('first result');
     expect(directController.suggestion.value).toMatchObject({ acceptedRevision: 2 });
     expect(directPredict).toHaveBeenCalledTimes(1);
-    directController.dismiss('submit', 's1');
+    directController.handleSubmit('first result');
     expect(directController.suggestion.value).toBeNull();
 
     directController.handleTurnEnded('s1', 'pending', 1, true);
     emptyInput = false;
     directController.handleInput();
     expect(directController.active.value).toMatchObject({ parked: true });
-    expect(directCancel).not.toHaveBeenCalledWith('s1', expect.any(String), 'input');
     emptyInput = true;
     directController.handleInput();
     expect(directController.accept('tab')).toBeNull();
@@ -511,9 +507,9 @@ describe('conversation events in the client', () => {
     resolveFirstSession('pending result');
     await vi.waitFor(() => expect(directController.suggestion.value).toMatchObject({ text: 'pending result', accepted: true }));
     expect(directPredict).toHaveBeenCalledTimes(2);
-    directController.dismiss('submit', 's1');
+    directController.handleSubmit('pending result');
+    expect(directController.suggestion.value).toBeNull();
 
-    directController.dismiss('session', 's1');
     activeSession = 's2';
     directController.handleTurnEnded('s2', 'second', 0, true);
     directController.refresh();

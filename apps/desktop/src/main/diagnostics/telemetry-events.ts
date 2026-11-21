@@ -312,7 +312,6 @@ export interface DesktopEventPayloads {
   prediction_shown: RendererEventPayloads['prediction_shown'];
   prediction_accepted: RendererEventPayloads['prediction_accepted'];
   prediction_submitted: RendererEventPayloads['prediction_submitted'];
-  prediction_dismissed: RendererEventPayloads['prediction_dismissed'];
   browser_operation_result: BrowserOperationResultEvent;
   browser_control_changed: BrowserControlChangedEvent;
   browser_mcp_reconnect: BrowserMcpReconnectEvent;

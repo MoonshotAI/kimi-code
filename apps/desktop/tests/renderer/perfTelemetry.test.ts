@@ -65,7 +65,6 @@ describe('renderer perf telemetry event schemas', () => {
       expect(parse('prediction_shown', base).success).toBe(true);
       expect(parse('prediction_accepted', { ...base, key: 'tab' }).success).toBe(true);
       expect(parse('prediction_submitted', { ...base, edited: true }).success).toBe(true);
-      expect(parse('prediction_dismissed', { ...base, reason: 'input', accepted: false }).success).toBe(true);
       expect(parse('prediction_accepted', { ...base, key: 'enter' }).success).toBe(false);
     });
   });

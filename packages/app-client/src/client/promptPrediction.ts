@@ -1,9 +1,7 @@
 import { v4 as randomUUID } from 'uuid';
 import { ref, shallowRef, triggerRef } from 'vue';
-import type { KimiWebApi, PromptPredictionCancelReason } from '@moonshot-ai/app-core/api';
+import type { KimiWebApi } from '@moonshot-ai/app-core/api';
 import { track } from '../contracts';
-
-export type PromptPredictionDismissReason = PromptPredictionCancelReason;
 
 export interface PromptPredictionSuggestion {
   readonly sessionId: string;
@@ -15,7 +13,7 @@ export interface PromptPredictionSuggestion {
   readonly parked: boolean;
 }
 
-type PredictionApi = Pick<KimiWebApi, 'predictNextPrompt' | 'cancelPromptPrediction'>;
+type PredictionApi = Pick<KimiWebApi, 'predictNextPrompt'>;
 
 interface ActivePrediction {
   readonly api: PredictionApi;
@@ -46,45 +44,25 @@ export function createPromptPrediction(host: {
   const latestTurn = ref<{ readonly sessionId: string; readonly sourceId: string; readonly turnId: number } | undefined>(undefined);
   const attempted = new Set<string>();
 
-  function cancelActive(reason: PromptPredictionDismissReason): void {
-    const current = active.value;
-    if (current === undefined) return;
-    active.value = undefined;
-    void current.api.cancelPromptPrediction(current.sessionId, current.predictionId, reason).catch(() => {});
-  }
-
-  function clearPending(sessionId?: string): boolean {
-    if (pending.value === undefined || (sessionId !== undefined && pending.value.sessionId !== sessionId)) return false;
+  function clearPending(sessionId?: string): void {
+    if (pending.value === undefined || (sessionId !== undefined && pending.value.sessionId !== sessionId)) return;
     pending.value = undefined;
-    return true;
   }
 
-  function dismissForSession(reason: PromptPredictionDismissReason, sessionId?: string): boolean {
-    if (reason === 'session' && latestTurn.value !== undefined && (sessionId === undefined || latestTurn.value.sessionId === sessionId)) latestTurn.value = undefined;
-    let dismissed = reason === 'queue' ? false : clearPending(sessionId);
+  function clearForSession(sessionId?: string): void {
+    clearPending(sessionId);
     if (active.value !== undefined && (sessionId === undefined || active.value.sessionId === sessionId)) {
-      cancelActive(reason);
-      dismissed = true;
+      active.value = undefined;
     }
     const current = suggestion.value;
-    if (current === null || (sessionId !== undefined && current.sessionId !== sessionId)) return dismissed;
-    if (current.accepted && reason === 'escape') return dismissed;
+    if (current === null || (sessionId !== undefined && current.sessionId !== sessionId)) return;
     suggestion.value = null;
-    track('prediction_dismissed', {
-      prediction_id: current.predictionId,
-      turn_id: current.turnId,
-      reason,
-      accepted: current.accepted,
-      duration_ms: Date.now() - current.startedAt,
-      prediction_chars: current.text.length,
-    });
-    return true;
   }
 
   function handleTurnStarted(sessionId: string): void {
     if (!host.isActiveSession(sessionId)) return;
     latestTurn.value = undefined;
-    dismissForSession('new_turn', sessionId);
+    clearForSession(sessionId);
   }
 
   function refresh(): void {
@@ -128,7 +106,7 @@ export function createPromptPrediction(host: {
   function handleTurnEnded(sessionId: string, sourceId: string, turnId: number, completed: boolean): void {
     if (!host.isActiveSession(sessionId)) return;
     latestTurn.value = undefined;
-    dismissForSession('new_turn', sessionId);
+    clearForSession(sessionId);
     if (!completed) return;
     latestTurn.value = { sessionId, sourceId, turnId };
     pending.value = latestTurn.value;
@@ -153,26 +131,21 @@ export function createPromptPrediction(host: {
   function handleSubmit(text: string): void {
     clearPending();
     const current = suggestion.value;
-    if (current !== null) {
-      if (current.accepted) {
-        suggestion.value = null;
-        track('prediction_submitted', {
-          prediction_id: current.predictionId,
-          turn_id: current.turnId,
-          duration_ms: Date.now() - current.startedAt,
-          prediction_chars: current.text.length,
-          edited: text !== current.text,
-        });
-      } else {
-        dismissForSession('submit');
-      }
-    }
-    cancelActive('submit');
+    if (current === null) return;
+    suggestion.value = null;
+    if (!current.accepted) return;
+    track('prediction_submitted', {
+      prediction_id: current.predictionId,
+      turn_id: current.turnId,
+      duration_ms: Date.now() - current.startedAt,
+      prediction_chars: current.text.length,
+      edited: text !== current.text,
+    });
   }
 
   function canAttemptPrediction(): boolean {
     const target = latestTurn.value;
-    return target !== undefined && !attempted.has(`${target.sessionId}:${target.sourceId}`);
+    return target !== undefined && host.isActiveSession(target.sessionId) && !attempted.has(`${target.sessionId}:${target.sourceId}`);
   }
 
   function accept(key: 'tab' | 'right'): string | null {
@@ -196,8 +169,9 @@ export function createPromptPrediction(host: {
       triggerRef(active);
       return null;
     }
-    if (latestTurn.value === undefined) return null;
-    pending.value = latestTurn.value;
+    const target = latestTurn.value;
+    if (target === undefined || !host.isActiveSession(target.sessionId)) return null;
+    pending.value = target;
     refresh();
     return null;
   }
@@ -213,6 +187,5 @@ export function createPromptPrediction(host: {
     handleInput,
     handleSubmit,
     accept,
-    dismiss: (reason: PromptPredictionDismissReason, sessionId?: string): boolean => dismissForSession(reason, sessionId),
   };
 }

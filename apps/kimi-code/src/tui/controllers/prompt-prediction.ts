@@ -27,17 +27,6 @@ interface PredictionSuggestion extends ActivePrediction {
   accepted: boolean;
 }
 
-type DismissReason =
-  | 'input'
-  | 'escape'
-  | 'new_turn'
-  | 'session'
-  | 'dialog'
-  | 'queue'
-  | 'submit'
-  | 'plan'
-  | 'shutdown';
-
 export class PromptPredictionController {
   private active: ActivePrediction | undefined;
   private suggestion: PredictionSuggestion | undefined;
@@ -49,18 +38,14 @@ export class PromptPredictionController {
     this.host.state.editor.setPromptPredictionPlaceholder(() => this.placeholder());
   }
 
-  handlePlanModeChanged(planMode: boolean): void {
-    if (planMode) this.dismiss('plan');
-  }
-
   handleTurnStarted(): void {
     this.latestTurn = undefined;
-    this.dismiss('new_turn');
+    this.clear();
   }
 
   handleTurnEnded(event: TurnEndedEvent): void {
     this.latestTurn = undefined;
-    this.dismiss('new_turn');
+    this.clear();
     if (event.reason !== 'completed' || typeof event.turnId !== 'number') return;
     const session = this.host.session;
     if (session === undefined) return;
@@ -120,12 +105,6 @@ export class PromptPredictionController {
   }
 
   handlePreInput(data: string): boolean {
-    if (matchesKey(data, Key.escape)) {
-      const hadPrediction = this.active !== undefined || this.suggestion !== undefined;
-      const autocomplete = this.host.state.editor.hasAutocompleteActivity();
-      this.dismiss('escape');
-      return hadPrediction && !autocomplete;
-    }
     if (matchesKey(data, Key.tab) || matchesKey(data, Key.right)) {
       const key = matchesKey(data, Key.right) ? 'right' : 'tab';
       if (this.suggestion !== undefined && this.canUseEditor()) return this.accept(key);
@@ -158,44 +137,26 @@ export class PromptPredictionController {
 
   handleSubmit(text: string): void {
     const suggestion = this.suggestion;
-    if (suggestion !== undefined) {
-      if (suggestion.accepted && text.trim().length > 0) {
-        this.host.track('prediction_submitted', {
-          prediction_id: suggestion.predictionId,
-          turn_id: suggestion.turnId,
-          duration_ms: Date.now() - suggestion.startedAt,
-          prediction_chars: suggestion.prediction.length,
-          edited: text !== suggestion.prediction,
-        });
-        this.suggestion = undefined;
-      } else {
-        this.dismiss('submit');
-      }
+    if (suggestion !== undefined && suggestion.accepted && text.trim().length > 0) {
+      this.host.track('prediction_submitted', {
+        prediction_id: suggestion.predictionId,
+        turn_id: suggestion.turnId,
+        duration_ms: Date.now() - suggestion.startedAt,
+        prediction_chars: suggestion.prediction.length,
+        edited: text !== suggestion.prediction,
+      });
     }
-    if (this.active !== undefined) this.cancelActive('submit');
-  }
-
-  notifyDisplaced(): void {
-    this.dismiss('dialog');
-  }
-
-  handleQueueChange(): void {
-    if (
-      this.host.state.queuedMessages.length > 0 ||
-      this.host.state.queuedMessageDispatchPending
-    ) {
-      this.dismiss('queue');
-    }
+    this.clear();
   }
 
   reset(): void {
     this.latestTurn = undefined;
     this.attempted.clear();
-    this.dismiss('session');
+    this.clear();
   }
 
   dispose(): void {
-    this.dismiss('shutdown');
+    this.clear();
     this.host.state.editor.setPromptPredictionPlaceholder(undefined);
   }
 
@@ -263,31 +224,11 @@ export class PromptPredictionController {
     );
   }
 
-  private dismiss(reason: DismissReason): void {
-    const hadActive = this.active !== undefined;
-    if (hadActive) this.cancelActive(reason);
-    const suggestion = this.suggestion;
+  private clear(): void {
+    const hadState = this.active !== undefined || this.suggestion !== undefined;
+    this.active = undefined;
     this.suggestion = undefined;
     this.host.state.editor.setPromptPrediction(undefined);
-    if (suggestion === undefined) {
-      if (hadActive) this.host.state.ui.requestRender();
-      return;
-    }
-    this.host.state.ui.requestRender();
-    this.host.track('prediction_dismissed', {
-      prediction_id: suggestion.predictionId,
-      turn_id: suggestion.turnId,
-      reason,
-      accepted: suggestion.accepted,
-      duration_ms: Date.now() - suggestion.startedAt,
-      prediction_chars: suggestion.prediction.length,
-    });
-  }
-
-  private cancelActive(reason: DismissReason): void {
-    const active = this.active;
-    if (active === undefined) return;
-    this.active = undefined;
-    void active.session.cancelPromptPrediction(active.predictionId, reason).catch(() => {});
+    if (hadState) this.host.state.ui.requestRender();
   }
 }

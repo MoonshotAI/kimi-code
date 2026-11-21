@@ -431,17 +431,6 @@ export const rendererTrackEventSchema = z.discriminatedUnion('event', [
       edited: z.boolean(),
     }),
   }),
-  z.object({
-    event: z.literal('prediction_dismissed'),
-    properties: z.object({
-      prediction_id: shortStringSchema,
-      turn_id: z.number().int().nonnegative(),
-      reason: z.enum(['input', 'escape', 'new_turn', 'session', 'dialog', 'queue', 'submit', 'visibility', 'shutdown']),
-      accepted: z.boolean(),
-      duration_ms: clampedPerfMsSchema,
-      prediction_chars: clampedCountSchema,
-    }),
-  }),
 ]);
 
 export type RendererTrackEvent = z.infer<typeof rendererTrackEventSchema>;

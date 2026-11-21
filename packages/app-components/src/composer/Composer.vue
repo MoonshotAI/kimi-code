@@ -801,7 +801,6 @@ onMounted(() => {
 });
 
 onUnmounted(() => {
-  if (!isSideChat.value) client.dismissPromptPrediction('shutdown');
   releaseBrowserTarget?.();
   window.removeEventListener('online', recoverOnlineMedia);
   for (const timer of remintRetryTimers.values()) window.clearTimeout(timer);
@@ -2176,11 +2175,6 @@ function handleKeydown(e: KeyboardEvent): boolean {
         return true;
       }
     }
-  }
-
-  if (e.key === 'Escape' && !isSideChat.value && client.dismissPromptPrediction('escape')) {
-    e.preventDefault();
-    return true;
   }
 
   if (
