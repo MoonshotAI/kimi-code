@@ -76,6 +76,62 @@ export const kimiOpenAIEncodeFixtures = [{
     },
   },
 }, {
+  name: 'kimi-openai-empty-text-cleanup',
+  module: testModule({
+    messages: [
+      {
+        role: 'user',
+        content: [{ type: 'text', text: '' }, { type: 'text', text: 'first' }],
+      },
+      {
+        role: 'assistant',
+        content: [{ type: 'text', text: '' }, { type: 'text', text: '   ' }],
+        toolCalls: [{
+          type: 'function',
+          id: 'call_empty',
+          name: 'weather',
+          arguments: '{}',
+        }],
+      },
+      {
+        role: 'tool',
+        content: [{ type: 'text', text: '' }],
+        toolCallId: 'call_empty',
+      },
+      {
+        role: 'assistant',
+        content: [{ type: 'text', text: '' }],
+        toolCalls: [],
+      },
+      {
+        role: 'user',
+        content: [{ type: 'text', text: ' ' }, { type: 'text', text: 'Compact this conversation.' }],
+      },
+    ],
+  }),
+  expected: {
+    params: {
+      model: 'test-model',
+      messages: [
+        { role: 'user', content: 'first' },
+        {
+          role: 'assistant',
+          tool_calls: [{
+            id: 'call_empty',
+            type: 'function',
+            function: { name: 'weather', arguments: '{}' },
+          }],
+        },
+        {
+          role: 'tool',
+          tool_call_id: 'call_empty',
+          content: '<system>Tool output is empty.</system>',
+        },
+        { role: 'user', content: 'Compact this conversation.' },
+      ],
+    },
+  },
+}, {
   name: 'kimi-openai-cache-key',
   module: testModule({
     model: { ...TEST_MODEL, cacheKey: 'kimi-cache-1' },
