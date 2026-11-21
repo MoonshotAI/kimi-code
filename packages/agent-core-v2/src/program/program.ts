@@ -9,7 +9,7 @@ import type { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
 import type { IWorkspaceFsService } from '#/workspace/workspaceFs/fs';
 import type { IWorkspaceGitService } from '#/workspace/workspaceGit/workspaceGit';
 import type { IWorkspaceInstructionsService } from '#/workspace/workspaceInstructions/workspaceInstructions';
-import type { ProjectMcpServer, WorkdirMcp } from '#/workspace/workspaceMcp/workspaceMcp';
+import type { ProjectMcpPreview, ProjectMcpServer, WorkdirMcp } from '#/workspace/workspaceMcp/workspaceMcp';
 import type { IWorkspaceTrust } from '#/workspace/workspaceTrust/workspaceTrust';
 import { WorkspaceTrustService } from '#/workspace/workspaceTrust/workspaceTrustService';
 import type { IWorkspaceTrustDisclosure } from '#/workspace/workspaceTrust/trustDisclosure';
@@ -32,7 +32,13 @@ import type { IEnvironmentService } from '#/app/environment/environment';
 
 import type { ProgramDependencies } from './programDependencies';
 import { ProgramMcp } from './programMcp';
-import { PROGRAM_CAPABILITIES, ProgramWorkdirs, type ProgramHarness, type ProgramWorkdir } from './programWorkdirs';
+import {
+  PROGRAM_CAPABILITIES,
+  ProgramWorkdirs,
+  type ProgramHarness,
+  type ProgramViewLease,
+  type ProgramWorkdir,
+} from './programWorkdirs';
 
 export type { ProgramWorkdir } from './programWorkdirs';
 
@@ -180,20 +186,11 @@ export class Program {
     }
     try {
       const mcp = await generation.mcp.workdir(cwd);
-      const trustDisclosure = new WorkspaceTrustDisclosureService(
+      const trustDisclosure = this.trustDisclosureFor(
         { ...this.context, cwd },
-        view.hostFs,
-        this.dependencies.bootstrap,
-        this.dependencies.config,
-        view.localConfig,
-        view.dirs,
+        view,
         generation.trust,
         { previewProjectServers: (pinnedWorkDir = cwd) => generation.mcp.previewProjectServers(pinnedWorkDir) },
-        view.skills,
-        view.agentProfiles,
-        this.dependencies.agentProfiles,
-        view.instructions,
-        this.dependencies.log,
       );
       return {
         ...view,
@@ -351,7 +348,7 @@ export class Program {
         onDidChange: this.dependencies.workspaceStore.onDidChange,
       };
       const mcp = own(new ProgramMcp({ ...this.dependencies, environments: this.environments, hostFs, project, rootDirs: root.dirs, trust }));
-      const trustDisclosure = new WorkspaceTrustDisclosureService(this.context, hostFs, this.dependencies.bootstrap, this.dependencies.config, root.localConfig, root.dirs, trust, mcp, root.skills, root.agentProfiles, this.dependencies.agentProfiles, root.instructions, this.dependencies.log);
+      const trustDisclosure = this.trustDisclosureFor(this.context, root, trust, mcp);
       own(workdirs);
       return {
         id: environment.identity.generation,
@@ -375,6 +372,29 @@ export class Program {
     } finally {
       lease.dispose();
     }
+  }
+
+  private trustDisclosureFor(
+    context: IWorkspaceContext,
+    view: Pick<ProgramViewLease, 'hostFs' | 'localConfig' | 'dirs' | 'skills' | 'agentProfiles' | 'instructions'>,
+    trust: IWorkspaceTrust,
+    mcp: ProjectMcpPreview,
+  ): IWorkspaceTrustDisclosure {
+    return new WorkspaceTrustDisclosureService(
+      context,
+      view.hostFs,
+      this.dependencies.bootstrap,
+      this.dependencies.config,
+      view.localConfig,
+      view.dirs,
+      trust,
+      mcp,
+      view.skills,
+      view.agentProfiles,
+      this.dependencies.agentProfiles,
+      view.instructions,
+      this.dependencies.log,
+    );
   }
 
   private observeReadiness(generation: ProgramGeneration): void {
