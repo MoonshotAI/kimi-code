@@ -52,6 +52,8 @@ kimi --session
 
 When a session is being restored, the TUI shows progress while it attempts the session's recorded environment connection.
 
+`--continue` only considers sessions that run in exactly the current directory: a Git worktree and its main checkout keep separate histories, and sessions of workspaces you created explicitly (for example in the desktop app) are not included. `--session <id>` finds a session by ID in any workspace, including explicitly created ones, but opens it only from the directory that session runs in; anywhere else it prints the `cd` command to run first. Earlier versions of `--continue` also picked sessions of explicitly created workspaces that contained the current directory; to reopen one of those, pass its ID to `--session`.
+
 ::: warning
 `--continue` and `--session` are mutually exclusive.
 :::

@@ -500,6 +500,8 @@ require_trust = false
 
 配置变更在 `/reload` 后生效；已经运行的 TUI 不会补弹启动信任提示。`KIMI_CODE_TRUST_WORKSPACE=1` 仍是独立的进程级信任覆盖，假值不会在 `require_trust` 为 `false` 时恢复首次打开的信任确认。已有信任记录会保留，恢复该要求后继续使用。
 
+信任属于项目，记录在项目的主目录上。在 Git 仓库的子目录或它的某个 worktree 中启动 Kimi Code 时，会话会归入该仓库的项目，因此提示问的是 `Trust this project?`，显示的是仓库的主检出目录。信任一次即覆盖主检出、它的子目录和它的各个 worktree，新建的 worktree 打开时不会再次询问。附加目录纳入使用它的项目的信任范围：用 `/add-dir` 或 `--add-dir` 添加目录，或在 `local.toml` 中列出目录，都不会让未受信任的项目变为受信任，即使该目录本身曾被信任。早期版本中仅因这类目录而被视为受信任的项目，需要再信任一次。
+
 <!--
 ## `experimental`
 
@@ -728,7 +730,7 @@ additional_dir = ["/absolute/path/to/shared"]
 
 目录以绝对路径存储，与具体机器相关。因此建议把 `.kimi-code/local.toml` 加入项目的 `.gitignore`，避免被提交。
 
-除了 `local.toml`，项目 `.kimi-code/` 目录还可以放 `mcp.json`（项目级 MCP server），受工作区信任门控：在启动提示中选择信任该文件夹后才生效。详见 [Model Context Protocol](../customization/mcp.md)。
+除了 `local.toml`，项目 `.kimi-code/` 目录还可以放 `mcp.json`（项目级 MCP server），受工作区信任门控：在启动提示中选择信任该项目后才生效。详见 [Model Context Protocol](../customization/mcp.md)。
 
 ## 下一步
 

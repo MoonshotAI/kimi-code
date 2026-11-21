@@ -501,6 +501,8 @@ Disabling the trust requirement loads project-level MCP servers and other trust-
 
 Changes take effect on `/reload`; a running TUI does not show a startup trust prompt retroactively. `KIMI_CODE_TRUST_WORKSPACE=1` remains an independent per-process trust override, and a falsy value does not restore the first-open requirement when `require_trust` is `false`. Existing trust records are preserved and used again if the requirement is re-enabled.
 
+Trust belongs to a project, and it is recorded for the project's primary directory. When you start Kimi Code in a subdirectory of a Git repository or in one of its worktrees, the session joins the repository's project, so the prompt asks `Trust this project?` and shows the repository's main checkout. Trusting it once covers the main checkout, its subdirectories, and its worktrees, and a new worktree opens without asking again. Additional directories come under the trust of the project that uses them: adding a directory with `/add-dir` or `--add-dir`, or listing it in `local.toml`, never makes an untrusted project trusted, even if that directory was trusted on its own. A project that earlier versions treated as trusted only because of such a directory asks for trust once more.
+
 <!--
 ## `experimental`
 
@@ -729,7 +731,7 @@ additional_dir = ["/absolute/path/to/shared"]
 
 Because directories are stored as absolute paths, which are specific to your machine, we recommend adding `.kimi-code/local.toml` to your project's `.gitignore` so it is not committed.
 
-Besides `local.toml`, the project `.kimi-code/` directory can also hold `mcp.json` (project MCP servers), which is gated by workspace trust: it only takes effect after you trust the folder in the startup prompt. See [Model Context Protocol](../customization/mcp.md).
+Besides `local.toml`, the project `.kimi-code/` directory can also hold `mcp.json` (project MCP servers), which is gated by workspace trust: it only takes effect after you trust the project in the startup prompt. See [Model Context Protocol](../customization/mcp.md).
 
 ## Next steps
 
