@@ -50,6 +50,7 @@ import { applyRecommendedEffort } from '#/utils/recommended-effort';
 import { getRecommendedEffortConfig } from '#/utils/recommended-effort-config';
 import { migrateLegacySurveySetting } from '#/utils/survey-setting';
 import { detectFdPath, ensureFdPath } from '#/utils/process/fd-detect';
+import { isExistingDirectory, resumeElsewhereHint } from '#/utils/session-directory';
 import { quoteShellArg } from '#/utils/shell-quote';
 import { restoreTerminalModes } from '#/utils/terminal-restore';
 
@@ -1183,16 +1184,9 @@ export class KimiTUI {
           }
           if (!sameDir(target.workDir, workDir)) {
             this.state.ui.stop();
-            process.stderr.write(
-              `${currentTheme.fg(
-                'warning',
-                `Session "${startup.sessionFlag}" was created under a different directory.\n` +
-                  `  cd "${target.workDir}" && kimi -r ${startup.sessionFlag}`,
-              )}\n\n`,
-            );
-            throw new Error(
-              `Session "${startup.sessionFlag}" was created under a different directory.`,
-            );
+            const hint = resumeElsewhereHint(startup.sessionFlag, target.workDir);
+            process.stderr.write(`${currentTheme.fg('warning', `${hint.summary}\n${hint.detail}`)}\n\n`);
+            throw new Error(hint.summary);
           }
           session = await this.harness.resumeSession({
             id: startup.sessionFlag,
@@ -3532,6 +3526,10 @@ export class KimiTUI {
 
   private async showResumeOtherWorkDirHint(session: SessionRow): Promise<void> {
     this.hideSessionPicker();
+    if (!isExistingDirectory(session.work_dir)) {
+      this.showStatus(`Selected session's working directory no longer exists:\n  ${session.work_dir}`, 'warning');
+      return;
+    }
     const command = `cd ${quoteShellArg(session.work_dir)} && kimi --resume ${quoteShellArg(session.id)}`;
     const message = `Current session is in a different working directory.\n  To resume, run: ${command}`;
     try {

@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
@@ -274,6 +274,14 @@ function makeHarness(session = makeSession(), overrides: Record<string, unknown>
     });
   }
   return harness;
+}
+
+function existingDir(name: string): string {
+  const base = mkdtempSync(join(tmpdir(), 'kimi-tui-resume-'));
+  onTestFinished(() => rmSync(base, { recursive: true, force: true }));
+  const dir = join(base, name);
+  mkdirSync(dir, { recursive: true });
+  return dir;
 }
 
 function makeDriver(harness: ReturnType<typeof makeHarness>, input: KimiTUIStartupInput) {
@@ -2257,6 +2265,7 @@ describe('KimiTUI startup', () => {
   });
 
   it('does not resume a session from a different cwd and shows a cd hint', async () => {
+    const otherDir = existingDir('proj-b');
     const currentWorkDirSession = {
       id: 'ses-cwd',
       title: 'Current cwd session',
@@ -2266,7 +2275,7 @@ describe('KimiTUI startup', () => {
     const otherWorkDirSession = {
       id: 'ses-other-cwd',
       title: 'Other cwd session',
-      workDir: '/tmp/proj-b',
+      workDir: otherDir,
       updatedAt: Date.now() - 1000,
     };
     const resumeSession = vi.fn(async () => makeSession({ id: 'ses-other-cwd' }));
@@ -2286,7 +2295,7 @@ describe('KimiTUI startup', () => {
 
     expect(resumeSession).not.toHaveBeenCalled();
     expect(driver.state.activeDialog).toBeNull();
-    const expectedResumeCmd = `cd ${quoteShellArg('/tmp/proj-b')} && kimi --resume ${quoteShellArg('ses-other-cwd')}`;
+    const expectedResumeCmd = `cd ${quoteShellArg(otherDir)} && kimi --resume ${quoteShellArg('ses-other-cwd')}`;
     expect(copyTextToClipboardMock).toHaveBeenCalledWith(expectedResumeCmd);
     const transcript = driver.state.transcriptContainer.render(160).join('\n');
     expect(transcript).toContain('Current session is in a different working directory.');
@@ -2302,10 +2311,11 @@ describe('KimiTUI startup', () => {
       workDir: '/tmp/proj-a',
       updatedAt: Date.now(),
     };
+    const otherDir = existingDir('proj$(touch /tmp/pwned)');
     const otherWorkDirSession = {
       id: 'ses-other-cwd',
       title: 'Other cwd session',
-      workDir: '/tmp/proj$(touch /tmp/pwned)',
+      workDir: otherDir,
       updatedAt: Date.now() - 1000,
     };
     const resumeSession = vi.fn(async () => makeSession({ id: 'ses-other-cwd' }));
@@ -2324,13 +2334,14 @@ describe('KimiTUI startup', () => {
     await new Promise((resolve) => setImmediate(resolve));
 
     expect(resumeSession).not.toHaveBeenCalled();
-    const expectedResumeCmd = `cd ${quoteShellArg('/tmp/proj$(touch /tmp/pwned)')} && kimi --resume ${quoteShellArg('ses-other-cwd')}`;
+    const expectedResumeCmd = `cd ${quoteShellArg(otherDir)} && kimi --resume ${quoteShellArg('ses-other-cwd')}`;
     expect(copyTextToClipboardMock).toHaveBeenCalledWith(expectedResumeCmd);
     const transcript = driver.state.transcriptContainer.render(160).join('\n');
     expect(transcript).toContain(`To resume, run: ${expectedResumeCmd}`);
   });
 
   it('exits after picking another cwd from the startup picker', async () => {
+    const otherDir = existingDir('proj-b');
     const currentWorkDirSession = {
       id: 'ses-cwd',
       title: 'Current cwd session',
@@ -2340,7 +2351,7 @@ describe('KimiTUI startup', () => {
     const otherWorkDirSession = {
       id: 'ses-other-cwd',
       title: 'Other cwd session',
-      workDir: '/tmp/proj-b',
+      workDir: otherDir,
       updatedAt: Date.now() - 1000,
     };
     const resumeSession = vi.fn(async () => makeSession({ id: 'ses-other-cwd' }));
@@ -2361,8 +2372,49 @@ describe('KimiTUI startup', () => {
     await new Promise((resolve) => setImmediate(resolve));
 
     expect(resumeSession).not.toHaveBeenCalled();
-    const expectedResumeCmd = `cd ${quoteShellArg('/tmp/proj-b')} && kimi --resume ${quoteShellArg('ses-other-cwd')}`;
+    const expectedResumeCmd = `cd ${quoteShellArg(otherDir)} && kimi --resume ${quoteShellArg('ses-other-cwd')}`;
     expect(copyTextToClipboardMock).toHaveBeenCalledWith(expectedResumeCmd);
+    expect(stop).toHaveBeenCalledOnce();
+    expect(stop).toHaveBeenCalledWith(0);
+  });
+
+  it('says a picked session directory no longer exists, offers no cd command, and exits from the startup picker', async () => {
+    const missing = join(existingDir('removed'), 'app-fix');
+    const currentWorkDirSession = {
+      id: 'ses-cwd',
+      title: 'Current cwd session',
+      workDir: '/tmp/proj-a',
+      updatedAt: Date.now(),
+    };
+    const goneWorkDirSession = {
+      id: 'ses-gone-cwd',
+      title: 'Removed worktree session',
+      workDir: missing,
+      updatedAt: Date.now() - 1000,
+    };
+    const resumeSession = vi.fn(async () => makeSession({ id: 'ses-gone-cwd' }));
+    const harness = makeHarness(makeSession({ id: 'ses-current' }), {
+      resumeSession,
+      listSessions: vi.fn(async () => [currentWorkDirSession, goneWorkDirSession]),
+    });
+    const driver = makeDriver(harness, makeStartupInput({ session: '' }));
+    const stop = vi.spyOn(driver, 'stop').mockResolvedValue(undefined);
+    copyTextToClipboardMock.mockClear();
+
+    await expect((driver as unknown as MigrateExitDriver).initMainTui()).resolves.toBe(false);
+    await (driver as unknown as { bootstrapFromPicker(): Promise<void> }).bootstrapFromPicker();
+
+    const picker = driver.state.editorContainer.children[0] as { handleInput(data: string): void };
+    picker.handleInput('\u001B[B');
+    picker.handleInput('\r');
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(resumeSession).not.toHaveBeenCalled();
+    expect(copyTextToClipboardMock).not.toHaveBeenCalled();
+    const transcript = driver.state.transcriptContainer.render(400).join('\n');
+    expect(transcript).toContain("Selected session's working directory no longer exists:");
+    expect(transcript).toContain(missing);
+    expect(transcript).not.toContain('To resume, run:');
     expect(stop).toHaveBeenCalledOnce();
     expect(stop).toHaveBeenCalledWith(0);
   });
@@ -4067,8 +4119,9 @@ describe('KimiTUI startup', () => {
   });
 
   it('refuses to resume a session of another directory and tells the user where to cd', async () => {
+    const otherDir = existingDir('app-fix');
     const harness = makeHarness(makeSession({ id: 'ses-other' }), {
-      listSessions: vi.fn(async () => [{ id: 'ses-other', workDir: '/tmp/app-fix' }]),
+      listSessions: vi.fn(async () => [{ id: 'ses-other', workDir: otherDir }]),
     });
     const driver = makeDriver(harness, makeStartupInput({ session: 'ses-other' }));
     const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
@@ -4076,8 +4129,29 @@ describe('KimiTUI startup', () => {
     try {
       await expect(driver.init()).rejects.toThrow('Session "ses-other" was created under a different directory.');
       expect(stderr.mock.calls.map(([chunk]) => String(chunk)).join('')).toContain(
-        '  cd "/tmp/app-fix" && kimi -r ses-other',
+        `  cd "${otherDir}" && kimi -r ses-other`,
       );
+    } finally {
+      stderr.mockRestore();
+    }
+    expect(harness.resumeSession).not.toHaveBeenCalled();
+  });
+
+  it('refuses to resume a session whose directory no longer exists and gives no cd hint', async () => {
+    const missing = join(existingDir('removed'), 'app-fix');
+    const harness = makeHarness(makeSession({ id: 'ses-gone' }), {
+      listSessions: vi.fn(async () => [{ id: 'ses-gone', workDir: missing }]),
+    });
+    const driver = makeDriver(harness, makeStartupInput({ session: 'ses-gone' }));
+    const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+
+    try {
+      await expect(driver.init()).rejects.toThrow(
+        'Session "ses-gone" was created in a directory that no longer exists.',
+      );
+      const written = stderr.mock.calls.map(([chunk]) => String(chunk)).join('');
+      expect(written).toContain(`  ${missing}`);
+      expect(written).not.toContain('kimi -r');
     } finally {
       stderr.mockRestore();
     }

@@ -85,6 +85,7 @@ import {
   PROMPT_CLEANUP_TIMEOUT_MS,
 } from '#/constant/app';
 import { currentKimiProfile, currentKimiRegionResolution } from '#/utils/region';
+import { resumeElsewhereHint } from '#/utils/session-directory';
 
 import {
   formatGoalSummaryText,
@@ -396,11 +397,9 @@ async function resolveNativeSession(
     const project = await services.get(IWorkspaceService).get(target.workspaceId);
     const targetDir = sessionWorkDir(sessionPlacementOf(target), project?.root);
     if (targetDir !== undefined && !sameDir(targetDir, workDir)) {
-      stderr.write(
-        `Session "${opts.session}" was created under a different directory.\n` +
-          `  cd "${targetDir}" && kimi -r ${opts.session}\n\n`,
-      );
-      throw new Error(`Session "${opts.session}" was created under a different directory.`);
+      const hint = resumeElsewhereHint(opts.session, targetDir);
+      stderr.write(`${hint.summary}\n${hint.detail}\n\n`);
+      throw new Error(hint.summary);
     }
     const session = await resumeById(opts.session);
     const agentContext = await ensureMainAgent(session);

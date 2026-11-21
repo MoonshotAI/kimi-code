@@ -1,4 +1,4 @@
-import { mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -916,13 +916,14 @@ describe('runV2Print', () => {
   it('refuses to resume a session pinned in another directory and names that directory', async () => {
     const stdout = writer();
     const stderr = writer();
+    const otherDir = await mkdtemp(join(tmpdir(), 'kimi-print-app-fix-'));
     const { app, appServices } = makeFakeHarness();
     const index = appServices.get(ISessionIndex) as { get: ReturnType<typeof vi.fn> };
     index.get.mockResolvedValue({
       id: 'ses_other',
       workspaceId: 'wd_v2',
-      cwd: '/work/app-fix',
-      environmentCwd: '/work/app-fix',
+      cwd: otherDir,
+      environmentCwd: otherDir,
       createdAt: 1,
       updatedAt: 1,
       archived: false,
@@ -931,11 +932,48 @@ describe('runV2Print', () => {
 
     mocks.bootstrap.mockReturnValue({ app });
 
-    await expect(
-      runV2Print(opts({ session: 'ses_other' }) as never, '1.2.3-test', { stdout, stderr }),
-    ).rejects.toThrow('Session "ses_other" was created under a different directory.');
+    try {
+      await expect(
+        runV2Print(opts({ session: 'ses_other' }) as never, '1.2.3-test', { stdout, stderr }),
+      ).rejects.toThrow('Session "ses_other" was created under a different directory.');
+    } finally {
+      await rm(otherDir, { recursive: true, force: true });
+    }
 
-    expect(stderr.text()).toContain('  cd "/work/app-fix" && kimi -r ses_other');
+    expect(stderr.text()).toContain(`  cd "${otherDir}" && kimi -r ses_other`);
+    expect(sessions.resume).not.toHaveBeenCalled();
+  });
+
+  it('refuses to resume a session whose directory no longer exists and gives no cd hint', async () => {
+    const stdout = writer();
+    const stderr = writer();
+    const removed = await mkdtemp(join(tmpdir(), 'kimi-print-removed-'));
+    const missing = join(removed, 'app-fix');
+    const { app, appServices } = makeFakeHarness();
+    const index = appServices.get(ISessionIndex) as { get: ReturnType<typeof vi.fn> };
+    index.get.mockResolvedValue({
+      id: 'ses_gone',
+      workspaceId: 'wd_v2',
+      cwd: missing,
+      environmentCwd: missing,
+      createdAt: 1,
+      updatedAt: 1,
+      archived: false,
+    });
+    const sessions = appServices.get(ISessionManager) as { resume: ReturnType<typeof vi.fn> };
+
+    mocks.bootstrap.mockReturnValue({ app });
+
+    try {
+      await expect(
+        runV2Print(opts({ session: 'ses_gone' }) as never, '1.2.3-test', { stdout, stderr }),
+      ).rejects.toThrow('Session "ses_gone" was created in a directory that no longer exists.');
+    } finally {
+      await rm(removed, { recursive: true, force: true });
+    }
+
+    expect(stderr.text()).toContain(`  ${missing}`);
+    expect(stderr.text()).not.toContain('kimi -r');
     expect(sessions.resume).not.toHaveBeenCalled();
   });
 
