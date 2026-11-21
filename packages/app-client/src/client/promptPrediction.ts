@@ -1,3 +1,4 @@
+import { v4 as randomUUID } from 'uuid';
 import { ref, shallowRef, triggerRef } from 'vue';
 import type { KimiWebApi, PromptPredictionCancelReason } from '@moonshot-ai/app-core/api';
 import { track } from '../contracts';
@@ -98,7 +99,7 @@ export function createPromptPrediction(host: {
       sessionId: next.sessionId,
       sourceId: next.sourceId,
       turnId: next.turnId,
-      predictionId: crypto.randomUUID(),
+      predictionId: randomUUID(),
       startedAt: Date.now(),
       parked: false,
       acceptKey: undefined,

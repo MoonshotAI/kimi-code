@@ -8,6 +8,10 @@ const SECOND = 'Now summarise the plan in one sentence';
 const DRAFT = 'unsent thought';
 const OPENER = 'Start a migration planning session';
 
+function prediction(message: string | null): ReturnType<typeof say> {
+  return say(JSON.stringify({ show: message === null ? 'no' : 'yes', message: message ?? '' }));
+}
+
 test('a multi-line prompt is written, expanded, sent verbatim and recalled from history after a relaunch', async ({ app, model }) => {
   model.script(say('Ready to plan.'), say('Migration plan noted.'), say('One sentence summary.'));
   const input = app.window.getByRole('combobox', { name: 'Message input' });
@@ -138,13 +142,13 @@ test.describe('next-prompt placeholder recall', () => {
     const predictionHold = model.hold('composer-tab-prediction');
     model.script(
       say('First answer.'),
-      held('composer-tab-prediction', say(tabPrediction)),
+      held('composer-tab-prediction', prediction(tabPrediction)),
       say('Second answer.'),
-      say(rightPrediction),
+      prediction(rightPrediction),
       say('Third answer.'),
-      say(dismissedPrediction),
+      prediction(dismissedPrediction),
       say('Fourth answer.'),
-      say(''),
+      prediction(null),
     );
     const input = app.window.getByRole('combobox', { name: 'Message input' });
     const lines = input.getByRole('paragraph');
@@ -154,16 +158,16 @@ test.describe('next-prompt placeholder recall', () => {
     await expect(placeholder).toHaveText('Type a message…');
     await app.startTurn(OPENER);
     await predictionHold.reached();
-    await expect(placeholder).toHaveText('Predicting next prompt…');
+    await expect(placeholder).toHaveText('Type a message…');
     await input.click();
     await app.window.keyboard.type('another draft');
     await expect(placeholder).toBeHidden();
     await app.window.keyboard.press('ControlOrMeta+a');
     await app.window.keyboard.press('Backspace');
     await app.window.keyboard.type(' ');
-    await expect(placeholder).toHaveText('Type a message… Press Tab to predict');
+    await expect(placeholder).toHaveText('Type a message…');
     await app.window.keyboard.press('Tab');
-    await expect(placeholder).toHaveText('Type a message… Press Tab to predict');
+    await expect(placeholder).toHaveText('Type a message…');
     predictionHold.release();
     await expect(lines).toHaveText([tabPrediction]);
     await expect(placeholder).toBeHidden();
@@ -171,7 +175,7 @@ test.describe('next-prompt placeholder recall', () => {
 
     await app.window.keyboard.press('ControlOrMeta+a');
     await app.window.keyboard.press('Backspace');
-    await expect(placeholder).toHaveText('Type a message… Press Tab to predict');
+    await expect(placeholder).toHaveText(tabPrediction);
     await app.window.keyboard.press('Tab');
     await expect(lines).toHaveText([tabPrediction]);
     expect(model.requests()).toHaveLength(2);
@@ -190,8 +194,7 @@ test.describe('next-prompt placeholder recall', () => {
     await app.window.keyboard.type('another draft');
     await app.window.keyboard.press('ControlOrMeta+a');
     await app.window.keyboard.press('Backspace');
-    await expect(placeholder).toHaveText('Type a message… Press Tab to predict');
-    await expect(placeholder.locator('kbd')).toHaveText('Tab');
+    await expect(placeholder).toHaveText(rightPrediction);
     await app.window.keyboard.press('ArrowRight');
     await expect(lines).toHaveText([rightPrediction]);
     await app.window.keyboard.press('Enter');

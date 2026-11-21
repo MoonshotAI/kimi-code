@@ -4,8 +4,6 @@ export default {
   placeholderHints: "Type <kbd>{'@'}</kbd> to reference files, or start with <kbd>/</kbd> for commands and skills",
   commandArgumentHint: 'Type {argument} after {command}',
   promptPredictionHint: 'Prediction: {prediction}. Press Tab or Right Arrow to insert.',
-  promptPredictionPending: 'Predicting next prompt…',
-  promptPredictionRecallPlaceholder: 'Type a message… Press <kbd>Tab</kbd> to predict',
   send: 'Send ↵',
   queueLabel: 'Queue',
   placeholderRunning: 'Press <kbd>Enter</kbd> to queue · <kbd>Ctrl</kbd>+<kbd>S</kbd> to inject into the running turn',
