@@ -49,7 +49,6 @@ export const useSessionInfoStore = defineStore('kimi.sessionInfo', () => {
     if (!session) return [];
     const workspaceId = workspacesStore().workspaceIdForSession(session);
     const workspace = workspacesStore().mergedWorkspaces.find((item) => item.id === workspaceId);
-    if (workspace === undefined) return workspaceFolders({ root: session.cwd });
     const { root, roots } = panelRoots(session, workspace);
     return workspaceFolders({ root, additionalDirs: roots.slice(1) });
   }

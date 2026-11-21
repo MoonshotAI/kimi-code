@@ -19,7 +19,7 @@ import type {
 } from '@moonshot-ai/app-client/panel';
 import type { PromptAttachment, SideChatTurnError } from '@moonshot-ai/app-client/client';
 import type { OpenMediaRequest } from '../../types';
-import { isWindowsPath, normalizeRelativePath, panelRoots, pathRelativeTo, resolveLocalPath } from '@moonshot-ai/app-core/lib';
+import { isWindowsPath, normalizeRelativePath, pathRelativeTo, resolveLocalPath } from '@moonshot-ai/app-core/lib';
 import { useWorkspaceTrust } from '@moonshot-ai/app-client/composables';
 import { filesStore, workspacesStore } from '@moonshot-ai/app-client/stores';
 import { focusAfterTabClose } from './tabCloseFocus';
@@ -59,15 +59,6 @@ export interface PanelAdapterCtx {
   openFile: (target: FilePreviewRequest) => void;
 }
 
-function activePanelRoots(client: PanelAdapterClient): readonly string[] | undefined {
-  const workspaceId = client.activeWorkspaceId.value;
-  const workspace = workspaceId === null
-    ? undefined
-    : workspacesStore().mergedWorkspaces.find((item) => item.id === workspaceId);
-  if (workspace === undefined) return undefined;
-  return panelRoots(client.activeSessionId.value ? { cwd: client.status.value.cwd } : undefined, workspace).roots;
-}
-
 export function panelTabProps(tab: PanelTab, ctx: PanelAdapterCtx): Record<string, unknown> | null {
   const { panel, client, filePreview } = ctx;
   const closeThis = () => {
@@ -91,8 +82,8 @@ export function panelTabProps(tab: PanelTab, ctx: PanelAdapterCtx): Record<strin
       const payload = tab.payload as FileTabPayload;
       const sessionId = client.activeSessionId.value;
       const workspaceId = client.activeWorkspaceId.value;
-      const roots = activePanelRoots(client) ?? [];
-      const root = filesStore().resolveFileTreeRoot(workspaceId, roots, client.status.value.cwd);
+      const { root: panelRoot, roots } = workspacesStore().activePanelRoots;
+      const root = filesStore().resolveFileTreeRoot(workspaceId, roots, panelRoot);
       return {
         preview: {
           file: filePreview.previewFile.value,
@@ -118,10 +109,10 @@ export function panelTabProps(tab: PanelTab, ctx: PanelAdapterCtx): Record<strin
           sessionId,
           roots,
           root,
-          cwd: client.status.value.cwd,
+          cwd: panelRoot,
           selectedPath: filePreview.previewNormalizedPath.value,
           onSelectRoot: (nextRoot: string) =>
-            filesStore().selectFileTreeRoot(workspaceId, roots, nextRoot, client.status.value.cwd),
+            filesStore().selectFileTreeRoot(workspaceId, roots, nextRoot, panelRoot),
           onSelectFile: (path: string) => {
             const existing = panel.panelTabs.value.find(
               (candidate) =>
@@ -144,7 +135,7 @@ export function panelTabProps(tab: PanelTab, ctx: PanelAdapterCtx): Record<strin
     case 'diff': {
       const root = (tab.payload as DiffTabPayload | undefined)?.root;
       const sessionId = client.activeSessionId.value;
-      const roots = activePanelRoots(client) ?? [client.status.value.cwd];
+      const { root: panelRoot, roots } = workspacesStore().activePanelRoots;
       const status = root === undefined || sessionId === null ? undefined : filesStore().gitStatusForRoot(sessionId, root);
       const changes = root === undefined
         ? client.changes.value
@@ -164,7 +155,7 @@ export function panelTabProps(tab: PanelTab, ctx: PanelAdapterCtx): Record<strin
         fileDiffLoading: client.fileDiffLoading.value,
         stale: ctx.diffStale.value,
         refreshing: client.fileDiffRefreshing.value,
-        cwd: root ?? client.status.value.cwd,
+        cwd: root ?? panelRoot,
         onSelectRoot: (nextRoot: string) => panel.openDiffDetail(nextRoot),
         onOpen: (path: string) => void panel.selectDiffFile(path, root),
         onOpenFile: (path: string) => panel.openFilePreview({ path: root === undefined ? path : resolveLocalPath(root, path) }),

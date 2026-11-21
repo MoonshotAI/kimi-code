@@ -40,4 +40,10 @@ describe('panelRoots', () => {
   it('falls back to the project root while the session working directory is unknown', () => {
     expect(panelRoots({ cwd: '' }, repo)).toEqual(panelRoots(undefined, repo));
   });
+
+  it('roots a session outside any project at its working directory alone', () => {
+    expect(panelRoots({ cwd: '/loose' }, undefined)).toEqual({ root: '/loose', roots: ['/loose'] });
+    expect(panelRoots({ cwd: '' }, undefined)).toEqual({ root: '', roots: [] });
+    expect(panelRoots(undefined, undefined)).toEqual({ root: '', roots: [] });
+  });
 });

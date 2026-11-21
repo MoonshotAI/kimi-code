@@ -7,8 +7,12 @@ export interface PanelRoots {
 
 export function panelRoots(
   session: { readonly cwd: string } | undefined,
-  workspace: { readonly root: string; readonly additionalDirs: readonly string[] },
+  workspace: { readonly root: string; readonly additionalDirs: readonly string[] } | undefined,
 ): PanelRoots {
+  if (workspace === undefined) {
+    const root = session?.cwd ?? '';
+    return { root, roots: root === '' ? [] : [root] };
+  }
   const root = session === undefined || session.cwd === '' ? workspace.root : session.cwd;
   const registered = [workspace.root, ...workspace.additionalDirs];
   const rootKey = workspaceRootKey(root);

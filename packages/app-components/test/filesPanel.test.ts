@@ -20,6 +20,7 @@ const fakes = vi.hoisted(() => ({
   workspaces: null as unknown as {
     workspaces: Array<{ id: string; root: string; name: string; additionalDirs: string[] }>;
     mergedWorkspaces: Array<{ id: string; root: string; name: string; additionalDirs: string[] }>;
+    activePanelRoots: { root: string; roots: string[] };
   },
   preview: null as unknown as Record<string, unknown> & {
     openFilePreview: ReturnType<typeof vi.fn>;
@@ -125,10 +126,11 @@ beforeEach(() => {
     { id: 'w1', root: '/repo', name: 'A', additionalDirs: ['/extra-a'] },
     { id: 'w2', root: '/repo', name: 'B', additionalDirs: ['/extra-b'] },
   ]);
-  fakes.workspaces = {
+  fakes.workspaces = reactive({
     workspaces: items,
     mergedWorkspaces: items,
-  };
+    activePanelRoots: { root: '/repo', roots: ['/repo', '/extra-a'] },
+  });
   fakes.preview = {
     previewTarget: ref(null),
     previewFile: ref(null),
@@ -175,6 +177,7 @@ describe('FilesPanel draft preview scope', () => {
     fakes.preview.openFilePreview.mockClear();
 
     fakes.client.activeWorkspaceId.value = 'w2';
+    fakes.workspaces.activePanelRoots = { root: '/repo', roots: ['/repo', '/extra-b'] };
     await nextTick();
 
     expect(fakes.preview.closeFilePreview).toHaveBeenCalledOnce();
@@ -185,6 +188,7 @@ describe('FilesPanel draft preview scope', () => {
 
   it('retains the cwd preview key when no workspace ID is available', async () => {
     fakes.client.activeWorkspaceId.value = null;
+    fakes.workspaces.activePanelRoots = { root: '/repo', roots: ['/repo'] };
     previews.set('workspace:/repo', { path: 'legacy.txt' });
 
     await mountPanel();
@@ -208,7 +212,7 @@ describe('FilesPanel draft preview scope', () => {
     await nextTick();
     fakes.preview.closeFilePreview.mockClear();
 
-    fakes.workspaces.mergedWorkspaces[0]!.additionalDirs = [];
+    fakes.workspaces.activePanelRoots = { root: '/repo', roots: ['/repo'] };
     await nextTick();
 
     expect(fakes.preview.closeFilePreview).toHaveBeenCalledOnce();
@@ -238,7 +242,7 @@ describe('FilesPanel draft preview scope', () => {
 describe('FilesPanel session roots', () => {
   it('roots the tree at a worktree session working directory instead of the project root', async () => {
     fakes.client.activeSessionId.value = 's1';
-    fakes.client.status.value = { cwd: '/repo-wt' };
+    fakes.workspaces.activePanelRoots = { root: '/repo-wt', roots: ['/repo-wt', '/extra-a'] };
 
     await mountPanel();
 

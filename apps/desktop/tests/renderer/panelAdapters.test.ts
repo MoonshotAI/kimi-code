@@ -1,6 +1,6 @@
-import { ref } from 'vue';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { AppWorkspace, KimiWebApi } from '@moonshot-ai/app-core/api';
+import { computed, ref } from 'vue';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { AppSession, AppWorkspace, KimiWebApi } from '@moonshot-ai/app-core/api';
 import type { PanelTab } from '@moonshot-ai/app-client/composables';
 import { resetKimiClientDeps, setKimiClientDeps } from '@moonshot-ai/app-client/client';
 import { filesStore, sessionsStore, workspacesStore } from '@moonshot-ai/app-client/stores';
@@ -20,7 +20,27 @@ function makeWorkspace(id: string, root: string, additionalDirs: string[]): AppW
   return { id, root, name: id, kind: 'managed', additionalDirs, sessionCount: 0 };
 }
 
-function makeCtx(workspaceId: string | null = 'wm_1') {
+function makeSession(id: string, workspaceId: string, cwd: string): AppSession {
+  return { id, workspaceId, cwd } as AppSession;
+}
+
+function openSession(id: string): void {
+  sessionsStore().setActiveSessionId(id);
+  const session = sessionsStore().sessions.find((item) => item.id === id);
+  if (session !== undefined) workspacesStore().selectWorkspace(workspacesStore().workspaceIdForSession(session));
+}
+
+function storeBackedClient() {
+  return {
+    activeSessionId: computed(() => sessionsStore().activeSessionId ?? null),
+    activeWorkspaceId: computed(() => workspacesStore().activeWorkspaceId),
+    status: computed(() => ({
+      cwd: sessionsStore().sessions.find((item) => item.id === sessionsStore().activeSessionId)?.cwd ?? '',
+    })),
+  };
+}
+
+function makeCtx() {
   const tab = { id: 'file-1', type: 'file', payload: { path: '/a/file.ts' } } as PanelTab;
   const panel = {
     panelTabs: ref([tab]),
@@ -44,11 +64,7 @@ function makeCtx(workspaceId: string | null = 'wm_1') {
     revealPreviewFile: vi.fn(),
     refreshFilePreview: vi.fn(),
   };
-  const client = {
-    activeSessionId: ref('s1'),
-    activeWorkspaceId: ref(workspaceId),
-    status: ref({ cwd: '/a' }),
-  };
+  const client = storeBackedClient();
   const ctx = {
     panel,
     client,
@@ -58,14 +74,14 @@ function makeCtx(workspaceId: string | null = 'wm_1') {
     onOpenMedia: vi.fn(),
     openFile: vi.fn(),
   } as unknown as PanelAdapterCtx;
-  return { tab, panel, client, ctx };
+  return { tab, panel, ctx };
 }
 
 function treeProps(tab: PanelTab, ctx: PanelAdapterCtx): TreeProps {
   return (panelTabProps(tab, ctx) as { tree: TreeProps }).tree;
 }
 
-function makeDiffCtx(workspaceId: string, cwd: string): PanelAdapterCtx {
+function makeDiffCtx(): PanelAdapterCtx {
   return {
     panel: {
       detailDiffMode: ref('list'),
@@ -75,9 +91,7 @@ function makeDiffCtx(workspaceId: string, cwd: string): PanelAdapterCtx {
       openFilePreview: vi.fn(),
     },
     client: {
-      activeSessionId: ref('s1'),
-      activeWorkspaceId: ref(workspaceId),
-      status: ref({ cwd }),
+      ...storeBackedClient(),
       changes: ref([]),
       gitInfo: ref(null),
       fileDiff: ref([]),
@@ -99,6 +113,14 @@ function makeDiffCtx(workspaceId: string, cwd: string): PanelAdapterCtx {
   } as unknown as PanelAdapterCtx;
 }
 
+beforeAll(() => {
+  vi.stubGlobal('WebSocket', undefined);
+});
+
+afterAll(() => {
+  vi.unstubAllGlobals();
+});
+
 beforeEach(() => {
   setKimiClientDeps({
     api: () => ({ getWorkspaceTrust: async () => ({ trusted: true }) }) as unknown as KimiWebApi,
@@ -110,7 +132,8 @@ beforeEach(() => {
   ];
   workspacesStore().hiddenWorkspaceIds = [];
   workspacesStore().sessionsHasMoreByWorkspace = {};
-  sessionsStore().setSessions([]);
+  sessionsStore().setSessions([makeSession('s1', 'wm_1', '/a'), makeSession('s2', 'wm_2', '/x')]);
+  openSession('s1');
   filesStore().fileTreeRootByWorkspace = {};
   setProductTracker(noopProductTracker);
 });
@@ -118,6 +141,9 @@ beforeEach(() => {
 afterEach(() => {
   resetKimiClientDeps();
   workspacesStore().workspaces = [];
+  workspacesStore().hiddenWorkspaceIds = [];
+  workspacesStore().storedActiveWorkspaceId = null;
+  sessionsStore().setActiveSessionId(undefined);
   sessionsStore().setSessions([]);
   filesStore().fileTreeRootByWorkspace = {};
   setProductTracker(noopProductTracker);
@@ -125,7 +151,7 @@ afterEach(() => {
 
 describe('desktop file preview panel adapter workspace roots', () => {
   it('provides and shares roots without changing the file payload on root selection', () => {
-    const { tab, panel, client, ctx } = makeCtx();
+    const { tab, panel, ctx } = makeCtx();
     let tree = treeProps(tab, ctx);
     expect(tree.roots).toEqual(['/a', '/b']);
     expect(tree.root).toBe('/a');
@@ -136,12 +162,10 @@ describe('desktop file preview panel adapter workspace roots', () => {
     expect(treeProps(tab, ctx).root).toBe('/b');
     expect(panel.updateTabPayload).not.toHaveBeenCalled();
 
-    client.activeWorkspaceId.value = 'wm_2';
-    client.status.value = { cwd: '/x' };
+    openSession('s2');
     expect(treeProps(tab, ctx).root).toBe('/x');
     treeProps(tab, ctx).onSelectRoot('/y');
-    client.activeWorkspaceId.value = 'wm_1';
-    client.status.value = { cwd: '/a' };
+    openSession('s1');
     expect(treeProps(tab, ctx).root).toBe('/b');
 
     workspacesStore().workspaces[0]!.additionalDirs = [];
@@ -153,22 +177,25 @@ describe('desktop file preview panel adapter workspace roots', () => {
 
   it('falls back for a single root and no registered workspace', () => {
     workspacesStore().workspaces = [makeWorkspace('wm_single', '/single', [])];
-    const { tab, client, ctx } = makeCtx('wm_single');
-    client.status.value = { cwd: '/single' };
+    sessionsStore().setSessions([makeSession('s1', 'wm_single', '/single'), makeSession('s2', 'wm_gone', '/a')]);
+    openSession('s1');
+    const { tab, ctx } = makeCtx();
     expect(treeProps(tab, ctx).roots).toEqual(['/single']);
     expect(treeProps(tab, ctx).root).toBe('/single');
 
-    client.activeWorkspaceId.value = null;
-    client.status.value = { cwd: '/a' };
+    workspacesStore().hiddenWorkspaceIds = ['wm_single', 'wm_gone'];
+    openSession('s2');
+    expect(workspacesStore().activeWorkspaceId).toBeNull();
     const tree = treeProps(tab, ctx);
-    expect(tree.roots).toEqual([]);
+    expect(tree.roots).toEqual(['/a']);
     expect(tree.root).toBe('/a');
   });
 
   it('roots the tree at a worktree session working directory instead of the project root', () => {
     workspacesStore().workspaces = [makeWorkspace('wd_repo', '/repo', ['/shared'])];
-    const { tab, client, ctx } = makeCtx('wd_repo');
-    client.status.value = { cwd: '/repo-wt' };
+    sessionsStore().setSessions([makeSession('wt', 'wd_repo', '/repo-wt')]);
+    openSession('wt');
+    const { tab, ctx } = makeCtx();
 
     const tree = treeProps(tab, ctx);
     expect(tree.roots).toEqual(['/repo-wt', '/shared']);
@@ -191,9 +218,7 @@ describe('diff panel adapter workspace roots', () => {
       openFilePreview: vi.fn(),
     };
     const client = {
-      activeSessionId: ref('s1'),
-      activeWorkspaceId: ref('wm_1'),
-      status: ref({ cwd: '/a' }),
+      ...storeBackedClient(),
       changes: ref([]),
       gitInfo: ref(null),
       fileDiff: ref([]),
@@ -244,9 +269,11 @@ describe('diff panel adapter workspace roots', () => {
 
   it('offers the working directory of a worktree session first instead of the project root', () => {
     workspacesStore().workspaces = [makeWorkspace('wd_repo', '/repo', ['/shared'])];
+    sessionsStore().setSessions([makeSession('wt', 'wd_repo', '/repo-wt')]);
+    openSession('wt');
     const tab = { id: 'diff-1', type: 'diff', payload: {} } as PanelTab;
 
-    const props = panelTabProps(tab, makeDiffCtx('wd_repo', '/repo-wt')) as { roots: string[]; cwd: string };
+    const props = panelTabProps(tab, makeDiffCtx()) as { roots: string[]; cwd: string };
 
     expect(props.roots).toEqual(['/repo-wt', '/shared']);
     expect(props.cwd).toBe('/repo-wt');

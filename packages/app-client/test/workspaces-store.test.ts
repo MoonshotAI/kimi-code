@@ -251,12 +251,28 @@ describe('active workspace resolution', () => {
     ]);
     sessionsStore().setActiveSessionId(undefined);
     expect(store.activePanelRoot).toBe('/repo');
+    expect(store.activePanelRoots).toEqual({ root: '/repo', roots: ['/repo', '/shared'] });
 
     sessionsStore().setActiveSessionId('wt');
     expect(store.activePanelRoot).toBe('/repo-wt');
+    expect(store.activePanelRoots).toEqual({ root: '/repo-wt', roots: ['/repo-wt', '/shared'] });
 
     sessionsStore().setActiveSessionId('main');
     expect(store.activePanelRoot).toBe('/repo');
+    expect(store.activePanelRoots).toEqual({ root: '/repo', roots: ['/repo', '/shared'] });
+    sessionsStore().setActiveSessionId(undefined);
+  });
+
+  it('roots the active panels at the session working directory alone when no project is visible', () => {
+    const store = workspacesStore();
+    store.hiddenWorkspaceIds = ['wd_gone'];
+    sessionsStore().setSessions([makeSession('loose', '2026-01-01T00:00:00.000Z', { workspaceId: 'wd_gone', cwd: '/loose' })]);
+    expect(store.visibleWorkspace).toBeNull();
+    expect(store.activePanelRoots).toEqual({ root: '', roots: [] });
+
+    sessionsStore().setActiveSessionId('loose');
+    expect(store.activePanelRoots).toEqual({ root: '/loose', roots: ['/loose'] });
+    expect(store.activePanelRoot).toBe('/loose');
     sessionsStore().setActiveSessionId(undefined);
   });
 
