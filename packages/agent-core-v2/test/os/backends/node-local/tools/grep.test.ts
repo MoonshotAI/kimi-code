@@ -38,7 +38,7 @@ import { IHostProcessService, type IHostProcess } from '#/os/interface/hostProce
 import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
 import { ISessionToolPolicyGate } from '#/session/sessionToolPolicyGate/sessionToolPolicyGate';
 import { Event } from '#/_base/event';
-import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
+import { ISessionWorkdirContext } from '#/session/workdirContext/workdirContext';
 import {
   type GrepInput,
   GrepInputSchema,
@@ -48,7 +48,7 @@ import { GrepTool as ProductionGrepTool } from '#/agent/tools/os/grep/grepTool';
 import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import { FakeEnvironment } from '#/environment/fakeEnvironment';
 import { ensureRgPath } from '#/os/backends/node-local/tools/rgLocator';
-import { stubWorkspaceContext } from '../../../../session/workspaceContext/stub-workspace-context';
+import { stubWorkspaceContext } from '../../../../session/workdirContext/stub-workdir-context';
 import { stubAgentEnvironment } from '../../../../environment/stubs';
 import { recordingTelemetry, type TelemetryRecord } from '../../../../app/telemetry/stubs';
 import { registerStateServices } from '../../../../state/stubs';
@@ -347,7 +347,7 @@ describe('GrepTool', () => {
             { process: processService, fs, host: environment },
           );
           reg.defineInstance(IAgentEnvironmentService, stubAgentEnvironment(backend));
-          reg.defineInstance(ISessionWorkspaceContext, stubWorkspaceContext('/workspace'));
+          reg.defineInstance(ISessionWorkdirContext, stubWorkspaceContext('/workspace'));
           reg.defineInstance(ITelemetryService, noopTelemetryService);
           reg.definePartialInstance(IOAuthService, {
             getRegion: () => 'mainland-cn',

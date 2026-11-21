@@ -18,9 +18,9 @@ import {
   ISessionManager,
   ISessionRunGate,
   ITelemetryService,
-  IWorkspaceInstanceManager,
-  IWorkspaceService,
-  IWorkspaceSessions,
+  IProjectInstanceManager,
+  IProjectService,
+  IProjectSessions,
   PRINT_MAX_TURNS_DEFAULT,
   PRINT_WAIT_CEILING_S_DEFAULT,
   applyPrintModeConfigDefaults,
@@ -76,7 +76,7 @@ import type {
 import { sameDir } from '@moonshot-ai/agent-core-v2/_base/utils/workdir-slug';
 import {
   sessionWorkDir,
-} from '@moonshot-ai/agent-core-v2/session/workspaceContext/workspaceRoots';
+} from '@moonshot-ai/agent-core-v2/session/workdirContext/workdirRoots';
 
 import {
   CLI_SHUTDOWN_TIMEOUT_MS,
@@ -393,7 +393,7 @@ async function resolveNativeSession(
     if (target === undefined) {
       throw new Error(`Session "${opts.session}" not found.`);
     }
-    const project = await services.get(IWorkspaceService).get(target.workspaceId);
+    const project = await services.get(IProjectService).get(target.workspaceId);
     const targetDir = sessionWorkDir(target, project?.root);
     if (targetDir !== undefined && !sameDir(targetDir, workDir)) {
       const hint = resumeElsewhereHint(opts.session, targetDir);
@@ -418,7 +418,7 @@ async function resolveNativeSession(
   }
 
   if (opts.continue) {
-    const [previous] = (await services.get(IWorkspaceSessions).listForWorkdir(workDir, { limit: 1 })).items;
+    const [previous] = (await services.get(IProjectSessions).listForWorkdir(workDir, { limit: 1 })).items;
     if (previous !== undefined) {
       const session = await resumeById(previous.id);
       const agentContext = await ensureMainAgent(session);
@@ -477,7 +477,7 @@ export async function listTrustGatedMcpServers(
   pinnedWorkDir?: string,
 ): Promise<readonly TrustGatedMcpServer[]> {
   const lease = await services
-    .get(IWorkspaceInstanceManager)
+    .get(IProjectInstanceManager)
     .acquire({ cwd: workDir });
   try {
     if (await lease.instance.program.trust.get()) return [];

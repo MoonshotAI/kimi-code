@@ -4,34 +4,34 @@ import { sameDir } from '#/_base/utils/workdir-slug';
 import type { IEnvironmentService } from '#/app/environment/environment';
 import type { IGitService } from '#/app/git/git';
 import { GitService } from '#/app/git/gitService';
-import type { Workspace } from '#/app/workspace/workspace';
+import type { Project } from '#/app/project/project';
 import { LOCAL_ENVIRONMENT_ID, environmentBindingId } from '#/environment/environment';
-import type { IExplicitFileSkillSource } from '#/features/skill/workspace/explicitFileSkillSource';
-import type { IExtraFileSkillSource } from '#/features/skill/workspace/extraFileSkillSource';
-import type { IPluginSkillSource } from '#/features/skill/workspace/pluginSkillSource';
-import { WorkspaceRootSkillSource } from '#/features/skill/workspace/rootFileSkillSource';
-import { EnvironmentSkillDiscovery } from '#/features/skill/workspace/environmentSkillDiscovery';
-import type { IWorkspaceSkillCatalog } from '#/features/skill/workspace/workspaceSkillCatalog';
-import { WorkspaceSkillCatalogService } from '#/features/skill/workspace/workspaceSkillCatalogService';
+import type { IExplicitFileSkillSource } from '#/features/skill/project/explicitFileSkillSource';
+import type { IExtraFileSkillSource } from '#/features/skill/project/extraFileSkillSource';
+import type { IPluginSkillSource } from '#/features/skill/project/pluginSkillSource';
+import { ProjectRootSkillSource } from '#/features/skill/project/rootFileSkillSource';
+import { EnvironmentSkillDiscovery } from '#/features/skill/project/environmentSkillDiscovery';
+import type { IProjectSkillCatalog } from '#/features/skill/project/projectSkillCatalog';
+import { ProjectSkillCatalogService } from '#/features/skill/project/projectSkillCatalogService';
 import type { HostEnvironmentInfo } from '#/os/interface/hostEnvironment';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { FileProjectLocalConfigService } from '#/persistence/backends/node-fs/projectLocalConfigService';
-import { WorkspaceStateService } from '#/workspace/state/workspaceStateService';
-import type { IWorkspaceStateService } from '#/workspace/state/workspaceState';
-import type { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
-import type { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
-import { WorkspaceDirsService } from '#/workspace/workspaceDirs/workspaceDirsService';
-import type { IWorkspaceFsService } from '#/workspace/workspaceFs/fs';
-import { WorkspaceFsService } from '#/workspace/workspaceFs/fsService';
-import type { IWorkspaceGitService } from '#/workspace/workspaceGit/workspaceGit';
-import { WorkspaceGitService } from '#/workspace/workspaceGit/workspaceGitService';
-import type { IWorkspaceInstructionsService } from '#/workspace/workspaceInstructions/workspaceInstructions';
-import { WorkspaceInstructionsService } from '#/workspace/workspaceInstructions/workspaceInstructionsService';
-import type { IUserAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/userAgentProfileLoader';
-import type { IWorkspaceTrustDisclosure } from '#/workspace/workspaceTrust/trustDisclosure';
-import type { IWorkspaceAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/workspaceAgentProfileLoader';
-import { WorkspaceAgentProfileLoaderService } from '#/workspace/workspaceAgentProfileLoader/workspaceAgentProfileLoaderService';
-import type { WorkdirMcp } from '#/workspace/workspaceMcp/workspaceMcp';
+import { ProjectStateService } from '#/project/state/projectStateService';
+import type { IProjectStateService } from '#/project/state/projectState';
+import type { IProjectContext } from '#/project/projectContext/projectContext';
+import type { IProjectDirs } from '#/project/projectDirs/projectDirs';
+import { ProjectDirsService } from '#/project/projectDirs/projectDirsService';
+import type { IProjectFsService } from '#/project/projectFs/fs';
+import { ProjectFsService } from '#/project/projectFs/fsService';
+import type { IProjectGitService } from '#/project/projectGit/projectGit';
+import { ProjectGitService } from '#/project/projectGit/projectGitService';
+import type { IProjectInstructionsService } from '#/project/projectInstructions/projectInstructions';
+import { ProjectInstructionsService } from '#/project/projectInstructions/projectInstructionsService';
+import type { IUserAgentProfileLoader } from '#/project/projectAgentProfileLoader/userAgentProfileLoader';
+import type { IProjectTrustDisclosure } from '#/project/projectTrust/trustDisclosure';
+import type { IProjectAgentProfileLoader } from '#/project/projectAgentProfileLoader/projectAgentProfileLoader';
+import { ProjectAgentProfileLoaderService } from '#/project/projectAgentProfileLoader/projectAgentProfileLoaderService';
+import type { WorkdirMcp } from '#/project/projectMcp/projectMcp';
 
 import type { ProgramDependencies } from './programDependencies';
 
@@ -43,32 +43,32 @@ export interface ProgramHarness {
 }
 
 export interface ProgramView {
-  readonly state: IWorkspaceStateService;
+  readonly state: IProjectStateService;
   readonly localConfig: FileProjectLocalConfigService;
   readonly hostFs: IHostFileSystem;
-  readonly dirs: IWorkspaceDirs;
-  readonly git: IWorkspaceGitService;
-  readonly fs: IWorkspaceFsService;
-  readonly instructions: IWorkspaceInstructionsService;
-  readonly skills: IWorkspaceSkillCatalog;
-  readonly agentProfiles: IWorkspaceAgentProfileLoader;
+  readonly dirs: IProjectDirs;
+  readonly git: IProjectGitService;
+  readonly fs: IProjectFsService;
+  readonly instructions: IProjectInstructionsService;
+  readonly skills: IProjectSkillCatalog;
+  readonly agentProfiles: IProjectAgentProfileLoader;
 }
 
 export interface ProgramViewLease {
   readonly contextKey: string;
   readonly hostFs: IHostFileSystem;
   readonly localConfig: FileProjectLocalConfigService;
-  readonly dirs: IWorkspaceDirs;
-  readonly fs: IWorkspaceFsService;
-  readonly instructions: IWorkspaceInstructionsService;
-  readonly skills: IWorkspaceSkillCatalog;
-  readonly agentProfiles: IWorkspaceAgentProfileLoader;
+  readonly dirs: IProjectDirs;
+  readonly fs: IProjectFsService;
+  readonly instructions: IProjectInstructionsService;
+  readonly skills: IProjectSkillCatalog;
+  readonly agentProfiles: IProjectAgentProfileLoader;
   dispose(): void;
 }
 
 export interface ProgramWorkdir extends ProgramViewLease {
   readonly mcp: WorkdirMcp;
-  readonly trustDisclosure: IWorkspaceTrustDisclosure;
+  readonly trustDisclosure: IProjectTrustDisclosure;
 }
 
 export const PROGRAM_CAPABILITIES = ['fs', 'process'] as const;
@@ -83,7 +83,7 @@ interface ProgramWorkdirEntry {
 }
 
 interface ProgramViewInput extends ProgramHarness {
-  readonly context: IWorkspaceContext;
+  readonly context: IProjectContext;
   readonly hostFs: IHostFileSystem;
   readonly environmentId: string;
   readonly followsPrimary: boolean;
@@ -102,7 +102,7 @@ export class ProgramWorkdirs {
 
   constructor(
     private readonly environments: IEnvironmentService,
-    private readonly context: IWorkspaceContext,
+    private readonly context: IProjectContext,
     private readonly dependencies: ProgramDependencies,
     private readonly harness: ProgramHarness,
     ownRoot: Own,
@@ -206,17 +206,17 @@ export class ProgramWorkdirs {
   }
 
   private buildView(own: Own, input: ProgramViewInput): ProgramView {
-    const state = own(new WorkspaceStateService(this.dependencies.appState));
+    const state = own(new ProjectStateService(this.dependencies.appState));
     const localConfig = new FileProjectLocalConfigService(this.dependencies.bootstrap, input.hostFs, input.homeDir);
-    const dirs = own(new WorkspaceDirsService(input.context, localConfig, this.dependencies.workspaces, this.dependencies.workspaceStore, this.dependencies.log, state, input.environmentId, input.followsPrimary));
-    const git = new WorkspaceGitService(dirs, input.git);
-    const fs = new WorkspaceFsService(input.context, dirs, input.hostFs, this.environments, this.dependencies.telemetry, git, input.environmentId);
-    const instructions = own(new WorkspaceInstructionsService(dirs, input.hostFs, input.instructionsHost, this.dependencies.bootstrap, this.dependencies.log, state, input.personalFs, input.watch));
-    const agentProfiles: IWorkspaceAgentProfileLoader = input.projectAgentProfiles
-      ? own(new WorkspaceAgentProfileLoaderService(input.context, input.hostFs, dirs, this.dependencies.log, input.userAgentProfiles, this.dependencies.agentProfiles, input.contextKey, input.watch))
+    const dirs = own(new ProjectDirsService(input.context, localConfig, this.dependencies.workspaces, this.dependencies.workspaceStore, this.dependencies.log, state, input.environmentId, input.followsPrimary));
+    const git = new ProjectGitService(dirs, input.git);
+    const fs = new ProjectFsService(input.context, dirs, input.hostFs, this.environments, this.dependencies.telemetry, git, input.environmentId);
+    const instructions = own(new ProjectInstructionsService(dirs, input.hostFs, input.instructionsHost, this.dependencies.bootstrap, this.dependencies.log, state, input.personalFs, input.watch));
+    const agentProfiles: IProjectAgentProfileLoader = input.projectAgentProfiles
+      ? own(new ProjectAgentProfileLoaderService(input.context, input.hostFs, dirs, this.dependencies.log, input.userAgentProfiles, this.dependencies.agentProfiles, input.contextKey, input.watch))
       : { _serviceBrand: undefined, ready: Promise.resolve(), reload: () => Promise.resolve() };
-    const workspaceSkills = own(new WorkspaceRootSkillSource(new EnvironmentSkillDiscovery(this.dependencies.log, input.hostFs), input.context, this.dependencies.config, this.dependencies.bootstrap, dirs, input.hostFs, this.dependencies.log, input.watch));
-    const skills = own(new WorkspaceSkillCatalogService(this.dependencies.builtinSkills, this.dependencies.userSkills, input.explicitSkills, input.extraSkills, workspaceSkills, input.pluginSkills, state));
+    const workspaceSkills = own(new ProjectRootSkillSource(new EnvironmentSkillDiscovery(this.dependencies.log, input.hostFs), input.context, this.dependencies.config, this.dependencies.bootstrap, dirs, input.hostFs, this.dependencies.log, input.watch));
+    const skills = own(new ProjectSkillCatalogService(this.dependencies.builtinSkills, this.dependencies.userSkills, input.explicitSkills, input.extraSkills, workspaceSkills, input.pluginSkills, state));
     return { state, localConfig, hostFs: input.hostFs, dirs, git, fs, instructions, skills, agentProfiles };
   }
 }
@@ -225,7 +225,7 @@ export function workdirViewKey(
   environmentId: string,
   cwd: string,
   followsPrimary: boolean,
-  project: Pick<Workspace, 'kind' | 'root'>,
+  project: Pick<Project, 'kind' | 'root'>,
 ): string {
   const atImplicitRoot = environmentId === LOCAL_ENVIRONMENT_ID && project.kind === 'implicit' && sameDir(cwd, project.root);
   return atImplicitRoot

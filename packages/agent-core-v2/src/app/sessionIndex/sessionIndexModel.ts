@@ -6,7 +6,7 @@ export const SESSION_INDEX_SCHEMA_VERSION = 3;
 
 export const PARENT_INDEX_NAME = 'byParent';
 
-export interface SessionWorkspaceCounts {
+export interface SessionProjectCounts {
   readonly active: number;
   readonly archived: number;
 }

@@ -71,7 +71,7 @@ import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionWorkdir } from '#/session/workdir/workdir';
-import { IWorkspaceTrust } from '#/workspace/workspaceTrust/workspaceTrust';
+import { IProjectTrust } from '#/project/projectTrust/projectTrust';
 import { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import { ISessionToolPolicy } from '#/session/sessionToolPolicy/sessionToolPolicy';
@@ -95,11 +95,11 @@ import {
 } from '#/session/subagent/subagentScopeCache';
 import { SessionSubagentScopeCacheService } from '#/session/subagent/subagentScopeCacheService';
 import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
-import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
-import { ISessionWorkspaceInfo } from '#/session/workspaceInfo/workspaceInfo';
+import { ISessionWorkdirContext } from '#/session/workdirContext/workdirContext';
+import { ISessionProjectInfo } from '#/session/projectInfo/projectInfo';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
-import { IWorkspaceInstanceManager } from '#/workspace/workspaceInstance/workspaceInstanceManager';
+import { IProjectInstanceManager } from '#/project/projectInstance/projectInstanceManager';
 import { IEnvironmentService, type EnvironmentResolver } from '#/app/environment/environment';
 
 import { stubAgentContext } from '../../agent/agentContext/stubs';
@@ -301,13 +301,13 @@ describe('SessionSubagentScopeCacheService', () => {
           ? 'sessions/ws_test/sess_test'
           : `sessions/ws_test/sess_test/${subKey}`,
     } as unknown as ISessionContext);
-    ix.stub(ISessionWorkspaceInfo, {
+    ix.stub(ISessionProjectInfo, {
       _serviceBrand: undefined,
       ready: Promise.resolve(),
       primaryByWorkspace: {},
       additionalDirs: [],
       onDidChange: Event.None,
-    } as ISessionWorkspaceInfo);
+    } as ISessionProjectInfo);
     ix.stub(IEnvironmentService, {
       onDidChange: () => ({ dispose: () => {} }),
       _serviceBrand: undefined,
@@ -324,10 +324,10 @@ describe('SessionSubagentScopeCacheService', () => {
       environmentId: 'local',
       fs: undefined,
     } as unknown as ISessionWorkdir);
-    ix.stub(IWorkspaceTrust, {
+    ix.stub(IProjectTrust, {
       get: async () => false,
-    } as unknown as IWorkspaceTrust);
-    ix.stub(IWorkspaceInstanceManager, {
+    } as unknown as IProjectTrust);
+    ix.stub(IProjectInstanceManager, {
       _serviceBrand: undefined,
       onDidChange: () => ({ dispose: () => {} }),
       get: () => undefined,
@@ -353,12 +353,12 @@ describe('SessionSubagentScopeCacheService', () => {
       enabled: () => false,
     } as unknown as IFlagService);
     ix.stub(ISessionNotify, { _serviceBrand: undefined, ready: Promise.resolve(), enabled: false });
-    ix.stub(ISessionWorkspaceContext, {
+    ix.stub(ISessionWorkdirContext, {
       _serviceBrand: undefined,
       workDir: '/tmp/kimi-subagentScopeCache-work',
       additionalDirs: [],
       setWorkDir: () => {},
-    } as unknown as ISessionWorkspaceContext);
+    } as unknown as ISessionWorkdirContext);
     ix.stub(IPluginService, pluginServiceStub);
     ix.stub(IProviderDiscoveryService, stubProviderDiscovery());
     ix.stub(IConfigService, {

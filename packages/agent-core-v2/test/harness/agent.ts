@@ -23,7 +23,7 @@ import type { Promisable, PromisifyMethods } from '#/_base/utils/types';
 import type { AgentTaskInfo } from '#/agent/task/task';
 import { IAgentBlobService } from '#/agent/blob/agentBlobService';
 import { AgentBlobServiceImpl } from '#/agent/blob/agentBlobServiceImpl';
-import { WorkspaceStateService } from '#/workspace/state/workspaceStateService';
+import { ProjectStateService } from '#/project/state/projectStateService';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import '#/features/reminder/reminderFeature';
@@ -35,7 +35,7 @@ import { IAgentGoalService } from '#/features/goal/goalService';
 import { IGoalDeadlineScheduler } from '#/features/goal/goalDeadlineScheduler';
 import { GoalDeadlineSchedulerService } from '#/features/goal/goalDeadlineSchedulerService';
 import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
-import { ISessionWorkspaceInfo } from '#/session/workspaceInfo/workspaceInfo';
+import { ISessionProjectInfo } from '#/session/projectInfo/projectInfo';
 import { McpConnectionManager } from '#/mcpCore/connection-manager';
 import { loadAgentsMdForRoots, type LoadedAgentsMd } from '#/agent/profile/context';
 import { InMemorySkillCatalog } from '#/features/skill/catalog/registry';
@@ -106,7 +106,7 @@ import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
 import { ISessionStateService } from '#/session/state/sessionState';
-import { workspaceContextAdditionalDirsKey } from '#/session/workspaceContext/workspaceContextService';
+import { workdirContextAdditionalDirsKey } from '#/session/workdirContext/workdirContextService';
 import type { StateKey } from '#/state/state';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { EventDispatcherService } from '#/state/eventDispatcherService';
@@ -180,9 +180,9 @@ import {
   IAgentToolActivationService,
   IAgentUserToolService,
   ISessionUsageService,
-  ISessionWorkspaceContext,
-  IWorkspaceStateService,
-  IWorkspaceTrust,
+  ISessionWorkdirContext,
+  IProjectStateService,
+  IProjectTrust,
   LifecycleScope,
   AgentMcpService,
   AgentPermissionGate,
@@ -190,7 +190,7 @@ import {
   AgentProfileService,
   SyncDescriptor,
   AgentUserToolService,
-  SessionWorkspaceContextService,
+  SessionWorkdirContextService,
   bootstrap,
   bootstrapSeed,
   createAppScope,
@@ -203,7 +203,7 @@ import {
 import {
   type SessionCreatedEvent,
   type SessionWillCloseEvent,
-} from '#/workspace/sessionLifecycle/sessionLifecycle';
+} from '#/project/sessionLifecycle/sessionLifecycle';
 import { stubSessionRunGate } from '../stubs';
 import { IEventBus, ISessionEventBus } from '#/app/event/eventBus';
 import { ISessionManager } from '#/app/sessionManager/sessionManager';
@@ -241,7 +241,7 @@ import type { IHostProcess } from '#/os/interface/hostProcess';
 import type { EnvironmentDisclosureSnapshot } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
 import { ISessionSwarmService } from '#/features/swarm/session/sessionSwarm';
-import type { PathAccessOperation } from '#/session/workspaceContext/workspaceContext';
+import type { PathAccessOperation } from '#/session/workdirContext/workdirContext';
 
 import { stubAgentIdentity } from '../app/agentIdentity/stubs';
 import { stubClientIdentity } from '../app/bootstrap/stubs';
@@ -580,8 +580,8 @@ export interface ExecEnvOverride {
 export function execEnvServices(override: ExecEnvOverride = {}): TestAgentServiceOverride {
   const session = sessionServices((reg) => {
     reg.defineDescriptor(
-      ISessionWorkspaceContext,
-      new SyncDescriptor(SessionWorkspaceContextService),
+      ISessionWorkdirContext,
+      new SyncDescriptor(SessionWorkdirContextService),
     );
   });
   const app = appServices((reg) => {
@@ -678,7 +678,7 @@ export function hostEnvironmentServices(homeDir: string): TestAgentServiceOverri
 export function additionalDirServices(additionalDirs: readonly string[]): TestAgentServiceOverride {
   return sessionServices((reg) => {
     reg.defineInstance(
-      ISessionWorkspaceContext,
+      ISessionWorkdirContext,
       createWorkspaceContextStub(process.cwd(), additionalDirs),
     );
   });
@@ -1348,13 +1348,13 @@ export class AgentTestContext {
               connectionManager: new McpConnectionManager(),
               isBaselineServer: () => true,
             } satisfies ISessionMcpHandle);
-            reg.defineInstance(ISessionWorkspaceInfo, {
+            reg.defineInstance(ISessionProjectInfo, {
               _serviceBrand: undefined,
               ready: Promise.resolve(),
               additionalDirs: [],
               primaryByWorkspace: {},
               onDidChange: Event.None as Event<void>,
-            } satisfies ISessionWorkspaceInfo);
+            } satisfies ISessionProjectInfo);
             reg.defineInstance(ISessionWorkdir, {
               _serviceBrand: undefined,
               environmentId: 'local',
@@ -1363,16 +1363,16 @@ export class AgentTestContext {
               onDidChangeAnchor: Event.None as Event<void>,
               fs: undefined as never,
             });
-            reg.definePartialInstance(IWorkspaceTrust, {
+            reg.definePartialInstance(IProjectTrust, {
               get: async () => false,
             });
             reg.defineInstance(
-              IWorkspaceStateService,
-              new WorkspaceStateService(this.root.accessor.get(IAppStateService)),
+              IProjectStateService,
+              new ProjectStateService(this.root.accessor.get(IAppStateService)),
             );
             reg.defineDescriptor(
-              ISessionWorkspaceContext,
-              new SyncDescriptor(SessionWorkspaceContextService),
+              ISessionWorkdirContext,
+              new SyncDescriptor(SessionWorkdirContextService),
             );
           },
         ],
@@ -1381,7 +1381,7 @@ export class AgentTestContext {
       ),
     });
     reassertServiceOverrides(this.serviceOverrides, 'session', this.session.instantiation);
-    const workspace = this.session.accessor.get(ISessionWorkspaceContext);
+    const workspace = this.session.accessor.get(ISessionWorkdirContext);
 
     const agentScopeContext = makeAgentScopeContext({
       agentId,
@@ -1441,7 +1441,7 @@ export class AgentTestContext {
                 workDir: this.session.accessor.get(ISessionContext).cwd,
                 additionalDirs: this.session.accessor
                   .get(ISessionStateService)
-                  .get(workspaceContextAdditionalDirsKey),
+                  .get(workdirContextAdditionalDirsKey),
               }),
             });
             reg.defineDescriptor(
@@ -2499,7 +2499,7 @@ export class AgentTestContext {
 function createWorkspaceContextStub(
   initialWorkDir: string,
   initialAdditionalDirs: readonly string[],
-): ISessionWorkspaceContext {
+): ISessionWorkdirContext {
   const workDir = resolve(initialWorkDir);
   const additionalDirs = initialAdditionalDirs.map((dir) => resolve(dir));
   const isWithin = (absPath: string): boolean => {

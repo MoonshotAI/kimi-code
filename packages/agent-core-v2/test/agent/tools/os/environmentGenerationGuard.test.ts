@@ -31,7 +31,7 @@ import { createFakeHostFs } from '../../../tools/fixtures/fake-exec';
 import { stubConfigService } from '../../../app/config/stubs';
 import { stubToolResultTruncationService } from '../../toolResultTruncation/stubs';
 import { makeSessionContext } from '#/session/sessionContext/sessionContext';
-import { stubWorkspaceContext } from '../../../session/workspaceContext/stub-workspace-context';
+import { stubWorkspaceContext } from '../../../session/workdirContext/stub-workdir-context';
 
 vi.mock('#/os/backends/node-local/tools/rgLocator', async (importOriginal) => {
   const original = await importOriginal<typeof import('#/os/backends/node-local/tools/rgLocator')>();

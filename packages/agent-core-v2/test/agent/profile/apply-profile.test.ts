@@ -10,7 +10,7 @@ import { type ResolvedAgentProfile } from '#/agent/profile/profile';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentChangeNotifierService } from '#/agent/changeNotifier/changeNotifier';
 import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
-import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
+import { ISessionWorkdirContext } from '#/session/workdirContext/workdirContext';
 import type { Environment, EnvironmentCapability, EnvironmentStatus } from '#/environment/environment';
 import { stubAgentEnvironment } from '../../environment/stubs';
 import { normalizeAgentProfile } from '#/app/agentProfileCatalog/agentProfileCatalog';
@@ -25,7 +25,7 @@ import {
 } from '#/features/skill/catalog/skillSource';
 import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
 import { DEFAULT_PRODUCT_NAME } from '#/app/agentProfileCatalog/profile-shared';
-import { IWorkspaceInstanceManager } from '#/workspace/workspaceInstance/workspaceInstanceManager';
+import { IProjectInstanceManager } from '#/project/projectInstance/projectInstanceManager';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 
 import { stubAgentIdentity } from '../../app/agentIdentity/stubs';
@@ -249,7 +249,7 @@ describe('AgentLoopService.applyProfile', () => {
       await writeFile(join(bindingDir, 'binding-only.txt'), 'x', 'utf-8');
       await writeFile(join(workDir, 'host-only.txt'), 'x', 'utf-8');
       const { profile: svc } = buildContext(
-        agentService(ISessionWorkspaceContext, {
+        agentService(ISessionWorkdirContext, {
           _serviceBrand: undefined,
           workDir: bindingDir,
           additionalDirs: [],

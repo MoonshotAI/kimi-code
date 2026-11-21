@@ -6,7 +6,7 @@ import * as posixPath from 'node:path/posix';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { PathSecurityError } from '#/tool/path-access';
-import { stubWorkspaceContext } from '../../../session/workspaceContext/stub-workspace-context';
+import { stubWorkspaceContext } from '../../../session/workdirContext/stub-workdir-context';
 import { stubAgentEnvironment } from '../../../environment/stubs';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices } from '#/_base/di/test';
@@ -19,7 +19,7 @@ import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { HostFsError, OsFsErrors } from '#/os/interface/hostFsErrors';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import type { Environment } from '#/environment/environment';
-import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
+import { ISessionWorkdirContext } from '#/session/workdirContext/workdirContext';
 import type { ExecutableToolContext, ExecutableToolResult, ToolExecution } from '#/tool/toolContract';
 
 const signal = new AbortController().signal;
@@ -57,14 +57,14 @@ function createSpiedEditFs(
 function buildTool(
   fs: IHostFileSystem,
   env: IHostEnvironment,
-  workspace: ISessionWorkspaceContext,
+  workspace: ISessionWorkdirContext,
   appFs: IHostFileSystem = fs,
 ): EditTool {
   const ix = createServices(disposables, {
     additionalServices: (reg) => {
       reg.defineInstance(IHostFileSystem, appFs);
       reg.defineInstance(IHostEnvironment, env);
-      reg.defineInstance(ISessionWorkspaceContext, workspace);
+      reg.defineInstance(ISessionWorkdirContext, workspace);
       reg.define(IFileEditService, FileEditService);
     },
   });

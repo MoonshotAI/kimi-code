@@ -17,7 +17,7 @@ import { acquireOrWhenReady, IAgentEnvironmentService, pinnedGeneration } from '
 import type { Environment } from '#/environment/environment';
 import { EnvironmentWorkspaceView } from '#/environment/environmentWorkspaceView';
 import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
-import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
+import { ISessionWorkdirContext } from '#/session/workdirContext/workdirContext';
 import {
   resolvePathAccessPath,
   type PathClass,
@@ -71,7 +71,7 @@ export class GrepTool implements IGrepTool {
   readonly parameters: Record<string, unknown> = toInputJsonSchema(GrepInputSchema);
   constructor(
     @IAgentEnvironmentService private readonly environment: IAgentEnvironmentService,
-    @ISessionWorkspaceContext private readonly workspaceCtx: ISessionWorkspaceContext,
+    @ISessionWorkdirContext private readonly workdirCtx: ISessionWorkdirContext,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @ISessionSkillCatalog private readonly skillCatalog?: ISessionSkillCatalog,
     @IOAuthService private readonly auth?: IOAuthService,
@@ -87,9 +87,9 @@ export class GrepTool implements IGrepTool {
       const inspected = resolutionLease.environment;
       const expectedGeneration = pinnedGeneration(inspected);
       const view = new EnvironmentWorkspaceView(inspected, {
-        workDir: this.workspaceCtx.workDir,
+        workDir: this.workdirCtx.workDir,
         additionalDirs: [
-          ...this.workspaceCtx.additionalDirs,
+          ...this.workdirCtx.additionalDirs,
           ...(this.skillCatalog?.catalog.getSkillRoots() ?? []),
         ],
       });

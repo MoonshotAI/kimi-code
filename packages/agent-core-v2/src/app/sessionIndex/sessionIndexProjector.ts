@@ -17,11 +17,11 @@ import {
   sessionCollection,
   sessionCountersCollection,
   withRecencyField,
-  type SessionWorkspaceCounts,
+  type SessionProjectCounts,
 } from './sessionIndexModel';
 import {
   listSessionIds,
-  listWorkspaceIds,
+  listProjectIds,
   mapBounded,
   readSessionScanCache,
   readSessionSummary,
@@ -181,7 +181,7 @@ export class SessionIndexProjector {
     const marks = await listDirtyMarks(storage, sessionsScope);
     const changed = dirtyMarkSessionIds(marks);
 
-    const workspaceIds = await listWorkspaceIds(storage, sessionsScope);
+    const workspaceIds = await listProjectIds(storage, sessionsScope);
     const primaryByWorkspace = await this.deps.primaryByWorkspace();
     const authoritative = new Map<string, string>();
     const workspaceSignals: Record<string, number> = {};
@@ -262,10 +262,10 @@ export class SessionIndexProjector {
       const old = olds.get(sessionId);
       if (old !== undefined) bump(old.workspaceId, old.archived ? 'archived' : 'active', -1);
     }
-    const current = await queryStore.getMany<SessionWorkspaceCounts>(counters, [...deltas.keys()]);
+    const current = await queryStore.getMany<SessionProjectCounts>(counters, [...deltas.keys()]);
     const counterOps: WriteOp[] = [...deltas.entries()].map(([workspaceId, delta]) => {
       const base = current.get(workspaceId) ?? { active: 0, archived: 0 };
-      const value: SessionWorkspaceCounts = {
+      const value: SessionProjectCounts = {
         active: Math.max(0, base.active + delta.active),
         archived: Math.max(0, base.archived + delta.archived),
       };
@@ -316,7 +316,7 @@ export class SessionIndexProjector {
     const workspaceSignals: Record<string, number> = {};
     let signalsComplete = true;
     let sourceSessionCount = 0;
-    for (const workspaceId of await listWorkspaceIds(storage, sessionsScope)) {
+    for (const workspaceId of await listProjectIds(storage, sessionsScope)) {
       const signal = await storage.mtime(sessionsScope, workspaceId);
       if (signal === undefined) signalsComplete = false;
       else workspaceSignals[workspaceId] = signal;
@@ -390,7 +390,7 @@ export class SessionIndexProjector {
       kind: 'put',
       collection: counters,
       key: workspaceId,
-      value: { active: value.active, archived: value.archived } satisfies SessionWorkspaceCounts,
+      value: { active: value.active, archived: value.archived } satisfies SessionProjectCounts,
     }));
     const existing = await queryStore.listKeys(counters);
     for (const key of existing) {

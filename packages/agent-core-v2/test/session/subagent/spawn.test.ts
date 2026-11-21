@@ -43,7 +43,7 @@ import {
   type SubagentSpawnPlanInput,
 } from '#/session/subagent/spawn';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
-import { IWorkspaceInstanceManager } from '#/workspace/workspaceInstance/workspaceInstanceManager';
+import { IProjectInstanceManager } from '#/project/projectInstance/projectInstanceManager';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';

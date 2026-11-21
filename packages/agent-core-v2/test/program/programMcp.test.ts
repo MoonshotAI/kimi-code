@@ -19,7 +19,7 @@ import { FakeEnvironment } from '#/environment/fakeEnvironment';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { HostProcessService } from '#/os/backends/node-local/hostProcessService';
 import { ProgramMcp, suppressedUserServers, type ProgramMcpDeps } from '#/program/programMcp';
-import type { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
+import type { IProjectDirs } from '#/project/projectDirs/projectDirs';
 import type { WatchChange } from '#human/utils/watch';
 
 import { stubLog } from '../_base/log/stubs';
@@ -151,7 +151,7 @@ describe('ProgramMcp', () => {
         return primary;
       },
       onDidChange: dirsChanges.event,
-    } as unknown as IWorkspaceDirs;
+    } as unknown as IProjectDirs;
     const program = new ProgramMcp({
       bootstrap: { homeDir } as never,
       config: { ready: Promise.resolve(), onDidSectionChange: Event.None, get: () => undefined } as never,

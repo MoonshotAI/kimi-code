@@ -50,7 +50,7 @@ import type {
   CreateSessionOptions,
   ForkSessionOptions,
   ResumeSessionOptions,
-} from '@moonshot-ai/agent-core-v2/workspace/sessionLifecycle/sessionLifecycle';
+} from '@moonshot-ai/agent-core-v2/project/sessionLifecycle/sessionLifecycle';
 import type {
   ApprovalRequest,
   ApprovalResponse,
@@ -135,9 +135,9 @@ import type {
 } from '@moonshot-ai/agent-core-v2/app/sessionIndex/sessionIndex';
 import type {
   ImplicitProjectResult,
-  Workspace,
-  WorkspaceUpdate,
-} from '@moonshot-ai/agent-core-v2/app/workspace/workspace';
+  Project,
+  ProjectUpdate,
+} from '@moonshot-ai/agent-core-v2/app/project/project';
 import type { ToolResultEvent } from '@moonshot-ai/agent-core-v2/events';
 import type {
   CompactionBlockedEvent,
@@ -364,9 +364,9 @@ type ConfigTargetValues = `${ConfigTarget}`;
 const _sessionSummary: AssertWire<typeof sessionSummarySchema, SessionSummary> = true;
 const _sessionListQuery: AssertWire<typeof sessionListQuerySchema, SessionListQuery> = true;
 
-const _workspace: AssertWire<typeof workspaceSchema, Workspace> = true;
+const _workspace: AssertWire<typeof workspaceSchema, Project> = true;
 const _implicitProjectResult: AssertWire<typeof implicitProjectResultSchema, ImplicitProjectResult> = true;
-const _workspaceUpdate: AssertWire<typeof workspaceUpdateSchema, WorkspaceUpdate> = true;
+const _workspaceUpdate: AssertWire<typeof workspaceUpdateSchema, ProjectUpdate> = true;
 
 const _configInspectValue: AssertEngineToWire<typeof configInspectValueSchema, ConfigInspectValue> =
   true;

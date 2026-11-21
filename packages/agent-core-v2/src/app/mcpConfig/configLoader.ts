@@ -2,8 +2,8 @@ import { dirname, join, normalize } from 'pathe';
 
 import { resolveKimiHome } from '#/app/bootstrap/bootstrap';
 import { findNearestGitMarker, locateCheckout } from '#/app/git/workTree';
-import { groupsInto } from '#/app/workspace/implicitProject';
-import type { Workspace } from '#/app/workspace/workspace';
+import { groupsInto } from '#/app/project/implicitProject';
+import type { Project } from '#/app/project/project';
 import { resolvePath } from '#/_base/utils/paths';
 import { toAbsoluteDir, workspaceRootKey } from '#/_base/utils/workdir-slug';
 import { ErrorCodes, Error2 } from '#/errors';
@@ -20,7 +20,7 @@ export interface KeyedMcpAnchor {
   readonly key: string;
 }
 
-export type McpAnchorScope = Pick<Workspace, 'root' | 'additionalDirs'>;
+export type McpAnchorScope = Pick<Project, 'root' | 'additionalDirs'>;
 
 export function rootAnchor(projectRoot: string): McpAnchor {
   return projectRoot as McpAnchor;

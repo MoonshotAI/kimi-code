@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { PathSecurityError } from '#/tool/path-access';
 import type { HostFileStat, IHostFileSystem } from '#/os/interface/hostFileSystem';
-import { stubWorkspaceContext } from '../../../../session/workspaceContext/stub-workspace-context';
+import { stubWorkspaceContext } from '../../../../session/workdirContext/stub-workdir-context';
 import { stubAgentEnvironment } from '../../../../environment/stubs';
 import { type WriteInput, WriteInputSchema } from '#/agent/tools/os/write/write';
 import { WriteTool } from '#/agent/tools/os/write/writeTool';

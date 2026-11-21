@@ -43,16 +43,16 @@ import { InMemoryStorageService } from '#/persistence/backends/memory/inMemorySt
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { FakeEnvironment } from '#/environment/fakeEnvironment';
-import type { WorkspaceInstance } from '#/workspace/workspaceInstance/workspaceInstance';
-import { IWorkspaceInstanceManager } from '#/workspace/workspaceInstance/workspaceInstanceManager';
+import type { ProjectInstance } from '#/project/projectInstance/projectInstance';
+import { IProjectInstanceManager } from '#/project/projectInstance/projectInstanceManager';
 import { locateCheckout } from '#/app/git/workTree';
-import { decideImplicitProject } from '#/app/workspace/implicitProject';
-import { IWorkspaceService } from '#/app/workspace/workspace';
+import { decideImplicitProject } from '#/app/project/implicitProject';
+import { IProjectService } from '#/app/project/project';
 import { IEnvironmentService, type EnvironmentResolver } from '#/app/environment/environment';
 import {
-  IWorkspaceTrustStore,
-  WorkspaceTrustStore,
-} from '#/workspace/workspaceTrust/workspaceTrustStore';
+  IProjectTrustStore,
+  ProjectTrustStore,
+} from '#/project/projectTrust/projectTrustStore';
 
 import { stubLog } from '../../_base/log/stubs';
 import {
@@ -85,8 +85,8 @@ describe('McpManagementService', () => {
   let identityReady: Promise<AgentIdentitySnapshot>;
   let identitySnapshot: AgentIdentitySnapshot;
   let trusted: boolean;
-  let acquire: Mock<IWorkspaceInstanceManager['acquire']>;
-  let acquireWorkdir: Mock<IWorkspaceInstanceManager['acquireWorkdir']>;
+  let acquire: Mock<IProjectInstanceManager['acquire']>;
+  let acquireWorkdir: Mock<IProjectInstanceManager['acquireWorkdir']>;
   let management: IMcpManagementService;
 
   beforeEach(() => {
@@ -103,11 +103,11 @@ describe('McpManagementService', () => {
     identitySnapshot = stubAgentIdentity({ slug: 'test-agent' }).current();
     identityReady = Promise.resolve(identitySnapshot);
     trusted = true;
-    acquire = vi.fn<IWorkspaceInstanceManager['acquire']>(async () => ({
-      instance: { id: 'test-workspace' } as unknown as WorkspaceInstance,
+    acquire = vi.fn<IProjectInstanceManager['acquire']>(async () => ({
+      instance: { id: 'test-workspace' } as unknown as ProjectInstance,
       dispose: () => {},
     }));
-    acquireWorkdir = vi.fn<IWorkspaceInstanceManager['acquireWorkdir']>(async () => {
+    acquireWorkdir = vi.fn<IProjectInstanceManager['acquireWorkdir']>(async () => {
       throw new Error('inline probes must not open a workdir');
     });
     const hostProcess = new HostProcessService();
@@ -150,9 +150,9 @@ describe('McpManagementService', () => {
           list: async () => [],
         });
         reg.defineInstance(ITelemetryService, noopTelemetryService);
-        reg.define(IWorkspaceTrustStore, WorkspaceTrustStore);
+        reg.define(IProjectTrustStore, ProjectTrustStore);
         const peekFs = new HostFileSystem();
-        reg.definePartialInstance(IWorkspaceService, {
+        reg.definePartialInstance(IProjectService, {
           peekImplicit: async (dir: string) =>
             (
               await decideImplicitProject(dir, { implicit: [] }, {
@@ -183,7 +183,7 @@ describe('McpManagementService', () => {
           acquire: () => ({ environment, track: (resource) => resource, dispose: () => {} }),
           acquireWhenReady: async () => ({ environment, track: (resource) => resource, dispose: () => {} }),
         });
-        reg.definePartialInstance(IWorkspaceInstanceManager, { acquireWorkdir, acquire });
+        reg.definePartialInstance(IProjectInstanceManager, { acquireWorkdir, acquire });
         reg.defineInstance(ILogService, stubLog());
         reg.define(IMcpManagementService, McpManagementService);
       },

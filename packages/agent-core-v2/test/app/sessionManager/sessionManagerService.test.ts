@@ -30,13 +30,13 @@ import type {
   SessionCreatedEvent,
   SessionCreateSource,
   SessionWillCreateEvent,
-} from '#/workspace/sessionLifecycle/sessionLifecycle';
-import type { SessionLifecycleService } from '#/workspace/sessionLifecycle/sessionLifecycleService';
-import type { WorkspaceInstance } from '#/workspace/workspaceInstance/workspaceInstance';
-import type { IWorkspaceInstanceManager } from '#/workspace/workspaceInstance/workspaceInstanceManager';
+} from '#/project/sessionLifecycle/sessionLifecycle';
+import type { SessionLifecycleService } from '#/project/sessionLifecycle/sessionLifecycleService';
+import type { ProjectInstance } from '#/project/projectInstance/projectInstance';
+import type { IProjectInstanceManager } from '#/project/projectInstance/projectInstanceManager';
 
 
-function environmentRegistryOf(workspaces: IWorkspaceInstanceManager): EnvironmentRegistry | undefined {
+function environmentRegistryOf(workspaces: IProjectInstanceManager): EnvironmentRegistry | undefined {
   for (const id of ['workspace', 'workspace-1']) {
     const holder = workspaces.get(id) as { environments?: EnvironmentRegistry } | undefined;
     if (holder?.environments !== undefined) return holder.environments;
@@ -45,7 +45,7 @@ function environmentRegistryOf(workspaces: IWorkspaceInstanceManager): Environme
 }
 
 function makeSessionManager(
-  workspaces: IWorkspaceInstanceManager,
+  workspaces: IProjectInstanceManager,
   index: ISessionIndex,
   overrides: {
     readonly config?: IConfigService;
@@ -120,9 +120,9 @@ function controller(sessionId = 'session-1'): {
   return { service, handle };
 }
 
-type WorkspaceLease = Awaited<ReturnType<IWorkspaceInstanceManager['acquire']>>;
+type WorkspaceLease = Awaited<ReturnType<IProjectInstanceManager['acquire']>>;
 
-function workspaceManager(workspace: WorkspaceInstance): IWorkspaceInstanceManager & {
+function workspaceManager(workspace: ProjectInstance): IProjectInstanceManager & {
   readonly leases: readonly WorkspaceLease[];
 } {
   const leases: WorkspaceLease[] = [];
@@ -141,7 +141,7 @@ function workspaceManager(workspace: WorkspaceInstance): IWorkspaceInstanceManag
     }),
     get: (workspaceId: string) => workspaceId === workspace.id ? workspace : undefined,
     leases,
-  } as unknown as IWorkspaceInstanceManager & { readonly leases: readonly WorkspaceLease[] };
+  } as unknown as IProjectInstanceManager & { readonly leases: readonly WorkspaceLease[] };
 }
 
 async function drainMicrotasks(ticks = 50): Promise<void> {
@@ -189,7 +189,7 @@ describe('SessionManager', () => {
     const workspace = {
       id: 'workspace-1',
       program: { sessionControllerGeneration: 'generation-1', createSessionController: () => service },
-    } as unknown as WorkspaceInstance;
+    } as unknown as ProjectInstance;
     const workspaces = workspaceManager(workspace);
     const index = {
       get: async () => ({ workspaceId: 'workspace-1', cwd: '/workspace' }),
@@ -214,7 +214,7 @@ describe('SessionManager', () => {
     const workspace = {
       id: 'workspace-1',
       program: { sessionControllerGeneration: 'generation-1', createSessionController: () => fake.service },
-    } as unknown as WorkspaceInstance;
+    } as unknown as ProjectInstance;
     const workspaces = workspaceManager(workspace);
     const index = {
       get: async () => ({ workspaceId: 'workspace-1', cwd: '/workspace' }),
@@ -252,7 +252,7 @@ describe('SessionManager', () => {
     const workspace = {
       id: 'workspace-1',
       program: { sessionControllerGeneration: 'generation-1', createSessionController: () => fake.service },
-    } as unknown as WorkspaceInstance;
+    } as unknown as ProjectInstance;
     const workspaces = workspaceManager(workspace);
     const index = {
       get: async () => ({ workspaceId: 'workspace-1', cwd: '/workspace' }),
@@ -287,7 +287,7 @@ describe('SessionManager', () => {
     const workspace = {
       id: 'workspace-1',
       program: { sessionControllerGeneration: 'generation-1', createSessionController: () => fake.service },
-    } as unknown as WorkspaceInstance;
+    } as unknown as ProjectInstance;
     const workspaces = workspaceManager(workspace);
     const index = {
       get: async () => ({ workspaceId: 'workspace-1', cwd: '/workspace' }),
@@ -322,7 +322,7 @@ describe('SessionManager', () => {
     const workspace = {
       id: 'workspace-1',
       program: { sessionControllerGeneration: 'generation-1', createSessionController: () => fake.service },
-    } as unknown as WorkspaceInstance;
+    } as unknown as ProjectInstance;
     const workspaces = workspaceManager(workspace);
     const index = {
       get: async () => ({ workspaceId: 'workspace-1', cwd: '/workspace' }),
@@ -357,7 +357,7 @@ describe('SessionManager', () => {
     const workspace = {
       id: 'workspace-1',
       program: { sessionControllerGeneration: 'generation-1', createSessionController: () => fake.service },
-    } as unknown as WorkspaceInstance;
+    } as unknown as ProjectInstance;
     const workspaces = workspaceManager(workspace);
     const index = {
       get: async () => ({ workspaceId: 'workspace-1', cwd: '/workspace' }),
@@ -392,7 +392,7 @@ describe('SessionManager', () => {
     const workspace = {
       id: 'workspace-1',
       program: { sessionControllerGeneration: 'generation-1', createSessionController: () => fake.service },
-    } as unknown as WorkspaceInstance;
+    } as unknown as ProjectInstance;
     const workspaces = workspaceManager(workspace);
     const index = {
       get: async () => ({ workspaceId: 'workspace-1', cwd: '/workspace' }),
@@ -426,7 +426,7 @@ describe('SessionManager', () => {
     const workspace = {
       id: 'workspace-1',
       program: { sessionControllerGeneration: 'generation-1', createSessionController: () => fake.service },
-    } as unknown as WorkspaceInstance;
+    } as unknown as ProjectInstance;
     const workspaces = workspaceManager(workspace);
     const index = {
       get: async () => ({ workspaceId: 'workspace-1', cwd: '/workspace' }),
@@ -461,7 +461,7 @@ describe('SessionManager', () => {
     const workspace = {
       id: 'workspace-1',
       program: { sessionControllerGeneration: 'generation-1', createSessionController: () => fake.service },
-    } as unknown as WorkspaceInstance;
+    } as unknown as ProjectInstance;
     const workspaces = workspaceManager(workspace);
     const index = {
       get: async () => ({ workspaceId: 'workspace-1', cwd: '/workspace' }),
@@ -482,7 +482,7 @@ describe('SessionManager', () => {
     const workspace = {
       id: 'workspace-1',
       program: { sessionControllerGeneration: 'generation-1', createSessionController: () => fake.service },
-    } as unknown as WorkspaceInstance;
+    } as unknown as ProjectInstance;
     const workspaces = workspaceManager(workspace);
     const index = { get: async () => undefined } as unknown as ISessionIndex;
     const manager = makeSessionManager(workspaces, index);
@@ -506,7 +506,7 @@ describe('SessionManager', () => {
         get sessionControllerGeneration() { return generation; },
         createSessionController: () => generation === 'generation-1' ? first.service : second.service,
       },
-    } as unknown as WorkspaceInstance;
+    } as unknown as ProjectInstance;
     const workspaces = workspaceManager(workspace);
     const manager = makeSessionManager(
       workspaces,
@@ -545,7 +545,7 @@ describe('SessionManager', () => {
         get sessionControllerGeneration() { return generation; },
         createSessionController: () => generation === 'generation-1' ? first.service : second.service,
       },
-    } as unknown as WorkspaceInstance;
+    } as unknown as ProjectInstance;
     const workspaces = workspaceManager(workspace);
     const manager = makeSessionManager(
       workspaces,
@@ -644,7 +644,7 @@ describe('SessionManager closeIfIdle', () => {
     const workspace = {
       id: 'workspace-1',
       program: { sessionControllerGeneration: 'generation-1', createSessionController: () => service },
-    } as unknown as WorkspaceInstance;
+    } as unknown as ProjectInstance;
     manager = makeSessionManager(
       workspaceManager(workspace),
       { get: async () => ({ workspaceId: 'workspace-1', cwd: '/workspace' }) } as unknown as ISessionIndex,
@@ -861,7 +861,7 @@ describe('SessionManager controller retirement', () => {
   }
 
   function managerFor(program: Program, registry?: EnvironmentRegistry, config?: IConfigService): SessionManager {
-    const workspace = { id: 'workspace', program, environments: registry } as unknown as WorkspaceInstance;
+    const workspace = { id: 'workspace', program, environments: registry } as unknown as ProjectInstance;
     return makeSessionManager(
       workspaceManager(workspace),
       { get: async () => undefined } as unknown as ISessionIndex,
@@ -990,7 +990,7 @@ describe('SessionManager creation environment', () => {
       sessionControllerGeneration: 'generation',
       createSessionController: () => service,
     } as unknown as Program;
-    const workspace = { id: 'workspace-1', root: '/workspace', environments: registry, program } as unknown as WorkspaceInstance;
+    const workspace = { id: 'workspace-1', root: '/workspace', environments: registry, program } as unknown as ProjectInstance;
     manager = makeSessionManager(
       workspaceManager(workspace),
       { get: async () => undefined } as unknown as ISessionIndex,

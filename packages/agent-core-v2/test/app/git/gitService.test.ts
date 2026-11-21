@@ -22,7 +22,7 @@ import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { HostProcessService } from '#/os/backends/node-local/hostProcessService';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IHostProcessService } from '#/os/interface/hostProcess';
-import { IWorkspaceInstanceManager, type WorkspaceInstanceChange } from '#/workspace/workspaceInstance/workspaceInstanceManager';
+import { IProjectInstanceManager, type ProjectInstanceChange } from '#/project/projectInstance/projectInstanceManager';
 import { IEnvironmentService, type EnvironmentResolver } from '#/app/environment/environment';
 import { Event } from '#/_base/event';
 import type { Environment } from '#/environment/environment';
@@ -76,8 +76,8 @@ describe('GitService', () => {
           acquire: () => ({ environment, track: (resource) => resource, dispose: () => {} }),
           acquireWhenReady: async () => ({ environment, track: (resource) => resource, dispose: () => {} }),
         });
-        reg.definePartialInstance(IWorkspaceInstanceManager, {
-          onDidChange: Event.None as Event<WorkspaceInstanceChange>,
+        reg.definePartialInstance(IProjectInstanceManager, {
+          onDidChange: Event.None as Event<ProjectInstanceChange>,
         });
         reg.define(IGitService, GitService);
       },

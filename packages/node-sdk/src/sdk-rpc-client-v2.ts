@@ -140,7 +140,7 @@ import { join } from 'node:path';
 
 import {
   sessionWorkDir,
-} from '@moonshot-ai/agent-core-v2/session/workspaceContext/workspaceRoots';
+} from '@moonshot-ai/agent-core-v2/session/workdirContext/workdirRoots';
 import { ContextClear } from '@moonshot-ai/agent-core-v2/agent/contextMemory/contextEvents';
 import { IEventDispatcher } from '@moonshot-ai/agent-core-v2/state/eventDispatcher';
 import { historyEntryFromContext } from '@moonshot-ai/agent-core-v2/agent/loop/history';
@@ -154,7 +154,7 @@ import {
   type McpAnchor,
 } from '@moonshot-ai/agent-core-v2/app/mcpConfig/configLoader';
 import { IGitService } from '@moonshot-ai/agent-core-v2/app/git/git';
-import { fsSuggestRequestSchema } from '@moonshot-ai/agent-core-v2/workspace/workspaceFs/fs';
+import { fsSuggestRequestSchema } from '@moonshot-ai/agent-core-v2/project/projectFs/fs';
 import { ILogService } from '@moonshot-ai/agent-core-v2/_base/log/log';
 import { IAppendLogStore } from '@moonshot-ai/agent-core-v2/persistence/interface/appendLogStore';
 import { ISessionLockService } from '@moonshot-ai/agent-core-v2/persistence/interface/sessionLock';
@@ -215,11 +215,11 @@ import {
   ISessionMetadata,
   ISessionSkillCatalog,
   IAgentTodoService,
-  ISessionWorkspaceContext,
+  ISessionWorkdirContext,
   ITelemetryService,
   ISessionActivityView,
-  IWorkspaceInstanceManager,
-  IWorkspaceSessions,
+  IProjectInstanceManager,
+  IProjectSessions,
   IEnvironmentService,
   IEnvironmentDeclarationService,
   closeSessionById,
@@ -231,7 +231,7 @@ import {
   snapshotAgentEnvironmentBinding,
   resumeSessionById,
   sessionDirOf,
-  workspacePersistenceScope,
+  projectPersistenceScope,
   logSeed,
   MAIN_AGENT_ID,
   prepareSystemPromptContext,
@@ -719,7 +719,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   ): Promise<T> {
     const dir = normalizeRequiredWorkDir(operation, workDir);
     await assertUsableWorkDir(this.engineAccessor.get(IHostFileSystem), dir);
-    const lease = await this.engineAccessor.get(IWorkspaceInstanceManager).acquireWorkdir(dir);
+    const lease = await this.engineAccessor.get(IProjectInstanceManager).acquireWorkdir(dir);
     try {
       return await use(lease);
     } finally {
@@ -1260,7 +1260,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   private async liveSessionSummary(handle: ISessionScopeHandle): Promise<SessionSummary> {
     const meta = await handle.accessor.get(ISessionMetadata).read();
     const ctx = handle.accessor.get(ISessionContext);
-    const workspace = handle.accessor.get(ISessionWorkspaceContext);
+    const workspace = handle.accessor.get(ISessionWorkdirContext);
     const liveOutcome = handle.accessor.get(ISessionActivityView).state().lastTurnReason;
     return {
       id: meta.id,
@@ -1446,7 +1446,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       items.flatMap((item) => this.mapIndexSummary(item, workspacesById) ?? []);
     if (input.workDir !== undefined) {
       const page = await this.engineAccessor
-        .get(IWorkspaceSessions)
+        .get(IProjectSessions)
         .listForWorkdir(normalizeRequiredWorkDir('listSessions', input.workDir), {
           includeArchived: input.includeArchived,
           limit: input.sessionId === undefined ? input.limit : undefined,
@@ -1503,7 +1503,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       workDir,
       sessionDir: sessionDirOf(
         bootstrapService.homeDir,
-        workspacePersistenceScope(bootstrapService.scope('sessions'), item.workspaceId),
+        projectPersistenceScope(bootstrapService.scope('sessions'), item.workspaceId),
         item.id,
       ),
     });
@@ -1751,7 +1751,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
         if (summary === undefined) return undefined;
         const sessionDir = sessionDirOf(
           bootstrap.homeDir,
-          workspacePersistenceScope(bootstrap.scope('sessions'), summary.workspaceId),
+          projectPersistenceScope(bootstrap.scope('sessions'), summary.workspaceId),
           sessionId,
         );
         return foldAgentWireReplay(
@@ -1833,13 +1833,13 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
 
   private async reloadWorkspaceCatalogs(workspaceId: string | undefined): Promise<void> {
     if (workspaceId === undefined) return;
-    const target = this.engineAccessor.get(IWorkspaceInstanceManager).get(workspaceId);
+    const target = this.engineAccessor.get(IProjectInstanceManager).get(workspaceId);
     if (target === undefined) return;
     await target.program.reload();
   }
 
   private async refreshPluginSessionStarts(excludedSessionId?: string): Promise<void> {
-    const workspaces = this.engineAccessor.get(IWorkspaceInstanceManager);
+    const workspaces = this.engineAccessor.get(IProjectInstanceManager);
     await Promise.all(
       workspaces.list().map(async (handler) => {
         const sessions = this.engineAccessor
@@ -1891,7 +1891,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     const workspaceId = handle.accessor.get(ISessionContext).workspaceId;
     const { environmentId, cwd } = handle.accessor.get(ISessionWorkdir);
     const lease = await this.engineAccessor
-      .get(IWorkspaceInstanceManager)
+      .get(IProjectInstanceManager)
       .acquire({ workspaceId });
     try {
       if (environmentId !== 'local' || cwd === undefined) {
@@ -2488,7 +2488,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
         },
         session.accessor.get(ISessionContext).cwd,
         this.engineAccessor.get(IBootstrapService).homeDir,
-        { additionalDirs: session.accessor.get(ISessionWorkspaceContext).additionalDirs },
+        { additionalDirs: session.accessor.get(ISessionWorkdirContext).additionalDirs },
       );
       warning = prepared.agentsMdWarning;
     }
@@ -3101,7 +3101,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     const parsed = parseInlineMcpServer(input.server);
     const target = { ...parsed, name: normalizeServerName(parsed.name) };
     if (input.persist === true) {
-      const cwd = session.accessor.get(ISessionWorkspaceContext).workDir;
+      const cwd = session.accessor.get(ISessionWorkdirContext).workDir;
       await this.rejectProjectLayerPersistedMcpAdd(session.accessor.get(ISessionWorkdir).anchor, target.name);
       await this.mcpManagement((management) => management.addServer(target, { cwd }));
     }

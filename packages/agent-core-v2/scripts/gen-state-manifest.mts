@@ -27,24 +27,28 @@ const SCOPES = [
   {
     dir: 'app',
     label: 'App',
+    stateService: 'IAppStateService',
     interfaceName: 'AppStateSnapshot',
     keyUnionName: 'AppStateKey',
   },
   {
-    dir: 'workspace',
+    dir: 'project',
     label: 'Workspace',
+    stateService: 'IProjectStateService',
     interfaceName: 'WorkspaceStateSnapshot',
     keyUnionName: 'WorkspaceStateKey',
   },
   {
     dir: 'session',
     label: 'Session',
+    stateService: 'ISessionStateService',
     interfaceName: 'SessionStateSnapshot',
     keyUnionName: 'SessionStateKey',
   },
   {
     dir: 'agent',
     label: 'Agent',
+    stateService: 'IAgentStateService',
     interfaceName: 'AgentStateSnapshot',
     keyUnionName: 'AgentStateKey',
   },
@@ -84,12 +88,9 @@ function isFeaturesFile(file: string): boolean {
   return relative(SRC, file).split(/[\\/]/)[0] === 'features';
 }
 
-const FEATURES_RECEIVER_SCOPE: Readonly<Record<string, ScopeDir>> = {
-  IAppStateService: 'app',
-  IWorkspaceStateService: 'workspace',
-  ISessionStateService: 'session',
-  IAgentStateService: 'agent',
-};
+const FEATURES_RECEIVER_SCOPE: Readonly<Record<string, ScopeDir>> = Object.fromEntries(
+  SCOPES.map((scope) => [scope.stateService, scope.dir]),
+);
 
 function receiverScope(
   expression: PropertyAccessExpression,
@@ -109,7 +110,7 @@ function featuresRegisterScope(
     throw new Error(
       `[gen-state-manifest] cannot resolve the state-service scope of '${expression.getText()}' ` +
         `in ${srcRelative(sf.getFilePath())} — register through an ` +
-        'I{App,Workspace,Session,Agent}StateService-typed member.',
+        'I{App,Project,Session,Agent}StateService-typed member.',
     );
   }
   return scope;
@@ -715,7 +716,7 @@ function renderManifest(
   for (const scope of SCOPES) {
     const regs = byScope.get(scope.dir) ?? [];
     const lines = [
-      `/** ${scope.label}-scope keys registered into I${scope.label}StateService. */`,
+      `/** ${scope.label}-scope keys registered into ${scope.stateService}. */`,
       `export interface ${scope.interfaceName} {`,
     ];
     const byFile = new Map<string, Registration[]>();
@@ -758,7 +759,7 @@ function renderManifest(
     '// Regenerate with: pnpm --filter @moonshot-ai/agent-core-v2 gen:state-manifest',
     '//',
     '// Every state key registered into the App-scope IAppStateService, the',
-    '// Workspace-scope IWorkspaceStateService, the Session-scope',
+    '// Workspace-scope IProjectStateService, the Session-scope',
     '// ISessionStateService, or the Agent-scope IAgentStateService (see',
     '// src/_base/state/stateRegistry.ts), collected statically from the',
     '// `states.contributeState(...)` call sites and the replayable key chains — a',

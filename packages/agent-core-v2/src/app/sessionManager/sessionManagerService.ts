@@ -15,7 +15,7 @@ import type { SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
 import { ISessionLockService, type SessionLockLease } from '#/persistence/interface/sessionLock';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionActivityView } from '#/session/sessionActivity/sessionActivity';
-import { sessionWorkDir } from '#/session/workspaceContext/workspaceRoots';
+import { sessionWorkDir } from '#/session/workdirContext/workdirRoots';
 import {
   type CreateChildSessionOptions,
   type ForkSessionOptions,
@@ -26,9 +26,9 @@ import {
   type SessionForkedEvent,
   type SessionWillCloseEvent,
   type SessionWillCreateEvent,
-} from '#/workspace/sessionLifecycle/sessionLifecycle';
-import type { SessionLifecycleService } from '#/workspace/sessionLifecycle/sessionLifecycleService';
-import { IWorkspaceInstanceManager, type WorkspaceInstanceLease, type WorkspaceInstanceRef } from '#/workspace/workspaceInstance/workspaceInstanceManager';
+} from '#/project/sessionLifecycle/sessionLifecycle';
+import type { SessionLifecycleService } from '#/project/sessionLifecycle/sessionLifecycleService';
+import { IProjectInstanceManager, type ProjectInstanceLease, type ProjectInstanceRef } from '#/project/projectInstance/projectInstanceManager';
 
 import {
   ISessionManager,
@@ -38,7 +38,7 @@ import {
 
 interface SessionControllerEntry {
   readonly workspaceId: string;
-  readonly workspaceLease: WorkspaceInstanceLease;
+  readonly workspaceLease: ProjectInstanceLease;
   readonly generation: string;
   readonly controller: SessionLifecycleService;
   readonly subscriptions: DisposableStore;
@@ -73,7 +73,7 @@ export class SessionManager implements ISessionManager {
   readonly onDidForkSession = this.didForkEmitter.event;
 
   constructor(
-    @IWorkspaceInstanceManager private readonly workspaces: IWorkspaceInstanceManager,
+    @IProjectInstanceManager private readonly projects: IProjectInstanceManager,
     @ISessionIndex private readonly index: ISessionIndex,
     @IEnvironmentDeclarationService private readonly environmentDeclarations: IEnvironmentDeclarationService,
     @IEnvironmentService private readonly environments: IEnvironmentService,
@@ -119,7 +119,7 @@ export class SessionManager implements ISessionManager {
     const environmentId = options.environmentId ?? declarations?.defaultId;
     const remote = environmentId !== undefined && environmentId !== LOCAL_ENVIRONMENT_ID;
     if (options.workDir !== undefined && !remote) await this.assertUsableWorkDir(options.workDir);
-    const lease = await this.workspaces.acquire(
+    const lease = await this.projects.acquire(
       options.workspaceId === undefined ? { cwd: options.workDir } : { workspaceId: options.workspaceId },
     );
     try {
@@ -408,8 +408,8 @@ export class SessionManager implements ISessionManager {
     this.didForkEmitter.dispose();
   }
 
-  private async controllerForWorkspace(ref: WorkspaceInstanceRef): Promise<SessionControllerEntry> {
-    const workspaceLease = await this.workspaces.acquire(ref);
+  private async controllerForWorkspace(ref: ProjectInstanceRef): Promise<SessionControllerEntry> {
+    const workspaceLease = await this.projects.acquire(ref);
     try {
       if (this.disposed) throw new Error('session manager is disposed');
       const workspace = workspaceLease.instance;

@@ -1,6 +1,6 @@
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
-import { sessionWorkDir } from '#/session/workspaceContext/workspaceRoots';
+import { sessionWorkDir } from '#/session/workdirContext/workdirRoots';
 
 import { CHILD_SESSION_KIND, CHILD_SESSION_KIND_KEY, type SessionSummary } from './sessionIndex';
 import { SESSION_INDEX_DIRTY_DIR } from './sessionIndexDirtyJournal';
@@ -215,7 +215,7 @@ export function summaryEquals(a: SessionSummary, b: SessionSummary): boolean {
   );
 }
 
-export async function listWorkspaceIds(
+export async function listProjectIds(
   storage: IFileSystemStorageService,
   sessionsScope: string,
 ): Promise<readonly string[]> {

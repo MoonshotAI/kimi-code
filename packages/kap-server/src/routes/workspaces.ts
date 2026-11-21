@@ -2,13 +2,13 @@ import {
   ErrorCodes,
   IBootstrapService,
   IHostFileSystem,
-  IWorkspaceService,
-  IWorkspaceSessions,
-  IWorkspaceTrust,
-  IWorkspaceTrustStore,
+  IProjectService,
+  IProjectSessions,
+  IProjectTrust,
+  IProjectTrustStore,
   isError2,
   type Scope,
-  type Workspace,
+  type Project,
 } from '@moonshot-ai/agent-core-v2';
 import { workspaceRootKey } from '@moonshot-ai/agent-core-v2/_base/utils/workdir-slug';
 import { isAbsolute, join, normalize, resolve } from 'node:path';
@@ -87,7 +87,7 @@ export function registerWorkspacesRoutes(app: WorkspaceRouteHost, core: Scope, h
       tags: ['workspaces'],
     },
     async (req, reply) => {
-      const items = await core.accessor.get(IWorkspaceService).list();
+      const items = await core.accessor.get(IProjectService).list();
       const projected = await Promise.all(items.map((ws) => toWireWorkspace(core, ws)));
       if (req.query.hosts !== 'include' || hosts === undefined) {
         reply.send(okEnvelope({ items: projected }, req.id));
@@ -149,7 +149,7 @@ export function registerWorkspacesRoutes(app: WorkspaceRouteHost, core: Scope, h
         reply.send(additional.envelope);
         return;
       }
-      const ws = await core.accessor.get(IWorkspaceService).create({
+      const ws = await core.accessor.get(IProjectService).create({
         root,
         name: req.body.name,
         additionalDirs: additional.dirs,
@@ -197,7 +197,7 @@ export function registerWorkspacesRoutes(app: WorkspaceRouteHost, core: Scope, h
         }
         additionalDirs = additional.dirs;
       }
-      const ws = await core.accessor.get(IWorkspaceService).update(existing.id, {
+      const ws = await core.accessor.get(IProjectService).update(existing.id, {
         name: req.body.name,
         additionalDirs,
       });
@@ -232,7 +232,7 @@ export function registerWorkspacesRoutes(app: WorkspaceRouteHost, core: Scope, h
     async (req, reply) => {
       const existing = await workspaceOrNotFound(core, req, reply);
       if (existing === undefined) return;
-      await core.accessor.get(IWorkspaceService).delete(existing.id);
+      await core.accessor.get(IProjectService).delete(existing.id);
       requestLog(req)?.info({ workspace_id: existing.id }, 'workspace deleted');
       reply.send(okEnvelope({ deleted: true as const }, req.id));
     },
@@ -366,9 +366,9 @@ export function registerWorkspacesRoutes(app: WorkspaceRouteHost, core: Scope, h
         );
         return;
       }
-      let ws: Workspace | undefined;
+      let ws: Project | undefined;
       try {
-        ws = await core.accessor.get(IWorkspaceService).setPrimary(existing.id, resolved);
+        ws = await core.accessor.get(IProjectService).setPrimary(existing.id, resolved);
       } catch (error) {
         if (!isError2(error) || error.code !== ErrorCodes.WORKSPACE_PRIMARY_IMMUTABLE) throw error;
         reply.send(errEnvelope(ErrorCode.WORKSPACE_PRIMARY_IMMUTABLE, error.message, req.id));
@@ -399,7 +399,7 @@ export function registerWorkspacesRoutes(app: WorkspaceRouteHost, core: Scope, h
       tags: ['workspaces'],
     },
     async (req, reply) => {
-      const dirs = await core.accessor.get(IWorkspaceService).readProjectConfigDirs(req.query.root);
+      const dirs = await core.accessor.get(IProjectService).readProjectConfigDirs(req.query.root);
       reply.send(okEnvelope({ additional_dirs: dirs }, req.id));
     },
   );
@@ -471,9 +471,9 @@ async function workspaceOrNotFound(
   core: Scope,
   req: WorkspaceRequest,
   reply: WorkspaceReply,
-): Promise<Workspace | undefined> {
+): Promise<Project | undefined> {
   const workspaceId = req.params.workspace_id;
-  const ws = await core.accessor.get(IWorkspaceService).get(workspaceId);
+  const ws = await core.accessor.get(IProjectService).get(workspaceId);
   if (ws === undefined) {
     reply.send(
       errEnvelope(ErrorCode.WORKSPACE_NOT_FOUND, `workspace ${workspaceId} does not exist`, req.id),
@@ -486,13 +486,13 @@ async function resolveTrust(
   core: Scope,
   req: WorkspaceRequest,
   reply: WorkspaceReply,
-): Promise<IWorkspaceTrust | undefined> {
+): Promise<IProjectTrust | undefined> {
   const ws = await workspaceOrNotFound(core, req, reply);
-  return ws === undefined ? undefined : core.accessor.get(IWorkspaceTrustStore).forProject(ws);
+  return ws === undefined ? undefined : core.accessor.get(IProjectTrustStore).forProject(ws);
 }
 
-export async function toWireWorkspace(core: Scope, ws: Workspace): Promise<WorkspaceWire> {
-  const sessionCount = await core.accessor.get(IWorkspaceSessions).count(ws.id);
+export async function toWireWorkspace(core: Scope, ws: Project): Promise<WorkspaceWire> {
+  const sessionCount = await core.accessor.get(IProjectSessions).count(ws.id);
   return {
     id: ws.id,
     root: ws.root,

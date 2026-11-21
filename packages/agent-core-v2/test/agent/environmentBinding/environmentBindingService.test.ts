@@ -19,11 +19,11 @@ import { makeSessionContext } from '#/session/sessionContext/sessionContext';
 import { SessionStateService } from '#/session/state/sessionStateService';
 import { EventDispatcherService } from '#/state/eventDispatcherService';
 import { IEventDispatcher } from '#/state/eventDispatcher';
-import type { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
+import type { ISessionWorkdirContext } from '#/session/workdirContext/workdirContext';
 import {
-  workspaceContextAdditionalDirsKey,
-  workspaceContextWorkDirKey,
-} from '#/session/workspaceContext/workspaceContextService';
+  workdirContextAdditionalDirsKey,
+  workdirContextWorkDirKey,
+} from '#/session/workdirContext/workdirContextService';
 import { IEnvironmentService, type EnvironmentResolver } from '#/app/environment/environment';
 import { stubAgentContext } from '../agentContext/stubs';
 import { noopLogger } from '../../wire/stubs';
@@ -60,7 +60,7 @@ function reminderText(environmentId: string, host: ReminderHost, cwd: string): s
   );
 }
 
-function stubWorkspaceContext(cwd: string, workDirWrites: string[]): ISessionWorkspaceContext {
+function stubWorkspaceContext(cwd: string, workDirWrites: string[]): ISessionWorkdirContext {
   return {
     _serviceBrand: undefined,
     workDir: cwd,
@@ -68,7 +68,7 @@ function stubWorkspaceContext(cwd: string, workDirWrites: string[]): ISessionWor
     setWorkDir: (dir: string) => {
       workDirWrites.push(dir);
     },
-  } as unknown as ISessionWorkspaceContext;
+  } as unknown as ISessionWorkdirContext;
 }
 
 function stubScopeContext(agentId: string) {
@@ -181,14 +181,14 @@ function setup(options: {
   const reminders: { content: string; variant: string }[] = [];
   const reminder = stubReminder(reminders);
   const sessionState = new SessionStateService();
-  sessionState.contributeState(workspaceContextWorkDirKey);
-  sessionState.contributeState(workspaceContextAdditionalDirsKey);
-  sessionState.set(workspaceContextWorkDirKey, session.cwd);
+  sessionState.contributeState(workdirContextWorkDirKey);
+  sessionState.contributeState(workdirContextAdditionalDirsKey);
+  sessionState.set(workdirContextWorkDirKey, session.cwd);
   const workspaceInfo = {
     _serviceBrand: undefined,
     ready: Promise.resolve(),
     primaryByWorkspace: options.primaryByWorkspace ?? {},
-    additionalDirs: sessionState.get(workspaceContextAdditionalDirsKey),
+    additionalDirs: sessionState.get(workdirContextAdditionalDirsKey),
     onDidChange: () => ({ dispose: () => {} }),
   };
   const makeAgent = (agentId: string) => {

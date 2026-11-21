@@ -2,8 +2,8 @@ import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/tool
 import { isWithinWorkspace } from '#/tool/path-access';
 import { findGitWorkTree } from '#/app/git/workTree';
 import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
-import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
-import type { ISessionWorkspaceContext as WorkspaceContext } from '#/session/workspaceContext/workspaceContext';
+import { ISessionWorkdirContext } from '#/session/workdirContext/workdirContext';
+import type { ISessionWorkdirContext as WorkspaceContext } from '#/session/workdirContext/workdirContext';
 import type {
   PermissionPolicy,
   PermissionPolicyResult,
@@ -16,7 +16,7 @@ export class GitCwdWriteApprovePermissionPolicyService implements PermissionPoli
 
   constructor(
     @IAgentEnvironmentService private readonly environment: IAgentEnvironmentService,
-    @ISessionWorkspaceContext private readonly workspace: WorkspaceContext,
+    @ISessionWorkdirContext private readonly workdir: WorkspaceContext,
   ) {}
 
   async evaluate(
@@ -32,7 +32,7 @@ export class GitCwdWriteApprovePermissionPolicyService implements PermissionPoli
       const fs = lease.environment.fs;
       if (fs === undefined) return undefined;
 
-      const cwd = this.workspace.workDir;
+      const cwd = this.workdir.workDir;
       if (cwd.length === 0) return undefined;
 
       const writeAccesses = writeFileAccesses(context);
@@ -41,7 +41,7 @@ export class GitCwdWriteApprovePermissionPolicyService implements PermissionPoli
         !writeAccesses.every((access) =>
           isWithinWorkspace(
             access.path,
-            { workspaceDir: cwd, additionalDirs: this.workspace.additionalDirs },
+            { workspaceDir: cwd, additionalDirs: this.workdir.additionalDirs },
             'posix',
           ),
         )

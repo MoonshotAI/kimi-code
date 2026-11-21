@@ -10,7 +10,7 @@ import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
-import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
+import { ISessionWorkdirContext } from '#/session/workdirContext/workdirContext';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { extendWorkspaceWithSkillRoots } from '#/tool/path-access';
 
@@ -33,7 +33,7 @@ export class AgentMediaToolsRegistrar extends Service implements IAgentMediaTool
     @IEventBus eventBus: IEventBus,
     @IEventDispatcher dispatcher: IEventDispatcher,
     @IAgentEnvironmentService private readonly environment: IAgentEnvironmentService,
-    @ISessionWorkspaceContext private readonly workspaceCtx: ISessionWorkspaceContext,
+    @ISessionWorkdirContext private readonly workdirCtx: ISessionWorkdirContext,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IAgentStateService private readonly states: IAgentStateService,
     @ISessionMediaStore private readonly attachmentStore: ISessionMediaStore,
@@ -77,7 +77,7 @@ export class AgentMediaToolsRegistrar extends Service implements IAgentMediaTool
     if (key === this.registeredKey) return;
     this.registeredKey = key;
     this.registration?.dispose();
-    const workspaceCtx = this.workspaceCtx;
+    const workspaceCtx = this.workdirCtx;
     const skillCatalog = this.skillCatalog;
     const environment = this.environment;
     const pathClass = inspected?.host?.pathClass;

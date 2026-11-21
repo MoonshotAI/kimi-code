@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { sessionWorkDir } from '@moonshot-ai/agent-core-v2/session/workspaceContext/workspaceRoots';
+import { sessionWorkDir } from '@moonshot-ai/agent-core-v2/session/workdirContext/workdirRoots';
 
 import { toWireSession, type SessionFacts, type SessionWireFields } from '../src/routes/sessions';
 

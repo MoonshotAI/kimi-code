@@ -8,11 +8,11 @@ import { IWireService } from '#/wire/wire';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { ISessionIndex, type SessionSummary } from '#/app/sessionIndex/sessionIndex';
 import { ISessionManager } from '#/app/sessionManager/sessionManager';
-import { IWorkspaceService } from '#/app/workspace/workspace';
+import { IProjectService } from '#/app/project/project';
 import {
   sessionDirOf,
-  workspacePersistenceScope,
-} from '#/workspace/sessionLifecycle/internal/addressing';
+  projectPersistenceScope,
+} from '#/project/sessionLifecycle/internal/addressing';
 import { ErrorCodes, Error2 } from '#/errors';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionRequestAttributionService } from '#/session/requestAttribution/requestAttribution';
@@ -48,7 +48,7 @@ export class SessionExportService implements ISessionExportService {
     @IBootstrapService private readonly bootstrap: IBootstrapService,
     @ISessionIndex private readonly index: ISessionIndex,
     @ISessionManager private readonly sessions: ISessionManager,
-    @IWorkspaceService private readonly workspaces: IWorkspaceService,
+    @IProjectService private readonly projects: IProjectService,
     @ILogService private readonly log: ILogService,
   ) {}
 
@@ -118,10 +118,10 @@ export class SessionExportService implements ISessionExportService {
   }
 
   private async flushLiveSession(summary: SessionSummary): Promise<ExportSessionDirectorySummary> {
-    const workspace = await this.workspaces.get(summary.workspaceId);
+    const workspace = await this.projects.get(summary.workspaceId);
     const sessionDir = sessionDirOf(
       this.bootstrap.homeDir,
-      workspacePersistenceScope(this.bootstrap.scope('sessions'), summary.workspaceId),
+      projectPersistenceScope(this.bootstrap.scope('sessions'), summary.workspaceId),
       summary.id,
     );
     let exportSummary: ExportSessionDirectorySummary = {

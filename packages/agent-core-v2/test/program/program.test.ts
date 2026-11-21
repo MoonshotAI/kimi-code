@@ -26,20 +26,20 @@ import { UserFileSkillSource } from '#/features/skill/catalog/userFileSkillSourc
 import { fakeEnvironment } from '../environment/stubs';
 import { cwdStdioFixture } from '../mcpCore/stubs';
 import { noopLogger } from '../wire/stubs';
-import type { WorkspaceKind } from '#/app/workspace/workspace';
-import type { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
-import { writeWorkspaceTrust } from '#/workspace/workspaceTrust/trustRecord';
-import { WorkspaceTrustStore } from '#/workspace/workspaceTrust/workspaceTrustStore';
-import type { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
-import type { IWorkspaceFsService } from '#/workspace/workspaceFs/fs';
-import type { IWorkspaceGitService } from '#/workspace/workspaceGit/workspaceGit';
-import type { IWorkspaceInstructionsService } from '#/workspace/workspaceInstructions/workspaceInstructions';
+import type { ProjectKind } from '#/app/project/project';
+import type { IProjectContext } from '#/project/projectContext/projectContext';
+import { writeProjectTrust } from '#/project/projectTrust/trustRecord';
+import { ProjectTrustStore } from '#/project/projectTrust/projectTrustStore';
+import type { IProjectDirs } from '#/project/projectDirs/projectDirs';
+import type { IProjectFsService } from '#/project/projectFs/fs';
+import type { IProjectGitService } from '#/project/projectGit/projectGit';
+import type { IProjectInstructionsService } from '#/project/projectInstructions/projectInstructions';
 import type { McpServerConfig } from '#/mcpCore/config-schema';
 import type { McpConnectionView } from '#/mcpCore/connection-manager';
-import type { WorkdirMcp } from '#/workspace/workspaceMcp/workspaceMcp';
-import type { IUserAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/userAgentProfileLoader';
-import type { IWorkspaceAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/workspaceAgentProfileLoader';
-import type { IWorkspaceSkillCatalog } from '#/features/skill/workspace/workspaceSkillCatalog';
+import type { WorkdirMcp } from '#/project/projectMcp/projectMcp';
+import type { IUserAgentProfileLoader } from '#/project/projectAgentProfileLoader/userAgentProfileLoader';
+import type { IProjectAgentProfileLoader } from '#/project/projectAgentProfileLoader/projectAgentProfileLoader';
+import type { IProjectSkillCatalog } from '#/features/skill/project/projectSkillCatalog';
 
 beforeEach(() => { vi.stubEnv('KIMI_CODE_WATCH', 'false'); });
 afterEach(() => { vi.unstubAllEnvs(); });
@@ -54,7 +54,7 @@ function deferred(): { readonly promise: Promise<void>; resolve(): void; reject(
   return { promise, resolve, reject };
 }
 
-function programWorkspace(cwd: string, kind: WorkspaceKind = 'implicit'): IWorkspaceContext {
+function programWorkspace(cwd: string, kind: ProjectKind = 'implicit'): IProjectContext {
   return {
     _serviceBrand: undefined,
     workspaceId: 'workspace',
@@ -308,13 +308,13 @@ describe('Program', () => {
 const execFileAsync = promisify(execFile);
 
 interface GenerationAccess {
-  readonly fs: IWorkspaceFsService;
-  readonly git: IWorkspaceGitService;
+  readonly fs: IProjectFsService;
+  readonly git: IProjectGitService;
   readonly mcp: WorkdirMcp;
-  readonly instructions: IWorkspaceInstructionsService;
-  readonly skills: IWorkspaceSkillCatalog;
-  readonly dirs: IWorkspaceDirs;
-  readonly agentProfiles: IWorkspaceAgentProfileLoader;
+  readonly instructions: IProjectInstructionsService;
+  readonly skills: IProjectSkillCatalog;
+  readonly dirs: IProjectDirs;
+  readonly agentProfiles: IProjectAgentProfileLoader;
   readonly userAgentProfiles: IUserAgentProfileLoader;
 }
 
@@ -363,7 +363,7 @@ function scopedFs(base: string, realBase: string, inner: IHostFileSystem, additi
   };
 }
 
-async function localityFixture(options: { readonly remoteCwd?: string; readonly kind?: WorkspaceKind } = {}): Promise<LocalityFixture> {
+async function localityFixture(options: { readonly remoteCwd?: string; readonly kind?: ProjectKind } = {}): Promise<LocalityFixture> {
   const base = await mkdtemp(join(tmpdir(), 'kimi-program-locality-'));
   const localRoot = join(base, 'local');
   const remoteRoot = join(base, 'target');
@@ -428,7 +428,7 @@ async function localityFixture(options: { readonly remoteCwd?: string; readonly 
       .filter((key) => key.startsWith(`${scope}/`))
       .map((key) => key.slice(scope.length + 1)),
   };
-  await writeWorkspaceTrust(docs as never, localRoot, Date.now());
+  await writeProjectTrust(docs as never, localRoot, Date.now());
 
   let registeredDirs: readonly string[] = [];
   const registryChanges = new Emitter<void>();
@@ -454,7 +454,7 @@ async function localityFixture(options: { readonly remoteCwd?: string; readonly 
     get: () => undefined,
     onDidSectionChange: () => ({ dispose: () => {} }),
   };
-  const trustStore = new WorkspaceTrustStore(docs as never, noopTelemetryService, bootstrap as never, config as never);
+  const trustStore = new ProjectTrustStore(docs as never, noopTelemetryService, bootstrap as never, config as never);
   const userSkills = new UserFileSkillSource(
     new FileSkillDiscovery(noopLogger),
     bootstrap as never,
