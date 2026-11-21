@@ -340,6 +340,10 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
               _serviceBrand: undefined,
               environmentId: environment?.environmentId ?? LOCAL_ENVIRONMENT_ID,
               cwd: environment?.cwd,
+              get anchor() {
+                return workdir.mcp.anchor;
+              },
+              onDidChangeAnchor: workdir.mcp.onDidChangeAnchor,
               fs: workdir.fs,
             }],
             ...sessionEphemeralMcpServersSeed(opts.mcpServers ?? {}),

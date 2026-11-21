@@ -1,6 +1,7 @@
 import { execFileSync } from 'node:child_process';
-import { Error2, ErrorCodes, IEnvironmentService, IModelCatalog, ISessionManager, IWorkspaceInstanceManager, WorkspaceFsService } from '@moonshot-ai/agent-core-v2';
-import { chmod, mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises';
+import { Error2, ErrorCodes, IEnvironmentService, IModelCatalog, ISessionManager, IWorkspaceInstanceManager, WorkspaceFsService, getLiveSessionById } from '@moonshot-ai/agent-core-v2';
+import { IProjectPermissionRulesService } from '@moonshot-ai/agent-core-v2/agent/permissionRules/projectPermissionRules';
+import { chmod, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, sep } from 'node:path';
 import { HostFileSystem } from '@moonshot-ai/agent-core-v2/os/backends/node-local/hostFsService';
@@ -784,6 +785,71 @@ describe('server-v2 /api/v1 fs routes', () => {
       await rm(lab, { recursive: true, force: true });
     }
   }, 20000);
+
+  it('reads and writes project permission rules at the anchor of the session working directory', async () => {
+    const lab = await mkdtemp(join(tmpdir(), 'kimi-server-v2-fs-rules-'));
+    try {
+      const main = join(lab, 'app');
+      const worktree = join(lab, 'app-fix');
+      const other = join(lab, 'other');
+      const shared = join(other, 'shared');
+      for (const dir of [main, other]) {
+        await mkdir(dir, { recursive: true });
+        git(dir, 'init', '-b', 'main');
+        git(dir, 'config', 'user.email', 'test@example.com');
+        git(dir, 'config', 'user.name', 'Test');
+        await writeFile(join(dir, 'tracked.txt'), 'one\n');
+        git(dir, 'add', '-A');
+        git(dir, 'commit', '-m', 'init');
+      }
+      git(main, 'worktree', 'add', '-b', 'fix', worktree);
+      await mkdir(shared, { recursive: true });
+      for (const [root, pattern] of [[main, 'Bash(main)'], [worktree, 'Bash(worktree)'], [other, 'Bash(other)']] as const) {
+        await mkdir(join(root, '.kimi-code'), { recursive: true });
+        await writeFile(
+          join(root, '.kimi-code', 'local.toml'),
+          `[permission]\nrules = [{ decision = "deny", pattern = "${pattern}" }]\n`,
+        );
+      }
+      const headers = authHeaders(server as RunningServer, { 'content-type': 'application/json' });
+      const post = async <T>(path: string, body: unknown, method = 'POST'): Promise<Envelope<T>> =>
+        (await (await fetch(`${base}/api/v1${path}`, { method, headers, body: JSON.stringify(body) } as never)).json()) as Envelope<T>;
+      const first = await post<{ workspace_id: string }>('/sessions', { cwd: main });
+      const workspaceId = first.data.workspace_id;
+      expect((await post(`/workspaces/${workspaceId}`, { additional_dirs: [shared] }, 'PATCH')).code).toBe(0);
+      expect((await post(`/workspaces/${workspaceId}/trust`, {})).code).toBe(0);
+      const rulesOf = async (body: Record<string, unknown>) => {
+        const created = await post<{ id: string }>('/sessions', { workspace_id: workspaceId, ...body });
+        expect(created.code).toBe(0);
+        const rules = getLiveSessionById((server as RunningServer).core.accessor, created.data.id)!
+          .accessor.get(IProjectPermissionRulesService);
+        await rules.ready;
+        return rules;
+      };
+
+      expect((await rulesOf({})).rules.map((rule) => rule.pattern)).toEqual(['Bash(main)']);
+      expect(
+        (await rulesOf({ environment_id: 'local', environment_cwd: worktree })).rules.map((rule) => rule.pattern),
+      ).toEqual(['Bash(worktree)']);
+      const sharedRules = await rulesOf({ environment_id: 'local', environment_cwd: shared });
+      expect(sharedRules.rules.map((rule) => rule.pattern)).toEqual(['Bash(main)']);
+
+      await sharedRules.appendRules([{ decision: 'allow', scope: 'project', pattern: 'Read' }]);
+      expect(sharedRules.rules.map((rule) => rule.pattern)).toEqual(['Bash(main)', 'Read']);
+      expect(await readFile(join(main, '.kimi-code', 'local.toml'), 'utf8')).toContain('Read');
+      expect(await readFile(join(other, '.kimi-code', 'local.toml'), 'utf8')).not.toContain('Read');
+
+      expect((await post(`/workspaces/${workspaceId}`, { additional_dirs: [shared, other] }, 'PATCH')).code).toBe(0);
+      await vi.waitFor(() => {
+        expect(sharedRules.rules.map((rule) => rule.pattern)).toEqual(['Bash(other)']);
+      });
+      await sharedRules.appendRules([{ decision: 'allow', scope: 'project', pattern: 'Glob' }]);
+      expect(await readFile(join(other, '.kimi-code', 'local.toml'), 'utf8')).toContain('Glob');
+      expect(await readFile(join(main, '.kimi-code', 'local.toml'), 'utf8')).not.toContain('Glob');
+    } finally {
+      await rm(lab, { recursive: true, force: true });
+    }
+  }, 30000);
 
   it('rejects an unknown action with VALIDATION_FAILED', async () => {
     const id = await createSession();

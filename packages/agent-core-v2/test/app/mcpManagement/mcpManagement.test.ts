@@ -45,6 +45,9 @@ import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { FakeEnvironment } from '#/environment/fakeEnvironment';
 import type { WorkspaceInstance } from '#/workspace/workspaceInstance/workspaceInstance';
 import { IWorkspaceInstanceManager } from '#/workspace/workspaceInstance/workspaceInstanceManager';
+import { locateCheckout } from '#/app/git/workTree';
+import { decideImplicitProject } from '#/app/workspace/implicitProject';
+import { IWorkspaceService } from '#/app/workspace/workspace';
 import { IEnvironmentService, type EnvironmentResolver } from '#/app/environment/environment';
 import {
   IWorkspaceTrustStore,
@@ -148,6 +151,18 @@ describe('McpManagementService', () => {
         });
         reg.defineInstance(ITelemetryService, noopTelemetryService);
         reg.define(IWorkspaceTrustStore, WorkspaceTrustStore);
+        const peekFs = new HostFileSystem();
+        reg.definePartialInstance(IWorkspaceService, {
+          peekImplicit: async (dir: string) =>
+            (
+              await decideImplicitProject(dir, { implicit: [] }, {
+                occupied: async () => false,
+                locate: (target) => locateCheckout(peekFs, target),
+                realpath: async (target) => peekFs.realpath(target).catch(() => undefined),
+                homeDirs: [home],
+              })
+            ).decision,
+        });
         reg.define(IMcpRegistryService, McpRegistryService);
         reg.defineInstance(IMcpOAuthService, oauth);
         reg.definePartialInstance(IConfigService, {

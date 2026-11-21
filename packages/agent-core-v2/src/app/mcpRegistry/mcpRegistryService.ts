@@ -1,12 +1,13 @@
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
-import { canonicalWorkspaceRoot } from '#/_base/utils/paths';
+import { resolvePath } from '#/_base/utils/paths';
 
 import { ErrorCodes, Error2 } from '#/errors';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
-import { loadMcpServersDetailed } from '#/app/mcpConfig/configLoader';
+import { findMcpAnchor, loadMcpServersDetailed } from '#/app/mcpConfig/configLoader';
 import { IMcpConfigStore } from '#/app/mcpConfig/configStore';
 import { IPluginService } from '#/app/plugin/plugin';
+import { IWorkspaceService } from '#/app/workspace/workspace';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IWorkspaceTrustStore } from '#/workspace/workspaceTrust/workspaceTrustStore';
 
@@ -25,6 +26,7 @@ export class McpRegistryService implements IMcpRegistryService {
     @IHostFileSystem private readonly fs: IHostFileSystem,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
     @IWorkspaceTrustStore private readonly trust: IWorkspaceTrustStore,
+    @IWorkspaceService private readonly workspaces: IWorkspaceService,
   ) {}
 
   async list(query: McpRegistryQuery = {}): Promise<readonly McpRegistryEntry[]> {
@@ -43,8 +45,10 @@ export class McpRegistryService implements IMcpRegistryService {
         });
       }
     } else {
-      const cwd = canonicalWorkspaceRoot(query.cwd);
-      const trusted = await this.trust.forRoot(cwd).refresh();
+      const cwd = resolvePath(process.cwd(), query.cwd);
+      const decision = await this.workspaces.peekImplicit(cwd);
+      const project = decision.kind === 'reuse' ? decision.project : { root: decision.root, additionalDirs: [] };
+      const trusted = await this.trust.forProject(project).refresh();
       if (!trusted) {
         const userEntries = await this.store.list();
         for (const server of userEntries) {
@@ -62,6 +66,7 @@ export class McpRegistryService implements IMcpRegistryService {
           fs: this.fs,
           cwd,
           homeDir: this.bootstrap.homeDir,
+          anchor: (await findMcpAnchor(this.fs, cwd, project)).anchor,
         });
         for (const [name, config] of Object.entries(detailed.servers)) {
           const origin = detailed.origins[name] ?? this.store.path;

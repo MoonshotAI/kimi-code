@@ -1,4 +1,5 @@
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
+import type { Event } from '#/_base/event';
 import type { McpAnchor } from '#/app/mcpConfig/configLoader';
 import type { McpConnectionManager, McpConnectionView } from '#/mcpCore/connection-manager';
 import type { McpServerConfig } from '#/mcpCore/config-schema';
@@ -35,6 +36,7 @@ export interface SessionMcpLease {
 
 export interface WorkdirMcp {
   readonly anchor: McpAnchor;
+  readonly onDidChangeAnchor: Event<void>;
   readonly ready: Promise<void>;
   view(): McpConnectionView;
   configuredNames(): readonly string[];

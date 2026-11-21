@@ -16,6 +16,8 @@ import {
 } from '#/app/mcpConfig/configLoader';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 
+import { forgedPointer, linkedWorktree, mainCheckout } from '../git/checkoutLayouts';
+
 const fs = new HostFileSystem();
 
 const tempDirs: string[] = [];
@@ -278,6 +280,24 @@ describe('findMcpAnchor', () => {
     await expect(
       findMcpAnchor(fs, join(checkout, 'missing'), { root: real, additionalDirs: [] }),
     ).resolves.toMatchObject({ anchor: checkout });
+  });
+
+  it('anchors a worktree of the project repository outside the primary subtree at the worktree root', async () => {
+    const base = makeTempDir();
+    const root = mainCheckout(join(base, 'app'));
+    const wt = linkedWorktree(join(root, '.git'), join(base, 'app-fix'));
+    await mkdir(join(wt, 'src'), { recursive: true });
+
+    await expect(findMcpAnchor(fs, join(wt, 'src'), { root, additionalDirs: [] })).resolves.toMatchObject({ anchor: wt });
+  });
+
+  it('falls back to the project root for a forged worktree pointer into the project repository', async () => {
+    const base = makeTempDir();
+    const root = mainCheckout(join(base, 'app'));
+    linkedWorktree(join(root, '.git'), join(base, 'app-fix'));
+    const evil = forgedPointer(join(base, 'evil'), join(root, '.git', 'worktrees', 'app-fix'));
+
+    await expect(findMcpAnchor(fs, evil, { root, additionalDirs: [] })).resolves.toMatchObject({ anchor: root });
   });
 
   it('falls back to the project root when the checkout root lies above a registered additional directory', async () => {

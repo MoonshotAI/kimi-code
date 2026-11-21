@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { noopTelemetryService } from '#/app/telemetry/telemetry';
 import { ISessionEphemeralMcpServers } from '#/session/mcp/ephemeralMcpServers';
 import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
+import { ISessionWorkdir } from '#/session/workdir/workdir';
 import { SessionLifecycleService } from '#/workspace/sessionLifecycle/sessionLifecycleService';
 
 const { createScopedChildHandleMock } = vi.hoisted(() => ({
@@ -39,6 +40,7 @@ describe('SessionLifecycleService', () => {
       fs: {},
       instructions: { sessionProvider: () => ({}) },
       agentProfiles: { ready },
+      mcp: { anchor: '/workspace' },
       dispose: vi.fn(),
     };
     const handle = {
@@ -125,7 +127,7 @@ describe('SessionLifecycleService', () => {
       fs: {},
       instructions: { sessionProvider: () => ({}) },
       agentProfiles: { ready },
-      mcp: { sessionHandle },
+      mcp: { anchor: '/workspace', sessionHandle },
       dispose: vi.fn(),
     };
     const provided = new Map<unknown, unknown>();
@@ -199,6 +201,7 @@ describe('SessionLifecycleService', () => {
         ephemeral: { ...mcpServers, contributed },
       });
       expect(provided.get(ISessionMcpHandle)).toBe(lease.handle);
+      expect(provided.get(ISessionWorkdir)).toMatchObject({ environmentId: 'local', anchor: '/workspace' });
       expect(lease.dispose).not.toHaveBeenCalled();
       for (const dispose of kernelEntries) dispose();
       expect(lease.dispose).toHaveBeenCalledOnce();

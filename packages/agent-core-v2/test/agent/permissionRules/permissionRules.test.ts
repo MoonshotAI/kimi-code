@@ -1,7 +1,8 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
+import { Emitter, Event } from '#/_base/event';
 import { TestInstantiationService } from '#/_base/di/test';
 import { ILogService } from '#/_base/log/log';
 import { IConfigService } from '#/app/config/config';
@@ -237,6 +238,68 @@ describe('AgentPermissionRulesService (wire-backed)', () => {
     expect(svc.sessionApprovalRulePatterns).toEqual(['Bash(rm *)']);
   });
 
+  it('follows the session anchor for project rules: reloads where it moves, writes there, and drops rules it cannot read', async () => {
+    const atMain: PermissionRule = { decision: 'deny', scope: 'project', pattern: 'Bash(main)' };
+    const atOther: PermissionRule = { decision: 'deny', scope: 'project', pattern: 'Bash(other)' };
+    const approved: PermissionRule = { decision: 'allow', scope: 'project', pattern: 'Read' };
+    const files = new Map<string, unknown[]>([
+      ['/main', [atMain]],
+      ['/other', [atOther]],
+      ['/broken', [{ decision: 'deny', scope: 'session-runtime', pattern: 'Bash' }]],
+    ]);
+    const writes: string[] = [];
+    const localConfig = {
+      readPermissionRules: async (dir: string) => ({
+        projectRoot: dir,
+        configPath: `${dir}/.kimi-code/local.toml`,
+        rules: files.get(dir) ?? [],
+      }),
+      appendPermissionRules: async (dir: string, rules: readonly unknown[]) => {
+        writes.push(dir);
+        const next = [...(files.get(dir) ?? []), ...rules];
+        files.set(dir, next);
+        return { projectRoot: dir, configPath: `${dir}/.kimi-code/local.toml`, rules: next };
+      },
+    } as never;
+    const warnings: string[] = [];
+    const anchorMoves = new Emitter<void>();
+    let anchor = '/main';
+    const service = new ProjectPermissionRulesService(
+      {
+        environmentId: 'local',
+        cwd: '/other/shared',
+        get anchor() {
+          return anchor;
+        },
+        onDidChangeAnchor: anchorMoves.event,
+      } as never,
+      localConfig,
+      { get: async () => true } as never,
+      { ...stubLog(), warn: (message: string) => warnings.push(message) },
+    );
+    await service.ready;
+    expect(service.rules).toEqual([atMain]);
+
+    anchor = '/other';
+    anchorMoves.fire();
+    await vi.waitFor(() => {
+      expect(service.rules).toEqual([atOther]);
+    });
+    await service.appendRules([approved]);
+    expect(writes).toEqual(['/other']);
+    expect(service.rules).toEqual([atOther, approved]);
+    expect(files.get('/main')).toEqual([atMain]);
+
+    anchor = '/broken';
+    anchorMoves.fire();
+    await vi.waitFor(() => {
+      expect(service.rules).toEqual([]);
+    });
+    expect(warnings).toEqual(['project permission rules reload failed']);
+
+    service.dispose();
+  });
+
   it('loads local trusted rules, ignores legacy user runtime scopes, and rejects remote project IO', async () => {
     const projectRule: PermissionRule = { decision: 'deny', scope: 'project', pattern: 'Bash' };
     const appendedRule: PermissionRule = { decision: 'allow', scope: 'project', pattern: 'Write' };
@@ -259,10 +322,10 @@ describe('AgentPermissionRulesService (wire-backed)', () => {
     } as never;
     const trust = { get: async () => trusted } as never;
     const untrusted = new ProjectPermissionRulesService(
-      { cwd: '/local-association' } as never,
-      { environmentId: 'local', cwd: '/local/project' } as never,
+      { environmentId: 'local', cwd: '/local/project/pkg', anchor: '/local/project', onDidChangeAnchor: Event.None } as never,
       localConfig,
       trust,
+      stubLog(),
     );
     await untrusted.ready;
     expect(untrusted.rules).toEqual([]);
@@ -271,10 +334,10 @@ describe('AgentPermissionRulesService (wire-backed)', () => {
     trusted = true;
     rawRules = [projectRule];
     const local = new ProjectPermissionRulesService(
-      { cwd: '/local-association' } as never,
-      { environmentId: 'local', cwd: '/local/project' } as never,
+      { environmentId: 'local', cwd: '/local/project/pkg', anchor: '/local/project', onDidChangeAnchor: Event.None } as never,
       localConfig,
       trust,
+      stubLog(),
     );
     await local.ready;
     expect(local.rules).toEqual([projectRule]);
@@ -296,18 +359,18 @@ describe('AgentPermissionRulesService (wire-backed)', () => {
 
     rawRules = [runtimeRule];
     const invalid = new ProjectPermissionRulesService(
-      { cwd: '/local-association' } as never,
-      { environmentId: 'local', cwd: '/local/project' } as never,
+      { environmentId: 'local', cwd: '/local/project/pkg', anchor: '/local/project', onDidChangeAnchor: Event.None } as never,
       localConfig,
       trust,
+      stubLog(),
     );
     await expect(invalid.ready).rejects.toThrow('Invalid project permission rule');
 
     const remote = new ProjectPermissionRulesService(
-      { cwd: '/local-association' } as never,
-      { environmentId: 'ssh', cwd: '/remote/project' } as never,
+      { environmentId: 'ssh', cwd: '/remote/project', anchor: '/local/root', onDidChangeAnchor: Event.None } as never,
       localConfig,
       { get: async () => { throw new Error('remote trust must not be read'); } } as never,
+      stubLog(),
     );
     await remote.ready;
     expect(remote.rules).toEqual([]);

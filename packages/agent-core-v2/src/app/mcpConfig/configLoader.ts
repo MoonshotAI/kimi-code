@@ -2,6 +2,7 @@ import { dirname, join, normalize } from 'pathe';
 
 import { resolveKimiHome } from '#/app/bootstrap/bootstrap';
 import { findNearestGitMarker } from '#/app/git/workTree';
+import { isInProjectScope } from '#/app/workspace/implicitProject';
 import type { Workspace } from '#/app/workspace/workspace';
 import { resolvePath } from '#/_base/utils/paths';
 import { workspaceRootKey } from '#/_base/utils/workdir-slug';
@@ -45,14 +46,10 @@ export async function findMcpAnchor(
   const nearest = [isSameOrInside(here, root) ? root : undefined, checkout]
     .filter((dir) => dir !== undefined)
     .toSorted((a, b) => b.key.length - a.key.length)[0];
-  if (
-    nearest === undefined ||
-    nearest.key === root.key ||
-    ![root, ...additional].some((scope) => isSameOrInside(nearest, scope))
-  ) {
-    return keyedRootAnchor(project.root);
-  }
-  return { anchor: nearest.dir as McpAnchor, key: nearest.key };
+  if (nearest === undefined || nearest.key === root.key) return keyedRootAnchor(project.root);
+  const inScope = [root, ...additional].some((scope) => isSameOrInside(nearest, scope)) ||
+    (await isInProjectScope(fs, project, nearest.dir));
+  return inScope ? { anchor: nearest.dir as McpAnchor, key: nearest.key } : keyedRootAnchor(project.root);
 }
 
 interface CanonicalDir {
@@ -105,6 +102,7 @@ export interface LoadMcpServersInput {
   readonly cwd: string;
   readonly homeDir?: string;
   readonly includeProject?: boolean;
+  readonly anchor?: McpAnchor;
 }
 
 export interface LoadMcpServersDetailedResult {
@@ -124,7 +122,7 @@ export async function loadMcpServersDetailed(
   if (input.includeProject === false) return loadUserMcpServers(input);
   const [user, anchor] = await Promise.all([
     loadUserMcpServers(input),
-    loadAnchorMcpServers({ fs: input.fs, anchor: rootAnchor(input.cwd) }),
+    loadAnchorMcpServers({ fs: input.fs, anchor: input.anchor ?? rootAnchor(input.cwd) }),
   ]);
   return mergeDetailed([user, anchor]);
 }
