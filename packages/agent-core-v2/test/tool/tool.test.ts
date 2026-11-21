@@ -332,7 +332,6 @@ function createAgentLifecycleStub(options: AgentLifecycleStubOptions = {}): Agen
             _serviceBrand: undefined,
             register: () => noopDisposable(),
             notify: () => {},
-            reconcileWhenIdle: () => Promise.resolve(),
           } as never;
         }
         if (serviceId === IEventBus) {
