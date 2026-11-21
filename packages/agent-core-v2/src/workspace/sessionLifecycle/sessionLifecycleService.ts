@@ -251,7 +251,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       }
       const agents = handle.accessor.get(IAgentLifecycleService);
       const main =
-        opts.mainAgentBinding !== undefined || opts.ensureMainAgent === true || environment !== undefined
+        opts.mainAgentBinding !== undefined || opts.ensureMainAgent === true
           ? await agents.create({
               agentId: MAIN_AGENT_ID,
               binding: opts.mainAgentBinding,
@@ -413,7 +413,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       environmentId: environment?.environmentId,
       environmentCwd: environment?.cwd,
     });
-    return sessionWorkDir(placement, this.workspaceContext.meta.root) ?? fallbackCwd;
+    return sessionWorkDir(placement, this.workspaceContext.meta.root);
   }
 
   private async openWorkdir(
@@ -867,7 +867,10 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
           lastTurnReason: meta.lastTurnReason,
         }),
       );
-      await this.appendSessionIndexEntry(targetId, this.workspaceContext.cwd);
+      await this.appendSessionIndexEntry(
+        targetId,
+        sessionWorkDir(sessionPlacementOf(meta), this.workspaceContext.meta.root),
+      );
       this._onDidForkSession.fire({ sourceSessionId: sourceId, sessionId: targetId });
       return meta;
     } catch (error) {

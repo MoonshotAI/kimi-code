@@ -35,6 +35,8 @@ export function sessionPlacementOf(facts: SessionPlacementFacts): SessionPlaceme
     : { kind: 'pinned', workDir: facts.environmentCwd };
 }
 
+export function sessionWorkDir(placement: SessionPlacement, projectRoot: string): SessionWorkdir;
+export function sessionWorkDir(placement: SessionPlacement, projectRoot: string | undefined): SessionWorkdir | undefined;
 export function sessionWorkDir(
   placement: SessionPlacement,
   projectRoot: string | undefined,

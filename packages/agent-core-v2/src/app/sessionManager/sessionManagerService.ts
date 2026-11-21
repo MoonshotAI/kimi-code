@@ -94,9 +94,12 @@ export class SessionManager implements ISessionManager {
   async create(options: CreateManagedSessionOptions): Promise<ISessionScopeHandle> {
     const opened = await this.openCreation(options);
     try {
-      const effective = opened.environmentId === undefined && opened.environmentCwd === undefined
-        ? options
-        : { ...options, environmentId: opened.environmentId, environmentCwd: opened.environmentCwd };
+      const effective = {
+        ...options,
+        environmentId: opened.environmentId,
+        environmentCwd: opened.environmentCwd,
+        ensureMainAgent: options.ensureMainAgent === true || opened.environmentRequested,
+      };
       const create = async () => {
         const entry = await this.controllerForWorkspace({ workspaceId: opened.workspaceId });
         return this.runControllerOperation(entry, (controller) => controller.create(effective));
@@ -124,7 +127,8 @@ export class SessionManager implements ISessionManager {
         return {
           workspaceId: lease.instance.id,
           environmentId,
-          environmentCwd: options.environmentCwd,
+          environmentCwd: options.environmentCwd ?? options.workDir,
+          environmentRequested: options.environmentCwd !== undefined,
           lease,
         };
       }
@@ -150,6 +154,7 @@ export class SessionManager implements ISessionManager {
         workspaceId: lease.instance.id,
         environmentId,
         environmentCwd: declared === undefined ? cwd : normalizeRemoteCwd(cwd),
+        environmentRequested: true,
         lease,
       };
     } catch (error) {

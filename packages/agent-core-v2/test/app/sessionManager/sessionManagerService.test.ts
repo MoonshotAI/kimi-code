@@ -1031,6 +1031,37 @@ describe('SessionManager creation environment', () => {
     expect((options[0] as { environmentId?: string }).environmentId).toBeUndefined();
   });
 
+  it('pins a new local session at the requested directory and keeps its main agent lazy', async () => {
+    const { options } = setup(configWith(undefined));
+
+    await manager.create({ workDir: '/workspace/app-fix' });
+    await manager.create({ workDir: '/workspace/app-fix', environmentId: 'local' });
+
+    expect(options).toMatchObject([
+      { workDir: '/workspace/app-fix', environmentCwd: '/workspace/app-fix', ensureMainAgent: false },
+      { workDir: '/workspace/app-fix', environmentId: 'local', environmentCwd: '/workspace/app-fix', ensureMainAgent: false },
+    ]);
+    await expect(manager.resolveCreationEnvironment({ workDir: '/workspace/app-fix' })).resolves.toEqual({
+      workspaceId: 'workspace-1',
+      environmentId: undefined,
+      environmentCwd: '/workspace/app-fix',
+    });
+  });
+
+  it('creates the main agent eagerly only when the caller bound an environment before pinning', async () => {
+    const { options } = setup(configWith({ sandbox: { command: 'sandbox', defaultCwd: '/remote/project' } }), true);
+
+    await manager.create({ workDir: '/workspace', environmentId: 'local', environmentCwd: '/workspace/sub' });
+    await manager.create({ workDir: '/workspace', environmentId: 'sandbox' });
+    await manager.create({ workDir: '/workspace', ensureMainAgent: true });
+
+    expect(options).toMatchObject([
+      { environmentId: 'local', environmentCwd: '/workspace/sub', ensureMainAgent: true },
+      { environmentId: 'sandbox', environmentCwd: '/remote/project', ensureMainAgent: true },
+      { environmentCwd: '/workspace', ensureMainAgent: true },
+    ]);
+  });
+
   it('rejects creation when declaration resolution fails and allows explicit local', async () => {
     const { options } = setup({
       _serviceBrand: undefined,

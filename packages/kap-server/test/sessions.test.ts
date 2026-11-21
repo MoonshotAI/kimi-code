@@ -1501,6 +1501,9 @@ describe('server-v2 /api/v1/sessions', () => {
     await mkdir(cwd);
     const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
     const id = created.body.data.id;
+    await getLiveSessionById((server as RunningServer).core.accessor, id)!
+      .accessor.get(ISessionMetadata)
+      .update({ environmentCwd: undefined }, { touchUpdatedAt: false });
     await closeSessionById((server as RunningServer).core.accessor, id);
     await (server as RunningServer).core.accessor
       .get(IWorkspaceService)

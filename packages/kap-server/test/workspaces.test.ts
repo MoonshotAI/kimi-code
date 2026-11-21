@@ -12,6 +12,7 @@ import {
   IAgentToolRegistryService,
   IAtomicDocumentStore,
   ISessionMcpHandle,
+  ISessionMetadata,
   type ISessionScopeHandle,
   IWorkspaceInstanceManager,
   resumeSessionById,
@@ -114,6 +115,16 @@ describe('server-v2 /api/v1/workspaces', () => {
       headers: authHeaders(server as RunningServer),
     } as never);
     return { status: res.status, body: (await res.json()) as Envelope<T> };
+  }
+
+  async function createFollowingSession(workspaceId: string): Promise<string> {
+    const created = await postJson<{ id: string }>('/api/v1/sessions', { workspace_id: workspaceId });
+    expect(created.body.code).toBe(0);
+    const core = (server as RunningServer).core.accessor;
+    const live = getLiveSessionById(core, created.body.data.id)!;
+    await live.accessor.get(ISessionMetadata).update({ environmentCwd: undefined }, { touchUpdatedAt: false });
+    await closeSessionById(core, created.body.data.id);
+    return created.body.data.id;
   }
 
   it('creates a workspace with the full wire shape', async () => {
@@ -789,24 +800,24 @@ describe('server-v2 /api/v1/workspaces', () => {
     });
     expect(created.body.code).toBe(0);
     const workspaceId = created.body.data.id;
-    const createdSession = await postJson<{ id: string }>('/api/v1/sessions', {
-      workspace_id: workspaceId,
-    });
-    expect(createdSession.body.code).toBe(0);
-    const sessionId = createdSession.body.data.id;
+    const sessionId = await createFollowingSession(workspaceId);
     const explicitSession = await postJson<{ id: string }>('/api/v1/sessions', {
       workspace_id: workspaceId,
       environment_id: 'local',
       environment_cwd: dirA,
     });
     expect(explicitSession.body.code).toBe(0);
+    const pinnedSession = await postJson<{ id: string }>('/api/v1/sessions', {
+      workspace_id: workspaceId,
+    });
+    expect(pinnedSession.body.code).toBe(0);
 
     const ensureAgent = async (session: ISessionScopeHandle) => {
       const agents = session.accessor.get(IAgentLifecycleService);
       if (agents.handleOf('main') === undefined) await agents.create({ agentId: 'main' });
       return agents.handleOf('main')!;
     };
-    let session = getLiveSessionById((server as RunningServer).core.accessor, sessionId)!;
+    let session = (await resumeSessionById((server as RunningServer).core.accessor, sessionId))!;
     let agent = await ensureAgent(session);
     let registry = agent.accessor.get(IAgentToolRegistryService);
     let environment = agent.accessor.get(IAgentEnvironmentService);
@@ -856,6 +867,9 @@ describe('server-v2 /api/v1/workspaces', () => {
     const explicitLive = getLiveSessionById((server as RunningServer).core.accessor, explicitSession.body.data.id)!;
     const explicitAgent = await ensureAgent(explicitLive);
     expect(explicitAgent.accessor.get(IAgentEnvironmentService).workspaceRoots().workDir).toBe(dirA);
+    const pinnedLive = getLiveSessionById((server as RunningServer).core.accessor, pinnedSession.body.data.id)!;
+    const pinnedAgent = await ensureAgent(pinnedLive);
+    expect(pinnedAgent.accessor.get(IAgentEnvironmentService).workspaceRoots().workDir).toBe(dirA);
 
     const added = await patchJson<WorkspaceWire>(`/api/v1/workspaces/${workspaceId}`, {
       additional_dirs: [dirA, dirC],
@@ -933,13 +947,14 @@ describe('server-v2 /api/v1/workspaces', () => {
       });
       expect(created.body.code).toBe(0);
       const workspaceId = created.body.data.id;
-      const following = await postJson<{ id: string }>('/api/v1/sessions', { workspace_id: workspaceId });
+      const followingId = await createFollowingSession(workspaceId);
+      await resumeSessionById((server as RunningServer).core.accessor, followingId);
+      const following = { body: { data: { id: followingId } } };
       const pinned = await postJson<{ id: string }>('/api/v1/sessions', {
         workspace_id: workspaceId,
         environment_id: 'local',
         environment_cwd: join(dirB, '.kimi-code'),
       });
-      expect(following.body.code).toBe(0);
       expect(pinned.body.code).toBe(0);
       const mcpOf = (id: string) =>
         getLiveSessionById((server as RunningServer).core.accessor, id)!.accessor.get(ISessionMcpHandle);

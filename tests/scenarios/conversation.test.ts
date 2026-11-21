@@ -1,4 +1,6 @@
 import { once } from 'node:events';
+import { mkdir, realpath, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 
 import { deferred } from '@moonshot-ai/testkit/fixtures';
 import type { KapFrame, KapItem, KapSocket, KapTurn, KapTurnsPage } from '@moonshot-ai/testkit/kap';
@@ -149,6 +151,26 @@ describe('conversation over KAP', () => {
       name: 'Bash',
       outcome: 'completed',
       output: 'testkit-ok\n',
+    });
+  });
+
+  test('runs the lazily created main agent of a session started in a repository subdirectory in that directory', async ({ kap, model }) => {
+    const repository = join(kap.home.workspace, 'app');
+    const subdirectory = join(repository, 'src');
+    await mkdir(join(repository, '.git'), { recursive: true });
+    await writeFile(join(repository, '.git', 'HEAD'), 'ref: refs/heads/main\n');
+    await mkdir(subdirectory);
+    model.script(bash('pwd -P'), say('done'));
+    const atRoot = await kap.createSession({ cwd: repository });
+    const pinned = await kap.createSession({ cwd: subdirectory });
+
+    await kap.prompt(pinned.id, 'where am I');
+    await kap.waitIdle(pinned.id);
+
+    expect(pinned.workspace_id).toBe(atRoot.workspace_id);
+    expect(model.request(1).view.messages.find((message) => message.role === 'tool')).toMatchObject({
+      callId: model.callId(0, 0),
+      text: `${await realpath(subdirectory)}\n`,
     });
   });
 
