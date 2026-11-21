@@ -27,6 +27,7 @@ import {
   type Event,
 } from '#/index';
 import { foldAgentWireReplay } from '#/v2/resume-replay';
+import { createGitWorktree, type GitWorktreeLayout } from './git-worktree';
 import {
   drainQueryStoreDisposals,
   drainSessionIndexMirror,
@@ -2820,21 +2821,10 @@ describe('SDKRpcClientV2 explicit MCP upserts', () => {
   });
 });
 
-async function gitWorktreeLayout(): Promise<{ readonly main: string; readonly worktree: string }> {
+async function gitWorktreeLayout(): Promise<GitWorktreeLayout> {
   const base = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-repo-'));
   tempDirs.push(base);
-  const main = join(base, 'app');
-  const worktree = join(base, 'app-fix');
-  const exec = promisify(execFile);
-  await mkdir(main);
-  await exec('git', ['init', '-q', '-b', 'main'], { cwd: main });
-  await exec(
-    'git',
-    ['-c', 'user.email=worktree-test@example.com', '-c', 'user.name=Worktree Test', 'commit', '-q', '--allow-empty', '-m', 'initial'],
-    { cwd: main },
-  );
-  await exec('git', ['worktree', 'add', '-q', '-b', 'fix', worktree], { cwd: main });
-  return { main, worktree };
+  return createGitWorktree(base);
 }
 
 describe('SDKRpcClientV2 workspace trust', () => {

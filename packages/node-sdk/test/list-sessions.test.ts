@@ -18,6 +18,7 @@ import {
 import { createKimiHarness, SDKRpcClientV2 } from '#/index';
 import type { KimiError } from '#/index';
 
+import { createGitWorktree } from './git-worktree';
 import { TEST_IDENTITY } from './test-identity';
 
 const tempDirs: string[] = [];
@@ -175,7 +176,7 @@ describe('KimiHarness.listSessions', () => {
     }
   });
 
-  it('directory view includes sessions of workspaces holding the dir as primary or member', async () => {
+  it('lists a directory\'s sessions from its implicit project only, never from a managed project rooted or registered there', async () => {
     const homeDir = await makeTempDir();
     const dirA = await makeTempDir();
     const dirB = await makeTempDir();
@@ -191,14 +192,61 @@ describe('KimiHarness.listSessions', () => {
       await sessionManager.create({ workspaceId: projectN.id, workDir: dirC, sessionId: 'ses_n' });
       await client.createSession({ id: 'ses_hash_a', workDir: dirA });
 
-      const inA = await client.listSessions({ workDir: dirA });
-      expect(inA.map((item) => item.id).toSorted()).toEqual(['ses_hash_a', 'ses_m', 'ses_n'].toSorted());
+      expect((await client.listSessions({ workDir: dirA })).map((item) => item.id)).toEqual(['ses_hash_a']);
+      expect(await client.listSessions({ workDir: dirB })).toEqual([]);
+      expect(await client.listSessions({ workDir: dirC })).toEqual([]);
+      const continued = await client.listSessionsPage({ workDir: dirA, limit: 1 });
+      expect(continued.items.map((item) => item.id)).toEqual(['ses_hash_a']);
+    } finally {
+      await client.close();
+    }
+  });
 
-      const inB = await client.listSessions({ workDir: dirB });
-      expect(inB.map((item) => item.id)).toEqual(['ses_m']);
+  it('finds a session of any project by id, managed projects included, at its own working directory', async () => {
+    const homeDir = await makeTempDir();
+    const managedRoot = await makeTempDir();
+    const elsewhere = await makeTempDir();
+    const client = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
 
-      const inC = await client.listSessions({ workDir: dirC });
-      expect(inC.map((item) => item.id)).toEqual(['ses_n']);
+    try {
+      const managed = await client.engineAccessor
+        .get(IWorkspaceService)
+        .create({ root: managedRoot, additionalDirs: [], name: 'Managed' });
+      await client.engineAccessor
+        .get(ISessionManager)
+        .create({ workspaceId: managed.id, workDir: managedRoot, sessionId: 'ses_managed' });
+      await client.createSession({ id: 'ses_elsewhere', workDir: elsewhere });
+
+      const [found] = await client.listSessions({ sessionId: 'ses_managed' });
+
+      expect(found).toMatchObject({ id: 'ses_managed', workDir: managedRoot });
+      expect(await client.listSessions({ workDir: managedRoot })).toEqual([]);
+    } finally {
+      await client.close();
+    }
+  });
+
+  it('continues the newest session of the working directory, keeping a repository and its worktree apart', async () => {
+    const homeDir = await makeTempDir();
+    const { main, worktree } = await createGitWorktree(await makeTempDir());
+    const client = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
+
+    try {
+      await client.createSession({ id: 'ses_main', workDir: main });
+      await client.createSession({ id: 'ses_worktree', workDir: worktree });
+      await client.createSession({ id: 'ses_worktree_newer', workDir: worktree });
+
+      const fromMain = await client.listSessionsPage({ workDir: main, limit: 1 });
+      const fromWorktree = await client.listSessionsPage({ workDir: worktree, limit: 1 });
+
+      expect(fromMain.items.map((item) => [item.id, item.workDir])).toEqual([['ses_main', main]]);
+      expect(fromWorktree.items.map((item) => [item.id, item.workDir])).toEqual([
+        ['ses_worktree_newer', worktree],
+      ]);
+      expect((await client.listSessions({ workDir: worktree })).map((item) => item.id)).toEqual([
+        'ses_worktree_newer',
+        'ses_worktree',
+      ]);
     } finally {
       await client.close();
     }

@@ -139,10 +139,9 @@ import { buildDaemonFileUrl } from '@moonshot-ai/agent-core-v2/agent/media/media
 import { join } from 'node:path';
 
 import {
-  encodeWorkDirKey,
-  isWorkDirKey,
-  workspaceRootKey,
-} from '@moonshot-ai/agent-core-v2/_base/utils/workdir-slug';
+  sessionPlacementOf,
+  sessionWorkDir,
+} from '@moonshot-ai/agent-core-v2/session/workspaceContext/workspaceRoots';
 import { ContextClear } from '@moonshot-ai/agent-core-v2/agent/contextMemory/contextEvents';
 import { IEventDispatcher } from '@moonshot-ai/agent-core-v2/state/eventDispatcher';
 import { historyEntryFromContext } from '@moonshot-ai/agent-core-v2/agent/loop/history';
@@ -215,9 +214,9 @@ import {
   IAgentTodoService,
   ISessionWorkspaceContext,
   ITelemetryService,
-  IWorkspaceAliases,
   ISessionActivityView,
   IWorkspaceInstanceManager,
+  IWorkspaceSessions,
   IEnvironmentService,
   IEnvironmentDeclarationService,
   closeSessionById,
@@ -1419,31 +1418,6 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     };
   }
 
-  /**
-   * Directory view for `workDir` (already normalized): the matching implicit
-   * workspace's aliases, or the computed hash bucket when no normalized root is
-   * registered, unioned with every registered workspace whose dir set contains
-   * the directory as a primary or member root.
-   */
-  private async workspaceIdsFor(workDir: string): Promise<readonly string[]> {
-    const workspaces = await this.klient.global.workspaces.list();
-    const implicit = workspaces.find(
-      (workspace) => isWorkDirKey(workspace.id) && normalizeWorkDir(workspace.root) === workDir,
-    );
-    const hashIds = await this.engineAccessor
-      .get(IWorkspaceAliases)
-      .resolveAliasIds(implicit?.id ?? encodeWorkDirKey(workDir));
-    const rootKey = workspaceRootKey(workDir);
-    const memberIds = workspaces
-      .filter((workspace) =>
-        [workspace.root, ...workspace.additionalDirs].some(
-          (dir) => workspaceRootKey(dir) === rootKey,
-        ),
-      )
-      .map((workspace) => workspace.id);
-    return [...new Set([...hashIds, ...memberIds])];
-  }
-
   override async listSessions(input: ListSessionsOptions = {}): Promise<readonly SessionSummary[]> {
     const all: SessionSummary[] = [];
     let before: string | undefined;
@@ -1461,30 +1435,37 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   }
 
   override async listSessionsPage(input: ListSessionsOptions = {}): Promise<SessionSummaryPage> {
-    const workspaceIds =
-      input.workDir === undefined
-        ? undefined
-        : await this.workspaceIdsFor(normalizeRequiredWorkDir('listSessions', input.workDir));
     const workspacesById = new Map(
       (await this.klient.global.workspaces.list()).map((workspace) => [workspace.id, workspace]),
     );
+    const toSummaries = (items: readonly V2SessionSummary[]): SessionSummary[] =>
+      items.flatMap((item) => this.mapIndexSummary(item, workspacesById) ?? []);
+    if (input.workDir !== undefined) {
+      const page = await this.engineAccessor
+        .get(IWorkspaceSessions)
+        .listForWorkdir(normalizeRequiredWorkDir('listSessions', input.workDir), {
+          includeArchived: input.includeArchived,
+          limit: input.sessionId === undefined ? input.limit : undefined,
+          before: input.before,
+        });
+      if (input.sessionId === undefined) {
+        return { items: toSummaries(page.items), nextCursor: page.nextCursor };
+      }
+      return { items: toSummaries(page.items.filter((item) => item.id === input.sessionId)) };
+    }
     const collected: SessionSummary[] = [];
     let before = input.before;
     for (;;) {
       const remaining = input.limit === undefined ? undefined : input.limit - collected.length;
       if (remaining !== undefined && remaining <= 0) break;
       const page = await this.klient.global.sessions.list({
-        workspaceIds,
         sessionId: input.sessionId,
         includeArchived: input.includeArchived,
         limit: remaining,
         before,
       });
       if (page.items.length === 0) return { items: collected, nextCursor: undefined };
-      for (const item of page.items) {
-        const summary = this.mapIndexSummary(item, workspacesById);
-        if (summary !== undefined) collected.push(summary);
-      }
+      collected.push(...toSummaries(page.items));
       if (page.nextCursor === undefined) return { items: collected, nextCursor: undefined };
       before = page.nextCursor;
       if (input.limit === undefined) return { items: collected, nextCursor: before };
@@ -1503,7 +1484,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     item: V2SessionSummary,
     workspacesById: ReadonlyMap<string, { readonly root: string }>,
   ): SessionSummary | undefined {
-    const workDir = item.cwd ?? workspacesById.get(item.workspaceId)?.root;
+    const workDir = sessionWorkDir(sessionPlacementOf(item), workspacesById.get(item.workspaceId)?.root);
     if (workDir === undefined) return undefined;
     const liveHandle = getLiveSessionById(this.engineAccessor, item.id);
     const effectiveItem =
