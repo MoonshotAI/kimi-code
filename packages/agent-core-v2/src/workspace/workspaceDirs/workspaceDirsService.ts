@@ -2,6 +2,7 @@ import { DisposableStore, MutableDisposable, type IDisposable } from '#/_base/di
 import { Emitter, type Event } from '#/_base/event';
 import { ILogService } from '#/_base/log/log';
 import { defineState } from '#/state/state';
+import { SerialQueue } from '#/_base/utils/serialQueue';
 import { TimeoutTimer } from '#/_base/utils/timer';
 import { subtreeWatchFilter } from '#/_base/utils/paths';
 import { sameDir } from '#/_base/utils/workdir-slug';
@@ -52,7 +53,7 @@ export class WorkspaceDirsService implements IWorkspaceDirs {
   readonly onDidChange: Event<void> = this.onDidChangeEmitter.event;
   private readonly watchDebounce = this._register(new TimeoutTimer());
   private readonly localConfigWatcher = this._register(new MutableDisposable<IDisposable>());
-  private mutationTail: Promise<void> = Promise.resolve();
+  private readonly mutations = new SerialQueue();
   private registryReloadQueued = false;
   private changeBatchDepth = 0;
   private changePending = false;
@@ -74,12 +75,12 @@ export class WorkspaceDirsService implements IWorkspaceDirs {
     this.projectRoot = workspace.cwd;
     this.configPath = '';
     this.legacyProjectConfig = workspace.meta.kind !== 'managed';
-    this.ready = this.enqueue(() => this.reloadWorkspace(true));
+    this.ready = this.mutations.run(() => this.reloadWorkspace(true));
     this._register(
       this.workspaceStore.onDidChange(() => {
         if (this.registryReloadQueued) return;
         this.registryReloadQueued = true;
-        void this.enqueue(async () => {
+        void this.mutations.run(async () => {
           this.registryReloadQueued = false;
           await this.reloadWorkspace();
         }).catch((error) => {
@@ -135,19 +136,19 @@ export class WorkspaceDirsService implements IWorkspaceDirs {
   }
 
   addDir(input: WorkspaceAddDirInput): Promise<WorkspaceAdditionalDirsResult> {
-    return this.enqueue(() => this.applyAddDir(input));
+    return this.mutations.run(() => this.applyAddDir(input));
   }
 
   mergeAdditionalDirs(baseDir: string, dirs: readonly string[]): Promise<void> {
     if (dirs.length === 0) return Promise.resolve();
-    return this.enqueue(async () => {
+    return this.mutations.run(async () => {
       const resolved = await this.localConfig.resolveAdditionalDirs(baseDir, dirs);
       if (this.unionEphemeral(resolved)) this.fireChange();
     });
   }
 
   reload(): Promise<void> {
-    return this.enqueue(() => this.reloadWorkspace(true));
+    return this.mutations.run(() => this.reloadWorkspace(true));
   }
 
   private async reloadWorkspace(reloadLocal = false): Promise<void> {
@@ -296,7 +297,7 @@ export class WorkspaceDirsService implements IWorkspaceDirs {
       });
       const subscription = handle.onDidChange(() => {
         this.watchDebounce.cancelAndSet(() => {
-          void this.enqueue(() => this.reloadFromDisk()).catch((error) => {
+          void this.mutations.run(() => this.reloadFromDisk()).catch((error) => {
             this.log.warn(`local.toml reload failed: ${String(error)}`);
           });
         }, WATCH_DEBOUNCE_MS);
@@ -316,20 +317,7 @@ export class WorkspaceDirsService implements IWorkspaceDirs {
 
   async dispose(): Promise<void> {
     this.disposables.dispose();
-    let pending: Promise<void>;
-    do {
-      pending = this.mutationTail;
-      await pending;
-    } while (pending !== this.mutationTail);
-  }
-
-  private enqueue<T>(work: () => Promise<T>): Promise<T> {
-    const run = this.mutationTail.then(work, work);
-    this.mutationTail = run.then(
-      () => undefined,
-      () => undefined,
-    );
-    return run;
+    await this.mutations.drain();
   }
 }
 

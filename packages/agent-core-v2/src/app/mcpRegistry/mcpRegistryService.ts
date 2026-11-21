@@ -30,56 +30,9 @@ export class McpRegistryService implements IMcpRegistryService {
   ) {}
 
   async list(query: McpRegistryQuery = {}): Promise<readonly McpRegistryEntry[]> {
-    const out: McpRegistryEntry[] = [];
-
-    if (query.cwd === undefined) {
-      const userEntries = await this.store.list();
-      for (const server of userEntries) {
-        const { name, ...config } = server;
-        out.push({
-          name,
-          config,
-          source: 'global',
-          origin: this.store.path,
-          mutable: true,
-        });
-      }
-    } else {
-      const cwd = resolvePath(process.cwd(), query.cwd);
-      const decision = await this.workspaces.peekImplicit(cwd);
-      const project = decision.kind === 'reuse' ? decision.project : { root: decision.root, additionalDirs: [] };
-      const trusted = await this.trust.forProject(project).refresh();
-      if (!trusted) {
-        const userEntries = await this.store.list();
-        for (const server of userEntries) {
-          const { name, ...config } = server;
-          out.push({
-            name,
-            config,
-            source: 'global',
-            origin: this.store.path,
-            mutable: true,
-          });
-        }
-      } else {
-        const detailed = await loadMcpServersDetailed({
-          fs: this.fs,
-          cwd,
-          homeDir: this.bootstrap.homeDir,
-          anchor: (await findMcpAnchor(this.fs, cwd, project)).anchor,
-        });
-        for (const [name, config] of Object.entries(detailed.servers)) {
-          const origin = detailed.origins[name] ?? this.store.path;
-          out.push({
-            name,
-            config,
-            source: 'global',
-            origin,
-            mutable: origin === this.store.path,
-          });
-        }
-      }
-    }
+    const out: McpRegistryEntry[] = query.cwd === undefined
+      ? await this.userEntries()
+      : await this.entriesAt(resolvePath(process.cwd(), query.cwd));
 
     for (const entry of await this.plugins.mcpServerEntries()) {
       out.push({
@@ -109,6 +62,32 @@ export class McpRegistryService implements IMcpRegistryService {
     const file = matches.find((entry) => entry.source === 'global');
     if (file !== undefined) return file;
     return matches.find((entry) => entry.source === 'plugin' && entry.config.enabled !== false);
+  }
+
+  private async userEntries(): Promise<McpRegistryEntry[]> {
+    return (await this.store.list()).map(({ name, ...config }) => ({
+      name,
+      config,
+      source: 'global',
+      origin: this.store.path,
+      mutable: true,
+    }));
+  }
+
+  private async entriesAt(cwd: string): Promise<McpRegistryEntry[]> {
+    const decision = await this.workspaces.peekImplicit(cwd);
+    const project = decision.kind === 'reuse' ? decision.project : { root: decision.root, additionalDirs: [] };
+    if (!(await this.trust.forProject(project).refresh())) return this.userEntries();
+    const detailed = await loadMcpServersDetailed({
+      fs: this.fs,
+      cwd,
+      homeDir: this.bootstrap.homeDir,
+      anchor: (await findMcpAnchor(this.fs, cwd, project)).anchor,
+    });
+    return Object.entries(detailed.servers).map(([name, config]) => {
+      const origin = detailed.origins[name] ?? this.store.path;
+      return { name, config, source: 'global', origin, mutable: origin === this.store.path };
+    });
   }
 }
 

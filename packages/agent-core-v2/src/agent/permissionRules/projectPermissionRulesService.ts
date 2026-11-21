@@ -1,6 +1,7 @@
 import { Disposable } from '#/_base/di/lifecycle';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { ILogService } from '#/_base/log/log';
+import { SerialQueue } from '#/_base/utils/serialQueue';
 import { LifecycleScope } from '#/app/scopes';
 import { IProjectLocalConfigService } from '#/app/projectLocalConfig/projectLocalConfig';
 import { ErrorCodes, Error2 } from '#/errors';
@@ -19,7 +20,7 @@ export class ProjectPermissionRulesService extends Disposable implements IProjec
   private currentRules: readonly PermissionRule[] = [];
   private trusted = false;
   readonly ready: Promise<void>;
-  private mutationTail: Promise<void> = Promise.resolve();
+  private readonly mutations = new SerialQueue();
 
   constructor(
     @ISessionWorkdir private readonly workdir: ISessionWorkdir,
@@ -29,7 +30,7 @@ export class ProjectPermissionRulesService extends Disposable implements IProjec
   ) {
     super();
     this.local = workdir.environmentId === LOCAL_ENVIRONMENT_ID;
-    this.ready = this.local ? this.enqueue(() => this.loadFromDisk()) : Promise.resolve();
+    this.ready = this.local ? this.mutations.run(() => this.loadFromDisk()) : Promise.resolve();
     if (this.local) {
       this._register(workdir.onDidChangeAnchor(() => {
         this.reloadAtMovedAnchor();
@@ -45,7 +46,7 @@ export class ProjectPermissionRulesService extends Disposable implements IProjec
     if (!this.local) {
       return Promise.reject(new Error('Project permission rules are not supported in remote environments'));
     }
-    return this.enqueue(async () => {
+    return this.mutations.run(async () => {
       parseProjectPermissionRules(rules);
       const appended = await this.localConfig.appendPermissionRules(this.workdir.anchor, rules);
       if (this.trusted) this.currentRules = parseProjectPermissionRules(appended.rules);
@@ -60,22 +61,13 @@ export class ProjectPermissionRulesService extends Disposable implements IProjec
   }
 
   private reloadAtMovedAnchor(): void {
-    void this.enqueue(async () => {
+    void this.mutations.run(async () => {
       try {
         await this.loadFromDisk();
       } catch (error) {
         this.log.warn('project permission rules reload failed; keeping the rules in effect', { anchor: this.workdir.anchor, error });
       }
     });
-  }
-
-  private enqueue<T>(work: () => Promise<T>): Promise<T> {
-    const run = this.mutationTail.then(work, work);
-    this.mutationTail = run.then(
-      () => undefined,
-      () => undefined,
-    );
-    return run;
   }
 }
 
