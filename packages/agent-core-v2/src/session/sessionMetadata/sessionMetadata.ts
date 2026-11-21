@@ -1,5 +1,8 @@
 import type { Event } from '#/_base/event';
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
+import type { SessionPatch, SessionRecord } from '@moonshot-ai/core/session/index';
+
+export type { SessionTitleKind } from '@moonshot-ai/core/session/index';
 
 export interface AgentMeta {
   readonly homedir?: string;
@@ -12,28 +15,14 @@ export interface AgentMeta {
 
 export const SESSION_META_VERSION = 2;
 
-export type SessionTitleKind = 'replaceable' | 'generated' | 'custom';
-
-export interface SessionMeta {
-  readonly id: string;
-  readonly version?: number;
-  readonly title?: string;
-  readonly titleKind?: SessionTitleKind;
-  readonly lastPrompt?: string;
-  readonly createdAt: number;
-  readonly updatedAt: number;
-  readonly archived: boolean;
-  readonly archivedAt?: number;
+export interface SessionMeta extends SessionRecord {
   readonly cwd?: string;
   readonly environmentId?: string;
   readonly environmentCwd?: string;
-  readonly forkedFrom?: string;
   readonly agents?: Readonly<Record<string, AgentMeta>>;
-  readonly custom?: Record<string, unknown>;
-  readonly lastTurnReason?: 'completed' | 'cancelled' | 'failed';
 }
 
-export type SessionMetaPatch = Partial<Omit<SessionMeta, 'id' | 'createdAt'>>;
+export type SessionMetaPatch = SessionPatch<SessionMeta>;
 
 export interface SessionMetadataChangedEvent {
   readonly changed: readonly (keyof SessionMeta)[];

@@ -7,8 +7,8 @@ import { Error2, ErrorCodes } from '#/errors';
 import { defineState } from '#/state/state';
 import { ISessionIndexMirror } from '#/app/sessionIndex/sessionIndex';
 import { buildSessionSummary } from '#/app/sessionIndex/sessionIndexSource';
-import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { ISessionLockService } from '#/persistence/interface/sessionLock';
+import { ISessionSpace } from '#/session/sessionSpace/sessionSpace';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionStateService } from '#/session/state/sessionState';
 import { ISessionWorkspaceInfo } from '#/session/workspaceInfo/workspaceInfo';
@@ -25,8 +25,6 @@ import {
   type SessionTitleKind,
 } from './sessionMetadata';
 import { isUntitled } from './promptMetadata';
-
-const META_KEY = 'state.json';
 
 const pendingWrites = new Set<Promise<void>>();
 
@@ -49,14 +47,14 @@ export class SessionMetadata extends Service implements ISessionMetadata {
   private readonly _onDidChangeMetadata = this._register(
     new Emitter<SessionMetadataChangedEvent>(),
   );
-  private readonly scope: string;
+  private readonly key: string;
   private updateQueue: Promise<void> = Promise.resolve();
   private refreshBeforeWrite = true;
 
   constructor(
     @ISessionStateService private readonly states: ISessionStateService,
     @ISessionContext private readonly ctx: ISessionContext,
-    @IAtomicDocumentStore private readonly store: IAtomicDocumentStore,
+    @ISessionSpace private readonly sessionSpace: ISessionSpace,
     @ILogService private readonly log: ILogService,
     @ISessionIndexMirror private readonly mirror: ISessionIndexMirror,
     @ISessionLockService private readonly sessionLocks: ISessionLockService,
@@ -79,7 +77,7 @@ export class SessionMetadata extends Service implements ISessionMetadata {
         if (this.states.get(sessionMetadataDataKey) !== undefined) this.mirrorToReadModel();
       }),
     );
-    this.scope = ctx.metaScope;
+    this.key = this.sessionSpace.keyFor(ctx.metaScope);
     this.onDidChangeMetadata = this._onDidChangeMetadata.event;
     this.ready = this.load();
   }
@@ -113,7 +111,7 @@ export class SessionMetadata extends Service implements ISessionMetadata {
     this.sessionLocks.hold(this.ctx.sessionId);
     if (this.refreshBeforeWrite) {
       this.refreshBeforeWrite = false;
-      const existing = await this.store.get<SessionMeta>(this.scope, META_KEY);
+      const existing = await this.sessionSpace.get(this.key);
       if (existing !== undefined) {
         this.data = normalizeSessionMeta(existing, this.ctx.sessionId);
       }
@@ -129,8 +127,8 @@ export class SessionMetadata extends Service implements ISessionMetadata {
     try {
       const updatedAt =
         patch.updatedAt ?? (opts?.touchUpdatedAt === false ? this.data.updatedAt : Date.now());
-      this.data = { ...this.data, ...patch, updatedAt };
-      await this.store.set(this.scope, META_KEY, encodeSessionMeta(this.data));
+      const next: SessionMeta = { ...this.data, ...patch, updatedAt };
+      this.data = await this.sessionSpace.update(this.key, next, { touchUpdatedAt: false });
       if (this.disposed) return false;
       this.mirrorToReadModel();
       this._onDidChangeMetadata.fire({
@@ -265,7 +263,7 @@ export class SessionMetadata extends Service implements ISessionMetadata {
   }
 
   private async load(): Promise<void> {
-    const existing = await this.store.get<SessionMeta>(this.scope, META_KEY);
+    const existing = await this.sessionSpace.get(this.key);
     if (existing !== undefined) {
       this.data = normalizeSessionMeta(existing, this.ctx.sessionId);
       if (
@@ -279,7 +277,7 @@ export class SessionMetadata extends Service implements ISessionMetadata {
           custom: this.data.custom ?? {},
         };
         if (this.sessionLocks.tryHold(this.ctx.sessionId)) {
-          await this.store.set(this.scope, META_KEY, encodeSessionMeta(this.data));
+          await this.sessionSpace.set(this.key, this.data);
         }
       }
       return;
@@ -296,7 +294,7 @@ export class SessionMetadata extends Service implements ISessionMetadata {
       custom: {},
     };
     if (this.sessionLocks.tryHold(this.ctx.sessionId)) {
-      await this.store.set(this.scope, META_KEY, encodeSessionMeta(this.data));
+      await this.sessionSpace.create(this.key, this.data);
     }
     this.mirrorToReadModel();
     this.log.debug('session metadata created', { sessionId: this.ctx.sessionId });

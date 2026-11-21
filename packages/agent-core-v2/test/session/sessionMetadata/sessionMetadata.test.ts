@@ -1,3 +1,7 @@
+import { mkdtemp, mkdir, rm, stat, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
@@ -6,6 +10,7 @@ import { ServiceCollection } from '#/_base/di/serviceCollection';
 import { TestInstantiationService } from '#/_base/di/test';
 import { Emitter } from '#/_base/event';
 import { ILogService } from '#/_base/log/log';
+import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IEventService } from '#/app/event/event';
 import type { Event2 } from '#/app/event/event2';
 import { ISessionIndexMirror } from '#/app/sessionIndex/sessionIndex';
@@ -18,11 +23,16 @@ import { ISessionStateService } from '#/session/state/sessionState';
 import { ISessionWorkspaceInfo } from '#/session/workspaceInfo/workspaceInfo';
 import { SessionStateService } from '#/session/state/sessionStateService';
 import { JsonAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDocumentStore';
+import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
+import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { InMemorySessionLockService } from '#/persistence/backends/memory/sessionLockService';
 import { ISessionLockService } from '#/persistence/interface/sessionLock';
+import { ISessionSpace } from '#/session/sessionSpace/sessionSpace';
+import { createHostSessionSpace, SessionSpaceService } from '#/session/sessionSpace/sessionSpaceService';
+import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 
 import { stubSessionIndexMirror } from '../../app/sessionIndex/stubs';
 import { stubLog } from '../../_base/log/stubs';
@@ -89,6 +99,12 @@ describe('SessionMetadata', () => {
     ix.set(ISessionStateService, new SyncDescriptor(SessionStateService));
     ix.set(IFileSystemStorageService, new SyncDescriptor(InMemoryStorageService));
     ix.set(IAtomicDocumentStore, new SyncDescriptor(JsonAtomicDocumentStore));
+    ix.stub(IBootstrapService, {
+      homeDir: '/tmp',
+      scope: () => 'sessions',
+    } as unknown as IBootstrapService);
+    ix.stub(IHostFileSystem, {} as unknown as IHostFileSystem);
+    ix.set(ISessionSpace, new SyncDescriptor(SessionSpaceService));
     ix.set(ISessionMetadata, new SyncDescriptor(SessionMetadata));
   });
 
@@ -835,5 +851,61 @@ describe('SessionMetadata', () => {
         },
       ]);
     });
+  });
+});
+
+describe('SessionSpaceService', () => {
+  async function setup() {
+    const homeDir = await mkdtemp(join(tmpdir(), 'session-space-service-'));
+    const storage = new FileStorageService(homeDir);
+    const docs = new JsonAtomicDocumentStore(storage);
+    const bootstrap = {
+      homeDir,
+      scope: () => 'sessions',
+    } as unknown as IBootstrapService;
+    const space = createHostSessionSpace(bootstrap, docs, new HostFileSystem());
+    return { homeDir, docs, space };
+  }
+
+  function meta(id: string): SessionMeta {
+    return { id, createdAt: 1, updatedAt: 1, archived: false };
+  }
+
+  it('maps scopes to keys, lists prefixes and reads legacy records', async () => {
+    const { homeDir, docs, space } = await setup();
+    try {
+      await space.create('ws-a/one', meta('one'));
+      await space.create('ws-ab/two', meta('two'));
+      await docs.set('sessions/ws-a/legacy/session-meta', 'state.json', meta('legacy'));
+      await mkdir(join(homeDir, 'sessions', 'ws-a', 'broken'), { recursive: true });
+      await writeFile(join(homeDir, 'sessions', 'ws-a', 'broken', 'state.json'), '{broken');
+
+      expect(await space.list()).toEqual([
+        'ws-a/broken',
+        'ws-a/legacy',
+        'ws-a/one',
+        'ws-ab/two',
+      ]);
+      expect(await space.list('ws-a/')).toEqual(['ws-a/broken', 'ws-a/legacy', 'ws-a/one']);
+      expect((await space.get('ws-a/legacy'))?.id).toBe('legacy');
+      await expect(space.get('ws-a/broken')).rejects.toThrow();
+    } finally {
+      await rm(homeDir, { recursive: true, force: true });
+    }
+  });
+
+  it('deletes the whole session container', async () => {
+    const { homeDir, space } = await setup();
+    try {
+      await space.create('ws-a/one', meta('one'));
+      await mkdir(join(homeDir, 'sessions', 'ws-a', 'one', 'agents', 'main'), { recursive: true });
+      await writeFile(join(homeDir, 'sessions', 'ws-a', 'one', 'agents', 'main', 'wire.jsonl'), '{}\n');
+      await space.delete('ws-a/one');
+      await expect(stat(join(homeDir, 'sessions', 'ws-a', 'one'))).rejects.toMatchObject({
+        code: 'ENOENT',
+      });
+    } finally {
+      await rm(homeDir, { recursive: true, force: true });
+    }
   });
 });

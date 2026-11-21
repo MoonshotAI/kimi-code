@@ -1,6 +1,5 @@
 import {
   SessionSpaceError,
-  type SessionInit,
   type SessionRecord,
   type SessionSpace,
   type SessionSpaceBackend,

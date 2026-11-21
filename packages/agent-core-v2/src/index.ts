@@ -165,6 +165,8 @@ export type { KimiThinkingConfig } from '@moonshot-ai/core/llm/builtin/provider/
 export * from '#/app/sessionIndex/sessionIndex';
 export * from '#/app/sessionIndex/sessionIndexService';
 export * from '#/app/sessionIndex/sessionIndexMirrorService';
+export * from '#/session/sessionSpace/sessionSpace';
+export * from '#/session/sessionSpace/sessionSpaceService';
 export * from '#/session/sessionMetadata/sessionMetadata';
 export * from '#/session/sessionMetadata/sessionMetadataService';
 export * from '#/session/sessionMetadata/promptMetadata';

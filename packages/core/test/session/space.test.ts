@@ -25,10 +25,9 @@ function record(id: string): SessionRecord {
 }
 
 function sessionSpaceSuite(
-  name: string,
   setup: () => Promise<{ space: SessionSpace; cleanup: () => Promise<void> }>,
 ): void {
-  describe(name, () => {
+  describe('shared behavior', () => {
     it('supports CRUD and prefix or full key listing', async () => {
       const { space, cleanup } = await setup();
       try {
@@ -91,20 +90,24 @@ function sessionSpaceSuite(
   });
 }
 
-sessionSpaceSuite('memorySessionSpace', async () => ({
-  space: memorySessionSpace(),
-  cleanup: async () => {},
-}));
-
-sessionSpaceSuite('nodeSessionSpace', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'session-space-'));
-  return {
-    space: nodeSessionSpace(root),
-    cleanup: () => rm(root, { recursive: true, force: true }),
-  };
+describe('memorySessionSpace', () => {
+  sessionSpaceSuite(async () => ({
+    space: memorySessionSpace(),
+    cleanup: async () => {},
+  }));
 });
 
 describe('nodeSessionSpace', () => {
+  sessionSpaceSuite(async () => {
+    const root = await mkdtemp(join(tmpdir(), 'session-space-'));
+    return {
+      space: nodeSessionSpace(root),
+      cleanup: () => rm(root, { recursive: true, force: true }),
+    };
+  });
+});
+
+describe('nodeSessionSpace filesystem behavior', () => {
   it('lists corrupt records without reading them and rejects on get', async () => {
     const root = await mkdtemp(join(tmpdir(), 'session-space-'));
     try {

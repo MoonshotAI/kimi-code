@@ -79,6 +79,8 @@ import {
   toEpochMs,
 } from '#/session/sessionMetadata/sessionMetadataService';
 import { ISessionToolPolicy } from '#/session/sessionToolPolicy/sessionToolPolicy';
+import type { HostSessionSpace } from '#/session/sessionSpace/sessionSpace';
+import { createHostSessionSpace } from '#/session/sessionSpace/sessionSpaceService';
 import { ISessionNotify } from '#/features/notify/sessionNotify';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import {
@@ -182,6 +184,11 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
   readonly onDidForkSession: Event<SessionForkedEvent> = this._onDidForkSession.event;
   private readonly resuming = new Map<string, Promise<ISessionScopeHandle | undefined>>();
   private readonly resumeFailures = new Map<string, Error>();
+  private sessionSpaceValue?: HostSessionSpace;
+
+  private get sessionSpace(): HostSessionSpace {
+    return this.sessionSpaceValue ??= createHostSessionSpace(this.bootstrap, this.docs, this.hostFs);
+  }
 
   constructor(
     private readonly instantiation: IInstantiationService,
@@ -614,7 +621,9 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       if (handle !== undefined) {
         await this.close(sessionId);
       }
-      await this.hostFs.remove(sessionDirOf(this.bootstrap.homeDir, this.handlerScope, sessionId));
+      await this.sessionSpace.delete(
+        this.sessionSpace.keyFor(sessionScopeOf(this.handlerScope, sessionId)),
+      );
       await this.index.remove(sessionId);
       await dropFileHistorySession({ docs: this.docs, workspaceId: this.workspaceId, sessionId });
       this.appendLogStore.append('', 'session_index.jsonl', { sessionId, deleted: true });
@@ -1070,7 +1079,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
   }
 
   private async readMetaFromDisk(sessionId: string): Promise<SessionMeta | undefined> {
-    return this.docs.get<SessionMeta>(sessionScopeOf(this.handlerScope, sessionId), 'state.json');
+    return this.sessionSpace.get(this.sessionSpace.keyFor(sessionScopeOf(this.handlerScope, sessionId)));
   }
 }
 
