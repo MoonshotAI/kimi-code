@@ -2696,6 +2696,22 @@ function loadMoreSidebarFlatSessions(): void {
   }
 }
 
+function revealFlatSession(sessionId: string): void {
+  const session = sessionsStore().sessions.find((s) => s.id === sessionId);
+  const frontier = sessionViewsStore().flatSessionsFrontier;
+  const updatedAt = session ? new Date(session.updatedAt).getTime() : null;
+  const alreadyIncluded = flatSessionsAll.value.some((s) => s.id === sessionId);
+  if (!alreadyIncluded && frontier !== null && updatedAt !== null && updatedAt < frontier) {
+    sessionViewsStore().setFlatSessionsFrontier(updatedAt);
+  }
+  const index = flatSessionsAll.value.findIndex((s) => s.id === sessionId);
+  if (index >= 0) flatVisibleCount.value = Math.max(flatVisibleCount.value, index + 1);
+  const sidebarIndex = sidebarFlatSessionsAll.value.findIndex((s) => s.id === sessionId);
+  if (sidebarIndex >= 0) {
+    sidebarFlatVisibleCount.value = Math.max(sidebarFlatVisibleCount.value, sidebarIndex + 1);
+  }
+}
+
 const doneVisibleCount = ref(FLAT_SESSIONS_PAGE_SIZE);
 
 const doneSessionsAll = computed<Session[]>(() => {
@@ -3409,6 +3425,7 @@ export function useKimiWebClient() {
     ensureSidebarFlatSessions,
     loadMoreFlatSessions,
     loadMoreSidebarFlatSessions,
+    revealFlatSession,
     ensureDoneSessions: sessionListStore().ensureDoneSessions,
     loadMoreDoneSessions,
     selectWorkspace: (id: string) => workspacesStore().selectWorkspace(id),
