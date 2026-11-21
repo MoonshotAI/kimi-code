@@ -189,7 +189,7 @@ export function runStepEnding(
   signal: AbortSignal,
 ): StepEndingRun | Promise<StepEndingRun> {
   const failures: StepEndingFailure[] = [];
-  if (draft.type === 'aborted' || draft.type === 'blocked') return { outcome: draft, failures };
+  if (draft.type === 'blocked') return { outcome: draft, failures };
   const finishContinuing = (continuing: HookRun<StepContinuingVerdict>, cause: Cause | undefined): StepEndingRun => {
     failures.push(...continuing.failures.map((failure) => ({ point: 'step.continuing' as const, failure })));
     const decision = continuing.decision;
@@ -200,6 +200,7 @@ export function runStepEnding(
   };
   const finishStopping = (stopping: HookRun<StepStoppingVerdict>): StepEndingRun | Promise<StepEndingRun> => {
     failures.push(...stopping.failures.map((failure) => ({ point: 'step.stopping' as const, failure })));
+    if (draft.type === 'aborted') return { outcome: draft, failures };
     if (stopping.blocked !== undefined) {
       return { outcome: { type: 'blocked', at: 'step.stopping', cause: stopping.blocked }, failures };
     }

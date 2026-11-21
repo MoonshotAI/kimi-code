@@ -69,7 +69,8 @@ class ActorTurn implements Turn {
   private requestId: string | undefined;
   private toolsSettled = false;
   private started = false;
-  private closing = false;
+  private abortFrom: 'created' | TurnPhase | undefined;
+  private abortSettling = false;
   private abortGrace: ReturnType<typeof setTimeout> | undefined;
   private readonly expireAbortCallback: () => void;
   private activeBuffer: { active: boolean; messages: TurnMessage[] } | undefined;
@@ -81,7 +82,7 @@ class ActorTurn implements Turn {
     this.actor = createActor<TurnState>({
       initial: { ...input, phase: 'created' },
     });
-    this.expireAbortCallback = this.actor.bind((ctrl) => this.expireAbort(ctrl));
+    this.expireAbortCallback = this.actor.bind(() => this.expireAbort());
     this.uncommitted = [...input.initialPending];
     this.done = new Promise((resolve) => {
       this.resolveDone = resolve;
@@ -102,6 +103,10 @@ class ActorTurn implements Turn {
 
   private get step(): number {
     return this.actor.state.step;
+  }
+
+  private get closing(): boolean {
+    return this.phase === 'finishing';
   }
 
   private get finished(): boolean {
@@ -142,22 +147,27 @@ class ActorTurn implements Turn {
       if (this.closing || this.finished) return;
       if (!this.started) {
         this.started = true;
+        this.abortFrom = 'created';
         this.setOutcome(ctrl, { type: 'aborted', reason });
+        this.setPhase(ctrl, 'aborting');
         this.finishTurn();
         return;
       }
       if (this.state.outcome?.type === 'aborted') {
-        if (options?.force === true) this.expireAbort(ctrl);
+        if (options?.force === true) this.expireAbort();
         return;
       }
+      const at = this.phase;
+      this.abortFrom = at;
       this.setOutcome(ctrl, { type: 'aborted', reason });
+      this.setPhase(ctrl, 'aborting');
       const step = this.currentStep;
       if (step !== undefined) {
         step.outcome = { type: 'aborted', reason };
         step.batch.aborted = { reason };
       }
       this.scope.abort(reason);
-      if (step !== undefined && (this.phase === 'batching' || this.phase === 'acting')) {
+      if (step !== undefined && (at === 'batching' || at === 'acting')) {
         const result = this.runtime.abortBatch(step.batch, reason, options);
         if (result !== undefined) {
           this.completeToolBatch(step, result);
@@ -165,15 +175,15 @@ class ActorTurn implements Turn {
           return;
         }
       }
-      if (this.phase === 'requesting') {
+      if (at === 'requesting') {
         if (options?.force === true) {
-          this.expireAbort(ctrl);
+          this.expireAbort();
         } else {
           this.abortGrace = setTimeout(this.expireAbortCallback, this.runtime.abortGraceMs ?? 2_500);
         }
         return;
       }
-      if (this.phase === 'acting') return;
+      if (at === 'acting') return;
       this.finishTurn();
     });
   }
@@ -238,8 +248,16 @@ class ActorTurn implements Turn {
     return this.started && !this.closing && !this.finished;
   }
 
-  private accepts(step: TurnStep): boolean {
+  private current(step: TurnStep): boolean {
     return this.running() && this.currentStep === step;
+  }
+
+  private accepts(step: TurnStep): boolean {
+    return this.current(step) && this.phase !== 'aborting';
+  }
+
+  private acceptsAbort(step: TurnStep): boolean {
+    return this.current(step) && this.phase === 'aborting';
   }
 
   private invokeOwner<D>(
@@ -384,6 +402,7 @@ class ActorTurn implements Turn {
     }
 
     const outcome = await this.executeRequest(proc, step, requester, profile);
+    if (this.phase === 'aborting') return this.settleAbortedRequest(proc, step, outcome);
     if (!this.accepts(step)) return false;
     this.completeRequest(step, outcome);
     if (outcome.type !== 'done' && this.finishSteeredStep(proc, step)) return false;
@@ -444,6 +463,20 @@ class ActorTurn implements Turn {
     });
   }
 
+  private async settleAbortedRequest(proc: TurnProcess, step: TurnStep, outcome: LlmOutcome): Promise<boolean> {
+    if (!this.acceptsAbort(step) || this.abortSettling) return false;
+    this.abortSettling = true;
+    if (this.abortGrace !== undefined) clearTimeout(this.abortGrace);
+    this.abortGrace = undefined;
+    this.completeRequest(step, outcome);
+    if (step.batch.calls.length === 0) {
+      this.finishTurn();
+      return false;
+    }
+    const result = await proc.step(() => this.runtime.executeBatch(step.batch));
+    return this.completeAbortedBatch(step, result);
+  }
+
   private requestProgress(step: TurnStep, event: LoopRequestProgress): void {
     if (!this.accepts(step) || this.phase !== 'requesting') return;
     if (event.type === 'llm.delta.request_id') this.requestId = event.requestId;
@@ -454,7 +487,7 @@ class ActorTurn implements Turn {
   }
 
   private completeRequest(step: TurnStep, outcome: LlmOutcome): void {
-    if (!this.accepts(step)) return;
+    if (!this.current(step)) return;
     this.runtime.transition(() => {
       step.llm = outcome;
       if (typeof outcome.requestId === 'string') this.requestId = outcome.requestId;
@@ -476,14 +509,11 @@ class ActorTurn implements Turn {
   private async executeBatch(proc: TurnProcess, step: TurnStep): Promise<boolean> {
     this.setPhase(proc, 'batching');
     const starting = await proc.step(() => this.batchStarting(step));
-    if (!this.accepts(step)) return false;
-    if (this.state.outcome?.type === 'aborted') {
+    if (this.phase === 'aborting') {
       const result = await proc.step(() => this.runtime.executeBatch(step.batch));
-      if (!this.accepts(step)) return false;
-      this.completeToolBatch(step, result);
-      this.finalizeStep(proc, step);
-      return false;
+      return this.completeAbortedBatch(step, result);
     }
+    if (!this.accepts(step)) return false;
     const reports = hookFailureReports('tool.batch-starting', starting.failures);
     if (starting.blocked !== undefined) {
       step.batch.blocked = starting.blocked;
@@ -513,13 +543,17 @@ class ActorTurn implements Turn {
     if (!this.accepts(step)) return false;
     this.setPhase(proc, 'acting');
     const result = await proc.step(() => this.runtime.executeBatch(step.batch));
+    if (this.acceptsAbort(step)) return this.completeAbortedBatch(step, result);
     if (!this.accepts(step)) return false;
     this.completeToolBatch(step, result);
-    if ((this.state.outcome as TurnOutcome | undefined)?.type === 'aborted') {
-      this.finalizeStep(proc, step);
-      return false;
-    }
     return this.finishStep(proc, step);
+  }
+
+  private completeAbortedBatch(step: TurnStep, result: TurnToolBatchResult): boolean {
+    if (!this.acceptsAbort(step)) return false;
+    this.completeToolBatch(step, result);
+    this.finishTurn();
+    return false;
   }
 
   private advanceStep(proc: TurnProcess, next: boolean | Promise<boolean>): boolean | Promise<boolean> {
@@ -544,7 +578,7 @@ class ActorTurn implements Turn {
   }
 
   private completeToolBatch(step: TurnStep, result: TurnToolBatchResult): void {
-    if (!this.accepts(step)) return;
+    if (!this.current(step)) return;
     this.runtime.transition(() => {
       if (result.failure !== undefined) {
         step.outcome = { type: 'failed', error: result.failure };
@@ -565,7 +599,8 @@ class ActorTurn implements Turn {
   private finishStep(proc: TurnProcess, step: TurnStep): boolean | Promise<boolean> {
     if (!this.accepts(step)) return false;
     this.setPhase(proc, 'ending');
-    const ending = this.stepEnding(step);
+    step.ending = this.stepEnding(step);
+    const ending = step.ending;
     return isPromiseLike(ending)
       ? ending.then((run) => this.completeStepEnding(proc, step, run))
       : this.completeStepEnding(proc, step, ending);
@@ -658,25 +693,25 @@ class ActorTurn implements Turn {
     this.setOutcome(ctrl, outcome);
   }
 
-  private expireAbort(ctrl: TurnControl): void {
+  private expireAbort(): void {
     const turnOutcome = this.state.outcome;
-    if (!this.running() || turnOutcome?.type !== 'aborted') return;
+    if (!this.running() || turnOutcome?.type !== 'aborted' || this.abortSettling) return;
     if (this.abortGrace !== undefined) clearTimeout(this.abortGrace);
     this.abortGrace = undefined;
-    if (this.phase === 'requesting' && this.currentStep !== undefined) {
-      const step = this.currentStep;
-      this.completeRequest(step, {
+    const at = this.abortFrom;
+    if (at === 'requesting' && this.currentStep !== undefined) {
+      this.abortSettling = true;
+      this.completeRequest(this.currentStep, {
         type: 'aborted',
         message: null,
         usage: undefined,
         reason: turnOutcome.reason,
       });
-      this.finalizeStep(ctrl, step);
       this.finishTurn();
       return;
     }
     const step = this.currentStep;
-    if (step !== undefined && (this.phase === 'batching' || this.phase === 'acting')) {
+    if (step !== undefined && (at === 'batching' || at === 'acting')) {
       const result = this.runtime.abortBatch(step.batch, turnOutcome.reason, { force: true });
       if (result !== undefined) {
         this.completeToolBatch(step, result);
@@ -691,8 +726,8 @@ class ActorTurn implements Turn {
     if (this.closing || this.finished) return;
     this.actor.act((ctrl) => {
       if (this.closing || this.finished) return;
-      this.closing = true;
-      const at = this.phase;
+      const at = this.abortFrom ?? this.phase;
+      this.setPhase(ctrl, 'finishing');
       if (this.abortGrace !== undefined) clearTimeout(this.abortGrace);
       this.abortGrace = undefined;
       if (this.activeBuffer !== undefined) {
@@ -700,41 +735,83 @@ class ActorTurn implements Turn {
         this.uncommitted.push(...this.activeBuffer.messages);
         this.activeBuffer = undefined;
       }
-      this.runtime.transition(() => {
-        if (this.currentStep !== undefined) this.finalizeStep(ctrl, this.currentStep);
-        let outcome = this.state.outcome ?? { type: 'aborted' as const };
-        this.setOutcome(ctrl, outcome);
-        this.setPhase(ctrl, 'finished');
-        const appended: TurnMessage[] = [];
-        const buffer = { active: true, messages: appended };
-        this.activeBuffer = buffer;
-        const ending: TurnEnding = {
-          turn: { ...this.state, outcome },
-          at,
-          uncommitted: this.uncommitted,
-        };
-        try {
-          const result = this.runtime.hooks.ending?.(ending, {
-            append: (...messages) => {
-              if (!buffer.active) throw new Error('turn hook context is no longer active');
-              buffer.messages.push(...messages);
-            },
-          });
-          if (isPromiseLike(result)) throw new Error('turn ending hook must be synchronous');
-        } catch (error) {
-          outcome = { type: 'failed', error };
-          this.setOutcome(ctrl, outcome);
-        } finally {
-          buffer.active = false;
-          this.activeBuffer = undefined;
+      const step = this.currentStep;
+      const ending = step !== undefined && this.state.outcome?.type === 'aborted'
+        ? (step.ending ??= this.stepEnding(step))
+        : undefined;
+      if (isPromiseLike(ending)) {
+        ctrl.spawn((proc) => this.finishAfterEnding(proc, at, step, ending));
+        return;
+      }
+      this.completeFinishTurn(ctrl, at, step, ending);
+    });
+  }
+
+  private async finishAfterEnding(
+    proc: TurnProcess,
+    at: TurnEnding['at'],
+    step: TurnStep | undefined,
+    pending: Promise<StepEndingRun>,
+  ): Promise<void> {
+    let ending: StepEndingRun;
+    try {
+      ending = await proc.step(() => pending);
+    } catch (error) {
+      ending = {
+        outcome: step?.outcome ?? { type: 'aborted' },
+        failures: [{ point: 'step.stopping', failure: runtimeFailure(error) }],
+      };
+    }
+    this.completeFinishTurn(proc, at, step, ending);
+  }
+
+  private completeFinishTurn(
+    ctrl: TurnControl,
+    at: TurnEnding['at'],
+    step: TurnStep | undefined,
+    ending: StepEndingRun | undefined,
+  ): void {
+    this.runtime.transition(() => {
+      if (step !== undefined) {
+        if (this.state.outcome?.type === 'aborted') step.outcome = this.state.outcome;
+        else if (ending !== undefined) step.outcome = ending.outcome;
+        for (const { point, failure } of ending?.failures ?? []) {
+          this.runtime.report(point, this.point, hookFailureReports(point, [failure]), true);
         }
-        for (const message of appended) this.commit(message);
-        this.uncommitted = [];
-        this.emit({ type: 'turn.ended', turnId: this.id, outcome, requestId: this.requestId });
-        this.resolveDone(outcome);
-        ctrl.defer(() => {
-          void this.actor.close();
+        this.finalizeStep(ctrl, step);
+      }
+      let outcome = this.state.outcome ?? { type: 'aborted' as const };
+      this.setOutcome(ctrl, outcome);
+      this.setPhase(ctrl, 'finished');
+      const appended: TurnMessage[] = [];
+      const buffer = { active: true, messages: appended };
+      this.activeBuffer = buffer;
+      const turnEnding: TurnEnding = {
+        turn: { ...this.state, outcome },
+        at,
+        uncommitted: this.uncommitted,
+      };
+      try {
+        const result = this.runtime.hooks.ending?.(turnEnding, {
+          append: (...messages) => {
+            if (!buffer.active) throw new Error('turn hook context is no longer active');
+            buffer.messages.push(...messages);
+          },
         });
+        if (isPromiseLike(result)) throw new Error('turn ending hook must be synchronous');
+      } catch (error) {
+        outcome = { type: 'failed', error };
+        this.setOutcome(ctrl, outcome);
+      } finally {
+        buffer.active = false;
+        this.activeBuffer = undefined;
+      }
+      for (const message of appended) this.commit(message);
+      this.uncommitted = [];
+      this.emit({ type: 'turn.ended', turnId: this.id, outcome, requestId: this.requestId });
+      this.resolveDone(outcome);
+      ctrl.defer(() => {
+        void this.actor.close();
       });
     });
   }

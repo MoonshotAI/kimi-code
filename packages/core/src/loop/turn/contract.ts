@@ -7,6 +7,7 @@ import type { QueuedItem, TurnTrigger } from '../contract/inbox';
 import type { Cause, StepOutcome, ToolCallOutcome, TurnOutcome } from '../contract/outcome';
 import type { LoopProfile } from '../contract/profile';
 import type { HookFailure, HookFailureReport } from '#/hook/loop/failure';
+import type { StepEndingRun } from '#/hook/loop/run';
 import type { LoopLlmRequester } from '../request';
 
 export type TurnMessage = Pick<QueuedItem, 'kind'> & {
@@ -27,7 +28,9 @@ export type TurnPhase =
   | 'requesting'
   | 'batching'
   | 'acting'
+  | 'aborting'
   | 'ending'
+  | 'finishing'
   | 'finished';
 
 export interface TurnEnding {
@@ -142,5 +145,6 @@ export interface TurnStep {
   steerRequested: boolean;
   toolCallStreaming: boolean;
   llm?: LlmOutcome;
+  ending?: StepEndingRun | Promise<StepEndingRun>;
   outcome?: StepOutcome;
 }

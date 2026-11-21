@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { createAssistantMessage, createUserMessage } from '@moonshot-ai/core/llm/message';
 import { createPolicyRegistry } from '@moonshot-ai/core/llm/policy/registry';
 import type { LlmOutcome } from '@moonshot-ai/core/llm/response';
+import { abortedToolOutcome } from '@moonshot-ai/core/loop/tool/outcome';
 import {
   createTurn,
   type LoopEmitted,
@@ -240,6 +241,157 @@ describe('loop.wait', () => {
     expect(batchCount).toBe(0);
     expect(events.filter((event) => event.type === 'turn.ended')).toHaveLength(1);
     expect(events.filter((event) => event.type === 'message.appended')).toHaveLength(0);
+
+    let announceLateRequest!: () => void;
+    const lateRequestStarted = new Promise<void>((resolve) => { announceLateRequest = resolve; });
+    let resolveLateRequest!: (outcome: LlmOutcome) => void;
+    const lateRequester: LoopLlmRequester = {
+      generate: () => {
+        announceLateRequest();
+        return new Promise<LlmOutcome>((resolve) => { resolveLateRequest = resolve; });
+      },
+    };
+    let announceStopping!: () => void;
+    const stoppingStarted = new Promise<void>((resolve) => { announceStopping = resolve; });
+    let releaseStopping!: () => void;
+    const stoppingRelease = new Promise<void>((resolve) => { releaseStopping = resolve; });
+    let batchStartingCount = 0;
+    let continuingCount = 0;
+    const order: string[] = [];
+    const lateEvents: TurnEmitted[] = [];
+    const lateRuntime: TurnRuntime = {
+      requester: () => lateRequester,
+      policy: createPolicyRegistry(),
+      executeBatch: (batch) => {
+        order.push('tools.abort');
+        return { outcomes: batch.calls.map((call) => abortedToolOutcome(call.toolCall, batch.aborted?.reason)) };
+      },
+      abortBatch: () => undefined,
+      hooks: {
+        ending: (event) => {
+          order.push(`owner.ending:${event.at}`);
+        },
+      },
+      extensions: {
+        'tool.batch-starting': () => {
+          batchStartingCount += 1;
+        },
+        'step.stopping': () => {
+          order.push('step.stopping');
+          announceStopping();
+          return stoppingRelease.then(() => ({
+            type: 'done' as const,
+            cause: { by: 'loop' as const, reason: 'prompt_only' as const },
+          }));
+        },
+        'step.continuing': () => {
+          continuingCount += 1;
+        },
+      },
+      read: () => ({ messages: [], profile: {} }),
+      emit: (event) => {
+        if (event.type === 'step.ended' || event.type === 'turn.ended') order.push(event.type);
+        lateEvents.push(event);
+      },
+      transition: (run) => run(),
+      report: () => undefined,
+      committed: () => undefined,
+      signal: new AbortController().signal,
+      abortGraceMs: 1_000,
+    };
+    const lateTurn = createTurn({
+      id: 91,
+      kind: 'continue',
+      trigger: 'continue',
+      initialPending: [],
+      promptOnly: false,
+      bypassMaxSteps: false,
+      step: 0,
+    }, lateRuntime);
+    lateTurn.start();
+    await lateRequestStarted;
+    lateTurn.abort('late-abort');
+    expect(lateTurn.state.phase).toBe('aborting');
+    resolveLateRequest({
+      type: 'done',
+      message: createAssistantMessage(
+        [{ type: 'text', text: 'late tools' }],
+        [{ type: 'function', id: 'late-call', name: 'noop', arguments: '{}' }],
+      ),
+      usage: undefined,
+    });
+    const firstSettlement = await Promise.race([
+      stoppingStarted.then(() => 'stopping'),
+      lateTurn.done.then(() => 'ended'),
+    ]);
+    expect(firstSettlement).toBe('stopping');
+    expect(batchStartingCount).toBe(0);
+    expect(lateEvents.filter((event) => event.type === 'turn.ended')).toHaveLength(0);
+    releaseStopping();
+    await expect(lateTurn.done).resolves.toMatchObject({ type: 'aborted', reason: 'late-abort' });
+    expect(continuingCount).toBe(0);
+    expect(order).toEqual(['tools.abort', 'step.stopping', 'step.ended', 'owner.ending:requesting', 'turn.ended']);
+    expect(lateEvents.filter((event) => event.type === 'step.ended')).toHaveLength(1);
+    expect(lateEvents.filter((event) => event.type === 'turn.ended')).toHaveLength(1);
+
+    let announceEnding!: () => void;
+    const endingStarted = new Promise<void>((resolve) => { announceEnding = resolve; });
+    let releaseEnding!: () => void;
+    const endingRelease = new Promise<void>((resolve) => { releaseEnding = resolve; });
+    let endingStoppingCount = 0;
+    let endingContinuingCount = 0;
+    const endingOrder: string[] = [];
+    const endingRuntime: TurnRuntime = {
+      requester: () => echoRequester(),
+      policy: createPolicyRegistry(),
+      executeBatch: () => ({ outcomes: [] }),
+      abortBatch: () => undefined,
+      hooks: {
+        ending: (event) => {
+          endingOrder.push(`owner.ending:${event.at}`);
+        },
+      },
+      extensions: {
+        'step.stopping': () => {
+          endingStoppingCount += 1;
+          endingOrder.push('step.stopping');
+          announceEnding();
+          return endingRelease.then(() => ({
+            type: 'done' as const,
+            cause: { by: 'loop' as const, reason: 'prompt_only' as const },
+          }));
+        },
+        'step.continuing': () => {
+          endingContinuingCount += 1;
+        },
+      },
+      read: () => ({ messages: [], profile: {} }),
+      emit: (event) => {
+        if (event.type === 'step.ended' || event.type === 'turn.ended') endingOrder.push(event.type);
+      },
+      transition: (run) => run(),
+      report: () => undefined,
+      committed: () => undefined,
+      signal: new AbortController().signal,
+    };
+    const endingTurn = createTurn({
+      id: 92,
+      kind: 'continue',
+      trigger: 'continue',
+      initialPending: [],
+      promptOnly: false,
+      bypassMaxSteps: false,
+      step: 0,
+    }, endingRuntime);
+    endingTurn.start();
+    await endingStarted;
+    endingTurn.abort('ending-abort');
+    expect(endingTurn.state.phase).toBe('finishing');
+    releaseEnding();
+    await expect(endingTurn.done).resolves.toMatchObject({ type: 'aborted', reason: 'ending-abort' });
+    expect(endingStoppingCount).toBe(1);
+    expect(endingContinuingCount).toBe(0);
+    expect(endingOrder).toEqual(['step.stopping', 'step.ended', 'owner.ending:ending', 'turn.ended']);
   });
 });
 

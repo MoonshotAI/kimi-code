@@ -38,7 +38,7 @@ export interface ToolBatchStartingEvent {
 export interface StepStoppingEvent {
   readonly turnId: number;
   readonly step: number;
-  readonly draft: Extract<StepOutcome, { type: 'continue' | 'done' | 'failed' }>;
+  readonly draft: Extract<StepOutcome, { type: 'continue' | 'done' | 'failed' | 'aborted' }>;
   readonly messages: readonly Message[];
 }
 
