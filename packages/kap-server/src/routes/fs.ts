@@ -7,7 +7,6 @@ import {
   IEnvironmentService,
   ISessionWorkdir,
   IWorkspaceFsService,
-  IWorkspaceInstanceManager,
   IWorkspaceService,
   getLiveSessionById,
   resumeSessionById,
@@ -18,11 +17,10 @@ import {
   WorkspaceGitService,
   ITelemetryService,
   type Scope,
-  type WorkdirLease,
 } from '@moonshot-ai/agent-core-v2';
 import { Event } from '@moonshot-ai/agent-core-v2/_base/event';
 import { IGitService } from '@moonshot-ai/agent-core-v2/app/git/git';
-import { encodeWorkDirKey } from '@moonshot-ai/agent-core-v2/_base/utils/workdir-slug';
+import { encodeWorkDirKey, sameDir } from '@moonshot-ai/agent-core-v2/_base/utils/workdir-slug';
 import {
   fsDiffRequestSchema,
   fsGitStatusRequestSchema,
@@ -208,31 +206,21 @@ async function acquireDirectoryFs(
   dir: string,
   required: readonly EnvironmentCapability[],
 ): Promise<FsScope | undefined> {
-  let workdir: WorkdirLease;
-  try {
-    workdir = await core.accessor.get(IWorkspaceInstanceManager).acquireWorkdir(dir);
-  } catch (error) {
-    if (isError2(error) && error.code === ErrorCodes.FS_PATH_NOT_FOUND) return undefined;
-    throw error;
+  if (await isNonDirectory(core.accessor.get(IHostFileSystem), dir)) return undefined;
+  const decision = await core.accessor.get(IWorkspaceService).peekImplicit(dir);
+  if (decision.kind === 'reuse' && sameDir(decision.project.root, dir)) {
+    const { project } = decision;
+    return acquireLocalRootedFs(core, project.id, { workDir: project.root, additionalDirs: project.additionalDirs }, required);
   }
+  return acquireLocalRootedFs(core, encodeWorkDirKey(dir), { workDir: dir, additionalDirs: [] }, required);
+}
+
+async function isNonDirectory(hostFs: IHostFileSystem, dir: string): Promise<boolean> {
   try {
-    const lease = core.accessor.get(IEnvironmentService).acquire({ environmentId: LOCAL_ENVIRONMENT_ID }, required);
-    return {
-      fs: workdir.workdir.fs,
-      hostFs: lease.environment.fs!,
-      lease: {
-        environment: lease.environment,
-        track: (resource, sessionId) => lease.track(resource, sessionId),
-        dispose: () => {
-          lease.dispose();
-          workdir.dispose();
-        },
-      },
-      environmentId: LOCAL_ENVIRONMENT_ID,
-    };
-  } catch (error) {
-    workdir.dispose();
-    throw error;
+    if ((await hostFs.stat(dir)).isDirectory) return false;
+    return !(await hostFs.stat(await hostFs.realpath(dir))).isDirectory;
+  } catch {
+    return false;
   }
 }
 
@@ -448,7 +436,7 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
         [ErrorCode.ENVIRONMENT_UNAVAILABLE]: {},
       },
       description:
-        'List files and directories in a workspace without a session. `workspace` accepts a registered workspace id or an absolute root (registered on the spot).',
+        'List files and directories in a workspace without a session. `workspace` accepts a registered workspace id or an absolute directory, served in place without registering a workspace.',
       tags: ['fs'],
       operationId: 'workspaceFsList',
     },
@@ -496,7 +484,7 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
         [ErrorCode.FS_TOO_MANY_RESULTS]: {},
       },
       description:
-        'Search files in a workspace without a session. `workspace` accepts a registered workspace id or an absolute root (registered on the spot).',
+        'Search files in a workspace without a session. `workspace` accepts a registered workspace id or an absolute directory, served in place without registering a workspace.',
       tags: ['fs'],
       operationId: 'workspaceFsSearch',
     },
@@ -543,7 +531,7 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
         [ErrorCode.ENVIRONMENT_UNAVAILABLE]: {},
       },
       description:
-        'Suggest file and directory completion candidates in a workspace without a session. `workspace` accepts a registered workspace id or an absolute root (registered on the spot).',
+        'Suggest file and directory completion candidates in a workspace without a session. `workspace` accepts a registered workspace id or an absolute directory, served in place without registering a workspace.',
       tags: ['fs'],
       operationId: 'workspaceFsSuggest',
     },

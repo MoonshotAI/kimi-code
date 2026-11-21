@@ -1520,6 +1520,88 @@ describe('server-v2 /api/v1 fs routes', () => {
     return body.data.items;
   }
 
+  it('workspace fs routes serve a path ref without registering a project or opening a project instance', async () => {
+    await mkdir(join(work!, '.kimi-code'), { recursive: true });
+    await writeFile(
+      join(work!, '.kimi-code', 'mcp.json'),
+      JSON.stringify({ mcpServers: { local: { command: 'node', args: ['-e', ''] } } }),
+    );
+    await writeFile(join(work!, 'lambda.ts'), '');
+    const headers = authHeaders(server as RunningServer, { 'content-type': 'application/json' });
+    const managed = (await (await fetch(`${base}/api/v1/workspaces`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ root: work }),
+    } as never)).json()) as Envelope<{ id: string }>;
+    expect(managed.code).toBe(0);
+    const trusted = (await (await fetch(`${base}/api/v1/workspaces/${managed.data.id}/trust`, {
+      method: 'POST',
+      headers,
+      body: '{}',
+    } as never)).json()) as Envelope<unknown>;
+    expect(trusted.code).toBe(0);
+    const before = await listWorkspaces();
+    const instances = server!.core.accessor.get(IWorkspaceInstanceManager);
+    const openBefore = instances.list().map((instance) => instance.id);
+
+    const listed = await postWorkspaceList<{ items: FsEntryWire[] }>({ workspace: work });
+    const searched = await postWorkspaceSearch<{ items: { path: string }[] }>({ workspace: work, query: 'lambda' });
+    const suggested = await postWorkspaceSuggest<{ items: SuggestItemWire[] }>({ workspace: work, query: 'lambda' });
+    const sessionSearch = await postFs<{ items: { path: string }[] }>(encodeURIComponent(work!), 'search', { query: 'lambda' });
+
+    expect(listed.code).toBe(0);
+    expect(listed.data.items.map((item) => item.name)).toContain('lambda.ts');
+    expect(searched.data.items.map((item) => item.path)).toContain('lambda.ts');
+    expect(suggested.data.items.map((item) => item.path)).toContain('lambda.ts');
+    expect(sessionSearch.data.items.map((item) => item.path)).toContain('lambda.ts');
+    expect(await listWorkspaces()).toEqual(before);
+    expect(instances.list().map((instance) => instance.id)).toEqual(openBefore);
+  });
+
+  it('workspace fs routes keep the additional dirs of the implicit project whose primary is the path ref', async () => {
+    const extra = await mkdtemp(join(tmpdir(), 'kimi-server-v2-fs-path-ref-extra-'));
+    try {
+      await writeFile(join(extra, 'extra-file.ts'), '');
+      await mkdir(join(work!, 'nested'));
+      const headers = authHeaders(server as RunningServer, { 'content-type': 'application/json' });
+      const created = (await (await fetch(`${base}/api/v1/sessions`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ cwd: work }),
+      } as never)).json()) as Envelope<{ workspace_id: string }>;
+      expect(created.code).toBe(0);
+      const patched = (await (await fetch(`${base}/api/v1/workspaces/${created.data.workspace_id}`, {
+        method: 'PATCH',
+        headers,
+        body: JSON.stringify({ additional_dirs: [extra] }),
+      } as never)).json()) as Envelope<unknown>;
+      expect(patched.code).toBe(0);
+      const before = await listWorkspaces();
+
+      const fromPrimary = await postWorkspaceList<{ items: FsEntryWire[] }>({ workspace: work, path: extra });
+      const fromSubdir = await postWorkspaceList<null>({ workspace: join(work!, 'nested'), path: extra });
+
+      expect(fromPrimary.code).toBe(0);
+      expect(fromPrimary.data.items.map((item) => item.name)).toEqual(['extra-file.ts']);
+      expect(fromSubdir.code).toBe(ErrorCode.FS_PATH_ESCAPES_SESSION);
+      expect(await listWorkspaces()).toEqual(before);
+    } finally {
+      await rm(extra, { recursive: true, force: true });
+    }
+  });
+
+  it('workspace fs routes keep the errors of a path ref that is a file or does not exist', async () => {
+    await writeFile(join(work!, 'plain.txt'), '');
+    const before = await listWorkspaces();
+
+    const file = await postWorkspaceList<null>({ workspace: join(work!, 'plain.txt') });
+    const missing = await postWorkspaceList<null>({ workspace: join(work!, 'missing') });
+
+    expect(file.code).toBe(ErrorCode.WORKSPACE_NOT_FOUND);
+    expect(missing.code).toBe(ErrorCode.FS_PATH_ESCAPES_SESSION);
+    expect(await listWorkspaces()).toEqual(before);
+  });
+
   it('fs:suggest serves an unregistered root without touching the workspace catalog', async () => {
     await writeFile(join(work!, 'kappa.ts'), '');
     const body = await postRootSuggest<{ items: SuggestItemWire[]; truncated: boolean }>({
