@@ -8,6 +8,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { WebSocket, type RawData } from 'ws';
 import {
   IAgentLifecycleService,
+  IAgentLoopService,
   IAgentPermissionModeService,
   IAgentTaskOutputService,
   IAgentToolExecutorService,
@@ -724,7 +725,7 @@ describe('conversation contract e2e', () => {
     channel.close();
   });
 
-  it('a session whose saved model was removed opens with the default model and a migration notice', async () => {
+  it('a session whose saved model was removed opens with history and a model error notice', async () => {
     await boot([]);
     await writeFile(
       join(home!, 'config.toml'),
@@ -749,17 +750,18 @@ describe('conversation contract e2e', () => {
     const channel = await subscribeConversation(server, sid);
 
     expect(channel.turns().flatMap((turn) => turn.items).map(textOf)).toContain('history from removed model');
-    expect(channel.agents.at(-1)).toMatchObject({ model: 'stub' });
-    expect(channel.notices).toContainEqual(expect.objectContaining({ level: 'warning', code: 'model.migrated' }));
-    expect(channel.notices.at(-1)!.title).toContain('old');
-    expect(channel.notices.at(-1)!.title).toContain('stub');
+    expect(channel.agents.at(-1)!.model).toBeUndefined();
+    expect(channel.notices).toContainEqual(expect.objectContaining({ level: 'warning', code: 'model.not_configured', title: 'old' }));
+    expect(channel.conversation.findIndex((frame) => frame.type === 'turns')).toBeLessThan(channel.conversation.findIndex((frame) => frame.type === 'notice'));
+    const main = getLiveSessionById(server.core.accessor, sid)!.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID)!;
+    expect(main.accessor.get(IAgentLoopService).getModel()).toBe('old');
     await submitPrompt(server, base, sid, 'after fallback');
     await idleOrDump(server, base, sid);
     expect(JSON.parse(llm!.hits.at(-1)!).model).toBe('stub');
     channel.close();
   }, 60000);
 
-  it('a session whose saved model and default model were removed opens with no model and a notice', async () => {
+  it('a session with no default model opens with no displayed model and a model error notice', async () => {
     await boot([]);
     await writeFile(
       join(home!, 'config.toml'),
@@ -790,8 +792,10 @@ describe('conversation contract e2e', () => {
     expect(channel.turns().flatMap((turn) => turn.items).map(textOf)).toContain('history without a default model');
     expect(channel.agents.at(-1)!.model).toBeUndefined();
     expect(channel.agents.at(-1)!.thinking).toBeUndefined();
-    expect(channel.notices).toContainEqual(expect.objectContaining({ level: 'warning', code: 'model.migrated' }));
-    expect(channel.notices.at(-1)!.title).toContain('No default model is available');
+    expect(channel.notices).toContainEqual(expect.objectContaining({ level: 'warning', code: 'model.not_configured', title: 'old' }));
+    expect(channel.conversation.findIndex((frame) => frame.type === 'turns')).toBeLessThan(channel.conversation.findIndex((frame) => frame.type === 'notice'));
+    const main = getLiveSessionById(server.core.accessor, sid)!.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID)!;
+    expect(main.accessor.get(IAgentLoopService).getModel()).toBe('old');
     channel.close();
   }, 60000);
 

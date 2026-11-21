@@ -134,7 +134,6 @@ export class ConversationFeed implements IDisposable {
   private readonly disposables: IDisposable[] = [];
   private undoQueue: Promise<unknown> = Promise.resolve();
   readonly ready: Promise<ConversationFeed>;
-  migrationNotice?: string;
 
   constructor(
     private readonly handle: IAgentScopeHandle,

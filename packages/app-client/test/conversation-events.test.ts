@@ -508,6 +508,30 @@ describe('model turn error notices', () => {
   });
 });
 
+describe('model availability notices', () => {
+  it('opens the model picker from the unavailable-model confirmation dialog', async () => {
+    const h = await boot();
+    const { useConfirmDialog } = await import('../src/composables/useConfirmDialog');
+    const { registerModelPickerOpener } = await import('../src/client/deps');
+    const open = vi.fn(async () => {});
+    registerModelPickerOpener(open);
+    const { current, runAction } = useConfirmDialog();
+
+    h.frame('s1', { type: 'notice', level: 'warning', code: 'model.not_configured', title: 'old-model' });
+
+    expect(current.value).toMatchObject({
+      title: 'warnings.modelUnavailable.title',
+      message: 'warnings.modelUnavailable.message',
+      confirmLabel: 'warnings.modelUnavailable.change',
+      variant: 'primary',
+    });
+    await runAction();
+    expect(open).toHaveBeenCalledWith('s1');
+    expect(current.value).toBeNull();
+    expect(h.warningsStore().warnings).toEqual([]);
+  });
+});
+
 describe('echoed steer prompt pruning', () => {
   it('prunes optimistic steer bubbles immediately when user_message items arrive mid-turn', async () => {
     const h = await boot();

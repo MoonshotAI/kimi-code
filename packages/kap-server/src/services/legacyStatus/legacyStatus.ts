@@ -6,6 +6,7 @@ import {
   ISessionUsageService,
   IModelCatalog,
   IModelService,
+  MAIN_AGENT_ID,
   ProfileErrors,
   isError2,
   type IAgentScopeHandle,
@@ -40,7 +41,7 @@ export function readLegacyStatus(agent: IAgentScopeHandle): LegacyStatusSnapshot
   try {
     modelSpec = model === '' ? undefined : profile.resolveModelContext().model;
   } catch (error) {
-    if (!isMissingConfiguredModel(error, model)) throw error;
+    if (context.agentId !== MAIN_AGENT_ID || !isMissingConfiguredModel(error, model)) throw error;
   }
   let maxContextTokens = modelSpec?.maxInputSize ?? modelSpec?.maxContextSize ?? 0;
   if (maxContextTokens === 0) {
@@ -59,6 +60,19 @@ export function isMissingConfiguredModel(error: unknown, model: string): boolean
     (error.code === ErrorCodes.CONFIG_INVALID || error.code === ProfileErrors.codes.MODEL_CONFIG_INVALID) &&
     error.details?.['model'] === model &&
     error.message === `Model "${model}" is not configured in config.toml.`;
+}
+
+export function missingConfiguredModelAlias(agent: IAgentScopeHandle): string | undefined {
+  const profile = agent.accessor.get(IAgentLoopService);
+  const previous = profile.getModel();
+  if (previous === '' || typeof profile.resolveModelContext !== 'function') return undefined;
+  try {
+    profile.resolveModelContext();
+    return undefined;
+  } catch (error) {
+    if (!isMissingConfiguredModel(error, previous)) throw error;
+    return previous;
+  }
 }
 
 function defaultModelContextTokens(agent: IAgentScopeHandle): number | undefined {
