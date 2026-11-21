@@ -253,14 +253,15 @@ describe('projectScopeContains', () => {
   const scope = { root: '/code/app', additionalDirs: ['/shared/lib'] };
 
   it('covers the primary and additional directory subtrees', () => {
-    expect(projectScopeContains(scope, '/code/app/src', undefined, undefined)).toBe(true);
-    expect(projectScopeContains(scope, '/shared/lib/pkg', undefined, undefined)).toBe(true);
-    expect(projectScopeContains(scope, '/code/app-fix', undefined, undefined)).toBe(false);
+    expect(projectScopeContains(scope, '/code/app/src', undefined)).toBe(true);
+    expect(projectScopeContains(scope, '/shared/lib/pkg', undefined)).toBe(true);
+    expect(projectScopeContains(scope, '/code/app-fix', undefined)).toBe(false);
   });
 
-  it('covers checkouts the locator groups into the primary directory', () => {
-    expect(projectScopeContains(scope, '/code/app-fix', grouped('/code/app'), undefined)).toBe(true);
-    expect(projectScopeContains(scope, '/code/app-fix', grouped('/tmp/app', '/private/code/app'), '/private/code/app')).toBe(true);
-    expect(projectScopeContains(scope, '/code/other', grouped('/code/other'), '/code/app')).toBe(false);
+  it('covers checkouts the locator groups into the primary directory by its real path', () => {
+    expect(projectScopeContains(scope, '/code/app-fix', grouped('/code/app'))).toBe(true);
+    expect(projectScopeContains(scope, '/code/app-fix', grouped('/tmp/app', '/code/app'))).toBe(true);
+    expect(projectScopeContains(scope, '/code/app-fix', grouped('/code/app', '/private/elsewhere'))).toBe(false);
+    expect(projectScopeContains(scope, '/code/other', grouped('/code/other'))).toBe(false);
   });
 });

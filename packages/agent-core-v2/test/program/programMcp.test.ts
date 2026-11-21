@@ -523,6 +523,25 @@ describe('ProgramMcp', () => {
     pinned.dispose();
   });
 
+  it('anchors a workdir pinned at a symlink to an outside checkout at the primary and never reads that checkout', async () => {
+    await mkdir(join(primary, '.git'));
+    const outside = temp('kimi-program-mcp-outside-');
+    await mkdir(join(outside, '.git'));
+    await writeMcpJson(projectFile(primary), { rootServer: disabledStdio('root') });
+    await writeMcpJson(join(outside, '.mcp.json'), { outsideServer: disabledStdio('outside') });
+    const link = join(primary, 'link');
+    await symlink(outside, link);
+    const program = createProgramMcp();
+    await program.root.ready;
+    const pinned = await program.workdir(link);
+    await pinned.ready;
+
+    expect(pinned.anchor).toBe(primary);
+    expect(names(pinned.view())).toEqual(['rootServer']);
+    expect((await program.previewProjectServers(link)).map(({ name }) => name)).toEqual(['rootServer']);
+    pinned.dispose();
+  });
+
   it('keeps a pinned workdir on its anchor when the project changes without moving it', async () => {
     const wt = await checkout();
     await writeMcpJson(projectFile(wt), { wtServer: disabledStdio('wt') });

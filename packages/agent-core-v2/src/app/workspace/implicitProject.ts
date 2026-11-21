@@ -8,6 +8,8 @@ import {
   type ImplicitProjectId,
 } from '#/_base/utils/workdir-slug';
 import { locateCheckout, type CheckoutLocation, type GroupedCheckout } from '#/app/git/workTree';
+import { realpathExistingPrefix } from '#/environment/environment';
+import { POSIX_ENVIRONMENT_PATH } from '#/environment/environmentDefaults';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 
 import type { Workspace } from './workspace';
@@ -95,23 +97,33 @@ export function reviveCandidates(
 }
 
 export function projectScopeContains(
-  project: ProjectScope,
-  dir: string,
+  realScope: ProjectScope,
+  realDir: string,
   location: CheckoutLocation | undefined,
-  canonicalRoot: string | undefined,
 ): boolean {
-  if ([project.root, ...project.additionalDirs].some((scope) => isAncestorOrSelf(scope, dir))) return true;
-  if (location?.kind !== 'grouped') return false;
-  return sameDir(location.mainDir, project.root) ||
-    (canonicalRoot !== undefined && sameDir(location.canonicalMainDir, canonicalRoot));
+  if ([realScope.root, ...realScope.additionalDirs].some((scope) => isAncestorOrSelf(scope, realDir))) return true;
+  return location !== undefined && groupsInto(location, realScope.root);
+}
+
+export function groupsInto(location: CheckoutLocation, realRoot: string): boolean {
+  return location.kind === 'grouped' && sameDir(location.canonicalMainDir, realRoot);
 }
 
 export async function isInProjectScope(fs: IHostFileSystem, project: ProjectScope, dir: string): Promise<boolean> {
-  if (projectScopeContains(project, dir, undefined, undefined)) return true;
   const absolute = toAbsoluteDir(dir);
   if (absolute === undefined) return false;
-  const [location, canonicalRoot] = await Promise.all([locateCheckout(fs, absolute), realpathOf(fs, project.root)]);
-  return projectScopeContains(project, dir, location, canonicalRoot);
+  const [realDir, root, additionalDirs] = await Promise.all([
+    realDirOf(fs, absolute),
+    realDirOf(fs, project.root),
+    Promise.all(project.additionalDirs.map((scope) => realDirOf(fs, scope))),
+  ]);
+  const realScope = { root, additionalDirs };
+  return projectScopeContains(realScope, realDir, undefined) ||
+    projectScopeContains(realScope, realDir, await locateCheckout(fs, absolute));
+}
+
+function realDirOf(fs: IHostFileSystem, dir: string): Promise<string> {
+  return realpathExistingPrefix(fs, POSIX_ENVIRONMENT_PATH, dir, () => true);
 }
 
 function ownProjectOf(implicit: readonly ImplicitWorkspace[], dir: string): ImplicitWorkspace | undefined {
@@ -150,12 +162,4 @@ async function findByRealpath(
 
 function preferCanonical(matches: readonly ImplicitWorkspace[]): ImplicitWorkspace | undefined {
   return matches.find((project) => project.id === encodeWorkDirKey(project.root)) ?? matches[0];
-}
-
-async function realpathOf(fs: IHostFileSystem, dir: string): Promise<string | undefined> {
-  try {
-    return await fs.realpath(dir);
-  } catch {
-    return undefined;
-  }
 }

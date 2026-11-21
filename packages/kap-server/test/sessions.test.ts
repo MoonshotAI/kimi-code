@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as slowDisk } from 'node:timers/promises';
@@ -674,6 +674,52 @@ describe('server-v2 /api/v1/sessions', () => {
       expect(inWorktree.body.data).toMatchObject({ workspace_id: workspaceId, cwd: worktree });
       expect(outside.body.code).toBe(40001);
       expect(outside.body.details?.[0]?.path).toBe('cwd');
+    } finally {
+      await rm(lab, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects a workspace cwd that is a symlink inside the project to an outside checkout (40001)', async () => {
+    const lab = await mkdtemp(join(tmpdir(), 'kimi-server-v2-sessions-escape-'));
+    try {
+      const root = join(lab, 'trusted');
+      const outside = join(lab, 'outside');
+      await mkdir(join(root, '.git'), { recursive: true });
+      await mkdir(join(outside, '.git'), { recursive: true });
+      await writeFile(join(outside, '.mcp.json'), JSON.stringify({ mcpServers: { outside: { command: 'never-runs' } } }));
+      await symlink(outside, join(root, 'link'));
+      const atRoot = await postJson<SessionWire>('/api/v1/sessions', { cwd: root });
+
+      const escaped = await postJson<null>('/api/v1/sessions', {
+        workspace_id: atRoot.body.data.workspace_id,
+        cwd: join(root, 'link'),
+      });
+
+      expect(escaped.body.code).toBe(40001);
+      expect(escaped.body.details?.[0]?.path).toBe('cwd');
+    } finally {
+      await rm(lab, { recursive: true, force: true });
+    }
+  });
+
+  it('accepts a workspace cwd that reaches the project root through a symlinked spelling', async () => {
+    const lab = await mkdtemp(join(tmpdir(), 'kimi-server-v2-sessions-alias-'));
+    try {
+      const root = join(lab, 'real');
+      const alias = join(lab, 'alias');
+      await mkdir(join(root, 'src'), { recursive: true });
+      await symlink(root, alias);
+      const atRoot = await postJson<SessionWire>('/api/v1/sessions', { cwd: root });
+      const workspaceId = atRoot.body.data.workspace_id;
+
+      const viaAlias = await postJson<SessionWire>('/api/v1/sessions', { workspace_id: workspaceId, cwd: alias });
+      const viaAliasSubdir = await postJson<SessionWire>('/api/v1/sessions', {
+        workspace_id: workspaceId,
+        cwd: join(alias, 'src'),
+      });
+
+      expect(viaAlias.body.data).toMatchObject({ workspace_id: workspaceId, cwd: alias });
+      expect(viaAliasSubdir.body.data).toMatchObject({ workspace_id: workspaceId, cwd: join(alias, 'src') });
     } finally {
       await rm(lab, { recursive: true, force: true });
     }

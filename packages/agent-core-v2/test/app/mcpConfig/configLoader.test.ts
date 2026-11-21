@@ -300,6 +300,17 @@ describe('findMcpAnchor', () => {
     await expect(findMcpAnchor(fs, evil, { root, additionalDirs: [] })).resolves.toMatchObject({ anchor: root });
   });
 
+  it('falls back to the project root for a symlink inside the project that points at an outside checkout', async () => {
+    const root = await project();
+    const outside = await project();
+    await writeJson(join(outside, '.mcp.json'), { mcpServers: { outside: { command: 'never-runs' } } });
+    const link = join(root, 'link');
+    await symlink(outside, link);
+
+    await expect(findMcpAnchor(fs, link, { root, additionalDirs: [] })).resolves.toMatchObject({ anchor: root });
+    await expect(findMcpAnchor(fs, join(link, 'src'), { root, additionalDirs: [] })).resolves.toMatchObject({ anchor: root });
+  });
+
   it('falls back to the project root when the checkout root lies above a registered additional directory', async () => {
     const root = await project();
     const repo = await project();

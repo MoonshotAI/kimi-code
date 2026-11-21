@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { mkdirSync, promises as fsp, realpathSync } from 'node:fs';
+import { mkdirSync, promises as fsp, realpathSync, symlinkSync } from 'node:fs';
 import os from 'node:os';
 import { join } from 'node:path';
 import { normalize } from 'pathe';
@@ -1438,6 +1438,27 @@ describe('implicit project resolution', () => {
     expect(await registry.contains(scope, `${main}/src`)).toBe(true);
     expect(await registry.contains(scope, `${worktree}/src`)).toBe(true);
     expect(await registry.contains(scope, outsider)).toBe(false);
+  });
+
+  it('compares real paths for the subtrees of the project scope', async () => {
+    const { main } = repository();
+    const outsider = mainCheckout(lab.dir('outside'));
+    const escape = join(main, 'link');
+    symlinkSync(outsider, escape);
+    const plain = lab.dir('plain');
+    lab.dir('plain', 'src');
+    const alias = join(lab.base, 'alias');
+    symlinkSync(plain, alias);
+    const registry = build();
+
+    expect(await registry.contains({ root: main, additionalDirs: [] }, escape)).toBe(false);
+    expect(await registry.contains({ root: main, additionalDirs: [] }, join(escape, 'src'))).toBe(false);
+    expect(await registry.contains({ root: real(main), additionalDirs: [plain] }, join(escape, 'src'))).toBe(false);
+    expect(await registry.contains({ root: plain, additionalDirs: [] }, alias)).toBe(true);
+    expect(await registry.contains({ root: plain, additionalDirs: [] }, join(alias, 'src'))).toBe(true);
+    expect(await registry.contains({ root: alias, additionalDirs: [] }, join(real(plain), 'src'))).toBe(true);
+    expect(await registry.contains({ root: main, additionalDirs: [alias] }, join(plain, 'src'))).toBe(true);
+    expect(await registry.contains({ root: plain, additionalDirs: [] }, join(plain, 'missing'))).toBe(true);
   });
 });
 
