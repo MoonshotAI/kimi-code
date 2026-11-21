@@ -124,6 +124,10 @@ async function repositoryWithWorktree(home: TestHome): Promise<RepositoryLayout>
   return { main, worktree };
 }
 
+function pathKey(path: string): string {
+  return process.platform === 'win32' ? path.replaceAll('\\', '/').toLowerCase() : path;
+}
+
 async function toolOutputOf(model: FakeModel, request: number): Promise<string | undefined> {
   return model.request(request).view.messages.find((message) => message.role === 'tool')?.text;
 }
@@ -224,9 +228,12 @@ test('revives the repository project of a pinned worktree session whose project 
       await second.waitIdle(created.id);
       expect(await toolOutputOf(model, before + 1)).toBe(`${bashPathOf(await realpath(worktree))}\n`);
       const workspaces = await second.rest.get<{ items: { id: string; root: string }[] }>('/api/v1/workspaces');
-      expect(workspaces.items.filter((item) => [main, worktree].includes(item.root))).toEqual([
-        expect.objectContaining({ id: created.workspace_id, root: main }),
-      ]);
+      const repositoryDirs = [main, worktree].map(pathKey);
+      expect(
+        workspaces.items
+          .filter((item) => repositoryDirs.includes(pathKey(item.root)))
+          .map((item) => ({ id: item.id, root: pathKey(item.root) })),
+      ).toEqual([{ id: created.workspace_id, root: pathKey(main) }]);
     } finally {
       await second.close();
     }
