@@ -14,17 +14,26 @@ declare const mcpAnchorBrand: unique symbol;
 
 export type McpAnchor = string & { readonly [mcpAnchorBrand]: true };
 
+export interface KeyedMcpAnchor {
+  readonly anchor: McpAnchor;
+  readonly key: string;
+}
+
 export type McpAnchorScope = Pick<Workspace, 'root' | 'additionalDirs'>;
 
 export function rootAnchor(projectRoot: string): McpAnchor {
   return projectRoot as McpAnchor;
 }
 
+export function keyedRootAnchor(projectRoot: string): KeyedMcpAnchor {
+  return { anchor: rootAnchor(projectRoot), key: workspaceRootKey(normalize(projectRoot)) };
+}
+
 export async function findMcpAnchor(
   fs: IHostFileSystem,
   workDir: string,
   project: McpAnchorScope,
-): Promise<McpAnchor> {
+): Promise<KeyedMcpAnchor> {
   const start = normalize(workDir);
   const checkoutRoot = (await findNearestGitMarker(fs, start))?.root;
   const [here, root, checkout, ...additional] = await Promise.all([
@@ -36,10 +45,14 @@ export async function findMcpAnchor(
   const nearest = [isSameOrInside(here, root) ? root : undefined, checkout]
     .filter((dir) => dir !== undefined)
     .toSorted((a, b) => b.key.length - a.key.length)[0];
-  if (nearest === undefined || ![root, ...additional].some((scope) => isSameOrInside(nearest, scope))) {
-    return rootAnchor(project.root);
+  if (
+    nearest === undefined ||
+    nearest.key === root.key ||
+    ![root, ...additional].some((scope) => isSameOrInside(nearest, scope))
+  ) {
+    return keyedRootAnchor(project.root);
   }
-  return nearest.dir as McpAnchor;
+  return { anchor: nearest.dir as McpAnchor, key: nearest.key };
 }
 
 interface CanonicalDir {

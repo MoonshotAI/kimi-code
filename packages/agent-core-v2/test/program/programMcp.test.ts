@@ -445,6 +445,55 @@ describe('ProgramMcp', () => {
     pinned.dispose();
   });
 
+  it('shares one anchor layer and its stdio servers between workdirs pinned to a checkout through its real path and a symlink', async () => {
+    const wt = await checkout();
+    const link = join(temp('kimi-program-mcp-link-'), 'checkout');
+    await symlink(wt, link);
+    await writeMcpJson(projectFile(wt), { wtServer: stdioServer() });
+    const spawn = vi.spyOn(HostProcessService.prototype, 'spawn');
+    const program = createProgramMcp();
+    await program.root.ready;
+
+    const [real, linked] = await Promise.all([program.workdir(wt), program.workdir(link)]);
+    await Promise.all([real.ready, linked.ready]);
+
+    expect(spawn).toHaveBeenCalledTimes(1);
+    const manager = plainHandle(real).upsertTarget!('wtServer');
+    expect(plainHandle(linked).upsertTarget!('wtServer')).toBe(manager);
+    expect(linked.anchor).toBe(wt);
+
+    real.dispose();
+    expect(plainHandle(linked).upsertTarget!('wtServer')).toBe(manager);
+    expect(linked.view().get('wtServer')?.status).toBe('connected');
+    expect(spawn).toHaveBeenCalledTimes(1);
+    linked.dispose();
+    await vi.waitFor(() => {
+      expect(manager.list()).toEqual([]);
+    });
+  }, 20000);
+
+  it('shares the root view layer with workdirs pinned to a symlinked project root checkout through other spellings', async () => {
+    const main = temp('kimi-program-mcp-main-');
+    await mkdir(join(main, '.git'));
+    await symlink(temp('kimi-program-mcp-outside-'), join(main, 'out'));
+    primary = join(temp('kimi-program-mcp-link-'), 'main');
+    await symlink(main, primary);
+    await writeMcpJson(projectFile(main), { rootServer: disabledStdio('root') });
+    const program = createProgramMcp();
+    await program.root.ready;
+    const rootManager = plainHandle(program.root).upsertTarget!('rootServer');
+
+    const inside = await program.workdir(realpathSync(main));
+    const escaped = await program.workdir(join(main, 'out'));
+    await Promise.all([inside.ready, escaped.ready]);
+
+    expect(plainHandle(inside).upsertTarget!('rootServer')).toBe(rootManager);
+    expect(plainHandle(escaped).upsertTarget!('rootServer')).toBe(rootManager);
+    expect([inside.anchor, escaped.anchor]).toEqual([primary, primary]);
+    inside.dispose();
+    escaped.dispose();
+  });
+
   it('keeps a pinned workdir on its anchor when the project changes without moving it', async () => {
     const wt = await checkout();
     await writeMcpJson(projectFile(wt), { wtServer: disabledStdio('wt') });

@@ -164,8 +164,8 @@ describe('findMcpAnchor', () => {
     const nested = join(root, 'node_modules', 'pkg');
     await mkdir(join(nested, '.kimi-code'), { recursive: true });
 
-    await expect(findMcpAnchor(fs, root, { root, additionalDirs: [] })).resolves.toBe(root);
-    await expect(findMcpAnchor(fs, nested, { root, additionalDirs: [] })).resolves.toBe(root);
+    await expect(findMcpAnchor(fs, root, { root, additionalDirs: [] })).resolves.toMatchObject({ anchor: root });
+    await expect(findMcpAnchor(fs, nested, { root, additionalDirs: [] })).resolves.toMatchObject({ anchor: root });
   });
 
   it('anchors a checkout nested in the project at its checkout root', async () => {
@@ -173,8 +173,8 @@ describe('findMcpAnchor', () => {
     const wt = await worktree(join(root, '.worktrees', 'feature'));
     await mkdir(join(wt, 'src'), { recursive: true });
 
-    await expect(findMcpAnchor(fs, wt, { root, additionalDirs: [] })).resolves.toBe(wt);
-    await expect(findMcpAnchor(fs, join(wt, 'src'), { root, additionalDirs: [] })).resolves.toBe(wt);
+    await expect(findMcpAnchor(fs, wt, { root, additionalDirs: [] })).resolves.toMatchObject({ anchor: wt });
+    await expect(findMcpAnchor(fs, join(wt, 'src'), { root, additionalDirs: [] })).resolves.toMatchObject({ anchor: wt });
   });
 
   it('stops at an unparseable .git file inside the project', async () => {
@@ -183,7 +183,7 @@ describe('findMcpAnchor', () => {
     await mkdir(join(vendored, 'src'), { recursive: true });
     await writeFile(join(vendored, '.git'), 'not a pointer\n');
 
-    await expect(findMcpAnchor(fs, join(vendored, 'src'), { root, additionalDirs: [] })).resolves.toBe(vendored);
+    await expect(findMcpAnchor(fs, join(vendored, 'src'), { root, additionalDirs: [] })).resolves.toMatchObject({ anchor: vendored });
   });
 
   it('prefers a project root nested below the checkout root', async () => {
@@ -191,7 +191,7 @@ describe('findMcpAnchor', () => {
     const root = join(repoRoot, 'packages', 'app');
     await mkdir(join(root, 'src'), { recursive: true });
 
-    await expect(findMcpAnchor(fs, join(root, 'src'), { root, additionalDirs: [] })).resolves.toBe(root);
+    await expect(findMcpAnchor(fs, join(root, 'src'), { root, additionalDirs: [] })).resolves.toMatchObject({ anchor: root });
   });
 
   it('anchors a checkout under a registered additional directory', async () => {
@@ -199,7 +199,7 @@ describe('findMcpAnchor', () => {
     const extra = await worktree(join(makeTempDir(), 'extra'));
     await mkdir(join(extra, 'src'), { recursive: true });
 
-    await expect(findMcpAnchor(fs, join(extra, 'src'), { root, additionalDirs: [extra] })).resolves.toBe(extra);
+    await expect(findMcpAnchor(fs, join(extra, 'src'), { root, additionalDirs: [extra] })).resolves.toMatchObject({ anchor: extra });
   });
 
   it.each([
@@ -209,7 +209,7 @@ describe('findMcpAnchor', () => {
     const root = await project();
     const dir = await outside();
 
-    await expect(findMcpAnchor(fs, dir, { root, additionalDirs: [] })).resolves.toBe(root);
+    await expect(findMcpAnchor(fs, dir, { root, additionalDirs: [] })).resolves.toMatchObject({ anchor: root });
   });
 
   async function symlinkedLayout() {
@@ -263,13 +263,13 @@ describe('findMcpAnchor', () => {
   ])('compares real paths for %s and keeps the requested spelling', async (_label, scenario) => {
     const { workDir, project, anchor } = scenario(await symlinkedLayout());
 
-    await expect(findMcpAnchor(fs, workDir, project)).resolves.toBe(anchor);
+    await expect(findMcpAnchor(fs, workDir, project)).resolves.toMatchObject({ anchor });
   });
 
   it('anchors the project root reached through a symlink at the stored project root', async () => {
     const { real, link } = await symlinkedLayout();
 
-    await expect(findMcpAnchor(fs, link, { root: real, additionalDirs: [] })).resolves.toBe(real);
+    await expect(findMcpAnchor(fs, link, { root: real, additionalDirs: [] })).resolves.toMatchObject({ anchor: real });
   });
 
   it('anchors a working directory that does not exist yet at its checkout', async () => {
@@ -277,7 +277,7 @@ describe('findMcpAnchor', () => {
 
     await expect(
       findMcpAnchor(fs, join(checkout, 'missing'), { root: real, additionalDirs: [] }),
-    ).resolves.toBe(checkout);
+    ).resolves.toMatchObject({ anchor: checkout });
   });
 
   it('falls back to the project root when the checkout root lies above a registered additional directory', async () => {
@@ -286,7 +286,7 @@ describe('findMcpAnchor', () => {
     const extra = join(repo, 'packages', 'lib');
     await mkdir(extra, { recursive: true });
 
-    await expect(findMcpAnchor(fs, extra, { root, additionalDirs: [extra] })).resolves.toBe(root);
+    await expect(findMcpAnchor(fs, extra, { root, additionalDirs: [extra] })).resolves.toMatchObject({ anchor: root });
   });
 });
 

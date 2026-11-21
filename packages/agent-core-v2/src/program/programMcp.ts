@@ -1,11 +1,11 @@
 import type { IDisposable } from '#/_base/di/lifecycle';
 import { AsyncEmitter, Emitter, type Event, type IWaitUntil } from '#/_base/event';
-import { workspaceRootKey } from '#/_base/utils/workdir-slug';
 import type { IEnvironmentService } from '#/app/environment/environment';
 import {
   findMcpAnchor,
+  keyedRootAnchor,
   loadAnchorMcpServers,
-  rootAnchor,
+  type KeyedMcpAnchor,
   type McpAnchor,
   type McpAnchorScope,
 } from '#/app/mcpConfig/configLoader';
@@ -47,6 +47,7 @@ export interface ProgramMcpDeps
 }
 
 interface McpAnchorLease extends IDisposable {
+  readonly key: string;
   readonly anchor: McpAnchor;
   readonly config: WorkspaceMcpConfigService;
   readonly service: WorkspaceMcpService;
@@ -63,7 +64,7 @@ interface WorkdirMcpHost {
   readonly user: WorkspaceMcpService;
   readonly userConfig: WorkspaceMcpConfigService;
   readonly userLayer: McpViewLayer;
-  acquireAnchor(anchor: McpAnchor): McpAnchorLease;
+  acquireAnchor(anchor: KeyedMcpAnchor): McpAnchorLease;
   suppressionSettled(): Promise<void>;
   openEphemeral(options: SessionMcpOptions, stdioCwd: string): EphemeralMcp;
   forget(workdir: AnchoredWorkdirMcp): void;
@@ -127,13 +128,13 @@ export class ProgramMcp implements ProjectMcpPreview {
     };
     this.rootWorkdir = new AnchoredWorkdirMcp(
       this.workdirHost,
-      rootAnchor(deps.rootDirs.primary),
+      keyedRootAnchor(deps.rootDirs.primary),
       () => deps.rootDirs.primary,
     );
     this.root = this.rootWorkdir;
     this.subscriptions = [
       deps.rootDirs.onDidChange(() => {
-        this.rootWorkdir.moveTo(rootAnchor(deps.rootDirs.primary));
+        this.rootWorkdir.moveTo(keyedRootAnchor(deps.rootDirs.primary));
       }),
       deps.project.onDidChange(() => {
         this.reanchorPinned();
@@ -151,7 +152,7 @@ export class ProgramMcp implements ProjectMcpPreview {
   }
 
   async previewProjectServers(pinnedWorkDir?: string): Promise<readonly ProjectMcpServer[]> {
-    const anchor = pinnedWorkDir === undefined ? this.root.anchor : await this.anchorFor(pinnedWorkDir);
+    const anchor = pinnedWorkDir === undefined ? this.root.anchor : (await this.anchorFor(pinnedWorkDir)).anchor;
     const loaded = await loadAnchorMcpServers({ fs: this.deps.hostFs, anchor });
     return Object.entries(loaded.servers).flatMap(([name, config]) => {
       const origin = loaded.origins[name];
@@ -186,7 +187,7 @@ export class ProgramMcp implements ProjectMcpPreview {
     if (errors.length > 1) throw new AggregateError(errors, 'program MCP disposal failed');
   }
 
-  private async anchorFor(workDir: string): Promise<McpAnchor> {
+  private async anchorFor(workDir: string): Promise<KeyedMcpAnchor> {
     return findMcpAnchor(this.deps.hostFs, workDir, await this.deps.project.current());
   }
 
@@ -209,9 +210,8 @@ export class ProgramMcp implements ProjectMcpPreview {
     });
   }
 
-  private acquireAnchor(anchor: McpAnchor): McpAnchorLease {
+  private acquireAnchor({ anchor, key }: KeyedMcpAnchor): McpAnchorLease {
     if (this.disposed) throw new Error('program MCP is disposed');
-    const key = workspaceRootKey(anchor);
     let entry = this.anchors.get(key);
     if (entry === undefined) {
       entry = this.createAnchorEntry(anchor);
@@ -221,6 +221,7 @@ export class ProgramMcp implements ProjectMcpPreview {
     const acquired = entry;
     let released = false;
     return {
+      key,
       anchor: acquired.anchor,
       config: acquired.config,
       service: acquired.service,
@@ -389,7 +390,7 @@ class AnchoredWorkdirMcp implements WorkdirMcp, IDisposable {
 
   constructor(
     private readonly host: WorkdirMcpHost,
-    anchor: McpAnchor,
+    anchor: KeyedMcpAnchor,
     private readonly workDir: () => string,
   ) {
     this.lease = host.acquireAnchor(anchor);
@@ -457,8 +458,8 @@ class AnchoredWorkdirMcp implements WorkdirMcp, IDisposable {
     };
   }
 
-  moveTo(anchor: McpAnchor): void {
-    if (this.disposed || workspaceRootKey(anchor) === workspaceRootKey(this.lease.anchor)) return;
+  moveTo(anchor: KeyedMcpAnchor): void {
+    if (this.disposed || anchor.key === this.lease.key) return;
     const previous = this.lease;
     this.lease = this.host.acquireAnchor(anchor);
     this.layersEmitter.fire();
