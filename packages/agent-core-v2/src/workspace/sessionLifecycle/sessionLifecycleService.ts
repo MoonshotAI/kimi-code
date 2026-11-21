@@ -71,7 +71,7 @@ import { ISessionSkillCatalogData } from '#/features/skill/session/skillCatalogD
 import { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
 import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
 import { ISessionWorkspaceInfo } from '#/session/workspaceInfo/workspaceInfo';
-import { resolveEffectiveWorkspaceRoots } from '#/session/workspaceContext/workspaceRoots';
+import { sessionPlacementOf, sessionWorkDir } from '#/session/workspaceContext/workspaceRoots';
 import { ISessionWorkdir } from '#/session/workdir/workdir';
 import {
   drainSessionMetadataWrites,
@@ -408,13 +408,12 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
   }
 
   private sessionWorkDir(fallbackCwd: string, environment: EnvironmentBinding | undefined): string {
-    if (environment !== undefined && environment.environmentId !== LOCAL_ENVIRONMENT_ID) return fallbackCwd;
-    const primary = this.workspaceContext.meta.root;
-    return resolveEffectiveWorkspaceRoots(
-      { workspaceId: this.workspaceId, cwd: fallbackCwd },
-      environment,
-      { primaryByWorkspace: { [this.workspaceId]: primary }, additionalDirs: [] },
-    ).workDir;
+    const placement = sessionPlacementOf({
+      cwd: fallbackCwd,
+      environmentId: environment?.environmentId,
+      environmentCwd: environment?.cwd,
+    });
+    return sessionWorkDir(placement, this.workspaceContext.meta.root) ?? fallbackCwd;
   }
 
   private async openWorkdir(

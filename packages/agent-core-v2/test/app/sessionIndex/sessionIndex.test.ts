@@ -183,6 +183,17 @@ describe('FileSessionIndex (legacy)', () => {
     expect(JSON.parse(await fsp.readFile(join(sessionsDir, workspaceId, 'default', 'session-meta', 'state.json'), 'utf8')).cwd).toBe('/old');
   });
 
+  it('derives the summary cwd of a pinned or remote session when its project is not registered', async () => {
+    await seedSession('pinned', { cwd: '/created-in', environmentCwd: '/pinned' });
+    await seedSession('remote-without-host-cwd', { environmentId: 'ssh', environmentCwd: '/remote' });
+    const docs = new JsonAtomicDocumentStore(new FileStorageService(homeDir));
+    const sessionsScope = stubBootstrap(homeDir).scope('sessions');
+
+    expect((await readSessionSummary(docs, sessionsScope, workspaceId, 'pinned'))?.cwd).toBe('/pinned');
+    expect((await readSessionSummary(docs, sessionsScope, workspaceId, 'remote-without-host-cwd', '/new'))?.cwd).toBe('/new');
+    expect((await readSessionSummary(docs, sessionsScope, workspaceId, 'remote-without-host-cwd'))?.cwd).toBeUndefined();
+  });
+
   it('recovers the session environment binding from metadata', async () => {
     await seedSession('remote', {
       cwd: '/local/workspace',
