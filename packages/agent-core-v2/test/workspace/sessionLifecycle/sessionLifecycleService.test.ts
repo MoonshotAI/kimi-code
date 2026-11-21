@@ -52,7 +52,7 @@ describe('SessionLifecycleService', () => {
       ...([
         undefined,
         { workspaceId: 'wm_test', persistenceScope: 'sessions/wm_test' },
-        { homeDir: '/home' },
+        { homeDir: '/home', scope: () => 'sessions' },
         { ready, assertValid: () => {}, get: () => undefined },
         undefined,
         undefined,

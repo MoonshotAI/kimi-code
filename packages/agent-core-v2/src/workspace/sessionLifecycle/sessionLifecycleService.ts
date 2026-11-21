@@ -79,7 +79,7 @@ import {
   toEpochMs,
 } from '#/session/sessionMetadata/sessionMetadataService';
 import { ISessionToolPolicy } from '#/session/sessionToolPolicy/sessionToolPolicy';
-import type { HostSessionSpace } from '#/session/sessionSpace/sessionSpace';
+import { ISessionSpace, type HostSessionSpace } from '#/session/sessionSpace/sessionSpace';
 import { createHostSessionSpace } from '#/session/sessionSpace/sessionSpaceService';
 import { ISessionNotify } from '#/features/notify/sessionNotify';
 import { IEventDispatcher } from '#/state/eventDispatcher';
@@ -332,6 +332,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
         {
           seeds: [
             ...sessionContextSeed(ctx),
+            [ISessionSpace, this.sessionSpace],
             [IProjectLocalConfigService, workdir.localConfig],
             [IWorkspaceTrust, this.trust],
             [ITelemetryService, telemetryBinding.telemetry],

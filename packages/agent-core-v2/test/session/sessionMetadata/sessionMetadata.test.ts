@@ -31,7 +31,7 @@ import { InMemoryStorageService } from '#/persistence/backends/memory/inMemorySt
 import { InMemorySessionLockService } from '#/persistence/backends/memory/sessionLockService';
 import { ISessionLockService } from '#/persistence/interface/sessionLock';
 import { ISessionSpace } from '#/session/sessionSpace/sessionSpace';
-import { createHostSessionSpace, SessionSpaceService } from '#/session/sessionSpace/sessionSpaceService';
+import { createHostSessionSpace } from '#/session/sessionSpace/sessionSpaceService';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 
 import { stubSessionIndexMirror } from '../../app/sessionIndex/stubs';
@@ -104,7 +104,14 @@ describe('SessionMetadata', () => {
       scope: () => 'sessions',
     } as unknown as IBootstrapService);
     ix.stub(IHostFileSystem, {} as unknown as IHostFileSystem);
-    ix.set(ISessionSpace, new SyncDescriptor(SessionSpaceService));
+    ix.stub(ISessionSpace, {
+      _serviceBrand: undefined,
+      ...createHostSessionSpace(
+        ix.get(IBootstrapService),
+        ix.get(IAtomicDocumentStore),
+        ix.get(IHostFileSystem),
+      ),
+    });
     ix.set(ISessionMetadata, new SyncDescriptor(SessionMetadata));
   });
 
@@ -854,7 +861,7 @@ describe('SessionMetadata', () => {
   });
 });
 
-describe('SessionSpaceService', () => {
+describe('createHostSessionSpace', () => {
   async function setup() {
     const homeDir = await mkdtemp(join(tmpdir(), 'session-space-service-'));
     const storage = new FileStorageService(homeDir);
