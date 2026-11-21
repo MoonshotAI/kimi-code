@@ -314,7 +314,6 @@ export async function runWillBeginStepHooks(
   loop: IAgentLoopService,
   firstStepOfTurn = false,
 ): Promise<void> {
-  await loop.start();
   await loop.hooks.onWillBeginStep.run({
     turnId: 0,
     step: 0,

@@ -336,15 +336,14 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
       }
       attachInteractionAgent(agentId, this.ctx.sessionId, handle.accessor.get(IEventDispatcher));
       stage = 'bootstrap';
-      const hasPersistedState = loop.hasPersistedState;
+      const shouldStartImmediately =
+        loop.hasPersistedState || opts.initialProfile !== undefined || opts.initialTools !== undefined;
       const initialProfile = await this.bindBootstrap(handle, opts);
       if (initialProfile !== undefined) await loop.setProfile(initialProfile);
       stage = 'toolActivation';
       await handle.accessor.get(IAgentToolActivationService).activate();
       stage = 'start';
-      // Restored agents have all initial inputs and start immediately. New agents
-      // start on their first submission or operation, after initial mode selection.
-      if (hasPersistedState) await loop.start(opts.initialTools);
+      if (shouldStartImmediately) await loop.start(opts.initialTools);
       return agent;
     } catch (error) {
       this.telemetry.track2('agent_create_failed', {
@@ -411,6 +410,7 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     }
     const source = sourceManaged.handle;
     const sourceLoop = source.accessor.get(IAgentLoopService);
+    await sourceLoop.start();
     const sourceData = sourceLoop.data();
     const override = opts?.binding;
     const sourceBinding = source.accessor.get(IAgentEnvironmentBindingService).current;
