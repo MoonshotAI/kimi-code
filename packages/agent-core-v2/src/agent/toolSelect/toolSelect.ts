@@ -52,8 +52,6 @@ export interface LoadToolsResult {
 export interface IAgentToolSelectService {
   readonly _serviceBrand: undefined;
 
-  featureEnabled(): boolean;
-
   enabled(capabilities?: ToolSelectCapabilities): boolean;
 
   prepareForRequest(signal?: AbortSignal): Promise<void>;

@@ -2,7 +2,6 @@ import { Service } from '#/_base/di/service';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { abortable } from '#/_base/utils/abort';
-import { IFlagService } from '#/app/flag/flag';
 import type { ToolDescription as Tool } from '@moonshot-ai/core/llm/message';
 import { AgentSpaceImpl } from '#/agent/agentContext/agentSpace';
 import type { ContextMessage } from '#/agent/contextMemory/types';
@@ -31,7 +30,6 @@ import {
   renderLoadableToolsAnnouncement,
   shapeUnsupportedDynamicToolContext,
 } from './dynamicTools';
-import { TOOL_SELECT_FLAG_ID } from './flag';
 import {
   IAgentToolSelectService,
   SELECT_TOOLS_TOOL_NAME,
@@ -70,7 +68,6 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
     @IAgentLoopService private readonly profile: IAgentLoopService,
     @IAgentToolPolicyService private readonly toolPolicy: IAgentToolPolicyService,
     @IAgentToolExecutorService toolExecutor: IAgentToolExecutorService,
-    @IFlagService private readonly flags: IFlagService,
     @IAgentStateService private readonly states: IAgentStateService,
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
@@ -109,16 +106,8 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
     return space instanceof AgentSpaceImpl ? space.readHistory() as readonly ContextMessage[] : [];
   }
 
-  featureEnabled(): boolean {
-    return this.flags.enabled(TOOL_SELECT_FLAG_ID);
-  }
-
   enabled(capabilities: ToolSelectCapabilities | undefined = this.profile.getModelCapabilities()): boolean {
-    return (
-      capabilities?.dynamically_loaded_tools === true &&
-      capabilities.tool_use === true &&
-      this.featureEnabled()
-    );
+    return capabilities?.dynamically_loaded_tools === true && capabilities.tool_use === true;
   }
 
   async prepareForRequest(signal?: AbortSignal): Promise<void> {
@@ -145,7 +134,7 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
 
   initialTools(): readonly Tool[] {
     const tools = this.initialToolInfos();
-    return this.activeEntries(tools, this.featureEnabled()).map((tool) => ({
+    return this.activeEntries(tools, true).map((tool) => ({
       name: tool.name,
       description: tool.description,
       parameters: tool.parameters ?? EMPTY_TOOL_PARAMETERS,
@@ -278,18 +267,13 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
     lastDisclosure?: ToolSelectAnnouncementDisclosure,
     includeSnapshot = true,
   ): ToolSelectAnnouncement | undefined {
-    const enabled = this.featureEnabled();
     const state = this.modelState();
     if (state.initial === undefined) return undefined;
     this.resetFailuresIfToolsChanged(state.current);
     const revision = state.changes.length;
-    const runtimeRevision = enabled
-      ? -1
-      : state.changes.findIndex((change) => change.added.some((tool) => tool.origin === 'runtime'));
-    let lastRevision = lastDisclosure?.revision ?? (runtimeRevision < 0 ? undefined : runtimeRevision);
-    if (enabled && !includeSnapshot && (lastRevision === undefined || lastRevision > revision)) lastRevision = 0;
+    let lastRevision = lastDisclosure?.revision;
+    if (!includeSnapshot && (lastRevision === undefined || lastRevision > revision)) lastRevision = 0;
     if (lastRevision === undefined || lastRevision > revision) {
-      if (!enabled) return undefined;
       const legacy = this.legacyAnnouncement(revision, !includeSnapshot);
       if (!includeSnapshot) return legacy?.disclosure.kind === 'snapshot' ? undefined : legacy;
       if (legacy !== undefined) return legacy;
@@ -304,13 +288,11 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
     for (let index = lastRevision; index < revision; index += 1) {
       const change = state.changes[index];
       if (change === undefined) return undefined;
-      const added = change.added.filter((tool) => enabled ? this.isDynamicallyLoadable(tool) : tool.origin === 'runtime');
+      const added = change.added.filter((tool) => this.isDynamicallyLoadable(tool));
       const removed = change.removed.filter((tool) =>
-        enabled
-          ? this.isDynamicallyLoadable(tool) || !change.added.some(
-              (next) => next.name === tool.name && !this.isDynamicallyLoadable(next),
-            )
-          : tool.origin === 'runtime');
+        this.isDynamicallyLoadable(tool) || !change.added.some(
+          (next) => next.name === tool.name && !this.isDynamicallyLoadable(next),
+        ));
       if (added.length === 0 && removed.length === 0) continue;
       return {
         content: renderDeltaAnnouncement(
@@ -326,7 +308,6 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
         },
       };
     }
-    if (!enabled) return undefined;
     const legacy = this.legacyAnnouncement(revision, !includeSnapshot);
     return !includeSnapshot && legacy?.disclosure.kind === 'snapshot' ? undefined : legacy;
   }

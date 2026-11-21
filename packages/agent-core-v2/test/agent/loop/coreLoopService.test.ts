@@ -14,7 +14,6 @@ import { ISessionRunGate } from '#/session/sessionActivity/sessionRunGate';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IAgentToolSelectService } from '#/agent/toolSelect/toolSelect';
-import { TOOL_SELECT_FLAG_ENV } from '#/agent/toolSelect/flag';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IAgentToolResultTruncationService } from '#/agent/toolResultTruncation/toolResultTruncation';
 import { IAgentTaskOutputService } from '#/agent/task/taskOutput';
@@ -85,7 +84,6 @@ describe('core LoopService integration', () => {
   it('previews unresolved request content while the real request applies resolvers', async () => {
     await ctx.dispose();
     ctx = createTestAgent();
-    vi.stubEnv(TOOL_SELECT_FLAG_ENV, '1');
     ctx.configure({ modelCapabilities: {
       image_in: false,
       video_in: false,

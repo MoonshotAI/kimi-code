@@ -6,7 +6,6 @@ import { createServices, type ServiceRegistration, type TestInstantiationService
 import { OrderedHookSlot } from '#/hooks';
 import { IEventBus } from '#/app/event/eventBus';
 import type { Event2, Event2Class } from '#/app/event/event2';
-import { IFlagService } from '#/app/flag/flag';
 import type { LlmRequest, ModelCapability } from '@moonshot-ai/core/llm/request';
 import { fromLlmModelSpec, type ModelCapability as LegacyModelCapability } from '#/llm-adapter/contract/capability';
 import type { Message, ToolCall, ToolDescription as Tool } from '@moonshot-ai/core/llm/message';
@@ -45,7 +44,6 @@ import { memoryOutputStore } from '#/tool/executor';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { AgentToolRegistryService } from '#/agent/toolRegistry/toolRegistryService';
 import { DYNAMIC_TOOL_SCHEMA_VARIANT, LOADABLE_TOOLS_VARIANT } from '#/agent/toolSelect/dynamicTools';
-import { TOOL_SELECT_FLAG_ID } from '#/agent/toolSelect/flag';
 import { IAgentToolSelectService, SELECT_TOOLS_TOOL_NAME } from '#/agent/toolSelect/toolSelect';
 import { IAgentToolSelectAnnouncementsService } from '#/agent/toolSelect/toolSelectAnnouncements';
 import { AgentToolSelectAnnouncementsService } from '#/agent/toolSelect/toolSelectAnnouncementsService';
@@ -90,7 +88,6 @@ const REQUIRED_PAYLOAD_PARAMETERS = {
 
 let disposables: DisposableStore;
 let capabilities: ModelCapability;
-let flagEnabled: boolean;
 let activeToolNames: ReadonlySet<string> | undefined;
 let disclosureToolActive: boolean;
 let deniedToolNames: ReadonlySet<string>;
@@ -98,7 +95,6 @@ let deniedToolNames: ReadonlySet<string>;
 beforeEach(() => {
   disposables = new DisposableStore();
   capabilities = makeCapabilities({ tool_use: true, dynamically_loaded_tools: true });
-  flagEnabled = false;
   activeToolNames = undefined;
   disclosureToolActive = true;
   deniedToolNames = new Set();
@@ -433,9 +429,6 @@ function registerSharedServices(
     ]),
     isToolActiveForDisclosure: () => disclosureToolActive,
   });
-  reg.definePartialInstance(IFlagService, {
-    enabled: (id: string) => (id === TOOL_SELECT_FLAG_ID ? flagEnabled : false),
-  });
   reg.defineInstance(IWireService, stubWire());
   reg.defineInstance(IEventDispatcher, {
     _serviceBrand: undefined,
@@ -653,36 +646,30 @@ async function execute(
 }
 
 describe('AgentToolSelectService gate', () => {
-  it('opens only when dynamically_loaded_tools capability, tool_use capability and flag are all on', () => {
-    flagEnabled = true;
+  it('opens when dynamically_loaded_tools and tool_use capabilities are both on', () => {
     const { sut } = createHarness();
     expect(sut.enabled()).toBe(true);
   });
 
   it('stays closed without the dynamically_loaded_tools capability', () => {
-    flagEnabled = true;
     capabilities = makeCapabilities({ tool_use: true, dynamically_loaded_tools: false });
     const { sut } = createHarness();
     expect(sut.enabled()).toBe(false);
   });
 
   it('stays closed without tool_use capability', () => {
-    flagEnabled = true;
     capabilities = makeCapabilities({ tool_use: false, dynamically_loaded_tools: true });
-    const { sut } = createHarness();
-    expect(sut.enabled()).toBe(false);
-  });
-
-  it('stays closed without the flag', () => {
-    flagEnabled = false;
     const { sut } = createHarness();
     expect(sut.enabled()).toBe(false);
   });
 });
 
 describe('AgentToolSelectService S0 baseline (gate closed)', () => {
+  beforeEach(() => {
+    capabilities = makeCapabilities({ tool_use: true, dynamically_loaded_tools: false });
+  });
+
   it.each([false, true])('keeps initial schemas pinned without dynamic loading (restored: %s)', async (restoring) => {
-    flagEnabled = true;
     const h = createHarness();
     const old = new StubMcpTool('SchemaTool');
     const registration = h.registry.register(old, { source: 'builtin' });
@@ -876,10 +863,6 @@ describe('AgentToolSelectService S0 baseline (gate closed)', () => {
 });
 
 describe('AgentToolSelectService view shaping (gate open)', () => {
-  beforeEach(() => {
-    flagEnabled = true;
-  });
-
   it.each(['builtin', 'mcp'] as const)('keeps pinned inline %s tools without duplicate declarations', async (source) => {
     const h = createExecutorHarness();
     const name = source === 'mcp' ? MCP_BETA : 'Echo';
@@ -1281,10 +1264,6 @@ describe('AgentToolSelectService view shaping (gate open)', () => {
 });
 
 describe('AgentToolSelectService.load', () => {
-  beforeEach(() => {
-    flagEnabled = true;
-  });
-
   it('settles per name and keeps same-name updates active with one reminder', async () => {
     const h = createHarness();
     const alpha = new StubMcpTool(MCP_ALPHA);
@@ -1663,10 +1642,6 @@ describe('AgentToolSelectService.load', () => {
 });
 
 describe('AgentToolSelectService consecutive failures', () => {
-  beforeEach(() => {
-    flagEnabled = true;
-  });
-
   it('counts failed calls across different names and turns, not names within a batch', () => {
     const h = createHarness();
     expect(h.sut.load(['Automation', 'automations', 'AutomationList']).consecutiveFailures).toBe(1);
@@ -1793,10 +1768,6 @@ describe('AgentToolSelectService consecutive failures', () => {
 });
 
 describe('AgentToolSelectService executor disclosure independence', () => {
-  beforeEach(() => {
-    flagEnabled = true;
-  });
-
   it('the executor runs a deferred tool without requiring selection', async () => {
     const h = createExecutorHarness();
     const alpha = new StubMcpTool(MCP_ALPHA);
@@ -1882,10 +1853,6 @@ describe('AgentToolSelectService executor disclosure independence', () => {
 });
 
 describe('AgentToolSelectService missing tool wording', () => {
-  beforeEach(() => {
-    flagEnabled = true;
-  });
-
   it('tells a loaded-but-disconnected MCP tool apart from an unknown name', async () => {
     const h = createExecutorHarness();
     h.contextMemory.messages.push(schemaMessage(MCP_GONE));
@@ -1921,10 +1888,6 @@ describe('AgentToolSelectService missing tool wording', () => {
 });
 
 describe('AgentToolSelectService loadable-tools announcements', () => {
-  beforeEach(() => {
-    flagEnabled = true;
-  });
-
   it('tells the model not to select tools without an added announcement', () => {
     const h = createHarness();
     const tool = h.ix.createInstance(SelectToolsTool);
@@ -2141,13 +2104,6 @@ describe('AgentToolSelectService loadable-tools announcements', () => {
     const first = await resolveInitialAnnouncement(h);
     expect(first).toContain(`<tools_added>\n${MCP_BETA}\n</tools_added>`);
     expect(first).not.toContain(MCP_ALPHA);
-    expect(await announce(h)).toBeUndefined();
-  });
-
-  it('stays silent while the gate is closed', async () => {
-    flagEnabled = false;
-    const h = createHarness();
-    registerMcp(h, new StubMcpTool(MCP_ALPHA));
     expect(await announce(h)).toBeUndefined();
   });
 });

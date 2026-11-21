@@ -94,7 +94,7 @@ it('loads the browser through upstream MCP selection and restores it with sessio
     homeDir: home,
     port: 0,
     logLevel: 'silent',
-    env: { ...process.env, KIMI_CODE_EXPERIMENTAL_TOOL_SELECT: '1' },
+    env: { ...process.env },
   });
   const registration = registerDesktopBrowserMcp(server.core, browser.config, createDesktopBrowserAccess(createControl()));
   try {
@@ -183,7 +183,7 @@ it('reminds agents about the built-in browser and follows the agent control swit
     homeDir: home,
     port: 0,
     logLevel: 'silent',
-    env: { ...process.env, KIMI_CODE_EXPERIMENTAL_TOOL_SELECT: '1' },
+    env: { ...process.env },
   });
   const sessions = server.core.accessor.get(ISessionManager);
   const existing = await sessions.create({ workDir: home });
@@ -277,7 +277,7 @@ it('keeps the built-in browser for chats that already used it when agent control
     homeDir: home,
     port: 0,
     logLevel: 'silent',
-    env: { ...process.env, KIMI_CODE_EXPERIMENTAL_TOOL_SELECT: '1' },
+    env: { ...process.env },
   });
   const sessions = server.core.accessor.get(ISessionManager);
   const registration = registerDesktopBrowserMcp(server.core, browser.config, access);
@@ -384,7 +384,7 @@ it('does not keep the built-in browser for chats whose only browser attempts wer
     homeDir: home,
     port: 0,
     logLevel: 'silent',
-    env: { ...process.env, KIMI_CODE_EXPERIMENTAL_TOOL_SELECT: '1' },
+    env: { ...process.env },
   });
   const sessions = server.core.accessor.get(ISessionManager);
   const registration = registerDesktopBrowserMcp(server.core, browser.config, access);
@@ -502,7 +502,7 @@ it('tells every agent why the built-in browser is blocked and allows other avail
     homeDir: home,
     port: 0,
     logLevel: 'silent',
-    env: { ...process.env, KIMI_CODE_EXPERIMENTAL_TOOL_SELECT: '1' },
+    env: { ...process.env },
   });
   const sessions = server.core.accessor.get(ISessionManager);
   const registration = registerDesktopBrowserMcp(server.core, browser.config, access);
@@ -612,7 +612,7 @@ it('injects trusted subagent runs through dynamic and direct tools without weake
     homeDir: home,
     port: 0,
     logLevel: 'silent',
-    env: { ...process.env, KIMI_CODE_EXPERIMENTAL_TOOL_SELECT: '1' },
+    env: { ...process.env },
   });
   const sessions = server.core.accessor.get(ISessionManager);
   const registration = registerDesktopBrowserMcp(server.core, browser.config, access);
@@ -761,7 +761,7 @@ it('attaches trusted identity to an eligible subagent scope that already exists'
     homeDir: home,
     port: 0,
     logLevel: 'silent',
-    env: { ...process.env, KIMI_CODE_EXPERIMENTAL_TOOL_SELECT: '1' },
+    env: { ...process.env },
   });
   let registration: ReturnType<typeof registerDesktopBrowserMcp> | undefined;
   try {

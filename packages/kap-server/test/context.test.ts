@@ -108,8 +108,6 @@ describe('context routes on restored sessions and dynamic tools', () => {
   let home: string | undefined;
   let base: string;
 
-  const TOOL_SELECT_ENV = 'KIMI_CODE_EXPERIMENTAL_TOOL_SELECT';
-
   beforeAll(async () => {
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-context-'));
     const modelCatalog: IModelCatalog = {
@@ -141,7 +139,6 @@ describe('context routes on restored sessions and dynamic tools', () => {
       },
     };
     const seeds: ScopeSeed = [[IModelCatalog, modelCatalog]];
-    process.env[TOOL_SELECT_ENV] = '1';
     server = await startServer({
       hostIdentity: TEST_HOST_IDENTITY,
       host: '127.0.0.1',
@@ -154,7 +151,6 @@ describe('context routes on restored sessions and dynamic tools', () => {
   });
 
   afterAll(async () => {
-    delete process.env[TOOL_SELECT_ENV];
     if (server !== undefined) {
       await server.close();
       server = undefined;

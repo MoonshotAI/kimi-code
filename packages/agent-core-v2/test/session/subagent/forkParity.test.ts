@@ -227,7 +227,7 @@ describe('subagent task reminders and fork request parity', () => {
     const profile = parent.accessor.get(IAgentLoopService);
     expect(profile.data().activeToolNames).toEqual([...ACTIVE_TOOL_NAMES]);
     expect(parent.accessor.get(IAgentToolSelectService).initialTools().map((tool) => tool.name))
-      .toEqual([...ACTIVE_TOOL_NAMES].toSorted());
+      .toEqual([...ACTIVE_TOOL_NAMES, 'select_tools'].toSorted());
     parent.accessor.get(IAgentPermissionModeService).setMode('yolo');
 
     ctx.mockNextResponse({

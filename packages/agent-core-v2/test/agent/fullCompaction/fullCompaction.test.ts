@@ -46,7 +46,6 @@ import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTok
 import { renderCompactionInstruction } from '#/agent/fullCompaction/compactionInstruction';
 import { IAgentToolSelectAnnouncementsService } from '#/agent/toolSelect/toolSelectAnnouncements';
 import { IAgentToolSelectService } from '#/agent/toolSelect/toolSelect';
-import { TOOL_SELECT_FLAG_ENV } from '#/agent/toolSelect/flag';
 import {
   IAgentFullCompactionService,
   IModelOAuthTokens,
@@ -4830,13 +4829,12 @@ describe('FullCompaction prompt-cache prefix', () => {
     loadSchema: boolean,
     media: (typeof MEDIA_SCENARIOS)[number],
   ): Promise<TestAgentContext> {
-    vi.stubEnv(TOOL_SELECT_FLAG_ENV, toolSelect ? '1' : '0');
     const ctx = testAgent({
       initialConfig: { providers: {}, loopControl: { reservedContextSize: 0 } },
     });
     ctx.configure({
       provider: CATALOGUED_PROVIDER,
-      modelCapabilities: { ...CATALOGUED_MODEL_CAPABILITIES, dynamically_loaded_tools: true },
+      modelCapabilities: { ...CATALOGUED_MODEL_CAPABILITIES, dynamically_loaded_tools: toolSelect },
     });
     await ctx.restorePersisted();
     await ctx.rpc.setPermission({ mode: 'yolo' });

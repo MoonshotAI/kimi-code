@@ -833,7 +833,7 @@ describe('native browser IPC', () => {
         homeDir: home,
         port: 0,
         logLevel: 'silent',
-        env: { ...process.env, KIMI_CODE_EXPERIMENTAL_TOOL_SELECT: '1', KIMI_CODE_EXPERIMENTAL_PERSISTENCE_MINIDB_READMODEL: 'false', KIMI_CODE_EXPERIMENTAL_SEARCH_WORKER: 'false' },
+        env: { ...process.env, KIMI_CODE_EXPERIMENTAL_PERSISTENCE_MINIDB_READMODEL: 'false', KIMI_CODE_EXPERIMENTAL_SEARCH_WORKER: 'false' },
       });
       registration = registerDesktopBrowserMcp(server.core, browser.config, access);
       const sessions = server.core.accessor.get(core.ISessionManager);
