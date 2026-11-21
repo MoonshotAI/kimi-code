@@ -1049,8 +1049,50 @@ describe('KimiTUI startup', () => {
 
     await (driver as unknown as { createNewSession(): Promise<void> }).createNewSession();
 
+    expect(harness.createSession).toHaveBeenCalledWith(expect.objectContaining({ environmentId: 'local' }));
+  });
+
+  it('leaves pinning a /new session at the startup directory to the engine so its main agent stays lazy', async () => {
+    const session = makeSession({
+      getEnvironment: vi.fn(async () => ({ environmentId: 'local', cwd: '/tmp/proj-a' })),
+    });
+    const harness = makeHarness(session, {
+      getConfig: vi.fn(async () => ({
+        models: { k2: { model: 'moonshot-v1', maxContextSize: 100 } },
+        defaultModel: 'k2',
+      })),
+    });
+    const driver = makeDriver(harness, makeStartupInput({ model: 'k2' }));
+    await expect(driver.init()).resolves.toBe(false);
+    (driver as unknown as { session: typeof session }).session = session;
+
+    await (driver as unknown as { createNewSession(): Promise<void> }).createNewSession();
+
+    expect(harness.createSession.mock.calls[0]?.[0]).toMatchObject({ workDir: '/tmp/proj-a', environmentId: 'local' });
+    expect(harness.createSession.mock.calls[0]?.[0]?.environmentCwd).toBeUndefined();
+  });
+
+  it('keeps an explicitly pinned local cwd of the current session for /new', async () => {
+    const session = makeSession({
+      getEnvironment: vi.fn(async () => ({ environmentId: 'local', cwd: '/tmp/elsewhere' })),
+    });
+    const harness = makeHarness(session, {
+      getConfig: vi.fn(async () => ({
+        models: { k2: { model: 'moonshot-v1', maxContextSize: 100 } },
+        defaultModel: 'k2',
+      })),
+    });
+    const driver = makeDriver(
+      harness,
+      makeStartupInput({ model: 'k2', environment: 'local', environmentCwd: '/tmp/elsewhere' }),
+    );
+    await expect(driver.init()).resolves.toBe(false);
+    (driver as unknown as { session: typeof session }).session = session;
+
+    await (driver as unknown as { createNewSession(): Promise<void> }).createNewSession();
+
     expect(harness.createSession).toHaveBeenCalledWith(
-      expect.objectContaining({ environmentId: 'local', environmentCwd: '/tmp/proj-a' }),
+      expect.objectContaining({ environmentId: 'local', environmentCwd: '/tmp/elsewhere' }),
     );
   });
 

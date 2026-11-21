@@ -3132,7 +3132,11 @@ export class KimiTUI {
     const session = this.session;
     if (session !== undefined) {
       const binding = await session.getEnvironment();
-      if (binding.environmentId !== 'local' && binding.cwd === undefined) {
+      if (binding.environmentId === 'local') {
+        const explicitCwd = binding.cwd !== undefined && !sameDir(binding.cwd, this.state.appState.workDir);
+        return { environmentId: 'local', environmentCwd: explicitCwd ? binding.cwd : undefined };
+      }
+      if (binding.cwd === undefined) {
         throw new Error(
           `Cannot start a new session on ${binding.environmentId}: the current binding has no working directory`,
         );
