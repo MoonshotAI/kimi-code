@@ -50,9 +50,12 @@ describe('SessionLifecycleService', () => {
     });
     const service = new SessionLifecycleService(
       ...([
-        undefined,
+        {
+          invokeFunction: (fn: (accessor: { get: () => unknown }) => unknown) =>
+            fn({ get: () => ({}) }),
+        },
         { workspaceId: 'wm_test', persistenceScope: 'sessions/wm_test' },
-        { homeDir: '/home', scope: () => 'sessions' },
+        { homeDir: '/home' },
         { ready, assertValid: () => {}, get: () => undefined },
         undefined,
         undefined,

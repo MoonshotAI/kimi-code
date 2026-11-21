@@ -1,7 +1,15 @@
 import { join } from 'pathe';
 
-import { createSessionSpace, type SessionSpaceBackend } from '@moonshot-ai/core/session/index';
+import { createSessionSpace } from '@moonshot-ai/core/session/index';
+import type {
+  SessionInit,
+  SessionPatch,
+  SessionSpaceBackend,
+  SessionUpdateOptions,
+} from '@moonshot-ai/core/session/index';
 
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { unwrapErrorCause } from '#/_base/errors/errors';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
@@ -9,7 +17,7 @@ import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStor
 import { encodeSessionMeta } from '#/session/sessionMetadata/sessionMetadataService';
 import type { SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
 
-import type { HostSessionSpace } from './sessionSpace';
+import { ISessionSpace, type HostSessionSpace } from './sessionSpace';
 
 function isMissingFileError(error: unknown): boolean {
   const unwrapped = unwrapErrorCause(error);
@@ -98,3 +106,57 @@ export function createHostSessionSpace(
     set: (key, record) => backend.write(key, record),
   };
 }
+
+export class SessionSpaceService implements ISessionSpace {
+  declare readonly _serviceBrand: undefined;
+
+  private readonly space: HostSessionSpace;
+
+  constructor(
+    @IBootstrapService bootstrap: IBootstrapService,
+    @IAtomicDocumentStore docs: IAtomicDocumentStore,
+    @IHostFileSystem hostFs: IHostFileSystem,
+  ) {
+    this.space = createHostSessionSpace(bootstrap, docs, hostFs);
+  }
+
+  keyFor(scope: string): string {
+    return this.space.keyFor(scope);
+  }
+
+  list(prefix?: string): Promise<readonly string[]> {
+    return this.space.list(prefix);
+  }
+
+  get(key: string): Promise<SessionMeta | undefined> {
+    return this.space.get(key);
+  }
+
+  create(key: string, init: SessionInit<SessionMeta>): Promise<SessionMeta> {
+    return this.space.create(key, init);
+  }
+
+  update(
+    key: string,
+    patch: SessionPatch<SessionMeta>,
+    opts?: SessionUpdateOptions,
+  ): Promise<SessionMeta> {
+    return this.space.update(key, patch, opts);
+  }
+
+  set(key: string, record: SessionMeta): Promise<void> {
+    return this.space.set(key, record);
+  }
+
+  delete(key: string): Promise<void> {
+    return this.space.delete(key);
+  }
+}
+
+registerScopedService(
+  LifecycleScope.App,
+  ISessionSpace,
+  SessionSpaceService,
+  ScopeActivation.OnScopeCreated,
+  'storage',
+);
