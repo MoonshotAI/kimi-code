@@ -221,6 +221,16 @@ export class AgentLoopRequestObserver {
       }
       return;
     }
+    if (event.reason === 'invalid_tool_arguments') {
+      this.log.warn('tool call arguments invalid; requesting a corrected tool call', {
+        model: request.model.spec.name,
+        ...request.logFields,
+        attempt: event.failedAttempt,
+        ...retryErrorFields(event.error),
+      });
+      return;
+    }
+    if (event.reason !== 'recovery') return;
     if (event.strategy === 'structure') {
       this.log.warn('provider rejected request structure; resending with strict projection', {
         model: request.model.spec.name,

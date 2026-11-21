@@ -1,5 +1,5 @@
 import { annotateBundledSkillParts, type UserPromptOrigin } from '#/llm/origin';
-import type { AssistantMessage, Message, ToolCall, ToolMessage, UserMessage } from '#/llm/message';
+import type { Message, ToolCall, ToolMessage, UserMessage } from '#/llm/message';
 import type { LlmOutcome } from '#/llm/response';
 import type { ToolExecutionHandler, ToolResult } from '#/tool/types';
 import { withAbort, type AbortScope } from '#/utils/abort';
@@ -81,7 +81,6 @@ export interface StepState {
   steerRequested: boolean;
   toolCallStreaming: boolean;
   llm?: LlmOutcome;
-  partialMessage?: AssistantMessage | null;
   readonly calls: StepCall[];
   readonly settled: Record<string, ToolMessage | null>;
   outcome?: StepOutcome;

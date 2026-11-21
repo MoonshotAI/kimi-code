@@ -413,7 +413,7 @@ describe('Agent loop', () => {
     );
   });
 
-  it('appends every failed attempt partial when a retried request fails mid-stream', async () => {
+  it('keeps attempts isolated when a retried request fails mid-stream', async () => {
     const local = createTestAgent({
       initialConfig: { providers: {}, loopControl: { maxAttemptsPerStep: 2 } },
     });
@@ -440,7 +440,7 @@ describe('Agent loop', () => {
         toolCalls: [],
         usage: { inputOther: 11, output: 5, inputCacheCreation: 0, inputCacheRead: 0 },
       });
-      expect(local.contextData().history).toContainEqual({
+      expect(local.contextData().history).not.toContainEqual({
         role: 'assistant',
         content: [{ type: 'text', text: 'first attempt partial' }],
         providerMessageId: 'mock-1',
@@ -457,7 +457,7 @@ describe('Agent loop', () => {
         record.type === 'context.append_loop_event' && (record['event'] as { type?: string }).type === 'step.end',
       );
       expect(endedSteps.map((record) => (record['event'] as { usage?: unknown }).usage)).toMatchObject([
-        { inputOther: 7, output: 3 },
+        undefined,
         { inputOther: 11, output: 5 },
       ]);
 
@@ -508,6 +508,8 @@ describe('Agent loop', () => {
             args: expect.objectContaining({ turnId: 0, step: 1 }),
           }),
         );
+        expect(JSON.stringify(local.contextData().history)).not.toContain('partial before retry');
+        expect(JSON.stringify(local.contextData().history)).toContain('completed after retry');
       } finally {
         await local.dispose();
       }
