@@ -1,5 +1,5 @@
 import { mkdtempSync, realpathSync } from 'node:fs';
-import { mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 
 import { join } from 'pathe';
@@ -416,6 +416,32 @@ describe('ProgramMcp', () => {
       expect(wtManager.list()).toEqual([]);
     });
     expect(disposedWatches).toContain(wt);
+    pinned.dispose();
+  });
+
+  it('resolves a pinned workdir reached through a symlink to its checkout when pinning, re-anchoring and previewing', async () => {
+    const wt = temp('kimi-program-mcp-wt-');
+    await mkdir(join(wt, '.git'));
+    const link = join(temp('kimi-program-mcp-link-'), 'checkout');
+    await symlink(wt, link);
+    await writeMcpJson(projectFile(primary), { rootServer: disabledStdio('root') });
+    await writeMcpJson(projectFile(wt), { wtServer: disabledStdio('wt') });
+    const program = createProgramMcp();
+    await program.root.ready;
+    const pinned = await program.workdir(link);
+    await pinned.ready;
+    expect(pinned.anchor).toBe(primary);
+
+    projectDirs.push(wt);
+    projectChanges.fire();
+    const second = await program.workdir(link);
+    await Promise.all([pinned.ready, second.ready]);
+
+    expect(pinned.anchor).toBe(link);
+    expect(second.anchor).toBe(link);
+    expect(names(pinned.view())).toEqual(['wtServer']);
+    expect((await program.previewProjectServers(link)).map((server) => server.name)).toEqual(['wtServer']);
+    second.dispose();
     pinned.dispose();
   });
 

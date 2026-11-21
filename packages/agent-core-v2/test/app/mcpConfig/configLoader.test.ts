@@ -1,5 +1,5 @@
-import { mkdtempSync } from 'node:fs';
-import { mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtempSync, realpathSync } from 'node:fs';
+import { mkdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'pathe';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -210,6 +210,74 @@ describe('findMcpAnchor', () => {
     const dir = await outside();
 
     await expect(findMcpAnchor(fs, dir, { root, additionalDirs: [] })).resolves.toBe(root);
+  });
+
+  async function symlinkedLayout() {
+    const base = makeTempDir();
+    const realBase = realpathSync(base);
+    const real = join(realBase, 'real-project-directory-with-a-long-name');
+    await mkdir(join(real, '.git'), { recursive: true });
+    await writeFile(join(real, '.git', 'HEAD'), 'ref: refs/heads/main\n');
+    const checkout = await worktree(join(real, '.worktrees', 'feature'));
+    const external = await worktree(join(realBase, 'external'));
+    await Promise.all([mkdir(join(checkout, 'src')), mkdir(join(external, 'src'))]);
+    const link = join(base, 'l');
+    const externalLink = join(base, 'x');
+    await Promise.all([symlink(real, link), symlink(external, externalLink)]);
+    return { real, checkout, external, link, externalLink };
+  }
+
+  it.each([
+    [
+      'a working directory reached through a symlink to the project root',
+      (layout: Awaited<ReturnType<typeof symlinkedLayout>>) => ({
+        workDir: join(layout.link, '.worktrees', 'feature', 'src'),
+        project: { root: layout.real, additionalDirs: [] },
+        anchor: join(layout.link, '.worktrees', 'feature'),
+      }),
+    ],
+    [
+      'a project root stored through a symlink',
+      (layout: Awaited<ReturnType<typeof symlinkedLayout>>) => ({
+        workDir: join(layout.checkout, 'src'),
+        project: { root: layout.link, additionalDirs: [] },
+        anchor: layout.checkout,
+      }),
+    ],
+    [
+      'an additional directory registered through a symlink',
+      (layout: Awaited<ReturnType<typeof symlinkedLayout>>) => ({
+        workDir: join(layout.external, 'src'),
+        project: { root: layout.real, additionalDirs: [layout.externalLink] },
+        anchor: layout.external,
+      }),
+    ],
+    [
+      'a working directory reached through a symlink to an additional directory',
+      (layout: Awaited<ReturnType<typeof symlinkedLayout>>) => ({
+        workDir: join(layout.externalLink, 'src'),
+        project: { root: layout.real, additionalDirs: [layout.external] },
+        anchor: layout.externalLink,
+      }),
+    ],
+  ])('compares real paths for %s and keeps the requested spelling', async (_label, scenario) => {
+    const { workDir, project, anchor } = scenario(await symlinkedLayout());
+
+    await expect(findMcpAnchor(fs, workDir, project)).resolves.toBe(anchor);
+  });
+
+  it('anchors the project root reached through a symlink at the stored project root', async () => {
+    const { real, link } = await symlinkedLayout();
+
+    await expect(findMcpAnchor(fs, link, { root: real, additionalDirs: [] })).resolves.toBe(real);
+  });
+
+  it('anchors a working directory that does not exist yet at its checkout', async () => {
+    const { real, checkout } = await symlinkedLayout();
+
+    await expect(
+      findMcpAnchor(fs, join(checkout, 'missing'), { root: real, additionalDirs: [] }),
+    ).resolves.toBe(checkout);
   });
 
   it('falls back to the project root when the checkout root lies above a registered additional directory', async () => {

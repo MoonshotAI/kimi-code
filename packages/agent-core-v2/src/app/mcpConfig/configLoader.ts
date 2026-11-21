@@ -27,22 +27,37 @@ export async function findMcpAnchor(
 ): Promise<McpAnchor> {
   const start = normalize(workDir);
   const checkoutRoot = (await findNearestGitMarker(fs, start))?.root;
-  const projectRoot = isSameOrInside(start, project.root) ? normalize(project.root) : undefined;
-  const nearest = [checkoutRoot, projectRoot]
+  const [here, root, checkout, ...additional] = await Promise.all([
+    canonicalDir(fs, start),
+    canonicalDir(fs, project.root),
+    checkoutRoot === undefined ? undefined : canonicalDir(fs, checkoutRoot),
+    ...project.additionalDirs.map((dir) => canonicalDir(fs, dir)),
+  ]);
+  const nearest = [isSameOrInside(here, root) ? root : undefined, checkout]
     .filter((dir) => dir !== undefined)
-    .toSorted((a, b) => workspaceRootKey(b).length - workspaceRootKey(a).length)[0];
-  if (nearest === undefined || !isInsideProject(project, nearest)) return rootAnchor(project.root);
-  return nearest as McpAnchor;
+    .toSorted((a, b) => b.key.length - a.key.length)[0];
+  if (nearest === undefined || ![root, ...additional].some((scope) => isSameOrInside(nearest, scope))) {
+    return rootAnchor(project.root);
+  }
+  return nearest.dir as McpAnchor;
 }
 
-function isInsideProject(project: McpAnchorScope, dir: string): boolean {
-  return [project.root, ...project.additionalDirs].some((root) => isSameOrInside(dir, root));
+interface CanonicalDir {
+  readonly dir: string;
+  readonly key: string;
 }
 
-function isSameOrInside(dir: string, ancestor: string): boolean {
-  const dirKey = workspaceRootKey(normalize(dir));
-  const ancestorKey = workspaceRootKey(normalize(ancestor));
-  return dirKey === ancestorKey || dirKey.startsWith(`${ancestorKey}/`);
+async function canonicalDir(fs: IHostFileSystem, dir: string): Promise<CanonicalDir> {
+  const spelled = normalize(dir);
+  try {
+    return { dir: spelled, key: workspaceRootKey(normalize(await fs.realpath(spelled))) };
+  } catch {
+    return { dir: spelled, key: workspaceRootKey(spelled) };
+  }
+}
+
+function isSameOrInside(dir: CanonicalDir, ancestor: CanonicalDir): boolean {
+  return dir.key === ancestor.key || dir.key.startsWith(`${ancestor.key}/`);
 }
 
 export interface McpJsonPaths {
