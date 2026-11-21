@@ -49,16 +49,16 @@ import {
   IConfigService,
   ISessionContext,
   ISessionMcpHandle,
-  ISessionWorkspaceContext,
+  ISessionWorkdirContext,
   IAgentTowerService,
   IHostRequestHeaders,
   IMcpManagementService,
   IMcpOAuthService,
   ISessionManager,
   ISessionLockService,
-  IWorkspaceInstanceManager,
+  IProjectInstanceManager,
   IEnvironmentService,
-  IWorkspaceService,
+  IProjectService,
   MAIN_AGENT_ID,
   OsProcessErrors,
   APIProviderRateLimitError,
@@ -1775,7 +1775,7 @@ key = "${titleOAuthRef.key}"
         `[workspace]\nadditional_dir = [${JSON.stringify(extraDir)}]\n`,
       );
       const client = harness['rpc'] as SDKRpcClientV2;
-      const manager = client.engineAccessor.get(IWorkspaceInstanceManager);
+      const manager = client.engineAccessor.get(IProjectInstanceManager);
       const acquireSpy = vi.spyOn(manager, 'acquire');
       try {
         await expect(harness.getWorkspaceAdditionalDirs(workDir)).resolves.toEqual([extraDir]);
@@ -1795,7 +1795,7 @@ key = "${titleOAuthRef.key}"
       const managedDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-managed-'));
       tempDirs.push(workDir, extraDir, managedDir);
       const client = harness['rpc'] as SDKRpcClientV2;
-      const workspaces = client.engineAccessor.get(IWorkspaceService);
+      const workspaces = client.engineAccessor.get(IProjectService);
       try {
         await expect(harness.getWorkspaceAdditionalDirs(workDir)).resolves.toEqual([]);
         await workspaces.create({ root: workDir, additionalDirs: [managedDir] });
@@ -1815,7 +1815,7 @@ key = "${titleOAuthRef.key}"
       const extraDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-extra-'));
       tempDirs.push(workDir, extraDir);
       const client = harness['rpc'] as SDKRpcClientV2;
-      const manager = client.engineAccessor.get(IWorkspaceInstanceManager);
+      const manager = client.engineAccessor.get(IProjectInstanceManager);
       let releaseReady!: () => void;
       const readyGate = new Promise<void>((resolve) => {
         releaseReady = resolve;
@@ -2493,7 +2493,7 @@ key = "${titleOAuthRef.key}"
       const before = getLiveSessionById(client.engineAccessor, 'ses_dirs_reload')!;
       const workspaceId = before.accessor.get(ISessionContext).workspaceId;
       const currentProgram = () => {
-        const current = client.engineAccessor.get(IWorkspaceInstanceManager).get(workspaceId);
+        const current = client.engineAccessor.get(IProjectInstanceManager).get(workspaceId);
         if (current === undefined) throw new Error('expected the current workspace program');
         return current.program;
       };
@@ -3311,7 +3311,7 @@ describe('SDKRpcClientV2 workspace trust', () => {
     try {
       const session = await harness.createSession({ workDir: worktree });
       const workspace = getLiveSessionById((harness['rpc'] as SDKRpcClientV2).engineAccessor, session.id)!
-        .accessor.get(ISessionWorkspaceContext);
+        .accessor.get(ISessionWorkdirContext);
 
       const added = await session.addAdditionalDir(sessionOnly, { persist: false });
       expect(workspace.additionalDirs).toContain(sessionOnly);

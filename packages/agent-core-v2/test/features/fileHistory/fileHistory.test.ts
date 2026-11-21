@@ -36,8 +36,8 @@ import { BlobStoreService } from '#/persistence/backends/node-fs/blobStoreServic
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IBlobStore } from '#/persistence/interface/blobStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
-import type { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
-import { resolveWorkspacePath } from '#/session/workspaceContext/workspacePaths';
+import type { ISessionWorkdirContext } from '#/session/workdirContext/workdirContext';
+import { resolveWorkdirPath } from '#/session/workdirContext/workdirPaths';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import type { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { JsonAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDocumentStore';
@@ -135,8 +135,8 @@ describe('AgentFileHistoryService', () => {
     const workspace = {
       workDir: WORK_DIR,
       additionalDirs: [],
-      resolve: (rel: string) => resolveWorkspacePath(posix, WORK_DIR, rel),
-    } as unknown as ISessionWorkspaceContext;
+      resolve: (rel: string) => resolveWorkdirPath(posix, WORK_DIR, rel),
+    } as unknown as ISessionWorkdirContext;
     pushConstructionFrame({
       ctor: AgentFileHistoryService,
       config: undefined,

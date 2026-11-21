@@ -45,8 +45,8 @@ import {
 import { writeExportZip } from '#/app/sessionExport/zip';
 import { ISessionIndex, type SessionSummary } from '#/app/sessionIndex/sessionIndex';
 import { ISessionManager, type UnguardedSessionLifecycle } from '#/app/sessionManager/sessionManager';
-import { ISessionLifecycleService } from '#/workspace/sessionLifecycle/sessionLifecycle';
-import { IWorkspaceService } from '#/app/workspace/workspace';
+import { ISessionLifecycleService } from '#/project/sessionLifecycle/sessionLifecycle';
+import { IProjectService } from '#/app/project/project';
 import { Error2 } from '#/errors';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionRequestAttributionService } from '#/session/requestAttribution/requestAttribution';
@@ -962,7 +962,7 @@ function registerSessionExportServices(
       throw new Error('createChild should not be called by session export');
     },
   });
-  reg.defineInstance(IWorkspaceService, {
+  reg.defineInstance(IProjectService, {
     _serviceBrand: undefined,
     list: async () => [],
     get: async (id) => ({

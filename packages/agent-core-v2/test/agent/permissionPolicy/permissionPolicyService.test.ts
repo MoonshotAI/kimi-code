@@ -37,7 +37,7 @@ import { findGitWorkTree } from '#/app/git/workTree';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { ToolAccesses, type ToolAccesses as ToolAccessList } from '#/tool/toolContract';
-import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
+import { ISessionWorkdirContext } from '#/session/workdirContext/workdirContext';
 
 import { stubPermissionModeService } from '../permissionMode/stubs';
 import { recordingTelemetry } from '../../app/telemetry/stubs';
@@ -87,7 +87,7 @@ describe('AgentPermissionPolicyService chain', () => {
           rules: () => rules,
           sessionApprovalRulePatterns: () => sessionApprovalRulePatterns,
         }));
-        reg.defineInstance(ISessionWorkspaceContext, workspace.stub);
+        reg.defineInstance(ISessionWorkdirContext, workspace.stub);
         reg.defineInstance(IHostEnvironment, kaosStub());
         reg.defineInstance(IAgentEnvironmentService, {
           _serviceBrand: undefined,
@@ -524,7 +524,7 @@ describe('AgentPermissionPolicyService git cwd write approval', () => {
           makeAgentScopeContext({ agentId: 'main', agentScope: '' }),
         );
         reg.definePartialInstance(IAgentPermissionRulesService, permissionRulesStub());
-        reg.defineInstance(ISessionWorkspaceContext, workspace.stub);
+        reg.defineInstance(ISessionWorkdirContext, workspace.stub);
         reg.defineInstance(IHostEnvironment, kaosStub());
         reg.defineInstance(IAgentEnvironmentService, {
           _serviceBrand: undefined,
@@ -867,11 +867,11 @@ function stringArg(
 }
 
 function workspaceStub(initialWorkDir: string): {
-  readonly stub: ISessionWorkspaceContext;
+  readonly stub: ISessionWorkdirContext;
   addAdditionalDir(dir: string): void;
 } {
   let additionalDirs: string[] = [];
-  const stub: ISessionWorkspaceContext = {
+  const stub: ISessionWorkdirContext = {
     _serviceBrand: undefined,
     workDir: initialWorkDir,
     get additionalDirs() {

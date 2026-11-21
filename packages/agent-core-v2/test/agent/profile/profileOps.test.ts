@@ -47,7 +47,7 @@ import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
 import { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
 import { ISessionToolPolicy } from '#/session/sessionToolPolicy/sessionToolPolicy';
-import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
+import { ISessionWorkdirContext } from '#/session/workdirContext/workdirContext';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
 
@@ -311,7 +311,7 @@ function buildHost(key: string): {
   host.stub(IHostFileSystem, stubUnused());
   host.stub(IBootstrapService, stubUnused());
   host.stub(ISessionContext, createSessionContextStub());
-  host.stub(ISessionWorkspaceContext, stubUnused());
+  host.stub(ISessionWorkdirContext, stubUnused());
   host.stub(ISessionAgentProfileCatalog, {
     _serviceBrand: undefined,
     ready: Promise.resolve(),

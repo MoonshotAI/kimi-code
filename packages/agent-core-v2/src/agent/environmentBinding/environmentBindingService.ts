@@ -13,9 +13,9 @@ import { LOCAL_ENVIRONMENT_ID, type EnvironmentBinding, type EnvironmentLease } 
 import { EnvironmentError } from '#/environment/environmentRegistry';
 import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
-import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
-import { ISessionWorkspaceInfo } from '#/session/workspaceInfo/workspaceInfo';
-import { resolveEffectiveWorkspaceRoots } from '#/session/workspaceContext/workspaceRoots';
+import { ISessionWorkdirContext } from '#/session/workdirContext/workdirContext';
+import { ISessionProjectInfo } from '#/session/projectInfo/projectInfo';
+import { resolveEffectiveWorkdirRoots } from '#/session/workdirContext/workdirRoots';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { IEnvironmentService, type EnvironmentResolver } from '#/app/environment/environment';
 
@@ -57,8 +57,8 @@ export class AgentEnvironmentBindingService implements IAgentEnvironmentBindingS
     @IAgentStateService private readonly state: IAgentStateService,
     @IAgentEnvironmentBindingSeed private readonly seed: IAgentEnvironmentBindingSeed,
     @ISessionContext private readonly session: ISessionContext,
-    @ISessionWorkspaceContext private readonly workspaceContext: ISessionWorkspaceContext,
-    @ISessionWorkspaceInfo private readonly workspaceInfo: ISessionWorkspaceInfo,
+    @ISessionWorkdirContext private readonly workdirContext: ISessionWorkdirContext,
+    @ISessionProjectInfo private readonly projectInfo: ISessionProjectInfo,
     @IEnvironmentService private readonly resolver: EnvironmentResolver,
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @IAgentReminderService private readonly reminder: IAgentReminderService,
@@ -92,7 +92,7 @@ export class AgentEnvironmentBindingService implements IAgentEnvironmentBindingS
 
   private applySessionWorkDir(binding: EnvironmentBinding): void {
     if (this.scopeContext.agentId !== MAIN_AGENT_ID) return;
-    this.workspaceContext.setWorkDir(this.effectiveRoots(binding).workDir);
+    this.workdirContext.setWorkDir(this.effectiveRoots(binding).workDir);
   }
 
   private effectiveRoots(binding: EnvironmentBinding, host?: HostEnvironmentInfo) {
@@ -104,7 +104,7 @@ export class AgentEnvironmentBindingService implements IAgentEnvironmentBindingS
         resolvedHost = undefined;
       }
     }
-    return resolveEffectiveWorkspaceRoots(this.session, binding, this.workspaceInfo, resolvedHost);
+    return resolveEffectiveWorkdirRoots(this.session, binding, this.projectInfo, resolvedHost);
   }
 
   get current(): EnvironmentBinding {

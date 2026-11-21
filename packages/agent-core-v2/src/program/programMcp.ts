@@ -12,20 +12,20 @@ import {
 import { McpConnectionManager, type McpConnectionView } from '#/mcpCore/connection-manager';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { LayeredMcpConnectionView, type McpViewLayer } from '#/session/mcp/layeredConnectionView';
-import type { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
+import type { IProjectDirs } from '#/project/projectDirs/projectDirs';
 import type {
   ProjectMcpPreview,
   ProjectMcpServer,
   SessionMcpLease,
   SessionMcpOptions,
   WorkdirMcp,
-} from '#/workspace/workspaceMcp/workspaceMcp';
+} from '#/project/projectMcp/projectMcp';
 import {
-  WorkspaceMcpService,
+  ProjectMcpService,
   subscribeMcpOAuthEvents,
-} from '#/workspace/workspaceMcp/workspaceMcpService';
-import { WorkspaceMcpConfigService } from '#/workspace/workspaceMcpConfig/workspaceMcpConfigService';
-import type { IWorkspaceTrust } from '#/workspace/workspaceTrust/workspaceTrust';
+} from '#/project/projectMcp/projectMcpService';
+import { ProjectMcpConfigService } from '#/project/projectMcpConfig/projectMcpConfigService';
+import type { IProjectTrust } from '#/project/projectTrust/projectTrust';
 
 import type { ProgramDependencies } from './programDependencies';
 
@@ -42,15 +42,15 @@ export interface ProgramMcpDeps
   readonly environments: IEnvironmentService;
   readonly hostFs: IHostFileSystem;
   readonly project: McpProjectScope;
-  readonly rootDirs: IWorkspaceDirs;
-  readonly trust: IWorkspaceTrust;
+  readonly rootDirs: IProjectDirs;
+  readonly trust: IProjectTrust;
 }
 
 interface McpAnchorLease extends IDisposable {
   readonly key: string;
   readonly anchor: McpAnchor;
-  readonly config: WorkspaceMcpConfigService;
-  readonly service: WorkspaceMcpService;
+  readonly config: ProjectMcpConfigService;
+  readonly service: ProjectMcpService;
   readonly layer: McpViewLayer;
 }
 
@@ -61,8 +61,8 @@ interface EphemeralMcp {
 }
 
 interface WorkdirMcpHost {
-  readonly user: WorkspaceMcpService;
-  readonly userConfig: WorkspaceMcpConfigService;
+  readonly user: ProjectMcpService;
+  readonly userConfig: ProjectMcpConfigService;
   readonly userLayer: McpViewLayer;
   acquireAnchor(anchor: KeyedMcpAnchor): McpAnchorLease;
   suppressionSettled(): Promise<void>;
@@ -75,8 +75,8 @@ const NO_ABORT = new AbortController().signal;
 export class ProgramMcp implements ProjectMcpPreview {
   readonly root: WorkdirMcp;
   private readonly rootWorkdir: AnchoredWorkdirMcp;
-  private readonly userConfig: WorkspaceMcpConfigService;
-  private readonly user: WorkspaceMcpService;
+  private readonly userConfig: ProjectMcpConfigService;
+  private readonly user: ProjectMcpService;
   private readonly anchors = new Map<string, AnchorEntry>();
   private readonly pinned = new Map<AnchoredWorkdirMcp, string>();
   private readonly workdirHost: WorkdirMcpHost;
@@ -90,7 +90,7 @@ export class ProgramMcp implements ProjectMcpPreview {
   private disposed = false;
 
   constructor(private readonly deps: ProgramMcpDeps) {
-    this.userConfig = new WorkspaceMcpConfigService(
+    this.userConfig = new ProjectMcpConfigService(
       { kind: 'user' },
       deps.bootstrap,
       deps.plugins,
@@ -101,7 +101,7 @@ export class ProgramMcp implements ProjectMcpPreview {
       deps.configStore,
       deps.oauth,
     );
-    this.user = new WorkspaceMcpService(
+    this.user = new ProjectMcpService(
       {
         stdioCwd: () => deps.rootDirs.primary,
         onDidChangeStdioCwd: deps.rootDirs.onDidChange,
@@ -235,7 +235,7 @@ export class ProgramMcp implements ProjectMcpPreview {
   }
 
   private createAnchorEntry(anchor: McpAnchor): AnchorEntry {
-    const config = new WorkspaceMcpConfigService(
+    const config = new ProjectMcpConfigService(
       { kind: 'workdir', anchor },
       this.deps.bootstrap,
       this.deps.plugins,
@@ -246,7 +246,7 @@ export class ProgramMcp implements ProjectMcpPreview {
       this.deps.configStore,
       this.deps.oauth,
     );
-    const service = new WorkspaceMcpService(
+    const service = new ProjectMcpService(
       { stdioCwd: () => anchor },
       this.deps.environments,
       config,
@@ -358,8 +358,8 @@ class AnchorEntry {
 
   constructor(
     readonly anchor: McpAnchor,
-    readonly config: WorkspaceMcpConfigService,
-    readonly service: WorkspaceMcpService,
+    readonly config: ProjectMcpConfigService,
+    readonly service: ProjectMcpService,
     onDidChange: () => void,
   ) {
     this.layer = layerOf(service);
@@ -482,7 +482,7 @@ class AnchoredWorkdirMcp implements WorkdirMcp, IDisposable {
   }
 }
 
-function layerOf(service: WorkspaceMcpService): McpViewLayer {
+function layerOf(service: ProjectMcpService): McpViewLayer {
   const manager = service.connectionManager();
   return { manager, owns: (name) => service.definedNames().has(name) };
 }

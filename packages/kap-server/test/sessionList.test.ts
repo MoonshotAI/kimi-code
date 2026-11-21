@@ -9,8 +9,8 @@ import {
   IEnvironmentService,
   ISessionIndex,
   IEventService,
-  IWorkspaceAliases,
-  IWorkspaceService,
+  IProjectAliases,
+  IProjectService,
   closeSessionById,
   getLiveSessionById,
   resumeSessionById,
@@ -142,7 +142,7 @@ function stubSessionIndex(summaries: SessionSummary[]): ISessionIndex {
   };
 }
 
-const workspaceStub: IWorkspaceService = {
+const workspaceStub: IProjectService = {
   _serviceBrand: undefined,
   list: async () => [
     {
@@ -255,7 +255,7 @@ describe('server /api/v1/sessions list', () => {
       logLevel: 'silent',
       seeds: [
         [ISessionIndex, stubSessionIndex(summaries)],
-        [IWorkspaceService, workspaceStub],
+        [IProjectService, workspaceStub],
         [IGitService, gitStub],
       ],
     });
@@ -1037,7 +1037,7 @@ describe('server /api/v1/sessions list', () => {
         archived: false,
       },
     ];
-    const aliasStub: IWorkspaceAliases = {
+    const aliasStub: IProjectAliases = {
       _serviceBrand: undefined,
       resolveAliasIds: async (id) =>
         id === WS_A || id === legacyAlias ? [WS_A, legacyAlias] : [id],
@@ -1050,9 +1050,9 @@ describe('server /api/v1/sessions list', () => {
       logLevel: 'silent',
       seeds: [
         [ISessionIndex, stubSessionIndex(aliasSummaries)],
-        [IWorkspaceService, workspaceStub],
+        [IProjectService, workspaceStub],
         [IGitService, gitStub],
-        [IWorkspaceAliases, aliasStub],
+        [IProjectAliases, aliasStub],
       ],
     });
     base = `http://127.0.0.1:${server.port}`;

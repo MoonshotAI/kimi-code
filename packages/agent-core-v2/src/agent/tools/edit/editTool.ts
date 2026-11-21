@@ -10,7 +10,7 @@ import { EnvironmentWorkspaceView } from '#/environment/environmentWorkspaceView
 import { IAgentPlanService } from '#/features/plan/plan';
 import { acquireOrWhenReady, IAgentEnvironmentService, pinnedGeneration } from '#/agent/environmentBinding/agentEnvironment';
 import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
-import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
+import { ISessionWorkdirContext } from '#/session/workdirContext/workdirContext';
 import {
   ToolAccesses,
   type ExecutableToolResult,
@@ -30,7 +30,7 @@ export class EditTool implements IEditTool {
   constructor(
     @IFileEditService private readonly editor: IFileEditService,
     @IAgentEnvironmentService private readonly environment: IAgentEnvironmentService,
-    @ISessionWorkspaceContext private readonly workspaceCtx: ISessionWorkspaceContext,
+    @ISessionWorkdirContext private readonly workdirCtx: ISessionWorkdirContext,
     @ISessionSkillCatalog private readonly skillCatalog?: ISessionSkillCatalog,
     @IAgentPlanService private readonly planService?: IAgentPlanService,
   ) {}
@@ -63,9 +63,9 @@ export class EditTool implements IEditTool {
       const inspected = resolutionLease.environment;
       const expectedGeneration = pinnedGeneration(inspected);
       const view = new EnvironmentWorkspaceView(inspected, {
-        workDir: this.workspaceCtx.workDir,
+        workDir: this.workdirCtx.workDir,
         additionalDirs: [
-          ...this.workspaceCtx.additionalDirs,
+          ...this.workdirCtx.additionalDirs,
           ...(this.skillCatalog?.catalog.getSkillRoots() ?? []),
         ],
       });

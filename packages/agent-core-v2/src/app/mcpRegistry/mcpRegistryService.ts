@@ -7,9 +7,9 @@ import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { findMcpAnchor, loadMcpServersDetailed } from '#/app/mcpConfig/configLoader';
 import { IMcpConfigStore } from '#/app/mcpConfig/configStore';
 import { IPluginService } from '#/app/plugin/plugin';
-import { IWorkspaceService } from '#/app/workspace/workspace';
+import { IProjectService } from '#/app/project/project';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
-import { IWorkspaceTrustStore } from '#/workspace/workspaceTrust/workspaceTrustStore';
+import { IProjectTrustStore } from '#/project/projectTrust/projectTrustStore';
 
 import {
   IMcpRegistryService,
@@ -25,8 +25,8 @@ export class McpRegistryService implements IMcpRegistryService {
     @IPluginService private readonly plugins: IPluginService,
     @IHostFileSystem private readonly fs: IHostFileSystem,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
-    @IWorkspaceTrustStore private readonly trust: IWorkspaceTrustStore,
-    @IWorkspaceService private readonly workspaces: IWorkspaceService,
+    @IProjectTrustStore private readonly trust: IProjectTrustStore,
+    @IProjectService private readonly projects: IProjectService,
   ) {}
 
   async list(query: McpRegistryQuery = {}): Promise<readonly McpRegistryEntry[]> {
@@ -75,7 +75,7 @@ export class McpRegistryService implements IMcpRegistryService {
   }
 
   private async entriesAt(cwd: string): Promise<McpRegistryEntry[]> {
-    const decision = await this.workspaces.peekImplicit(cwd);
+    const decision = await this.projects.peekImplicit(cwd);
     const project = decision.kind === 'reuse' ? decision.project : { root: decision.root, additionalDirs: [] };
     if (!(await this.trust.forProject(project).refresh())) return this.userEntries();
     const detailed = await loadMcpServersDetailed({

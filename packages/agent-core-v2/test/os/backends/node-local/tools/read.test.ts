@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { PathSecurityError } from '#/tool/path-access';
 import { MEDIA_SNIFF_BYTES } from '#/agent/media/file-type';
 import type { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
-import { stubWorkspaceContext } from '../../../../session/workspaceContext/stub-workspace-context';
+import { stubWorkspaceContext } from '../../../../session/workdirContext/stub-workdir-context';
 import { stubAgentEnvironment } from '../../../../environment/stubs';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import {

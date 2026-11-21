@@ -34,7 +34,7 @@ import { ISessionActivityView } from '#/session/sessionActivity/sessionActivity'
 import { isWithinDirectory } from '#/tool/path-access';
 import type { ToolFileAccess } from '#/tool/toolContract';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
-import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
+import { ISessionWorkdirContext } from '#/session/workdirContext/workdirContext';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import { isUntitled } from '#/session/sessionMetadata/promptMetadata';
 import { SubagentStarted } from '#/session/subagent/mirrorAgentRun';
@@ -121,7 +121,7 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
     @IAgentLoopService private readonly loop: IAgentLoopService,
     @ISessionEventBus sessionBus: ISessionEventBus,
     @IBashParserService private readonly bashParser: IBashParserService,
-    @ISessionWorkspaceContext private readonly workspaceCtx: ISessionWorkspaceContext | undefined,
+    @ISessionWorkdirContext private readonly workdirCtx: ISessionWorkdirContext | undefined,
   ) {
     super();
     this.agentState.contributeState(towerKey);
@@ -404,7 +404,7 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
         const cwd =
           typeof cwdArg === 'string'
             ? this.resolveBashGuardCwd(cwdArg)
-            : (this.workspaceCtx?.workDir ?? this.sessionCtx.cwd);
+            : (this.workdirCtx?.workDir ?? this.sessionCtx.cwd);
         const reason = analyzeTowerBashCommand({ command, cwd, mainCheckout }, (source) =>
           this.bashParser.parse(source, TOWER_BASH_GUARD_PARSE_OPTIONS),
         );
@@ -415,7 +415,7 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
   }
 
   private resolveBashGuardCwd(cwdArg: string): string {
-    if (this.workspaceCtx !== undefined) return this.workspaceCtx.resolve(cwdArg);
+    if (this.workdirCtx !== undefined) return this.workdirCtx.resolve(cwdArg);
     return isAbsolute(cwdArg) ? resolve(cwdArg) : resolve(this.sessionCtx.cwd, cwdArg);
   }
 

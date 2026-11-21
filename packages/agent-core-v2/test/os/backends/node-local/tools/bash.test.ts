@@ -16,7 +16,7 @@ import type { IConfigService } from '#/app/config/config';
 import type { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { FakeEnvironment } from '#/environment/fakeEnvironment';
 import { getShellPathBridge } from '#/_base/execEnv/shellPathBridge';
-import { stubWorkspaceContext } from '../../../../session/workspaceContext/stub-workspace-context';
+import { stubWorkspaceContext } from '../../../../session/workdirContext/stub-workdir-context';
 import { stubAgentEnvironment } from '../../../../environment/stubs';
 import type { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import type { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
@@ -24,12 +24,12 @@ import { type ISessionContext, makeSessionContext } from '#/session/sessionConte
 import type { IHostProcess, IHostProcessService } from '#/os/interface/hostProcess';
 import { type BashInput, BashInputSchema } from '#/agent/tools/os/bash/bash';
 import { BashTool } from '#/agent/tools/os/bash/bashTool';
-import { AgentWorkspaceContextService } from '#/session/workspaceContext/agentWorkspaceContextService';
+import { AgentWorkdirContextService } from '#/session/workdirContext/agentWorkdirContextService';
 import { SessionStateService } from '#/session/state/sessionStateService';
 import {
-  workspaceContextAdditionalDirsKey,
-  workspaceContextWorkDirKey,
-} from '#/session/workspaceContext/workspaceContextService';
+  workdirContextAdditionalDirsKey,
+  workdirContextWorkDirKey,
+} from '#/session/workdirContext/workdirContextService';
 import type { ExecutableToolContext, ExecutableToolResult, ToolExecution } from '#/tool/toolContract';
 import {
   channelsByService,
@@ -621,10 +621,10 @@ describe('BashTool', () => {
     );
     const environment = stubAgentEnvironment(backend, { workDir: '/remote-work' });
     const sessionState = new SessionStateService();
-    sessionState.contributeState(workspaceContextWorkDirKey);
-    sessionState.contributeState(workspaceContextAdditionalDirsKey);
-    sessionState.set(workspaceContextWorkDirKey, ctx.cwd);
-    const shadow = new AgentWorkspaceContextService(sessionState, {
+    sessionState.contributeState(workdirContextWorkDirKey);
+    sessionState.contributeState(workdirContextAdditionalDirsKey);
+    sessionState.set(workdirContextWorkDirKey, ctx.cwd);
+    const shadow = new AgentWorkdirContextService(sessionState, {
       current: environment,
       onDidChange: () => ({ dispose: () => {} }),
     });

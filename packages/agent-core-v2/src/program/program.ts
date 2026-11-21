@@ -2,32 +2,32 @@ import { Emitter, type Event } from '#/_base/event';
 import type { EnvironmentBinding } from '#/environment/environment';
 import { LOCAL_ENVIRONMENT_ID, environmentBindingId } from '#/environment/environment';
 import { EnvironmentError, type EnvironmentGenerationSnapshot, type EnvironmentRegistryChange } from '#/environment/environmentRegistry';
-import type { SessionLifecycleService } from '#/workspace/sessionLifecycle/sessionLifecycleService';
-import type { IWorkspaceStateService } from '#/workspace/state/workspaceState';
-import type { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
-import type { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
-import type { IWorkspaceFsService } from '#/workspace/workspaceFs/fs';
-import type { IWorkspaceGitService } from '#/workspace/workspaceGit/workspaceGit';
-import type { IWorkspaceInstructionsService } from '#/workspace/workspaceInstructions/workspaceInstructions';
-import type { ProjectMcpPreview, ProjectMcpServer, WorkdirMcp } from '#/workspace/workspaceMcp/workspaceMcp';
-import type { IWorkspaceTrust } from '#/workspace/workspaceTrust/workspaceTrust';
-import { WorkspaceTrustService } from '#/workspace/workspaceTrust/workspaceTrustService';
-import type { IWorkspaceTrustDisclosure } from '#/workspace/workspaceTrust/trustDisclosure';
-import { WorkspaceTrustDisclosureService } from '#/workspace/workspaceTrust/trustDisclosureService';
-import type { IExtraAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/extraAgentProfileLoader';
-import { ExtraAgentProfileLoaderService } from '#/workspace/workspaceAgentProfileLoader/extraAgentProfileLoaderService';
-import type { IExplicitAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/explicitAgentProfileLoader';
-import { ExplicitAgentProfileLoaderService } from '#/workspace/workspaceAgentProfileLoader/explicitAgentProfileLoaderService';
-import type { IPluginAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/pluginAgentProfileLoader';
-import { PluginAgentProfileLoaderService } from '#/workspace/workspaceAgentProfileLoader/pluginAgentProfileLoaderService';
-import type { IUserAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/userAgentProfileLoader';
-import { UserAgentProfileLoaderService } from '#/workspace/workspaceAgentProfileLoader/userAgentProfileLoaderService';
-import type { IWorkspaceAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/workspaceAgentProfileLoader';
-import { ExplicitFileSkillSource } from '#/features/skill/workspace/explicitFileSkillSource';
-import { ExtraFileSkillSource } from '#/features/skill/workspace/extraFileSkillSource';
-import { PluginSkillSource } from '#/features/skill/workspace/pluginSkillSource';
-import { EnvironmentSkillDiscovery } from '#/features/skill/workspace/environmentSkillDiscovery';
-import type { IWorkspaceSkillCatalog } from '#/features/skill/workspace/workspaceSkillCatalog';
+import type { SessionLifecycleService } from '#/project/sessionLifecycle/sessionLifecycleService';
+import type { IProjectStateService } from '#/project/state/projectState';
+import type { IProjectContext } from '#/project/projectContext/projectContext';
+import type { IProjectDirs } from '#/project/projectDirs/projectDirs';
+import type { IProjectFsService } from '#/project/projectFs/fs';
+import type { IProjectGitService } from '#/project/projectGit/projectGit';
+import type { IProjectInstructionsService } from '#/project/projectInstructions/projectInstructions';
+import type { ProjectMcpPreview, ProjectMcpServer, WorkdirMcp } from '#/project/projectMcp/projectMcp';
+import type { IProjectTrust } from '#/project/projectTrust/projectTrust';
+import { ProjectTrustService } from '#/project/projectTrust/projectTrustService';
+import type { IProjectTrustDisclosure } from '#/project/projectTrust/trustDisclosure';
+import { ProjectTrustDisclosureService } from '#/project/projectTrust/trustDisclosureService';
+import type { IExtraAgentProfileLoader } from '#/project/projectAgentProfileLoader/extraAgentProfileLoader';
+import { ExtraAgentProfileLoaderService } from '#/project/projectAgentProfileLoader/extraAgentProfileLoaderService';
+import type { IExplicitAgentProfileLoader } from '#/project/projectAgentProfileLoader/explicitAgentProfileLoader';
+import { ExplicitAgentProfileLoaderService } from '#/project/projectAgentProfileLoader/explicitAgentProfileLoaderService';
+import type { IPluginAgentProfileLoader } from '#/project/projectAgentProfileLoader/pluginAgentProfileLoader';
+import { PluginAgentProfileLoaderService } from '#/project/projectAgentProfileLoader/pluginAgentProfileLoaderService';
+import type { IUserAgentProfileLoader } from '#/project/projectAgentProfileLoader/userAgentProfileLoader';
+import { UserAgentProfileLoaderService } from '#/project/projectAgentProfileLoader/userAgentProfileLoaderService';
+import type { IProjectAgentProfileLoader } from '#/project/projectAgentProfileLoader/projectAgentProfileLoader';
+import { ExplicitFileSkillSource } from '#/features/skill/project/explicitFileSkillSource';
+import { ExtraFileSkillSource } from '#/features/skill/project/extraFileSkillSource';
+import { PluginSkillSource } from '#/features/skill/project/pluginSkillSource';
+import { EnvironmentSkillDiscovery } from '#/features/skill/project/environmentSkillDiscovery';
+import type { IProjectSkillCatalog } from '#/features/skill/project/projectSkillCatalog';
 import type { IEnvironmentService } from '#/app/environment/environment';
 
 import type { ProgramDependencies } from './programDependencies';
@@ -85,8 +85,8 @@ interface ProgramGeneration extends ProgramHarness {
   readonly id: string;
   readonly workdirs: ProgramWorkdirs;
   readonly mcp: ProgramMcp;
-  readonly trust: IWorkspaceTrust;
-  readonly trustDisclosure: IWorkspaceTrustDisclosure;
+  readonly trust: IProjectTrust;
+  readonly trustDisclosure: IProjectTrustDisclosure;
   readonly pluginAgentProfiles: IPluginAgentProfileLoader;
   readonly explicitAgentProfiles: IExplicitAgentProfileLoader;
   readonly extraAgentProfiles: IExtraAgentProfileLoader;
@@ -113,7 +113,7 @@ export class Program {
   constructor(
     readonly workspaceId: string,
     private readonly environments: IEnvironmentService,
-    private readonly context: IWorkspaceContext,
+    private readonly context: IProjectContext,
     private readonly dependencies: ProgramDependencies,
   ) {
     this.registrySubscription = environments.onDidChange((change) => this.onEnvironmentChange(change));
@@ -121,16 +121,16 @@ export class Program {
   }
 
   get status(): ProgramStatus { return this.currentStatus; }
-  get state(): IWorkspaceStateService { return this.requireGeneration().workdirs.root.state; }
-  get dirs(): IWorkspaceDirs { return this.requireGeneration().workdirs.root.dirs; }
-  get fs(): IWorkspaceFsService { return this.requireGeneration().workdirs.root.fs; }
-  get git(): IWorkspaceGitService { return this.requireGeneration().workdirs.root.git; }
-  get instructions(): IWorkspaceInstructionsService { return this.requireGeneration().workdirs.root.instructions; }
+  get state(): IProjectStateService { return this.requireGeneration().workdirs.root.state; }
+  get dirs(): IProjectDirs { return this.requireGeneration().workdirs.root.dirs; }
+  get fs(): IProjectFsService { return this.requireGeneration().workdirs.root.fs; }
+  get git(): IProjectGitService { return this.requireGeneration().workdirs.root.git; }
+  get instructions(): IProjectInstructionsService { return this.requireGeneration().workdirs.root.instructions; }
   get mcp(): WorkdirMcp { return this.requireGeneration().mcp.root; }
-  get trust(): IWorkspaceTrust { return this.requireGeneration().trust; }
-  get trustDisclosure(): IWorkspaceTrustDisclosure { return this.requireGeneration().trustDisclosure; }
-  get skills(): IWorkspaceSkillCatalog { return this.requireGeneration().workdirs.root.skills; }
-  get agentProfiles(): IWorkspaceAgentProfileLoader { return this.requireGeneration().workdirs.root.agentProfiles; }
+  get trust(): IProjectTrust { return this.requireGeneration().trust; }
+  get trustDisclosure(): IProjectTrustDisclosure { return this.requireGeneration().trustDisclosure; }
+  get skills(): IProjectSkillCatalog { return this.requireGeneration().workdirs.root.skills; }
+  get agentProfiles(): IProjectAgentProfileLoader { return this.requireGeneration().workdirs.root.agentProfiles; }
   get userAgentProfiles(): IUserAgentProfileLoader { return this.requireGeneration().userAgentProfiles; }
   get sessionControllerGeneration(): string { return this.requireGeneration().id; }
 
@@ -342,7 +342,7 @@ export class Program {
       const root = workdirs.root;
       const explicitAgentProfiles = own(new ExplicitAgentProfileLoaderService(this.context, root.dirs, this.dependencies.bootstrap, hostFs, this.dependencies.log, userAgentProfiles, this.dependencies.agentProfiles));
       const extraAgentProfiles = own(new ExtraAgentProfileLoaderService(this.dependencies.config, this.context, root.dirs, this.dependencies.bootstrap, hostFs, this.dependencies.log, userAgentProfiles, this.dependencies.agentProfiles));
-      const trust = own(new WorkspaceTrustService(root.dirs, this.dependencies.trustStore, root.state, this.dependencies.config));
+      const trust = own(new ProjectTrustService(root.dirs, this.dependencies.trustStore, root.state, this.dependencies.config));
       const project = {
         current: async () => (await this.dependencies.workspaces.get(this.workspaceId)) ?? { root: this.context.meta.root, additionalDirs: [] },
         onDidChange: this.dependencies.workspaceStore.onDidChange,
@@ -375,12 +375,12 @@ export class Program {
   }
 
   private trustDisclosureFor(
-    context: IWorkspaceContext,
+    context: IProjectContext,
     view: Pick<ProgramViewLease, 'hostFs' | 'localConfig' | 'dirs' | 'skills' | 'agentProfiles' | 'instructions'>,
-    trust: IWorkspaceTrust,
+    trust: IProjectTrust,
     mcp: ProjectMcpPreview,
-  ): IWorkspaceTrustDisclosure {
-    return new WorkspaceTrustDisclosureService(
+  ): IProjectTrustDisclosure {
+    return new ProjectTrustDisclosureService(
       context,
       view.hostFs,
       this.dependencies.bootstrap,

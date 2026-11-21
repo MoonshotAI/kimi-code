@@ -18,7 +18,7 @@ import {
   sessionCollection,
   sessionCountersCollection,
   withRecencyField,
-  type SessionWorkspaceCounts,
+  type SessionProjectCounts,
 } from './sessionIndexModel';
 
 const FLUSH_INTERVAL_MS = 100;
@@ -160,7 +160,7 @@ export class SessionIndexMirror extends Disposable implements ISessionIndexMirro
         }
       }
 
-      const current = await this.queryStore.getMany<SessionWorkspaceCounts>(counters, [
+      const current = await this.queryStore.getMany<SessionProjectCounts>(counters, [
         ...deltas.keys(),
       ]);
       const ops = [
@@ -173,7 +173,7 @@ export class SessionIndexMirror extends Disposable implements ISessionIndexMirro
         })),
         ...[...deltas.entries()].map(([workspaceId, delta]) => {
           const base = current.get(workspaceId) ?? { active: 0, archived: 0 };
-          const value: SessionWorkspaceCounts = {
+          const value: SessionProjectCounts = {
             active: Math.max(0, base.active + delta.active),
             archived: Math.max(0, base.archived + delta.archived),
           };

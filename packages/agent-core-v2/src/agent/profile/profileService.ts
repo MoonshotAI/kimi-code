@@ -33,7 +33,7 @@ import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnviro
 import { EnvironmentWorkspaceView } from '#/environment/environmentWorkspaceView';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import type { ToolSource } from '#/tool/toolContract';
-import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
+import { ISessionWorkdirContext } from '#/session/workdirContext/workdirContext';
 import { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
 import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
@@ -146,7 +146,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     @ISessionContext private readonly sessionContext: ISessionContext,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
     @ISessionNotify private readonly notify: ISessionNotify,
-    @ISessionWorkspaceContext private readonly workspace: ISessionWorkspaceContext,
+    @ISessionWorkdirContext private readonly workdir: ISessionWorkdirContext,
     @ISessionAgentProfileCatalog private readonly catalog: ISessionAgentProfileCatalog,
     @ISessionSkillCatalog private readonly skillCatalog: ISessionSkillCatalog,
     @ISessionInstructionsProvider private readonly instructions: ISessionInstructionsProvider,
@@ -243,7 +243,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     this.activeProfile = undefined;
     const agentsMdPaths =
       snapshot.agentsMdPaths ?? extractAgentsMdPathsFromSystemPrompt(snapshot.systemPrompt);
-    this.agentsMdReminder.seedInjected(agentsMdPaths, this.workspace.workDir);
+    this.agentsMdReminder.seedInjected(agentsMdPaths, this.workdir.workDir);
     return { ...snapshot, agentsMdPaths };
   }
 
@@ -814,8 +814,8 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     const fsAvailable = this.environment.isAvailable(['fs']);
     const lease = this.environment.acquire(fsAvailable ? ['fs'] : []);
     const view = new EnvironmentWorkspaceView(lease.environment, {
-      workDir: this.workspace.workDir,
-      additionalDirs: options?.additionalDirs ?? this.workspace.additionalDirs,
+      workDir: this.workdir.workDir,
+      additionalDirs: options?.additionalDirs ?? this.workdir.additionalDirs,
     });
     const env = view.host;
     let base: SystemPromptContext;

@@ -20,8 +20,8 @@ import {
   IEventService,
   SessionCreated,
   ISessionManager,
-  IWorkspaceInstanceManager,
-  IWorkspaceService,
+  IProjectInstanceManager,
+  IProjectService,
   IWireService,
   closeSessionById,
   drainSessionMetadataWrites,
@@ -49,14 +49,14 @@ import { wrapSystemReminder } from '@moonshot-ai/agent-core-v2/features/reminder
 import {
   legacySessionMetaScopeOf,
   sessionScopeOf,
-  workspacePersistenceScope,
-} from '@moonshot-ai/agent-core-v2/workspace/sessionLifecycle/internal/addressing';
+  projectPersistenceScope,
+} from '@moonshot-ai/agent-core-v2/project/sessionLifecycle/internal/addressing';
 import { SessionMetaUpdated } from '@moonshot-ai/agent-core-v2/session/sessionMetadata/sessionMetaEvents';
 import {
   sessionWorkDir,
   type SessionPlacementFacts,
   type SessionWorkDirPath,
-} from '@moonshot-ai/agent-core-v2/session/workspaceContext/workspaceRoots';
+} from '@moonshot-ai/agent-core-v2/session/workdirContext/workdirRoots';
 import { ErrorCode } from '../protocol/error-codes';
 import { listPendingInteractions } from '../protocol/interaction-wire';
 import type { PendingInteraction } from '../protocol/interaction';
@@ -220,7 +220,7 @@ export function registerSessionsRoutes(
         return;
       }
 
-      const registry = core.accessor.get(IWorkspaceService);
+      const registry = core.accessor.get(IProjectService);
       let workDir: string;
       if (workspaceId !== undefined) {
         const workspace = await registry.get(workspaceId);
@@ -886,7 +886,7 @@ async function cancelSessionAction(
     if (targetAgentId !== MAIN_AGENT_ID) {
       const docs = core.accessor.get(IAtomicDocumentStore);
       const metaScope = sessionScopeOf(
-        workspacePersistenceScope(
+        projectPersistenceScope(
           core.accessor.get(IBootstrapService).scope('sessions'),
           summary.workspaceId,
         ),
@@ -1177,7 +1177,7 @@ async function refreshWorkspaceCatalogs(
   excludedSessionId: string,
 ): Promise<void> {
   if (workspaceId !== undefined) {
-    const target = core.accessor.get(IWorkspaceInstanceManager).get(workspaceId);
+    const target = core.accessor.get(IProjectInstanceManager).get(workspaceId);
     if (target !== undefined) {
       await target.program.reload();
     }
@@ -1210,7 +1210,7 @@ export async function sessionCwd(
   core: Scope,
   session: SessionPlacementFacts & { readonly workspaceId: string },
 ): Promise<SessionWorkDirPath | undefined> {
-  const root = (await core.accessor.get(IWorkspaceService).get(session.workspaceId))?.root;
+  const root = (await core.accessor.get(IProjectService).get(session.workspaceId))?.root;
   return sessionWorkDir(session, root);
 }
 

@@ -23,7 +23,7 @@ import type { ConfigChangedEvent, ConfigWarningEvent } from '#/app/config/config
 import type { ModelCatalogChangedEvent } from '#/app/kosongConfig/discovery';
 import type { PluginChangedEvent } from '#/app/plugin/pluginEvents';
 import type { SessionCreatedEvent, SessionStatusChangedEvent, SessionWorkChangedEvent } from '#/app/sessionLegacy/sessionProtocol';
-import type { WorkspaceCreatedEvent, WorkspaceDeletedEvent, WorkspaceUpdatedEvent } from '#/app/workspace/workspaceProtocol';
+import type { ProjectCreatedEvent, ProjectDeletedEvent, ProjectUpdatedEvent } from '#/app/project/projectProtocol';
 import type { CronFiredEvent } from '#/features/cron/cronOps';
 import type { HookResultEvent } from '#/features/externalHooks/agent/agentExternalHooksService';
 import type { GoalUpdatedEvent } from '#/features/goal/goalOps';
@@ -44,9 +44,9 @@ export type AgentEvent =
   | AgentStatusUpdatedEvent
   | SessionMetaUpdatedEvent
   | SessionCreatedEvent
-  | WorkspaceCreatedEvent
-  | WorkspaceUpdatedEvent
-  | WorkspaceDeletedEvent
+  | ProjectCreatedEvent
+  | ProjectUpdatedEvent
+  | ProjectDeletedEvent
   | SessionWorkChangedEvent
   | SessionStatusChangedEvent
   | ConfigChangedEvent

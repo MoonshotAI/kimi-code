@@ -6,26 +6,26 @@ import { ISessionManager, type ISessionManager as SessionManager } from '#/app/s
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { ErrorCodes, isError2 } from '#/errors';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
-import { sessionWorkDir } from '#/session/workspaceContext/workspaceRoots';
-import type { ResumeSessionOptions } from '#/workspace/sessionLifecycle/sessionLifecycle';
-import { IWorkspaceInstanceManager, type WorkspaceInstanceLease } from '#/workspace/workspaceInstance/workspaceInstanceManager';
+import { sessionWorkDir } from '#/session/workdirContext/workdirRoots';
+import type { ResumeSessionOptions } from '#/project/sessionLifecycle/sessionLifecycle';
+import { IProjectInstanceManager, type ProjectInstanceLease } from '#/project/projectInstance/projectInstanceManager';
 
 export async function programForSession(
   accessor: ServicesAccessor,
   sessionId: string,
-): Promise<WorkspaceInstanceLease | undefined> {
+): Promise<ProjectInstanceLease | undefined> {
   const manager = accessor.get(ISessionManager);
   const live = manager.get(sessionId);
   if (live !== undefined) {
     const context = live.accessor.get(ISessionContext);
-    return accessor.get(IWorkspaceInstanceManager).acquire({
+    return accessor.get(IProjectInstanceManager).acquire({
       workspaceId: context.workspaceId,
       reviveFrom: context.cwd,
     });
   }
   const summary = await accessor.get(ISessionIndex).get(sessionId);
   if (summary === undefined) return undefined;
-  return accessor.get(IWorkspaceInstanceManager).acquire({
+  return accessor.get(IProjectInstanceManager).acquire({
     workspaceId: summary.workspaceId,
     reviveFrom: sessionWorkDir(summary, undefined),
   });

@@ -6,7 +6,7 @@ import { acquireOrWhenReady, IAgentEnvironmentService, pinnedGeneration } from '
 import { IAgentPlanService } from '#/features/plan/plan';
 import { EnvironmentWorkspaceView } from '#/environment/environmentWorkspaceView';
 import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
-import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
+import { ISessionWorkdirContext } from '#/session/workdirContext/workdirContext';
 import {
   ToolAccesses,
   type ExecutableToolResult,
@@ -30,7 +30,7 @@ export class WriteTool implements IWriteTool {
 
   constructor(
     @IAgentEnvironmentService private readonly environment: IAgentEnvironmentService,
-    @ISessionWorkspaceContext private readonly workspaceCtx: ISessionWorkspaceContext,
+    @ISessionWorkdirContext private readonly workdirCtx: ISessionWorkdirContext,
     @ISessionSkillCatalog private readonly skillCatalog?: ISessionSkillCatalog,
     @IAgentPlanService private readonly planService?: IAgentPlanService,
   ) {}
@@ -63,9 +63,9 @@ export class WriteTool implements IWriteTool {
       const inspected = resolutionLease.environment;
       const expectedGeneration = pinnedGeneration(inspected);
       const view = new EnvironmentWorkspaceView(inspected, {
-        workDir: this.workspaceCtx.workDir,
+        workDir: this.workdirCtx.workDir,
         additionalDirs: [
-          ...this.workspaceCtx.additionalDirs,
+          ...this.workdirCtx.additionalDirs,
           ...(this.skillCatalog?.catalog.getSkillRoots() ?? []),
         ],
       });

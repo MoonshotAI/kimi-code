@@ -17,12 +17,12 @@ import { TurnEnded } from '#/agent/loop/turnOps';
 import { IEventBus } from '#/app/event/eventBus';
 import { IBlobStore } from '#/persistence/interface/blobStore';
 import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
-import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
+import { ISessionWorkdirContext } from '#/session/workdirContext/workdirContext';
 import {
-  hostWorkspacePathSemantics,
-  resolveWorkspacePath,
-  type WorkspacePathSemantics,
-} from '#/session/workspaceContext/workspacePaths';
+  hostWorkdirPathSemantics,
+  resolveWorkdirPath,
+  type WorkdirPathSemantics,
+} from '#/session/workdirContext/workdirPaths';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 import type { Environment, EnvironmentLease } from '#/environment/environment';
@@ -65,7 +65,7 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @IAgentEnvironmentService private readonly environment: IAgentEnvironmentService,
     @IBlobStore private readonly blobs: IBlobStore,
-    @ISessionWorkspaceContext private readonly workspaceCtx: ISessionWorkspaceContext,
+    @ISessionWorkdirContext private readonly workdirCtx: ISessionWorkdirContext,
     @ISessionContext private readonly sessionCtx: ISessionContext,
     @IAtomicDocumentStore private readonly docs: IAtomicDocumentStore,
     @IHostFileSystem private readonly hostFs: IHostFileSystem,
@@ -482,7 +482,7 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
       if (fs === undefined) return 'unreadable';
       const path = lease.environment.path;
       if (path === undefined) return 'unreadable';
-      const absolute = resolveWorkspacePath(path, this.workspaceCtx.workDir, pathKey);
+      const absolute = resolveWorkdirPath(path, this.workdirCtx.workDir, pathKey);
       let info;
       try {
         info = await fs.stat(absolute);
@@ -516,7 +516,7 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
     let raw = path;
     const { semantics, caseInsensitive } = this.pathSemantics();
     if (semantics.isAbsolute(path)) {
-      const relativePath = semantics.relative(this.workspaceCtx.workDir, path);
+      const relativePath = semantics.relative(this.workdirCtx.workDir, path);
       if (
         relativePath !== '' &&
         !relativePath.startsWith('..') &&
@@ -533,7 +533,7 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
   }
 
   private pathSemantics(): {
-    semantics: WorkspacePathSemantics;
+    semantics: WorkdirPathSemantics;
     caseInsensitive: boolean;
   } {
     const path = this.inspectEnvironment()?.path;
@@ -541,8 +541,8 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
       return { semantics: path, caseInsensitive: path.separator === '\\' };
     }
     return {
-      semantics: hostWorkspacePathSemantics,
-      caseInsensitive: isWindowsPath(this.workspaceCtx.workDir),
+      semantics: hostWorkdirPathSemantics,
+      caseInsensitive: isWindowsPath(this.workdirCtx.workDir),
     };
   }
 

@@ -47,8 +47,8 @@ import {
   ISessionTitleService,
   ISessionWorkdir,
   IWireService,
-  IWorkspaceInstanceManager,
-  IWorkspaceService,
+  IProjectInstanceManager,
+  IProjectService,
   MAIN_AGENT_ID,
   closeSessionById,
   getLiveSessionById,
@@ -571,7 +571,7 @@ describe('server-v2 /api/v1/sessions', () => {
       secondId = second.body.data.id;
       expect(second.body.data.workspace_id).toBe(first.body.data.workspace_id);
       expect(second.body.data.id).not.toBe(first.body.data.id);
-      const manager = (server as RunningServer).core.accessor.get(IWorkspaceInstanceManager);
+      const manager = (server as RunningServer).core.accessor.get(IProjectInstanceManager);
       const workspace = manager.get(first.body.data.workspace_id);
       expect(workspace).toBeDefined();
       await closeSessionById((server as RunningServer).core.accessor, firstId);
@@ -1688,7 +1688,7 @@ describe('server-v2 /api/v1/sessions', () => {
       const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
       const id = created.body.data.id;
       const workspaceId = created.body.data.workspace_id;
-      const manager = (server as RunningServer).core.accessor.get(IWorkspaceInstanceManager);
+      const manager = (server as RunningServer).core.accessor.get(IProjectInstanceManager);
       const workspace = manager.get(workspaceId);
       expect(workspace).toBeDefined();
       await workspace!.program.mcp.ready;
@@ -1774,7 +1774,7 @@ describe('server-v2 /api/v1/sessions', () => {
       .update({ environmentCwd: undefined }, { touchUpdatedAt: false });
     await closeSessionById((server as RunningServer).core.accessor, id);
     await (server as RunningServer).core.accessor
-      .get(IWorkspaceService)
+      .get(IProjectService)
       .delete(encodeWorkDirKey(cwd));
     await rm(cwd, { recursive: true, force: true });
 

@@ -6,7 +6,7 @@ import { resolveAgentTaskConfig } from '#/agent/task/configSection';
 import { IConfigService } from '#/app/config/config';
 import type { IHostProcess, IHostProcessService } from '#/os/interface/hostProcess';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
-import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
+import { ISessionWorkdirContext } from '#/session/workdirContext/workdirContext';
 import { acquireOrWhenReady, pinnedGeneration, IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import { EnvironmentWorkspaceView } from '#/environment/environmentWorkspaceView';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
@@ -77,7 +77,7 @@ export class BashTool implements IBashTool {
   constructor(
     @IAgentEnvironmentService private readonly environment: IAgentEnvironmentService,
     @ISessionContext private readonly ctx: ISessionContext,
-    @ISessionWorkspaceContext private readonly workspaceCtx: ISessionWorkspaceContext,
+    @ISessionWorkdirContext private readonly workdirCtx: ISessionWorkdirContext,
     @IAgentToolExecutorService private readonly toolExecutor: IAgentToolExecutorService,
     @IAgentTaskOutputService private readonly taskOutputs: IAgentTaskOutputService,
     @IAgentToolPolicyService private readonly toolPolicy: IAgentToolPolicyService,
@@ -154,7 +154,7 @@ export class BashTool implements IBashTool {
 
   private executionCwd(args: BashInput): string {
     try {
-      const view = new EnvironmentWorkspaceView(this.environment.inspect(), this.workspaceCtx);
+      const view = new EnvironmentWorkspaceView(this.environment.inspect(), this.workdirCtx);
       return view.resolve(args.cwd ?? view.workDir);
     } catch {
       return args.cwd ?? this.ctx.cwd;
@@ -203,7 +203,7 @@ export class BashTool implements IBashTool {
       lease.dispose();
       return { isError: true, output: 'Environment changed before execution. Retry the tool call.' };
     }
-    const view = new EnvironmentWorkspaceView(lease.environment, this.workspaceCtx);
+    const view = new EnvironmentWorkspaceView(lease.environment, this.workdirCtx);
     const command = view.host.osKind === 'Windows' ? rewriteWindowsNullRedirect(args.command) : args.command;
     const description = startsInBackground ? args.description!.trim() : foregroundDescription(args);
     const timeoutMs = startsInBackground

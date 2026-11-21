@@ -7,7 +7,7 @@ import { IProjectLocalConfigService } from '#/app/projectLocalConfig/projectLoca
 import { ErrorCodes, Error2 } from '#/errors';
 import { LOCAL_ENVIRONMENT_ID } from '#/environment/environment';
 import { ISessionWorkdir } from '#/session/workdir/workdir';
-import { IWorkspaceTrust } from '#/workspace/workspaceTrust/workspaceTrust';
+import { IProjectTrust } from '#/project/projectTrust/projectTrust';
 
 import { PersistedPermissionRuleSchema } from './configSection';
 import type { PermissionRule } from './permissionRules';
@@ -25,7 +25,7 @@ export class ProjectPermissionRulesService extends Disposable implements IProjec
   constructor(
     @ISessionWorkdir private readonly workdir: ISessionWorkdir,
     @IProjectLocalConfigService private readonly localConfig: IProjectLocalConfigService,
-    @IWorkspaceTrust private readonly trust: IWorkspaceTrust,
+    @IProjectTrust private readonly trust: IProjectTrust,
     @ILogService private readonly log: ILogService,
   ) {
     super();

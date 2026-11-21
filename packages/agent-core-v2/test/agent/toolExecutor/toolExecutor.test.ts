@@ -81,7 +81,7 @@ import { HostProcessService } from '#/os/backends/node-local/hostProcessService'
 import { FakeEnvironment } from '#/environment/fakeEnvironment';
 import type { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import type { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
-import { stubWorkspaceContext } from '../../session/workspaceContext/stub-workspace-context';
+import { stubWorkspaceContext } from '../../session/workdirContext/stub-workdir-context';
 import { stubAgentEnvironment } from '../../environment/stubs';
 import { ConfigRegistry, ConfigService } from '#/app/config/configService';
 import { IConfigRegistry, IConfigService } from '#/app/config/config';

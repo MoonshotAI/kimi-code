@@ -6,7 +6,7 @@ import { dirname, join } from 'node:path';
 import {
   closeSessionById,
   ISessionIndex,
-  IWorkspaceInstanceManager,
+  IProjectInstanceManager,
 } from '@moonshot-ai/agent-core-v2';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 

@@ -6,22 +6,22 @@ import {
   IHostFileSystem,
   IEnvironmentService,
   ISessionWorkdir,
-  IWorkspaceFsService,
-  IWorkspaceService,
+  IProjectFsService,
+  IProjectService,
   getLiveSessionById,
   resumeSessionById,
   isError2,
   Error2,
   LOCAL_ENVIRONMENT_ID,
-  WorkspaceFsService,
-  WorkspaceGitService,
+  ProjectFsService,
+  ProjectGitService,
   ITelemetryService,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
 import { Event } from '@moonshot-ai/agent-core-v2/_base/event';
 import { IGitService } from '@moonshot-ai/agent-core-v2/app/git/git';
 import { encodeWorkDirKey, sameDir } from '@moonshot-ai/agent-core-v2/_base/utils/workdir-slug';
-import { isNonDirectory } from '@moonshot-ai/agent-core-v2/app/workspace/implicitProject';
+import { isNonDirectory } from '@moonshot-ai/agent-core-v2/app/project/implicitProject';
 import {
   fsDiffRequestSchema,
   fsGitStatusRequestSchema,
@@ -41,7 +41,7 @@ import {
   fsSuggestRequestSchema,
   fsSuggestResponseSchema,
   type FsSuggestRequest,
-} from '@moonshot-ai/agent-core-v2/workspace/workspaceFs/fs';
+} from '@moonshot-ai/agent-core-v2/project/projectFs/fs';
 import type { EnvironmentCapability, EnvironmentLease } from '@moonshot-ai/agent-core-v2/environment/environment';
 import { z } from 'zod';
 
@@ -156,7 +156,7 @@ type FsAction = (typeof FS_ACTIONS)[number];
 const FS_TAIL_PREFIX = 'fs:';
 
 interface FsScope extends EnvironmentReadStreamSource {
-  readonly fs: IWorkspaceFsService;
+  readonly fs: IProjectFsService;
   readonly environmentId: string;
   readonly lease: EnvironmentLease;
 }
@@ -180,8 +180,8 @@ function acquireLocalRootedFs(
   try {
     const hostFs = lease.environment.fs!;
     const context = { workspaceId, cwd: roots.workDir };
-    const git = new WorkspaceGitService({ primary: roots.workDir }, { current: core.accessor.get(IGitService), onDidChange: Event.None as Event<void> });
-    const fs = new WorkspaceFsService(context, { primary: roots.workDir, additionalDirs: roots.additionalDirs }, hostFs, environments, core.accessor.get(ITelemetryService), git);
+    const git = new ProjectGitService({ primary: roots.workDir }, { current: core.accessor.get(IGitService), onDidChange: Event.None as Event<void> });
+    const fs = new ProjectFsService(context, { primary: roots.workDir, additionalDirs: roots.additionalDirs }, hostFs, environments, core.accessor.get(ITelemetryService), git);
     return { fs, hostFs, lease, environmentId: LOCAL_ENVIRONMENT_ID };
   } catch (error) {
     lease.dispose();
@@ -194,7 +194,7 @@ async function resolveWorkspaceFs(
   ref: string,
   required: readonly EnvironmentCapability[],
 ): Promise<FsScope | undefined> {
-  const ws = await core.accessor.get(IWorkspaceService).get(ref);
+  const ws = await core.accessor.get(IProjectService).get(ref);
   if (ws !== undefined) {
     return acquireLocalRootedFs(core, ws.id, { workDir: ws.root, additionalDirs: ws.additionalDirs }, required);
   }
@@ -208,7 +208,7 @@ async function acquireDirectoryFs(
   required: readonly EnvironmentCapability[],
 ): Promise<FsScope | undefined> {
   if (await isNonDirectory(core.accessor.get(IHostFileSystem), dir)) return undefined;
-  const decision = await core.accessor.get(IWorkspaceService).peekImplicit(dir);
+  const decision = await core.accessor.get(IProjectService).peekImplicit(dir);
   if (decision.kind === 'reuse' && sameDir(decision.project.root, dir)) {
     const { project } = decision;
     return acquireLocalRootedFs(core, project.id, { workDir: project.root, additionalDirs: project.additionalDirs }, required);
@@ -681,7 +681,7 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
         return;
       }
 
-      let resolved: Awaited<ReturnType<IWorkspaceFsService['resolveDownload']>>;
+      let resolved: Awaited<ReturnType<IProjectFsService['resolveDownload']>>;
       let environmentFs: FsScope | undefined;
       try {
         environmentFs = acquireSessionFs(core, session_id, ['fs']);
@@ -792,7 +792,7 @@ export function createEnvironmentReadStream(
 type Req = { id: string; body: unknown };
 type Reply = FsPostReply;
 
-async function handleList(fs: IWorkspaceFsService, req: Req, reply: Reply): Promise<void> {
+async function handleList(fs: IProjectFsService, req: Req, reply: Reply): Promise<void> {
   const parsed = fsListRequestSchema.safeParse(req.body ?? {});
   if (!parsed.success) {
     reply.send(buildValidationEnvelope(parsed.error.issues, req.id));
@@ -802,7 +802,7 @@ async function handleList(fs: IWorkspaceFsService, req: Req, reply: Reply): Prom
   reply.send(okEnvelope(data, req.id));
 }
 
-async function handleRead(fs: IWorkspaceFsService, req: Req, reply: Reply): Promise<void> {
+async function handleRead(fs: IProjectFsService, req: Req, reply: Reply): Promise<void> {
   const parsed = fsReadRequestSchema.safeParse(req.body ?? {});
   if (!parsed.success) {
     reply.send(buildValidationEnvelope(parsed.error.issues, req.id));
@@ -812,7 +812,7 @@ async function handleRead(fs: IWorkspaceFsService, req: Req, reply: Reply): Prom
   reply.send(okEnvelope(data, req.id));
 }
 
-async function handleListMany(fs: IWorkspaceFsService, req: Req, reply: Reply): Promise<void> {
+async function handleListMany(fs: IProjectFsService, req: Req, reply: Reply): Promise<void> {
   const parsed = fsListManyRequestSchema.safeParse(req.body ?? {});
   if (!parsed.success) {
     reply.send(buildValidationEnvelope(parsed.error.issues, req.id));
@@ -822,7 +822,7 @@ async function handleListMany(fs: IWorkspaceFsService, req: Req, reply: Reply): 
   reply.send(okEnvelope(data, req.id));
 }
 
-async function handleStat(fs: IWorkspaceFsService, req: Req, reply: Reply): Promise<void> {
+async function handleStat(fs: IProjectFsService, req: Req, reply: Reply): Promise<void> {
   const parsed = fsStatRequestSchema.safeParse(req.body ?? {});
   if (!parsed.success) {
     reply.send(buildValidationEnvelope(parsed.error.issues, req.id));
@@ -832,7 +832,7 @@ async function handleStat(fs: IWorkspaceFsService, req: Req, reply: Reply): Prom
   reply.send(okEnvelope(data, req.id));
 }
 
-async function handleStatMany(fs: IWorkspaceFsService, req: Req, reply: Reply): Promise<void> {
+async function handleStatMany(fs: IProjectFsService, req: Req, reply: Reply): Promise<void> {
   const parsed = fsStatManyRequestSchema.safeParse(req.body ?? {});
   if (!parsed.success) {
     reply.send(buildValidationEnvelope(parsed.error.issues, req.id));
@@ -842,7 +842,7 @@ async function handleStatMany(fs: IWorkspaceFsService, req: Req, reply: Reply): 
   reply.send(okEnvelope(data, req.id));
 }
 
-async function handleMkdir(fs: IWorkspaceFsService, req: Req, reply: Reply): Promise<void> {
+async function handleMkdir(fs: IProjectFsService, req: Req, reply: Reply): Promise<void> {
   const parsed = fsMkdirRequestSchema.safeParse(req.body ?? {});
   if (!parsed.success) {
     reply.send(buildValidationEnvelope(parsed.error.issues, req.id));
@@ -852,7 +852,7 @@ async function handleMkdir(fs: IWorkspaceFsService, req: Req, reply: Reply): Pro
   reply.send(okEnvelope(data, req.id));
 }
 
-async function handleSearch(fs: IWorkspaceFsService, req: Req, reply: Reply): Promise<void> {
+async function handleSearch(fs: IProjectFsService, req: Req, reply: Reply): Promise<void> {
   const parsed = fsSearchRequestSchema.safeParse(req.body ?? {});
   if (!parsed.success) {
     reply.send(buildValidationEnvelope(parsed.error.issues, req.id));
@@ -862,7 +862,7 @@ async function handleSearch(fs: IWorkspaceFsService, req: Req, reply: Reply): Pr
   reply.send(okEnvelope(data, req.id));
 }
 
-async function handleGrep(fs: IWorkspaceFsService, req: Req, reply: Reply): Promise<void> {
+async function handleGrep(fs: IProjectFsService, req: Req, reply: Reply): Promise<void> {
   const parsed = fsGrepRequestSchema.safeParse(req.body ?? {});
   if (!parsed.success) {
     reply.send(buildValidationEnvelope(parsed.error.issues, req.id));
@@ -872,7 +872,7 @@ async function handleGrep(fs: IWorkspaceFsService, req: Req, reply: Reply): Prom
   reply.send(okEnvelope(data, req.id));
 }
 
-async function handleGitStatus(fs: IWorkspaceFsService, req: Req, reply: Reply): Promise<void> {
+async function handleGitStatus(fs: IProjectFsService, req: Req, reply: Reply): Promise<void> {
   const parsed = fsGitStatusRequestSchema.safeParse(req.body ?? {});
   if (!parsed.success) {
     reply.send(buildValidationEnvelope(parsed.error.issues, req.id));
@@ -882,7 +882,7 @@ async function handleGitStatus(fs: IWorkspaceFsService, req: Req, reply: Reply):
   reply.send(okEnvelope(data, req.id));
 }
 
-async function handleGitStatusBatch(fs: IWorkspaceFsService, req: Req, reply: Reply): Promise<void> {
+async function handleGitStatusBatch(fs: IProjectFsService, req: Req, reply: Reply): Promise<void> {
   const parsed = fsGitStatusBatchRequestSchema.safeParse(req.body ?? {});
   if (!parsed.success) {
     reply.send(buildValidationEnvelope(parsed.error.issues, req.id));
@@ -892,7 +892,7 @@ async function handleGitStatusBatch(fs: IWorkspaceFsService, req: Req, reply: Re
   reply.send(okEnvelope(data, req.id));
 }
 
-async function handlePullRequestBatch(fs: IWorkspaceFsService, req: Req, reply: Reply): Promise<void> {
+async function handlePullRequestBatch(fs: IProjectFsService, req: Req, reply: Reply): Promise<void> {
   const parsed = fsPullRequestBatchRequestSchema.safeParse(req.body ?? {});
   if (!parsed.success) {
     reply.send(buildValidationEnvelope(parsed.error.issues, req.id));
@@ -902,7 +902,7 @@ async function handlePullRequestBatch(fs: IWorkspaceFsService, req: Req, reply: 
   reply.send(okEnvelope(data, req.id));
 }
 
-async function handlePullRequest(fs: IWorkspaceFsService, req: Req, reply: Reply): Promise<void> {
+async function handlePullRequest(fs: IProjectFsService, req: Req, reply: Reply): Promise<void> {
   const parsed = fsPullRequestRequestSchema.safeParse(req.body ?? {});
   if (!parsed.success) {
     reply.send(buildValidationEnvelope(parsed.error.issues, req.id));
@@ -912,7 +912,7 @@ async function handlePullRequest(fs: IWorkspaceFsService, req: Req, reply: Reply
   reply.send(okEnvelope(data, req.id));
 }
 
-async function handleDiff(fs: IWorkspaceFsService, req: Req, reply: Reply): Promise<void> {
+async function handleDiff(fs: IProjectFsService, req: Req, reply: Reply): Promise<void> {
   const parsed = fsDiffRequestSchema.safeParse(req.body ?? {});
   if (!parsed.success) {
     reply.send(buildValidationEnvelope(parsed.error.issues, req.id));
@@ -922,7 +922,7 @@ async function handleDiff(fs: IWorkspaceFsService, req: Req, reply: Reply): Prom
   reply.send(okEnvelope(data, req.id));
 }
 
-async function handleOpen(fs: IWorkspaceFsService, req: Req, reply: Reply): Promise<void> {
+async function handleOpen(fs: IProjectFsService, req: Req, reply: Reply): Promise<void> {
   const parsed = fsOpenRequestSchema.safeParse(req.body ?? {});
   if (!parsed.success) {
     reply.send(buildValidationEnvelope(parsed.error.issues, req.id));
@@ -933,7 +933,7 @@ async function handleOpen(fs: IWorkspaceFsService, req: Req, reply: Reply): Prom
   reply.send(okEnvelope({ opened: true as const }, req.id));
 }
 
-async function handleReveal(fs: IWorkspaceFsService, req: Req, reply: Reply): Promise<void> {
+async function handleReveal(fs: IProjectFsService, req: Req, reply: Reply): Promise<void> {
   const parsed = fsRevealRequestSchema.safeParse(req.body ?? {});
   if (!parsed.success) {
     reply.send(buildValidationEnvelope(parsed.error.issues, req.id));
@@ -944,7 +944,7 @@ async function handleReveal(fs: IWorkspaceFsService, req: Req, reply: Reply): Pr
   reply.send(okEnvelope({ revealed: true as const }, req.id));
 }
 
-async function handleOpenIn(fs: IWorkspaceFsService, sessionId: string, req: Req, reply: Reply): Promise<void> {
+async function handleOpenIn(fs: IProjectFsService, sessionId: string, req: Req, reply: Reply): Promise<void> {
   const parsed = fsOpenInRequestSchema.safeParse(req.body ?? {});
   if (!parsed.success) {
     reply.send(buildValidationEnvelope(parsed.error.issues, req.id));

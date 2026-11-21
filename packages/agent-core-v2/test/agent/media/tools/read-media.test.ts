@@ -49,7 +49,7 @@ import {
 import { EventBusService } from '#/app/event/eventBusService';
 import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
 import type { Model } from '#/llm-adapter/model/catalog';
-import type { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
+import type { ISessionWorkdirContext } from '#/session/workdirContext/workdirContext';
 import type { WorkspaceConfig } from '#/tool/path-access';
 import { sniffImageDimensions } from '#/agent/media/file-type';
 import { stubAgentContext } from '../../agentContext/stubs';
@@ -918,7 +918,7 @@ describe('AgentMediaToolsRegistrar', () => {
     const workspaceCtx = {
       workDir: '/workspace',
       additionalDirs: [],
-    } as unknown as ISessionWorkspaceContext;
+    } as unknown as ISessionWorkdirContext;
     const baseEnvironment = environmentFor(createTestFs(files));
     const environmentChanges = new Emitter<void>();
     let environmentAvailable = true;

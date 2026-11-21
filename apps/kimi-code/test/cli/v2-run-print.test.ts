@@ -37,9 +37,9 @@ import {
   ISessionRunGate,
   ISessionManager,
   ITelemetryService,
-  IWorkspaceInstanceManager,
-  IWorkspaceService,
-  IWorkspaceSessions,
+  IProjectInstanceManager,
+  IProjectService,
+  IProjectSessions,
   InMemorySessionLockService,
   Error2,
   ErrorCodes,
@@ -49,7 +49,7 @@ import {
   type BootstrapInput,
   type Event2,
 } from '@moonshot-ai/agent-core-v2';
-import type { ProjectMcpServer } from '@moonshot-ai/agent-core-v2/workspace/workspaceMcp/workspaceMcp';
+import type { ProjectMcpServer } from '@moonshot-ai/agent-core-v2/project/projectMcp/projectMcp';
 
 import { CLI_SHUTDOWN_TIMEOUT_MS, CLI_USER_AGENT_PRODUCT } from '#/constant/app';
 
@@ -320,8 +320,8 @@ function makeFakeHarness(toolUpdates = false) {
       },
     ],
     [ISessionIndex, { get: vi.fn(async () => undefined), listRecent: vi.fn(async () => ({ items: [] })) }],
-    [IWorkspaceService, { get: vi.fn(async () => undefined) }],
-    [IWorkspaceSessions, { listForWorkdir: vi.fn(async () => ({ items: [] })) }],
+    [IProjectService, { get: vi.fn(async () => undefined) }],
+    [IProjectSessions, { listForWorkdir: vi.fn(async () => ({ items: [] })) }],
     [ISessionLockService, new InMemorySessionLockService()],
     [
       IAppendLogStore,
@@ -360,7 +360,7 @@ function makeFakeHarness(toolUpdates = false) {
     [IHostFileSystem, {}],
     [IEnvironmentService, { addProvider: vi.fn(async () => ({ dispose: vi.fn() })) }],
     [
-      IWorkspaceInstanceManager,
+      IProjectInstanceManager,
       {
         acquire: vi.fn(async () => ({
           instance: {
@@ -861,7 +861,7 @@ describe('runV2Print', () => {
     const { app, agentServices, appServices, planState } = makeFakeHarness();
     planState.active = true;
 
-    const workdirSessions = appServices.get(IWorkspaceSessions) as { listForWorkdir: ReturnType<typeof vi.fn> };
+    const workdirSessions = appServices.get(IProjectSessions) as { listForWorkdir: ReturnType<typeof vi.fn> };
     workdirSessions.listForWorkdir.mockResolvedValue({ items: [{ id: 'ses_9', cwd: process.cwd() }] });
 
     mocks.bootstrap.mockReturnValue({ app });
@@ -879,7 +879,7 @@ describe('runV2Print', () => {
     const stdout = writer();
     const stderr = writer();
     const { app, appServices } = makeFakeHarness();
-    const workdirSessions = appServices.get(IWorkspaceSessions) as { listForWorkdir: ReturnType<typeof vi.fn> };
+    const workdirSessions = appServices.get(IProjectSessions) as { listForWorkdir: ReturnType<typeof vi.fn> };
     workdirSessions.listForWorkdir.mockResolvedValue({ items: [{ id: 'ses_here', cwd: process.cwd() }] });
     const index = appServices.get(ISessionIndex) as { listRecent: ReturnType<typeof vi.fn> };
     const sessions = appServices.get(ISessionManager) as {
@@ -1459,7 +1459,7 @@ describe('runV2Print', () => {
     const stderr = writer();
     const { app, appServices, trustState } = makeFakeHarness();
     trustState.trusted = false;
-    const workspaces = appServices.get(IWorkspaceInstanceManager) as {
+    const workspaces = appServices.get(IProjectInstanceManager) as {
       acquire: ReturnType<typeof vi.fn>;
     };
     workspaces.acquire.mockRejectedValueOnce(new Error('trust store unavailable'));

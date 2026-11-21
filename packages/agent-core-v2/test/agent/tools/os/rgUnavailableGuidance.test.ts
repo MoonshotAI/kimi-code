@@ -10,7 +10,7 @@ import { FakeEnvironment } from '#/environment/fakeEnvironment';
 import { ensureRgPath } from '#/os/backends/node-local/tools/rgLocator';
 import { GlobTool } from '#/agent/tools/os/glob/globTool';
 import { GrepTool } from '#/agent/tools/os/grep/grepTool';
-import { stubWorkspaceContext } from '../../../session/workspaceContext/stub-workspace-context';
+import { stubWorkspaceContext } from '../../../session/workdirContext/stub-workdir-context';
 import { stubAgentEnvironment } from '../../../environment/stubs';
 
 vi.mock('#/os/backends/node-local/tools/rgLocator', async (importOriginal) => {

@@ -47,7 +47,7 @@ import { ErrorCodes, isError2 } from '@moonshot-ai/agent-core-v2';
 import { sameDir } from '@moonshot-ai/agent-core-v2/_base/utils/workdir-slug';
 import {
   sessionWorkDir,
-} from '@moonshot-ai/agent-core-v2/session/workspaceContext/workspaceRoots';
+} from '@moonshot-ai/agent-core-v2/session/workdirContext/workdirRoots';
 import { RPCError } from '@moonshot-ai/klient';
 
 import type { AcpClient } from './acp-client';

@@ -15,7 +15,7 @@ import type { IHostProcessService } from '#/os/interface/hostProcess';
 import { acquireOrWhenReady, IAgentEnvironmentService, pinnedGeneration } from '#/agent/environmentBinding/agentEnvironment';
 import { EnvironmentWorkspaceView } from '#/environment/environmentWorkspaceView';
 import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
-import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
+import { ISessionWorkdirContext } from '#/session/workdirContext/workdirContext';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IOAuthService } from '#/app/auth/auth';
 import {
@@ -66,7 +66,7 @@ export class GlobTool implements IGlobTool {
   readonly parameters: Record<string, unknown> = toInputJsonSchema(GlobInputSchema);
   constructor(
     @IAgentEnvironmentService private readonly environment: IAgentEnvironmentService,
-    @ISessionWorkspaceContext private readonly workspaceCtx: ISessionWorkspaceContext,
+    @ISessionWorkdirContext private readonly workdirCtx: ISessionWorkdirContext,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @ISessionSkillCatalog private readonly skillCatalog?: ISessionSkillCatalog,
     @IOAuthService private readonly auth?: IOAuthService,
@@ -88,9 +88,9 @@ export class GlobTool implements IGlobTool {
       const inspected = resolutionLease.environment;
       const expectedGeneration = pinnedGeneration(inspected);
       const view = new EnvironmentWorkspaceView(inspected, {
-        workDir: this.workspaceCtx.workDir,
+        workDir: this.workdirCtx.workDir,
         additionalDirs: [
-          ...this.workspaceCtx.additionalDirs,
+          ...this.workdirCtx.additionalDirs,
           ...(this.skillCatalog?.catalog.getSkillRoots() ?? []),
         ],
       });
