@@ -9,10 +9,7 @@ import type { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
 import type { IWorkspaceFsService } from '#/workspace/workspaceFs/fs';
 import type { IWorkspaceGitService } from '#/workspace/workspaceGit/workspaceGit';
 import type { IWorkspaceInstructionsService } from '#/workspace/workspaceInstructions/workspaceInstructions';
-import type { IWorkspaceMcpService } from '#/workspace/workspaceMcp/workspaceMcp';
-import { WorkspaceMcpService } from '#/workspace/workspaceMcp/workspaceMcpService';
-import type { IWorkspaceMcpConfigService } from '#/workspace/workspaceMcpConfig/workspaceMcpConfig';
-import { WorkspaceMcpConfigService } from '#/workspace/workspaceMcpConfig/workspaceMcpConfigService';
+import type { ProjectMcpServer, WorkdirMcp } from '#/workspace/workspaceMcp/workspaceMcp';
 import type { IWorkspaceTrust } from '#/workspace/workspaceTrust/workspaceTrust';
 import { WorkspaceTrustService } from '#/workspace/workspaceTrust/workspaceTrustService';
 import type { IWorkspaceTrustDisclosure } from '#/workspace/workspaceTrust/trustDisclosure';
@@ -34,6 +31,7 @@ import type { IWorkspaceSkillCatalog } from '#/features/skill/workspace/workspac
 import type { IEnvironmentService } from '#/app/environment/environment';
 
 import type { ProgramDependencies } from './programDependencies';
+import { ProgramMcp } from './programMcp';
 import { PROGRAM_CAPABILITIES, ProgramWorkdirs, type ProgramHarness, type ProgramWorkdir } from './programWorkdirs';
 
 export type { ProgramWorkdir } from './programWorkdirs';
@@ -80,8 +78,7 @@ export interface ProgramSnapshot {
 interface ProgramGeneration extends ProgramHarness {
   readonly id: string;
   readonly workdirs: ProgramWorkdirs;
-  readonly mcpConfig: IWorkspaceMcpConfigService;
-  readonly mcp: IWorkspaceMcpService;
+  readonly mcp: ProgramMcp;
   readonly trust: IWorkspaceTrust;
   readonly trustDisclosure: IWorkspaceTrustDisclosure;
   readonly pluginAgentProfiles: IPluginAgentProfileLoader;
@@ -123,8 +120,7 @@ export class Program {
   get fs(): IWorkspaceFsService { return this.requireGeneration().workdirs.root.fs; }
   get git(): IWorkspaceGitService { return this.requireGeneration().workdirs.root.git; }
   get instructions(): IWorkspaceInstructionsService { return this.requireGeneration().workdirs.root.instructions; }
-  get mcpConfig(): IWorkspaceMcpConfigService { return this.requireGeneration().mcpConfig; }
-  get mcp(): IWorkspaceMcpService { return this.requireGeneration().mcp; }
+  get mcp(): WorkdirMcp { return this.requireGeneration().mcp.root; }
   get trust(): IWorkspaceTrust { return this.requireGeneration().trust; }
   get trustDisclosure(): IWorkspaceTrustDisclosure { return this.requireGeneration().trustDisclosure; }
   get skills(): IWorkspaceSkillCatalog { return this.requireGeneration().workdirs.root.skills; }
@@ -152,9 +148,8 @@ export class Program {
         explicitAgentProfiles: generation.explicitAgentProfiles,
         userAgentProfiles: generation.userAgentProfiles,
         pluginAgentProfiles: generation.pluginAgentProfiles,
-        mcp: generation.mcp,
         trust: generation.trust,
-        acquireWorkdir: (environmentId, cwd, followsPrimary) => generation.workdirs.acquire(environmentId, cwd, followsPrimary),
+        acquireWorkdir: (environmentId, cwd, followsPrimary) => this.acquireGenerationWorkdir(generation, environmentId, cwd, followsPrimary),
         onDispose: release,
       });
     } catch (error) {
@@ -167,10 +162,38 @@ export class Program {
     const generation = this.requireGeneration();
     const lease = await this.environments.acquireWhenReady({ environmentId }, ['fs']);
     try {
-      return await generation.workdirs.acquire(environmentId, cwd, followsPrimary);
+      return await this.acquireGenerationWorkdir(generation, environmentId, cwd, followsPrimary);
     } finally {
       lease.dispose();
     }
+  }
+
+  private async acquireGenerationWorkdir(
+    generation: ProgramGeneration,
+    environmentId: string,
+    cwd: string,
+    followsPrimary = environmentId === LOCAL_ENVIRONMENT_ID,
+  ): Promise<ProgramWorkdir> {
+    const view = await generation.workdirs.acquire(environmentId, cwd, followsPrimary);
+    if (environmentId !== LOCAL_ENVIRONMENT_ID || followsPrimary) return { ...view, mcp: generation.mcp.root };
+    try {
+      const mcp = await generation.mcp.workdir(cwd);
+      return {
+        ...view,
+        mcp,
+        dispose: () => {
+          mcp.dispose();
+          view.dispose();
+        },
+      };
+    } catch (error) {
+      view.dispose();
+      throw error;
+    }
+  }
+
+  previewProjectMcp(pinnedWorkDir?: string): Promise<readonly ProjectMcpServer[]> {
+    return this.requireGeneration().mcp.previewProjectServers(pinnedWorkDir);
   }
 
   async reload(): Promise<void> {
@@ -201,7 +224,7 @@ export class Program {
         priority: entry.priority,
         profiles: entry.contribution.profiles.map((profile) => profile.name),
       }));
-    const mcpServers = Object.keys(generation?.mcpConfig.servers() ?? {});
+    const mcpServers = generation?.mcp.root.configuredNames() ?? [];
     return {
       workspaceId: this.workspaceId,
       binding: this.binding,
@@ -305,15 +328,16 @@ export class Program {
       const explicitAgentProfiles = own(new ExplicitAgentProfileLoaderService(this.context, root.dirs, this.dependencies.bootstrap, hostFs, this.dependencies.log, userAgentProfiles, this.dependencies.agentProfiles));
       const extraAgentProfiles = own(new ExtraAgentProfileLoaderService(this.dependencies.config, this.context, root.dirs, this.dependencies.bootstrap, hostFs, this.dependencies.log, userAgentProfiles, this.dependencies.agentProfiles));
       const trust = own(new WorkspaceTrustService(root.dirs, this.dependencies.trustStore, root.state, this.dependencies.config));
-      const mcpConfig = own(new WorkspaceMcpConfigService(root.dirs, this.dependencies.bootstrap, this.dependencies.plugins, this.dependencies.log, this.dependencies.config, hostFs, trust, this.dependencies.configStore, this.dependencies.oauth));
-      const mcp = new WorkspaceMcpService(this.context, root.dirs, this.environments, mcpConfig, this.dependencies.oauth, this.dependencies.log, this.dependencies.telemetry, this.dependencies.identity, this.dependencies.sessionManager);
-      disposables.push({ dispose: () => mcp.disposeAsync() });
-      const trustDisclosure = new WorkspaceTrustDisclosureService(this.context, hostFs, this.dependencies.bootstrap, this.dependencies.config, root.localConfig, root.dirs, trust, root.skills, root.agentProfiles, this.dependencies.agentProfiles, root.instructions, this.dependencies.log);
+      const project = {
+        current: async () => (await this.dependencies.workspaces.get(this.workspaceId)) ?? { root: this.context.meta.root, additionalDirs: [] },
+        onDidChange: this.dependencies.workspaceStore.onDidChange,
+      };
+      const mcp = own(new ProgramMcp({ ...this.dependencies, environments: this.environments, hostFs, project, rootDirs: root.dirs, trust }));
+      const trustDisclosure = new WorkspaceTrustDisclosureService(this.context, hostFs, this.dependencies.bootstrap, this.dependencies.config, root.localConfig, root.dirs, trust, mcp, root.skills, root.agentProfiles, this.dependencies.agentProfiles, root.instructions, this.dependencies.log);
       own(workdirs);
       return {
         id: environment.identity.generation,
         workdirs,
-        mcpConfig,
         mcp,
         trust,
         trustDisclosure,
@@ -339,8 +363,7 @@ export class Program {
     void Promise.all([
       readiness(generation.workdirs.root.dirs),
       readiness(generation.workdirs.root.instructions),
-      readiness(generation.mcpConfig),
-      readiness(generation.mcp),
+      readiness(generation.mcp.root),
       readiness(generation.workdirs.root.skills),
       readiness(generation.workdirs.root.agentProfiles),
     ]).then(

@@ -1,38 +1,56 @@
 import { dirname } from 'pathe';
 
-import { Disposable, type IDisposable } from '#/_base/di/lifecycle';
-import { AsyncEmitter, Emitter } from '#/_base/event';
+import { Disposable } from '#/_base/di/lifecycle';
+import { AsyncEmitter, Emitter, Event } from '#/_base/event';
 import { ILogService } from '#/_base/log/log';
 import { subtreeWatchFilter } from '#/_base/utils/paths';
 import { TimeoutTimer } from '#/_base/utils/timer';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
-import { loadMcpServers, resolveMcpJsonPaths } from '#/app/mcpConfig/configLoader';
+import {
+  loadAnchorMcpServers,
+  loadUserMcpServers,
+  resolveMcpJsonPaths,
+  userMcpJsonPath,
+  type McpAnchor,
+} from '#/app/mcpConfig/configLoader';
 import { MCP_SECTION, type McpSection } from '#/app/mcpConfig/configSection';
-import { IMcpConfigStore } from '#/app/mcpConfig/configStore';
+import { IMcpConfigStore, type McpConfigWriteEvent } from '#/app/mcpConfig/configStore';
 import { IMcpOAuthService } from '#/app/mcpConfig/oauthService';
 import { IPluginService } from '#/app/plugin/plugin';
-import type { PluginMcpServerEntry } from '#/app/plugin/types';
+import type { PluginMcpServerEntry, PluginReloadEvent } from '#/app/plugin/types';
 import type { McpServerConfig } from '#/mcpCore/config-schema';
 import type { McpOAuthService } from '#/mcpCore/oauth/service';
 import { mcpOAuthStoreKey } from '#/mcpCore/oauth/store';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
-import { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
 import { IWorkspaceTrust } from '#/workspace/workspaceTrust/workspaceTrust';
-import { watch, watchCandidates } from '#human/utils/watch';
+import { watch, watchCandidates, type WatchHandle } from '#human/utils/watch';
 
 import {
   IWorkspaceMcpConfigService,
+  type McpConfigSource,
   type McpServersChangeEvent,
   type McpTunables,
 } from './workspaceMcpConfig';
 
 const WATCH_DEBOUNCE_MS = 200;
 
+type PluginMcpServers = readonly [Record<string, McpServerConfig>, readonly PluginMcpServerEntry[]];
+
+interface McpConfigReader {
+  readonly trustGated: boolean;
+  readonly onDidReloadPlugins: Event<PluginReloadEvent>;
+  readonly onDidWriteFiles: Event<McpConfigWriteEvent>;
+  readFiles(trusted: boolean): Promise<Record<string, McpServerConfig>>;
+  readPlugins(): Promise<PluginMcpServers>;
+  watchFiles(): Promise<WatchHandle>;
+}
+
 export class WorkspaceMcpConfigService extends Disposable implements IWorkspaceMcpConfigService {
   declare readonly _serviceBrand: undefined;
 
   readonly ready: Promise<void>;
+  private readonly reader: McpConfigReader;
   private mutationTail: Promise<void> = Promise.resolve();
   private fileServers = new Map<string, McpServerConfig>();
   private pluginServers = new Map<string, McpServerConfig>();
@@ -45,29 +63,30 @@ export class WorkspaceMcpConfigService extends Disposable implements IWorkspaceM
   private readonly tunablesEmitter = this._register(new Emitter<McpTunables>());
   readonly onDidChange = this.changeEmitter.event;
   readonly onDidChangeTunables = this.tunablesEmitter.event;
-  private projectWatcher?: IDisposable;
-  private watchedPrimary?: string;
-  private primaryReloadTail: Promise<void> = Promise.resolve();
 
   constructor(
-    @IWorkspaceDirs private readonly dirs: IWorkspaceDirs,
-    @IBootstrapService private readonly bootstrap: IBootstrapService,
-    @IPluginService private readonly plugins: IPluginService,
+    source: McpConfigSource,
+    @IBootstrapService bootstrap: IBootstrapService,
+    @IPluginService plugins: IPluginService,
     @ILogService private readonly log: ILogService,
     @IConfigService private readonly config: IConfigService,
-    @IHostFileSystem private readonly fs: IHostFileSystem,
+    @IHostFileSystem fs: IHostFileSystem,
     @IWorkspaceTrust private readonly trust: IWorkspaceTrust,
     @IMcpConfigStore mcpConfigStore: IMcpConfigStore,
     @IMcpOAuthService private readonly oauth: McpOAuthService,
   ) {
     super();
+    this.reader =
+      source.kind === 'user'
+        ? userConfigReader(fs, bootstrap, plugins, mcpConfigStore)
+        : anchorConfigReader(fs, source.anchor);
     this.oauth.setConfigurationSource(this, []);
     this._register({ dispose: () => this.oauth.removeConfigurationSource(this) });
     this.ready = this.initialize().catch((error: unknown) => {
       this.log.error('mcp config initial load failed', { error });
     });
     this._register(
-      this.plugins.onDidReload((event) => {
+      this.reader.onDidReloadPlugins((event) => {
         event.waitUntil(
           this.reloadPluginServers().catch((error) => {
             this.log.warn(`mcp plugin reload failed: ${String(error)}`);
@@ -83,7 +102,7 @@ export class WorkspaceMcpConfigService extends Disposable implements IWorkspaceM
       }),
     );
     this._register(
-      mcpConfigStore.onDidWrite((event) => {
+      this.reader.onDidWriteFiles((event) => {
         event.waitUntil(
           this.reloadFileServers().catch((error) => {
             this.log.warn(`mcp config reload after management write failed: ${String(error)}`);
@@ -105,18 +124,13 @@ export class WorkspaceMcpConfigService extends Disposable implements IWorkspaceM
         this.tunablesEmitter.fire(value);
       }),
     );
-    this._register({ dispose: () => this.projectWatcher?.dispose() });
-    this.primaryReloadTail = this.watchConfigFiles();
-    this._register(
-      this.dirs.onDidChange(() => {
-        this.primaryReloadTail = this.primaryReloadTail.then(
-          () => this.refreshPrimary(),
-          () => this.refreshPrimary(),
-        );
-        void this.primaryReloadTail.catch((error) => {
-          this.log.warn(`mcp primary reload failed: ${String(error)}`);
-        });
-      }),
+    void this.reader.watchFiles().then(
+      (handle) => {
+        this.watchFiles(handle);
+      },
+      (error: unknown) => {
+        this.log.warn(`mcp config watch failed: ${String(error)}`);
+      },
     );
   }
 
@@ -137,15 +151,9 @@ export class WorkspaceMcpConfigService extends Disposable implements IWorkspaceM
   private async initialize(publish = false, preserveOAuthCredentials = false): Promise<void> {
     await this.config.ready;
     const trusted = await this.trust.get();
-    const [fileServers, pluginServers, entries] = await Promise.all([
-      loadMcpServers({
-        fs: this.fs,
-        cwd: this.dirs.primary,
-        homeDir: this.bootstrap.homeDir,
-        includeProject: trusted,
-      }),
-      this.plugins.enabledMcpServers(),
-      this.plugins.mcpServerEntries(),
+    const [fileServers, [pluginServers, entries]] = await Promise.all([
+      this.reader.readFiles(trusted),
+      this.reader.readPlugins(),
     ]);
     this.fileServers = new Map(Object.entries(fileServers));
     this.disabledOAuthServers = retainedDisabledOAuthServers(
@@ -168,17 +176,12 @@ export class WorkspaceMcpConfigService extends Disposable implements IWorkspaceM
     await this.mutate(async () => {
       if (!this.initializationComplete) {
         await this.initialize(true, true);
-      } else {
+      } else if (this.reader.trustGated) {
         const trusted = this.trust.isTrusted();
         if (!trusted && this.untrustedOAuthServers === undefined) {
           this.untrustedOAuthServers = Object.fromEntries(this.fileServers);
         }
-        const fresh = await loadMcpServers({
-          fs: this.fs,
-          cwd: this.dirs.primary,
-          homeDir: this.bootstrap.homeDir,
-          includeProject: trusted,
-        });
+        const fresh = await this.reader.readFiles(trusted);
         if (trusted) await this.reconcileUntrustedOAuthServers(fresh);
         this.fileServers = new Map(Object.entries(fresh));
       }
@@ -209,57 +212,13 @@ export class WorkspaceMcpConfigService extends Disposable implements IWorkspaceM
     return { ...Object.fromEntries(this.pluginServers), ...Object.fromEntries(this.fileServers) };
   }
 
-  private async refreshPrimary(): Promise<void> {
-    await this.dirs.ready;
-    if (this.watchedPrimary === this.dirs.primary) return;
-    await Promise.all([this.reloadFileServers(), this.refreshProjectConfigWatcher()]);
-  }
-
-  private async watchConfigFiles(): Promise<void> {
-    const paths = await resolveMcpJsonPaths({
-      fs: this.fs,
-      cwd: this.dirs.primary,
-      homeDir: this.bootstrap.homeDir,
-    });
-    this.watchPaths([paths.user]);
-    await this.refreshProjectConfigWatcher();
-  }
-
-  private async refreshProjectConfigWatcher(): Promise<void> {
-    const primary = this.dirs.primary;
-    if (this.watchedPrimary === primary) return;
-    const paths = await resolveMcpJsonPaths({
-      fs: this.fs,
-      cwd: primary,
-      homeDir: this.bootstrap.homeDir,
-    });
-    const projectRoot = dirname(paths.projectRoot);
-    const handle = watchCandidates(projectRoot, [paths.projectRoot, paths.project], {
-      ignored: subtreeWatchFilter(projectRoot, [paths.projectRoot, paths.project]),
-    });
-    const subscription = handle.onDidChange(() => {
-      this.scheduleFileReload();
-    });
-    this.projectWatcher?.dispose();
-    this.projectWatcher = {
-      dispose: () => {
-        subscription.dispose();
-        handle.dispose();
-      },
-    };
-    this.watchedPrimary = primary;
-  }
-
-  private watchPaths(paths: readonly string[]): void {
-    for (const path of paths) {
-      const handle = watch(path);
-      this._register(handle);
-      this._register(
-        handle.onDidChange(() => {
-          this.scheduleFileReload();
-        }),
-      );
-    }
+  private watchFiles(handle: WatchHandle): void {
+    this._register(handle);
+    this._register(
+      handle.onDidChange(() => {
+        this.scheduleFileReload();
+      }),
+    );
   }
 
   private scheduleFileReload(): void {
@@ -273,12 +232,7 @@ export class WorkspaceMcpConfigService extends Disposable implements IWorkspaceM
   private async reloadFileServers(): Promise<void> {
     await this.ready;
     await this.mutate(async () => {
-      const fresh = await loadMcpServers({
-        fs: this.fs,
-        cwd: this.dirs.primary,
-        homeDir: this.bootstrap.homeDir,
-        includeProject: this.trust.isTrusted(),
-      });
+      const fresh = await this.reader.readFiles(this.trust.isTrusted());
       this.fileServers = new Map(Object.entries(fresh));
       await this.publishIfChanged();
     });
@@ -287,10 +241,7 @@ export class WorkspaceMcpConfigService extends Disposable implements IWorkspaceM
   private async reloadPluginServers(): Promise<void> {
     await this.ready;
     await this.mutate(async () => {
-      const [fresh, entries] = await Promise.all([
-        this.plugins.enabledMcpServers(),
-        this.plugins.mcpServerEntries(),
-      ]);
+      const [fresh, entries] = await this.reader.readPlugins();
       const previousDisabled = this.disabledOAuthServers;
       const retained = retainedDisabledOAuthServers(
         entries,
@@ -330,6 +281,7 @@ export class WorkspaceMcpConfigService extends Disposable implements IWorkspaceM
     preserveOAuthCredentials = false,
     preservedOAuthServers?: ReadonlySet<string>,
   ): Promise<void> {
+    if (this._store.isDisposed) return;
     const next = this.merged();
     const upsert: Record<string, McpServerConfig> = Object.create(null);
     const remove: string[] = [];
@@ -369,6 +321,7 @@ export class WorkspaceMcpConfigService extends Disposable implements IWorkspaceM
   }
 
   private syncOAuthConfiguration(): void {
+    if (this._store.isDisposed) return;
     const retained = this.untrustedOAuthServers ?? {};
     this.oauth.setConfigurationSource(
       this,
@@ -403,6 +356,41 @@ export class WorkspaceMcpConfigService extends Disposable implements IWorkspaceM
       this.log.warn('mcp oauth credential cleanup failed', { name, error });
     }
   }
+}
+
+function userConfigReader(
+  fs: IHostFileSystem,
+  bootstrap: IBootstrapService,
+  plugins: IPluginService,
+  store: IMcpConfigStore,
+): McpConfigReader {
+  return {
+    trustGated: false,
+    onDidReloadPlugins: plugins.onDidReload,
+    onDidWriteFiles: store.onDidWrite,
+    readFiles: async () => (await loadUserMcpServers({ fs, homeDir: bootstrap.homeDir })).servers,
+    readPlugins: () => Promise.all([plugins.enabledMcpServers(), plugins.mcpServerEntries()]),
+    watchFiles: async () => watch(userMcpJsonPath(bootstrap.homeDir)),
+  };
+}
+
+function anchorConfigReader(fs: IHostFileSystem, anchor: McpAnchor): McpConfigReader {
+  return {
+    trustGated: true,
+    onDidReloadPlugins: Event.None as Event<PluginReloadEvent>,
+    onDidWriteFiles: Event.None as Event<McpConfigWriteEvent>,
+    readFiles: async (trusted) =>
+      trusted ? (await loadAnchorMcpServers({ fs, anchor })).servers : {},
+    readPlugins: async () => [{}, []],
+    watchFiles: async () => {
+      const paths = await resolveMcpJsonPaths({ fs, cwd: anchor });
+      const checkoutRoot = dirname(paths.projectRoot);
+      const candidates = [paths.projectRoot, paths.project];
+      return watchCandidates(checkoutRoot, candidates, {
+        ignored: subtreeWatchFilter(checkoutRoot, candidates),
+      });
+    },
+  };
 }
 
 function retainedDisabledOAuthServers(

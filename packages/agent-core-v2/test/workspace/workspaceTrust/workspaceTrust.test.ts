@@ -38,6 +38,7 @@ import {
   writeWorkspaceTrust,
 } from '#/workspace/workspaceTrust/trustRecord';
 import { WorkspaceTrustDisclosureService } from '#/workspace/workspaceTrust/trustDisclosureService';
+import type { ProjectMcpPreview, ProjectMcpServer } from '#/workspace/workspaceMcp/workspaceMcp';
 import {
   IWorkspaceTrustStore,
   WorkspaceTrustStore,
@@ -47,6 +48,10 @@ import { stubBootstrap } from '../../app/bootstrap/stubs';
 import { stubConfigService } from '../../app/config/stubs';
 import { registerStateServices } from '../../state/stubs';
 import { stubLog } from '../../_base/log/stubs';
+
+function stubProjectMcp(servers: readonly ProjectMcpServer[] = []): ProjectMcpPreview {
+  return { previewProjectServers: async () => servers };
+}
 
 describe('WorkspaceTrustService', () => {
   let homeDir: string;
@@ -606,6 +611,7 @@ describe('WorkspaceTrustService', () => {
       } as never,
       { ready: Promise.resolve(), primary: cwd, sharedAdditionalDirs: [secondary] } as never,
       { ready: Promise.resolve(), get: async () => false } as never,
+      stubProjectMcp(),
       { ready: Promise.resolve(), catalog, reloadSources: async () => undefined } as never,
       { ready: Promise.resolve() } as never,
       { entries: () => [] } as never,
@@ -661,6 +667,7 @@ describe('WorkspaceTrustService', () => {
       } as never,
       { ready: Promise.resolve(), primary: cwd, sharedAdditionalDirs: [] } as never,
       { ready: Promise.resolve(), get: async () => false } as never,
+      stubProjectMcp(),
       { ready: Promise.resolve(), catalog, reloadSources } as never,
       { ready: Promise.resolve() } as never,
       { entries: () => [] } as never,
@@ -699,6 +706,7 @@ describe('WorkspaceTrustService', () => {
       new FileProjectLocalConfigService(stubBootstrap(homeDir), fs, secondary),
       { ready: Promise.resolve(), primary: cwd, sharedAdditionalDirs: [] } as never,
       { ready: Promise.resolve(), get: async () => false } as never,
+      stubProjectMcp(),
       { ready: Promise.resolve(), catalog: new InMemorySkillCatalog(), reloadSources: async () => undefined } as never,
       { ready: Promise.resolve() } as never,
       { entries: () => [] } as never,
@@ -717,5 +725,90 @@ describe('WorkspaceTrustService', () => {
     } finally {
       await rm(secondary, { recursive: true, force: true });
     }
+  });
+  it('discloses AGENTS.md files up to an unparseable .git file above the primary', async () => {
+    const vendored = join(cwd, 'vendored');
+    const primary = join(vendored, 'src');
+    await mkdir(primary, { recursive: true });
+    await mkdir(join(cwd, '.git'));
+    await writeFile(join(vendored, '.git'), 'not a pointer\n', 'utf8');
+    const outerAgentsMd = join(cwd, 'AGENTS.md');
+    const vendoredAgentsMd = join(vendored, 'AGENTS.md');
+    const primaryAgentsMd = join(primary, 'AGENTS.md');
+    await Promise.all(
+      [outerAgentsMd, vendoredAgentsMd, primaryAgentsMd].map((path) => writeFile(path, 'instructions', 'utf8')),
+    );
+    const fs = new HostFileSystem();
+    const service = new WorkspaceTrustDisclosureService(
+      { cwd: primary, workspaceId: 'wm_test' } as never,
+      fs,
+      stubBootstrap(homeDir),
+      { get: () => true } as never,
+      {
+        readAdditionalDirs: async () => ({
+          projectRoot: vendored,
+          configPath: join(vendored, '.kimi-code', 'local.toml'),
+          additionalDirs: [],
+        }),
+        resolveAdditionalDirs: async (_baseDir: string, dirs: readonly string[]) => [...dirs],
+      } as never,
+      { ready: Promise.resolve(), primary, sharedAdditionalDirs: [] } as never,
+      { ready: Promise.resolve(), get: async () => false } as never,
+      stubProjectMcp(),
+      { ready: Promise.resolve(), catalog: new InMemorySkillCatalog(), reloadSources: async () => undefined } as never,
+      { ready: Promise.resolve() } as never,
+      { entries: () => [] } as never,
+      {
+        ready: Promise.resolve(),
+        snapshot: { agentsMdPaths: [outerAgentsMd, vendoredAgentsMd, primaryAgentsMd] },
+      } as never,
+      stubLog(),
+    );
+
+    const result = await service.describeGatedActivation();
+
+    expect(result.instructionSources.agentsMdPaths).toEqual(
+      [await fs.realpath(vendoredAgentsMd), await fs.realpath(primaryAgentsMd)].toSorted(),
+    );
+  });
+
+  it('discloses the enabled project MCP servers the root view would start, sorted with real origins', async () => {
+    const fs = new HostFileSystem();
+    const origin = join(cwd, '.mcp.json');
+    await writeFile(origin, '{}', 'utf8');
+    const service = new WorkspaceTrustDisclosureService(
+      { cwd, workspaceId: 'wm_test' } as never,
+      fs,
+      stubBootstrap(homeDir),
+      { get: () => true } as never,
+      {
+        readAdditionalDirs: async () => ({
+          projectRoot: cwd,
+          configPath: join(cwd, '.kimi-code', 'local.toml'),
+          additionalDirs: [],
+        }),
+        resolveAdditionalDirs: async (_baseDir: string, dirs: readonly string[]) => [...dirs],
+      } as never,
+      { ready: Promise.resolve(), primary: cwd, sharedAdditionalDirs: [] } as never,
+      { ready: Promise.resolve(), get: async () => false } as never,
+      stubProjectMcp([
+        { name: 'zeta', config: { transport: 'stdio', command: 'zeta-cmd', args: ['--x'] }, origin },
+        { name: 'alpha', config: { transport: 'http', url: 'https://example.test/mcp' }, origin },
+        { name: 'off', config: { transport: 'stdio', command: 'off', enabled: false }, origin },
+      ]),
+      { ready: Promise.resolve(), catalog: new InMemorySkillCatalog(), reloadSources: async () => undefined } as never,
+      { ready: Promise.resolve() } as never,
+      { entries: () => [] } as never,
+      { ready: Promise.resolve(), snapshot: { agentsMdPaths: [] } } as never,
+      stubLog(),
+    );
+
+    const result = await service.describeGatedActivation();
+
+    const realOrigin = await fs.realpath(origin);
+    expect(result.mcpServers).toEqual([
+      { name: 'alpha', transport: 'http', url: 'https://example.test/mcp', origin: realOrigin },
+      { name: 'zeta', transport: 'stdio', command: 'zeta-cmd', args: ['--x'], origin: realOrigin },
+    ]);
   });
 });

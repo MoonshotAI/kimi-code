@@ -1424,7 +1424,7 @@ describe('server-v2 /api/v1/sessions', () => {
       const workspace = manager.get(workspaceId);
       expect(workspace).toBeDefined();
       await workspace!.program.mcp.ready;
-      const connections = workspace!.program.mcp.connectionManager();
+      const connections = workspace!.program.mcp.view();
       await vi.waitFor(() => {
         expect(connections.list().some((entry) => entry.name === 'fixture' && entry.status === 'connected')).toBe(true);
       });
@@ -1464,7 +1464,7 @@ describe('server-v2 /api/v1/sessions', () => {
       const replacement = replacementLease.instance;
       expect(replacement).not.toBe(workspace);
       await replacement.program.mcp.ready;
-      const replacementConnections = replacement.program.mcp.connectionManager();
+      const replacementConnections = replacement.program.mcp.view();
       await vi.waitFor(() => {
         expect(replacementConnections.list().some((entry) => entry.name === 'fixture' && entry.status === 'connected')).toBe(true);
       });

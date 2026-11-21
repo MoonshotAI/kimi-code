@@ -9,14 +9,12 @@ import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vite
 
 import type { OAuthClientInformationFull } from '@modelcontextprotocol/sdk/shared/auth.js';
 
-import type { ServiceIdentifier } from '#/_base/di/instantiation';
-import { Disposable, DisposableStore } from '#/_base/di/lifecycle';
+import { SyncDescriptor } from '#/_base/di/descriptors';
+import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices } from '#/_base/di/test';
-import { AsyncEmitter, Emitter } from '#/_base/event';
+import { AsyncEmitter, Emitter, type IWaitUntil } from '#/_base/event';
 import { ILogService } from '#/_base/log/log';
 import { IMcpOAuthService } from '#/app/mcpConfig/oauthService';
-import { ISessionManager } from '#/app/sessionManager/sessionManager';
-import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemetry';
 import type { McpServerConfig } from '#/mcpCore/config-schema';
 import {
   McpConnectionManager,
@@ -26,19 +24,12 @@ import {
 import { McpOAuthService, type McpOAuthEvent } from '#/mcpCore/oauth/service';
 import { HostProcessService } from '#/os/backends/node-local/hostProcessService';
 import { FakeEnvironment } from '#/environment/fakeEnvironment';
-import { ISessionEphemeralMcpServers } from '#/session/mcp/ephemeralMcpServers';
-import { MergedMcpConnectionView } from '#/session/mcp/mergedConnectionView';
-import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
-import { ISessionContext, makeSessionContext } from '#/session/sessionContext/sessionContext';
-import type { SessionWillCreateEvent } from '#/workspace/sessionLifecycle/sessionLifecycle';
-import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
-import { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
-import { IEnvironmentService, type EnvironmentResolver } from '#/app/environment/environment';
+import { IEnvironmentService } from '#/app/environment/environment';
+import { IWorkspaceMcpService } from '#/workspace/workspaceMcp/workspaceMcp';
 import {
-  IWorkspaceMcpService,
-  type ISessionMcpOverlay,
-} from '#/workspace/workspaceMcp/workspaceMcp';
-import { WorkspaceMcpService } from '#/workspace/workspaceMcp/workspaceMcpService';
+  WorkspaceMcpService,
+  type McpSuppression,
+} from '#/workspace/workspaceMcp/workspaceMcpService';
 import {
   IWorkspaceMcpConfigService,
   type McpServersChangeEvent,
@@ -50,7 +41,6 @@ import { registerAgentIdentityStub } from '../../app/agentIdentity/stubs';
 import {
   createMemoryMcpOAuthStore,
   ManualMcpOAuthScheduler,
-  startInProcessHttpMcpServer,
   stdioFixture,
 } from '../../mcpCore/stubs';
 
@@ -71,31 +61,22 @@ describe('WorkspaceMcpService', () => {
   let tunablesFn: Mock<() => McpTunables>;
   let configChanges: AsyncEmitter<McpServersChangeEvent>;
   let tunablesChanges: Emitter<McpTunables>;
-  let assemblyEvents: Emitter<SessionWillCreateEvent>;
   let oauthService: McpOAuthService;
   let oauthScheduler: ManualMcpOAuthScheduler;
   let manager: InstanceType<typeof McpConnectionManager> | undefined;
-  let trackedSessions: Array<string | undefined>;
-  let primaryDirs: IWorkspaceDirs;
-  let dirsChanges: Emitter<void>;
+  let stdioCwd: string;
+  let stdioCwdChanges: Emitter<void>;
 
   beforeEach(() => {
     cwd = mkdtempSync(join(tmpdir(), 'kimi-workspace-mcp-cwd-'));
     disposables = new DisposableStore();
-    dirsChanges = disposables.add(new Emitter<void>());
-    primaryDirs = {
-      _serviceBrand: undefined,
-      ready: Promise.resolve(),
-      primary: cwd,
-      onDidChange: dirsChanges.event,
-    } as unknown as IWorkspaceDirs;
+    stdioCwd = cwd;
+    stdioCwdChanges = disposables.add(new Emitter<void>());
     current = {};
-    trackedSessions = [];
     tunablesValue = {};
     tunablesFn = vi.fn(() => tunablesValue);
     configChanges = disposables.add(new AsyncEmitter<McpServersChangeEvent>());
     tunablesChanges = disposables.add(new Emitter<McpTunables>());
-    assemblyEvents = disposables.add(new Emitter<SessionWillCreateEvent>());
     oauthScheduler = new ManualMcpOAuthScheduler();
     oauthService = new McpOAuthService({
       store: createMemoryMcpOAuthStore(),
@@ -123,16 +104,13 @@ describe('WorkspaceMcpService', () => {
     };
   }
 
-  function createService(): IWorkspaceMcpService {
+  function createService(suppression?: McpSuppression): IWorkspaceMcpService {
     const ix = createServices(disposables, {
       strict: true,
       additionalServices: (reg) => {
-        reg.definePartialInstance(IWorkspaceContext, { cwd, workspaceId: 'test-workspace' });
-        reg.defineInstance(IWorkspaceDirs, primaryDirs);
         reg.defineInstance(IWorkspaceMcpConfigService, mcpConfigStub());
         reg.definePartialInstance(IMcpOAuthService, oauthService);
         reg.defineInstance(ILogService, stubLog());
-        reg.defineInstance(ITelemetryService, noopTelemetryService);
         const environment = Object.assign(
           new FakeEnvironment(
             { environmentId: 'local', generation: 'test-generation' },
@@ -143,30 +121,22 @@ describe('WorkspaceMcpService', () => {
         reg.definePartialInstance(IEnvironmentService, {
           _serviceBrand: undefined,
           inspect: () => environment,
-          acquire: () => ({
-            environment,
-            track: <T,>(resource: T, sessionId?: string): T => {
-              trackedSessions.push(sessionId);
-              return resource;
-            },
-            dispose: () => {},
-          }),
+          acquire: () => ({ environment, track: <T,>(resource: T): T => resource, dispose: () => {} }),
           acquireWhenReady: async () => ({
             environment,
-            track: <T,>(resource: T, sessionId?: string): T => {
-              trackedSessions.push(sessionId);
-              return resource;
-            },
+            track: <T,>(resource: T): T => resource,
             dispose: () => {},
           }),
         });
-        reg.definePartialInstance(ISessionManager, {
-          onWillCreateSession: assemblyEvents.event,
-        });
         registerAgentIdentityStub(reg);
-        reg.define(IWorkspaceMcpService, WorkspaceMcpService);
       },
     });
+    ix.set(
+      IWorkspaceMcpService,
+      new SyncDescriptor(WorkspaceMcpService, [
+        { stdioCwd: () => stdioCwd, onDidChangeStdioCwd: stdioCwdChanges.event, suppression },
+      ]),
+    );
     return ix.get(IWorkspaceMcpService);
   }
 
@@ -215,7 +185,24 @@ describe('WorkspaceMcpService', () => {
     expect(manager.get('beta')?.status).toBe('connected');
   }, 20000);
 
-  it('reconnects only default-cwd baseline stdio servers when primary changes', async () => {
+  it('connects nothing from a config change still queued when the service is disposed', async () => {
+    const service = createService();
+    manager = service.connectionManager();
+    await service.ready;
+    const spawn = vi.spyOn(HostProcessService.prototype, 'spawn');
+
+    const applied = configChanges.fireAsync(
+      { upsert: { beta: stdioServer() }, remove: [] },
+      new AbortController().signal,
+    );
+    await (service as WorkspaceMcpService).disposeAsync();
+    await applied;
+
+    expect(spawn).not.toHaveBeenCalled();
+    expect(manager.get('beta')).toBeUndefined();
+  }, 20000);
+
+  it('reconnects only default-cwd baseline stdio servers when the stdio cwd changes', async () => {
     current = {
       defaulted: stdioServer(),
       explicit: { ...stdioServer(), cwd: '/explicit-cwd' } as McpServerConfig,
@@ -225,13 +212,106 @@ describe('WorkspaceMcpService', () => {
     await service.ready;
     const reconnect = vi.spyOn(manager, 'reconnect').mockResolvedValue(undefined);
 
-    Object.defineProperty(primaryDirs, 'primary', { get: () => '/next-primary' });
-    dirsChanges.fire();
+    stdioCwd = '/next-primary';
+    stdioCwdChanges.fire();
 
     await vi.waitFor(() => {
       expect(reconnect).toHaveBeenCalledWith('defaulted');
     });
     expect(reconnect).not.toHaveBeenCalledWith('explicit');
+  });
+
+  describe('suppression', () => {
+    function suppressionOf(initial: readonly string[]): McpSuppression & {
+      set(names: readonly string[]): Promise<void>;
+      settle(): void;
+    } {
+      let names: ReadonlySet<string> = new Set(initial);
+      let settle!: () => void;
+      const settled = new Promise<void>((resolve) => {
+        settle = resolve;
+      });
+      const changes = disposables.add(new AsyncEmitter<IWaitUntil>());
+      return {
+        settled: () => settled,
+        current: () => names,
+        onDidChange: changes.event,
+        set: (next) => {
+          names = new Set(next);
+          return changes.fireAsync({}, new AbortController().signal);
+        },
+        settle: () => settle(),
+      };
+    }
+
+    it('connects only unsuppressed names once suppression settles', async () => {
+      current = { alpha: stdioServer(), beta: stdioServer() };
+      const connectAll = vi
+        .spyOn(McpConnectionManager.prototype, 'connectAll')
+        .mockResolvedValue(undefined);
+      const suppression = suppressionOf(['beta']);
+
+      const service = createService(suppression);
+      manager = service.connectionManager();
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(connectAll).not.toHaveBeenCalled();
+
+      suppression.settle();
+      await service.ready;
+
+      expect(connectAll).toHaveBeenCalledTimes(1);
+      expect(Object.keys(connectAll.mock.calls[0]?.[0] ?? {})).toEqual(['alpha']);
+      expect([...service.definedNames()].toSorted()).toEqual(['alpha', 'beta']);
+    });
+
+    it('removes newly suppressed names, reconnects released ones, and skips suppressed upserts', async () => {
+      current = { alpha: stdioServer(), beta: stdioServer() };
+      vi.spyOn(McpConnectionManager.prototype, 'connectAll').mockResolvedValue(undefined);
+      const connect = vi
+        .spyOn(McpConnectionManager.prototype, 'connect')
+        .mockResolvedValue(undefined as never);
+      const markRemoved = vi
+        .spyOn(McpConnectionManager.prototype, 'markRemoved')
+        .mockResolvedValue(true as never);
+      const suppression = suppressionOf([]);
+      suppression.settle();
+      const service = createService(suppression);
+      manager = service.connectionManager();
+      await service.ready;
+
+      await suppression.set(['alpha']);
+      expect(markRemoved).toHaveBeenCalledWith('alpha');
+      await configChanges.fireAsync(
+        { upsert: { alpha: stdioServer(), gamma: stdioServer() }, remove: [] },
+        new AbortController().signal,
+      );
+      expect(connect).toHaveBeenCalledWith('gamma', stdioServer());
+      expect(connect).not.toHaveBeenCalledWith('alpha', expect.anything());
+
+      await suppression.set([]);
+      expect(connect).toHaveBeenCalledWith('alpha', stdioServer());
+    });
+
+    it('starts every released name before any of their connections finishes', async () => {
+      current = { alpha: stdioServer(), beta: stdioServer() };
+      vi.spyOn(McpConnectionManager.prototype, 'connectAll').mockResolvedValue(undefined);
+      const pending: (() => void)[] = [];
+      const connect = vi
+        .spyOn(McpConnectionManager.prototype, 'connect')
+        .mockImplementation(() => new Promise<void>((resolve) => pending.push(resolve)));
+      const suppression = suppressionOf(['alpha', 'beta']);
+      suppression.settle();
+      const service = createService(suppression);
+      manager = service.connectionManager();
+      await service.ready;
+
+      const applied = suppression.set([]);
+      await vi.waitFor(() => expect(connect).toHaveBeenCalledTimes(2));
+      expect(connect.mock.calls.map(([name]) => name).toSorted()).toEqual(['alpha', 'beta']);
+
+      for (const resolve of pending) resolve();
+      await applied;
+    });
   });
 
   it('queues change events until the initial connect settles', async () => {
@@ -276,251 +356,6 @@ describe('WorkspaceMcpService', () => {
       { timeout: 10000, interval: 50 },
     );
   }, 20000);
-
-  it('sessionHandle admits servers connecting before ready settles and freezes the baseline after', async () => {
-    current = { alpha: stdioServer() };
-    let settleConnectAll: () => void = () => undefined;
-    vi.spyOn(McpConnectionManager.prototype, 'connectAll').mockImplementation(function (
-      this: McpConnectionManager,
-      servers: Readonly<Record<string, McpServerConfig>>,
-    ) {
-      for (const [name, config] of Object.entries(servers)) {
-        void this.connect(name, config);
-      }
-      return new Promise<void>((resolve) => {
-        settleConnectAll = resolve;
-      });
-    });
-
-    const service = createService();
-    manager = service.connectionManager();
-    const handle = service.sessionHandle();
-
-    await vi.waitFor(() => {
-      expect(manager?.get('alpha')).toBeDefined();
-    });
-    expect(handle.isBaselineServer('alpha')).toBe(true);
-    expect(handle.isBaselineServer('ghost')).toBe(false);
-
-    settleConnectAll();
-    await service.ready;
-
-    await manager?.connect('late', stdioServer());
-    expect(handle.isBaselineServer('late')).toBe(false);
-    expect(handle.isBaselineServer('alpha')).toBe(true);
-
-    expect(service.sessionHandle().isBaselineServer('late')).toBe(true);
-  }, 20000);
-
-  it('sessionHandle admits servers that finished the initial load before the first baseline read', async () => {
-    current = { alpha: stdioServer() };
-    const service = createService();
-    manager = service.connectionManager();
-    const handle = service.sessionHandle();
-
-    await service.ready;
-    expect(manager.get('alpha')?.status).toBe('connected');
-
-    expect(handle.isBaselineServer('alpha')).toBe(true);
-  }, 20000);
-
-  it('sessionHandle admits a needs-auth server that settled before the first baseline read', async () => {
-    const server = await startInProcessHttpMcpServer({ authToken: 'secret' });
-    try {
-      current = { remote: { transport: 'http', url: server.url } };
-      const service = createService();
-      manager = service.connectionManager();
-      const handle = service.sessionHandle();
-
-      await service.ready;
-      expect(manager.get('remote')?.status).toBe('needs-auth');
-
-      expect(handle.isBaselineServer('remote')).toBe(true);
-    } finally {
-      await server.close();
-    }
-  }, 20000);
-
-  it('sessionOverlay marks the ephemeral server names as baseline by construction', async () => {
-    current = { base: stdioServer() };
-    const service = createService();
-    manager = service.connectionManager();
-    await service.ready;
-
-    const overlay = service.sessionOverlay({ eph: stdioServer() });
-    expect(overlay.handle.isBaselineServer('eph')).toBe(true);
-    expect(overlay.handle.isBaselineServer('base')).toBe(true);
-
-    await overlay.handle.ready;
-    expect(overlay.handle.isBaselineServer('eph')).toBe(true);
-    expect(overlay.handle.isBaselineServer('late')).toBe(false);
-
-    await overlay.shutdown();
-  }, 20000);
-
-  it('sessionOverlay freezes the workspace baseline on workspace ready even while the overlay connect is pending', async () => {
-    current = { base: stdioServer() };
-    let settleOverlay: () => void = () => undefined;
-    vi.spyOn(McpConnectionManager.prototype, 'connectAll').mockImplementation(function (
-      this: McpConnectionManager,
-      servers: Readonly<Record<string, McpServerConfig>>,
-    ) {
-      if ('eph' in servers) {
-        return new Promise<void>((resolve) => {
-          settleOverlay = resolve;
-        });
-      }
-      for (const [name, config] of Object.entries(servers)) {
-        void this.connect(name, config);
-      }
-      return Promise.resolve();
-    });
-
-    const service = createService();
-    manager = service.connectionManager();
-    await service.ready;
-
-    const overlay = service.sessionOverlay({ eph: stdioServer() });
-    expect(overlay.handle.isBaselineServer('eph')).toBe(true);
-    expect(overlay.handle.isBaselineServer('base')).toBe(true);
-
-    await manager?.connect('late', stdioServer());
-    expect(overlay.handle.isBaselineServer('late')).toBe(false);
-
-    settleOverlay();
-    await overlay.handle.ready;
-    expect(overlay.handle.isBaselineServer('late')).toBe(false);
-    expect(overlay.handle.isBaselineServer('eph')).toBe(true);
-
-    await overlay.shutdown();
-  }, 20000);
-
-  it('sessionOverlay connects ephemeral servers on a session-owned manager, released by shutdown', async () => {
-    current = { base: stdioServer() };
-    const service = createService();
-    manager = service.connectionManager();
-    await service.ready;
-
-    const overlay = service.sessionOverlay({ eph: stdioServer() });
-    await overlay.handle.ready;
-
-    const view = overlay.handle.connectionManager;
-    expect(view.get('eph')?.status).toBe('connected');
-    expect(view.get('base')?.status).toBe('connected');
-    expect(manager?.get('eph')).toBeUndefined();
-    expect(Object.keys(current)).toEqual(['base']);
-
-    await overlay.shutdown();
-    expect(view.get('eph')).toBeUndefined();
-    expect(view.get('base')?.status).toBe('connected');
-  }, 20000);
-
-  it('tags overlay stdio resources with the session id while workspace servers stay untagged', async () => {
-    current = { base: stdioServer() };
-    const service = createService();
-    manager = service.connectionManager();
-    await service.ready;
-
-    const overlay = service.sessionOverlay({ eph: stdioServer() }, { sessionId: 'session-1' });
-    await overlay.handle.ready;
-
-    expect(new Set(trackedSessions)).toEqual(new Set([undefined, 'session-1']));
-
-    await overlay.shutdown();
-  }, 20000);
-
-  describe('session overlay activation (onWillCreateSession)', () => {
-    function willCreateEvent(
-      servers: Record<string, McpServerConfig>,
-      sessionCwd: string,
-      workspaceId = 'test-workspace',
-    ) {
-      const seeds = new Map<unknown, unknown>([
-        [ISessionEphemeralMcpServers, servers],
-        [
-          ISessionContext,
-          makeSessionContext({
-            sessionId: 's1',
-            workspaceId,
-            sessionDir: join(cwd, 's1'),
-            sessionScope: 'ws/s1',
-            cwd: sessionCwd,
-          }),
-        ],
-      ]);
-      const contributed = new Map<unknown, unknown>();
-      const disposers: Array<() => void> = [];
-      const event: SessionWillCreateEvent = {
-        sessionId: 's1',
-        onDidCreateScope: () => Disposable.None,
-        readSeed: <T>(id: ServiceIdentifier<T>): T => seeds.get(id) as T,
-        contributeSeed: (id, value) => {
-          contributed.set(id, value);
-        },
-        onSessionDispose: (dispose) => {
-          disposers.push(dispose);
-        },
-      };
-      return { event, contributed, disposers };
-    }
-
-    it('creates the overlay from the will-create event, contributes the merged handle, and shuts it down with the session', async () => {
-      const service = createService();
-      manager = service.connectionManager();
-      await service.ready;
-
-      const sessionCwd = mkdtempSync(join(tmpdir(), 'kimi-session-mcp-cwd-'));
-      const servers = { eph: stdioServer() };
-      const sessionOverlay = vi.spyOn(service, 'sessionOverlay');
-      const { event, contributed, disposers } = willCreateEvent(servers, sessionCwd);
-      assemblyEvents.fire(event);
-
-      expect(sessionOverlay).toHaveBeenCalledWith(servers, { stdioCwd: cwd, sessionId: 's1' });
-      const overlay = sessionOverlay.mock.results[0]?.value as ISessionMcpOverlay;
-      expect(contributed.get(ISessionMcpHandle)).toBe(overlay.handle);
-      await overlay.handle.ready;
-      expect(overlay.handle.connectionManager.get('eph')?.status).toBe('connected');
-
-      const shutdown = vi.spyOn(overlay, 'shutdown');
-      expect(disposers).toHaveLength(1);
-      disposers[0]!();
-      expect(shutdown).toHaveBeenCalledTimes(1);
-      await shutdown.mock.results[0]?.value;
-      await rm(sessionCwd, { recursive: true, force: true });
-    }, 20000);
-
-    it('ignores a session created without ephemeral servers', async () => {
-      const service = createService();
-      manager = service.connectionManager();
-      await service.ready;
-
-      const sessionOverlay = vi.spyOn(service, 'sessionOverlay');
-      const { event, contributed, disposers } = willCreateEvent({}, cwd);
-      assemblyEvents.fire(event);
-
-      expect(sessionOverlay).not.toHaveBeenCalled();
-      expect(contributed.size).toBe(0);
-      expect(disposers).toHaveLength(0);
-    });
-
-    it('ignores a will-create event of a session belonging to another workspace', async () => {
-      const service = createService();
-      manager = service.connectionManager();
-      await service.ready;
-
-      const sessionOverlay = vi.spyOn(service, 'sessionOverlay');
-      const { event, contributed, disposers } = willCreateEvent(
-        { eph: stdioServer() },
-        cwd,
-        'other-workspace',
-      );
-      assemblyEvents.fire(event);
-
-      expect(sessionOverlay).not.toHaveBeenCalled();
-      expect(contributed.size).toBe(0);
-      expect(disposers).toHaveLength(0);
-    });
-  });
 
   describe('credential events', () => {
     const SERVER_URL = 'https://mcp.example.test/mcp';
@@ -818,71 +653,5 @@ describe('WorkspaceMcpService', () => {
 
       expect(reconnectAndJoin).not.toHaveBeenCalled();
     });
-  });
-});
-
-describe('MergedMcpConnectionView', () => {
-  let base: McpConnectionManager;
-  let overlay: McpConnectionManager;
-
-  beforeEach(() => {
-    base = new McpConnectionManager();
-    overlay = new McpConnectionManager();
-  });
-
-  afterEach(async () => {
-    await base.shutdown();
-    await overlay.shutdown();
-  });
-
-  function disabledStdio(command: string): McpServerConfig {
-    return { transport: 'stdio', command, enabled: false };
-  }
-
-  it('shadows same-named base entries with overlay entries and filters their statuses', async () => {
-    await base.connect('shared', disabledStdio('base-cmd'));
-    await base.connect('base-only', disabledStdio('base-cmd'));
-    await overlay.connect('shared', {
-      transport: 'http',
-      url: 'https://example.com/mcp',
-      enabled: false,
-    });
-    await overlay.connect('eph', disabledStdio('eph-cmd'));
-    const view = new MergedMcpConnectionView(base, overlay, new Set(['shared', 'eph']));
-
-    expect(
-      view
-        .list()
-        .map((entry) => entry.name)
-        .toSorted(),
-    ).toEqual(['base-only', 'eph', 'shared']);
-    expect(view.get('shared')?.transport).toBe('http');
-    expect(view.get('base-only')?.transport).toBe('stdio');
-
-    const seen: string[] = [];
-    const unsubscribe = view.onStatusChange((entry) => seen.push(entry.name));
-    await base.connect('shared', disabledStdio('base-cmd'));
-    await base.connect('base-only', disabledStdio('base-cmd'));
-    await overlay.connect('shared', {
-      transport: 'http',
-      url: 'https://example.com/mcp',
-      enabled: false,
-    });
-    unsubscribe();
-
-    expect(seen).toEqual(['base-only', 'shared']);
-  });
-
-  it('routes reconnect to the name owner and aggregates initial-load readiness', async () => {
-    await base.connect('shared', disabledStdio('base-cmd'));
-    await overlay.connect('shared', { transport: 'http', url: 'http://127.0.0.1:1/mcp' });
-    expect(overlay.get('shared')?.status).toBe('failed');
-    const view = new MergedMcpConnectionView(base, overlay, new Set(['shared']));
-
-    await expect(view.reconnect('shared')).resolves.toBeUndefined();
-    await expect(view.reconnect('unknown')).rejects.toThrow('Unknown MCP server: unknown');
-
-    await view.waitForInitialLoad();
-    expect(view.initialLoadDurationMs()).toBe(0);
   });
 });

@@ -1,12 +1,77 @@
 import { dirname, join, normalize } from 'pathe';
 
 import { resolveKimiHome } from '#/app/bootstrap/bootstrap';
-import { findGitWorkTree } from '#/app/git/workTree';
+import { findNearestGitMarker } from '#/app/git/workTree';
+import type { Workspace } from '#/app/workspace/workspace';
 import { resolvePath } from '#/_base/utils/paths';
+import { workspaceRootKey } from '#/_base/utils/workdir-slug';
 import { ErrorCodes, Error2 } from '#/errors';
 import { McpServerConfigSchema, type McpServerConfig } from '#/mcpCore/config-schema';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { OsFsErrors, HostFsError } from '#/os/interface/hostFsErrors';
+
+declare const mcpAnchorBrand: unique symbol;
+
+export type McpAnchor = string & { readonly [mcpAnchorBrand]: true };
+
+export interface KeyedMcpAnchor {
+  readonly anchor: McpAnchor;
+  readonly key: string;
+}
+
+export type McpAnchorScope = Pick<Workspace, 'root' | 'additionalDirs'>;
+
+export function rootAnchor(projectRoot: string): McpAnchor {
+  return projectRoot as McpAnchor;
+}
+
+export function keyedRootAnchor(projectRoot: string): KeyedMcpAnchor {
+  return { anchor: rootAnchor(projectRoot), key: workspaceRootKey(normalize(projectRoot)) };
+}
+
+export async function findMcpAnchor(
+  fs: IHostFileSystem,
+  workDir: string,
+  project: McpAnchorScope,
+): Promise<KeyedMcpAnchor> {
+  const start = normalize(workDir);
+  const checkoutRoot = (await findNearestGitMarker(fs, start))?.root;
+  const [here, root, checkout, ...additional] = await Promise.all([
+    canonicalDir(fs, start),
+    canonicalDir(fs, project.root),
+    checkoutRoot === undefined ? undefined : canonicalDir(fs, checkoutRoot),
+    ...project.additionalDirs.map((dir) => canonicalDir(fs, dir)),
+  ]);
+  const nearest = [isSameOrInside(here, root) ? root : undefined, checkout]
+    .filter((dir) => dir !== undefined)
+    .toSorted((a, b) => b.key.length - a.key.length)[0];
+  if (
+    nearest === undefined ||
+    nearest.key === root.key ||
+    ![root, ...additional].some((scope) => isSameOrInside(nearest, scope))
+  ) {
+    return keyedRootAnchor(project.root);
+  }
+  return { anchor: nearest.dir as McpAnchor, key: nearest.key };
+}
+
+interface CanonicalDir {
+  readonly dir: string;
+  readonly key: string;
+}
+
+async function canonicalDir(fs: IHostFileSystem, dir: string): Promise<CanonicalDir> {
+  const spelled = normalize(dir);
+  try {
+    return { dir: spelled, key: workspaceRootKey(normalize(await fs.realpath(spelled))) };
+  } catch {
+    return { dir: spelled, key: workspaceRootKey(spelled) };
+  }
+}
+
+function isSameOrInside(dir: CanonicalDir, ancestor: CanonicalDir): boolean {
+  return dir.key === ancestor.key || dir.key.startsWith(`${ancestor.key}/`);
+}
 
 export interface McpJsonPaths {
   readonly user: string;
@@ -22,13 +87,17 @@ export interface ResolveMcpJsonPathsInput {
 
 export async function resolveMcpJsonPaths(input: ResolveMcpJsonPathsInput): Promise<McpJsonPaths> {
   const start = normalize(input.cwd);
-  const projectRoot = (await findGitWorkTree(input.fs, start))?.root ?? start;
+  const projectRoot = (await findNearestGitMarker(input.fs, start))?.root ?? start;
 
   return {
-    user: join(resolveKimiHome(input.homeDir), 'mcp.json'),
+    user: userMcpJsonPath(input.homeDir),
     projectRoot: join(projectRoot, '.mcp.json'),
     project: join(input.cwd, '.kimi-code', 'mcp.json'),
   };
+}
+
+export function userMcpJsonPath(homeDir?: string): string {
+  return join(resolveKimiHome(homeDir), 'mcp.json');
 }
 
 export interface LoadMcpServersInput {
@@ -52,28 +121,54 @@ export async function loadMcpServers(
 export async function loadMcpServersDetailed(
   input: LoadMcpServersInput,
 ): Promise<LoadMcpServersDetailedResult> {
-  const paths = await resolveMcpJsonPaths(input);
-  if (input.includeProject === false) {
-    const user = await readMcpJson(input.fs, paths.user);
-    return { servers: user, origins: mapValuesToPath(user, paths.user) };
-  }
-  const layers: readonly [path: string, servers: Record<string, McpServerConfig>][] =
-    await Promise.all([
-      readMcpJson(input.fs, paths.user),
-      readMcpJson(input.fs, paths.projectRoot, { stdioCwdBase: dirname(paths.projectRoot) }),
-      readMcpJson(input.fs, paths.project),
-    ]).then(([user, projectRoot, project]) => [
-      [paths.user, user],
-      [paths.projectRoot, projectRoot],
-      [paths.project, project],
-    ]);
+  if (input.includeProject === false) return loadUserMcpServers(input);
+  const [user, anchor] = await Promise.all([
+    loadUserMcpServers(input),
+    loadAnchorMcpServers({ fs: input.fs, anchor: rootAnchor(input.cwd) }),
+  ]);
+  return mergeDetailed([user, anchor]);
+}
+
+export interface LoadUserMcpServersInput {
+  readonly fs: IHostFileSystem;
+  readonly homeDir?: string;
+}
+
+export async function loadUserMcpServers(
+  input: LoadUserMcpServersInput,
+): Promise<LoadMcpServersDetailedResult> {
+  const path = userMcpJsonPath(input.homeDir);
+  const servers = await readMcpJson(input.fs, path);
+  return { servers, origins: mapValuesToPath(servers, path) };
+}
+
+export interface LoadAnchorMcpServersInput {
+  readonly fs: IHostFileSystem;
+  readonly anchor: McpAnchor;
+}
+
+export async function loadAnchorMcpServers(
+  input: LoadAnchorMcpServersInput,
+): Promise<LoadMcpServersDetailedResult> {
+  const paths = await resolveMcpJsonPaths({ fs: input.fs, cwd: input.anchor });
+  const [checkoutServers, anchorServers] = await Promise.all([
+    readMcpJson(input.fs, paths.projectRoot, { stdioCwdBase: dirname(paths.projectRoot) }),
+    readMcpJson(input.fs, paths.project),
+  ]);
+  return mergeDetailed([
+    { servers: checkoutServers, origins: mapValuesToPath(checkoutServers, paths.projectRoot) },
+    { servers: anchorServers, origins: mapValuesToPath(anchorServers, paths.project) },
+  ]);
+}
+
+function mergeDetailed(
+  layers: readonly LoadMcpServersDetailedResult[],
+): LoadMcpServersDetailedResult {
   const servers: Record<string, McpServerConfig> = Object.create(null);
   const origins: Record<string, string> = Object.create(null);
-  for (const [path, layer] of layers) {
-    for (const [name, config] of Object.entries(layer)) {
-      servers[name] = config;
-      origins[name] = path;
-    }
+  for (const layer of layers) {
+    Object.assign(servers, layer.servers);
+    Object.assign(origins, layer.origins);
   }
   return { servers, origins };
 }

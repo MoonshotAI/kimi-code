@@ -5,12 +5,14 @@ import { tmpdir } from 'node:os';
 import { join } from 'pathe';
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 
+import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices } from '#/_base/di/test';
 import { AsyncEmitter, Emitter } from '#/_base/event';
 import { ILogService } from '#/_base/log/log';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService, type ConfigSectionChangedEvent } from '#/app/config/config';
+import { rootAnchor } from '#/app/mcpConfig/configLoader';
 import { MCP_SECTION, type McpSection } from '#/app/mcpConfig/configSection';
 import {
   IMcpConfigStore,
@@ -23,10 +25,9 @@ import type { McpServerConfig } from '#/mcpCore/config-schema';
 import { McpOAuthService } from '#/mcpCore/oauth/service';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
-import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
-import { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
 import {
   IWorkspaceMcpConfigService,
+  type McpConfigSource,
   type McpServersChange,
 } from '#/workspace/workspaceMcpConfig/workspaceMcpConfig';
 import { WorkspaceMcpConfigService } from '#/workspace/workspaceMcpConfig/workspaceMcpConfigService';
@@ -41,6 +42,7 @@ import { stubLog } from '../../_base/log/stubs';
 import { createMemoryMcpOAuthStore } from '../../mcpCore/stubs';
 
 const watchFires = new Map<string, Emitter<WatchChange>>();
+const disposedWatches: string[] = [];
 
 vi.mock('#human/utils/watch', () => {
   const watch = (path: string) => {
@@ -49,7 +51,13 @@ vi.mock('#human/utils/watch', () => {
       emitter = new Emitter<WatchChange>();
       watchFires.set(path, emitter);
     }
-    return { ready: Promise.resolve(), onDidChange: emitter.event, dispose: () => {} };
+    return {
+      ready: Promise.resolve(),
+      onDidChange: emitter.event,
+      dispose: () => {
+        disposedWatches.push(path);
+      },
+    };
   };
   return {
     watch,
@@ -71,8 +79,6 @@ describe('WorkspaceMcpConfigService', () => {
   let trusted: boolean;
   let trustFlips: Emitter<WorkspaceTrustChange>;
   let sectionChanges: Emitter<ConfigSectionChangedEvent>;
-  let dirsChanges: Emitter<void>;
-  let primaryDirs: IWorkspaceDirs;
   let changes: McpServersChange[];
   let cancelAuthorization: Mock<(source: object | undefined, serverName: string, serverUrl: string | URL) => Promise<void>>;
   let invalidate: Mock<(source: object | undefined, serverName: string, serverUrl: string | URL) => Promise<void>>;
@@ -82,13 +88,13 @@ describe('WorkspaceMcpConfigService', () => {
     homeDir = mkdtempSync(join(tmpdir(), 'kimi-workspace-mcp-config-home-'));
     disposables = new DisposableStore();
     watchFires.clear();
+    disposedWatches.length = 0;
     pluginServers = {};
     pluginReloads = disposables.add(new AsyncEmitter<PluginReloadEvent>());
     storeWrites = disposables.add(new AsyncEmitter<McpConfigWriteEvent>());
     trusted = true;
     trustFlips = new Emitter<WorkspaceTrustChange>();
     sectionChanges = disposables.add(new Emitter<ConfigSectionChangedEvent>());
-    dirsChanges = disposables.add(new Emitter<void>());
     changes = [];
     cancelAuthorization = vi.fn(async () => undefined);
     invalidate = vi.fn(async () => undefined);
@@ -103,24 +109,22 @@ describe('WorkspaceMcpConfigService', () => {
     ]);
   });
 
+  function workdirSource(): McpConfigSource {
+    return { kind: 'workdir', anchor: rootAnchor(cwd) };
+  }
+
   function createService(
+    source: McpConfigSource,
     mcpSection?: McpSection,
     trustReady: () => Promise<void> = () => Promise.resolve(),
     log: ILogService = stubLog(),
     oauth?: McpOAuthService,
+    record?: McpServersChange[],
   ): IWorkspaceMcpConfigService {
-    primaryDirs = {
-      _serviceBrand: undefined,
-      ready: Promise.resolve(),
-      primary: cwd,
-      onDidChange: dirsChanges.event,
-    } as unknown as IWorkspaceDirs;
     const ix = createServices(disposables, {
       strict: true,
       additionalServices: (reg) => {
         reg.definePartialInstance(IBootstrapService, { homeDir });
-        reg.definePartialInstance(IWorkspaceContext, { cwd });
-        reg.defineInstance(IWorkspaceDirs, primaryDirs);
         reg.definePartialInstance(IPluginService, {
           enabledMcpServers: async () =>
             Object.fromEntries(
@@ -162,12 +166,32 @@ describe('WorkspaceMcpConfigService', () => {
           setConfigurationSource: vi.fn(),
           removeConfigurationSource: vi.fn(),
         });
-        reg.define(IWorkspaceMcpConfigService, WorkspaceMcpConfigService);
       },
     });
+    ix.set(IWorkspaceMcpConfigService, new SyncDescriptor(WorkspaceMcpConfigService, [source]));
     const service = ix.get(IWorkspaceMcpConfigService);
-    service.onDidChange(({ upsert, remove }) => changes.push({ upsert, remove }));
+    service.onDidChange(({ upsert, remove }) => (record ?? changes).push({ upsert, remove }));
     return service;
+  }
+
+  function createUserLayer(
+    mcpSection?: McpSection,
+    trustReady?: () => Promise<void>,
+    log?: ILogService,
+    oauth?: McpOAuthService,
+    record?: McpServersChange[],
+  ): IWorkspaceMcpConfigService {
+    return createService({ kind: 'user' }, mcpSection, trustReady, log, oauth, record);
+  }
+
+  function createWorkdirLayer(
+    mcpSection?: McpSection,
+    trustReady?: () => Promise<void>,
+    log?: ILogService,
+    oauth?: McpOAuthService,
+    record?: McpServersChange[],
+  ): IWorkspaceMcpConfigService {
+    return createService(workdirSource(), mcpSection, trustReady, log, oauth, record);
   }
 
   async function writeProjectConfig(servers: Record<string, McpServerConfig>): Promise<string> {
@@ -178,14 +202,20 @@ describe('WorkspaceMcpConfigService', () => {
     return file;
   }
 
+  async function writeUserConfig(servers: Record<string, McpServerConfig>): Promise<string> {
+    const file = join(homeDir, 'mcp.json');
+    await writeFile(file, JSON.stringify({ mcpServers: servers }), 'utf8');
+    return file;
+  }
+
   it('merges file and plugin servers in the initial resolve (file wins name collisions)', async () => {
-    await writeProjectConfig({
+    await writeUserConfig({
       shared: stdioConfig('file-version'),
       fileOnly: stdioConfig('file'),
     });
     pluginServers = { shared: stdioConfig('plugin-version'), pluginOnly: stdioConfig('plugin') };
 
-    const service = createService();
+    const service = createUserLayer();
     await service.ready;
 
     expect(service.servers()).toEqual({
@@ -201,16 +231,34 @@ describe('WorkspaceMcpConfigService', () => {
     pluginServers = { pluginOnly: stdioConfig('plugin') };
     trusted = false;
 
-    const service = createService();
-    await service.ready;
+    const user = createUserLayer();
+    const workdir = createWorkdirLayer();
+    await Promise.all([user.ready, workdir.ready]);
 
-    expect(service.servers()).toEqual({ pluginOnly: stdioConfig('plugin') });
+    expect(user.servers()).toEqual({ pluginOnly: stdioConfig('plugin') });
+    expect(workdir.servers()).toEqual({});
+  });
+
+  it('keeps the user layer to the user file and plugins and the workdir layer to its anchor files', async () => {
+    await writeProjectConfig({ projectOnly: stdioConfig('project') });
+    await writeUserConfig({ userOnly: stdioConfig('user') });
+    pluginServers = { pluginOnly: stdioConfig('plugin') };
+
+    const user = createUserLayer();
+    const workdir = createWorkdirLayer();
+    await Promise.all([user.ready, workdir.ready]);
+
+    expect(user.servers()).toEqual({
+      pluginOnly: stdioConfig('plugin'),
+      userOnly: stdioConfig('user'),
+    });
+    expect(workdir.servers()).toEqual({ projectOnly: stdioConfig('project') });
   });
 
   it('skips the project-level config files when trust initialization fails', async () => {
     await writeProjectConfig({ fileOnly: stdioConfig('file') });
 
-    const service = createService(undefined, () => Promise.reject(new Error('trust storage unavailable')));
+    const service = createWorkdirLayer(undefined, () => Promise.reject(new Error('trust storage unavailable')));
     await service.ready;
 
     expect(service.servers()).toEqual({});
@@ -221,14 +269,18 @@ describe('WorkspaceMcpConfigService', () => {
     pluginServers = { pluginOnly: stdioConfig('plugin') };
     trusted = false;
     let attempts = 0;
-    const service = createService(undefined, () => {
+    const failFirstTrustRead = (): Promise<void> => {
       attempts++;
-      return attempts === 1
+      return attempts <= 2
         ? Promise.reject(new Error('trust storage unavailable'))
         : Promise.resolve();
-    });
-    await service.ready;
+    };
+    const workdirChanges: McpServersChange[] = [];
+    const service = createUserLayer(undefined, failFirstTrustRead);
+    const workdir = createWorkdirLayer(undefined, failFirstTrustRead, undefined, undefined, workdirChanges);
+    await Promise.all([service.ready, workdir.ready]);
     expect(service.servers()).toEqual({});
+    expect(workdir.servers()).toEqual({});
 
     trustFlips.fire({ trusted: false });
 
@@ -236,12 +288,15 @@ describe('WorkspaceMcpConfigService', () => {
       expect(changes).toEqual([{ upsert: { pluginOnly: stdioConfig('plugin') }, remove: [] }]);
     });
     expect(service.servers()).toEqual({ pluginOnly: stdioConfig('plugin') });
+    await workdir.ready;
+    expect(workdir.servers()).toEqual({});
+    expect(workdirChanges).toEqual([]);
   });
 
   it('picks up the project servers when the workspace becomes trusted', async () => {
     await writeProjectConfig({ fileOnly: stdioConfig('file') });
     trusted = false;
-    const service = createService();
+    const service = createWorkdirLayer();
     await service.ready;
     expect(service.servers()).toEqual({});
 
@@ -260,12 +315,12 @@ describe('WorkspaceMcpConfigService', () => {
   it('drops the project servers when the workspace loses trust', async () => {
     await writeProjectConfig({ fileOnly: stdioConfig('file') });
     pluginServers = { pluginOnly: stdioConfig('plugin') };
-    const service = createService();
-    await service.ready;
-    expect(service.servers()).toEqual({
-      fileOnly: stdioConfig('file'),
-      pluginOnly: stdioConfig('plugin'),
-    });
+    const userChanges: McpServersChange[] = [];
+    const user = createUserLayer(undefined, undefined, undefined, undefined, userChanges);
+    const service = createWorkdirLayer();
+    await Promise.all([user.ready, service.ready]);
+    expect(service.servers()).toEqual({ fileOnly: stdioConfig('file') });
+    expect(user.servers()).toEqual({ pluginOnly: stdioConfig('plugin') });
 
     trusted = false;
     trustFlips.fire({ trusted: false });
@@ -276,12 +331,14 @@ describe('WorkspaceMcpConfigService', () => {
       },
       { timeout: 10000, interval: 50 },
     );
-    expect(service.servers()).toEqual({ pluginOnly: stdioConfig('plugin') });
+    expect(service.servers()).toEqual({});
+    expect(user.servers()).toEqual({ pluginOnly: stdioConfig('plugin') });
+    expect(userChanges).toEqual([]);
   }, 20000);
 
   it('exposes live tunables and publishes only reconnect delay changes', async () => {
     const mcpSection = { startupTimeoutMs: 1234, toolTimeoutMs: 5678, defaultDeferred: true };
-    const service = createService(mcpSection);
+    const service = createUserLayer(mcpSection);
     await service.ready;
 
     expect(service.tunables()).toEqual({ startupTimeoutMs: 1234, toolTimeoutMs: 5678, defaultDeferred: true });
@@ -307,7 +364,7 @@ describe('WorkspaceMcpConfigService', () => {
 
   it('publishes the diff when a watched config file changes', async () => {
     const file = await writeProjectConfig({ alpha: stdioConfig('alpha') });
-    const service = createService();
+    const service = createWorkdirLayer();
     await service.ready;
     expect(service.servers()).toEqual({ alpha: stdioConfig('alpha') });
 
@@ -324,13 +381,13 @@ describe('WorkspaceMcpConfigService', () => {
   }, 20000);
 
   it('revives the same-named plugin entry when the winning file entry vanishes', async () => {
-    await writeProjectConfig({ shared: stdioConfig('file-version') });
+    await writeUserConfig({ shared: stdioConfig('file-version') });
     pluginServers = { shared: stdioConfig('plugin-version') };
-    const service = createService();
+    const service = createUserLayer();
     await service.ready;
     expect(service.servers()).toEqual({ shared: stdioConfig('file-version') });
 
-    await writeProjectConfig({});
+    await writeUserConfig({});
     await storeWrites.fireAsync({}, new AbortController().signal);
     pluginServers = {
       shared: stdioConfig('plugin-version'),
@@ -357,7 +414,7 @@ describe('WorkspaceMcpConfigService', () => {
   }, 20000);
 
   it('publishes a plugin server that appears on plugin reload', async () => {
-    const service = createService();
+    const service = createUserLayer();
     await service.ready;
 
     pluginServers = { gamma: stdioConfig('gamma') };
@@ -376,7 +433,7 @@ describe('WorkspaceMcpConfigService', () => {
   }, 20000);
 
   it('settles the plugin reload event only after the workspace reconcile is published', async () => {
-    const service = createService();
+    const service = createUserLayer();
     await service.ready;
 
     pluginServers = { gamma: stdioConfig('gamma') };
@@ -391,7 +448,7 @@ describe('WorkspaceMcpConfigService', () => {
 
   it('removes a plugin server that vanishes on plugin reload', async () => {
     pluginServers = { alpha: stdioConfig('alpha') };
-    const service = createService();
+    const service = createUserLayer();
     await service.ready;
 
     pluginServers = {};
@@ -411,7 +468,7 @@ describe('WorkspaceMcpConfigService', () => {
   it('cancels the previous remote authorization when a plugin server is removed', async () => {
     const url = 'https://mcp.example.test/mcp';
     pluginServers = { alpha: { transport: 'http', url, auth: 'oauth' } };
-    const service = createService();
+    const service = createUserLayer();
     await service.ready;
 
     pluginServers = {};
@@ -430,7 +487,7 @@ describe('WorkspaceMcpConfigService', () => {
     const previousUrl = 'https://mcp.example.test/mcp-a';
     const nextUrl = 'https://mcp.example.test/mcp-b';
     pluginServers = { alpha: { transport: 'http', url: previousUrl, auth: 'oauth' } };
-    const service = createService();
+    const service = createUserLayer();
     await service.ready;
 
     pluginServers = { alpha: { transport: 'http', url: nextUrl, auth: 'oauth' } };
@@ -447,7 +504,7 @@ describe('WorkspaceMcpConfigService', () => {
   it('preserves OAuth credentials when trust temporarily unloads a project server', async () => {
     const url = 'https://mcp.example.test/mcp';
     await writeProjectConfig({ alpha: { transport: 'http', url, auth: 'oauth' } });
-    const service = createService();
+    const service = createWorkdirLayer();
     await service.ready;
 
     trusted = false;
@@ -463,15 +520,15 @@ describe('WorkspaceMcpConfigService', () => {
   it('revokes OAuth credentials for project servers removed while untrusted after re-trust', async () => {
     const url = 'https://mcp.example.test/mcp';
     await writeProjectConfig({ alpha: { transport: 'http', url, auth: 'oauth' } });
-    const service = createService();
+    const service = createWorkdirLayer();
     await service.ready;
     trusted = false;
     trustFlips.fire({ trusted: false });
     await vi.waitFor(() => expect(service.servers()).toEqual({}));
     expect(invalidate).not.toHaveBeenCalled();
 
-    await writeProjectConfig({});
-    await storeWrites.fireAsync({}, new AbortController().signal);
+    const file = await writeProjectConfig({});
+    watchFires.get(cwd)?.fire({ path: file, action: 'modified', kind: 'file' });
     trusted = true;
     trustFlips.fire({ trusted: true });
 
@@ -484,15 +541,15 @@ describe('WorkspaceMcpConfigService', () => {
     const previousUrl = 'https://mcp.example.test/mcp-a';
     const nextUrl = 'https://mcp.example.test/mcp-b';
     await writeProjectConfig({ alpha: { transport: 'http', url: previousUrl, auth: 'oauth' } });
-    const service = createService();
+    const service = createWorkdirLayer();
     await service.ready;
     trusted = false;
     trustFlips.fire({ trusted: false });
     await vi.waitFor(() => expect(service.servers()).toEqual({}));
     expect(invalidate).not.toHaveBeenCalled();
 
-    await writeProjectConfig({ alpha: { transport: 'http', url: nextUrl, auth: 'oauth' } });
-    await storeWrites.fireAsync({}, new AbortController().signal);
+    const file = await writeProjectConfig({ alpha: { transport: 'http', url: nextUrl, auth: 'oauth' } });
+    watchFires.get(cwd)?.fire({ path: file, action: 'modified', kind: 'file' });
     trusted = true;
     trustFlips.fire({ trusted: true });
 
@@ -500,6 +557,26 @@ describe('WorkspaceMcpConfigService', () => {
       expect(invalidate).toHaveBeenCalledWith(service, 'alpha', previousUrl);
     });
     expect(invalidate).not.toHaveBeenCalledWith(service, 'alpha', nextUrl);
+  });
+
+  it('leaves no OAuth reference behind when disposed before its first load finishes', async () => {
+    const url = 'https://mcp.example.test/mcp';
+    const oauth = new McpOAuthService({ store: createMemoryMcpOAuthStore() });
+    await oauth.getProvider('remote', url).saveTokens({ access_token: 'a', token_type: 'Bearer' });
+    try {
+      await writeProjectConfig({ remote: { transport: 'http', url, auth: 'oauth', enabled: false } });
+      const record: McpServersChange[] = [];
+      const service = createWorkdirLayer(undefined, undefined, undefined, oauth, record);
+      (service as WorkspaceMcpConfigService).dispose();
+      await service.ready;
+
+      await oauth.invalidateFromConfiguration(undefined, 'remote', url);
+
+      expect((await oauth.tokenState('remote', url)).hasTokens).toBe(false);
+      expect(record).toEqual([]);
+    } finally {
+      await oauth.dispose();
+    }
   });
 
   it('keeps untrusted OAuth identities in the shared reference set until re-trust', async () => {
@@ -510,7 +587,7 @@ describe('WorkspaceMcpConfigService', () => {
     const cwdA = cwd;
     try {
       await writeProjectConfig({ alpha: config });
-      const serviceA = createService(undefined, undefined, undefined, oauth);
+      const serviceA = createWorkdirLayer(undefined, undefined, undefined, oauth);
       await serviceA.ready;
       trusted = false;
       trustFlips.fire({ trusted: false });
@@ -521,7 +598,7 @@ describe('WorkspaceMcpConfigService', () => {
       trusted = true;
       cwd = mkdtempSync(join(tmpdir(), 'kimi-workspace-mcp-config-cwd-b-'));
       await writeProjectConfig({ alpha: config });
-      const serviceB = createService(undefined, undefined, undefined, oauth);
+      const serviceB = createWorkdirLayer(undefined, undefined, undefined, oauth);
       await serviceB.ready;
       await writeProjectConfig({});
       watchFires.get(cwd)?.fire({
@@ -549,7 +626,7 @@ describe('WorkspaceMcpConfigService', () => {
     const url = 'https://mcp.example.test/mcp';
     const config: McpServerConfig = { transport: 'http', url, auth: 'oauth' };
     pluginServers = { alpha: config };
-    const service = createService();
+    const service = createUserLayer();
     await service.ready;
 
     pluginServers = { alpha: { ...config, enabled: false } };
@@ -569,7 +646,7 @@ describe('WorkspaceMcpConfigService', () => {
     const previous = { transport: 'http', url: previousUrl, auth: 'oauth' } as const;
     const next = { transport: 'http', url: nextUrl, auth: 'oauth' } as const;
     pluginServers = { alpha: previous };
-    const service = createService();
+    const service = createUserLayer();
     await service.ready;
 
     pluginServers = { alpha: { ...previous, enabled: false } };
@@ -598,7 +675,7 @@ describe('WorkspaceMcpConfigService', () => {
     const previousUrl = 'https://mcp.example.test/mcp-a';
     const nextUrl = 'https://mcp.example.test/mcp-b';
     pluginServers = { alpha: { transport: 'http', url: previousUrl, auth: 'oauth' } };
-    const service = createService();
+    const service = createUserLayer();
     await service.ready;
 
     pluginServers = {
@@ -630,9 +707,9 @@ describe('WorkspaceMcpConfigService', () => {
   it('retains the disabled plugin OAuth identity while a same-named file server uses it', async () => {
     const url = 'https://mcp.example.test/mcp';
     const config: McpServerConfig = { transport: 'http', url, auth: 'oauth' };
-    await writeProjectConfig({ alpha: config });
+    await writeUserConfig({ alpha: config });
     pluginServers = { alpha: config };
-    const service = createService();
+    const service = createUserLayer();
     await service.ready;
 
     pluginServers = { alpha: { ...config, enabled: false } };
@@ -657,7 +734,7 @@ describe('WorkspaceMcpConfigService', () => {
     pluginServers = {
       alpha: { transport: 'http', url: 'https://mcp.example.test/mcp', auth: 'oauth' },
     };
-    const service = createService(undefined, undefined, log);
+    const service = createUserLayer(undefined, undefined, log);
     await service.ready;
     changes = [];
 
@@ -677,9 +754,9 @@ describe('WorkspaceMcpConfigService', () => {
   });
 
   it('keeps the winning file server when the same-named plugin entry vanishes', async () => {
-    await writeProjectConfig({ shared: stdioConfig('file-version') });
+    await writeUserConfig({ shared: stdioConfig('file-version') });
     pluginServers = { shared: stdioConfig('plugin-version') };
-    const service = createService();
+    const service = createUserLayer();
     await service.ready;
     expect(service.servers()).toEqual({ shared: stdioConfig('file-version') });
 
@@ -694,7 +771,7 @@ describe('WorkspaceMcpConfigService', () => {
   });
 
   it('reloads immediately on a management-plane write, without the watch debounce', async () => {
-    const service = createService();
+    const service = createUserLayer();
     await service.ready;
     expect(service.servers()).toEqual({});
 
@@ -714,41 +791,7 @@ describe('WorkspaceMcpConfigService', () => {
     expect(service.servers()).toEqual({ added: stdioConfig('added') });
   }, 20000);
 
-  it('reloads project servers and moves the watcher when the primary changes', async () => {
-    const first = cwd;
-    await writeProjectConfig({ first: stdioConfig('first') });
-    const service = createService();
-    await service.ready;
-    expect(service.servers()).toEqual({ first: stdioConfig('first') });
-    Object.defineProperty(primaryDirs, 'primary', { get: () => cwd });
-    const next = mkdtempSync(join(tmpdir(), 'kimi-workspace-mcp-config-next-'));
-    try {
-      cwd = next;
-      await writeProjectConfig({ second: stdioConfig('second') });
-      dirsChanges.fire();
-      await vi.waitFor(() => {
-        expect(service.servers()).toEqual({ second: stdioConfig('second') });
-      });
-      const watcher = [...watchFires.entries()].find(([root]) => root === next || next.startsWith(`${root}/`))?.[1];
-      expect(watcher).toBeDefined();
-
-      changes = [];
-      await writeProjectConfig({ second: stdioConfig('updated') });
-      watcher!.fire({ path: join(next, '.kimi-code', 'mcp.json'), action: 'modified', kind: 'file' });
-      await vi.waitFor(() => {
-        expect(service.servers()).toEqual({ second: stdioConfig('updated') });
-      });
-    } finally {
-      await Promise.all([
-        rm(first, { recursive: true, force: true }),
-        rm(next, { recursive: true, force: true }),
-      ]);
-      cwd = first;
-    }
-  });
-
-  it('serializes initial watcher setup with a primary change', async () => {
-    const first = cwd;
+  it('leaves no live watcher behind when a workdir layer is disposed during watcher setup', async () => {
     let releaseInitial!: () => void;
     let markInitialStarted!: () => void;
     const initialGate = new Promise<void>((resolve) => {
@@ -760,37 +803,28 @@ describe('WorkspaceMcpConfigService', () => {
     const resolvePaths = mcpConfigLoader.resolveMcpJsonPaths;
     const resolver = vi.spyOn(mcpConfigLoader, 'resolveMcpJsonPaths').mockImplementation(
       async (input) => {
-        if (input.cwd === first) {
+        if (input.cwd === cwd) {
           markInitialStarted();
           await initialGate;
         }
         return resolvePaths(input);
       },
     );
-    const service = createService();
-    const next = mkdtempSync(join(tmpdir(), 'kimi-workspace-mcp-config-next-'));
     try {
+      const service = createWorkdirLayer() as WorkspaceMcpConfigService;
       await initialStarted;
-      Object.defineProperty(primaryDirs, 'primary', { get: () => cwd });
-      cwd = next;
-      dirsChanges.fire();
-      await new Promise<void>((resolve) => setImmediate(resolve));
-      expect(watchFires.has(next)).toBe(false);
+      expect(watchFires.has(cwd)).toBe(false);
 
+      service.dispose();
       releaseInitial();
+
       await vi.waitFor(() => {
-        expect(watchFires.has(next)).toBe(true);
+        expect(watchFires.has(cwd)).toBe(true);
       });
-      expect([...watchFires.keys()].at(-1)).toBe(next);
-      await service.ready;
+      expect(disposedWatches).toContain(cwd);
     } finally {
       releaseInitial();
       resolver.mockRestore();
-      await Promise.all([
-        rm(first, { recursive: true, force: true }),
-        rm(next, { recursive: true, force: true }),
-      ]);
-      cwd = first;
     }
   });
 });

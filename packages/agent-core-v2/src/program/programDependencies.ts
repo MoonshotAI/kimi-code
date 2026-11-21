@@ -9,7 +9,6 @@ import type { IGitService } from '#/app/git/git';
 import type { McpOAuthService } from '#/mcpCore/oauth/service';
 import type { IMcpConfigStore } from '#/app/mcpConfig/configStore';
 import type { IPluginService } from '#/app/plugin/plugin';
-import type { ISessionManager } from '#/app/sessionManager/sessionManager';
 import type { IBuiltinSkillSource } from '#/features/skill/catalog/builtinSkillSource';
 import type { IUserFileSkillSource } from '#/features/skill/catalog/userFileSkillSource';
 import type { IAppStateService } from '#/app/state/appState';
@@ -23,7 +22,6 @@ import type { IExtraAgentProfileLoader } from '#/workspace/workspaceAgentProfile
 import type { IExplicitAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/explicitAgentProfileLoader';
 import type { IPluginAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/pluginAgentProfileLoader';
 import type { IUserAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/userAgentProfileLoader';
-import type { IWorkspaceMcpService } from '#/workspace/workspaceMcp/workspaceMcp';
 import type { IWorkspaceTrust } from '#/workspace/workspaceTrust/workspaceTrust';
 import type { IWorkspaceTrustStore } from '#/workspace/workspaceTrust/workspaceTrustStore';
 import type { ProgramWorkdir } from './programWorkdirs';
@@ -34,7 +32,6 @@ export interface ProgramSessionControllerInput {
   readonly explicitAgentProfiles: IExplicitAgentProfileLoader;
   readonly userAgentProfiles: IUserAgentProfileLoader;
   readonly pluginAgentProfiles: IPluginAgentProfileLoader;
-  readonly mcp: IWorkspaceMcpService;
   readonly trust: IWorkspaceTrust;
   readonly acquireWorkdir: (environmentId: string, cwd: string, followsPrimary?: boolean) => Promise<ProgramWorkdir>;
   readonly onDispose: () => void;
@@ -50,7 +47,6 @@ export interface ProgramDependencies {
   readonly oauth: McpOAuthService;
   readonly configStore: IMcpConfigStore;
   readonly plugins: IPluginService;
-  readonly sessionManager: LiveRef<ISessionManager>;
   readonly agentProfiles: IAgentProfileRegistry;
   readonly builtinAgentProfiles: IBuiltinAgentProfileLoader;
   readonly builtinSkills: IBuiltinSkillSource;

@@ -176,6 +176,25 @@ describe('loadAgentsMd nested project hierarchy', () => {
     expect(result.indexOf('root instructions')).toBeLessThan(result.indexOf('packages instructions'));
     expect(result.indexOf('packages instructions')).toBeLessThan(result.indexOf('leaf instructions'));
   });
+
+  it('stops the hierarchy at an unparseable .git file inside another repository', async () => {
+    const outer = await mkdtemp(join(tmpdir(), 'kimi-agents-outer-'));
+    extraDirs.push(outer);
+    const vendored = join(outer, 'vendored');
+    const leaf = join(vendored, 'src');
+    await mkdir(join(outer, '.git'));
+    await mkdir(leaf, { recursive: true });
+    await writeFile(join(vendored, '.git'), 'not a pointer\n', 'utf-8');
+    await writeFile(join(outer, 'AGENTS.md'), 'outer instructions', 'utf-8');
+    await writeFile(join(vendored, 'AGENTS.md'), 'vendored instructions', 'utf-8');
+    await writeFile(join(leaf, 'AGENTS.md'), 'leaf instructions', 'utf-8');
+
+    const result = await loadAgentsMd({ fs, homeDir }, leaf);
+
+    expect(result).toContain('vendored instructions');
+    expect(result).toContain('leaf instructions');
+    expect(result).not.toContain('outer instructions');
+  });
 });
 
 describe('loadAgentsMd oversized content', () => {

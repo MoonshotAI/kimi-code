@@ -148,7 +148,6 @@ import { IEventDispatcher } from '@moonshot-ai/agent-core-v2/state/eventDispatch
 import { historyEntryFromContext } from '@moonshot-ai/agent-core-v2/agent/loop/history';
 import { agentTaskInfo } from '@moonshot-ai/agent-core-v2/agent/task/handler';
 import type { PromptPredictionCancelReason } from '@moonshot-ai/agent-core-v2/features/promptPrediction/promptPrediction';
-import { McpConnectionManager } from '@moonshot-ai/agent-core-v2/mcpCore/connection-manager';
 import { ITowerRateLimitService } from '@moonshot-ai/agent-core-v2/features/tower/towerRateLimit';
 import { readTowerStatusSummary } from '@moonshot-ai/agent-core-v2/features/tower/tools/status/statusReader';
 import { loadMcpServers } from '@moonshot-ai/agent-core-v2/app/mcpConfig/configLoader';
@@ -881,6 +880,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
         additionalDirs,
         baseDir,
         pendingAdditionalDirsResolved,
+        environment?.environmentId === 'local' ? environment.cwd : undefined,
       );
       return {
         trusted: false,
@@ -3034,7 +3034,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     return this.withWorkspaceInstance('listWorkspaceMcpServers', workDir, async (handler) => {
       const mcp = handler.program.mcp;
       await mcp.ready;
-      return mcp.connectionManager().list() as readonly McpServerInfo[];
+      return mcp.view().list() as readonly McpServerInfo[];
     });
   }
 
@@ -3059,8 +3059,8 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       await mcp.connectionManager.reconnect(input.name);
       return;
     }
-    const manager = mcp.connectionManager;
-    if (!(manager instanceof McpConnectionManager)) {
+    const upsertTarget = mcp.upsertTarget;
+    if (upsertTarget === undefined) {
       throw new KimiError(
         ErrorCodes.NOT_IMPLEMENTED,
         'reconnectMcpServer with an explicit config is not supported for v2 sessions with ephemeral MCP servers',
@@ -3073,7 +3073,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
         `MCP server is disabled: ${input.name}`,
       );
     }
-    await manager.connect(input.name, replacement);
+    await upsertTarget(input.name).connect(input.name, replacement);
   }
 
   /**
@@ -3092,8 +3092,8 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   }): Promise<McpServerInfo> {
     const session = this.requireLiveSession(input.sessionId);
     const mcp = session.accessor.get(ISessionMcpHandle);
-    const manager = mcp.connectionManager;
-    if (!(manager instanceof McpConnectionManager)) {
+    const upsertTarget = mcp.upsertTarget;
+    if (upsertTarget === undefined) {
       throw new KimiError(
         ErrorCodes.NOT_IMPLEMENTED,
         'addSessionMcpServer is not supported for v2 sessions with ephemeral MCP servers',
@@ -3106,6 +3106,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       await this.rejectProjectLayerPersistedMcpAdd(cwd, target.name);
       await this.mcpManagement((management) => management.addServer(target, { cwd }));
     }
+    const manager = upsertTarget(target.name);
     await manager.connect(target.name, mcpConfigWithoutName(target));
     const entry = manager.get(target.name);
     if (entry === undefined) {

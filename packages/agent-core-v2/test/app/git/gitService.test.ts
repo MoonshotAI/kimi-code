@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, delimiter, isAbsolute, join } from 'node:path';
 
@@ -9,7 +9,7 @@ import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices, type TestInstantiationService } from '#/_base/di/test';
 import { IGitService } from '#/app/git/git';
 import { GitService } from '#/app/git/gitService';
-import { findGitWorkTree } from '#/app/git/workTree';
+import { findGitWorkTree, findNearestGitMarker } from '#/app/git/workTree';
 import { ErrorCodes } from '#/errors';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { HostProcessService } from '#/os/backends/node-local/hostProcessService';
@@ -369,18 +369,143 @@ describe('GitService', () => {
       }
     });
 
-    it('skips a .git file without a gitdir pointer and keeps walking up', async () => {
+    it('stops at a .git file without a gitdir pointer instead of walking up to the outer repo', async () => {
+      const inner = join(repo, 'inner');
+      mkdirSync(join(inner, 'src'), { recursive: true });
+      writeFileSync(join(inner, '.git'), 'not a pointer\n');
+
+      await expect(service.findWorkTree(inner)).resolves.toBeNull();
+      await expect(service.findWorkTree(join(inner, 'src'))).resolves.toBeNull();
+    });
+
+    it('stops at a dangling .git symlink instead of walking up to the outer repo', async () => {
       const inner = join(repo, 'inner');
       mkdirSync(inner, { recursive: true });
-      writeFileSync(join(inner, '.git'), 'not a pointer\n');
+      symlinkSync(join(repo, 'missing-git-dir'), join(inner, '.git'));
+
+      await expect(service.findWorkTree(inner)).resolves.toBeNull();
+    });
+
+    it('keeps treating a .git directory without HEAD as the work tree', async () => {
+      const inner = join(repo, 'inner');
+      mkdirSync(join(inner, '.git'), { recursive: true });
 
       const result = await service.findWorkTree(inner);
 
-      expect(result?.root).toBe(normalize(repo));
+      expect(result).toEqual({
+        root: normalize(inner),
+        dotGitPath: normalize(join(inner, '.git')),
+        controlDirPath: normalize(join(inner, '.git')),
+      });
     });
 
     it('returns null for a relative cwd', async () => {
       await expect(findGitWorkTree(new HostFileSystem(), 'some/relative/path')).resolves.toBeNull();
+    });
+  });
+});
+
+describe('findNearestGitMarker', () => {
+  let base: string;
+  const fs = new HostFileSystem();
+
+  beforeEach(() => {
+    base = mkdtempSync(join(tmpdir(), 'git-marker-'));
+  });
+
+  afterEach(() => {
+    rmSync(base, { recursive: true, force: true });
+  });
+
+  function dir(...segments: string[]): string {
+    const path = join(base, ...segments);
+    mkdirSync(path, { recursive: true });
+    return path;
+  }
+
+  it('returns undefined when no ancestor holds a .git entry', async () => {
+    await expect(findNearestGitMarker(fs, dir('plain', 'nested'))).resolves.toBeUndefined();
+  });
+
+  it('reports a .git directory with HEAD from a nested directory', async () => {
+    const repo = dir('repo');
+    git(repo, 'init');
+
+    await expect(findNearestGitMarker(fs, dir('repo', 'a', 'b'))).resolves.toEqual({
+      kind: 'directory',
+      root: normalize(repo),
+      dotGitPath: normalize(join(repo, '.git')),
+    });
+  });
+
+  it('reports a .git directory without HEAD as a directory marker', async () => {
+    const repo = dir('repo');
+    dir('repo', '.git');
+
+    await expect(findNearestGitMarker(fs, repo)).resolves.toEqual({
+      kind: 'directory',
+      root: normalize(repo),
+      dotGitPath: normalize(join(repo, '.git')),
+    });
+  });
+
+  it.each([
+    ['an absolute pointer', (target: string) => `gitdir: ${target}\n`],
+    ['a relative pointer', () => 'gitdir: ../store/worktrees/wt\n'],
+    ['a BOM-prefixed pointer', () => '\uFEFFgitdir: ../store/worktrees/wt\n'],
+    ['a CRLF pointer', () => 'gitdir: ../store/worktrees/wt\r\n'],
+  ])('resolves %s in a .git file', async (_label, content) => {
+    const target = join(base, 'store', 'worktrees', 'wt');
+    const wt = dir('wt');
+    writeFileSync(join(wt, '.git'), content(target));
+
+    await expect(findNearestGitMarker(fs, dir('wt', 'src'))).resolves.toEqual({
+      kind: 'pointer',
+      root: normalize(wt),
+      dotGitPath: normalize(join(wt, '.git')),
+      gitDir: normalize(target),
+    });
+  });
+
+  it.each([
+    ['without a gitdir line', 'not a pointer\n'],
+    ['with an empty gitdir', 'gitdir:   \r\n'],
+    ['that is empty', ''],
+  ])('stops at a .git file %s and reports it invalid', async (_label, content) => {
+    const outer = dir('outer');
+    git(outer, 'init');
+    const inner = dir('outer', 'inner');
+    writeFileSync(join(inner, '.git'), content);
+
+    await expect(findNearestGitMarker(fs, dir('outer', 'inner', 'src'))).resolves.toEqual({
+      kind: 'invalid',
+      root: normalize(inner),
+      dotGitPath: normalize(join(inner, '.git')),
+    });
+  });
+
+  it('stops at a dangling .git symlink and reports it invalid', async () => {
+    const outer = dir('outer');
+    git(outer, 'init');
+    const inner = dir('outer', 'inner');
+    symlinkSync(join(base, 'missing'), join(inner, '.git'));
+
+    await expect(findNearestGitMarker(fs, inner)).resolves.toEqual({
+      kind: 'invalid',
+      root: normalize(inner),
+      dotGitPath: normalize(join(inner, '.git')),
+    });
+  });
+
+  it('prefers the nearest marker over an enclosing repository', async () => {
+    const outer = dir('outer');
+    git(outer, 'init');
+    const nested = dir('outer', 'nested');
+    writeFileSync(join(nested, '.git'), 'gitdir: ../.git/worktrees/nested\n');
+
+    await expect(findNearestGitMarker(fs, dir('outer', 'nested', 'src'))).resolves.toMatchObject({
+      kind: 'pointer',
+      root: normalize(nested),
     });
   });
 });

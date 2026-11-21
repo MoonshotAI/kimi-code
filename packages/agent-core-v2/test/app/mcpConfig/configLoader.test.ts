@@ -1,11 +1,19 @@
-import { mkdtempSync } from 'node:fs';
-import { mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtempSync, realpathSync } from 'node:fs';
+import { mkdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'pathe';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { ErrorCodes, Error2 } from '#/errors';
-import { loadMcpServers, resolveMcpJsonPaths } from '#/app/mcpConfig/configLoader';
+import {
+  findMcpAnchor,
+  loadAnchorMcpServers,
+  loadMcpServers,
+  loadMcpServersDetailed,
+  loadUserMcpServers,
+  resolveMcpJsonPaths,
+  rootAnchor,
+} from '#/app/mcpConfig/configLoader';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 
 const fs = new HostFileSystem();
@@ -41,6 +49,244 @@ describe('resolveMcpJsonPaths', () => {
     expect(paths.user).toBe('/home/user/.kimi-code/mcp.json');
     expect(paths.projectRoot).toBe(join(repoRoot, '.mcp.json'));
     expect(paths.project).toBe(join(cwd, '.kimi-code', 'mcp.json'));
+  });
+
+  it('stops the checkout lookup at an unparseable .git file instead of the enclosing repository', async () => {
+    const repoRoot = makeTempDir();
+    const vendored = join(repoRoot, 'vendor', 'lib');
+    const cwd = join(vendored, 'src');
+    await mkdir(join(repoRoot, '.git'), { recursive: true });
+    await mkdir(cwd, { recursive: true });
+    await writeFile(join(vendored, '.git'), 'not a pointer\n');
+
+    const paths = await resolveMcpJsonPaths({ fs, cwd });
+
+    expect(paths.projectRoot).toBe(join(vendored, '.mcp.json'));
+  });
+});
+
+describe('loadUserMcpServers', () => {
+  it('reads only the user-level file and records its origin', async () => {
+    const home = makeTempDir();
+    await writeJson(join(home, 'mcp.json'), {
+      mcpServers: { user: { command: 'user-cmd' }, toString: { url: 'https://example.com/mcp' } },
+    });
+
+    const loaded = await loadUserMcpServers({ fs, homeDir: home });
+
+    expect(loaded.servers).toEqual({
+      user: { transport: 'stdio', command: 'user-cmd' },
+      toString: { transport: 'http', url: 'https://example.com/mcp' },
+    });
+    expect(loaded.origins).toEqual({
+      user: join(home, 'mcp.json'),
+      toString: join(home, 'mcp.json'),
+    });
+  });
+});
+
+describe('loadAnchorMcpServers', () => {
+  async function writeProjectFiles(checkoutRoot: string, anchor: string): Promise<void> {
+    await writeJson(join(checkoutRoot, '.mcp.json'), {
+      mcpServers: {
+        shared: { command: 'root-shared' },
+        rootOnly: { command: 'root-only', cwd: 'tools' },
+        remote: { url: 'https://example.com/mcp' },
+      },
+    });
+    await writeJson(join(anchor, '.kimi-code', 'mcp.json'), {
+      mcpServers: {
+        shared: { command: 'anchor-shared' },
+        anchorOnly: { command: 'anchor-only' },
+      },
+    });
+  }
+
+  it.each([
+    ['a checkout root', (repoRoot: string) => repoRoot],
+    ['a project root inside a checkout', (repoRoot: string) => join(repoRoot, 'packages', 'app')],
+  ])('reads the same files as resolveMcpJsonPaths for %s', async (_label, anchorOf) => {
+    const home = makeTempDir();
+    const repoRoot = makeTempDir();
+    const anchor = anchorOf(repoRoot);
+    await mkdir(join(repoRoot, '.git'), { recursive: true });
+    await mkdir(anchor, { recursive: true });
+    await writeJson(join(home, 'mcp.json'), { mcpServers: { userOnly: { command: 'user-only' } } });
+    await writeProjectFiles(repoRoot, anchor);
+    const paths = await resolveMcpJsonPaths({ fs, cwd: anchor, homeDir: home });
+
+    const loaded = await loadAnchorMcpServers({ fs, anchor: rootAnchor(anchor) });
+
+    expect(loaded.origins).toEqual({
+      shared: paths.project,
+      rootOnly: paths.projectRoot,
+      remote: paths.projectRoot,
+      anchorOnly: paths.project,
+    });
+    expect(loaded.servers).toEqual({
+      shared: { transport: 'stdio', command: 'anchor-shared' },
+      rootOnly: { transport: 'stdio', command: 'root-only', cwd: join(repoRoot, 'tools') },
+      remote: { transport: 'http', url: 'https://example.com/mcp' },
+      anchorOnly: { transport: 'stdio', command: 'anchor-only' },
+    });
+    const merged = await loadMcpServersDetailed({ fs, cwd: anchor, homeDir: home });
+    expect(merged.servers).toEqual({ userOnly: { transport: 'stdio', command: 'user-only' }, ...loaded.servers });
+  });
+
+  it('reads both files at the anchor outside any checkout', async () => {
+    const anchor = makeTempDir();
+    await writeProjectFiles(anchor, anchor);
+
+    const loaded = await loadAnchorMcpServers({ fs, anchor: rootAnchor(anchor) });
+
+    expect(loaded.origins['rootOnly']).toBe(join(anchor, '.mcp.json'));
+    expect(loaded.origins['anchorOnly']).toBe(join(anchor, '.kimi-code', 'mcp.json'));
+    expect(loaded.servers['rootOnly']).toEqual({ transport: 'stdio', command: 'root-only', cwd: join(anchor, 'tools') });
+  });
+});
+
+describe('findMcpAnchor', () => {
+  async function project(): Promise<string> {
+    const root = makeTempDir();
+    await mkdir(join(root, '.git'), { recursive: true });
+    await writeFile(join(root, '.git', 'HEAD'), 'ref: refs/heads/main\n');
+    return root;
+  }
+
+  async function worktree(path: string): Promise<string> {
+    await mkdir(path, { recursive: true });
+    await writeFile(join(path, '.git'), 'gitdir: /elsewhere/.git/worktrees/wt\n');
+    return path;
+  }
+
+  it('anchors the project root and its plain subdirectories at the project root', async () => {
+    const root = await project();
+    const nested = join(root, 'node_modules', 'pkg');
+    await mkdir(join(nested, '.kimi-code'), { recursive: true });
+
+    await expect(findMcpAnchor(fs, root, { root, additionalDirs: [] })).resolves.toMatchObject({ anchor: root });
+    await expect(findMcpAnchor(fs, nested, { root, additionalDirs: [] })).resolves.toMatchObject({ anchor: root });
+  });
+
+  it('anchors a checkout nested in the project at its checkout root', async () => {
+    const root = await project();
+    const wt = await worktree(join(root, '.worktrees', 'feature'));
+    await mkdir(join(wt, 'src'), { recursive: true });
+
+    await expect(findMcpAnchor(fs, wt, { root, additionalDirs: [] })).resolves.toMatchObject({ anchor: wt });
+    await expect(findMcpAnchor(fs, join(wt, 'src'), { root, additionalDirs: [] })).resolves.toMatchObject({ anchor: wt });
+  });
+
+  it('stops at an unparseable .git file inside the project', async () => {
+    const root = await project();
+    const vendored = join(root, 'vendor', 'lib');
+    await mkdir(join(vendored, 'src'), { recursive: true });
+    await writeFile(join(vendored, '.git'), 'not a pointer\n');
+
+    await expect(findMcpAnchor(fs, join(vendored, 'src'), { root, additionalDirs: [] })).resolves.toMatchObject({ anchor: vendored });
+  });
+
+  it('prefers a project root nested below the checkout root', async () => {
+    const repoRoot = await project();
+    const root = join(repoRoot, 'packages', 'app');
+    await mkdir(join(root, 'src'), { recursive: true });
+
+    await expect(findMcpAnchor(fs, join(root, 'src'), { root, additionalDirs: [] })).resolves.toMatchObject({ anchor: root });
+  });
+
+  it('anchors a checkout under a registered additional directory', async () => {
+    const root = await project();
+    const extra = await worktree(join(makeTempDir(), 'extra'));
+    await mkdir(join(extra, 'src'), { recursive: true });
+
+    await expect(findMcpAnchor(fs, join(extra, 'src'), { root, additionalDirs: [extra] })).resolves.toMatchObject({ anchor: extra });
+  });
+
+  it.each([
+    ['a sibling checkout outside the project', async () => worktree(join(makeTempDir(), 'app-fix'))],
+    ['a plain directory outside the project', async () => makeTempDir()],
+  ])('falls back to the project root for %s', async (_label, outside) => {
+    const root = await project();
+    const dir = await outside();
+
+    await expect(findMcpAnchor(fs, dir, { root, additionalDirs: [] })).resolves.toMatchObject({ anchor: root });
+  });
+
+  async function symlinkedLayout() {
+    const base = makeTempDir();
+    const realBase = realpathSync(base);
+    const real = join(realBase, 'real-project-directory-with-a-long-name');
+    await mkdir(join(real, '.git'), { recursive: true });
+    await writeFile(join(real, '.git', 'HEAD'), 'ref: refs/heads/main\n');
+    const checkout = await worktree(join(real, '.worktrees', 'feature'));
+    const external = await worktree(join(realBase, 'external'));
+    await Promise.all([mkdir(join(checkout, 'src')), mkdir(join(external, 'src'))]);
+    const link = join(base, 'l');
+    const externalLink = join(base, 'x');
+    await Promise.all([symlink(real, link), symlink(external, externalLink)]);
+    return { real, checkout, external, link, externalLink };
+  }
+
+  it.each([
+    [
+      'a working directory reached through a symlink to the project root',
+      (layout: Awaited<ReturnType<typeof symlinkedLayout>>) => ({
+        workDir: join(layout.link, '.worktrees', 'feature', 'src'),
+        project: { root: layout.real, additionalDirs: [] },
+        anchor: join(layout.link, '.worktrees', 'feature'),
+      }),
+    ],
+    [
+      'a project root stored through a symlink',
+      (layout: Awaited<ReturnType<typeof symlinkedLayout>>) => ({
+        workDir: join(layout.checkout, 'src'),
+        project: { root: layout.link, additionalDirs: [] },
+        anchor: layout.checkout,
+      }),
+    ],
+    [
+      'an additional directory registered through a symlink',
+      (layout: Awaited<ReturnType<typeof symlinkedLayout>>) => ({
+        workDir: join(layout.external, 'src'),
+        project: { root: layout.real, additionalDirs: [layout.externalLink] },
+        anchor: layout.external,
+      }),
+    ],
+    [
+      'a working directory reached through a symlink to an additional directory',
+      (layout: Awaited<ReturnType<typeof symlinkedLayout>>) => ({
+        workDir: join(layout.externalLink, 'src'),
+        project: { root: layout.real, additionalDirs: [layout.external] },
+        anchor: layout.externalLink,
+      }),
+    ],
+  ])('compares real paths for %s and keeps the requested spelling', async (_label, scenario) => {
+    const { workDir, project, anchor } = scenario(await symlinkedLayout());
+
+    await expect(findMcpAnchor(fs, workDir, project)).resolves.toMatchObject({ anchor });
+  });
+
+  it('anchors the project root reached through a symlink at the stored project root', async () => {
+    const { real, link } = await symlinkedLayout();
+
+    await expect(findMcpAnchor(fs, link, { root: real, additionalDirs: [] })).resolves.toMatchObject({ anchor: real });
+  });
+
+  it('anchors a working directory that does not exist yet at its checkout', async () => {
+    const { real, checkout } = await symlinkedLayout();
+
+    await expect(
+      findMcpAnchor(fs, join(checkout, 'missing'), { root: real, additionalDirs: [] }),
+    ).resolves.toMatchObject({ anchor: checkout });
+  });
+
+  it('falls back to the project root when the checkout root lies above a registered additional directory', async () => {
+    const root = await project();
+    const repo = await project();
+    const extra = join(repo, 'packages', 'lib');
+    await mkdir(extra, { recursive: true });
+
+    await expect(findMcpAnchor(fs, extra, { root, additionalDirs: [extra] })).resolves.toMatchObject({ anchor: root });
   });
 });
 

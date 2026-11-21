@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
+import { findNearestGitMarker } from '#/app/git/workTree';
 import {
   IProjectLocalConfigService,
   type ProjectAdditionalDirsLoadResult,
@@ -125,15 +126,8 @@ export class FileProjectLocalConfigService implements IProjectLocalConfigService
   }
 
   private async findProjectRoot(workDir: string): Promise<string> {
-    const initial = normalize(workDir);
-    let current = initial;
-
-    while (true) {
-      if (await this.pathExists(join(current, '.git'))) return current;
-      const parent = dirname(current);
-      if (parent === current) return initial;
-      current = parent;
-    }
+    const start = normalize(workDir);
+    return (await findNearestGitMarker(this.fs, start))?.root ?? start;
   }
 
   private async readProjectLocalToml(
@@ -233,15 +227,6 @@ export class FileProjectLocalConfigService implements IProjectLocalConfigService
         ErrorCodes.CONFIG_INVALID,
         `workspace.additional_dir must exist and be a directory: ${filePath}`,
       );
-    }
-  }
-
-  private async pathExists(filePath: string): Promise<boolean> {
-    try {
-      await this.fs.lstat(filePath);
-      return true;
-    } catch {
-      return false;
     }
   }
 }
