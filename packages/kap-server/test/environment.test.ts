@@ -123,7 +123,7 @@ describe('server-v2 /api/v1 environment routes', () => {
       const binding = await call<EnvironmentBindingWire>('GET', `/api/v1/sessions/${id}/environment`);
       expect(binding.body.code).toBe(0);
       expect(binding.body.data.environment_id).toBe('local');
-      expect(binding.body.data.cwd).toBeUndefined();
+      expect(binding.body.data.cwd).toBe(home);
 
       const summary = await server!.core.accessor.get(ISessionIndex).get(id);
       await closeSessionById(server!.core.accessor, id);
