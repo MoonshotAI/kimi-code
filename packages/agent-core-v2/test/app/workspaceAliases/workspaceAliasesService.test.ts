@@ -38,6 +38,8 @@ import { IWorkspaceAliases } from '#/app/workspaceAliases/workspaceAliases';
 import { WorkspaceAliasesService } from '#/app/workspaceAliases/workspaceAliasesService';
 import { stubBootstrap } from '../bootstrap/stubs';
 import { stubHostEnvironment } from '../../stubs';
+import { stubConfigService } from '../config/stubs';
+import { IWorkspaceTrustStore, WorkspaceTrustStore } from '#/workspace/workspaceTrust/workspaceTrustStore';
 
 interface SessionIndexLine {
   readonly sessionId: string;
@@ -118,6 +120,10 @@ describe('WorkspaceAliasesService (file-backed)', () => {
       } as unknown as IEventService),
       stubPair(IHostEnvironment, stubHostEnvironment(homeDir)),
       stubPair(ITelemetryService, noopTelemetryService),
+      stubPair(
+        IWorkspaceTrustStore,
+        new WorkspaceTrustStore(new JsonAtomicDocumentStore(fileStorage), noopTelemetryService, stubBootstrap(homeDir), stubConfigService()),
+      ),
     ]);
     currentHost = host;
     return host.app.accessor.get(IWorkspaceAliases);

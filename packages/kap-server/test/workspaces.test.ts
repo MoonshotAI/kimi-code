@@ -532,6 +532,30 @@ describe('server-v2 /api/v1/workspaces', () => {
     }
   });
 
+  it('reports a project trusted only through the record of its primary directory', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'kimi-server-v2-workspaces-trust-primary-'));
+    const extra = await mkdtemp(join(tmpdir(), 'kimi-server-v2-workspaces-trust-extra-'));
+    try {
+      const neighbour = await postJson<WorkspaceWire>('/api/v1/workspaces', { root: extra });
+      const trustedNeighbour = await postJson<{ trusted: boolean }>(`/api/v1/workspaces/${neighbour.body.data.id}/trust`);
+      expect(trustedNeighbour.body.data.trusted).toBe(true);
+      const created = await postJson<WorkspaceWire>('/api/v1/workspaces', { root, additional_dirs: [extra] });
+      const id = created.body.data.id;
+
+      const initial = await getJson<{ trusted: boolean }>(`/api/v1/workspaces/${id}/trust`);
+      expect(initial.body.data.trusted).toBe(false);
+
+      await postJson<{ trusted: boolean }>(`/api/v1/workspaces/${id}/trust`);
+      const revoked = await postJson<{ trusted: boolean }>(`/api/v1/workspaces/${id}/untrust`);
+      expect(revoked.body.data.trusted).toBe(false);
+      const neighbourAfter = await getJson<{ trusted: boolean }>(`/api/v1/workspaces/${neighbour.body.data.id}/trust`);
+      expect(neighbourAfter.body.data.trusted).toBe(true);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+      await rm(extra, { recursive: true, force: true });
+    }
+  });
+
   it('returns trust storage errors with their original message and request id', async () => {
     const root = await mkdtemp(join(tmpdir(), 'kimi-server-v2-workspaces-trust-error-'));
     try {

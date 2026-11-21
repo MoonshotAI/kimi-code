@@ -23,6 +23,7 @@ import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
+import { IWorkspaceTrustStore } from '#/workspace/workspaceTrust/workspaceTrustStore';
 
 import {
   decideImplicitProject,
@@ -78,6 +79,7 @@ export class WorkspaceService implements IWorkspaceService {
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
     @IAtomicDocumentStore private readonly docs: IAtomicDocumentStore,
+    @IWorkspaceTrustStore private readonly trustStore: IWorkspaceTrustStore,
   ) {}
 
   list(): Promise<readonly Workspace[]> {
@@ -287,6 +289,12 @@ export class WorkspaceService implements IWorkspaceService {
       await this.store.update(async (catalog) => {
         const existing = catalog.workspaces.find((ws) => ws.id === id);
         if (existing === undefined) return catalog;
+        if (existing.kind === 'implicit') {
+          throw new Error2(
+            ErrorCodes.WORKSPACE_PRIMARY_IMMUTABLE,
+            `project ${id} is implicit; its primary directory is the directory it was opened from and cannot change`,
+          );
+        }
         const resolved = (await this.localConfig.resolveAdditionalDirs(existing.root, [path]))[0];
         if (resolved === undefined) {
           throw new Error2(ErrorCodes.FS_PATH_NOT_FOUND, `primary ${path} does not exist`);
@@ -303,6 +311,7 @@ export class WorkspaceService implements IWorkspaceService {
             `primary ${resolved} is not in the workspace dir set`,
           );
         }
+        await this.trustStore.carry(existing.root, resolved);
         updated = {
           ...existing,
           root: resolved,

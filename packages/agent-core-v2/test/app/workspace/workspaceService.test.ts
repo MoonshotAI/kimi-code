@@ -39,7 +39,9 @@ import {
 } from '#/app/workspace/workspacePersistence';
 import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemetry';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
+import { IWorkspaceTrustStore, WorkspaceTrustStore } from '#/workspace/workspaceTrust/workspaceTrustStore';
 import { stubBootstrap } from '../bootstrap/stubs';
+import { stubConfigService } from '../config/stubs';
 import { stubHostEnvironment } from '../../stubs';
 import {
   createLayoutLab,
@@ -139,9 +141,19 @@ describe('WorkspaceService (file-backed)', () => {
       } as unknown as IEventService),
       stubPair(IHostEnvironment, stubHostEnvironment(hostHome)),
       stubPair(ITelemetryService, recordingTelemetry),
+      stubPair(IWorkspaceTrustStore, trustStoreFor(fileStorage)),
     ]);
     currentHost = host;
     return host.app.accessor.get(IWorkspaceService);
+  }
+
+  function trustStoreFor(storage: IFileSystemStorageService): WorkspaceTrustStore {
+    return new WorkspaceTrustStore(
+      new JsonAtomicDocumentStore(storage),
+      noopTelemetryService,
+      stubBootstrap(homeDir),
+      stubConfigService(),
+    );
   }
 
   function restart(hostFs?: IHostFileSystem, storage?: IFileSystemStorageService): IWorkspaceService {
@@ -798,6 +810,41 @@ describe('WorkspaceService (file-backed)', () => {
     expect(noop?.additionalDirs).toEqual([homeDir, extraB]);
   });
 
+  it('setPrimary carries the trust record of a managed project to its new primary', async () => {
+    const extra = join(homeDir, 'extra');
+    const untrustedExtra = join(homeDir, 'untrusted-extra');
+    await fsp.mkdir(extra, { recursive: true });
+    await fsp.mkdir(untrustedExtra, { recursive: true });
+    const registry = build();
+    const trusted = await registry.create({ root: homeDir, additionalDirs: [extra] });
+    const untrusted = await registry.create({ root: untrustedExtra, additionalDirs: [extra] });
+    const store = trustStoreFor(new FileStorageService(homeDir));
+    await store.forRoot(homeDir).trust();
+
+    await registry.setPrimary(trusted.id, extra);
+    expect(await trustStoreFor(new FileStorageService(homeDir)).forProject({ root: extra }).get()).toBe(true);
+    expect(await trustStoreFor(new FileStorageService(homeDir)).forRoot(homeDir).get()).toBe(true);
+
+    await trustStoreFor(new FileStorageService(homeDir)).forRoot(extra).untrust();
+    await registry.setPrimary(untrusted.id, extra);
+    expect(await trustStoreFor(new FileStorageService(homeDir)).forProject({ root: extra }).get()).toBe(false);
+  });
+
+  it('setPrimary refuses to move the primary directory of an implicit project', async () => {
+    const extra = join(homeDir, 'extra');
+    await fsp.mkdir(extra, { recursive: true });
+    const registry = build();
+    const implicit = (await registry.resolveImplicit(homeDir)).project;
+    await registry.update(implicit.id, { additionalDirs: [extra] });
+    const before = await fsp.readFile(join(homeDir, 'projects.json'), 'utf8');
+
+    await expect(registry.setPrimary(implicit.id, extra)).rejects.toMatchObject({
+      code: ErrorCodes.WORKSPACE_PRIMARY_IMMUTABLE,
+    });
+    expect(await fsp.readFile(join(homeDir, 'projects.json'), 'utf8')).toBe(before);
+    expect(await registry.update(implicit.id, { name: 'renamed' })).toMatchObject({ name: 'renamed', root: homeDir });
+  });
+
   it('setPrimary rejects a path outside the dir set, a missing path, or an unknown id', async () => {
     const registry = build();
     const outside = join(homeDir, 'outside');
@@ -1145,6 +1192,7 @@ describe('implicit project resolution', () => {
       stubPair(IEventService, { publish: () => {}, subscribe: () => ({ dispose: () => {} }) } as unknown as IEventService),
       stubPair(IHostEnvironment, stubHostEnvironment(osHome)),
       stubPair(ITelemetryService, recordingTelemetry),
+      stubPair(IWorkspaceTrustStore, trustStoreFor(fileStorage)),
     ]);
     isolated.push(host);
     return host.app.accessor.get(IWorkspaceService);

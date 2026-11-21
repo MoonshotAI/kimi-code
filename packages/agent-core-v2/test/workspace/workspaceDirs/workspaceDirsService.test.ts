@@ -25,6 +25,8 @@ import { WorkspaceDirsService } from '#/workspace/workspaceDirs/workspaceDirsSer
 
 import { stubBootstrap } from '../../app/bootstrap/stubs';
 import { stubHostEnvironment } from '../../stubs';
+import { stubConfigService } from '../../app/config/stubs';
+import { WorkspaceTrustStore } from '#/workspace/workspaceTrust/workspaceTrustStore';
 
 const noopLog = {
   error: () => {},
@@ -72,6 +74,7 @@ describe('WorkspaceDirsService (registry source)', () => {
       noopTelemetryService,
       bootstrap,
       new JsonAtomicDocumentStore(storage),
+      new WorkspaceTrustStore(new JsonAtomicDocumentStore(storage), noopTelemetryService, bootstrap, stubConfigService()),
     );
   });
 
@@ -192,7 +195,7 @@ describe('WorkspaceDirsService (registry source)', () => {
     expect(dirs.additionalDirs).toEqual([dirC, dirB]);
   });
 
-  it('moves legacy local config and its watcher when the associated primary changes', async () => {
+  it('moves legacy local config and its watcher when an older version moves the implicit primary', async () => {
     const project = (await workspaces.resolveImplicit(dirA)).project;
     await workspaces.update(project.id, { additionalDirs: [dirB] });
     const dirD = mkdtempSync(join(tmpdir(), 'ws-dirs-d-'));
@@ -208,7 +211,12 @@ describe('WorkspaceDirsService (registry source)', () => {
       await dirs.ready;
       expect(dirs.additionalDirs).toEqual([dirC, dirB]);
 
-      await workspaces.setPrimary(project.id, dirB);
+      await persistence.update((catalog) => ({
+        ...catalog,
+        workspaces: catalog.workspaces.map((entry) =>
+          entry.id === project.id ? { ...entry, root: dirB, additionalDirs: [dirA] } : entry,
+        ),
+      }));
       await vi.waitFor(
         () => {
           expect(dirs.primary).toBe(dirB);
