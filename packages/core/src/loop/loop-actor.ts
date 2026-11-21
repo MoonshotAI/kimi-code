@@ -614,7 +614,9 @@ class LoopActor implements Loop {
     if (!this.open()) return undefined;
     return this.actor.act(() => {
       if (!this.open()) return undefined;
-      return this.mailbox.notify(normalized);
+      const ack = this.mailbox.notify(normalized);
+      this.held = true;
+      return ack;
     });
   }
 

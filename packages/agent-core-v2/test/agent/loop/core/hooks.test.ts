@@ -743,6 +743,39 @@ describe('notify turn handoff', () => {
     await loop.close();
   });
 
+  it('keeps recorded notifications parked until later intake releases them', async () => {
+    const events: LoopEmitted[] = [];
+    const loop = createLoop({
+      requester: requester([done('first'), done('queued')]),
+      executor: createExecutor({}),
+    });
+    loop.subscribe((event) => events.push(event));
+    try {
+      expect((await loop.runTurn(prompt('first'))).type).toBe('done');
+      expect(loop.state.held).toBe(false);
+
+      loop.recordNotification(prompt('restored'));
+
+      expect(loop.state.turn).toBeUndefined();
+      expect(events.filter((event) => event.type === 'turn.started').map((event) => event.turnId)).toEqual([0]);
+
+      const followup = once(loop, (event) => event.type === 'turn.ended' && event.turnId === 2);
+      loop.submit(prompt('queued'));
+      await followup;
+
+      expect(events.filter((event) => event.type === 'turn.started').map((event) => [event.turnId, event.trigger])).toEqual([
+        [0, 'normal'],
+        [1, 'normal'],
+        [2, 'notify'],
+      ]);
+      expect(events.find((event) => event.type === 'turn.ended' && event.turnId === 2)).toMatchObject({
+        outcome: { type: 'done', cause: { by: 'loop', reason: 'prompt_only' } },
+      });
+    } finally {
+      await loop.close();
+    }
+  });
+
   it('resumes interrupted and queued turns before a prompt-only notification', async () => {
     const events: LoopEmitted[] = [];
     const starting: number[] = [];
