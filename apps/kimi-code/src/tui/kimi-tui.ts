@@ -4774,6 +4774,7 @@ export class KimiTUI {
     } catch {
       info = {
         trusted: false,
+        projectRoot: workDir,
         gatedMcpServers: [],
         gatedAdditionalDirs: [],
         additionalDirSources: [],

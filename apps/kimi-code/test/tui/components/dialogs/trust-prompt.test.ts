@@ -3,9 +3,11 @@ import type { TuiMouseEvent } from '@moonshot-ai/pi-tui';
 import type { WorkspaceTrustInfo } from '@moonshot-ai/kimi-code-sdk';
 import { TrustPromptComponent } from '#/tui/components/dialogs/trust-prompt';
 
+const projectRoot = '/tmp/example-project';
 function info(overrides: Partial<WorkspaceTrustInfo> = {}): WorkspaceTrustInfo {
   return {
     trusted: false,
+    projectRoot,
     gatedMcpServers: [],
     gatedAdditionalDirs: [],
     additionalDirSources: [],

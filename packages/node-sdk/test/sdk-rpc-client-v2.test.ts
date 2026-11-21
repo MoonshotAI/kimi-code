@@ -1813,25 +1813,27 @@ key = "${titleOAuthRef.key}"
       tempDirs.push(workDir, extraDir);
       const client = harness['rpc'] as SDKRpcClientV2;
       const manager = client.engineAccessor.get(IWorkspaceInstanceManager);
-      const lease = await manager.acquire({ cwd: workDir });
-      const dirs = lease.instance.program.dirs;
       let releaseReady!: () => void;
       const readyGate = new Promise<void>((resolve) => {
         releaseReady = resolve;
       });
       let ready = false;
-      const gatedDirs = Object.create(dirs) as typeof dirs;
-      Object.defineProperties(gatedDirs, {
-        ready: {
-          value: readyGate.then(() => {
-            ready = true;
-          }),
-        },
-        additionalDirs: {
-          get: () => (ready ? [extraDir] : []),
-        },
+      const acquireWorkdir = manager.acquireWorkdir.bind(manager);
+      const acquireSpy = vi.spyOn(manager, 'acquireWorkdir').mockImplementation(async (cwd) => {
+        const lease = await acquireWorkdir(cwd);
+        const gatedDirs = Object.create(lease.workdir.dirs) as typeof lease.workdir.dirs;
+        Object.defineProperties(gatedDirs, {
+          ready: {
+            value: readyGate.then(() => {
+              ready = true;
+            }),
+          },
+          additionalDirs: {
+            get: () => (ready ? [extraDir] : []),
+          },
+        });
+        return { ...lease, workdir: { ...lease.workdir, dirs: gatedDirs } };
       });
-      const dirsSpy = vi.spyOn(lease.instance.program, 'dirs', 'get').mockReturnValue(gatedDirs);
       try {
         let settled = false;
         const pending = harness.getWorkspaceAdditionalDirs(workDir);
@@ -1846,8 +1848,7 @@ key = "${titleOAuthRef.key}"
         await expect(pending).resolves.toEqual([extraDir]);
       } finally {
         releaseReady();
-        dirsSpy.mockRestore();
-        lease.dispose();
+        acquireSpy.mockRestore();
         await harness.close();
       }
     });
@@ -3003,6 +3004,7 @@ describe('SDKRpcClientV2 workspace trust', () => {
       const info = await harness.getWorkspaceTrustInfo(workDir);
       expect(info).toEqual({
         trusted: false,
+        projectRoot: workDir,
         gatedMcpServers: [],
         gatedAdditionalDirs: [],
         additionalDirSources: [],
@@ -3217,6 +3219,58 @@ describe('SDKRpcClientV2 workspace trust', () => {
     }
   });
 
+  it('names the main checkout as the project to trust from a fresh worktree or a subdirectory', async () => {
+    const { harness } = await makeHarness();
+    const { main, worktree } = await gitWorktreeLayout();
+    const subdir = join(main, 'src');
+    await mkdir(subdir);
+    try {
+      const fromWorktree = await harness.getWorkspaceTrustInfo(worktree);
+      const fromSubdir = await harness.getWorkspaceTrustInfo(subdir);
+
+      expect(fromWorktree.trusted).toBe(false);
+      expect(await realpath(fromWorktree.projectRoot)).toBe(await realpath(main));
+      expect(fromSubdir).toMatchObject({ trusted: false, projectRoot: fromWorktree.projectRoot });
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it('records trust for the main checkout when a fresh worktree is trusted', async () => {
+    const { harness } = await makeHarness();
+    const { main, worktree } = await gitWorktreeLayout();
+    try {
+      await harness.trustWorkspace(worktree);
+
+      expect((await harness.getWorkspaceTrustInfo(main)).trusted).toBe(true);
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it('discloses the project MCP servers a new session in a worktree or subdirectory would load', async () => {
+    const { harness } = await makeHarness();
+    const { main, worktree } = await gitWorktreeLayout();
+    const subdir = join(main, 'src');
+    const servers = (name: string) => JSON.stringify({ mcpServers: { [name]: { command: `${name}-cmd` } } });
+    await mkdir(join(main, '.kimi-code'));
+    await mkdir(join(subdir, '.kimi-code'), { recursive: true });
+    await mkdir(join(worktree, '.kimi-code'));
+    await writeFile(join(main, '.kimi-code', 'mcp.json'), servers('main-server'), 'utf-8');
+    await writeFile(join(subdir, '.kimi-code', 'mcp.json'), servers('subdir-server'), 'utf-8');
+    await writeFile(join(worktree, '.kimi-code', 'mcp.json'), servers('worktree-server'), 'utf-8');
+    try {
+      const gatedNames = async (dir: string) =>
+        (await harness.getWorkspaceTrustInfo(dir)).gatedMcpServers.map((server) => server.name);
+
+      expect(await gatedNames(main)).toEqual(['main-server']);
+      expect(await gatedNames(worktree)).toEqual(['worktree-server']);
+      expect(await gatedNames(subdir)).toEqual(['main-server']);
+    } finally {
+      await harness.close();
+    }
+  });
+
   it('keeps sessions from a fresh worktree in the project of its main checkout', async () => {
     const { harness, homeDir } = await makeHarness();
     const { main, worktree } = await gitWorktreeLayout();
@@ -3242,6 +3296,7 @@ describe('SDKRpcClientV2 workspace trust', () => {
       await harness.trustWorkspace(workDir);
       expect(await harness.getWorkspaceTrustInfo(workDir)).toEqual({
         trusted: true,
+        projectRoot: workDir,
         gatedMcpServers: [],
         gatedAdditionalDirs: [],
         additionalDirSources: [],

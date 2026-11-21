@@ -194,6 +194,12 @@ export interface WorkspaceTrustInstructionSources {
 /** Trust state of a workspace directory, plus everything trusting it would activate. */
 export interface WorkspaceTrustInfo {
   readonly trusted: boolean;
+  /**
+   * Primary directory of the project the queried directory belongs to. Trust
+   * is recorded for this directory, and a worktree or subdirectory of a
+   * repository reports the repository's main checkout here.
+   */
+  readonly projectRoot: string;
   /** Project-level MCP servers that trusting would start. */
   readonly gatedMcpServers: readonly WorkspaceTrustMcpServerInfo[];
   /** Directories outside the project that trusting grants access to (symlink-resolved). */
