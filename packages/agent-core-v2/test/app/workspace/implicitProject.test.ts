@@ -37,7 +37,7 @@ interface PortOptions {
   readonly occupied?: readonly string[];
   readonly location?: CheckoutLocation;
   readonly realpaths?: Readonly<Record<string, string>>;
-  readonly homeDirs?: readonly string[] | undefined;
+  readonly homeDirs?: readonly string[];
 }
 
 function ports(options: PortOptions = {}): ImplicitResolutionPorts & { readonly located: string[] } {
