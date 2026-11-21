@@ -1876,23 +1876,34 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   }
 
   /**
-   * Through the leased `WorkspaceInstance.program.dirs` (`IWorkspaceDirs`) — the
+   * Through the `IWorkspaceDirs` of the view the session runs in — the
    * workspace-level add-dir surface: `persist: true` (default) appends to the
-   * workspace entry in the registry, `persist: false` joins the `Program`'s
-   * shared in-memory set. The set is shared by every session of the workspace
+   * workspace entry in the registry, `persist: false` joins the view's shared
+   * in-memory set. A local session pinned at its own directory (a worktree or
+   * subdirectory) has a view of its own; every other session uses the
+   * `Program`'s root view. The set is shared by every session of that view
    * (a v1 `persist: false` dir was session-scoped and written into session
-   * metadata to survive a resume; the v2 `Program` keeps it until the last
-   * workspace reference is released). Returns the same
+   * metadata to survive a resume; the v2 view keeps it until its last
+   * reference is released). Returns the same
    * `{additionalDirs, projectRoot, configPath, persisted}` shape as v1.
    */
   override async addAdditionalDir(input: AddAdditionalDirInput): Promise<AddAdditionalDirResult> {
     const handle = this.requireLiveSession(input.id);
     const workspaceId = handle.accessor.get(ISessionContext).workspaceId;
+    const { environmentId, cwd } = handle.accessor.get(ISessionWorkdir);
     const lease = await this.engineAccessor
       .get(IWorkspaceInstanceManager)
       .acquire({ workspaceId });
     try {
-      return await lease.instance.program.dirs.addDir({ path: input.path, persist: input.persist });
+      if (environmentId !== 'local' || cwd === undefined) {
+        return await lease.instance.program.dirs.addDir({ path: input.path, persist: input.persist });
+      }
+      const workdir = await lease.instance.program.acquireWorkdir(environmentId, cwd, false);
+      try {
+        return await workdir.dirs.addDir({ path: input.path, persist: input.persist });
+      } finally {
+        workdir.dispose();
+      }
     } finally {
       lease.dispose();
     }

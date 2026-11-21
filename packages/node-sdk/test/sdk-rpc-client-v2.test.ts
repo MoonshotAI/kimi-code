@@ -49,6 +49,7 @@ import {
   IConfigService,
   ISessionContext,
   ISessionMcpHandle,
+  ISessionWorkspaceContext,
   IAgentTowerService,
   IHostRequestHeaders,
   IMcpManagementService,
@@ -3295,6 +3296,29 @@ describe('SDKRpcClientV2 workspace trust', () => {
       expect(await gatedNames(main)).toEqual(['main-server']);
       expect(await gatedNames(worktree)).toEqual(['worktree-server']);
       expect(await gatedNames(subdir)).toEqual(['main-server']);
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it('adds a directory to the session that asked for it when the session runs in a worktree', async () => {
+    const { harness } = await makeHarness();
+    const { worktree } = await gitWorktreeLayout();
+    const sessionOnly = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-extra-'));
+    const remembered = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-extra-'));
+    tempDirs.push(sessionOnly, remembered);
+    try {
+      const session = await harness.createSession({ workDir: worktree });
+      const workspace = getLiveSessionById((harness['rpc'] as SDKRpcClientV2).engineAccessor, session.id)!
+        .accessor.get(ISessionWorkspaceContext);
+
+      const added = await session.addAdditionalDir(sessionOnly, { persist: false });
+      expect(workspace.additionalDirs).toContain(sessionOnly);
+      expect(added.additionalDirs).toEqual(workspace.additionalDirs);
+
+      const kept = await session.addAdditionalDir(remembered, { persist: true });
+      expect(workspace.additionalDirs).toEqual(expect.arrayContaining([sessionOnly, remembered]));
+      expect(kept.additionalDirs).toEqual(workspace.additionalDirs);
     } finally {
       await harness.close();
     }
