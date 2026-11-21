@@ -1063,6 +1063,10 @@ describe('KimiTUI startup', () => {
 
     await expect(driver.init()).resolves.toBe(true);
 
+    expect((harness as unknown as { listSessionsPage: ReturnType<typeof vi.fn> }).listSessionsPage).toHaveBeenCalledWith({
+      workDir: '/tmp/proj-a',
+      limit: 1,
+    });
     expect(harness.resumeSession).toHaveBeenCalledWith({
       id: 'ses-latest',
       replayTurnLimit: REPLAY_FETCH_TURN_LIMIT,
@@ -3983,6 +3987,61 @@ describe('KimiTUI startup', () => {
     loadSpy.mockRestore();
   });
 
+  it('resumes a startup session whose Windows workdir differs in drive and letter case', async () => {
+    const session = makeSession({ id: 'ses-target' });
+    const harness = makeHarness(session, {
+      listSessions: vi.fn(async () => [{ id: 'ses-target', workDir: 'c:/users/KIMI/Project' }]),
+    });
+    const driver = makeDriver(harness, {
+      ...makeStartupInput({ session: 'ses-target' }),
+      workDir: String.raw`C:\Users\kimi\project`,
+    });
+
+    await expect(driver.init()).resolves.toBe(true);
+
+    expect(harness.resumeSession).toHaveBeenCalledWith({
+      id: 'ses-target',
+      replayTurnLimit: REPLAY_FETCH_TURN_LIMIT,
+    });
+  });
+
+  it('looks up a resumed session by id in every project and resumes it from its own directory', async () => {
+    const session = makeSession({ id: 'ses-managed' });
+    const listSessions = vi.fn(async (input: { workDir?: string; sessionId?: string } = {}) =>
+      input.workDir === undefined && input.sessionId === 'ses-managed'
+        ? [{ id: 'ses-managed', workDir: '/tmp/proj-a' }]
+        : [],
+    );
+    const harness = makeHarness(session, { listSessions });
+    const driver = makeDriver(harness, makeStartupInput({ session: 'ses-managed' }));
+
+    await expect(driver.init()).resolves.toBe(true);
+
+    expect(listSessions).toHaveBeenCalledWith({ sessionId: 'ses-managed' });
+    expect(harness.resumeSession).toHaveBeenCalledWith({
+      id: 'ses-managed',
+      replayTurnLimit: REPLAY_FETCH_TURN_LIMIT,
+    });
+  });
+
+  it('refuses to resume a session of another directory and tells the user where to cd', async () => {
+    const harness = makeHarness(makeSession({ id: 'ses-other' }), {
+      listSessions: vi.fn(async () => [{ id: 'ses-other', workDir: '/tmp/app-fix' }]),
+    });
+    const driver = makeDriver(harness, makeStartupInput({ session: 'ses-other' }));
+    const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+
+    try {
+      await expect(driver.init()).rejects.toThrow('Session "ses-other" was created under a different directory.');
+      expect(stderr.mock.calls.map(([chunk]) => String(chunk)).join('')).toContain(
+        '  cd "/tmp/app-fix" && kimi -r ses-other',
+      );
+    } finally {
+      stderr.mockRestore();
+    }
+    expect(harness.resumeSession).not.toHaveBeenCalled();
+  });
+
   it('resumes a startup session when Windows workdir uses backslashes', async () => {
     const session = makeSession({ id: 'ses-target' });
     const harness = makeHarness(session, {
@@ -3995,10 +4054,7 @@ describe('KimiTUI startup', () => {
 
     await expect(driver.init()).resolves.toBe(true);
 
-    expect(harness.listSessions).toHaveBeenCalledWith({
-      sessionId: 'ses-target',
-      workDir: String.raw`C:\Users\kimi\project`,
-    });
+    expect(harness.listSessions).toHaveBeenCalledWith({ sessionId: 'ses-target' });
     expect(harness.resumeSession).toHaveBeenCalledWith({
       id: 'ses-target',
       replayTurnLimit: REPLAY_FETCH_TURN_LIMIT,

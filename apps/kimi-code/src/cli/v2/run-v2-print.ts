@@ -19,6 +19,8 @@ import {
   ISessionRunGate,
   ITelemetryService,
   IWorkspaceInstanceManager,
+  IWorkspaceService,
+  IWorkspaceSessions,
   PRINT_MAX_TURNS_DEFAULT,
   PRINT_WAIT_CEILING_S_DEFAULT,
   applyPrintModeConfigDefaults,
@@ -71,7 +73,11 @@ import type {
   ToolUpdated,
   ToolResultEvent,
 } from '@moonshot-ai/agent-core-v2/agent/toolExecutor/toolExecutorEvents';
-import { resolve } from 'pathe';
+import { sameDir } from '@moonshot-ai/agent-core-v2/_base/utils/workdir-slug';
+import {
+  sessionPlacementOf,
+  sessionWorkDir,
+} from '@moonshot-ai/agent-core-v2/session/workspaceContext/workspaceRoots';
 
 import {
   CLI_SHUTDOWN_TIMEOUT_MS,
@@ -225,7 +231,9 @@ export async function runV2Print(
       const gated = await listTrustGatedMcpServers(
         services,
         workDir,
-        opts.environment === 'local' ? opts.environmentCwd : undefined,
+        opts.environment === undefined || opts.environment === 'local'
+          ? (opts.environmentCwd ?? workDir)
+          : undefined,
       );
       if (gated.length > 0) stderr.write(formatTrustGatedMcpWarning(gated));
     } catch {}
@@ -385,10 +393,12 @@ async function resolveNativeSession(
     if (target === undefined) {
       throw new Error(`Session "${opts.session}" not found.`);
     }
-    if (target.cwd !== undefined && resolve(target.cwd) !== resolve(workDir)) {
+    const project = await services.get(IWorkspaceService).get(target.workspaceId);
+    const targetDir = sessionWorkDir(sessionPlacementOf(target), project?.root);
+    if (targetDir !== undefined && !sameDir(targetDir, workDir)) {
       stderr.write(
         `Session "${opts.session}" was created under a different directory.\n` +
-          `  cd "${target.cwd}" && kimi -r ${opts.session}\n\n`,
+          `  cd "${targetDir}" && kimi -r ${opts.session}\n\n`,
       );
       throw new Error(`Session "${opts.session}" was created under a different directory.`);
     }
@@ -410,8 +420,7 @@ async function resolveNativeSession(
   }
 
   if (opts.continue) {
-    const page = await index.listRecent({});
-    const previous = page.items.find((summary) => summary.cwd === workDir);
+    const [previous] = (await services.get(IWorkspaceSessions).listForWorkdir(workDir, { limit: 1 })).items;
     if (previous !== undefined) {
       const session = await resumeById(previous.id);
       const agentContext = await ensureMainAgent(session);

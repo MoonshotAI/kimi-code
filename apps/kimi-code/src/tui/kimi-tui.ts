@@ -4,7 +4,7 @@ import { unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import type { DeviceAuthorization } from '@moonshot-ai/kimi-code-oauth';
-import { ErrorCodes, isKimiError, log } from '@moonshot-ai/kimi-code-sdk';
+import { ErrorCodes, isKimiError, log, sameDir } from '@moonshot-ai/kimi-code-sdk';
 import type {
   ApprovalRequest,
   ApprovalResponse,
@@ -38,7 +38,6 @@ import {
   TuiAltScreen,
   TuiMainScreen,
 } from '@moonshot-ai/pi-tui';
-import { resolve } from 'pathe';
 
 import type { CLIOptions } from '#/cli/options';
 import { MigrationScreenComponent, type MigrationScreenResult } from '#/migration/index';
@@ -1177,15 +1176,12 @@ export class KimiTUI {
         }
 
         if (startup.sessionFlag !== undefined) {
-          const sessions = await this.harness.listSessions({
-            sessionId: startup.sessionFlag,
-            workDir,
-          });
+          const sessions = await this.harness.listSessions({ sessionId: startup.sessionFlag });
           const target = sessions[0];
           if (target === undefined) {
             throw new Error(`Session "${startup.sessionFlag}" not found.`);
           }
-          if (resolve(target.workDir) !== resolve(workDir)) {
+          if (!sameDir(target.workDir, workDir)) {
             this.state.ui.stop();
             process.stderr.write(
               `${currentTheme.fg(
@@ -5032,7 +5028,7 @@ export class KimiTUI {
     applyStartupModes: boolean,
   ): Promise<void> {
     this.sessionPickerScopeRequestToken += 1;
-    if (resolve(session.work_dir) !== resolve(this.state.appState.workDir)) {
+    if (!sameDir(session.work_dir, this.state.appState.workDir)) {
       await this.showResumeOtherWorkDirHint(session);
       if (applyStartupModes) await this.stop(0);
       return;
