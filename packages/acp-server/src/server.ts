@@ -44,6 +44,11 @@ import type {
   SessionSummary,
 } from '@moonshot-ai/klient';
 import { ErrorCodes, isError2 } from '@moonshot-ai/agent-core-v2';
+import { sameDir } from '@moonshot-ai/agent-core-v2/_base/utils/workdir-slug';
+import {
+  sessionPlacementOf,
+  sessionWorkDir,
+} from '@moonshot-ai/agent-core-v2/session/workspaceContext/workspaceRoots';
 import { RPCError } from '@moonshot-ai/klient';
 
 import type { AcpClient } from './acp-client';
@@ -232,9 +237,13 @@ export class AcpServer {
 
   async listSessions(params: ListSessionsRequest): Promise<ListSessionsResponse> {
     const cwd = params.cwd ?? undefined;
-    const page = await this.klient.global.sessions.list({});
-    const sessions: SessionInfo[] = filterSessionSummariesByCwd(page.items, cwd).map(
-      sessionSummaryToSessionInfo,
+    const [page, workspaces] = await Promise.all([
+      this.klient.global.sessions.list({}),
+      this.klient.global.workspaces.list(),
+    ]);
+    const projectRoots = new Map(workspaces.map((workspace) => [workspace.id, workspace.root]));
+    const sessions: SessionInfo[] = filterSessionSummariesByCwd(page.items, cwd, projectRoots).map(
+      (summary) => sessionSummaryToSessionInfo(summary, sessionCwdOf(summary, projectRoots)),
     );
     return { sessions, nextCursor: page.nextCursor ?? null };
   }
@@ -533,12 +542,23 @@ export function createAcpAgentApp(getServer: () => AcpServer | Promise<AcpServer
 export function filterSessionSummariesByCwd(
   items: readonly SessionSummary[],
   cwd: string | undefined,
+  projectRoots: ReadonlyMap<string, string> = new Map(),
 ): readonly SessionSummary[] {
   if (cwd === undefined) return items;
-  return items.filter((s) => s.cwd === undefined || s.cwd === cwd);
+  return items.filter((summary) => {
+    const sessionCwd = sessionCwdOf(summary, projectRoots);
+    return sessionCwd === undefined || sameDir(sessionCwd, cwd);
+  });
 }
 
-function sessionSummaryToSessionInfo(summary: SessionSummary): SessionInfo {
+function sessionCwdOf(
+  summary: SessionSummary,
+  projectRoots: ReadonlyMap<string, string>,
+): string | undefined {
+  return sessionWorkDir(sessionPlacementOf(summary), projectRoots.get(summary.workspaceId));
+}
+
+function sessionSummaryToSessionInfo(summary: SessionSummary, cwd: string | undefined): SessionInfo {
   let updatedAt: string | null = null;
   if (typeof summary.updatedAt === 'number' && Number.isFinite(summary.updatedAt)) {
     const date = new Date(summary.updatedAt);
@@ -550,7 +570,7 @@ function sessionSummaryToSessionInfo(summary: SessionSummary): SessionInfo {
   const title = typeof titleRaw === 'string' && titleRaw.length > 0 ? titleRaw : null;
   return {
     sessionId: summary.id,
-    cwd: summary.cwd ?? '',
+    cwd: cwd ?? '',
     title,
     updatedAt,
   };

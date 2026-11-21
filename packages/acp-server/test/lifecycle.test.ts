@@ -1,11 +1,15 @@
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
+import { mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { promisify } from 'node:util';
 
 import {
   IOAuthToolkit,
   IAgentEnvironmentBindingService,
+  ISessionContext,
+  IWorkspaceService,
   IAgentLifecycleService,
   ensureMainAgent,
   ISessionManager,
@@ -53,6 +57,21 @@ function createFakeOAuthToolkit(): {
     getManagedUserInfo: () => Promise.reject(new Error('fakeOAuthToolkit: not implemented')),
   } as unknown as IOAuthToolkit;
   return { seed: [IOAuthToolkit, fake], hasToken: () => token !== undefined };
+}
+
+async function createGitWorktree(base: string): Promise<{ readonly main: string; readonly worktree: string }> {
+  const main = join(base, 'app');
+  const worktree = join(base, 'app-fix');
+  const exec = promisify(execFile);
+  await mkdir(main, { recursive: true });
+  await exec('git', ['init', '-q', '-b', 'main'], { cwd: main });
+  await exec(
+    'git',
+    ['-c', 'user.email=worktree-test@example.com', '-c', 'user.name=Worktree Test', 'commit', '-q', '--allow-empty', '-m', 'initial'],
+    { cwd: main },
+  );
+  await exec('git', ['worktree', 'add', '-q', '-b', 'fix', worktree], { cwd: main });
+  return { main, worktree };
 }
 
 describe('acp-server session lifecycle', () => {
@@ -511,6 +530,34 @@ describe('acp-server session lifecycle', () => {
     },
     30_000,
   );
+
+  it(
+    'session/new in a worktree joins the repository project, pins the worktree and lists it there',
+    async () => {
+      const c = await boot();
+      const { main, worktree } = await createGitWorktree(join(homeDir!, 'repos'));
+      const created = (await c.send('session/new', { cwd: worktree, mcpServers: [] })) as {
+        sessionId: string;
+      };
+
+      const handle = c.server.core.accessor.get(ISessionManager).get(created.sessionId)!;
+      const context = handle.accessor.get(ISessionContext);
+      const project = await c.server.core.accessor.get(IWorkspaceService).get(context.workspaceId);
+      expect(await realpath(project!.root)).toBe(await realpath(main));
+      expect(context.cwd).toBe(worktree);
+      const inWorktree = (await c.send('session/list', { cwd: worktree })) as {
+        sessions: { sessionId: string; cwd: string }[];
+      };
+      const inMain = (await c.send('session/list', { cwd: main })) as {
+        sessions: { sessionId: string }[];
+      };
+      expect(inWorktree.sessions).toContainEqual(
+        expect.objectContaining({ sessionId: created.sessionId, cwd: worktree }),
+      );
+      expect(inMain.sessions.map((s) => s.sessionId)).not.toContain(created.sessionId);
+    },
+    30_000,
+  );
 });
 
 describe('filterSessionSummariesByCwd', () => {
@@ -532,5 +579,24 @@ describe('filterSessionSummariesByCwd', () => {
     const items = [summary('a', '/x'), summary('b'), summary('c', '/y')];
     expect(filterSessionSummariesByCwd(items, '/x').map((s) => s.id)).toEqual(['a', 'b']);
     expect(filterSessionSummariesByCwd(items, '/y').map((s) => s.id)).toEqual(['b', 'c']);
+  });
+
+  it('filters by the pinned directory, or the current project root for a session that follows it', () => {
+    const pinned = { ...summary('pinned', '/repo-wt'), workspaceId: 'ws-repo', environmentCwd: '/repo-wt' };
+    const following = { ...summary('following', '/old-root'), workspaceId: 'ws-moved' };
+    const roots = new Map([
+      ['ws-repo', '/repo'],
+      ['ws-moved', '/new-root'],
+    ]);
+    const ids = (cwd: string) => filterSessionSummariesByCwd([pinned, following], cwd, roots).map((s) => s.id);
+    expect(ids('/repo-wt')).toEqual(['pinned']);
+    expect(ids('/repo')).toEqual([]);
+    expect(ids('/new-root')).toEqual(['following']);
+    expect(ids('/old-root')).toEqual([]);
+  });
+
+  it('compares Windows-shaped directories without regard to drive case or separators', () => {
+    const pinned = { ...summary('win', String.raw`C:\Work\App`), environmentCwd: String.raw`C:\Work\App` };
+    expect(filterSessionSummariesByCwd([pinned], 'c:/work/app').map((s) => s.id)).toEqual(['win']);
   });
 });
