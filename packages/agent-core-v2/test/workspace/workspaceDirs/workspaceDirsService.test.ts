@@ -10,6 +10,7 @@ import { Emitter } from '#/_base/event';
 import type { ILogService } from '#/_base/log/log';
 import { encodeWorkDirKey } from '#/_base/utils/workdir-slug';
 import type { IEventService } from '#/app/event/event';
+import { noopTelemetryService } from '#/app/telemetry/telemetry';
 import { FileProjectLocalConfigService } from '#/persistence/backends/node-fs/projectLocalConfigService';
 import { JsonAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDocumentStore';
 import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
@@ -23,6 +24,7 @@ import type { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceCo
 import { WorkspaceDirsService } from '#/workspace/workspaceDirs/workspaceDirsService';
 
 import { stubBootstrap } from '../../app/bootstrap/stubs';
+import { stubHostEnvironment } from '../../stubs';
 
 const noopLog = {
   error: () => {},
@@ -66,6 +68,10 @@ describe('WorkspaceDirsService (registry source)', () => {
       localConfig,
       noopLog,
       noopEvent,
+      stubHostEnvironment(homeDir),
+      noopTelemetryService,
+      bootstrap,
+      new JsonAtomicDocumentStore(storage),
     );
   });
 

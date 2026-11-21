@@ -54,6 +54,16 @@ function manager(
       if (value === undefined) throw new Error(`unknown root ${root}`);
       return value;
     }),
+    resolveImplicit: vi.fn(async (dir: string) => {
+      throw new Error(`unexpected resolve of ${dir}`);
+    }),
+    peekImplicit: vi.fn(async (dir: string) => {
+      throw new Error(`unexpected peek of ${dir}`);
+    }),
+    reviveImplicit: vi.fn(async (id: string) => {
+      throw new Error(`unexpected revive of ${id}`);
+    }),
+    contains: async () => false,
     touch: vi.fn(async (id: string) => byId.get(id)),
     update: async () => undefined,
     setPrimary: async () => undefined,

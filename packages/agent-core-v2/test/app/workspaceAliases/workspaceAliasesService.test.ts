@@ -22,6 +22,8 @@ import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { IEventService } from '#/app/event/event';
+import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemetry';
+import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IProjectLocalConfigService } from '#/app/projectLocalConfig/projectLocalConfig';
 import { IWorkspaceService, type Workspace } from '#/app/workspace/workspace';
@@ -35,6 +37,7 @@ import {
 import { IWorkspaceAliases } from '#/app/workspaceAliases/workspaceAliases';
 import { WorkspaceAliasesService } from '#/app/workspaceAliases/workspaceAliasesService';
 import { stubBootstrap } from '../bootstrap/stubs';
+import { stubHostEnvironment } from '../../stubs';
 
 interface SessionIndexLine {
   readonly sessionId: string;
@@ -113,6 +116,8 @@ describe('WorkspaceAliasesService (file-backed)', () => {
         publish: () => {},
         subscribe: () => ({ dispose: () => {} }),
       } as unknown as IEventService),
+      stubPair(IHostEnvironment, stubHostEnvironment(homeDir)),
+      stubPair(ITelemetryService, noopTelemetryService),
     ]);
     currentHost = host;
     return host.app.accessor.get(IWorkspaceAliases);

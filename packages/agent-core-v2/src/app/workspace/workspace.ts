@@ -1,5 +1,7 @@
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 
+import type { ImplicitDecision, ImplicitRule, ImplicitWorkspace } from './implicitProject';
+
 export type WorkspaceKind = 'managed' | 'implicit';
 
 export interface Workspace {
@@ -24,6 +26,11 @@ export interface WorkspaceUpdate {
   readonly additionalDirs?: readonly string[];
 }
 
+export interface ImplicitProjectResult {
+  readonly project: ImplicitWorkspace;
+  readonly rule: ImplicitRule;
+}
+
 export interface IWorkspaceService {
   readonly _serviceBrand: undefined;
 
@@ -31,6 +38,10 @@ export interface IWorkspaceService {
   get(id: string): Promise<Workspace | undefined>;
   create(input: WorkspaceCreate): Promise<Workspace>;
   createOrTouch(root: string, name?: string): Promise<Workspace>;
+  resolveImplicit(dir: string): Promise<ImplicitProjectResult>;
+  peekImplicit(dir: string): Promise<ImplicitDecision>;
+  reviveImplicit(id: string, workDir: string): Promise<Workspace>;
+  contains(project: Pick<Workspace, 'root' | 'additionalDirs'>, dir: string): Promise<boolean>;
   touch(id: string): Promise<Workspace | undefined>;
   update(id: string, patch: WorkspaceUpdate): Promise<Workspace | undefined>;
   setPrimary(id: string, path: string): Promise<Workspace | undefined>;

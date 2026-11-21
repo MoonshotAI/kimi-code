@@ -992,6 +992,16 @@ function registerSessionExportServices(
       createdAt: 1,
       lastOpenedAt: 2,
     }),
+    resolveImplicit: async () => {
+      throw new Error('resolveImplicit should not be called by session export');
+    },
+    peekImplicit: async () => {
+      throw new Error('peekImplicit should not be called by session export');
+    },
+    reviveImplicit: async () => {
+      throw new Error('reviveImplicit should not be called by session export');
+    },
+    contains: async () => false,
     touch: async () => undefined,
     update: async () => undefined,
     setPrimary: async () => undefined,
