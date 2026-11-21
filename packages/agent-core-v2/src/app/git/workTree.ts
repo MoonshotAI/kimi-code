@@ -1,6 +1,7 @@
-import { dirname, isAbsolute, join, normalize } from 'pathe';
+import { basename, dirname, isAbsolute, join, normalize, resolve } from 'pathe';
 
-import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
+import type { AbsoluteDir } from '#/_base/utils/workdir-slug';
+import type { HostFileStat, IHostFileSystem } from '#/os/interface/hostFileSystem';
 
 export interface GitWorkTree {
   readonly root: string;
@@ -82,4 +83,195 @@ function parseGitDirPointer(content: string, markerParent: string): string | und
   const rawPath = line.slice('gitdir:'.length).trim();
   if (rawPath.length === 0) return undefined;
   return normalize(isAbsolute(rawPath) ? rawPath : join(markerParent, rawPath));
+}
+
+export type CheckoutLayout = 'main' | 'linked' | 'bare' | 'core-worktree';
+
+type UnreadableReason = 'unreadable-dotgit' | 'invalid-gitdir' | 'incomplete-worktree-metadata';
+
+export type OwnReason = 'not-a-repo' | 'main-unknown' | UnreadableReason;
+
+export type RejectReason = 'registered-path-not-dotgit' | 'backpointer-mismatch' | 'core-worktree-mismatch';
+
+export type CheckoutLocation =
+  | {
+      readonly kind: 'grouped';
+      readonly layout: CheckoutLayout;
+      readonly checkoutRoot: AbsoluteDir;
+      readonly mainDir: AbsoluteDir;
+      readonly canonicalMainDir: AbsoluteDir;
+    }
+  | { readonly kind: 'own'; readonly reason: OwnReason; readonly checkoutRoot?: AbsoluteDir }
+  | { readonly kind: 'rejected'; readonly reason: RejectReason; readonly checkoutRoot: AbsoluteDir };
+
+export type GroupedCheckout = Extract<CheckoutLocation, { readonly kind: 'grouped' }>;
+
+export type DegradedLocation =
+  | Extract<CheckoutLocation, { readonly kind: 'rejected' }>
+  | { readonly kind: 'own'; readonly reason: UnreadableReason; readonly checkoutRoot: AbsoluteDir };
+
+const MAX_POINTER_BYTES = 64 * 1024;
+const MAX_CONFIG_BYTES = 1024 * 1024;
+
+export function isDegradedLocation(location: CheckoutLocation): location is DegradedLocation {
+  if (location.kind === 'rejected') return true;
+  return location.kind === 'own' && location.reason !== 'not-a-repo' && location.reason !== 'main-unknown';
+}
+
+export async function locateCheckout(fs: IHostFileSystem, dir: AbsoluteDir): Promise<CheckoutLocation> {
+  const marker = await findNearestGitMarker(fs, dir);
+  if (marker === undefined) return { kind: 'own', reason: 'not-a-repo' };
+  const checkoutRoot = marker.root as AbsoluteDir;
+  if (marker.kind === 'invalid') return { kind: 'own', reason: 'unreadable-dotgit', checkoutRoot };
+  if (marker.kind !== 'pointer') return groupedAt(fs, 'main', checkoutRoot);
+
+  const pointerFile = await lstatOrUndefined(fs, marker.dotGitPath);
+  if (pointerFile === undefined || !isPlainSmallFile(pointerFile, MAX_POINTER_BYTES)) {
+    return { kind: 'own', reason: 'unreadable-dotgit', checkoutRoot };
+  }
+  const gitDirStat = await lstatOrUndefined(fs, marker.gitDir);
+  const canonicalGitDir = await realpathOrEmpty(fs, marker.gitDir);
+  if (gitDirStat?.isDirectory !== true || gitDirStat.isSymbolicLink === true || canonicalGitDir === '') {
+    return { kind: 'own', reason: 'invalid-gitdir', checkoutRoot };
+  }
+  if (basename(dirname(canonicalGitDir)) !== 'worktrees') return groupedAt(fs, 'main', checkoutRoot);
+
+  const common = dirname(dirname(canonicalGitDir));
+  const [backPointer, commonPointer] = await Promise.all([
+    readSmallText(fs, join(canonicalGitDir, 'gitdir'), MAX_POINTER_BYTES),
+    readSmallText(fs, join(canonicalGitDir, 'commondir'), MAX_POINTER_BYTES),
+  ]);
+  if (backPointer === undefined || commonPointer === undefined) {
+    return { kind: 'own', reason: 'incomplete-worktree-metadata', checkoutRoot };
+  }
+  const registeredDotGit = resolve(canonicalGitDir, backPointer.trim());
+  if (basename(registeredDotGit) !== '.git') {
+    return { kind: 'rejected', reason: 'registered-path-not-dotgit', checkoutRoot };
+  }
+  const [registered, self, linkedCommon] = await Promise.all([
+    realpathOrEmpty(fs, dirname(registeredDotGit)),
+    realpathOrEmpty(fs, checkoutRoot),
+    realpathOrEmpty(fs, resolve(canonicalGitDir, commonPointer.trim())),
+  ]);
+  if (!sameRealpath(registered, self) || !sameRealpath(linkedCommon, common)) {
+    return { kind: 'rejected', reason: 'backpointer-mismatch', checkoutRoot };
+  }
+
+  const mainCheckout = dirname(common);
+  if (await pointsTo(fs, mainCheckout, common)) {
+    return grouped('linked', checkoutRoot, await writtenOr(fs, writtenCommon(marker.gitDir, 1), mainCheckout), mainCheckout);
+  }
+  const core = await readCoreConfig(fs, join(common, 'config'));
+  if (core.bare === true) {
+    return grouped('bare', checkoutRoot, await writtenOr(fs, writtenCommon(marker.gitDir, 0), common), common);
+  }
+  if (core.worktree === undefined) return { kind: 'own', reason: 'main-unknown', checkoutRoot };
+  const coreWorktree = await realpathOrEmpty(fs, resolve(common, core.worktree));
+  if (coreWorktree !== '' && (await pointsTo(fs, coreWorktree, common))) {
+    return grouped('core-worktree', checkoutRoot, coreWorktree, coreWorktree);
+  }
+  return { kind: 'rejected', reason: 'core-worktree-mismatch', checkoutRoot };
+}
+
+async function groupedAt(fs: IHostFileSystem, layout: CheckoutLayout, checkoutRoot: AbsoluteDir): Promise<GroupedCheckout> {
+  const canonical = await realpathOrEmpty(fs, checkoutRoot);
+  return grouped(layout, checkoutRoot, checkoutRoot, canonical === '' ? checkoutRoot : canonical);
+}
+
+function grouped(layout: CheckoutLayout, checkoutRoot: AbsoluteDir, mainDir: string, canonicalMainDir: string): GroupedCheckout {
+  return {
+    kind: 'grouped',
+    layout,
+    checkoutRoot,
+    mainDir: mainDir as AbsoluteDir,
+    canonicalMainDir: canonicalMainDir as AbsoluteDir,
+  };
+}
+
+function writtenCommon(gitDir: string, parents: 0 | 1): string | undefined {
+  if (basename(dirname(gitDir)) !== 'worktrees') return undefined;
+  const common = dirname(dirname(gitDir));
+  return parents === 0 ? common : dirname(common);
+}
+
+async function writtenOr(fs: IHostFileSystem, written: string | undefined, canonical: string): Promise<string> {
+  if (written === undefined) return canonical;
+  return sameRealpath(await realpathOrEmpty(fs, written), canonical) ? written : canonical;
+}
+
+async function pointsTo(fs: IHostFileSystem, checkout: string, common: string): Promise<boolean> {
+  const dotGitPath = join(checkout, '.git');
+  const marker = await lstatOrUndefined(fs, dotGitPath);
+  if (marker === undefined) return false;
+  if (marker.isDirectory && marker.isSymbolicLink !== true) {
+    return sameRealpath(await realpathOrEmpty(fs, dotGitPath), common);
+  }
+  const text = await readSmallText(fs, dotGitPath, MAX_POINTER_BYTES);
+  const pointed = text === undefined ? undefined : parseGitDirPointer(text, checkout);
+  return pointed !== undefined && sameRealpath(await realpathOrEmpty(fs, pointed), common);
+}
+
+interface CoreConfig {
+  readonly bare?: boolean;
+  readonly worktree?: string;
+}
+
+async function readCoreConfig(fs: IHostFileSystem, path: string): Promise<CoreConfig> {
+  const text = await readSmallText(fs, path, MAX_CONFIG_BYTES);
+  return text === undefined ? {} : parseCoreConfig(text);
+}
+
+function parseCoreConfig(text: string): CoreConfig {
+  let bare: boolean | undefined;
+  let worktree: string | undefined;
+  let inCore = false;
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.replace(/^\uFEFF/, '').trim();
+    if (line === '' || line.startsWith('#') || line.startsWith(';')) continue;
+    if (line.startsWith('[')) {
+      inCore = /^\[\s*core\s*\]$/i.test(line);
+      continue;
+    }
+    const entry = inCore ? /^([A-Za-z][A-Za-z0-9-]*)\s*(?:=\s*(.*))?$/.exec(line) : null;
+    if (entry === null) continue;
+    const value = (entry[2] ?? 'true').replace(/\s+[#;].*$/, '').trim().replace(/^"(.*)"$/, '$1');
+    const key = entry[1]!.toLowerCase();
+    if (key === 'bare') bare = /^(?:true|yes|on|1)$/i.test(value);
+    if (key === 'worktree') worktree = value;
+  }
+  return { ...(bare === undefined ? {} : { bare }), ...(worktree === undefined ? {} : { worktree }) };
+}
+
+function isPlainSmallFile(stat: HostFileStat, maxBytes: number): boolean {
+  return stat.isFile && stat.isSymbolicLink !== true && stat.size <= maxBytes;
+}
+
+async function readSmallText(fs: IHostFileSystem, path: string, maxBytes: number): Promise<string | undefined> {
+  const stat = await lstatOrUndefined(fs, path);
+  if (stat === undefined || !isPlainSmallFile(stat, maxBytes)) return undefined;
+  try {
+    return await fs.readText(path);
+  } catch {
+    return undefined;
+  }
+}
+
+function sameRealpath(a: string, b: string): boolean {
+  return a !== '' && a === b;
+}
+
+async function realpathOrEmpty(fs: IHostFileSystem, path: string): Promise<string> {
+  try {
+    return normalize(await fs.realpath(path));
+  } catch {
+    return '';
+  }
+}
+
+async function lstatOrUndefined(fs: IHostFileSystem, path: string): Promise<HostFileStat | undefined> {
+  try {
+    return await fs.lstat(path);
+  } catch {
+    return undefined;
+  }
 }

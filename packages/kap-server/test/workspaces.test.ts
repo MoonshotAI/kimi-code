@@ -495,7 +495,7 @@ describe('server-v2 /api/v1/workspaces', () => {
     await vi.waitFor(async () => {
       const { body } = await getJson<ListWire>('/api/v1/workspaces');
       expect(body.code).toBe(0);
-      const unions = body.data.items.filter((w) => [typedId, lowerId].includes(w.id));
+      const unions = body.data.items.filter((w) => w.id === typedId || w.id === lowerId);
       expect(unions).toHaveLength(1);
       expect(unions[0]?.session_count).toBe(2);
     });
