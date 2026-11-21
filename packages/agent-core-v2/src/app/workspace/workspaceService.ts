@@ -492,11 +492,11 @@ export class WorkspaceService implements IWorkspaceService {
     let indexLines: Promise<SessionIndexLine[]> | undefined;
     const ports: ImplicitResolutionPorts = {
       occupied: async (project) => {
+        if (await this.bucketsHoldSession([project.id])) return true;
         indexLines ??= readSessionIndexEntries(this.storage);
-        return this.bucketsHoldSession([
-          project.id,
-          ...collectAliasIds(catalog.workspaces, await indexLines, project.root),
-        ]);
+        return this.bucketsHoldSession(
+          collectAliasIds(catalog.workspaces, await indexLines, project.root).filter((id) => id !== project.id),
+        );
       },
       locate: (target: AbsoluteDir) => locateCheckout(this.hostFs, target),
       realpath: (target) => this.realpathOrUndefined(target),
