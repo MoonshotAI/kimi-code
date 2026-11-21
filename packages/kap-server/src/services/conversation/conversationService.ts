@@ -3,6 +3,8 @@ import {
   Error2,
   ErrorCodes,
   IAgentLifecycleService,
+  IAgentLoopService,
+  IModelService,
   ISessionManager,
   ISessionStateService,
   MAIN_AGENT_ID,
@@ -19,6 +21,7 @@ import {
 
 import type { ConversationTurn } from '../../protocol/conversation';
 import { ensureMainAgent } from '../../transport/mainAgent';
+import { isMissingConfiguredModel } from '../legacyStatus/legacyStatus';
 import { ConversationFeed } from './conversationFeed';
 import type { ConversationFork } from './conversationFold';
 
@@ -64,7 +67,10 @@ export class ConversationService implements IDisposable {
     if (handle === undefined) {
       throw new Error2(ErrorCodes.AGENT_NOT_FOUND, `agent not found: ${agentId}`);
     }
-    return this.attach(sessionId, this.watch(sessionId, session), handle).ready;
+    const migration = agentId === MAIN_AGENT_ID ? await migrateMissingMainModel(handle) : undefined;
+    const feed = await this.attach(sessionId, this.watch(sessionId, session), handle).ready;
+    if (migration !== undefined) feed.migrationNotice = migration;
+    return feed;
   }
 
   async mainTurns(sessionId: string): Promise<readonly ConversationTurn[] | undefined> {
@@ -132,6 +138,29 @@ export class ConversationService implements IDisposable {
     for (const watch of entry.watches) watch.dispose();
     for (const { feed } of entry.feeds.values()) feed.dispose();
   }
+}
+
+async function migrateMissingMainModel(handle: IAgentScopeHandle): Promise<string | undefined> {
+  const profile = handle.accessor.get(IAgentLoopService);
+  const previous = profile.getModel();
+  if (previous === '') return undefined;
+  try {
+    profile.resolveModelContext();
+    return undefined;
+  } catch (error) {
+    if (!isMissingConfiguredModel(error, previous)) throw error;
+  }
+  const replacement = handle.accessor.get(IModelService).getDefaultModel();
+  if (replacement !== undefined && replacement !== previous) {
+    try {
+      await profile.setModel(replacement);
+      return `Session model "${previous}" is not configured. Switched to the current default model "${replacement}".`;
+    } catch (error) {
+      if (!isMissingConfiguredModel(error, replacement)) throw error;
+    }
+  }
+  profile.update({ modelAlias: '' });
+  return `Session model "${previous}" is not configured. No default model is available.`;
 }
 
 function forkOf(session: ISessionScopeHandle, agentId: string): ConversationFork | undefined {

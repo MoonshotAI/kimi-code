@@ -313,6 +313,11 @@ export class SessionEventBroadcaster {
       }),
     };
     subscription.conversation = attachment;
+    if (feed.migrationNotice !== undefined) {
+      const title = feed.migrationNotice;
+      feed.migrationNotice = undefined;
+      feed.notify({ level: 'warning', title, code: 'model.migrated' });
+    }
     void this.sendPage(state, target, agentId, attachment);
   }
 

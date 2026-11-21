@@ -134,6 +134,7 @@ export class ConversationFeed implements IDisposable {
   private readonly disposables: IDisposable[] = [];
   private undoQueue: Promise<unknown> = Promise.resolve();
   readonly ready: Promise<ConversationFeed>;
+  migrationNotice?: string;
 
   constructor(
     private readonly handle: IAgentScopeHandle,
@@ -472,7 +473,7 @@ export class ConversationFeed implements IDisposable {
     this.emit({ type: 'item.delta', turn_id: target.turn.turn_id, item_id: event.toolCallId, field: 'output', delta: text });
   }
 
-  private notify(notice: Notice): void {
+  notify(notice: Notice): void {
     this.flushPending();
     this.emit({ type: 'notice', ...notice });
   }
