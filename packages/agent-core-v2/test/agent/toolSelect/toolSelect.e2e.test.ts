@@ -12,7 +12,7 @@ import { IAgentStateService } from '#/agent/state/agentState';
 import { TOOL_SELECT_FLAG_ENV } from '#/agent/toolSelect/flag';
 import { IAgentToolSelectService } from '#/agent/toolSelect/toolSelect';
 import { IAgentToolSelectAnnouncementsService } from '#/agent/toolSelect/toolSelectAnnouncements';
-import { LOADABLE_TOOLS_VARIANT } from '#/agent/toolSelect/dynamicTools';
+import { isToolSelectAnnouncementDisclosure, LOADABLE_TOOLS_VARIANT } from '#/agent/toolSelect/dynamicTools';
 import { toolSelectKey } from '#/agent/toolSelect/toolSelectOps';
 import { IAgentUserToolService } from '#/agent/userTool/userTool';
 import { McpConnectionManager } from '#/mcpCore/connection-manager';
@@ -149,8 +149,16 @@ describe('progressive tool disclosure end-to-end', () => {
 
     const firstWire = ctx.llmCalls[0]!;
     expect(toolNames(firstWire.tools)).not.toContain(MCP_ALPHA);
+    expect(firstWire.history[0]).toMatchObject({ role: 'user' });
     expect(historyText(firstWire.history)).toContain('<tools_added>');
     expect(historyText(firstWire.history)).toContain(MCP_ALPHA);
+    const persistedAnnouncements = ctx.get(IAgentLoopService).history().filter(
+      (message) => message.origin?.kind === 'injection' && message.origin.variant === LOADABLE_TOOLS_VARIANT,
+    );
+    expect(persistedAnnouncements).toHaveLength(1);
+    expect(persistedAnnouncements[0]).toMatchObject({
+      origin: { kind: 'injection', disclosure: { kind: 'delta' } },
+    });
   });
 
   it('can cancel the first turn while MCP discovery is still pending', async () => {
@@ -192,6 +200,16 @@ describe('progressive tool disclosure end-to-end', () => {
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'try the srv alpha tool' }] });
     await ctx.untilTurnEnd();
     const initialTools = ctx.get(IAgentStateService).get(toolSelectKey).initial;
+    const initialAnnouncements = ctx.get(IAgentLoopService).history().filter(
+      (message) => message.origin?.kind === 'injection' && message.origin.variant === LOADABLE_TOOLS_VARIANT,
+    );
+    expect(initialAnnouncements).toHaveLength(1);
+    expect(initialAnnouncements[0]).toMatchObject({
+      origin: { disclosure: { kind: 'delta', added: [
+        { name: MCP_ALPHA },
+        { name: inlineName },
+      ] } },
+    });
 
     inlineRegistration.dispose();
     const updatedInlineTool = new StubMcpTool(inlineName);
@@ -306,10 +324,8 @@ describe('progressive tool disclosure end-to-end', () => {
     expect(ctx.get(IAgentLoopService).data().activeToolNames).toBeUndefined();
     expect(ctx.get(IAgentToolSelectService).defaultTools(false).map((tool) => tool.name))
       .toContain(MCP_ALPHA);
-    expect(toolNames(switchWire.tools)).toContain(MCP_ALPHA);
-    expect(toolNames(switchWire.tools)).toContain(inlineName);
-    expect(switchWire.tools.find((tool) => tool.name === inlineName)?.description)
-      .toBe(`${inlineName} desc`);
+    expect(toolNames(switchWire.tools)).not.toContain(MCP_ALPHA);
+    expect(toolNames(switchWire.tools)).not.toContain(inlineName);
     expect(toolNames(switchWire.tools)).not.toContain(runtimeTool);
     expect(toolNames(switchWire.tools)).not.toContain('select_tools');
     expect(historyText(switchWire.history)).toContain(runtimeTool);
@@ -607,7 +623,11 @@ describe('same-turn MCP tool replacement', () => {
         .map((match) => match[1])).toEqual(deferred ? [authenticate, echo] : [echo]);
       expect([...catalog.matchAll(/<tools_removed>\n([\s\S]*?)\n<\/tools_removed>/g)]
         .map((match) => match[1])).toEqual([authenticate]);
-      expect(announcements).toHaveLength(2);
+      expect(announcements).toHaveLength(deferred ? 2 : 1);
+      expect(announcements.every((message) =>
+        message.origin?.kind === 'injection' &&
+        isToolSelectAnnouncementDisclosure(message.origin.disclosure) &&
+        message.origin.disclosure.kind === 'delta')).toBe(true);
       expect(afterAuthentication.history.flatMap((message) => toolsOf(message) ?? [])
         .some((tool) => tool.name === echo)).toBe(false);
       const schema = beforeEcho.history.flatMap((message) => toolsOf(message) ?? [])

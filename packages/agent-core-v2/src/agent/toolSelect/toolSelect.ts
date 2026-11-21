@@ -67,8 +67,6 @@ export interface IAgentToolSelectService {
   requestTools(
     base: readonly Tool[] | undefined,
     disclosure?: boolean,
-    dynamic?: boolean,
-    messages?: readonly ContextMessage[],
   ): readonly Tool[];
 
   shapeTools(entries: readonly ToolInfo[], disclosure?: boolean): readonly ShapedToolEntry[];
@@ -77,12 +75,14 @@ export interface IAgentToolSelectService {
     messages: readonly ContextMessage[],
     disclosure?: boolean,
     tools?: readonly Tool[],
+    deferred?: readonly Tool[],
   ): readonly ContextMessage[];
 
   load(names: readonly string[]): LoadToolsResult;
 
   loadableToolsAnnouncement(
     lastDisclosure?: ToolSelectAnnouncementDisclosure,
+    includeSnapshot?: boolean,
   ): ToolSelectAnnouncement | undefined;
 
 }
