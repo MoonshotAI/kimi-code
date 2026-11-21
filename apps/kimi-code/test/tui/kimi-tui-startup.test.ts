@@ -248,7 +248,7 @@ function makeHarness(session = makeSession(), overrides: Record<string, unknown>
     getWorkspaceAdditionalDirs: vi.fn(async () => []),
     getGitStatus: vi.fn(async () => null),
     getGitPullRequest: vi.fn(async () => null),
-    getWorkspaceTrustInfo: vi.fn(async () => ({ trusted: true, gatedMcpServers: [], gatedAdditionalDirs: [], additionalDirSources: [], warnings: [], instructionSources: { agentsMdPaths: [], skills: [], agentProfiles: [], paths: [] } })),
+    getWorkspaceTrustInfo: vi.fn(async () => ({ trusted: true, projectRoot: '/tmp/proj-a', gatedMcpServers: [], gatedAdditionalDirs: [], additionalDirSources: [], warnings: [], instructionSources: { agentsMdPaths: [], skills: [], agentProfiles: [], paths: [] } })),
     refreshProviderModels: vi.fn(async () => ({ changed: [], unchanged: [], failed: [] })),
     auth: {
       status: vi.fn(async () => ({ providers: [] })),
@@ -3693,6 +3693,7 @@ describe('KimiTUI startup', () => {
   it('checks workspace trust before entering the migration screen', async () => {
     const getWorkspaceTrustInfo = vi.fn(async () => ({
       trusted: true,
+      projectRoot: '/tmp/proj-a',
       gatedMcpServers: [],
       gatedAdditionalDirs: [], additionalDirSources: [], warnings: [],
       instructionSources: { agentsMdPaths: [], skills: [], agentProfiles: [], paths: [] },
@@ -3728,6 +3729,7 @@ describe('KimiTUI startup', () => {
   it('prompts for workspace trust before migrating an untrusted workspace', async () => {
     const getWorkspaceTrustInfo = vi.fn(async () => ({
       trusted: false,
+      projectRoot: '/tmp/proj-a',
       gatedMcpServers: [],
       gatedAdditionalDirs: [], additionalDirSources: [], warnings: [],
       instructionSources: { agentsMdPaths: [], skills: [], agentProfiles: [], paths: [] },
@@ -3841,6 +3843,7 @@ describe('KimiTUI startup', () => {
   it('continues startup when persisting trust fails', async () => {
     const getWorkspaceTrustInfo = vi.fn(async () => ({
       trusted: false,
+      projectRoot: '/tmp/proj-a',
       gatedMcpServers: [],
       gatedAdditionalDirs: [], additionalDirSources: [], warnings: [],
       instructionSources: { agentsMdPaths: [], skills: [], agentProfiles: [], paths: [] },
