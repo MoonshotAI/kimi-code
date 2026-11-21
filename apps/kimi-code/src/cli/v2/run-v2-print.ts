@@ -222,7 +222,11 @@ export async function runV2Print(
     }
 
     try {
-      const gated = await listTrustGatedMcpServers(services, workDir);
+      const gated = await listTrustGatedMcpServers(
+        services,
+        workDir,
+        opts.environment === 'local' ? opts.environmentCwd : undefined,
+      );
       if (gated.length > 0) stderr.write(formatTrustGatedMcpWarning(gated));
     } catch {}
 
@@ -463,13 +467,14 @@ export interface TrustGatedMcpServer {
 export async function listTrustGatedMcpServers(
   services: ServicesAccessor,
   workDir: string,
+  pinnedWorkDir?: string,
 ): Promise<readonly TrustGatedMcpServer[]> {
   const lease = await services
     .get(IWorkspaceInstanceManager)
     .acquire({ root: workDir });
   try {
     if (await lease.instance.program.trust.get()) return [];
-    return (await lease.instance.program.mcp.previewProjectServers())
+    return (await lease.instance.program.previewProjectMcp(pinnedWorkDir))
       .map(({ name, config }) => ({ name, target: describeMcpTarget(config) }))
       .toSorted((a, b) => a.name.localeCompare(b.name));
   } finally {

@@ -9,7 +9,7 @@ import type { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
 import type { IWorkspaceFsService } from '#/workspace/workspaceFs/fs';
 import type { IWorkspaceGitService } from '#/workspace/workspaceGit/workspaceGit';
 import type { IWorkspaceInstructionsService } from '#/workspace/workspaceInstructions/workspaceInstructions';
-import type { WorkdirMcp } from '#/workspace/workspaceMcp/workspaceMcp';
+import type { ProjectMcpServer, WorkdirMcp } from '#/workspace/workspaceMcp/workspaceMcp';
 import type { IWorkspaceTrust } from '#/workspace/workspaceTrust/workspaceTrust';
 import { WorkspaceTrustService } from '#/workspace/workspaceTrust/workspaceTrustService';
 import type { IWorkspaceTrustDisclosure } from '#/workspace/workspaceTrust/trustDisclosure';
@@ -192,6 +192,10 @@ export class Program {
     }
   }
 
+  previewProjectMcp(pinnedWorkDir?: string): Promise<readonly ProjectMcpServer[]> {
+    return this.requireGeneration().mcp.previewProjectServers(pinnedWorkDir);
+  }
+
   async reload(): Promise<void> {
     const generation = this.requireGeneration();
     await generation.workdirs.reload();
@@ -329,7 +333,7 @@ export class Program {
         onDidChange: this.dependencies.workspaceStore.onDidChange,
       };
       const mcp = own(new ProgramMcp({ ...this.dependencies, environments: this.environments, hostFs, project, rootDirs: root.dirs, trust }));
-      const trustDisclosure = new WorkspaceTrustDisclosureService(this.context, hostFs, this.dependencies.bootstrap, this.dependencies.config, root.localConfig, root.dirs, trust, mcp.root, root.skills, root.agentProfiles, this.dependencies.agentProfiles, root.instructions, this.dependencies.log);
+      const trustDisclosure = new WorkspaceTrustDisclosureService(this.context, hostFs, this.dependencies.bootstrap, this.dependencies.config, root.localConfig, root.dirs, trust, mcp, root.skills, root.agentProfiles, this.dependencies.agentProfiles, root.instructions, this.dependencies.log);
       own(workdirs);
       return {
         id: environment.identity.generation,

@@ -14,6 +14,7 @@ import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { LayeredMcpConnectionView, type McpViewLayer } from '#/session/mcp/layeredConnectionView';
 import type { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
 import type {
+  ProjectMcpPreview,
   ProjectMcpServer,
   SessionMcpLease,
   SessionMcpOptions,
@@ -59,7 +60,6 @@ interface EphemeralMcp {
 }
 
 interface WorkdirMcpHost {
-  readonly fs: IHostFileSystem;
   readonly user: WorkspaceMcpService;
   readonly userConfig: WorkspaceMcpConfigService;
   readonly userLayer: McpViewLayer;
@@ -71,7 +71,7 @@ interface WorkdirMcpHost {
 
 const NO_ABORT = new AbortController().signal;
 
-export class ProgramMcp {
+export class ProgramMcp implements ProjectMcpPreview {
   readonly root: WorkdirMcp;
   private readonly rootWorkdir: AnchoredWorkdirMcp;
   private readonly userConfig: WorkspaceMcpConfigService;
@@ -117,7 +117,6 @@ export class ProgramMcp {
       deps.identity,
     );
     this.workdirHost = {
-      fs: deps.hostFs,
       user: this.user,
       userConfig: this.userConfig,
       userLayer: layerOf(this.user),
@@ -148,6 +147,15 @@ export class ProgramMcp {
       const workdir = new AnchoredWorkdirMcp(this.workdirHost, await this.anchorFor(workDir), () => workDir);
       this.pinned.set(workdir, workDir);
       return workdir;
+    });
+  }
+
+  async previewProjectServers(pinnedWorkDir?: string): Promise<readonly ProjectMcpServer[]> {
+    const anchor = pinnedWorkDir === undefined ? this.root.anchor : await this.anchorFor(pinnedWorkDir);
+    const loaded = await loadAnchorMcpServers({ fs: this.deps.hostFs, anchor });
+    return Object.entries(loaded.servers).flatMap(([name, config]) => {
+      const origin = loaded.origins[name];
+      return origin === undefined ? [] : [{ name, config, origin }];
     });
   }
 
@@ -415,14 +423,6 @@ class AnchoredWorkdirMcp implements WorkdirMcp, IDisposable {
         ...Object.keys(this.lease.config.servers()),
       ]),
     ];
-  }
-
-  async previewProjectServers(): Promise<readonly ProjectMcpServer[]> {
-    const loaded = await loadAnchorMcpServers({ fs: this.host.fs, anchor: this.anchor });
-    return Object.entries(loaded.servers).flatMap(([name, config]) => {
-      const origin = loaded.origins[name];
-      return origin === undefined ? [] : [{ name, config, origin }];
-    });
   }
 
   sessionHandle(options: SessionMcpOptions): SessionMcpLease {

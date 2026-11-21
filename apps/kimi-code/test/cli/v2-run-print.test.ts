@@ -57,7 +57,7 @@ import { resetKimiRegionCache } from '../../src/utils/region';
 const mocks = vi.hoisted(() => ({
   bootstrap: vi.fn(),
   ensureMainAgent: vi.fn(),
-  previewProjectServers: vi.fn(async (): Promise<readonly ProjectMcpServer[]> => []),
+  previewProjectMcp: vi.fn(async (_pinnedWorkDir?: string): Promise<readonly ProjectMcpServer[]> => []),
   createKimiDefaultHeaders: vi.fn(() => ({})),
   resolveKimiHome: vi.fn((homeDir?: string) => homeDir ?? '/tmp/kimi-code-test-home'),
   createKimiDeviceId: vi.fn(() => 'device-1'),
@@ -362,7 +362,7 @@ function makeFakeHarness(toolUpdates = false) {
           instance: {
             program: {
               trust: { get: vi.fn(async () => trustState.trusted) },
-              mcp: { previewProjectServers: mocks.previewProjectServers },
+              previewProjectMcp: mocks.previewProjectMcp,
             },
           },
           dispose: vi.fn(),
@@ -405,7 +405,7 @@ describe('runV2Print', () => {
     vi.stubEnv('KIMI_DISABLE_TELEMETRY', '');
     vi.stubEnv('KIMI_CODE_OAUTH_HOST', 'https://auth.kimi.com');
     resetKimiRegionCache();
-    mocks.previewProjectServers.mockImplementation(async () => []);
+    mocks.previewProjectMcp.mockImplementation(async () => []);
   });
 
   afterEach(() => {
@@ -1217,7 +1217,7 @@ describe('runV2Print', () => {
     const stderr = writer();
     const { app, trustState } = makeFakeHarness();
     trustState.trusted = false;
-    mocks.previewProjectServers.mockResolvedValue([
+    mocks.previewProjectMcp.mockResolvedValue([
       {
         name: 'fs',
         config: { transport: 'stdio', command: 'node', args: ['server.js'] },
@@ -1253,7 +1253,7 @@ describe('runV2Print', () => {
 
     await runV2Print(opts() as never, '1.2.3-test', { stdout, stderr });
 
-    expect(mocks.previewProjectServers).not.toHaveBeenCalled();
+    expect(mocks.previewProjectMcp).not.toHaveBeenCalled();
     expect(stderr.text()).not.toContain('not trusted');
   });
 
@@ -1268,8 +1268,26 @@ describe('runV2Print', () => {
 
     await runV2Print(opts() as never, '1.2.3-test', { stdout, stderr });
 
-    expect(mocks.previewProjectServers).toHaveBeenCalled();
+    expect(mocks.previewProjectMcp).toHaveBeenCalled();
     expect(stderr.text()).not.toContain('not trusted');
+  });
+
+  it.each([
+    ['a session pinned to a local cwd', { environment: 'local', environmentCwd: '/tmp/project/worktree' }, '/tmp/project/worktree'],
+    ['a session following the project root', {}, undefined],
+    ['a session on another environment', { environment: 'box', environmentCwd: '/srv/project' }, undefined],
+  ] as const)('previews the project MCP servers %s would load', async (_label, overrides, pinnedWorkDir) => {
+    const stdout = writer();
+    const stderr = writer();
+    const { app, trustState } = makeFakeHarness();
+    trustState.trusted = false;
+
+    mocks.bootstrap.mockReturnValue({ app });
+    mocks.ensureMainAgent.mockResolvedValue({ agentId: 'main', generation: 1 });
+
+    await runV2Print(opts(overrides) as never, '1.2.3-test', { stdout, stderr });
+
+    expect(mocks.previewProjectMcp.mock.calls).toEqual([[pinnedWorkDir]]);
   });
 
   it('warns for a project server that overrides a same-named user server', async () => {
@@ -1277,7 +1295,7 @@ describe('runV2Print', () => {
     const stderr = writer();
     const { app, trustState } = makeFakeHarness();
     trustState.trusted = false;
-    mocks.previewProjectServers.mockResolvedValue([
+    mocks.previewProjectMcp.mockResolvedValue([
       {
         name: 'github',
         config: { transport: 'stdio', command: './project-github' },

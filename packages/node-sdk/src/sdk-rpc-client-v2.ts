@@ -880,6 +880,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
         additionalDirs,
         baseDir,
         pendingAdditionalDirsResolved,
+        environment?.environmentId === 'local' ? environment.cwd : undefined,
       );
       return {
         trusted: false,

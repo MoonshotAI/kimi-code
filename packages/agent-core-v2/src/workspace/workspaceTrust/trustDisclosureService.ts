@@ -19,7 +19,7 @@ import type { IWorkspaceAgentProfileLoader } from '#/workspace/workspaceAgentPro
 import type { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
 import type { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
 import type { IWorkspaceInstructionsService } from '#/workspace/workspaceInstructions/workspaceInstructions';
-import type { WorkdirMcp } from '#/workspace/workspaceMcp/workspaceMcp';
+import type { ProjectMcpPreview } from '#/workspace/workspaceMcp/workspaceMcp';
 
 import type {
   IWorkspaceTrustDisclosure,
@@ -57,7 +57,7 @@ export class WorkspaceTrustDisclosureService implements IWorkspaceTrustDisclosur
     private readonly localConfig: IProjectLocalConfigService,
     private readonly workspaceDirs: IWorkspaceDirs,
     private readonly trust: IWorkspaceTrust,
-    private readonly mcp: WorkdirMcp,
+    private readonly mcp: ProjectMcpPreview,
     private readonly skills: IWorkspaceSkillCatalog,
     private readonly agentProfilesLoader: IWorkspaceAgentProfileLoader,
     private readonly agentProfilesRegistry: IAgentProfileRegistry,
@@ -69,6 +69,7 @@ export class WorkspaceTrustDisclosureService implements IWorkspaceTrustDisclosur
     pendingAdditionalDirs: readonly string[] = [],
     baseDir = this.workspaceDirs.primary,
     pendingAdditionalDirsResolved = false,
+    pinnedWorkDir?: string,
   ): Promise<TrustGatedActivation> {
     if (await this.trust.get()) return EMPTY_ACTIVATION;
     await this.workspaceDirs.ready;
@@ -78,7 +79,7 @@ export class WorkspaceTrustDisclosureService implements IWorkspaceTrustDisclosur
     const warnings: string[] = [];
     await this.skills.reloadSources(['workspace']).catch(() => undefined);
     const [mcpServers, configuredDirs, skillRoots, instructionSources] = await Promise.all([
-      this.describeGatedMcpServers().catch((error: unknown) => {
+      this.describeGatedMcpServers(pinnedWorkDir).catch((error: unknown) => {
         this.log.warn(`trust disclosure: MCP scan failed: ${String(error)}`);
         warnings.push('Could not inspect MCP configuration.');
         return [];
@@ -106,8 +107,10 @@ export class WorkspaceTrustDisclosureService implements IWorkspaceTrustDisclosur
     return { mcpServers, additionalDirs, additionalDirSources, instructionSources, warnings };
   }
 
-  private async describeGatedMcpServers(): Promise<readonly TrustGatedMcpServer[]> {
-    const servers = (await this.mcp.previewProjectServers())
+  private async describeGatedMcpServers(
+    pinnedWorkDir?: string,
+  ): Promise<readonly TrustGatedMcpServer[]> {
+    const servers = (await this.mcp.previewProjectServers(pinnedWorkDir))
       .filter(({ config }) => config.enabled !== false)
       .map(({ name, config, origin }) => describeMcpServer(name, config, origin))
       .toSorted((a, b) => a.name.localeCompare(b.name));

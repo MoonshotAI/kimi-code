@@ -38,7 +38,7 @@ import {
   writeWorkspaceTrust,
 } from '#/workspace/workspaceTrust/trustRecord';
 import { WorkspaceTrustDisclosureService } from '#/workspace/workspaceTrust/trustDisclosureService';
-import type { ProjectMcpServer, WorkdirMcp } from '#/workspace/workspaceMcp/workspaceMcp';
+import type { ProjectMcpPreview, ProjectMcpServer } from '#/workspace/workspaceMcp/workspaceMcp';
 import {
   IWorkspaceTrustStore,
   WorkspaceTrustStore,
@@ -49,8 +49,8 @@ import { stubConfigService } from '../../app/config/stubs';
 import { registerStateServices } from '../../state/stubs';
 import { stubLog } from '../../_base/log/stubs';
 
-function stubProjectMcp(servers: readonly ProjectMcpServer[] = []): WorkdirMcp {
-  return { previewProjectServers: async () => servers } as unknown as WorkdirMcp;
+function stubProjectMcp(servers: readonly ProjectMcpServer[] = []): ProjectMcpPreview {
+  return { previewProjectServers: async () => servers };
 }
 
 describe('WorkspaceTrustService', () => {

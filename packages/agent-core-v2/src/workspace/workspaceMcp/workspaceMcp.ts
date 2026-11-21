@@ -38,6 +38,9 @@ export interface WorkdirMcp {
   readonly ready: Promise<void>;
   view(): McpConnectionView;
   configuredNames(): readonly string[];
-  previewProjectServers(): Promise<readonly ProjectMcpServer[]>;
   sessionHandle(options: SessionMcpOptions): SessionMcpLease;
+}
+
+export interface ProjectMcpPreview {
+  previewProjectServers(pinnedWorkDir?: string): Promise<readonly ProjectMcpServer[]>;
 }

@@ -2931,6 +2931,44 @@ describe('SDKRpcClientV2 workspace trust', () => {
     }
   });
 
+  it('reports the project servers of the checkout a local environment cwd pins the session to', async () => {
+    const { harness } = await makeHarness();
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+    tempDirs.push(workDir);
+    const checkout = join(workDir, 'worktrees', 'feature');
+    await mkdir(join(checkout, '.kimi-code'), { recursive: true });
+    await writeFile(join(checkout, '.git'), `gitdir: ${join(workDir, '.git', 'worktrees', 'feature')}\n`, 'utf-8');
+    await writeFile(
+      join(workDir, '.mcp.json'),
+      JSON.stringify({ mcpServers: { 'root-server': { command: 'root-cmd' } } }),
+      'utf-8',
+    );
+    await writeFile(
+      join(checkout, '.kimi-code', 'mcp.json'),
+      JSON.stringify({ mcpServers: { 'checkout-server': { command: 'checkout-cmd' } } }),
+      'utf-8',
+    );
+    try {
+      const pinned = await harness.getWorkspaceTrustInfo(workDir, {
+        environmentId: 'local',
+        environmentCwd: join(checkout, 'src'),
+      });
+      const following = await harness.getWorkspaceTrustInfo(workDir);
+
+      expect(pinned.gatedMcpServers).toEqual([
+        {
+          name: 'checkout-server',
+          transport: 'stdio',
+          command: 'checkout-cmd',
+          origin: await realpath(join(checkout, '.kimi-code', 'mcp.json')),
+        },
+      ]);
+      expect(following.gatedMcpServers.map((server) => server.name)).toEqual(['root-server']);
+    } finally {
+      await harness.close();
+    }
+  });
+
   it('reports failed configuration and instruction sources while retaining readable instructions', async () => {
     const { harness } = await makeHarness();
     const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
