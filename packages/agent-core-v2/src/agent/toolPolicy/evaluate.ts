@@ -7,6 +7,10 @@ export interface ToolActivationPolicy {
   readonly disallowedTools?: readonly string[];
 }
 
+/**
+ * Check one policy layer. An undefined `tools` list means no allowlist,
+ * not an empty one; deny rules are applied afterwards.
+ */
 export function isToolActive(
   policy: ToolActivationPolicy,
   name: string,
@@ -40,6 +44,10 @@ export interface ToolPolicyLayers {
   readonly sessionDisabledTools?: readonly string[];
 }
 
+/**
+ * Require every layer to admit the tool. In particular, global enabled tools
+ * cannot restore a tool rejected by the profile or another deny layer.
+ */
 export function isToolActiveComposed(
   layers: ToolPolicyLayers,
   name: string,

@@ -49,6 +49,10 @@ export class AgentLoopProfileAdapter implements EffectiveProfileReader {
     return this.state.profile ?? EMPTY_LOOP_PROFILE;
   }
 
+  /**
+   * Read the effective profile. The active tools may include a runtime overlay,
+   * while snapshot() retains the binding used to establish the loop baseline.
+   */
   data(): ProfileData {
     const data = this.profile.data(this.snapshot());
     if (this.activeToolNamesOverlay === undefined) return data;
@@ -206,6 +210,7 @@ export class AgentLoopProfileAdapter implements EffectiveProfileReader {
     this.profile.republishStatus(this.snapshot());
   }
 
+  /** Add to the runtime policy only; the loop's existing tool baseline is unchanged. */
   addActiveTool(name: string): void {
     const active = this.getActiveToolNames();
     if (active === undefined || active.includes(name)) return;

@@ -140,6 +140,10 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
     return this.defaultToolsForDisclosure(disclosure);
   }
 
+  /**
+   * Capture the tool-schema baseline for the host loop. This is a point-in-time
+   * view of the current policy; later active-tool changes do not rebuild it.
+   */
   initialTools(): readonly Tool[] {
     const tools = this.initialToolInfos();
     return this.activeEntries(tools, this.featureEnabled()).map((tool) => ({
@@ -150,6 +154,11 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
     }));
   }
 
+  /**
+   * Shape a request from an established baseline and dynamically loaded tools.
+   * A supplied `base` remains the source of static schemas; newly activated
+   * tools are not merged into it here.
+   */
   requestTools(
     base: readonly Tool[] | undefined,
     disclosure = this.enabled(),

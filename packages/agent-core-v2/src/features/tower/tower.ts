@@ -25,7 +25,7 @@ export const TOWER_FLAG_ID = 'tower';
 export type TowerEnterFailure =
   | {
       readonly entered: false;
-      readonly reason: 'not-main-agent' | 'experiment-off' | 'feature-not-assembled';
+      readonly reason: 'not-main-agent' | 'experiment-off' | 'feature-not-assembled' | 'loop-already-started';
     }
   | {
       readonly entered: false;
@@ -46,6 +46,8 @@ export function towerEnterFailureMessage(failure: TowerEnterFailure): string {
       return 'the tower experiment is disabled; enable it with KIMI_CODE_EXPERIMENTAL_TOWER=1 or `[experimental] tower = true` in config.toml';
     case 'feature-not-assembled':
       return 'the tower feature is not assembled in this process; a restart is required';
+    case 'loop-already-started':
+      return 'tower mode can only be enabled before the agent loop starts; create a new session to use tower mode';
     case 'owned-by-live-session': {
       const owner =
         failure.ownerTitle === undefined
