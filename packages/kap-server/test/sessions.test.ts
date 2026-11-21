@@ -40,9 +40,11 @@ import {
   ISessionActivityView,
   ISessionIndexMirror,
   ISessionManager,
+  ISessionMcpHandle,
   ISessionMetadata,
   ISessionPromptPredictionService,
   ISessionTitleService,
+  ISessionWorkdir,
   IWireService,
   IWorkspaceInstanceManager,
   IWorkspaceService,
@@ -637,6 +639,10 @@ describe('server-v2 /api/v1/sessions', () => {
       expect((await getJson<SessionWire>(`/api/v1/sessions/${inWorktree.body.data.id}`)).body.data.cwd).toBe(worktree);
       expect(await stateOf(inWorktree.body.data)).toMatchObject({ cwd: worktree, environmentCwd: worktree });
       expect(await indexWorkDirOf(inWorktree.body.data.id)).toBe(worktree);
+      const listed = await getJson<PageWire>(`/api/v1/sessions?workspace_id=${encodeURIComponent(encodeWorkDirKey(main))}`);
+      expect(
+        Object.fromEntries(listed.body.data.items.map((item) => [item.id, item.cwd])),
+      ).toEqual({ [atMain.body.data.id]: main, [inWorktree.body.data.id]: worktree });
       const workspaces = await getJson<{ items: { id: string; root: string }[] }>('/api/v1/workspaces');
       expect(workspaces.body.data.items.filter((item) => [main, worktree].includes(item.root))).toEqual([
         expect.objectContaining({ id: encodeWorkDirKey(main), root: main }),
@@ -670,6 +676,74 @@ describe('server-v2 /api/v1/sessions', () => {
       expect(outside.body.details?.[0]?.path).toBe('cwd');
     } finally {
       await rm(lab, { recursive: true, force: true });
+    }
+  });
+
+  it('reads the project MCP of a session started in a worktree subdirectory from the worktree root', async () => {
+    const { lab, main, worktree } = await repositoryWithWorktree();
+    try {
+      const subdir = join(worktree, 'src');
+      for (const [dir, name] of [[main, 'from-main'], [worktree, 'from-worktree'], [subdir, 'from-subdir']] as const) {
+        await mkdir(join(dir, '.kimi-code'), { recursive: true });
+        await writeFile(
+          join(dir, '.kimi-code', 'mcp.json'),
+          JSON.stringify({ mcpServers: { [name]: { command: 'never-runs', enabled: false } } }),
+        );
+      }
+      vi.stubEnv('KIMI_CODE_TRUST_WORKSPACE', '1');
+      const atMain = await postJson<SessionWire>('/api/v1/sessions', { cwd: main });
+      const created = await postJson<SessionWire>('/api/v1/sessions', { cwd: subdir });
+      const live = getLiveSessionById((server as RunningServer).core.accessor, created.body.data.id)!;
+      const mcp = live.accessor.get(ISessionMcpHandle);
+      await mcp.ready;
+
+      expect(created.body.data).toMatchObject({ workspace_id: atMain.body.data.workspace_id, cwd: subdir });
+      expect(live.accessor.get(ISessionWorkdir).anchor).toBe(worktree);
+      expect(mcp.connectionManager.list().map((entry) => entry.name)).toEqual(['from-worktree']);
+    } finally {
+      vi.unstubAllEnvs();
+      await rm(lab, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps one directory in both a managed and an implicit workspace with a session in each', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'kimi-server-v2-sessions-shared-dir-'));
+    try {
+      const managed = await postJson<{ id: string }>('/api/v1/workspaces', { root: dir });
+      const inManaged = await postJson<SessionWire>('/api/v1/sessions', { workspace_id: managed.body.data.id, cwd: dir });
+      const inImplicit = await postJson<SessionWire>('/api/v1/sessions', { cwd: dir });
+
+      expect(inManaged.body.data).toMatchObject({ workspace_id: managed.body.data.id, cwd: dir });
+      expect(inImplicit.body.data).toMatchObject({ workspace_id: encodeWorkDirKey(dir), cwd: dir });
+      expect(await stateOf(inManaged.body.data)).toMatchObject({ environmentCwd: dir });
+      expect(await stateOf(inImplicit.body.data)).toMatchObject({ environmentCwd: dir });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('starts a session in the directory it was asked for even when its old implicit project moved its primary', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'kimi-server-v2-sessions-moved-primary-'));
+    try {
+      const moved = join(dir, 'moved');
+      await mkdir(moved);
+      const first = await postJson<SessionWire>('/api/v1/sessions', { cwd: dir });
+      expect(first.body.data.workspace_id).toBe(encodeWorkDirKey(dir));
+      const projectsPath = join(home as string, 'projects.json');
+      const projects = JSON.parse(await readFile(projectsPath, 'utf8')) as { projects: Record<string, { root: string }> };
+      projects.projects[encodeWorkDirKey(dir)]!.root = moved;
+      await writeFile(projectsPath, JSON.stringify(projects));
+      await vi.waitFor(async () => {
+        const listed = await getJson<{ items: { id: string; root: string }[] }>('/api/v1/workspaces');
+        expect(listed.body.data.items.find((item) => item.id === encodeWorkDirKey(dir))?.root).toBe(moved);
+      });
+
+      const second = await postJson<SessionWire>('/api/v1/sessions', { cwd: dir });
+
+      expect(second.body.data).toMatchObject({ workspace_id: encodeWorkDirKey(dir), cwd: dir });
+      expect(await stateOf(second.body.data)).toMatchObject({ environmentCwd: dir });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
     }
   });
 
