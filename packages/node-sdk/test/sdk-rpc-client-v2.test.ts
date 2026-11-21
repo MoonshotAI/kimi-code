@@ -368,7 +368,8 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
   it('resolves creation defaults without creating a session', async () => {
     const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-default-work-'));
     const remoteDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-default-target-'));
-    tempDirs.push(workDir, remoteDir);
+    const pinnedDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-default-pinned-'));
+    tempDirs.push(workDir, remoteDir, pinnedDir);
     const { harness, client } = await makeEnvironmentHarness({ defaultCwd: remoteDir });
     const provider = await attachFakeBoxEnvironment(client);
     try {
@@ -378,8 +379,8 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
       expect(await harness.resolveSessionEnvironment({
         workDir,
         environmentId: 'local',
-        environmentCwd: workDir,
-      })).toEqual({ environmentId: 'local', cwd: workDir });
+        environmentCwd: pinnedDir,
+      })).toEqual({ environmentId: 'local', cwd: pinnedDir });
       expect(client.engineAccessor.get(ISessionManager).list()).toHaveLength(0);
     } finally {
       await provider.dispose(); await harness.close(); vi.unstubAllEnvs();
