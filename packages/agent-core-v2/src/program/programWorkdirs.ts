@@ -1,8 +1,10 @@
 import type { LiveRef } from '#/_base/di/instantiation';
 import { Event } from '#/_base/event';
+import { sameDir } from '#/_base/utils/workdir-slug';
 import type { IEnvironmentService } from '#/app/environment/environment';
 import type { IGitService } from '#/app/git/git';
 import { GitService } from '#/app/git/gitService';
+import type { Workspace } from '#/app/workspace/workspace';
 import { LOCAL_ENVIRONMENT_ID, environmentBindingId } from '#/environment/environment';
 import type { IExplicitFileSkillSource } from '#/features/skill/workspace/explicitFileSkillSource';
 import type { IExtraFileSkillSource } from '#/features/skill/workspace/extraFileSkillSource';
@@ -26,6 +28,7 @@ import { WorkspaceGitService } from '#/workspace/workspaceGit/workspaceGitServic
 import type { IWorkspaceInstructionsService } from '#/workspace/workspaceInstructions/workspaceInstructions';
 import { WorkspaceInstructionsService } from '#/workspace/workspaceInstructions/workspaceInstructionsService';
 import type { IUserAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/userAgentProfileLoader';
+import type { IWorkspaceTrustDisclosure } from '#/workspace/workspaceTrust/trustDisclosure';
 import type { IWorkspaceAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/workspaceAgentProfileLoader';
 import { WorkspaceAgentProfileLoaderService } from '#/workspace/workspaceAgentProfileLoader/workspaceAgentProfileLoaderService';
 import type { WorkdirMcp } from '#/workspace/workspaceMcp/workspaceMcp';
@@ -65,6 +68,7 @@ export interface ProgramViewLease {
 
 export interface ProgramWorkdir extends ProgramViewLease {
   readonly mcp: WorkdirMcp;
+  readonly trustDisclosure: IWorkspaceTrustDisclosure;
 }
 
 export const PROGRAM_CAPABILITIES = ['fs', 'process'] as const;
@@ -104,11 +108,15 @@ export class ProgramWorkdirs {
     ownRoot: Own,
   ) {
     this.root = this.build(ownRoot, LOCAL_ENVIRONMENT_ID, context.cwd, true);
-    this.entries.set(workdirContextKey(LOCAL_ENVIRONMENT_ID, context.cwd, true), { view: this.root, disposables: [], references: 1 });
+    this.entries.set(this.rootKey, { view: this.root, disposables: [], references: 1 });
+  }
+
+  get rootKey(): string {
+    return workdirContextKey(LOCAL_ENVIRONMENT_ID, this.context.cwd, true);
   }
 
   async acquire(environmentId: string, cwd: string, followsPrimary = environmentId === LOCAL_ENVIRONMENT_ID): Promise<ProgramViewLease> {
-    const contextKey = workdirContextKey(environmentId, cwd, followsPrimary);
+    const contextKey = workdirViewKey(environmentId, cwd, followsPrimary, { kind: this.context.meta.kind, root: this.context.cwd });
     let entry = this.entries.get(contextKey);
     const stale = entry !== undefined && !watchable(environmentId);
     if (entry === undefined) {
@@ -211,6 +219,18 @@ export class ProgramWorkdirs {
     const skills = own(new WorkspaceSkillCatalogService(this.dependencies.builtinSkills, this.dependencies.userSkills, input.explicitSkills, input.extraSkills, workspaceSkills, input.pluginSkills, state));
     return { state, localConfig, hostFs: input.hostFs, dirs, git, fs, instructions, skills, agentProfiles };
   }
+}
+
+export function workdirViewKey(
+  environmentId: string,
+  cwd: string,
+  followsPrimary: boolean,
+  project: Pick<Workspace, 'kind' | 'root'>,
+): string {
+  const atImplicitRoot = environmentId === LOCAL_ENVIRONMENT_ID && project.kind === 'implicit' && sameDir(cwd, project.root);
+  return atImplicitRoot
+    ? workdirContextKey(LOCAL_ENVIRONMENT_ID, project.root, true)
+    : workdirContextKey(environmentId, cwd, followsPrimary);
 }
 
 function workdirContextKey(environmentId: string, cwd: string, followsPrimary: boolean): string {

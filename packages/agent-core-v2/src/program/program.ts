@@ -175,12 +175,30 @@ export class Program {
     followsPrimary = environmentId === LOCAL_ENVIRONMENT_ID,
   ): Promise<ProgramWorkdir> {
     const view = await generation.workdirs.acquire(environmentId, cwd, followsPrimary);
-    if (environmentId !== LOCAL_ENVIRONMENT_ID || followsPrimary) return { ...view, mcp: generation.mcp.root };
+    if (environmentId !== LOCAL_ENVIRONMENT_ID || followsPrimary || view.contextKey === generation.workdirs.rootKey) {
+      return { ...view, mcp: generation.mcp.root, trustDisclosure: generation.trustDisclosure };
+    }
     try {
       const mcp = await generation.mcp.workdir(cwd);
+      const trustDisclosure = new WorkspaceTrustDisclosureService(
+        { ...this.context, cwd },
+        view.hostFs,
+        this.dependencies.bootstrap,
+        this.dependencies.config,
+        view.localConfig,
+        view.dirs,
+        generation.trust,
+        { previewProjectServers: (pinnedWorkDir = cwd) => generation.mcp.previewProjectServers(pinnedWorkDir) },
+        view.skills,
+        view.agentProfiles,
+        this.dependencies.agentProfiles,
+        view.instructions,
+        this.dependencies.log,
+      );
       return {
         ...view,
         mcp,
+        trustDisclosure,
         dispose: () => {
           mcp.dispose();
           view.dispose();
