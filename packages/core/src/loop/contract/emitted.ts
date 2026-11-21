@@ -50,10 +50,15 @@ export type HookFailedEvent = {
 };
 
 export type LoopEmitted =
+  /** A user message was accepted into the normal inbox (`Loop.submit`). */
   | { type: 'prompt.submitted'; message: UserMessage }
+  /** A user message entered the notify inbox (`Loop.notify`, `Loop.recordNotification`, `Loop.sendNow`), or a notification was synthesized (hook failure, detached tool completion). */
   | { type: 'prompt.notified'; message: UserMessage }
+  /** A message was queued in the remind inbox (`Loop.remind`). */
   | { type: 'prompt.reminded'; message: RemindMessage }
+  /** Messages moved from the normal inbox to the notify inbox (`Loop.steer`, `Loop.sendNowQueued`); `messages` lists the moved ones, absent when nothing moved. */
   | { type: 'prompt.steered'; promptIds: string[]; messages?: readonly UserMessage[] }
+  /** A queued message was removed from the inboxes (`Loop.cancel`); `canceled` is false when nothing matched. */
   | { type: 'prompt.canceled'; promptId: string; canceled: boolean }
   | { type: 'turn.started'; turnId: number; trigger: TurnTrigger; promptOnly?: true; message?: UserMessage }
   | { type: 'turn.resumed'; turnId: number; step: number }
