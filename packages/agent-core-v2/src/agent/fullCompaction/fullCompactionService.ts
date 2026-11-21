@@ -185,8 +185,8 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
       }),
     );
     this._register(
-      this.loopService.hooks.onDidFinishStep.register('full-compaction', async (_ctx, next) => {
-        await this.afterStep();
+      this.loopService.hooks.onDidFinishStep.register('full-compaction', async (ctx, next) => {
+        if (!ctx.signal.aborted) await this.afterStep();
         await next();
       }),
     );

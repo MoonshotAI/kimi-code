@@ -2,10 +2,8 @@ import type { HookFailure } from '#/hook/result';
 import { createUserMessage, type UserMessage } from '#/llm/message';
 import { errorText } from '#/llm/protocol/errors';
 import type { HookFailedEvent } from '#/loop/contract/emitted';
-import type { HookPoint as LoopHookPoint, ToolHookPoint } from '#/loop/contract/hook';
+import type { HookPoint } from '#/loop/contract/hook';
 import type { Cause } from '#/loop/contract/outcome';
-
-type HookPoint = LoopHookPoint | ToolHookPoint;
 
 export type { HookFailure };
 

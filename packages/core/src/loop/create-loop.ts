@@ -46,31 +46,33 @@ export interface Loop {
   readonly executor: LoopToolExecutor;
   readonly waitForTasks: WaitForTasks;
   readonly policy: PolicyRegistry;
+  setRequester(requester: LoopLlmRequester | undefined): void;
+  setContext(messages: Message[], reason?: string): LoopAck<'context.settled' | 'context.rejected'> | undefined;
+  setSystemPrompt(systemPrompt: string): LoopAck<'system_prompt.settled'> | undefined;
   submit(message: UserMessage): LoopAck<'prompt.submitted'> | undefined;
   notify(message: UserMessage): LoopAck<'prompt.notified'> | undefined;
-  recordNotification(message: UserMessage): LoopAck<'prompt.notified'> | undefined;
   remind(...messages: readonly RemindMessage[]): LoopAck<'prompt.reminded'> | undefined;
-  flushReminders(): void;
-  steer(promptIds: readonly string[]): LoopAck<'prompt.steered'> | undefined;
   sendNow(message: UserMessage): LoopAck<'prompt.notified'> | undefined;
-  sendNow(promptIds: readonly string[]): void;
-  cancel(promptId: string): LoopAck<'prompt.canceled'> | undefined;
+  recordNotification(message: UserMessage): LoopAck<'prompt.notified'> | undefined;
+
   start(): void;
   resume(): void;
+  reset(prepare: () => Promise<LoopInput>): Promise<void>;
+  close(): Promise<void>;
+  
   continue(options?: { readonly force?: boolean }): void;
+  flushReminders(): void;
+  steer(promptIds: readonly string[]): LoopAck<'prompt.steered'> | undefined;
+  sendNowQueued(promptIds: readonly string[]): void;
+  cancel(promptId: string): LoopAck<'prompt.canceled'> | undefined;
   abort(reason?: unknown, options?: { readonly continue?: boolean }): void;
   abortTool(toolCallId: string, reason?: unknown): void;
   detachTool(toolCallId: string, text?: string, completion?: ToolCompletionFactory): void;
-  reset(prepare: () => Promise<LoopInput>): Promise<void>;
-  setRequester(requester: LoopLlmRequester | undefined): void;
   operation<T>(create: (runtime: LoopRequestRuntime) => T): T;
-  setContext(messages: Message[], reason?: string): LoopAck<'context.settled' | 'context.rejected'> | undefined;
-  setSystemPrompt(systemPrompt: string): LoopAck<'system_prompt.settled'> | undefined;
   subscribe(listener: (event: LoopEmitted) => void): () => void;
   wait<T extends LoopEmitted['type']>(type: T, opts?: WaitOpts<LoopAck<T>>): Promise<LoopAck<T>>;
   runTurn(message: UserMessage, opts?: { readonly signal?: AbortSignal }): Promise<TurnOutcome>;
   waitForIdle(): Promise<void>;
-  close(): Promise<void>;
 }
 
 export function createLoop(options: CreateLoopOptions): Loop {

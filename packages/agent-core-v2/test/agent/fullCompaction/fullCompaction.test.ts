@@ -4920,4 +4920,42 @@ describe('FullCompaction prompt-cache prefix', () => {
       expect(findGenerateCallPrefixBreak(lastLoopCall, compactionCall)).toBeUndefined();
     },
   );
+
+  it('skips automatic compaction for aborted steps and preserves it for normal steps', async () => {
+    const ctx = testAgent({ initialConfig: { loopControl: { compactionTriggerRatio: 0.5 } } });
+    const compaction = ctx.get(IAgentFullCompactionService) as IAgentFullCompactionService & {
+      strategy: { shouldCompact: () => boolean };
+    };
+    const shouldCompact = vi.spyOn(compaction.strategy, 'shouldCompact').mockReturnValue(true);
+    const begin = vi.spyOn(compaction, 'begin').mockReturnValue(true);
+    let nextCalls = 0;
+    const registration = ctx.get(IAgentLoopService).hooks.onDidFinishStep.register('test-next', async (_ctx, next) => {
+      nextCalls += 1;
+      await next();
+    });
+    const context = (signal: AbortSignal) => ({
+      turnId: 0,
+      step: 1,
+      firstStepOfTurn: true,
+      signal,
+      usage: { inputOther: 0, output: 0, inputCacheRead: 0, inputCacheCreation: 0 },
+      finishReason: 'completed' as const,
+      tools: [],
+      stopTurn: false,
+    });
+
+    const aborted = new AbortController();
+    aborted.abort('cancelled');
+    await ctx.get(IAgentLoopService).hooks.onDidFinishStep.run(context(aborted.signal));
+    expect(nextCalls).toBe(1);
+    expect(begin).not.toHaveBeenCalled();
+    expect(shouldCompact).not.toHaveBeenCalled();
+
+    await ctx.get(IAgentLoopService).hooks.onDidFinishStep.run(context(new AbortController().signal));
+    expect(nextCalls).toBe(2);
+    expect(shouldCompact).toHaveBeenCalledOnce();
+    expect(begin).toHaveBeenCalledOnce();
+    expect(begin).toHaveBeenCalledWith({ source: 'auto' });
+    registration.dispose();
+  });
 });

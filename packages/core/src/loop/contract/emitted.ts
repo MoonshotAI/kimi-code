@@ -1,6 +1,6 @@
 import type { ContentPart, Message, ToolCall, ToolDescription, UserMessage } from '#/llm/message';
 import type { LlmRunEvent, LlmTiming } from '#/llm/response';
-import type { HookPoint, ToolHookPoint } from './hook';
+import type { HookPoint } from './hook';
 import type { MessageSource, RemindMessage, TurnTrigger } from './inbox';
 import type { AsyncToolOutcome, Cause, StepOutcome, ToolCallOutcome, TurnOutcome } from './outcome';
 
@@ -17,14 +17,6 @@ export interface ToolUpdate {
 export interface LlmMessageTiming {
   readonly llmFirstTokenLatencyMs?: number;
   readonly llmStreamDurationMs?: number;
-}
-
-export function llmMessageTiming(timing: LlmTiming | undefined): LlmMessageTiming | undefined {
-  if (timing === undefined) return undefined;
-  return {
-    llmFirstTokenLatencyMs: timing.firstTokenLatencyMs,
-    llmStreamDurationMs: timing.streamDurationMs,
-  };
 }
 
 export type ToolEvent =
@@ -49,7 +41,7 @@ export type ToolEvent =
 
 export type HookFailedEvent = {
   type: 'hook.failed';
-  point: HookPoint | ToolHookPoint;
+  point: HookPoint;
   hookId?: string;
   turnId: number;
   step: number;

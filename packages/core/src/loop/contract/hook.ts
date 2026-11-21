@@ -3,7 +3,7 @@ import type { QueuedItem, TurnTrigger } from './inbox';
 import type { Cause, StepOutcome } from './outcome';
 import type { LoopProfile } from './profile';
 
-export interface ToolResult {
+export interface HookToolResult {
   content: ContentPart[];
   isError?: boolean;
   durationMs?: number;
@@ -38,7 +38,7 @@ export interface ToolBatchStartingEvent {
 export interface StepStoppingEvent {
   readonly turnId: number;
   readonly step: number;
-  readonly draft: Extract<StepOutcome, { type: 'continue' | 'done' | 'failed' }>;
+  readonly draft: Extract<StepOutcome, { type: 'continue' | 'done' | 'failed' | 'aborted' }>;
   readonly messages: readonly Message[];
 }
 
@@ -53,12 +53,9 @@ export type TurnStartingVerdict = { readonly type: 'blocked'; readonly cause: Ca
 
 export type MessageAppendingDecision = { readonly message?: Message; readonly blocked?: Cause };
 
-export type StepStartingDecision = {
-  readonly messages?: readonly Message[];
-  readonly blocked?: Cause;
-};
+export type StepStartingDecision = { readonly blocked?: Cause };
 
-export type ToolBatchStartingDecision = { readonly blocked: Cause; readonly result?: ToolResult };
+export type ToolBatchStartingDecision = { readonly blocked: Cause; readonly result?: HookToolResult };
 
 export type StepStoppingVerdict = { readonly type: 'continue' | 'done'; readonly cause: Cause };
 
@@ -76,5 +73,3 @@ export interface LoopHooks {
 }
 
 export type HookPoint = keyof LoopHooks;
-
-export type ToolHookPoint = 'tool.starting' | 'tool.permitting' | 'tool.ending';
