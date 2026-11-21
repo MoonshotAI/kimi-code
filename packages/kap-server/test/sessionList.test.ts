@@ -701,6 +701,7 @@ describe('server /api/v1/sessions list', () => {
       id: 'local-shadow',
       workspaceId: WS_A,
       cwd: remoteRepo,
+      environmentCwd: remoteRepo,
       createdAt: 5_500,
       updatedAt: 5_500,
       archived: false,

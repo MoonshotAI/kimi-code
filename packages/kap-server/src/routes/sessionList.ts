@@ -14,6 +14,11 @@ import {
 } from '@moonshot-ai/agent-core-v2';
 import { IGitService, type FsPullRequest } from '@moonshot-ai/agent-core-v2/app/git/git';
 import { GitService } from '@moonshot-ai/agent-core-v2/app/git/gitService';
+import {
+  sessionPlacementOf,
+  sessionWorkDir,
+  type SessionWorkdir,
+} from '@moonshot-ai/agent-core-v2/session/workspaceContext/workspaceRoots';
 import { z } from 'zod';
 
 import { errEnvelope, okEnvelope } from '../envelope';
@@ -193,7 +198,7 @@ interface GitTarget {
   readonly cwd: string;
 }
 
-function gitTarget(summary: SessionSummary, workspaceCwd: string): GitTarget | undefined {
+function gitTarget(summary: SessionSummary, workspaceCwd: SessionWorkdir): GitTarget | undefined {
   const environmentId = summary.environmentId ?? LOCAL_ENVIRONMENT_ID;
   const cwd = environmentId === LOCAL_ENVIRONMENT_ID ? workspaceCwd : summary.environmentCwd;
   if (cwd === undefined || cwd.length === 0) return undefined;
@@ -208,7 +213,7 @@ class GitDomainResolver {
 
   async resolveAll(
     summaries: readonly SessionSummary[],
-    cwdOf: (summary: SessionSummary) => string,
+    cwdOf: (summary: SessionSummary) => SessionWorkdir,
   ): Promise<ReadonlyMap<string, SessionGit>> {
     const targets = summaries.flatMap((summary) => {
       const target = gitTarget(summary, cwdOf(summary));
@@ -375,8 +380,8 @@ async function listSessionsHere(
         return facts;
       };
 
-      const cwdOf = (summary: SessionSummary): string | undefined => {
-        const candidate = summary.cwd ?? roots.get(summary.workspaceId);
+      const cwdOf = (summary: SessionSummary): SessionWorkdir | undefined => {
+        const candidate = sessionWorkDir(sessionPlacementOf(summary), roots.get(summary.workspaceId));
         return candidate !== undefined && candidate.length > 0 ? candidate : undefined;
       };
 
@@ -413,7 +418,7 @@ async function listSessionsHere(
       const sorted = filtered.toSorted(comparator);
       const keyOf = sortKeyOf(query.sort);
       const ascending = query.sort === 'updated_at_asc';
-      const requiredCwdOf = (summary: SessionSummary): string => cwdOf(summary)!;
+      const requiredCwdOf = (summary: SessionSummary): SessionWorkdir => cwdOf(summary)!;
 
       const buildItems = async (summaries: readonly SessionSummary[]): Promise<Session[]> => {
         let gitBySession: ReadonlyMap<string, SessionGit> | undefined;

@@ -383,6 +383,29 @@ describe('server-v2 /api/v1/workspaces', () => {
     expect(session.body.data.cwd).toBe(extra);
   });
 
+  it('rejects promoting a folder of an implicit workspace with WORKSPACE_PRIMARY_IMMUTABLE (40941)', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'kimi-server-v2-workspaces-implicit-primary-'));
+    try {
+      const extra = join(root, 'candidate');
+      await mkdir(extra);
+      const session = await postJson<{ workspace_id: string }>('/api/v1/sessions', { cwd: root });
+      const id = session.body.data.workspace_id;
+      expect((await patchJson<WorkspaceWire>(`/api/v1/workspaces/${id}`, { additional_dirs: [extra] })).body.code).toBe(0);
+
+      const rejected = await postJson<null>(`/api/v1/workspaces/${id}/primary`, { path: extra });
+
+      expect(rejected.body.code).toBe(40941);
+      const listed = await getJson<{ items: WorkspaceWire[] }>('/api/v1/workspaces');
+      expect(listed.body.data.items.find((item) => item.id === id)).toMatchObject({
+        kind: 'implicit',
+        root,
+        additional_dirs: [extra],
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it('rejects invalid primary paths and unknown workspaces (40001/40409/40410)', async () => {
     const root = home as string;
     const created = await postJson<WorkspaceWire>('/api/v1/workspaces', { root });

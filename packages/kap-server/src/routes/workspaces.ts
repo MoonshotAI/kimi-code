@@ -1,10 +1,12 @@
 import {
+  ErrorCodes,
   IBootstrapService,
   IHostFileSystem,
   IWorkspaceService,
   IWorkspaceSessions,
   IWorkspaceTrust,
   IWorkspaceTrustStore,
+  isError2,
   type Scope,
   type Workspace,
 } from '@moonshot-ai/agent-core-v2';
@@ -340,8 +342,10 @@ export function registerWorkspacesRoutes(app: WorkspaceRouteHost, core: Scope, h
         [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
         [ErrorCode.FS_PATH_NOT_FOUND]: {},
         [ErrorCode.WORKSPACE_NOT_FOUND]: {},
+        [ErrorCode.WORKSPACE_PRIMARY_IMMUTABLE]: {},
       },
-      description: 'Promote a source folder to the primary directory (atomic swap; id and bucket unchanged)',
+      description:
+        'Promote a source folder to the primary directory (atomic swap; id and bucket unchanged). An implicit workspace keeps the directory it was opened from and is rejected with WORKSPACE_PRIMARY_IMMUTABLE',
       tags: ['workspaces'],
     },
     async (req, reply) => {
@@ -383,7 +387,14 @@ export function registerWorkspacesRoutes(app: WorkspaceRouteHost, core: Scope, h
         );
         return;
       }
-      const ws = await registry.setPrimary(workspace_id, resolved);
+      let ws: Workspace | undefined;
+      try {
+        ws = await registry.setPrimary(workspace_id, resolved);
+      } catch (error) {
+        if (!isError2(error) || error.code !== ErrorCodes.WORKSPACE_PRIMARY_IMMUTABLE) throw error;
+        reply.send(errEnvelope(ErrorCode.WORKSPACE_PRIMARY_IMMUTABLE, error.message, req.id));
+        return;
+      }
       if (ws === undefined) {
         reply.send(
           errEnvelope(ErrorCode.WORKSPACE_NOT_FOUND, `workspace ${workspace_id} does not exist`, req.id),

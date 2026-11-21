@@ -25,7 +25,6 @@ import {
   ISessionIndex,
   ISessionManager,
   ISessionMetadata,
-  IWorkspaceService,
   followSessionLifecycles,
   getLiveSessionById,
   resumeSessionById,
@@ -60,7 +59,8 @@ import { toWireQuestion } from '../../../protocol/question-wire';
 import type { AgentFeedMessage } from '../../../protocol/ws-agent';
 import type { TaskEventMessage, TaskListMessage } from '../../../protocol/ws-task';
 import { toConfigResponse } from '../../../routes/config';
-import { resolveSessionFacts, toWireSession, type SessionFacts, type SessionWireFields } from '../../../routes/sessions';
+import { resolveSessionFacts, sessionCwd, toWireSession, type SessionFacts, type SessionWireFields } from '../../../routes/sessions';
+import type { SessionPlacementFacts } from '@moonshot-ai/agent-core-v2/session/workspaceContext/workspaceRoots';
 import { toWireWorkspace } from '../../../routes/workspaces';
 import type { ConversationEvent, ConversationFeed } from '../../../services/conversation/conversationFeed';
 import type {
@@ -570,24 +570,14 @@ export class SessionEventBroadcaster {
     const parsed = sessionSchema.safeParse(candidate);
     let session: Session | undefined = parsed.success ? parsed.data : undefined;
     if (session === undefined) {
-      let summary = candidate as (SessionWireFields & { cwd?: string }) | undefined;
+      let summary = candidate as (SessionWireFields & SessionPlacementFacts) | undefined;
       if (summary === undefined) {
         const live = getLiveSessionById(this.opts.core.accessor, sessionId);
         if (live !== undefined) {
           try {
-            const meta = await live.accessor.get(ISessionMetadata).read();
-            const ctx = live.accessor.get(ISessionContext);
             summary = {
-              id: meta.id,
-              workspaceId: ctx.workspaceId,
-              cwd: ctx.cwd,
-              title: meta.title,
-              lastPrompt: meta.lastPrompt,
-              createdAt: meta.createdAt,
-              updatedAt: meta.updatedAt,
-              archived: meta.archived,
-              archivedAt: meta.archivedAt,
-              custom: meta.custom,
+              ...(await live.accessor.get(ISessionMetadata).read()),
+              workspaceId: live.accessor.get(ISessionContext).workspaceId,
             };
           } catch {
             summary = undefined;
@@ -595,10 +585,10 @@ export class SessionEventBroadcaster {
         }
       }
       summary ??= (await this.opts.core.accessor.get(ISessionIndex).get(sessionId)) as
-        | (SessionWireFields & { cwd?: string })
+        | (SessionWireFields & SessionPlacementFacts)
         | undefined;
       if (summary === undefined) return undefined;
-      const cwd = summary.cwd ?? (await this.opts.core.accessor.get(IWorkspaceService).get(summary.workspaceId))?.root;
+      const cwd = await sessionCwd(this.opts.core, summary);
       if (cwd === undefined) return undefined;
       session = toWireSession(summary, cwd, factsOverride ?? resolveSessionFacts(this.opts.core, sessionId));
     }
