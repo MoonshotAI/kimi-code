@@ -29,6 +29,7 @@ import {
   decideImplicitProject,
   implicitCatalogOf,
   isInProjectScope,
+  isNonDirectory,
   reviveCandidates,
   reviveRoot,
   type ImplicitDecision,
@@ -101,7 +102,9 @@ export class WorkspaceService implements IWorkspaceService {
 
   resolveImplicit(dir: string): Promise<ImplicitProjectResult> {
     return this.runExclusive(async () => {
-      await this.rejectNonDirectory(dir);
+      if (await isNonDirectory(this.hostFs, dir)) {
+        throw new Error2(ErrorCodes.FS_PATH_NOT_FOUND, `workspace root ${dir} is not a directory`);
+      }
       await this.ensureMerged();
       const home = await this.homeDirs();
       let resolution!: ImplicitResolution;
@@ -551,24 +554,6 @@ export class WorkspaceService implements IWorkspaceService {
       return await this.hostFs.realpath(path);
     } catch {
       return undefined;
-    }
-  }
-
-  private async rejectNonDirectory(dir: string): Promise<void> {
-    let stat;
-    try {
-      stat = await this.hostFs.stat(dir);
-    } catch {
-      return;
-    }
-    if (stat.isDirectory) return;
-    try {
-      stat = await this.hostFs.stat(await this.hostFs.realpath(dir));
-    } catch {
-      return;
-    }
-    if (!stat.isDirectory) {
-      throw new Error2(ErrorCodes.FS_PATH_NOT_FOUND, `workspace root ${dir} is not a directory`);
     }
   }
 

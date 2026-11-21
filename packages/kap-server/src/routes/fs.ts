@@ -21,6 +21,7 @@ import {
 import { Event } from '@moonshot-ai/agent-core-v2/_base/event';
 import { IGitService } from '@moonshot-ai/agent-core-v2/app/git/git';
 import { encodeWorkDirKey, sameDir } from '@moonshot-ai/agent-core-v2/_base/utils/workdir-slug';
+import { isNonDirectory } from '@moonshot-ai/agent-core-v2/app/workspace/implicitProject';
 import {
   fsDiffRequestSchema,
   fsGitStatusRequestSchema,
@@ -213,15 +214,6 @@ async function acquireDirectoryFs(
     return acquireLocalRootedFs(core, project.id, { workDir: project.root, additionalDirs: project.additionalDirs }, required);
   }
   return acquireLocalRootedFs(core, encodeWorkDirKey(dir), { workDir: dir, additionalDirs: [] }, required);
-}
-
-async function isNonDirectory(hostFs: IHostFileSystem, dir: string): Promise<boolean> {
-  try {
-    if ((await hostFs.stat(dir)).isDirectory) return false;
-    return !(await hostFs.stat(await hostFs.realpath(dir))).isDirectory;
-  } catch {
-    return false;
-  }
 }
 
 async function sendSuggestStream(

@@ -122,6 +122,15 @@ export async function isInProjectScope(fs: IHostFileSystem, project: ProjectScop
     projectScopeContains(realScope, realDir, await locateCheckout(fs, absolute));
 }
 
+export async function isNonDirectory(fs: IHostFileSystem, dir: string): Promise<boolean> {
+  try {
+    if ((await fs.stat(dir)).isDirectory) return false;
+    return !(await fs.stat(await fs.realpath(dir))).isDirectory;
+  } catch {
+    return false;
+  }
+}
+
 function realDirOf(fs: IHostFileSystem, dir: string): Promise<string> {
   return realpathExistingPrefix(fs, POSIX_ENVIRONMENT_PATH, dir, () => true);
 }
