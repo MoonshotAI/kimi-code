@@ -64,8 +64,7 @@ export class ProjectPermissionRulesService extends Disposable implements IProjec
       try {
         await this.loadFromDisk();
       } catch (error) {
-        this.currentRules = [];
-        this.log.warn('project permission rules reload failed', { anchor: this.workdir.anchor, error });
+        this.log.warn('project permission rules reload failed; keeping the rules in effect', { anchor: this.workdir.anchor, error });
       }
     });
   }

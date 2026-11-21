@@ -238,7 +238,7 @@ describe('AgentPermissionRulesService (wire-backed)', () => {
     expect(svc.sessionApprovalRulePatterns).toEqual(['Bash(rm *)']);
   });
 
-  it('follows the session anchor for project rules: reloads where it moves, writes there, and drops rules it cannot read', async () => {
+  it('follows the session anchor for project rules: reloads where it moves, writes there, and keeps the rules in effect when the new anchor cannot be read', async () => {
     const atMain: PermissionRule = { decision: 'deny', scope: 'project', pattern: 'Bash(main)' };
     const atOther: PermissionRule = { decision: 'deny', scope: 'project', pattern: 'Bash(other)' };
     const approved: PermissionRule = { decision: 'allow', scope: 'project', pattern: 'Read' };
@@ -293,9 +293,10 @@ describe('AgentPermissionRulesService (wire-backed)', () => {
     anchor = '/broken';
     anchorMoves.fire();
     await vi.waitFor(() => {
-      expect(service.rules).toEqual([]);
+      expect(warnings).toHaveLength(1);
     });
-    expect(warnings).toEqual(['project permission rules reload failed']);
+    expect(service.rules).toEqual([atOther, approved]);
+    expect(warnings).toEqual(['project permission rules reload failed; keeping the rules in effect']);
 
     service.dispose();
   });
