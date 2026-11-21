@@ -175,7 +175,7 @@ describe('conversation over KAP', () => {
       .join('') ?? '';
     expect(assistantText).not.toContain('I will call Bash');
     expect(assistantText).toContain('done');
-    const steps = (turn?.steps ?? []) as readonly { usage?: Record<string, unknown> }[];
+    const steps = (turn?.['steps'] ?? []) as readonly { usage?: Record<string, unknown> }[];
     const usages = steps.flatMap((step) => step.usage === undefined ? [] : [step.usage]);
     expect(usages).toMatchObject([
       { input_other: 4, output: 3 },
