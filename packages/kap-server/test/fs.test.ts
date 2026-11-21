@@ -8,6 +8,7 @@ import { HostFileSystem } from '@moonshot-ai/agent-core-v2/os/backends/node-loca
 import { HostProcessService } from '@moonshot-ai/agent-core-v2/os/backends/node-local/hostProcessService';
 import { FakeEnvironment } from '@moonshot-ai/agent-core-v2/environment/fakeEnvironment';
 import type { EnvironmentCapability } from '@moonshot-ai/agent-core-v2/environment/environment';
+import { createGitRepository, createGitWorktree } from '@moonshot-ai/testkit/fixtures';
 import { ErrorCode } from '../src/protocol/error-codes';
 import { sendMappedError } from '../src/routes/fs';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -725,16 +726,9 @@ describe('server-v2 /api/v1 fs routes', () => {
       const main = join(lab, 'app');
       const worktree = join(lab, 'app-fix');
       const extra = join(lab, 'shared');
-      for (const dir of [main, extra]) {
-        await mkdir(dir, { recursive: true });
-        git(dir, 'init', '-b', 'main');
-        git(dir, 'config', 'user.email', 'test@example.com');
-        git(dir, 'config', 'user.name', 'Test');
-        await writeFile(join(dir, 'tracked.txt'), 'one\n');
-        git(dir, 'add', '-A');
-        git(dir, 'commit', '-m', 'init');
-      }
-      git(main, 'worktree', 'add', '-b', 'fix', worktree);
+      const files = { 'tracked.txt': 'one\n' };
+      await createGitWorktree({ main, worktree }, { files });
+      await createGitRepository(extra, { files });
       await writeFile(join(extra, 'tracked.txt'), 'one\ntwo\n');
       const headers = authHeaders(server as RunningServer, { 'content-type': 'application/json' });
       const first = (await (await fetch(`${base}/api/v1/sessions`, {
@@ -793,16 +787,9 @@ describe('server-v2 /api/v1 fs routes', () => {
       const worktree = join(lab, 'app-fix');
       const other = join(lab, 'other');
       const shared = join(other, 'shared');
-      for (const dir of [main, other]) {
-        await mkdir(dir, { recursive: true });
-        git(dir, 'init', '-b', 'main');
-        git(dir, 'config', 'user.email', 'test@example.com');
-        git(dir, 'config', 'user.name', 'Test');
-        await writeFile(join(dir, 'tracked.txt'), 'one\n');
-        git(dir, 'add', '-A');
-        git(dir, 'commit', '-m', 'init');
-      }
-      git(main, 'worktree', 'add', '-b', 'fix', worktree);
+      const files = { 'tracked.txt': 'one\n' };
+      await createGitWorktree({ main, worktree }, { files });
+      await createGitRepository(other, { files });
       await mkdir(shared, { recursive: true });
       for (const [root, pattern] of [[main, 'Bash(main)'], [worktree, 'Bash(worktree)'], [other, 'Bash(other)']] as const) {
         await mkdir(join(root, '.kimi-code'), { recursive: true });

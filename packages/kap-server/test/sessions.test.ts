@@ -10,6 +10,7 @@ import { mcpResultToExecutableOutput } from '@moonshot-ai/agent-core-v2/agent/mc
 import { renderToolResultForModel } from '@moonshot-ai/agent-core-v2/agent/contextMemory/toolResultRender';
 import { IReadTool, ReadInputSchema, type ReadInput } from '@moonshot-ai/agent-core-v2/agent/tools/os/read/read';
 
+import { createGitWorktree } from '@moonshot-ai/testkit/fixtures';
 import { say } from '@moonshot-ai/testkit/model';
 import { kapFixtures, type KapFixtures } from '@moonshot-ai/testkit/vitest';
 import { afterAll, afterEach, beforeAll, describe, expect, it, test as base, vi } from 'vitest';
@@ -601,16 +602,10 @@ describe('server-v2 /api/v1/sessions', () => {
 
   async function repositoryWithWorktree(): Promise<{ readonly lab: string; readonly main: string; readonly worktree: string }> {
     const lab = await mkdtemp(join(tmpdir(), 'kimi-server-v2-sessions-repo-'));
-    const main = join(lab, 'app');
-    const worktree = join(lab, 'app-fix');
-    await mkdir(join(main, 'src'), { recursive: true });
-    git(main, 'init', '-b', 'main');
-    git(main, 'config', 'user.email', 'test@example.com');
-    git(main, 'config', 'user.name', 'Test');
-    await writeFile(join(main, 'src', 'tracked.txt'), 'one\n');
-    git(main, 'add', '-A');
-    git(main, 'commit', '-m', 'init');
-    git(main, 'worktree', 'add', '-b', 'fix', worktree);
+    const { main, worktree } = await createGitWorktree(
+      { main: join(lab, 'app'), worktree: join(lab, 'app-fix') },
+      { files: { 'src/tracked.txt': 'one\n' } },
+    );
     return { lab, main, worktree };
   }
 

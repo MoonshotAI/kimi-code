@@ -1,9 +1,7 @@
-import { execFile } from 'node:child_process';
 import { mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { promisify } from 'node:util';
 
 import {
   IOAuthToolkit,
@@ -19,6 +17,7 @@ import {
 import { afterEach, describe, expect, it } from 'vitest';
 
 import type { SessionSummary } from '@moonshot-ai/klient';
+import { createGitWorktree } from '@moonshot-ai/testkit/fixtures';
 
 import { filterSessionSummariesByCwd } from '../src/server';
 import { createTestClient, type TestClient } from './_helpers/acpClient';
@@ -57,21 +56,6 @@ function createFakeOAuthToolkit(): {
     getManagedUserInfo: () => Promise.reject(new Error('fakeOAuthToolkit: not implemented')),
   } as unknown as IOAuthToolkit;
   return { seed: [IOAuthToolkit, fake], hasToken: () => token !== undefined };
-}
-
-async function createGitWorktree(base: string): Promise<{ readonly main: string; readonly worktree: string }> {
-  const main = join(base, 'app');
-  const worktree = join(base, 'app-fix');
-  const exec = promisify(execFile);
-  await mkdir(main, { recursive: true });
-  await exec('git', ['init', '-q', '-b', 'main'], { cwd: main });
-  await exec(
-    'git',
-    ['-c', 'user.email=worktree-test@example.com', '-c', 'user.name=Worktree Test', 'commit', '-q', '--allow-empty', '-m', 'initial'],
-    { cwd: main },
-  );
-  await exec('git', ['worktree', 'add', '-q', '-b', 'fix', worktree], { cwd: main });
-  return { main, worktree };
 }
 
 describe('acp-server session lifecycle', () => {
@@ -535,7 +519,8 @@ describe('acp-server session lifecycle', () => {
     'session/new in a worktree joins the repository project, pins the worktree and lists it there',
     async () => {
       const c = await boot();
-      const { main, worktree } = await createGitWorktree(join(homeDir!, 'repos'));
+      const repos = join(homeDir!, 'repos');
+      const { main, worktree } = await createGitWorktree({ main: join(repos, 'app'), worktree: join(repos, 'app-fix') });
       const created = (await c.send('session/new', { cwd: worktree, mcpServers: [] })) as {
         sessionId: string;
       };
