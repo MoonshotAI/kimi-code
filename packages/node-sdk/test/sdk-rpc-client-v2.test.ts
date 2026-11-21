@@ -2819,6 +2819,45 @@ describe('SDKRpcClientV2 explicit MCP upserts', () => {
       await client.close();
     }
   });
+
+  it('guards a persisted add with the project MCP files a session in a subdirectory loads', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
+    tempDirs.push(homeDir);
+    const { main } = await gitWorktreeLayout();
+    const subdir = join(main, 'src');
+    const servers = (name: string) =>
+      JSON.stringify({ mcpServers: { [name]: { command: 'never-runs', enabled: false } } });
+    await mkdir(join(main, '.kimi-code'));
+    await mkdir(join(subdir, '.kimi-code'), { recursive: true });
+    await writeFile(join(main, '.kimi-code', 'mcp.json'), servers('checkout-server'), 'utf-8');
+    await writeFile(join(subdir, '.kimi-code', 'mcp.json'), servers('subdir-server'), 'utf-8');
+    const client = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
+    try {
+      await client.createSession({ id: 'ses_mcp_subdir', workDir: subdir });
+
+      await expect(
+        client.addSessionMcpServer({
+          sessionId: 'ses_mcp_subdir',
+          server: { name: 'checkout-server', ...unreachable },
+          persist: true,
+        }),
+      ).rejects.toMatchObject({
+        code: ErrorCodes.REQUEST_INVALID,
+        message: 'MCP server "checkout-server" is read-only: it is defined in the project MCP config — edit that file instead',
+      });
+      await client.addSessionMcpServer({
+        sessionId: 'ses_mcp_subdir',
+        server: { name: 'subdir-server', ...unreachable },
+        persist: true,
+      });
+      const persisted = JSON.parse(await readFile(join(homeDir, 'mcp.json'), 'utf-8')) as {
+        readonly mcpServers: Record<string, unknown>;
+      };
+      expect(Object.keys(persisted.mcpServers)).toEqual(['subdir-server']);
+    } finally {
+      await client.close();
+    }
+  });
 });
 
 async function gitWorktreeLayout(): Promise<GitWorktreeLayout> {

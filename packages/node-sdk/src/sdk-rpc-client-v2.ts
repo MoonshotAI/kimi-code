@@ -149,7 +149,11 @@ import { agentTaskInfo } from '@moonshot-ai/agent-core-v2/agent/task/handler';
 import type { PromptPredictionCancelReason } from '@moonshot-ai/agent-core-v2/features/promptPrediction/promptPrediction';
 import { ITowerRateLimitService } from '@moonshot-ai/agent-core-v2/features/tower/towerRateLimit';
 import { readTowerStatusSummary } from '@moonshot-ai/agent-core-v2/features/tower/tools/status/statusReader';
-import { loadMcpServers } from '@moonshot-ai/agent-core-v2/app/mcpConfig/configLoader';
+import {
+  loadAnchorMcpServers,
+  loadUserMcpServers,
+  type McpAnchor,
+} from '@moonshot-ai/agent-core-v2/app/mcpConfig/configLoader';
 import { IGitService } from '@moonshot-ai/agent-core-v2/app/git/git';
 import { fsSuggestRequestSchema } from '@moonshot-ai/agent-core-v2/workspace/workspaceFs/fs';
 import { ILogService } from '@moonshot-ai/agent-core-v2/_base/log/log';
@@ -1206,21 +1210,22 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   }
 
   /**
-   * v1's persist-add project guard ported to the workspace loader. This read
-   * deliberately includes the project layer even while the workspace is
-   * untrusted: a user-level write must not create a shadow that springs into
-   * conflict when the workspace is trusted later.
+   * v1's persist-add project guard ported to the workspace loader, reading
+   * the project MCP files of the anchor the session's working directory
+   * loads them from. This read deliberately includes the project layer even
+   * while the workspace is untrusted: a user-level write must not create a
+   * shadow that springs into conflict when the workspace is trusted later.
    */
   private async rejectProjectLayerPersistedMcpAdd(
-    cwd: string,
+    anchor: McpAnchor,
     name: string,
   ): Promise<void> {
     const fs = this.engineAccessor.get(IHostFileSystem);
-    const [withProject, userOnly] = await Promise.all([
-      loadMcpServers({ fs, cwd, homeDir: this.homeDir, includeProject: true }),
-      loadMcpServers({ fs, cwd, homeDir: this.homeDir, includeProject: false }),
+    const [project, user] = await Promise.all([
+      loadAnchorMcpServers({ fs, anchor }),
+      loadUserMcpServers({ fs, homeDir: this.homeDir }),
     ]);
-    if (withProject[name] !== undefined && userOnly[name] === undefined) {
+    if (project.servers[name] !== undefined && user.servers[name] === undefined) {
       throw new KimiError(
         ErrorCodes.REQUEST_INVALID,
         `MCP server "${name}" is read-only: it is defined in the project MCP config — edit that file instead`,
@@ -3087,7 +3092,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     const target = { ...parsed, name: normalizeServerName(parsed.name) };
     if (input.persist === true) {
       const cwd = session.accessor.get(ISessionWorkspaceContext).workDir;
-      await this.rejectProjectLayerPersistedMcpAdd(cwd, target.name);
+      await this.rejectProjectLayerPersistedMcpAdd(session.accessor.get(ISessionWorkdir).anchor, target.name);
       await this.mcpManagement((management) => management.addServer(target, { cwd }));
     }
     const manager = upsertTarget(target.name);
