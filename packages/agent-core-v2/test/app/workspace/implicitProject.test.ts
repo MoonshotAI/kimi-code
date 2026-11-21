@@ -246,6 +246,16 @@ describe('reviveRoot', () => {
     expect(reviveRoot(encodeWorkDirKey('/private/tmp/app'), candidates)).toBe('/private/tmp/app');
   });
 
+  it('revives a bucket from a parent of the session directory in the spelling the session recorded', () => {
+    expect(reviveRoot(encodeWorkDirKey('/code/notes'), reviveCandidates('/code/notes/drafts/today', undefined, undefined))).toBe('/code/notes');
+    expect(reviveRoot(encodeWorkDirKey('/real/notes'), reviveCandidates('/link/notes/drafts', '/real/notes/drafts', undefined))).toBe('/real/notes');
+    expect(reviveRoot(encodeWorkDirKey('c:\\Users\\Me\\notes'), reviveCandidates('c:\\Users\\Me\\notes\\drafts', undefined, undefined))).toBe('c:\\Users\\Me\\notes');
+  });
+
+  it('keeps the main checkout spelling for a grouped bucket that a parent of the session directory also hashes to', () => {
+    expect(reviveRoot(encodeWorkDirKey('C:/code/app'), reviveCandidates('C:\\code\\app\\src', undefined, grouped('C:/code/app')))).toBe('C:/code/app');
+  });
+
   it('gives up when no candidate hashes to the bucket', () => {
     expect(reviveRoot(encodeWorkDirKey('/somewhere'), reviveCandidates('/code/app-fix', undefined, undefined))).toBeUndefined();
   });

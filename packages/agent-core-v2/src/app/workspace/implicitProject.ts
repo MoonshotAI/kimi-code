@@ -1,3 +1,4 @@
+import { isWindowsAbsolutePath } from '#/_base/utils/paths';
 import {
   encodeWorkDirKey,
   isAncestorOrSelf,
@@ -86,17 +87,18 @@ export function isHomeOrAncestor(location: GroupedCheckout, homeDirs: readonly s
   );
 }
 
-export function reviveRoot(bucketId: string, candidates: readonly (string | undefined)[]): string | undefined {
-  return candidates.find((candidate) => candidate !== undefined && encodeWorkDirKey(candidate) === bucketId);
+export function reviveRoot(bucketId: string, candidates: readonly string[]): string | undefined {
+  return candidates.find((candidate) => encodeWorkDirKey(candidate) === bucketId);
 }
 
 export function reviveCandidates(
   workDir: string,
   realWorkDir: string | undefined,
   location: CheckoutLocation | undefined,
-): readonly (string | undefined)[] {
+): readonly string[] {
+  const spellings = realWorkDir === undefined ? [workDir] : [workDir, realWorkDir];
   const grouped = location?.kind === 'grouped' ? [location.mainDir, location.canonicalMainDir] : [];
-  return [workDir, realWorkDir, ...grouped];
+  return [...spellings, ...grouped, ...spellings.flatMap((spelling) => ancestorsOf(spelling))];
 }
 
 export function projectScopeContains(
@@ -141,6 +143,19 @@ export async function isNonDirectory(fs: IHostFileSystem, dir: string): Promise<
 
 function realDirOf(fs: IHostFileSystem, dir: string, pathClass: PathClass): Promise<string> {
   return realpathExistingPrefix(fs, ENVIRONMENT_PATHS[pathClass], dir, () => true);
+}
+
+function ancestorsOf(dir: string): string[] {
+  const path = ENVIRONMENT_PATHS[isWindowsAbsolutePath(dir) ? 'win32' : 'posix'];
+  const ancestors: string[] = [];
+  let child = dir;
+  let parent = path.dirname(child);
+  while (parent !== child) {
+    ancestors.push(parent);
+    child = parent;
+    parent = path.dirname(child);
+  }
+  return ancestors;
 }
 
 function ownProjectOf(implicit: readonly ImplicitWorkspace[], dir: string): ImplicitWorkspace | undefined {

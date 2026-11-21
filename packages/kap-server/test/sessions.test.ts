@@ -1790,6 +1790,32 @@ describe('server-v2 /api/v1/sessions', () => {
     expect(got.body.data.archived).toBe(true);
   });
 
+  it('resumes a session pinned in a subdirectory of a deleted plain project under the same project id', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'kimi-server-v2-sessions-plain-'));
+    try {
+      const subdir = join(dir, 'sub');
+      await mkdir(subdir);
+      const atRoot = await postJson<SessionWire>('/api/v1/sessions', { cwd: dir });
+      const workspaceId = atRoot.body.data.workspace_id;
+      const pinned = await postJson<SessionWire>('/api/v1/sessions', { workspace_id: workspaceId, cwd: subdir });
+      expect(pinned.body.data).toMatchObject({ workspace_id: workspaceId, cwd: subdir });
+      const id = pinned.body.data.id;
+      const core = (server as RunningServer).core.accessor;
+      await closeSessionById(core, atRoot.body.data.id);
+      await closeSessionById(core, id);
+      expect((await deleteJson<{ deleted: boolean }>(`/api/v1/workspaces/${workspaceId}`)).body.code).toBe(0);
+
+      const resumed = await postJson<ProfileWire>(`/api/v1/sessions/${id}/profile`, {});
+
+      expect(resumed.body.code).toBe(0);
+      expect(resumed.body.data.session).toMatchObject({ id, workspace_id: workspaceId, cwd: subdir });
+      const workspaces = await getJson<{ items: { id: string; root: string }[] }>('/api/v1/workspaces');
+      expect(workspaces.body.data.items).toContainEqual(expect.objectContaining({ id: workspaceId, root: dir }));
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it('keeps listing a session pinned in a removed directory, refuses to resume it with the missing directory, and still archives it', async () => {
     const { lab, worktree } = await repositoryWithWorktree();
     try {

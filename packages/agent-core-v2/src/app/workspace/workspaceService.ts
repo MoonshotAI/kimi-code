@@ -150,7 +150,7 @@ export class WorkspaceService implements IWorkspaceService {
           throw new Error2(
             ErrorCodes.WORKSPACE_NOT_FOUND,
             isWorkDirKey(id)
-              ? `session project ${id} no longer exists and cannot be recreated from ${workDir}: neither the directory nor its main checkout hashes to that id`
+              ? `session project ${id} no longer exists and cannot be recreated from ${workDir}: neither the directory, its parents, nor its main checkout hashes to that id`
               : `session project ${id} no longer exists and only implicit projects can be recreated`,
           );
         }
@@ -535,7 +535,7 @@ export class WorkspaceService implements IWorkspaceService {
     }
   }
 
-  private async reviveCandidatesOf(workDir: string): Promise<readonly (string | undefined)[]> {
+  private async reviveCandidatesOf(workDir: string): Promise<readonly string[]> {
     const absolute = toAbsoluteDir(workDir);
     const location = absolute === undefined ? undefined : await locateCheckout(this.hostFs, absolute);
     return reviveCandidates(workDir, await this.realpathOrUndefined(workDir), location);

@@ -1381,6 +1381,28 @@ describe('implicit project resolution', () => {
     });
   });
 
+  it('revives a deleted plain project at its primary from a session pinned in one of its subdirectories', async () => {
+    const root = lab.dir('notes');
+    const id = encodeWorkDirKey(root);
+    const linkedRoot = real(lab.dir('linked-notes'));
+    const linkedId = encodeWorkDirKey(linkedRoot);
+    const link = join(lab.base, 'notes-link');
+    symlinkSync(linkedRoot, link);
+    lab.dir('linked-notes', 'drafts');
+    await writeProjectsJson({ [id]: implicitEntry(root), [linkedId]: implicitEntry(linkedRoot) });
+    const registry = build();
+    await registry.delete(id);
+    await registry.delete(linkedId);
+
+    expect(await registry.reviveImplicit(id, lab.dir('notes', 'drafts', 'today'))).toMatchObject({
+      id,
+      root,
+      kind: 'implicit',
+    });
+    expect(await registry.reviveImplicit(linkedId, join(link, 'drafts'))).toMatchObject({ id: linkedId, root: linkedRoot });
+    expect((await readRegistry()).deleted_workspace_ids).toEqual([]);
+  });
+
   it('never registers a worktree project from grouped session-index lines on restart', async () => {
     const { main, worktree } = repository();
     const mainId = encodeWorkDirKey(main);
