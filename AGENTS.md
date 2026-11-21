@@ -20,7 +20,7 @@
 - `apps/vscode`：VS Code 扩展。
 - `docs`：用户文档站（VitePress），中文和英文页面分别在 `docs/zh/` 和 `docs/en/`。
 - `packages/agent-core-v2`：DI × Scope 的 agent 引擎（kap-server 背后的 v2 移植版），包括 `src/remote` 下的远程执行栈。
-- `packages/core`：不依赖 DI 的 Loop、LLM、工具和 Store 运行时；LLM 模块的设计指南是 `packages/agent-core-v2/docs/en/llm.md`。
+- `packages/core`：不依赖 DI 的 Loop、LLM、工具、Store 和 Session 运行时；LLM 模块的设计指南是 `packages/agent-core-v2/docs/en/llm.md`。
 - `packages/node-sdk`：公开的 TypeScript SDK 和 harness。
 - `packages/oauth`：Kimi OAuth 和托管认证工具。
 - `packages/telemetry`：共享的客户端遥测基础设施。
