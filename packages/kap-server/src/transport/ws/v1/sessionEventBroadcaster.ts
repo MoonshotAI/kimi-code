@@ -21,10 +21,8 @@ import {
   INTERACTION_TAG_SESSION_ID,
   INTERACTION_TAG_TOOL_CALL_ID,
   ISessionActivityView,
-  ISessionContext,
   ISessionIndex,
   ISessionManager,
-  ISessionMetadata,
   followSessionLifecycles,
   getLiveSessionById,
   resumeSessionById,
@@ -59,6 +57,7 @@ import { toWireQuestion } from '../../../protocol/question-wire';
 import type { AgentFeedMessage } from '../../../protocol/ws-agent';
 import type { TaskEventMessage, TaskListMessage } from '../../../protocol/ws-task';
 import { toConfigResponse } from '../../../routes/config';
+import { liveSessionFields } from '../../../routes/sessionProfile';
 import { resolveSessionFacts, sessionCwd, toWireSession, type SessionFacts, type SessionWireFields } from '../../../routes/sessions';
 import type { SessionPlacementFacts } from '@moonshot-ai/agent-core-v2/session/workspaceContext/workspaceRoots';
 import { toWireWorkspace } from '../../../routes/workspaces';
@@ -575,10 +574,7 @@ export class SessionEventBroadcaster {
         const live = getLiveSessionById(this.opts.core.accessor, sessionId);
         if (live !== undefined) {
           try {
-            summary = {
-              ...(await live.accessor.get(ISessionMetadata).read()),
-              workspaceId: live.accessor.get(ISessionContext).workspaceId,
-            };
+            summary = await liveSessionFields(live);
           } catch {
             summary = undefined;
           }

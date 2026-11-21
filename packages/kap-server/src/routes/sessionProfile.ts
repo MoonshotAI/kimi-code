@@ -6,6 +6,7 @@ import {
   ISessionMetadata,
   PARENT_SESSION_ID_KEY,
   resumeSessionById,
+  type ISessionScopeHandle,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
 import type { SessionMeta } from '@moonshot-ai/agent-core-v2/session/sessionMetadata/sessionMetadata';
@@ -56,5 +57,14 @@ export async function updateSessionProfile(
     });
   }
 
-  return { ...(await metadata.read()), workspaceId: session.accessor.get(ISessionContext).workspaceId };
+  return liveSessionFields(session);
+}
+
+export async function liveSessionFields(
+  session: ISessionScopeHandle,
+): Promise<SessionMeta & { readonly workspaceId: string }> {
+  return {
+    ...(await session.accessor.get(ISessionMetadata).read()),
+    workspaceId: session.accessor.get(ISessionContext).workspaceId,
+  };
 }

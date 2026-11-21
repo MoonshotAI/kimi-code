@@ -110,7 +110,7 @@ import {
   applySessionAgentConfig,
   creationMainAgentBinding,
 } from './sessionAgentConfig';
-import { customSessionMetadata, updateSessionProfile } from './sessionProfile';
+import { customSessionMetadata, liveSessionFields, updateSessionProfile } from './sessionProfile';
 
 interface SessionRouteHost {
   post(
@@ -275,14 +275,8 @@ export function registerSessionsRoutes(
             if (appliesSettings) await applyAgentConfigToSession(session, settings);
           },
         });
-        const metadata = handle.accessor.get(ISessionMetadata);
-        if (typeof body.title === 'string') await metadata.setTitle(body.title);
-        const fields = { ...(await metadata.read()), workspaceId: handle.accessor.get(ISessionContext).workspaceId };
-        const session = toWireSession(
-          fields,
-          await requireSessionCwd(core, fields),
-          resolveSessionFacts(core, fields.id),
-        );
+        if (typeof body.title === 'string') await handle.accessor.get(ISessionMetadata).setTitle(body.title);
+        const session = await liveWireSession(core, handle);
         core.accessor.get(IEventService).publish(
           new SessionCreated({ payload: { agentId: 'main', sessionId: session.id, session } }),
         );
@@ -1233,10 +1227,7 @@ async function requireSessionCwd(
 }
 
 async function liveWireSession(core: Scope, handle: ISessionScopeHandle): Promise<Session> {
-  const fields = {
-    ...(await handle.accessor.get(ISessionMetadata).read()),
-    workspaceId: handle.accessor.get(ISessionContext).workspaceId,
-  };
+  const fields = await liveSessionFields(handle);
   return toWireSession(fields, await requireSessionCwd(core, fields), resolveSessionFacts(core, fields.id));
 }
 
