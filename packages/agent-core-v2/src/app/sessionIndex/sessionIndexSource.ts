@@ -1,6 +1,6 @@
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
-import { sessionPlacementOf, sessionWorkDir } from '#/session/workspaceContext/workspaceRoots';
+import { sessionWorkDir } from '#/session/workspaceContext/workspaceRoots';
 
 import { CHILD_SESSION_KIND, CHILD_SESSION_KIND_KEY, type SessionSummary } from './sessionIndex';
 import { SESSION_INDEX_DIRTY_DIR } from './sessionIndexDirtyJournal';
@@ -259,11 +259,10 @@ export async function readSessionSummary(
   const environmentCwd = typeof meta['environmentCwd'] === 'string'
     ? meta['environmentCwd']
     : undefined;
-  const placement = sessionPlacementOf({ cwd: recoverCwd(meta), environmentId, environmentCwd });
   return buildSessionSummary({
     id: sessionId,
     workspaceId,
-    cwd: sessionWorkDir(placement, primaryDir),
+    cwd: sessionWorkDir({ cwd: recoverCwd(meta), environmentId, environmentCwd }, primaryDir),
     environmentId,
     environmentCwd,
     title: typeof meta['title'] === 'string' ? meta['title'] : undefined,

@@ -15,7 +15,7 @@ import type { SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
 import { ISessionLockService, type SessionLockLease } from '#/persistence/interface/sessionLock';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionActivityView } from '#/session/sessionActivity/sessionActivity';
-import { sessionPlacementOf, sessionWorkDir } from '#/session/workspaceContext/workspaceRoots';
+import { sessionWorkDir } from '#/session/workspaceContext/workspaceRoots';
 import {
   type CreateChildSessionOptions,
   type ForkSessionOptions,
@@ -510,7 +510,7 @@ export class SessionManager implements ISessionManager {
     await this.environments.ready;
     return this.controllerForWorkspace({
       workspaceId: summary.workspaceId,
-      reviveFrom: sessionWorkDir(sessionPlacementOf(summary), undefined),
+      reviveFrom: sessionWorkDir(summary, undefined),
     });
   }
 }

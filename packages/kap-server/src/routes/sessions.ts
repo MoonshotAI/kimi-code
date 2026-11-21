@@ -53,7 +53,6 @@ import {
 } from '@moonshot-ai/agent-core-v2/workspace/sessionLifecycle/internal/addressing';
 import { SessionMetaUpdated } from '@moonshot-ai/agent-core-v2/session/sessionMetadata/sessionMetaEvents';
 import {
-  sessionPlacementOf,
   sessionWorkDir,
   type SessionPlacementFacts,
   type SessionWorkDirPath,
@@ -816,7 +815,7 @@ async function forkSessionAction(
     });
     const session = toWireSession(
       { ...meta, workspaceId: lease.instance.program.workspaceId },
-      sessionWorkDir(sessionPlacementOf(meta), lease.instance.root),
+      sessionWorkDir(meta, lease.instance.root),
       resolveSessionFacts(core, meta.id),
     );
     core.accessor
@@ -1212,7 +1211,7 @@ export async function sessionCwd(
   session: SessionPlacementFacts & { readonly workspaceId: string },
 ): Promise<SessionWorkDirPath | undefined> {
   const root = (await core.accessor.get(IWorkspaceService).get(session.workspaceId))?.root;
-  return sessionWorkDir(sessionPlacementOf(session), root);
+  return sessionWorkDir(session, root);
 }
 
 async function requireSessionCwd(

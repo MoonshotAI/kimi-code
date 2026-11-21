@@ -46,7 +46,6 @@ import type {
 import { ErrorCodes, isError2 } from '@moonshot-ai/agent-core-v2';
 import { sameDir } from '@moonshot-ai/agent-core-v2/_base/utils/workdir-slug';
 import {
-  sessionPlacementOf,
   sessionWorkDir,
 } from '@moonshot-ai/agent-core-v2/session/workspaceContext/workspaceRoots';
 import { RPCError } from '@moonshot-ai/klient';
@@ -555,7 +554,7 @@ function sessionCwdOf(
   summary: SessionSummary,
   projectRoots: ReadonlyMap<string, string>,
 ): string | undefined {
-  return sessionWorkDir(sessionPlacementOf(summary), projectRoots.get(summary.workspaceId));
+  return sessionWorkDir(summary, projectRoots.get(summary.workspaceId));
 }
 
 function sessionSummaryToSessionInfo(summary: SessionSummary, cwd: string | undefined): SessionInfo {

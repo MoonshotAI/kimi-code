@@ -21,26 +21,18 @@ export interface SessionPlacementFacts {
   readonly environmentCwd?: string;
 }
 
-export type SessionPlacement =
+type SessionPlacement =
   | { readonly kind: 'pinned'; readonly workDir: string }
   | { readonly kind: 'follows-project-root'; readonly createdIn?: string }
   | { readonly kind: 'remote'; readonly hostCwd?: string };
 
-export function sessionPlacementOf(facts: SessionPlacementFacts): SessionPlacement {
-  if ((facts.environmentId ?? LOCAL_ENVIRONMENT_ID) !== LOCAL_ENVIRONMENT_ID) {
-    return { kind: 'remote', hostCwd: facts.cwd };
-  }
-  return facts.environmentCwd === undefined
-    ? { kind: 'follows-project-root', createdIn: facts.cwd }
-    : { kind: 'pinned', workDir: facts.environmentCwd };
-}
-
-export function sessionWorkDir(placement: SessionPlacement, projectRoot: string): SessionWorkDirPath;
-export function sessionWorkDir(placement: SessionPlacement, projectRoot: string | undefined): SessionWorkDirPath | undefined;
+export function sessionWorkDir(facts: SessionPlacementFacts, projectRoot: string): SessionWorkDirPath;
+export function sessionWorkDir(facts: SessionPlacementFacts, projectRoot: string | undefined): SessionWorkDirPath | undefined;
 export function sessionWorkDir(
-  placement: SessionPlacement,
+  facts: SessionPlacementFacts,
   projectRoot: string | undefined,
 ): SessionWorkDirPath | undefined {
+  const placement = sessionPlacementOf(facts);
   switch (placement.kind) {
     case 'pinned':
       return placement.workDir as SessionWorkDirPath;
@@ -49,6 +41,15 @@ export function sessionWorkDir(
     case 'remote':
       return (placement.hostCwd ?? projectRoot) as SessionWorkDirPath | undefined;
   }
+}
+
+function sessionPlacementOf(facts: SessionPlacementFacts): SessionPlacement {
+  if ((facts.environmentId ?? LOCAL_ENVIRONMENT_ID) !== LOCAL_ENVIRONMENT_ID) {
+    return { kind: 'remote', hostCwd: facts.cwd };
+  }
+  return facts.environmentCwd === undefined
+    ? { kind: 'follows-project-root', createdIn: facts.cwd }
+    : { kind: 'pinned', workDir: facts.environmentCwd };
 }
 
 export function resolveEffectiveWorkspaceRoots(
@@ -62,7 +63,7 @@ export function resolveEffectiveWorkspaceRoots(
   const primaryDir = local ? workspace.primaryByWorkspace[session.workspaceId] : undefined;
   const followsPrimary = local && binding?.cwd === undefined && primaryDir !== undefined;
   const workDir = local
-    ? sessionWorkDir(sessionPlacementOf({ cwd: session.cwd, environmentCwd: binding?.cwd }), primaryDir) ?? session.cwd
+    ? sessionWorkDir({ cwd: session.cwd, environmentCwd: binding?.cwd }, primaryDir) ?? session.cwd
     : binding?.cwd ?? host?.cwd ?? host?.homeDir ?? session.cwd;
   const workDirKey = workspaceRootKey(workDir);
   const seen = new Set([workDirKey]);

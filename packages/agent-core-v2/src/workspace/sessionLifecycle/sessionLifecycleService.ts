@@ -71,7 +71,7 @@ import { ISessionSkillCatalogData } from '#/features/skill/session/skillCatalogD
 import { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
 import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
 import { ISessionWorkspaceInfo } from '#/session/workspaceInfo/workspaceInfo';
-import { sessionPlacementOf, sessionWorkDir } from '#/session/workspaceContext/workspaceRoots';
+import { sessionWorkDir } from '#/session/workspaceContext/workspaceRoots';
 import { ISessionWorkdir } from '#/session/workdir/workdir';
 import {
   drainSessionMetadataWrites,
@@ -408,12 +408,10 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
   }
 
   private workDirOfBinding(fallbackCwd: string, environment: EnvironmentBinding | undefined): string {
-    const placement = sessionPlacementOf({
-      cwd: fallbackCwd,
-      environmentId: environment?.environmentId,
-      environmentCwd: environment?.cwd,
-    });
-    return sessionWorkDir(placement, this.workspaceContext.meta.root);
+    return sessionWorkDir(
+      { cwd: fallbackCwd, environmentId: environment?.environmentId, environmentCwd: environment?.cwd },
+      this.workspaceContext.meta.root,
+    );
   }
 
   private async openWorkdir(
@@ -869,7 +867,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       );
       await this.appendSessionIndexEntry(
         targetId,
-        sessionWorkDir(sessionPlacementOf(meta), this.workspaceContext.meta.root),
+        sessionWorkDir(meta, this.workspaceContext.meta.root),
       );
       this._onDidForkSession.fire({ sourceSessionId: sourceId, sessionId: targetId });
       return meta;

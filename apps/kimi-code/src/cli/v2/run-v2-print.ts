@@ -75,7 +75,6 @@ import type {
 } from '@moonshot-ai/agent-core-v2/agent/toolExecutor/toolExecutorEvents';
 import { sameDir } from '@moonshot-ai/agent-core-v2/_base/utils/workdir-slug';
 import {
-  sessionPlacementOf,
   sessionWorkDir,
 } from '@moonshot-ai/agent-core-v2/session/workspaceContext/workspaceRoots';
 
@@ -395,7 +394,7 @@ async function resolveNativeSession(
       throw new Error(`Session "${opts.session}" not found.`);
     }
     const project = await services.get(IWorkspaceService).get(target.workspaceId);
-    const targetDir = sessionWorkDir(sessionPlacementOf(target), project?.root);
+    const targetDir = sessionWorkDir(target, project?.root);
     if (targetDir !== undefined && !sameDir(targetDir, workDir)) {
       const hint = resumeElsewhereHint(opts.session, targetDir);
       stderr.write(`${hint.summary}\n${hint.detail}\n\n`);

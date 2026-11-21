@@ -6,7 +6,7 @@ import { ISessionManager, type ISessionManager as SessionManager } from '#/app/s
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { ErrorCodes, isError2 } from '#/errors';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
-import { sessionPlacementOf, sessionWorkDir } from '#/session/workspaceContext/workspaceRoots';
+import { sessionWorkDir } from '#/session/workspaceContext/workspaceRoots';
 import type { ResumeSessionOptions } from '#/workspace/sessionLifecycle/sessionLifecycle';
 import { IWorkspaceInstanceManager, type WorkspaceInstanceLease } from '#/workspace/workspaceInstance/workspaceInstanceManager';
 
@@ -27,7 +27,7 @@ export async function programForSession(
   if (summary === undefined) return undefined;
   return accessor.get(IWorkspaceInstanceManager).acquire({
     workspaceId: summary.workspaceId,
-    reviveFrom: sessionWorkDir(sessionPlacementOf(summary), undefined),
+    reviveFrom: sessionWorkDir(summary, undefined),
   });
 }
 

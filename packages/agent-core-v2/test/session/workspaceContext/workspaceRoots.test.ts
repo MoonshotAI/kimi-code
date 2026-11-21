@@ -2,67 +2,36 @@ import { describe, expect, it } from 'vitest';
 
 import {
   resolveEffectiveWorkspaceRoots,
-  sessionPlacementOf,
   sessionWorkDir,
 } from '#/session/workspaceContext/workspaceRoots';
 
-describe('session placement', () => {
-  it('reads a local session with an environment cwd as pinned there', () => {
-    expect(sessionPlacementOf({ cwd: '/repo', environmentCwd: '/repo-fix' })).toEqual({
-      kind: 'pinned',
-      workDir: '/repo-fix',
-    });
-    expect(sessionPlacementOf({ environmentId: 'local', environmentCwd: '/repo-fix' })).toEqual({
-      kind: 'pinned',
-      workDir: '/repo-fix',
-    });
-  });
-
-  it('reads a local session without an environment cwd as following the project root', () => {
-    expect(sessionPlacementOf({ cwd: '/created-in' })).toEqual({
-      kind: 'follows-project-root',
-      createdIn: '/created-in',
-    });
-    expect(sessionPlacementOf({})).toEqual({ kind: 'follows-project-root', createdIn: undefined });
-  });
-
-  it('reads a session bound to another environment as remote with its host cwd', () => {
-    expect(sessionPlacementOf({ cwd: '/host', environmentId: 'ssh', environmentCwd: '/remote' })).toEqual({
-      kind: 'remote',
-      hostCwd: '/host',
-    });
-  });
-});
-
 describe('sessionWorkDir', () => {
-  it('keeps a pinned session in its own directory whatever the project root is', () => {
-    const pinned = sessionPlacementOf({ cwd: '/repo', environmentCwd: '/repo-fix' });
+  it('keeps a local session with an environment cwd in its own directory whatever the project root is', () => {
+    const pinned = { cwd: '/repo', environmentCwd: '/repo-fix' };
 
     expect(sessionWorkDir(pinned, '/repo')).toBe('/repo-fix');
     expect(sessionWorkDir(pinned, '/moved')).toBe('/repo-fix');
     expect(sessionWorkDir(pinned, undefined)).toBe('/repo-fix');
+    expect(sessionWorkDir({ environmentId: 'local', environmentCwd: '/repo-fix' }, '/repo')).toBe('/repo-fix');
   });
 
   it('moves an old session without an environment cwd with the project root', () => {
-    const old = sessionPlacementOf({ cwd: '/created-in' });
+    const old = { cwd: '/created-in' };
 
     expect(sessionWorkDir(old, '/repo')).toBe('/repo');
     expect(sessionWorkDir(old, '/moved')).toBe('/moved');
+    expect(sessionWorkDir({}, '/repo')).toBe('/repo');
   });
 
   it('falls back to the recorded cwd of an old session whose project is gone', () => {
-    expect(sessionWorkDir(sessionPlacementOf({ cwd: '/created-in' }), undefined)).toBe('/created-in');
-    expect(sessionWorkDir(sessionPlacementOf({}), undefined)).toBeUndefined();
+    expect(sessionWorkDir({ cwd: '/created-in' }, undefined)).toBe('/created-in');
+    expect(sessionWorkDir({}, undefined)).toBeUndefined();
   });
 
-  it('reports a remote session at its host cwd and never at the remote environment cwd', () => {
-    expect(
-      sessionWorkDir(sessionPlacementOf({ cwd: '/host', environmentId: 'ssh', environmentCwd: '/remote' }), '/repo'),
-    ).toBe('/host');
-    expect(
-      sessionWorkDir(sessionPlacementOf({ environmentId: 'ssh', environmentCwd: '/remote' }), '/repo'),
-    ).toBe('/repo');
-    expect(sessionWorkDir(sessionPlacementOf({ environmentId: 'ssh', environmentCwd: '/remote' }), undefined)).toBeUndefined();
+  it('reports a session bound to another environment at its host cwd and never at the remote environment cwd', () => {
+    expect(sessionWorkDir({ cwd: '/host', environmentId: 'ssh', environmentCwd: '/remote' }, '/repo')).toBe('/host');
+    expect(sessionWorkDir({ environmentId: 'ssh', environmentCwd: '/remote' }, '/repo')).toBe('/repo');
+    expect(sessionWorkDir({ environmentId: 'ssh', environmentCwd: '/remote' }, undefined)).toBeUndefined();
   });
 });
 

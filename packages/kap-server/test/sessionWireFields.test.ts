@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { sessionPlacementOf, sessionWorkDir } from '@moonshot-ai/agent-core-v2/session/workspaceContext/workspaceRoots';
+import { sessionWorkDir } from '@moonshot-ai/agent-core-v2/session/workspaceContext/workspaceRoots';
 
 import { toWireSession, type SessionFacts, type SessionWireFields } from '../src/routes/sessions';
 
-const cwd = sessionWorkDir(sessionPlacementOf({ cwd: '/tmp/ws' }), '/tmp/ws');
+const cwd = sessionWorkDir({ cwd: '/tmp/ws' }, '/tmp/ws');
 
 const fields: SessionWireFields = {
   id: 's1',

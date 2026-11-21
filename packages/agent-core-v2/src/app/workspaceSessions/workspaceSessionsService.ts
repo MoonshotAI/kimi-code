@@ -6,7 +6,7 @@ import { ISessionIndex, type SessionSummary } from '#/app/sessionIndex/sessionIn
 import { IWorkspaceService } from '#/app/workspace/workspace';
 import { IWorkspaceAliases } from '#/app/workspaceAliases/workspaceAliases';
 import type { Page } from '#/persistence/interface/queryStore';
-import { sessionPlacementOf, sessionWorkDir } from '#/session/workspaceContext/workspaceRoots';
+import { sessionWorkDir } from '#/session/workspaceContext/workspaceRoots';
 
 import { IWorkspaceSessions, RECENT_SESSIONS_LIMIT, type WorkdirSessionQuery } from './workspaceSessions';
 
@@ -46,7 +46,7 @@ export class WorkspaceSessionsService implements IWorkspaceSessions {
         limit: query.limit === undefined ? undefined : WORKDIR_SCAN_PAGE_SIZE,
       });
       for (const summary of page.items) {
-        if (!sameDir(sessionWorkDir(sessionPlacementOf(summary), project.root), dir)) continue;
+        if (!sameDir(sessionWorkDir(summary, project.root), dir)) continue;
         items.push(summary);
         if (items.length === query.limit) return { items, nextCursor: summary.id };
       }

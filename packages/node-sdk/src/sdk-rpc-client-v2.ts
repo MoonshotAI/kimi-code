@@ -139,7 +139,6 @@ import { buildDaemonFileUrl } from '@moonshot-ai/agent-core-v2/agent/media/media
 import { join } from 'node:path';
 
 import {
-  sessionPlacementOf,
   sessionWorkDir,
 } from '@moonshot-ai/agent-core-v2/session/workspaceContext/workspaceRoots';
 import { ContextClear } from '@moonshot-ai/agent-core-v2/agent/contextMemory/contextEvents';
@@ -1489,7 +1488,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     item: V2SessionSummary,
     workspacesById: ReadonlyMap<string, { readonly root: string }>,
   ): SessionSummary | undefined {
-    const workDir = sessionWorkDir(sessionPlacementOf(item), workspacesById.get(item.workspaceId)?.root);
+    const workDir = sessionWorkDir(item, workspacesById.get(item.workspaceId)?.root);
     if (workDir === undefined) return undefined;
     const liveHandle = getLiveSessionById(this.engineAccessor, item.id);
     const effectiveItem =
