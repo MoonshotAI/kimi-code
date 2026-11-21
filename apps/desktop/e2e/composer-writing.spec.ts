@@ -1,5 +1,5 @@
 import { expect, test } from './fixtures/app';
-import { messageProblems, say } from './fixtures/model';
+import { held, messageProblems, say } from './fixtures/model';
 import { sidebarOf } from './fixtures/sessions';
 
 const LINES = ['Plan the migration:', '- move the config loader', '- rename the env flags', '- update the docs', '- keep the old flags working'];
@@ -7,6 +7,10 @@ const MULTILINE = LINES.join('\n');
 const SECOND = 'Now summarise the plan in one sentence';
 const DRAFT = 'unsent thought';
 const OPENER = 'Start a migration planning session';
+
+function prediction(message: string | null): ReturnType<typeof say> {
+  return say(JSON.stringify({ show: message === null ? 'no' : 'yes', message: message ?? '' }));
+}
 
 test('a multi-line prompt is written, expanded, sent verbatim and recalled from history after a relaunch', async ({ app, model }) => {
   model.script(say('Ready to plan.'), say('Migration plan noted.'), say('One sentence summary.'));
@@ -124,5 +128,91 @@ test('a multi-line prompt is written, expanded, sent verbatim and recalled from 
     await expect(app.window.getByRole('list').first().getByText('Sent again.', { exact: true })).toBeVisible();
     await expect(restoredLines).toHaveText(['']);
     await expect(app.window.getByRole('alert')).toHaveCount(0);
+  });
+});
+
+test.describe('next-prompt placeholder recall', () => {
+  test.use({ appEnv: { KIMI_CODE_EXPERIMENTAL_PROMPT_PREDICTION: '1' } });
+
+  test('shows predictions in the placeholder and waits for an in-flight recall without cancelling input', async ({ app, model }) => {
+    const tabPrediction = 'Recall this prediction with Tab';
+    const rightPrediction = 'Recall this prediction with Right Arrow';
+    const dismissedPrediction = 'Dismiss this prediction only';
+    const draft = 'keep this draft';
+    const predictionHold = model.hold('composer-tab-prediction');
+    model.script(
+      say('First answer.'),
+      held('composer-tab-prediction', prediction(tabPrediction)),
+      say('Second answer.'),
+      prediction(rightPrediction),
+      say('Third answer.'),
+      prediction(dismissedPrediction),
+      say('Fourth answer.'),
+      prediction(null),
+    );
+    const input = app.window.getByRole('combobox', { name: 'Message input' });
+    const lines = input.getByRole('paragraph');
+    const placeholder = app.window.locator('.composer-placeholder-overlay');
+    const transcript = app.window.getByRole('list').first();
+
+    await expect(placeholder).toHaveText('Type a message…');
+    await app.startTurn(OPENER);
+    await predictionHold.reached();
+    await expect(placeholder).toHaveText('Type a message…');
+    await input.click();
+    await app.window.keyboard.type('another draft');
+    await expect(placeholder).toBeHidden();
+    await app.window.keyboard.press('ControlOrMeta+a');
+    await app.window.keyboard.press('Backspace');
+    await app.window.keyboard.type(' ');
+    await expect(placeholder).toHaveText('Type a message…');
+    await app.window.keyboard.press('Tab');
+    await expect(placeholder).toHaveText('Type a message…');
+    predictionHold.release();
+    await expect(lines).toHaveText([tabPrediction]);
+    await expect(placeholder).toBeHidden();
+    expect(model.requests()).toHaveLength(2);
+
+    await app.window.keyboard.press('ControlOrMeta+a');
+    await app.window.keyboard.press('Backspace');
+    await expect(placeholder).toHaveText(tabPrediction);
+    await app.window.keyboard.press('Tab');
+    await expect(lines).toHaveText([tabPrediction]);
+    expect(model.requests()).toHaveLength(2);
+    await app.window.keyboard.press('Enter');
+    const second = await model.waitForRequest(2);
+    expect(second.userTextsSinceReply).toEqual([tabPrediction]);
+    await expect(transcript.getByText('Second answer.', { exact: true })).toBeVisible();
+
+    await expect(placeholder).toHaveText(rightPrediction);
+    const descriptionId = await input.getAttribute('aria-describedby');
+    expect(descriptionId).toBeTruthy();
+    await expect(app.window.locator(`#${descriptionId}`)).toHaveText(`Prediction: ${rightPrediction}. Press Tab or Right Arrow to insert.`);
+    await app.window.evaluate(() => window.dispatchEvent(new Event('blur')));
+    await expect(placeholder).toBeVisible();
+    await input.click();
+    await app.window.keyboard.type('another draft');
+    await app.window.keyboard.press('ControlOrMeta+a');
+    await app.window.keyboard.press('Backspace');
+    await expect(placeholder).toHaveText(rightPrediction);
+    await app.window.keyboard.press('ArrowRight');
+    await expect(lines).toHaveText([rightPrediction]);
+    await app.window.keyboard.press('Enter');
+    const third = await model.waitForRequest(4);
+    expect(third.userTextsSinceReply).toEqual([rightPrediction]);
+    await expect(transcript.getByText('Third answer.', { exact: true })).toBeVisible();
+
+    await expect(placeholder).toHaveText(dismissedPrediction);
+    await input.click();
+    await app.window.keyboard.type(draft);
+    await app.window.keyboard.press('Escape');
+    await expect(lines).toHaveText([draft]);
+    await expect(placeholder).toBeHidden();
+    expect(model.requests()).toHaveLength(6);
+
+    await app.window.keyboard.press('Enter');
+    await expect(transcript.getByText('Fourth answer.', { exact: true })).toBeVisible();
+    await expect(placeholder).toHaveText('Type a message…');
+    expect(model.requests()).toHaveLength(8);
   });
 });

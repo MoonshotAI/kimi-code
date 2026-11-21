@@ -2,6 +2,7 @@ export default {
   inputLabel: 'Message input',
   placeholder: 'Type a message…',
   commandArgumentHint: 'Type {argument} after {command}',
+  promptPredictionHint: 'Prediction: {prediction}. Press Tab or Right Arrow to insert.',
   send: 'Send ↵',
   continue: 'Continue',
   queueLabel: 'Queue',

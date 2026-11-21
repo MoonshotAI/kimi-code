@@ -29,6 +29,7 @@ import {
   PROMPT_PREDICTION_INSTRUCTION,
   PROMPT_PREDICTION_MAX_CHARS,
   PROMPT_PREDICTION_MAX_OUTPUT_TOKENS,
+  PROMPT_PREDICTION_RESPONSE_FORMAT,
   PROMPT_PREDICTION_TIMEOUT_MS,
   type PromptPredictionCancelReason,
   type PromptPredictionInput,
@@ -156,6 +157,7 @@ export class SessionPromptPredictionService extends Disposable implements ISessi
           content: {
             messages: historyFromContext([...contextSnapshot, createUserMessage(PROMPT_PREDICTION_INSTRUCTION)]),
           },
+          model: { responseFormat: PROMPT_PREDICTION_RESPONSE_FORMAT },
           profile: {},
         },
         { signal: active.deadline.signal },
@@ -168,12 +170,14 @@ export class SessionPromptPredictionService extends Disposable implements ISessi
       active.usage = outcome.usage;
       active.requestId = outcome.requestId ?? trace?.requestId;
       active.timing = outcome.timing;
-      const prediction = predictionText(outcome);
-      if (prediction === null) {
-        active.outcome = outcome.message.toolCalls.length > 0 ? 'tool_call' : 'invalid';
+      const prediction = parsePrediction(outcome);
+      if (prediction.text === null) {
+        active.outcome = outcome.message.toolCalls.length > 0
+          ? 'tool_call'
+          : prediction.empty ? 'empty' : 'invalid';
         return null;
       }
-      active.predictionChars = prediction.length;
+      active.predictionChars = prediction.text.length;
       if ((await abortable(scope.plan.status(), active.deadline.signal)) !== null) {
         active.outcome = 'stale';
         return null;
@@ -183,7 +187,7 @@ export class SessionPromptPredictionService extends Disposable implements ISessi
         return null;
       }
       active.outcome = 'generated';
-      return prediction;
+      return prediction.text;
     } catch {
       active.outcome = active.deadline.timedOut()
         ? 'timeout'
@@ -325,17 +329,38 @@ export class SessionPromptPredictionService extends Disposable implements ISessi
   }
 }
 
-function predictionText(outcome: Extract<LlmOutcome, { type: 'done' }>): string | null {
-  if (outcome.finish?.finishReason !== 'completed' || outcome.message.toolCalls.length > 0) return null;
-  const parts = outcome.message.content;
-  if (parts.some((part) => part.type !== 'text' && part.type !== 'think')) return null;
-  const text = parts.map((part) => part.type === 'text' ? part.text : '').join('').trim();
-  if (
-    text.length === 0 ||
-    text.length > PROMPT_PREDICTION_MAX_CHARS ||
-    /[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F]/.test(text)
-  ) {
-    return null;
+function parsePrediction(outcome: Extract<LlmOutcome, { type: 'done' }>): { readonly text: string | null; readonly empty: boolean } {
+  if (outcome.finish?.finishReason !== 'completed' || outcome.message.toolCalls.length > 0) {
+    return { text: null, empty: false };
   }
-  return text;
+  const parts = outcome.message.content;
+  if (parts.some((part) => part.type !== 'text' && part.type !== 'think')) return { text: null, empty: false };
+  const text = parts.map((part) => part.type === 'text' ? part.text : '').join('').trim();
+  if (text.length === 0) return { text: null, empty: true };
+  let value: unknown;
+  try {
+    value = JSON.parse(text);
+  } catch {
+    return { text: null, empty: false };
+  }
+  if (
+    typeof value !== 'object' ||
+    value === null ||
+    Array.isArray(value) ||
+    Object.keys(value).some((key) => key !== 'show' && key !== 'message')
+  ) {
+    return { text: null, empty: false };
+  }
+  const { show, message } = value as { show?: unknown; message?: unknown };
+  if ((show !== 'yes' && show !== 'no') || typeof message !== 'string') return { text: null, empty: false };
+  if (show === 'no') return { text: null, empty: true };
+  const prediction = message.trim();
+  if (prediction.length === 0) return { text: null, empty: true };
+  if (
+    prediction.length > PROMPT_PREDICTION_MAX_CHARS ||
+    /[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F]/.test(prediction)
+  ) {
+    return { text: null, empty: false };
+  }
+  return { text: prediction, empty: false };
 }

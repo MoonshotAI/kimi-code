@@ -5,6 +5,7 @@ import { textToDoc } from '../../src/model';
 class FakeEl {
   className = '';
   innerHTML = '';
+  textContent = '';
   hidden = false;
   readonly attrs = new Map<string, string>();
 
@@ -39,6 +40,13 @@ describe('composer placeholder overlay', () => {
     expect(el.getAttribute('aria-hidden')).toBe('true');
     expect(el.hidden).toBe(true);
     expect(el.innerHTML).toBe('Ask Kimi');
+
+    const prediction = buildComposerPlaceholderOverlay('Fix <tests>') as unknown as FakeEl;
+    expect(prediction.tagName).toBe('SPAN');
+    expect(prediction.className).toBe('composer-placeholder-overlay');
+    expect(prediction.getAttribute('aria-hidden')).toBe('true');
+    expect(prediction.hidden).toBe(true);
+    expect(prediction.innerHTML).toBe('Fix &lt;tests&gt;');
   });
 
   it('keeps exact kbd pairs and escapes every other tag on updates', () => {
@@ -73,7 +81,7 @@ describe('composer placeholder overlay', () => {
     expect(composerPlaceholderAnchor({ left: 22, top: 10 })).toEqual({ left: 22, top: 10 });
   });
 
-  it('anchors after an inline prefix including its trailing margin', () => {
+  it('anchors after inline and touch prefixes including their margins', () => {
     expect(
       composerPlaceholderAnchor(
         { left: 22, top: 10 },
@@ -81,9 +89,6 @@ describe('composer placeholder overlay', () => {
         { lane: 'inline', marginRight: 6, marginBottom: 0 },
       ),
     ).toEqual({ left: 102, top: 10 });
-  });
-
-  it('anchors in the text lane below a touch prefix', () => {
     expect(
       composerPlaceholderAnchor(
         { left: 22, top: 12 },

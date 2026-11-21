@@ -47,6 +47,10 @@ function finish(
   };
 }
 
+function structured(message: string | null): string {
+  return JSON.stringify({ show: message === null ? 'no' : 'yes', message: message ?? '' });
+}
+
 describe('SessionPromptPredictionService', () => {
   it('keeps prediction isolated, strictly once, cancellable, and stale-safe', async () => {
     let enabled = false;
@@ -55,7 +59,7 @@ describe('SessionPromptPredictionService', () => {
       { role: 'user', content: [{ type: 'text', text: 'hello' }] },
     ];
     const originalContext = contextSnapshot;
-    let nextResult = () => Promise.resolve(finish('inspect the failing test'));
+    let nextResult = () => Promise.resolve(finish(structured('inspect the failing test')));
     const requests: Array<{
       options: OperationLoopRequesterOptions;
       input?: Parameters<CoreLoopRequester['generate']>[0];
@@ -147,13 +151,29 @@ describe('SessionPromptPredictionService', () => {
       turnId: 0,
       requestKind: 'prompt_prediction',
     });
+    expect(requests[0]?.input?.model?.responseFormat).toEqual({
+      type: 'json_schema',
+      jsonSchema: {
+        name: 'next_prompt_prediction',
+        strict: true,
+        schema: {
+          type: 'object',
+          properties: {
+            show: { type: 'string', enum: ['yes', 'no'] },
+            message: { type: 'string' },
+          },
+          required: ['show', 'message'],
+          additionalProperties: false,
+        },
+      },
+    });
     expect(requests[0]?.input?.content?.messages).toHaveLength(2);
     expect(requests[0]?.input?.content?.messages?.at(-1)).toEqual({
       role: 'user',
       content: [{
         type: 'text',
         text: expect.stringMatching(
-          /predict what THEY would type[\s\S]*NEVER SUGGEST[\s\S]*Stay silent if the next step[\s\S]*Format: 2-12 words, match the user's style and language\. Or nothing\./,
+          /predict what THEY would type[\s\S]*NEVER SUGGEST[\s\S]*Format: 2-12 words, match the user's style and language\.[\s\S]*Return JSON matching the provided schema\./,
         ),
       }],
     });
@@ -162,18 +182,18 @@ describe('SessionPromptPredictionService', () => {
     expect(contextSnapshot).toHaveLength(1);
 
     lastEnded = { turnId: 1, reason: 'completed' };
-    nextResult = () => Promise.resolve(finish('', [{ type: 'function', id: 'call-1', name: 'Read', arguments: '{}' }]));
+    nextResult = () => Promise.resolve(finish(structured('ignored'), [{ type: 'function', id: 'call-1', name: 'Read', arguments: '{}' }]));
     await expect(service.predict({ predictionId: 'tools', expectedTurnId: 1 })).resolves.toBeNull();
     expect(contextSnapshot).toBe(originalContext);
     expect(requests).toHaveLength(2);
 
     lastEnded = { turnId: 2, reason: 'completed' };
-    nextResult = () => Promise.resolve(finish('run this\u001b[2J'));
+    nextResult = () => Promise.resolve(finish(structured('run this\u001b[2J')));
     await expect(service.predict({ predictionId: 'control', expectedTurnId: 2 })).resolves.toBeNull();
     expect(requests).toHaveLength(3);
 
     lastEnded = { turnId: 3, reason: 'completed' };
-    nextResult = () => Promise.resolve(finish('partial', [], 'filtered'));
+    nextResult = () => Promise.resolve(finish(structured('partial'), [], 'filtered'));
     await expect(service.predict({ predictionId: 'filtered', expectedTurnId: 3 })).resolves.toBeNull();
     expect(requests).toHaveLength(4);
 
@@ -203,7 +223,7 @@ describe('SessionPromptPredictionService', () => {
     const stale = service.predict({ predictionId: 'stale', expectedTurnId: 5 });
     await vi.waitFor(() => expect(requests).toHaveLength(6));
     contextSnapshot = [];
-    resolveStale(finish('must not leak'));
+    resolveStale(finish(structured('must not leak')));
     await expect(stale).resolves.toBeNull();
 
     lastEnded = { turnId: 6, reason: 'completed' };
@@ -244,11 +264,28 @@ describe('SessionPromptPredictionService', () => {
     }
 
     lastEnded = { turnId: 8, reason: 'completed' };
-    const disposed = service.predict({ predictionId: 'dispose', expectedTurnId: 8 });
-    await vi.waitFor(() => expect(requests).toHaveLength(9));
+    nextResult = () => Promise.resolve(finish(structured(null)));
+    await expect(service.predict({ predictionId: 'no-prediction', expectedTurnId: 8 })).resolves.toBeNull();
+    expect(requests).toHaveLength(9);
+    expect(telemetry.track2).toHaveBeenCalledWith('prediction_generated', expect.objectContaining({
+      status: 'empty',
+    }));
+
+    lastEnded = { turnId: 9, reason: 'completed' };
+    nextResult = () => Promise.resolve(finish('not json'));
+    await expect(service.predict({ predictionId: 'invalid-json', expectedTurnId: 9 })).resolves.toBeNull();
+    expect(requests).toHaveLength(10);
+    expect(telemetry.track2).toHaveBeenCalledWith('prediction_generated', expect.objectContaining({
+      status: 'invalid',
+    }));
+
+    lastEnded = { turnId: 10, reason: 'completed' };
+    nextResult = () => new Promise<PredictionOutcome>(() => {});
+    const disposed = service.predict({ predictionId: 'dispose', expectedTurnId: 10 });
+    await vi.waitFor(() => expect(requests).toHaveLength(11));
     service.dispose();
     await expect(disposed).resolves.toBeNull();
-    expect(requests[8]?.signal?.aborted).toBe(true);
+    expect(requests[10]?.signal?.aborted).toBe(true);
     expect(telemetry.track2).toHaveBeenCalledWith('prediction_generated', expect.objectContaining({
       status: 'cancelled',
       reason: 'disposed',

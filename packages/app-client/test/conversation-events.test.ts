@@ -98,7 +98,7 @@ function session(id: string): AppSession {
   };
 }
 
-async function boot(opts: { deferPages?: boolean; sessionIds?: string[] } = {}) {
+async function boot(opts: { deferPages?: boolean; sessionIds?: string[]; promptPrediction?: boolean } = {}) {
   vi.stubGlobal('WebSocket', class {});
   vi.resetModules();
   const sessions = (opts.sessionIds ?? ['s1']).map(session);
@@ -135,6 +135,7 @@ async function boot(opts: { deferPages?: boolean; sessionIds?: string[] } = {}) 
       capabilities: {},
       openInApps: [],
       dangerousBypassAuth: false,
+      experimentalFlags: opts.promptPrediction === true ? { prompt_prediction: true } : {},
       backend: 'v2' as const,
     })),
     getConfig: vi.fn(async () => ({ providers: {}, defaultModel: 'model-1' })),
@@ -165,6 +166,8 @@ async function boot(opts: { deferPages?: boolean; sessionIds?: string[] } = {}) 
     listSkills,
     listSkillsForWorkspace: vi.fn(async () => []),
     generateSessionTitle,
+    predictNextPrompt: vi.fn(async () => null),
+    cancelPromptPrediction: vi.fn(async () => true),
     getFileUrl: (fileId: string) => `file:${fileId}`,
     connectEvents: vi.fn((next: KimiEventHandlers) => {
       handlers = next;
@@ -184,8 +187,9 @@ async function boot(opts: { deferPages?: boolean; sessionIds?: string[] } = {}) 
   const frame = (sid: string, next: ConversationFrame) => handlers!.onConversation?.(sid, 'main', next);
   const agentStatus = (sid: string, status: AppAgentState['status'] | 'compacting') =>
     handlers!.onAgentState?.(sid, 'main', status === 'compacting' ? agentState('idle', { compacting: true }) : agentState(status));
-  const header = (ordinal: number, outcome?: ConversationOutcome): ConversationTurnHeader => ({
-    turn_id: `t${ordinal}`,
+  const turnId = (ordinal: number): string => opts.promptPrediction === true ? `t_${ordinal}` : `t${ordinal}`;
+  const header = (ordinal: number, outcome?: ConversationOutcome, id = turnId(ordinal)): ConversationTurnHeader => ({
+    turn_id: id,
     ordinal,
     turn_number: ordinal + 1,
     kind: 'agent',
@@ -194,13 +198,13 @@ async function boot(opts: { deferPages?: boolean; sessionIds?: string[] } = {}) 
     started_at: AT,
     steps: [],
   });
-  const startTurn = (sid: string, ordinal: number, promptId: string, text: string) => {
+  const startTurn = (sid: string, ordinal: number, promptId: string, text: string, id = turnId(ordinal)) => {
     agentStatus(sid, 'running');
-    frame(sid, { type: 'turn.started', turn: header(ordinal) });
-    frame(sid, { type: 'item.ended', turn_id: `t${ordinal}`, item: opener(promptId, text) });
+    frame(sid, { type: 'turn.started', turn: header(ordinal, undefined, id) });
+    frame(sid, { type: 'item.ended', turn_id: id, item: opener(promptId, text) });
   };
-  const endTurn = (sid: string, ordinal: number, outcome: ConversationOutcome = 'completed') => {
-    frame(sid, { type: 'turn.ended', turn: header(ordinal, outcome) });
+  const endTurn = (sid: string, ordinal: number, outcome: ConversationOutcome = 'completed', id = turnId(ordinal)) => {
+    frame(sid, { type: 'turn.ended', turn: header(ordinal, outcome, id) });
     agentStatus(sid, 'idle');
   };
   const sentPromptId = (index: number) => submitPrompt.mock.calls[index]![1].promptId!;
@@ -345,8 +349,17 @@ describe('conversation events in the client', () => {
     expect(userTexts()).toEqual(['hello there']);
   });
 
-  it('reads the main turn as running from the agent frame, and from the session row only before any frame', async () => {
-    const h = await boot();
+  it('reads the main turn state and drives the prompt prediction lifecycle after a normal turn', async () => {
+    vi.stubGlobal('document', {
+      visibilityState: 'visible',
+      hasFocus: () => true,
+      addEventListener: vi.fn(),
+      title: '',
+    });
+    const h = await boot({ promptPrediction: true });
+    const hasFocus = vi.spyOn(document, 'hasFocus').mockReturnValue(false);
+    const predict = clientApiMock['predictNextPrompt'] as ReturnType<typeof vi.fn>;
+    const cancel = clientApiMock['cancelPromptPrediction'] as ReturnType<typeof vi.fn>;
     h.event('s1', { type: 'sessionWorkChanged', sessionId: 's1', busy: true, mainTurnActive: true });
     expect(h.client.turnActive.value).toBe(true);
     expect(h.client.activity.value).toBe('running');
@@ -357,6 +370,152 @@ describe('conversation events in the client', () => {
 
     h.agentStatus('s1', 'running');
     expect(h.client.working.value).toBe(true);
+
+    expect(h.client.promptPredictionHasTurn.value).toBe(false);
+    predict.mockResolvedValueOnce('next step');
+    h.startTurn('s1', 0, 'msg_remote', 'work');
+    h.endTurn('s1', 0);
+    await vi.waitFor(() => expect(h.client.promptPrediction.value?.text).toBe('next step'));
+    expect(h.client.promptPredictionHasTurn.value).toBe(true);
+    expect(predict).toHaveBeenCalledWith('s1', {
+      predictionId: expect.any(String),
+      expectedTurnId: 0,
+    });
+    const { modeStore } = await import('../src/stores/mode');
+    modeStore().setPlanMode(true);
+    expect(h.client.promptPrediction.value).toBeNull();
+    expect(h.client.acceptPromptPrediction('tab')).toBeNull();
+    modeStore().setPlanMode(false);
+    await vi.waitFor(() => expect(h.client.promptPrediction.value?.text).toBe('next step'));
+    expect(h.client.acceptPromptPrediction('tab')).toBe('next step');
+    expect(h.client.promptPrediction.value).toMatchObject({ accepted: true });
+    h.client.handlePromptPredictionInput();
+    expect(h.client.promptPrediction.value).toMatchObject({ accepted: true });
+    h.client.handlePromptPredictionSubmit('next step edited');
+    expect(h.client.promptPrediction.value).toBeNull();
+
+    let resolvePrediction!: (value: string) => void;
+    const latePrediction = new Promise<string>((resolve) => {
+      resolvePrediction = resolve;
+    });
+    predict.mockReturnValueOnce(latePrediction);
+    h.startTurn('s1', 1, 'msg_next', 'next');
+    h.endTurn('s1', 1);
+    await vi.waitFor(() => expect(predict).toHaveBeenCalledTimes(2));
+    const predictionId = predict.mock.calls[1]![1].predictionId as string;
+    h.client.handlePromptPredictionInput();
+    expect(cancel).not.toHaveBeenCalledWith('s1', predictionId, 'input');
+    resolvePrediction('late result');
+    await vi.waitFor(() => expect(h.client.promptPrediction.value?.text).toBe('late result'));
+    h.endTurn('s1', 1);
+    expect(predict).toHaveBeenCalledTimes(2);
+
+    const { promptStore } = await import('../src/stores/prompt');
+    promptStore().inFlightBySession['s1'] = true;
+    h.startTurn('s1', 2, 'msg_settle', 'settle');
+    h.endTurn('s1', 2);
+    expect(predict).toHaveBeenCalledTimes(2);
+    promptStore().inFlightBySession['s1'] = false;
+    await vi.waitFor(() => expect(predict).toHaveBeenCalledTimes(3));
+
+    const storage = new Map<string, string>();
+    vi.stubGlobal('localStorage', {
+      getItem: (key: string) => storage.get(key) ?? null,
+      setItem: (key: string, value: string) => { storage.set(key, value); },
+      removeItem: (key: string) => { storage.delete(key); },
+    });
+    const { draftStorageKey, safeGetString, safeRemove, safeSetString } = await import('@moonshot-ai/app-core/lib');
+    safeSetString(draftStorageKey('s1'), 'draft');
+    expect(safeGetString(draftStorageKey('s1'))).toBe('draft');
+    h.startTurn('s1', 3, 'msg_draft', 'draft');
+    h.endTurn('s1', 3);
+    safeRemove(draftStorageKey('s1'));
+    expect(predict).toHaveBeenCalledTimes(3);
+
+    const { createPromptPrediction } = await import('../src/client/promptPrediction');
+    let activeSession = 's1';
+    let emptyInput = true;
+    let resolveFirstSession!: (value: string) => void;
+    const directPredict = vi.fn((sessionId: string) => sessionId === 's1'
+      ? new Promise<string>((resolve) => { resolveFirstSession = resolve; })
+      : Promise.resolve(`${sessionId} result`));
+    const directCancel = vi.fn(async () => true);
+    const directController = createPromptPrediction({
+      api: () => ({
+        predictNextPrompt: directPredict,
+        cancelPromptPrediction: directCancel,
+      }),
+      isActiveSession: (sessionId) => sessionId === activeSession,
+      canPredict: (sessionId) => sessionId === activeSession,
+      hasEmptyInput: () => emptyInput,
+    });
+    emptyInput = false;
+    directController.handleTurnEnded('s1', 'first', 0, true);
+    expect(directPredict).not.toHaveBeenCalled();
+    emptyInput = true;
+    expect(directController.accept('tab')).toBeNull();
+    expect(directController.active.value).toBeDefined();
+    resolveFirstSession('first result');
+    await Promise.resolve();
+    await Promise.resolve();
+    directController.handleTurnStarted('s2');
+    directController.handleTurnEnded('s2', 'background', 99, true);
+    expect(directController.suggestion.value).toMatchObject({ text: 'first result' });
+    expect(directPredict).toHaveBeenCalledTimes(1);
+    emptyInput = false;
+    directController.handleInput();
+    expect(directController.suggestion.value).toMatchObject({ text: 'first result', parked: true });
+    emptyInput = true;
+    const parked = directController.suggestion.value;
+    directController.handleInput();
+    expect(directController.suggestion.value).not.toBe(parked);
+    expect(directController.suggestion.value).toMatchObject({ text: 'first result', parked: true });
+    expect(directController.accept('right')).toBe('first result');
+    expect(directController.suggestion.value).toMatchObject({ acceptedRevision: 1 });
+    expect(directController.accept('tab')).toBe('first result');
+    expect(directController.suggestion.value).toMatchObject({ acceptedRevision: 2 });
+    expect(directPredict).toHaveBeenCalledTimes(1);
+    directController.dismiss('submit', 's1');
+    expect(directController.suggestion.value).toBeNull();
+
+    directController.handleTurnEnded('s1', 'pending', 1, true);
+    emptyInput = false;
+    directController.handleInput();
+    expect(directController.active.value).toMatchObject({ parked: true });
+    expect(directCancel).not.toHaveBeenCalledWith('s1', expect.any(String), 'input');
+    emptyInput = true;
+    directController.handleInput();
+    expect(directController.accept('tab')).toBeNull();
+    expect(directController.active.value).toMatchObject({ parked: true, acceptKey: 'tab' });
+    resolveFirstSession('pending result');
+    await vi.waitFor(() => expect(directController.suggestion.value).toMatchObject({ text: 'pending result', accepted: true }));
+    expect(directPredict).toHaveBeenCalledTimes(2);
+    directController.dismiss('submit', 's1');
+
+    directController.dismiss('session', 's1');
+    activeSession = 's2';
+    directController.handleTurnEnded('s2', 'second', 0, true);
+    directController.refresh();
+    await vi.waitFor(() => expect(directPredict).toHaveBeenCalledTimes(3));
+    expect(directPredict).toHaveBeenNthCalledWith(3, 's2', {
+      predictionId: expect.any(String),
+      expectedTurnId: 0,
+    });
+    directController.handleTurnEnded('s2', 'replacement', 0, true);
+    await vi.waitFor(() => expect(directPredict).toHaveBeenCalledTimes(4));
+    expect(directPredict).toHaveBeenNthCalledWith(4, 's2', {
+      predictionId: expect.any(String),
+      expectedTurnId: 0,
+    });
+    directPredict.mockResolvedValueOnce(null);
+    directController.handleTurnEnded('s2', 'empty', 1, true);
+    await vi.waitFor(() => expect(directPredict).toHaveBeenCalledTimes(5));
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(directController.active.value).toBeUndefined();
+    expect(directController.suggestion.value).toBeNull();
+    expect(directController.canAttemptPrediction()).toBe(false);
+    hasFocus.mockRestore();
   });
 
   it('stops the running turn by its opener prompt, else falls back to session cancel', async () => {

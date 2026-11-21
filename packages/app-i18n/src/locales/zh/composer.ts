@@ -2,6 +2,7 @@ export default {
   inputLabel: '消息输入框',
   placeholder: '输入消息…',
   commandArgumentHint: '在 {command} 后输入{argument}',
+  promptPredictionHint: '预测：{prediction}。按 Tab 或右方向键填入。',
   send: '发送 ↵',
   continue: '继续',
   queueLabel: '队列',

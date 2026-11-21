@@ -132,6 +132,7 @@ export class CustomEditor extends Editor {
   private argumentHints: ReadonlyMap<string, string> = new Map();
   private skillCommandNames: ReadonlySet<string> = new Set();
   private promptPrediction: string | undefined;
+  private promptPredictionPlaceholder: (() => string | undefined) | undefined;
   private currentSubmitKey: SubmitKey = 'enter';
 
   get submitKey(): SubmitKey {
@@ -150,13 +151,17 @@ export class CustomEditor extends Editor {
     this.promptPrediction = text;
   }
 
+  setPromptPredictionPlaceholder(provider: (() => string | undefined) | undefined): void {
+    this.promptPredictionPlaceholder = provider;
+  }
+
   getPromptPrediction(): string | undefined {
     return this.promptPrediction;
   }
 
   acceptPromptPrediction(): boolean {
     const text = this.promptPrediction;
-    if (text === undefined || this.getText().length > 0) return false;
+    if (text === undefined || this.getText().trim().length > 0) return false;
     this.promptPrediction = undefined;
     this.setText(text);
     return true;
@@ -285,15 +290,16 @@ export class CustomEditor extends Editor {
         lines[firstContentIdx] = injectArgumentHint(line, hint, this.getText().length, width);
       }
     }
+    const predictionPlaceholder = this.promptPredictionPlaceholder?.();
     if (
-      this.promptPrediction !== undefined &&
+      predictionPlaceholder !== undefined &&
       this.inputMode === 'prompt' &&
-      this.getText().length === 0 &&
+      this.getText().trim().length === 0 &&
       !this.hasAutocompleteActivity()
     ) {
       const line = lines[firstContentIdx];
       if (line !== undefined) {
-        lines[firstContentIdx] = injectPromptPrediction(line, this.promptPrediction, width);
+        lines[firstContentIdx] = injectPromptPrediction(line, predictionPlaceholder, width);
       }
     }
     const firstContent = lines[firstContentIdx];
@@ -689,17 +695,20 @@ function truncateHint(hint: string, maxLen: number): string {
 }
 
 function injectPromptPrediction(line: string, prediction: string, width: number): string {
-  const cursorIdx = line.indexOf(CURSOR_BLOCK);
-  const cursorPresent = cursorIdx !== -1;
+  const fakeCursorEnd = line.indexOf(FAKE_CURSOR_END);
+  const legacyCursorIdx = line.indexOf(CURSOR_BLOCK);
+  const cursorPresent = fakeCursorEnd !== -1 || legacyCursorIdx !== -1;
   const contentWidth = Math.max(1, width - EDITOR_LEFT_PADDING * 2);
   const available = contentWidth - (cursorPresent ? 1 : 0);
   if (available <= 0) return line;
   const preview = prediction.replaceAll(/\s+/g, ' ').trim();
   const trimmed = truncateToWidth(preview, available, '…');
   if (trimmed.length === 0) return line;
-  const insertAt = cursorPresent
-    ? cursorIdx + CURSOR_BLOCK.length
-    : mapVisibleIdxToRaw(line, EDITOR_LEFT_PADDING);
+  const insertAt = fakeCursorEnd !== -1
+    ? fakeCursorEnd + FAKE_CURSOR_END.length
+    : legacyCursorIdx !== -1
+      ? legacyCursorIdx + CURSOR_BLOCK.length
+      : mapVisibleIdxToRaw(line, EDITOR_LEFT_PADDING);
   const trailing = line.slice(insertAt);
   const remaining = Math.max(0, visibleWidth(trailing) - visibleWidth(trimmed));
   return line.slice(0, insertAt) + currentTheme.fg('textMuted', trimmed) + ' '.repeat(remaining);

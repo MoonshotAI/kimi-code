@@ -45,9 +45,15 @@ describe('PromptPredictionController', () => {
     const controller = new PromptPredictionController(host);
     editor.onChange = (text) => controller.handleEditorChange(text);
     editor.onSubmit = (text) => controller.handleSubmit(text);
+    expect(editor.render(80).join('\n')).not.toContain('Tab to predict');
 
+    editor.setText('draft before prediction');
     nextPrediction = () => Promise.resolve('请修复失败的测试\n并补充回归覆盖');
     controller.handleTurnEnded(turnEnded(7));
+    expect(session.predictNextPrompt).not.toHaveBeenCalled();
+    editor.setText('');
+    expect(editor.render(80).join('\n')).toContain('Tab to predict');
+    expect(controller.handlePreInput('\t')).toBe(true);
     await vi.waitFor(() => expect(editor.getPromptPrediction()).toBeDefined());
     expect(session.predictNextPrompt).toHaveBeenCalledWith({
       predictionId: expect.any(String),
@@ -56,6 +62,12 @@ describe('PromptPredictionController', () => {
     expect(controller.handlePreInput('\t')).toBe(true);
     expect(editor.getText()).toBe('请修复失败的测试\n并补充回归覆盖');
     expect(editor.getPromptPrediction()).toBeUndefined();
+    expect(session.predictNextPrompt).toHaveBeenCalledTimes(1);
+    editor.setText('');
+    expect(editor.render(80).join('\n')).toContain('请修复失败的测试');
+    expect(controller.handlePreInput('\t')).toBe(true);
+    expect(editor.getText()).toBe('请修复失败的测试\n并补充回归覆盖');
+    expect(session.predictNextPrompt).toHaveBeenCalledTimes(1);
     expect(track.mock.calls.filter(([event]) => event === 'prediction_dismissed')).toHaveLength(0);
     editor.handleInput('\r');
     expect(track).toHaveBeenCalledWith('prediction_submitted', expect.objectContaining({ edited: false }));
@@ -85,18 +97,47 @@ describe('PromptPredictionController', () => {
     editor.handleInput('\r');
     expect(track).toHaveBeenCalledWith('prediction_submitted', expect.objectContaining({ edited: true }));
 
-    nextPrediction = () => Promise.resolve('this suggestion is dismissed');
+    let resolveRecalled!: (value: string | null) => void;
+    nextPrediction = () => new Promise<string | null>((resolve) => {
+      resolveRecalled = resolve;
+    });
     controller.handleTurnStarted();
     editor.setText('');
     controller.handleTurnEnded(turnEnded(10));
-    await vi.waitFor(() => expect(editor.getPromptPrediction()).toBeDefined());
+    await vi.waitFor(() => expect(session.predictNextPrompt).toHaveBeenCalledTimes(4));
+    const pendingPrediction = (session.predictNextPrompt as ReturnType<typeof vi.fn>).mock.calls[3]?.[0] as {
+      predictionId: string;
+    };
+    expect(editor.render(80).join('\n')).toContain('Tab to predict');
+    expect(editor.render(80).join('\n')).not.toContain('Predicting next prompt…');
     editor.handleInput('x');
+    expect(session.cancelPromptPrediction).not.toHaveBeenCalledWith(pendingPrediction.predictionId, 'input');
+    expect(track).not.toHaveBeenCalledWith('prediction_dismissed', expect.objectContaining({ reason: 'input' }));
+    editor.setText('');
+    expect(editor.render(80).join('\n')).toContain('Type a message… Tab to predict');
+    expect(controller.handlePreInput('\t')).toBe(true);
+    resolveRecalled('this suggestion is recalled');
+    await vi.waitFor(() => expect(editor.getText()).toBe('this suggestion is recalled'));
     expect(editor.getPromptPrediction()).toBeUndefined();
-    expect(track).toHaveBeenCalledWith('prediction_dismissed', expect.objectContaining({ reason: 'input' }));
+    expect(session.predictNextPrompt).toHaveBeenCalledTimes(4);
+    editor.setText('');
+    expect(editor.render(80).join('\n')).toContain('this suggestion is recalled');
+
+    nextPrediction = () => Promise.resolve('dismiss this parked suggestion');
+    controller.handleTurnEnded(turnEnded(11));
+    await vi.waitFor(() => expect(editor.getPromptPrediction()).toBeDefined());
+    editor.handleInput('y');
+    expect(controller.handlePreInput(String.fromCodePoint(0x1b))).toBe(true);
+    expect(editor.getText()).toBe('y');
+    expect(editor.getPromptPrediction()).toBeUndefined();
+    expect(track).toHaveBeenCalledWith('prediction_dismissed', expect.objectContaining({
+      reason: 'escape',
+      accepted: false,
+    }));
 
     nextPrediction = () => Promise.resolve('do not show this in plan mode');
     editor.setText('');
-    controller.handleTurnEnded(turnEnded(11));
+    controller.handleTurnEnded(turnEnded(12));
     await vi.waitFor(() => expect(editor.getPromptPrediction()).toBeDefined());
     state.appState.planMode = true;
     controller.handlePlanModeChanged(true);
@@ -105,7 +146,7 @@ describe('PromptPredictionController', () => {
 
     state.appState.planMode = false;
     nextPrediction = () => Promise.resolve('clear this accepted suggestion');
-    controller.handleTurnEnded(turnEnded(12));
+    controller.handleTurnEnded(turnEnded(13));
     await vi.waitFor(() => expect(editor.getPromptPrediction()).toBeDefined());
     expect(controller.handlePreInput('\t')).toBe(true);
     editor.setText('');
@@ -118,7 +159,7 @@ describe('PromptPredictionController', () => {
 
     nextPrediction = () => Promise.resolve('git push');
     editor.terminalFocused = false;
-    controller.handleTurnEnded(turnEnded(13));
+    controller.handleTurnEnded(turnEnded(14));
     await vi.waitFor(() => expect(editor.getPromptPrediction()).toBeDefined());
     expect(editor.render(80).join('\n')).toContain('git push');
     editor.terminalFocused = true;
@@ -127,6 +168,25 @@ describe('PromptPredictionController', () => {
     expect(controller.handlePreInput('\t')).toBe(false);
     expect(controller.handlePreInput(`${String.fromCodePoint(0x1b)}[C`)).toBe(false);
     expect(editor.getText()).toBe('');
+
+    editor.setInputMode('prompt');
+    nextPrediction = () => Promise.resolve(null);
+    controller.handleTurnEnded(turnEnded(15));
+    await vi.waitFor(() => expect(session.predictNextPrompt).toHaveBeenCalledTimes(9));
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(editor.render(80).join('\n')).not.toContain('Tab to predict');
+    expect(controller.handlePreInput('\t')).toBe(false);
+
+    nextPrediction = () => Promise.reject(new Error('prediction failed'));
+    controller.handleTurnEnded(turnEnded(16));
+    await vi.waitFor(() => expect(session.predictNextPrompt).toHaveBeenCalledTimes(10));
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(editor.render(80).join('\n')).not.toContain('Predicting next prompt…');
+    expect(editor.render(80).join('\n')).not.toContain('prediction failed');
+    expect(editor.render(80).join('\n')).not.toContain('Tab to predict');
+    expect(controller.handlePreInput('\t')).toBe(false);
 
     for (const [, properties] of track.mock.calls) {
       expect(properties).not.toHaveProperty('text');
