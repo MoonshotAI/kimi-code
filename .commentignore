@@ -25,3 +25,13 @@ packages/core/test/llm/delta/
 
 # User-requested inline comments in LLM retry policy.
 packages/core/src/llm/policy/policy.ts
+
+# User-requested lifecycle narration in the turn state machine.
+packages/core/src/loop/turn/create-turn.ts
+
+# User-requested jscpd fragment exemptions in the loop actor.
+packages/core/src/loop/loop-actor.ts
+
+# User-requested API documentation for the loop module public surface.
+packages/core/src/loop/create-loop.ts
+packages/core/src/loop/contract/emitted.ts

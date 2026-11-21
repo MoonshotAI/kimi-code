@@ -1140,7 +1140,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     if (loop.state.turn?.id !== activeTurnId || ![...ids].every((id) => pendingNormal.has(id) || pendingNotify.has(id))) {
       throw new Error2(ErrorCodes.PROMPT_NOT_FOUND, 'one or more prompts are no longer pending');
     }
-    loop.sendNow(promptIds);
+    loop.sendNowQueued(promptIds);
   }
 
   remind(...messages: readonly Message[]): void {
