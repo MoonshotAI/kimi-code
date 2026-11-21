@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest';
 
 import { encodeWorkDirKey, type AbsoluteDir } from '#/_base/utils/workdir-slug';
 import type { CheckoutLocation } from '#/app/git/workTree';
+import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import {
   decideImplicitProject,
+  isInProjectScope,
   projectScopeContains,
   reviveCandidates,
   reviveRoot,
@@ -263,5 +265,40 @@ describe('projectScopeContains', () => {
     expect(projectScopeContains(scope, '/code/app-fix', grouped('/tmp/app', '/code/app'))).toBe(true);
     expect(projectScopeContains(scope, '/code/app-fix', grouped('/code/app', '/private/elsewhere'))).toBe(false);
     expect(projectScopeContains(scope, '/code/other', grouped('/code/other'))).toBe(false);
+  });
+});
+
+describe('isInProjectScope on a Windows host', () => {
+  function windowsFs(cwd: string, directories: readonly string[]): IHostFileSystem {
+    const key = (path: string): string => path.replaceAll('/', '\\').replace(/(?<!:)\\+$/, '').toLowerCase();
+    const byKey = new Map(directories.map((dir) => [key(dir), dir]));
+    return {
+      realpath: async (path: string) => {
+        const found = path === '.' ? cwd : byKey.get(key(path));
+        if (found === undefined) throw Object.assign(new Error(`ENOENT: ${path}`), { code: 'ENOENT' });
+        return found;
+      },
+      lstat: async (path: string) => {
+        throw Object.assign(new Error(`ENOENT: ${path}`), { code: 'ENOENT' });
+      },
+    } as unknown as IHostFileSystem;
+  }
+
+  it('resolves a missing directory against its nearest existing ancestor, not the process cwd', async () => {
+    const root = String.raw`C:\work\app`;
+    const fs = windowsFs(root, ['C:\\', String.raw`C:\work`, root, String.raw`C:\Users`]);
+    const project = { root, additionalDirs: [] };
+
+    await expect(isInProjectScope(fs, project, String.raw`C:\work\app\new\leaf`, 'win32')).resolves.toBe(true);
+    await expect(isInProjectScope(fs, project, String.raw`D:\elsewhere\leaf`, 'win32')).resolves.toBe(false);
+    await expect(isInProjectScope(fs, project, String.raw`C:\Users\leaf`, 'win32')).resolves.toBe(false);
+  });
+
+  it('keeps a deleted primary directory and its missing subdirectories in scope', async () => {
+    const fs = windowsFs(String.raw`C:\work\app`, ['C:\\', String.raw`C:\work`, String.raw`C:\work\app`]);
+    const project = { root: String.raw`C:\work\gone`, additionalDirs: [] };
+
+    await expect(isInProjectScope(fs, project, String.raw`C:\work\gone\src`, 'win32')).resolves.toBe(true);
+    await expect(isInProjectScope(fs, project, String.raw`C:\work\app`, 'win32')).resolves.toBe(false);
   });
 });

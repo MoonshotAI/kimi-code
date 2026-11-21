@@ -9,7 +9,8 @@ import {
 } from '#/_base/utils/workdir-slug';
 import { locateCheckout, type CheckoutLocation, type GroupedCheckout } from '#/app/git/workTree';
 import { realpathExistingPrefix } from '#/environment/environment';
-import { POSIX_ENVIRONMENT_PATH } from '#/environment/environmentDefaults';
+import { ENVIRONMENT_PATHS } from '#/environment/environmentDefaults';
+import type { PathClass } from '#/os/interface/hostEnvironment';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 
 import type { Workspace } from './workspace';
@@ -44,6 +45,8 @@ export interface ImplicitResolution {
 }
 
 export type ProjectScope = Pick<Workspace, 'root' | 'additionalDirs'>;
+
+const HOST_PATH_CLASS: PathClass = process.platform === 'win32' ? 'win32' : 'posix';
 
 export function isImplicitWorkspace(workspace: Workspace): workspace is ImplicitWorkspace {
   return workspace.kind === 'implicit' && isWorkDirKey(workspace.id);
@@ -109,13 +112,18 @@ export function groupsInto(location: CheckoutLocation, realRoot: string): boolea
   return location.kind === 'grouped' && sameDir(location.canonicalMainDir, realRoot);
 }
 
-export async function isInProjectScope(fs: IHostFileSystem, project: ProjectScope, dir: string): Promise<boolean> {
+export async function isInProjectScope(
+  fs: IHostFileSystem,
+  project: ProjectScope,
+  dir: string,
+  pathClass: PathClass = HOST_PATH_CLASS,
+): Promise<boolean> {
   const absolute = toAbsoluteDir(dir);
   if (absolute === undefined) return false;
   const [realDir, root, additionalDirs] = await Promise.all([
-    realDirOf(fs, absolute),
-    realDirOf(fs, project.root),
-    Promise.all(project.additionalDirs.map((scope) => realDirOf(fs, scope))),
+    realDirOf(fs, absolute, pathClass),
+    realDirOf(fs, project.root, pathClass),
+    Promise.all(project.additionalDirs.map((scope) => realDirOf(fs, scope, pathClass))),
   ]);
   const realScope = { root, additionalDirs };
   return projectScopeContains(realScope, realDir, undefined) ||
@@ -131,8 +139,8 @@ export async function isNonDirectory(fs: IHostFileSystem, dir: string): Promise<
   }
 }
 
-function realDirOf(fs: IHostFileSystem, dir: string): Promise<string> {
-  return realpathExistingPrefix(fs, POSIX_ENVIRONMENT_PATH, dir, () => true);
+function realDirOf(fs: IHostFileSystem, dir: string, pathClass: PathClass): Promise<string> {
+  return realpathExistingPrefix(fs, ENVIRONMENT_PATHS[pathClass], dir, () => true);
 }
 
 function ownProjectOf(implicit: readonly ImplicitWorkspace[], dir: string): ImplicitWorkspace | undefined {
