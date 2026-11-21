@@ -57,6 +57,20 @@ interface SessionIndexLine {
   readonly workDir: string;
 }
 
+class WriteFailingStorage extends FileStorageService {
+  failingKey: string | undefined;
+
+  override async write(
+    scope: string,
+    key: string,
+    data: Uint8Array,
+    options?: { readonly atomic?: boolean; readonly signal?: AbortSignal },
+  ): Promise<void> {
+    if (key === this.failingKey) throw new Error('injected write failure');
+    return super.write(scope, key, data, options);
+  }
+}
+
 describe('WorkspaceService (file-backed)', () => {
   let homeDir: string;
   let osHome: string;
@@ -850,6 +864,43 @@ describe('WorkspaceService (file-backed)', () => {
     expect(await trustStoreFor(new FileStorageService(homeDir)).forProject(implicit).get()).toBe(false);
   });
 
+  it('setPrimary carries no trust record to the new primary when the catalog write fails', async () => {
+    const original = join(homeDir, 'original');
+    const promoted = join(homeDir, 'promoted');
+    await fsp.mkdir(original, { recursive: true });
+    await fsp.mkdir(promoted, { recursive: true });
+    const storage = new WriteFailingStorage(homeDir);
+    const registry = build(new HostFileSystem(), storage);
+    const project = await registry.create({ root: original, additionalDirs: [promoted] });
+    await trustStoreFor(new FileStorageService(homeDir)).forRoot(original).trust();
+
+    storage.failingKey = 'projects.json';
+    await expect(registry.setPrimary(project.id, promoted)).rejects.toThrow('injected write failure');
+
+    expect((await readRegistry()).workspaces[project.id]?.root).toBe(original);
+    expect(await trustStoreFor(new FileStorageService(homeDir)).forRoot(promoted).get()).toBe(false);
+  });
+
+  it('setPrimary reports a trust carry that fails after the swap and leaves the moved project untrusted', async () => {
+    const original = join(homeDir, 'original');
+    const promoted = join(homeDir, 'promoted');
+    await fsp.mkdir(original, { recursive: true });
+    await fsp.mkdir(promoted, { recursive: true });
+    const registry = build();
+    const project = await registry.create({ root: original, additionalDirs: [promoted] });
+    await trustStoreFor(new FileStorageService(homeDir)).forRoot(original).trust();
+    vi.spyOn(currentHost!.app.accessor.get(IWorkspaceTrustStore), 'carry').mockRejectedValueOnce(
+      new Error('injected carry failure'),
+    );
+
+    await expect(registry.setPrimary(project.id, promoted)).rejects.toThrow('injected carry failure');
+
+    const moved = { root: promoted, additionalDirs: [original] };
+    expect((await readRegistry()).workspaces[project.id]).toMatchObject({ root: promoted, additional_dirs: [original] });
+    expect(await trustStoreFor(new FileStorageService(homeDir)).forProject(moved).get()).toBe(false);
+    expect(published.at(-1)).toMatchObject({ type: 'event.workspace.updated', payload: { workspace: moved } });
+  });
+
   it('setPrimary refuses to move the primary directory of an implicit project', async () => {
     const extra = join(homeDir, 'extra');
     await fsp.mkdir(extra, { recursive: true });
@@ -1129,25 +1180,14 @@ describe('WorkspaceService (file-backed)', () => {
     await writeSessionIndexLines(lines);
     const before = await fsp.readFile(join(homeDir, 'session_index.jsonl'), 'utf8');
 
-    let failWrites = true;
-    class FlakyStorage extends FileStorageService {
-      override async write(
-        scope: string,
-        key: string,
-        data: Uint8Array,
-        options?: { readonly atomic?: boolean; readonly signal?: AbortSignal },
-      ): Promise<void> {
-        if (failWrites && key === 'session_index.jsonl') throw new Error('injected write failure');
-        return super.write(scope, key, data, options);
-      }
-    }
-    const flaky = new FlakyStorage(homeDir);
+    const flaky = new WriteFailingStorage(homeDir);
+    flaky.failingKey = 'session_index.jsonl';
 
     const list = await build(new HostFileSystem(), flaky).list();
     expect(list).toHaveLength(21);
     expect(await fsp.readFile(join(homeDir, 'session_index.jsonl'), 'utf8')).toBe(before);
 
-    failWrites = false;
+    flaky.failingKey = undefined;
     await restart(new HostFileSystem(), flaky).list();
 
     const { ids, lines: compacted } = await readSessionIndexIds();

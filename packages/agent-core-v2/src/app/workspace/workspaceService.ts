@@ -288,7 +288,7 @@ export class WorkspaceService implements IWorkspaceService {
     return this.runExclusive(async () => {
       await this.ensureMerged();
       let updated: Workspace | undefined;
-      let changed = false;
+      let previousRoot: string | undefined;
       await this.store.update(async (catalog) => {
         const existing = catalog.workspaces.find((ws) => ws.id === id);
         if (existing === undefined) return catalog;
@@ -314,7 +314,6 @@ export class WorkspaceService implements IWorkspaceService {
             `primary ${resolved} is not in the workspace dir set`,
           );
         }
-        await this.trustStore.carry(existing.root, resolved);
         updated = {
           ...existing,
           root: resolved,
@@ -324,14 +323,17 @@ export class WorkspaceService implements IWorkspaceService {
           ],
           lastOpenedAt: Date.now(),
         };
-        changed = true;
+        previousRoot = existing.root;
         return {
           workspaces: catalog.workspaces.map((ws) => (ws.id === id ? updated! : ws)),
           deletedIds: catalog.deletedIds,
           idempotencyKeys: catalog.idempotencyKeys,
         };
       });
-      if (changed && updated !== undefined) {
+      if (previousRoot === undefined || updated === undefined) return updated;
+      try {
+        await this.trustStore.carry(previousRoot, updated.root);
+      } finally {
         this.event.publish(new WorkspaceUpdated({ payload: { workspace: updated } }));
       }
       return updated;
