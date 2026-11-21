@@ -199,7 +199,9 @@ describe('WorkspaceService (file-backed)', () => {
   }
 
   it('persists the catalog across registry instances', async () => {
-    const created = await build().createOrTouch(homeDir, 'proj');
+    const registry = build();
+    const created = (await registry.resolveImplicit(homeDir)).project;
+    await registry.update(created.id, { name: 'proj' });
 
     const list = await restart().list();
     expect(list.map((w) => w.id)).toContain(created.id);
@@ -208,8 +210,8 @@ describe('WorkspaceService (file-backed)', () => {
 
   it('publishes lifecycle events on create, touch, rename, and delete', async () => {
     const service = build();
-    const created = await service.createOrTouch(homeDir, 'proj');
-    await service.createOrTouch(homeDir);
+    const created = (await service.resolveImplicit(homeDir)).project;
+    await service.resolveImplicit(homeDir);
     await service.update(created.id, { name: 'renamed' });
     await service.delete(created.id);
 
@@ -219,7 +221,7 @@ describe('WorkspaceService (file-backed)', () => {
       'event.workspace.updated',
       'event.workspace.deleted',
     ]);
-    expect(published[0]?.payload).toMatchObject({ workspace: { id: created.id, name: 'proj' } });
+    expect(published[0]?.payload).toMatchObject({ workspace: { id: created.id, name: created.name } });
     expect(published[2]?.payload).toMatchObject({ workspace: { id: created.id, name: 'renamed' } });
     expect(published[3]?.payload).toEqual({
       workspaceId: created.id,
@@ -344,8 +346,8 @@ describe('WorkspaceService (file-backed)', () => {
     await fsp.mkdir(dirA);
     await fsp.mkdir(dirB);
     const registry = build();
-    const a = await registry.createOrTouch(dirA);
-    await registry.createOrTouch(dirB);
+    const a = (await registry.resolveImplicit(dirA)).project;
+    await registry.resolveImplicit(dirB);
 
     await registry.delete(a.id);
     expect((await registry.list()).map((w) => w.id)).toEqual([encodeWorkDirKey(dirB)]);
@@ -364,28 +366,28 @@ describe('WorkspaceService (file-backed)', () => {
     expect((await restart().list()).map((w) => w.id)).toEqual([encodeWorkDirKey(dirB)]);
   });
 
-  it('createOrTouch clears the deletion tombstone', async () => {
+  it('resolveImplicit clears the deletion tombstone', async () => {
     const dirA = join(homeDir, 'dir-a');
     await fsp.mkdir(dirA);
     const registry = build();
-    const a = await registry.createOrTouch(dirA);
+    const a = (await registry.resolveImplicit(dirA)).project;
     await registry.delete(a.id);
 
-    await registry.createOrTouch(dirA);
+    await registry.resolveImplicit(dirA);
     expect((await registry.list()).map((w) => w.id)).toEqual([a.id]);
     expect(await readRegistry().then((f) => f.deleted_workspace_ids)).toEqual([]);
 
     expect((await restart().list()).map((w) => w.id)).toEqual([a.id]);
   });
 
-  it('createOrTouch preserves external additions and tombstones written after load', async () => {
+  it('resolveImplicit preserves external additions and tombstones written after load', async () => {
     const dirA = join(homeDir, 'dir-a');
     const dirB = join(homeDir, 'dir-b');
     const dirC = join(homeDir, 'dir-c');
     await fsp.mkdir(dirA);
     await fsp.mkdir(dirC);
     const registry = build();
-    await registry.createOrTouch(dirA);
+    await registry.resolveImplicit(dirA);
 
     const onDisk = await readRegistry();
     onDisk.workspaces[encodeWorkDirKey(dirB)] = {
@@ -397,7 +399,7 @@ describe('WorkspaceService (file-backed)', () => {
     };
     await writeProjectsJson(onDisk.workspaces, ['wd_external_tombstone']);
 
-    await registry.createOrTouch(dirC);
+    await registry.resolveImplicit(dirC);
 
     const after = await readRegistry();
     expect(Object.keys(after.workspaces).toSorted()).toEqual(
@@ -411,7 +413,7 @@ describe('WorkspaceService (file-backed)', () => {
     const dirA = join(homeDir, 'dir-a');
     await fsp.mkdir(dirA);
     const registry = build();
-    const a = await registry.createOrTouch(dirA);
+    const a = (await registry.resolveImplicit(dirA)).project;
 
     const onDisk = await readRegistry();
     await writeProjectsJson(onDisk.workspaces, ['wd_external_tombstone']);
@@ -429,7 +431,7 @@ describe('WorkspaceService (file-backed)', () => {
     const dirA = join(homeDir, 'dir-a');
     await fsp.mkdir(dirA);
     const registry = build();
-    const a = await registry.createOrTouch(dirA);
+    const a = (await registry.resolveImplicit(dirA)).project;
 
     const onDisk = await readRegistry();
     const entry = onDisk.workspaces[a.id];
@@ -446,7 +448,7 @@ describe('WorkspaceService (file-backed)', () => {
   });
 
   it('writes through on update and delete', async () => {
-    const created = await build().createOrTouch(homeDir, 'proj');
+    const created = (await build().resolveImplicit(homeDir)).project;
     await build().update(created.id, { name: 'renamed' });
 
     expect((await restart().get(created.id))?.name).toBe('renamed');
@@ -455,37 +457,37 @@ describe('WorkspaceService (file-backed)', () => {
     expect(await restart().get(created.id)).toBeUndefined();
   });
 
-  it('registers createOrTouch best-effort when the root does not exist locally', async () => {
+  it('registers a missing directory best-effort on resolveImplicit', async () => {
     const missing = join(homeDir, 'never-created');
-    const ws = await build().createOrTouch(missing);
+    const ws = (await build().resolveImplicit(missing)).project;
     expect(ws.root).toBe(missing);
     expect((await build().list()).map((w) => w.id)).toEqual([ws.id]);
   });
 
-  it('rejects createOrTouch when the root is not a directory', async () => {
+  it('rejects resolveImplicit when the directory is a file', async () => {
     const file = join(homeDir, 'a-file.txt');
     await fsp.writeFile(file, 'hi', 'utf8');
-    await expect(build().createOrTouch(file)).rejects.toMatchObject({
+    await expect(build().resolveImplicit(file)).rejects.toMatchObject({
       code: ErrorCodes.FS_PATH_NOT_FOUND,
     });
     expect(await build().list()).toEqual([]);
   });
 
-  it('accepts createOrTouch when the root is given through a symlink', async () => {
+  it('keeps the symlinked spelling of a plain directory on resolveImplicit', async () => {
     const real = join(homeDir, 'real-root');
     await fsp.mkdir(real, { recursive: true });
     const link = join(homeDir, 'link-root');
     await fsp.symlink(real, link, 'dir');
-    const ws = await build().createOrTouch(link);
+    const ws = (await build().resolveImplicit(link)).project;
     expect(ws.root).toBe(link);
     expect(ws.id).toBe(encodeWorkDirKey(link));
   });
 
-  it('registers createOrTouch best-effort when a parent of the root is not a directory', async () => {
+  it('registers resolveImplicit best-effort when a parent of the directory is not a directory', async () => {
     const file = join(homeDir, 'a-file.txt');
     await fsp.writeFile(file, 'hi', 'utf8');
     const child = join(file, 'child');
-    const ws = await build().createOrTouch(child);
+    const ws = (await build().resolveImplicit(child)).project;
     expect(ws.root).toBe(child);
   });
 
@@ -513,9 +515,9 @@ describe('WorkspaceService (file-backed)', () => {
   it('folds Windows casing/slash variants onto the first-registered entry', async () => {
     const registry = build(allDirsHostFs());
 
-    const first = await registry.createOrTouch('C:\\Users\\Foo\\Proj');
-    const cased = await registry.createOrTouch('c:\\Users\\Foo\\Proj');
-    const slashed = await registry.createOrTouch('C:/Users/Foo/Proj/');
+    const first = (await registry.resolveImplicit('C:\\Users\\Foo\\Proj')).project;
+    const cased = (await registry.resolveImplicit('c:\\Users\\Foo\\Proj')).project;
+    const slashed = (await registry.resolveImplicit('C:/Users/Foo/Proj/')).project;
 
     expect(cased.id).toBe(first.id);
     expect(slashed.id).toBe(first.id);
@@ -568,8 +570,8 @@ describe('WorkspaceService (file-backed)', () => {
   it('keeps POSIX roots case-sensitive', async () => {
     const registry = build(allDirsHostFs());
 
-    const upper = await registry.createOrTouch('/tmp/Foo');
-    const lower = await registry.createOrTouch('/tmp/foo');
+    const upper = (await registry.resolveImplicit('/tmp/Foo')).project;
+    const lower = (await registry.resolveImplicit('/tmp/foo')).project;
 
     expect(lower.id).not.toBe(upper.id);
     expect((await registry.list()).map((w) => w.root).toSorted()).toEqual(['/tmp/Foo', '/tmp/foo']);
@@ -579,7 +581,7 @@ describe('WorkspaceService (file-backed)', () => {
     const registry = build();
     const extra = join(homeDir, 'extra');
     await fsp.mkdir(extra, { recursive: true });
-    const implicit = await registry.createOrTouch(homeDir);
+    const implicit = (await registry.resolveImplicit(homeDir)).project;
 
     const created = await registry.create({ root: homeDir, additionalDirs: [extra], name: 'proj' });
 
@@ -622,11 +624,11 @@ describe('WorkspaceService (file-backed)', () => {
     });
   });
 
-  it('createOrTouch mints a separate hash entry when only a wm_ entry holds the root', async () => {
+  it('resolveImplicit mints a separate hash entry when only a wm_ entry holds the root', async () => {
     const registry = build();
     const project = await registry.create({ root: homeDir, name: 'proj' });
 
-    const touched = await registry.createOrTouch(homeDir);
+    const touched = (await registry.resolveImplicit(homeDir)).project;
 
     expect(touched.id).toBe(encodeWorkDirKey(homeDir));
     expect(touched.id).not.toBe(project.id);
@@ -660,7 +662,7 @@ describe('WorkspaceService (file-backed)', () => {
 
   it('delete of a wm_ entry tombstones only itself and keeps the same-root hash entry', async () => {
     const registry = build();
-    const implicit = await registry.createOrTouch(homeDir);
+    const implicit = (await registry.resolveImplicit(homeDir)).project;
     const project = await registry.create({ root: homeDir, name: 'proj' });
 
     await registry.delete(project.id);
@@ -673,7 +675,7 @@ describe('WorkspaceService (file-backed)', () => {
 
   it('delete of a hash entry leaves the same-root wm_ entry registered', async () => {
     const registry = build();
-    const implicit = await registry.createOrTouch(homeDir);
+    const implicit = (await registry.resolveImplicit(homeDir)).project;
     const project = await registry.create({ root: homeDir, name: 'proj' });
 
     await registry.delete(implicit.id);
@@ -710,7 +712,7 @@ describe('WorkspaceService (file-backed)', () => {
     const registry = build();
     const managed = await registry.create({ root: homeDir, name: 'proj' });
     expect(managed.kind).toBe('managed');
-    const implicit = await registry.createOrTouch(homeDir);
+    const implicit = (await registry.resolveImplicit(homeDir)).project;
     expect(implicit.kind).toBe('implicit');
 
     const saved = await readRegistry();
@@ -866,13 +868,13 @@ describe('WorkspaceService (file-backed)', () => {
     expect(saved.future_top_level).toEqual({ nested: true });
   });
 
-  it('createOrTouch resurrects a tombstoned hash entry through the implicit channel', async () => {
+  it('resolveImplicit resurrects a tombstoned hash entry through the implicit channel', async () => {
     const registry = build();
-    const implicit = await registry.createOrTouch(homeDir);
+    const implicit = (await registry.resolveImplicit(homeDir)).project;
     await registry.delete(implicit.id);
     expect(await registry.list()).toEqual([]);
 
-    const revived = await registry.createOrTouch(homeDir);
+    const revived = (await registry.resolveImplicit(homeDir)).project;
     expect(revived.id).toBe(implicit.id);
     expect((await registry.list()).map((w) => w.id)).toEqual([implicit.id]);
   });

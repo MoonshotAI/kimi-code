@@ -68,6 +68,7 @@ import { CapabilityService } from '@moonshot-ai/agent-core-v2/app/capability/cap
 import { ISessionAgentProfileCatalog } from '@moonshot-ai/agent-core-v2/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import { attachmentFileSource } from '@moonshot-ai/agent-core-v2/agent/tools/fileReadSource';
 import { HostFileSystem } from '@moonshot-ai/agent-core-v2/os/backends/node-local/hostFsService';
+import { encodeWorkDirKey } from '@moonshot-ai/agent-core-v2/_base/utils/workdir-slug';
 import { HostProcessService } from '@moonshot-ai/agent-core-v2/os/backends/node-local/hostProcessService';
 import { FakeEnvironment } from '@moonshot-ai/agent-core-v2/environment/fakeEnvironment';
 import { RemoteEnvironmentProviderFactory } from '@moonshot-ai/agent-core-v2/remote';
@@ -1808,7 +1809,7 @@ key = "${titleOAuthRef.key}"
       tempDirs.push(workDir, extraDir);
       const client = harness['rpc'] as SDKRpcClientV2;
       const manager = client.engineAccessor.get(IWorkspaceInstanceManager);
-      const lease = await manager.acquire({ root: workDir });
+      const lease = await manager.acquire({ cwd: workDir });
       const dirs = lease.instance.program.dirs;
       let releaseReady!: () => void;
       const readyGate = new Promise<void>((resolve) => {
@@ -2814,6 +2815,23 @@ describe('SDKRpcClientV2 explicit MCP upserts', () => {
   });
 });
 
+async function gitWorktreeLayout(): Promise<{ readonly main: string; readonly worktree: string }> {
+  const base = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-repo-'));
+  tempDirs.push(base);
+  const main = join(base, 'app');
+  const worktree = join(base, 'app-fix');
+  const exec = promisify(execFile);
+  await mkdir(main);
+  await exec('git', ['init', '-q', '-b', 'main'], { cwd: main });
+  await exec(
+    'git',
+    ['-c', 'user.email=worktree-test@example.com', '-c', 'user.name=Worktree Test', 'commit', '-q', '--allow-empty', '-m', 'initial'],
+    { cwd: main },
+  );
+  await exec('git', ['worktree', 'add', '-q', '-b', 'fix', worktree], { cwd: main });
+  return { main, worktree };
+}
+
 describe('SDKRpcClientV2 workspace trust', () => {
   it('reports an untrusted workspace with the project MCP servers it gates', async () => {
     const { harness } = await makeHarness();
@@ -3176,6 +3194,37 @@ describe('SDKRpcClientV2 workspace trust', () => {
       const info = await harness.getWorkspaceTrustInfo(workDir);
       expect(info.instructionSources.agentProfiles).toEqual(['agent']);
       expect(info.instructionSources.paths).toEqual([`${await realpath(join(workDir, '.kimi-code', 'agents'))}/`]);
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it('trusts a fresh worktree of a trusted repository without asking again', async () => {
+    const { harness } = await makeHarness();
+    const { main, worktree } = await gitWorktreeLayout();
+    try {
+      await harness.trustWorkspace(main);
+
+      const info = await harness.getWorkspaceTrustInfo(worktree);
+
+      expect(info.trusted).toBe(true);
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it('keeps sessions from a fresh worktree in the project of its main checkout', async () => {
+    const { harness, homeDir } = await makeHarness();
+    const { main, worktree } = await gitWorktreeLayout();
+    try {
+      await harness.createSession({ workDir: main });
+      await harness.createSession({ workDir: worktree });
+
+      const catalog = JSON.parse(await readFile(join(homeDir, 'projects.json'), 'utf-8')) as {
+        readonly projects: Record<string, { readonly root: string }>;
+      };
+      expect(Object.keys(catalog.projects)).toEqual([encodeWorkDirKey(main)]);
+      expect(await readdir(join(homeDir, 'sessions'))).not.toContain(encodeWorkDirKey(worktree));
     } finally {
       await harness.close();
     }

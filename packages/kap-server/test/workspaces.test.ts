@@ -622,7 +622,7 @@ describe('server-v2 /api/v1/workspaces', () => {
       });
       let release: (() => void) | undefined;
       try {
-        const lease = await manager.acquire({ workspaceId: id, root });
+        const lease = await manager.acquire({ workspaceId: id });
         release = () => lease.dispose();
         const workspace = lease.instance;
         await workspace.program.mcp.ready;
@@ -676,7 +676,7 @@ describe('server-v2 /api/v1/workspaces', () => {
       });
       let release: (() => void) | undefined;
       try {
-        const lease = await manager.acquire({ workspaceId: id, root });
+        const lease = await manager.acquire({ workspaceId: id });
         release = () => lease.dispose();
         const workspace = lease.instance;
         await workspace.program.mcp.ready;
@@ -708,7 +708,7 @@ describe('server-v2 /api/v1/workspaces', () => {
     const manager = (server as RunningServer).core.accessor.get(IWorkspaceInstanceManager);
     let release: (() => void) | undefined;
     try {
-      const lease = await manager.acquire({ workspaceId: id, root });
+      const lease = await manager.acquire({ workspaceId: id });
       release = () => lease.dispose();
       const workspace = lease.instance;
       await workspace.program.trust.ready;
@@ -805,7 +805,7 @@ describe('server-v2 /api/v1/workspaces', () => {
       return JSON.stringify(result.output);
     };
     const manager = (server as RunningServer).core.accessor.get(IWorkspaceInstanceManager);
-    const lease = await manager.acquire({ workspaceId, root: dirA });
+    const lease = await manager.acquire({ workspaceId });
     const instance = lease.instance;
     const program = instance.program;
 

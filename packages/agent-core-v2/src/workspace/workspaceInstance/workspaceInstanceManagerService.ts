@@ -32,12 +32,18 @@ import { Error2, ErrorCodes } from '#/errors';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IEnvironmentService } from '#/app/environment/environment';
-import { canonicalWorkspaceRoot } from '#/_base/utils/paths';
+import { workspaceRootKey } from '#/_base/utils/workdir-slug';
+import { LOCAL_ENVIRONMENT_ID } from '#/environment/environment';
 import { SessionLifecycleService } from '#/workspace/sessionLifecycle/sessionLifecycleService';
 import { IWorkspaceTrustStore } from '#/workspace/workspaceTrust/workspaceTrustStore';
 
 import { WorkspaceInstance } from './workspaceInstance';
-import { IWorkspaceInstanceManager, type WorkspaceInstanceLease, type WorkspaceInstanceRef } from './workspaceInstanceManager';
+import {
+  IWorkspaceInstanceManager,
+  type WorkdirLease,
+  type WorkspaceInstanceLease,
+  type WorkspaceInstanceRef,
+} from './workspaceInstanceManager';
 
 export class WorkspaceInstanceManager implements IWorkspaceInstanceManager {
   declare readonly _serviceBrand: undefined;
@@ -101,27 +107,6 @@ export class WorkspaceInstanceManager implements IWorkspaceInstanceManager {
     return this.instances.get(workspaceId);
   }
 
-  findByRoot(root: string): WorkspaceInstance | undefined {
-    const normalized = root.replace(/[\\/]$/, '');
-    return [...this.instances.values()].find((instance) => instance.root.replace(/[\\/]$/, '') === normalized);
-  }
-
-  findContaining(cwd: string): WorkspaceInstance | undefined {
-    const probe = canonicalWorkspaceRoot(cwd);
-    let best: { readonly instance: WorkspaceInstance; readonly rootLength: number } | undefined;
-    for (const instance of this.instances.values()) {
-      for (const dir of [instance.root, ...instance.program.dirs.additionalDirs]) {
-        const root = canonicalWorkspaceRoot(dir);
-        const prefix = root.endsWith('/') ? root : `${root}/`;
-        if (probe !== root && !probe.startsWith(prefix)) continue;
-        if (best === undefined || root.length > best.rootLength) {
-          best = { instance, rootLength: root.length };
-        }
-      }
-    }
-    return best?.instance;
-  }
-
   list(): readonly WorkspaceInstance[] {
     return [...this.instances.values()];
   }
@@ -132,9 +117,7 @@ export class WorkspaceInstanceManager implements IWorkspaceInstanceManager {
 
   acquire(ref: WorkspaceInstanceRef): Promise<WorkspaceInstanceLease> {
     if (this.disposing) return Promise.reject(new Error('workspace instance manager is disposing'));
-    const key = 'workspaceId' in ref
-      ? `id:${ref.workspaceId}`
-      : `root:${ref.root.replace(/[\\/]$/, '')}`;
+    const key = requestKey(ref);
     let request = this.requests.get(key);
     if (request === undefined) {
       const pending: Promise<Workspace> = this.resolveWorkspace(ref).finally(() => {
@@ -146,16 +129,33 @@ export class WorkspaceInstanceManager implements IWorkspaceInstanceManager {
     return request.then((workspace) => this.acquireWorkspace(workspace));
   }
 
-  private async resolveWorkspace(ref: WorkspaceInstanceRef): Promise<Workspace> {
-    let workspace: Workspace | undefined;
-    if ('workspaceId' in ref) {
-      workspace = await this.workspaces.get(ref.workspaceId);
-      if (workspace === undefined && ref.root !== undefined) workspace = await this.workspaces.createOrTouch(ref.root);
-    } else {
-      workspace = await this.workspaces.createOrTouch(ref.root);
+  async acquireWorkdir(cwd: string): Promise<WorkdirLease> {
+    const lease = await this.acquire({ cwd });
+    try {
+      const workdir = await lease.instance.program.acquireWorkdir(LOCAL_ENVIRONMENT_ID, cwd, false);
+      let released = false;
+      return {
+        instance: lease.instance,
+        workdir,
+        dispose: () => {
+          if (released) return;
+          released = true;
+          workdir.dispose();
+          lease.dispose();
+        },
+      };
+    } catch (error) {
+      lease.dispose();
+      throw error;
     }
-    if (workspace === undefined) throw new Error2(ErrorCodes.WORKSPACE_NOT_FOUND, `workspace ${'workspaceId' in ref ? ref.workspaceId : ref.root} does not exist`);
-    return workspace;
+  }
+
+  private async resolveWorkspace(ref: WorkspaceInstanceRef): Promise<Workspace> {
+    if ('cwd' in ref) return (await this.workspaces.resolveImplicit(ref.cwd)).project;
+    const workspace = await this.workspaces.get(ref.workspaceId);
+    if (workspace !== undefined) return workspace;
+    if (ref.reviveFrom !== undefined) return this.workspaces.reviveImplicit(ref.workspaceId, ref.reviveFrom);
+    throw new Error2(ErrorCodes.WORKSPACE_NOT_FOUND, `workspace ${ref.workspaceId} does not exist`);
   }
 
   private async acquireWorkspace(workspace: Workspace): Promise<WorkspaceInstanceLease> {
@@ -321,6 +321,11 @@ export class WorkspaceInstanceManager implements IWorkspaceInstanceManager {
       this.log.error('workspace disposal failed', { workspaceId: instance.id, error });
     }
   }
+}
+
+function requestKey(ref: WorkspaceInstanceRef): string {
+  if ('cwd' in ref) return `cwd:${workspaceRootKey(ref.cwd)}`;
+  return ref.reviveFrom === undefined ? `id:${ref.workspaceId}` : `revive:${ref.workspaceId}`;
 }
 
 registerScopedService(LifecycleScope.App, IWorkspaceInstanceManager, WorkspaceInstanceManager, ScopeActivation.OnScopeCreated, 'workspaceInstanceManager');

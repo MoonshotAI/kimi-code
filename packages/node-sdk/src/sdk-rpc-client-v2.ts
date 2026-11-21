@@ -715,7 +715,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   ): Promise<T> {
     const root = normalizeRequiredWorkDir(operation, workDir);
     await assertUsableWorkDir(this.engineAccessor.get(IHostFileSystem), root);
-    const lease = await this.engineAccessor.get(IWorkspaceInstanceManager).acquire({ root });
+    const lease = await this.engineAccessor.get(IWorkspaceInstanceManager).acquire({ cwd: root });
     try {
       return await use(lease.instance);
     } finally {
@@ -741,7 +741,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   override async getWorkspaceAdditionalDirs(workDir: string): Promise<readonly string[]> {
     const lease = await this.engineAccessor
       .get(IWorkspaceInstanceManager)
-      .acquire({ root: normalizeRequiredWorkDir('getWorkspaceAdditionalDirs', workDir) });
+      .acquire({ cwd: normalizeRequiredWorkDir('getWorkspaceAdditionalDirs', workDir) });
     try {
       const dirs = lease.instance.program.dirs;
       await dirs.ready;
@@ -822,7 +822,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
 
   /**
    * klient has no workspace-trust facade; composed directly from the engine
-   * via {@link engineAccessor} — the same `IWorkspaceInstanceManager.acquire({ root })`
+   * via {@link engineAccessor} — the same `IWorkspaceInstanceManager.acquire({ cwd })`
    * path `createSession` takes. The disclosure of what trusting would activate is
    * computed inside the engine by `WorkspaceTrustDisclosureService`.
    */
@@ -3151,7 +3151,7 @@ function normalizeRequiredWorkDir(operation: string, workDir: string): string {
  * The kap-server `POST /workspaces` rule applied to every SDK path that
  * registers a workDir as a workspace: the local root must exist and be a
  * directory — a missing root is rejected here instead of silently creating
- * a workspace record the engine's `createOrTouch` would accept.
+ * a workspace record the engine's `resolveImplicit` would accept.
  */
 async function assertUsableWorkDir(fs: IHostFileSystem, workDir: string): Promise<void> {
   const stat = await fs.stat(workDir).catch(() => undefined);

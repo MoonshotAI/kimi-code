@@ -77,7 +77,6 @@ describe('GitService', () => {
           acquireWhenReady: async () => ({ environment, track: (resource) => resource, dispose: () => {} }),
         });
         reg.definePartialInstance(IWorkspaceInstanceManager, {
-          findContaining: () => ({ id: 'workspace-1' } as never),
           onDidChange: Event.None as Event<WorkspaceInstanceChange>,
         });
         reg.define(IGitService, GitService);

@@ -13,6 +13,13 @@ export const workspaceSchema = z.object({
   lastOpenedAt: z.number(),
 });
 
+export const implicitWorkspaceSchema = workspaceSchema.extend({ kind: z.literal('implicit') });
+
+export const implicitProjectResultSchema = z.object({
+  project: implicitWorkspaceSchema,
+  rule: z.enum(['sticky', 'repo', 'own']),
+});
+
 export const workspaceUpdateSchema = z.object({
   name: z.string().optional(),
   additionalDirs: z.array(z.string()).optional(),
@@ -21,9 +28,9 @@ export const workspaceUpdateSchema = z.object({
 export const workspacesContract = {
   list: { input: z.tuple([]), output: z.array(workspaceSchema) },
   get: { input: z.tuple([z.string()]), output: maybe(workspaceSchema) },
-  createOrTouch: {
-    input: z.tuple([z.string(), z.string().optional()]),
-    output: workspaceSchema,
+  resolveImplicit: {
+    input: z.tuple([z.string()]),
+    output: implicitProjectResultSchema,
   },
   update: {
     input: z.tuple([z.string(), workspaceUpdateSchema]),

@@ -84,7 +84,7 @@ describe('acp-server session lifecycle', () => {
   ): Promise<readonly { readonly name: string; readonly status: string; readonly error?: string }[]> {
     const lease = await c.server.core.accessor
       .get(IWorkspaceInstanceManager)
-      .acquire({ root: homeDir! });
+      .acquire({ cwd: homeDir! });
     try {
       const handle = c.server.core.accessor.get(ISessionManager).get(sessionId);
       expect(handle).toBeDefined();
@@ -393,7 +393,7 @@ describe('acp-server session lifecycle', () => {
 
       const lease = await c.server.core.accessor
         .get(IWorkspaceInstanceManager)
-        .acquire({ root: homeDir! });
+        .acquire({ cwd: homeDir! });
       try {
         const dirs = lease.instance.program.dirs;
         await dirs.ready;

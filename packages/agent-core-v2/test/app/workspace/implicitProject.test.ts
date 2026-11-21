@@ -13,7 +13,7 @@ import {
 
 function project(root: string, id: string = encodeWorkDirKey(root)): ImplicitWorkspace {
   return {
-    id: id as ImplicitWorkspace['id'],
+    id,
     root,
     name: root.split(/[\\/]/).pop() ?? root,
     kind: 'implicit',

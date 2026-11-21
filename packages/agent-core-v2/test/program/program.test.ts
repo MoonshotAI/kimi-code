@@ -511,7 +511,7 @@ async function localityFixture(options: { readonly remoteCwd?: string } = {}): P
         get: async () => registeredDirs.length === 0
           ? undefined
           : { id: 'workspace', root: localRoot, additionalDirs: registeredDirs },
-        createOrTouch: async () => { throw new Error('unexpected workspace create'); },
+        resolveImplicit: async () => { throw new Error('unexpected workspace create'); },
       },
       workspaceStore: { onDidChange: registryChanges.event },
       trustStore,

@@ -168,9 +168,6 @@ const workspaceStub: IWorkspaceService = {
   create: async () => {
     throw new Error('not used in these tests');
   },
-  createOrTouch: async () => {
-    throw new Error('not used in these tests');
-  },
   resolveImplicit: async () => {
     throw new Error('not used in these tests');
   },

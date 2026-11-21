@@ -12,7 +12,7 @@ import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 
 import type { Workspace } from './workspace';
 
-export type ImplicitWorkspace = Workspace & { readonly kind: 'implicit'; readonly id: ImplicitProjectId };
+export type ImplicitWorkspace = Workspace & { readonly kind: 'implicit' };
 
 export interface ImplicitCatalog {
   readonly implicit: readonly ImplicitWorkspace[];

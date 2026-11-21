@@ -159,9 +159,9 @@ describe('KimiHarness.listSessions', () => {
 
     try {
       const legacyWorkDir = `${workDir}/.`;
-      const workspace = await client.engineAccessor
+      const { project: workspace } = await client.engineAccessor
         .get(IWorkspaceService)
-        .createOrTouch(legacyWorkDir);
+        .resolveImplicit(legacyWorkDir);
       await client.engineAccessor.get(ISessionManager).create({
         workspaceId: workspace.id,
         workDir: legacyWorkDir,

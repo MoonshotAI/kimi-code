@@ -983,15 +983,6 @@ function registerSessionExportServices(
       createdAt: 1,
       lastOpenedAt: 2,
     }),
-    createOrTouch: async (root) => ({
-      id: 'ws_created',
-      root,
-      name: 'created',
-      kind: 'implicit',
-      additionalDirs: [],
-      createdAt: 1,
-      lastOpenedAt: 2,
-    }),
     resolveImplicit: async () => {
       throw new Error('resolveImplicit should not be called by session export');
     },

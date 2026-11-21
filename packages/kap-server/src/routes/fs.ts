@@ -7,6 +7,7 @@ import {
   IEnvironmentService,
   ISessionWorkdir,
   IWorkspaceFsService,
+  IWorkspaceInstanceManager,
   IWorkspaceService,
   getLiveSessionById,
   resumeSessionById,
@@ -17,6 +18,7 @@ import {
   WorkspaceGitService,
   ITelemetryService,
   type Scope,
+  type WorkdirLease,
 } from '@moonshot-ai/agent-core-v2';
 import { Event } from '@moonshot-ai/agent-core-v2/_base/event';
 import { IGitService } from '@moonshot-ai/agent-core-v2/app/git/git';
@@ -193,17 +195,45 @@ async function resolveWorkspaceFs(
   ref: string,
   required: readonly EnvironmentCapability[],
 ): Promise<FsScope | undefined> {
-  const workspaces = core.accessor.get(IWorkspaceService);
-  let ws = await workspaces.get(ref);
-  if (ws === undefined) {
-    if (!isAbsolute(ref)) return undefined;
-    try {
-      ws = await workspaces.createOrTouch(ref);
-    } catch {
-      return undefined;
-    }
+  const ws = await core.accessor.get(IWorkspaceService).get(ref);
+  if (ws !== undefined) {
+    return acquireLocalRootedFs(core, ws.id, { workDir: ws.root, additionalDirs: ws.additionalDirs }, required);
   }
-  return acquireLocalRootedFs(core, ws.id, { workDir: ws.root, additionalDirs: ws.additionalDirs }, required);
+  if (!isAbsolute(ref)) return undefined;
+  return acquireDirectoryFs(core, ref, required);
+}
+
+async function acquireDirectoryFs(
+  core: Scope,
+  dir: string,
+  required: readonly EnvironmentCapability[],
+): Promise<FsScope | undefined> {
+  let workdir: WorkdirLease;
+  try {
+    workdir = await core.accessor.get(IWorkspaceInstanceManager).acquireWorkdir(dir);
+  } catch (error) {
+    if (isError2(error) && error.code === ErrorCodes.FS_PATH_NOT_FOUND) return undefined;
+    throw error;
+  }
+  try {
+    const lease = core.accessor.get(IEnvironmentService).acquire({ environmentId: LOCAL_ENVIRONMENT_ID }, required);
+    return {
+      fs: workdir.workdir.fs,
+      hostFs: lease.environment.fs!,
+      lease: {
+        environment: lease.environment,
+        track: (resource, sessionId) => lease.track(resource, sessionId),
+        dispose: () => {
+          lease.dispose();
+          workdir.dispose();
+        },
+      },
+      environmentId: LOCAL_ENVIRONMENT_ID,
+    };
+  } catch (error) {
+    workdir.dispose();
+    throw error;
+  }
 }
 
 async function sendSuggestStream(

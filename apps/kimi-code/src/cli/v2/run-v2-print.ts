@@ -471,7 +471,7 @@ export async function listTrustGatedMcpServers(
 ): Promise<readonly TrustGatedMcpServer[]> {
   const lease = await services
     .get(IWorkspaceInstanceManager)
-    .acquire({ root: workDir });
+    .acquire({ cwd: workDir });
   try {
     if (await lease.instance.program.trust.get()) return [];
     return (await lease.instance.program.previewProjectMcp(pinnedWorkDir))

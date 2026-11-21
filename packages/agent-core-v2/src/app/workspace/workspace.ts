@@ -37,7 +37,6 @@ export interface IWorkspaceService {
   list(): Promise<readonly Workspace[]>;
   get(id: string): Promise<Workspace | undefined>;
   create(input: WorkspaceCreate): Promise<Workspace>;
-  createOrTouch(root: string, name?: string): Promise<Workspace>;
   resolveImplicit(dir: string): Promise<ImplicitProjectResult>;
   peekImplicit(dir: string): Promise<ImplicitDecision>;
   reviveImplicit(id: string, workDir: string): Promise<Workspace>;

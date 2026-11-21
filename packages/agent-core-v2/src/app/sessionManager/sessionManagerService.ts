@@ -97,10 +97,7 @@ export class SessionManager implements ISessionManager {
         ? options
         : { ...options, environmentId: opened.environmentId, environmentCwd: opened.environmentCwd };
       const create = async () => {
-        const entry = await this.controllerForWorkspace({
-          workspaceId: opened.workspaceId,
-          root: options.workDir,
-        });
+        const entry = await this.controllerForWorkspace({ workspaceId: opened.workspaceId });
         return this.runControllerOperation(entry, (controller) => controller.create(effective));
       };
       if (options.sessionId === undefined) return await create();
@@ -119,9 +116,7 @@ export class SessionManager implements ISessionManager {
     const remote = environmentId !== undefined && environmentId !== LOCAL_ENVIRONMENT_ID;
     if (options.workDir !== undefined && !remote) await this.assertUsableWorkDir(options.workDir);
     const lease = await this.workspaces.acquire(
-      options.workspaceId === undefined
-        ? { root: options.workDir }
-        : { workspaceId: options.workspaceId, root: options.workDir },
+      options.workspaceId === undefined ? { cwd: options.workDir } : { workspaceId: options.workspaceId },
     );
     try {
       if (!remote) {
@@ -507,7 +502,7 @@ export class SessionManager implements ISessionManager {
     const summary = await this.index.get(sessionId);
     if (summary === undefined) return undefined;
     await this.environments.ready;
-    return this.controllerForWorkspace({ workspaceId: summary.workspaceId, root: summary.cwd });
+    return this.controllerForWorkspace({ workspaceId: summary.workspaceId, reviveFrom: summary.cwd });
   }
 }
 

@@ -253,7 +253,7 @@ export function registerSessionsRoutes(
       try {
         const resolved =
           bucket === undefined
-            ? await registry.createOrTouch(workDir)
+            ? (await registry.resolveImplicit(workDir)).project
             : ((await registry.touch(bucket.id)) ?? bucket);
         const custom = customSessionMetadata(body.metadata);
         const agentConfig = body.agent_config ?? {};

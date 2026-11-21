@@ -193,7 +193,7 @@ describe('WorkspaceDirsService (registry source)', () => {
   });
 
   it('moves legacy local config and its watcher when the associated primary changes', async () => {
-    const project = await workspaces.createOrTouch(dirA);
+    const project = (await workspaces.resolveImplicit(dirA)).project;
     await workspaces.update(project.id, { additionalDirs: [dirB] });
     const dirD = mkdtempSync(join(tmpdir(), 'ws-dirs-d-'));
     const writeLocalConfig = async (root: string, additionalDirs: readonly string[]) => {

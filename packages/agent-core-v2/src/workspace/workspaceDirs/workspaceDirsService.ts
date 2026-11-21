@@ -195,7 +195,7 @@ export class WorkspaceDirsService implements IWorkspaceDirs {
         throw new Error(`additional dir ${input.path} did not resolve`);
       }
       const existing = await this.workspaces.get(this.workspace.workspaceId);
-      const target = existing ?? (await this.workspaces.createOrTouch(this.workspace.cwd));
+      const target = existing ?? (await this.workspaces.reviveImplicit(this.workspace.workspaceId, this.workspace.cwd));
       const dirKey = workspaceRootKey(dir);
       const inSet =
         workspaceRootKey(target.root) === dirKey ||
