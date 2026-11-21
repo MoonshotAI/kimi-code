@@ -2,7 +2,7 @@ import { once } from 'node:events';
 import { mkdir, realpath, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import { deferred } from '@moonshot-ai/testkit/fixtures';
+import { bashPathOf, deferred } from '@moonshot-ai/testkit/fixtures';
 import type { KapFrame, KapItem, KapSocket, KapTurn, KapTurnsPage } from '@moonshot-ai/testkit/kap';
 import { agent, bash, held, httpError, say, think, withUsage } from '@moonshot-ai/testkit/model';
 import { test as base, describe, expect } from 'vitest';
@@ -170,7 +170,7 @@ describe('conversation over KAP', () => {
     expect(pinned.workspace_id).toBe(atRoot.workspace_id);
     expect(model.request(1).view.messages.find((message) => message.role === 'tool')).toMatchObject({
       callId: model.callId(0, 0),
-      text: `${await realpath(subdirectory)}\n`,
+      text: `${bashPathOf(await realpath(subdirectory))}\n`,
     });
   });
 

@@ -1,7 +1,7 @@
 import { mkdir, readFile, realpath, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import { createTestHome, until, writeKimiConfig, type TestHome } from '@moonshot-ai/testkit/fixtures';
+import { bashPathOf, createTestHome, until, writeKimiConfig, type TestHome } from '@moonshot-ai/testkit/fixtures';
 import { KapProcess, type KapSocket, type KapTurn } from '@moonshot-ai/testkit/kap';
 import { bash, fakeModelConfig, held, say, type FakeModel } from '@moonshot-ai/testkit/model';
 import { modelFixtures, type ModelFixtures } from '@moonshot-ai/testkit/vitest';
@@ -148,7 +148,7 @@ test('keeps a released session without an environment cwd following the current 
       const before = model.requests('main').length;
       await server.prompt(id, 'Where are you?');
       await server.waitIdle(id);
-      expect(await toolOutputOf(model, before + 1)).toBe(`${await realpath(moved)}\n`);
+      expect(await toolOutputOf(model, before + 1)).toBe(`${bashPathOf(await realpath(moved))}\n`);
       expect((await server.session(id)).cwd).toBe(moved);
     } finally {
       await server.close();
@@ -188,7 +188,7 @@ test('keeps a pinned session in its directory after the server crashes mid-turn 
       const before = model.requests('main').length;
       await second.prompt(created.id, 'Where are you?');
       await second.waitIdle(created.id);
-      expect(await toolOutputOf(model, before + 1)).toBe(`${await realpath(pinnedDir)}\n`);
+      expect(await toolOutputOf(model, before + 1)).toBe(`${bashPathOf(await realpath(pinnedDir))}\n`);
       expect(await second.session(created.id)).toMatchObject({ cwd: pinnedDir });
     } finally {
       await second.close();
@@ -222,7 +222,7 @@ test('revives the repository project of a pinned worktree session whose project 
       const before = model.requests('main').length;
       await second.prompt(created.id, 'Where are you?');
       await second.waitIdle(created.id);
-      expect(await toolOutputOf(model, before + 1)).toBe(`${await realpath(worktree)}\n`);
+      expect(await toolOutputOf(model, before + 1)).toBe(`${bashPathOf(await realpath(worktree))}\n`);
       const workspaces = await second.rest.get<{ items: { id: string; root: string }[] }>('/api/v1/workspaces');
       expect(workspaces.items.filter((item) => [main, worktree].includes(item.root))).toEqual([
         expect.objectContaining({ id: created.workspace_id, root: main }),

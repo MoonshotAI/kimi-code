@@ -11,6 +11,7 @@ export {
 export { CLI_BUILD_ENV, KIMI_SERVICE_URL, kimiCliBuild, kimiCliCommand, kimiCliEnv, kimiServiceStubs, type KimiCliBuild } from '#/fixtures/cli';
 export { isolateProcessEnv, TEST_ENV_DEFAULTS, testEnv, type TestEnvOptions } from '#/fixtures/env';
 export {
+  bashPathOf,
   createGitRepository,
   createGitWorktree,
   type GitRepositoryOptions,

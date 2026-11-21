@@ -48,3 +48,10 @@ export async function createGitWorktree(
 async function git(cwd: string, ...args: readonly string[]): Promise<void> {
   await execFileAsync('git', [...args], { cwd });
 }
+
+export function bashPathOf(nativePath: string, platform: NodeJS.Platform = process.platform): string {
+  if (platform !== 'win32') return nativePath;
+  const slashed = nativePath.replaceAll('\\', '/');
+  const drive = /^([A-Za-z]):\//.exec(slashed);
+  return drive === null ? slashed : `/${drive[1]!.toLowerCase()}${slashed.slice(2)}`;
+}
