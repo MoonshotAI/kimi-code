@@ -189,6 +189,7 @@ class ActorTurn implements Turn {
 
   private async execute(proc: TurnProcess): Promise<void> {
     try {
+      // 1. Snapshot the profile and requester once for the whole turn.
       const profile = this.runtime.read().profile;
       this.profile = {
         ...profile,
@@ -201,6 +202,8 @@ class ActorTurn implements Turn {
         this.requester = undefined;
         this.requesterError = error;
       }
+
+      // 2. Let the owner run starting hooks and produce the initial message batch.
       this.setPhase(proc, 'starting');
       const starting = await proc.step(() => this.invokeOwner<Extract<TurnOutcome, { type: 'done' | 'blocked' }>>(
         'starting',
@@ -208,12 +211,16 @@ class ActorTurn implements Turn {
         this.scope.signal,
       ));
       if (!this.running()) return;
+
+      // 3. A starting decision skips the initial commit and every later step.
       this.setPhase(proc, 'appending');
       if (starting.decision !== undefined) {
         this.uncommitted.push(...starting.appended);
         this.setOutcome(proc, starting.decision);
         return;
       }
+
+      // 4. Commit one initial batch before entering the step loop.
       const appended = starting.appended.length > 0 ? starting.appended : this.state.initialPending;
       this.uncommitted = [];
       this.runtime.transition(() => {
@@ -221,19 +228,25 @@ class ActorTurn implements Turn {
         for (const message of appended) this.commit(message);
       });
       if (!this.running()) return;
+
+      // 5. Prompt-only turns finish after their initial append without requesting a model.
       if (this.state.promptOnly) {
         this.setOutcome(proc, { type: 'done', cause: { by: 'loop', reason: 'prompt_only' } });
         return;
       }
+
+      // 6. Run complete steps until one produces a turn outcome or the turn closes.
       while (this.running() && this.state.outcome === undefined) {
         await this.executeStep(proc);
       }
     } catch (error) {
+      // Preserve the first execution failure and let the shared close own terminal events.
       if (!this.closing && !this.finished) {
         this.setOutcome(proc, { type: 'failed', error });
         if (this.currentStep !== undefined) this.currentStep.outcome = { type: 'failed', error };
       }
     } finally {
+      // Normal completion, failure, and abort all enter the same asynchronous close.
       this.finishTurn();
     }
   }
@@ -308,6 +321,7 @@ class ActorTurn implements Turn {
   }
 
   private async executeStep(proc: TurnProcess): Promise<void> {
+    // 1. Create the step and publish its start before invoking any extension hook.
     const scope = withAbort(this.scope.signal);
     const number = this.step + 1;
     const step: TurnStep = {
@@ -323,6 +337,7 @@ class ActorTurn implements Turn {
     });
     if (!this.accepts(step) || this.finishSteeredStep(proc, step)) return;
 
+    // 2. Run step.starting and preserve its outcome before choosing the next phase.
     const starting = await proc.step(() => this.stepStarting(step));
     if (!this.accepts(step) || this.finishSteeredStep(proc, step)) return;
     this.runtime.transition(() => {
@@ -341,134 +356,157 @@ class ActorTurn implements Turn {
     });
     if (!this.accepts(step) || this.finishSteeredStep(proc, step)) return;
 
-    if (starting.blocked === undefined) {
-      const requesting = await proc.step(() => this.invokeOwner<Extract<TurnOutcome, { type: 'done' }>>(
-        'requesting',
-        this.state,
-        step.scope.signal,
-      ));
-      if (!this.accepts(step) || this.finishSteeredStep(proc, step)) return;
-      if (requesting.decision?.type === 'done') {
-        this.uncommitted.push(...requesting.appended);
-        step.outcome = requesting.decision;
-      } else {
-        this.runtime.transition(() => {
-          for (const message of requesting.appended) this.commit(message);
-        });
-        if (!this.accepts(step) || this.finishSteeredStep(proc, step)) return;
-        const turnOutcome = this.state.outcome;
-        const requester = this.requester;
-        const profile = this.profile;
-        if (turnOutcome?.type === 'aborted') {
-          this.completeRequest(step, {
-            type: 'aborted',
-            message: null,
-            usage: undefined,
-            reason: turnOutcome.reason,
-          });
-        } else if (requester === undefined || profile === undefined) {
-          const error = this.requesterError ?? new Error('loop has no requester');
-          step.outcome = { type: 'failed', error };
-          this.setOutcome(proc, step.outcome);
-        } else {
-          if (!this.toolsSettled) {
-            this.toolsSettled = true;
-            this.runtime.transition(() => {
-              if (profile.tools !== undefined) this.emit({ type: 'tools.settled', tools: [...profile.tools!] });
-            });
-          }
-
-          const outcome = await this.executeRequest(proc, step, requester, profile);
-          if (this.phase === 'aborting') {
-            if (!this.acceptsAbort(step) || this.abortSettling) return;
-            this.abortSettling = true;
-            if (this.abortGrace !== undefined) clearTimeout(this.abortGrace);
-            this.abortGrace = undefined;
-            this.completeRequest(step, outcome);
-            if (step.batch.calls.length === 0) {
-              this.finishTurn();
-              return;
-            }
-            const result = await proc.step(() => this.runtime.executeBatch(step.batch));
-            this.completeAbortedBatch(step, result);
-            return;
-          }
-          if (!this.accepts(step)) return;
-          this.completeRequest(step, outcome);
-          if (outcome.type !== 'done' && this.finishSteeredStep(proc, step)) return;
-
-          if (step.batch.calls.length > 0) {
-            this.setPhase(proc, 'batching');
-            const batchStarting = await proc.step(() => this.batchStarting(step));
-            if (this.acceptsAbort(step)) {
-              const result = await proc.step(() => this.runtime.executeBatch(step.batch));
-              this.completeAbortedBatch(step, result);
-              return;
-            }
-            if (!this.accepts(step)) return;
-            const reports = hookFailureReports('tool.batch-starting', batchStarting.failures);
-            let result: TurnToolBatchResult;
-            if (batchStarting.blocked !== undefined) {
-              step.batch.blocked = batchStarting.blocked;
-              result = await proc.step(() => this.runtime.transition(() => {
-                const pending = this.runtime.executeBatch(step.batch);
-                this.runtime.report('tool.batch-starting', this.point, reports, true);
-                return pending;
-              }));
-            } else {
-              this.runtime.transition(() => {
-                this.runtime.report('tool.batch-starting', this.point, reports, true);
-              });
-              if (!this.accepts(step)) return;
-              this.setPhase(proc, 'acting');
-              result = await proc.step(() => this.runtime.executeBatch(step.batch));
-            }
-            if (this.acceptsAbort(step)) {
-              this.completeAbortedBatch(step, result);
-              return;
-            }
-            if (!this.accepts(step)) return;
-            this.completeToolBatch(step, result);
-          }
-
-          if (this.state.outcome?.type !== 'aborted') {
-            this.setPhase(proc, 'ending');
-            const ending = await proc.step(() => {
-              step.ending ??= this.stepEnding(step);
-              return step.ending;
-            });
-            if (!this.accepts(step)) return;
-            this.runtime.transition(() => {
-              step.outcome = ending.outcome;
-              if (ending.outcome.type !== 'continue') this.setOutcome(proc, ending.outcome);
-              for (const { point, failure } of ending.failures) {
-                this.runtime.report(point, this.point, hookFailureReports(point, [failure]), true);
-              }
-            });
-            if (!this.accepts(step)) return;
-            if (ending.outcome.type === 'continue') {
-              const continuing = await proc.step(() => this.invokeOwner<Extract<TurnOutcome, { type: 'done' }>>(
-                'continuing',
-                this.state,
-                this.scope.signal,
-              ));
-              if (!this.accepts(step)) return;
-              if (continuing.decision?.type === 'done') {
-                this.uncommitted.push(...continuing.appended);
-                step.outcome = continuing.decision;
-              } else {
-                this.runtime.transition(() => {
-                  for (const message of continuing.appended) this.commit(message);
-                });
-                if (!this.accepts(step)) return;
-              }
-            }
-          }
-        }
-      }
+    // 3. A blocked start skips requesting and every regular step-ending hook.
+    if (starting.blocked !== undefined) {
+      this.finalizeStep(proc, step);
+      return;
     }
 
-    if (this.currentStep === step) this.finalizeStep(proc, step);
+    // 4. Let the owner settle completions, reminders, or a direct terminal decision.
+    const requesting = await proc.step(() => this.invokeOwner<Extract<TurnOutcome, { type: 'done' }>>(
+      'requesting',
+      this.state,
+      step.scope.signal,
+    ));
+    if (!this.accepts(step) || this.finishSteeredStep(proc, step)) return;
+    if (requesting.decision?.type === 'done') {
+      this.uncommitted.push(...requesting.appended);
+      step.outcome = requesting.decision;
+      this.finalizeStep(proc, step);
+      return;
+    }
+
+    this.runtime.transition(() => {
+      for (const message of requesting.appended) this.commit(message);
+    });
+    if (!this.accepts(step) || this.finishSteeredStep(proc, step)) return;
+
+    const turnOutcome = this.state.outcome;
+    const requester = this.requester;
+    const profile = this.profile;
+
+    // 5. Resolve short terminal paths before starting any new request work.
+    if (turnOutcome?.type === 'aborted') {
+      this.completeRequest(step, {
+        type: 'aborted',
+        message: null,
+        usage: undefined,
+        reason: turnOutcome.reason,
+      });
+      this.finalizeStep(proc, step);
+      return;
+    }
+    if (requester === undefined || profile === undefined) {
+      const error = this.requesterError ?? new Error('loop has no requester');
+      step.outcome = { type: 'failed', error };
+      this.setOutcome(proc, step.outcome);
+      this.finalizeStep(proc, step);
+      return;
+    }
+    if (!this.toolsSettled) {
+      this.toolsSettled = true;
+      this.runtime.transition(() => {
+        if (profile.tools !== undefined) this.emit({ type: 'tools.settled', tools: [...profile.tools!] });
+      });
+    }
+
+    // 6. Settle a late request through the abort-only path without normal batch hooks.
+    const outcome = await this.executeRequest(proc, step, requester, profile);
+    if (this.phase === 'aborting') {
+      if (!this.acceptsAbort(step) || this.abortSettling) return;
+      this.abortSettling = true;
+      if (this.abortGrace !== undefined) clearTimeout(this.abortGrace);
+      this.abortGrace = undefined;
+      this.completeRequest(step, outcome);
+      if (step.batch.calls.length === 0) {
+        this.finishTurn();
+        return;
+      }
+      const result = await proc.step(() => this.runtime.executeBatch(step.batch));
+      this.completeAbortedBatch(step, result);
+      return;
+    }
+    if (!this.accepts(step)) return;
+    this.completeRequest(step, outcome);
+    if (outcome.type !== 'done' && this.finishSteeredStep(proc, step)) return;
+
+    if (step.batch.calls.length > 0) {
+      // 7. Run blocked and regular batches through the same awaited runtime boundary.
+      this.setPhase(proc, 'batching');
+      const batchStarting = await proc.step(() => this.batchStarting(step));
+      if (this.acceptsAbort(step)) {
+        const result = await proc.step(() => this.runtime.executeBatch(step.batch));
+        this.completeAbortedBatch(step, result);
+        return;
+      }
+      if (!this.accepts(step)) return;
+      const reports = hookFailureReports('tool.batch-starting', batchStarting.failures);
+      let result: TurnToolBatchResult;
+      if (batchStarting.blocked !== undefined) {
+        step.batch.blocked = batchStarting.blocked;
+        result = await proc.step(() => this.runtime.transition(() => {
+          const pending = this.runtime.executeBatch(step.batch);
+          this.runtime.report('tool.batch-starting', this.point, reports, true);
+          return pending;
+        }));
+      } else {
+        this.runtime.transition(() => {
+          this.runtime.report('tool.batch-starting', this.point, reports, true);
+        });
+        if (!this.accepts(step)) return;
+        this.setPhase(proc, 'acting');
+        result = await proc.step(() => this.runtime.executeBatch(step.batch));
+      }
+      if (this.acceptsAbort(step)) {
+        this.completeAbortedBatch(step, result);
+        return;
+      }
+      if (!this.accepts(step)) return;
+      this.completeToolBatch(step, result);
+    }
+
+    // 8. Aborts skip regular ending; every other outcome reuses one ending promise.
+    if (this.state.outcome?.type === 'aborted') {
+      this.finalizeStep(proc, step);
+      return;
+    }
+    this.setPhase(proc, 'ending');
+    const ending = await proc.step(() => {
+      step.ending ??= this.stepEnding(step);
+      return step.ending;
+    });
+    if (!this.accepts(step)) return;
+    this.runtime.transition(() => {
+      step.outcome = ending.outcome;
+      if (ending.outcome.type !== 'continue') this.setOutcome(proc, ending.outcome);
+      for (const { point, failure } of ending.failures) {
+        this.runtime.report(point, this.point, hookFailureReports(point, [failure]), true);
+      }
+    });
+    if (!this.accepts(step)) return;
+
+    // 9. Terminal endings finish immediately; only continue invokes the owner.
+    if (ending.outcome.type !== 'continue') {
+      this.finalizeStep(proc, step);
+      return;
+    }
+    const continuing = await proc.step(() => this.invokeOwner<Extract<TurnOutcome, { type: 'done' }>>(
+      'continuing',
+      this.state,
+      this.scope.signal,
+    ));
+    if (!this.accepts(step)) return;
+    if (continuing.decision?.type === 'done') {
+      this.uncommitted.push(...continuing.appended);
+      step.outcome = continuing.decision;
+      this.finalizeStep(proc, step);
+      return;
+    }
+    this.runtime.transition(() => {
+      for (const message of continuing.appended) this.commit(message);
+    });
+    if (!this.accepts(step)) return;
+    this.finalizeStep(proc, step);
   }
 
   private async stepStarting(step: TurnStep): Promise<StepStartingRun> {
