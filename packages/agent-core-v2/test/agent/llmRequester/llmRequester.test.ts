@@ -27,7 +27,7 @@ import {
   telemetryServices,
   type TestAgentContext,
 } from '../../harness';
-import { drainPromptCacheViolations, promptCacheComparisons } from '../../harness/prompt-cache-guard';
+import { promptCacheComparisons } from '../../harness/prompt-cache-guard';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 
 interface CapturedLogEntry {
@@ -459,59 +459,6 @@ describe('LLMRequester service migration coverage', () => {
       await ctx.untilTurnEnd();
     });
 
-    it('retries invalid arguments with a temporary system correction', async () => {
-      await ctx.rpc.setPermission({ mode: 'auto' });
-      await ctx.rpc.registerTool({
-        name: 'Lookup',
-        description: 'Look up a short test value.',
-        parameters: {
-          type: 'object',
-          properties: { query: { type: 'string' } },
-          required: ['query'],
-          additionalProperties: false,
-        },
-      });
-      ctx.mockNextProviderResponse({
-        parts: [
-          { type: 'text', text: 'I will call Lookup' },
-          { type: 'function', id: 'call_bad', name: 'Lookup', arguments: '{"query":' },
-        ],
-        usage: { inputOther: 2, output: 1, inputCacheRead: 0, inputCacheCreation: 0 },
-        finishReason: 'tool_calls',
-      });
-      ctx.mockNextProviderResponse({
-        parts: [{ type: 'function', id: 'call_good', name: 'Lookup', arguments: '{"query":"moon"}' }],
-        usage: { inputOther: 4, output: 3, inputCacheRead: 0, inputCacheCreation: 0 },
-        finishReason: 'tool_calls',
-      });
-      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Look up moon' }] });
-      await ctx.untilToolCall({ content: 'moon-result', output: 'moon-result' });
-      ctx.mockNextResponse({ type: 'text', text: 'The lookup result is moon-result.' });
-      await ctx.untilTurnEnd();
-
-      expect(protocolEvents(ctx, 'turn.step.retrying').map((event) => event.args)).toEqual([
-        expect.objectContaining({
-          failedAttempt: 1,
-          nextAttempt: 2,
-          delayMs: 0,
-          errorMessage: expect.stringContaining('not executed'),
-        }),
-      ]);
-      expect(protocolEvents(ctx, 'turn.step.stream_reset')).toHaveLength(1);
-      expect(protocolEvents(ctx, 'toolCall')).toHaveLength(1);
-      expect(ctx.llmCalls).toHaveLength(3);
-      expect(ctx.llmCalls[1]?.history.at(-1)).toMatchObject({ role: 'system' });
-      expect(JSON.stringify(ctx.llmCalls[1]?.history.at(-1))).toContain('not executed');
-      expect(JSON.stringify(ctx.context.history())).not.toContain('was not executed because its arguments were invalid');
-      expect(JSON.stringify(ctx.context.history())).not.toContain('I will call Lookup');
-      expect(wireEvents(ctx, 'usage.record')[0]?.args).toMatchObject({
-        usage: { inputOther: 4, output: 3, inputCacheRead: 0, inputCacheCreation: 0 },
-      });
-      expect(wireEvents(ctx, 'token_counting.measured')[0]?.args).toMatchObject({ tokens: 7 });
-      expect(drainPromptCacheViolations()).toEqual([
-        expect.stringContaining('next step request does not extend the last turn request'),
-      ]);
-    });
   });
 
   describe('request failure logging', () => {

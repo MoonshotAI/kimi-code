@@ -2,7 +2,7 @@ import { once } from 'node:events';
 
 import { deferred } from '@moonshot-ai/testkit/fixtures';
 import type { KapFrame, KapItem, KapSocket, KapTurn, KapTurnsPage } from '@moonshot-ai/testkit/kap';
-import { agent, bash, held, httpError, say, think, withUsage } from '@moonshot-ai/testkit/model';
+import { agent, bash, call, held, httpError, say, think, withUsage } from '@moonshot-ai/testkit/model';
 import { test as base, describe, expect } from 'vitest';
 
 import { scenarioFixtures, type ScenarioFixtures } from './support/scenario';
@@ -150,6 +150,37 @@ describe('conversation over KAP', () => {
       outcome: 'completed',
       output: 'testkit-ok\n',
     });
+  });
+
+  test('retries invalid tool arguments without retaining failed attempt output or usage', async ({ kap, model }) => {
+    model.script(
+      withUsage({ input: 2, output: 1 }, call('Bash', {}, { rawArguments: '{"command":', text: 'I will call Bash' })),
+      withUsage({ input: 4, output: 3 }, bash('echo testkit-ok')),
+      withUsage({ input: 6, output: 2 }, say('done')),
+    );
+    const session = await kap.createSession();
+
+    await kap.prompt(session.id, 'run it');
+    await kap.waitIdle(session.id);
+
+    expect(model.requests('main')).toHaveLength(3);
+    expect(model.request(1).view.system).toContain('not executed');
+    const [turn] = await kap.turns(session.id);
+    const toolCalls = turn?.items.filter((item) => item.type === 'tool_call') ?? [];
+    expect(toolCalls).toHaveLength(1);
+    expect(toolCalls[0]).toMatchObject({ name: 'Bash', outcome: 'completed', output: 'testkit-ok\n' });
+    const assistantText = turn?.items
+      .filter((item) => item.type === 'assistant_message')
+      .map((item) => item['text'])
+      .join('') ?? '';
+    expect(assistantText).not.toContain('I will call Bash');
+    expect(assistantText).toContain('done');
+    const steps = (turn?.steps ?? []) as readonly { usage?: Record<string, unknown> }[];
+    const usages = steps.flatMap((step) => step.usage === undefined ? [] : [step.usage]);
+    expect(usages).toMatchObject([
+      { input_other: 4, output: 3 },
+      { input_other: 6, output: 2 },
+    ]);
   });
 
   test('waits for approval in manual mode, shows it on the tool item and runs the tool once approved', async ({ kap, model }) => {
