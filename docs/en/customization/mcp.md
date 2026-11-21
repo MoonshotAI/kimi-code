@@ -23,7 +23,7 @@ Kimi Code CLI supports three MCP server connection methods:
 MCP server configuration is written in `mcp.json`, at two levels:
 
 - **User level**: `~/.kimi-code/mcp.json` (or `$KIMI_CODE_HOME/mcp.json`), shared across projects
-- **Project level**: `.kimi-code/mcp.json` at the root of the current checkout, effective only for that checkout. In a Git repository this is the repository root, even when you start Kimi Code in a subdirectory, and each Git worktree reads the file at its own root. Outside a Git repository it is the directory you start in
+- **Project level**: `.kimi-code/mcp.json` at the root of the current checkout (a folder that holds the repository's files: the repository's original folder, or a worktree, which is an extra working folder of the same repository created with `git worktree add`), effective only for that checkout. In a Git repository this is the repository root, even when you start Kimi Code in a subdirectory, and each Git worktree reads the file at its own root. Outside a Git repository it is the directory you start in
 
 Entries with the same name: the project-level entry takes precedence and overrides the user-level entry.
 

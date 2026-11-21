@@ -23,7 +23,7 @@ Kimi Code CLI 支持三种 MCP server 接入方式：
 MCP server 配置写在 `mcp.json` 中，分两层：
 
 - **用户级**：`~/.kimi-code/mcp.json`（或 `$KIMI_CODE_HOME/mcp.json`），跨项目共享
-- **项目级**：当前检出根目录下的 `.kimi-code/mcp.json`，只对该检出生效。在 Git 仓库中，即使在子目录里启动 Kimi Code，读取的也是仓库根目录下的文件；每个 Git worktree 读取它自己根目录下的文件。不在 Git 仓库中时，读取启动目录下的文件
+- **项目级**：当前检出（存放仓库文件的文件夹：仓库最初所在的文件夹，或 worktree，即用 `git worktree add` 为同一仓库另建的工作文件夹）根目录下的 `.kimi-code/mcp.json`，只对该检出生效。在 Git 仓库中，即使在子目录里启动 Kimi Code，读取的也是仓库根目录下的文件；每个 Git worktree 读取它自己根目录下的文件。不在 Git 仓库中时，读取启动目录下的文件
 
 同名条目以项目级为准，覆盖用户级。
 
