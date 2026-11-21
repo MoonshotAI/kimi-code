@@ -777,7 +777,7 @@ export function defineKlientConformance(
         const agent = target.klient.session(created.id).agent('main');
         const binding = await agent.getEnvironment();
         expect(binding.environmentId).toBe('local');
-        expect(binding).toEqual({ environmentId: 'local' });
+        expect(binding).toEqual({ environmentId: 'local', cwd: process.cwd() });
         expect(await agent.getEnvironment()).toEqual(binding);
 
         const seen: unknown[] = [];
