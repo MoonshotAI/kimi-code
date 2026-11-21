@@ -3,8 +3,6 @@ export default {
   placeholder: '输入消息…',
   commandArgumentHint: '在 {command} 后输入{argument}',
   promptPredictionHint: '预测：{prediction}。按 Tab 或右方向键填入。',
-  promptPredictionPending: '正在预测提示词…',
-  promptPredictionRecallPlaceholder: '输入消息… 按 <kbd>Tab</kbd> 预测提示词',
   send: '发送 ↵',
   continue: '继续',
   queueLabel: '队列',

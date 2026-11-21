@@ -269,33 +269,13 @@ const promptPredictionIdle = computed(() =>
   activeAttachmentEntries.value.length === 0
 );
 const promptPredictionSuggestion = computed(() => {
-  const suggestion = client.promptPrediction.value;
+  const suggestion = client.promptPrediction?.value ?? null;
   if (!promptPredictionIdle.value || suggestion === null || suggestion.sessionId !== sessionId.value) return undefined;
   return suggestion;
 });
-const promptPredictionPending = computed(() => {
-  const pending = client.promptPredictionPending?.value ?? null;
-  if (!promptPredictionIdle.value || pending === null || pending.sessionId !== sessionId.value) return undefined;
-  return pending;
-});
-const promptPredictionText = computed(() => {
-  const suggestion = promptPredictionSuggestion.value;
-  return suggestion === undefined || suggestion.accepted || suggestion.parked ? undefined : suggestion.text;
-});
-const promptPredictionPredicting = computed(() => promptPredictionPending.value !== undefined && !promptPredictionPending.value.parked);
-const promptPredictionRecallAvailable = computed(() => {
-  const suggestion = promptPredictionSuggestion.value;
-  return (suggestion !== undefined && !suggestion.accepted && suggestion.parked) || promptPredictionPending.value?.parked === true;
-});
-const promptPredictionPlaceholderActive = computed(() =>
-  promptPredictionIdle.value || promptPredictionText.value !== undefined || promptPredictionPredicting.value || promptPredictionRecallAvailable.value
-);
-const promptPredictionPlaceholder = computed(() => {
-  if (promptPredictionText.value !== undefined) return promptPredictionText.value;
-  if (promptPredictionPredicting.value) return t('composer.promptPredictionPending');
-  if (promptPredictionIdle.value || promptPredictionRecallAvailable.value) return t('composer.promptPredictionRecallPlaceholder');
-  return placeholder.value;
-});
+const promptPredictionText = computed(() => promptPredictionSuggestion.value?.text);
+const promptPredictionPlaceholderActive = computed(() => promptPredictionIdle.value || promptPredictionText.value !== undefined);
+const promptPredictionPlaceholder = computed(() => promptPredictionText.value ?? placeholder.value);
 const promptPredictionActionAvailable = computed(() => promptPredictionIdle.value);
 const promptPredictionA11yId = useId();
 const promptPredictionA11yText = computed(() => {

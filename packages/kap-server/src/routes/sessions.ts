@@ -1108,15 +1108,19 @@ async function btwSessionAction(ctx: SessionActionCtx): Promise<void> {
   reply.send(okEnvelope({ agent_id: agentId }, req.id));
 }
 
-async function predictPromptAction(
-  ctx: SessionActionCtx<z.infer<typeof predictPromptRequestSchema>>,
-): Promise<void> {
-  const { core, req, reply, id, body } = ctx;
+async function resumePromptPredictionService(core: Scope, id: string): Promise<ISessionPromptPredictionService> {
   const session = await resumeSessionById(core.accessor, id);
   if (session === undefined) {
     throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${id} does not exist`);
   }
-  const service = session.accessor.get(ISessionPromptPredictionService);
+  return session.accessor.get(ISessionPromptPredictionService);
+}
+
+async function predictPromptAction(
+  ctx: SessionActionCtx<z.infer<typeof predictPromptRequestSchema>>,
+): Promise<void> {
+  const { core, req, reply, id, body } = ctx;
+  const service = await resumePromptPredictionService(core, id);
   const disconnected = (): boolean => req.raw?.aborted === true || reply.raw?.destroyed === true;
   const onAborted = (): void => {
     service.cancel(body.prediction_id, 'disconnect');
@@ -1142,13 +1146,8 @@ async function cancelPromptPredictionAction(
   ctx: SessionActionCtx<z.infer<typeof cancelPromptPredictionRequestSchema>>,
 ): Promise<void> {
   const { core, req, reply, id, body } = ctx;
-  const session = await resumeSessionById(core.accessor, id);
-  if (session === undefined) {
-    throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${id} does not exist`);
-  }
-  const cancelled = session.accessor
-    .get(ISessionPromptPredictionService)
-    .cancel(body.prediction_id, body.reason);
+  const service = await resumePromptPredictionService(core, id);
+  const cancelled = service.cancel(body.prediction_id, body.reason);
   reply.send(okEnvelope(cancelPromptPredictionResponseSchema.parse({ cancelled }), req.id));
 }
 
