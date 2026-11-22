@@ -31,9 +31,9 @@ export class ExtraAgentProfileLoaderService
   protected readonly priority = AGENT_PROFILE_SOURCE_PRIORITY.extra;
 
   constructor(
-    @IConfigService private readonly configService: IConfigService,
     @IWorkspaceContext private readonly workspace: IWorkspaceContext,
     @IWorkspaceDirs private readonly dirs: IWorkspaceDirs,
+    @IConfigService private readonly configService: IConfigService,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
     @IHostFileSystem private readonly fs: IHostFileSystem,
     @ILogService log: ILogService,

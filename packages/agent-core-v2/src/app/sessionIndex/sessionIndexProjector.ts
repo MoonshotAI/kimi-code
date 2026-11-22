@@ -13,6 +13,7 @@ import {
   PARENT_INDEX_NAME,
   SESSION_INDEX_MANIFEST,
   SESSION_INDEX_SCHEMA_VERSION,
+  addSessionCounts,
   recencyColumn,
   sessionCollection,
   sessionCountersCollection,
@@ -263,14 +264,12 @@ export class SessionIndexProjector {
       if (old !== undefined) bump(old.workspaceId, old.archived ? 'archived' : 'active', -1);
     }
     const current = await queryStore.getMany<SessionWorkspaceCounts>(counters, [...deltas.keys()]);
-    const counterOps: WriteOp[] = [...deltas.entries()].map(([workspaceId, delta]) => {
-      const base = current.get(workspaceId) ?? { active: 0, archived: 0 };
-      const value: SessionWorkspaceCounts = {
-        active: Math.max(0, base.active + delta.active),
-        archived: Math.max(0, base.archived + delta.archived),
-      };
-      return { kind: 'put', collection: counters, key: workspaceId, value };
-    });
+    const counterOps: WriteOp[] = [...deltas.entries()].map(([workspaceId, delta]) => ({
+      kind: 'put',
+      collection: counters,
+      key: workspaceId,
+      value: addSessionCounts(current.get(workspaceId), delta),
+    }));
     const totals = new Map<string, number>();
     for (const workspaceId of authoritative.values()) {
       totals.set(workspaceId, (totals.get(workspaceId) ?? 0) + 1);
