@@ -8,13 +8,13 @@ import {
   worktreeRemovalStateText,
   worktreeRemovalSummaryText,
   worktreeSessionDeleteRows,
+  type WorktreeDeleteListItem,
   type WorktreeDeleteRow,
   type WorktreeRemovalProgress,
 } from '@moonshot-ai/app-client/lib';
 import ConfirmDialog from '../dialogs/ConfirmDialog.vue';
 import type { ConfirmDialogCancelSource, ConfirmDialogRow } from '../dialogs/confirmDialogRow';
 import ManageDeleteList from './ManageDeleteList.vue';
-import type { ManageDeleteListItem } from './manageDeleteList';
 
 const props = defineProps<{
   state: WorktreeDeleteDialogState;
@@ -80,14 +80,10 @@ const rows = computed<ConfirmDialogRow[]>(() => {
       },
     ];
   }
-  return copyRows.value.map((row) => {
-    const next: ConfirmDialogRow = { key: row.kind, icon: row.icon, text: row.text, tone: row.tone };
-    if (row.trailing !== undefined) next.trailing = row.trailing;
-    return next;
-  });
+  return copyRows.value;
 });
 
-const listItems = computed<ManageDeleteListItem[]>(() => {
+const listItems = computed<WorktreeDeleteListItem[]>(() => {
   const progress = props.progress;
   if ((view.value === 'progress' || view.value === 'result') && progress !== null) {
     return progress.items.map((item) => ({
@@ -98,14 +94,7 @@ const listItems = computed<ManageDeleteListItem[]>(() => {
       stateText: worktreeRemovalStateText(item.state, tr),
     }));
   }
-  const items = copyRows.value.find((row) => row.items !== undefined)?.items ?? [];
-  return items.map((item) => ({
-    key: item.path,
-    name: item.name,
-    nameIsDirectory: item.nameIsDirectory,
-    meta: item.project,
-    loss: item.loss,
-  }));
+  return copyRows.value.find((row) => row.items !== undefined)?.items ?? [];
 });
 
 const branchOption = computed<string | null>(() => {

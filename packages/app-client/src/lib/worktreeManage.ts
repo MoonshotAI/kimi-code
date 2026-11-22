@@ -30,15 +30,17 @@ export type WorktreeDeleteRowIcon = 'folder' | 'message' | 'alert-triangle' | 'c
 export type WorktreeDeleteRowKind = 'target' | 'sessions' | 'risk' | 'safe' | 'unknown' | 'retained';
 
 export interface WorktreeDeleteListItem {
-  path: string;
+  key: string;
   name: string;
   nameIsDirectory: boolean;
-  project: string;
-  loss: string;
+  meta?: string;
+  loss?: string;
+  state?: WorktreeRemovalState;
+  stateText?: string;
 }
 
 export interface WorktreeDeleteRow {
-  kind: WorktreeDeleteRowKind;
+  key: WorktreeDeleteRowKind;
   icon: WorktreeDeleteRowIcon;
   tone: 'muted' | 'warning';
   text: string;
@@ -83,14 +85,14 @@ export function worktreeRiskRow(
   t: Translator,
 ): WorktreeDeleteRow {
   if (risk === null) {
-    return { kind: 'unknown', icon: 'alert-triangle', tone: 'warning', text: t('worktreeManage.riskUnknown') };
+    return { key: 'unknown', icon: 'alert-triangle', tone: 'warning', text: t('worktreeManage.riskUnknown') };
   }
   const effective = effectiveRisk(risk, deleteBranch);
   if (isRisky(effective)) {
-    return { kind: 'risk', icon: 'alert-triangle', tone: 'warning', text: riskSentence(effective, t) };
+    return { key: 'risk', icon: 'alert-triangle', tone: 'warning', text: riskSentence(effective, t) };
   }
   return {
-    kind: 'safe',
+    key: 'safe',
     icon: 'circle-check',
     tone: 'muted',
     text: t(deleteBranch ? 'worktreeManage.noRiskWithBranch' : 'worktreeManage.noRisk'),
@@ -119,16 +121,16 @@ export function worktreeDeleteRows(
       target.risk !== null && isRisky(effectiveRisk(target.risk, deleteBranch));
     const ordered = targets.toSorted((a, b) => Number(risky(b)) - Number(risky(a)));
     rows.push({
-      kind: 'target',
+      key: 'target',
       icon: 'folder',
       tone: 'muted',
       text: t(deleteBranch ? 'worktreeManage.targetListWithBranches' : 'worktreeManage.targetList'),
       trailing: t('worktreeManage.targetTotal', { n: targets.length }),
       items: ordered.map((target) => ({
-        path: target.path,
+        key: target.path,
         name: worktreeTargetLabel(target),
         nameIsDirectory: worktreeTargetIsDirectory(target),
-        project: target.projectName,
+        meta: target.projectName,
         loss:
           target.risk === null
             ? t('worktreeManage.shortUnknown')
@@ -137,7 +139,7 @@ export function worktreeDeleteRows(
     });
   } else {
     rows.push({
-      kind: 'target',
+      key: 'target',
       icon: 'folder',
       tone: 'muted',
       text: t(deleteBranch ? 'worktreeManage.targetDirectoryAndBranch' : 'worktreeManage.targetDirectory', {
@@ -148,7 +150,7 @@ export function worktreeDeleteRows(
   const sessions = targets.reduce((sum, target) => sum + Math.max(0, target.sessionCount), 0);
   if (sessions > 0) {
     rows.push({
-      kind: 'sessions',
+      key: 'sessions',
       icon: 'message',
       tone: 'muted',
       text: t(batch ? 'worktreeManage.sessionsAffectedBatch' : 'worktreeManage.sessionsAffected', { n: sessions }),
@@ -164,7 +166,7 @@ export function worktreeDeleteRows(
   const unknownCount = targets.filter((target) => target.risk === null).length;
   if (riskyCount > 0) {
     rows.push({
-      kind: 'risk',
+      key: 'risk',
       icon: 'alert-triangle',
       tone: 'warning',
       text: t('worktreeManage.riskBatch', { n: riskyCount }),
@@ -172,7 +174,7 @@ export function worktreeDeleteRows(
   }
   if (unknownCount > 0) {
     rows.push({
-      kind: 'unknown',
+      key: 'unknown',
       icon: 'alert-triangle',
       tone: 'warning',
       text: t('worktreeManage.riskUnknownBatch', { n: unknownCount }),
@@ -180,7 +182,7 @@ export function worktreeDeleteRows(
   }
   if (riskyCount === 0 && unknownCount === 0) {
     rows.push({
-      kind: 'safe',
+      key: 'safe',
       icon: 'circle-check',
       tone: 'muted',
       text: t(deleteBranch ? 'worktreeManage.noRiskWithBranch' : 'worktreeManage.noRisk'),
@@ -196,13 +198,13 @@ export function worktreeSessionDeleteRows(
   if (input.otherSessions > 0) {
     return [
       {
-        kind: 'target',
+        key: 'target',
         icon: 'message',
         tone: 'muted',
         text: t('worktreeManage.sessionTargetShared', { title: input.title }),
       },
       {
-        kind: 'retained',
+        key: 'retained',
         icon: 'folder',
         tone: 'muted',
         text: t('worktreeManage.sessionRetained', { n: input.otherSessions }),
@@ -210,7 +212,7 @@ export function worktreeSessionDeleteRows(
     ];
   }
   return [
-    { kind: 'target', icon: 'message', tone: 'muted', text: t('worktreeManage.sessionTarget', { title: input.title }) },
+    { key: 'target', icon: 'message', tone: 'muted', text: t('worktreeManage.sessionTarget', { title: input.title }) },
     worktreeRiskRow(input.risk, input.deleteBranch, t),
   ];
 }

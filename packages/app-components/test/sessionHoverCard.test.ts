@@ -16,7 +16,6 @@ const stores = vi.hoisted(() => ({
   infoRows: vi.fn(),
   observe: vi.fn(),
   refresh: vi.fn(),
-  refreshNow: vi.fn(),
 }));
 
 vi.mock('@moonshot-ai/app-client/stores', () => ({
@@ -31,7 +30,6 @@ vi.mock('@moonshot-ai/app-client/stores', () => ({
     rows: stores.infoRows,
     observe: stores.observe,
     refresh: stores.refresh,
-    refreshNow: stores.refreshNow,
   }),
 }));
 
@@ -114,7 +112,6 @@ beforeEach(() => {
   stores.infoRows.mockReset().mockImplementation(() => stores.rows);
   stores.observe.mockReset();
   stores.refresh.mockReset();
-  stores.refreshNow.mockReset();
 });
 
 afterEach(() => {
@@ -244,7 +241,6 @@ describe('SessionHoverCard', () => {
     expect(el.textContent).not.toContain('+3');
     expect(stores.observe).not.toHaveBeenCalled();
     expect(stores.refresh).not.toHaveBeenCalled();
-    expect(stores.refreshNow).not.toHaveBeenCalled();
   });
 
   it('uses the row directory when the session is not in the loaded list', async () => {

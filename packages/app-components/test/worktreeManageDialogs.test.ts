@@ -75,7 +75,7 @@ function until(check: () => void): Promise<void> {
 }
 
 async function settled(): Promise<void> {
-  await until(() => expect(worktreesStore().removalRunning).toBe(false));
+  await until(() => expect(worktreesStore().removals.some((item) => item.state === 'waiting' || item.state === 'deleting')).toBe(false));
   await nextTick();
   await nextTick();
 }

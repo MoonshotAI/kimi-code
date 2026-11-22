@@ -382,18 +382,6 @@ describe('sessionInfoStore', () => {
     ]);
   });
 
-  it('refreshes a session that is not on screen when asked explicitly', async () => {
-    sessionsStore().setSessions([{ id: 's2', workspaceId: 'ws1', cwd: '/repo' } as AppSession]);
-    workspacesStore().workspaces = [seedWorkspace('ws1', '/repo', [])];
-    const getGitStatusBatch = vi.fn().mockResolvedValue(statusBatch({ '/repo': gitStatus('main') }));
-    mockBatches(getGitStatusBatch, vi.fn().mockResolvedValue(prBatch({ '/repo': null })));
-
-    await sessionInfoStore().refreshNow('s2');
-
-    expect(getGitStatusBatch).toHaveBeenCalledExactlyOnceWith('s2', { roots: ['/repo'], includePullRequest: false, includeUntracked: true }, undefined);
-    expect(sessionInfoStore().rows('s2')[0]?.state).toEqual({ status: 'ready', value: gitStatus('main') });
-  });
-
   it('observes, refreshes in background, and preserves ready context summary across reobserves', async () => {
     const summary1 = {
       session_id: 's1',

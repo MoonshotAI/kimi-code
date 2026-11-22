@@ -170,7 +170,7 @@ describe('worktree first-prompt hold', () => {
 
     const started = await start(ws);
 
-    expect(started).toEqual({ sessionId: SID, promptRejected: false, held: true });
+    expect(started).toEqual({ sessionId: SID, promptRejected: false });
     expect(api.createSession.mock.calls[0]![0]).toMatchObject({
       workspaceId: 'workspace',
       cwd: '/workspace',

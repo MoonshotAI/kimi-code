@@ -47,14 +47,6 @@ export interface WorktreeRemovalRequest {
   deleteBranch?: boolean;
 }
 
-export interface WorktreeRemovalSummary {
-  total: number;
-  waiting: number;
-  deleting: number;
-  deleted: number;
-  failed: number;
-}
-
 export const WORKTREE_SIZE_BACKFILL_DELAY_MS = 2000;
 
 export const WORKTREE_SIZE_BACKFILL_MAX_ATTEMPTS = 5;
@@ -72,7 +64,6 @@ export const useWorktreesStore = defineStore('kimi.worktrees', () => {
   const items = ref<AppWorktree[]>([]);
   const totalSizeBytes = ref<number | undefined>(undefined);
   const loaded = ref(false);
-  const loading = ref(false);
   const refreshingSizes = ref(false);
   const loadError = ref<string | null>(null);
   const removals = ref<WorktreeRemovalItem[]>([]);
@@ -85,16 +76,6 @@ export const useWorktreesStore = defineStore('kimi.worktrees', () => {
   let sizeBackfillAttempts = 0;
 
   const groups = computed<WorktreeProjectGroup[]>(() => groupWorktreesByProject(items.value));
-
-  const removalSummary = computed<WorktreeRemovalSummary>(() => {
-    const summary: WorktreeRemovalSummary = { total: removals.value.length, waiting: 0, deleting: 0, deleted: 0, failed: 0 };
-    for (const item of removals.value) summary[item.state] += 1;
-    return summary;
-  });
-
-  const removalRunning = computed<boolean>(() =>
-    removals.value.some((item) => item.state === 'waiting' || item.state === 'deleting'),
-  );
 
   const shouldRemindDiskUsage = computed<boolean>(() =>
     shouldRemindWorktreeDisk(totalSizeBytes.value, lastRemindedLevel.value),
@@ -129,7 +110,7 @@ export const useWorktreesStore = defineStore('kimi.worktrees', () => {
     sizeBackfillAttempts += 1;
     sizeBackfillTimer = setTimeout(() => {
       sizeBackfillTimer = undefined;
-      if (refreshingSizes.value || loading.value) return;
+      if (refreshingSizes.value) return;
       void fetchList(false, true);
     }, WORKTREE_SIZE_BACKFILL_DELAY_MS);
   }
@@ -138,7 +119,6 @@ export const useWorktreesStore = defineStore('kimi.worktrees', () => {
     const seq = ++listSeq;
     cancelSizeBackfill();
     if (refreshSizes) refreshingSizes.value = true;
-    else if (!backfill) loading.value = true;
     const promise = (async () => {
       try {
         const list = await getKimiWebApi().listWorktrees(refreshSizes ? { refreshSizes: true } : undefined);
@@ -153,10 +133,7 @@ export const useWorktreesStore = defineStore('kimi.worktrees', () => {
         if (seq === listSeq) loadError.value = errorText(error);
         return false;
       } finally {
-        if (seq === listSeq) {
-          loading.value = false;
-          refreshingSizes.value = false;
-        }
+        if (seq === listSeq) refreshingSizes.value = false;
       }
     })().finally(() => {
       if (listInFlight === promise) listInFlight = undefined;
@@ -330,7 +307,6 @@ export const useWorktreesStore = defineStore('kimi.worktrees', () => {
     items.value = [];
     totalSizeBytes.value = undefined;
     loaded.value = false;
-    loading.value = false;
     refreshingSizes.value = false;
     loadError.value = null;
     removals.value = [];
@@ -344,14 +320,11 @@ export const useWorktreesStore = defineStore('kimi.worktrees', () => {
     items,
     totalSizeBytes,
     loaded,
-    loading,
     refreshingSizes,
     loadError,
     groups,
     removals,
     deletedSessionTitles,
-    removalSummary,
-    removalRunning,
     lastRemindedLevel,
     shouldRemindDiskUsage,
     load,

@@ -46,7 +46,7 @@ async function loadStore(items: AppWorktree[]) {
 }
 
 async function settled(): Promise<void> {
-  await waitFor(() => expect(worktreesStore().removalRunning).toBe(false));
+  await waitFor(() => expect(worktreesStore().removals.some((item) => item.state === 'waiting' || item.state === 'deleting')).toBe(false));
   await Promise.resolve();
 }
 

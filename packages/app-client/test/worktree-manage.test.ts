@@ -67,14 +67,14 @@ describe('risk wording', () => {
     [{ uncommittedFiles: 0, unpushedCommits: 0 }, true, 'safe', 'There are no uncommitted or unpushed changes.'],
   ] as const)('%j with branch deletion %s reads as %s', (risk, deleteBranch, kind, text) => {
     const row = worktreeRiskRow(risk, deleteBranch, en);
-    expect(row.kind).toBe(kind);
+    expect(row.key).toBe(kind);
     expect(row.text).toBe(text);
     expect(row.tone).toBe(kind === 'risk' ? 'warning' : 'muted');
   });
 
   it('says so when the status could not be checked', () => {
     const row = worktreeRiskRow(null, true, en);
-    expect(row.kind).toBe('unknown');
+    expect(row.key).toBe('unknown');
     expect(row.tone).toBe('warning');
     expect(row.text).toBe('Couldn’t check for uncommitted or unpushed changes.');
   });
@@ -83,7 +83,7 @@ describe('risk wording', () => {
 describe('single deletion dialog', () => {
   it('puts the affected sessions between the target and the risk', () => {
     const rows = worktreeDeleteRows([target('a', { sessionCount: 3 })], false, en);
-    expect(rows.map((row) => [row.kind, row.icon, row.text])).toEqual([
+    expect(rows.map((row) => [row.key, row.icon, row.text])).toEqual([
       ['target', 'folder', 'The Worktree directory for kimi/a will be deleted.'],
       ['sessions', 'message', '3 associated sessions will no longer be able to use this directory.'],
       ['safe', 'circle-check', 'There are no uncommitted files.'],
@@ -108,13 +108,13 @@ describe('batch deletion dialog', () => {
 
   it('heads the list, sorts risky worktrees first and states what each would lose', () => {
     const rows = worktreeDeleteRows(targets, false, en);
-    expect(rows[0]).toMatchObject({ kind: 'target', text: 'Worktrees to delete', trailing: '3 total' });
+    expect(rows[0]).toMatchObject({ key: 'target', text: 'Worktrees to delete', trailing: '3 total' });
     expect(rows[0]?.items).toEqual([
-      { path: '/wt/dirty', name: 'kimi/dirty', nameIsDirectory: false, project: 'kimi-code-app', loss: '3 uncommitted files' },
-      { path: '/wt/one', name: 'kimi/one', nameIsDirectory: false, project: 'kimi-code-app', loss: '1 uncommitted file' },
-      { path: '/wt/clean', name: 'kimi/clean', nameIsDirectory: false, project: 'demo', loss: '' },
+      { key: '/wt/dirty', name: 'kimi/dirty', nameIsDirectory: false, meta: 'kimi-code-app', loss: '3 uncommitted files' },
+      { key: '/wt/one', name: 'kimi/one', nameIsDirectory: false, meta: 'kimi-code-app', loss: '1 uncommitted file' },
+      { key: '/wt/clean', name: 'kimi/clean', nameIsDirectory: false, meta: 'demo', loss: '' },
     ]);
-    expect(rows.slice(1).map((row) => [row.kind, row.text])).toEqual([
+    expect(rows.slice(1).map((row) => [row.key, row.text])).toEqual([
       ['sessions', '4 associated sessions will no longer be able to use these directories.'],
       ['risk', 'Contents of 2 Worktrees cannot be recovered after deletion.'],
     ]);
@@ -129,11 +129,11 @@ describe('batch deletion dialog', () => {
   it('reports no risk only when every worktree is clean', () => {
     const clean = [target('a'), target('b', { risk: { uncommittedFiles: 0, unpushedCommits: 4 } })];
     expect(worktreeDeleteRows(clean, false, en).at(-1)).toMatchObject({
-      kind: 'safe',
+      key: 'safe',
       text: 'There are no uncommitted files.',
     });
     expect(worktreeDeleteRows(clean, true, en).at(-1)).toMatchObject({
-      kind: 'risk',
+      key: 'risk',
       text: 'Contents of 1 Worktree cannot be recovered after deletion.',
     });
     expect(worktreeDeleteRows([target('a'), target('b')], true, en).at(-1)?.text).toBe(
@@ -145,10 +145,10 @@ describe('batch deletion dialog', () => {
     const rows = worktreeDeleteRows([target('a'), target('b', { risk: null })], false, en);
     expect(rows[0]?.items?.map((item) => item.loss)).toEqual(['', 'Status unknown']);
     expect(rows.at(-1)).toMatchObject({
-      kind: 'unknown',
+      key: 'unknown',
       text: 'Couldn’t check 1 Worktree for uncommitted or unpushed changes.',
     });
-    expect(rows.some((row) => row.kind === 'safe')).toBe(false);
+    expect(rows.some((row) => row.key === 'safe')).toBe(false);
   });
 });
 
@@ -172,7 +172,7 @@ describe('session deletion dialog', () => {
       { title: 'Hello', otherSessions: 2, risk: { uncommittedFiles: 4, unpushedCommits: 1 }, deleteBranch: true },
       en,
     );
-    expect(rows.map((row) => [row.kind, row.icon, row.text])).toEqual([
+    expect(rows.map((row) => [row.key, row.icon, row.text])).toEqual([
       [
         'target',
         'message',

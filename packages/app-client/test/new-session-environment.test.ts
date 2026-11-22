@@ -148,10 +148,10 @@ describe('new session environment', () => {
     getWorkspaceGitBranches.mockReturnValueOnce(pending.promise);
     const refreshed = store.refreshBranches('git');
     expect(store.availability('git')).toBe('available');
-    expect(store.view('git')).toMatchObject({ refreshing: true, branches: repo().branches });
+    expect(store.view('git')).toMatchObject({ branches: repo().branches });
     pending.resolve(repo({ branches: [{ name: 'main', committedAt: '2026-11-19T00:00:00.000Z' }] }));
     await refreshed;
-    expect(store.view('git')).toMatchObject({ refreshing: false, branches: [{ name: 'main' }] });
+    expect(store.view('git')).toMatchObject({ branches: [{ name: 'main' }] });
   });
 
   it('loads the active project as soon as Worktree is chosen', async () => {

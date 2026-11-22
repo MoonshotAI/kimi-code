@@ -335,14 +335,6 @@ export const useSessionInfoStore = defineStore('kimi.sessionInfo', () => {
     return Promise.all(tasks).then(() => undefined);
   }
 
-  function refreshNow(sessionId: string, options?: ReadRequestOptions): Promise<void> {
-    if (observedBySession.value[sessionId]) return reload(sessionId, options);
-    const folders = foldersForSession(sessionId);
-    if (folders.length === 0) return Promise.resolve();
-    adoptFolders(sessionId, folders);
-    return reload(sessionId, options);
-  }
-
   function contextState(sessionId: string): SessionContextInfoState | undefined {
     return contextBySession.value[sessionId];
   }
@@ -471,7 +463,6 @@ export const useSessionInfoStore = defineStore('kimi.sessionInfo', () => {
     observe,
     observeContext,
     refresh,
-    refreshNow,
     refreshContext,
     unobserve,
     unobserveContext,

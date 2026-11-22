@@ -33,9 +33,7 @@ export interface NewSessionEnvironmentView {
   preferred: NewSessionEnvironment;
   effective: NewSessionEnvironment;
   availability: WorktreeAvailability;
-  refreshing: boolean;
   headBranch?: string;
-  dirty: boolean;
   branches: AppGitBranch[];
   remotes: string[];
   selection: WorktreeSourceSelection | null;
@@ -45,7 +43,6 @@ export interface NewSessionEnvironmentView {
   usesRemote: boolean;
   setupScript: WorktreeSetupScript | null;
   runSetupScript: boolean;
-  request?: AppWorktreeSetupRequest;
 }
 
 function loadRecord<T>(key: string, accept: (value: unknown) => T | undefined): Record<string, T> {
@@ -275,9 +272,7 @@ export const useNewSessionEnvironmentStore = defineStore('kimi.newSessionEnviron
       preferred: preferred.value,
       effective: effectiveEnvironment(workspaceId),
       availability: availability(workspaceId),
-      refreshing: state?.status === 'loading' && info !== undefined,
       headBranch: info?.headBranch,
-      dirty: info?.dirty === true,
       branches: info?.branches ?? [],
       remotes: info?.remotes ?? [],
       selection: selected,
@@ -288,7 +283,6 @@ export const useNewSessionEnvironmentStore = defineStore('kimi.newSessionEnviron
       usesRemote: remoteOn && remoteAvailable,
       setupScript: setupScript(workspaceId),
       runSetupScript: runSetupScript.value,
-      request: worktreeRequest(workspaceId),
     };
   }
 

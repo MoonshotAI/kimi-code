@@ -305,7 +305,7 @@ export function usePromptPipeline(rawState: ExtendedState, deps: PromptPipelineD
   async function startSessionAndSendPrompt(
     workspaceId: string,
     prompt: PromptEnvelope,
-  ): Promise<{ sessionId: string | null; promptRejected: boolean; concurrent?: boolean; held?: boolean }> {
+  ): Promise<{ sessionId: string | null; promptRejected: boolean; concurrent?: boolean }> {
     if (!promptStore().tryBeginStartingFirstPrompt(workspaceId)) {
       return { sessionId: null, promptRejected: false, concurrent: true };
     }
@@ -317,10 +317,9 @@ export function usePromptPipeline(rawState: ExtendedState, deps: PromptPipelineD
       if (worktreeHoldsPrompts(sid)) {
         const content = buildPromptContent(prompt);
         if (content.length === 0) return { sessionId: sid, promptRejected: true };
-        const message = buildOptimisticUserMessage(sid, nextOptimisticMsgId(), content, prompt.skills, {
-          'kimiWeb.worktreeHeld': true,
-          ...(prompt.snapshot === undefined ? {} : { 'kimiWeb.composerSnapshot': prompt.snapshot }),
-        });
+        const message = buildOptimisticUserMessage(sid, nextOptimisticMsgId(), content, prompt.skills,
+          prompt.snapshot === undefined ? {} : { 'kimiWeb.composerSnapshot': prompt.snapshot },
+        );
         holdFirstSend(sid, message, async () => {
           const outcome = await submitPromptInternal(sid, prompt);
           if (outcome === 'ok' || sessionOf(sid) === undefined) return outcome;
@@ -329,7 +328,7 @@ export function usePromptPipeline(rawState: ExtendedState, deps: PromptPipelineD
           return 'requeued';
         });
         syncWorktreeHold(sid);
-        return { sessionId: sid, promptRejected: false, held: true };
+        return { sessionId: sid, promptRejected: false };
       }
       const outcome = await submitPromptInternal(sid, prompt);
       return { sessionId: sid, promptRejected: outcome === 'rejected' };
@@ -363,7 +362,6 @@ export function usePromptPipeline(rawState: ExtendedState, deps: PromptPipelineD
           [{ type: 'text', text: `/${skillName}${args ? ` ${args}` : ''}` }, ...attachmentsToContent(attachments)],
           [],
           {
-            'kimiWeb.worktreeHeld': true,
             ...(savedSnapshot === undefined ? {} : { 'kimiWeb.composerSnapshot': savedSnapshot }),
             origin: { kind: 'skill_activation', trigger: 'user-slash', skillName, skillPath, skillArgs: args },
           },
@@ -1010,8 +1008,6 @@ export function usePromptPipeline(rawState: ExtendedState, deps: PromptPipelineD
     abortCurrentPrompt,
     unqueue,
     reorderQueue,
-    worktreeHoldsPrompts,
-    worktreeBlocksSend,
     syncWorktreeHold,
     runSessionWorktreeAction,
   };

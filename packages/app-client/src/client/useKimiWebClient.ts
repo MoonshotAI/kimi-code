@@ -37,10 +37,8 @@ import {
   classifySessionEnvironment,
   sessionEnvironmentTag,
   sessionWorktreeBlocksSend,
-  sessionWorktreeCard,
   sessionWorktreeHoldsPrompts,
   type SessionEnvironmentKind,
-  type SessionWorktreeCard,
 } from '@moonshot-ai/app-core/lib';
 import { buildApprovalBlock } from '@moonshot-ai/app-core/client';
 import { ackThinkingPending, foldDaemonThinkingLevel } from '@moonshot-ai/app-core/lib';
@@ -106,11 +104,7 @@ import { sessionReadScope, workspaceReadScope } from './observationScope';
 import { createSessionActions } from './sessionActions';
 import { usePromptPipeline } from './usePromptPipeline';
 import { useConfirmDialog } from '../composables/useConfirmDialog';
-import {
-  WORKTREE_RESULT_TOAST_MS,
-  openWorktreeSettings,
-  useWorktreeManageDialogs,
-} from '../composables/useWorktreeManageDialogs';
+import { toastWithManage, useWorktreeManageDialogs } from '../composables/useWorktreeManageDialogs';
 import { persistComposerDraftSnapshot } from '../lib/composerDraftLifecycle';
 import { closeSessionBusyWindow, openSessionBusyWindow } from '../lib/perfTracking';
 import { waitForSessionExecution, type SessionExecutionState } from '../lib/sessionExecutionReadiness';
@@ -2853,16 +2847,6 @@ const activeSessionEnvironment = computed<SessionEnvironmentKind>(() =>
   classifySessionEnvironment({ worktree: activeSessionWorktree.value }),
 );
 
-const activeWorktreeCard = computed<SessionWorktreeCard | null>(() => sessionWorktreeCard(activeSessionWorktree.value));
-
-const activeWorktreeHoldsPrompts = computed<boolean>(() =>
-  sessionWorktreeHoldsPrompts({ worktree: activeSessionWorktree.value }),
-);
-
-const activeWorktreeBlocksSend = computed<boolean>(() =>
-  sessionWorktreeBlocksSend({ worktree: activeSessionWorktree.value }),
-);
-
 const activeMainDirectory = computed<string>(
   () =>
     workspacesStore().mainDirectoryFor(rawState.activeSessionId, activeWorkspaceId.value) ||
@@ -3156,21 +3140,7 @@ async function deleteWorktreeSessionWithToast(
       output: result.worktree.output,
     });
     if (worktrees.loaded) void worktrees.load();
-    toast({
-      layout: 'bar',
-      mode: 'replace',
-      title: t('worktreeManage.toastSessionDirectoryKept'),
-      duration: WORKTREE_RESULT_TOAST_MS,
-      actions: [
-        {
-          label: t('worktreeManage.manage'),
-          onClick: ({ dismiss }) => {
-            dismiss();
-            openWorktreeSettings();
-          },
-        },
-      ],
-    });
+    toastWithManage(t('worktreeManage.toastSessionDirectoryKept'));
     return true;
   }
   if (worktrees.loaded) void worktrees.load();
@@ -3583,11 +3553,7 @@ export function useKimiWebClient() {
     abortCurrentPrompt: promptPipeline.abortCurrentPrompt,
     activeSessionWorktree,
     activeSessionEnvironment,
-    activeWorktreeCard,
-    activeWorktreeHoldsPrompts,
-    activeWorktreeBlocksSend,
     activeMainDirectory,
-    heldFirstPromptBySession: computed(() => promptStore().heldFirstPromptBySession),
     runSessionWorktreeAction: promptPipeline.runSessionWorktreeAction,
     retrySessionWorktree: (sessionId: string, input?: SessionWorktreeRetryInput) =>
       promptPipeline.runSessionWorktreeAction(sessionId, 'retry', input),

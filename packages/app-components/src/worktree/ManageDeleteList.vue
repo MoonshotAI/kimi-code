@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from 'vue';
 import { Icon, Spinner } from '@moonshot-ai/app-ui';
-import { MANAGE_DELETE_LIST_NATURAL_ROWS, type ManageDeleteListItem } from './manageDeleteList';
+import type { WorktreeDeleteListItem } from '@moonshot-ai/app-client/lib';
+import { MANAGE_DELETE_LIST_NATURAL_ROWS } from './manageDeleteList';
 
 const props = defineProps<{
-  items: readonly ManageDeleteListItem[];
+  items: readonly WorktreeDeleteListItem[];
 }>();
 
 const listRef = ref<HTMLElement | null>(null);

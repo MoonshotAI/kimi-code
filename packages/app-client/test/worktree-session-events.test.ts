@@ -123,10 +123,9 @@ describe('useKimiWebClient worktree session', () => {
 
     const started = await client.startSessionAndSendPrompt('workspace-1', client.createPromptEnvelope({ text: 'hello' }));
 
-    expect(started).toEqual({ sessionId: SID, promptRejected: false, held: true });
+    expect(started).toEqual({ sessionId: SID, promptRejected: false });
     expect(api.createSession).toHaveBeenCalledWith(expect.objectContaining({ worktree: { sourceBranch: 'main' } }));
     expect(client.activeSessionEnvironment.value).toBe('settingUp');
-    expect(client.activeWorktreeHoldsPrompts.value).toBe(true);
     expect(client.activeMainDirectory.value).toBe('/workspace');
     expect(client.turns.value.filter((turn) => turn.role === 'user').map((turn) => turn.text)).toEqual(['hello']);
     expect(client.activity.value).toBe('idle');
@@ -138,7 +137,7 @@ describe('useKimiWebClient worktree session', () => {
     expect(await client.abortCurrentPrompt()).toBe(true);
     expect(sessionWorktreeAction).toHaveBeenCalledExactlyOnceWith(SID, 'cancel', undefined);
     expect(cancelSession).not.toHaveBeenCalled();
-    expect(client.activeWorktreeCard.value).toBe('stopped');
+    expect(client.activeSessionWorktree.value?.setup.status).toBe('stopped');
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(submitPrompt).not.toHaveBeenCalled();
 
@@ -152,7 +151,6 @@ describe('useKimiWebClient worktree session', () => {
     await vi.waitFor(() => expect(submitPrompt).toHaveBeenCalledTimes(1));
     expect(submitPrompt.mock.calls[0]![1].content).toEqual([{ type: 'text', text: 'hello' }]);
     expect(client.activeSessionEnvironment.value).toBe('worktree');
-    expect(client.activeWorktreeCard.value).toBeNull();
     expect(client.activeMainDirectory.value).toBe('/wt/a');
     expect(client.status.value.cwd).toBe('/wt/a');
     expect(getGitStatus).toHaveBeenCalled();

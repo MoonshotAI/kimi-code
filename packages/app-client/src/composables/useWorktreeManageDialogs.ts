@@ -105,14 +105,15 @@ function isGone(inspection: WorktreeInspection | null, path: string): boolean {
   return inspection?.errors[path]?.code === WORKTREE_NOT_FOUND_CODE;
 }
 
-function showResultToast(items: readonly WorktreeRemovalProgressItem[], failed: boolean): void {
+export function toastWithManage(title: string, options: { manage?: boolean; replace?: boolean } = {}): void {
   toast({
     layout: 'bar',
-    mode: 'replace',
-    title: worktreeRemovalSummaryText(items, t),
+    ...(options.replace === false ? {} : { mode: 'replace' as const }),
+    title,
     duration: WORKTREE_RESULT_TOAST_MS,
-    ...(failed
-      ? {
+    ...(options.manage === false
+      ? {}
+      : {
           actions: [
             {
               label: t('worktreeManage.manage'),
@@ -122,9 +123,12 @@ function showResultToast(items: readonly WorktreeRemovalProgressItem[], failed: 
               },
             },
           ],
-        }
-      : {}),
+        }),
   });
+}
+
+function showResultToast(items: readonly WorktreeRemovalProgressItem[], failed: boolean): void {
+  toastWithManage(worktreeRemovalSummaryText(items, t), { manage: failed });
 }
 
 function dropBatch(id: number): void {

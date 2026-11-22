@@ -33,8 +33,16 @@ function waitFor(check: () => void): Promise<void> {
   return vi.waitFor(check, { interval: 1 });
 }
 
+function states(store: ReturnType<typeof freshStore>): string[] {
+  return store.removals.map((entry) => entry.state);
+}
+
+function running(store: ReturnType<typeof freshStore>): boolean {
+  return states(store).some((state) => state === 'waiting' || state === 'deleting');
+}
+
 async function settled(store: ReturnType<typeof freshStore>): Promise<void> {
-  await waitFor(() => expect(store.removalRunning).toBe(false));
+  await waitFor(() => expect(running(store)).toBe(false));
   await Promise.resolve();
 }
 
@@ -94,7 +102,6 @@ describe('worktree list', () => {
     await vi.advanceTimersByTimeAsync(WORKTREE_SIZE_BACKFILL_DELAY_MS);
     expect(api.listWorktrees).toHaveBeenCalledTimes(2);
     expect(api.listWorktrees).toHaveBeenLastCalledWith(undefined);
-    expect(store.loading).toBe(false);
 
     await vi.advanceTimersByTimeAsync(WORKTREE_SIZE_BACKFILL_DELAY_MS * (WORKTREE_SIZE_BACKFILL_MAX_ATTEMPTS + 3));
     expect(api.listWorktrees).toHaveBeenCalledTimes(1 + WORKTREE_SIZE_BACKFILL_MAX_ATTEMPTS);
@@ -129,7 +136,6 @@ describe('worktree removal queue', () => {
     expect(store.removals.map((entry) => [entry.path, entry.state])).toEqual([['/wt/a', 'deleting'], ['/wt/b', 'waiting']]);
     expect(store.removals[0]).toMatchObject({ name: 'a', branch: 'kimi/a', deleteBranch: true });
     expect(api.removeWorktree).toHaveBeenCalledExactlyOnceWith({ path: '/wt/a', deleteBranch: true });
-    expect(store.removalRunning).toBe(true);
 
     first.resolve({ removed: true, branchDeleted: true });
     await waitFor(() => expect(store.removalFor('/wt/b')?.state).toBe('deleting'));
@@ -138,7 +144,7 @@ describe('worktree removal queue', () => {
 
     second.resolve({ removed: true, branchDeleted: false });
     await settled(store);
-    expect(store.removalSummary).toEqual({ total: 2, waiting: 0, deleting: 0, deleted: 2, failed: 0 });
+    expect(states(store)).toEqual(['deleted', 'deleted']);
   });
 
   it('removes deleted worktrees from the list and reloads it when the queue drains', async () => {
@@ -147,7 +153,7 @@ describe('worktree removal queue', () => {
     api.listWorktrees.mockResolvedValueOnce(list([item('c')], GB));
 
     store.enqueueRemovals([{ path: '/wt/a' }, { path: '/wt/b' }]);
-    await waitFor(() => expect(store.removalSummary.deleted).toBe(2));
+    await waitFor(() => expect(states(store)).toEqual(['deleted', 'deleted']));
     expect(store.items.map((entry) => entry.path)).toEqual(['/wt/c']);
     expect(store.totalSizeBytes).toBe(GB);
     await waitFor(() => expect(api.listWorktrees).toHaveBeenCalledTimes(2));
@@ -180,7 +186,7 @@ describe('worktree removal queue', () => {
     await store.load();
     store.enqueueRemovals([{ path: '/wt/a' }, { path: '/wt/b' }]);
     await settled(store);
-    expect(store.removalSummary.failed).toBe(2);
+    expect(states(store)).toEqual(['failed', 'failed']);
 
     store.retryFailedRemovals(['/wt/b']);
     await settled(store);
@@ -189,7 +195,7 @@ describe('worktree removal queue', () => {
 
     store.retryFailedRemovals();
     await settled(store);
-    expect(store.removalSummary).toEqual({ total: 2, waiting: 0, deleting: 0, deleted: 2, failed: 0 });
+    expect(states(store)).toEqual(['deleted', 'deleted']);
   });
 
   it('keeps running without any consumer and accepts more work while busy', async () => {
@@ -205,7 +211,7 @@ describe('worktree removal queue', () => {
     first.resolve({ removed: true, branchDeleted: false });
     await settled(store);
     expect(api.removeWorktree).toHaveBeenCalledTimes(2);
-    expect(store.removalSummary.deleted).toBe(2);
+    expect(states(store)).toEqual(['deleted', 'deleted']);
   });
 
   it('keeps a failed session removal with the session name for this run', async () => {
