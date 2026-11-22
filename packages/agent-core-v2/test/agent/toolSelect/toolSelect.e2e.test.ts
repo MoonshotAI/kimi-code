@@ -405,6 +405,9 @@ describe('progressive tool disclosure end-to-end', () => {
     expect(historyText(switchWire.history)).toContain(runtimeTool);
     expect(historyText(switchWire.history)).toContain('The available tools changed during this session.');
     expect(historyText(switchWire.history)).not.toContain('Use the select_tools tool');
+    expect(switchWire.history.flatMap((message) => message.content).some(
+      (part) => part.type === 'text' && part.meta?.kind === 'tool_lifecycle',
+    )).toBe(false);
 
     const dynamicAgainWire = priorCalls[8]!;
     expect(toolNames(dynamicAgainWire.tools)).toContain('select_tools');
@@ -427,6 +430,12 @@ describe('progressive tool disclosure end-to-end', () => {
     expect(snapshotHashes.size).toBe(2);
     expect(ctx.get(IAgentLoopService).history().some((message) =>
       message.origin?.kind === 'injection' && message.origin.variant === LOADABLE_TOOLS_VARIANT)).toBe(true);
+    expect(ctx.get(IAgentLoopService).history().flatMap((message) => message.content)).toContainEqual(
+      expect.objectContaining({
+        type: 'text',
+        meta: expect.objectContaining({ kind: 'tool_lifecycle', removed: [runtimeTool] }),
+      }),
+    );
 
     expect(alpha.calls).toBe(1);
     expect(inlineTool.calls).toBe(0);
