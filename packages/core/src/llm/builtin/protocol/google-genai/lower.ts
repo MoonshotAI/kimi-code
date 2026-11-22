@@ -356,6 +356,7 @@ export const googleGenAIPipeline: PipelineSpec<
   Request
 > = {
   media: googleGenAIMedia,
+  preserveSignedBlankText: true,
   patterns: () => [sortToolRunByCallOrder],
   legality: googleGenAIModelLegality,
   thinking: (thinking, module) =>
