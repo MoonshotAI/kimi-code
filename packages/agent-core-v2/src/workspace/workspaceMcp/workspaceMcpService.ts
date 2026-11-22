@@ -16,7 +16,7 @@ import { canonicalMcpOAuthResource } from '#/mcpCore/oauth/store';
 import { ISessionEphemeralMcpServers } from '#/session/mcp/ephemeralMcpServers';
 import { MergedMcpConnectionView } from '#/session/mcp/mergedConnectionView';
 import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
-import { ISessionMcpOverlayConnection, SESSION_MCP_OVERLAY_STARTUP_TIMEOUT_MS } from '#/session/mcp/sessionMcpOverlay';
+import { ISessionMcpOverlayConnection } from '#/session/mcp/sessionMcpOverlay';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
 import { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
@@ -166,22 +166,13 @@ export class WorkspaceMcpService extends Disposable implements IWorkspaceMcpServ
       environmentResolver: this.environmentResolver,
       environmentId: 'local',
       requireStdioEnvironmentId: true,
-      reconnectRetryEnabled: false,
+      reconnectRetryEnabled: true,
       sessionId: opts?.sessionId,
       resolveDefaults: () => this.mcpConfig.tunables(),
       resolveClientName: this.resolveClientName,
     });
-    const budgeted = Object.fromEntries(
-      Object.entries(servers).map(([name, config]) => [
-        name,
-        {
-          ...config,
-          startupTimeoutMs: config.startupTimeoutMs ?? SESSION_MCP_OVERLAY_STARTUP_TIMEOUT_MS,
-        },
-      ]),
-    );
     const connect = Promise.all([this.mcpConfig.ready, this.identity.resolved()])
-      .then(() => sessionManager.connectAll(budgeted))
+      .then(() => sessionManager.connectAll({ ...servers }))
       .catch((error: unknown) => {
         this.log.error('session mcp overlay initial load failed', { error });
       });
