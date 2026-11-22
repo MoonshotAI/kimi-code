@@ -222,7 +222,7 @@ import { beginScreenTakeover, endScreenTakeover, type ScreenTakeover } from './u
 import { sessionRowsForPicker } from './utils/session-picker-rows';
 import { isSessionOccupiedError } from './utils/session-lock-errors';
 import { formatStepRetryDetail, formatStepRetryLabel } from './utils/step-retry';
-import { formatBashOutputForDisplay } from './utils/shell-output';
+import { capStoredShellOutput, formatBashOutputForDisplay } from './utils/shell-output';
 import { lazyModelSelection } from './utils/model-switch';
 import { combineStartupNotice, isOAuthLoginRequiredError } from './utils/startup';
 import { installTerminalFocusTracking } from './utils/terminal-focus';
@@ -1555,8 +1555,12 @@ export class KimiTUI {
     if (backgrounded === true) {
       return;
     }
-    stream.component.finish(stdout, stderr, isError);
-    stream.entry.content = formatBashOutputForDisplay(stdout, stderr, isError);
+    const storedStdout = capStoredShellOutput(stdout);
+    const storedStderr = capStoredShellOutput(stderr);
+    stream.component.finish(storedStdout, storedStderr, isError);
+    // The transcript entry mirrors what the component stores, so export/copy
+    // and Ctrl-O agree on the kept tail. The component renders itself.
+    stream.entry.content = formatBashOutputForDisplay(storedStdout, storedStderr, isError);
     this.shellOutputStreams.delete(commandId);
     if (this.shellOutputStreams.size === 0) {
       this.programStatus.finishShell();
