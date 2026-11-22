@@ -91,6 +91,7 @@ export function toAppSession(wire: WireSession): AppSession {
     lastTurnReason: wire.last_turn_outcome === 'interrupted' ? 'cancelled' : wire.last_turn_outcome,
     archived: wire.archived ?? false,
     archivedAt: wire.archived_at,
+    ephemeral: wire.ephemeral === true ? true : undefined,
     lastPrompt: wire.last_prompt,
     cwd: wire.cwd,
     model: '',

@@ -86,6 +86,7 @@ export interface AppSession {
   lastTurnReason?: 'completed' | 'cancelled' | 'failed';
   archived: boolean;
   archivedAt?: string;
+  ephemeral?: boolean;
   lastPrompt?: string;
   cwd: string;
   model: string;
@@ -1033,7 +1034,14 @@ export interface KimiWebApi {
   listSessions(input?: ListSessionsInput, options?: ReadRequestOptions): Promise<SessionsPage>;
   listSessionIds(input?: ListSessionIdsInput): Promise<SessionIdsPage>;
   listSessionGroups(input?: ListSessionGroupsInput, options?: ReadRequestOptions): Promise<SessionGroupsPage>;
-  createSession(input: { title?: string; cwd?: string; model?: string; workspaceId?: string; planMode?: boolean }): Promise<AppSession>;
+  createSession(input: {
+    title?: string;
+    cwd?: string;
+    model?: string;
+    workspaceId?: string;
+    planMode?: boolean;
+    ephemeral?: boolean;
+  }): Promise<AppSession>;
   getSession(sessionId: string, options?: ReadRequestOptions): Promise<AppSession>;
   updateSession(sessionId: string, input: { title?: string; cwd?: string; model?: string; permissionMode?: string; planMode?: boolean; swarmMode?: boolean; towerMode?: boolean; towerBase?: string; goalObjective?: string; goalControl?: 'pause' | 'resume' | 'cancel' | 'edit'; thinking?: string }): Promise<AppSession>;
   evaluateSessionRating(sessionId: string, turnId: string): Promise<AppSessionRatingOffer | null>;

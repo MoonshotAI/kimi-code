@@ -1539,4 +1539,22 @@ describe('DaemonKimiWebApi.mkdirFs', () => {
       'http://daemon.test/api/v1/sessions/sess%2F9:continue',
     );
   });
+
+  it('forwards ephemeral and top-level cwd in createSession and maps ephemeral on AppSession', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(
+      envelope({
+        ...WIRE_SESSION,
+        id: 'sess_ephemeral',
+        ephemeral: true,
+      }),
+    );
+    const created = await createApi().createSession({ cwd: '/tmp/probe', ephemeral: true, title: 'Probe' });
+    expect(created.ephemeral).toBe(true);
+    const [, init] = vi.mocked(fetch).mock.calls[0]!;
+    expect(JSON.parse(init?.body as string)).toEqual({
+      cwd: '/tmp/probe',
+      ephemeral: true,
+      title: 'Probe',
+    });
+  });
 });

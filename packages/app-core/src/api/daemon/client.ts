@@ -519,10 +519,11 @@ export class DaemonKimiWebApi implements KimiWebApi {
     model?: string;
     workspaceId?: string;
     planMode?: boolean;
+    ephemeral?: boolean;
   }): Promise<AppSession> {
-    const body: Record<string, unknown> = {
-      metadata: input.cwd !== undefined ? { cwd: input.cwd } : {},
-    };
+    const body: Record<string, unknown> = {};
+    if (input.cwd !== undefined) body['cwd'] = input.cwd;
+    if (input.ephemeral !== undefined) body['ephemeral'] = input.ephemeral;
     if (input.workspaceId !== undefined) body['workspace_id'] = input.workspaceId;
     if (input.title !== undefined) body['title'] = input.title;
     const agentConfig: Record<string, unknown> = {};

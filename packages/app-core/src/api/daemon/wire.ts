@@ -78,6 +78,7 @@ export interface WireSession {
   last_turn_outcome?: 'completed' | 'interrupted' | 'failed';
   archived: boolean;
   archived_at?: string;
+  ephemeral?: boolean;
   last_prompt?: string;
   workspace_id?: string;
   host_id?: string;
