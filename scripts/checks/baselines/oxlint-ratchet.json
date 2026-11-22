@@ -177,7 +177,6 @@
     "packages/agent-core-v2/test/program/program.test.ts": 1,
     "packages/agent-core-v2/test/remote/providerFactory.test.ts": 6,
     "packages/agent-core-v2/test/session/agentLifecycle/agentLifecycle.test.ts": 3,
-    "packages/agent-core-v2/test/session/subagent/forkParity.test.ts": 1,
     "packages/agent-core-v2/test/session/subagent/spawn.test.ts": 1,
     "packages/agent-core-v2/test/session/subagent/subagentScopeCache.test.ts": 2,
     "packages/agent-core-v2/test/session/workspaceContext/agentWorkspaceContext.test.ts": 1,
