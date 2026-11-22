@@ -4062,6 +4062,8 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
 }
 
 .ph {
+  --ph-leading: 1.5;
+  --ph-line-height: calc(var(--content-font-size) * var(--ph-leading));
   color: var(--faint);
   caret-color: var(--color-text);
   position: relative;
@@ -4076,7 +4078,7 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
   max-height: calc(var(--app-height, 100dvh) / 4);
   overflow-y: auto;
   scrollbar-width: none;
-  line-height: 1.5;
+  line-height: var(--ph-leading);
   margin-bottom: 6px;
   user-select: text;
 }
@@ -4160,10 +4162,10 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
   align-items: center;
   gap: var(--space-1);
   vertical-align: top;
-  height: calc(var(--content-font-size) * 1.5);
+  height: var(--ph-line-height);
   margin-left: calc(-1 * var(--space-05));
   margin-right: var(--space-1-5);
-  padding: 0 calc((var(--content-font-size) * 1.5 - var(--wm-x-size)) / 2) 0 var(--space-2);
+  padding: 0 calc((var(--ph-line-height) - var(--wm-x-size)) / 2) 0 var(--space-2);
   border: none;
   border-radius: var(--radius-full);
   background: var(--color-selected);
@@ -4171,7 +4173,7 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
   font-family: var(--font-ui);
   font-size: var(--ui-font-size-sm);
   font-weight: var(--weight-medium);
-  line-height: calc(var(--content-font-size) * 1.5);
+  line-height: var(--ph-line-height);
   white-space: nowrap;
   user-select: none;
 }
@@ -4238,10 +4240,12 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
 
 .ph :deep(.composer-placeholder-overlay kbd) {
   display: inline-flex;
+  vertical-align: top;
   align-items: center;
   justify-content: center;
   min-width: var(--kbd-min-width);
   height: var(--kbd-height);
+  margin-top: max(0px, calc((var(--ph-line-height) - var(--kbd-height)) / 2));
   padding: 0 var(--kbd-padding-x);
   border: var(--p-hairline) solid var(--color-line);
   border-radius: var(--radius-xs);
@@ -4250,6 +4254,15 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
   font-family: var(--font-kbd);
   font-size: var(--kbd-font-size);
   line-height: var(--leading-solid);
+}
+
+@supports (text-box: trim-both cap alphabetic) {
+  .ph :deep(.composer-placeholder-overlay kbd) {
+    display: inline-block;
+    padding-top: calc((var(--kbd-height) - 1cap) / 2 - var(--p-hairline));
+    text-align: center;
+    text-box: trim-both cap alphabetic;
+  }
 }
 
 .composer.expanded .ph {
