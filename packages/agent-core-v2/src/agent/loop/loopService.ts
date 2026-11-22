@@ -10,7 +10,7 @@ import { abortError, isUserCancellation, userCancellationReason } from '#/_base/
 import { toErrorMessage } from '#/_base/errors/errorMessage';
 import { parseBooleanEnv } from '#/_base/utils/env';
 import { AgentLoopRequestObserver } from './requestObservation';
-import { createAgentMediaPolicy, hideReadMediaFile, type AgentMediaPolicy, type AgentMediaPolicyFactory } from './mediaPolicy';
+import { createAgentMediaPolicy, type AgentMediaPolicy, type AgentMediaPolicyFactory } from './mediaPolicy';
 import {
   agentLLMRequestLogFields,
   type CoreLoopRequester,
@@ -21,7 +21,6 @@ import {
   type ResolvedRequestContext,
 } from './requesterContract';
 import { AgentLoopProjector } from './projector';
-import { project } from './projection';
 import { createStructureRecovery, createStructureResolver } from './projectionPolicy';
 import { createToolSelectResolver } from './toolSelectPolicy';
 import { RequestMetadataTracker, requestMetadataHeaders } from './requestMetadata';
@@ -243,14 +242,11 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     this.mediaPolicyFactory = (model, request) => createAgentMediaPolicy(mediaResolver, model, request);
     this.requester = {
       coreRequester: (options) => this.coreRequester(options),
-      prepareOperation: async (options, signal) => {
+      prepareOperation: async (options, _signal) => {
         if (this.loop === undefined) throw new BugIndicatingError('Agent loop is not started');
         const config = this.requestConfigSnapshot();
-        const baseline = options.tools ?? this.loop.state.profile.tools;
-        const visible = options.tools === undefined && baseline !== undefined
-          ? this.operationTools(baseline, config.resolved.model.capability)
-          : baseline;
-        const tools = await this.prepareTools(signal, config.resolved.model.capability, visible);
+        const baseline = options.tools ?? this.baselineTools();
+        const tools = this.toolsForCapabilities(config.resolved.model.capability, baseline);
         return this.loop.operation((runtime) => {
           const requester = this.coreRequester({ ...options, runtime, tools, config });
           return requester.snapshot?.() ?? requester;
@@ -458,16 +454,10 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   }
 
   previewRequestContent(): LoopRequestContent {
-    const capabilities = this.data().modelCapabilities;
-    const disclosure = this.toolSelect.enabled(capabilities);
-    const source = this.loop?.state.messages ?? this.journal.snapshot().input.messages ?? [];
-    const tools = this.toolSelect.requestTools(this.baselineTools(), disclosure, true, source);
-    const messages = this.toolSelect.shapeHistory(source, disclosure, tools);
-    const mediaInput = capabilities.image_in || capabilities.video_in;
     return {
       systemPrompt: this.loop?.state.profile.systemPrompt || this.getSystemPrompt(),
-      tools: mediaInput ? tools : tools.filter((tool) => tool.name !== READ_MEDIA_FILE_TOOL_NAME),
-      messages: project(mediaInput ? messages : hideReadMediaFile(messages)),
+      tools: this.baselineTools(),
+      messages: this.loop?.state.messages ?? this.journal.snapshot().input.messages ?? [],
     };
   }
 
@@ -635,7 +625,6 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         return { type: 'turn', turnId: turn.id, step: turn.step };
       },
       runtime,
-      dynamicTools: true,
       onSnapshot: (config) => {
         this.turns.thinkingEffort = config.resolved.thinkingLevel;
       },
@@ -655,32 +644,12 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     };
   }
 
-  private operationTools(
-    baseline: readonly Tool[],
-    capabilities: LlmModelCapability | undefined,
-  ): readonly Tool[] {
-    const disclosure = this.toolSelect.enabled(capabilities);
-    const active = new Set(this.toolSelect.defaultTools(disclosure).map((tool) => tool.name));
-    return baseline.filter((tool) => active.has(tool.name));
-  }
-
-  private async prepareTools(
-    signal: AbortSignal,
-    capabilities: LlmModelCapability | undefined,
-    base?: readonly Tool[],
-  ): Promise<readonly Tool[]> {
-    await this.toolSelect.prepareForRequest(signal);
-    return this.toolsForCapabilities(capabilities, base);
-  }
-
   private toolsForCapabilities(
     capabilities: LlmModelCapability | undefined,
-    base?: readonly Tool[],
+    base: readonly Tool[],
   ): readonly Tool[] {
-    const disclosure = this.toolSelect.enabled(capabilities);
-    const tools = base ?? this.toolSelect.defaultTools(disclosure);
-    if (capabilities?.image_in === true || capabilities?.video_in === true) return tools;
-    return tools.filter((tool) => tool.name !== READ_MEDIA_FILE_TOOL_NAME);
+    if (capabilities?.image_in === true || capabilities?.video_in === true) return base;
+    return base.filter((tool) => tool.name !== READ_MEDIA_FILE_TOOL_NAME);
   }
 
   private coreRequester(options: CoreLoopRequesterOptions): CoreLoopRequester {
@@ -734,7 +703,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         mediaPolicy.recovery,
       ],
       resolvers: [
-        createToolSelectResolver(this.toolSelect, request.dynamicTools),
+        createToolSelectResolver(this.toolSelect),
         mediaPolicy.toolResolver,
         createStructureResolver(this.projector),
         mediaPolicy.resolver,
@@ -858,7 +827,6 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       promptCacheProbe: options.promptCacheProbe,
       source,
       logFields: agentLLMRequestLogFields(source),
-      dynamicTools: options.dynamicTools ?? false,
       runtime: options.runtime,
     };
   }

@@ -1,5 +1,4 @@
 import { providerHttpError } from '../../harness/index';
-import { TOOL_SELECT_FLAG_ENV } from '#/agent/toolSelect/flag';
 import type {
   Message,
   StreamedMessagePart,
@@ -91,7 +90,6 @@ describe('LLMRequester service migration coverage', () => {
     ];
 
     beforeEach(() => {
-      vi.stubEnv(TOOL_SELECT_FLAG_ENV, '1');
       shouldVerifyResume = true;
       ctx = createTestAgent();
       llmRequester = ctx.get(IAgentLoopService).requester;
