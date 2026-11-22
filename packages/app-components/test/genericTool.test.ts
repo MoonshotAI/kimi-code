@@ -1,4 +1,6 @@
 // @vitest-environment jsdom
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { createApp, h, nextTick, reactive, type App, type Component } from 'vue';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -232,6 +234,17 @@ describe('FetchURL row', () => {
     expect(host.querySelector('.tl-name')?.textContent).toBe('抓取');
     expect(host.querySelector('.tl-lead')?.textContent).toContain('api.npmjs.org/downloads');
     expect(host.querySelector('.tl-lead')?.textContent).not.toContain('{"url"');
+  });
+
+  it('wraps long URLs instead of widening the row', () => {
+    const url = `https://example.com/${'a'.repeat(160)}`;
+    mount({ name: 'FetchURL', arg: JSON.stringify({ url }) }, 'zh', WebFetchTool);
+
+    expect(host.querySelector('.tl-url')?.textContent).toBe(`example.com/${'a'.repeat(160)}`);
+    const component = readFileSync(resolve(process.cwd(), 'packages/app-components/src/chat/tool-calls/WebFetchTool.vue'), 'utf8');
+    const rule = /\.tl-url\s*\{([^}]*)\}/.exec(component)?.[1];
+    expect(rule).toContain('min-width: 0;');
+    expect(rule).toContain('overflow-wrap: anywhere;');
   });
 });
 
