@@ -17,7 +17,6 @@ import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IEventDispatcher } from '#/state/eventDispatcher';
-import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
 
 import {
   collectCurrentDynamicTools,
@@ -71,7 +70,6 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
     @IAgentStateService private readonly states: IAgentStateService,
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
-    @ISessionMcpHandle private readonly mcpHandle: ISessionMcpHandle,
     @IAgentReminderService private readonly reminder: IAgentReminderService,
   ) {
     super();
@@ -119,7 +117,6 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
   }
 
   private async reconcileForRequest(signal: AbortSignal | undefined, publishInitialization: boolean): Promise<void> {
-    await (signal === undefined ? this.mcpHandle.ready : abortable(this.mcpHandle.ready, signal));
     const work = this.reconcileTail.then(async () => {
       if (publishInitialization) await this.publishDeferredInitialization();
       await this.reconcile(signal, publishInitialization);
