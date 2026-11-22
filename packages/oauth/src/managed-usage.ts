@@ -111,7 +111,7 @@ export function parseManagedUsagePayload(payload: unknown): ManagedQuota {
   }
   return {
     usages: parseQuotaUsages(payload['usages']),
-    extraUsage: parseBoosterWallet(payload['boosterWallet']),
+    extraUsage: parseBoosterWallet(payload['booster_wallet'] ?? payload['boosterWallet']),
   };
 }
 
