@@ -75,6 +75,14 @@ function isRecreateRun(setup: AppWorktreeSetup): boolean {
   return setup.purpose === 'recreate';
 }
 
+const FAILURE_TITLE_KEYS: Partial<Record<NonNullable<AppWorktreeSetup['failure']>['kind'], string>> = {
+  fetch_failed: 'fetchFailed',
+  fetch_timeout: 'fetchTimeout',
+  conflict: 'conflict',
+  script_failed: 'scriptFailed',
+  script_timeout: 'scriptTimeout',
+};
+
 function blockTitleKey(setup: AppWorktreeSetup): string {
   switch (setup.status) {
     case 'running':
@@ -88,26 +96,7 @@ function blockTitleKey(setup: AppWorktreeSetup): string {
     case 'local':
       return 'local';
     case 'failed':
-      switch (setup.failure?.kind) {
-        case 'fetch_failed':
-          return 'fetchFailed';
-        case 'fetch_timeout':
-          return 'fetchTimeout';
-        case 'conflict':
-          return 'conflict';
-        case 'script_failed':
-          return 'scriptFailed';
-        case 'script_timeout':
-          return 'scriptTimeout';
-        case 'create_failed':
-        case 'disk_full':
-        case undefined:
-          return 'createFailed';
-        default:
-          return 'createFailed';
-      }
-    default:
-      return 'created';
+      return (setup.failure === undefined ? undefined : FAILURE_TITLE_KEYS[setup.failure.kind]) ?? 'createFailed';
   }
 }
 
@@ -125,17 +114,6 @@ export function createStepLabel(step: AppWorktreeSetupStep, t: CreateTranslate):
       : t(`worktreeCreate.step.createPlain.${state}`);
   }
   return t(`worktreeCreate.step.${step.kind}.${state}`);
-}
-
-function stepViews(setup: AppWorktreeSetup, t: CreateTranslate): CreateStepView[] {
-  return setup.steps.map((step, index) => ({
-    key: `${index}:${step.kind}`,
-    kind: step.kind,
-    tone: step.state,
-    label: createStepLabel(step, t),
-    ...(step.command === undefined || step.command.length === 0 ? {} : { command: step.command }),
-    ...(step.output === undefined || step.output.trim().length === 0 ? {} : { output: step.output.trimEnd() }),
-  }));
 }
 
 function staticBlockView(setup: AppWorktreeSetup, t: CreateTranslate): CreateBlockView {
@@ -164,7 +142,14 @@ export function createBlockView(
     return createBlockView(original, t);
   }
   const running = setup.status === 'running';
-  const steps = stepViews(setup, t);
+  const steps = setup.steps.map((step, index): CreateStepView => ({
+    key: `${index}:${step.kind}`,
+    kind: step.kind,
+    tone: step.state,
+    label: createStepLabel(step, t),
+    ...(step.command === undefined || step.command.length === 0 ? {} : { command: step.command }),
+    ...(step.output === undefined || step.output.trim().length === 0 ? {} : { output: step.output.trimEnd() }),
+  }));
   return {
     title: t(`worktreeCreate.block.${blockTitleKey(setup)}`),
     running,
@@ -308,8 +293,6 @@ export function createDecisionCardView(
         code: setup.scriptContent === undefined || setup.scriptContent.length === 0 ? null : setup.scriptContent,
         actions: withPrimary([skipScript, action('runScript', t('worktreeCreate.action.run'))]),
       };
-    default:
-      return null;
   }
 }
 
