@@ -4,6 +4,7 @@ import { useI18n } from 'vue-i18n';
 import { Button, Icon } from '@moonshot-ai/app-ui';
 import { copyTextToClipboard } from '@moonshot-ai/app-core/lib';
 import { useAnchoredMenu } from '../composables/useAnchoredMenu';
+import WorktreeOutput from './WorktreeOutput.vue';
 
 defineOptions({ inheritAttrs: false });
 
@@ -85,7 +86,7 @@ defineExpose({ close });
       >
         <div class="sip-title">{{ title }}</div>
         <p class="sip-body">{{ body }}</p>
-        <pre v-if="hasOutput" class="sip-output" tabindex="0">{{ output }}</pre>
+        <WorktreeOutput v-if="hasOutput" class="sip-output" :text="output" />
         <div class="sip-actions">
           <Button class="sip-retry" variant="secondary" size="sm" :loading="busy" :disabled="busy" @click="emit('retry')">
             {{ t('worktreeSession.retry') }}
@@ -137,24 +138,8 @@ defineExpose({ close });
 .sip-title { color: var(--color-text-strong); font-size: var(--text-sm); font-weight: var(--weight-medium); line-height: var(--leading-tight); }
 .sip-body { margin: var(--space-1) 0 0; color: var(--color-text-muted); font-size: var(--text-xs); line-height: var(--leading-normal); }
 .sip-output {
-  --sip-output-line: 18px;
-  box-sizing: border-box;
-  max-height: calc(5 * var(--sip-output-line) + 2 * var(--space-2));
-  margin: var(--space-2) 0 0;
-  padding: var(--space-2);
-  overflow: auto;
-  overscroll-behavior: contain;
-  border-radius: var(--radius-md);
-  background: var(--color-well);
-  color: var(--color-text-muted);
-  font-family: var(--font-mono);
-  font-size: var(--text-xs);
-  line-height: var(--sip-output-line);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  user-select: text;
+  margin-top: var(--space-2);
 }
-.sip-output:focus-visible { outline: none; box-shadow: var(--p-focus-ring); }
 .sip-actions { display: flex; align-items: center; gap: var(--space-2); margin-top: var(--space-3); }
 .sip-pop-enter-active {
   transition:

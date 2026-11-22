@@ -23,7 +23,7 @@ import chatHeaderSource from '../../src/renderer/components/chat/ChatHeader.vue?
 import chatPaneSource from '../../../../packages/app-components/src/chat/ChatPane.vue?raw';
 import turnFoldSource from '../../../../packages/app-components/src/chat/TurnFold.vue?raw';
 import pullRequestStateSource from '../../../../packages/app-components/src/worktree/SessionPullRequestState.vue?raw';
-import sessionInfoPopoverSource from '../../../../packages/app-components/src/worktree/SessionInfoPopover.vue?raw';
+import worktreeOutputSource from '../../../../packages/app-components/src/worktree/WorktreeOutput.vue?raw';
 
 const store = vi.hoisted(() => ({
   rows: vi.fn(),
@@ -484,8 +484,8 @@ describe('SessionInfoFolder', () => {
   });
 
   it('limits the raw output to five lines with scrolling inside', () => {
-    const outputStyle = sessionInfoPopoverSource.match(/\.sip-output\s*\{([^}]*)\}/)?.[1];
-    expect(outputStyle).toContain('max-height: calc(5 * var(--sip-output-line) + 2 * var(--space-2))');
+    const outputStyle = worktreeOutputSource.match(/\.worktree-output\s*\{([^}]*)\}/)?.[1];
+    expect(outputStyle).toContain('max-height: calc(5 * var(--worktree-output-line) + 2 * var(--space-2))');
     expect(outputStyle).toContain('overflow: auto');
   });
 });

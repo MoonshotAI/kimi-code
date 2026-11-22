@@ -6,6 +6,7 @@ import { Icon, Spinner } from '@moonshot-ai/app-ui';
 import { useHistoryState } from '../chat/historyState';
 import { recallCreateRun, rememberCreateRun } from './createBlockMemory';
 import { createBlockView, createElapsedSeconds } from './createPresentation';
+import WorktreeOutput from './WorktreeOutput.vue';
 
 const props = defineProps<{
   worktree: AppSessionWorktree;
@@ -106,7 +107,7 @@ function toggle(): void {
         </span>
         <span class="wcb-label">{{ step.label }}</span>
         <span v-if="step.command" class="wcb-command" :title="step.command">{{ step.command }}</span>
-        <pre v-if="step.output && step.tone !== 'done'" class="wcb-output">{{ step.output }}</pre>
+        <WorktreeOutput v-if="step.output && step.tone !== 'done'" class="wcb-output" :text="step.output" />
       </li>
     </ol>
   </div>
@@ -243,11 +244,11 @@ function toggle(): void {
 .wcb-output {
   grid-column: 2;
   min-width: 0;
+}
+.wcb-command {
   font-family: var(--font-mono);
   font-size: var(--text-sm);
   line-height: var(--leading-normal);
-}
-.wcb-command {
   overflow: hidden;
   color: var(--color-text-faint);
   text-overflow: ellipsis;
@@ -255,15 +256,6 @@ function toggle(): void {
   user-select: text;
 }
 .wcb-output {
-  max-height: 160px;
-  margin: var(--space-1) 0 0;
-  padding: var(--space-2) var(--space-3);
-  overflow: auto;
-  border-radius: var(--radius-md);
-  background: var(--color-well);
-  color: var(--color-text-muted);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  user-select: text;
+  margin-top: var(--space-1);
 }
 </style>

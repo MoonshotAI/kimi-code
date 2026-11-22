@@ -3,6 +3,7 @@ import { ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Button, Icon, Spinner } from '@moonshot-ai/app-ui';
 import type { CreateCardActionId, CreateInvalidCardView } from './createPresentation';
+import WorktreeOutput from './WorktreeOutput.vue';
 
 const props = defineProps<{
   view: CreateInvalidCardView;
@@ -65,7 +66,7 @@ function labelOf(id: CreateCardActionId, label: string): string {
         </Button>
       </div>
     </div>
-    <pre v-if="outputOpen && view.output" class="wci-output">{{ view.output }}</pre>
+    <WorktreeOutput v-if="outputOpen && view.output" class="wci-output" :text="view.output" />
   </div>
 </template>
 
@@ -137,19 +138,6 @@ function labelOf(id: CreateCardActionId, label: string): string {
   align-items: center;
   justify-content: flex-end;
   gap: var(--space-2);
-}
-.wci-output {
-  max-height: 200px;
-  margin: 0;
-  padding: var(--space-2) var(--space-3);
-  overflow: auto;
-  border-radius: var(--radius-md);
-  background: var(--color-surface-raised);
-  color: var(--color-text-muted);
-  font: var(--text-sm) / var(--leading-normal) var(--font-mono);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  user-select: text;
 }
 @container (max-width: 520px) {
   .wci-row {

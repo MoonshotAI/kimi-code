@@ -3,6 +3,7 @@ import { computed } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Badge, Checkbox, Icon, IconButton, Link, Spinner, Tooltip } from '@moonshot-ai/app-ui';
 import { formatWorktreeSize, worktreeFailureText, type WorktreeManageRow } from '@moonshot-ai/app-client/lib';
+import WorktreeOutput from './WorktreeOutput.vue';
 
 const props = defineProps<{
   row: WorktreeManageRow;
@@ -80,7 +81,7 @@ function onSelect(): void {
           <Link>{{ outputOpen ? t('worktreeManage.hideOutput') : t('worktreeManage.viewOutput') }}</Link>
         </button>
       </div>
-      <pre v-if="failure !== null && outputOpen && row.output" class="manage-row__output">{{ row.output }}</pre>
+      <WorktreeOutput v-if="failure !== null && outputOpen && row.output" class="manage-row__output" :text="row.output" />
     </div>
     <div class="manage-row__actions">
       <span v-if="row.status === 'deleting'" class="manage-row__deleting">
@@ -175,18 +176,7 @@ function onSelect(): void {
   box-shadow: var(--p-focus-ring);
 }
 .manage-row__output {
-  margin: var(--space-2) 0 0;
-  padding: var(--space-2) var(--space-3);
-  max-height: 160px;
-  overflow: auto;
-  border-radius: var(--radius-md);
-  background: var(--color-surface-sunken);
-  font-family: var(--font-mono);
-  font-size: var(--text-xs);
-  line-height: var(--leading-normal);
-  color: var(--color-text-muted);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
+  margin-top: var(--space-2);
 }
 .manage-row__actions {
   display: flex;
