@@ -226,14 +226,33 @@ it('reminds agents about the built-in browser and follows the agent control swit
 
     const registry = agent!.accessor.get(IAgentToolRegistryService);
     const selection = agent!.accessor.get(IAgentToolSelectService);
+    const loop = agent!.accessor.get(IAgentLoopService);
+    const requestView = () => {
+      const base = loop.baselineTools();
+      const disclosure = selection.enabled();
+      const tools = selection.requestTools(base, disclosure);
+      const deferred = base.filter((tool) => tool.deferred === true);
+      const messages = selection.shapeHistory(loop.history(), disclosure, tools, deferred);
+      const announcements = messages
+        .map((message) => JSON.stringify(message.content))
+        .filter((text) => text.includes('<tools_added>') || text.includes('<tools_removed>'))
+        .join('\n');
+      return { toolNames: tools.map((tool) => tool.name), announcements };
+    };
     await selection.prepareForRequest();
     expect(registry.resolve(name)).toBeDefined();
-    expect(selection.loadableToolsAnnouncement()?.content).toContain(name);
+    const enabledView = requestView();
+    expect(enabledView.toolNames).not.toContain(name);
+    expect(enabledView.announcements).toContain(name);
     control.set(false);
     await vi.waitFor(() => expect(registry.resolve(name)).toBeUndefined());
     await selection.prepareForRequest();
-    expect(selection.loadableToolsAnnouncement()?.content).toContain('<tools_removed>');
-    expect(selection.loadableToolsAnnouncement()?.content).toContain(name);
+    const disabledView = requestView();
+    expect(disabledView.toolNames).not.toContain(name);
+    await reconcile(agent!);
+    const disabledAfterStep = requestView();
+    expect(disabledAfterStep.announcements).toContain('<tools_removed>');
+    expect(disabledAfterStep.announcements).toContain(name);
     const denied = await agent!.accessor.get(IAgentMcpService).resolved('desktop_browser')!.client.callTool('run', { protocol: 'kimi.browser/1.0.0', operation: 'browser.get_state' });
     expect(denied.isError).toBe(true);
     expect(JSON.stringify(denied.content)).toContain(DESKTOP_BROWSER_DISABLED_ERROR);
@@ -250,7 +269,9 @@ it('reminds agents about the built-in browser and follows the agent control swit
     control.set(true);
     await vi.waitFor(() => expect(registry.resolve(name)).toBeDefined());
     await selection.prepareForRequest();
-    expect(selection.loadableToolsAnnouncement()?.content).toContain(name);
+    const reenabledView = requestView();
+    expect(reenabledView.toolNames).not.toContain(name);
+    expect(reenabledView.announcements).toContain(name);
     await reconcile(agent!);
     expect(reminders(agent!)).toHaveLength(2);
     expect(reminders(agent!)[1]).toContain('select_tools');
