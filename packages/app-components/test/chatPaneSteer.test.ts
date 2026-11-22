@@ -55,7 +55,7 @@ vi.mock('@moonshot-ai/app-client/client', async () => {
 import { createKimiI18n } from '@moonshot-ai/app-i18n';
 import type { ChatTurn } from '@moonshot-ai/app-core/client/types';
 import { createComposerSnapshot, textToDoc, type ComposerDocumentSnapshot } from '@moonshot-ai/app-composer/model';
-import { useConfirmDialog, useTurnFolding } from '@moonshot-ai/app-client/composables';
+import { useConfirmDialog, useTranscriptScroll, useTurnFolding, type TranscriptScroll } from '@moonshot-ai/app-client/composables';
 import ChatPane from '../src/chat/ChatPane.vue';
 import { resetInMemorySettledSteerTurnIds } from '../src/chat/steerContinuationState';
 
@@ -561,17 +561,25 @@ describe('ChatPane assistant footers', () => {
       const tailTurns = Array.from({ length: 4 }, (_, index) =>
         turn({ id: `u-tail-${index}`, role: 'user', no: index + 2, text: `q${index}` }),
       );
+      let scroll!: TranscriptScroll;
       app = createApp({
-        setup: () => () => h(ChatPane, { turns: [foldedHeavy, ...tailTurns], windowHistory: true }),
+        setup() {
+          scroll = useTranscriptScroll({ sessionId: () => 's-fold' });
+          return () => h('div', { ref: (el: unknown) => scroll.bindScroller(el as HTMLElement | null) }, [
+            h(ChatPane, { turns: [foldedHeavy, ...tailTurns], sessionId: 's-fold', windowHistory: true }),
+          ]);
+        },
       });
       app.use(createKimiI18n({ locale: 'en' }));
       app.mount(host);
       await nextTick();
       await nextTick();
 
-      const windowEl = host.querySelector<HTMLElement>('.chat > .history-window');
-      expect(windowEl).not.toBeNull();
-      expect(Number.parseFloat(windowEl!.style.minHeight)).toBeLessThan(500);
+      const model = scroll.host.model;
+      const index = model.indexOf('a-folded-heavy');
+      expect(index).toBe(0);
+      expect(model.isMeasured(index)).toBe(false);
+      expect(model.height(index)).toBeLessThan(500);
     } finally {
       setTurnFolding(false);
     }

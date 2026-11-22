@@ -1,11 +1,13 @@
 // @vitest-environment jsdom
-import { createApp, h, nextTick, type App } from 'vue';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createApp, h, nextTick, ref, type App } from 'vue';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const clientState = vi.hoisted(() => ({
   activeSessionId: null as null | { value: string | null },
   activity: null as null | { value: string },
   working: null as null | { value: boolean },
+  canContinue: null as null | { value: boolean },
+  activeTurnEnd: null as null | { value: { outcome: string; end_reason?: string } | undefined },
   visibleWorkspace: null as null | { value: { hostId?: string } | null },
   searchFiles: null as null | ((query: string) => Promise<unknown[]>),
 }));
@@ -16,6 +18,8 @@ vi.mock('@moonshot-ai/app-client/client', async (importOriginal) => {
   clientState.activeSessionId = vue.ref<string | null>('sess-1');
   clientState.activity = vue.ref('idle');
   clientState.working = vue.ref(false);
+  clientState.canContinue = vue.ref(false);
+  clientState.activeTurnEnd = vue.ref<{ outcome: string; end_reason?: string } | undefined>(undefined);
   clientState.visibleWorkspace = vue.ref<{ hostId?: string } | null>(null);
   return {
     ...actual,
@@ -25,6 +29,8 @@ vi.mock('@moonshot-ai/app-client/client', async (importOriginal) => {
       visibleWorkspace: clientState.visibleWorkspace!,
       activity: clientState.activity!,
       working: clientState.working!,
+      canContinue: clientState.canContinue!,
+      activeTurnEnd: clientState.activeTurnEnd!,
       isStartingFirstPrompt: vue.ref(false),
       queued: vue.ref([]),
       searchFiles: async (query: string) => clientState.searchFiles?.(query) ?? [],
@@ -64,6 +70,11 @@ import { createComposerSnapshot, textToDoc } from '@moonshot-ai/app-composer/mod
 let app: App | undefined;
 let host: HTMLDivElement;
 let storage: Map<string, string>;
+
+beforeAll(async () => {
+  await import('../src/composer/Composer.vue');
+  vi.resetModules();
+});
 
 beforeEach(() => {
   storage = new Map<string, string>();
@@ -113,15 +124,19 @@ async function mountFreshComposer(locale: 'zh' | 'en' = 'zh') {
   const submits: Array<Record<string, unknown>> = [];
   const steers: Array<Record<string, unknown>> = [];
   const commands: Array<Record<string, unknown>> = [];
+  const interruptArmed = ref(false);
+  let continues = 0;
   app = createApp({
     setup() {
       dialogs = useAppDialogs();
       runningMode = useRunningSendMode();
       return () => h(Composer, {
         ref: (value) => { composerRef = value as InstanceType<typeof Composer>; },
+        interruptArmed: interruptArmed.value,
         onSubmit: (payload: Record<string, unknown>) => submits.push(payload),
         onSteer: (payload: Record<string, unknown>) => steers.push(payload),
         onCommand: (payload: Record<string, unknown>) => commands.push(payload),
+        onContinue: () => { continues += 1; },
       });
     },
   });
@@ -132,9 +147,11 @@ async function mountFreshComposer(locale: 'zh' | 'en' = 'zh') {
     setDraft: (value: string) => {
       composerRef.loadForEdit(value, createComposerSnapshot(textToDoc(value), [], []));
     },
+    interruptArmed,
     submits,
     steers,
     commands,
+    getContinues: () => continues,
     dialogs,
     runningMode,
   };
@@ -362,6 +379,61 @@ describe('Composer running send mode and first-time steer tip', () => {
     expect(dialogs.showSettings.value).toBe(true);
     expect(dialogs.settingsInitialTab.value).toBe('hosts');
     expect(hostsStore().focusHostId).toBe('devbox');
+  });
+
+  it('switches the empty send button to continue only on interrupted turns and restores send on typing', async () => {
+    const { setDraft, submits, getContinues } = await mountFreshComposer('zh');
+    clientState.activity!.value = 'idle';
+    clientState.working!.value = false;
+    clientState.canContinue!.value = true;
+    clientState.activeTurnEnd!.value = { outcome: 'failed', end_reason: 'error' };
+    await nextTick();
+
+    const button = host.querySelector<HTMLButtonElement>('button.send')!;
+    const input = host.querySelector('[aria-label="消息输入框"]')!;
+    expect(button.disabled).toBe(true);
+    expect(button.getAttribute('aria-label')).toBe('发送 ↵');
+
+    clientState.activeTurnEnd!.value = { outcome: 'interrupted', end_reason: 'user_cancelled' };
+    await nextTick();
+
+    expect(button.disabled).toBe(false);
+    expect(button.getAttribute('aria-label')).toBe('继续');
+
+    pressKey(input, { key: 'Enter' });
+    await nextTick();
+    expect(getContinues()).toBe(0);
+
+    button.click();
+    await nextTick();
+    expect(getContinues()).toBe(1);
+    expect(submits).toHaveLength(0);
+
+    setDraft('换个思路继续');
+    await nextTick();
+    expect(button.getAttribute('aria-label')).toBe('发送 ↵');
+
+    button.click();
+    await nextTick();
+    expect(getContinues()).toBe(1);
+    expect(submits).toHaveLength(1);
+    expect(submits[0]?.text).toBe('换个思路继续');
+    expect(button.getAttribute('aria-label')).toBe('继续');
+  });
+
+  it('shows the compact ESC stop label when interruptArmed is active', async () => {
+    const { interruptArmed } = await mountFreshComposer('zh');
+    clientState.activity!.value = 'running';
+    clientState.working!.value = true;
+    await nextTick();
+
+    expect(host.querySelector('.stop-esc')).toBeNull();
+
+    interruptArmed.value = true;
+    await nextTick();
+
+    const stopEsc = host.querySelector('.stop-esc');
+    expect(stopEsc?.textContent).toBe('ESC');
   });
 });
 

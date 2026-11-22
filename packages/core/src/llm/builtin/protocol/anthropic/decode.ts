@@ -3,6 +3,7 @@ import {
   APIConnectionTimeoutError as RawAnthropicSDKConnectionTimeoutError,
   APIError as RawAnthropicSDKAPIError,
 } from '@anthropic-ai/sdk';
+import { v4 as randomUUID } from 'uuid';
 
 import { headersToRecord, parseRetryAfterMs } from '#/llm/protocol/kit/http';
 import {
@@ -188,7 +189,7 @@ export function createDecoder(sink: DecodeSink): Decoder<RawChunk> {
         toolUseIndexes.add(index);
         sink.onDelta({
           type: 'function',
-          id: block.id ?? crypto.randomUUID(),
+          id: block.id ?? randomUUID(),
           name: block.name ?? '',
           arguments: '',
           _streamIndex: index,

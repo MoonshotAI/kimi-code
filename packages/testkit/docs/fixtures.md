@@ -48,6 +48,23 @@ test('writes manual permissions to the test config', async ({ testHome }) => {
 
 ## 让断言稳定，同时保留对象之间的关系
 
-比较一组帧或多个快照时，在**同一个测试**里复用 `createNormalizer({ idKeys: ['session_id'], paths: { '<workspace>': testHome.workspace } })` 返回的函数。它按首次出现的顺序为 ID 编号，所以同一个会话在前后两份数据里仍对应同一个标记。`paths` 的键是要显示的占位符，值是测试机上的实际路径。单份数据可以直接调用 `normalize(value, options)`。如果要验证两个真实 ID 是否相同，直接比较原始值即可。[快照规范化用例](../test/fixtures.test.ts)
+比较一组帧或多个快照时，在**同一个测试**里复用 `createNormalizer({ idKeys: ['session_id'], paths: { '<workspace>': testHome.workspace } })` 返回的函数。它按首次出现的顺序给每个**值**编号：同一个原始 ID 不论出现在哪个键下、ID 数组里还是嵌在文本中的 UUID，都换成同一个标记，标记的种类取首次出现时的键名。所以「用户消息的 `item_id` 就是 `prompt_ids` 里的那个 ID」这种关系在规范化后仍能看出来。`paths` 的键是要显示的占位符，值是测试机上的实际路径。单份数据可以直接调用 `normalize(value, options)`。如果要验证两个真实 ID 是否相同，直接比较原始值即可。[快照规范化用例](../test/fixtures.test.ts)
+
+时间字段默认换成 `<time>`。数据还要交给会解析时间的代码（例如客户端 reducer）时，传 `timePlaceholder: 'fixed'`：时间字符串换成固定的 `FIXED_TIME`，`timeKeys` 里的数字（例如 `duration_ms`）换成 0，字段类型不变。
+
+## 把预期数据入库：golden
+
+协议文档、录制的帧这类需要人审的预期数据，用 `await expectGolden(path, value, { kind, refreshCommand })` 和入库文件比较。值按键排序后序列化；有差异时列出每一处变化的 JSON Pointer 和前后取值，再给出刷新命令。读取时忽略 CRLF，Windows 检出的文件也能比较。只有环境变量 `TESTKIT_REFRESH` 等于 `kind` 时才写文件，而且在 CI 里拒绝写入，所以 CI 只验证、不生成。仓库根目录的 `pnpm qa:refresh <kind>` 负责设置这个变量。[golden 实现](../src/fixtures/golden.ts)
 
 构造图片输入时，`dataUrl('image/png', solidPng(2, 2))` 可以生成完整的 PNG。需要区分损坏的 Base64 和无法解码的图片时，从 `BROKEN_DATA_URLS` 选择对应样本。`mp4Header()` 只构造 MP4 的文件类型头，适合格式识别测试。[媒体样本](../src/fixtures/media.ts)
+
+## 启动被测程序的子进程
+
+需要真正的进程边界时（冷启动、强杀、终端读屏），用 `TestProcess.start({ label, command, cwd, env, logDir })` 启动 Node 子进程。入口文件不存在时直接失败。它一直读空 stdout，保留 stdout 和 stderr 的尾部，可以用 `waitForLine(predicate)` 等结构化的就绪行，用 `onOutput(listener)` 把输出交给虚拟终端。子进程提前退出时，等待会立刻失败，并附上退出码和 stderr。[进程夹具](../src/fixtures/process.ts) · [用例](../test/fixtures.test.ts)
+
+- **启动 CLI** 用 `command: kimiCliCommand()` 和 `env: kimiCliEnv(testHome, extra)`。前者默认用 tsx 运行 `apps/kimi-code/src/main.ts`；环境变量 `TESTKIT_CLI_BUILD=dist` 时改用 Node 直接运行发布用的 `apps/kimi-code/dist/main.mjs`，不加载 tsx，也不打开开发服务器开关，所以要先构建，没有构建产物时子进程不会启动。后者在 `testEnv()` 基础上，把 OS home、`KIMI_CODE_HOME` 指向测试目录，关闭自动更新，并把 Kimi 服务地址指向网络守卫会拦截的 `KIMI_SERVICE_URL`。产品启动时会读的两个可选配置接口用 `kimiServiceStubs()` 回 404；对这个地址的其他请求都会记为违例，所以首轮流程里新增的服务依赖会让测试变红。只需要 OS home 那组变量（`HOME`、`USERPROFILE`、XDG 和 Windows 的 AppData）时，用 `osHomeEnv(dir)`。[CLI 命令与环境](../src/fixtures/cli.ts)
+- **子进程的网络**：每个 `TestProcess` 都预加载 testkit 的网络守卫，违例逐条追加到 `logDir` 下的日志，所以子进程被强杀后仍能读到。收尾时调用 `await child.networkViolations()`；如果子进程没有加载守卫，这个调用会失败，不会返回空列表。产品会访问、又无法改地址的固定下载（例如 CDN 上的 fd 压缩包），用 `fetchStubs: [{ method, url, status }]` 在子进程里直接回固定状态码。不经 `TestProcess` 启动的 Node 程序，例如 Playwright 启动的 Electron 主进程，用 `-r` 或 `--import` 加载 `NETWORK_GUARD_PRELOAD`，把 `networkGuardEnv(log, stubs)` 合入环境，收尾时用 `readNetworkViolations(log, label)` 读取违例。[桌面夹具](../../../apps/desktop/e2e/fixtures/app.ts)
+- **结束子进程**：先走被测程序自己的退出路径并等 `child.closed`，再检查退出码；超时或模拟崩溃时用 `await child.forceKill()`，它在 POSIX 上结束整个进程组，在 Windows 上结束进程树。只需要清理测试自己启动的其他进程时，用 `killProcessTree(pid)`，并在 POSIX 上以 `detached: true` 启动它。
+- **KAP 服务端子进程**用 `KapProcess.start({ home })`，见 [KAP 场景指南](kap-scenarios.md#重启清理与失败诊断)。终端读屏见 [TUI 夹具](../../../apps/kimi-code/test/e2e/tui/support/terminal-session.ts)。
+
+需要读取仓库里的数据文件（例如其他包录下的样本）时，用 `repoPath('tests', 'scenarios', ...)` 从仓库根目录定位，不要写跨包的相对路径。

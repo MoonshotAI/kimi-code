@@ -1,7 +1,6 @@
 ### Features
 
 - Support SSH remote projects that keep running while this machine is offline.
-- Install the `use-kimi-code` skill to interact with other agent clients; see [Agent to Agent](https://moonshotai.github.io/kimi-code/en/guides/other-agents.html).
 
 ### Polish
 

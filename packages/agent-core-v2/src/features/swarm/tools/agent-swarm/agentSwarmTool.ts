@@ -22,17 +22,13 @@ import {
   type SubagentSpawnPlan,
 } from '#/session/subagent/spawn';
 import { SUBAGENT_FORK_FLAG_ID } from '#/session/subagent/flag';
-import {
-  buildSubagentModelSummary,
-  exposesSubagentModelChoice,
-  stripSubagentForkParameter,
-  stripSubagentModelParameter,
-} from '#/session/subagent/configSection';
+import { stripSubagentForkParameter } from '#/session/subagent/configSection';
 import {
   AgentSwarmToolInputSchema,
   IAgentSwarmTool,
   MAX_AGENT_SWARM_SUBAGENTS,
   PROMPT_TEMPLATE_PLACEHOLDER,
+  SWARM_RESUME_ONLY_WITH_MODEL_UNAVAILABLE,
   type AgentSwarmToolInput,
 } from './agent-swarm';
 import AGENT_SWARM_DESCRIPTION from './agent-swarm.md?raw';
@@ -47,7 +43,7 @@ const SWARM_MODE_OFF_RESULT: ExecutableToolErrorResult = {
 };
 
 const AGENT_SWARM_PARAMETERS = toInputJsonSchema(AgentSwarmToolInputSchema);
-const AGENT_SWARM_PARAMETERS_NO_MODEL = stripSubagentModelParameter(AGENT_SWARM_PARAMETERS);
+const AGENT_SWARM_PARAMETERS_NO_FORK = stripSubagentForkParameter(AGENT_SWARM_PARAMETERS);
 
 interface AgentSwarmSpawnSpec {
   readonly kind: 'spawn';
@@ -81,12 +77,9 @@ export class AgentSwarmTool implements IAgentSwarmTool {
   readonly name = 'AgentSwarm' as const;
 
   get parameters(): Record<string, unknown> {
-    const parameters = exposesSubagentModelChoice(this.config)
-      ? AGENT_SWARM_PARAMETERS
-      : AGENT_SWARM_PARAMETERS_NO_MODEL;
     return this.flags.enabled(SUBAGENT_FORK_FLAG_ID)
-      ? parameters
-      : stripSubagentForkParameter(parameters);
+      ? AGENT_SWARM_PARAMETERS
+      : AGENT_SWARM_PARAMETERS_NO_FORK;
   }
 
   private readonly callerAgentId: string;
@@ -104,12 +97,9 @@ export class AgentSwarmTool implements IAgentSwarmTool {
   }
 
   get description(): string {
-    let description = AGENT_SWARM_DESCRIPTION;
-    if (this.flags.enabled(SUBAGENT_FORK_FLAG_ID)) {
-      description += `\n\n${AGENT_SWARM_FORK_DESCRIPTION}`;
-    }
-    const modelLines = buildSubagentModelSummary(this.config);
-    return modelLines === undefined ? description : `${description}\n\n${modelLines}`;
+    return this.flags.enabled(SUBAGENT_FORK_FLAG_ID)
+      ? `${AGENT_SWARM_DESCRIPTION}\n\n${AGENT_SWARM_FORK_DESCRIPTION}`
+      : AGENT_SWARM_DESCRIPTION;
   }
 
   resolveExecution(args: AgentSwarmToolInput): ToolExecution {
@@ -157,6 +147,9 @@ export class AgentSwarmTool implements IAgentSwarmTool {
     }
     if (fork && Object.keys(args.resume_agent_ids ?? {}).length > 0) {
       throw new Error2(ErrorCodes.VALIDATION_FAILED, FORK_WITH_RESUME_UNAVAILABLE);
+    }
+    if ((args.items?.length ?? 0) === 0 && args.model !== undefined) {
+      throw new Error2(ErrorCodes.VALIDATION_FAILED, SWARM_RESUME_ONLY_WITH_MODEL_UNAVAILABLE);
     }
     let plan: SubagentSpawnPlan | undefined;
     if ((args.items?.length ?? 0) > 0) {

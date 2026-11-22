@@ -63,9 +63,9 @@ class FetchSink implements PlaybackSink {
     this.resolve(response);
   }
 
-  write(data: string): void {
+  write(data: string | Uint8Array): void {
     if (this.finished || this.gone) return;
-    this.controller?.enqueue(encoder.encode(data));
+    this.controller?.enqueue(typeof data === 'string' ? encoder.encode(data) : data);
   }
 
   end(): void {

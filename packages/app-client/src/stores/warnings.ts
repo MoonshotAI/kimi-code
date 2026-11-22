@@ -11,6 +11,7 @@ import {
 } from '@moonshot-ai/app-core/client';
 import { logError } from '@moonshot-ai/app-core/lib';
 import { getKimiWebApi, t, traceKeyEvent } from '../client/deps';
+import { sessionConflictErrorMessage } from '../lib/sessionConflictErrors';
 import { clientPinia } from './pinia';
 import { connectionStore } from './connection';
 import { sessionsStore } from './sessions';
@@ -109,7 +110,7 @@ export function operationFailureNotice(
         ? t('warnings.daemonTimeoutMessage')
         : t('warnings.daemonNetworkMessage')
       : api
-        ? err.message
+        ? (sessionConflictErrorMessage(err) ?? err.message)
         : t('warnings.operationFailedMessage'));
   return {
     severity: 'error',

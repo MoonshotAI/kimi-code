@@ -2,7 +2,7 @@
 import { useHistoryState } from './historyState';
 import { computed, inject } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { Card, Icon } from '@moonshot-ai/app-ui';
+import { Card, Icon, Skeleton } from '@moonshot-ai/app-ui';
 import { panelApiKey } from '@moonshot-ai/app-client/panel';
 import type { TurnFileChange } from '@moonshot-ai/app-components';
 import { basename } from '@moonshot-ai/app-core/lib';
@@ -16,6 +16,7 @@ const props = withDefaults(
     sessionId?: string;
     cwd?: string;
     interactive?: boolean;
+    expected?: number;
   }>(),
   { interactive: true },
 );
@@ -26,6 +27,10 @@ const { t } = useI18n();
 const interactive = computed(() => props.interactive !== false);
 
 const PREVIEW_COUNT = 3;
+const SKELETON_WIDTHS = ['9rem', '12rem', '7rem'];
+
+const loading = computed(() => props.expected !== undefined && props.changes.length === 0);
+const fileCount = computed(() => (loading.value ? props.expected! : props.changes.length));
 
 const title = computed(() => {
   const n = props.changes.length;
@@ -57,8 +62,9 @@ const visibleRows = computed(() => {
     base: baseOf(change.path),
   }));
 });
+const skeletonRows = computed(() => (loading.value ? (expanded.value ? fileCount.value : Math.min(fileCount.value, PREVIEW_COUNT)) : 0));
 const hiddenCount = computed(() => Math.max(0, props.changes.length - PREVIEW_COUNT));
-const showMoreRow = computed(() => props.changes.length > PREVIEW_COUNT);
+const showMoreRow = computed(() => fileCount.value > PREVIEW_COUNT);
 const moreLabel = computed(() =>
   expanded.value
     ? t('conversation.turnFiles.showLess')
@@ -102,12 +108,13 @@ function openChange(change: TurnFileChange): void {
 </script>
 
 <template>
-  <div class="turn-files">
+  <div class="turn-files" :aria-busy="loading || undefined">
     <Card>
       <template #head>
         <span class="tf-ic" aria-hidden="true"><Icon name="pencil" size="sm" /></span>
-        <span class="tf-title">{{ title }}</span>
-        <template v-if="hasTotals">
+        <span v-if="loading" class="tf-title tf-skel-line"><Skeleton width="8rem" height="0.75em" /></span>
+        <span v-else class="tf-title">{{ title }}</span>
+        <template v-if="!loading && hasTotals">
           <span class="tf-stats">
             <span v-if="totals.added > 0" class="tf-add">+{{ totals.added }}</span>
             <span v-if="totals.removed > 0" class="tf-del">−{{ totals.removed }}</span>
@@ -120,7 +127,12 @@ function openChange(change: TurnFileChange): void {
       </template>
 
       <ul class="tf-list">
-        <li v-for="row in visibleRows" :key="row.change.path" class="tf-row">
+        <li v-for="n in skeletonRows" :key="`skeleton-${n}`" class="tf-row" aria-hidden="true">
+          <component :is="interactive ? 'button' : 'span'" class="tf-file" :type="interactive ? 'button' : undefined" tabindex="-1" :disabled="interactive || undefined">
+            <span class="tf-base tf-skel-line"><Skeleton :width="SKELETON_WIDTHS[(n - 1) % SKELETON_WIDTHS.length]" height="0.75em" /></span>
+          </component>
+        </li>
+        <li v-for="row in loading ? [] : visibleRows" :key="row.change.path" class="tf-row">
           <component
             :is="interactive ? 'button' : 'span'"
             class="tf-file"
@@ -138,7 +150,10 @@ function openChange(change: TurnFileChange): void {
       </ul>
 
       <template v-if="showMoreRow" #foot>
-        <button type="button" class="tf-more" :aria-expanded="expanded" @click="expanded = !expanded">
+        <button v-if="loading" type="button" class="tf-more" aria-hidden="true" tabindex="-1" disabled>
+          <Skeleton width="6rem" height="0.75em" />
+        </button>
+        <button v-else type="button" class="tf-more" :aria-expanded="expanded" @click="expanded = !expanded">
           {{ moreLabel }}
           <Icon class="tf-more-car" :class="{ open: expanded }" name="chevron-down" size="sm" aria-hidden="true" />
         </button>
@@ -267,6 +282,12 @@ button.tf-file:hover .tf-dir {
   color: var(--color-text);
 }
 
+.tf-skel-line {
+  display: flex;
+  align-items: center;
+  height: 1lh;
+}
+
 .tf-more {
   display: flex;
   align-items: center;
@@ -283,7 +304,8 @@ button.tf-file:hover .tf-dir {
   cursor: pointer;
   justify-content: flex-start;
 }
-.tf-more:hover { background: var(--color-hover); }
+.tf-more:hover:not(:disabled) { background: var(--color-hover); }
+.tf-more:disabled { cursor: default; }
 .tf-more:focus-visible { outline: none; box-shadow: var(--p-focus-ring); }
 .tf-more-car {
   color: var(--color-text-faint);

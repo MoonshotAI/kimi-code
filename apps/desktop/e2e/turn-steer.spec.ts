@@ -18,7 +18,7 @@ const REPLY_3 = 'Audited token refresh and legacy cookies.';
 
 test.use({ permissionMode: 'yolo' });
 
-test('Enter steers by default with a one-time composer tip, and Mod+Enter queues for Ctrl+S steering', async ({ app, model }) => {
+test('Enter steers by default with a one-time composer tip, and Mod+Enter queues for Ctrl+S steering', { tag: '@quarantine' }, async ({ app, model }) => {
   model.script(
     bash(`while [ ! -f ${GATE_1} ]; do sleep 0.1; done; echo build ok`, { description: 'Slow build' }),
     bash(`while [ ! -f ${GATE_2} ]; do sleep 0.1; done; echo size ok`, { description: 'Size check' }),

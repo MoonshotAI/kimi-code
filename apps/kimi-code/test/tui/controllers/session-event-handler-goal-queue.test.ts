@@ -259,6 +259,26 @@ describe('SessionEventHandler goal queue promotion', () => {
     expect(host.sendQueuedMessage).toHaveBeenLastCalledWith(session, { text: 'Ship queued goal' });
   });
 
+  it('defers queued-goal promotion until compaction finishes while idle', async () => {
+    const { host, session } = makeHost();
+    host.state.appState.streamingPhase = 'idle';
+    host.state.appState.isCompacting = true;
+    const handler = new SessionEventHandler(host);
+
+    handler.requestQueuedGoalPromotion();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(session.createGoal).not.toHaveBeenCalled();
+
+    host.state.appState.isCompacting = false;
+    handler.retryQueuedGoalPromotion();
+    await vi.waitFor(() => {
+      expect(session.createGoal).toHaveBeenCalledWith({
+        objective: 'Ship queued goal',
+        replace: false,
+      });
+    });
+  });
+
   it('defers queued-goal promotion while a queued message is mid-dispatch', async () => {
     const { host, session } = makeHost();
     host.state.appState.streamingPhase = 'idle';

@@ -5,14 +5,28 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { _electron, expect, test as base, type ElectronApplication, type Page, type TestInfo } from '@playwright/test';
 
+import {
+  KIMI_SERVICE_URL,
+  killProcessTree,
+  kimiServiceStubs,
+  NETWORK_GUARD_PRELOAD,
+  networkGuardEnv,
+  osHomeEnv,
+  readNetworkViolations,
+  testEnv,
+} from '@moonshot-ai/testkit/fixtures';
+import { startFakeModel, type FakeModel } from '@moonshot-ai/testkit/model';
+
 import { connectBrowserAgent, type BrowserAgent } from './agent';
 import { startStubModel, stubModelConfig, type ModelRequest, type PermissionMode, type StubModel } from './model';
 import { startFixturePages, type FixturePages } from './pages';
-import { closeApp, CLOSE_TIMEOUT_MS, killProcessTree, killSurvivors, windowsDescendants, windowsLoad, within } from './processes';
+import { closeApp, CLOSE_TIMEOUT_MS, killSurvivors, windowsDescendants, windowsLoad, within } from './processes';
 import { saveSnapshot } from './snapshot';
 
 const DESKTOP_DIR = resolve(fileURLToPath(new URL('../..', import.meta.url)));
 const MAIN_SHIM = fileURLToPath(new URL('./main-shim.cjs', import.meta.url));
+const NETWORK_GUARD = fileURLToPath(NETWORK_GUARD_PRELOAD);
+const OFFLINE_MODELS_DEV = { method: 'GET', url: 'https://models.dev/api.json', status: 404 };
 const PAGE_TIMEOUT_MS = 30_000;
 const STARTUP_TIMEOUT_MS = process.platform === 'win32' ? 90_000 : 30_000;
 const AUXILIARY_PAGES = /^app:\/\/renderer\/(browser-overlay|browser-control|screenshot|pin|capture-host)\b/;
@@ -54,6 +68,7 @@ export interface Options {
 export interface Fixtures {
   scratch: string;
   model: StubModel;
+  modelServer: StubModel | FakeModel;
   pages: FixturePages;
   app: DesktopApp;
   agent: BrowserAgent;
@@ -152,31 +167,40 @@ export const test = base.extend<Options & Fixtures>({
     await pages.close();
   },
 
-  app: async ({ scratch, model, seedWorkspace, permissionMode, appEnv, extraConfig, onboarded }, use, testInfo) => {
+  modelServer: async ({ model }, use) => use(model),
+
+  app: async ({ scratch, modelServer, seedWorkspace, permissionMode, appEnv, extraConfig, onboarded }, use, testInfo) => {
     const home = join(scratch, 'home');
+    const osHome = join(scratch, 'os-home');
     const userData = join(scratch, 'user-data');
     const downloads = join(scratch, 'downloads');
     const workspace = join(scratch, 'workspace');
-    await Promise.all([home, userData, downloads, workspace].map(dir => mkdir(dir, { recursive: true })));
-    await writeFile(join(home, 'config.toml'), stubModelConfig(model.baseUrl, permissionMode) + extraConfig);
+    await Promise.all([home, osHome, userData, downloads, workspace].map(dir => mkdir(dir, { recursive: true })));
+    await writeFile(join(home, 'config.toml'), stubModelConfig(modelServer.baseUrl, permissionMode, 'verify' in modelServer ? 'test-key' : 'sk-e2e') + extraConfig);
     const token = randomBytes(24).toString('base64url');
-    const env: Record<string, string> = {};
-    for (const [key, value] of Object.entries(process.env)) {
-      if (value !== undefined && !/^(KIMI_|ELECTRON_RUN_AS_NODE$)/.test(key)) env[key] = value;
-    }
-    Object.assign(env, {
-      KIMI_CODE_HOME: home,
-      KIMI_BROWSER_MCP_TEST_TOKEN: token,
-      KIMI_DISABLE_TELEMETRY: '1',
-      KIMI_MCP_RECONNECT_INITIAL_DELAY_MS: '600000',
-      KIMI_MCP_RECONNECT_MAX_DELAY_MS: '600000',
-      KIMI_DESKTOP_NO_SHELL_ENV: '1',
-      KIMI_DESKTOP_E2E: quietMode ? 'quiet' : '1',
-      KIMI_E2E_DOWNLOADS_DIR: downloads,
-      LANG: 'en_US.UTF-8',
-    }, appEnv);
+    const networkLog = join(scratch, 'network.log');
+    const env = testEnv({
+      set: {
+        ELECTRON_RUN_AS_NODE: undefined,
+        KIMI_CODE_SEARCH_WORKER: undefined,
+        KIMI_CODE_PERSISTENCE_MINIDB_READMODEL: undefined,
+        ...osHomeEnv(osHome),
+        ...networkGuardEnv(networkLog, [...kimiServiceStubs(), OFFLINE_MODELS_DEV]),
+        KIMI_CODE_HOME: home,
+        KIMI_CODE_BASE_URL: KIMI_SERVICE_URL,
+        KIMI_BROWSER_MCP_TEST_TOKEN: token,
+        KIMI_MCP_RECONNECT_INITIAL_DELAY_MS: '600000',
+        KIMI_MCP_RECONNECT_MAX_DELAY_MS: '600000',
+        KIMI_DESKTOP_NO_SHELL_ENV: '1',
+        KIMI_DESKTOP_E2E: quietMode ? 'quiet' : '1',
+        KIMI_E2E_DOWNLOADS_DIR: downloads,
+        LANG: 'en_US.UTF-8',
+        ...appEnv,
+      },
+    });
 
     const output: string[] = [];
+    const rendererErrors: string[] = [];
     const nativeCalls: NativeCall[] = [];
     const unusedAnswers: string[] = [];
     const focusRequests: string[] = [];
@@ -186,7 +210,7 @@ export const test = base.extend<Options & Fixtures>({
 
     const launchElectron = async (): Promise<Launch> => {
       const electron = await _electron.launch({
-        args: ['-r', MAIN_SHIM, DESKTOP_DIR, `--user-data-dir=${userData}`, '--lang=en-US'],
+        args: ['-r', MAIN_SHIM, '-r', NETWORK_GUARD, DESKTOP_DIR, `--user-data-dir=${userData}`, '--lang=en-US'],
         cwd: workspace,
         env,
       });
@@ -202,8 +226,19 @@ export const test = base.extend<Options & Fixtures>({
       };
       electron.process().stdout?.on('data', collect);
       electron.process().stderr?.on('data', collect);
+      electron.context().on('weberror', event => {
+        if (event.page()?.url().startsWith('app://renderer/')) {
+          const error = event.error();
+          rendererErrors.push(error.stack ?? error.message);
+        }
+      });
       electron.context().on('dialog', () => undefined);
-      await electron.context().tracing.start({ screenshots: true, snapshots: true });
+      try {
+        await electron.context().tracing.start({ screenshots: true, snapshots: true });
+      } catch (error) {
+        await closeApp(electron);
+        throw error;
+      }
       return { electron, output: launchOutput, mcpUrl: () => mcpUrl, serverOrigin: () => serverOrigin };
     };
 
@@ -274,7 +309,7 @@ export const test = base.extend<Options & Fixtures>({
         },
         trustWorkspace: () => trustWorkspaceIn(currentWindow!),
         relaunch: async () => {
-          model.releaseTurns();
+          if ('releaseTurns' in modelServer) modelServer.releaseTurns();
           await Promise.allSettled(agents.splice(0).map(agent => agent.close()));
           record(await shutdown(current, testInfo.outputPath(`trace-launch-${launches}.zip`)));
           launches += 1;
@@ -312,6 +347,8 @@ export const test = base.extend<Options & Fixtures>({
           await window.keyboard.press('Enter');
         },
         startTurn: async (prompt) => {
+          if (!('releaseTurns' in modelServer)) throw new Error('Use app.submit and provider.waitForRequest with the testkit provider');
+          const model = modelServer;
           const next = model.requests().length;
           await app.submit(prompt);
           return model.waitForRequest(next);
@@ -326,6 +363,8 @@ export const test = base.extend<Options & Fixtures>({
         },
         startAgentTurn: async (prompt) => {
           const window = currentWindow!;
+          if (!('releaseTurns' in modelServer)) throw new Error('startAgentTurn requires the browser-agent stub');
+          const model = modelServer;
           const held = model.heldTurns();
           const composer = window.getByRole('combobox').first();
           await composer.click();
@@ -348,12 +387,26 @@ export const test = base.extend<Options & Fixtures>({
       failure = error;
     }
 
-    model.releaseTurns();
+    if ('verify' in modelServer) {
+      try {
+        modelServer.verify();
+      } catch (error) {
+        failure ??= error;
+      }
+    } else {
+      modelServer.releaseTurns();
+    }
     await Promise.allSettled(agents.map(agent => agent.close()));
-    const passed = failure === undefined && testInfo.status === testInfo.expectedStatus;
     record(await shutdown(current, testInfo.outputPath(launches > 1 ? `trace-launch-${launches}.zip` : 'trace.zip')));
+    let blockedConnections: readonly string[] = [];
+    try {
+      blockedConnections = await readNetworkViolations(networkLog, 'The desktop main process');
+    } catch (error) {
+      failure ??= error;
+    }
+    const passed = failure === undefined && testInfo.status === testInfo.expectedStatus && blockedConnections.length === 0;
     for (const trace of traces) {
-      if (passed && trace.clean) await rm(trace.path, { force: true });
+      if (passed && trace.clean && rendererErrors.length === 0) await rm(trace.path, { force: true });
     }
     for (const [type, entries] of [['blocked focus requests', focusRequests], ['killed processes left after exit', leftovers]] as const) {
       if (entries.length === 0) continue;
@@ -363,11 +416,16 @@ export const test = base.extend<Options & Fixtures>({
       testInfo.annotations.push({ type, description: summary });
       process.stderr.write(`[kimi-e2e] ${testInfo.title}: ${type}: ${summary}\n`);
     }
-    if (!passed || closeErrors.length > 0 || nativeCalls.length > 0 || unusedAnswers.length > 0) {
+    if (!passed || rendererErrors.length > 0 || closeErrors.length > 0 || nativeCalls.length > 0 || unusedAnswers.length > 0) {
+      await attachLog(testInfo, 'renderer-errors', rendererErrors.map(error => error + '\n'));
       await attachLog(testInfo, 'electron-output', output);
       await writeFile(testInfo.outputPath('electron-output.log'), output.join('')).catch(() => undefined);
     }
     if (failure !== undefined) throw failure;
+    if (blockedConnections.length > 0) {
+      throw new Error(`The desktop main process tried to reach non-loopback addresses; e2e runs must stay offline:\n${blockedConnections.map(target => `- ${target}`).join('\n')}`);
+    }
+    if (rendererErrors.length > 0 && 'verify' in modelServer) throw new Error(rendererErrors.join('\n'));
     if (nativeCalls.length > 0) {
       throw new Error(`The app requested native UI during the test; e2e runs must never show it:\n${nativeCalls.map(call => `- ${call.api}: ${call.detail}`).join('\n')}`);
     }
@@ -380,6 +438,27 @@ export const test = base.extend<Options & Fixtures>({
   agent: async ({ app }, use) => {
     await use(await app.startAgentTurn('Use the browser to check the fixture page.'));
   },
+});
+
+export const testWithProvider = test.extend<{ provider: FakeModel }>({
+  provider: async ({ scratch }, use, testInfo) => {
+    const provider = await startFakeModel({ apiKey: 'test-key' });
+    try {
+      await use(provider);
+      if (testInfo.status === testInfo.expectedStatus) provider.verify();
+    } finally {
+      try {
+        if (testInfo.status !== testInfo.expectedStatus || provider.problems().length > 0) {
+          const path = join(scratch, 'provider-requests.json');
+          await writeFile(path, JSON.stringify(provider.requests().map(({ index, lane, state }) => ({ index, lane, state }))));
+          await testInfo.attach('provider-requests', { path, contentType: 'application/json' });
+        }
+      } finally {
+        await provider.close();
+      }
+    }
+  },
+  modelServer: async ({ provider }, use) => use(provider),
 });
 
 export { expect };

@@ -1,18 +1,20 @@
 import Anthropic, { APIError as AnthropicAPIError } from '@anthropic-ai/sdk';
 import { GoogleGenAI, type GenerateContentResponse } from '@google/genai';
-import { afterEach, describe, expect, it } from 'vitest';
+import OpenAI from 'openai';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { createFakeModel, type FakeModel } from '#/model/fake-model';
+import { createFakeModel, type FakeModel, type FakeModelOptions } from '#/model/fake-model';
 import { call, httpError, say, streamError, think, thinkSigned, withUsage } from '#/model/steps';
 
 const models: FakeModel[] = [];
 
 afterEach(async () => {
+  vi.unstubAllGlobals();
   await Promise.all(models.splice(0).map((model) => model.close()));
 });
 
-function fakeModel(): FakeModel {
-  const model = createFakeModel();
+function fakeModel(options: FakeModelOptions = {}): FakeModel {
+  const model = createFakeModel(options);
   models.push(model);
   return model;
 }
@@ -329,7 +331,8 @@ describe('google genai', () => {
   it('ends a stream with an error chunk the SDK raises as an API error', async () => {
     const model = fakeModel();
     model.script(streamError(say('partial'), { status: 503, message: 'overloaded' }), httpError(429, { message: 'slow down', retryAfterSeconds: 2 }));
-    const client = await googleClient(model);
+    vi.stubGlobal('fetch', model.fetch);
+    const client = new GoogleGenAI({ apiKey: 'test-key', httpOptions: { baseUrl: 'http://testkit.invalid' } });
     const texts: string[] = [];
     const streamed = async (): Promise<void> => {
       for await (const chunk of await client.models.generateContentStream({
@@ -352,6 +355,7 @@ describe('google genai', () => {
     expect(JSON.parse((rejected as Error).message.replace(/^[^{]*/, ''))).toMatchObject({
       error: { code: 429, status: 'RESOURCE_EXHAUSTED', details: [{ retryDelay: '2s' }] },
     });
+    vi.unstubAllGlobals();
     model.verify();
   });
 
@@ -397,4 +401,120 @@ it.each([
 
   expect((await send([user, calls('shared', 'shared'), result])).status).toBe(200);
   expect(() => model.verify()).toThrow(/messages\[1\].*shared/);
+});
+
+describe('random byte splitting', () => {
+  const TEXT = '你好，世界🙂 done';
+  const COMMAND = 'echo 你好🙂';
+  const reply = () => think('想一想', call('Bash', { command: COMMAND }, { text: TEXT }));
+  const chunking = { seed: 7, maxBytes: 3 };
+
+  it('cuts the stream inside multi-byte characters and SSE events, and keeps the bytes intact', async () => {
+    const read = async (model: FakeModel): Promise<Uint8Array[]> => {
+      model.script(reply());
+      const response = await model.fetch('http://testkit.invalid/v1/chat/completions', {
+        method: 'POST',
+        body: JSON.stringify({ model: 'testkit-model', stream: true, messages: [{ role: 'user', content: 'go' }], tools: [{ type: 'function', function: { name: 'Bash', parameters: { type: 'object' } } }] }),
+      });
+      const chunks: Uint8Array[] = [];
+      for await (const chunk of response.body!) chunks.push(chunk);
+      return chunks;
+    };
+    const whole = await read(fakeModel());
+    const split = await read(fakeModel({ chunking }));
+    const joined = (chunks: Uint8Array[]): string => new TextDecoder().decode(Buffer.concat(chunks));
+    expect(joined(split)).toBe(joined(whole));
+    expect(split.length).toBeGreaterThan(whole.length * 10);
+    expect(split.every((chunk) => chunk.length <= 3)).toBe(true);
+    const fatal = new TextDecoder('utf-8', { fatal: true });
+    expect(split.some((chunk) => { try { fatal.decode(chunk); return false; } catch { return true; } })).toBe(true);
+    expect(split.some((chunk) => !new TextDecoder().decode(chunk).includes('\n'))).toBe(true);
+  });
+
+  it('keeps each lane on its own sequence, so concurrent lanes do not change how a request is cut', async () => {
+    const sizesOf = async (order: readonly ('main' | 'side')[]): Promise<number[]> => {
+      const model = fakeModel({ chunking });
+      model.script(say(TEXT));
+      model.lane('side').script(say('side reply'));
+      const requests = order.map((lane) => model.fetch('http://testkit.invalid/v1/chat/completions', {
+        method: 'POST',
+        body: JSON.stringify({
+          model: 'testkit-model',
+          stream: true,
+          messages: [{ role: 'user', content: lane }],
+          tools: lane === 'main' ? [{ type: 'function', function: { name: 'Bash', parameters: { type: 'object' } } }] : undefined,
+        }),
+      }));
+      const responses = await Promise.all(requests);
+      const main = responses[order.indexOf('main')]!;
+      const sizes: number[] = [];
+      for await (const chunk of main.body!) sizes.push(chunk.length);
+      await Promise.all(responses.filter((response) => response !== main).map((response) => response.text()));
+      return sizes;
+    };
+    expect(await sizesOf(['side', 'main'])).toEqual(await sizesOf(['main', 'side']));
+  });
+
+  it('rejects chunking options that would drop or garble data', () => {
+    expect(() => createFakeModel({ chunking: { seed: 1, maxBytes: Number.NaN } })).toThrow(/chunking\.maxBytes must be a positive integer/);
+    expect(() => createFakeModel({ chunking: { seed: 1, maxBytes: 0 } })).toThrow(/chunking\.maxBytes must be a positive integer/);
+    expect(() => createFakeModel({ chunking: { seed: 1.5 } })).toThrow(/chunking\.seed must be an integer/);
+  });
+
+  it('is deterministic for a seed', async () => {
+    const sizes = async (): Promise<number[]> => {
+      const model = fakeModel({ chunking });
+      model.script(say(TEXT));
+      const response = await model.fetch('http://testkit.invalid/v1/chat/completions', {
+        method: 'POST',
+        body: JSON.stringify({ model: 'testkit-model', stream: true, messages: [{ role: 'user', content: 'go' }] }),
+      });
+      const result: number[] = [];
+      for await (const chunk of response.body!) result.push(chunk.length);
+      return result;
+    };
+    expect(await sizes()).toEqual(await sizes());
+  });
+
+  it('still parses into the same reasoning, text and tool call with the official OpenAI SDK', async () => {
+    const model = fakeModel({ chunking });
+    model.script(reply());
+    const client = new OpenAI({ apiKey: 'sk-test', baseURL: 'http://testkit.invalid/v1', fetch: model.fetch, maxRetries: 0 });
+    let text = '';
+    let reasoning = '';
+    let args = '';
+    for await (const chunk of await client.chat.completions.create({ model: 'testkit-model', stream: true, messages: [{ role: 'user', content: 'go' }], tools: [{ type: 'function', function: { name: 'Bash', parameters: { type: 'object' } } }] })) {
+      const delta = chunk.choices[0]?.delta as { content?: string | null; reasoning_content?: string; tool_calls?: { function?: { arguments?: string } }[] } | undefined;
+      text += delta?.content ?? '';
+      reasoning += delta?.reasoning_content ?? '';
+      args += delta?.tool_calls?.map((toolCall) => toolCall.function?.arguments ?? '').join('') ?? '';
+    }
+    expect({ text, reasoning, args: JSON.parse(args) as unknown }).toEqual({ text: TEXT, reasoning: '想一想', args: { command: COMMAND } });
+    model.verify();
+  });
+
+  it('still parses with the official Anthropic SDK', async () => {
+    const model = fakeModel({ chunking });
+    model.script(reply());
+    const message = await anthropicClient(model).messages.stream({ model: 'testkit-model', max_tokens: 100, messages: [{ role: 'user', content: 'go' }], tools: ANTHROPIC_TOOLS }).finalMessage();
+    expect(message.content).toEqual([
+      { type: 'thinking', thinking: '想一想', signature: '' },
+      { type: 'text', text: TEXT },
+      { type: 'tool_use', id: 'call_0_0', name: 'Bash', input: { command: COMMAND } },
+    ]);
+    model.verify();
+  });
+
+  it('still parses with the official Google SDK over HTTP', async () => {
+    const model = fakeModel({ chunking });
+    model.script(reply());
+    await model.listen();
+    const client = new GoogleGenAI({ apiKey: 'test-key', httpOptions: { baseUrl: model.origin } });
+    const parts = [];
+    for await (const chunk of await client.models.generateContentStream({ model: 'testkit-model', contents: [{ role: 'user', parts: [{ text: 'go' }] }], config: { tools: GOOGLE_TOOLS } })) {
+      parts.push(...(chunk.candidates?.[0]?.content?.parts ?? []));
+    }
+    expect(parts).toEqual([{ text: '想一想', thought: true }, { text: TEXT }, { functionCall: { id: 'call_0_0', name: 'Bash', args: { command: COMMAND } } }]);
+    model.verify();
+  });
 });

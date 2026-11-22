@@ -115,10 +115,16 @@ describe('loop record', () => {
     expect(crashed.unfinished).toEqual({ turnId: 2, trigger: 'normal', step: 1, stepUnfinished: true, appended: true });
     expect(crashed.nextTurnId).toBe(3);
 
+    const lifecycleEvents: LoopEmitted['type'][] = [];
+    working.subscribe((event) => {
+      if (event.type === 'loop.drained' || event.type === 'loop.idle') lifecycleEvents.push(event.type);
+    });
+    let closingIdle: Promise<void> | undefined;
     let closes: { first: Promise<void>; second: Promise<void> } | undefined;
     const stop = working.subscribe((event) => {
       if (event.type !== 'prompt.reminded') return;
       stop();
+      closingIdle = working.waitForIdle();
       closes = { first: working.close(), second: working.close() };
     });
     working.remind(prompt('reentrant close'));
@@ -127,6 +133,8 @@ describe('loop record', () => {
     settleSlow?.({ content: [{ type: 'text', text: 'slow stopped' }] });
     settleBackground?.({ content: [{ type: 'text', text: 'background stopped' }] });
     await first;
+    await closingIdle;
+    expect(lifecycleEvents).toEqual([]);
     const closed = fold([...records, ...live]);
     expect(closed.unfinished).toBeUndefined();
     expect(closed.turns.at(-1)).toMatchObject({ turnId: 2, outcome: { type: 'aborted', reason: { reason: 'closed' } } });

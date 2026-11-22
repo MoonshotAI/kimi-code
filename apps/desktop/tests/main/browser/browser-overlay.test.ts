@@ -58,7 +58,12 @@ const mocks = vi.hoisted(() => {
 vi.mock('electron', () => ({ app: { get isPackaged() { return mocks.packaged; } }, WebContentsView: mocks.FakeWebContentsView }));
 vi.mock('../../../src/main/diagnostics/log', () => ({ log: { error: mocks.logError } }));
 vi.mock('../../../src/main/app/protocol', () => ({ rendererDevBase: mocks.devBase }));
+vi.mock('@moonshot-ai/app-ui', async () => {
+  const { ref } = await import('vue');
+  return { openDialogCount: ref(0), registerExternalMenuSurface: () => () => {} };
+});
 
+import { effectScope, nextTick, ref, watchEffect, type Ref } from 'vue';
 import {
   activateBrowserOverlayItem,
   dismissBrowserOverlay,
@@ -81,8 +86,20 @@ import {
   asBrowserOverlayMenuRequest,
   asBrowserOverlayDialogRequest,
   isBrowserOverlayConfig,
+  type BrowserOverlayAction,
+  type BrowserOverlayAnchor,
+  type BrowserOverlayClosed,
   type BrowserOverlayMenuConfig,
+  type BrowserOverlayMenuItem,
 } from '../../../src/shared/browser-overlay';
+
+interface RendererOverlayMenus {
+  registerBrowserOverlayMenu: (registration: { id: string; items: () => BrowserOverlayMenuItem[]; onSelect: (itemId: string) => void }) => {
+    open: Readonly<Ref<boolean>>;
+    showAt: (anchor: BrowserOverlayAnchor) => void;
+    refresh: () => void;
+  };
+}
 
 function createHost(width = 1200, height = 800, reportedWidth = width, reportedHeight = height) {
   const handlers = new Map<string, Array<(...args: unknown[]) => void>>();
@@ -204,6 +221,12 @@ describe('browser overlay menu protocol', () => {
     expect(asBrowserOverlayMenuRequest({ ...request, items: [{ ...row, actions: Array.from({ length: 5 }, (_, i) => ({ id: `a${i}`, label: 'A', icon: 'pause' })) }] })).toBeNull();
   });
 
+  it('keeps only a true refresh marker on menu requests', () => {
+    expect(asBrowserOverlayMenuRequest({ ...request, refresh: true })).toMatchObject({ menuId: request.menuId, refresh: true });
+    expect(asBrowserOverlayMenuRequest({ ...request, refresh: false })).not.toHaveProperty('refresh');
+    expect(asBrowserOverlayMenuRequest({ ...request, refresh: 'yes' })).toBeNull();
+  });
+
   it('preserves a bounded icon on composite Zoom rows', () => {
     const parsed = asBrowserOverlayMenuRequest({
       ...request,
@@ -295,6 +318,153 @@ describe('browser overlay lifecycle', () => {
     expect(view.visible).toBe(true);
     activateBrowserOverlayItem(view.webContents as never, { requestId: 2, itemId: 'browser' });
     expect(host.webContents.send).toHaveBeenCalledWith(IPC.browserOverlayAction, { menuId: 'site-b', itemId: 'browser' });
+  });
+
+  it('[L0:desktop.overlay-menu-stays-closed] keeps a menu closed by Escape when the renderer refreshes it before the close reaches the renderer', async () => {
+    const host = createHost();
+    attachBrowserOverlayWindow(host as never);
+    const view = mocks.FakeWebContentsView.instances[0]!;
+    markBrowserOverlayReady(view.webContents as never);
+    const toRenderer: Array<[string, unknown]> = [];
+    host.webContents.send.mockImplementation((channel: string, payload: unknown) => { toRenderer.push([channel, payload]); });
+    const requests: unknown[] = [];
+    let onAction: ((payload: BrowserOverlayAction) => void) | undefined;
+    let onClosed: ((payload: BrowserOverlayClosed) => void) | undefined;
+    vi.stubGlobal('document', { hasFocus: () => true, activeElement: null, addEventListener: vi.fn(), removeEventListener: vi.fn() });
+    vi.stubGlobal('window', {
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      requestAnimationFrame: (callback: (time: number) => void) => { callback(0); return 1; },
+      kimiDesktop: {
+        browserOverlaySupported: true,
+        browserOverlayOpenMenu: (request: unknown) => {
+          requests.push(request);
+          const sanitized = asBrowserOverlayMenuRequest(request);
+          if (sanitized !== null) openBrowserOverlayMenu(sanitized);
+        },
+        browserOverlayCloseMenu: (menuId: string) => closeBrowserOverlayMenu(menuId),
+        onBrowserOverlayAction: (callback: (payload: BrowserOverlayAction) => void) => { onAction = callback; return () => {}; },
+        onBrowserOverlayClosed: (callback: (payload: BrowserOverlayClosed) => void) => { onClosed = callback; return () => {}; },
+      },
+    });
+    const rendererCatchesUp = async (): Promise<void> => {
+      for (const [channel, payload] of toRenderer.splice(0)) {
+        if (channel === IPC.browserOverlayAction) onAction?.(payload as BrowserOverlayAction);
+        if (channel === IPC.browserOverlayClosed) onClosed?.(payload as BrowserOverlayClosed);
+        await nextTick();
+      }
+    };
+    let renderedConfigs = 0;
+    const overlayRendersNewConfigs = (): void => {
+      const configs = view.webContents.send.mock.calls.filter(([channel]) => channel === IPC.browserOverlayConfig);
+      for (const [, config] of configs.slice(renderedConfigs)) {
+        showBrowserOverlayRendered(view.webContents as never, { requestId: (config as BrowserOverlayMenuConfig).requestId, width: 220, height: 160 });
+      }
+      renderedConfigs = configs.length;
+    };
+    const { registerBrowserOverlayMenu } = await vi.importActual<RendererOverlayMenus>('../../../src/renderer/lib/browserOverlayMenu');
+    const thinking = ref('high');
+    const scope = effectScope();
+    try {
+      const menu = scope.run(() => {
+        const registered = registerBrowserOverlayMenu({
+          id: 'composer-models',
+          items: () => [
+            { kind: 'item', id: 'model', label: 'Thinking Stub', selected: true },
+            { kind: 'choices', id: 'thinking', label: 'Thinking', value: `thinking-${thinking.value}`, options: [{ id: 'thinking-off', label: 'Off' }, { id: 'thinking-high', label: 'High' }] },
+          ],
+          onSelect: (itemId) => { thinking.value = itemId.slice('thinking-'.length); },
+        });
+        watchEffect(() => { if (registered.open.value) registered.refresh(); });
+        return registered;
+      })!;
+      menu.showAt({ x: 900, y: 845, width: 120, height: 32 });
+      await nextTick();
+      overlayRendersNewConfigs();
+      expect(view.visible).toBe(true);
+      const { menuId } = requests[0] as { menuId: string };
+
+      activateBrowserOverlayItem(view.webContents as never, { requestId: 1, itemId: 'thinking-off' });
+      dismissBrowserOverlay(view.webContents as never, { requestId: 1, reason: 'escape' });
+      expect(toRenderer.map(([channel]) => channel)).toEqual([IPC.browserOverlayAction, IPC.browserOverlayClosed]);
+      const sentBeforeCatchingUp = requests.length;
+      await rendererCatchesUp();
+      markBrowserOverlayHidden(view.webContents as never, { requestId: 1 });
+      overlayRendersNewConfigs();
+
+      expect(menu.open.value, 'the renderer treats the menu as closed').toBe(false);
+      expect(view.visible, 'the overlay stays hidden after Escape').toBe(false);
+      expect(
+        view.webContents.send.mock.calls.filter(([channel, config]) => channel === IPC.browserOverlayConfig && (config as BrowserOverlayMenuConfig).requestId !== 1),
+        'no new menu is presented after Escape',
+      ).toEqual([]);
+      expect(requests.slice(sentBeforeCatchingUp), 'the renderer refreshed the menu after the main process had closed it').toEqual([
+        expect.objectContaining({ menuId, items: [expect.anything(), expect.objectContaining({ value: 'thinking-off' })] }),
+      ]);
+    } finally {
+      scope.stop();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  type OverlayView = InstanceType<typeof mocks.FakeWebContentsView>;
+  type Host = ReturnType<typeof createHost>;
+  it.each<[string, (view: OverlayView, host: Host) => void]>([
+    ['Escape', (view) => dismissBrowserOverlay(view.webContents as never, { requestId: 1, reason: 'escape' })],
+    ['a click on another page', () => {
+      const page = new mocks.FakeWebContents();
+      observeBrowserOverlayOutsidePointer(page as never);
+      page.emit('before-mouse-event', {}, { type: 'mouseDown' });
+    }],
+    ['window blur', (_view, host) => host.emit('blur')],
+    ['a closing action', (view) => activateBrowserOverlayItem(view.webContents as never, { requestId: 1, itemId: 'browser' })],
+  ])('does not reopen a menu closed by %s when a refresh the host sent before hearing about it arrives', (_trigger, close) => {
+    const host = createHost();
+    attachBrowserOverlayWindow(host as never);
+    openBrowserOverlayMenu(request);
+    const view = mocks.FakeWebContentsView.instances[0]!;
+    markBrowserOverlayReady(view.webContents as never);
+    showBrowserOverlayRendered(view.webContents as never, { requestId: 1, width: 220, height: 160 });
+    openBrowserOverlayMenu({ ...request, refresh: true, items: [request.items[0]!] });
+    expect(view.webContents.send).toHaveBeenLastCalledWith(IPC.browserOverlayConfig, expect.objectContaining({ requestId: 1, items: [request.items[0]] }));
+    expect(view.webContents.send.mock.lastCall?.[1]).not.toHaveProperty('refresh');
+
+    close(view, host);
+    view.webContents.send.mockClear();
+    openBrowserOverlayMenu({ ...request, refresh: true });
+    expect(view.webContents.send).not.toHaveBeenCalled();
+    markBrowserOverlayHidden(view.webContents as never, { requestId: 1 });
+    expect(view.visible).toBe(false);
+    expect(host.webContents.send.mock.calls.filter(([channel]) => channel === IPC.browserOverlayClosed)).toEqual([
+      [IPC.browserOverlayClosed, expect.objectContaining({ menuId: request.menuId })],
+    ]);
+
+    openBrowserOverlayMenu({ ...request, menuId: 'panel-tabs.add.reopened' });
+    expect(view.webContents.send).toHaveBeenLastCalledWith(IPC.browserOverlayConfig, expect.objectContaining({ menuId: 'panel-tabs.add.reopened', requestId: 2 }));
+  });
+
+  it.each([
+    ['menu', () => openBrowserOverlayMenu({ ...request, menuId: 'menu-b' })],
+    ['dialog', () => openBrowserOverlayDialog({ dialogId: 'confirm', title: 'Confirm', confirmLabel: 'OK', cancelLabel: 'Cancel', closeLabel: 'Close' })],
+  ])('keeps a %s that replaced a menu when a late refresh of the replaced menu arrives', (_kind, replace) => {
+    const host = createHost();
+    attachBrowserOverlayWindow(host as never);
+    openBrowserOverlayMenu({ ...request, menuId: 'menu-a' });
+    const view = mocks.FakeWebContentsView.instances[0]!;
+    markBrowserOverlayReady(view.webContents as never);
+    showBrowserOverlayRendered(view.webContents as never, { requestId: 1, width: 220, height: 160 });
+    replace();
+    showBrowserOverlayRendered(view.webContents as never, { requestId: 2, width: 220, height: 160 });
+    host.webContents.send.mockClear();
+    view.webContents.send.mockClear();
+
+    openBrowserOverlayMenu({ ...request, menuId: 'menu-a', refresh: true });
+    expect(view.webContents.send).not.toHaveBeenCalled();
+    expect(host.webContents.send).not.toHaveBeenCalled();
+    expect(view.visible).toBe(true);
+    dismissBrowserOverlay(view.webContents as never, { requestId: 2, reason: 'escape' });
+    expect(host.webContents.send).toHaveBeenCalledOnce();
+    expect(host.webContents.send.mock.lastCall?.[1]).toMatchObject({ reason: 'escape' });
   });
 
   it('dismisses only the current native overlay presentation', () => {

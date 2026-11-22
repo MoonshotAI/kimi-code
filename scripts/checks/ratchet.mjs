@@ -69,6 +69,16 @@ export function compareCounts(baseline, current) {
   });
 }
 
+export function ratchetBaseline(path, counts, args) {
+  const changes = compareCounts(existsSync(path) ? JSON.parse(readFileSync(path, 'utf8')) : {}, counts);
+  if (!args.includes('--update')) return { status: 'compared', changes };
+  const added = changes.filter((change) => change.kind === 'added');
+  if (added.length > 0 && !args.includes('--allow-increase')) return { status: 'refused', changes: added };
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, `${JSON.stringify(sortCounts(counts), null, 2)}\n`);
+  return { status: 'written', changes };
+}
+
 function sortCounts(counts) {
   return Object.fromEntries(
     Object.keys(counts)
@@ -203,22 +213,13 @@ export function main(args) {
     process.stderr.write(`${formatUnmatched(unmatched).join('\n')}\n`);
     return 1;
   }
-  const baselinePath = join(ROOT, BASELINE_FILE);
-  const baseline = existsSync(baselinePath) ? JSON.parse(readFileSync(baselinePath, 'utf8')) : {};
-  const changes = compareCounts(baseline, counts);
-  if (args.includes('--update')) {
-    const added = changes.filter((change) => change.kind === 'added');
-    if (added.length > 0 && !args.includes('--allow-increase')) {
-      process.stderr.write(`${formatReport(added, [], diagnostics).join('\n')}\n`);
-      return 1;
-    }
-    mkdirSync(dirname(baselinePath), { recursive: true });
-    writeFileSync(baselinePath, `${JSON.stringify(sortCounts(counts), null, 2)}\n`);
+  const outcome = ratchetBaseline(join(ROOT, BASELINE_FILE), counts, args);
+  if (outcome.status === 'written') {
     const { findings, files } = totals(counts);
     process.stdout.write(`✓ ratchet: wrote ${BASELINE_FILE} (${findings} findings in ${files} files)\n`);
     return 0;
   }
-  const report = formatReport(changes, unused, diagnostics);
+  const report = formatReport(outcome.changes, outcome.status === 'refused' ? [] : unused, diagnostics);
   if (report.length > 0) {
     process.stderr.write(`${report.join('\n')}\n`);
     return 1;

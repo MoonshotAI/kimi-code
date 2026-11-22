@@ -2,9 +2,15 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, onUpdated, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { PinnedEntry, Session } from '@moonshot-ai/app-core/client/types';
-import type { DropPosition, PinnedInsertTarget, SessionListRowMeasure } from '@moonshot-ai/app-core/lib';
+import type {
+  DropPosition,
+  PinnedInsertTarget,
+  PinnedSessionDisplayMode,
+  SessionListRowMeasure,
+} from '@moonshot-ai/app-core/lib';
 import {
   loadPinnedCollapsed,
+  loadPinnedSessionDisplayMode,
   isNoopGesture,
   measureSessionsListRows,
   pinnedRowsDefaultHeight,
@@ -16,14 +22,17 @@ import {
   pinnedSessionKey,
   safeGetString,
   savePinnedCollapsed,
+  savePinnedSessionDisplayMode,
   sessionsListMinHeight,
   STORAGE_KEYS,
 } from '@moonshot-ai/app-core/lib';
 import { useAppearance } from '@moonshot-ai/app-core';
 import { useResizable, useOverlayScrollbar } from '@moonshot-ai/app-client/composables';
 import SessionRow from './SessionRow.vue';
+import SidebarSectionHeader from './sidebar/SidebarSectionHeader.vue';
+import { useAnchoredMenu } from './composables/useAnchoredMenu';
 import { useSessionDrag, usePinnedListDrag } from './composables/useSessionDrag';
-import { Icon, IconButton } from '@moonshot-ai/app-ui';
+import { Icon, IconButton, Menu, MenuItem, Tooltip } from '@moonshot-ai/app-ui';
 
 const { t } = useI18n();
 
@@ -56,22 +65,105 @@ const emit = defineEmits<{
 }>();
 
 const collapsed = ref(loadPinnedCollapsed());
+const displayMode = ref<PinnedSessionDisplayMode>(loadPinnedSessionDisplayMode());
+const showPinnedWorkspace = computed(() => displayMode.value === 'workspace');
+
+const menuRef = ref<InstanceType<typeof Menu> | null>(null);
+const menuVia = ref<'toggle' | 'context'>('toggle');
+const {
+  open: menuOpen,
+  menuStyle,
+  showAnchored: showMenuAnchored,
+  openAt: openMenuAt,
+  close: closeMenu,
+} = useAnchoredMenu(menuRef);
+
+function toggleOptionsMenu(event: MouseEvent): void {
+  if (menuOpen.value && menuVia.value === 'toggle') {
+    closeMenu();
+    return;
+  }
+  menuVia.value = 'toggle';
+  void showMenuAnchored(event, 'right');
+}
+
+function onPinnedContextMenu(event: MouseEvent): void {
+  const target =
+    event.target instanceof Element ? event.target : ((event.target as Node | null)?.parentElement ?? null);
+  if (
+    target !== null &&
+    target.closest(
+      '.pin-row, .pin-workspace .gh, .pin-workspace .se, .pin-workspace .show-more-row, .pinned-resize',
+    ) !== null
+  ) {
+    return;
+  }
+  event.preventDefault();
+  event.stopPropagation();
+  menuVia.value = 'context';
+  void openMenuAt(event.clientX, event.clientY);
+}
+
+function chooseDisplayMode(mode: PinnedSessionDisplayMode): void {
+  if (displayMode.value !== mode) {
+    displayMode.value = mode;
+    savePinnedSessionDisplayMode(mode);
+    void nextTick(() => {
+      updateRowsScrollState();
+      measureSessionList();
+    });
+  }
+  closeMenu();
+}
+
+let foldAnimating = false;
+let foldFallbackTimer: ReturnType<typeof setTimeout> | null = null;
+let rowsScrollStateFrame = 0;
+let sessionListMeasureFrame = 0;
+
+function finishFoldAnimation(): void {
+  if (!foldAnimating) return;
+  foldAnimating = false;
+  if (foldFallbackTimer !== null) {
+    clearTimeout(foldFallbackTimer);
+    foldFallbackTimer = null;
+  }
+  if (!collapsed.value) {
+    measureSplitBudget();
+    scheduleRowsScrollState();
+  }
+}
+
+function setCollapsed(next: boolean): void {
+  if (collapsed.value === next) return;
+  foldAnimating = true;
+  if (foldFallbackTimer !== null) clearTimeout(foldFallbackTimer);
+  foldFallbackTimer = setTimeout(finishFoldAnimation, 220);
+  collapsed.value = next;
+  savePinnedCollapsed(next);
+  if (!next) {
+    void nextTick(() => updateRowsScrollState());
+  }
+}
 
 function toggleCollapsed(): void {
-  collapsed.value = !collapsed.value;
-  savePinnedCollapsed(collapsed.value);
+  setCollapsed(!collapsed.value);
 }
 
 function expand(): void {
-  if (!collapsed.value) return;
-  collapsed.value = false;
-  savePinnedCollapsed(false);
+  setCollapsed(false);
 }
 defineExpose({ expand });
 
-const resizable = computed(
-  () => !collapsed.value && pinnedSectionResizable(props.sessions.length + (props.workspaceRowCount ?? 0)),
+function onPinnedFoldTransitionEnd(event: TransitionEvent): void {
+  if (event.target !== event.currentTarget || event.propertyName !== 'grid-template-rows') return;
+  finishFoldAnimation();
+}
+
+const hasResizeCap = computed(() =>
+  pinnedSectionResizable(props.sessions.length + (props.workspaceRowCount ?? 0)),
 );
+const resizable = computed(() => !collapsed.value && hasResizeCap.value);
 
 const viewportHeight = ref(window.innerHeight);
 
@@ -92,6 +184,7 @@ function sessionsListEl(): HTMLElement | null {
 const splitBudget = ref<number | undefined>(undefined);
 
 function measureSplitBudget(): void {
+  if (collapsed.value || foldAnimating) return;
   const rows = pinnedRowsEl.value;
   const sessions = sessionsListEl();
   if (!rows || !sessions) {
@@ -107,7 +200,7 @@ const sessionsPaddingY = ref<number | null>(null);
 
 function measureSessionList(): void {
   const sessions = sessionsListEl();
-  if (!sessions) return;
+  if (!sessions || sessions.classList.contains('sessions--collapsed')) return;
   const rows = sessions.querySelectorAll('.se');
   const measures: SessionListRowMeasure[] = [];
   let visibleCount = 0;
@@ -128,13 +221,21 @@ function measureSessionList(): void {
   sessionsPaddingY.value = Number.isFinite(pad) ? pad : null;
 }
 
+function scheduleMeasureSessionList(): void {
+  if (sessionListMeasureFrame) return;
+  sessionListMeasureFrame = requestAnimationFrame(() => {
+    sessionListMeasureFrame = 0;
+    measureSessionList();
+  });
+}
+
 let budgetObserver: ResizeObserver | null = null;
 let sessionsMutationObserver: MutationObserver | null = null;
 
 function onSessionsTransitionEnd(event: TransitionEvent): void {
   if (event.propertyName !== 'height') return;
   if (!(event.target as HTMLElement).classList.contains('group-sessions')) return;
-  measureSessionList();
+  scheduleMeasureSessionList();
 }
 
 onMounted(() => {
@@ -147,7 +248,7 @@ onMounted(() => {
       budgetObserver.observe(sessions);
     }
     if (typeof MutationObserver === 'function' && sessions) {
-      sessionsMutationObserver = new MutationObserver(measureSessionList);
+      sessionsMutationObserver = new MutationObserver(scheduleMeasureSessionList);
       sessionsMutationObserver.observe(sessions, {
         childList: true,
         subtree: true,
@@ -159,6 +260,9 @@ onMounted(() => {
   });
 });
 onBeforeUnmount(() => {
+  if (foldFallbackTimer !== null) clearTimeout(foldFallbackTimer);
+  if (rowsScrollStateFrame) cancelAnimationFrame(rowsScrollStateFrame);
+  if (sessionListMeasureFrame) cancelAnimationFrame(sessionListMeasureFrame);
   budgetObserver?.disconnect();
   sessionsMutationObserver?.disconnect();
   sessionsListEl()?.removeEventListener('transitionend', onSessionsTransitionEnd);
@@ -244,9 +348,10 @@ watch(resizeDragging, (dragging) => {
 });
 
 const handleVisible = computed(() => resizable.value || resizeDragging.value);
+const rowsCapActive = computed(() => hasResizeCap.value || resizeDragging.value);
 
 watch(
-  [pinnedRowsEl, handleVisible, rowsHeight],
+  [pinnedRowsEl, rowsCapActive, rowsHeight],
   ([el, active, height]) => {
     if (!el) return;
     if (active) el.style.setProperty('max-height', `${height}px`);
@@ -297,26 +402,32 @@ const {
 function updateRowsScrollState(el = pinnedRowsEl.value): void {
   if (!el) return;
   contentHeight.value = el.scrollHeight;
-  const rows: HTMLElement[] = [];
+  const rows: Array<{ el: HTMLElement; wrapper?: HTMLElement }> = [];
   for (const child of Array.from(el.children)) {
     if (rows.length >= 2) break;
     const row = child as HTMLElement;
     if (!row.classList.contains('pin-workspace')) {
-      rows.push(row);
+      rows.push({ el: row });
       continue;
     }
     const header = row.querySelector<HTMLElement>(':scope > .group > .gh');
-    if (header) rows.push(header);
+    if (header) rows.push({ el: header, wrapper: row });
     if (rows.length >= 2) break;
     const sessions = row.querySelector<HTMLElement>(':scope > .group > .group-sessions');
     if (!sessions || sessions.classList.contains('collapsed')) continue;
     const content = sessions.querySelectorAll<HTMLElement>(':scope > .se, :scope > .show-more-row, :scope > .group-empty');
     for (const session of Array.from(content)) {
-      rows.push(session);
+      rows.push({ el: session });
       if (rows.length >= 2) break;
     }
   }
-  const next = [rows[0], rows[1]].map((row) => row?.getBoundingClientRect().height ?? null);
+  const next = [rows[0], rows[1]].map((entry) => {
+    if (!entry) return null;
+    const height = entry.el.getBoundingClientRect().height;
+    if (!entry.wrapper) return height;
+    const padTop = Number.parseFloat(globalThis.getComputedStyle(entry.wrapper).paddingTop);
+    return Number.isFinite(padTop) ? height + padTop : height;
+  });
   if (
     next.length !== firstRowHeights.value.length ||
     next.some((height, index) => height !== firstRowHeights.value[index])
@@ -333,17 +444,25 @@ function onRowsScroll(): void {
   markRowsScrolling();
 }
 
+function scheduleRowsScrollState(): void {
+  if (collapsed.value || rowsScrollStateFrame) return;
+  rowsScrollStateFrame = requestAnimationFrame(() => {
+    rowsScrollStateFrame = 0;
+    if (!collapsed.value) updateRowsScrollState();
+  });
+}
+
 let rowsObserver: ResizeObserver | null = null;
 
 watch(pinnedRowsEl, (el, prev) => {
   if (prev) rowsObserver?.disconnect();
   rowsObserver = null;
   if (el && typeof ResizeObserver === 'function') {
-    rowsObserver = new ResizeObserver(() => updateRowsScrollState());
+    rowsObserver = new ResizeObserver(scheduleRowsScrollState);
     rowsObserver.observe(el);
   }
   if (el) {
-    updateRowsScrollState(el);
+    if (!collapsed.value) updateRowsScrollState(el);
   } else {
     contentHeight.value = null;
     firstRowHeights.value = [];
@@ -352,7 +471,6 @@ watch(pinnedRowsEl, (el, prev) => {
     updateRowsThumb();
   }
 });
-onUpdated(() => updateRowsScrollState());
 onBeforeUnmount(() => rowsObserver?.disconnect());
 
 const { fontScale } = useAppearance();
@@ -400,6 +518,10 @@ const resolvedEntries = computed<PinnedEntry[]>(
     })),
 );
 
+onUpdated(() => {
+  if (!collapsed.value) updateRowsScrollState();
+});
+
 const {
   dropActive,
   entryDragOver,
@@ -422,32 +544,53 @@ const {
   <div
     ref="pinnedRootEl"
     class="pinned"
-    :class="{ 'drop-active': dropActive }"
+    :class="{ 'drop-active': dropActive, 'pinned--workspace': showPinnedWorkspace }"
+    @contextmenu="onPinnedContextMenu"
     @dragover="onContainerDragOver"
     @drop="onContainerDrop"
     @dragleave="onContainerDragLeave"
   >
-    <div class="pinned-label">
-      <span class="pinned-title">{{ t('sidebar.pinned') }}</span>
-      <IconButton
-        class="pinned-toggle"
-        :class="{ 'pinned-toggle--on': collapsed }"
-        size="sm"
-        :label="collapsed ? t('sidebar.expandPinned') : t('sidebar.collapsePinned')"
-        :tooltip="collapsed ? t('sidebar.expandPinned') : t('sidebar.collapsePinned')"
-        @click.stop="toggleCollapsed"
-      >
-        <Icon v-if="collapsed" name="chevron-right" />
-        <Icon v-else name="chevron-down" />
-      </IconButton>
-    </div>
-    <div
-      v-if="!collapsed"
-      class="pinned-rows-wrap"
-      :class="{ scrolled: rowsScrolled, 'more-below': rowsCanScrollDown }"
-      @mouseenter="onRowsListMouseEnter"
-      @mouseleave="onRowsListMouseLeave"
+    <SidebarSectionHeader
+      :title="t('sidebar.pinned')"
+      :collapsed="collapsed"
+      :toggle-label="collapsed ? t('sidebar.expandPinned') : t('sidebar.collapsePinned')"
+      label-class="pinned-label"
+      heading-class="pinned-heading"
+      title-class="pinned-title"
+      toggle-class="pinned-toggle"
+      collapsed-toggle-class="pinned-toggle--on"
+      actions-class="pinned-actions"
+      @toggle="toggleCollapsed"
     >
+      <template #actions>
+        <Tooltip :text="t('sidebar.pinnedOptions')">
+          <IconButton
+            class="pinned-options"
+            :class="{ open: menuOpen && menuVia === 'toggle' }"
+            size="sm"
+            :label="t('sidebar.pinnedOptions')"
+            aria-haspopup="menu"
+            :aria-expanded="menuOpen && menuVia === 'toggle'"
+            @click.stop="toggleOptionsMenu"
+          >
+            <Icon name="view-switch" />
+          </IconButton>
+        </Tooltip>
+      </template>
+    </SidebarSectionHeader>
+    <div
+      class="pinned-fold"
+      :class="{ collapsed }"
+      :inert="collapsed || undefined"
+      @transitionend="onPinnedFoldTransitionEnd"
+    >
+      <div class="pinned-fold-inner">
+        <div
+          class="pinned-rows-wrap"
+          :class="{ scrolled: rowsScrolled, 'more-below': rowsCanScrollDown }"
+          @mouseenter="onRowsListMouseEnter"
+          @mouseleave="onRowsListMouseLeave"
+        >
       <div ref="pinnedRowsEl" class="pinned-rows" @scroll="onRowsScroll">
         <slot v-if="!entries" name="workspaces" />
         <template v-for="entry in resolvedEntries" :key="entry.key">
@@ -485,6 +628,7 @@ const {
           >
             <SessionRow
               compact-pinned
+              :show-pinned-workspace="showPinnedWorkspace"
               :session="entry.session"
               :active="entry.session.id === activeId"
               :approval-count="pendingBySession[entry.session.id]?.approvals ?? 0"
@@ -519,6 +663,8 @@ const {
         @mouseenter="onRowsThumbMouseEnter"
         @mouseleave="onRowsThumbMouseLeave"
       ></span>
+        </div>
+      </div>
     </div>
     <div
       v-if="handleVisible"
@@ -537,43 +683,57 @@ const {
     >
       <span class="pinned-resize-bar" aria-hidden="true"></span>
     </div>
+    <Teleport to="body">
+      <Transition name="menu-pop">
+        <Menu
+          v-if="menuOpen"
+          ref="menuRef"
+          class="pinned-menu anchored-menu"
+          :style="menuStyle"
+          @click.stop
+          @contextmenu.prevent.stop
+        >
+          <div class="pinned-menu-label anchored-menu-label">{{ t('sidebar.pinnedSessionsGroup') }}</div>
+          <MenuItem
+            role="menuitemradio"
+            :aria-checked="displayMode === 'compact'"
+            @click="chooseDisplayMode('compact')"
+          >
+            <Icon name="list" size="sm" />
+            {{ t('sidebar.pinnedDisplayCompact') }}
+            <span class="pinned-menu-check anchored-menu-check">
+              <Icon v-if="displayMode === 'compact'" name="check" size="sm" />
+            </span>
+          </MenuItem>
+          <MenuItem
+            role="menuitemradio"
+            :aria-checked="displayMode === 'workspace'"
+            @click="chooseDisplayMode('workspace')"
+          >
+            <Icon name="folder-closed" size="sm" />
+            {{ t('sidebar.pinnedDisplayWorkspace') }}
+            <span class="pinned-menu-check anchored-menu-check">
+              <Icon v-if="displayMode === 'workspace'" name="check" size="sm" />
+            </span>
+          </MenuItem>
+        </Menu>
+      </Transition>
+    </Teleport>
   </div>
 </template>
 
 <style scoped>
-.pinned-label {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 0 var(--sb-action-inset) var(--space-1) var(--space-2);
-  font-family: var(--font-ui);
-  font-size: var(--text-xs);
-  font-weight: var(--weight-section-label);
-  text-transform: uppercase;
+.pinned-options {
   color: var(--faint);
-  user-select: none;
 }
-.pinned-title {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.pinned-toggle {
-  color: var(--faint);
-  opacity: 0;
-  transition: opacity var(--duration-base) var(--ease-out);
-}
-.pinned-label:hover .pinned-toggle,
-.pinned-label:focus-within .pinned-toggle,
-.pinned-toggle--on {
-  opacity: 1;
-}
-.pinned-toggle:hover {
+.pinned-options:hover,
+.pinned-options.open {
   color: var(--dim);
 }
-.pinned-toggle svg {
+.pinned-options.open {
+  background: var(--color-hover);
+}
+.pinned-options svg {
   width: 13px;
   height: 13px;
 }
@@ -643,9 +803,40 @@ const {
   right: 0;
 }
 
+.pinned-fold {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
+  margin: 0 calc(var(--sb-inset) * -1);
+  opacity: 1;
+  visibility: visible;
+  transition:
+    grid-template-rows var(--duration-base) var(--ease-out),
+    opacity var(--duration-base) var(--ease-out),
+    visibility 0s;
+}
+.pinned-fold.collapsed {
+  grid-template-rows: minmax(0, 0fr);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition:
+    grid-template-rows var(--duration-base) var(--ease-out),
+    opacity var(--duration-base) var(--ease-out),
+    visibility 0s linear var(--duration-base);
+}
+.pinned-fold-inner {
+  min-height: 0;
+  overflow: hidden;
+}
+@media (prefers-reduced-motion: reduce) {
+  .pinned-fold,
+  .pinned-fold.collapsed {
+    transition: none;
+  }
+}
+
 .pinned-rows-wrap {
   position: relative;
-  margin: 0 calc(var(--sb-inset) * -1);
   --pinned-seam-down: linear-gradient(to bottom, color-mix(in srgb, var(--color-text) 1.5%, transparent), transparent 35%), linear-gradient(to bottom, color-mix(in srgb, var(--color-text) 1%, transparent), transparent 65%), linear-gradient(to bottom, color-mix(in srgb, var(--color-text) 0.75%, transparent), transparent);
   --pinned-seam-up: linear-gradient(to top, color-mix(in srgb, var(--color-text) 1.5%, transparent), transparent 35%), linear-gradient(to top, color-mix(in srgb, var(--color-text) 1%, transparent), transparent 65%), linear-gradient(to top, color-mix(in srgb, var(--color-text) 0.75%, transparent), transparent);
 }
@@ -707,6 +898,14 @@ const {
 .pin-row :deep(.se) {
   --se-pad-x: calc(var(--sb-pad-x, 16px) - var(--sb-inset, 8px));
 }
+.pinned--workspace .pin-row + .pin-row {
+  padding-top: var(--space-05);
+}
+.pinned--workspace .pin-row + .pin-workspace,
+.pinned--workspace .pin-workspace + .pin-row,
+.pinned--workspace .pin-workspace + .pin-workspace {
+  padding-top: var(--space-1-5);
+}
 .pin-row.drop-before,
 .pin-workspace.drop-before {
   box-shadow: inset 0 2px 0 var(--color-accent);
@@ -720,3 +919,5 @@ const {
   box-shadow: inset 0 0 0 1px var(--color-accent);
 }
 </style>
+
+<style src="./lib/anchored-menu.css"></style>

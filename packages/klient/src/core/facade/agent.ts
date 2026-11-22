@@ -79,7 +79,7 @@ export interface AgentFacade {
     promptId?: string;
   }): Promise<PromptLaunchResult>;
   promptWithSkills(input: PromptWithSkillsInput): Promise<PromptWithSkillsResult>;
-  steer(input: { input: readonly ContentPart[] }): Promise<SteerResult>;
+  steer(input: { input: readonly ContentPart[]; promptId?: string }): Promise<SteerResult>;
   activateSkill(input: { name: string; path?: string; args?: string }): Promise<PromptLaunchResult>;
   cancel(input?: { turnId?: number }): Promise<void>;
   runShellCommand(input: { command: string; commandId?: string }): Promise<ShellCommandResult>;
@@ -115,7 +115,10 @@ export function createAgentFacade(call: ScopedCaller, scope: ScopeRef): AgentFac
       const entry: AgentSteerEntry = {
         role: 'user',
         content: input.input,
-        attributes: { origin: { kind: 'user' } },
+        attributes: {
+          origin: { kind: 'user' },
+          ...(input.promptId === undefined ? {} : { promptId: input.promptId }),
+        },
       };
       return call(scope, 'agentLoopService', 'notifyClient', [entry]) as Promise<SteerResult>;
     },

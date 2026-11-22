@@ -78,6 +78,14 @@ export interface PromptSteeredEvent {
   readonly messageId?: string;
 }
 
+export interface PromptQueuedEvent {
+  readonly type: 'prompt.queued';
+  readonly promptId: string;
+  readonly content: readonly MessageContent[];
+  readonly queueLength: number;
+  readonly clientMetadata?: UserPromptOrigin['clientMetadata'];
+}
+
 export interface PromptSteeredPayload {
   readonly agentId: string;
   readonly activePromptId: string;

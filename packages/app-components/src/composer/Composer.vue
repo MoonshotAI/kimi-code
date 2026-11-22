@@ -1,4 +1,54 @@
 <script lang="ts">
+import type { PromptAttachment } from '@moonshot-ai/app-client/client';
+import type { AttachmentEntry } from '@moonshot-ai/app-composer/features/attachment';
+import type { ComposerDocumentSnapshot } from '@moonshot-ai/app-composer/model';
+
+export interface ComposerSubmitPayload {
+  text: string;
+  restoreText: string;
+  editText: string;
+  attachments: PromptAttachment[];
+  restoreEntries: AttachmentEntry[];
+  snapshot?: ComposerDocumentSnapshot;
+  skills?: { name: string; path?: string }[];
+  forceQueue?: boolean;
+}
+
+export interface ComposerSteerPayload {
+  text: string;
+  restoreText: string;
+  editText: string;
+  attachments: PromptAttachment[];
+  restoreEntries: AttachmentEntry[];
+  snapshot?: ComposerDocumentSnapshot;
+  skills?: { name: string; path?: string }[];
+}
+
+export interface ComposerCommandPayload {
+  cmd: string;
+  attachments: PromptAttachment[];
+  restoreText?: string;
+  skillName?: string;
+  skillPath?: string;
+  restoreEntries?: AttachmentEntry[];
+  snapshot?: ComposerDocumentSnapshot;
+  editText?: string;
+  delivery?: 'steer' | 'queue';
+}
+
+export type ComposerEmits = {
+  submit: [payload: ComposerSubmitPayload];
+  steer: [payload: ComposerSteerPayload];
+  steerQueued: [index: number];
+  command: [payload: ComposerCommandPayload];
+  interrupt: [];
+  continue: [];
+  focusGoal: [];
+  pickModel: [];
+  login: [];
+  configureModel: [];
+};
+
 let composerMenuSequence = 0;
 </script>
 
@@ -11,9 +61,10 @@ import { BrowserScreenshotRecovery } from '@moonshot-ai/app-client/lib';
 import { useComposerBrowserReferenceHost, restoreBrowserCaptureBookmark, browserReferenceAnchor, type BrowserCaptureResource } from './browserReferences';
 import type { BrowserCapture, BrowserReference } from '@moonshot-ai/app-core/browser-reference';
 import { newAttId } from '@moonshot-ai/app-composer/features/attachment';
-import { composerSnapshotDocument, docToText, type ComposerDocumentSnapshot } from '@moonshot-ai/app-composer/model';
+import { composerSnapshotDocument, docToText } from '@moonshot-ai/app-composer/model';
 import type { NativeMenuItem } from '@moonshot-ai/app-core/native-menu';
 import { measureNaturalWidth, prepareWithSegments } from '@chenglou/pretext';
+import { v4 as randomUUID } from 'uuid';
 import { computed, inject, nextTick, onMounted, onUnmounted, ref, shallowRef, useId, watch, watchEffect } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { ReadRequestOptions, SessionContextSummary } from '@moonshot-ai/app-core/api';
@@ -48,7 +99,6 @@ import {
   adoptAttachment,
   attachmentReferenceName,
   rebaseAttachmentMediaOrdinals,
-  type AttachmentEntry,
   type AttachmentInventoryState,
 } from '@moonshot-ai/app-composer/features/attachment';
 import { startMentionSelectionSync } from '@moonshot-ai/app-composer/features/mention';
@@ -79,7 +129,6 @@ import {
 } from '@moonshot-ai/app-client/lib';
 import { getKimiWebApi, sessionObservationOptions } from '@moonshot-ai/app-client/client';
 import { composerSessionScope } from '@moonshot-ai/app-core/lib';
-import type { PromptAttachment } from '@moonshot-ai/app-client/client';
 import {
   ContextRing,
   Icon,
@@ -104,11 +153,13 @@ import SlashMenu from './SlashMenu.vue';
 
 const props = defineProps<{
   variant?: 'full' | 'side-chat';
+  workingOverride?: boolean;
   interruptArmed?: boolean;
   hideContext?: boolean;
   submitDisabled?: boolean;
   statusNote?: string;
   beforeSubmit?: () => boolean;
+  deferSubmitReset?: boolean;
   draftScopeKey?: string;
   placeholderText?: string;
   onCaptureScreenshot?: () => void;
@@ -128,6 +179,7 @@ const sessionId = client.activeSessionId;
 const scopeId = computed(() => props.draftScopeKey ?? sessionId.value);
 const running = computed(() => client.activity.value !== 'idle');
 const working = client.working;
+const stopButtonVisible = computed(() => (isSideChat.value ? Boolean(props.workingOverride) : working.value));
 const starting = client.isStartingFirstPrompt;
 const queued = client.queued;
 const searchFiles = client.searchFiles;
@@ -180,17 +232,7 @@ const placeholder = computed(() =>
             : t(isMobile.value || isSideChat.value ? 'composer.placeholder' : 'composer.placeholderHints')
 );
 
-const emit = defineEmits<{
-  submit: [payload: { text: string; restoreText: string; editText: string; attachments: PromptAttachment[]; restoreEntries: AttachmentEntry[]; snapshot?: ComposerDocumentSnapshot; skills?: { name: string; path?: string }[]; forceQueue?: boolean }];
-  steer: [payload: { text: string; restoreText: string; editText: string; attachments: PromptAttachment[]; restoreEntries: AttachmentEntry[]; snapshot?: ComposerDocumentSnapshot; skills?: { name: string; path?: string }[] }];
-  steerQueued: [index: number];
-  command: [payload: { cmd: string; attachments: PromptAttachment[]; restoreText?: string; skillName?: string; skillPath?: string; restoreEntries?: AttachmentEntry[]; snapshot?: ComposerDocumentSnapshot; editText?: string; delivery?: 'steer' | 'queue' }];
-  interrupt: [];
-  focusGoal: [];
-  pickModel: [];
-  login: [];
-  configureModel: [];
-}>();
+const emit = defineEmits<ComposerEmits>();
 
 const browserReferenceHost = useComposerBrowserReferenceHost();
 const browserDetails = useBrowserReferenceDetails(() => JSON.stringify([sessionId.value, client.activeWorkspaceId.value]));
@@ -545,7 +587,7 @@ async function acceptBrowserCapture(resource: BrowserCaptureResource, comment: s
     capture.screenshot.attachmentId = attId;
     composerAttachmentStore.upsert(scope, entry);
   }
-  ed.insertBrowserReference(capture, { id: `br_${crypto.randomUUID()}`, captureId: capture.id, comment: comment || undefined, includeScreenshot: capture.target.kind === 'region' || includeScreenshot });
+  ed.insertBrowserReference(capture, { id: `br_${randomUUID()}`, captureId: capture.id, comment: comment || undefined, includeScreenshot: capture.target.kind === 'region' || includeScreenshot });
   ed.focus();
   return true;
 }
@@ -805,7 +847,7 @@ function armGoalMode(): void {
 function insertMentionEntry(entry: MentionEntry, range: { start: number; end: number }): void {
   if (entry.kind === 'browser') {
     const capture = browserCaptures.value.find((candidate) => candidate.id === entry.captureId);
-    if (capture !== undefined) editor?.insertBrowserReference(capture, { id: `br_${crypto.randomUUID()}`, captureId: capture.id }, range);
+    if (capture !== undefined) editor?.insertBrowserReference(capture, { id: `br_${randomUUID()}`, captureId: capture.id }, range);
     return;
   }
   if (entry.kind === 'attachment') {
@@ -1721,6 +1763,30 @@ const canSend = computed(() => {
   }).kind !== 'noop';
 });
 
+const showContinueButton = computed(
+  () =>
+    !isSideChat.value &&
+    props.submitDisabled !== true &&
+    !canSend.value &&
+    !goalMode.value &&
+    text.value.trim() === '' &&
+    activeAttachmentEntries.value.length === 0 &&
+    !pillGate.value.uploading &&
+    !pillGate.value.errored &&
+    !pillGate.value.missing &&
+    Boolean(client.canContinue?.value) &&
+    client.activeTurnEnd?.value?.outcome !== 'failed',
+);
+
+function handleSendOrContinue(): void {
+  if (showContinueButton.value) {
+    if (!passSubmitGate()) return;
+    emit('continue');
+    return;
+  }
+  handleSubmit();
+}
+
 const clearDispatchPolicy = {
   attachments: 'clear',
   mentionMenu: 'close',
@@ -1748,6 +1814,19 @@ function resetAfterDispatch(
   );
 }
 
+function clearAfterDispatch(expectedSnapshot?: ComposerDocumentSnapshot): void {
+  if (props.deferSubmitReset === true && expectedSnapshot !== undefined) {
+    const current = editor?.getSnapshot();
+    if (
+      current === undefined ||
+      docToText(composerSnapshotDocument(current)) !== docToText(composerSnapshotDocument(expectedSnapshot)) ||
+      JSON.stringify(current.attachmentOrder) !== JSON.stringify(expectedSnapshot.attachmentOrder) ||
+      JSON.stringify(current.browserReferences ?? []) !== JSON.stringify(expectedSnapshot.browserReferences ?? [])
+    ) return;
+  }
+  resetAfterDispatch(clearDispatchPolicy);
+}
+
 function passSubmitGate(): boolean {
   if (props.beforeSubmit !== undefined && props.beforeSubmit() === false) return false;
   if (hostSetupId.value !== undefined) {
@@ -1757,7 +1836,7 @@ function passSubmitGate(): boolean {
   return true;
 }
 
-function handleSteer(): void {
+function handleRunningSend(delivery: 'steer' | 'queue'): void {
   const decision = currentSubmitDecision();
   if (
     decision.kind !== 'submit' &&
@@ -1771,34 +1850,24 @@ function handleSteer(): void {
   const restoreEntries = snapshotAttachmentEntries(activeAttachmentEntries.value);
   history.push(decision.historyText, snapshot);
   historyEntrySnapshot = null;
-  resetAfterDispatch(clearDispatchPolicy);
+  if (props.deferSubmitReset !== true || decision.kind === 'prompt-command') clearAfterDispatch();
   if (decision.kind === 'prompt-command') {
-    emit('command', { cmd: decision.cmd, attachments: decision.attachments, restoreText: decision.restoreText, restoreEntries, snapshot, editText: decision.editText, delivery: 'steer' });
+    emit('command', { cmd: decision.cmd, attachments: decision.attachments, restoreText: decision.restoreText, restoreEntries, snapshot, editText: decision.editText, delivery });
     return;
   }
-  emit('steer', { text: decision.text, restoreText: decision.restoreText, editText: decision.editText, attachments: decision.attachments, restoreEntries, snapshot, ...(decision.kind === 'multi-skill-activation' ? { skills: decision.skills } : {}) });
-}
-
-function handleQueue(): void {
-  const decision = currentSubmitDecision();
-  if (
-    decision.kind !== 'submit' &&
-    decision.kind !== 'multi-skill-activation' &&
-    !(decision.kind === 'prompt-command' && decision.target === 'main')
-  ) {
-    return;
-  }
-  if (!passSubmitGate()) return;
-  const snapshot = editor?.getSnapshot();
-  const restoreEntries = snapshotAttachmentEntries(activeAttachmentEntries.value);
-  history.push(decision.historyText, snapshot);
-  historyEntrySnapshot = null;
-  resetAfterDispatch(clearDispatchPolicy);
-  if (decision.kind === 'prompt-command') {
-    emit('command', { cmd: decision.cmd, attachments: decision.attachments, restoreText: decision.restoreText, restoreEntries, snapshot, editText: decision.editText, delivery: 'queue' });
+  if (delivery === 'steer') {
+    emit('steer', { text: decision.text, restoreText: decision.restoreText, editText: decision.editText, attachments: decision.attachments, restoreEntries, snapshot, ...(decision.kind === 'multi-skill-activation' ? { skills: decision.skills } : {}) });
     return;
   }
   emit('submit', { text: decision.text, restoreText: decision.restoreText, editText: decision.editText, attachments: decision.attachments, restoreEntries, snapshot, ...(decision.kind === 'multi-skill-activation' ? { skills: decision.skills } : {}), forceQueue: true });
+}
+
+function handleSteer(): void {
+  handleRunningSend('steer');
+}
+
+function handleQueue(): void {
+  handleRunningSend('queue');
 }
 
 function handleSubmit(): void {
@@ -1901,7 +1970,7 @@ function handleSubmit(): void {
         snapshot,
         ...(decision.kind === 'multi-skill-activation' ? { skills: decision.skills } : {}),
       };
-      resetAfterDispatch(clearDispatchPolicy);
+      if (props.deferSubmitReset !== true) clearAfterDispatch();
       if (!isSideChat.value && running.value) {
         if (runningSendMode.value === 'steer') {
           noteDefaultRunningSteerTriggered();
@@ -2139,7 +2208,7 @@ function insertNewlineAtCaret(): void {
   editor.insertNewlineAtCaret();
 }
 
-const sendLabel = computed(() => t('composer.send'));
+const sendLabel = computed(() => t(showContinueButton.value ? 'composer.continue' : 'composer.send'));
 const hasUpload = computed(() => !!uploadImage);
 
 const dropdownOpen = ref(false);
@@ -2260,7 +2329,7 @@ function closeOverlays(): void {
 
 const isEmpty = () => text.value.trim().length === 0 && activeAttachmentEntries.value.length === 0;
 
-defineExpose({ loadForEdit, insertQuote, insertScreenshotAnnotation, insertPathMention, addFiles, loadAttachmentsForEdit, restoreDraftEntries, focus, closeOverlays, anyPopupOpen, isEmpty });
+defineExpose({ loadForEdit, insertQuote, insertScreenshotAnnotation, insertPathMention, addFiles, loadAttachmentsForEdit, restoreDraftEntries, focus, closeOverlays, anyPopupOpen, isEmpty, clearAfterDispatch });
 
 function hasAnyToolbarMenuOpen(): boolean {
   return dropdownOpen.value || permDropdownOpen.value || ctxCardOpen.value || addMenuOpen.value;
@@ -3523,13 +3592,14 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
           </button>
           </Tooltip>
           <span v-if="statusNote" class="status-note">{{ statusNote }}</span>
-          <Tooltip v-if="working && !isSideChat" :text="t(interruptArmed ? 'composer.interruptConfirm' : 'composer.interruptTitle')">
+          <Tooltip v-if="stopButtonVisible" :text="t(interruptArmed ? 'composer.interruptConfirm' : 'composer.interruptTitle')">
             <button
               class="stop"
+              :class="{ 'is-armed': interruptArmed }"
               :aria-label="t(interruptArmed ? 'composer.interruptConfirm' : 'composer.interrupt')"
               @click="emit('interrupt')"
             >
-              <span v-if="interruptArmed" class="text-ui-xs" aria-hidden="true">ESC</span>
+              <span v-if="interruptArmed" class="stop-esc" aria-hidden="true">ESC</span>
               <Icon v-else name="stop" size="sm" />
             </button>
           </Tooltip>
@@ -3538,10 +3608,13 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
             class="send"
             :class="{ 'is-starting': starting }"
             :aria-label="sendLabel"
-            :disabled="starting || !canSend"
-            @click="handleSubmit()"
+            :disabled="starting || (!canSend && !showContinueButton)"
+            @click="handleSendOrContinue()"
           >
             <Spinner v-if="starting" size="sm" />
+            <svg v-else-if="showContinueButton" class="send-continue" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M9 8.25A1 1 0 0 1 10.543 7.41L16.343 11.16A1 1 0 0 1 16.343 12.84L10.543 16.59A1 1 0 0 1 9 15.75V8.25Z" fill="currentColor" />
+            </svg>
             <Icon v-else name="send" size="sm" />
           </button>
           </Tooltip>
@@ -4389,6 +4462,10 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
   flex-shrink: 0;
   transition: background 0.16s ease, color 0.16s ease, transform 0.12s ease;
 }
+.stop.is-armed {
+  background: var(--color-danger-soft);
+  color: var(--color-danger);
+}
 .stop:hover {
   background: var(--color-danger);
   color: var(--color-text-on-accent);
@@ -4400,6 +4477,14 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
   flex: none;
   width: var(--composer-send-icon-size);
   height: var(--composer-send-icon-size);
+}
+.stop-esc {
+  font-family: var(--font-ui);
+  font-size: 12px;
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.02em;
+  line-height: 1;
+  transform: scale(0.72);
 }
 
 .toolbar {

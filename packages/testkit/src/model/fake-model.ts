@@ -2,6 +2,7 @@ import { FakeModelClosedError, FakeModelVerificationError, TestkitError } from '
 import { TIMEOUTS } from '#/fixtures/timeouts';
 import { deferred } from '#/fixtures/wait';
 import { callProblems, messageProblems } from '#/model/checks';
+import { byteSplitter, validateChunking, type ChunkingOptions } from '#/model/chunking';
 import { resolveUsage } from '#/model/emission';
 import { createFetchTransport } from '#/model/fetch-transport';
 import { HoldRegistry, type Hold } from '#/model/holds';
@@ -17,6 +18,7 @@ import type { ErrorSpec, ModelRequest, ScriptedStep, Step, WaitOptions } from '#
 import { waitForModelEvent } from '#/model/wait';
 
 export interface FakeModelOptions {
+  readonly chunking?: ChunkingOptions;
   readonly apiKey?: string;
   readonly models?: readonly string[];
   readonly intervalMs?: number;
@@ -76,6 +78,7 @@ class FakeModelImpl implements FakeModel {
   private starting: Promise<HttpEndpoint> | undefined;
 
   constructor(private readonly options: FakeModelOptions) {
+    if (options.chunking !== undefined) validateChunking(options.chunking);
     const onScripted = (step: Step): void => this.claimHold(step);
     const closing = this.closing.signal;
     this.builtIn.set('main', new LaneState('main', 'fail', onScripted, closing));
@@ -353,6 +356,7 @@ class FakeModelImpl implements FakeModel {
       context,
       defaultIntervalMs: this.options.intervalMs ?? 0,
       sink,
+      split: this.options.chunking === undefined ? undefined : byteSplitter(this.options.chunking, record.lane, record.laneIndex),
       problem: (message) => this.problem(`request #${record.index}: ${message}`),
     };
   }

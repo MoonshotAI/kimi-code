@@ -1,13 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   loadCollapsedWorkspaces,
+  loadPinnedSessionDisplayMode,
   loadPinnedSessions,
+  loadSessionsSectionCollapsed,
   loadUnread,
   loadWorkspaceOrder,
   loadWorkspaceRecencyFloor,
   loadWorkspaceSort,
   saveCollapsedWorkspaces,
+  savePinnedSessionDisplayMode,
   savePinnedSessions,
+  saveSessionsSectionCollapsed,
   saveUnread,
   saveWorkspaceOrder,
   saveWorkspaceRecencyFloor,
@@ -265,6 +269,40 @@ describe('loadPinnedSessions / savePinnedSessions', () => {
 
     safeSetString(STORAGE_KEYS.pinnedSessions, '{not json');
     expect(loadPinnedSessions()).toEqual([]);
+  });
+});
+
+describe('loadPinnedSessionDisplayMode / savePinnedSessionDisplayMode', () => {
+  it("defaults to 'compact' when the key is missing", () => {
+    expect(loadPinnedSessionDisplayMode()).toBe('compact');
+  });
+
+  it("round-trips 'workspace' and 'compact'", () => {
+    savePinnedSessionDisplayMode('workspace');
+    expect(loadPinnedSessionDisplayMode()).toBe('workspace');
+
+    savePinnedSessionDisplayMode('compact');
+    expect(loadPinnedSessionDisplayMode()).toBe('compact');
+  });
+
+  it("falls back to 'compact' for an unknown stored value", () => {
+    safeSetString(STORAGE_KEYS.pinnedSessionDisplayMode, 'detailed');
+    expect(loadPinnedSessionDisplayMode()).toBe('compact');
+  });
+});
+
+describe('loadSessionsSectionCollapsed / saveSessionsSectionCollapsed', () => {
+  it('defaults to false when unset or invalid', () => {
+    expect(loadSessionsSectionCollapsed()).toBe(false);
+    safeSetString(STORAGE_KEYS.sessionsSectionCollapsed, 'invalid');
+    expect(loadSessionsSectionCollapsed()).toBe(false);
+  });
+
+  it('round-trips boolean collapsed state', () => {
+    saveSessionsSectionCollapsed(true);
+    expect(loadSessionsSectionCollapsed()).toBe(true);
+    saveSessionsSectionCollapsed(false);
+    expect(loadSessionsSectionCollapsed()).toBe(false);
   });
 });
 

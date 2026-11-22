@@ -31,6 +31,8 @@ export const usePromptStore = defineStore('kimi.prompt', () => {
   const autoCompactedAtBySession = new Map<string, number>();
   const steerInFlightCounts = new Map<string, number>();
   const startingFirstPromptWorkspaces = reactive(new Set<string>());
+  const continueStartingSessions = reactive(new Set<string>());
+  const continueStartingTimers = new Map<string, ReturnType<typeof setTimeout>>();
   let queueEntryCounter = 0;
 
   const isStartingFirstPrompt = computed(() => startingFirstPromptWorkspaces.size > 0);
@@ -231,6 +233,32 @@ export const usePromptStore = defineStore('kimi.prompt', () => {
     startingFirstPromptWorkspaces.delete(workspaceId);
   }
 
+  function beginContinueTurnStart(sid: string): void {
+    const existing = continueStartingTimers.get(sid);
+    if (existing !== undefined) clearTimeout(existing);
+    continueStartingSessions.add(sid);
+    continueStartingTimers.set(
+      sid,
+      setTimeout(() => {
+        continueStartingTimers.delete(sid);
+        continueStartingSessions.delete(sid);
+      }, 2000),
+    );
+  }
+
+  function settleContinueTurnStart(sid: string): void {
+    const existing = continueStartingTimers.get(sid);
+    if (existing !== undefined) {
+      clearTimeout(existing);
+      continueStartingTimers.delete(sid);
+    }
+    continueStartingSessions.delete(sid);
+  }
+
+  function isContinueTurnStarting(sid: string): boolean {
+    return continueStartingSessions.has(sid);
+  }
+
   function setDraftEntry(entry: 'newChat' | 'workspace'): void {
     draftEntry.value = entry;
     draftEntryNonce.value += 1;
@@ -243,6 +271,7 @@ export const usePromptStore = defineStore('kimi.prompt', () => {
     autoCompactedAtBySession.delete(sid);
     steerInFlightCounts.delete(sid);
     steerChainBySession.delete(sid);
+    settleContinueTurnStart(sid);
   }
 
   function forgetLocalTurnState(sid: string): void {
@@ -301,6 +330,9 @@ export const usePromptStore = defineStore('kimi.prompt', () => {
     clearOptimisticMessages,
     tryBeginStartingFirstPrompt,
     endStartingFirstPrompt,
+    beginContinueTurnStart,
+    settleContinueTurnStart,
+    isContinueTurnStarting,
     setDraftEntry,
     forgetPromptState,
     forgetLocalTurnState,

@@ -14,8 +14,10 @@
     "nursery": "off"
   },
   "plugins": ["typescript", "import", "unicorn", "promise", "node", "oxc"],
-  "jsPlugins": ["./apps/desktop/scripts/e2e-lint-plugin.mjs"],
+  "jsPlugins": ["./apps/desktop/scripts/e2e-lint-plugin.mjs", "./scripts/no-crypto-random-uuid-lint-plugin.mjs"],
   "rules": {
+    "kimi/no-crypto-random-uuid": "error",
+
     // ESLint core.
     "eslint/accessor-pairs": "error",
     "eslint/block-scoped-var": "error",
@@ -256,7 +258,7 @@
   },
   "overrides": [
     {
-      "files": ["apps/desktop/e2e/*.spec.ts"],
+      "files": ["apps/desktop/e2e/*.spec.ts", "apps/desktop/test/e2e/**/*.spec.ts"],
       "rules": {
         "no-restricted-globals": ["error", "localStorage", "sessionStorage"],
         "no-restricted-imports": ["error", { "patterns": ["../src/*", "../src/**", "**/known-bug"] }],

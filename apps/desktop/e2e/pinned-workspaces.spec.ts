@@ -106,6 +106,17 @@ test('pinned workspaces share the pinned section, support manual reordering, sur
     await app.snapshot('pinned-workspace-and-session');
   });
 
+  await test.step('switch pinned sessions to show project subtitles via the pinned options menu', async () => {
+    await sidebar.locator('.pinned .pinned-label').hover();
+    await sidebar.locator('.pinned').getByRole('button', { name: 'Pinned options', exact: true }).click();
+    await app.window.getByRole('menuitemradio', { name: 'Show project', exact: true }).click();
+    const pinnedFirstRow = sidebar.locator('.pinned [data-session-id]').filter({ hasText: FIRST });
+    await expect(pinnedFirstRow.locator('.sub')).toHaveCount(1);
+    await expect(pinnedFirstRow.locator('.sub-icon')).toHaveCount(0);
+    await expect(pinnedFirstRow.locator('.sub-text')).toHaveText('workspace');
+    await app.snapshot('pinned-workspace-and-session-with-project');
+  });
+
   await test.step('collapse, expand and create a session from the pinned workspace', async () => {
     await pinnedGroup('second-project').getByText('second-project', { exact: true }).click();
     await expect(pinnedGroup('second-project').locator('.group-sessions')).toHaveClass(/collapsed/);
@@ -119,7 +130,7 @@ test('pinned workspaces share the pinned section, support manual reordering, sur
     await expect(pinnedGroup('second-project').getByText(THIRD)).toBeVisible();
   });
 
-  await test.step('restore the pinned workspace and manual order after a relaunch', async () => {
+  await test.step('restore the pinned workspace, display mode and manual order after a relaunch', async () => {
     await relaunchAndSettle(app);
     sidebar = sidebarOf(app);
     await expect(pinnedGroup('second-project')).toBeVisible({ timeout: 30_000 });
@@ -127,8 +138,17 @@ test('pinned workspaces share the pinned section, support manual reordering, sur
     await expect(pinnedGroup('second-project').getByText(THIRD)).toBeVisible();
     await expect(regularGroup('second-project')).toHaveCount(0);
     await expectOrder(sidebar.locator('.pinned'), ['second-project', THIRD, SECOND, FIRST]);
+    const pinnedFirstRow = sidebar.locator('.pinned [data-session-id]').filter({ hasText: FIRST });
+    await expect(pinnedFirstRow.locator('.sub-text')).toHaveText('workspace');
     const stored = await app.window.evaluate(() => JSON.parse(globalThis.localStorage.getItem('kimi-web.pinned-workspaces') ?? '[]'));
     expect(stored).toHaveLength(1);
+  });
+
+  await test.step('switch back to compact pinned rows via right-clicking the pinned header', async () => {
+    await sidebar.locator('.pinned .pinned-label').click({ button: 'right' });
+    await app.window.getByRole('menuitemradio', { name: 'Compact', exact: true }).click();
+    const pinnedFirstRow = sidebar.locator('.pinned [data-session-id]').filter({ hasText: FIRST });
+    await expect(pinnedFirstRow.locator('.sub')).toHaveCount(0);
   });
 
   await test.step('unpin the workspace back into the regular groups', async () => {

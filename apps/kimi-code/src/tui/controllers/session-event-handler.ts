@@ -129,6 +129,7 @@ export interface SessionEventHost {
   sendQueuedMessage(session: Session, item: QueuedMessage): void;
   shiftQueuedMessage(): QueuedMessage | undefined;
   steerQueuedMessagesIntoRunningTurn(): void;
+  acknowledgePromptQueued?(promptId: string): void;
   acknowledgeSteerDelivery?(input: unknown, promptIds?: readonly string[]): void;
   acknowledgeSteerTurnPrompt?(promptId: string | undefined, input: unknown, origin: unknown): void;
   acknowledgeSteerTurnStarted?(promptId?: string): void;
@@ -313,8 +314,11 @@ export class SessionEventHandler {
     }
 
     switch (event.type) {
+      case 'prompt.queued': this.host.acknowledgePromptQueued?.(event.promptId); break;
       case 'turn.started': this.handleTurnBegin(event); break;
       case 'turn.ended': this.handleTurnEnd(event, sendQueued); break;
+      case 'loop.drained': this.host.streamingUI.finalizeDrained(sendQueued, event.generation ?? null); break;
+      case 'loop.idle': this.host.streamingUI.finalizeIdle(event.generation ?? null); break;
       case 'prompt.completed': this.handlePromptCompleted(event, sendQueued); break;
       case 'turn.step.started': this.handleStepBegin(event); break;
       case 'turn.step.interrupted': this.handleStepInterrupted(event); break;
@@ -918,6 +922,7 @@ export class SessionEventHandler {
       (session === undefined || this.host.session === session) &&
       !this.host.aborted &&
       this.host.state.appState.streamingPhase === 'idle' &&
+      !this.host.state.appState.isCompacting &&
       this.host.state.queuedMessages.length === 0 &&
       !this.host.state.queuedMessageDispatchPending
     );
@@ -1167,12 +1172,8 @@ export class SessionEventHandler {
   private handleCompactionBegin(event: CompactionStartedEvent): void {
     this.compactionFailed = false;
     this.host.lastCompactionTrigger = event.trigger;
-    this.host.streamingUI.finalizeLiveTextBuffers('waiting');
-    this.host.setAppState({
-      isCompacting: true,
-      streamingPhase: 'waiting',
-      streamingStartTime: Date.now(),
-    });
+    this.host.streamingUI.finalizeLiveTextBuffers(this.host.state.livePane.mode);
+    this.host.setAppState({ isCompacting: true });
     this.host.streamingUI.beginCompaction(event.instruction);
   }
 
@@ -1204,6 +1205,12 @@ export class SessionEventHandler {
 
   private finishCompaction(sendQueued: (item: QueuedMessage) => void): void {
     const hasActiveTurn = this.host.streamingUI.hasActiveTurn();
+    if (!hasActiveTurn && this.host.state.appState.loopLifecycleEvents === true) {
+      this.host.setAppState({ isCompacting: false });
+      if (!this.host.state.queuedMessageDispatchPending) this.host.streamingUI.finalizeDrained(sendQueued);
+      this.host.streamingUI.finalizeIdle(undefined, false);
+      return;
+    }
     if (!hasActiveTurn && !this.host.state.queuedMessageDispatchPending) {
       const next = this.host.shiftQueuedMessage();
       if (next !== undefined) {

@@ -15,8 +15,8 @@ import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import type { BashInput } from '#/agent/tools/os/bash/bash';
 import type { SubagentToolInput } from '#/agent/tools/agent/agent';
+import { toolExecutorHook } from '../../harness/toolHooks';
 import {
-  composeToolExecutorHooks,
   memoryOutputStore,
   ToolExecutor as HandlerToolExecutor,
   type LegacyToolAgentContext,
@@ -212,7 +212,7 @@ export function createTaskChannel(
   const raw = new HandlerToolExecutor<LegacyToolAgentContext>([], {
     outputStore: store,
     get hook() {
-      return composeToolExecutorHooks(hooks);
+      return toolExecutorHook(hooks);
     },
   });
   const reduced = new AgentTaskService('main');

@@ -501,6 +501,8 @@ export * from '#/session/subagent/mirrorAgentRun';
 export * from '#/session/subagent/subagentScopeCache';
 import '#/session/subagent/subagentScopeCacheService';
 export * from '#/session/subagent/configSection';
+export * from '#/agent/subagentModelsReminder/subagentModelsReminder';
+import '#/agent/subagentModelsReminder/subagentModelsReminderService';
 export * from '#/agent/tools/agent/agent';
 import '#/agent/tools/agent/agentTool';
 export * from '#/app/sessionManager/sessionLookup';

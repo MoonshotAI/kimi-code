@@ -1,6 +1,7 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { PassThrough } from 'node:stream';
 
 import { describe, expect, it, vi } from 'vitest';
 
@@ -9,8 +10,9 @@ import { ErrorCode } from '../src/protocol/error-codes';
 import { listAllSessionsAcrossHosts, listSessionsAcrossHosts, type SessionsListOutcome } from '../src/routes/sessionsAcrossHosts';
 import type { ListSessionsQuery } from '../src/protocol/rest-session';
 import { HostBridgeManager } from '../src/services/hosts/hostBridgeManager';
-import { HostSourceError, type HostSources } from '../src/services/hosts/hostFanout';
+import { collectFromHosts, hostProjects, HostSourceError, type HostSources } from '../src/services/hosts/hostFanout';
 import type { HostHttpRequest, HostSession } from '../src/services/hosts/hostSession';
+import { StdioHostSession } from '../src/services/hosts/stdioHostSession';
 import { startServer } from '../src/start';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 
@@ -124,7 +126,7 @@ function localList(sessions: FakeSession[]): (query: Omit<ListSessionsQuery, 'ho
 }
 
 function sourcesOf(hosts: Array<{ id: string; session: HostSession | undefined }>): HostSources {
-  return { sources: () => hosts };
+  return { sources: () => hosts.map(({ id, session }) => ({ id, getSession: async () => session })) };
 }
 
 function ids(data: unknown): string[] {
@@ -234,8 +236,8 @@ describe('sessions across hosts', () => {
   });
 
   it('reports hosts that are offline or failing and still answers with the rest', async () => {
-    const failing = { ...hosts.sources()[0]!.session!, request: async () => { throw new Error('tunnel closed'); } };
-    const unavailableHosts = sourcesOf([{ id: 'off', session: undefined }, { id: 'broken', session: failing }, ...hosts.sources()]);
+    const failing = { ...session, request: async () => { throw new Error('tunnel closed'); } };
+    const unavailableHosts = sourcesOf([{ id: 'off', session: undefined }, { id: 'broken', session: failing }, { id: 'dev', session }]);
 
     const page = await list({ page_size: 50 }, unavailableHosts, local);
 
@@ -354,6 +356,38 @@ describe('sessions across hosts', () => {
 });
 
 describe('projects across hosts', () => {
+  it('returns projects and session groups within five seconds even if an SSH host stops answering', async () => {
+    vi.useFakeTimers();
+    const transport = new PassThrough();
+    const stalled = new StdioHostSession(transport);
+    const project = { id: 'wm_healthy', kind: 'managed' } as const;
+    const hosts = sourcesOf([
+      { id: 'healthy', session: fakeHost([project], [{ id: 'remote', workspace: project.id, updated: 10 }]) },
+      { id: 'stalled', session: stalled },
+    ]);
+    const onProjects = vi.fn();
+    const onGroups = vi.fn();
+    try {
+      void collectFromHosts(hosts, hostProjects).then(onProjects);
+      void list({ view: 'by_workspace' }, hosts, [{ id: 'local', workspace: 'wm_local', updated: 20 }]).then(onGroups);
+
+      await vi.advanceTimersByTimeAsync(5_000);
+
+      expect(onProjects).toHaveBeenCalledWith({
+        items: [{ ...project, host_id: 'healthy' }],
+        unavailable: ['stalled'],
+      });
+      expect(onGroups).toHaveBeenCalledWith(expect.objectContaining({
+        groups: [expect.objectContaining({ workspace_id: 'wm_local' }), expect.objectContaining({ workspace_id: project.id })],
+        unavailable_hosts: ['stalled'],
+      }));
+    } finally {
+      stalled.close();
+      transport.destroy();
+      vi.useRealTimers();
+    }
+  });
+
   it('adds each host\'s app-created projects and names the hosts that cannot answer', async () => {
     const home = await mkdtemp(join(tmpdir(), 'kimi-host-projects-'));
     const project = {

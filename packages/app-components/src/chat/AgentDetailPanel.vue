@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { computed, inject, nextTick, onActivated, onBeforeUnmount, onDeactivated, provide, ref, watch } from 'vue';
+import { computed, inject, nextTick, onBeforeUnmount, provide, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Icon, Spinner } from '@moonshot-ai/app-ui';
 
-import { useFollowScroll } from '@moonshot-ai/app-client/composables';
+import { usePanelScroll } from '@moonshot-ai/app-client/composables';
 import { ModelDisplayKey, PinScrollKey, SubagentEffortKey } from '@moonshot-ai/app-client/contracts';
 import { panelApiKey } from '@moonshot-ai/app-client/panel';
 import { ComposerText } from '@moonshot-ai/app-composer/transcript';
@@ -81,18 +81,8 @@ watch(promptText, () => {
 });
 
 function togglePrompt(event: MouseEvent): void {
-  if (!promptExpanded.value) {
-    pinScroll();
-  } else {
-    const btn = event.currentTarget instanceof HTMLElement ? event.currentTarget : null;
-    const scrollerEl = scroller.value;
-    if (btn !== null && scrollerEl !== null) {
-      const top = btn.getBoundingClientRect().top;
-      requestAnimationFrame(() => {
-        scrollerEl.scrollTop += btn.getBoundingClientRect().top - top;
-      });
-    }
-  }
+  const anchor = promptExpanded.value ? event.currentTarget : promptTextEl.value;
+  if (anchor instanceof HTMLElement) panelScroll.hold(anchor);
   promptExpanded.value = !promptExpanded.value;
 }
 
@@ -117,7 +107,12 @@ const promptAttachments = computed(() => {
 });
 
 const identity = computed(() => props.member.id);
-const { scroller, following, showJump, onScroll, pinScroll, jumpToBottom } = useFollowScroll(identity);
+const panelScroll = usePanelScroll({ identity: () => props.member.id });
+const { scroller, following, showJump } = panelScroll;
+
+function jumpToBottom(): void {
+  panelScroll.follow();
+}
 
 const working = computed(
   () =>
@@ -135,22 +130,9 @@ watch(identity, () => {
   promptExpanded.value = false;
 });
 
-let lastScrollTop = 0;
-let parkedScrollTop: number | null = null;
 function onTranscriptScroll(): void {
-  lastScrollTop = scroller.value?.scrollTop ?? 0;
-  onScroll();
+  panelScroll.onScroll();
 }
-onDeactivated(() => {
-  parkedScrollTop = following.value ? null : lastScrollTop;
-});
-onActivated(() => {
-  const element = scroller.value;
-  if (parkedScrollTop === null || !element) return;
-  pinScroll();
-  element.scrollTop = parkedScrollTop;
-  parkedScrollTop = null;
-});
 
 const contentReady = ref(false);
 let readyFrame: number | null = null;
@@ -214,9 +196,7 @@ const showEmptyOutput = computed(
 );
 const showOutputState = computed(() => outputLoading.value || showEmptyOutput.value);
 
-provide(PinScrollKey, () => {
-  if (scroller.value) pinScroll();
-});
+provide(PinScrollKey, (el: HTMLElement, ms?: number) => panelScroll.hold(el, ms));
 
 const modelDisplay = inject(ModelDisplayKey);
 const subagentEffort = inject(SubagentEffortKey);
@@ -241,10 +221,10 @@ const metaLabel = computed(() => {
   <div class="agent-panel">
     <div ref="scroller" class="agent-transcript" @scroll.passive="onTranscriptScroll">
       <div class="agent-transcript-inner">
-        <div v-if="metaLabel" class="agent-meta">
+        <div v-if="metaLabel" class="agent-meta" data-row-key="meta">
           <span class="agent-meta-text">{{ metaLabel }}</span>
         </div>
-        <section v-if="promptText" class="agent-prompt">
+        <section v-if="promptText" class="agent-prompt" data-row-key="prompt">
           <div class="agent-prompt-bubble">
             <div class="agent-prompt-wrap" :class="{ 'is-clamped': isPromptClamped }">
               <div
@@ -275,6 +255,7 @@ const metaLabel = computed(() => {
           <div
             v-if="transcriptTurns.length === 0 && !loading && (loadError || fallbackOutput.length > 0 || showOutputState)"
             class="agent-fallback"
+            data-row-key="fallback"
             :class="{ prose: fallbackProse }"
           >
             <div v-if="loadError" class="agent-error">{{ t('tasks.transcriptLoadError') }}</div>

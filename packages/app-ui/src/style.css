@@ -231,6 +231,9 @@ html[data-color-scheme="dark"] {
   --color-done-bd: #e0ccff;
   --color-context-definition: #84649a;
   --color-context-assistant: #087f8c;
+  --color-context-reminder: #8a6d00;
+  --color-context-skill: #1a7f37;
+  --color-context-compaction: #b3407a;
   --color-syntax-string: #0a3069;
   --color-syntax-number: #0550ae;
   --color-syntax-keyword: #cf222e;
@@ -847,6 +850,9 @@ html[data-color-scheme="dark"] {
   --color-done-bd: rgba(163, 113, 247, 0.28);
   --color-context-definition: #b59cc8;
   --color-context-assistant: #54bdc5;
+  --color-context-reminder: #d4b44a;
+  --color-context-skill: #56c271;
+  --color-context-compaction: #e07ab0;
   --color-syntax-string: #a5d6ff;
   --color-syntax-number: #79c0ff;
   --color-syntax-keyword: #ff7b72;
@@ -947,6 +953,9 @@ html[data-color-scheme="dark"] {
     --color-term-black: #484f58;
     --color-context-definition: #b59cc8;
     --color-context-assistant: #54bdc5;
+    --color-context-reminder: #d4b44a;
+    --color-context-skill: #56c271;
+    --color-context-compaction: #e07ab0;
     --color-syntax-string: #a5d6ff;
     --color-syntax-number: #79c0ff;
     --color-syntax-keyword: #ff7b72;
@@ -989,6 +998,15 @@ html[data-color-scheme="dark"] {
    Consumed only by .side.macos-desktop; web keeps the opaque --color-sidebar-bg. */
 :root { --color-sidebar-tint: rgba(255, 255, 255, 0.35); }
 html[data-color-scheme="dark"] { --color-sidebar-tint: rgba(0, 0, 0, 0.22); }
+
+[data-context-role="system"] { --context-color: var(--color-text-muted); }
+[data-context-role="definition"] { --context-color: var(--color-context-definition); }
+[data-context-role="user"] { --context-color: var(--color-info); }
+[data-context-role="reminder"] { --context-color: var(--color-context-reminder); }
+[data-context-role="skill"] { --context-color: var(--color-context-skill); }
+[data-context-role="assistant"] { --context-color: var(--color-context-assistant); }
+[data-context-role="tool"] { --context-color: var(--color-orange); }
+[data-context-role="compaction"] { --context-color: var(--color-context-compaction); }
 @media (prefers-color-scheme: dark) {
   html[data-color-scheme="system"] { --color-sidebar-tint: rgba(0, 0, 0, 0.22); }
 }

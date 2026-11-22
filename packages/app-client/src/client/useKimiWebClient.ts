@@ -603,7 +603,11 @@ interface ProfileWriteTokens {
   permission: number | undefined;
 }
 
-function persistSessionProfile(patch: PersistSessionProfilePatch, sessionId?: string): Promise<boolean> {
+function persistSessionProfile(
+  patch: PersistSessionProfilePatch,
+  sessionId?: string,
+  preserveDraftThinking = false,
+): Promise<boolean> {
   const sid = sessionId ?? rawState.activeSessionId;
   if (!sid) return Promise.resolve(false);
   const tokens: ProfileWriteTokens = {
@@ -623,7 +627,7 @@ function persistSessionProfile(patch: PersistSessionProfilePatch, sessionId?: st
   permissionsStore().noteSubmitPrepStart(sid);
   const run = prev.then(async (prevOk) => {
     if (permissionsStore().sessionTeardownGenFor(sid) !== teardownGen) return false;
-    return (await writeSessionProfile(sid, patch, tokens)) && prevOk;
+    return (await writeSessionProfile(sid, patch, tokens, preserveDraftThinking)) && prevOk;
   });
   chainMap.set(sid, run);
   return run.then((ok) => {
@@ -637,6 +641,7 @@ async function writeSessionProfile(
   sid: string,
   patch: PersistSessionProfilePatch,
   tokens: ProfileWriteTokens,
+  preserveDraftThinking: boolean,
 ): Promise<boolean> {
   let ok = true;
   try {
@@ -651,7 +656,7 @@ async function writeSessionProfile(
   ackTowerPending(rawState, sid, tokens.tower);
   ackPlanPending(rawState, sid, tokens.plan);
   permissionsStore().settleExplicit(sid, tokens.permission, ok);
-  resyncMainAgentState(sid);
+  if (!ok || !preserveDraftThinking) resyncMainAgentState(sid);
   return ok;
 }
 
@@ -1336,6 +1341,7 @@ function createOnConnectionChangeHandler(): KimiEventHandlers['onConnectionChang
       }
       warningsStore().dismissWsError();
       void configStore().refreshServerMeta();
+      sideChat.flushPendingCloses();
       if (connectionStore().connectionGeneration > 1) {
         void workspacesStore().loadWorkspaces();
         void reconcileSessionWorkAfterReconnect();
@@ -1380,10 +1386,12 @@ export function connectEventsIfNeeded(): void {
       onAgentState: (sessionId, agentId, state) => {
         if (state.status === 'ended') {
           agentStatesStore().forgetAgent(sessionId, agentId);
+          sideChat.handleAgentEnded(sessionId, agentId);
           return;
         }
         agentStatesStore().setState(sessionId, agentId, state);
         if (agentId !== MAIN_AGENT_ID) return;
+        promptStore().settleContinueTurnStart(sessionId);
         applyMainAgentState(sessionId, state);
         observeMainCompaction(sessionId);
         if (state.status === 'idle') promptPipeline.resumeQueueIfIdle(sessionId);
@@ -1744,7 +1752,28 @@ const promptPending = computed<boolean>(() => {
   return sid !== undefined && unechoedOptimisticMessages(sid).length > 0;
 });
 
-const working = computed<boolean>(() => inFlight.value || turnActive.value || promptPending.value);
+const continuePending = computed<boolean>(() => {
+  const sid = rawState.activeSessionId;
+  return sid !== undefined && promptStore().isContinueTurnStarting(sid);
+});
+
+const working = computed<boolean>(
+  () => inFlight.value || turnActive.value || promptPending.value || continuePending.value,
+);
+
+const canContinue = computed<boolean>(() => {
+  const sid = rawState.activeSessionId;
+  if (!sid) return false;
+  const session = rawState.sessions.find((s) => s.id === sid);
+  if (session?.archived === true) return false;
+  if (working.value || activity.value !== 'idle' || queued.value.length > 0) return false;
+  const lastAgentTurn = activeMainConversation()?.view.turns.findLast((turn) => turn.kind === 'agent');
+  if (lastAgentTurn?.status !== 'ended') return false;
+  return (
+    lastAgentTurn.outcome === 'interrupted' ||
+    (lastAgentTurn.outcome === 'failed' && lastAgentTurn.end_reason !== 'blocked')
+  );
+});
 
 watch(
   [() => rawState.activeSessionId, working],
@@ -1823,6 +1852,7 @@ function onMainPage(entry: ConversationEntry, previous: readonly ConversationTur
 }
 
 function onMainTurnsRemoved(entry: ConversationEntry, turnIds: readonly string[]): void {
+  promptStore().settleContinueTurnStart(entry.sessionId);
   const phases = turnPhasesOf(entry);
   for (const turnId of turnIds) phases.delete(turnId);
   clearTurnFileHistorySession(entry.sessionId);
@@ -1840,6 +1870,7 @@ function onMainTurnEnded(entry: ConversationEntry, turn: ConversationTurn): void
 
 function settleMainTurnEnd(entry: ConversationEntry, turn: ConversationTurn): void {
   const sessionId = entry.sessionId;
+  promptStore().settleContinueTurnStart(sessionId);
   turnPhasesOf(entry).set(turn.turn_id, 'settled');
   pruneEchoedPrompts(sessionId);
   promptPipeline.resumeQueueIfIdle(sessionId);
@@ -2770,6 +2801,7 @@ const promptPipeline = usePromptPipeline(rawState, {
   isCompacting: mainCompacting,
   isMainWaitForWaiting: mainWaitForWaiting,
   promptIdToAbort: mainPromptIdToAbort,
+  lastAgentTurnId: (sessionId) => mainTurnsOf(sessionId).findLast((turn) => turn.kind === 'agent')?.turn_id,
   selectSession: sessionSelection.selectSession,
   upsertSessionSorted,
 });
@@ -3304,6 +3336,7 @@ export function useKimiWebClient() {
     activeTurnError,
     activeTurnRetry,
     activeTurnEnd,
+    canContinue,
     inFlight,
     working,
     isStartingFirstPrompt,
@@ -3431,11 +3464,14 @@ export function useKimiWebClient() {
     sideChatTurnErrorOf: sideChat.sideChatTurnErrorOf,
     openSideChatOn: sideChat.openSideChatOn,
     sendSideChatPromptOn: sideChat.sendSideChatPromptOn,
+    cancelSideChat: sideChat.cancelSideChat,
+    cancelSideChatOn: sideChat.cancelSideChatOn,
     saveSideChatDraft: sideChat.saveSideChatDraft,
     sideChatDraft: sideChat.sideChatDraft,
     clearSideChatDraftIfUnchanged: sideChat.clearSideChatDraftIfUnchanged,
     uploadImage: promptPipeline.uploadImage,
     abortCurrentPrompt: promptPipeline.abortCurrentPrompt,
+    continueSession: promptPipeline.continueSession,
     respondApproval: approvalsStore().respondApproval,
     respondQuestion: approvalsStore().respondQuestion,
     dismissQuestion: approvalsStore().dismissQuestion,

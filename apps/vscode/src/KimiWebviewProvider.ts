@@ -1,4 +1,5 @@
 import * as vscode from "vscode";
+import { v4 as randomUUID } from "uuid";
 import type { KimiHarness } from "@moonshot-ai/kimi-code-sdk";
 import { Events } from "../shared/bridge";
 import { BridgeHandler } from "./bridge-handler";
@@ -45,7 +46,7 @@ export class KimiWebviewProvider implements vscode.WebviewViewProvider {
   }
 
   resolveWebviewView(webviewView: vscode.WebviewView): void {
-    const webviewId = `sidebar_${crypto.randomUUID()}`;
+    const webviewId = `sidebar_${randomUUID()}`;
     this.setupWebview(webviewId, webviewView.webview);
 
     webviewView.onDidDispose(() => {
@@ -55,7 +56,7 @@ export class KimiWebviewProvider implements vscode.WebviewViewProvider {
   }
 
   createPanel(): vscode.WebviewPanel {
-    const webviewId = `panel_${crypto.randomUUID()}`;
+    const webviewId = `panel_${randomUUID()}`;
 
     const panel = vscode.window.createWebviewPanel("kimiPanel", "Kimi Code", vscode.ViewColumn.One, {
       enableScripts: true,

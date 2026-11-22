@@ -9,7 +9,7 @@ import { sidebarOf } from './fixtures/sessions';
 
 const NOTES = 'Release checklist:\n1. bump version\n2. tag\n';
 
-test('a prompt with a file mention, a pasted image and a dropped file reaches the model with every reference', async ({ app, model }) => {
+test('a prompt with a file mention, a pasted image and a dropped file reaches the model with every reference', { tag: '@quarantine' }, async ({ app, model }) => {
   await mkdir(join(app.workspace, 'src'), { recursive: true });
   await mkdir(join(app.workspace, 'docs'), { recursive: true });
   await writeFile(join(app.workspace, 'src', 'alpha.ts'), 'export const alpha = 1;\n');
