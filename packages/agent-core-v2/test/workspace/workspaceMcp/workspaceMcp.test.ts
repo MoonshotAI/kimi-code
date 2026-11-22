@@ -29,7 +29,7 @@ import { FakeEnvironment } from '#/environment/fakeEnvironment';
 import { ISessionEphemeralMcpServers } from '#/session/mcp/ephemeralMcpServers';
 import { MergedMcpConnectionView } from '#/session/mcp/mergedConnectionView';
 import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
-import { ISessionMcpOverlayConnection } from '#/session/mcp/sessionMcpOverlay';
+import { ISessionMcpOverlayConnection, SESSION_MCP_OVERLAY_STARTUP_TIMEOUT_MS } from '#/session/mcp/sessionMcpOverlay';
 import { ISessionContext, makeSessionContext } from '#/session/sessionContext/sessionContext';
 import type { SessionWillCreateEvent } from '#/workspace/sessionLifecycle/sessionLifecycle';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
@@ -430,6 +430,55 @@ describe('WorkspaceMcpService', () => {
     settleOverlay();
     await overlay.connection.ready;
     expect(overlay.handle.connectionManager.get('eph')).toBeUndefined();
+
+    await overlay.shutdown();
+  }, 20000);
+
+  it('sessionOverlay bounds each ephemeral server startup with the overlay budget', async () => {
+    current = { base: stdioServer() };
+    const service = createService();
+    manager = service.connectionManager();
+    await service.ready;
+
+    const connectAll = vi
+      .spyOn(McpConnectionManager.prototype, 'connectAll')
+      .mockResolvedValue(undefined);
+    const overlay = service.sessionOverlay({
+      eph: stdioServer(),
+      pinned: { ...stdioServer(), startupTimeoutMs: 123 },
+    });
+    await overlay.connection.ready;
+
+    expect(connectAll).toHaveBeenCalledWith({
+      eph: expect.objectContaining({ startupTimeoutMs: SESSION_MCP_OVERLAY_STARTUP_TIMEOUT_MS }),
+      pinned: expect.objectContaining({ startupTimeoutMs: 123 }),
+    });
+
+    await overlay.shutdown();
+  }, 20000);
+
+  it('sessionOverlay fails a server that misses the budget while connected peers survive', async () => {
+    current = { base: stdioServer() };
+    const service = createService();
+    manager = service.connectionManager();
+    await service.ready;
+
+    const overlay = service.sessionOverlay({
+      fast: stdioServer(),
+      hang: {
+        transport: 'stdio',
+        command: process.execPath,
+        args: ['-e', 'setInterval(() => {}, 1000)'],
+        environment_id: 'local',
+        startupTimeoutMs: 200,
+      },
+    });
+    await overlay.connection.ready;
+
+    const view = overlay.handle.connectionManager;
+    expect(view.get('fast')?.status).toBe('connected');
+    expect(view.get('hang')?.status).toBe('failed');
+    expect(view.get('hang')?.nextRetryAt).toBeUndefined();
 
     await overlay.shutdown();
   }, 20000);
