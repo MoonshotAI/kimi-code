@@ -1,6 +1,6 @@
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import type { ContextMessage } from '#/agent/contextMemory/types';
-import type { ToolDescription as Tool } from '@moonshot-ai/core/llm/message';
+import type { ContentPart, ToolDescription as Tool } from '@moonshot-ai/core/llm/message';
 import type { ToolInfo } from '#/tool/toolContract';
 
 import type { ToolSelectTool } from './toolSelectOps';
@@ -31,7 +31,7 @@ export type ToolSelectAnnouncementDisclosure =
     };
 
 export interface ToolSelectAnnouncement {
-  readonly content: string;
+  readonly content: readonly ContentPart[];
   readonly disclosure: ToolSelectAnnouncementDisclosure;
 }
 
