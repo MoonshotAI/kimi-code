@@ -175,29 +175,31 @@ async function copyPath(): Promise<void> {
       </button>
     </Tooltip>
 
-    <Menu
-      v-if="menuOpen"
-      ref="menuRef"
-      class="open-in-menu"
-      :style="menuStyle"
-      @click.stop
-    >
-      <MenuItem
-        v-for="target in visibleTargets"
-        :key="target.id"
-        :active="target.id === quickTargetId"
-        @click="handleOpenTarget(target.id)"
+    <Transition name="menu-pop">
+      <Menu
+        v-if="menuOpen"
+        ref="menuRef"
+        class="open-in-menu"
+        :style="menuStyle"
+        @click.stop
       >
-        <img v-if="openInService?.icon(target.id)" class="om-icon" :src="openInService?.icon(target.id)" alt="" />
-        <Icon v-else name="external-link" size="sm" />
-        <span class="om-label">{{ target.label }}</span>
-      </MenuItem>
-      <MenuItem separator />
-      <MenuItem @click="copyPath">
-        <Icon :name="copiedPath ? 'check' : 'copy'" size="sm" />
-        {{ copiedPath ? t('header.copied') : t('header.copyPath') }}
-      </MenuItem>
-    </Menu>
+        <MenuItem
+          v-for="target in visibleTargets"
+          :key="target.id"
+          :active="target.id === quickTargetId"
+          @click="handleOpenTarget(target.id)"
+        >
+          <img v-if="openInService?.icon(target.id)" class="om-icon" :src="openInService?.icon(target.id)" alt="" />
+          <Icon v-else name="external-link" size="sm" />
+          <span class="om-label">{{ target.label }}</span>
+        </MenuItem>
+        <MenuItem separator />
+        <MenuItem @click="copyPath">
+          <Icon :name="copiedPath ? 'check' : 'copy'" size="sm" />
+          {{ copiedPath ? t('header.copied') : t('header.copyPath') }}
+        </MenuItem>
+      </Menu>
+    </Transition>
   </div>
 </template>
 
@@ -256,6 +258,22 @@ async function copyPath(): Promise<void> {
   top: 0;
   left: 0;
   z-index: var(--z-dropdown);
+}
+.menu-pop-enter-active {
+  transition:
+    opacity var(--duration-base) var(--ease-out),
+    transform var(--duration-base) var(--ease-out);
+}
+.menu-pop-leave-active {
+  transition:
+    opacity var(--duration-fast) var(--ease-out),
+    transform var(--duration-fast) var(--ease-out);
+  pointer-events: none;
+}
+.menu-pop-enter-from,
+.menu-pop-leave-to {
+  opacity: 0;
+  transform: scale(0.97) translateY(var(--menu-pop-shift, -2px));
 }
 .om-icon { width: 16px; height: 16px; flex: none; border-radius: 4px; }
 .om-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
