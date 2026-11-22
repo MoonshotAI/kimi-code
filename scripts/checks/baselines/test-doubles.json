@@ -85,7 +85,7 @@
     "packages/agent-core-v2/test/agent/task/tools/task-tools.test.ts": 12,
     "packages/agent-core-v2/test/agent/tokenCounting/tokenCounting.test.ts": 4,
     "packages/agent-core-v2/test/agent/toolDedupe/toolDedupe.test.ts": 8,
-    "packages/agent-core-v2/test/agent/toolSelect/toolSelect.e2e.test.ts": 44,
+    "packages/agent-core-v2/test/agent/toolSelect/toolSelect.e2e.test.ts": 42,
     "packages/agent-core-v2/test/agent/undo/undo.test.ts": 5,
     "packages/agent-core-v2/test/app/config/config.test.ts": 3,
     "packages/agent-core-v2/test/features/cron/cron-fire-steer.e2e.test.ts": 3,

@@ -58,7 +58,6 @@ import { kimiOpenAIProtocol } from '@moonshot-ai/core/llm/builtin/provider/kimi/
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IWireService } from '#/wire/wire';
 import { IEventDispatcher } from '#/state/eventDispatcher';
-import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
 import { registerLogServices } from '../../_base/log/stubs';
 import { recordingTelemetry } from '../../app/telemetry/stubs';
 import { registerStateServices } from '../../state/stubs';
@@ -410,9 +409,6 @@ function registerSharedServices(
   reg.defineInstance(IAgentLoopService, loop);
   reg.definePartialInstance(IAgentMcpService, {
     waitForInitialLoad: () => Promise.resolve(),
-  });
-  reg.definePartialInstance(ISessionMcpHandle, {
-    ready: Promise.resolve(),
   });
   reg.defineInstance(IAgentLoopService, contextMemory);
   const scope = makeAgentScopeContext({ agentId: 'main', agentScope: 'agents/main', generation: 1 });
