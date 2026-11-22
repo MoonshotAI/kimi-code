@@ -144,6 +144,7 @@ beforeEach(() => {
     initialized: ref(false),
     ensureFlatSessions: vi.fn(),
     ensureDoneSessions: vi.fn(),
+    revealFlatSession: vi.fn(),
     togglePinWorkspace: vi.fn(),
     pinWorkspace: vi.fn(),
     pinSession: vi.fn(),
@@ -218,6 +219,29 @@ describe('SessionListPanel re-render scope', () => {
     await nextTick();
 
     expect(title()).toBe('sessions');
+  });
+
+  it('keeps flat view when locating a session from search', async () => {
+    app?.unmount();
+    localStorage.setItem('kimi-web.sidebar-view-mode', 'flat');
+    const target = session(0, 0);
+    fakes.client.flatSessions = ref([target]);
+    app = installTestPlugins(createApp(SessionListPanel, { statusTab: 'open', canEditWorkspace: true }));
+    const panel = app.mount(host) as unknown as { locateSession: (id: string) => void };
+    await nextTick();
+    vi.stubGlobal('matchMedia', () => ({ matches: false }));
+    const row = rowOf(target.id) as HTMLElement;
+    expect(row).not.toBeNull();
+    row.scrollIntoView = vi.fn();
+
+    panel.locateSession(target.id);
+    await nextTick();
+    await nextTick();
+
+    expect(localStorage.getItem('kimi-web.sidebar-view-mode')).toBe('flat');
+    expect(fakes.client.revealFlatSession).toHaveBeenCalledExactlyOnceWith(target.id);
+    expect(row.scrollIntoView).toHaveBeenCalled();
+    vi.unstubAllGlobals();
   });
 
   it('shows pinned workspaces in the pinned section with working group actions', async () => {

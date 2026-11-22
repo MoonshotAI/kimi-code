@@ -613,9 +613,12 @@ function locateSession(sessionId: string): void {
     return;
   }
   if (props.statusTab !== 'open') emit('update:statusTab', 'open');
-  if (listMode.value !== 'grouped') setListMode('grouped');
+  if (listMode.value === 'flat') {
+    client.revealFlatSession(sessionId);
+  } else if (isCollapsed(group.workspace.id)) {
+    toggleCollapse(group.workspace.id);
+  }
   setSessionsCollapsed(false);
-  if (isCollapsed(group.workspace.id)) toggleCollapse(group.workspace.id);
   void nextTick(() => {
     const row = [...(sessionsEl.value?.querySelectorAll<HTMLElement>('[data-session-id]') ?? [])].find(
       (el) => el.dataset.sessionId === sessionId,
@@ -866,6 +869,7 @@ defineExpose({
           <SessionRow
             v-for="s in flatSessions"
             :key="s.id"
+            :data-session-id="s.id"
             :session="s"
             :active="s.id === activeId"
             :approval-count="pendingBySession[s.id]?.approvals ?? 0"
