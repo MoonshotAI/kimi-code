@@ -81,7 +81,11 @@ export const kimiOpenAIEncodeFixtures = [{
     messages: [
       {
         role: 'user',
-        content: [{ type: 'text', text: '' }, { type: 'text', text: 'first' }],
+        content: [
+          { type: 'text', text: '' },
+          { type: 'text', text: '', meta: { thought_signature_b64: 'gemini-signature' } },
+          { type: 'text', text: 'first' },
+        ],
       },
       {
         role: 'assistant',
