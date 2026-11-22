@@ -106,7 +106,7 @@ export function llmStartedEvent(request: LlmRequest): LlmRunStarted {
       ? undefined
       : sha256Hex(
           encoder.encode(
-            JSON.stringify(profile.tools.filter((tool) => tool.deferred !== true).map(toolSignature)),
+            JSON.stringify(profile.tools.map(toolSignature)),
           ),
         );
   return {

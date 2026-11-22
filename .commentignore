@@ -35,3 +35,6 @@ packages/core/src/loop/loop-actor.ts
 # User-requested API documentation for the loop module public surface.
 packages/core/src/loop/create-loop.ts
 packages/core/src/loop/contract/emitted.ts
+
+# User-requested request event timing documentation.
+packages/core/src/llm/response.ts

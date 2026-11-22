@@ -61,7 +61,10 @@ export default {
           ],
         },
       ],
-      tools: [{ type: 'function', ...tool, strict: false }],
+      tools: [
+        { type: 'function', ...tool, strict: false },
+        { type: 'function', ...tool, name: 'later', strict: false },
+      ],
       store: false,
       prompt_cache_key: 'cache-1',
       reasoning: { effort: 'high', summary: 'auto' },
