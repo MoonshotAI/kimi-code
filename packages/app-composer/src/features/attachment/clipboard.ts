@@ -1,5 +1,6 @@
 
 
+import { v4 as randomUUID } from 'uuid';
 import { Fragment, Slice, type Node as PMNode } from 'prosemirror-model';
 import { browserCaptureBindingId, parseBrowserCapture, parseBrowserReference, type BrowserCapture, type BrowserReference } from '@moonshot-ai/app-core/browser-reference';
 import { BrowserReferenceStep, browserReferenceKey, type BrowserReferenceInventory } from '../browser-reference/inventory';
@@ -184,7 +185,7 @@ export function buildAttachmentClipboardPaste(
       const existing = browser.captures.get(capture.id);
       if (existing !== undefined && JSON.stringify(parseBrowserCapture(existing)) !== JSON.stringify(parseBrowserCapture(capture))) {
         capture.bindingId = browserCaptureBindingId(capture);
-        capture.id = `bc_${crypto.randomUUID()}`;
+        capture.id = `bc_${randomUUID()}`;
       }
       captureIds.set(original.id, capture.id);
       captures.push(capture);
@@ -192,12 +193,12 @@ export function buildAttachmentClipboardPaste(
     const refById = new Map(payload.browserReferences.map((reference) => [reference.id, reference]));
     const copy = (node: PMNode): PMNode => {
       if (node.type === composerSchema.nodes.browser_reference) {
-        const refId = `br_${crypto.randomUUID()}`;
+        const refId = `br_${randomUUID()}`;
         const reference = refById.get(node.attrs.refId as string);
         if (reference !== undefined) {
           let captureId = captureIds.get(reference.captureId);
           if (captureId === undefined) {
-            captureId = `bc_${crypto.randomUUID()}`;
+            captureId = `bc_${randomUUID()}`;
             captureIds.set(reference.captureId, captureId);
           }
           references.push({ ...reference, id: refId, captureId });

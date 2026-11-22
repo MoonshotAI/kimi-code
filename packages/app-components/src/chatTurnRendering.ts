@@ -347,19 +347,6 @@ export function turnToMarkdown(turn: ChatTurn): string {
   return parts.join('\n\n');
 }
 
-const RENDER_ALL_MAX_TURNS = 40;
-const RENDER_ALL_MAX_BLOCKS = 240;
-
-export function historyRenderAllAffordable(turns: readonly ChatTurn[]): boolean {
-  if (turns.length > RENDER_ALL_MAX_TURNS) return false;
-  let blocks = 0;
-  for (const turn of turns) {
-    blocks += 1 + (turn.blocks?.length ?? turn.tools?.length ?? 0);
-    if (blocks > RENDER_ALL_MAX_BLOCKS) return false;
-  }
-  return true;
-}
-
 export function turnTocTitle(turn: ChatTurn, t: (key: string) => string): string {
   if (turn.role === 'compaction') return t('conversation.compactedPlain');
   if (turn.role === 'user') {

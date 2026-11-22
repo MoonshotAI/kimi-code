@@ -824,13 +824,13 @@ describe('SessionInfoPanel', () => {
     const segWidths = Array.from(section.querySelectorAll<HTMLElement>('.ctx-composition-seg'))
       .map((seg) => Number.parseFloat(seg.style.width));
     expect(segWidths).toHaveLength(3);
-    expect(segWidths[0]).toBeCloseTo((320000 / 1048576) * 100, 5);
+    expect(segWidths[0]).toBeCloseTo((128000 / 1048576) * 100, 5);
     expect(segWidths[1]).toBeCloseTo((192000 / 1048576) * 100, 5);
-    expect(segWidths[2]).toBeCloseTo((128000 / 1048576) * 100, 5);
+    expect(segWidths[2]).toBeCloseTo((320000 / 1048576) * 100, 5);
     const rowText = (selector: string) => [...section.querySelectorAll(selector)].map((el) => el.textContent);
-    expect(rowText('.ctx-role-name')).toEqual(['用户', '工具', '系统']);
-    expect(rowText('.ctx-role-tokens')).toEqual(['~313k', '~188k', '~125k']);
-    expect(rowText('.ctx-role-share')).toEqual(['30.5%', '18.3%', '12.2%']);
+    expect(rowText('.ctx-role-name')).toEqual(['系统提示词', '工具定义', '用户消息']);
+    expect(rowText('.ctx-role-tokens')).toEqual(['~125k', '~188k', '~313k']);
+    expect(rowText('.ctx-role-share')).toEqual(['12.2%', '18.3%', '30.5%']);
 
     vi.useFakeTimers();
     try {
@@ -982,12 +982,12 @@ describe('SessionInfoPanel', () => {
     await nextTick();
     expect(host!.querySelector('.ctx-usage-headline')?.textContent).toBe('已用 2.9k');
     expect(host!.querySelector('.ctx-usage-total')).toBeNull();
-    expect([...host!.querySelectorAll('.ctx-role-tokens')].map((el) => el.textContent)).toEqual(['~2k', '~1000']);
+    expect([...host!.querySelectorAll('.ctx-role-tokens')].map((el) => el.textContent)).toEqual(['~1000', '~2k']);
     expect(host!.querySelector('.ctx-role-share')).toBeNull();
     const widths = [...host!.querySelectorAll<HTMLElement>('.ctx-composition-seg')]
       .map((seg) => Number.parseFloat(seg.style.width));
-    expect(widths[0]).toBeCloseTo(200 / 3, 5);
-    expect(widths[1]).toBeCloseTo(100 / 3, 5);
+    expect(widths[0]).toBeCloseTo(100 / 3, 5);
+    expect(widths[1]).toBeCloseTo(200 / 3, 5);
   });
 });
 

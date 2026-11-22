@@ -340,6 +340,8 @@ class FakeLoopService extends StubEffectiveProfileReader implements IAgentLoopSe
 
   async settled(): Promise<undefined> {}
 
+  continueTurn(): void {}
+
   async retry(): Promise<never> {
     throw new Error('unused in this suite');
   }

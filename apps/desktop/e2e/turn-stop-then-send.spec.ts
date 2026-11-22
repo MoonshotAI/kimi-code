@@ -1,8 +1,6 @@
-import { join } from 'node:path';
-import { writeKimiConfig } from '@moonshot-ai/testkit/fixtures';
-import { fakeModelConfig, held as holdReply, say as reply, startFakeModel, type FakeModel } from '@moonshot-ai/testkit/model';
+import { held as holdReply, say as reply } from '@moonshot-ai/testkit/model';
 
-import { expect, test, type DesktopApp } from './fixtures/app';
+import { expect, test, testWithProvider, type DesktopApp } from './fixtures/app';
 import { held, messageProblems, say, type StubModel } from './fixtures/model';
 
 const INTERRUPTION_NOTE = 'The previous turn was interrupted by the user before completion';
@@ -69,25 +67,6 @@ test('stopping a streaming turn keeps its partial answer and the next prompt get
     },
   });
   expect(model.aborts()).toBe(2);
-});
-
-const testWithProvider = test.extend<{ provider: FakeModel }>({
-  provider: async ({ app, scratch }, use) => {
-    const provider = await startFakeModel({ apiKey: 'test-key' });
-    try {
-      await writeKimiConfig(join(scratch, 'home'), fakeModelConfig(provider, {
-        type: 'openai', providerAlias: 'e2e', alias: 'e2e/stub', modelName: 'stub', apiKey: 'test-key',
-      }));
-      await app.relaunch();
-      await use(provider);
-    } finally {
-      try {
-        provider.verify();
-      } finally {
-        await provider.close();
-      }
-    }
-  },
 });
 
 testWithProvider('the desktop cancels its testkit provider stream and continues the same conversation', async ({ app, provider }) => {

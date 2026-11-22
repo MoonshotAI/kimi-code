@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
   AppAgentState,
   AppEvent,
@@ -54,6 +54,12 @@ function endedTurn(ordinal: number, extra: Partial<ConversationTurn> = {}): Conv
     ...extra,
   };
 }
+
+async function compileClientModules(): Promise<void> {
+  await Promise.all([import('../src/client/useKimiWebClient'), import('../src/stores/warnings')]);
+}
+
+beforeAll(compileClientModules);
 
 beforeEach(() => {
   setKimiClientDeps({ api: () => clientApiMock as unknown as KimiWebApi, t: (key) => key });
@@ -455,6 +461,27 @@ describe('conversation events in the client', () => {
     expect(states.some((state) => !state.loading && state.count === 0)).toBe(false);
   });
 
+  it('reads each older page once for a 240-turn history despite concurrent requests', async () => {
+    const h = await boot({ deferPages: true });
+    const turns = Array.from({ length: 240 }, (_, ordinal) => endedTurn(ordinal));
+    const size = 20;
+    const reads = vi.fn(async (_sid: string, _agent: string, query: { beforeOrdinal: number; pageSize: number }) => {
+      const from = Math.max(0, query.beforeOrdinal - query.pageSize);
+      return { turns: turns.slice(from, query.beforeOrdinal), has_more: from > 0 };
+    });
+    clientApiMock['getAgentTurns'] = reads;
+    h.frame('s1', { type: 'turns', turns: turns.slice(-size), has_more: true });
+    for (let cursor = turns.length - size; cursor > 0; cursor -= size) {
+      await Promise.all([h.client.loadOlderMessages('s1'), h.client.loadOlderMessages('s1')]);
+    }
+    await h.client.loadOlderMessages('s1');
+    expect(reads.mock.calls.map(([, , query]) => [query.beforeOrdinal, query.pageSize]), 'history page-read budget').toEqual(
+      Array.from({ length: 11 }, (_, i) => [220 - i * size, size]),
+    );
+    expect(h.client.hasMoreMessages.value).toBe(false);
+    expect(h.client.turns.value.map(turn => turn.id)).toEqual(turns.map(turn => turn.items[0]!.item_id));
+  });
+
   it('commits prepended older turns before loadOlderMessages resolves and flags a stalled older page', async () => {
     const h = await boot({ deferPages: true });
     h.frame('s1', { type: 'turns', turns: [endedTurn(2)], has_more: true });
@@ -545,5 +572,81 @@ describe('echoed steer prompt pruning', () => {
       item: { ...opener(secondPromptId, 'second steer'), placement: 'steer' },
     });
     expect(promptStore().optimisticMessagesBySession['s1']).toBeUndefined();
+  });
+});
+
+describe('session continuation', () => {
+  it('exposes canContinue for interrupted or failed turns and bridges working state across continueSession', async () => {
+    const h = await boot();
+    const continueSession = vi.fn(async () => ({ continued: true as const }));
+    clientApiMock['continueSession'] = continueSession;
+
+    expect(h.client.canContinue.value).toBe(false);
+
+    h.frame('s1', {
+      type: 'turns',
+      turns: [endedTurn(0)],
+      has_more: false,
+    });
+    await vi.waitFor(() => expect(h.client.activeTurnEnd.value).toMatchObject({ outcome: 'completed' }));
+    expect(h.client.canContinue.value).toBe(false);
+
+    h.frame('s1', {
+      type: 'turns',
+      turns: [endedTurn(0, { outcome: 'failed', end_reason: 'blocked' })],
+      has_more: false,
+    });
+    await vi.waitFor(() => expect(h.client.activeTurnEnd.value).toMatchObject({ outcome: 'failed', end_reason: 'blocked' }));
+    expect(h.client.canContinue.value).toBe(false);
+
+    h.frame('s1', {
+      type: 'turns',
+      turns: [
+        endedTurn(0, { outcome: 'interrupted', end_reason: 'user_cancelled' }),
+        {
+          turn_id: 't_compact',
+          ordinal: 1,
+          kind: 'system',
+          status: 'ended',
+          outcome: 'completed',
+          started_at: AT,
+          ended_at: AT,
+          steps: [],
+          items: [],
+        },
+      ],
+      has_more: false,
+    });
+    await vi.waitFor(() => expect(h.client.canContinue.value).toBe(true));
+
+    await expect(h.client.continueSession('s1')).resolves.toBe('ok');
+    expect(continueSession).toHaveBeenCalledWith('s1');
+    expect(h.client.working.value).toBe(true);
+    expect(h.client.canContinue.value).toBe(false);
+
+    h.agentStatus('s1', 'running');
+    h.frame('s1', {
+      type: 'turn.started',
+      turn: { turn_id: 't_cont', ordinal: 2, turn_number: 1, kind: 'agent', status: 'running', started_at: AT, steps: [] },
+    });
+    expect(h.client.working.value).toBe(true);
+
+    h.frame('s1', {
+      type: 'turn.ended',
+      turn: {
+        turn_id: 't_cont',
+        ordinal: 2,
+        turn_number: 1,
+        kind: 'agent',
+        status: 'ended',
+        outcome: 'completed',
+        started_at: AT,
+        ended_at: AT,
+        steps: [],
+      },
+    });
+    h.agentStatus('s1', 'idle');
+    await vi.waitFor(() => expect(h.client.working.value).toBe(false));
+    expect(h.client.canContinue.value).toBe(false);
   });
 });

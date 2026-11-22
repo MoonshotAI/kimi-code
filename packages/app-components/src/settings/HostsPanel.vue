@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { v4 as randomUUID } from 'uuid';
 import { computed, nextTick, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { AppHost, AppHostConnectFailure, AppHostDefinition, AppSshConfigHost, AppSshConfigHosts } from '@moonshot-ai/app-core/api';
@@ -391,7 +392,7 @@ async function test(): Promise<boolean> {
 
 function newHostId(): string {
   let hostId: string;
-  do hostId = `host-${crypto.randomUUID().slice(0, 8)}`;
+  do hostId = `host-${randomUUID().slice(0, 8)}`;
   while (store.hosts.some((row) => row.id === hostId));
   return hostId;
 }

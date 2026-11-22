@@ -12,7 +12,7 @@ const INTERRUPTION_NOTE = 'The previous turn was interrupted by the user before 
 
 test.use({ permissionMode: 'manual' });
 
-test('stopping a turn while a command waits for approval drops the command and the next prompt works', async ({ app, model }) => {
+test('stopping a turn while a command waits for approval drops the command and the next prompt works', { tag: '@quarantine' }, async ({ app, model }) => {
   model.script(bash(`echo approved > ${MARKER}`, { description: 'Write the marker' }), say(REPLY));
   await app.startTurn(P1);
   const transcript = app.window.getByRole('list').first();

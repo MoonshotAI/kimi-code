@@ -376,7 +376,10 @@ onMounted(() => {
       .kimiDesktop?.onMenuAction?.((menuId) => {
       if (menuId === 'close-panel-tab') {
         if (anyOverlayOpen.value) return;
-        if (panel.panelVisible.value && panel.activeTabId.value) panel.closeTab(panel.activeTabId.value);
+        if (panel.panelVisible.value && panel.activeTabId.value) {
+          if (panelTabsRef.value?.requestClose) void panelTabsRef.value.requestClose('close', panel.activeTabId.value);
+          else panel.closeTab(panel.activeTabId.value);
+        }
         else window.close();
         return;
       }
@@ -558,7 +561,8 @@ function runShortcutAction(id: AppActionId, source: 'shortcut' | 'menu' | 'butto
       break;
     case 'closeSessionView':
       if (!anyOverlayOpen.value && panel.panelVisible.value && panel.activeTabId.value) {
-        panel.closeTab(panel.activeTabId.value);
+        if (panelTabsRef.value?.requestClose) void panelTabsRef.value.requestClose('close', panel.activeTabId.value);
+        else panel.closeTab(panel.activeTabId.value);
         break;
       }
       if (
@@ -1391,6 +1395,9 @@ const {
       pending.prompt.snapshot,
     );
   },
+  beforePendingPromptSend: (pending) => {
+    conversationPaneRef.value?.clearComposerAfterDispatch(pending.prompt.snapshot);
+  },
   onWorkspaceAdded: () => {
     track('workspace_added', { workspace_count: client.workspacesView.value.length });
     terminalStore.destroySession(terminalBucketKey('', null));
@@ -1625,6 +1632,19 @@ async function handleEditMessage(payload: {
 
 async function handleInterrupt(): Promise<void> {
   await client.abortCurrentPrompt();
+}
+
+async function handleContinue(): Promise<void> {
+  const gateSid = client.activeSessionId.value;
+  if (!gateSid) return;
+  const verdict = await client.ensureChatReady();
+  if (verdict !== 'ok') {
+    if (verdict !== 'server-auth-required') await actOnGateVerdict(verdict);
+    return;
+  }
+  if (client.activeSessionId.value !== gateSid) return;
+  ++sendGeneration;
+  await client.continueSession(gateSid);
 }
 
 const pendingQuoteInserts = ref<Array<{ quote: string; comment?: string; source?: string; sessionId: string | undefined }>>([]);
@@ -2042,7 +2062,29 @@ async function handleCommand(payload: { cmd: string; attachments: PromptAttachme
   }
 }
 
+let promptDispatchInFlight = 0;
+let promptDispatchSequence = 0;
+
+function beginPromptDispatch(): number {
+  promptDispatchInFlight = ++promptDispatchSequence;
+  return promptDispatchInFlight;
+}
+
+function releasePromptDispatch(owner: number): void {
+  if (promptDispatchInFlight === owner) promptDispatchInFlight = 0;
+}
+
 async function handleSteer(payload: { text: string; attachments: PromptAttachment[]; restoreText?: string; restoreEntries?: AttachmentEntry[]; snapshot?: ComposerDocumentSnapshot; skills?: { name: string; path?: string }[] }): Promise<void> {
+  if (promptDispatchInFlight !== 0) return;
+  const owner = beginPromptDispatch();
+  try {
+    await handleSteerDispatch(payload, owner);
+  } finally {
+    releasePromptDispatch(owner);
+  }
+}
+
+async function handleSteerDispatch(payload: { text: string; attachments: PromptAttachment[]; restoreText?: string; restoreEntries?: AttachmentEntry[]; snapshot?: ComposerDocumentSnapshot; skills?: { name: string; path?: string }[] }, owner: number): Promise<void> {
   const generation = ++sendGeneration;
   const gateSid = client.activeSessionId.value;
   const restore = () => {
@@ -2056,6 +2098,8 @@ async function handleSteer(payload: { text: string; attachments: PromptAttachmen
   }
   if ((client.activeSessionId.value ?? undefined) !== gateSid) { restore(); return; }
   const prompt = client.createPromptEnvelope({ text: payload.text, attachments: payload.attachments, skills: payload.skills, snapshot: payload.snapshot });
+  releasePromptDispatch(owner);
+  conversationPaneRef.value?.clearComposerAfterDispatch(payload.snapshot);
   const outcome = await client.steerPromptDirect(prompt);
   if (outcome === 'rejected') restoreDraftAfterFailedSend(generation, gateSid ?? undefined, payload.text, payload.attachments, payload.restoreText, payload.restoreEntries, payload.snapshot);
 }
@@ -2073,8 +2117,8 @@ async function handleSteerQueued(index: number): Promise<void> {
 }
 
 function restoreDraftAtOrigin(originSid: string | undefined, text: string, attachments: PromptAttachment[], restoreText?: string, restoreEntries?: AttachmentEntry[], snapshot?: ComposerDocumentSnapshot): void {
-  restoreSendDraftAtOrigin(originSid, { text: restoreText ?? text, attachments, restoreEntries, snapshot }, {
-    activeSessionId: () => client.activeSessionId.value ?? undefined,
+  restoreSendDraftAtOrigin(originSid || undefined, { text: restoreText ?? text, attachments, restoreEntries, snapshot }, {
+    activeSessionId: () => client.activeSessionId.value || undefined,
     composer: () => {
       const pane = conversationPaneRef.value;
       if (!pane) return null;
@@ -2092,6 +2136,16 @@ function restoreDraftAfterFailedSend(generation: number, originSid: string | und
 }
 
 async function handleSubmit(payload: SubmitPayload): Promise<void> {
+  if (promptDispatchInFlight !== 0) return;
+  const owner = beginPromptDispatch();
+  try {
+    await handleSubmitDispatch(payload, owner);
+  } finally {
+    releasePromptDispatch(owner);
+  }
+}
+
+async function handleSubmitDispatch(payload: SubmitPayload, owner: number): Promise<void> {
   const gateSid = client.activeSessionId.value;
   const gateWsId = client.activeWorkspaceId.value;
   if (!(await passAuthGate(payload.text, payload.attachments, payload.restoreText, payload.restoreEntries, payload.snapshot))) return;
@@ -2111,6 +2165,8 @@ async function handleSubmit(payload: SubmitPayload): Promise<void> {
       : ++sendGeneration;
   const wsId = client.activeWorkspaceId.value;
   if (!client.activeSessionId.value && wsId) {
+    releasePromptDispatch(owner);
+    conversationPaneRef.value?.clearComposerAfterDispatch(payload.snapshot);
     const started = await client.startSessionAndSendPrompt(wsId, prompt);
     if (started.promptRejected || (started.sessionId === null && started.concurrent !== true)) {
       restoreDraftAfterFailedSend(generation, started.sessionId ?? undefined, payload.text, payload.attachments, payload.restoreText, payload.restoreEntries, payload.snapshot);
@@ -2138,6 +2194,8 @@ async function handleSubmit(payload: SubmitPayload): Promise<void> {
     return;
   }
   const sid = client.activeSessionId.value;
+  releasePromptDispatch(owner);
+  conversationPaneRef.value?.clearComposerAfterDispatch(payload.snapshot);
   const outcome = await client.sendPrompt(
     prompt,
     payload.editText ?? payload.restoreText,
@@ -2416,6 +2474,7 @@ function openPr(url: string): void {
       @login="openLogin()"
       @command="handleCommand"
       @interrupt="handleInterrupt"
+      @continue="handleContinue"
       @steer-queued="handleSteerQueued"
       @toggle-pin="togglePinFromHeader"
       @pick-model="openModelPicker()"

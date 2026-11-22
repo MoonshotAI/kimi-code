@@ -49,6 +49,7 @@ export interface WorkspaceRigDeps {
   persistSessionProfile: (
     patch: PersistSessionProfilePatch,
     sessionId?: string,
+    preserveDraftThinking?: boolean,
   ) => Promise<boolean>;
   whenSessionProfileSettled: (sid: string) => Promise<boolean>;
   mapSendAuthFailure?: (err: unknown, sid?: string) => Promise<ChatGateVerdict | null>;

@@ -171,7 +171,27 @@ describe('prompt queue', () => {
     await enqueue(loop, { id: 'waiting', message: message('waiting') });
     expect(queued).toEqual([{ promptId: 'waiting', queueLength: 1 }]);
 
+    let settled = false;
+    const pending = loop.notifyClient({
+      role: 'user',
+      content: [{ type: 'text', text: 'steer' }],
+      attributes: { promptId: 'client-steer', origin: { kind: 'user' } },
+    });
+    void pending.then(() => {
+      settled = true;
+    });
+    await vi.waitFor(() => {
+      expect(queued.map((event) => event.promptId)).toContain('client-steer');
+    });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
     hold.release();
+    await expect(pending).resolves.toMatchObject({
+      prompt_id: 'client-steer',
+      state: 'running',
+      steered: true,
+    });
     await loop.settled();
   });
 

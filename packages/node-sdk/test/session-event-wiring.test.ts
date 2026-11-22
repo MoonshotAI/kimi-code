@@ -154,11 +154,17 @@ describe('SessionEventWiring status snapshot fold', () => {
     expect(JSON.stringify(events[3])).not.toContain('"source"');
   });
 
-  it.each(['blocked', 'failed'] as const)('forwards prompt.completed(%s) so rejected prompts can settle clients', (reason) => {
+  it.each(['blocked', 'failed'] as const)('forwards prompt.queued and prompt.completed(%s) so clients can track prompts', (reason) => {
     const sub = new FakeAgentHandle('agent-1');
     const { sink, events } = collectingSink();
     const wiring = new SessionEventWiring(makeSession([sub]), sink);
     try {
+      sub.bus.emit({
+        type: 'prompt.queued',
+        promptId: 'prompt-1',
+        content: [{ type: 'text', text: 'queued' }],
+        queueLength: 1,
+      });
       sub.bus.emit({
         type: 'prompt.completed',
         promptId: 'prompt-1',
@@ -169,8 +175,15 @@ describe('SessionEventWiring status snapshot fold', () => {
       wiring.dispose();
     }
 
-    expect(events).toHaveLength(1);
+    expect(events).toHaveLength(2);
     expect(events[0]).toMatchObject({
+      type: 'prompt.queued',
+      sessionId: 's1',
+      agentId: 'agent-1',
+      promptId: 'prompt-1',
+      queueLength: 1,
+    });
+    expect(events[1]).toMatchObject({
       type: 'prompt.completed',
       sessionId: 's1',
       agentId: 'agent-1',

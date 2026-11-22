@@ -1,6 +1,5 @@
 export * from './useIsMobile';
 export * from './useViewportWidth';
-export * from './useFollowScroll';
 export * from './useResizable';
 export * from './useOverlayScrollbar';
 export * from './useConfirmDialog';
@@ -28,6 +27,8 @@ export * from './useTurnFolding';
 export * from './usePasteImageAutoMention';
 export * from './useRunningSendMode';
 export * from './useActivityRunFolding';
+export * from './useTranscriptScroll';
+export * from './usePanelScroll';
 export * from './useWorkspaceTrust';
 export * from './useWorkspaceFolderPicker';
 export * from './usePlugins';

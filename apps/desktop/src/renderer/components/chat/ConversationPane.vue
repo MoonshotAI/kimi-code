@@ -4,8 +4,6 @@ import { computed, inject, nextTick, onMounted, onUnmounted, provide, ref, watch
 import { useI18n } from 'vue-i18n';
 import type { ChatTurn, ConversationStatus, OpenMediaRequest, QueuedPromptView, TaskItem, TurnAttachment, UIQuestion } from '../../types';
 import type { QuestionResponse } from '../../api/types';
-import type { PromptAttachment } from '@moonshot-ai/app-client/client';
-import { HistoryScrollKey } from '@moonshot-ai/app-core/contracts';
 import { useSidebarTabs } from '@moonshot-ai/app-core';
 import { ChatPane } from '@moonshot-ai/app-components';
 import { HostNotice, WorkspaceIcon } from '@moonshot-ai/app-components/support';
@@ -19,6 +17,8 @@ import { WorkspaceTrustDialog } from '@moonshot-ai/app-components';
 import ChatDock from './ChatDock.vue';
 import SessionInfoPanel from './SessionInfoPanel.vue';
 import { useSessionInfoLayout } from '../../composables/useSessionInfoLayout';
+import { toHtmlEl, useTranscriptScrollBinding } from '../../composables/useTranscriptScroll';
+import { useTranscriptStabilityProbe } from '../../composables/useTranscriptStabilityProbe';
 import WorkspaceHome from './WorkspaceHome.vue';
 import { WorkspaceRecentSessions } from '@moonshot-ai/app-components';
 import { ConversationToc, type ConversationTocItem } from '@moonshot-ai/app-components';
@@ -33,10 +33,9 @@ import { osGlobalFailures, resolvedBindingKeys } from '../../composables/useShor
 import { OpenShortcutSettingsKey } from '../../lib/shortcutSettings';
 import { closestRegion, isEditableTarget, isSelectAllKeyEvent, selectContentsOf } from '@moonshot-ai/app-core/lib';
 import { isFindKeyEvent } from '@moonshot-ai/app-core/lib';
-import { nestedScrollerTakesUpwardScroll, nextJumpPillVisible, scrollKeyDirection } from '@moonshot-ai/app-core/lib';
 import { reviveQuoteBlockLinks } from '@moonshot-ai/app-composer/model';
 import type { AttachmentEntry } from '@moonshot-ai/app-composer/features/attachment';
-import { FetchTurnFileChangesKey, ModelDisplayKey, PinScrollKey, ResolveAgentModelKey, ResolveAgentTaskIdKey, ResolveAgentTaskStateKey, ResolveDetachableTaskKey, SubagentEffortKey } from '@moonshot-ai/app-client/contracts';
+import { FetchTurnFileChangesKey, ModelDisplayKey, ResolveAgentModelKey, ResolveAgentTaskIdKey, ResolveAgentTaskStateKey, ResolveDetachableTaskKey, SubagentEffortKey } from '@moonshot-ai/app-client/contracts';
 import { sessionObservationOptions, toast, turnFileChangesFetcher } from '@moonshot-ai/app-client/client';
 import { track } from '../../lib/track';
 import { useComposerAutoFocus, useEscInterrupt, useWorkspaceTrust } from '@moonshot-ai/app-client/composables';
@@ -47,8 +46,13 @@ import type { SelectionActionPayload } from '@moonshot-ai/app-client/lib';
 import type { PanelTab } from '@moonshot-ai/app-client/composables';
 import type { PanelLauncherType } from '@moonshot-ai/app-client/panel';
 import type { PanelLauncherItem } from '../../lib/panelLauncher';
-import { historyRenderAllAffordable, turnHasOutput, turnTocTitle } from '@moonshot-ai/app-components';
-import type { TurnFileChange } from '@moonshot-ai/app-components';
+import { turnHasOutput, turnTocTitle } from '@moonshot-ai/app-components';
+import type {
+  ComposerCommandPayload,
+  ComposerSteerPayload,
+  ComposerSubmitPayload,
+  TurnFileChange,
+} from '@moonshot-ai/app-components';
 
 const { t } = useI18n();
 
@@ -69,10 +73,11 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
-  submit: [payload: { text: string; attachments: PromptAttachment[]; restoreText?: string; editText?: string; restoreEntries?: AttachmentEntry[]; snapshot?: ComposerDocumentSnapshot; skills?: { name: string; path?: string }[]; forceQueue?: boolean }];
-  steer: [payload: { text: string; attachments: PromptAttachment[]; restoreText?: string; restoreEntries?: AttachmentEntry[]; snapshot?: ComposerDocumentSnapshot; skills?: { name: string; path?: string }[] }];
-  command: [payload: { cmd: string; attachments: PromptAttachment[]; restoreText?: string; skillName?: string; skillPath?: string; restoreEntries?: AttachmentEntry[]; snapshot?: ComposerDocumentSnapshot; editText?: string; delivery?: 'steer' | 'queue' }];
+  submit: [payload: ComposerSubmitPayload];
+  steer: [payload: ComposerSteerPayload];
+  command: [payload: ComposerCommandPayload];
   interrupt: [];
+  continue: [];
   steerQueued: [index: number];
   pickModel: [];
   login: [];
@@ -311,6 +316,10 @@ function isComposerEmpty(): boolean {
   return composer ? (composer.isEmpty?.() ?? true) : true;
 }
 
+function clearComposerAfterDispatch(expectedSnapshot?: ComposerDocumentSnapshot): void {
+  (dockedComposerRef.value ?? emptyComposerRef.value)?.clearAfterDispatch(expectedSnapshot);
+}
+
 const backgroundTasks = computed(() => tasks.value.filter((t) => t.runInBackground === true));
 const bashTasks = computed(() =>
   backgroundTasks.value.filter(
@@ -366,22 +375,6 @@ function resolveDetachableTask(toolCallId: string): boolean {
   );
 }
 provide(ResolveDetachableTaskKey, resolveDetachableTask);
-provide(PinScrollKey, pinScrollFor);
-const pendingHistoryScrolls = new Map<HTMLElement, { top: number }>();
-provide(HistoryScrollKey, (container, delta) => {
-  if (!delta || (container === panesRef.value && following.value)) return;
-  const existing = pendingHistoryScrolls.get(container);
-  if (existing) { existing.top += delta; return; }
-  const pending = { top: container.scrollTop + delta };
-  pendingHistoryScrolls.set(container, pending);
-  void nextTick(() => {
-    if (pendingHistoryScrolls.get(container) !== pending) return;
-    pendingHistoryScrolls.delete(container);
-    if (!container.isConnected || (container === panesRef.value && following.value)) return;
-    container.scrollTop = pending.top;
-    if (container === panesRef.value) lastScrollTop = container.scrollTop;
-  });
-});
 provide(FetchTurnFileChangesKey, turnFileChangesFetcher(
   () => props.sessionId,
   () => sessionObservationOptions(props.sessionId),
@@ -439,76 +432,12 @@ const conversationTocItems = computed<ConversationTocItem[]>(() =>
     })),
 );
 
-const activeTurnId = ref<string | null>(null);
-const turnQuestionIds = computed(() => {
-  const result = new Map<string, string>();
-  let questionId: string | null = null;
-  for (const turn of turns.value) {
-    if (turn.role === 'user') questionId = turn.id;
-    if (questionId !== null) result.set(turn.id, questionId);
-  }
-  return result;
-});
-
-function updateActiveTocQuery(): void {
-  const pane = panesRef.value;
-  if (!pane) return;
-  const items = conversationTocItems.value;
-  if (items.length === 0) return;
-
-  if (distanceFromBottom() <= BOTTOM_THRESHOLD) {
-    activeTurnId.value = items[items.length - 1]!.id;
-    return;
-  }
-
-  if (tocAnchorsDirty || tocAnchorsCache === null) {
-    const scrollTop = pane.scrollTop;
-    const paneTop = pane.getBoundingClientRect().top;
-    const measured: { id: string; top: number }[] = [];
-    for (const el of pane.querySelectorAll<HTMLElement>('.turn-anchor[data-turn-id]')) {
-      const id = el.dataset.turnId;
-      if (id) measured.push({ id, top: el.getBoundingClientRect().top - paneTop + scrollTop });
-    }
-    tocAnchorsCache = measured;
-    tocAnchorsDirty = false;
-  }
-  const paneMiddle = pane.scrollTop + pane.clientHeight / 2;
-  let bestId: string | null = null;
-  for (const anchor of tocAnchorsCache) {
-    const questionId = turnQuestionIds.value.get(anchor.id);
-    if (questionId && anchor.top <= paneMiddle) bestId = questionId;
-  }
-  activeTurnId.value = bestId ?? items[0]!.id;
-}
-
-let tocAnchorsCache: { id: string; top: number }[] | null = null;
-let tocAnchorsDirty = true;
-
-function markTocAnchorsDirty(): void {
-  tocAnchorsDirty = true;
-}
-
-let activeTocRaf = 0;
-
-function scheduleActiveTocUpdate(): void {
-  if (activeTocRaf) return;
-  activeTocRaf = raf(() => {
-    activeTocRaf = 0;
-    updateActiveTocQuery();
-  });
-}
-
 const { tocHidden: tocHiddenByWideTable, syncWideTable } = useWideTableToc();
 const wideTableActive = computed(() => isWideTableLayoutActive(tocHiddenByWideTable.value, conversationHostWidth.value));
 const sessionInfoPanelVisible = computed(() => sessionInfoVisible.value && !wideTableActive.value);
 
 function syncWideTableToc(): void {
   syncWideTable(panesRef.value);
-}
-
-function onTableLayout(): void {
-  syncWideTableToc();
-  markTocAnchorsDirty();
 }
 
 const pendingQuestion = computed<UIQuestion | undefined>(() =>
@@ -531,27 +460,10 @@ const approvalBusy = computed<boolean>(() => {
   return !!props.pendingApprovalActions?.[a.approvalId];
 });
 
-const panesRef = ref<HTMLElement | null>(null);
-const dockRef = ref<HTMLElement | null>(null);
-const panesScrollbarWidth = ref(0);
-const dockHeight = ref(0);
-
 const transcriptSearchOpen = ref(false);
 const historySelection = ref(false);
-const activeSessionPaged = ref(false);
 const historyState = new Map<string, unknown>();
 
-watch(
-  () => props.sessionId,
-  () => {
-    activeSessionPaged.value = hasMoreMessages.value;
-  },
-  { immediate: true },
-);
-
-watch(hasMoreMessages, (hasMore) => {
-  if (hasMore) activeSessionPaged.value = true;
-});
 const transcriptSearchRef = ref<InstanceType<typeof TranscriptSearch> | null>(null);
 let searchPreFocus: Element | null = null;
 
@@ -580,13 +492,41 @@ watch(
     if (empty && transcriptSearchOpen.value) closeTranscriptSearch();
   },
 );
-const chatDockStyle = computed(() => ({
-  '--panes-scrollbar-width': `${panesScrollbarWidth.value}px`,
-}));
-const DOCK_VEIL_FADE_PX = 48;
-const contentWrapStyle = computed(() => ({
-  paddingBottom: `${dockHeight.value + DOCK_VEIL_FADE_PX}px`,
-}));
+const {
+  panesRef,
+  dockRef,
+  bindChatPane,
+  bindDock,
+  following,
+  showPill,
+  panesScrolling,
+  dockHeight,
+  contentWrapStyle,
+  chatDockStyle,
+  activeTurnId,
+  onPanesScroll,
+  onPanesWheel,
+  onPanesPointerDown,
+  onPanesTouchStart,
+  onPanesTouchMove,
+  onTranscriptKeyDown,
+  scrollToBottom,
+  scrollToTurn,
+  revealTranscriptRange,
+  followAfterUserAction,
+  handleLoadOlderMessages,
+} = useTranscriptScrollBinding({
+  sessionId: () => props.sessionId,
+  mobile: () => props.mobile,
+  turns,
+  hasMoreMessages,
+  loadingMore,
+  conversationTocItems,
+  loadOlderMessages: (sessionId) => client.loadOlderMessages(sessionId),
+  syncWideTableToc,
+  keyScrollBlocked: (event) => isComposingKeyEvent(event) || anyOverlayOpen.value || composerPopupOpen(),
+});
+useTranscriptStabilityProbe(panesRef);
 type ComposerHandle = {
   loadForEdit: (value: string, snapshot?: ComposerDocumentSnapshot) => boolean | void;
   insertQuote?: (quote: string, comment?: string, source?: string) => boolean | void;
@@ -597,46 +537,15 @@ type ComposerHandle = {
   loadAttachmentsForEdit: (atts: TurnAttachment[]) => void;
   restoreDraftEntries?: (entries: AttachmentEntry[]) => void;
   focus: () => void;
+  clearAfterDispatch: (expectedSnapshot?: ComposerDocumentSnapshot) => void;
   anyPopupOpen?: boolean;
   isEmpty?: () => boolean;
 };
 type RefArg = Element | (ComponentPublicInstance & Partial<ComposerHandle>) | null;
 
-function toHtmlEl(el: RefArg): HTMLElement | null {
-  if (el instanceof HTMLElement) return el;
-  if (el && '$el' in el && el.$el instanceof HTMLElement) return el.$el;
-  return null;
-}
-
-let panesGeomRaf = 0;
-
-function updateDockHeight(): void {
-  const dh = dockRef.value?.offsetHeight ?? 0;
-  if (dh !== dockHeight.value) dockHeight.value = dh;
-}
-
-function updatePanesScrollbarWidth(): void {
-  if (panesGeomRaf) return;
-  panesGeomRaf = raf(() => {
-    panesGeomRaf = 0;
-    const el = panesRef.value;
-    const sbw = el ? Math.max(0, el.offsetWidth - el.clientWidth) : 0;
-    if (sbw !== panesScrollbarWidth.value) panesScrollbarWidth.value = sbw;
-    updateDockHeight();
-  });
-}
-
-function bindChatPane(el: RefArg): void {
-  const node = toHtmlEl(el);
-  if (node === panesRef.value) return;
-  panesRef.value = node;
-  if (node) rebindScrollObservers();
-}
-
 function bindChatDock(el: RefArg): void {
   const node = toHtmlEl(el);
   if (node === dockRef.value) return;
-  dockRef.value = node ?? null;
   if (
     el &&
     'loadForEdit' in el && typeof el.loadForEdit === 'function' &&
@@ -673,6 +582,10 @@ function bindChatDock(el: RefArg): void {
           ? el.restoreDraftEntries.bind(el)
           : undefined,
       focus: el.focus.bind(el),
+      clearAfterDispatch:
+        'clearAfterDispatch' in el && typeof el.clearAfterDispatch === 'function'
+          ? el.clearAfterDispatch.bind(el)
+          : () => {},
       get anyPopupOpen(): boolean {
         return 'anyPopupOpen' in el && el.anyPopupOpen === true;
       },
@@ -682,739 +595,20 @@ function bindChatDock(el: RefArg): void {
   } else {
     dockedComposerRef.value = null;
   }
-  ensureDockObserved();
-  updateDockHeight();
+  bindDock(node);
 }
 
-void bindChatPane;
-void bindChatDock;
-
-const following = ref(true);
-const pillFar = ref(false);
-const showPill = computed(() => !following.value && pillFar.value);
-const panesScrolling = ref(false);
-let panesScrollHideTimer: ReturnType<typeof setTimeout> | null = null;
-
-const BOTTOM_THRESHOLD = 80;
-const USER_ACTION_FOLLOW_LOCK_MS = 1000;
-
-function distanceFromBottom(): number {
-  const el = panesRef.value;
-  if (!el) return 0;
-  return lastObservedScrollHeight - lastScrollTop - lastObservedClientHeight;
-}
-
-let lastScrollTop = 0;
-let userActionFollowUntil = 0;
-let lastSmoothScroll = 0;
-let searchScrollFollowSuppressUntil = 0;
-let smoothScrollUntil = 0;
-const SMOOTH_SCROLL_GUARD_MS = 420;
-let stableFollowRaf = 0;
-let stableFollowToken = 0;
-
-function hasUserActionFollowLock(): boolean {
-  return Date.now() < userActionFollowUntil;
-}
-
-let pillRaf = 0;
-
-function livePillVisible(el: HTMLElement): boolean {
-  return nextJumpPillVisible(pillFar.value, el.scrollHeight - el.scrollTop - el.clientHeight, el.clientHeight);
-}
-
-function syncPill(el: HTMLElement): void {
-  if (nextJumpPillVisible(pillFar.value, distanceFromBottom(), lastObservedClientHeight) === pillFar.value) return;
-  if (pillFar.value) {
-    pillFar.value = livePillVisible(el);
-    return;
-  }
-  if (pillRaf) return;
-  pillRaf = raf(() => {
-    pillRaf = raf(() => {
-      pillRaf = 0;
-      const pane = panesRef.value;
-      if (pane) pillFar.value = livePillVisible(pane);
-    });
-  });
-}
-
-function onPanesScroll(): void {
-  panesScrolling.value = true;
-  if (panesScrollHideTimer) clearTimeout(panesScrollHideTimer);
-  panesScrollHideTimer = setTimeout(() => {
-    panesScrolling.value = false;
-    panesScrollHideTimer = null;
-  }, 900);
-  const el = panesRef.value;
-  if (!el) return;
-  const top = el.scrollTop;
-  syncPill(el);
-
-  if (isPinned()) {
-    lastScrollTop = top;
-    return;
-  }
-
-  if (performance.now() - lastSmoothScroll < 100 || (following.value && !pointerHeld && stableFollowRaf)) {
-    lastScrollTop = top;
-    return;
-  }
-
-  const dist = lastObservedScrollHeight - top - lastObservedClientHeight;
-  if (hasUserActionFollowLock()) {
-    following.value = true;
-    lastScrollTop = top;
-    return;
-  }
-  if (top < lastScrollTop - 1 && dist > 1) {
-    const liveDist = el.scrollHeight - top - el.clientHeight;
-    if (liveDist > 1) {
-      if (pointerHeld || liveDist > BOTTOM_THRESHOLD) following.value = false;
-      else if (following.value) scheduleFollow();
-    }
-  } else if (
-    dist <= BOTTOM_THRESHOLD &&
-    top > lastScrollTop + 1 &&
-    Date.now() >= searchScrollFollowSuppressUntil &&
-    (following.value || el.scrollHeight - top - el.clientHeight <= BOTTOM_THRESHOLD)
-  ) {
-    following.value = true;
-  }
-  lastScrollTop = top;
-  scheduleActiveTocUpdate();
-}
-
-function scrollToBottom(smooth = false): void {
-  const el = panesRef.value;
-  following.value = true;
-  cancelTocSettleCorrection();
-  if (!el) return;
-  if (!smooth && performance.now() < smoothScrollUntil) return;
-  if (smooth) {
-    smoothScrollToBottom();
-  } else {
-    el.scrollTop = Math.max(el.scrollTop, el.scrollHeight - el.clientHeight);
-  }
-  lastScrollTop = el.scrollTop;
-}
-
-let smoothRaf = 0;
-
-function smoothScrollToBottom(ms = 320): void {
-  const el = panesRef.value;
-  if (!el) return;
-  if (smoothRaf) {
-    cancelRaf(smoothRaf);
-    smoothRaf = 0;
-  }
-  if (typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
-    el.scrollTop = el.scrollHeight;
-    lastScrollTop = el.scrollTop;
-    return;
-  }
-  const start = el.scrollTop;
-  const t0 = performance.now();
-  lastSmoothScroll = t0;
-  smoothScrollUntil = t0 + ms + SMOOTH_SCROLL_GUARD_MS;
-  const tick = () => {
-    smoothRaf = 0;
-    const p = Math.min(1, (performance.now() - t0) / ms);
-    const ease = 1 - Math.pow(1 - p, 3);
-    el.scrollTop = start + (el.scrollHeight - start) * ease;
-    lastScrollTop = el.scrollTop;
-    if (p < 1) {
-      smoothRaf = raf(tick);
-    } else {
-      smoothScrollUntil = 0;
-    }
-  };
-  smoothRaf = raf(tick);
-}
-
-type ScrollAnchor = { kind: 'turn' | 'tool'; id: string; top: number; messageId?: string };
-
-function scrollAnchorTop(container: HTMLElement, node: HTMLElement): number {
-  const inert = node.closest<HTMLElement>('[inert]');
-  const positionNode = inert?.closest<HTMLElement>('.tool-group, .activity-run, .turn-fold') ?? node;
-  return (
-    positionNode.getBoundingClientRect().top -
-    container.getBoundingClientRect().top +
-    container.scrollTop
-  );
-}
-
-function findTopAnchors(
-  container: HTMLElement,
-  scrollTop: number,
-): ScrollAnchor[] {
-  const anchors = Array.from(
-    container.querySelectorAll<HTMLElement>('.turn-anchor[data-turn-id], [data-scroll-anchor-id]'),
-  ).map((node) => ({ node, top: scrollAnchorTop(container, node) }));
-  const firstAfterTop = anchors.findIndex((anchor) => anchor.top >= scrollTop);
-  const start = firstAfterTop < 0 ? Math.max(0, anchors.length - 1) : firstAfterTop;
-  return anchors.slice(start, start + 2).flatMap((anchor) => {
-    const toolId = anchor.node.dataset.scrollAnchorId;
-    const id = toolId ?? anchor.node.dataset.turnId;
-    return id ? [{ kind: toolId ? 'tool' : 'turn', id, top: anchor.top, messageId: anchor.node.closest<HTMLElement>('[data-turn-id]')?.dataset.turnId }] : [];
-  });
-}
-
-type HistoryScrollSnapshot = {
-  anchors: ScrollAnchor[];
-  oldHeight: number;
-};
-
-const pendingHistoryRestoreBySession = new Map<string, HistoryScrollSnapshot>();
-
-function historyAnchorDelta(container: HTMLElement, snapshot: HistoryScrollSnapshot): number | null {
-  for (const anchor of snapshot.anchors) {
-    const attr = anchor.kind === 'tool' ? 'data-scroll-anchor-id' : 'data-turn-id';
-    const newAnchor = container.querySelector<HTMLElement>(
-      `[${attr}="${attrEscape(anchor.id)}"]`,
-    );
-    if (newAnchor) return scrollAnchorTop(container, newAnchor) - anchor.top;
-  }
-  return null;
-}
-
-function historyScrollDelta(container: HTMLElement, snapshot: HistoryScrollSnapshot): number {
-  return historyAnchorDelta(container, snapshot) ?? container.scrollHeight - snapshot.oldHeight;
-}
-
-function restoreHistoryScroll(
-  container: HTMLElement,
-  snapshot: HistoryScrollSnapshot,
-  currentTop: number,
-): number {
-  container.scrollTop = currentTop + historyScrollDelta(container, snapshot);
-  lastScrollTop = container.scrollTop;
-  return container.scrollTop;
-}
-
-async function handleLoadOlderMessages(): Promise<void> {
-  if (
-    !props.sessionId ||
-    loadingMore.value ||
-    historyLoadInProgress.value ||
-    !hasMoreMessages.value
-  ) {
-    return;
-  }
-  const requestedSessionId = props.sessionId;
-  const el = panesRef.value;
-  const snapshot: HistoryScrollSnapshot = {
-    anchors: el ? findTopAnchors(el, el.scrollTop) : [],
-    oldHeight: el?.scrollHeight ?? 0,
-  };
-
-  setHistoryLoadInProgress(requestedSessionId, true);
-  cancelScheduledFollow();
-  try {
-    await nextTick();
-    await client.loadOlderMessages(requestedSessionId);
-    await nextTick();
-
-    if (props.sessionId !== requestedSessionId) {
-      pendingHistoryRestoreBySession.set(requestedSessionId, snapshot);
-      return;
-    }
-
-    const el2 = panesRef.value;
-    if (!el2) return;
-
-    if (!el2.querySelector('[data-virtual-scroll-root]')) restoreHistoryScroll(el2, snapshot, el2.scrollTop);
-    pendingHistoryRestoreBySession.delete(requestedSessionId);
-  } finally {
-    setHistoryLoadInProgress(requestedSessionId, false);
-  }
-}
-
-function attrEscape(value: string): string {
-  if (typeof CSS !== 'undefined' && typeof CSS.escape === 'function') return CSS.escape(value);
-  return value.replaceAll(/["\\]/g, '\\$&');
-}
-
-let tocSettleTimer: ReturnType<typeof setTimeout> | null = null;
-
-function cancelTocSettleCorrection(): void {
-  if (tocSettleTimer !== null) {
-    clearTimeout(tocSettleTimer);
-    tocSettleTimer = null;
-  }
-}
-
-function settleTranscriptTarget(rect: () => DOMRect | undefined): void {
-  cancelTocSettleCorrection();
-  const until = performance.now() + 2000;
-  const correct = () => {
-    tocSettleTimer = null;
-    const pane = panesRef.value;
-    const target = rect();
-    if (!pane || !target) return;
-    const delta = target.top + target.height / 2 - (pane.getBoundingClientRect().top + pane.clientHeight / 2);
-    if (Math.abs(delta) > 48) pane.scrollTop += delta;
-    if (performance.now() < until) tocSettleTimer = setTimeout(correct, 120);
-  };
-  tocSettleTimer = setTimeout(correct, 480);
-}
-
-function revealTranscriptElement(target: HTMLElement): void {
-  cancelActiveScrollWrites();
-  following.value = false;
-  target.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  settleTranscriptTarget(() => target.isConnected ? target.getBoundingClientRect() : undefined);
-}
-
-async function scrollToTurn(turnId: string): Promise<void> {
-  const el = panesRef.value;
-  if (!el) return;
-  await chatPaneRef.value?.revealTurn(turnId);
-  const target = el.querySelector<HTMLElement>(`.turn-anchor[data-turn-id="${attrEscape(turnId)}"]`);
-  if (!target) return;
-  revealTranscriptElement(target);
-}
-
-function scrollNestedContainersToRange(range: Range, pane: HTMLElement): void {
-  const parent = range.startContainer.parentElement;
-  if (parent === null) return;
-  for (let node: Element | null = parent; node !== null && node !== pane; node = node.parentElement) {
-    const style = getComputedStyle(node);
-    const canScrollY = /(auto|scroll)/.test(style.overflowY) && node.scrollHeight > node.clientHeight;
-    const canScrollX = /(auto|scroll)/.test(style.overflowX) && node.scrollWidth > node.clientWidth;
-    if (!canScrollY && !canScrollX) continue;
-    const rect = range.getClientRects()[0];
-    if (!rect) return;
-    const nodeRect = node.getBoundingClientRect();
-    if (canScrollY) {
-      node.scrollTop += (rect.top + rect.height / 2) - (nodeRect.top + node.clientHeight / 2);
-    }
-    if (canScrollX) {
-      node.scrollLeft += (rect.left + rect.width / 2) - (nodeRect.left + node.clientWidth / 2);
-    }
-  }
-}
-
-function revealTranscriptRange(range: Range): void {
-  const el = panesRef.value;
-  if (!el) return;
-  const parent = range.startContainer.parentElement;
-  cancelActiveScrollWrites();
-  following.value = false;
-  searchScrollFollowSuppressUntil = Date.now() + 700;
-  const clampWrap = parent?.closest('.u-text-wrap.is-clamped');
-  if (clampWrap) {
-    clampWrap.querySelector<HTMLElement>('.u-text-toggle')?.click();
-    void nextTick(() => revealTranscriptRangeAfterExpand(range, el));
-    return;
-  }
-  revealTranscriptRangeAfterExpand(range, el);
-}
-
-function revealTranscriptRangeAfterExpand(range: Range, el: HTMLElement): void {
-  const parent = range.startContainer.parentElement;
-  scrollNestedContainersToRange(range, el);
-  const rect = range.getClientRects()[0];
-  if (!rect) {
-    if (parent instanceof HTMLElement) revealTranscriptElement(parent);
-    return;
-  }
-  const paneRect = el.getBoundingClientRect();
-  const centerDelta = (rect.top + rect.height / 2) - (paneRect.top + el.clientHeight / 2);
-  const smooth =
-    typeof window === 'undefined' ||
-    !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  el.scrollTo({ top: el.scrollTop + centerDelta, behavior: smooth ? 'smooth' : 'auto' });
-  settleTranscriptTarget(() => range.startContainer.isConnected ? range.getClientRects()[0] : undefined);
-}
-
-function currentLayoutKey(): string {
-  const el = panesRef.value;
-  if (!el) return 'none';
-  const content = el.firstElementChild;
-  const contentHeight = content instanceof HTMLElement ? content.offsetHeight : 0;
-  const dockHeight = dockRef.value?.offsetHeight ?? 0;
-  return `${el.scrollHeight}:${el.clientHeight}:${contentHeight}:${dockHeight}`;
-}
-
-function raf(cb: () => void): number {
-  return (typeof requestAnimationFrame === 'function'
-    ? requestAnimationFrame(cb)
-    : setTimeout(cb, 16)) as unknown as number;
-}
-
-function cancelRaf(id: number): void {
-  if (typeof cancelAnimationFrame === 'function') cancelAnimationFrame(id);
-  else clearTimeout(id);
-}
-
-let pinUntil = 0;
-let pinRaf = 0;
-let pinEl: HTMLElement | null = null;
-let pinTargetTop = 0;
-
-function isPinned(): boolean {
-  return performance.now() < pinUntil;
-}
-
-function pinScrollFor(el: HTMLElement, ms = 200): void {
-  const panes = panesRef.value;
-  if (!panes) return;
-  if (historyLoadInProgress.value) return;
-  cancelActiveScrollWrites();
-  following.value = false;
-  pinEl = el;
-  pinTargetTop = el.getBoundingClientRect().top;
-  pinUntil = performance.now() + ms;
-  if (pinRaf) return;
-  const tick = () => {
-    pinRaf = 0;
-    if (!pinEl) return;
-    if (following.value) {
-      pinEl = null;
-      return;
-    }
-    if (performance.now() >= pinUntil) {
-      pinEl = null;
-      settleAfterPin();
-      return;
-    }
-    const delta = pinEl.getBoundingClientRect().top - pinTargetTop;
-    if (delta) panes.scrollTop += delta;
-    pinRaf = raf(tick);
-  };
-  pinRaf = raf(tick);
-}
-
-function settleAfterPin(): void {
-  following.value = distanceFromBottom() <= BOTTOM_THRESHOLD;
-}
-
-function stabilizeAnchorForRestore(el: HTMLElement): void {
-  const panes = panesRef.value;
-  if (!panes || historyLoadInProgress.value) {
-    liftSessionSettle();
-    return;
-  }
-  following.value = false;
-  pinEl = el;
-  pinTargetTop = el.getBoundingClientRect().top;
-  pinUntil = performance.now() + 1200;
-  let lastKey = '';
-  let stableFrames = 0;
-  const finish = () => {
-    pinEl = null;
-    pinUntil = 0;
-    settleAfterPin();
-    liftSessionSettle();
-  };
-  const tick = () => {
-    pinRaf = 0;
-    if (!pinEl) return;
-    if (following.value) {
-      pinEl = null;
-      pinUntil = 0;
-      return;
-    }
-    if (!sessionSettling.value) {
-      pinEl = null;
-      pinUntil = 0;
-      settleAfterPin();
-      return;
-    }
-    if (performance.now() >= pinUntil) {
-      finish();
-      return;
-    }
-    const delta = pinEl.getBoundingClientRect().top - pinTargetTop;
-    if (delta) panes.scrollTop += delta;
-    const key = currentLayoutKey();
-    stableFrames = delta === 0 && key === lastKey ? stableFrames + 1 : 0;
-    lastKey = key;
-    if (stableFrames >= 3) {
-      finish();
-      return;
-    }
-    pinRaf = raf(tick);
-  };
-  if (pinRaf) cancelRaf(pinRaf);
-  pinRaf = raf(tick);
-}
-
-function scheduleStableFollow(maxFrames = 36, onDone?: () => void): void {
-  if (!following.value && !hasUserActionFollowLock()) {
-    onDone?.();
-    return;
-  }
-  const token = ++stableFollowToken;
-  let lastKey = '';
-  let stableFrames = 0;
-  let frames = 0;
-  if (stableFollowRaf) {
-    cancelRaf(stableFollowRaf);
-    stableFollowRaf = 0;
-  }
-
-  const tick = () => {
-    stableFollowRaf = 0;
-    if (token !== stableFollowToken) return;
-    if (!following.value && !hasUserActionFollowLock()) {
-      onDone?.();
-      return;
-    }
-    scrollToBottom(false);
-    const key = currentLayoutKey();
-    stableFrames = key === lastKey ? stableFrames + 1 : 0;
-    lastKey = key;
-    frames++;
-    if (stableFrames < 3 && frames < maxFrames) {
-      stableFollowRaf = raf(tick);
-    } else {
-      onDone?.();
-    }
-  };
-
-  stableFollowRaf = raf(tick);
-}
-
-type ScrollKey = {
-  length: number;
-  firstId: string;
-  lastId: string;
-  lastTextLen: number;
-  lastThinkingLen: number;
-  lastToolsLen: number;
-  approvalIds: string;
-};
-
-function isHistoryPrependOnly(prev: ScrollKey | undefined, next: ScrollKey): boolean {
-  return (
-    prev !== undefined &&
-    prev.length > 0 &&
-    next.length >= prev.length &&
-    prev.firstId !== next.firstId &&
-    prev.lastId === next.lastId &&
-    prev.lastTextLen === next.lastTextLen &&
-    prev.lastThinkingLen === next.lastThinkingLen &&
-    prev.lastToolsLen === next.lastToolsLen &&
-    prev.approvalIds === next.approvalIds
-  );
-}
-
-const scrollKey = computed<ScrollKey>(() => {
-  const approvalIds = approvals.value.map((a) => a.approvalId).join(',');
-  const t = turns.value;
-  const last = t.at(-1);
-  const thinkingLen = last?.thinking?.length ?? 0;
-  const toolsLen =
-    last?.tools?.reduce(
-      (n, tool) => n + tool.name.length + (tool.arg?.length ?? 0) + (tool.output?.join('').length ?? 0),
-      0,
-    ) ?? 0;
-  return {
-    length: t.length,
-    firstId: t[0]?.id ?? '',
-    lastId: last?.id ?? '',
-    lastTextLen: last?.text.length ?? 0,
-    lastThinkingLen: thinkingLen,
-    lastToolsLen: toolsLen,
-    approvalIds,
-  };
-});
-
-let scrollKeySession: string | number | undefined = props.sessionId;
-
-watch(scrollKey, async (next, prev) => {
-  const sid = props.sessionId;
-  const crossSession = sid !== scrollKeySession;
-  scrollKeySession = sid;
-  if (historyLoadInProgress.value && isHistoryPrependOnly(prev, next)) {
-    scheduleActiveTocUpdate();
-    return;
-  }
-  if (crossSession || sessionSettling.value) {
-    scheduleActiveTocUpdate();
-    return;
-  }
-  await nextTick();
-  if (following.value || hasUserActionFollowLock()) {
-    scrollToBottom(next.length < prev.length);
-  }
-  scheduleActiveTocUpdate();
-});
-
-watch(dockRef, () => {
-  ensureDockObserved();
-});
-
-watch(
-  () => props.mobile,
-  async () => {
-    await nextTick();
-    updatePanesScrollbarWidth();
-  },
-);
-
-const scrollStateBySession = new Map<string, { top: number; following: boolean; anchor?: ScrollAnchor }>();
-
-const sessionSettling = ref(false);
-let settleLiftRaf = 0;
-let settleLiftTimer: ReturnType<typeof setTimeout> | null = null;
-
-function beginSessionSettle(): void {
-  sessionSettling.value = true;
-  if (settleLiftRaf) {
-    cancelRaf(settleLiftRaf);
-    settleLiftRaf = 0;
-  }
-  if (settleLiftTimer) clearTimeout(settleLiftTimer);
-  settleLiftTimer = setTimeout(() => {
-    sessionSettling.value = false;
-    settleLiftTimer = null;
-  }, 1200);
-}
-
-function liftSessionSettle(): void {
-  if (!sessionSettling.value) return;
-  let framesLeft = 2;
-  const step = (): void => {
-    settleLiftRaf = 0;
-    framesLeft--;
-    if (framesLeft > 0) {
-      settleLiftRaf = raf(step);
-      return;
-    }
-    sessionSettling.value = false;
-    if (settleLiftTimer) {
-      clearTimeout(settleLiftTimer);
-      settleLiftTimer = null;
-    }
-  };
-  if (settleLiftRaf) cancelRaf(settleLiftRaf);
-  settleLiftRaf = raf(step);
-}
-
-let restoreGeneration = 0;
-
-async function restoreSessionScroll(sessionKey: string | undefined): Promise<void> {
-  const gen = ++restoreGeneration;
-  beginSessionSettle();
-  await nextTick();
-  if (gen !== restoreGeneration || props.sessionId !== sessionKey) return;
-  updateDockHeight();
-  const el2 = panesRef.value;
-  const saved = sessionKey ? scrollStateBySession.get(String(sessionKey)) : undefined;
-  if (saved && el2) {
-    following.value = saved.following;
-    const pendingRestore = pendingHistoryRestoreBySession.get(String(sessionKey));
-    let top = pendingRestore
-      ? restoreHistoryScroll(el2, pendingRestore, saved.top)
-      : saved.top;
-    let savedAnchor: HTMLElement | null = null;
-    if (!saved.following && saved.anchor) {
-      await chatPaneRef.value?.revealTurn(saved.anchor.messageId ?? saved.anchor.id);
-      if (gen !== restoreGeneration || props.sessionId !== sessionKey) return;
-      if (saved.anchor.kind === 'tool') {
-        el2.scrollTop = top;
-        await new Promise<void>(resolve => raf(() => raf(() => resolve())));
-        await nextTick();
-        if (gen !== restoreGeneration || props.sessionId !== sessionKey) return;
-      }
-      const attr = saved.anchor.kind === 'tool' ? 'data-scroll-anchor-id' : 'data-turn-id';
-      const anchor = el2.querySelector<HTMLElement>(`[${attr}="${attrEscape(saved.anchor.id)}"]`);
-      if (anchor) {
-        savedAnchor = anchor;
-        top = scrollAnchorTop(el2, anchor) - saved.anchor.top;
-      }
-    }
-    if (pendingRestore && sessionKey) pendingHistoryRestoreBySession.delete(String(sessionKey));
-    following.value = saved.following;
-    el2.scrollTop = top;
-    lastScrollTop = el2.scrollTop;
-    syncPill(el2);
-    if (saved.following) {
-      scheduleStableFollow(36, liftSessionSettle);
-    } else {
-      if (savedAnchor) stabilizeAnchorForRestore(savedAnchor);
-      else liftSessionSettle();
-    }
-  } else {
-    following.value = true;
-    lastScrollTop = 0;
-    scrollToBottom(false);
-    scheduleStableFollow(36, liftSessionSettle);
-  }
-  markTocAnchorsDirty();
-  updateActiveTocQuery();
-}
-
-watch(
-  () => props.sessionId,
-  async (newKey, oldKey) => {
-    const el = panesRef.value;
-    if (oldKey && el) {
-      const anchor = findTopAnchors(el, el.scrollTop)[0];
-      scrollStateBySession.set(String(oldKey), {
-        top: el.scrollTop,
-        following: following.value,
-        anchor: anchor ? { ...anchor, top: anchor.top - el.scrollTop } : undefined,
-      });
-    }
-    cancelActiveScrollWrites();
-    pillFar.value = false;
-    if (sessionLoading.value) {
-      following.value = (newKey ? scrollStateBySession.get(String(newKey))?.following : undefined) ?? true;
-      beginSessionSettle();
-      return;
-    }
-    await restoreSessionScroll(newKey);
-  },
-);
-
-watch(
-  () => sessionLoading.value,
-  async (loading, was) => {
-    if (loading) {
-      beginSessionSettle();
-      return;
-    }
-    if (!was) return;
-    await restoreSessionScroll(props.sessionId);
-  },
-  { immediate: true },
-);
-
-watch(
-  () => turnActive.value,
-  async (now, was) => {
-    if (now || !was) return;
-    if (!following.value && !hasUserActionFollowLock()) return;
-    await nextTick();
-    scheduleStableFollow(48);
-    scheduleActiveTocUpdate();
-  },
-);
-
-function followAfterUserAction(): void {
-  following.value = true;
-  userActionFollowUntil = Date.now() + USER_ACTION_FOLLOW_LOCK_MS;
-  void nextTick(() => {
-    scrollToBottom(true);
-    scheduleStableFollow(16);
-  });
-}
-
-function handleComposerSubmit(payload: { text: string; attachments: PromptAttachment[]; restoreText?: string; editText?: string; restoreEntries?: AttachmentEntry[]; snapshot?: ComposerDocumentSnapshot; skills?: { name: string; path?: string }[]; forceQueue?: boolean }): void {
+function handleComposerSubmit(payload: ComposerSubmitPayload): void {
   followAfterUserAction();
   emit('submit', payload);
 }
 
-function handleComposerSteer(payload: { text: string; attachments: PromptAttachment[]; restoreText?: string; restoreEntries?: AttachmentEntry[]; snapshot?: ComposerDocumentSnapshot; skills?: { name: string; path?: string }[] }): void {
+function handleComposerSteer(payload: ComposerSteerPayload): void {
   followAfterUserAction();
   emit('steer', payload);
 }
 
-function handleComposerCommand(payload: { cmd: string; attachments: PromptAttachment[]; restoreText?: string; skillName?: string; skillPath?: string; restoreEntries?: AttachmentEntry[]; snapshot?: ComposerDocumentSnapshot; editText?: string; delivery?: 'steer' | 'queue' }): void {
+function handleComposerCommand(payload: ComposerCommandPayload): void {
   if (payload.delivery !== undefined) followAfterUserAction();
   emit('command', payload);
 }
@@ -1425,8 +619,7 @@ function handleEditMessage(payload: {
   snapshot?: ComposerDocumentSnapshot;
   turnId: string;
 }): void {
-  following.value = true;
-  userActionFollowUntil = Date.now() + USER_ACTION_FOLLOW_LOCK_MS;
+  followAfterUserAction();
   emit('editMessage', { ...payload, text: reviveQuoteBlockLinks(payload.text) });
 }
 
@@ -1454,197 +647,6 @@ function handleApproval(
   void client.respondApproval(id, response);
 }
 
-let contentObserver: MutationObserver | null = null;
-let resizeObserver: ResizeObserver | null = null;
-let observedContent: Element | null = null;
-let observedDock: HTMLElement | null = null;
-let lastObservedScrollHeight = 0;
-let lastObservedClientHeight = 0;
-let scrollRaf = 0;
-const historyLoadingSessions = ref<ReadonlySet<string>>(new Set());
-const historyLoadInProgress = computed(
-  () => !!props.sessionId && historyLoadingSessions.value.has(props.sessionId),
-);
-
-function setHistoryLoadInProgress(sessionId: string, inProgress: boolean): void {
-  const next = new Set(historyLoadingSessions.value);
-  if (inProgress) next.add(sessionId);
-  else next.delete(sessionId);
-  historyLoadingSessions.value = next;
-}
-
-function scheduleFollow(): void {
-  if (historyLoadInProgress.value) return;
-  if (scrollRaf) return;
-  scrollRaf = raf(() => {
-    scrollRaf = 0;
-    if (historyLoadInProgress.value) return;
-    if (isPinned()) return;
-    if (following.value || hasUserActionFollowLock()) scrollToBottom(false);
-  });
-}
-
-function followNow(): void {
-  if (following.value && !historyLoadInProgress.value) scrollToBottom(false);
-  else scheduleFollow();
-}
-
-function cancelScheduledFollow(): void {
-  stableFollowToken++;
-  if (stableFollowRaf) {
-    cancelRaf(stableFollowRaf);
-    stableFollowRaf = 0;
-  }
-  if (scrollRaf) {
-    cancelRaf(scrollRaf);
-    scrollRaf = 0;
-  }
-}
-
-function cancelActiveScrollWrites(): void {
-  ++restoreGeneration;
-  const el = panesRef.value;
-  if (el) pendingHistoryScrolls.delete(el);
-
-  userActionFollowUntil = 0;
-  searchScrollFollowSuppressUntil = 0;
-  cancelScheduledFollow();
-  pinUntil = 0;
-  pinEl = null;
-  if (smoothRaf) {
-    cancelRaf(smoothRaf);
-    smoothRaf = 0;
-  }
-  cancelTocSettleCorrection();
-
-  if (el) {
-    const top = el.scrollTop;
-    if (typeof el.scrollTo === 'function') el.scrollTo({ top, behavior: 'auto' });
-    else el.scrollTop = top;
-  }
-  smoothScrollUntil = 0;
-  lastSmoothScroll = Number.NEGATIVE_INFINITY;
-  if (el) lastScrollTop = el.scrollTop;
-  liftSessionSettle();
-}
-
-function stopFollowingForUserIntent(): void {
-  const el = panesRef.value;
-  if (!el || (el.scrollHeight - el.clientHeight <= 1 && !hasMoreMessages.value && !sessionSettling.value && !isPinned())) return;
-
-  following.value = false;
-  cancelActiveScrollWrites();
-}
-
-function upwardScrollStaysNested(event: Event): boolean {
-  const pane = panesRef.value;
-  return pane !== null && nestedScrollerTakesUpwardScroll(event.composedPath(), pane);
-}
-
-function onPanesWheel(event: WheelEvent): void {
-  if (event.defaultPrevented || event.ctrlKey || event.shiftKey) return;
-  cancelTocSettleCorrection();
-  if (event.deltaY > 0) {
-    if (sessionSettling.value || isPinned()) cancelActiveScrollWrites();
-    const el = panesRef.value;
-    if (el && !following.value && distanceFromBottom() <= 1 && el.scrollHeight - el.scrollTop - el.clientHeight <= 1) {
-      following.value = true;
-    }
-    return;
-  }
-  if (event.deltaY === 0 || upwardScrollStaysNested(event)) return;
-  stopFollowingForUserIntent();
-}
-
-let pointerHeld = false;
-
-function releasePointer(): void {
-  pointerHeld = false;
-}
-
-function onPanesPointerDown(event: PointerEvent): void {
-  pointerHeld = true;
-  const el = panesRef.value;
-  if (!el || event.defaultPrevented || event.button !== 0 || event.pointerType === 'touch') return;
-  const rect = el.getBoundingClientRect();
-  const gutterWidth = el.offsetWidth - el.clientWidth;
-  const hitWidth = gutterWidth > 0 ? gutterWidth : 12;
-  if (event.target === el && event.clientX >= rect.right - hitWidth) {
-    stopFollowingForUserIntent();
-  }
-}
-
-let lastTouchY: number | null = null;
-
-function onPanesTouchStart(event: TouchEvent): void {
-  lastTouchY = event.touches.length === 1 ? event.touches[0]!.clientY : null;
-}
-
-function onPanesTouchMove(event: TouchEvent): void {
-  const y = event.touches.length === 1 ? event.touches[0]!.clientY : null;
-  cancelTocSettleCorrection();
-  if (y !== null && lastTouchY !== null) {
-    if (y < lastTouchY - 2) {
-      if (sessionSettling.value || isPinned()) cancelActiveScrollWrites();
-    } else if (y > lastTouchY + 2 && !upwardScrollStaysNested(event)) {
-      stopFollowingForUserIntent();
-    }
-  }
-  lastTouchY = y;
-}
-
-function ensureContentObserved(): void {
-  if (!resizeObserver) return;
-  const el = panesRef.value?.firstElementChild ?? null;
-  if (el === observedContent) return;
-  if (observedContent) resizeObserver.unobserve(observedContent);
-  observedContent = el;
-  if (el) resizeObserver.observe(el);
-}
-
-function ensureDockObserved(): void {
-  if (!resizeObserver) return;
-  const el = dockRef.value;
-  if (el === observedDock) return;
-  if (observedDock) resizeObserver.unobserve(observedDock);
-  observedDock = el;
-  if (el) resizeObserver.observe(el);
-}
-
-function rebindScrollObservers(): void {
-  const el = panesRef.value;
-  updatePanesScrollbarWidth();
-  if (contentObserver) {
-    contentObserver.disconnect();
-    if (el) contentObserver.observe(el, { childList: true, subtree: true, characterData: true });
-  }
-  if (resizeObserver) {
-    resizeObserver.disconnect();
-    observedContent = null;
-    observedDock = null;
-    if (el) resizeObserver.observe(el);
-    ensureContentObserved();
-    ensureDockObserved();
-  }
-  lastObservedScrollHeight = el?.scrollHeight ?? 0;
-  lastObservedClientHeight = el?.clientHeight ?? 0;
-  syncWideTableToc();
-  markTocAnchorsDirty();
-}
-
-function onContentMutated(): void {
-  ensureContentObserved();
-  scheduleFollow();
-  syncWideTableToc();
-}
-
-function onVisibilityChange(): void {
-  if (typeof document === 'undefined') return;
-  if (document.visibilityState === 'visible' && following.value) {
-    scheduleStableFollow();
-  }
-}
-
 const interruptedTurnId = computed<string | null>(() => {
   if (turnEnd.value?.outcome !== 'interrupted' || props.working || turnActive.value) return null;
   const last = turns.value[turns.value.length - 1];
@@ -1654,6 +656,7 @@ const interruptedTurnId = computed<string | null>(() => {
 const turnFailed = computed<boolean>(
   () =>
     turnEnd.value?.outcome === 'failed' &&
+    turnEnd.value.end_reason !== 'blocked' &&
     !props.working &&
     !turnActive.value &&
     turns.value.length > 0,
@@ -1662,7 +665,7 @@ const turnFailed = computed<boolean>(
 function handleResumeTurn(): void {
   if (!gateSubmit()) return;
   followAfterUserAction();
-  emit('submit', { text: t('conversation.turnFailedResumeText'), attachments: [] });
+  emit('continue');
 }
 
 function handleForkTurn(payload: { turnIndex: number }): void {
@@ -1720,18 +723,7 @@ function onKeyDown(event: KeyboardEvent): void {
   if (event.target instanceof Element && event.target.closest('.terminal-host') !== null) {
     return;
   }
-  const scrollDirection = scrollKeyDirection(event);
-  if (
-    scrollDirection !== 0 &&
-    !event.defaultPrevented && !isComposingKeyEvent(event) &&
-    !anyOverlayOpen.value && !composerPopupOpen() && !isEditableTarget(event.target) &&
-    event.target instanceof Element &&
-    (panesRef.value?.contains(event.target) || event.target === document.body) &&
-    (event.key !== ' ' || !event.target.closest('button, a[href], select, summary, [role="button"]'))
-  ) {
-    if (scrollDirection < 0) stopFollowingForUserIntent();
-    else if (!following.value) cancelActiveScrollWrites();
-  }
+  onTranscriptKeyDown(event);
   if (
     event.key === 'Escape' &&
     !anyOverlayOpen.value &&
@@ -1757,72 +749,26 @@ function onKeyDown(event: KeyboardEvent): void {
   }
 }
 
-function onVisualViewportResize(): void {
-  if (following.value) scheduleFollow();
-}
-
 onMounted(() => {
   document.addEventListener('selectionchange', onTranscriptSelectionChange);
   nextTick(() => {
-    if (typeof MutationObserver === 'function') {
-      contentObserver = new MutationObserver(onContentMutated);
-    }
-    if (typeof ResizeObserver === 'function') {
-      resizeObserver = new ResizeObserver((entries) => {
-        markTocAnchorsDirty();
-        updatePanesScrollbarWidth();
-        if (entries.some((entry) => entry.target === dockRef.value)) updateDockHeight();
-        const el = panesRef.value;
-        if (!el) return;
-        const { scrollHeight, clientHeight } = el;
-        const grew = scrollHeight > lastObservedScrollHeight + 1;
-        const viewportShrank = clientHeight < lastObservedClientHeight - 1;
-        lastObservedScrollHeight = scrollHeight;
-        lastObservedClientHeight = clientHeight;
-        if (!isPinned() && (grew || viewportShrank)) followNow();
-        syncPill(el);
-      });
-    }
-    rebindScrollObservers();
-    if (!sessionLoading.value) scheduleStableFollow(48);
-    updateActiveTocQuery();
-    panesRef.value?.addEventListener('kimi-table-layout', onTableLayout);
     if (typeof document !== 'undefined') {
-      document.addEventListener('visibilitychange', onVisibilityChange);
       document.addEventListener('keydown', onKeyDown);
       document.addEventListener('pointerdown', onDocumentPointerDown, true);
-      document.addEventListener('pointerup', releasePointer, true);
-      document.addEventListener('pointercancel', releasePointer, true);
       document.addEventListener('compositionstart', handleCompositionStart);
       document.addEventListener('compositionend', handleCompositionEnd);
     }
-    window.visualViewport?.addEventListener('resize', onVisualViewportResize);
   });
 });
 
 onUnmounted(() => {
   document.removeEventListener('selectionchange', onTranscriptSelectionChange);
-  panesRef.value?.removeEventListener('kimi-table-layout', onTableLayout);
-  if (contentObserver) contentObserver.disconnect();
-  if (resizeObserver) resizeObserver.disconnect();
-  if (scrollRaf) cancelRaf(scrollRaf);
-  if (stableFollowRaf) cancelRaf(stableFollowRaf);
-  if (pinRaf) cancelRaf(pinRaf);
-  if (smoothRaf) cancelRaf(smoothRaf);
-  if (pillRaf) cancelRaf(pillRaf);
-  if (activeTocRaf) cancelRaf(activeTocRaf);
-  if (tocSettleTimer !== null) clearTimeout(tocSettleTimer);
-  if (panesScrollHideTimer) clearTimeout(panesScrollHideTimer);
   if (typeof document !== 'undefined') {
-    document.removeEventListener('visibilitychange', onVisibilityChange);
     document.removeEventListener('keydown', onKeyDown);
     document.removeEventListener('pointerdown', onDocumentPointerDown, true);
-    document.removeEventListener('pointerup', releasePointer, true);
-    document.removeEventListener('pointercancel', releasePointer, true);
     document.removeEventListener('compositionstart', handleCompositionStart);
     document.removeEventListener('compositionend', handleCompositionEnd);
   }
-  window.visualViewport?.removeEventListener('resize', onVisualViewportResize);
 });
 
 function focusComposer(): void {
@@ -1845,7 +791,7 @@ const showEmptyToggles = computed(
   () => !props.mobile && turns.value.length === 0 && !sessionLoading.value,
 );
 
-defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMention, insertScreenshotAnnotation, addComposerFiles, hasInsertableComposer, isComposerEmpty, focusComposer, notifyUndone, selectAllRegion, focusGoal, closeDockPanel, composerPopupOpen });
+defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMention, insertScreenshotAnnotation, addComposerFiles, hasInsertableComposer, isComposerEmpty, clearComposerAfterDispatch, focusComposer, notifyUndone, selectAllRegion, focusGoal, closeDockPanel, composerPopupOpen });
 </script>
 
 <template>
@@ -1885,7 +831,6 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
         :class="{
           'is-following': following,
           scrolling: panesScrolling,
-          'session-settling': sessionSettling,
         }"
         @scroll.passive="onPanesScroll"
         @wheel.passive="onPanesWheel"
@@ -1998,6 +943,7 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
               class="empty-composer"
               hide-context
               :before-submit="gateSubmit"
+              :defer-submit-reset="true"
               :on-capture-screenshot="captureScreenshotAction"
               :screenshot-shortcut-keys="screenshotShortcutKeys"
               :screenshot-shortcut-unavailable="!!osGlobalFailures.captureScreenshot"
@@ -2008,6 +954,7 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
               @steer-queued="emit('steerQueued', $event)"
               @command="handleComposerCommand"
               @interrupt="handleInterrupt"
+              @continue="handleResumeTurn"
               @focus-goal="focusGoal"
               @pick-model="emit('pickModel')"
               @login="emit('login')"
@@ -2036,7 +983,7 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
               :turns="turns"
               :window-history="true"
               :history-state="historyState"
-              :render-all-history="(!mobile && !hasMoreMessages && !activeSessionPaged && historyRenderAllAffordable(turns)) || transcriptSearchOpen || historySelection"
+              :render-all-history="transcriptSearchOpen || historySelection"
               :cwd="status.cwd"
               :worktree="sessionWorktree"
               :approvals="approvals"
@@ -2088,6 +1035,7 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
         :approval-busy="approvalBusy"
         :mobile="mobile"
         :before-submit="gateSubmit"
+        :defer-submit-reset="true"
         :on-capture-screenshot="captureScreenshotAction"
         :screenshot-shortcut-keys="screenshotShortcutKeys"
         :screenshot-shortcut-unavailable="!!osGlobalFailures.captureScreenshot"
@@ -2102,6 +1050,7 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
         @steer-queued="emit('steerQueued', $event)"
         @command="handleComposerCommand"
         @interrupt="handleInterrupt"
+        @continue="handleResumeTurn"
         @focus-goal="focusGoal"
         @pick-model="emit('pickModel')"
         @login="emit('login')"
@@ -2221,10 +1170,6 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
   background-color: var(--color-chat-scrollbar-hover);
 }
 
-.panes.session-settling :deep(.chat > *:not(.chat-loading)) {
-  visibility: hidden;
-}
-
 .chat-layout {
   display: flex;
   flex-direction: row;
@@ -2244,6 +1189,8 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
   flex: 1;
   min-height: 0;
   position: relative;
+  display: flex;
+  flex-direction: column;
 }
 
 .content-wrap {
@@ -2552,16 +1499,6 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
 .ws-action:hover { background: var(--color-hover); color: var(--color-text); }
 .ws-action:hover > .kw-icon { color: var(--dim); }
 .ws-action:focus-visible { outline: none; box-shadow: var(--p-focus-ring); }
-
-.chat-scroll {
-  display: flex;
-  flex-direction: column;
-}
-
-.mobile .panes:has(> .chat-layout) {
-  overflow: hidden;
-  scrollbar-gutter: auto;
-}
 
 .newmsg-pill {
   position: absolute;

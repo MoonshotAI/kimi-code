@@ -106,7 +106,7 @@ async function collectSources(
   const filter = query.workspace_id === undefined ? undefined : new Set([query.workspace_id].flat());
   const configured = hosts.sources();
   const remote = await Promise.all(configured.map(async (host): Promise<Source | undefined> => {
-    const session = host.session;
+    const session = await host.getSession();
     if (session === undefined) {
       unavailable.push(host.id);
       return undefined;

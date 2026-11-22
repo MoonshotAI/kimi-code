@@ -7,7 +7,6 @@ export interface SubagentModelPoolSnapshot {
 
 export interface SubagentChangesInput {
   readonly previousSubagentNames?: readonly string[];
-  readonly previousModelPool?: SubagentModelPoolSnapshot | null;
 }
 
 export interface BeliefsSeed {
@@ -16,12 +15,19 @@ export interface BeliefsSeed {
   readonly skillsListing: string;
 }
 
+export interface ReloadNotificationGuard {
+  readonly previousSubagentNames: readonly string[];
+  restoreAfterFailure(): Promise<void>;
+}
+
 export interface IAgentChangeNotifierService {
   readonly _serviceBrand: undefined;
   notifyAgentsMdChanges(): Promise<void>;
   notifySkillChanges(): Promise<void>;
   notifySubagentChanges(input?: SubagentChangesInput): Promise<void>;
   notifyWorkspaceDirsChanges(): Promise<void>;
+  notifyAllChanges(input?: SubagentChangesInput): Promise<void>;
+  prepareForReload(): ReloadNotificationGuard;
   seedBeliefs(seed: BeliefsSeed): Promise<void>;
   mute(): void;
   unmute(): void;

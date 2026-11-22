@@ -1,30 +1,47 @@
-import { appendFileSync, existsSync, readFileSync } from 'node:fs';
+import { appendFileSync, existsSync, readFileSync, realpathSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { parseArgs } from 'node:util';
 
-const specPattern = /^apps\/desktop\/e2e\/(?!fixtures\/)[A-Za-z0-9._/-]+\.spec\.ts$/;
+export const LABEL = 'desktop-e2e';
+
+const specPattern = /^apps\/desktop\/(?:test\/)?e2e\/(?!fixtures\/)[A-Za-z0-9._/-]+\.spec\.ts$/;
+const journeyPattern = /^(?:apps\/desktop\/(?:test\/)?e2e\/|packages\/testkit\/|apps\/desktop\/scripts\/ci\/select-e2e-specs\.mjs$|\.github\/workflows\/desktop-e2e\.yml$)/;
 const desktopPrefix = 'apps/desktop/';
 
-const changed = [...new Set(readFileSync(0, 'utf8').split(/\r?\n/).map(line => line.trim()).filter(Boolean))];
+export function selectJourneys({ pullRequest, labelled, changed, exists = existsSync }) {
+  if (!pullRequest) return { mode: 'full', specs: [], reason: 'not a pull request' };
+  if (labelled) return { mode: 'full', specs: [], reason: `the pull request has the ${LABEL} label` };
+  const journeyFiles = [...new Set(changed)].filter(path => journeyPattern.test(path));
+  if (journeyFiles.length === 0) {
+    return { mode: 'none', specs: [], reason: `the pull request does not change the journeys; add the ${LABEL} label to run them` };
+  }
+  const shared = journeyFiles.filter(path => !specPattern.test(path));
+  if (shared.length > 0) return { mode: 'full', specs: [], reason: `${shared.length} shared journey file(s) changed`, shared };
+  const specs = journeyFiles.filter(path => exists(path)).map(path => path.slice(desktopPrefix.length)).sort();
+  if (specs.length === 0) return { mode: 'none', specs: [], reason: 'only deleted specs changed' };
+  return { mode: 'specs', specs, reason: `${specs.length} changed spec(s)` };
+}
 
-function finish(mode, specs, reason) {
-  console.log(`Desktop e2e mode: ${mode} (${reason})`);
-  for (const spec of specs) console.log(`  ${spec}`);
+function main() {
+  const { values } = parseArgs({
+    options: {
+      'pull-request': { type: 'boolean', default: false },
+      labelled: { type: 'boolean', default: false },
+    },
+  });
+  const pullRequest = values['pull-request'];
+  const changed = pullRequest ? readFileSync(0, 'utf8').split(/\r?\n/).map(line => line.trim()).filter(Boolean) : [];
+  const selection = selectJourneys({ pullRequest, labelled: values.labelled, changed });
+  if (selection.shared !== undefined) {
+    const listed = selection.shared.slice(0, 20).map(path => `  ${path}`);
+    if (selection.shared.length > listed.length) listed.push(`  ... and ${selection.shared.length - listed.length} more`);
+    console.log(`Changed journey files outside the specs:\n${listed.join('\n')}`);
+  }
+  console.log(`Desktop e2e mode: ${selection.mode} (${selection.reason})`);
+  for (const spec of selection.specs) console.log(`  ${spec}`);
   if (process.env.GITHUB_OUTPUT) {
-    appendFileSync(process.env.GITHUB_OUTPUT, `mode=${mode}\nspecs=${specs.join(' ')}\n`);
+    appendFileSync(process.env.GITHUB_OUTPUT, `mode=${selection.mode}\nspecs=${selection.specs.join(' ')}\n`);
   }
 }
 
-const shared = changed.filter(path => !specPattern.test(path));
-if (changed.length === 0) {
-  finish('full', [], 'no changed files reported');
-} else if (shared.length > 0) {
-  const listed = shared.slice(0, 20).map(path => `  ${path}`);
-  if (shared.length > listed.length) listed.push(`  ... and ${shared.length - listed.length} more`);
-  console.log(`Changed files outside the e2e specs:\n${listed.join('\n')}`);
-  finish('full', [], `${shared.length} non-spec file(s) changed`);
-} else {
-  const deleted = changed.filter(path => !existsSync(path));
-  for (const path of deleted) console.log(`Skipping deleted spec ${path}`);
-  const specs = changed.filter(path => existsSync(path)).map(path => path.slice(desktopPrefix.length)).sort();
-  if (specs.length === 0) finish('none', [], 'only deleted specs changed');
-  else finish('specs', specs, `${specs.length} changed spec(s)`);
-}
+if (process.argv[1] !== undefined && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url))) main();

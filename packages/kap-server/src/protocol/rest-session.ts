@@ -420,6 +420,11 @@ export const waitSessionResponseSchema = z.object({
 });
 export type WaitSessionResponse = z.infer<typeof waitSessionResponseSchema>;
 
+export const sessionContinueResponseSchema = z.object({
+  continued: z.literal(true),
+});
+export type SessionContinueResponse = z.infer<typeof sessionContinueResponseSchema>;
+
 function fitsUtf8ByteLimit(value: string, limit: number): boolean {
   let bytes = 0;
   for (let index = 0; index < value.length; index += 1) {

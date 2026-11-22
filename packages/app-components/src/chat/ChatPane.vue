@@ -4,7 +4,7 @@ import { browserReferenceAnchor, useComposerBrowserReferenceHost } from '../comp
 import BrowserReferenceDetails from '../composer/BrowserReferenceDetails.vue';
 import { useBrowserReferenceDetails } from '../composer/browserReferenceDetails';
 import { composerSnapshotFromMetadata, rebindComposerSnapshotMedia } from '@moonshot-ai/app-client/lib';
-import { computed, inject, nextTick, onMounted, onUnmounted, provide, reactive, ref, watch } from 'vue';
+import { computed, inject, nextTick, onMounted, onUnmounted, provide, reactive, ref, watch, watchSyncEffect, type Component } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { ChatTurn, ApprovalBlock, OpenMediaRequest, ToolMedia, QueuedPromptView, TurnAttachment, UIQuestion } from '@moonshot-ai/app-core/client/types';
 import type { AppSessionRatingResponse, AppSessionWorktree } from '@moonshot-ai/app-core/api';
@@ -13,9 +13,10 @@ import ToolCall from './ToolCall.vue';
 import { BrowserToolContextKey } from './tool-calls/browserToolContext';
 import { browserToolContexts } from './tool-calls/browserToolPresentation';
 import { CronToolContextKey, cronToolContexts } from './tool-calls/cronToolContext';
-import HistoryWindow from './HistoryWindow.vue';
+import BlockList from './BlockList.vue';
+import TranscriptList from './TranscriptList.vue';
 import { settledSteerTurnIdsFor, syncSettledSteerTurnIds } from './steerContinuationState';
-import { HistoryAllKey } from '@moonshot-ai/app-core/contracts';
+import { TranscriptScrollKey } from '@moonshot-ai/app-core/contracts';
 import ActivityRun from './ActivityRun.vue';
 import CreateProgressBlock from '../worktree/CreateProgressBlock.vue';
 import TurnFold from './TurnFold.vue';
@@ -27,6 +28,7 @@ import { createHistoryImageCache, HistoryImageCacheKey, Markdown, tableSelection
 import { FetchTurnFileChangesKey, LatestNotifyToolCallIdKey, NotifyUserEnabledKey, PinScrollKey, SelectionContextMenuKey, SessionRatingKey } from '@moonshot-ai/app-client/contracts';
 import { useKimiWebClient } from '@moonshot-ai/app-client/client';
 import { useTurnFileStats } from './useTurnFileStats';
+import { editedFileCount } from '../lib/fileStaleness';
 import type { TurnFileChange } from '@moonshot-ai/app-core/client/types';
 import ThinkingBlock from './ThinkingBlock.vue';
 import SessionRatingRow from './SessionRatingRow.vue';
@@ -277,13 +279,30 @@ function forkAssistantRun(turn: ChatTurn): void {
   emit('forkTurn', { turnIndex: turn.forkTurnIndex });
 }
 
+const liveTurnKeys = new Set<string>();
+function liveTurnKey(turnId: number): string {
+  return `${props.sessionId ?? ''}:${turnId}`;
+}
+watchSyncEffect(() => {
+  for (const group of assistantTurnGroups.value.values()) {
+    const turnId = group[0]!.daemonTurnId;
+    if (turnId !== undefined && !groupSettled(group)) liveTurnKeys.add(liveTurnKey(turnId));
+  }
+});
+
 const turnFileChangesById = computed(() => {
-  const map = new Map<string, { changes: TurnFileChange[]; daemonTurnId: number }>();
+  const map = new Map<string, { changes: TurnFileChange[]; daemonTurnId: number; expected?: number }>();
   if (props.inspector) return map;
   for (const group of assistantTurnGroups.value.values()) {
     const turnId = group[0]!.daemonTurnId;
     if (turnId === undefined || !groupSettled(group)) continue;
     const fetched = fetchedFileStats.value.get(turnId);
+    if (fetched === 'pending') {
+      if (!liveTurnKeys.has(liveTurnKey(turnId))) continue;
+      const expected = editedFileCount(group, props.cwd);
+      if (expected > 0) map.set(group[group.length - 1]!.id, { changes: [], daemonTurnId: turnId, expected });
+      continue;
+    }
     if (!Array.isArray(fetched) || fetched.length === 0) continue;
     map.set(group[group.length - 1]!.id, {
       changes: fetched.map((change) => ({
@@ -995,9 +1014,43 @@ function copyFinalSummary(onCopied?: (ok: boolean) => void): void {
   });
 }
 
-provide(HistoryAllKey, computed(() => props.renderAllHistory));
 if (props.windowHistory) provide(HistoryImageCacheKey, createHistoryImageCache());
 const historyState = props.historyState ?? new Map<string, unknown>();
+const transcriptHost = inject(TranscriptScrollKey, null);
+const transcriptList = props.windowHistory && transcriptHost !== null;
+const transcriptAuxRefs = new Map<string, (el: unknown) => void>();
+function transcriptAux(id: string): (el: unknown) => void {
+  let bind = transcriptAuxRefs.get(id);
+  if (!bind) {
+    bind = (el: unknown) => {
+      const node = el && typeof el === 'object' && '$el' in el ? el.$el : el;
+      transcriptHost?.observeAux('tail', node instanceof HTMLElement ? node : null, id);
+    };
+    transcriptAuxRefs.set(id, bind);
+  }
+  return bind;
+}
+if (transcriptList) watch(topSentinelRef, transcriptAux('sentinel'), { flush: 'sync' });
+function historyTurnKey(turn: ChatTurn): string {
+  return turn.id;
+}
+function historyTurnKind(turn: ChatTurn): string {
+  return turn.role;
+}
+function historyTurnEstimate(turn: ChatTurn): number {
+  return estimateTurnHeight(turn) + (turn.role === 'assistant' ? 10 : 16);
+}
+const historyList = computed<{ is: Component; key: string; props: Record<string, unknown> }>(() => transcriptList
+  ? {
+      is: TranscriptList,
+      key: `v2:${props.sessionId ?? 'empty'}`,
+      props: { scope: props.sessionId ?? 'empty', state: historyState, items: props.turns, itemKey: historyTurnKey, estimate: historyTurnEstimate, kind: historyTurnKind, renderAll: props.renderAllHistory },
+    }
+  : {
+      is: BlockList,
+      key: `blocks:${props.sessionId ?? 'empty'}`,
+      props: { items: props.turns, itemKey: historyTurnKey },
+    });
 const historyRef = ref<{ reveal: (key: string) => Promise<HTMLElement | null>; release: () => void } | null>(null);
 async function revealTurn(id: string): Promise<HTMLElement | null> {
   return await historyRef.value?.reveal(id) ?? null;
@@ -1282,9 +1335,9 @@ function streamingTailIndex(turn: ChatTurn): number | null {
 </script>
 
 <template>
-  <div class="chat" :class="{ 'chat-unwindowed': !windowHistory }" ref="chatRootRef" tabindex="-1" @mouseup="onChatMouseup" @keyup="onChatKeyup" @pointerdown="onChatPointerdown" @contextmenu="onChatContextMenu">
+  <div class="chat" :class="{ 'chat-unwindowed': !windowHistory }" :data-first-kind="turns[0]?.role" ref="chatRootRef" tabindex="-1" @mouseup="onChatMouseup" @keyup="onChatKeyup" @pointerdown="onChatPointerdown" @contextmenu="onChatContextMenu">
     <BrowserReferenceDetails :state="browserDetails.state.value" @resolve="browserDetails.finish" />
-    <div v-if="sessionLoadingVisible" class="chat-loading">
+    <div v-if="sessionLoadingVisible" :ref="transcriptAux('loading')" class="chat-loading">
       <Spinner size="sm" />
       <span class="chat-loading-text">{{ t('conversation.loading') }}</span>
     </div>
@@ -1310,8 +1363,9 @@ function streamingTailIndex(turn: ChatTurn): number | null {
       </span>
     </div>
 
-    <HistoryWindow ref="historyRef" :key="`${windowHistory}:${sessionId ?? 'empty'}`" :scope="sessionId ?? 'empty'" :state="historyState" :items="turns" :item-key="turn => turn.id" :enabled="windowHistory" :tail="4" :overscan="3" :estimate="estimateTurnHeight" :gap="(turn, index) => index === 0 && !hasMoreMessages && !loadingMore ? 0 : turn.role === 'assistant' ? 10 : 16">
-      <template #default="{ item: turn, index: ti }">
+    <component :is="historyList.is" ref="historyRef" :key="historyList.key" v-bind="historyList.props">
+      <template #default="{ item: turn, index: ti }: { item: ChatTurn; index: number }">
+      <div class="chat-row" :data-row-kind="turn.role" :data-row-key="windowHistory ? undefined : turn.id">
       <template v-if="turn.role === 'user'">
         <div class="u-turn">
           <div class="u-bub turn-anchor" :class="{ undoing: undoingTurnId === turn.id }" :data-turn-id="turn.id">
@@ -1438,7 +1492,7 @@ function streamingTailIndex(turn: ChatTurn): number | null {
            compaction lookup: where the API is blanked (an embedded subagent
            transcript, whose turns the root lookup cannot resolve) the label
            stays a plain inert divider. -->
-      <div v-else-if="turn.role === 'compaction'" class="compact-divider turn-anchor" :class="{ 'compact-divider-windowed': windowHistory }" :data-turn-id="turn.id" role="separator">
+      <div v-else-if="turn.role === 'compaction'" class="compact-divider turn-anchor" :data-turn-id="turn.id" role="separator">
         <span class="cd-line" aria-hidden="true" />
         <button
           v-if="turn.text && panelApi?.openCompaction !== undefined"
@@ -1465,6 +1519,7 @@ function streamingTailIndex(turn: ChatTurn): number | null {
       <div v-else class="a-msg turn-anchor" :data-turn-id="turn.id">
         <TurnFold
           v-if="!inspector && turnFolding && assistantFold(turn).folded.length > 0"
+          data-block-key="fold"
           :items="assistantFold(turn).folded"
           mobile
           :streaming-tail-index="streamingTailIndex(turn)"
@@ -1480,11 +1535,12 @@ function streamingTailIndex(turn: ChatTurn): number | null {
           @open-media="onOpenMedia"
           @detach="onDetach"
         />
-        <HistoryWindow :items="assistantVisibleBlocks(turn)" :item-key="renderBlockKey" :enabled="windowHistory" scope="visible-blocks"><template #default="{ item: blk, index: bi }">
-          <ThinkingBlock v-if="blk.kind === 'thinking'" :text="blk.thinking" mobile :streaming="isStreamingRenderBlock(turn, blk)" :started-at="blk.startedAt" :duration-ms="blk.durationMs" :instant-reveal="inspector" />
-          <div v-else-if="blk.kind === 'text' && blk.text" class="msg"><Markdown :text="blk.text" :streaming="isStreamingRenderBlock(turn, blk)" :state-key="renderBlockKey(blk, bi)" :open-file="panelApi?.openFile" :resolve-file-path="turnFilePathResolver(turn)" :resolve-image="turnImageResolver(turn)" /></div>
+        <BlockList :items="assistantVisibleBlocks(turn)" :item-key="renderBlockKey" :enabled="windowHistory" scope="visible-blocks"><template #default="{ item: blk, index: bi }">
+          <ThinkingBlock v-if="blk.kind === 'thinking'" :data-block-key="renderBlockKey(blk, bi)" :text="blk.thinking" mobile :streaming="isStreamingRenderBlock(turn, blk)" :started-at="blk.startedAt" :duration-ms="blk.durationMs" :instant-reveal="inspector" />
+          <div v-else-if="blk.kind === 'text' && blk.text" class="msg" :data-block-key="renderBlockKey(blk, bi)"><Markdown :text="blk.text" :streaming="isStreamingRenderBlock(turn, blk)" :state-key="renderBlockKey(blk, bi)" :open-file="panelApi?.openFile" :resolve-file-path="turnFilePathResolver(turn)" :resolve-image="turnImageResolver(turn)" /></div>
           <ActivityRun
             v-else-if="blk.kind === 'activity-run'"
+            :data-block-key="renderBlockKey(blk, bi)"
             :items="blk.items"
             mobile
             :live="isLiveActivityRun(turn, blk)"
@@ -1495,10 +1551,10 @@ function streamingTailIndex(turn: ChatTurn): number | null {
             @open-media="onOpenMedia"
             @detach="onDetach"
           />
-          <ToolCall v-else-if="blk.kind === 'tool'" :tool="blk.tool" mobile :resolve-file-path="turnFilePathResolver(turn)" :resolve-image="turnImageResolver(turn)" @open-media="onOpenMedia" @detach="onDetach" />
-          <NotificationCard v-else-if="blk.kind === 'notification'" :items="blk.items" />
+          <ToolCall v-else-if="blk.kind === 'tool'" :data-block-key="renderBlockKey(blk, bi)" :tool="blk.tool" mobile :resolve-file-path="turnFilePathResolver(turn)" :resolve-image="turnImageResolver(turn)" @open-media="onOpenMedia" @detach="onDetach" />
+          <NotificationCard v-else-if="blk.kind === 'notification'" :data-block-key="renderBlockKey(blk, bi)" :items="blk.items" />
           <template v-if="blk.kind === 'thinking' || blk.kind === 'text' || blk.kind === 'tool'"><RequestDebugRow v-for="(debug, di) in blk.debug ?? []" :key="di" :debug="debug" /></template>
-        </template></HistoryWindow>
+        </template></BlockList>
         <BrowserSources
           v-if="!inspector && turn.id !== streamingTurnId && isAssistantRunEnd(ti)"
           :turns="stableAssistantRun(ti)"
@@ -1507,14 +1563,16 @@ function streamingTailIndex(turn: ChatTurn): number | null {
              sub-agent detail view stays a pure trajectory, no diff card. -->
         <TurnFilesSummary
           v-if="!inspector && turnFileChangesById.get(turn.id)"
+          data-block-key="files"
           :changes="turnFileChangesById.get(turn.id)!.changes"
           :turn-id="turn.id"
           :daemon-turn-id="turnFileChangesById.get(turn.id)!.daemonTurnId"
+          :expected="turnFileChangesById.get(turn.id)!.expected"
           :session-id="turn.sessionId"
           :cwd="props.cwd"
           :interactive="turnFilesInteractive"
         />
-        <div v-if="!inspector && turn.id !== streamingTurnId && isAssistantRunEnd(ti) && (props.turns[ti + 1]?.steered !== true || forkEntryAvailable(turn)) && (assistantRunHasOutput(ti) || forkEntryAvailable(turn)) && (assistantRunFinalText(ti).trim().length > 0 || turnTimeLabel(turn) || forkEntryAvailable(turn))" class="a-msg-ft">
+        <div v-if="!inspector && turn.id !== streamingTurnId && isAssistantRunEnd(ti) && (props.turns[ti + 1]?.steered !== true || forkEntryAvailable(turn)) && (assistantRunHasOutput(ti) || forkEntryAvailable(turn)) && (assistantRunFinalText(ti).trim().length > 0 || turnTimeLabel(turn) || forkEntryAvailable(turn))" class="a-msg-ft" data-block-key="footer">
           <div class="a-msg-meta">
             <Tooltip :text="t('filePreview.copy')">
             <button
@@ -1562,13 +1620,14 @@ function streamingTailIndex(turn: ChatTurn): number | null {
         <span class="cd-label" role="status">{{ t('conversation.turnInterrupted') }}</span>
         <span class="cd-line" aria-hidden="true" />
       </div>
+      </div>
       </template>
-    </HistoryWindow>
+    </component>
 
     <!-- Model-request failure (e.g. provider 429 after retry exhaustion): the
          turn died and nothing resumes it on its own — a persistent card, since
          the transient error toast alone leaves a silently dead session. -->
-    <div v-if="turnFailed" class="turn-failed" role="alert">
+    <div v-if="turnFailed" :ref="transcriptAux('failed')" class="turn-failed" role="alert">
       <span class="tf-chip" aria-hidden="true"><Icon name="alert-triangle" size="sm" /></span>
       <div class="tf-main">
         <span class="tf-title">{{ turnFailedTitle }}</span>
@@ -1581,7 +1640,7 @@ function streamingTailIndex(turn: ChatTurn): number | null {
     </div>
 
     <Transition name="sr-fade">
-      <div v-if="ratingStandalone && ratingView" class="sr-tailrow">
+      <div v-if="ratingStandalone && ratingView" :ref="transcriptAux('rating')" class="sr-tailrow">
         <SessionRatingRow
           :key="ratingView.appearanceId"
           :view="ratingView"
@@ -1597,16 +1656,16 @@ function streamingTailIndex(turn: ChatTurn): number | null {
          alongside questions, so both blocking prompts share one position. -->
 
     <!-- Compaction in progress — body-sized activity notice -->
-    <ActivityNotice v-if="compaction" :label="t('conversation.compacting')" />
+    <ActivityNotice v-if="compaction" :ref="transcriptAux('compaction')" :label="t('conversation.compacting')" />
 
-    <div v-if="showMascot" class="sending-placeholder">
+    <div v-if="showMascot" :ref="transcriptAux('working')" class="sending-placeholder">
       <WorkingIndicator :label="showWorking ? workingLabel : ''" :idle="!showWorking" />
     </div>
 
     <!-- Inline queue — pending user messages shown after the running turn.
          The head row steers into the running turn; click to edit, × to
          remove, drag the grip to reorder. -->
-    <div v-if="queued.length > 0" class="q-stack">
+    <div v-if="queued.length > 0" :ref="transcriptAux('queue')" class="q-stack">
       <div class="q-head">
         <span class="q-title">
           <Icon name="mail" size="sm" />
@@ -1781,11 +1840,11 @@ function streamingTailIndex(turn: ChatTurn): number | null {
 .chat {
   text-autospace: normal;
   --chat-turn-gap: 16px;
+  --chat-assistant-gap: 10px;
   --chat-block-gap: 10px;
   --chat-strip-gap: 12px;
   --chat-group-gap: 6px;
   --chat-strip-tight: 4px;
-  --chat-section-gap: 18px;
   display: flex;
   flex-direction: column;
   gap: 0;
@@ -1798,21 +1857,29 @@ function streamingTailIndex(turn: ChatTurn): number | null {
 .chat :deep(code) { text-autospace: no-autospace; }
 .chat .chat-empty { align-self: stretch; }
 
-.chat > .u-turn,
-.chat > .a-msg,
-.chat > .compact-divider,
-.chat > .cron-notice,
+.chat-row {
+  padding-top: var(--chat-turn-gap);
+}
+.chat-row[data-row-kind='assistant'] {
+  padding-top: var(--chat-assistant-gap);
+}
+.chat > .chat-row:first-child {
+  padding-top: 0;
+}
+.chat[data-first-kind] > :is(.block-list, .transcript-list) {
+  margin-top: calc(-1 * var(--chat-turn-gap));
+}
+.chat[data-first-kind='assistant'] > :is(.block-list, .transcript-list) {
+  margin-top: calc(-1 * var(--chat-assistant-gap));
+}
+.chat > .top-sentinel + :is(.block-list, .transcript-list) {
+  margin-top: 0;
+}
+
 .chat > .sending-placeholder,
 .chat > :deep(.activity-notice) {
   margin-top: var(--chat-turn-gap);
 }
-.chat > .a-msg {
-  margin-top: 10px;
-}
-.chat > .u-turn:first-child,
-.chat > .a-msg:first-child,
-.chat > .compact-divider:first-child,
-.chat > .cron-notice:first-child,
 .chat > .sending-placeholder:first-child,
 .chat > :deep(.activity-notice:first-child) {
   margin-top: 0;
@@ -1986,8 +2053,6 @@ function streamingTailIndex(turn: ChatTurn): number | null {
 .u-copy svg { display: block; flex: none; }
 .u-copy:hover { opacity: 1; color: var(--color-accent); background: var(--hover); }
 .u-edit-wrap { display: flex; justify-content: flex-end; }
-.chat > .u-edit-wrap { margin-top: 4px; }
-.chat > .u-edit-wrap + .a-msg { margin-top: 8px; }
 
 .compact-divider {
   display: flex;
@@ -1995,16 +2060,10 @@ function streamingTailIndex(turn: ChatTurn): number | null {
   gap: 10px;
   align-self: stretch;
   width: 100%;
-  margin: var(--chat-section-gap) 0 0;
-}
-.compact-divider-windowed {
-  margin-top: 0;
+  margin: 0;
 }
 .compact-divider-interrupted {
   margin-top: var(--chat-turn-gap);
-}
-.chat > .compact-divider:first-child {
-  margin-top: 0;
 }
 .cd-line {
   flex: 1;
@@ -2178,75 +2237,75 @@ function streamingTailIndex(turn: ChatTurn): number | null {
 .a-msg .msg :deep(p) { margin: 0; }
 .a-msg .msg :deep(p + p) { margin-top: 8px; }
 .a-msg > :deep(.think),
-.a-msg > :deep(.history-window > .history-row > .think),
+.a-msg > :deep(.block-list > .history-row > .think),
 .a-msg > :deep(.tool-group),
-.a-msg > :deep(.history-window > .history-row > .tool-group),
+.a-msg > :deep(.block-list > .history-row > .tool-group),
 .a-msg > :deep(.activity-run),
-.a-msg > :deep(.history-window > .history-row > .activity-run),
+.a-msg > :deep(.block-list > .history-row > .activity-run),
 .a-msg > :deep(.agent-group),
-.a-msg > :deep(.history-window > .history-row > .agent-group),
+.a-msg > :deep(.block-list > .history-row > .agent-group),
 .a-msg > :deep(.tool-line),
-.a-msg > :deep(.history-window > .history-row > .tool-line),
+.a-msg > :deep(.block-list > .history-row > .tool-line),
 .a-msg > :deep(.media-tool),
-.a-msg > :deep(.history-window > .history-row > .media-tool),
+.a-msg > :deep(.block-list > .history-row > .media-tool),
 .a-msg > :deep(.ask-receipt),
-.a-msg > :deep(.history-window > .history-row > .ask-receipt) {
+.a-msg > :deep(.block-list > .history-row > .ask-receipt) {
   margin-top: var(--chat-block-gap);
 }
 .a-msg > :deep(.think),
-.a-msg > :deep(.history-window > .history-row > .think),
+.a-msg > :deep(.block-list > .history-row > .think),
 .a-msg > :deep(.turn-fold),
-.a-msg > :deep(.history-window > .history-row > .turn-fold),
+.a-msg > :deep(.block-list > .history-row > .turn-fold),
 .a-msg > :deep(.activity-run),
-.a-msg > :deep(.history-window > .history-row > .activity-run) {
+.a-msg > :deep(.block-list > .history-row > .activity-run) {
   margin-top: var(--chat-strip-gap);
 }
 .a-msg > :deep(.tool-line),
-.a-msg > :deep(.history-window > .history-row > .tool-line),
+.a-msg > :deep(.block-list > .history-row > .tool-line),
 .a-msg > :deep(.ntf-list),
-.a-msg > :deep(.history-window > .history-row > .ntf-list) {
+.a-msg > :deep(.block-list > .history-row > .ntf-list) {
   margin-top: var(--chat-group-gap);
 }
 .a-msg > .msg + :deep(.tool-line),
-.a-msg > :deep(.history-window > .history-row:has(> .msg) + .history-row > .tool-line),
+.a-msg > :deep(.block-list > .history-row:has(> .msg) + .history-row > .tool-line),
 .a-msg > .msg + :deep(.ntf-list),
-.a-msg > :deep(.history-window > .history-row:has(> .msg) + .history-row > .ntf-list) {
+.a-msg > :deep(.block-list > .history-row:has(> .msg) + .history-row > .ntf-list) {
   margin-top: var(--chat-strip-gap);
 }
 .a-msg > :deep(.tool-line + .tool-line),
-.a-msg > :deep(.history-window > .history-row:has(> .tool-line) + .history-row > .tool-line),
+.a-msg > :deep(.block-list > .history-row:has(> .tool-line) + .history-row > .tool-line),
 .a-msg > :deep(.ntf-list + .tool-line),
-.a-msg > :deep(.history-window > .history-row:has(> .ntf-list) + .history-row > .tool-line),
+.a-msg > :deep(.block-list > .history-row:has(> .ntf-list) + .history-row > .tool-line),
 .a-msg > :deep(.tool-line + .ntf-list),
-.a-msg > :deep(.history-window > .history-row:has(> .tool-line) + .history-row > .ntf-list) {
+.a-msg > :deep(.block-list > .history-row:has(> .tool-line) + .history-row > .ntf-list) {
   margin-top: var(--chat-strip-tight);
 }
 .a-msg > :deep(.tool-line.open + .tool-line),
-.a-msg > :deep(.history-window > .history-row:has(> .tool-line.open) + .history-row > .tool-line),
+.a-msg > :deep(.block-list > .history-row:has(> .tool-line.open) + .history-row > .tool-line),
 .a-msg > :deep(.ntf-list:has(.tool-line.open) + .tool-line),
-.a-msg > :deep(.history-window > .history-row:has(> .ntf-list .tool-line.open) + .history-row > .tool-line),
+.a-msg > :deep(.block-list > .history-row:has(> .ntf-list .tool-line.open) + .history-row > .tool-line),
 .a-msg > :deep(.tool-line.open + .ntf-list),
-.a-msg > :deep(.history-window > .history-row:has(> .tool-line.open) + .history-row > .ntf-list) {
+.a-msg > :deep(.block-list > .history-row:has(> .tool-line.open) + .history-row > .ntf-list) {
   margin-top: var(--chat-group-gap);
 }
 .a-msg > :deep(.tool-line + .think),
 .a-msg > :deep(.tool-line + .activity-run),
 .a-msg > :deep(.ntf-list + .think),
 .a-msg > :deep(.ntf-list + .activity-run),
-.a-msg > :deep(.history-window > .history-row:has(> .tool-line) + .history-row > .think),
-.a-msg > :deep(.history-window > .history-row:has(> .tool-line) + .history-row > .activity-run),
-.a-msg > :deep(.history-window > .history-row:has(> .ntf-list) + .history-row > .think),
-.a-msg > :deep(.history-window > .history-row:has(> .ntf-list) + .history-row > .activity-run) {
+.a-msg > :deep(.block-list > .history-row:has(> .tool-line) + .history-row > .think),
+.a-msg > :deep(.block-list > .history-row:has(> .tool-line) + .history-row > .activity-run),
+.a-msg > :deep(.block-list > .history-row:has(> .ntf-list) + .history-row > .think),
+.a-msg > :deep(.block-list > .history-row:has(> .ntf-list) + .history-row > .activity-run) {
   margin-top: var(--chat-strip-tight);
 }
 .a-msg > :deep(.tool-line.open + .think),
 .a-msg > :deep(.tool-line.open + .activity-run),
 .a-msg > :deep(.ntf-list:has(.tool-line.open) + .think),
 .a-msg > :deep(.ntf-list:has(.tool-line.open) + .activity-run),
-.a-msg > :deep(.history-window > .history-row:has(> .tool-line.open) + .history-row > .think),
-.a-msg > :deep(.history-window > .history-row:has(> .tool-line.open) + .history-row > .activity-run),
-.a-msg > :deep(.history-window > .history-row:has(> .ntf-list .tool-line.open) + .history-row > .think),
-.a-msg > :deep(.history-window > .history-row:has(> .ntf-list .tool-line.open) + .history-row > .activity-run) {
+.a-msg > :deep(.block-list > .history-row:has(> .tool-line.open) + .history-row > .think),
+.a-msg > :deep(.block-list > .history-row:has(> .tool-line.open) + .history-row > .activity-run),
+.a-msg > :deep(.block-list > .history-row:has(> .ntf-list .tool-line.open) + .history-row > .think),
+.a-msg > :deep(.block-list > .history-row:has(> .ntf-list .tool-line.open) + .history-row > .activity-run) {
   margin-top: var(--chat-group-gap);
 }
 
@@ -2259,25 +2318,25 @@ function streamingTailIndex(turn: ChatTurn): number | null {
 .a-msg > :deep(.ntf-list:first-child),
 .a-msg > :deep(.media-tool:first-child),
 .a-msg > :deep(.ask-receipt:first-child),
-.a-msg > :deep(.history-window:first-child > .history-row:first-child > .msg),
-.a-msg > :deep(.history-window:first-child > .history-row:first-child > .think),
-.a-msg > :deep(.history-window:first-child > .history-row:first-child > .tool-group),
-.a-msg > :deep(.history-window:first-child > .history-row:first-child > .activity-run),
-.a-msg > :deep(.history-window:first-child > .history-row:first-child > .agent-group),
-.a-msg > :deep(.history-window:first-child > .history-row:first-child > .tool-line),
-.a-msg > :deep(.history-window:first-child > .history-row:first-child > .ntf-list),
-.a-msg > :deep(.history-window:first-child > .history-row:first-child > .media-tool),
-.a-msg > :deep(.history-window:first-child > .history-row:first-child > .ask-receipt) {
+.a-msg > :deep(.block-list:first-child > .history-row:first-child > .msg),
+.a-msg > :deep(.block-list:first-child > .history-row:first-child > .think),
+.a-msg > :deep(.block-list:first-child > .history-row:first-child > .tool-group),
+.a-msg > :deep(.block-list:first-child > .history-row:first-child > .activity-run),
+.a-msg > :deep(.block-list:first-child > .history-row:first-child > .agent-group),
+.a-msg > :deep(.block-list:first-child > .history-row:first-child > .tool-line),
+.a-msg > :deep(.block-list:first-child > .history-row:first-child > .ntf-list),
+.a-msg > :deep(.block-list:first-child > .history-row:first-child > .media-tool),
+.a-msg > :deep(.block-list:first-child > .history-row:first-child > .ask-receipt) {
   margin-top: 0;
 }
 .a-msg > :deep(.ntf-list),
-.a-msg > :deep(.history-window > .history-row > .ntf-list) {
+.a-msg > :deep(.block-list > .history-row > .ntf-list) {
   margin-bottom: 0;
 }
-.a-msg > :deep(.history-window > .history-row > .agent-card) {
+.a-msg > :deep(.block-list > .history-row > .agent-card) {
   margin: 0;
 }
-.a-msg > :deep(.history-window:last-child > .history-row:last-child > .agent-card) {
+.a-msg > :deep(.block-list:last-child > .history-row:last-child > .agent-card) {
   margin-bottom: var(--space-1);
 }
 .a-msg :deep(:not(pre) > code:not(.md code)) {

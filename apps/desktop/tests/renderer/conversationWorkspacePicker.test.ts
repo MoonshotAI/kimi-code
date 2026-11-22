@@ -98,6 +98,7 @@ let app: App | undefined;
 let host: HTMLDivElement | undefined;
 
 beforeEach(() => {
+  vi.stubGlobal('ResizeObserver', class { observe(): void {} unobserve(): void {} disconnect(): void {} });
   mockWorkspacesView.value = [];
   mockActiveWorkspaceId.value = null;
   mockVisibleWorkspace.value = null;

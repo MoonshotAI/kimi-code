@@ -101,7 +101,7 @@ class HttpSink implements PlaybackSink {
     this.response.flushHeaders();
   }
 
-  write(data: string): void {
+  write(data: string | Uint8Array): void {
     if (this.gone || this.response.writableEnded) return;
     this.response.write(data);
   }

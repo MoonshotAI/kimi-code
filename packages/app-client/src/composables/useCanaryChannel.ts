@@ -63,7 +63,7 @@ let tracker: CanaryTracker | null = null;
 
 export function useCanaryChannel(): CanaryTracker {
   if (tracker === null) {
-    const bridge = (window as { kimiDesktop?: Partial<CanaryBridge> }).kimiDesktop;
+    const bridge = (globalThis as { kimiDesktop?: Partial<CanaryBridge> }).kimiDesktop;
     tracker = createCanaryTracker(hasBridge(bridge) ? bridge : undefined);
   }
   return tracker;

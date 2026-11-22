@@ -11,6 +11,7 @@ import {
   TABLE_COPY_CLASS,
   TABLE_LAYOUT_EVENT,
   TABLE_TOGGLE_CLASS,
+  TABLE_TOGGLE_EVENT,
   TABLE_WIDE_CLASS,
   toggleTableWide,
 } from './tableWide';
@@ -53,6 +54,8 @@ class StubElement {
   rectLeft = 0;
   rectRight = 0;
   rectHeight = 0;
+  clientWidth = 0;
+  overflowX = 'visible';
   style: Record<string, string> = {};
   hostContext: unknown = null;
   dispatched: Array<{ type: string; bubbles: boolean }> = [];
@@ -170,8 +173,14 @@ class StubElement {
     }
     return null;
   }
-  getBoundingClientRect(): { top: number; left: number; right: number; height: number } {
-    return { top: this.rectTop, left: this.rectLeft, right: this.rectRight, height: this.rectHeight };
+  getBoundingClientRect(): { top: number; left: number; right: number; width: number; height: number } {
+    return {
+      top: this.rectTop,
+      left: this.rectLeft,
+      right: this.rectRight,
+      width: this.rectRight - this.rectLeft,
+      height: this.rectHeight,
+    };
   }
   querySelector(selector: string): StubElement | null {
     if (selector.startsWith(':scope > .')) {
@@ -256,7 +265,10 @@ beforeEach(() => {
     createElement: () => new StubElement(),
   };
   (globalThis as Record<string, unknown>).ResizeObserver = StubResizeObserver;
-  (globalThis as Record<string, unknown>).getComputedStyle = () => ({ columnGap: '6px' });
+  (globalThis as Record<string, unknown>).getComputedStyle = (el?: StubElement) => ({
+    columnGap: '6px',
+    overflowX: el?.overflowX ?? 'visible',
+  });
   vi.stubGlobal('navigator', { clipboard: { writeText } });
 });
 
@@ -391,6 +403,14 @@ describe('toggleTableWide', () => {
     expect(stubOf(wrapper).dispatched).toHaveLength(2);
   });
 
+  it('announces user toggles before the width changes, unlike restored state', () => {
+    const wrapper = makeWrapper();
+    stubOf(ensureTableWideToggle(wrapper, LABELS)!).click();
+    expect(stubOf(wrapper).dispatched.map(event => event.type)).toEqual([TABLE_TOGGLE_EVENT, TABLE_LAYOUT_EVENT]);
+    toggleTableWide(wrapper, LABELS);
+    expect(stubOf(wrapper).dispatched.map(event => event.type)).toEqual([TABLE_TOGGLE_EVENT, TABLE_LAYOUT_EVENT, TABLE_LAYOUT_EVENT]);
+  });
+
   it('uses the latest labels for clicks after a locale switch', () => {
     const localized = { widen: '加宽表格', restore: '恢复默认宽度', copy: '复制表格' };
     const wrapper = makeWrapper();
@@ -476,6 +496,29 @@ describe('table actions positioning', () => {
     expect(StubResizeObserver.instances).toHaveLength(1);
     expect(StubResizeObserver.instances[0]!.observed).toEqual([wrapper, hostOf(wrapper)]);
   });
+
+  it('observes clipping ancestors and recomputes when their bounds change', () => {
+    const wrapper = makeWrapper({ rectRight: 600 });
+    const pane = new StubElement();
+    pane.rectRight = 900;
+    pane.clientWidth = 900;
+    pane.overflowX = 'auto';
+    pane.appendChild(hostOf(wrapper));
+    ensureTableWideToggle(wrapper, LABELS);
+    const actions = actionsOf(wrapper);
+    stubOf(actions).rectRight = 26;
+    const observer = StubResizeObserver.instances[0]!;
+    expect(observer.observed).toEqual([wrapper, hostOf(wrapper), pane]);
+    expect(actions.style.left).toBe('606px');
+
+    pane.clientWidth = 620;
+    observer.fire();
+    expect(actions.style.left).toBe('568px');
+
+    pane.clientWidth = 900;
+    observer.fire();
+    expect(actions.style.left).toBe('606px');
+  });
 });
 
 describe('positionTableActions', () => {
@@ -486,6 +529,29 @@ describe('positionTableActions', () => {
     stubOf(wrapper).rectRight = 750;
     positionTableActions(wrapper);
     expect(actionsOf(wrapper).style.left).toBe('756px');
+  });
+
+  it('moves the actions inside the visible right edge when the outside position would be clipped', () => {
+    const wrapper = makeWrapper({ rectRight: 600 });
+    const pane = new StubElement();
+    pane.rectRight = 620;
+    pane.clientWidth = 620;
+    pane.overflowX = 'auto';
+    pane.appendChild(hostOf(wrapper));
+    ensureTableWideToggle(wrapper, LABELS);
+    const actions = actionsOf(wrapper);
+    stubOf(actions).rectRight = 26;
+
+    positionTableActions(wrapper);
+    expect(actions.style.left).toBe('568px');
+
+    stubOf(wrapper).rectRight = 650;
+    positionTableActions(wrapper);
+    expect(actions.style.left).toBe('588px');
+
+    stubOf(wrapper).rectRight = 500;
+    positionTableActions(wrapper);
+    expect(actions.style.left).toBe('506px');
   });
 
   it('no-ops when the wrapper has no actions (not injected)', () => {

@@ -17,7 +17,7 @@ export const TowerSpawnToolInputSchema = z
       .string()
       .optional()
       .describe(
-        'Model for this new spawn: one of the aliases listed under "Available models" in this tool description. Pass this only when the user explicitly requests a model; when omitted, a worker binds the pool default (or inherits the tower model when no pool is configured) and a reviewer inherits the tower model.',
+        'Model alias for this new spawn, chosen from the available subagent models announced in <system-reminder>. Pass this only when the user explicitly requests a model; when omitted, a worker binds the default subagent model (or inherits the tower model when no pool is configured) and a reviewer inherits the tower model.',
       ),
     mission_id: z
       .string()
