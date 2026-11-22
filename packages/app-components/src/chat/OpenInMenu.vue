@@ -260,20 +260,15 @@ async function copyPath(): Promise<void> {
   z-index: var(--z-dropdown);
 }
 .menu-pop-enter-active {
-  transition:
-    opacity var(--duration-base) var(--ease-out),
-    transform var(--duration-base) var(--ease-out);
+  transition: opacity var(--duration-base) var(--ease-out);
 }
 .menu-pop-leave-active {
-  transition:
-    opacity var(--duration-fast) var(--ease-out),
-    transform var(--duration-fast) var(--ease-out);
+  transition: opacity var(--duration-fast) var(--ease-out);
   pointer-events: none;
 }
 .menu-pop-enter-from,
 .menu-pop-leave-to {
   opacity: 0;
-  transform: scale(0.97) translateY(var(--menu-pop-shift, -2px));
 }
 .om-icon { width: 16px; height: 16px; flex: none; border-radius: 4px; }
 .om-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
