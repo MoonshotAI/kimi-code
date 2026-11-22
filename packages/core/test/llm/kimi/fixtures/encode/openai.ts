@@ -11,6 +11,7 @@ export const kimiOpenAIEncodeFixtures = [{
         provider: 'kimi',
         name: 'kimi-for-coding',
         maxContextSize: 1000,
+        capability: { ...TEST_MODEL.spec.capability, dynamically_loaded_tools: true },
       },
       thinking: { effort: 'high', keep: 'all' },
       cacheKey: 'cache-1',
@@ -23,6 +24,28 @@ export const kimiOpenAIEncodeFixtures = [{
         role: 'system',
         content: [],
         tools: [{ name: '$builtin', description: '', parameters: { type: 'object' } }],
+      },
+      {
+        role: 'system',
+        content: [],
+        tools: [{ name: 'reloadable', description: 'old schema', parameters: { type: 'object' } }],
+      },
+      {
+        role: 'user',
+        content: [{
+          type: 'text',
+          text: '<system-reminder>\n<tools_removed>\nreloadable\n</tools_removed>\n<tools_added>\nreloadable\n</tools_added>\n</system-reminder>',
+          meta: { kind: 'tool_lifecycle', added: ['reloadable'], removed: ['reloadable'] },
+        }],
+      },
+      {
+        role: 'system',
+        content: [],
+        tools: [{
+          name: 'reloadable',
+          description: 'new schema',
+          parameters: { type: 'object', required: ['value'] },
+        }],
       },
       {
         role: 'assistant',
@@ -51,6 +74,29 @@ export const kimiOpenAIEncodeFixtures = [{
         {
           role: 'system',
           tools: [{ type: 'builtin_function', function: { name: '$builtin' } }],
+        },
+        {
+          role: 'system',
+          tools: [{
+            type: 'function',
+            function: { name: 'reloadable', description: 'old schema', parameters: { type: 'object' } },
+          }],
+        },
+        {
+          role: 'user',
+          content: '<system-reminder>\n<tools_removed>\nreloadable\n</tools_removed>\n<tools_added>\nreloadable\n</tools_added>\n</system-reminder>',
+        },
+        { role: 'system', unload_tools: ['reloadable'] },
+        {
+          role: 'system',
+          tools: [{
+            type: 'function',
+            function: {
+              name: 'reloadable',
+              description: 'new schema',
+              parameters: { type: 'object', required: ['value'] },
+            },
+          }],
         },
         {
           role: 'assistant',
@@ -111,6 +157,14 @@ export const kimiOpenAIEncodeFixtures = [{
         role: 'user',
         content: [{ type: 'text', text: ' ' }, { type: 'text', text: 'Compact this conversation.' }],
       },
+      {
+        role: 'user',
+        content: [{
+          type: 'text',
+          text: 'runtime change',
+          meta: { kind: 'tool_lifecycle', added: [], removed: ['weather'] },
+        }],
+      },
     ],
   }),
   expected: {
@@ -132,6 +186,7 @@ export const kimiOpenAIEncodeFixtures = [{
           content: '<system>Tool output is empty.</system>',
         },
         { role: 'user', content: 'Compact this conversation.' },
+        { role: 'user', content: 'runtime change' },
       ],
     },
   },

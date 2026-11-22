@@ -158,6 +158,7 @@ describe('core LoopService integration', () => {
       expect(sent.history[0]?.content).toContainEqual({
         type: 'text',
         text: expect.stringContaining('<tools_added>\nDeferredPreview\n</tools_added>'),
+        meta: { kind: 'tool_lifecycle', added: ['DeferredPreview'], removed: [] },
       });
       expect(sent.history.length).toBeGreaterThan(preview.messages.length);
     } finally {
