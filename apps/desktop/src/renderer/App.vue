@@ -202,7 +202,7 @@ provide(FetchTurnFileContentKey, turnFileContentFetcher(() => client.activeSessi
 provide(SubagentEffortKey, (effort: string | undefined): string | undefined =>
   subagentEffortSuffix(effort),
 );
-const { confirm, isConfirmOpen, settle: settleConfirm, busy: confirmBusy } = useConfirmDialog();
+const { confirm, confirmWithCheckbox, isConfirmOpen, settle: settleConfirm, busy: confirmBusy } = useConfirmDialog();
 
 const workspaces = workspacesStore();
 const { visibleWorkspace, activeWorkspaceId } = storeToRefs(workspaces);
@@ -1406,6 +1406,7 @@ const {
 
 const offQuitConfirm = useQuitConfirm({
   confirm,
+  confirmWithCheckbox,
   cancelCurrent: () => settleConfirm(false),
   isBusy: () => confirmBusy.value,
   isOverlayOpen: () => interruptiveOverlayOpen.value,

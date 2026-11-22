@@ -1,7 +1,9 @@
 // @vitest-environment jsdom
 import { createApp, defineComponent, nextTick, ref, type App } from 'vue';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { useConfirmDialog } from '@moonshot-ai/app-client/composables';
 import { createKimiI18n } from '@moonshot-ai/app-i18n';
+import BrowserOverlayConfirmHost from '../../src/renderer/components/browser-overlay/BrowserOverlayConfirmHost.vue';
 import BrowserOverlayMenu from '../../src/renderer/components/browser-overlay/BrowserOverlayMenu.vue';
 import { registerBrowserOverlayDialog } from '../../src/renderer/lib/browserOverlayDialog';
 import { activeBrowserPageDialog, browserApprovalBrowserIds, browserPageDialogContent, browserPageDialogs, useBrowserPageDialog } from '../../src/renderer/lib/browserPageDialogs';
@@ -211,6 +213,27 @@ describe('page dialog and app dialogs on the shared overlay', () => {
     }
   });
 
+  it('shows the checkbox of an app confirm on the overlay and returns the choice made there', async () => {
+    let action!: (payload: BrowserOverlayDialogAction) => void;
+    const open = vi.fn();
+    (window as { kimiDesktop?: unknown }).kimiDesktop = {
+      browserOverlayOpenDialog: open, browserOverlayCloseDialog: vi.fn(), onBrowserOverlayDialogClosed: () => () => {},
+      onBrowserOverlayDialogAction: (cb: typeof action) => { action = cb; return () => {}; },
+    };
+    const app = createApp(BrowserOverlayConfirmHost, { active: true }).use(i18n);
+    app.mount(document.createElement('div'));
+    try {
+      const result = useConfirmDialog().confirmWithCheckbox({ title: 'Restart to update?', checkbox: { label: 'Continue these sessions after restarting', checked: true } });
+      await nextTick();
+      const request = open.mock.lastCall?.[0] as { dialogId: string; checkbox?: unknown };
+      expect(request.checkbox).toEqual({ label: 'Continue these sessions after restarting', checked: true });
+      action({ dialogId: request.dialogId, action: 'confirm', checked: false });
+      await expect(result).resolves.toEqual({ confirmed: true, checked: false });
+    } finally {
+      app.unmount();
+    }
+  });
+
   it('lets an app dialog opened by the user take over from a showing page dialog, then restores the page dialog', async () => {
     const surface = fakeSurface();
     browserPageDialogs.value = [dialog({ dialogId: 'page-1', kind: 'confirm', answerer: 'user' })];
@@ -324,6 +347,19 @@ describe('overlay dialog', () => {
     field.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
     expect(submitForm).toHaveBeenLastCalledWith({ requestId: 1, action: 'cancel', value: 'Grace', checked: undefined });
     expect(dismiss).not.toHaveBeenCalled();
+  });
+
+  it('submits the checkbox choice of a dialog without a text field', async () => {
+    submitForm.mockClear();
+    const host = await render({
+      kind: 'dialog', requestId: 1, dialogId: 'global-confirm:1', title: 'Restart to update?', confirmLabel: 'Restart', cancelLabel: 'Cancel', closeLabel: 'Close',
+      checkbox: { label: 'Continue these sessions after restarting', checked: true },
+    });
+    const checkbox = host.querySelector<HTMLInputElement>('.browser-overlay-dialog__body input[type="checkbox"]')!;
+    expect(checkbox.checked).toBe(true);
+    checkbox.click();
+    host.querySelector<HTMLButtonElement>('.browser-overlay-dialog__confirm')!.click();
+    expect(submitForm).toHaveBeenLastCalledWith({ requestId: 1, action: 'confirm', value: '', checked: false });
   });
 
   it('renders a plain dialog without the agent mark', async () => {

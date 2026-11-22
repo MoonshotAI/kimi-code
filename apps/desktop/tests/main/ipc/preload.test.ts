@@ -898,6 +898,30 @@ describe('kimiDesktop preload bridge', () => {
     expect(closed).toHaveBeenCalledOnce();
   });
 
+  it('sanitizes quit confirmation prompts and forwards the continue choice only when it is exactly true', async () => {
+    await import('../../../src/main/ipc/preload');
+    const [, exposed] = expose.mock.calls[0]!;
+
+    const promptCb = vi.fn();
+    exposed.onQuitConfirm(promptCb);
+    const prompt = listeners.get('kimi:quit-confirm')!;
+    prompt({}, 3, ['busy', 'bogus', 'remote-control'], { purpose: 'update', sessionTitles: ['Fix login bug', 42] });
+    prompt({}, 4, 'busy', { purpose: 'bogus', sessionTitles: 'Fix login bug' });
+    prompt({}, 4.5, ['busy'], undefined);
+    expect(promptCb.mock.calls).toEqual([
+      [3, ['busy', 'remote-control'], { purpose: 'update', sessionTitles: ['Fix login bug'] }],
+      [4, [], { purpose: 'quit', sessionTitles: [] }],
+    ]);
+
+    await exposed.respondQuitConfirm('quit', 3, true);
+    await exposed.respondQuitConfirm('quit', 4, 'yes' as unknown as boolean);
+    await exposed.respondQuitConfirm('bogus' as 'quit', 5, true);
+    expect(invoke.mock.calls.filter(([channel]) => channel === 'kimi:quit-confirm-response')).toEqual([
+      ['kimi:quit-confirm-response', { choice: 'quit', requestId: 3, continueSessions: true }],
+      ['kimi:quit-confirm-response', { choice: 'quit', requestId: 4, continueSessions: false }],
+    ]);
+  });
+
   it('forwards menu-action and shortcut payloads to the renderer callback', async () => {
     await import('../../../src/main/ipc/preload');
     const [, exposed] = expose.mock.calls[0]!;

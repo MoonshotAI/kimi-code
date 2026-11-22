@@ -5,7 +5,7 @@ import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { getColorScheme, getRemoteControlRestoreState, setColorScheme, setRemoteControlPreviousEnabled, setRemoteControlRestoreEnabled } from '../../../src/main/app/ui-state';
+import { getColorScheme, getRemoteControlRestoreState, savePendingSessionContinue, setColorScheme, setRemoteControlPreviousEnabled, setRemoteControlRestoreEnabled, takePendingSessionContinue } from '../../../src/main/app/ui-state';
 import { getBrowserDownloadsAccess, getBrowserPreferences, getPreventLidSleep, getPreventSystemSleep, getWindowsLidActionAcOriginal, saveBrowserDownloadsAccess, getBrowserRecords, isOnboarded, isUpdateAutoDownloadEnabled, isVibrancyEnabled, getDockIconChoice, loadUiState, markFirstLaunchReported, markOnboarded, saveBrowserPreferences, saveBrowserRecords, saveDockIconChoice, setPreventLidSleep, setPreventSystemSleep, setUpdateAutoDownloadEnabled, setVibrancyEnabled, setWindowsLidActionAcOriginal, shouldReportFirstLaunch } from '../../../src/main/app/ui-state';
 
 describe('ui-state persistence', () => {
@@ -375,6 +375,55 @@ describe('ui-state persistence', () => {
 
     markFirstLaunchReported(file);
     expect(shouldReportFirstLaunch(file)).toBe(false);
+  });
+
+  it('hands out the pending session continue marker once and clears it', () => {
+    writeFileSync(file, '{"onboarded":true}', 'utf-8');
+    const pending = { sessionIds: ['s1', 's2'], armedAt: 1_000, fromVersion: '1.4.2' };
+    savePendingSessionContinue(pending, file);
+
+    expect(takePendingSessionContinue(file)).toEqual(pending);
+    expect(loadUiState(file)).toEqual({ onboarded: true });
+    expect(takePendingSessionContinue(file)).toBeUndefined();
+  });
+
+  it('clears the pending session continue marker when saving nothing', () => {
+    savePendingSessionContinue({ sessionIds: ['s1'], armedAt: 1_000, fromVersion: '1.4.2' }, file);
+    savePendingSessionContinue(undefined, file);
+    expect(takePendingSessionContinue(file)).toBeUndefined();
+  });
+
+  it('saves the pending session continue marker over a corrupt state file', () => {
+    writeFileSync(file, 'not json', 'utf-8');
+    const pending = { sessionIds: ['s1'], armedAt: 1_000, fromVersion: '1.4.2' };
+    savePendingSessionContinue(pending, file);
+    expect(takePendingSessionContinue(file)).toEqual(pending);
+  });
+
+  it('reports a pending session continue marker that cannot be written', () => {
+    mkdirSync(file);
+    expect(() => savePendingSessionContinue({ sessionIds: ['s1'], armedAt: 1_000, fromVersion: '1.4.2' }, file)).toThrow();
+  });
+
+  it.each([
+    null,
+    'armed',
+    { sessionIds: 's1', armedAt: 1_000, fromVersion: '1.4.2' },
+    { sessionIds: ['s1'], armedAt: 'now', fromVersion: '1.4.2' },
+    { sessionIds: ['s1'], armedAt: 1_000 },
+  ])('drops a malformed pending session continue marker: %j', (marker) => {
+    writeFileSync(file, JSON.stringify({ onboarded: true, pendingSessionContinue: marker }), 'utf-8');
+    expect(takePendingSessionContinue(file)).toBeUndefined();
+    expect(loadUiState(file)).toEqual({ onboarded: true });
+  });
+
+  it('keeps only usable session ids from the pending marker', () => {
+    writeFileSync(
+      file,
+      JSON.stringify({ pendingSessionContinue: { sessionIds: ['s1', '', 7, 's2'], armedAt: 1_000, fromVersion: '1.4.2' } }),
+      'utf-8',
+    );
+    expect(takePendingSessionContinue(file)?.sessionIds).toEqual(['s1', 's2']);
   });
 
   it('treats a missing or invalid dockIconChoice as undefined', () => {

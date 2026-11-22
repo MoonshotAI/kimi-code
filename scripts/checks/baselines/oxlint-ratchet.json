@@ -97,7 +97,6 @@
     "apps/desktop/src/main/app/lifecycle.ts": 1,
     "apps/desktop/src/shared/browser-data.ts": 1,
     "apps/desktop/tests/main/browser/browser-view.test.ts": 1,
-    "apps/desktop/tests/renderer/useQuitConfirm.test.ts": 1,
     "apps/kimi-code/test/cli/options.test.ts": 1,
     "apps/kimi-code/test/cli/update/native-swap.test.ts": 1,
     "apps/kimi-code/test/cli/update/preflight.test.ts": 1,

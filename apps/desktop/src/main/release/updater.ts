@@ -64,10 +64,19 @@ export interface UpdateController {
   stop(): void;
 }
 
-export interface StartAutoUpdaterDeps {
+export interface RestartDecision {
+  readonly proceed: boolean;
+  readonly continueSessionIds: readonly string[];
+}
+
+export interface UpdateRestartDeps {
+  confirmRestart: () => Promise<RestartDecision>;
+  prepareSessionContinue: (sessionIds: readonly string[]) => void;
+}
+
+export interface StartAutoUpdaterDeps extends UpdateRestartDeps {
   updater: UpdaterLike;
   send: (status: UpdateStatus) => void;
-  shouldBlockQuit: () => Promise<boolean>;
   isPackaged: boolean;
   initialDelayMs?: number;
   intervalMs?: number;
@@ -397,11 +406,16 @@ export function startAutoUpdater(deps: StartAutoUpdaterDeps): UpdateController |
       }
       installPending = true;
       try {
-        const blocked = await deps.shouldBlockQuit().catch((error: unknown) => {
+        const decision = await deps.confirmRestart().catch((error: unknown): RestartDecision => {
           log.warn(`[kimi-desktop] update quit confirmation skipped: check failed (${error instanceof Error ? error.message : String(error)})`);
-          return false;
+          return { proceed: true, continueSessionIds: [] };
         });
-        if (blocked) return;
+        if (!decision.proceed) return;
+        try {
+          deps.prepareSessionContinue(decision.continueSessionIds);
+        } catch (error) {
+          log.warn(`[kimi-desktop] sessions will not continue after the update restart (${error instanceof Error ? error.message : String(error)})`);
+        }
         log.info(`[kimi-desktop] installing update ${current.version ?? 'unknown'} (quitAndInstall)`);
         markQuitting();
         updater.quitAndInstall(true, true);
@@ -441,7 +455,7 @@ export async function fetchReleaseNotes(version: string): Promise<ReleaseNotes> 
 
 let controller: UpdateController | null = null;
 
-export function initAutoUpdater(shouldBlockQuit: () => Promise<boolean>): void {
+export function initAutoUpdater(restart: UpdateRestartDeps): void {
   if (isPreviewVersion(app.getVersion())) {
     return;
   }
@@ -454,7 +468,7 @@ export function initAutoUpdater(shouldBlockQuit: () => Promise<boolean>): void {
   controller = startAutoUpdater({
     updater: autoUpdater,
     send: (status) => sendToRenderer(IPC.updateStatus, status),
-    shouldBlockQuit,
+    ...restart,
     isPackaged: app.isPackaged,
     intervalMs: channel === 'canary' ? CANARY_CHECK_INTERVAL_MS : CHECK_INTERVAL_MS,
     autoDownload: isUpdateAutoDownloadEnabled(),

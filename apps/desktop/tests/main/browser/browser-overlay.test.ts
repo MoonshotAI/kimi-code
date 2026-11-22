@@ -869,6 +869,25 @@ describe('browser overlay lifecycle', () => {
     expect(host.webContents.send).toHaveBeenLastCalledWith(IPC.browserOverlayDialogAction, { dialogId: 'annotation', action: 'confirm', value: 'Original', checked: true });
   });
 
+  it('routes the checkbox choice of a dialog without a text field and refuses forms from plain dialogs', () => {
+    const host = createHost();
+    attachBrowserOverlayWindow(host as never);
+    const view = mocks.FakeWebContentsView.instances[0]!;
+    markBrowserOverlayReady(view.webContents as never);
+    openBrowserOverlayDialog({
+      dialogId: 'global-confirm:1', title: 'Restart to update?', confirmLabel: 'Restart', cancelLabel: 'Cancel', closeLabel: 'Close',
+      checkbox: { label: 'Continue these sessions after restarting', checked: true },
+    });
+    host.webContents.send.mockClear();
+    submitBrowserOverlayForm(view.webContents as never, { requestId: 1, action: 'confirm', value: 'ignored', checked: false });
+    expect(host.webContents.send).toHaveBeenCalledExactlyOnceWith(IPC.browserOverlayDialogAction, { dialogId: 'global-confirm:1', action: 'confirm', value: undefined, checked: false });
+
+    openBrowserOverlayDialog({ dialogId: 'global-confirm:2', title: 'Delete session?', confirmLabel: 'Delete', cancelLabel: 'Cancel', closeLabel: 'Close' });
+    host.webContents.send.mockClear();
+    submitBrowserOverlayForm(view.webContents as never, { requestId: 2, action: 'confirm', value: '' });
+    expect(host.webContents.send).not.toHaveBeenCalled();
+  });
+
   it('keeps annotation native bounds stable across animated content sizes', () => {
     const host = createHost();
     attachBrowserOverlayWindow(host as never);
