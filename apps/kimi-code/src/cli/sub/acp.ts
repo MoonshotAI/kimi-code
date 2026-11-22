@@ -1,5 +1,6 @@
 import type { Command } from 'commander';
 
+import { createKimiCodeHostIdentity } from '#/cli/host-identity';
 import { getVersion } from '#/cli/version';
 import { KIMI_CODE_HOME_ENV } from '#/constant/app';
 import { getDataDir } from '#/utils/paths';
@@ -42,11 +43,14 @@ export function registerAcpCommand(parent: Command): void {
           ? { [KIMI_CODE_HOME_ENV]: sandboxHome }
           : undefined;
       const legacyCommand = process.argv[1];
+      const version = getVersion();
+      const hostIdentity = createKimiCodeHostIdentity(version);
       try {
         const { runAcpServer } = await import('@moonshot-ai/acp-server');
         await runAcpServer({
           homeDir: getDataDir(),
-          agentInfo: { name: 'Kimi Code CLI', version: getVersion() },
+          hostIdentity,
+          agentInfo: { name: 'Kimi Code CLI', version },
           ...(terminalAuthEnv ? { terminalAuthEnv } : {}),
           ...(legacyCommand !== undefined && legacyCommand.length > 0
             ? { terminalAuthLegacyCommand: legacyCommand }
