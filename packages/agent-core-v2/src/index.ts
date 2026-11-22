@@ -472,7 +472,6 @@ export * from '#/session/agentLifecycle/forked';
 export * from '#/session/agentLifecycle/mainAgent';
 export * from '#/session/mcp/sessionMcpHandle';
 export * from '#/session/mcp/sessionMcpOverlay';
-export * from '#/session/mcp/sessionMcpOverlayService';
 import '#/app/mcpConfig/configSection';
 export {
   MCP_SECTION,

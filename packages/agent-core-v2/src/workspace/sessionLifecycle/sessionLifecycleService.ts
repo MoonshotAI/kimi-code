@@ -62,9 +62,9 @@ import { ISessionContext, sessionContextSeed } from '#/session/sessionContext/se
 import { sessionEphemeralMcpServersSeed } from '#/session/mcp/ephemeralMcpServers';
 import {
   inactiveSessionMcpOverlayConnection,
+  ISessionMcpOverlayConnection,
   sessionMcpOverlayConnectionSeed,
 } from '#/session/mcp/sessionMcpOverlay';
-import { ISessionMcpOverlayService } from '#/session/mcp/sessionMcpOverlayService';
 import { sessionAgentProfileCatalogSeed } from '#/session/sessionAgentProfileCatalog/agentProfileCatalogSeed';
 import {
   ISessionMetadata,
@@ -256,7 +256,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
         );
       }
       const agents = handle.accessor.get(IAgentLifecycleService);
-      await handle.accessor.get(ISessionMcpOverlayService).ready;
+      await handle.accessor.get(ISessionMcpOverlayConnection).ready;
       const main =
         opts.mainAgentBinding !== undefined || opts.ensureMainAgent === true || environment !== undefined
           ? await agents.create({
@@ -521,7 +521,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     }, environment, await this.openWorkdir(environment, workDir));
     try {
       const agents = handle.accessor.get(IAgentLifecycleService);
-      await handle.accessor.get(ISessionMcpOverlayService).ready;
+      await handle.accessor.get(ISessionMcpOverlayConnection).ready;
       if (agents.get(MAIN_AGENT_ID) === undefined) {
         await agents.create({ agentId: MAIN_AGENT_ID });
       }
