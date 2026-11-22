@@ -309,7 +309,7 @@ export class ProgramWorkdirs {
       explicitSkills: own(new ExplicitFileSkillSource(discovery, input.context, bootstrap, input.hostFs, log)),
       extraSkills: own(new ExtraFileSkillSource(discovery, config, input.context, bootstrap, input.hostFs, log)),
       explicitAgentProfiles: own(new ExplicitAgentProfileLoaderService(input.context, dirs, bootstrap, input.hostFs, log, input.userAgentProfiles, agentProfiles)),
-      extraAgentProfiles: own(new ExtraAgentProfileLoaderService(config, input.context, dirs, bootstrap, input.hostFs, log, input.userAgentProfiles, agentProfiles)),
+      extraAgentProfiles: own(new ExtraAgentProfileLoaderService(input.context, dirs, config, bootstrap, input.hostFs, log, input.userAgentProfiles, agentProfiles)),
     };
   }
 }

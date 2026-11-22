@@ -14,6 +14,7 @@ import { ISessionIndexMirror, type SessionSummary } from './sessionIndex';
 import { markSessionDirty } from './sessionIndexDirtyJournal';
 import {
   SESSION_INDEX_MANIFEST,
+  addSessionCounts,
   recencyColumn,
   sessionCollection,
   sessionCountersCollection,
@@ -171,14 +172,12 @@ export class SessionIndexMirror extends Disposable implements ISessionIndexMirro
           value: withRecencyField(manifest.seq, summary),
           columns: { [recencyColumn(manifest.seq)]: summary.updatedAt },
         })),
-        ...[...deltas.entries()].map(([workspaceId, delta]) => {
-          const base = current.get(workspaceId) ?? { active: 0, archived: 0 };
-          const value: SessionWorkspaceCounts = {
-            active: Math.max(0, base.active + delta.active),
-            archived: Math.max(0, base.archived + delta.archived),
-          };
-          return { kind: 'put' as const, collection: counters, key: workspaceId, value };
-        }),
+        ...[...deltas.entries()].map(([workspaceId, delta]) => ({
+          kind: 'put' as const,
+          collection: counters,
+          key: workspaceId,
+          value: addSessionCounts(current.get(workspaceId), delta),
+        })),
       ];
       await this.queryStore.batch(ops);
       for (const [id, summary] of chunk) {
