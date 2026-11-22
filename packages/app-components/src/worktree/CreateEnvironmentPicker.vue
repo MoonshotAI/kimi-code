@@ -2,12 +2,11 @@
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { NewSessionEnvironment } from '@moonshot-ai/app-core/lib';
-import { toast } from '@moonshot-ai/app-client/client';
-import { openWorktreeSettings } from '@moonshot-ai/app-client/composables';
+import { toastWithManage } from '@moonshot-ai/app-client/composables';
 import { formatWorktreeSize } from '@moonshot-ai/app-client/lib';
 import { newSessionEnvironmentStore, worktreesStore } from '@moonshot-ai/app-client/stores';
 import { Icon, Spinner, menuNavigationIndex } from '@moonshot-ai/app-ui';
-import { useCreatePopover } from './createPopover';
+import CreatePicker from './CreatePicker.vue';
 
 const props = defineProps<{
   workspaceId?: string | null;
@@ -21,8 +20,6 @@ interface EnvironmentOption {
   disabled: boolean;
   loading: boolean;
 }
-
-const DISK_REMINDER_MS = 8000;
 
 const { t } = useI18n();
 const store = newSessionEnvironmentStore();
@@ -61,10 +58,8 @@ const options = computed<EnvironmentOption[]>(() => {
 
 const current = computed(() => options.value.find((option) => option.id === view.value.effective) ?? options.value[0]!);
 
-const anchorRef = ref<HTMLElement | null>(null);
-const panelRef = ref<HTMLElement | null>(null);
-const triggerRef = ref<HTMLButtonElement | null>(null);
-const { open, up, toggle, close } = useCreatePopover(anchorRef, panelRef, triggerRef);
+const picker = ref<InstanceType<typeof CreatePicker> | null>(null);
+const open = ref(false);
 const activeIndex = ref(0);
 
 watch(open, async (isOpen) => {
@@ -72,7 +67,7 @@ watch(open, async (isOpen) => {
   void store.ensureBranches(props.workspaceId);
   activeIndex.value = Math.max(0, options.value.findIndex((option) => option.id === view.value.effective));
   await nextTick();
-  panelRef.value?.focus({ preventScroll: true });
+  picker.value?.focusPanel();
 });
 
 let stopAwaitingDiskUsage: (() => void) | null = null;
@@ -106,26 +101,13 @@ async function remindDiskUsage(): Promise<void> {
   stopAwaitingDiskUsage?.();
   stopAwaitingDiskUsage = null;
   worktreesStore().markDiskUsageReminded();
-  toast({
-    layout: 'bar',
-    title: t('worktreeCreate.disk.reminder', { size: formatWorktreeSize(bytes) }),
-    duration: DISK_REMINDER_MS,
-    actions: [
-      {
-        label: t('worktreeCreate.disk.manage'),
-        onClick: ({ dismiss }) => {
-          dismiss();
-          openWorktreeSettings();
-        },
-      },
-    ],
-  });
+  toastWithManage(t('worktreeCreate.disk.reminder', { size: formatWorktreeSize(bytes) }), { replace: false });
 }
 
 function select(option: EnvironmentOption): void {
   if (option.disabled) return;
   store.selectEnvironment(option.id);
-  close({ focusTrigger: true });
+  picker.value?.close({ focusTrigger: true });
   if (option.id === 'worktree') void remindDiskUsage();
 }
 
@@ -150,141 +132,63 @@ function onPanelKeydown(event: KeyboardEvent): void {
 </script>
 
 <template>
-  <div ref="anchorRef" class="wce" data-worktree-environment>
-    <button
-      ref="triggerRef"
-      type="button"
-      class="wce-chip"
-      :class="{ open }"
-      aria-haspopup="menu"
-      :aria-expanded="open"
-      :aria-label="`${t('worktreeCreate.environment.label')}: ${current.label}`"
-      :data-environment="current.id"
-      @click.stop="toggle"
-    >
-      <Icon :name="current.icon" size="md" />
+  <CreatePicker
+    ref="picker"
+    v-model:open="open"
+    class="wce"
+    data-worktree-environment
+    popup="menu"
+    chip-class="wce-chip"
+    panel-class="wce-panel"
+    :label="`${t('worktreeCreate.environment.label')}: ${current.label}`"
+    :panel-label="t('worktreeCreate.environment.label')"
+    :data-environment="current.id"
+    @panel-keydown="onPanelKeydown"
+  >
+    <template #chip>
+      <Icon class="wce-chip-icon" :name="current.icon" size="md" />
       <span class="wce-chip-name">{{ current.label }}</span>
-      <Icon class="wce-chip-chev" name="chevron-down" size="sm" />
-    </button>
-    <div
-      v-if="open"
-      ref="panelRef"
-      class="wce-panel"
-      :class="{ up }"
-      role="menu"
+    </template>
+    <button
+      v-for="(option, index) in options"
+      :key="option.id"
+      type="button"
+      class="wce-row"
+      :class="{ on: option.id === current.id, active: index === activeIndex, disabled: option.disabled }"
+      role="menuitemradio"
       tabindex="-1"
-      :aria-label="t('worktreeCreate.environment.label')"
-      @keydown="onPanelKeydown"
+      :aria-checked="option.id === current.id"
+      :aria-disabled="option.disabled"
+      :data-option="option.id"
+      @mousemove="hover(option, index)"
+      @click.stop="select(option)"
     >
-      <button
-        v-for="(option, index) in options"
-        :key="option.id"
-        type="button"
-        class="wce-row"
-        :class="{ on: option.id === current.id, active: index === activeIndex, disabled: option.disabled }"
-        role="menuitemradio"
-        tabindex="-1"
-        :aria-checked="option.id === current.id"
-        :aria-disabled="option.disabled"
-        :data-option="option.id"
-        @mousemove="hover(option, index)"
-        @click.stop="select(option)"
-      >
-        <Icon class="wce-row-icon" :name="option.icon" size="md" />
-        <span class="wce-row-text">
-          <span class="wce-row-label">{{ option.label }}</span>
-          <span class="wce-row-desc">{{ option.description }}</span>
-        </span>
-        <Spinner v-if="option.loading" class="wce-row-end" size="sm" :label="t('worktreeCreate.environment.checking')" />
-        <Icon v-else-if="option.id === current.id" class="wce-row-end" name="check" size="sm" />
-      </button>
-    </div>
-  </div>
+      <Icon class="wce-row-icon" :name="option.icon" size="md" />
+      <span class="wce-row-text">
+        <span class="wce-row-label">{{ option.label }}</span>
+        <span class="wce-row-desc">{{ option.description }}</span>
+      </span>
+      <Spinner v-if="option.loading" class="wce-row-end" size="sm" :label="t('worktreeCreate.environment.checking')" />
+      <Icon v-else-if="option.id === current.id" class="wce-row-end" name="check" size="sm" />
+    </button>
+  </CreatePicker>
 </template>
 
 <style scoped>
 .wce {
-  position: relative;
-  display: flex;
   flex: none;
-  font-family: var(--font-ui);
 }
-.wce-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  height: 28px;
-  margin-bottom: 4px;
-  padding: 0 var(--space-2);
-  border: none;
-  border-radius: 10px;
-  background: var(--color-selected);
-  -webkit-backdrop-filter: blur(30px);
-  backdrop-filter: blur(30px);
-  color: var(--color-text);
-  font-family: inherit;
-  font-size: var(--ui-font-size-sm);
-  white-space: nowrap;
-  cursor: pointer;
-  transition: color var(--duration-base) var(--ease-out);
-}
-.wce-chip:hover,
-.wce-chip.open {
-  color: var(--color-text-strong);
-}
-.wce-chip:focus-visible {
-  outline: none;
-  box-shadow: var(--p-focus-ring);
-}
-.wce-chip > .kw-icon {
+.wce-chip-icon {
   flex: none;
 }
 .wce-chip-name {
   font-weight: var(--weight-option-label);
 }
-.wce-chip-chev {
-  transition: transform var(--duration-base) var(--ease-out);
-}
-.wce-chip.open .wce-chip-chev {
-  transform: rotate(180deg);
-}
-.wce-panel {
-  position: absolute;
-  top: calc(100% + var(--space-1));
-  left: 0;
-  z-index: var(--z-dropdown);
-  box-sizing: border-box;
-  display: flex;
-  flex-direction: column;
+.wce :deep(.wce-panel) {
   gap: 2px;
   width: max-content;
   min-width: calc(var(--space-8) * 8);
   max-width: min(calc(var(--space-8) * 13), calc(100vw - var(--space-8)));
-  padding: var(--space-1);
-  border: var(--p-hairline) solid var(--color-line);
-  border-radius: var(--radius-lg);
-  background: var(--color-menu-bg);
-  -webkit-backdrop-filter: var(--p-menu-backdrop);
-  backdrop-filter: var(--p-menu-backdrop);
-  box-shadow: var(--shadow-sm);
-  animation: wce-pop var(--duration-base) var(--ease-out);
-}
-.wce-panel:focus {
-  outline: none;
-}
-.wce-panel.up {
-  top: auto;
-  bottom: calc(100% + var(--space-1));
-}
-@keyframes wce-pop {
-  from {
-    opacity: 0;
-    transform: scale(0.99);
-  }
-  to {
-    opacity: 1;
-    transform: scale(1);
-  }
 }
 .wce-row {
   display: flex;

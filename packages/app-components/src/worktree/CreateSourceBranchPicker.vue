@@ -4,7 +4,7 @@ import { useI18n } from 'vue-i18n';
 import { newSessionEnvironmentStore } from '@moonshot-ai/app-client/stores';
 import { Icon, MenuItem, Switch, menuNavigationIndex, useImeComposition } from '@moonshot-ai/app-ui';
 import CreateSetupScriptDialog from './CreateSetupScriptDialog.vue';
-import { useCreatePopover } from './createPopover';
+import CreatePicker from './CreatePicker.vue';
 
 const props = defineProps<{
   workspaceId?: string | null;
@@ -21,7 +21,6 @@ interface BranchRow {
 
 const HOVER_DELAY_MS = 150;
 const PANEL_WIDTH_PX = 320;
-const VIEWPORT_MARGIN_PX = 16;
 
 const { t } = useI18n();
 const store = newSessionEnvironmentStore();
@@ -36,16 +35,13 @@ const hoverRef = computed(() =>
   view.value.usesRemote ? (selection.value?.branch.remoteRef ?? branchName.value) : branchName.value,
 );
 
-const anchorRef = ref<HTMLElement | null>(null);
-const panelRef = ref<HTMLElement | null>(null);
-const triggerRef = ref<HTMLButtonElement | null>(null);
+const picker = ref<InstanceType<typeof CreatePicker> | null>(null);
+const open = ref(false);
 const searchRef = ref<HTMLInputElement | null>(null);
 const listRef = ref<HTMLElement | null>(null);
-const { open, up, maxHeight, toggle, close } = useCreatePopover(anchorRef, panelRef, triggerRef);
 
 const query = ref('');
 const activeIndex = ref(-1);
-const alignRight = ref(false);
 const fadeTop = ref(false);
 const fadeBottom = ref(false);
 
@@ -81,6 +77,14 @@ const branchRows = computed<BranchRow[]>(() =>
 
 const rows = computed<BranchRow[]>(() => (localRow.value === null ? branchRows.value : [localRow.value, ...branchRows.value]));
 
+function groupLabel(row: BranchRow): string {
+  return row.includeLocalChanges ? 'worktreeCreate.branch.localFileStatus' : 'worktreeCreate.branch.localBranches';
+}
+
+function startsGroup(index: number): boolean {
+  return index === 0 || rows.value[index - 1]!.includeLocalChanges !== rows.value[index]!.includeLocalChanges;
+}
+
 function updateFades(): void {
   const el = listRef.value;
   if (el === null) {
@@ -105,9 +109,6 @@ watch(open, async (isOpen) => {
   hideHover();
   void store.refreshBranches(props.workspaceId);
   void store.ensureSetupScript(props.workspaceId);
-  const rect = anchorRef.value?.getBoundingClientRect();
-  alignRight.value =
-    rect !== undefined && rect.left + PANEL_WIDTH_PX > window.innerWidth - VIEWPORT_MARGIN_PX && rect.right >= PANEL_WIDTH_PX;
   activeIndex.value = rows.value.findIndex((row) => row.selected);
   await nextTick();
   searchRef.value?.focus({ preventScroll: true });
@@ -156,7 +157,7 @@ const scriptExists = computed(() => view.value.setupScript?.exists === true);
 const scriptDialogOpen = ref(false);
 
 function openScriptDialog(): void {
-  close();
+  picker.value?.close();
   scriptDialogOpen.value = true;
 }
 
@@ -183,193 +184,134 @@ onUnmounted(hideHover);
 </script>
 
 <template>
-  <div v-if="visible" ref="anchorRef" class="wsb" data-worktree-source-branch>
-    <button
-      ref="triggerRef"
-      type="button"
-      class="wsb-chip"
-      :class="{ open }"
-      aria-haspopup="dialog"
-      :aria-expanded="open"
-      :aria-label="`${t('worktreeCreate.branch.label')}: ${branchName}`"
-      @click.stop="toggle"
-      @mouseenter="showHover"
-      @mouseleave="hideHover"
-      @focus="showHover"
-      @blur="hideHover"
-    >
+  <CreatePicker
+    v-if="visible"
+    ref="picker"
+    v-model:open="open"
+    class="wsb"
+    data-worktree-source-branch
+    popup="dialog"
+    chip-class="wsb-chip"
+    panel-class="wsb-panel"
+    :panel-width="PANEL_WIDTH_PX"
+    :label="`${t('worktreeCreate.branch.label')}: ${branchName}`"
+    :panel-label="t('worktreeCreate.branch.label')"
+    @mouseenter="showHover"
+    @mouseleave="hideHover"
+    @focusin="showHover"
+    @focusout="hideHover"
+  >
+    <template #chip>
       <span class="wsb-glyph" :class="{ 'has-dot': includesLocalChanges }" :data-glyph="glyphIcon">
         <Icon :name="glyphIcon" size="md" />
       </span>
       <span class="wsb-chip-name">{{ branchName }}</span>
-      <Icon class="wsb-chip-chev" name="chevron-down" size="sm" />
-    </button>
-    <div v-if="hoverOpen && !open" class="wsb-hover" role="tooltip">
-      <div class="wsb-hover-row wsb-hover-main">
-        <Icon :name="glyphIcon" size="sm" />
-        <span>{{ hoverRef }}</span>
+    </template>
+    <template #extra>
+      <div v-if="hoverOpen && !open" class="wsb-hover" role="tooltip">
+        <div class="wsb-hover-row wsb-hover-main">
+          <Icon :name="glyphIcon" size="sm" />
+          <span>{{ hoverRef }}</span>
+        </div>
+        <div v-if="includesLocalChanges" class="wsb-hover-row">
+          <span class="wsb-glyph has-dot"><Icon name="worktree-branch" size="sm" /></span>
+          <span>{{ t('worktreeCreate.branch.includeLocalChanges') }}</span>
+        </div>
       </div>
-      <div v-if="includesLocalChanges" class="wsb-hover-row">
-        <span class="wsb-glyph has-dot"><Icon name="worktree-branch" size="sm" /></span>
-        <span>{{ t('worktreeCreate.branch.includeLocalChanges') }}</span>
-      </div>
+      <CreateSetupScriptDialog
+        v-model:open="scriptDialogOpen"
+        :workspace-id="workspaceId"
+        :workspace-name="workspaceName"
+      />
+    </template>
+    <div class="wsb-search">
+      <Icon name="search" size="sm" />
+      <input
+        ref="searchRef"
+        v-model="query"
+        class="wsb-search-input"
+        type="text"
+        role="combobox"
+        aria-expanded="true"
+        aria-autocomplete="list"
+        :placeholder="t('worktreeCreate.branch.searchPlaceholder')"
+        :aria-label="t('worktreeCreate.branch.searchPlaceholder')"
+        autocomplete="off"
+        spellcheck="false"
+        @keydown="onSearchKeydown"
+        @compositionstart="handleCompositionStart"
+        @compositionend="handleCompositionEnd"
+      />
     </div>
     <div
-      v-if="open"
-      ref="panelRef"
-      class="wsb-panel"
-      :class="{ up, 'align-right': alignRight }"
-      :style="maxHeight === null ? undefined : { maxHeight: `${maxHeight}px` }"
-      role="dialog"
-      :aria-label="t('worktreeCreate.branch.label')"
+      ref="listRef"
+      class="wsb-list"
+      :class="{ 'fade-top': fadeTop, 'fade-bottom': fadeBottom }"
+      role="listbox"
+      @scroll.passive="updateFades"
     >
-      <div class="wsb-search">
-        <Icon name="search" size="sm" />
-        <input
-          ref="searchRef"
-          v-model="query"
-          class="wsb-search-input"
-          type="text"
-          role="combobox"
-          aria-expanded="true"
-          aria-autocomplete="list"
-          :placeholder="t('worktreeCreate.branch.searchPlaceholder')"
-          :aria-label="t('worktreeCreate.branch.searchPlaceholder')"
-          autocomplete="off"
-          spellcheck="false"
-          @keydown="onSearchKeydown"
-          @compositionstart="handleCompositionStart"
-          @compositionend="handleCompositionEnd"
+      <div v-if="rows.length === 0" class="wsb-empty">{{ t('worktreeCreate.branch.empty') }}</div>
+      <template v-for="(row, index) in rows" :key="row.key">
+        <div v-if="startsGroup(index)" class="wsb-group">{{ t(groupLabel(row)) }}</div>
+        <button
+          type="button"
+          class="wsb-row"
+          :class="{ on: row.selected, active: activeIndex === index }"
+          role="option"
+          tabindex="-1"
+          :aria-selected="row.selected"
+          :data-row="row.includeLocalChanges ? 'local' : row.branch"
+          @mousemove="activeIndex = index"
+          @click.stop="selectRow(row)"
+        >
+          <span class="wsb-glyph" :class="{ 'has-dot': row.includeLocalChanges }"><Icon name="worktree-branch" size="md" /></span>
+          <span class="wsb-row-text">
+            <span class="wsb-row-name">{{ row.branch }}</span>
+            <span v-if="row.includeLocalChanges" class="wsb-row-desc">{{ t('worktreeCreate.branch.includeLocalChangesHint') }}</span>
+          </span>
+          <span v-if="row.remote" class="wsb-row-remote" data-remote>{{ row.remote }}</span>
+          <Icon v-if="row.selected" class="wsb-row-check" name="check" size="sm" />
+        </button>
+      </template>
+    </div>
+    <MenuItem class="wsb-sep" separator />
+    <div class="wsb-foot">
+      <div v-if="view.remoteAvailable" class="wsb-foot-row" data-foot="remote">
+        <Icon class="wsb-foot-icon" name="git-branch-cloud" size="md" />
+        <span class="wsb-foot-label">{{ t('worktreeCreate.branch.useRemote') }}</span>
+        <Switch
+          :model-value="view.useRemote"
+          :label="t('worktreeCreate.branch.useRemote')"
+          @update:model-value="setUseRemote"
         />
       </div>
-      <div
-        ref="listRef"
-        class="wsb-list"
-        :class="{ 'fade-top': fadeTop, 'fade-bottom': fadeBottom }"
-        role="listbox"
-        @scroll.passive="updateFades"
-      >
-        <div v-if="rows.length === 0" class="wsb-empty">{{ t('worktreeCreate.branch.empty') }}</div>
-        <template v-if="localRow">
-          <div class="wsb-group">{{ t('worktreeCreate.branch.localFileStatus') }}</div>
-          <button
-            type="button"
-            class="wsb-row"
-            :class="{ on: localRow.selected, active: activeIndex === 0 }"
-            role="option"
-            tabindex="-1"
-            :aria-selected="localRow.selected"
-            data-row="local"
-            @mousemove="activeIndex = 0"
-            @click.stop="selectRow(localRow)"
-          >
-            <span class="wsb-glyph has-dot"><Icon name="worktree-branch" size="md" /></span>
-            <span class="wsb-row-text">
-              <span class="wsb-row-name">{{ localRow.branch }}</span>
-              <span class="wsb-row-desc">{{ t('worktreeCreate.branch.includeLocalChangesHint') }}</span>
-            </span>
-            <Icon v-if="localRow.selected" class="wsb-row-check" name="check" size="sm" />
-          </button>
-        </template>
-        <template v-if="branchRows.length > 0">
-          <div class="wsb-group">{{ t('worktreeCreate.branch.localBranches') }}</div>
-          <button
-            v-for="(row, index) in branchRows"
-            :key="row.key"
-            type="button"
-            class="wsb-row"
-            :class="{ on: row.selected, active: activeIndex === index + (localRow ? 1 : 0) }"
-            role="option"
-            tabindex="-1"
-            :aria-selected="row.selected"
-            :data-row="row.branch"
-            @mousemove="activeIndex = index + (localRow ? 1 : 0)"
-            @click.stop="selectRow(row)"
-          >
-            <span class="wsb-glyph"><Icon name="worktree-branch" size="md" /></span>
-            <span class="wsb-row-text">
-              <span class="wsb-row-name">{{ row.branch }}</span>
-            </span>
-            <span v-if="row.remote" class="wsb-row-remote" data-remote>{{ row.remote }}</span>
-            <Icon v-if="row.selected" class="wsb-row-check" name="check" size="sm" />
-          </button>
-        </template>
+      <div v-else class="wsb-foot-row is-note" data-foot="no-remote">
+        <Icon class="wsb-foot-icon" name="worktree-branch" size="md" />
+        <span class="wsb-foot-label">{{ t('worktreeCreate.branch.noRemote') }}</span>
       </div>
-      <MenuItem class="wsb-sep" separator />
-      <div class="wsb-foot">
-        <div v-if="view.remoteAvailable" class="wsb-foot-row" data-foot="remote">
-          <Icon class="wsb-foot-icon" name="git-branch-cloud" size="md" />
-          <span class="wsb-foot-label">{{ t('worktreeCreate.branch.useRemote') }}</span>
-          <Switch
-            :model-value="view.useRemote"
-            :label="t('worktreeCreate.branch.useRemote')"
-            @update:model-value="setUseRemote"
-          />
-        </div>
-        <div v-else class="wsb-foot-row is-note" data-foot="no-remote">
-          <Icon class="wsb-foot-icon" name="worktree-branch" size="md" />
-          <span class="wsb-foot-label">{{ t('worktreeCreate.branch.noRemote') }}</span>
-        </div>
-        <div class="wsb-foot-row" data-foot="script">
-          <Icon class="wsb-foot-icon" name="terminal" size="md" />
-          <span class="wsb-foot-label wsb-foot-script">
-            <span>{{ t('worktreeCreate.script.label') }}</span>
-            <button type="button" class="wsb-link" data-action="script" @click.stop="openScriptDialog">
-              {{ t(scriptExists ? 'worktreeCreate.script.edit' : 'worktreeCreate.script.configure') }}
-            </button>
-          </span>
-          <Switch
-            v-if="scriptExists"
-            :model-value="view.runSetupScript"
-            :label="t('worktreeCreate.script.runForSession')"
-            @update:model-value="store.setRunSetupScript($event)"
-          />
-        </div>
+      <div class="wsb-foot-row" data-foot="script">
+        <Icon class="wsb-foot-icon" name="terminal" size="md" />
+        <span class="wsb-foot-label wsb-foot-script">
+          <span>{{ t('worktreeCreate.script.label') }}</span>
+          <button type="button" class="wsb-link" data-action="script" @click.stop="openScriptDialog">
+            {{ t(scriptExists ? 'worktreeCreate.script.edit' : 'worktreeCreate.script.configure') }}
+          </button>
+        </span>
+        <Switch
+          v-if="scriptExists"
+          :model-value="view.runSetupScript"
+          :label="t('worktreeCreate.script.runForSession')"
+          @update:model-value="store.setRunSetupScript($event)"
+        />
       </div>
     </div>
-    <CreateSetupScriptDialog
-      v-model:open="scriptDialogOpen"
-      :workspace-id="workspaceId"
-      :workspace-name="workspaceName"
-    />
-  </div>
+  </CreatePicker>
 </template>
 
 <style scoped>
 .wsb {
-  position: relative;
-  display: flex;
   flex: 0 1 auto;
   min-width: 88px;
-  font-family: var(--font-ui);
-}
-.wsb-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  max-width: 100%;
-  min-width: 0;
-  height: 28px;
-  margin-bottom: 4px;
-  padding: 0 var(--space-2);
-  border: none;
-  border-radius: 10px;
-  background: var(--color-selected);
-  -webkit-backdrop-filter: blur(30px);
-  backdrop-filter: blur(30px);
-  color: var(--color-text);
-  font-family: inherit;
-  font-size: var(--ui-font-size-sm);
-  cursor: pointer;
-  transition: color var(--duration-base) var(--ease-out);
-}
-.wsb-chip:hover,
-.wsb-chip.open {
-  color: var(--color-text-strong);
-}
-.wsb-chip:focus-visible {
-  outline: none;
-  box-shadow: var(--p-focus-ring);
 }
 .wsb-chip-name {
   min-width: 0;
@@ -377,13 +319,6 @@ onUnmounted(hideHover);
   font-weight: var(--weight-option-label);
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-.wsb-chip-chev {
-  flex: none;
-  transition: transform var(--duration-base) var(--ease-out);
-}
-.wsb-chip.open .wsb-chip-chev {
-  transform: rotate(180deg);
 }
 .wsb-glyph {
   position: relative;
@@ -434,42 +369,9 @@ onUnmounted(hideHover);
   font-weight: var(--weight-semibold);
   opacity: 1;
 }
-.wsb-panel {
-  position: absolute;
-  top: calc(100% + var(--space-1));
-  left: 0;
-  z-index: var(--z-dropdown);
-  box-sizing: border-box;
-  display: flex;
-  flex-direction: column;
+.wsb :deep(.wsb-panel) {
   width: min(320px, calc(100vw - var(--space-8)));
   overflow: hidden;
-  padding: var(--space-1);
-  border: var(--p-hairline) solid var(--color-line);
-  border-radius: var(--radius-lg);
-  background: var(--color-menu-bg);
-  -webkit-backdrop-filter: var(--p-menu-backdrop);
-  backdrop-filter: var(--p-menu-backdrop);
-  box-shadow: var(--shadow-sm);
-  animation: wsb-pop var(--duration-base) var(--ease-out);
-}
-.wsb-panel.align-right {
-  right: 0;
-  left: auto;
-}
-.wsb-panel.up {
-  top: auto;
-  bottom: calc(100% + var(--space-1));
-}
-@keyframes wsb-pop {
-  from {
-    opacity: 0;
-    transform: scale(0.99);
-  }
-  to {
-    opacity: 1;
-    transform: scale(1);
-  }
 }
 .wsb-search {
   display: flex;

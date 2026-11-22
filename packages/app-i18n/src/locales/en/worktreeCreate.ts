@@ -12,7 +12,6 @@ export default {
   },
   disk: {
     reminder: 'Worktrees are using {size} ·',
-    manage: 'Manage',
   },
   branch: {
     label: 'Source branch',

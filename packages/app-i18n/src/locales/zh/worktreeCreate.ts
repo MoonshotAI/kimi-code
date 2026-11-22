@@ -12,7 +12,6 @@ export default {
   },
   disk: {
     reminder: '工作树已占用 {size} ·',
-    manage: '去管理',
   },
   branch: {
     label: '来源分支',

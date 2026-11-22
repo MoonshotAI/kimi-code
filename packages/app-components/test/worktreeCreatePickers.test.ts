@@ -11,6 +11,8 @@ import { memoryStorage } from '@moonshot-ai/app-client/testing';
 import CreateEnvironmentPicker from '../src/worktree/CreateEnvironmentPicker.vue';
 import CreateSourceBranchPicker from '../src/worktree/CreateSourceBranchPicker.vue';
 
+const i18n = createKimiI18n({ locale: 'en' });
+
 const GB = 1024 * 1024 * 1024;
 
 const api = {
@@ -55,7 +57,7 @@ let stopToasts: (() => void) | undefined;
 
 function mount(component: Component, props: Record<string, unknown>): void {
   app = createApp({ render: () => h(component, props) });
-  app.use(createKimiI18n({ locale: 'en' }));
+  app.use(i18n);
   app.provide(IconResolverKey, (name: string) => ({ render: () => h('svg', { 'data-icon': name }) }));
   app.mount(host);
 }
@@ -91,7 +93,7 @@ beforeEach(() => {
     exists: content.trim().length > 0,
     content,
   }));
-  setKimiClientDeps({ api: () => api as never, t: (key) => key });
+  setKimiClientDeps({ api: () => api as never, t: (key, params) => i18n.global.t(key, params ?? {}) });
   workspacesStore().workspaces = [workspace('ws1'), workspace('ws2'), workspace('remote', { hostId: 'h1' })];
   newSessionEnvironmentStore().reset();
   worktreesStore().reset();
@@ -119,7 +121,7 @@ describe('CreateEnvironmentPicker', () => {
     mount(CreateEnvironmentPicker, { workspaceId: 'ws1' });
     await nextTick();
 
-    expect(q('.wce-chip')?.dataset.environment).toBe('local');
+    expect(q('.wce')?.dataset.environment).toBe('local');
     expect(q('.wce-chip-name')?.textContent).toBe('Local');
 
     q('.wce-chip')!.click();
@@ -140,7 +142,7 @@ describe('CreateEnvironmentPicker', () => {
     worktreeRow().click();
     await settle();
     expect(newSessionEnvironmentStore().preferred).toBe('worktree');
-    expect(q('.wce-chip')?.dataset.environment).toBe('worktree');
+    expect(q('.wce')?.dataset.environment).toBe('worktree');
     expect(q('.wce-panel')).toBeNull();
   });
 
@@ -384,12 +386,12 @@ describe('CreateSourceBranchPicker', () => {
       store.setUseRemote('ws1', true);
       mount(CreateSourceBranchPicker, { workspaceId: 'ws1' });
       await nextTick();
-      q('.wsb-chip')!.dispatchEvent(new MouseEvent('mouseenter'));
+      q('.wsb')!.dispatchEvent(new MouseEvent('mouseenter'));
       vi.advanceTimersByTime(200);
       await nextTick();
       expect(all('.wsb-hover-row').map((el) => el.textContent?.trim())).toEqual(['origin/main', 'Include local changes']);
       expect(q('.wsb-hover-main svg')?.getAttribute('data-icon')).toBe('git-branch-cloud');
-      q('.wsb-chip')!.dispatchEvent(new MouseEvent('mouseleave'));
+      q('.wsb')!.dispatchEvent(new MouseEvent('mouseleave'));
       await nextTick();
       expect(q('.wsb-hover')).toBeNull();
     } finally {
