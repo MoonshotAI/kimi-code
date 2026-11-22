@@ -29,6 +29,7 @@ import { FakeEnvironment } from '#/environment/fakeEnvironment';
 import { ISessionEphemeralMcpServers } from '#/session/mcp/ephemeralMcpServers';
 import { MergedMcpConnectionView } from '#/session/mcp/mergedConnectionView';
 import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
+import { ISessionMcpOverlayConnection } from '#/session/mcp/sessionMcpOverlay';
 import { ISessionContext, makeSessionContext } from '#/session/sessionContext/sessionContext';
 import type { SessionWillCreateEvent } from '#/workspace/sessionLifecycle/sessionLifecycle';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
@@ -395,6 +396,44 @@ describe('WorkspaceMcpService', () => {
     await overlay.shutdown();
   }, 20000);
 
+  it('sessionOverlay handle ready no longer waits for the overlay connect', async () => {
+    current = { base: stdioServer() };
+    let settleOverlay: () => void = () => undefined;
+    vi.spyOn(McpConnectionManager.prototype, 'connectAll').mockImplementation(function (
+      this: McpConnectionManager,
+      servers: Readonly<Record<string, McpServerConfig>>,
+    ) {
+      if ('eph' in servers) {
+        return new Promise<void>((resolve) => {
+          settleOverlay = resolve;
+        });
+      }
+      for (const [name, config] of Object.entries(servers)) {
+        void this.connect(name, config);
+      }
+      return Promise.resolve();
+    });
+
+    const service = createService();
+    manager = service.connectionManager();
+    await service.ready;
+
+    const overlay = service.sessionOverlay({ eph: stdioServer() });
+    let handleReady = false;
+    void overlay.handle.ready.then(() => {
+      handleReady = true;
+    });
+    await vi.waitFor(() => {
+      expect(handleReady).toBe(true);
+    });
+
+    settleOverlay();
+    await overlay.connection.ready;
+    expect(overlay.handle.connectionManager.get('eph')).toBeUndefined();
+
+    await overlay.shutdown();
+  }, 20000);
+
   it('sessionOverlay connects ephemeral servers on a session-owned manager, released by shutdown', async () => {
     current = { base: stdioServer() };
     const service = createService();
@@ -402,7 +441,7 @@ describe('WorkspaceMcpService', () => {
     await service.ready;
 
     const overlay = service.sessionOverlay({ eph: stdioServer() });
-    await overlay.handle.ready;
+    await overlay.connection.ready;
 
     const view = overlay.handle.connectionManager;
     expect(view.get('eph')?.status).toBe('connected');
@@ -422,7 +461,7 @@ describe('WorkspaceMcpService', () => {
     await service.ready;
 
     const overlay = service.sessionOverlay({ eph: stdioServer() }, { sessionId: 'session-1' });
-    await overlay.handle.ready;
+    await overlay.connection.ready;
 
     expect(new Set(trackedSessions)).toEqual(new Set([undefined, 'session-1']));
 
@@ -478,7 +517,8 @@ describe('WorkspaceMcpService', () => {
       expect(sessionOverlay).toHaveBeenCalledWith(servers, { stdioCwd: cwd, sessionId: 's1' });
       const overlay = sessionOverlay.mock.results[0]?.value as ISessionMcpOverlay;
       expect(contributed.get(ISessionMcpHandle)).toBe(overlay.handle);
-      await overlay.handle.ready;
+      expect(contributed.get(ISessionMcpOverlayConnection)).toBe(overlay.connection);
+      await overlay.connection.ready;
       expect(overlay.handle.connectionManager.get('eph')?.status).toBe('connected');
 
       const shutdown = vi.spyOn(overlay, 'shutdown');

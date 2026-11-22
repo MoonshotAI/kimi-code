@@ -16,6 +16,7 @@ import { canonicalMcpOAuthResource } from '#/mcpCore/oauth/store';
 import { ISessionEphemeralMcpServers } from '#/session/mcp/ephemeralMcpServers';
 import { MergedMcpConnectionView } from '#/session/mcp/mergedConnectionView';
 import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
+import { ISessionMcpOverlayConnection } from '#/session/mcp/sessionMcpOverlay';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
 import { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
@@ -133,6 +134,7 @@ export class WorkspaceMcpService extends Disposable implements IWorkspaceMcpServ
           sessionId: context.sessionId,
         });
         event.contributeSeed(ISessionMcpHandle, overlay.handle);
+        event.contributeSeed(ISessionMcpOverlayConnection, overlay.connection);
         event.onSessionDispose(() => {
           void overlay.shutdown();
         });
@@ -180,18 +182,23 @@ export class WorkspaceMcpService extends Disposable implements IWorkspaceMcpServ
       sessionManager,
       new Set(Object.keys(servers)),
     );
-    const ready = Promise.all([this.ready, connect]).then(() => undefined);
+    let shutdownPromise: Promise<void> | undefined;
+    const shutdown = (): Promise<void> => {
+      shutdownPromise ??= (async () => {
+        unsubscribeOAuth();
+        await sessionManager.shutdown();
+      })();
+      return shutdownPromise;
+    };
     return {
       handle: {
         _serviceBrand: undefined,
-        ready,
+        ready: this.ready,
         connectionManager: view,
         isBaselineServer: this.sessionBaseline(this.manager, this.ready, Object.keys(servers)),
       },
-      shutdown: () => {
-        unsubscribeOAuth();
-        return sessionManager.shutdown();
-      },
+      connection: { ready: connect, shutdown },
+      shutdown,
     };
   }
 
