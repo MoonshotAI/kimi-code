@@ -21,6 +21,10 @@ export function isLoadableToolsAnnouncement(message: ContextMessage): boolean {
   return origin?.kind === 'system_trigger' && origin.name === LOADABLE_TOOLS_VARIANT;
 }
 
+export function isLoadableToolsSnapshotAnnouncement(message: ContextMessage): boolean {
+  return isLoadableToolsAnnouncement(message) && announcementDisclosure(message)?.kind === 'snapshot';
+}
+
 export function isToolSelectAnnouncementDisclosure(
   value: unknown,
 ): value is ToolSelectAnnouncementDisclosure {
