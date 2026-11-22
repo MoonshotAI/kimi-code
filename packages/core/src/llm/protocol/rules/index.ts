@@ -15,6 +15,7 @@ export type PatternSet<TOptions> = (
 
 export interface LegalizeSpec<TOptions> {
   readonly media: MediaSupport;
+  readonly preserveSignedBlankText?: boolean;
   readonly toolCallId?: ToolCallIdPolicy;
   readonly patterns?: PatternSet<TOptions>;
   readonly thinkingHistory?: PatternSet<TOptions>;
@@ -34,7 +35,7 @@ export function legalize<TOptions>(
     relocateToolMedia(messages, spec.media),
   );
   const structuralLegal = pass.messages('legalize-structure', relocated, (messages, ctx) =>
-    cleanMessages(messages, ctx.report),
+    cleanMessages(messages, ctx.report, spec.preserveSignedBlankText === true),
   );
   const idsLegal = pass.messages('legalize-tool-call-ids', structuralLegal, (messages) =>
     legalizeToolCallIds(messages, spec.toolCallId),
