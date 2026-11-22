@@ -216,10 +216,6 @@ const chevronLabel = computed(() =>
   color: var(--color-text-muted);
   flex: none;
 }
-.tl-lead :slotted(.tl-wrap) {
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
 .tl-lead :slotted(.tl-dim) {
   color: var(--color-text-muted);
   min-width: 0;

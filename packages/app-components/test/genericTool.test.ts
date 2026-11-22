@@ -236,15 +236,17 @@ describe('FetchURL row', () => {
     expect(host.querySelector('.tl-lead')?.textContent).not.toContain('{"url"');
   });
 
-  it('wraps long URLs instead of widening the row', () => {
+  it('uses single-line ellipsis for long URLs instead of widening the row', () => {
     const url = `https://example.com/${'a'.repeat(160)}`;
     mount({ name: 'FetchURL', arg: JSON.stringify({ url }) }, 'zh', WebFetchTool);
 
-    expect(host.querySelector('.tl-wrap')?.textContent).toBe(`example.com/${'a'.repeat(160)}`);
+    expect(host.querySelector('.tl-dim')?.textContent).toBe(`example.com/${'a'.repeat(160)}`);
     const component = readFileSync(resolve(process.cwd(), 'packages/app-components/src/chat/tool-calls/ToolDisclosure.vue'), 'utf8');
-    const rule = /\.tl-lead\s+:slotted\(\.tl-wrap\)\s*\{([^}]*)\}/.exec(component)?.[1];
+    const rule = /\.tl-lead\s+:slotted\(\.tl-dim\)\s*\{([^}]*)\}/.exec(component)?.[1];
     expect(rule).toContain('min-width: 0;');
-    expect(rule).toContain('overflow-wrap: anywhere;');
+    expect(rule).toContain('overflow: hidden;');
+    expect(rule).toContain('text-overflow: ellipsis;');
+    expect(rule).toContain('white-space: nowrap;');
   });
 });
 

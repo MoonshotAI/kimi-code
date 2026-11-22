@@ -2,4 +2,4 @@
 'kimi-code-app': patch
 ---
 
-Wrap long URLs in FetchURL tool rows.
+Truncate long URLs in FetchURL tool rows.
