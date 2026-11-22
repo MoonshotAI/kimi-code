@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Button, Checkbox, Icon, IconButton, Spinner, Tooltip } from '@moonshot-ai/app-ui';
 import { WORKTREE_DISK_REMINDER_THRESHOLD_BYTES } from '@moonshot-ai/app-core/lib';
@@ -24,9 +24,9 @@ interface GroupView {
   deletable: string[];
 }
 
-const collapsed = ref<Set<string>>(new Set());
+const collapsed = reactive(new Set<string>());
 const batchMode = ref(false);
-const selected = ref<Set<string>>(new Set());
+const selected = reactive(new Set<string>());
 const outputPath = ref<string | null>(null);
 const viewedFailures = new Set<string>();
 
@@ -48,7 +48,7 @@ const groups = computed<GroupView[]>(() =>
 );
 
 const deletablePaths = computed(() => new Set(groups.value.flatMap((group) => group.deletable)));
-const selectedPaths = computed(() => [...selected.value].filter((path) => deletablePaths.value.has(path)));
+const selectedPaths = computed(() => [...selected].filter((path) => deletablePaths.value.has(path)));
 
 const reminder = computed(
   () => store.totalSizeBytes !== undefined && store.totalSizeBytes >= WORKTREE_DISK_REMINDER_THRESHOLD_BYTES,
@@ -60,37 +60,29 @@ const totalText = computed(() => {
   return t(reminder.value ? 'worktreeManage.totalReminder' : 'worktreeManage.total', { size });
 });
 
-function isExpanded(key: string): boolean {
-  return !collapsed.value.has(key);
+function toggleIn(set: Set<string>, key: string): void {
+  if (!set.delete(key)) set.add(key);
 }
 
-function toggleGroup(key: string): void {
-  const next = new Set(collapsed.value);
-  if (!next.delete(key)) next.add(key);
-  collapsed.value = next;
+function isExpanded(key: string): boolean {
+  return !collapsed.has(key);
 }
 
 function groupSelected(group: GroupView): boolean {
-  return group.deletable.length > 0 && group.deletable.every((path) => selected.value.has(path));
+  return group.deletable.length > 0 && group.deletable.every((path) => selected.has(path));
 }
 
 function toggleGroupSelection(group: GroupView): void {
-  if (group.deletable.length === 0) return;
-  const next = new Set(selected.value);
-  if (groupSelected(group)) for (const path of group.deletable) next.delete(path);
-  else for (const path of group.deletable) next.add(path);
-  selected.value = next;
-}
-
-function toggleSelection(path: string): void {
-  const next = new Set(selected.value);
-  if (!next.delete(path)) next.add(path);
-  selected.value = next;
+  const select = !groupSelected(group);
+  for (const path of group.deletable) {
+    if (select) selected.add(path);
+    else selected.delete(path);
+  }
 }
 
 function exitBatch(): void {
   batchMode.value = false;
-  selected.value = new Set();
+  selected.clear();
 }
 
 function requestDelete(paths: string[]): void {
@@ -115,8 +107,8 @@ watch(
 );
 
 watch(
-  groups,
-  (current) => {
+  [groups, collapsed],
+  ([current]) => {
     for (const group of current) {
       if (!isExpanded(group.key)) continue;
       for (const row of group.rows) if (row.status === 'failed') viewedFailures.add(row.path);
@@ -124,13 +116,6 @@ watch(
   },
   { immediate: true },
 );
-
-watch(collapsed, () => {
-  for (const group of groups.value) {
-    if (!isExpanded(group.key)) continue;
-    for (const row of group.rows) if (row.status === 'failed') viewedFailures.add(row.path);
-  }
-});
 
 watch(
   () => store.totalSizeBytes,
@@ -216,7 +201,7 @@ onBeforeUnmount(() => {
             @update:model-value="toggleGroupSelection(group)"
           />
         </span>
-        <button type="button" class="wtp-card-toggle" :aria-expanded="isExpanded(group.key)" @click="toggleGroup(group.key)">
+        <button type="button" class="wtp-card-toggle" :aria-expanded="isExpanded(group.key)" @click="toggleIn(collapsed, group.key)">
           <span class="wtp-card-name">{{ group.name }}</span>
           <span class="wtp-card-summary">{{ group.summary }}</span>
           <Icon class="wtp-card-chevron" :class="{ 'is-expanded': isExpanded(group.key) }" name="chevron-right" size="md" />
@@ -232,7 +217,7 @@ onBeforeUnmount(() => {
             :selected="selected.has(row.path)"
             :output-open="outputPath === row.path"
             :pending="deleteRequestPending"
-            @toggle-select="toggleSelection(row.path)"
+            @toggle-select="toggleIn(selected, row.path)"
             @open-session="emit('openSession', $event)"
             @delete="requestDelete([row.path])"
             @toggle-output="toggleOutput(row.path)"
