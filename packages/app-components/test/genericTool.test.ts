@@ -240,9 +240,9 @@ describe('FetchURL row', () => {
     const url = `https://example.com/${'a'.repeat(160)}`;
     mount({ name: 'FetchURL', arg: JSON.stringify({ url }) }, 'zh', WebFetchTool);
 
-    expect(host.querySelector('.tl-url')?.textContent).toBe(`example.com/${'a'.repeat(160)}`);
-    const component = readFileSync(resolve(process.cwd(), 'packages/app-components/src/chat/tool-calls/WebFetchTool.vue'), 'utf8');
-    const rule = /\.tl-url\s*\{([^}]*)\}/.exec(component)?.[1];
+    expect(host.querySelector('.tl-wrap')?.textContent).toBe(`example.com/${'a'.repeat(160)}`);
+    const component = readFileSync(resolve(process.cwd(), 'packages/app-components/src/chat/tool-calls/ToolDisclosure.vue'), 'utf8');
+    const rule = /\.tl-lead\s+:slotted\(\.tl-wrap\)\s*\{([^}]*)\}/.exec(component)?.[1];
     expect(rule).toContain('min-width: 0;');
     expect(rule).toContain('overflow-wrap: anywhere;');
   });
