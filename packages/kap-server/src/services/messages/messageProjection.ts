@@ -162,7 +162,7 @@ export function projectPromptContentParts(content: readonly ContentPart[]): Mess
   for (const part of content) {
     const daemonRef = daemonFileRefFromPart(part);
     const legacy = fromCorePart(part);
-    if (daemonRef !== undefined) {
+    if (daemonRef !== undefined && daemonRef.kind !== 'audio') {
       parts.push({
         type: daemonRef.kind,
         source: { kind: 'session_media', file_id: daemonRef.ref.fileId },

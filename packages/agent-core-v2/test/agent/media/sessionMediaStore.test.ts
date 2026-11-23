@@ -11,6 +11,7 @@ import { createServices, type TestInstantiationService } from '#/_base/di/test';
 import { ISessionMediaStore } from '#/agent/media/sessionMediaStore';
 import { SessionMediaStoreService } from '#/agent/media/sessionMediaStoreService';
 import { mcpResultToExecutableOutput } from '#/agent/mcp/output';
+import type { MCPContentBlock } from '#/mcpCore/types';
 import { detectFileType, sniffImageDimensions } from '#/agent/media/file-type';
 import { renderToolResultForModel } from '#/agent/contextMemory/toolResultRender';
 import { lowerMessage as lowerOpenAI } from '@moonshot-ai/core/llm/builtin/protocol/openai/lower';
@@ -202,6 +203,49 @@ describe('SessionMediaStoreService', () => {
       : lowerAnthropic(message, providerImagePolicy().acceptedMimes);
     expect(JSON.stringify(wire)).toContain(JSON.stringify(encodedPath!).slice(1, -1));
     expect(JSON.stringify(wire)).not.toContain(bytes.toString('base64'));
+  });
+
+  it.each([
+    { kind: 'audio', mimeType: 'audio/wav', block: { type: 'audio', mimeType: 'audio/wav', data: Buffer.alloc(1024, 0x61).toString('base64') } as MCPContentBlock },
+    { kind: 'video', mimeType: 'video/mp4', block: { type: 'resource', resource: { uri: 'example://video', mimeType: 'video/mp4', blob: Buffer.alloc(1024, 0x62).toString('base64') } } as MCPContentBlock },
+  ])('references an MCP $kind part by kimi-file URL instead of inline data', async ({ kind, mimeType, block }) => {
+    const bytes = Buffer.alloc(1024, kind === 'audio' ? 0x61 : 0x62);
+    const result = await mcpResultToExecutableOutput(
+      { isError: false, content: [block] },
+      'mcp__example__media',
+      { attachmentStore: store },
+    );
+    const content = renderToolResultForModel(result);
+    const part = content.find((entry) => entry.type === 'audio_url' || entry.type === 'video_url');
+    expect(part).toBeDefined();
+    const url = part!.type === 'audio_url'
+      ? (part as { audioUrl: { url: string } }).audioUrl.url
+      : (part as { videoUrl: { url: string } }).videoUrl.url;
+    expect(url.startsWith('data:')).toBe(false);
+    const ref = parseDaemonFileUrl(url);
+    expect(ref).toBeDefined();
+    const saved = await store.read(ref!.fileId);
+    expect(saved).toBeDefined();
+    expect(Buffer.from(saved!.data).equals(bytes)).toBe(true);
+    const opened = await store.open(ref!.fileId);
+    expect(opened?.mediaType).toBe(mimeType);
+    expect(modelText(result)).not.toContain(bytes.toString('base64'));
+  });
+
+  it('keeps an MCP audio part inline when the attachment save fails', async () => {
+    await writeFile(join(sessionDir, 'media'), 'not a directory');
+    const bytes = Buffer.alloc(64, 0x61);
+    const result = await mcpResultToExecutableOutput({
+      isError: false,
+      content: [{ type: 'audio', mimeType: 'audio/wav', data: bytes.toString('base64') }],
+    }, 'mcp__example__audio', { attachmentStore: store });
+    const content = renderToolResultForModel(result);
+    const part = content.find((entry) => entry.type === 'audio_url');
+    expect(part).toEqual({
+      type: 'audio_url',
+      audioUrl: { url: `data:audio/wav;base64,${bytes.toString('base64')}` },
+    });
+    expect(modelText(result)).toContain('original attachment preservation is incomplete');
   });
 
   it('provides a readable attachment reference when the backing store has no local path', async () => {

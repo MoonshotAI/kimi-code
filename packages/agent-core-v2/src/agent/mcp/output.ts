@@ -235,7 +235,7 @@ export async function mcpResultToExecutableOutput(
   const capped = await applyBinaryPartCap(compressed.parts, preserveInlineMedia);
   const parts: ContentPart[] = [];
   for (const part of capped.parts) {
-    parts.push(await referenceInlineImage(part, options, preservedUrls));
+    parts.push(await referenceInlineMedia(part, options, preservedUrls));
   }
   const notices = await attachmentDetails(
     [...compressed.captions, ...attachmentNotices, ...capped.notices], options,
@@ -250,23 +250,39 @@ export async function mcpResultToExecutableOutput(
   return result.isError ? { ...base, isError: true } : base;
 }
 
-async function referenceInlineImage(
+async function referenceInlineMedia(
   part: ContentPart,
   options: McpOutputOptions,
   preservedUrls: ReadonlyMap<string, string | undefined>,
 ): Promise<ContentPart> {
-  if (part.type !== 'image_url' || options.attachmentStore === undefined) return part;
-  const url = part.imageUrl.url;
-  const image = parseImageDataUrl(url);
-  if (image === null || sniffMediaFromMagic(decodeBase64Prefix(image.base64))?.kind !== 'image') return part;
+  if (options.attachmentStore === undefined) return part;
+  if (part.type !== 'image_url' && part.type !== 'audio_url' && part.type !== 'video_url') {
+    return part;
+  }
+  const url =
+    part.type === 'image_url'
+      ? part.imageUrl.url
+      : part.type === 'audio_url'
+        ? part.audioUrl.url
+        : part.videoUrl.url;
+  const parsed = parseImageDataUrl(url);
+  if (parsed === null) return part;
+  if (
+    part.type === 'image_url' &&
+    sniffMediaFromMagic(decodeBase64Prefix(parsed.base64))?.kind !== 'image'
+  ) {
+    return part;
+  }
   options.signal?.throwIfAborted();
   let reference = preservedUrls.get(url);
   if (reference === undefined && preservedUrls.has(url)) return part;
   try {
     reference ??= (await saveAttachment(
-      decodeAttachment(image.base64), image.mimeType, options.attachmentStore, options.signal,
+      decodeAttachment(parsed.base64), parsed.mimeType, options.attachmentStore, options.signal,
     )).reference;
-    return { ...part, imageUrl: { ...part.imageUrl, url: reference } };
+    if (part.type === 'image_url') return { ...part, imageUrl: { ...part.imageUrl, url: reference } };
+    if (part.type === 'audio_url') return { ...part, audioUrl: { ...part.audioUrl, url: reference } };
+    return { ...part, videoUrl: { ...part.videoUrl, url: reference } };
   } catch {
     options.signal?.throwIfAborted();
     return part;
