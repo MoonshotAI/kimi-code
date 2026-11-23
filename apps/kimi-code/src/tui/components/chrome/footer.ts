@@ -4,6 +4,7 @@ import chalk from 'chalk';
 import { effectiveModelAlias } from '@moonshot-ai/kimi-code-sdk';
 
 import { ALL_TIPS, TRANSCRIPT_GROUPING_TIP, type ToolbarTip } from '#/tui/constant/tips';
+import type { TodoItem } from '#/tui/components/messages/tool-renderers/todo';
 import { transcriptGroupingActive } from '#/tui/config';
 import { isRainbowDancing, renderDanceFooterModel } from '#/tui/easter-eggs/dance';
 import { currentTheme } from '#/tui/theme';
@@ -36,6 +37,7 @@ const DEFAULT_STATUS_LINE_ITEMS = ['mode', 'goal', 'model', 'tasks', 'environmen
 
 const MAX_CWD_SEGMENTS = 3;
 const MAX_ENVIRONMENT_REASON_WIDTH = 40;
+const MAX_TODO_TITLE_WIDTH = 32;
 const GOAL_TIMER_INTERVAL_MS = 1_000;
 
 const TIP_ROTATE_INTERVAL_MS = 10_000;
@@ -115,6 +117,18 @@ function formatGoalBadge(
     chalk.hex(dotColor)('●') +
     chalk.hex(colors.textMuted)(` ${label}]`)
   );
+}
+
+function formatTodoBadge(todos: readonly TodoItem[] | null, colors: ColorPalette): string | null {
+  if (todos === null || todos.length === 0) return null;
+  const done = todos.filter((todo) => todo.status === 'done').length;
+  const counts = `[todo ${String(done)}/${String(todos.length)}`;
+  const current =
+    todos.find((todo) => todo.status === 'in_progress') ??
+    todos.find((todo) => todo.status === 'pending');
+  if (current === undefined) return chalk.hex(colors.primary)(`${counts}]`);
+  const title = truncateToWidth(current.title, MAX_TODO_TITLE_WIDTH, '…');
+  return chalk.hex(colors.primary)(`${counts} · ${title}]`);
 }
 
 function formatBadgeElapsed(ms: number): string {
@@ -388,6 +402,7 @@ export class FooterComponent implements Component {
       goal: [],
       model: [],
       tasks: [],
+      todos: [],
       environment: [],
       cwd: [],
       git: [],
@@ -449,6 +464,9 @@ export class FooterComponent implements Component {
       );
     }
     slots['tasks'] = taskBadges;
+
+    const todoBadge = formatTodoBadge(state.todos ?? null, colors);
+    if (todoBadge !== null) slots['todos'] = [todoBadge];
 
     const environment = state.environment;
     const remote = isRemoteEnvironment(environment);
