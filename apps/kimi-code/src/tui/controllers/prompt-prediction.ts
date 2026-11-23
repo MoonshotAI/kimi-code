@@ -53,6 +53,10 @@ export class PromptPredictionController {
     this.startPrediction();
   }
 
+  handleLoopIdle(): void {
+    this.startPrediction();
+  }
+
   private startPrediction(): boolean {
     const target = this.latestTurn;
     if (target === undefined || this.host.session !== target.session || !this.canUsePrediction()) return false;

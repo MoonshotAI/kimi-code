@@ -179,4 +179,52 @@ describe('PromptPredictionController', () => {
     }
     controller.dispose();
   });
+
+  it('starts the prediction when the loop turns idle after a waiting turn end', async () => {
+    setExperimentalFeatures([{ id: 'prompt_prediction', enabled: true }]);
+    onTestFinished(() => setExperimentalFeatures([]));
+    const editor = new CustomEditor({ requestRender: vi.fn(), terminal: { rows: 40, cols: 80 } } as unknown as TUI);
+    const state = {
+      editor,
+      startupState: 'ready',
+      appState: {
+        streamingPhase: 'waiting',
+        isCompacting: false,
+        isReplaying: false,
+        planMode: false,
+      },
+      queuedMessages: [],
+      queuedMessageDispatchPending: false,
+      activeDialog: null,
+      editorReplacementMounted: false,
+      tasksBrowser: undefined,
+      externalEditorRunning: false,
+      livePane: { pendingApproval: null, pendingQuestion: null },
+      ui: { requestRender: vi.fn() },
+    } as unknown as TUIState;
+    const session = {
+      id: 'session-1',
+      predictNextPrompt: vi.fn(() => Promise.resolve<string | null>('add a regression test')),
+      cancelPromptPrediction: vi.fn(async () => true),
+    } as unknown as Session;
+    const controller = new PromptPredictionController({ state, session, aborted: false, track: vi.fn() });
+
+    controller.handleTurnEnded(turnEnded(3));
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(session.predictNextPrompt).not.toHaveBeenCalled();
+
+    state.appState.streamingPhase = 'idle';
+    controller.handleLoopIdle();
+    await vi.waitFor(() => expect(session.predictNextPrompt).toHaveBeenCalledTimes(1));
+    expect(session.predictNextPrompt).toHaveBeenCalledWith({
+      predictionId: expect.any(String),
+      expectedTurnId: 3,
+    });
+    await vi.waitFor(() => expect(editor.getPromptPrediction()).toBe('add a regression test'));
+
+    controller.handleLoopIdle();
+    expect(session.predictNextPrompt).toHaveBeenCalledTimes(1);
+    controller.dispose();
+  });
 });

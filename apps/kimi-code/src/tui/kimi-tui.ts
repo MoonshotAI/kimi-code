@@ -2212,6 +2212,10 @@ export class KimiTUI {
     this.promptPredictionController.handleTurnEnded(event);
   }
 
+  handlePromptPredictionIdle(): void {
+    this.promptPredictionController.handleLoopIdle();
+  }
+
   private async maybeAutoGenerateSessionTitle(): Promise<void> {
     const sessionId = this.state.appState.sessionId;
     if (sessionId.length === 0) return;
