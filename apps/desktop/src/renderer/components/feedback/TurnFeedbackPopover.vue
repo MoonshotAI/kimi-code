@@ -260,7 +260,10 @@ async function submit(): Promise<void> {
   border-radius: var(--radius-dock-pill);
 }
 .feedback-editor.is-scrollable { gap: var(--space-2); }
-.feedback-editor:focus-within { border: 1px solid var(--color-accent); }
+.feedback-editor:focus-within {
+  outline: 1px solid var(--color-accent);
+  outline-offset: -1px;
+}
 .feedback-editor .ui-textarea {
   min-height: 20px;
   max-height: calc(240px - 26px - 1.5 * var(--ui-c1));

@@ -9,6 +9,19 @@ import { waitForSettledReply } from './fixtures/transcript';
 
 const envelope = (data: unknown) => ({ code: 0, msg: '', data });
 
+async function expectStableEditorOnFocus(input: Locator, editor = input): Promise<void> {
+  await expect(input).not.toBeFocused();
+  const box = await editor.boundingBox();
+  if (!box) throw new Error('Feedback editor is not visible');
+  const clip = { x: box.x + 8, y: box.y + 8, width: box.width - 16, height: box.height - 16 };
+  const capture = () => input.page().screenshot({ clip, caret: 'hide', animations: 'disabled' });
+  const idle = await capture();
+  await input.click();
+  await expect(input).toBeFocused();
+  expect(await editor.boundingBox()).toEqual(box);
+  expect((await capture()).equals(idle), 'Text and counter stay in place on focus').toBe(true);
+}
+
 async function expectVisibleCheckmark(app: DesktopApp, checkbox: Locator): Promise<void> {
   const icon = checkbox.locator('..').locator('.ui-check__box');
   const png = await icon.screenshot({ scale: 'css', animations: 'disabled' });
@@ -104,15 +117,7 @@ testWithProvider('submits global and reply feedback with opt-in attachments', as
   await expect(dialog.getByRole('checkbox', { name: /Submit diagnostic logs/ })).not.toBeChecked();
   await expect(dialog.getByRole('checkbox', { name: /Submit this conversation/ })).toHaveCount(0);
   const description = dialog.getByRole('textbox', { name: 'Description' });
-  const textClip = await description.evaluate(element => {
-    const { x, y, width, height } = element.getBoundingClientRect();
-    return { x: x + 8, y: y + 8, width: width - 16, height: height - 16 };
-  });
-  const captureText = () => page.screenshot({ clip: textClip, caret: 'hide', animations: 'disabled' });
-  const beforeFocus = await captureText();
-  await description.click();
-  await expect(description).toBeFocused();
-  expect((await captureText()).equals(beforeFocus)).toBe(true);
+  await expectStableEditorOnFocus(description);
   await description.fill('A reproducible issue');
   await dialog.getByRole('button', { name: 'Cancel' }).click();
 
@@ -172,6 +177,11 @@ testWithProvider('submits global and reply feedback with opt-in attachments', as
   await expect(details.getByRole('checkbox', { name: 'Also submit this conversation' })).not.toBeChecked();
   await app.snapshot('reply-feedback');
   const replyDescription = details.getByRole('textbox');
+  const replyEditor = details.locator('.feedback-editor');
+  await expectStableEditorOnFocus(replyDescription, replyEditor);
+  await replyDescription.fill('Some feedback');
+  await replyDescription.press('Tab');
+  await expectStableEditorOnFocus(replyDescription, replyEditor);
   const replySubmit = details.getByRole('button', { name: 'Submit', exact: true });
   const initialHeight = await details.evaluate(el => el.clientHeight);
   const longDescription = `${'Example feedback. '.repeat(10)}\n`.repeat(12);
