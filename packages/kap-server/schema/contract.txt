@@ -890,7 +890,7 @@ GET /api/v1/sessions/{session_id}/agents/{agent_id}/turns response 200<code=0>.d
 GET /api/v1/sessions/{session_id}/agents/{agent_id}/turns response 200<code=0>.data.turns[].items[]<tool_call>.note: string optional
 GET /api/v1/sessions/{session_id}/agents/{agent_id}/turns response 200<code=0>.data.turns[].items[]<tool_call>.outcome: enum "completed"|"failed"|"interrupted" optional
 GET /api/v1/sessions/{session_id}/agents/{agent_id}/turns response 200<code=0>.data.turns[].items[]<tool_call>.output: string optional
-GET /api/v1/sessions/{session_id}/agents/{agent_id}/turns response 200<code=0>.data.turns[].items[]<tool_call>.stage: enum "awaiting_approval"|"executing"|"input" optional
+GET /api/v1/sessions/{session_id}/agents/{agent_id}/turns response 200<code=0>.data.turns[].items[]<tool_call>.stage: enum "auto_review"|"awaiting_approval"|"executing"|"input" optional
 GET /api/v1/sessions/{session_id}/agents/{agent_id}/turns response 200<code=0>.data.turns[].items[]<tool_call>.started_at: any
 GET /api/v1/sessions/{session_id}/agents/{agent_id}/turns response 200<code=0>.data.turns[].items[]<tool_call>.status: enum "ended"|"running"
 GET /api/v1/sessions/{session_id}/agents/{agent_id}/turns response 200<code=0>.data.turns[].items[]<tool_call>.step_index: integer maximum=9007199254740991 exclusiveMinimum=true optional
@@ -3530,6 +3530,9 @@ ws server message interaction<interaction#0>.interaction_id: string minLength=1
 ws server message interaction<interaction#0>.kind: const "approval"
 ws server message interaction<interaction#0>.outcome: enum "answered"|"approved"|"cancelled"|"dismissed"|"rejected" optional
 ws server message interaction<interaction#0>.request.action: string
+ws server message interaction<interaction#0>.request.approval_detail.detail: string
+ws server message interaction<interaction#0>.request.approval_detail.title: string
+ws server message interaction<interaction#0>.request.approval_detail: object optional
 ws server message interaction<interaction#0>.request.expires_at: string
 ws server message interaction<interaction#0>.request.tool_input_display: any optional
 ws server message interaction<interaction#0>.request.tool_name: string minLength=1
@@ -3675,7 +3678,7 @@ ws server message item.item<tool_call>.name: string
 ws server message item.item<tool_call>.note: string optional
 ws server message item.item<tool_call>.outcome: enum "completed"|"failed"|"interrupted" optional
 ws server message item.item<tool_call>.output: string optional
-ws server message item.item<tool_call>.stage: enum "awaiting_approval"|"executing"|"input" optional
+ws server message item.item<tool_call>.stage: enum "auto_review"|"awaiting_approval"|"executing"|"input" optional
 ws server message item.item<tool_call>.started_at: string
 ws server message item.item<tool_call>.status: enum "ended"|"running"
 ws server message item.item<tool_call>.step_index: integer maximum=9007199254740991 exclusiveMinimum=0 optional
@@ -3781,7 +3784,7 @@ ws server message item_updated.set.name: string optional
 ws server message item_updated.set.note: string optional
 ws server message item_updated.set.outcome: enum "completed"|"failed"|"interrupted" optional
 ws server message item_updated.set.output: string optional
-ws server message item_updated.set.stage: enum "awaiting_approval"|"executing"|"input" optional
+ws server message item_updated.set.stage: enum "auto_review"|"awaiting_approval"|"executing"|"input" optional
 ws server message item_updated.set.started_at: string optional
 ws server message item_updated.set.status: enum "ended"|"running" optional
 ws server message item_updated.set.step_index: integer maximum=9007199254740991 exclusiveMinimum=0 optional
@@ -4149,7 +4152,7 @@ ws server message turns.turns[].items[]<tool_call>.name: string
 ws server message turns.turns[].items[]<tool_call>.note: string optional
 ws server message turns.turns[].items[]<tool_call>.outcome: enum "completed"|"failed"|"interrupted" optional
 ws server message turns.turns[].items[]<tool_call>.output: string optional
-ws server message turns.turns[].items[]<tool_call>.stage: enum "awaiting_approval"|"executing"|"input" optional
+ws server message turns.turns[].items[]<tool_call>.stage: enum "auto_review"|"awaiting_approval"|"executing"|"input" optional
 ws server message turns.turns[].items[]<tool_call>.started_at: string
 ws server message turns.turns[].items[]<tool_call>.status: enum "ended"|"running"
 ws server message turns.turns[].items[]<tool_call>.step_index: integer maximum=9007199254740991 exclusiveMinimum=0 optional

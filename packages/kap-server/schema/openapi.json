@@ -16880,6 +16880,7 @@
                                             "stage": {
                                               "enum": [
                                                 "input",
+                                                "auto_review",
                                                 "awaiting_approval",
                                                 "executing"
                                               ],

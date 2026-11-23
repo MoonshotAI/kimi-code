@@ -8,7 +8,7 @@
 # commented "# field: type" lines describe the remaining schema fields.
 # Values resolve as: default -> config.toml -> env overlay -> memory.
 
-# Index (32 sections · 2 overlay(s))
+# Index (33 sections · 2 overlay(s))
 #   autoReview               src/features/autoReview/configSection.ts
 #   background               src/agent/task/configSection.ts
 #   builtinProductSkills     src/features/skill/catalog/configSection.ts

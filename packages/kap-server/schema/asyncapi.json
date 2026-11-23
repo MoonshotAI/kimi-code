@@ -325,6 +325,21 @@
                     "action": {
                       "type": "string"
                     },
+                    "approval_detail": {
+                      "properties": {
+                        "detail": {
+                          "type": "string"
+                        },
+                        "title": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "title",
+                        "detail"
+                      ],
+                      "type": "object"
+                    },
                     "expires_at": {
                       "type": "string"
                     },
@@ -1326,6 +1341,7 @@
                     "stage": {
                       "enum": [
                         "input",
+                        "auto_review",
                         "awaiting_approval",
                         "executing"
                       ],
@@ -2139,6 +2155,7 @@
                 "stage": {
                   "enum": [
                     "input",
+                    "auto_review",
                     "awaiting_approval",
                     "executing"
                   ],
@@ -4662,6 +4679,7 @@
                             "stage": {
                               "enum": [
                                 "input",
+                                "auto_review",
                                 "awaiting_approval",
                                 "executing"
                               ],

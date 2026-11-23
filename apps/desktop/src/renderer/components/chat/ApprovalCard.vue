@@ -708,16 +708,19 @@ onUpdated(updateScrollSeams);
   color: var(--color-text-faint);
   margin-top: var(--space-2);
 }
-.shell-danger {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  margin-top: var(--space-2);
+.shell-danger,
+.review-detail {
   padding: var(--space-2) var(--space-3);
   border-radius: var(--radius-md);
   color: var(--color-danger);
   font: var(--text-sm)/var(--leading-normal) var(--font-ui);
   background: var(--color-danger-soft);
+}
+.shell-danger {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
 }
 .shell-danger-ic { flex: none; }
 .review-detail {
@@ -725,11 +728,6 @@ onUpdated(updateScrollSeams);
   flex-direction: column;
   gap: 2px;
   margin-bottom: var(--space-2);
-  padding: var(--space-2) var(--space-3);
-  border-radius: var(--radius-md);
-  color: var(--color-danger);
-  font: var(--text-sm)/var(--leading-normal) var(--font-ui);
-  background: var(--color-danger-soft);
   overflow-wrap: anywhere;
   white-space: pre-wrap;
 }
