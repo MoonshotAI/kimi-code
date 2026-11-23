@@ -551,7 +551,6 @@ export class DaemonKimiWebApi implements KimiWebApi {
     sessionId: string,
     input: {
       title?: string;
-      cwd?: string;
       model?: string;
       permissionMode?: string;
       planMode?: boolean;
@@ -565,7 +564,6 @@ export class DaemonKimiWebApi implements KimiWebApi {
   ): Promise<AppSession> {
     const body: Record<string, unknown> = {};
     if (input.title !== undefined) body['title'] = input.title;
-    if (input.cwd !== undefined) body['metadata'] = { cwd: input.cwd };
     const agentConfig: Record<string, unknown> = {};
     if (input.model !== undefined) agentConfig['model'] = input.model;
     if (input.permissionMode !== undefined) agentConfig['permission_mode'] = input.permissionMode;

@@ -125,7 +125,12 @@ function toEntry(environment: EnvironmentGenerationSnapshot, entry: RemoteEnviro
 }
 
 function toResponse(binding: EnvironmentBinding, workspaceId: string): EnvironmentBindingResponse {
-  return { workspace_id: workspaceId, environment_id: binding.environmentId, cwd: binding.cwd };
+  return {
+    workspace_id: workspaceId,
+    environment_id: binding.environmentId,
+    environment_cwd: binding.cwd,
+    cwd: binding.cwd,
+  };
 }
 
 function sendEnvironmentRouteError(

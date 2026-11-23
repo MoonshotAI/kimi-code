@@ -67,6 +67,7 @@ import type {
   ConversationFeedCreated,
   ConversationService,
 } from '../../../services/conversation/conversationService';
+import { workspaceRootOf } from '../../../services/workspaceVisibility';
 import { mapError } from '../../errors';
 import { ensureMainAgent, MAIN_AGENT_ID } from '../../mainAgent';
 import { SessionAgentFeed } from './sessionAgentFeed';
@@ -581,6 +582,8 @@ export class SessionEventBroadcaster {
               id: meta.id,
               workspaceId: ctx.workspaceId,
               cwd: ctx.cwd,
+              environmentId: meta.environmentId,
+              environmentCwd: meta.environmentCwd,
               title: meta.title,
               lastPrompt: meta.lastPrompt,
               createdAt: meta.createdAt,
@@ -600,7 +603,12 @@ export class SessionEventBroadcaster {
       if (summary === undefined) return undefined;
       const cwd = summary.cwd ?? (await this.opts.core.accessor.get(IWorkspaceService).get(summary.workspaceId))?.root;
       if (cwd === undefined) return undefined;
-      session = toWireSession(summary, cwd, factsOverride ?? resolveSessionFacts(this.opts.core, sessionId));
+      const workspaceRoot = await workspaceRootOf(this.opts.core, summary.workspaceId);
+      session = toWireSession(
+        { ...summary, workspaceRoot },
+        cwd,
+        factsOverride ?? resolveSessionFacts(this.opts.core, sessionId),
+      );
     }
     if (change === 'archived') {
       session = {
