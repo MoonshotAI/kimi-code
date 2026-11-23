@@ -73,8 +73,9 @@ watch([() => props.target, availableSessionId], ([target, sessionId], [previousT
   guideUrls.value = undefined;
   if (target !== null) {
     if (!hasDraft.value) draft.value = blankDraft(target.sessionId);
+    guideUrls.value = feedback?.peekForm()?.learn_more_url;
     void feedback?.loadForm().then(config => {
-      if (target === props.target) guideUrls.value = config?.learn_more_url;
+      if (target === props.target && config !== null) guideUrls.value = config.learn_more_url;
     });
   }
   dragDepth.value = 0;
