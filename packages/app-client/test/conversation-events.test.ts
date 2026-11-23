@@ -206,6 +206,27 @@ async function boot(opts: { deferPages?: boolean; sessionIds?: string[] } = {}) 
 }
 
 describe('conversation events in the client', () => {
+  it('opens a live MCP wait only for the foreground client that sent the prompt, never for a snapshot or a greeting alone', async () => {
+    const h = await boot();
+    const openExternal = vi.fn(async () => {});
+    vi.stubGlobal('window', { kimiDesktop: { openExternal } });
+    vi.stubGlobal('document', { visibilityState: 'visible', hasFocus: () => true });
+    await h.client.sendPrompt(h.client.createPromptEnvelope({ text: 'hi' }));
+    h.startTurn('s1', 0, h.sentPromptId(0), 'hi');
+    expect(openExternal).not.toHaveBeenCalled();
+    const call = { type: 'tool_call', item_id: 'auth', status: 'running', name: 'mcp__example__authenticate', created_at: AT, started_at: AT, stage: 'executing', display: { kind: 'generic', detail: { kind: 'mcp_oauth', serverName: 'example' } } } as const;
+    const request = { serverName: 'example', waitId: 'test-wait', expiresAt: Date.now() + 60_000, authorizationUrl: 'https://auth.example.test/authorize?state=test' };
+    const fields = { 'mcp.oauth.authorization_url': request };
+    const update = { type: 'item.updated', turn_id: 't0', item_id: 'auth', set: { fields } } as const;
+    h.frame('s1', { type: 'item.started', turn_id: 't0', item: call });
+    h.frame('s1', update);
+    h.frame('s1', update);
+    expect(openExternal.mock.calls).toEqual([[request.authorizationUrl]]);
+    h.frame('s1', { type: 'turns', has_more: false, turns: [endedTurn(1, { status: 'running', outcome: undefined, items: [opener('another-client', 'use example'), { ...call, fields }] })] });
+    h.frame('s1', { ...update, turn_id: 't1' });
+    expect(openExternal).toHaveBeenCalledTimes(1);
+  });
+
   it('settles a local turn whose terminal frames beat the POST response', async () => {
     const h = await boot();
     const { notificationsStore } = await import('../src/stores/notifications');
