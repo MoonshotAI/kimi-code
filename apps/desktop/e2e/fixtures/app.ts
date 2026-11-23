@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -25,6 +26,7 @@ import { saveSnapshot } from './snapshot';
 
 const DESKTOP_DIR = resolve(fileURLToPath(new URL('../..', import.meta.url)));
 const MAIN_SHIM = fileURLToPath(new URL('./main-shim.cjs', import.meta.url));
+const MAIN_OUTPUT_RECORDING = '[kimi-e2e] recording the main process output';
 const NETWORK_GUARD = fileURLToPath(NETWORK_GUARD_PRELOAD);
 const OFFLINE_MODELS_DEV = { method: 'GET', url: 'https://models.dev/api.json', status: 404 };
 const PAGE_TIMEOUT_MS = 30_000;
@@ -76,7 +78,7 @@ export interface Fixtures {
 
 interface Launch {
   readonly electron: ElectronApplication;
-  readonly output: string[];
+  readonly mainOutput: () => string;
   readonly mcpUrl: () => string | undefined;
   readonly serverOrigin: () => string | undefined;
 }
@@ -208,21 +210,26 @@ export const test = base.extend<Options & Fixtures>({
     const leftovers: string[] = [];
     const agents: BrowserAgent[] = [];
 
+    let launchesStarted = 0;
     const launchElectron = async (): Promise<Launch> => {
+      launchesStarted += 1;
+      const outputFile = join(scratch, `main-output-${launchesStarted}.log`);
+      await writeFile(outputFile, '');
       const electron = await _electron.launch({
         args: ['-r', MAIN_SHIM, '-r', NETWORK_GUARD, DESKTOP_DIR, `--user-data-dir=${userData}`, '--lang=en-US'],
         cwd: workspace,
-        env,
+        env: { ...env, KIMI_E2E_OUTPUT_FILE: outputFile },
       });
-      const launchOutput: string[] = [];
-      let mcpUrl: string | undefined;
-      let serverOrigin: string | undefined;
+      const mainOutput = (): string => readFileSync(outputFile, 'utf8');
+      const firstRecorded = (pattern: RegExp): (() => string | undefined) => {
+        let value: string | undefined;
+        return () => {
+          value ??= pattern.exec(mainOutput())?.[1];
+          return value;
+        };
+      };
       const collect = (chunk: Buffer): void => {
-        const text = chunk.toString();
-        output.push(text);
-        launchOutput.push(text);
-        mcpUrl ??= /Browser MCP listening on (\S+)/.exec(launchOutput.join(''))?.[1];
-        serverOrigin ??= /embedded server listening on (http:\/\/[^\s/]+)/.exec(launchOutput.join(''))?.[1];
+        output.push(chunk.toString());
       };
       electron.process().stdout?.on('data', collect);
       electron.process().stderr?.on('data', collect);
@@ -239,7 +246,12 @@ export const test = base.extend<Options & Fixtures>({
         await closeApp(electron);
         throw error;
       }
-      return { electron, output: launchOutput, mcpUrl: () => mcpUrl, serverOrigin: () => serverOrigin };
+      return {
+        electron,
+        mainOutput,
+        mcpUrl: firstRecorded(/Browser MCP listening on (\S+)/),
+        serverOrigin: firstRecorded(/embedded server listening on (http:\/\/[^\s/]+)/),
+      };
     };
 
     const traces: Array<{ path: string; clean: boolean }> = [];
@@ -279,6 +291,7 @@ export const test = base.extend<Options & Fixtures>({
     const open = async (launch: Launch, seed: 'workspace' | 'storage' | 'none'): Promise<Page> => {
       const window = await findPage(launch.electron, url => url.startsWith('app://renderer/') && !AUXILIARY_PAGES.test(url), 'main renderer', STARTUP_TIMEOUT_MS);
       await window.waitForLoadState('domcontentloaded');
+      expect(launch.mainOutput().startsWith(MAIN_OUTPUT_RECORDING), 'the main process output must be recorded from its first line, before Playwright reads the pipes').toBe(true);
       await expect.poll(launch.serverOrigin, { message: 'waiting for the embedded server address in the app log', timeout: STARTUP_TIMEOUT_MS }).toBeDefined();
       serverOrigin = launch.serverOrigin()!;
       if (quietMode) await window.emulateMedia({ reducedMotion: 'reduce' });
@@ -335,7 +348,7 @@ export const test = base.extend<Options & Fixtures>({
             const errors: string[] = [];
             if (settled === 'timeout') errors.push(`Playwright did not settle ${CLOSE_TIMEOUT_MS} ms after Electron exited (exit code ${child.exitCode}, signal ${child.signalCode}) and its pipes were closed.`);
             if (leftovers.length > 0) errors.push(`Electron exited but left processes running; they were killed: ${leftovers.join(', ')}`);
-            const blocked = [...launch.output.join('').matchAll(/\[kimi-e2e\] blocked native (\S+): ([^\n]*)/g)];
+            const blocked = [...launch.mainOutput().matchAll(/\[kimi-e2e\] blocked native (\S+): ([^\n]*)/g)];
             record({ nativeCalls: blocked.map(match => ({ api: match[1]!, detail: match[2]! })), unusedAnswers: [], closeError: errors.length > 0 ? errors.join('\n') : null, leftovers });
           }
           return child.exitCode;

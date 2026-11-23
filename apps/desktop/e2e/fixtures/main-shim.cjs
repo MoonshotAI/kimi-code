@@ -1,4 +1,18 @@
 const Module = require('node:module');
+
+const outputFile = process.env.KIMI_E2E_OUTPUT_FILE;
+if (outputFile) {
+  const { appendFileSync } = process.getBuiltinModule('node:fs');
+  for (const stream of [process.stdout, process.stderr]) {
+    const write = stream.write.bind(stream);
+    stream.write = (chunk, ...rest) => {
+      appendFileSync(outputFile, chunk, typeof rest[0] === 'string' ? rest[0] : undefined);
+      return write(chunk, ...rest);
+    };
+  }
+  process.stderr.write('[kimi-e2e] recording the main process output\n');
+}
+
 const electron = require('electron');
 
 const { app, dialog, shell, BaseWindow, BrowserWindow } = electron;
