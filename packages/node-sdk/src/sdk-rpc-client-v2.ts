@@ -181,7 +181,6 @@ import {
   IAgentPermissionModeService,
   IAgentPermissionRulesService,
   IAgentPluginCommandService,
-  IAgentReminderService,
   IAgentSkillService,
   IAgentSwarmService,
   IAgentTaskService,
@@ -2542,8 +2541,8 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   /**
    * Through the agent scope (`IAgentSwarmService.enter` / `.exit`) — no
    * klient facade exists. The v2 service is the port of v1's `SwarmMode`:
-   * enter is idempotent and injects the byte-identical enter reminder for
-   * non-`tool` triggers, exit pops that reminder when it is the last message
+   * enter is idempotent and schedules the byte-identical enter reminder for
+   * non-`tool` triggers on the next step, exit pops that reminder when it is the last message
    * (appending the exit reminder otherwise), and `task` / `tool` triggers
    * auto-exit on turn end. The base class's private enter/exit pair is
    * replaced wholesale; `swarm()` below recomposes it over this override.
@@ -2556,7 +2555,6 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     } else {
       swarm.exit();
     }
-    await agent.accessor.get(IAgentReminderService).reconcileWhenIdle('swarm_mode');
   }
 
   /** v1's `swarm()` composition: enter with the one-shot `task` trigger, then prompt. */
@@ -2580,7 +2578,6 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     } else {
       await tower.exit();
     }
-    await agent.accessor.get(IAgentReminderService).reconcileWhenIdle('tower_mode');
   }
 
   /** Reads the shared tower status summary; the main agent's tower service is authoritative. */
