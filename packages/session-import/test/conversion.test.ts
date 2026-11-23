@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { zstdCompressSync } from 'node:zlib';
@@ -103,6 +103,21 @@ describe('session conversion', () => {
     expect(await readFile(join(copy, 'source', 'subagents', 'agent-one.jsonl'), 'utf8')).toBe(`${answer}\n`);
     expect(await readFile(join(copy, 'source', 'tool-results', 'saved.bin'))).toEqual(Buffer.from([0, 1, 2, 255]));
     expect(body(result.messages)).toContain(`a path under ${folder} maps to ${join(copy, 'source')}.`);
+  });
+
+  it.skipIf(process.getuid?.() === 0)('reports an unreadable source session folder instead of silently omitting it', async () => {
+    const paths = await fixture([user('Original request'), assistant('Original answer')]);
+    const folder = join(dirname(paths.sourcePath), 'source');
+    await mkdir(folder);
+    await writeFile(join(folder, 'saved-tool-output.txt'), 'source tool output');
+    await chmod(folder, 0);
+
+    try {
+      const result = await convertSession({ ...paths, source: 'claude-code', contextWindow: 32768 });
+      expect(result).toMatchObject({ status: 'unreliable', issues: [{ stage: 'attachment' }] });
+    } finally {
+      await chmod(folder, 0o700);
+    }
   });
 
   it('keeps a decompressed copy of a compressed Codex rollout', async () => {
