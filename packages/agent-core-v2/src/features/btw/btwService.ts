@@ -5,9 +5,11 @@ import { denyToolExecution } from '#/agent/toolExecutor/beforeToolExecuteEvent';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { registerLegacyStarting } from '#/agent/toolExecutor/legacyHooks';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import { ErrorCodes, Error2 } from '#/errors';
+import { ErrorCodes, Error2, isError2 } from '#/errors';
+import type { SessionLockLease } from '#/persistence/interface/sessionLock';
 import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionRunGate } from '#/session/sessionActivity/sessionRunGate';
+import { SessionErrors } from '#/session/errors';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 
 import {
@@ -52,12 +54,17 @@ export class SessionBtwService extends Disposable implements ISessionBtwService 
     if (main === undefined) {
       throw new Error2(ErrorCodes.AGENT_NOT_FOUND, 'Main agent was not found');
     }
-    const lease = this.runGate.acquire();
+    let lease: SessionLockLease | undefined;
+    try {
+      lease = this.runGate.acquire();
+    } catch (error) {
+      if (!isError2(error) || error.code !== SessionErrors.codes.SESSION_OCCUPIED) throw error;
+    }
     const childContext = await this.agentLifecycle
       .fork(main.accessor.get(IAgentScopeContext).agentContext, {
         labels: { [BTW_AGENT_LABEL]: 'true' },
       })
-      .finally(() => lease.release());
+      .finally(() => lease?.release());
     const child = this.agentLifecycle.handleOf(childContext.agentId)!;
     child.accessor
       .get(IAgentReminderService)

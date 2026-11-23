@@ -168,6 +168,16 @@ describe('SessionBtwService', () => {
     expect(fork).not.toHaveBeenCalled();
   });
 
+  it('still forks without a lease when another process holds the session', async () => {
+    acquire.mockImplementationOnce(() => {
+      throw new Error2(SessionErrors.codes.SESSION_OCCUPIED, 'occupied');
+    });
+
+    await expect(ix.get(ISessionBtwService).start()).resolves.toBe('agent-btw-1');
+    expect(fork).toHaveBeenCalledTimes(1);
+    expect(releaseLease).not.toHaveBeenCalled();
+  });
+
   it('vetoes non-read-only tool calls on the child through the btw deny listener', async () => {
     const svc = ix.get(ISessionBtwService);
     await svc.start();
