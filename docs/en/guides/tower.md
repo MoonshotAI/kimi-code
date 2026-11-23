@@ -60,7 +60,7 @@ Tower may snapshot uncommitted and untracked files into worker branches; when cr
 
    If HEAD is detached (no branch is checked out), or you need to change the base, run `/tower <base-branch>` instead, for example `/tower feature/my-objective`.
 
-   Activate Tower before sending the first task in a session. After work has started, `/tower on` and `/tower <base-branch>` cannot newly enable Tower; create a new session and activate Tower before sending work.
+   You can toggle Tower at any time, including in the middle of a session. On models that support dynamic tool loading, the Tower tools arrive through a `<tools_added>` announcement and load with `select_tools` after `/tower on`; on models without dynamic tool loading, tools registered mid-session do not reach the model — create a new session there to use Tower.
 
 2. **Send the development objective.** Enter the task as a normal chat message, for example: "Split the checkout documentation update into independent missions, test each one, and merge only branches that pass independent review." It is best to include how to verify the work and what completion means. Tower initializes `.tower/`, plans missions, and starts workers whose dependencies are satisfied in the background. When a worker finishes or Tower receives an inbox message, Tower resumes automatically, so you do not need to poll repeatedly.
 
