@@ -1,0 +1,2 @@
+export const WORKTREE_SHORT_SHA_LENGTH = 7;
+export const WORKTREE_LISTED_FILES = 3;

@@ -92,3 +92,16 @@ export function getInputHistoryFile(workDir: string): string {
   const hash = createHash('md5').update(workDir, 'utf-8').digest('hex');
   return join(getDataDir(), KIMI_CODE_INPUT_HISTORY_DIR_NAME, `${hash}.jsonl`);
 }
+
+export function abbreviateHome(path: string, home = homedir()): string {
+  if (home === '') return path;
+  const cleanHome = home.replace(/[\\/]+$/, '');
+  if (cleanHome === '') return path;
+  const foldedHome = cleanHome.replaceAll('\\', '/');
+  const foldedPath = path.replaceAll('\\', '/');
+  if (foldedPath === foldedHome) return '~';
+  if (foldedPath.startsWith(`${foldedHome}/`)) {
+    return `~${path.slice(cleanHome.length)}`;
+  }
+  return path;
+}
