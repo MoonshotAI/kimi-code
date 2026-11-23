@@ -19,8 +19,6 @@ import type { IWorkspacePersistence } from '#/app/workspace/workspacePersistence
 import type { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import type { SessionLifecycleService } from '#/workspace/sessionLifecycle/sessionLifecycleService';
 import type { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
-import type { IExtraAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/extraAgentProfileLoader';
-import type { IExplicitAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/explicitAgentProfileLoader';
 import type { IPluginAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/pluginAgentProfileLoader';
 import type { IUserAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/userAgentProfileLoader';
 import type { IWorkspaceTrust } from '#/workspace/workspaceTrust/workspaceTrust';
@@ -30,13 +28,11 @@ import type { ProgramWorkdir } from './programWorkdirs';
 
 export interface ProgramSessionControllerInput {
   readonly context: IWorkspaceContext;
-  readonly extraAgentProfiles: IExtraAgentProfileLoader;
-  readonly explicitAgentProfiles: IExplicitAgentProfileLoader;
   readonly userAgentProfiles: IUserAgentProfileLoader;
   readonly pluginAgentProfiles: IPluginAgentProfileLoader;
-  readonly acquireMcp: () => Promise<ProgramMcpLease>;
+  readonly acquireMcp: (workDir?: string) => Promise<ProgramMcpLease>;
   readonly trust: IWorkspaceTrust;
-  readonly acquireWorkdir: (environmentId: string, cwd: string, followsPrimary?: boolean) => Promise<ProgramWorkdir>;
+  readonly acquireWorkdir: (environmentId: string, cwd: string, followsPrimary?: boolean, launchDir?: string) => Promise<ProgramWorkdir>;
   readonly onDispose: () => void;
 }
 

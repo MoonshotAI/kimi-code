@@ -3,11 +3,12 @@ import { tmpdir } from 'node:os';
 import { join, posix } from 'node:path';
 
 import { Immer } from 'immer';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { popConstructionFrame, pushConstructionFrame } from '#/_base/di/fiber';
 import { DisposableStore } from '#/_base/di/lifecycle';
+import { encodeWorkDirKey } from '#/_base/utils/workdir-slug';
 import { TestInstantiationService } from '#/_base/di/test';
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
@@ -18,6 +19,11 @@ import { IEventBus, type ISessionEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
 import { IAgentFileHistoryService, type FileBackupEntry, type FileHistoryState } from '#/features/fileHistory/fileHistory';
 import { AgentFileHistoryService, countLineDiff } from '#/features/fileHistory/fileHistoryService';
+import {
+  dropFileHistorySession,
+  FILE_HISTORY_SESSION_WINDOW,
+  touchFileHistorySession,
+} from '#/features/fileHistory/fileHistoryRetention';
 import {
   displacedCheckpoints,
   fileHistoryKey,
@@ -40,6 +46,7 @@ import type { ISessionWorkspaceContext } from '#/session/workspaceContext/worksp
 import { resolveWorkspacePath } from '#/session/workspaceContext/workspacePaths';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import type { ISessionContext } from '#/session/sessionContext/sessionContext';
+import type { ISessionWorkdir } from '#/session/workdir/workdir';
 import { JsonAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDocumentStore';
 import type { RunnableToolExecution } from '#/tool/toolContract';
 
@@ -127,7 +134,11 @@ describe('AgentFileHistoryService', () => {
     });
   }
 
-  function createService(agentId = 'main', remoteShape = false): AgentFileHistoryService {
+  function createService(
+    agentId = 'main',
+    remoteShape = false,
+    binding: Pick<ISessionWorkdir, 'environmentId' | 'cwd'> = { environmentId: 'local' },
+  ): AgentFileHistoryService {
     const ctx =
       agentId === scopeCtx.agentId
         ? scopeCtx
@@ -166,6 +177,7 @@ describe('AgentFileHistoryService', () => {
                 ? 'sessions/wd_test/test-session'
                 : `sessions/wd_test/test-session/${subKey}`,
           } as ISessionContext,
+          binding as ISessionWorkdir,
           new JsonAtomicDocumentStore(ix.get(IFileSystemStorageService)),
           {
             readdir: async () => [],
@@ -539,6 +551,24 @@ describe('AgentFileHistoryService', () => {
     expect(await blobs.list(scopeCtx.scope(), 'file-history/')).toEqual([]);
   });
 
+  it.each([
+    ['follows the project', { environmentId: 'local' }, true],
+    ['runs in a directory of its own', { environmentId: 'local', cwd: WORK_DIR }, false],
+    ['runs on another environment', { environmentId: 'box', cwd: '/srv/app' }, true],
+  ])('counts a session in the project list unless it runs locally in a directory of its own (%s)', async (_label, binding, inProjectList) => {
+    const service = createService('main', false, binding);
+    setFile('/ws/a.txt', 'one\n');
+
+    startTurn(1);
+    await fireEdit(service, '/ws/a.txt', 1);
+    endTurn(1);
+    await service.settled();
+
+    const docs = new JsonAtomicDocumentStore(ix.get(IFileSystemStorageService));
+    await vi.waitFor(async () => expect(await docs.list('file-history')).toHaveLength(1));
+    expect((await docs.list('file-history')).includes('wd_test')).toBe(inProjectList);
+  });
+
   it('keeps files outside the workspace keyed by absolute path', async () => {
     const service = createService();
     setFile('/elsewhere/notes.md', 'note\n');
@@ -547,6 +577,115 @@ describe('AgentFileHistoryService', () => {
     await fireEdit(service, '/elsewhere/notes.md', 1);
 
     expect(service.history().tracked).toEqual(['/elsewhere/notes.md']);
+  });
+});
+
+describe('file history session lists', () => {
+  const ownListOf = (docs: JsonAtomicDocumentStore, dir: string) =>
+    docs.get<{ sessions: { id: string }[] }>('file-history', `wd_app.${encodeWorkDirKey(dir)}`);
+
+  function retention() {
+    const docs = new JsonAtomicDocumentStore(new InMemoryStorageService());
+    const evicted: string[] = [];
+    const hostFs = {
+      readdir: async () => [{ name: 'main', isDirectory: true }],
+      remove: async (path: string) => {
+        evicted.push(path.split('/').at(-4)!);
+      },
+    } as unknown as IHostFileSystem;
+    const session = (sessionId: string, ownDir?: string, environmentId?: string) => ({
+      docs,
+      hostFs,
+      workspaceId: 'wd_app',
+      placement: environmentId === undefined ? { environmentCwd: ownDir } : { environmentId, environmentCwd: ownDir },
+      sessionDir: `/home/sessions/wd_app/${sessionId}`,
+      sessionId,
+    });
+    return {
+      docs,
+      evicted,
+      touch: (sessionId: string, ownDir?: string) => touchFileHistorySession(session(sessionId, ownDir)),
+      drop: (sessionId: string, ownDir?: string) => dropFileHistorySession(session(sessionId, ownDir)),
+      fill: async (prefix: string, ownDir?: string, environmentId?: string) => {
+        for (let index = 0; index < FILE_HISTORY_SESSION_WINDOW; index += 1) {
+          await touchFileHistorySession(session(`${prefix}-${String(index)}`, ownDir, environmentId));
+        }
+      },
+    };
+  }
+
+  it('keeps the newest sessions of every working directory of a project', async () => {
+    const { evicted, fill, touch } = retention();
+    await fill('main');
+    await fill('fix', '/app-fix');
+    expect(evicted).toEqual([]);
+
+    await touch('main-new');
+    expect(evicted).toEqual(['main-0']);
+
+    await touch('fix-new', '/app-fix');
+    expect(evicted).toEqual(['main-0', 'fix-0']);
+  });
+
+  it('counts remote sessions in the list of their project, where earlier versions counted them', async () => {
+    const { evicted, fill, touch } = retention();
+    await fill('box-a', '/srv/a', 'box');
+    expect(evicted).toEqual([]);
+
+    await touch('main-new');
+    expect(evicted).toEqual(['box-a-0']);
+  });
+
+  it('keeps counting the sessions of the primary directory in the list earlier versions wrote', async () => {
+    const { docs, evicted, touch } = retention();
+    const earlier = Array.from({ length: FILE_HISTORY_SESSION_WINDOW }, (_, index) => ({ id: `earlier-${String(index)}`, touchedAt: index }));
+    await docs.set('file-history', 'wd_app', { sessions: earlier });
+
+    await touch('main-new');
+
+    expect(evicted).toEqual(['earlier-0']);
+  });
+
+  it('never evicts a session with a directory of its own through the list earlier versions counted it in', async () => {
+    const { docs, evicted, fill, touch } = retention();
+    await docs.set('file-history', 'wd_app', { sessions: [{ id: 'fix', touchedAt: 0 }] });
+
+    await touch('fix', '/app-fix');
+    await fill('main');
+
+    expect(evicted).toEqual([]);
+  });
+
+  it('keeps a session out of its own list until it has left the list earlier versions counted it in', async () => {
+    const { docs, touch } = retention();
+    await docs.set('file-history', 'wd_app', { sessions: [{ id: 'fix', touchedAt: 0 }] });
+    const set = docs.set.bind(docs);
+    let failEarlierList = true;
+    docs.set = (async (scope: string, key: string, value: unknown) => {
+      if (key === 'wd_app' && failEarlierList) {
+        failEarlierList = false;
+        throw new Error('disk full');
+      }
+      return set(scope, key, value);
+    }) as typeof docs.set;
+
+    await touch('fix', '/app-fix');
+    expect((await docs.get<{ sessions: { id: string }[] }>('file-history', 'wd_app'))?.sessions.map((entry) => entry.id)).toEqual(['fix']);
+    expect(await ownListOf(docs, '/app-fix')).toBeUndefined();
+
+    await touch('fix', '/app-fix');
+    expect((await docs.get<{ sessions: { id: string }[] }>('file-history', 'wd_app'))?.sessions).toEqual([]);
+    expect((await ownListOf(docs, '/app-fix'))?.sessions.map((entry) => entry.id)).toEqual(['fix']);
+  });
+
+  it('frees the place of a deleted session in the list of its working directory', async () => {
+    const { evicted, drop, fill, touch } = retention();
+    await fill('fix', '/app-fix');
+    await drop('fix-3', '/app-fix');
+
+    await touch('fix-new', '/app-fix');
+
+    expect(evicted).toEqual([]);
   });
 });
 

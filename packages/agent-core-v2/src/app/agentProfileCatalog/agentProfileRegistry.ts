@@ -17,6 +17,18 @@ export interface AgentProfileRegistryChange {
   readonly contextKey?: string;
 }
 
+export interface AgentProfileViewer {
+  readonly workspaceKey: string;
+  readonly contextKeys?: readonly string[];
+}
+
+export function isVisibleAgentProfileSource(source: AgentProfileRegistryChange, viewer: AgentProfileViewer): boolean {
+  return (
+    (source.workspaceKey === undefined || source.workspaceKey === viewer.workspaceKey) &&
+    (source.contextKey === undefined || viewer.contextKeys?.includes(source.contextKey) === true)
+  );
+}
+
 export interface IAgentProfileRegistry {
   readonly _serviceBrand: undefined;
 
@@ -28,3 +40,12 @@ export interface IAgentProfileRegistry {
 
 export const IAgentProfileRegistry: ServiceIdentifier<IAgentProfileRegistry> =
   createDecorator<IAgentProfileRegistry>('agentProfileRegistry');
+
+export function agentProfileRegistryInContext(registry: IAgentProfileRegistry, contextKey: string): IAgentProfileRegistry {
+  return {
+    _serviceBrand: undefined,
+    onDidChange: registry.onDidChange,
+    entries: () => registry.entries(),
+    register: (registration) => registry.register({ ...registration, contextKey }),
+  };
+}

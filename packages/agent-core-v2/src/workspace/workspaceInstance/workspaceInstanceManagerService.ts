@@ -136,7 +136,7 @@ export class WorkspaceInstanceManager implements IWorkspaceInstanceManager {
     if (this.disposing) return Promise.reject(new Error('workspace instance manager is disposing'));
     const key = 'workspaceId' in ref
       ? `id:${ref.workspaceId}`
-      : `root:${ref.root.replace(/[\\/]$/, '')}`;
+      : `cwd:${ref.cwd.replace(/[\\/]$/, '')}`;
     let request = this.requests.get(key);
     if (request === undefined) {
       const pending: Promise<Workspace> = this.resolveWorkspace(ref).finally(() => {
@@ -149,15 +149,11 @@ export class WorkspaceInstanceManager implements IWorkspaceInstanceManager {
   }
 
   private async resolveWorkspace(ref: WorkspaceInstanceRef): Promise<Workspace> {
-    let workspace: Workspace | undefined;
-    if ('workspaceId' in ref) {
-      workspace = await this.workspaces.get(ref.workspaceId);
-      if (workspace === undefined && ref.root !== undefined) workspace = await this.workspaces.createOrTouch(ref.root);
-    } else {
-      workspace = await this.workspaces.createOrTouch(ref.root);
-    }
-    if (workspace === undefined) throw new Error2(ErrorCodes.WORKSPACE_NOT_FOUND, `workspace ${'workspaceId' in ref ? ref.workspaceId : ref.root} does not exist`);
-    return workspace;
+    if ('cwd' in ref) return this.workspaces.resolveImplicit(ref.cwd);
+    const workspace = await this.workspaces.get(ref.workspaceId);
+    if (workspace !== undefined) return workspace;
+    if (ref.reviveFrom !== undefined) return this.workspaces.reviveImplicit(ref.workspaceId, ref.reviveFrom);
+    throw new Error2(ErrorCodes.WORKSPACE_NOT_FOUND, `workspace ${ref.workspaceId} does not exist`);
   }
 
   private async acquireWorkspace(workspace: Workspace): Promise<WorkspaceInstanceLease> {
@@ -289,8 +285,6 @@ export class WorkspaceInstanceManager implements IWorkspaceInstanceManager {
           this.event,
           this.telemetry,
           this.flags,
-          input.extraAgentProfiles,
-          input.explicitAgentProfiles,
           input.userAgentProfiles,
           input.pluginAgentProfiles,
           input.acquireMcp,

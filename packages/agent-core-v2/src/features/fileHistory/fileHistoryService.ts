@@ -17,6 +17,7 @@ import { TurnEnded } from '#/agent/loop/turnOps';
 import { IEventBus } from '#/app/event/eventBus';
 import { IBlobStore } from '#/persistence/interface/blobStore';
 import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
+import { ISessionWorkdir } from '#/session/workdir/workdir';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import {
   hostWorkspacePathSemantics,
@@ -67,6 +68,7 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
     @IBlobStore private readonly blobs: IBlobStore,
     @ISessionWorkspaceContext private readonly workspaceCtx: ISessionWorkspaceContext,
     @ISessionContext private readonly sessionCtx: ISessionContext,
+    @ISessionWorkdir private readonly workdir: ISessionWorkdir,
     @IAtomicDocumentStore private readonly docs: IAtomicDocumentStore,
     @IHostFileSystem private readonly hostFs: IHostFileSystem,
     @IAgentLifecycleService private readonly agentLifecycle: IAgentLifecycleService,
@@ -349,6 +351,10 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
       docs: this.docs,
       hostFs: this.hostFs,
       workspaceId: this.sessionCtx.workspaceId,
+      placement: {
+        environmentId: this.workdir.environmentId,
+        environmentCwd: this.workdir.cwd,
+      },
       sessionDir: this.sessionCtx.sessionDir,
       sessionId: this.sessionCtx.sessionId,
     });

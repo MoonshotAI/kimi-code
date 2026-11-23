@@ -1,4 +1,4 @@
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, realpathSync } from 'node:fs';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, relative } from 'pathe';
@@ -16,11 +16,15 @@ import {
   McpConfigStore,
   type GlobalMcpServerConfig,
 } from '#/app/mcpConfig/configStore';
+import { locateCheckout } from '#/app/git/workTree';
 import { IPluginService } from '#/app/plugin/plugin';
 import type { PluginMcpServerEntry } from '#/app/plugin/types';
 import { IMcpRegistryService, mcpServerConfigsEqual } from '#/app/mcpRegistry/mcpRegistry';
 import { McpRegistryService } from '#/app/mcpRegistry/mcpRegistryService';
 import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemetry';
+import { decideImplicitProject } from '#/app/workspace/implicitProject';
+import { projectDirAt } from '#/app/workspace/projectWorkDir';
+import { IWorkspaceService } from '#/app/workspace/workspace';
 import { ErrorCodes } from '#/errors';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
@@ -33,6 +37,8 @@ import {
   IWorkspaceTrustStore,
   WorkspaceTrustStore,
 } from '#/workspace/workspaceTrust/workspaceTrustStore';
+
+import { linkedWorktree, mainCheckout } from '../git/checkoutLayouts';
 
 function stdioServer(name: string, command = 'npx'): GlobalMcpServerConfig {
   return { name, transport: 'stdio', command };
@@ -109,6 +115,16 @@ describe('McpRegistryService', () => {
               : undefined) as T) as IConfigService['get'],
         });
         reg.define(IWorkspaceTrustStore, WorkspaceTrustStore);
+        const hostFs = new HostFileSystem();
+        reg.definePartialInstance(IWorkspaceService, {
+          peekImplicit: (dir: string) =>
+            decideImplicitProject(dir, [], {
+              occupied: async () => false,
+              locate: (target) => locateCheckout(hostFs, target),
+              homeDirs: [home],
+            }),
+          projectDirAt: ({ root }, dir) => projectDirAt(root, dir, { fs: hostFs, homeDirs: [home] }),
+        });
         reg.define(IMcpRegistryService, McpRegistryService);
       },
     });
@@ -270,7 +286,7 @@ describe('McpRegistryService', () => {
       expect(configEntries.map((entry) => entry.name).toSorted()).toEqual(expected);
     });
 
-    it('checks trust at the queried cwd rather than the canonical git root', async () => {
+    it('checks trust at the queried cwd rather than a parent directory that is no git repository', async () => {
       const { project, sub } = await makeProject();
       await writeJson(join(project, '.mcp.json'), {
         mcpServers: { projectOnly: { command: 'project-only' } },
@@ -297,6 +313,72 @@ describe('McpRegistryService', () => {
       expect(entries.map((entry) => entry.name)).toEqual(
         expect.arrayContaining(['projectOnly', 'localOnly']),
       );
+    });
+
+    describe('in a git repository', () => {
+      async function makeRepository(): Promise<Record<'main' | 'sub' | 'worktree' | 'worktreeSub', string>> {
+        const base = realpathSync(mkdtempSync(join(tmpdir(), 'kimi-mcp-registry-repo-')));
+        tempDirs.push(base);
+        const main = mainCheckout(join(base, 'app'));
+        const worktree = linkedWorktree(join(main, '.git'), join(base, 'app-fix'));
+        const sub = join(main, 'pkg');
+        const worktreeSub = join(worktree, 'pkg');
+        await writeJson(join(main, '.mcp.json'), { mcpServers: { mainOnly: { command: 'main-only' } } });
+        await writeJson(join(main, '.kimi-code', 'mcp.json'), { mcpServers: { homeOnly: { command: 'home-only' } } });
+        await writeJson(join(sub, '.kimi-code', 'mcp.json'), { mcpServers: { subOnly: { command: 'sub-only' } } });
+        await writeJson(join(worktree, '.mcp.json'), { mcpServers: { worktreeOnly: { command: 'worktree-only' } } });
+        await writeJson(join(worktreeSub, '.kimi-code', 'mcp.json'), { mcpServers: { worktreeSubOnly: { command: 'sub-only' } } });
+        return { main, sub, worktree, worktreeSub };
+      }
+
+      const listedInSessions = [
+        ['main', ['homeOnly', 'mainOnly']],
+        ['sub', ['homeOnly', 'mainOnly']],
+        ['worktree', ['worktreeOnly']],
+        ['worktreeSub', ['worktreeOnly']],
+      ] as const;
+
+      it.each(listedInSessions)('lists for %s the project layers a session there loads while the project of the repository is trusted', async (queried, expected) => {
+        const repository = await makeRepository();
+        trustedKey = repository.main;
+
+        const entries = await registry.list({ cwd: repository[queried] });
+
+        expect(entries.map((entry) => entry.name).toSorted()).toEqual(expected);
+      });
+
+      it.each(listedInSessions)('lists for %s the project layers a session there loads when no directory has to be trusted', async (queried, expected) => {
+        const repository = await makeRepository();
+        trusted = false;
+        env = { [TRUST_WORKSPACE_ENV]: '1' };
+        expect((await registry.list({ cwd: repository[queried] })).map((entry) => entry.name).toSorted()).toEqual(expected);
+
+        env = {};
+        workspaceTrustEnabled = false;
+        expect((await registry.list({ cwd: repository[queried] })).map((entry) => entry.name).toSorted()).toEqual(expected);
+      });
+
+      it.each([
+        ['sub', ['mainOnly', 'subOnly']],
+        ['worktree', ['worktreeOnly']],
+      ] as const)('lists the project layers of %s while that directory itself is trusted, as the primary directory of a manual project', async (queried, expected) => {
+        const repository = await makeRepository();
+        trustedKey = repository[queried];
+
+        const entries = await registry.list({ cwd: repository[queried] });
+
+        expect(entries.map((entry) => entry.name).toSorted()).toEqual(expected);
+        expect((await registry.list({ cwd: repository.main })).map((entry) => entry.name)).toEqual([]);
+      });
+
+      it('lists no project layer of a directory while only another directory of the repository is trusted', async () => {
+        const repository = await makeRepository();
+        trustedKey = repository.worktree;
+        expect(await registry.list({ cwd: repository.sub })).toEqual([]);
+
+        trustedKey = repository.sub;
+        expect(await registry.list({ cwd: repository.worktree })).toEqual([]);
+      });
     });
 
     it('resolves a relative non-git cwd before checking workspace trust', async () => {
