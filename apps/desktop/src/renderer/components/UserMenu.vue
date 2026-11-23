@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch, type ComponentPublicInstance } from 'vue';
 import { useI18n } from 'vue-i18n';
+import FeedbackIcon from '~icons/kimi/feedback';
 import type { ManagedQuotaResult } from '../api/types';
 import { useKimiWebClient, type ColorScheme } from '@moonshot-ai/app-client/client';
 import { useConfirmDialog } from '@moonshot-ai/app-client/composables';
@@ -390,7 +391,7 @@ async function onLogout(): Promise<void> {
           <Icon name="chevron-right" size="sm" />
         </MenuItem>
         <MenuItem v-if="feedbackEnabled" @click="onOpenFeedback" @mouseenter="scheduleSubmenuClose">
-          <span class="user-menu-feedback-icon" aria-hidden="true" />
+          <FeedbackIcon aria-hidden="true" />
           <span class="user-menu-item-label">{{ t('feedback.menuLabel') }}</span>
         </MenuItem>
         <template v-if="signedIn && !rcMode">
@@ -632,13 +633,6 @@ html.macos-desktop.vibrancy .user-menu-avatar {
 }
 .user-menu-item-label:has(+ .user-menu-row-value) {
   flex: 1 0 auto;
-}
-.user-menu-feedback-icon {
-  flex: none;
-  width: 16px;
-  height: 16px;
-  background: currentColor;
-  mask: url('./feedback/assets/sidebar-feedback.svg') center / contain no-repeat;
 }
 .user-menu-login-label {
   color: var(--color-accent);

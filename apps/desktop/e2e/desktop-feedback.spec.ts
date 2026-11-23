@@ -126,6 +126,19 @@ testWithProvider('submits global and reply feedback with opt-in attachments', as
   const account = await openAccountMenu(page);
   const preferences = account.getByRole('menuitem').filter({ hasText: /Settings|Appearance|Language|Feedback/ });
   await expect(preferences).toHaveText([/^Settings/, /^Appearance/, /^Language/, 'Feedback']);
+  const menuIcons = preferences.locator(':scope > :first-child');
+  for (const colorScheme of ['dark', 'light'] as const) {
+    await page.emulateMedia({ colorScheme });
+    await expect.poll(() => menuIcons.evaluateAll(icons => {
+      const colors = icons.map(icon => {
+        const path = icon.querySelector('path');
+        if (!path) return getComputedStyle(icon).backgroundColor;
+        const { fill, stroke } = getComputedStyle(path);
+        return fill === 'none' ? stroke : fill;
+      });
+      return [...new Set(colors)];
+    })).toHaveLength(1);
+  }
   await account.getByRole('menuitem', { name: 'Feedback', exact: true }).click();
   await expect(page.getByRole('dialog', { name: 'Sign in to Kimi Code' })).toBeVisible();
   expect(feedbackRequests).toHaveLength(0);
