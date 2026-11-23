@@ -1,5 +1,17 @@
 # @moonshot-ai/kap-server
 
+## 0.3.3
+
+### Patch Changes
+
+- [#5212](https://github.com/MoonshotAI/kimi-code/pull/5212) [`2348f53`](https://github.com/MoonshotAI/kimi-code/commit/2348f531923616e250639bf66dcbf67c169ee4ab) Thanks [@kimi-agent-bot](https://github.com/kimi-agent-bot)! - Fix sessions that could not open after their model became unavailable.
+
+- [#5300](https://github.com/MoonshotAI/kimi-code/pull/5300) [`fce3af9`](https://github.com/MoonshotAI/kimi-code/commit/fce3af9e694a5a572699546ebe8e28ccf004ed88) Thanks [@Grapedge](https://github.com/Grapedge)! - Add routes for feedback, reply ratings, and opt-in uploads of media, session history, and desktop logs. Servers advertise support in `capabilities.feedback`.
+
+- Updated dependencies [[`f81c924`](https://github.com/MoonshotAI/kimi-code/commit/f81c924b1d70f963b0dc094bcb6859e446c37a49), [`fce3af9`](https://github.com/MoonshotAI/kimi-code/commit/fce3af9e694a5a572699546ebe8e28ccf004ed88), [`fce3af9`](https://github.com/MoonshotAI/kimi-code/commit/fce3af9e694a5a572699546ebe8e28ccf004ed88)]:
+  - @moonshot-ai/agent-core-v2@0.6.1
+  - @moonshot-ai/kimi-code-oauth@0.5.1
+
 ## 0.3.2
 
 ### Patch Changes

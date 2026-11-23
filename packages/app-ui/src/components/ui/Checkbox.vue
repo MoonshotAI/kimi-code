@@ -38,12 +38,12 @@ const emit = defineEmits<{ 'update:modelValue': [value: boolean] }>();
   flex: none;
   border: var(--p-hairline) solid var(--color-line-strong);
   border-radius: var(--radius-sm);
-  background: var(--color-surface-raised);
+  background: var(--ui-check-background, var(--color-surface-raised));
   color: var(--color-text-on-accent);
   transition: background var(--duration-base) var(--ease-out),
     border-color var(--duration-base) var(--ease-out);
 }
-.ui-check.is-on .ui-check__box { background: var(--color-accent); border-color: var(--color-accent); }
+.ui-check.is-on .ui-check__box { background: var(--ui-check-background, var(--color-accent)); border-color: var(--color-accent); }
 .ui-check__input:focus-visible + .ui-check__box { box-shadow: var(--p-focus-ring); }
 .ui-check__box svg { width: 12px; height: 12px; visibility: hidden; }
 .ui-check.is-on .ui-check__box svg { visibility: visible; }

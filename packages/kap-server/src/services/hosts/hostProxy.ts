@@ -11,6 +11,8 @@ import { selectWsBearerProtocol } from '../../transport/ws/bearerProtocol';
 import type { HostBridgeManager } from './hostBridgeManager';
 import { HostRequestError, type HostSession } from './hostSession';
 
+type HostConnections = Pick<HostBridgeManager, 'session' | 'connect'>;
+
 const PROXY_PATH = /^\/api\/v1\/hosts\/([^/?]+)\/proxy(\/[^?]*)?(\?.*)?$/;
 const HOP_BY_HOP = new Set([
   'connection',
@@ -58,15 +60,20 @@ export function upstreamHeaders(headers: IncomingHttpHeaders): IncomingHttpHeade
   return forwarded;
 }
 
+function proxyRequestTimeout(method: string, path: string): number | undefined {
+  if (method === 'POST' && /^\/api\/v1\/feedback\/\d+\/attachments(?:\/session)?(?:\?|$)/.test(path)) return Infinity;
+  return /^\/api\/v1\/sessions\/[^/]+\/export(?:\?|$)/.test(path) ? 5 * 60_000 : undefined;
+}
+
 async function resolveSession(
-  manager: HostBridgeManager,
+  manager: HostConnections,
   hostId: string,
 ): Promise<HostSession> {
   return manager.session(hostId) ?? manager.connect(hostId);
 }
 
 async function proxyHttp(
-  manager: HostBridgeManager,
+  manager: HostConnections,
   req: FastifyRequest,
   reply: FastifyReply,
 ): Promise<void> {
@@ -115,7 +122,7 @@ async function proxyHttp(
       headers: upstreamHeaders(req.headers),
       body,
       signal: cancellation.signal,
-      timeoutMs: /^\/api\/v1\/sessions\/[^/]+\/export(?:\?|$)/.test(target.path) ? 5 * 60_000 : undefined,
+      timeoutMs: proxyRequestTimeout(req.method, target.path),
     });
     for (const [name, value] of Object.entries(response.headers)) {
       if (value !== undefined && !HOP_BY_HOP.has(name.toLowerCase())) {
@@ -143,7 +150,7 @@ async function proxyHttp(
 
 export function registerHostProxyRoutes(
   app: FastifyInstance,
-  manager: HostBridgeManager,
+  manager: HostConnections,
 ): void {
   void app.register(async (scope) => {
     scope.removeAllContentTypeParsers();

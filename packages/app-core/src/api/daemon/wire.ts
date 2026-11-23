@@ -716,6 +716,11 @@ export interface WireMcpAuthStatus {
     | 'unavailable';
 }
 
+export interface WireMcpServerAuthInspection {
+  runtime_name: string;
+  auth_status: WireMcpAuthStatus['auth_status'];
+}
+
 export type WireMcpServerLocator =
   | { source: 'global'; name: string }
   | { source: 'plugin'; plugin_id: string; server_name: string };

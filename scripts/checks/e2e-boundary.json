@@ -1,0 +1,11 @@
+{
+  "exceptions": [
+    {
+      "file": "tests/e2e/support/scenario.ts",
+      "rule": "no-flake-masking",
+      "pattern": ".skip(",
+      "reason": "scenario() reports a surface that a scenario declares as not applicable (except / onlyOn, each with a mandatory reason) as skipped with that reason. Scenarios, self-tests and drivers still cannot skip."
+    }
+  ],
+  "testSwitches": []
+}

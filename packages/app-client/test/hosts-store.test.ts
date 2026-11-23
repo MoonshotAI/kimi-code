@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AppHost } from '@moonshot-ai/app-core/api';
 
 import { setKimiClientDeps } from '../src/client/deps';
@@ -16,6 +16,7 @@ const api = {
 };
 
 const remote = {
+  getMeta: vi.fn(),
   getAuth: vi.fn(),
   logout: vi.fn(),
   startOAuthLogin: vi.fn(),
@@ -38,13 +39,14 @@ beforeEach(() => {
   for (const fn of Object.values(api)) fn.mockReset();
   for (const fn of Object.values(remote)) fn.mockReset();
   api.deviceApi.mockReturnValue(remote);
+  remote.getMeta.mockResolvedValue({ capabilities: {} });
   remote.getAuth.mockResolvedValue(auth(null));
   remote.listModels.mockResolvedValue([]);
   remote.getConfig.mockResolvedValue({});
   setKimiClientDeps({ api: () => api as never, t: (key) => key });
   setHostsHooks(null);
   const store = hostsStore();
-  store.byId = {};
+  store.applySnapshot([]);
   store.loaded = false;
   store.connecting = {};
   store.providerCopies = {};
@@ -54,6 +56,74 @@ beforeEach(() => {
 });
 
 describe('hosts store', () => {
+  describe('feedback support', () => {
+    afterEach(() => { vi.useRealTimers(); });
+
+    it('enables local feedback and only trusts an explicit capability on each ready host', async () => {
+      const store = hostsStore();
+      const supported = host('supported', { status: 'ready' });
+      const legacy = host('legacy', { status: 'ready' });
+      const disabled = host('disabled', { status: 'ready', enabled: false });
+      const supportedMeta = vi.fn().mockResolvedValue({ capabilities: { feedback: true } });
+      const legacyMeta = vi.fn().mockResolvedValue({ capabilities: {}, experimentalFlags: { desktop_feedback: true } });
+      api.deviceApi.mockImplementation((id: string) => ({ ...remote, getMeta: id === supported.id ? supportedMeta : legacyMeta }));
+      expect(store.supportsFeedback(undefined)).toBe(true);
+      expect(store.supportsFeedback(supported.id)).toBe(false);
+      api.listHosts.mockResolvedValue([supported, legacy, disabled]);
+      await store.load();
+      expect(store.supportsFeedback(supported.id)).toBe(true);
+      expect(store.supportsFeedback(legacy.id)).toBe(false);
+      expect(store.supportsFeedback(disabled.id)).toBe(false);
+      await store.load();
+      expect(supportedMeta).toHaveBeenCalledTimes(1);
+      expect(legacyMeta).toHaveBeenCalledTimes(1);
+      store.applySnapshot([legacy]);
+      expect(store.supportsFeedback(supported.id)).toBe(false);
+    });
+
+    it('discards stale replies when a host reconnects and refreshes support when re-enabled', async () => {
+      const first = Promise.withResolvers<{ capabilities: { feedback: boolean } }>();
+      remote.getMeta.mockReturnValueOnce(first.promise)
+        .mockResolvedValueOnce({ capabilities: { feedback: false } })
+        .mockResolvedValueOnce({ capabilities: { feedback: true } });
+      const store = hostsStore();
+      const ready = host('example', { status: 'ready' });
+      store.applySnapshot([ready]);
+      store.applySnapshot([{ ...ready, status: 'disconnected' }]);
+      api.listHosts.mockResolvedValue([ready]);
+      await store.load();
+      first.resolve({ capabilities: { feedback: true } });
+      await first.promise;
+      expect(store.supportsFeedback(ready.id)).toBe(false);
+      store.applySnapshot([{ ...ready, enabled: false }]);
+      await store.load();
+      expect(store.supportsFeedback(ready.id)).toBe(true);
+      store.applySnapshot([{ ...ready, enabled: false }]);
+      expect(store.supportsFeedback(ready.id)).toBe(false);
+    });
+
+    it('recovers from a transient metadata failure without retrying a disconnected host', async () => {
+      vi.useFakeTimers();
+      remote.getMeta.mockRejectedValueOnce(new Error('Temporarily unavailable'))
+        .mockResolvedValueOnce({ capabilities: { feedback: true } });
+      const store = hostsStore();
+      const ready = host('example', { status: 'ready' });
+      api.listHosts.mockResolvedValue([ready]);
+      await store.load();
+      expect(store.supportsFeedback(ready.id)).toBe(false);
+      await vi.runAllTimersAsync();
+      expect(store.supportsFeedback(ready.id)).toBe(true);
+      store.applySnapshot([{ ...ready, status: 'disconnected' }]);
+      expect(store.supportsFeedback(ready.id)).toBe(false);
+      remote.getMeta.mockRejectedValueOnce(new Error('Temporarily unavailable'));
+      await store.load();
+      store.applySnapshot([]);
+      await vi.runAllTimersAsync();
+      expect(remote.getMeta).toHaveBeenCalledTimes(3);
+      expect(store.supportsFeedback(ready.id)).toBe(false);
+    });
+  });
+
   it('copies shareable local providers to a ready host without repeating in-flight copies and refreshes the host', async () => {
     api.copyProvidersToHost.mockResolvedValue({ providers: ['gateway', 'backup'] });
     const store = hostsStore();
