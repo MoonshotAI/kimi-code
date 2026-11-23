@@ -5,8 +5,9 @@ Shared test infrastructure for this repository: a protocol-level fake model, a d
 | Import | What it provides |
 |---|---|
 | `@moonshot-ai/testkit/model` | the fake model, the step DSL, tool-call builders, and the provider config that points the product at the fake model |
-| `@moonshot-ai/testkit/kap` | `startKap`: a KAP server backed by the fake model, with REST and WebSocket clients and a turn reducer |
-| `@moonshot-ai/testkit/fixtures` | temporary homes, a `config.toml` writer, environment isolation, the network guard, waits, timeouts, media samples and normalizers |
+| `@moonshot-ai/testkit/kap` | `startKap`: an in-process KAP server backed by the fake model; `KapProcess`: the CLI's `web --json` server in a child process; `KapClient`: the session operations both of them share, with REST and WebSocket clients and a turn reducer |
+| `@moonshot-ai/testkit/fixtures` | temporary homes, a `config.toml` writer, environment isolation, the network guard, child processes that stay offline, the CLI command and environment, repository paths, waits, timeouts, media samples and normalizers |
+| `@moonshot-ai/testkit/contract` | a field-per-line summary of OpenAPI and AsyncAPI documents, a check that lists contract changes as breaking, non-breaking or unclassified, and a digest that ignores wording, for pinning an API level |
 | `@moonshot-ai/testkit/vitest` | fixture definitions for `test.extend` and the network guard hooks |
 
 ## Writing a test
@@ -50,7 +51,7 @@ test('runs a tool and answers', async ({ kap, model }) => {
 
 Define `test` in the test file itself with `base.extend(...)`. The repository's `vitest/no-standalone-expect` lint rule recognizes only `extend` chains of vitest's own `test` in the same file, so a `test` imported from a helper module fails lint.
 
-The `model` fixture calls `model.verify()` after the test and prints a request summary on failure. The `kap` fixture runs verification before shutdown so an unreleased hold stays visible. It then stops the server and removes the temporary home.
+The `model` fixture calls `model.verify()` after the test and prints a request summary on failure. The `kap` fixture runs verification before shutdown so an unreleased hold stays visible. It then stops the server and removes the temporary home. A fixture that owns another driver of the model, such as the engine harness's `testkitAgentFixtures()`, calls `verifyModelOnce(model)` before tearing that driver down; the `model` fixture then skips its own verification.
 
 The network guard allows local TCP connections. It checks both numeric ports and port strings accepted by Node, and passes Unix socket paths and Windows named pipes through to Node. For IPv4, use a valid address in the loopback range (`127.0.0.0/8`). When guards overlap, their `allowHosts` lists combine. Uninstalling one guard removes its list.
 
@@ -159,4 +160,4 @@ For OpenAI chat completions, `request.texts('system')` returns the individual sy
 
 - Request indexes and the default tool-call ids follow arrival order. When subagents run concurrently, find their requests by lane and content (`waitForRequest(predicate)`) and take ids from `model.callId(request.index, k)`, or give the calls fixed ids with `call(name, args, { id })`.
 - `startKap` points `process.env.HOME` at the test home while the server runs, because user-level skills are read from the OS home. Do not run KAP tests concurrently in one worker.
-- Not built yet: the OpenAI responses API, recording and replay, ACP and TUI drivers, subprocess drivers, and fake MCP servers.
+- Not built yet: the OpenAI responses API, general model recording/replay, an ACP driver in this package, and fake MCP servers. The terminal session driver lives in the CLI tests and starts the CLI through `TestProcess`. See the [testing guide](../../tests/AGENTS.md).

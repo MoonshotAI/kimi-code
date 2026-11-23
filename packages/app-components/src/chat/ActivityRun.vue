@@ -2,7 +2,7 @@
 import { computed, inject, nextTick, ref, watch } from 'vue';
 import { Icon, Tooltip } from '@moonshot-ai/app-ui';
 import { HistoryStateKey } from '@moonshot-ai/app-core/contracts';
-import HistoryWindow from './HistoryWindow.vue';
+import BlockList from './BlockList.vue';
 import { useHistoryState } from './historyState';
 import { PinScrollKey } from '@moonshot-ai/app-client/contracts';
 import { useActivityRunFolding } from '@moonshot-ai/app-client/composables';
@@ -237,7 +237,7 @@ function isThinkingStreaming(item: ActivityRunItem): boolean {
     <div v-if="!historyState || bodyMounted" class="ar-body" :class="{ open: bodyOpen }" :inert="!effectiveOpen">
       <div class="ar-body-inner">
         <BrowserReceiptStrip :items="items" @open-media="emit('openMedia', $event)" />
-        <HistoryWindow :items="folded.items" :item-key="itemKey" :enabled="!!historyState" :scope="openKey" :tail="1" :gap="(_, index) => index ? 4 : 0"><template #default="{ item }">
+        <BlockList :items="folded.items" :item-key="itemKey" :enabled="!!historyState" :scope="openKey" :gap="(_, index) => index ? 4 : 0"><template #default="{ item }">
           <ThinkingBlock
             v-if="item.kind === 'thinking'"
             :text="item.thinking"
@@ -264,7 +264,7 @@ function isThinkingStreaming(item: ActivityRunItem): boolean {
             @detach="emit('detach', $event)"
           />
           <template v-if="item.kind !== 'browser-retry'"><RequestDebugRow v-for="(debug, di) in item.debug ?? []" :key="di" :debug="debug" /></template>
-        </template></HistoryWindow>
+        </template></BlockList>
       </div>
     </div>
   </div>
@@ -387,7 +387,7 @@ function isThinkingStreaming(item: ActivityRunItem): boolean {
   padding-right: var(--space-1-5);
 }
 .ar-body-inner > :deep(.tool-line.open + *),
-.ar-body-inner > :deep(.history-window > .history-row:has(> .tool-line.open) + .history-row > *:not(.history-navigation)) {
+.ar-body-inner > :deep(.block-list > .history-row:has(> .tool-line.open) + .history-row > *:not(.history-navigation)) {
   margin-top: 4px;
 }
 </style>

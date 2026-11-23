@@ -574,7 +574,7 @@ export function defineKlientConformance(
             responseEvents.push(event);
           }
           expect(responseEvents).toContainEqual(
-            expect.objectContaining({ type: 'llm.streaming.part', part: responsePart }),
+            expect.objectContaining({ type: 'llm.delta.part', part: responsePart }),
           );
           expect(responseEvents).toContainEqual(
             expect.objectContaining({

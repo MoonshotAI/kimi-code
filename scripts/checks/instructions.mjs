@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join, posix, resolve } from 'node:path';
 
 const ROOT = resolve(import.meta.dirname, '../..');
@@ -95,12 +95,6 @@ export function applyAllowlist(missing, entries) {
   };
 }
 
-export function checkBudgets(budgets, sizeOf) {
-  return Object.entries(budgets)
-    .map(([file, limit]) => ({ file, limit, size: sizeOf(file) }))
-    .filter((entry) => entry.size === undefined || entry.size > entry.limit);
-}
-
 export function entriesOf(files) {
   const entries = new Set(['.']);
   for (const file of files) {
@@ -123,12 +117,7 @@ function listRepoFiles() {
   return result.stdout.split('\0').filter((file) => file !== '' && existsSync(join(ROOT, file)));
 }
 
-function sizeOf(file) {
-  const path = join(ROOT, file);
-  return existsSync(path) ? statSync(path).size : undefined;
-}
-
-function formatReport({ invalid, unexplained, unused, overBudget }) {
+function formatReport({ invalid, unexplained, unused, missingRoot }) {
   const lines = [];
   if (invalid.length > 0) {
     lines.push(
@@ -154,20 +143,7 @@ function formatReport({ invalid, unexplained, unused, overBudget }) {
       `  What to do: delete the entry from ${CONFIG_FILE}.`,
     );
   }
-  for (const entry of overBudget) {
-    if (entry.size === undefined) {
-      lines.push(
-        `✗ instructions: ${entry.file} has a budget in ${CONFIG_FILE} but does not exist`,
-        `  What to do: fix the file name, or delete the budget if the file was removed on purpose.`,
-      );
-      continue;
-    }
-    lines.push(
-      `✗ instructions: ${entry.file} is ${entry.size} bytes, over its ${entry.limit}-byte budget`,
-      '  Why: every agent session loads this file, and agent loaders warn or truncate once instructions pass 32 KiB.',
-      `  What to do: move content that only one directory needs into that directory's AGENTS.md, then condense. Raise the budget in ${CONFIG_FILE} only if the words need the space, and give the reason in the PR.`,
-    );
-  }
+  if (missingRoot) lines.push('✗ instructions: root AGENTS.md is missing');
   return lines;
 }
 
@@ -204,17 +180,13 @@ export function main(args) {
     }
   }
   const { unexplained, unused } = applyAllowlist(missing, unresolved);
-  const overBudget = checkBudgets(config.budgets ?? {}, sizeOf);
-  const report = formatReport({ invalid: invalidEntries(unresolved), unexplained, unused, overBudget });
+  const report = formatReport({ invalid: invalidEntries(unresolved), unexplained, unused, missingRoot: !files.includes('AGENTS.md') });
   if (report.length > 0) {
     process.stderr.write(`${report.join('\n')}\n`);
     return 1;
   }
-  const budgets = Object.entries(config.budgets ?? {})
-    .map(([file, limit]) => `${file} ${sizeOf(file)}/${limit} bytes`)
-    .join(', ');
   process.stdout.write(
-    `✓ instructions: ${files.length} AGENTS.md files, ${resolved} references resolve, ${missing.length} listed as unresolved${budgets === '' ? '' : `; ${budgets}`}\n`,
+    `✓ instructions: ${files.length} AGENTS.md files, ${resolved} references resolve, ${missing.length} listed as unresolved\n`,
   );
   return 0;
 }

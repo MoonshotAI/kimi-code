@@ -1,5 +1,6 @@
 import { stripAttachmentLinks, type ComposerDocumentSnapshot } from '@moonshot-ai/app-composer/model';
 import { browserReferenceText, buildPromptContent, buildPromptMetadata } from '../lib/browserReferenceSubmission';
+import { withSessionReferences } from '../lib/sessionReferences';
 
 import { computed, watch, type ComputedRef } from 'vue';
 import { DaemonApiError, isSessionOccupiedError } from '@moonshot-ai/app-core/api';
@@ -47,7 +48,11 @@ export interface UseModelProviderStateDeps {
     err: unknown,
     opts?: { title?: string; message?: string; sessionId?: string },
   ) => void;
-  persistSessionProfile: (patch: PersistSessionProfilePatch, sessionId?: string) => Promise<boolean>;
+  persistSessionProfile: (
+    patch: PersistSessionProfilePatch,
+    sessionId?: string,
+    preserveDraftThinking?: boolean,
+  ) => Promise<boolean>;
   whenSessionProfileSettled: (sid: string) => Promise<boolean>;
   savePlanModeToStorage: () => void;
   saveTowerModeToStorage: () => void;
@@ -207,12 +212,16 @@ export function useModelProviderState(
     sid: string,
     modelId: string,
     nextThinking: ThinkingLevel | undefined,
+    preserveDraftThinking = false,
   ): Promise<boolean> {
     updateSession(sid, (s) => ({ ...s, model: modelId }));
     sessionRuntimeStore().markModelPending(sid);
     if (nextThinking !== undefined) {
       rawState.thinkingBySession = { ...rawState.thinkingBySession, [sid]: nextThinking };
       markThinkingPending(rawState, sid);
+    }
+    if (preserveDraftThinking) {
+      return persistSessionProfile({ model: modelId, thinking: nextThinking }, sid, true);
     }
     return persistSessionProfile({ model: modelId, thinking: nextThinking }, sid);
   }
@@ -252,6 +261,10 @@ export function useModelProviderState(
     );
   }
 
+  function normalizeDraftSessionModel(sessionId: string, modelId: string): Promise<boolean> {
+    return writeSessionModel(sessionId, modelId, rawState.thinkingBySession[sessionId], true);
+  }
+
   async function activateSkill(
     skillName: string,
     args?: string,
@@ -263,8 +276,8 @@ export function useModelProviderState(
     if (!sid) return false;
     const snapshot = opts?.snapshot === undefined ? undefined : structuredClone(opts.snapshot);
     const activationArgs = snapshot === undefined
-      ? (args === undefined ? undefined : stripAttachmentLinks(args))
-      : stripAttachmentLinks(browserReferenceText(args ?? '', snapshot)) || undefined;
+      ? (args === undefined ? undefined : withSessionReferences(stripAttachmentLinks(args)))
+      : withSessionReferences(stripAttachmentLinks(browserReferenceText(args ?? '', snapshot))) || undefined;
     const guarded = activity.value === 'idle' && !promptStore().inFlightBySession[sid];
     const tempId = `msg_skill_opt_${Date.now().toString(36)}`;
     const promptId = newPromptId();
@@ -561,6 +574,7 @@ export function useModelProviderState(
     loadProviders,
     setModel,
     setSessionModel,
+    normalizeDraftSessionModel,
     thinkingLevelForModelId,
     thinkingLevelForSessionId,
     resolveThinkingForPrompt,

@@ -21,13 +21,14 @@ const editChange: TurnFileChange = {
 };
 
 describe('panel registry', () => {
-  it('registers exactly the ten panel types', () => {
+  it('registers all panel types', () => {
     expect(Object.keys(panelRegistry).sort()).toEqual(
       [
         'agent',
         'browser',
         'btw',
         'compaction',
+        'context',
         'diff',
         'file',
         'files',
@@ -55,6 +56,7 @@ describe('panel registry', () => {
       term: { policy: 'always', restorable: true },
       browser: { policy: 'always', restorable: true },
       inspector: { policy: 'singleton', restorable: true },
+      context: { policy: 'singleton', restorable: true },
     };
     for (const [type, want] of Object.entries(expected)) {
       const def = panelRegistry[type as PanelTabType];

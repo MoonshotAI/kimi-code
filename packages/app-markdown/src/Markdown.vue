@@ -7,14 +7,15 @@ setCustomComponents('kimi-markdown', { image: MarkdownImage });
 </script>
 
 <script setup lang="ts">
-import { computed, inject, nextTick, onBeforeUnmount, onMounted, reactive, ref, shallowRef, watch } from 'vue';
+import { computed, inject, nextTick, onBeforeUnmount, onMounted, provide, reactive, ref, shallowRef, watch } from 'vue';
 import { useKimiI18n } from '@moonshot-ai/app-i18n';
 import { MarkdownRender, enableKatex, enableMermaid, languageMap } from 'markstream-vue';
 import { ensureMarkdownWorkers } from './lib/markdownWorkers';
 import { useIsDark } from '@moonshot-ai/app-core';
+import { PinScrollKey } from '@moonshot-ai/app-client/contracts';
 import { HistoryStateKey, OpenFileLinkKey, OpenLocalHtmlFileKey, OpenSidebarBrowserUrlKey, ResolveImageKey } from '@moonshot-ai/app-core/contracts';
-import { classifyMentionHref, decodeSkillMention, mentionActionLine, mentionActionPath, mentionActionSuffix, unescapeLinkDest, unescapeRenderedLinkText } from '@moonshot-ai/app-composer/model';
-import { fileMentionIconSvg, mentionHrefToPath, mentionIconSvg, truncateMentionName } from '@moonshot-ai/app-composer/features/mention';
+import { classifyMentionHref, decodeSessionMention, decodeSkillMention, mentionActionLine, mentionActionPath, mentionActionSuffix, sessionMentionPath, unescapeLinkDest, unescapeRenderedLinkText } from '@moonshot-ai/app-composer/model';
+import { mentionHrefToPath, mentionIconSvg, truncateMentionName } from '@moonshot-ai/app-composer/features/mention';
 import { collectFilePathAliases, findFilePathLinks, isRelativeLinkCandidate, type FilePathResolution } from './lib/filePathLinks';
 import { splitFrontmatter } from './lib/frontmatter';
 import Frontmatter from './Frontmatter.vue';
@@ -26,6 +27,7 @@ import { MARKDOWN_CODE_THEME, MARKDOWN_CODE_THEME_DARK } from './lib/codeTheme';
 import { isMarkdownCodeHeader, markdownFenceSources } from './lib/codePreview';
 import { listMarkerWidth } from './lib/listMarkerWidth';
 import { HistoryImageCacheKey } from './lib/historyImages';
+import { createMarkdownImageSizes, MarkdownImageSizesKey, pendingImageIndex, pendingImageSrc, type ImageSize } from './lib/imageSizes';
 import { copyCodeBlockFallback, copyTextToClipboard } from './lib/clipboard';
 import { markdownTableSources } from './lib/tableSource';
 import { createCodeScrollbars } from './lib/codeScrollbars';
@@ -37,6 +39,8 @@ import {
   ensureTableWideToggle,
   positionTableActions,
   pruneTableWideToggles,
+  TABLE_TOGGLE_EVENT,
+  tableWidthTransitionMs,
   toggleTableWide,
   type TableWideToggleLabels,
 } from './lib/tableWide';
@@ -71,6 +75,7 @@ const resolveImageFn = computed(() => {
 const openSidebarBrowserUrl = inject(OpenSidebarBrowserUrlKey, undefined);
 const resolveOpenLocalHtmlFile = inject(OpenLocalHtmlFileKey, undefined);
 const openFileLink = inject(OpenFileLinkKey, undefined);
+const pinScroll = inject(PinScrollKey, undefined);
 const mdRef = ref<HTMLElement | null>(null);
 const props = withDefaults(
   defineProps<{
@@ -181,16 +186,11 @@ const frontmatter = computed(() => frontmatterSplit.value.frontmatter);
 const markdownBody = computed(() => frontmatterSplit.value.body);
 
 const filePathAliases = computed(() => collectFilePathAliases(markdownBody.value));
-const renderPlan = computed(() => {
-  if (props.streaming) return { renderCodeBlocksAsPre: false, codeFenceCount: 0, codeChars: 0 };
-  return markdownRenderPlan(markdownBody.value);
-});
+const renderPlan = computed(() => markdownRenderPlan(markdownBody.value));
 
 const isDark = useIsDark();
 
 const allowBatchRender = computed(() => !props.streaming && !historyState);
-
-const IMG_PLACEHOLDER = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
 
 const resolvedImages = reactive(new Map<string, string>(imageKey ? imageCache?.get(imageKey, props.text) : undefined));
 const pendingImages = new Set<string>();
@@ -249,7 +249,7 @@ function rewriteImageSrcs(text: string): string {
   const sub = (src: string): string | null => {
     if (!isLocalImageSrc(src)) return null;
     const resolved = resolvedImages.get(src);
-    if (resolved === undefined) return IMG_PLACEHOLDER;
+    if (resolved === undefined) return pendingImageSrc(images.value.findIndex(image => image.src === src));
     return resolved === '' ? null : resolved;
   };
   return rewriteImageSources(text, images.value, sub);
@@ -260,6 +260,21 @@ watch(
   () => queueImageResolution(),
   { immediate: true },
 );
+
+const imageSizesKey = `${historyKey}:image-sizes`;
+const imageSizes = reactive((historyState?.get(imageSizesKey) as Map<string, ImageSize> | undefined) ?? new Map<string, ImageSize>());
+historyState?.set(imageSizesKey, imageSizes);
+
+function imageSourceOf(src: string): { key: string; pending: boolean } {
+  const index = pendingImageIndex(src);
+  if (index !== null) return { key: images.value[index]?.src ?? src, pending: true };
+  for (const [original, resolved] of resolvedImages) {
+    if (resolved === src) return { key: original, pending: false };
+  }
+  return { key: src, pending: false };
+}
+
+provide(MarkdownImageSizesKey, createMarkdownImageSizes(imageSizes, imageSourceOf));
 
 function resolveCandidate(rawPath: string): FilePathResolution | null {
   const resolver = props.resolveFilePath;
@@ -373,20 +388,22 @@ function processMarkdownLinks(): void {
     if (link.querySelector('img')) continue;
     link.dataset.mdLinkHandled = 'true';
     link.removeAttribute('title');
+    const pathLike = kind === 'file' || kind === 'folder';
     const skill = kind === 'skill' ? decodeSkillMention(href) : undefined;
-    const path = skill?.path ?? mentionHrefToPath(href);
+    const session = kind === 'session' ? decodeSessionMention(href) : null;
+    const path = skill?.path ?? (session === null ? mentionHrefToPath(href) : sessionMentionPath(session));
     const name = unescapeRenderedLinkText(link.textContent ?? '');
     link.classList.add('mention-pill', `mention-${kind}`);
     link.dataset.mentionKind = kind;
     link.dataset.mentionName = skill?.name ?? name;
-    link.dataset.mentionPath = skill?.path ?? (props.resolveMentionPath?.(path) ?? path);
-    if (kind !== 'skill') {
+    link.dataset.mentionPath = pathLike ? (props.resolveMentionPath?.(path) ?? path) : path;
+    if (pathLike) {
       const actionPath =
         props.resolveMentionPath?.(unescapeLinkDest(mentionActionPath(href), false)) ??
         unescapeLinkDest(mentionActionPath(href), false);
       if (actionPath !== link.dataset.mentionPath) link.dataset.mentionActionPath = actionPath;
     }
-    if (kind === 'skill' || props.openFile) link.removeAttribute('href');
+    if (!pathLike || props.openFile) link.removeAttribute('href');
     if (kind === 'skill' || (kind === 'file' && props.openFile)) {
       link.tabIndex = 0;
       link.setAttribute('role', 'button');
@@ -400,10 +417,7 @@ function processMarkdownLinks(): void {
       const icon = document.createElement('span');
       icon.className = 'mention-pill-icon';
       icon.setAttribute('aria-hidden', 'true');
-      icon.innerHTML =
-        kind === 'skill'
-          ? mentionIconSvg('skill', '', name)
-          : fileMentionIconSvg(path, name, kind === 'folder');
+      icon.innerHTML = mentionIconSvg(kind, path, name);
       link.prepend(icon);
     }
     const actionLine = mentionActionLine(href);
@@ -677,6 +691,10 @@ watch(
   },
 );
 
+function onTableToggle(event: Event): void {
+  if (event.target instanceof HTMLElement) pinScroll?.(event.target, tableWidthTransitionMs());
+}
+
 let codeScrollbars: ReturnType<typeof createCodeScrollbars> | null = null;
 let observer: MutationObserver | null = null;
 let tableWideResizeObserver: ResizeObserver | null = null;
@@ -700,6 +718,7 @@ onMounted(() => {
     tableWideResizeObserver.observe(mdRef.value);
     mdRef.value.addEventListener('click', onLocalFileLinkClick);
     mdRef.value.addEventListener('auxclick', onLocalFileLinkClick);
+    mdRef.value.addEventListener(TABLE_TOGGLE_EVENT, onTableToggle);
     mdRef.value.addEventListener('click', onStreamingLinkClick);
     mdRef.value.addEventListener('auxclick', onStreamingLinkClick);
   }
@@ -721,6 +740,7 @@ onBeforeUnmount(() => {
   tableWideResizeObserver?.disconnect();
   mdRef.value?.removeEventListener('click', onLocalFileLinkClick);
   mdRef.value?.removeEventListener('auxclick', onLocalFileLinkClick);
+  mdRef.value?.removeEventListener(TABLE_TOGGLE_EVENT, onTableToggle);
   mdRef.value?.removeEventListener('click', onStreamingLinkClick);
   mdRef.value?.removeEventListener('auxclick', onStreamingLinkClick);
   hideCodeTooltipIfAnchorWithin(mdRef.value);
@@ -1161,6 +1181,7 @@ watch([() => numberedDiffs.size, segments], async () => {
 }
 .md :deep(.code-editor-container) {
   height: auto !important;
+  min-height: 0 !important;
   max-height: var(--markdown-code-max-height) !important;
   overflow: hidden !important;
   line-height: var(--markdown-code-line-height);
@@ -1175,8 +1196,18 @@ watch([() => numberedDiffs.size, segments], async () => {
   display: none;
 }
 .md :deep(.code-block-container .code-pre-fallback) {
-  padding: 0 var(--markdown-code-padding-inline) var(--markdown-code-padding-bottom);
+  min-height: 0 !important;
+  margin: 0;
+  padding-top: 0 !important;
+  padding-inline: var(--markdown-code-padding-inline) !important;
+  padding-bottom: var(--markdown-code-padding-bottom) !important;
+  font-family: var(--markdown-code-font-family) !important;
+  font-size: var(--markdown-code-font-size) !important;
   line-height: var(--markdown-code-line-height) !important;
+  scrollbar-width: none;
+}
+.md :deep(.code-block-container .code-pre-fallback::-webkit-scrollbar) {
+  display: none;
 }
 .md :deep(.code-block-container pre:not(.code-pre-fallback):not(.markstream-pre--line-numbers)),
 .md :deep(pre[data-markstream-pre]:not(.code-pre-fallback):not(.markstream-pre--line-numbers)) {
@@ -1678,6 +1709,15 @@ watch([() => numberedDiffs.size, segments], async () => {
   min-width: 0;
   min-height: 0;
   height: auto;
+}
+.md :deep(.image-node-container.md-image-sized .image-node__img) {
+  width: var(--md-image-width);
+  aspect-ratio: var(--md-image-ratio);
+}
+.md :deep(.image-node-container.md-image-pending .image-node__img) {
+  width: var(--markdown-image-placeholder-width);
+  height: var(--markdown-image-placeholder-height);
+  opacity: 0;
 }
 .md :deep(.image-node-container[data-caption]::after) {
   content: attr(data-caption);

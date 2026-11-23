@@ -1,0 +1,11 @@
+{
+  "writer": "@moonshot-ai/kimi-code@2.6.3",
+  "integrity": "sha512-QDrY5FA2LQXQm3hcBF7eue/ALMet7KGq25uwyrgAIUlp5uvn4h5141xY2USe+m92f/qr5k7T43wHxfGSdLB2kw==",
+  "sessionId": "session_6bc111a2-dccf-4142-9f0d-60edb9bce532",
+  "files": {
+    "projects.json": "e0a774ede1b8ef0e4a8ac461afe879d7048a5436b35ec53d338c042b9a5b1b02",
+    "session_index.jsonl": "61a9303a77f64d81f0b34dab48986293535d99c9f9d3fc1a0bc23ca36c0c06c0",
+    "sessions/wd_old-workspace_a85097989a5d/session_6bc111a2-dccf-4142-9f0d-60edb9bce532/state.json": "07b4e7395d9d182176024e1ea3e8196dd2b63c4879f39603839a6c81d8ffc6f9",
+    "sessions/wd_old-workspace_a85097989a5d/session_6bc111a2-dccf-4142-9f0d-60edb9bce532/agents/main/wire.jsonl": "4c2362abb5588f6ee4258c37c2bef740010307b37ae64f61f78d318ea0c620ca"
+  }
+}

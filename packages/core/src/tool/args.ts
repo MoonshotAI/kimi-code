@@ -3,7 +3,19 @@ import Ajv2019 from 'ajv/dist/2019';
 import Ajv2020 from 'ajv/dist/2020';
 import addFormats from 'ajv-formats';
 
+import { log } from '#/utils/log';
+
 type AnyAjv = Ajv | Ajv2019 | Ajv2020;
+
+const ajvOptions = {
+  strict: false,
+  allErrors: true,
+  logger: {
+    log: (...args: unknown[]) => log.debug(args.map(String).join(' ')),
+    warn: (...args: unknown[]) => log.warn(args.map(String).join(' ')),
+    error: (...args: unknown[]) => log.error(args.map(String).join(' ')),
+  },
+};
 
 let draft07Ajv: Ajv | undefined;
 let draft2019Ajv: Ajv2019 | undefined;
@@ -15,15 +27,15 @@ function withFormats<T extends AnyAjv>(ajv: T): T {
 }
 
 function draft07(): Ajv {
-  return (draft07Ajv ??= withFormats(new Ajv({ strict: false, allErrors: true })));
+  return (draft07Ajv ??= withFormats(new Ajv(ajvOptions)));
 }
 
 function draft2019(): Ajv2019 {
-  return (draft2019Ajv ??= withFormats(new Ajv2019({ strict: false, allErrors: true })));
+  return (draft2019Ajv ??= withFormats(new Ajv2019(ajvOptions)));
 }
 
 function draft2020(): Ajv2020 {
-  return (draft2020Ajv ??= withFormats(new Ajv2020({ strict: false, allErrors: true })));
+  return (draft2020Ajv ??= withFormats(new Ajv2020(ajvOptions)));
 }
 
 const DRAFT_2019_KEYWORDS = new Set([

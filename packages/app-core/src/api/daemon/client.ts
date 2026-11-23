@@ -30,6 +30,9 @@ import type {
   AppSession,
   AppSessionRatingReport,
   AppSessionRatingOffer,
+  SessionContextItemDetail,
+  SessionContextItemsResponse,
+  SessionContextSummary,
   AppSkill,
   AppSkillAttachment,
   AppSkillActivationOptions,
@@ -224,6 +227,7 @@ interface WireMeta {
   server_version: string;
   server_id: string;
   started_at: string;
+  home_dir: string;
   capabilities: Record<string, boolean>;
   open_in_apps?: string[];
   dangerous_bypass_auth?: boolean;
@@ -357,6 +361,7 @@ export class DaemonKimiWebApi implements KimiWebApi {
     serverVersion: string;
     serverId: string;
     startedAt: string;
+    homeDir: string;
     capabilities: Record<string, boolean>;
     openInApps: string[];
     dangerousBypassAuth: boolean;
@@ -370,6 +375,7 @@ export class DaemonKimiWebApi implements KimiWebApi {
       serverVersion: data.server_version,
       serverId: data.server_id,
       startedAt: data.started_at,
+      homeDir: data.home_dir,
       capabilities: data.capabilities,
       openInApps: Array.isArray(data.open_in_apps) ? data.open_in_apps : [],
       dangerousBypassAuth: data.dangerous_bypass_auth === true,
@@ -415,6 +421,10 @@ export class DaemonKimiWebApi implements KimiWebApi {
     input?: ListSessionsInput,
     options?: ReadRequestOptions,
   ): Promise<SessionsPage> {
+    const hasWorkspaceCursor =
+      input?.workspaceId !== undefined &&
+      input.workspaceIds === undefined &&
+      (input.beforeId !== undefined || input.afterId !== undefined);
     const query: RestQuery = {
       before_id: input?.beforeId,
       after_id: input?.afterId,
@@ -428,9 +438,10 @@ export class DaemonKimiWebApi implements KimiWebApi {
       has_prompt: input?.hasPrompt,
       updated_after: input?.updatedAfter,
       updated_before: input?.updatedBefore,
+      query: input?.query,
       sort: input?.sort,
       include: input?.include,
-      hosts: this.hostsQuery(),
+      hosts: input?.localOnly === true || hasWorkspaceCursor ? undefined : this.hostsQuery(),
     };
     const data = await this.http.get<WireSessionsPage>('/sessions', query, options);
     return {
@@ -811,10 +822,58 @@ export class DaemonKimiWebApi implements KimiWebApi {
     return { cancelled: data.cancelled };
   }
 
+  async continueSession(sessionId: string): Promise<{ continued: true }> {
+    const data = await this.http.post<{ continued: true }>(
+      `/sessions/${encodeURIComponent(sessionId)}:continue`,
+      {},
+    );
+    return { continued: data.continued };
+  }
+
   async compactSession(sessionId: string, instruction?: string): Promise<void> {
     await this.http.post(
       `/sessions/${encodeURIComponent(sessionId)}:compact`,
       instruction ? { instruction } : {},
+    );
+  }
+
+  async getSessionContextSummary(
+    sessionId: string,
+    agentId?: string,
+    options?: ReadRequestOptions,
+  ): Promise<SessionContextSummary> {
+    return this.http.get<SessionContextSummary>(
+      `/sessions/${encodeURIComponent(sessionId)}/context/summary`,
+      { agent_id: agentId },
+      options,
+    );
+  }
+
+  async getSessionContextItems(
+    sessionId: string,
+    query?: { agentId?: string; role?: string; roles?: readonly string[]; offset?: number; limit?: number },
+    options?: ReadRequestOptions,
+  ): Promise<SessionContextItemsResponse> {
+    return this.http.get<SessionContextItemsResponse>(
+      `/sessions/${encodeURIComponent(sessionId)}/context/items`,
+      {
+        agent_id: query?.agentId,
+        role: query?.roles?.length ? query.roles : query?.role,
+        offset: query?.offset !== undefined ? String(query.offset) : undefined,
+        limit: query?.limit !== undefined ? String(query.limit) : undefined,
+      },
+      options,
+    );
+  }
+
+  async getSessionContextItem(
+    sessionId: string,
+    itemId: string,
+    agentId?: string,
+  ): Promise<SessionContextItemDetail> {
+    return this.http.get<SessionContextItemDetail>(
+      `/sessions/${encodeURIComponent(sessionId)}/context/items/${encodeURIComponent(itemId)}`,
+      { agent_id: agentId },
     );
   }
 
@@ -862,6 +921,15 @@ export class DaemonKimiWebApi implements KimiWebApi {
       {},
     );
     return { agentId: data.agent_id };
+  }
+
+  async closeAgent(sessionId: string, agentId: string): Promise<{ closed: true }> {
+    await this.http.post<{ closed: true }>(
+      `/sessions/${encodeURIComponent(sessionId)}/agents/${encodeURIComponent(agentId)}:close`,
+      {},
+      { allowCodes: [40401] },
+    );
+    return { closed: true };
   }
 
   respondApproval(

@@ -154,7 +154,7 @@ test('prepares a draft and retries an interrupted release from the same SHA', ()
   assert.match(readFileSync(join(f.dir, 'output'), 'utf8'), /build=false/);
 });
 
-test('workflow release titles use product names and full versions', () => {
+void test('workflow release titles use product names and full versions', () => {
   const workflow = (name) => readFileSync(fileURLToPath(new URL(`../.github/workflows/${name}`, import.meta.url)), 'utf8');
   const stable = workflow('release.yml');
   assert.match(stable, /RELEASE_VERSION: \$\{\{ steps\.kimi-release\.outputs\.version \}\}/);

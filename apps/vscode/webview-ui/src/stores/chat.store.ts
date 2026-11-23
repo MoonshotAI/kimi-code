@@ -1,3 +1,4 @@
+import { v4 as randomUUID } from "uuid";
 import { create } from "zustand";
 import { produce } from "immer";
 import { bridge } from "@/services";
@@ -425,7 +426,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   enqueue: (content, model) => {
     set((s) => ({
-      queue: [...s.queue, { id: crypto.randomUUID(), content, model }],
+      queue: [...s.queue, { id: randomUUID(), content, model }],
     }));
   },
 

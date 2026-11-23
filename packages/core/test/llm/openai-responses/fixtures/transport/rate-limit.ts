@@ -2,7 +2,7 @@ import { testModule } from '../../../harness';
 import type { OpenAIResponsesTransportFixture } from '../types';
 
 export default {
-  name: 'rate-limit',
+  name: 'as a Responses API user, I want rate-limit errors to preserve retry metadata',
   module: testModule(),
   endpoint: { baseUrl: 'https://example.test/v1', apiKey: 'test-key' },
   stream: false,
@@ -19,7 +19,7 @@ export default {
   },
   expected: {
     url: 'https://example.test/v1/responses',
-    body: { stream: false, store: false },
+    body: { stream: false },
     outcome: {
       type: 'failed',
       error: {

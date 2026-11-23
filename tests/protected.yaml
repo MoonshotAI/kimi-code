@@ -1,0 +1,83 @@
+require_smoke: [agent-core-v2, scenarios, cli, smoke]
+
+protected:
+  - id: core.first-turn
+    kind: smoke
+    runner: vitest
+    project: agent-core-v2
+    file: packages/agent-core-v2/test/integration/conversation/first-turn.test.ts
+    behavior: 引擎完成首轮对话，追问带上前一轮的提问和回答。
+    source: 引擎会话 RPC 基础冒烟
+    owner: '@RealKai42'
+  - id: kap.first-turn
+    kind: smoke
+    runner: vitest
+    project: scenarios
+    file: tests/scenarios/conversation.test.ts
+    behavior: 回合完成前可读到部分回答，最终 WebSocket 历史与 REST 一致。
+    source: KAP 首轮对话契约
+    owner: '@RealKai42'
+  - id: tui.first-turn
+    kind: smoke
+    runner: vitest
+    project: cli
+    file: apps/kimi-code/test/e2e/tui/conversation/first-turn.test.ts
+    behavior: 终端用户键入首问并按 Enter 后能看到回答。
+    source: 默认 TUI 首轮旅程
+    owner: '@RealKai42'
+  - id: desktop.first-turn
+    kind: smoke
+    runner: playwright
+    project: smoke
+    file: apps/desktop/e2e/core-turn.spec.ts
+    behavior: 用户在新工作区发送首问，看到流式回复，回合结束后可以继续输入。
+    source: Electron 新工作区首轮旅程
+    owner: '@RealKai42'
+  - id: core.overflow-recovery-after-retry
+    kind: regression
+    runner: vitest
+    project: agent-core-v2
+    file: packages/agent-core-v2/test/agent/fullCompaction/fullCompaction.test.ts
+    behavior: 请求先被限流，重试时又遇上下文超限，引擎自动压缩后再次请求，这一回合正常完成，而不是直接失败。
+    source: 'core #4950 修复：LLM 重试后恢复超限压缩'
+    owner: '@RealKai42'
+  - id: desktop.overlay-menu-stays-closed
+    kind: regression
+    runner: vitest
+    project: kimi-code-app
+    file: apps/desktop/tests/main/browser/browser-overlay.test.ts
+    behavior: 用户在浮层菜单里刚改完选项就按 Escape，渲染进程在收到关闭通知前发出的菜单刷新不会让菜单重新弹出；菜单保持关闭，渲染进程和主进程都认为它已关闭。
+    source: 'desktop #5199 修复：浮层菜单被迟到的刷新重新打开'
+    owner: '@RealKai42'
+  - id: kap.api-contract
+    kind: contract
+    runner: vitest
+    project: kap-server
+    file: packages/kap-server/test/apiSurface.test.ts
+    behavior: 真实服务发布的 REST 和 WebSocket 契约与入库的 OpenAPI、AsyncAPI 和字段摘要一致，字段、操作或消息的变化必须和这三份文档一起提交评审。
+    source: KAP 公开协议文档
+    owner: '@RealKai42'
+  - id: kap.replay-recording
+    kind: contract
+    runner: vitest
+    project: scenarios
+    file: tests/scenarios/replay.test.ts
+    behavior: 真实服务在首轮对话中推给客户端的帧，包括回合中途才订阅的第二个客户端收到的帧，与入库录制一致。
+    source: KAP 首轮录制的生产端
+    owner: '@RealKai42'
+  - id: app-core.replay-recording
+    kind: contract
+    runner: vitest
+    project: '@moonshot-ai/app-core'
+    file: packages/app-core/test/replay/first-turn.test.ts
+    behavior: 客户端会话逻辑离线回放入库录制，回合结束前显示部分回答，结束后得到与服务端相同的最终历史。
+    source: KAP 首轮录制的消费端
+    owner: '@RealKai42'
+  - id: kap.cold-recovery
+    kind: contract
+    runner: vitest
+    project: scenarios
+    file: tests/scenarios/cold-recovery.test.ts
+    behavior: 每个已发布版本写下的会话都能在新的 KAP 进程里继续；续写的回合写入磁盘后进程崩溃，重启后仍能看到这一回合。
+    source: 已发布版本的会话语料
+    owner: '@RealKai42'

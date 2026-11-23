@@ -31,12 +31,13 @@ const MenuItem = Type.Union([
     metrics: Type.Optional(Type.Array(Type.Object({ label: Label, value: Label }), { maxItems: 4 })), description: Type.Optional(Type.String({ maxLength: 1024 })), detail: Type.Optional(Type.String({ maxLength: 1024 })), tone: Type.Optional(Type.Enum(['warning', 'danger'])),
     actions: Type.Optional(Type.Array(ItemAction, { maxItems: 4 })), progress: Type.Optional(ItemProgress) }),
 ]);
-export const BrowserOverlayMenuRequestSchema = Type.Object({
+const MenuFields = {
   menuId: Id, anchor: BrowserBoundsSchema, placement: Type.Optional(Placement), initialFocus: Type.Optional(InitialFocus),
   offset: Type.Optional(Type.Number({ minimum: -16, maximum: 32 })), width: Type.Optional(Type.Number({ minimum: 180 })),
   autoWidth: OptionalFlag, preserveFocus: OptionalFlag, items: Type.Array(MenuItem, { minItems: 1, maxItems: 2048 }),
   footerStart: Type.Optional(Type.Integer({ minimum: 0 })), query: Type.Optional(Type.String({ maxLength: 1024 })),
-});
+};
+export const BrowserOverlayMenuRequestSchema = Type.Object({ ...MenuFields, refresh: OptionalFlag });
 const DialogCoordinate = Type.Number({ minimum: 0, maximum: 32768 });
 const DialogBounds = Type.Object({ x: DialogCoordinate, y: DialogCoordinate, width: DialogCoordinate, height: DialogCoordinate });
 const DialogFields = {
@@ -75,7 +76,7 @@ export type BrowserOverlayActivateRequest = Static<typeof Activate>;
 export type BrowserOverlayDismissRequest = Static<typeof Dismiss>;
 
 const MenuConfig = Type.Object({
-  ...BrowserOverlayMenuRequestSchema.properties, kind: Type.Literal('menu'), requestId: BrowserRequestIdSchema,
+  ...MenuFields, kind: Type.Literal('menu'), requestId: BrowserRequestIdSchema,
   width: Type.Optional(Type.Number({ minimum: 1 })),
   minWidth: Type.Optional(Type.Number({ minimum: 1 })), maxHeight: Type.Optional(Type.Number({ minimum: 1 })),
 });
@@ -195,6 +196,7 @@ export function asBrowserOverlayMenuRequest(value: unknown): BrowserOverlayMenuR
   return {
     menuId: request.menuId, anchor, items, placement: request.placement ?? 'bottom-end',
     offset: Math.round(request.offset ?? 4), width: Math.round(request.width ?? 220),
+    ...(request.refresh === true ? { refresh: true } : {}),
     ...(request.initialFocus === undefined ? {} : { initialFocus: request.initialFocus }),
     ...(request.autoWidth === true ? { autoWidth: true } : {}),
     ...(request.preserveFocus === true ? { preserveFocus: true } : {}),

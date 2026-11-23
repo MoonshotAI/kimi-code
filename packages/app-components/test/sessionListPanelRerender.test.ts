@@ -402,7 +402,7 @@ describe('SessionListPanel re-render scope', () => {
     expect(reads).toBe(readsPerPass * 2);
   });
 
-  it('renders standalone pinned sessions as compact single-line rows with message icon, interleaved order and drag reordering', async () => {
+  it('renders standalone pinned sessions as compact single-line rows by default, with interleaved order and drag reordering', async () => {
     app?.unmount();
     const pinnedGroup = group(0, 1);
     const otherGroup = group(1, 1);
@@ -438,6 +438,7 @@ describe('SessionListPanel re-render scope', () => {
 
     const compactRow = host.querySelector(`.pinned [data-session-id="${pinnedSingle.id}"]`)!;
     expect(compactRow.classList.contains('compact-pinned')).toBe(true);
+    expect(compactRow.classList.contains('has-sub')).toBe(false);
     expect(compactRow.classList.contains('flat')).toBe(false);
     expect(compactRow.querySelector('.lead .lead-icon')?.getAttribute('data-icon')).toBe('message');
     expect(compactRow.querySelector('.sub')).toBeNull();
@@ -480,5 +481,256 @@ describe('SessionListPanel re-render scope', () => {
       'ws:ws-0',
       'after',
     );
+  });
+
+  it('switches pinned sessions between compact and project-subtitle display via header options and blank-area context menu', async () => {
+    app?.unmount();
+    const pinnedGroup = group(0, 1);
+    const otherGroup = group(1, 1);
+    const pinnedSingle: Session = {
+      ...session(1, 1),
+      pinned: true,
+      workspaceName: 'Workspace 1',
+      cwdLabel: '1',
+      pullRequest: { number: 1279, state: 'open', url: 'https://example.com/pr/1279' },
+    };
+    fakes.views.workspaceGroups = [pinnedGroup, otherGroup];
+    fakes.views.unpinnedWorkspaceGroups = [otherGroup];
+    fakes.views.pinnedWorkspaceGroups = [pinnedGroup];
+    fakes.views.pinnedSessions = [pinnedSingle];
+    fakes.views.pinnedEntries = [
+      { key: `session:${pinnedSingle.id}`, kind: 'session', session: pinnedSingle },
+      { key: 'ws:ws-0', kind: 'workspace', group: pinnedGroup },
+    ];
+    fakes.workspaces.pinnedWorkspaceIds = ['ws-0'];
+
+    app = installTestPlugins(
+      createApp(SessionListPanel, { statusTab: 'open', canEditWorkspace: true }),
+    );
+    app.mount(host);
+    await nextTick();
+
+    const pinnedRoot = host.querySelector('.pinned')!;
+    const pinnedRow = () => host.querySelector(`.pinned [data-session-id="${pinnedSingle.id}"]`)!;
+    const openPinnedMenu = () => document.body.querySelector('.pinned-menu:not(.menu-pop-leave-active)');
+
+    const pinnedHeading = pinnedRoot.querySelector<HTMLElement>('.pinned-heading')!;
+    expect(pinnedHeading.firstElementChild?.classList.contains('pinned-title')).toBe(true);
+    expect(pinnedHeading.lastElementChild?.classList.contains('pinned-toggle')).toBe(true);
+    expect(pinnedHeading.querySelector('.ui-tip')).toBeNull();
+    const pinnedActionButtons = [...pinnedRoot.querySelectorAll('.pinned-actions button')];
+    expect(pinnedActionButtons.map((btn) => btn.classList.contains('pinned-options'))).toEqual([true]);
+
+    const sectionHeading = host.querySelector<HTMLElement>('.side-section-heading')!;
+    expect(sectionHeading.firstElementChild?.classList.contains('side-section-title')).toBe(true);
+    expect(sectionHeading.lastElementChild?.classList.contains('side-section-fold')).toBe(true);
+    expect(sectionHeading.querySelector('.ui-tip')).toBeNull();
+    const sectionActionButtons = [...host.querySelectorAll<HTMLButtonElement>('.side-section-actions button')];
+    expect(sectionActionButtons.map((btn) => btn.getAttribute('aria-label'))).toEqual([
+      'Collapse all projects',
+      'New Project',
+      'List options',
+    ]);
+    expect(sectionActionButtons.at(-1)?.classList.contains('side-section-view')).toBe(true);
+
+    const pinnedRowsNode = pinnedRoot.querySelector('.pinned-rows')!;
+    const pinnedFold = pinnedRoot.querySelector('.pinned-fold')!;
+    pinnedHeading.querySelector<HTMLElement>('.pinned-title')!.click();
+    await nextTick();
+    expect(pinnedFold.classList.contains('collapsed')).toBe(true);
+    expect(pinnedFold.hasAttribute('inert')).toBe(true);
+    expect(pinnedRoot.querySelector('.pinned-rows')).toBe(pinnedRowsNode);
+    expect(pinnedHeading.querySelector('.pinned-toggle')?.classList.contains('pinned-toggle--on')).toBe(true);
+    pinnedHeading.querySelector<HTMLButtonElement>('.pinned-toggle')!.click();
+    await nextTick();
+    expect(pinnedFold.classList.contains('collapsed')).toBe(false);
+    expect(pinnedFold.hasAttribute('inert')).toBe(false);
+    expect(pinnedRoot.querySelector('.pinned-rows')).toBe(pinnedRowsNode);
+
+    const sessionsListNode = host.querySelector('.sessions')!;
+    const wsNodeBefore = host.querySelector('.sessions [data-ws-id]')!;
+    sectionHeading.querySelector<HTMLElement>('.side-section-title')!.click();
+    await nextTick();
+    expect(localStorage.getItem('kimi-web.sessions-section-collapsed')).toBe('true');
+    expect(sessionsListNode.classList.contains('sessions--collapsed')).toBe(true);
+    expect(sessionsListNode.hasAttribute('inert')).toBe(true);
+    expect(host.querySelector('.sessions [data-ws-id]')).toBe(wsNodeBefore);
+    expect(sectionHeading.querySelector('.side-section-fold')?.classList.contains('side-section-fold--on')).toBe(true);
+    sectionHeading.querySelector<HTMLButtonElement>('.side-section-fold')!.click();
+    await nextTick();
+    expect(localStorage.getItem('kimi-web.sessions-section-collapsed')).toBe('false');
+    expect(sessionsListNode.classList.contains('sessions--collapsed')).toBe(false);
+    expect(sessionsListNode.hasAttribute('inert')).toBe(false);
+    expect(host.querySelector('.sessions [data-ws-id]')).toBe(wsNodeBefore);
+
+    expect(pinnedRoot.classList.contains('pinned--workspace')).toBe(false);
+    expect(pinnedRow().querySelector('.sub')).toBeNull();
+    expect(pinnedRow().querySelector('.compact-pr')?.textContent).toContain('#1279');
+
+    pinnedRow().dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 20, clientY: 20 }));
+    await nextTick();
+    expect(openPinnedMenu()).toBeNull();
+
+    pinnedRoot.querySelector('.pin-workspace .gh')!.dispatchEvent(
+      new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 20, clientY: 60 }),
+    );
+    await nextTick();
+    expect(openPinnedMenu()).toBeNull();
+
+    pinnedRoot.querySelector<HTMLButtonElement>('.pinned-options')!.click();
+    await vi.waitFor(() => expect(openPinnedMenu()).not.toBeNull());
+    const menuItems = [...openPinnedMenu()!.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')];
+    const initialCompactItem = menuItems.find((item) => item.textContent?.includes('Compact'));
+    const showProjectItem = menuItems.find((item) => item.textContent?.includes('Show project'));
+    expect(initialCompactItem?.getAttribute('aria-checked')).toBe('true');
+    expect(showProjectItem?.getAttribute('aria-checked')).toBe('false');
+    showProjectItem!.click();
+    await nextTick();
+
+    expect(localStorage.getItem('kimi-web.pinned-session-display-mode')).toBe('workspace');
+    expect(pinnedRoot.classList.contains('pinned--workspace')).toBe(true);
+    expect(pinnedRow().classList.contains('has-sub')).toBe(true);
+    expect(pinnedRow().querySelector('.sub.sub--pinned .sub-text')?.textContent).toBe('Workspace 1');
+    expect(pinnedRow().querySelector('.sub .sub-icon')).toBeNull();
+    expect(pinnedRow().querySelector('.sub .pr')?.textContent).toContain('#1279');
+    expect(pinnedRow().querySelector('.compact-pr')).toBeNull();
+    expect(openPinnedMenu()).toBeNull();
+
+    const pinRowWrapper = pinnedRow().closest<HTMLElement>('.pin-row')!;
+    const pinWsWrapper = pinnedRoot.querySelector<HTMLElement>('.pin-workspace')!;
+    const wsHeader = pinWsWrapper.querySelector<HTMLElement>('.gh')!;
+    pinWsWrapper.style.paddingTop = '6px';
+    vi.spyOn(pinRowWrapper, 'getBoundingClientRect').mockReturnValue({ height: 45 } as DOMRect);
+    vi.spyOn(wsHeader, 'getBoundingClientRect').mockReturnValue({ height: 32 } as DOMRect);
+    fakes.views.pinnedWorkspaceGroups = [group(0, 3)];
+    fakes.views.pinnedEntries = [
+      { key: `session:${pinnedSingle.id}`, kind: 'session', session: pinnedSingle },
+      { key: 'ws:ws-0', kind: 'workspace', group: fakes.views.pinnedWorkspaceGroups[0] },
+    ];
+    await nextTick();
+    expect(pinnedRoot.querySelector('.pinned-resize')?.getAttribute('aria-valuemin')).toBe('83');
+
+    pinnedRoot.querySelector('.pinned-label')!.dispatchEvent(
+      new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 80, clientY: 20 }),
+    );
+    await vi.waitFor(() => expect(openPinnedMenu()).not.toBeNull());
+    expect(pinnedRoot.querySelector('.pinned-options')?.classList.contains('open')).toBe(false);
+    const reopenedItems = [...openPinnedMenu()!.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')];
+    const compactItem = reopenedItems.find((item) => item.textContent?.includes('Compact'));
+    const checkedProjectItem = reopenedItems.find((item) => item.textContent?.includes('Show project'));
+    expect(compactItem?.getAttribute('aria-checked')).toBe('false');
+    expect(checkedProjectItem?.getAttribute('aria-checked')).toBe('true');
+    compactItem!.click();
+    await nextTick();
+
+    expect(localStorage.getItem('kimi-web.pinned-session-display-mode')).toBe('compact');
+    expect(pinnedRoot.classList.contains('pinned--workspace')).toBe(false);
+    expect(pinnedRow().querySelector('.sub')).toBeNull();
+    expect(pinnedRow().querySelector('.compact-pr')?.textContent).toContain('#1279');
+    expect(openPinnedMenu()).toBeNull();
+
+    pinnedRoot.querySelector('.pinned-rows')!.dispatchEvent(
+      new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 120, clientY: 90 }),
+    );
+    await vi.waitFor(() => expect(openPinnedMenu()).not.toBeNull());
+  });
+
+  it('collapses and expands pinned and project sections with zero WorkspaceGroup re-renders and clean scroll/reveal state', async () => {
+    app?.unmount();
+    const pinnedGroup = group(0, 3);
+    const unpinnedGroups = Array.from({ length: GROUPS }, (_, i) => group(i + 1, PER_GROUP));
+    const pinnedSingle = session(1, 99);
+    fakes.workspaces.pinnedWorkspaceIds = ['ws-0'];
+    fakes.views.pinnedWorkspaceGroups = [pinnedGroup];
+    fakes.views.pinnedSessions = [pinnedSingle];
+    fakes.views.pinnedEntries = [
+      { key: `session:${pinnedSingle.id}`, kind: 'session', session: pinnedSingle },
+      { key: 'ws:ws-0', kind: 'workspace', group: pinnedGroup },
+    ];
+    fakes.views.unpinnedWorkspaceGroups = unpinnedGroups;
+    fakes.views.workspaceGroups = [pinnedGroup, ...unpinnedGroups];
+
+    let panelRef: {
+      expandGroupIfCollapsed: (wsId: string | null, sessionId?: string) => void;
+      sessionsCanScrollDown: boolean;
+    } | null = null;
+    const statusTab = ref<'open' | 'done' | 'workspaces'>('open');
+    const emittedStatusTabs: string[] = [];
+    app = installTestPlugins(
+      createApp(
+        defineComponent({
+          setup() {
+            const el = ref<typeof panelRef>(null);
+            panelRef = new Proxy({} as NonNullable<typeof panelRef>, {
+              get(_, key) {
+                return (el.value as Record<PropertyKey, unknown> | null)?.[key];
+              },
+            });
+            return () =>
+              h(SessionListPanel, {
+                ref: el,
+                statusTab: statusTab.value,
+                'onUpdate:statusTab': (tab: 'open' | 'done' | 'workspaces') => emittedStatusTabs.push(tab),
+              });
+          },
+        }),
+      ),
+    );
+    app.mount(host);
+    await nextTick();
+
+    const sessionsEl = host.querySelector<HTMLElement>('.sessions')!;
+    Object.defineProperty(sessionsEl, 'clientHeight', { value: 200, configurable: true });
+    Object.defineProperty(sessionsEl, 'scrollHeight', { value: 800, configurable: true });
+    sessionsEl.scrollTop = 120;
+    sessionsEl.dispatchEvent(new Event('scroll'));
+    await nextTick();
+    expect(host.querySelector('.sessions-head')?.classList.contains('sessions-head--scrolled')).toBe(true);
+    expect(panelRef!.sessionsCanScrollDown).toBe(true);
+
+    const beforeToggleRenders = renders.count();
+    host.querySelector<HTMLElement>('.pinned-title')!.click();
+    await nextTick();
+    host.querySelector<HTMLButtonElement>('.pinned-toggle')!.click();
+    await nextTick();
+
+    host.querySelector<HTMLElement>('.side-section-title')!.click();
+    await nextTick();
+    expect(host.querySelector('.sessions-head')?.classList.contains('sessions-head--scrolled')).toBe(false);
+    expect(panelRef!.sessionsCanScrollDown).toBe(false);
+    expect(sessionsEl.scrollTop).toBe(120);
+
+    host.querySelector<HTMLButtonElement>('.side-section-fold')!.click();
+    await nextTick();
+    expect(host.querySelector('.sessions-head')?.classList.contains('sessions-head--scrolled')).toBe(true);
+    expect(panelRef!.sessionsCanScrollDown).toBe(true);
+    expect(sessionsEl.scrollTop).toBe(120);
+
+    expect(renders.count() - beforeToggleRenders).toBe(0);
+
+    host.querySelector<HTMLElement>('.pinned-title')!.click();
+    host.querySelector<HTMLElement>('.side-section-title')!.click();
+    await nextTick();
+    expect(host.querySelector('.pinned-fold')?.classList.contains('collapsed')).toBe(true);
+    expect(sessionsEl.classList.contains('sessions--collapsed')).toBe(true);
+
+    panelRef!.expandGroupIfCollapsed(null, pinnedSingle.id);
+    await nextTick();
+    expect(host.querySelector('.pinned-fold')?.classList.contains('collapsed')).toBe(false);
+    expect(sessionsEl.classList.contains('sessions--collapsed')).toBe(true);
+
+    panelRef!.expandGroupIfCollapsed(null, 'flat-unpinned-session');
+    await nextTick();
+    expect(sessionsEl.classList.contains('sessions--collapsed')).toBe(false);
+
+    statusTab.value = 'done';
+    await nextTick();
+    host.querySelector<HTMLElement>('.side-section-title')!.click();
+    await nextTick();
+    expect(sessionsEl.classList.contains('sessions--collapsed')).toBe(true);
+    panelRef!.expandGroupIfCollapsed('ws-0', 'done-session-in-pinned-ws');
+    await nextTick();
+    expect(sessionsEl.classList.contains('sessions--collapsed')).toBe(false);
+    expect(emittedStatusTabs).toEqual([]);
   });
 });

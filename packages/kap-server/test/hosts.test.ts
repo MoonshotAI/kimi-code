@@ -369,13 +369,23 @@ while IFS= read -r line; do :; done
       async (ssh, dir) => {
         const down = join(dir, 'down');
         writeFileSync(down, '');
-        const bridge = new SshKapBridge({ host: 'dev' }, { sshProgram: ssh });
+        const states: { status: string; failure?: string; error?: string }[] = [];
+        let refused: string | undefined;
+        const bridge = new SshKapBridge({ host: 'dev' }, {
+          sshProgram: ssh,
+          onChange: () => {
+            states.push({ status: bridge.status, failure: bridge.failure, error: bridge.error });
+            if (bridge.failure === 'connection_refused') refused = bridge.error;
+          },
+        });
         try {
           bridge.start();
-          await vi.waitFor(() => {
-            expect(bridge.status).toBe('disconnected');
-            expect(bridge.failure).toBe('connection_refused');
-          });
+          await vi.waitFor(
+            () => {
+              expect(states).toContainEqual({ status: 'connecting', failure: 'connection_refused', error: refused });
+            },
+            { timeout: 3_000, interval: 20 },
+          );
           await expect(bridge.connect()).rejects.toBeInstanceOf(HostConnectError);
           rmSync(down);
           await vi.waitFor(
@@ -617,6 +627,84 @@ describe('host management routes', () => {
       await rm(home, { recursive: true, force: true });
     }
   });
+});
+
+describe('host aggregation after idle exit', () => {
+  it.skipIf(process.platform === 'win32').each([false, true])(
+    'uses one on-demand SSH connection for concurrent listings (slow startup: %s)',
+    (slow) => withFakeSsh(
+      (dir) => `#!/usr/bin/env node
+const { appendFileSync, existsSync } = require('node:fs');
+const { createInterface } = require('node:readline');
+const count = ${JSON.stringify(join(dir, 'count'))};
+const waking = existsSync(count);
+appendFileSync(count, 'x');
+async function serve() {
+  while (waking && existsSync(${JSON.stringify(join(dir, 'hold'))})) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  console.log('__KIMI_ENSURE_DAEMON__{"protocol":${String(HOST_PROTOCOL_VERSION)},"api_level":${String(HOST_API_LEVEL)},"version":"1.2.3"}');
+  for await (const line of createInterface({ input: process.stdin })) {
+    const frame = JSON.parse(line);
+    if (!waking) process.exit(0);
+    const items = frame.path === '/api/v1/workspaces' ? [{
+      id: 'wm_00000000-0000-4000-8000-000000000001', kind: 'managed', root: '/srv/example',
+      name: 'example', additional_dirs: [], created_at: '2026-01-01T00:00:00.000Z',
+      last_opened_at: '2026-01-01T00:00:00.000Z', session_count: 0,
+    }] : [];
+    const body = Buffer.from(JSON.stringify({ code: 0, data: { items, total: items.length, has_more: false } })).toString('base64');
+    console.log(JSON.stringify({ type: 'http.res', id: frame.id, status: 200, headers: {}, body }));
+  }
+}
+void serve();
+`,
+      async (ssh, dir) => {
+        const entry = { host: 'example.test' };
+        const bridge = new SshKapBridge(entry, { sshProgram: ssh });
+        const hold = join(dir, 'hold');
+        if (slow) writeFileSync(hold, '');
+        const server = await startServer({
+          hostIdentity: TEST_HOST_IDENTITY, host: '127.0.0.1', port: 0, homeDir: dir, logLevel: 'silent',
+        });
+        const list = vi.spyOn(server.hostBridges, 'list').mockReturnValue([{ id: 'example', entry, bridge }]);
+        const get = async (path: string): Promise<unknown> => {
+          const response = await fetch(`http://127.0.0.1:${server.port}${path}`, {
+            headers: { authorization: `Bearer ${server.authTokenService.getToken()}` },
+            signal: AbortSignal.timeout(5000),
+          });
+          return response.json();
+        };
+        try {
+          const session = await bridge.connect();
+          await expect(session.request({ method: 'GET', path: '/api/v1/healthz', headers: {} })).rejects.toBeInstanceOf(HostRequestError);
+          await vi.waitFor(() => expect(bridge.session).toBeUndefined());
+          const listWorkspaces = () => get('/api/v1/workspaces?hosts=include');
+          const listSessions = () => get('/api/v1/sessions?hosts=include');
+          const first = await Promise.all([listWorkspaces(), listSessions()]);
+          const connected = bridge.session !== undefined;
+          if (slow) rmSync(hold);
+          const recovered = slow
+            ? await Promise.all([listWorkspaces(), listSessions()])
+            : first;
+          const available = [
+            { code: 0, data: { items: [{ name: 'example', host_id: 'example' }] } },
+            { code: 0, data: { unavailable_hosts: [] } },
+          ];
+          expect(connected).toBe(!slow);
+          expect(first).toMatchObject(slow ? [
+            { code: 0, data: { items: [] } },
+            { code: 0, data: { unavailable_hosts: ['example'] } },
+          ] : available);
+          expect(recovered).toMatchObject(available);
+          expect(readFileSync(join(dir, 'count'), 'utf8')).toBe('xx');
+        } finally {
+          list.mockRestore();
+          bridge.dispose();
+          await server.close();
+        }
+      },
+    ),
+  );
 });
 
 describe('host HTTP proxy', () => {

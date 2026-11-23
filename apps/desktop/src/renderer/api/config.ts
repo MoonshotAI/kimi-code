@@ -1,4 +1,5 @@
 
+import { v4 as randomUUID } from 'uuid';
 import { safeGetString, safeSetString, STORAGE_KEYS } from '@moonshot-ai/app-core/lib';
 import { DESKTOP_PRODUCT_NAME, DESKTOP_UI_MODE } from '../../shared/identity';
 
@@ -90,7 +91,7 @@ export function serverEndpointLabel(): string {
 function getClientId(): string {
   const stored = safeGetString(CLIENT_ID_KEY);
   if (stored) return stored;
-  const generated = `web_${globalThis.crypto?.randomUUID?.() || Math.random().toString(36).slice(2)}`;
+  const generated = `web_${randomUUID()}`;
   safeSetString(CLIENT_ID_KEY, generated);
   return generated;
 }

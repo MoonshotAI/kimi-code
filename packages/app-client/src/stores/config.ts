@@ -31,6 +31,7 @@ export const useConfigStore = defineStore('kimi.config', () => {
   const experimentalFlags = ref<Record<string, boolean>>({});
   const backend = ref<'v1' | 'v2'>('v1');
   const webTitle = ref('');
+  const homeDir = ref('');
 
   let configWriteGeneration = 0;
   let configCommittedGeneration = 0;
@@ -130,6 +131,7 @@ export const useConfigStore = defineStore('kimi.config', () => {
     experimentalFlags.value = m.experimentalFlags;
     backend.value = m.backend;
     webTitle.value = m.webTitle;
+    homeDir.value = m.homeDir;
   }
 
   async function setNotifyUserEnabled(on: boolean): Promise<boolean> {
@@ -148,6 +150,7 @@ export const useConfigStore = defineStore('kimi.config', () => {
     experimentalFlags.value = {};
     backend.value = 'v1';
     webTitle.value = '';
+    homeDir.value = '';
     configWriteGeneration = 0;
     configCommittedGeneration = 0;
     configWriteCommittedGeneration = 0;
@@ -162,6 +165,7 @@ export const useConfigStore = defineStore('kimi.config', () => {
     experimentalFlags,
     backend,
     webTitle,
+    homeDir,
     noteConfigWrite,
     loadConfig,
     updateConfig,

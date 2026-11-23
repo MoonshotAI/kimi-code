@@ -200,6 +200,14 @@ function confirmReset(): void {
                 </template>
               </div>
             </template>
+            <p
+              v-if="authState(server)?.error !== undefined"
+              class="plugin-capabilities__error plugin-capabilities__authorization-error"
+              role="alert"
+              :title="authState(server)?.error"
+            >
+              {{ t('settings.plugins.authorizationFailed') }}
+            </p>
           </li>
         </ul>
       </section>
@@ -348,6 +356,11 @@ function confirmReset(): void {
   color: var(--color-text-muted);
   font-size: var(--text-xs);
   white-space: nowrap;
+}
+
+.plugin-capabilities__authorization-error {
+  grid-column: 2 / -1;
+  overflow-wrap: anywhere;
 }
 
 .plugin-capabilities__loading,

@@ -50,3 +50,32 @@ it('renders the filename before its directory without a trailing slash', () => {
   expect(files[1]?.querySelector('.tf-dir')).toBeNull();
   expect(files[1]?.getAttribute('aria-label')).toBe('README.md');
 });
+
+function mountSummary(props: Record<string, unknown>): HTMLDivElement {
+  app?.unmount();
+  host?.remove();
+  host = document.createElement('div');
+  document.body.append(host);
+  app = createApp({ render: () => h(TurnFilesSummary, { turnId: 'turn-1', ...props }) });
+  app.use(createKimiI18n({ locale: 'en' }));
+  app.provide(panelApiKey, undefined);
+  app.mount(host);
+  return host;
+}
+
+function layout(root: HTMLElement): { rows: number; more: boolean } {
+  return { rows: root.querySelectorAll('.tf-row').length, more: root.querySelector('.tf-more') !== null };
+}
+
+it('reserves the completed card layout while the expected changes load', () => {
+  const change = (n: number) => ({ path: `src/file_${n}.ts`, added: n, removed: 0 });
+  for (const count of [1, 3, 5]) {
+    const loading = mountSummary({ changes: [], expected: count });
+    expect(loading.querySelector('.turn-files')?.getAttribute('aria-busy')).toBe('true');
+    expect(loading.querySelector('.tf-title')?.textContent).toBe('');
+    const skeleton = layout(loading);
+    const done = layout(mountSummary({ changes: Array.from({ length: count }, (_, n) => change(n)) }));
+    expect(skeleton).toEqual(done);
+    expect(done.rows).toBe(Math.min(count, 3));
+  }
+});

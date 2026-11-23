@@ -6,6 +6,7 @@ import { useIsMobile } from './useIsMobile';
 import { openDialogCount } from '@moonshot-ai/app-ui';
 import { resolveUpgradeRegion } from '@moonshot-ai/app-core/lib';
 import type { AttachmentEntry } from '@moonshot-ai/app-composer/features/attachment';
+import { hostsStore } from '../stores/hosts';
 
 export type PendingWorkspaceSubmit = {
   prompt: PromptEnvelope;
@@ -16,6 +17,7 @@ export type PendingWorkspaceSubmit = {
 
 export type AppDialogsDeps = {
   restorePendingComposer: (pending: PendingWorkspaceSubmit, sessionId?: string) => void;
+  beforePendingPromptSend?: (pending: PendingWorkspaceSubmit) => void;
   onWorkspaceAdded?: () => void;
 };
 
@@ -46,7 +48,10 @@ watch(showMobileSettings, (open) => {
 });
 
 watch([showSettings, showMobileSettings], ([settingsOpen, mobileOpen]) => {
-  if (!settingsOpen && !mobileOpen) settingsHighlightKey.value = undefined;
+  if (!settingsOpen && !mobileOpen) {
+    settingsHighlightKey.value = undefined;
+    hostsStore().requestFocus(null);
+  }
 });
 
 const anyOverlayOpen = computed<boolean>(
@@ -98,6 +103,26 @@ export function openAgentSettings(mobile = false): void {
       settingsHighlightKey.value = 'running-send-mode';
       showSettings.value = true;
     }
+  }
+}
+
+export function openHostSettings(hostId?: string, options?: { addIfEmpty?: boolean }): void {
+  const seq = ++dialogOpenSeq;
+  showModelPicker.value = false;
+  showMobileSettings.value = false;
+  settingsHighlightKey.value = undefined;
+  hostsStore().requestFocus(hostId ?? null, options);
+  settingsInitialTab.value = 'hosts';
+  if (showSettings.value) {
+    showSettings.value = false;
+    void nextTick(() => {
+      if (seq !== dialogOpenSeq) return;
+      hostsStore().requestFocus(hostId ?? null, options);
+      settingsInitialTab.value = 'hosts';
+      showSettings.value = true;
+    });
+  } else {
+    showSettings.value = true;
   }
 }
 
@@ -195,10 +220,11 @@ export function useAppDialogs(dialogDeps?: AppDialogsDeps) {
     const wsId = client.activeWorkspaceId.value;
     if (pending && wsId) {
       await client.ensureWorkspaceTrust(wsId, { background: false });
-      if (client.activeSessionId.value !== null || client.activeWorkspaceId.value !== wsId || client.activeWorkspaceTrust.value !== true) {
+      if (client.activeSessionId.value || client.activeWorkspaceId.value !== wsId || client.activeWorkspaceTrust.value !== true) {
         deps?.restorePendingComposer(pending);
         return true;
       }
+      deps?.beforePendingPromptSend?.(pending);
       const started = await client.startSessionAndSendPrompt(wsId, pending.prompt);
       if (started.promptRejected || (started.sessionId === null && started.concurrent !== true)) {
         deps?.restorePendingComposer(pending, started.sessionId ?? undefined);
@@ -255,6 +281,7 @@ export function useAppDialogs(dialogDeps?: AppDialogsDeps) {
     openAddWorkspace,
     openProviderSettings,
     openArchivedSettings,
+    openHostSettings,
     openAgentSettings: () => openAgentSettings(isMobile.value),
     dropPendingWorkspaceSubmit,
     completeWorkspaceCreation,

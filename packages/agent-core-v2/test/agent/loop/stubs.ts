@@ -171,6 +171,7 @@ export function stubLoopWithHooks(options: StubLoopOptions = {}): StubLoop {
     addActiveTool: () => {},
     removeActiveTool: () => {},
     history: () => messages,
+    previewRequestContent: () => ({ systemPrompt: '', tools: [], messages }),
     historyRevision: () => 0,
     replaceHistory(next, _reason, onAccepted) {
       messages.splice(0, messages.length, ...next.map((entry) => contextFromHistoryEntry(entry)));
@@ -302,6 +303,7 @@ export function stubLoopWithHooks(options: StubLoopOptions = {}): StubLoop {
     flushReminders() {
       stub.drainNextBatch(stub, ['message']);
     },
+    continueTurn() {},
   };
   return stub;
 }

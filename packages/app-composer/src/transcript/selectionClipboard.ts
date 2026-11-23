@@ -44,7 +44,7 @@ export function renderedComposerSlice(fragment: DocumentFragment, snapshot?: Com
         return;
       } else if (el.classList.contains('mention-pill')) {
         const kind = el.getAttribute('data-mention-kind');
-        if (kind === 'file' || kind === 'folder' || kind === 'skill') {
+        if (kind === 'file' || kind === 'folder' || kind === 'skill' || kind === 'session') {
           inline.push(mentionNode({ kind, name: el.getAttribute('data-mention-name') ?? '', path: el.getAttribute('data-mention-path') ?? '', rawDest: el.getAttribute('data-mention-raw-dest') ?? undefined }));
           return;
         }

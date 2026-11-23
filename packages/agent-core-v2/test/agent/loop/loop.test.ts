@@ -28,6 +28,7 @@ import {
   TurnStepStarted,
 } from '#/agent/loop/turnEvents';
 import { TurnEnded } from '#/agent/loop/turnOps';
+import { LoopDrained, LoopIdle } from '#/agent/loop/loopOps';
 import { runAgentTurn } from '#/session/subagent/runAgentTurn';
 import type { ExecutableTool } from '#/tool/toolContract';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
@@ -115,8 +116,8 @@ describe('Agent loop', () => {
       [emit] prompt.started              { "time": "<time>", "agentId": "main", "promptId": "<msg-1>" }
       [emit] turn.step.started           { "time": "<time>", "agentId": "main", "turnId": 0, "step": 1, "stepId": "<uuid-1>" }
       [wire] plugin.session_start        { "agentId": "main", "content": null, "time": "<time>" }
-      [wire] tool_select.initialized     { "agentId": "main", "tools": [ "Agent", "AgentSwarm", "AskUserQuestion", "Bash", "CreateGoal", "CronCreate", "CronDelete", "CronList", "Edit", "ExitPlanMode", "FetchURL", "GetGoal", "Glob", "Grep", "Read", "ReadMediaFile", "select_tools", "SetGoalBudget", "Skill", "TaskList", "TaskOutput", "TaskStop", "TodoList", "UpdateGoal", "WaitFor", "Write" ], "time": "<time>" }
       [wire] context.append_loop_event   { "agentId": "main", "event": { "type": "step.begin", "uuid": "<uuid-2>", "turnId": "0", "step": 1 }, "time": "<time>" }
+      [wire] tool_select.initialized     { "agentId": "main", "tools": [ "Agent", "AgentSwarm", "AskUserQuestion", "Bash", "CreateGoal", "CronCreate", "CronDelete", "CronList", "Edit", "ExitPlanMode", "FetchURL", "GetGoal", "Glob", "Grep", "Read", "ReadMediaFile", "select_tools", "SetGoalBudget", "Skill", "TaskList", "TaskOutput", "TaskStop", "TodoList", "UpdateGoal", "WaitFor", "Write" ], "time": "<time>" }
       [wire] llm.tools_snapshot          { "agentId": "main", "hash": "<tools-hash>", "tools": [ "Agent", "AgentSwarm", "AskUserQuestion", "Bash", "CreateGoal", "CronCreate", "CronDelete", "CronList", "Edit", "ExitPlanMode", "FetchURL", "GetGoal", "Glob", "Grep", "Read", "SetGoalBudget", "Skill", "TaskList", "TaskOutput", "TaskStop", "TodoList", "UpdateGoal", "WaitFor", "Write" ], "time": "<time>" }
       [emit] thinking.delta              { "time": "<time>", "agentId": "main", "turnId": 0, "delta": "<think-1>", "block": 0 }
       [emit] assistant.delta             { "time": "<time>", "agentId": "main", "turnId": 0, "delta": "<text-1>", "block": 1 }
@@ -205,8 +206,8 @@ describe('Agent loop', () => {
       [emit] prompt.started              { "time": "<time>", "agentId": "main", "promptId": "<msg-1>" }
       [emit] turn.step.started           { "time": "<time>", "agentId": "main", "turnId": 0, "step": 1, "stepId": "<uuid-1>" }
       [wire] plugin.session_start        { "agentId": "main", "content": null, "time": "<time>" }
-      [wire] tool_select.initialized     { "agentId": "main", "tools": [ "Agent", "AgentSwarm", "AskUserQuestion", "Bash", "CreateGoal", "CronCreate", "CronDelete", "CronList", "Edit", "ExitPlanMode", "FetchURL", "GetGoal", "Glob", "Grep", "Read", "ReadMediaFile", "select_tools", "SetGoalBudget", "Skill", "TaskList", "TaskOutput", "TaskStop", "TodoList", "UpdateGoal", "WaitFor", "Write" ], "time": "<time>" }
       [wire] context.append_loop_event   { "agentId": "main", "event": { "type": "step.begin", "uuid": "<uuid-2>", "turnId": "0", "step": 1 }, "time": "<time>" }
+      [wire] tool_select.initialized     { "agentId": "main", "tools": [ "Agent", "AgentSwarm", "AskUserQuestion", "Bash", "CreateGoal", "CronCreate", "CronDelete", "CronList", "Edit", "ExitPlanMode", "FetchURL", "GetGoal", "Glob", "Grep", "Read", "ReadMediaFile", "select_tools", "SetGoalBudget", "Skill", "TaskList", "TaskOutput", "TaskStop", "TodoList", "UpdateGoal", "WaitFor", "Write" ], "time": "<time>" }
       [wire] llm.tools_snapshot          { "agentId": "main", "hash": "<tools-hash>", "tools": [ "Agent", "AgentSwarm", "AskUserQuestion", "Bash", "CreateGoal", "CronCreate", "CronDelete", "CronList", "Edit", "ExitPlanMode", "FetchURL", "GetGoal", "Glob", "Grep", "Read", "SetGoalBudget", "Skill", "TaskList", "TaskOutput", "TaskStop", "TodoList", "UpdateGoal", "WaitFor", "Write" ], "time": "<time>" }
       [emit] assistant.delta             { "time": "<time>", "agentId": "main", "turnId": 0, "delta": "blocked", "block": 0 }
       [emit] context.spliced             { "time": "<time>", "agentId": "main", "start": 1, "deleteCount": 0, "messages": [ { "role": "assistant", "content": [ { "type": "text", "text": "blocked" } ], "toolCalls": [], "providerMessageId": "mock-1", "usage": { "inputOther": 3, "output": 5, "inputCacheRead": 0, "inputCacheCreation": 0 } } ] }
@@ -483,6 +484,36 @@ describe('Agent loop', () => {
     }
   });
 
+  it('resets streamed output for backoff and recovery retries', async () => {
+    for (const failure of [
+      providerHttpError(429, 'retry', { retryAfterMs: 1 }),
+      providerHttpError(400, 'text content blocks must be non-empty'),
+    ]) {
+      const local = createTestAgent({
+        initialConfig: { providers: {}, loopControl: { maxAttemptsPerStep: 2 } },
+      });
+      try {
+        local.mockNextProviderResponse({
+          parts: [{ type: 'text', text: 'partial before retry' }],
+          ...failure,
+        });
+        local.mockNextResponse({ type: 'text', text: 'completed after retry' });
+        await local.rpc.prompt({ input: [{ type: 'text', text: 'Hello' }] });
+        await local.untilTurnEnd();
+
+        expect(local.llmCalls).toHaveLength(2);
+        expect(local.allEvents).toContainEqual(
+          expect.objectContaining({
+            event: 'turn.step.stream_reset',
+            args: expect.objectContaining({ turnId: 0, step: 1 }),
+          }),
+        );
+      } finally {
+        await local.dispose();
+      }
+    }
+  });
+
   it('does not run loop error handlers for aborted turns', async () => {
     let called = false;
     loop.registerLoopErrorHandler({
@@ -568,8 +599,8 @@ describe('Agent loop', () => {
       [emit] prompt.started                  { "time": "<time>", "agentId": "main", "promptId": "<msg-1>" }
       [emit] turn.step.started               { "time": "<time>", "agentId": "main", "turnId": 0, "step": 1, "stepId": "<uuid-1>" }
       [wire] plugin.session_start            { "agentId": "main", "content": null, "time": "<time>" }
-      [wire] tool_select.initialized         { "agentId": "main", "tools": [ "Agent", "AgentSwarm", "AskUserQuestion", "Bash", "CreateGoal", "CronCreate", "CronDelete", "CronList", "Edit", "ExitPlanMode", "FetchURL", "GetGoal", "Glob", "Grep", "Lookup", "Read", "ReadMediaFile", "select_tools", "SetGoalBudget", "Skill", "TaskList", "TaskOutput", "TaskStop", "TodoList", "UpdateGoal", "WaitFor", "Write" ], "time": "<time>" }
       [wire] context.append_loop_event       { "agentId": "main", "event": { "type": "step.begin", "uuid": "<uuid-2>", "turnId": "0", "step": 1 }, "time": "<time>" }
+      [wire] tool_select.initialized         { "agentId": "main", "tools": [ "Agent", "AgentSwarm", "AskUserQuestion", "Bash", "CreateGoal", "CronCreate", "CronDelete", "CronList", "Edit", "ExitPlanMode", "FetchURL", "GetGoal", "Glob", "Grep", "Lookup", "Read", "ReadMediaFile", "select_tools", "SetGoalBudget", "Skill", "TaskList", "TaskOutput", "TaskStop", "TodoList", "UpdateGoal", "WaitFor", "Write" ], "time": "<time>" }
       [wire] llm.tools_snapshot              { "agentId": "main", "hash": "<tools-hash>", "tools": [ "Agent", "AgentSwarm", "AskUserQuestion", "Bash", "CreateGoal", "CronCreate", "CronDelete", "CronList", "Edit", "ExitPlanMode", "FetchURL", "GetGoal", "Glob", "Grep", "Read", "SetGoalBudget", "Skill", "TaskList", "TaskOutput", "TaskStop", "TodoList", "UpdateGoal", "WaitFor", "Write" ], "time": "<time>" }
       [emit] assistant.delta                 { "time": "<time>", "agentId": "main", "turnId": 0, "delta": "I will look it up.", "block": 0 }
       [emit] tool.call.delta                 { "time": "<time>", "agentId": "main", "turnId": 0, "toolCallId": "call_lookup", "name": "Lookup", "argumentsPart": "{\\"query\\":\\"moon\\"}" }
@@ -1097,6 +1128,15 @@ describe('Agent loop', () => {
     await completion;
 
     expect(ctx.llmCalls).toHaveLength(2);
+    const lifecycleEvents = ctx.allEvents.filter(
+      (event) => event.type === '[rpc]' && (event.event === 'turn.ended' || event.event === 'loop.drained' || event.event === 'loop.idle'),
+    );
+    expect(lifecycleEvents.map((event) => event.event)).toEqual([
+      'turn.ended',
+      'turn.ended',
+      'loop.drained',
+      'loop.idle',
+    ]);
     await expect(loop.settled()).resolves.toEqual({
       type: 'completed',
       steps: 1,
@@ -1107,6 +1147,39 @@ describe('Agent loop', () => {
       steps: 1,
       truncated: false,
     });
+
+    const eventOffset = ctx.allEvents.length;
+    let followUpSubmitted = false;
+    let firstGeneration: number | undefined;
+    let lastGeneration: number | undefined;
+    const idleSubscription = ctx.get(IEventBus).subscribe(LoopIdle, (event) => {
+      lastGeneration = event.generation;
+    });
+    const subscription = ctx.get(IEventBus).subscribe(LoopDrained, (event) => {
+      firstGeneration = event.generation;
+      subscription.dispose();
+      loop.submit({
+        role: 'user',
+        content: [{ type: 'text', text: 'submitted from drained' }],
+      });
+      followUpSubmitted = true;
+    });
+    ctx.mockNextResponse({ type: 'text', text: 'First macro answer.' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'start first macro' }] });
+    ctx.mockNextResponse({ type: 'text', text: 'Second macro answer.' });
+    await vi.waitFor(() => expect(followUpSubmitted).toBe(true));
+    await loop.settled();
+    expect(ctx.allEvents.slice(eventOffset).filter(
+      (event) => event.type === '[rpc]' && (event.event === 'turn.ended' || event.event === 'loop.drained' || event.event === 'loop.idle'),
+    ).map((event) => event.event)).toEqual([
+      'turn.ended',
+      'loop.drained',
+      'turn.ended',
+      'loop.drained',
+      'loop.idle',
+    ]);
+    expect(lastGeneration).toBe(firstGeneration! + 1);
+    idleSubscription.dispose();
   });
 
   it('carries a tool stopTurnReason into the completed turn result and turn.ended', async () => {

@@ -182,14 +182,18 @@ export class Session {
   async promptWithSkills(
     input: string | PromptInput,
     skills: readonly PromptSkillActivation[],
-    options?: { readonly steerIfActive?: boolean },
+    options?: { readonly steerIfActive?: boolean; readonly promptId?: string },
   ): Promise<PromptSubmissionResult> {
     this.ensureOpen();
+    if (options?.promptId !== undefined && options.promptId.length === 0) {
+      throw new TypeError('promptId must not be empty');
+    }
     return this.rpc.promptWithSkills({
       sessionId: this.id,
       input: normalizePromptInput(input),
       skills,
       steerIfActive: options?.steerIfActive,
+      promptId: options?.promptId,
     });
   }
 
@@ -214,11 +218,18 @@ export class Session {
     return this.rpc.cancelShellCommand({ sessionId: this.id, commandId });
   }
 
-  async steer(input: string | PromptInput): Promise<PromptSubmissionResult> {
+  async steer(
+    input: string | PromptInput,
+    options?: { promptId?: string },
+  ): Promise<PromptSubmissionResult> {
     this.ensureOpen();
+    if (options?.promptId !== undefined && options.promptId.length === 0) {
+      throw new TypeError('promptId must not be empty');
+    }
     return this.rpc.steer({
       sessionId: this.id,
       input: normalizePromptInput(input),
+      promptId: options?.promptId,
     });
   }
 

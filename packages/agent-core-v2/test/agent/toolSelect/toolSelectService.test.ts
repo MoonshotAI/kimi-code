@@ -21,6 +21,7 @@ import {
   IAgentLoopService,
   type AfterStepContext,
   type BeforeStepContext,
+  type LoopRequestContent,
   type LoopSnapshot,
   type PromptSubmitContext,
   type Turn,
@@ -253,6 +254,10 @@ class FakeLoopService extends StubEffectiveProfileReader implements IAgentLoopSe
     return [];
   }
 
+  previewRequestContent(): LoopRequestContent {
+    return { systemPrompt: '', tools: [], messages: this.history() };
+  }
+
   historyRevision(): number {
     return 0;
   }
@@ -334,6 +339,8 @@ class FakeLoopService extends StubEffectiveProfileReader implements IAgentLoopSe
   }
 
   async settled(): Promise<undefined> {}
+
+  continueTurn(): void {}
 
   async retry(): Promise<never> {
     throw new Error('unused in this suite');

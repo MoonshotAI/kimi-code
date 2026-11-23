@@ -74,6 +74,7 @@ import { effectiveThinkingLevel } from '@moonshot-ai/app-core/lib';
 import { isPurePreviewFile, modelDisplayName, subagentEffortSuffix } from '@moonshot-ai/app-core/lib';
 import { stripSkillPrefix, skillCommandArgs } from '@moonshot-ai/app-core/lib';
 import { TOWER_STATUS_PROMPT, TOWER_TEARDOWN_PROMPT } from '@moonshot-ai/app-core/lib';
+import { useContextInspector } from '@moonshot-ai/app-core';
 import { sessionDisplayStatus, type SessionDisplayStatus } from '@moonshot-ai/app-core/lib';
 import { Icon, IconButton, StatusDot } from '@moonshot-ai/app-ui';
 import { hasCustomTitleBar, hasDesktopBridge, isMacosDesktop, isWindowsDesktop } from '@moonshot-ai/app-core/lib';
@@ -375,7 +376,10 @@ onMounted(() => {
       .kimiDesktop?.onMenuAction?.((menuId) => {
       if (menuId === 'close-panel-tab') {
         if (anyOverlayOpen.value) return;
-        if (panel.panelVisible.value && panel.activeTabId.value) panel.closeTab(panel.activeTabId.value);
+        if (panel.panelVisible.value && panel.activeTabId.value) {
+          if (panelTabsRef.value?.requestClose) void panelTabsRef.value.requestClose('close', panel.activeTabId.value);
+          else panel.closeTab(panel.activeTabId.value);
+        }
         else window.close();
         return;
       }
@@ -557,7 +561,8 @@ function runShortcutAction(id: AppActionId, source: 'shortcut' | 'menu' | 'butto
       break;
     case 'closeSessionView':
       if (!anyOverlayOpen.value && panel.panelVisible.value && panel.activeTabId.value) {
-        panel.closeTab(panel.activeTabId.value);
+        if (panelTabsRef.value?.requestClose) void panelTabsRef.value.requestClose('close', panel.activeTabId.value);
+        else panel.closeTab(panel.activeTabId.value);
         break;
       }
       if (
@@ -1009,12 +1014,13 @@ const deadBtwTabIds = computed(() =>
     })
     .map((tab) => tab.id),
 );
-watch(deadBtwTabIds, (ids) => {
+function reapPanelTabs(ids: readonly string[]): void {
   if (ids.length === 0) return;
   const snapshot = reapFocusSnapshot(ids);
   for (const id of ids) panel.closeTab(id);
   focusHandoffAfterReap(snapshot.reapedActive, snapshot.focusWasInside);
-});
+}
+watch(deadBtwTabIds, reapPanelTabs);
 
 
 const canOpenTermTab = computed(() => terminalStore.available && !isMobile.value);
@@ -1149,6 +1155,10 @@ provide(panelApiKey, {
   openAgent: (id) => {
     closeDockWorkPanel();
     panel.openAgentPanel(id);
+  },
+  openContext: () => {
+    closeDockWorkPanel();
+    panel.openTab('context', {});
   },
   openTurnDiff: (payload) => {
     closeDockWorkPanel();
@@ -1296,6 +1306,14 @@ function openSessionInfoTab(type: PanelLauncherType): void {
   void panelTabsRef.value?.openLauncherTab(type);
 }
 
+const { contextInspectorEnabled } = useContextInspector();
+const disabledContextTabIds = computed(() =>
+  contextInspectorEnabled.value
+    ? []
+    : panel.panelTabs.value.filter((tab) => tab.type === 'context').map((tab) => tab.id),
+);
+watch(disabledContextTabIds, reapPanelTabs, { immediate: true });
+
 function armSideChatFocus(): { acted: () => boolean; focusWhenReady: () => void } {
   let userActed = false;
   const onUserAction = (e: Event): void => {
@@ -1360,6 +1378,7 @@ const {
   openModelPicker,
   openLogin,
   openProviderSettings,
+  openHostSettings,
   dropPendingWorkspaceSubmit,
   completeWorkspaceCreation,
   addWorkspace,
@@ -1375,6 +1394,9 @@ const {
       pending.restoreEntries,
       pending.prompt.snapshot,
     );
+  },
+  beforePendingPromptSend: (pending) => {
+    conversationPaneRef.value?.clearComposerAfterDispatch(pending.prompt.snapshot);
   },
   onWorkspaceAdded: () => {
     track('workspace_added', { workspace_count: client.workspacesView.value.length });
@@ -1585,7 +1607,7 @@ async function handleGetOAuthRegion() {
 const hostLoginId = computed(() => hostsStore().loginHostId);
 const hostLoginTitle = computed(() => {
   const hostId = hostLoginId.value;
-  return hostId === null ? undefined : t('login.hostTitle', { name: hostsStore().displayName(hostId) || hostId });
+  return hostId === null ? undefined : t('login.hostTitle', { name: hostsStore().hostLabel(hostId, t) });
 });
 
 async function handleWizardLoginSuccess(): Promise<void> {
@@ -1610,6 +1632,19 @@ async function handleEditMessage(payload: {
 
 async function handleInterrupt(): Promise<void> {
   await client.abortCurrentPrompt();
+}
+
+async function handleContinue(): Promise<void> {
+  const gateSid = client.activeSessionId.value;
+  if (!gateSid) return;
+  const verdict = await client.ensureChatReady();
+  if (verdict !== 'ok') {
+    if (verdict !== 'server-auth-required') await actOnGateVerdict(verdict);
+    return;
+  }
+  if (client.activeSessionId.value !== gateSid) return;
+  ++sendGeneration;
+  await client.continueSession(gateSid);
 }
 
 const pendingQuoteInserts = ref<Array<{ quote: string; comment?: string; source?: string; sessionId: string | undefined }>>([]);
@@ -2027,7 +2062,29 @@ async function handleCommand(payload: { cmd: string; attachments: PromptAttachme
   }
 }
 
+let promptDispatchInFlight = 0;
+let promptDispatchSequence = 0;
+
+function beginPromptDispatch(): number {
+  promptDispatchInFlight = ++promptDispatchSequence;
+  return promptDispatchInFlight;
+}
+
+function releasePromptDispatch(owner: number): void {
+  if (promptDispatchInFlight === owner) promptDispatchInFlight = 0;
+}
+
 async function handleSteer(payload: { text: string; attachments: PromptAttachment[]; restoreText?: string; restoreEntries?: AttachmentEntry[]; snapshot?: ComposerDocumentSnapshot; skills?: { name: string; path?: string }[] }): Promise<void> {
+  if (promptDispatchInFlight !== 0) return;
+  const owner = beginPromptDispatch();
+  try {
+    await handleSteerDispatch(payload, owner);
+  } finally {
+    releasePromptDispatch(owner);
+  }
+}
+
+async function handleSteerDispatch(payload: { text: string; attachments: PromptAttachment[]; restoreText?: string; restoreEntries?: AttachmentEntry[]; snapshot?: ComposerDocumentSnapshot; skills?: { name: string; path?: string }[] }, owner: number): Promise<void> {
   const generation = ++sendGeneration;
   const gateSid = client.activeSessionId.value;
   const restore = () => {
@@ -2041,6 +2098,8 @@ async function handleSteer(payload: { text: string; attachments: PromptAttachmen
   }
   if ((client.activeSessionId.value ?? undefined) !== gateSid) { restore(); return; }
   const prompt = client.createPromptEnvelope({ text: payload.text, attachments: payload.attachments, skills: payload.skills, snapshot: payload.snapshot });
+  releasePromptDispatch(owner);
+  conversationPaneRef.value?.clearComposerAfterDispatch(payload.snapshot);
   const outcome = await client.steerPromptDirect(prompt);
   if (outcome === 'rejected') restoreDraftAfterFailedSend(generation, gateSid ?? undefined, payload.text, payload.attachments, payload.restoreText, payload.restoreEntries, payload.snapshot);
 }
@@ -2058,8 +2117,8 @@ async function handleSteerQueued(index: number): Promise<void> {
 }
 
 function restoreDraftAtOrigin(originSid: string | undefined, text: string, attachments: PromptAttachment[], restoreText?: string, restoreEntries?: AttachmentEntry[], snapshot?: ComposerDocumentSnapshot): void {
-  restoreSendDraftAtOrigin(originSid, { text: restoreText ?? text, attachments, restoreEntries, snapshot }, {
-    activeSessionId: () => client.activeSessionId.value ?? undefined,
+  restoreSendDraftAtOrigin(originSid || undefined, { text: restoreText ?? text, attachments, restoreEntries, snapshot }, {
+    activeSessionId: () => client.activeSessionId.value || undefined,
     composer: () => {
       const pane = conversationPaneRef.value;
       if (!pane) return null;
@@ -2077,6 +2136,16 @@ function restoreDraftAfterFailedSend(generation: number, originSid: string | und
 }
 
 async function handleSubmit(payload: SubmitPayload): Promise<void> {
+  if (promptDispatchInFlight !== 0) return;
+  const owner = beginPromptDispatch();
+  try {
+    await handleSubmitDispatch(payload, owner);
+  } finally {
+    releasePromptDispatch(owner);
+  }
+}
+
+async function handleSubmitDispatch(payload: SubmitPayload, owner: number): Promise<void> {
   const gateSid = client.activeSessionId.value;
   const gateWsId = client.activeWorkspaceId.value;
   if (!(await passAuthGate(payload.text, payload.attachments, payload.restoreText, payload.restoreEntries, payload.snapshot))) return;
@@ -2096,6 +2165,8 @@ async function handleSubmit(payload: SubmitPayload): Promise<void> {
       : ++sendGeneration;
   const wsId = client.activeWorkspaceId.value;
   if (!client.activeSessionId.value && wsId) {
+    releasePromptDispatch(owner);
+    conversationPaneRef.value?.clearComposerAfterDispatch(payload.snapshot);
     const started = await client.startSessionAndSendPrompt(wsId, prompt);
     if (started.promptRejected || (started.sessionId === null && started.concurrent !== true)) {
       restoreDraftAfterFailedSend(generation, started.sessionId ?? undefined, payload.text, payload.attachments, payload.restoreText, payload.restoreEntries, payload.snapshot);
@@ -2123,6 +2194,8 @@ async function handleSubmit(payload: SubmitPayload): Promise<void> {
     return;
   }
   const sid = client.activeSessionId.value;
+  releasePromptDispatch(owner);
+  conversationPaneRef.value?.clearComposerAfterDispatch(payload.snapshot);
   const outcome = await client.sendPrompt(
     prompt,
     payload.editText ?? payload.restoreText,
@@ -2141,7 +2214,7 @@ const remoteHosts = computed(() => hostsStore().hosts);
 const {
   folderPickerRequest,
   pickWorkspaceFolders,
-  pickRemoteWorkspaceDir,
+  pickRemoteWorkspaceDirs,
   completeWorkspaceFolderPicker,
   cancelWorkspaceFolderPicker,
 } = useWorkspaceFolderPicker();
@@ -2161,8 +2234,8 @@ function openWorkspaceEditor(ws: WorkspaceView): void {
   };
 }
 
-async function importProjectConfigDirs(primary: string): Promise<string[] | undefined> {
-  return workspaces.fetchWorkspaceProjectConfigDirs(primary);
+async function importProjectConfigDirs(primary: string, hostId?: string): Promise<string[] | undefined> {
+  return workspaces.fetchWorkspaceProjectConfigDirs(primary, hostId);
 }
 
 async function pickMoreWorkspaceDirs(): Promise<string[]> {
@@ -2397,6 +2470,7 @@ function openPr(url: string): void {
       @login="openLogin()"
       @command="handleCommand"
       @interrupt="handleInterrupt"
+      @continue="handleContinue"
       @steer-queued="handleSteerQueued"
       @toggle-pin="togglePinFromHeader"
       @pick-model="openModelPicker()"
@@ -2599,9 +2673,9 @@ function openPr(url: string): void {
       :initial-dirs="workspaceDialog.dirs"
       :initial-host-id="workspaceDialog.hostId"
       :pick="pickMoreWorkspaceDirs"
-      :pick-remote="pickRemoteWorkspaceDir"
+      :pick-remote="pickRemoteWorkspaceDirs"
       :hosts="remoteHosts"
-      :manage-hosts="() => { settingsInitialTab = 'hosts'; showSettings = true; }"
+      :manage-hosts="() => openHostSettings(undefined, { addIfEmpty: true })"
       :import-project-config="importProjectConfigDirs"
       :busy="workspaceDialogBusy"
       @submit="onWorkspaceDialogSubmit"
@@ -2613,7 +2687,7 @@ function openPr(url: string): void {
       :multiple="folderPickerRequest.multiple"
       :browse-fs="(path, signal) => browseFs(path, signal, folderPickerRequest?.hostId)"
       :search-fs="(root, query, signal) => workspaces.searchFs(root, query, signal, folderPickerRequest?.hostId)"
-      :get-fs-home="getFsHome"
+      :get-fs-home="() => getFsHome(folderPickerRequest?.hostId)"
       :default-path="folderPickerRequest.defaultPath"
       :host-id="folderPickerRequest.hostId"
       :mkdir-fs="(path) => workspaces.mkdirFs(path, folderPickerRequest?.hostId)"
@@ -2731,6 +2805,7 @@ function openPr(url: string): void {
       v-if="showLogin || hostLoginId !== null"
       :key="hostLoginId ?? 'local'"
       :title="hostLoginTitle"
+      :remote-host="hostLoginId !== null"
       :on-start-o-auth-login="hostLoginId !== null ? (region) => hostsStore().startLogin(region) : handleStartOAuthLogin"
       :on-poll-o-auth-login="hostLoginId !== null ? () => hostsStore().pollLogin() : handlePollOAuthLogin"
       :on-cancel-o-auth-login="hostLoginId !== null ? () => hostsStore().cancelLogin() : handleCancelOAuthLogin"

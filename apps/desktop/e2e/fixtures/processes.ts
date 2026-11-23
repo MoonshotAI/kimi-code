@@ -1,4 +1,5 @@
 import { spawnSync } from 'node:child_process';
+import { killProcessTree } from '@moonshot-ai/testkit/fixtures';
 import type { ElectronApplication } from '@playwright/test';
 
 export const CLOSE_TIMEOUT_MS = 15_000;
@@ -39,18 +40,6 @@ export function windowsDescendants(root: number): WindowsProcess[] {
     }
   }
   return found;
-}
-
-export function killProcessTree(pid: number): void {
-  if (process.platform === 'win32') {
-    spawnSync('taskkill', ['/pid', String(pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true });
-    return;
-  }
-  try {
-    process.kill(-pid, 'SIGKILL');
-  } catch {
-    try { process.kill(pid, 'SIGKILL'); } catch { return; }
-  }
 }
 
 export function killSurvivors(tree: readonly WindowsProcess[]): string[] {

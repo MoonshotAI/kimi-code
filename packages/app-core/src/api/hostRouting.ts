@@ -33,6 +33,9 @@ const ROUTES = {
   getTurnFileChanges: 'session',
   getTurnFileContent: 'session',
   getSessionWarnings: 'session',
+  getSessionContextSummary: 'session',
+  getSessionContextItems: 'session',
+  getSessionContextItem: 'session',
   archiveSession: 'session',
   restoreSession: 'session',
   reloadSession: 'session',
@@ -47,11 +50,13 @@ const ROUTES = {
   steerPrompts: 'session',
   abortPrompt: 'session',
   cancelSession: 'session',
+  continueSession: 'session',
   compactSession: 'session',
   undoSession: 'session',
   generateSessionTitle: 'session',
   forkSession: 'session',
   startBtw: 'session',
+  closeAgent: 'session',
   respondApproval: 'session',
   respondQuestion: 'session',
   dismissQuestion: 'session',
@@ -167,6 +172,15 @@ function isRoutedMethod(method: string): method is keyof typeof ROUTES {
 export class HostRouter implements HostRoutingControls {
   private readonly hosts = new Map<string, HostClient>();
   private readonly sessionHost = new Map<string, string | null>();
+  private readonly onSessionHostChanged = new Set<(sessionId: string, hostId: string | null) => void>();
+
+  private setSessionHost(sessionId: string, hostId: string | null): void {
+    const previous = this.sessionHost.get(sessionId);
+    this.sessionHost.set(sessionId, hostId);
+    if (previous !== hostId) {
+      for (const listener of this.onSessionHostChanged) listener(sessionId, hostId);
+    }
+  }
   private readonly lookups = new Map<string, Promise<AppSession>>();
   private readonly workspaceHost = new Map<string, string>();
   private readonly fileHost = new Map<string, string>();
@@ -216,10 +230,23 @@ export class HostRouter implements HostRoutingControls {
 
   private applyHostRecords(records: readonly AppHost[]): void {
     const known = new Set(records.map((record) => record.id));
+    const removed = new Set<string>();
     for (const id of this.hosts.keys()) {
       if (known.has(id)) continue;
+      removed.add(id);
       this.hosts.get(id)?.api.dispose();
       this.hosts.delete(id);
+    }
+    if (removed.size > 0) {
+      for (const [id, hostId] of this.workspaceHost) {
+        if (removed.has(hostId)) this.workspaceHost.delete(id);
+      }
+      for (const [id, hostId] of this.sessionHost) {
+        if (hostId !== null && removed.has(hostId)) this.sessionHost.delete(id);
+      }
+      for (const [id, hostId] of this.fileHost) {
+        if (removed.has(hostId)) this.fileHost.delete(id);
+      }
     }
     for (const record of records) {
       const existing = this.hosts.get(record.id);
@@ -279,7 +306,7 @@ export class HostRouter implements HostRoutingControls {
     const lookup = this.local
       .findSession(sessionId)
       .then((session) => {
-        this.sessionHost.set(session.id, session.hostId ?? null);
+        this.setSessionHost(session.id, session.hostId ?? null);
         return session;
       })
       .finally(() => {
@@ -305,7 +332,7 @@ export class HostRouter implements HostRoutingControls {
     const result = api[method]!.apply(api, args);
     if (method === 'forkSession') {
       return (result as Promise<{ id?: string }>).then((session) => {
-        if (session.id !== undefined) this.sessionHost.set(session.id, hostId ?? null);
+        if (session.id !== undefined) this.setSessionHost(session.id, hostId ?? null);
         return session;
       });
     }
@@ -313,7 +340,7 @@ export class HostRouter implements HostRoutingControls {
   }
 
   private rememberSessions(hostId: string | undefined, sessions: readonly AppSession[]): AppSession[] {
-    for (const session of sessions) this.sessionHost.set(session.id, hostId ?? session.hostId ?? null);
+    for (const session of sessions) this.setSessionHost(session.id, hostId ?? session.hostId ?? null);
     return hostId === undefined ? [...sessions] : sessions.map((session) => ({ ...session, hostId }));
   }
 
@@ -332,7 +359,7 @@ export class HostRouter implements HostRoutingControls {
         this.workspaceHost.delete(event.workspaceId);
         return event;
       case 'sessionCreated':
-        this.sessionHost.set(event.session.id, hostId);
+        this.setSessionHost(event.session.id, hostId);
         return event;
       case 'sessionArchived':
       case 'sessionRestored':
@@ -341,7 +368,7 @@ export class HostRouter implements HostRoutingControls {
       case 'approvalRequested':
       case 'questionRequested':
       case 'interactionsReset':
-        this.sessionHost.set(event.sessionId, hostId);
+        this.setSessionHost(event.sessionId, hostId);
         return event;
       case 'sessionDeleted':
         this.sessionHost.delete(event.sessionId);
@@ -356,6 +383,21 @@ export class HostRouter implements HostRoutingControls {
     const remote = new Map<string, KimiEventConnection>();
     const subscriptions = new Map<string, Set<string>>();
     const taskWatches = new Map<string, { sessionId: string; agentId: string; taskId: string }>();
+    const connectionFor = (hostId: string | null | undefined): KimiEventConnection | undefined =>
+      hostId === undefined || hostId === null ? local : remote.get(hostId);
+    const onOwnerChanged = (sessionId: string, hostId: string | null): void => {
+      const connection = connectionFor(hostId);
+      if (connection === undefined) return;
+      const agents = subscriptions.get(sessionId);
+      if (agents !== undefined) {
+        for (const agentId of agents) connection.subscribeConversation(sessionId, agentId);
+      }
+      for (const watch of taskWatches.values()) {
+        if (watch.sessionId === sessionId) {
+          connection.watchTaskOutput(watch.sessionId, watch.agentId, watch.taskId);
+        }
+      }
+    };
     const sync = (): void => {
       for (const [id, connection] of remote) {
         if (this.hosts.get(id)?.record.status === 'ready') continue;
@@ -378,11 +420,10 @@ export class HostRouter implements HostRoutingControls {
       }
     };
     this.streamSyncs.add(sync);
+    this.onSessionHostChanged.add(onOwnerChanged);
     sync();
-    const forSession = (sessionId: string): KimiEventConnection | undefined => {
-      const hostId = this.sessionHost.get(sessionId);
-      return hostId === undefined || hostId === null ? local : remote.get(hostId);
-    };
+    const forSession = (sessionId: string): KimiEventConnection | undefined =>
+      connectionFor(this.sessionHost.get(sessionId));
     const requireForSession = (sessionId: string): KimiEventConnection => forSession(sessionId) ?? local;
     return {
       subscribeConversation: (sessionId, agentId) => {
@@ -422,6 +463,7 @@ export class HostRouter implements HostRoutingControls {
       },
       close: () => {
         this.streamSyncs.delete(sync);
+        this.onSessionHostChanged.delete(onOwnerChanged);
         subscriptions.clear();
         taskWatches.clear();
         local.close();
@@ -451,6 +493,7 @@ export class HostRouter implements HostRoutingControls {
 
   protected route_dispose(): void {
     this.streamSyncs.clear();
+    this.onSessionHostChanged.clear();
     this.hostListeners.clear();
     for (const host of this.hosts.values()) host.api.dispose();
     this.hosts.clear();
@@ -525,7 +568,7 @@ export class HostRouter implements HostRoutingControls {
 
   private rememberTagged(items: readonly HostTagged[]): void {
     for (const item of items) {
-      this.sessionHost.set(item.id, item.host_id ?? null);
+      this.setSessionHost(item.id, item.host_id ?? null);
     }
   }
 

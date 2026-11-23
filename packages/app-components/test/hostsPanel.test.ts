@@ -7,6 +7,7 @@ import type { AppHost, AppHostDefinition, AppHostTestResult, AppSshConfigHosts }
 import { useConfirmDialog } from '@moonshot-ai/app-client/composables';
 import { hostsStore, type HostAccount } from '@moonshot-ai/app-client/stores';
 import HostsPanel from '../src/settings/HostsPanel.vue';
+import HostTestResult from '../src/settings/HostTestResult.vue';
 
 let app: App | undefined;
 let host: HTMLDivElement;
@@ -30,6 +31,7 @@ afterEach(() => {
   store.providerCopies = {};
   store.accounts = {};
   store.loginHostId = null;
+  store.focusHostId = null;
   host.remove();
   document.body.innerHTML = '';
   vi.restoreAllMocks();
@@ -55,6 +57,7 @@ function mountPanel(options: {
   createProject?: (hostId: string) => void;
   copyProviders?: (hostId: string) => Promise<void>;
   accounts?: Record<string, HostAccount>;
+  loadAccount?: (hostId: string) => Promise<void>;
   signIn?: (hostId: string) => void;
   signOut?: (hostId: string) => Promise<void>;
 } = {}) {
@@ -80,6 +83,7 @@ function mountPanel(options: {
   });
   const connect = vi.fn(options.connect ?? (async () => undefined));
   const copyProviders = vi.fn(options.copyProviders ?? (async () => undefined));
+  const loadAccount = vi.fn(options.loadAccount ?? (async () => undefined));
   const signIn = vi.fn(options.signIn ?? (() => undefined));
   const signOut = vi.fn(options.signOut ?? (async () => undefined));
 
@@ -92,6 +96,7 @@ function mountPanel(options: {
   vi.spyOn(store, 'remove').mockImplementation(remove);
   vi.spyOn(store, 'connect').mockImplementation(connect as never);
   vi.spyOn(store, 'copyProviders').mockImplementation(copyProviders);
+  vi.spyOn(store, 'loadAccount').mockImplementation(loadAccount);
   vi.spyOn(store, 'openLogin').mockImplementation(signIn);
   vi.spyOn(store, 'signOut').mockImplementation(signOut);
 
@@ -105,7 +110,7 @@ function mountPanel(options: {
   app.use(createKimiI18n({ locale: 'en' }));
   app.provide(IconResolverKey, (name: string) => ({ render: () => h('svg', { 'data-icon': name }) }));
   app.mount(host);
-  return { store, test, save, remove, connect, copyProviders, signIn, signOut };
+  return { store, test, save, remove, connect, copyProviders, loadAccount, signIn, signOut };
 }
 
 async function fillForm(id: string, target: string, identityFile?: string): Promise<void> {
@@ -149,9 +154,28 @@ async function openDraft(name = 'devbox', target = 'dev@example.test'): Promise<
 
 async function openRowEditor(index = 0): Promise<void> {
   await flush();
-  host.querySelectorAll<HTMLButtonElement>('.re-row-main')[index]!.click();
+  await openRowMenu(index);
+  host.querySelector<HTMLButtonElement>('.re-row-menu .re-menu-edit')!.click();
   await nextTick();
 }
+
+describe('HostTestResult', () => {
+  it.each([
+    ['executor_not_found', '.etr-install-command', 'curl -fsSL https://code.kimi.com/kimi-code/install.sh | bash'],
+    ['executor_outdated', '.etr-update-command', 'kimi upgrade'],
+  ] as const)('copies the recovery command for %s', async (failure, selector, command) => {
+    const writeText = vi.fn(async () => undefined);
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
+    app = createApp({ render: () => h(HostTestResult, { state: 'failed', endpoint: 'devbox', failure, reason: 'Failed', detail: 'raw' }) });
+    app.use(createKimiI18n({ locale: 'en' }));
+    app.mount(host);
+
+    const button = host.querySelector<HTMLButtonElement>(selector)!;
+    button.click();
+    await vi.waitFor(() => expect(writeText).toHaveBeenCalledExactlyOnceWith(command));
+    await vi.waitFor(() => expect(button.textContent).toContain('Copied'));
+  });
+});
 
 describe('HostsPanel', () => {
   it('tests a new host before saving it and connects right after without copying providers', async () => {
@@ -200,7 +224,7 @@ describe('HostsPanel', () => {
     expect(host.querySelector('.re-page [role="alert"]')?.textContent).toContain('SSH handshake failed');
   });
 
-  it('names the outdated remote version when the test fails', async () => {
+  it('names the outdated remote version and shows the raw error with the hint', async () => {
     const test = vi.fn(async (): Promise<AppHostTestResult> => ({
       connected: false,
       remoteVersion: '0.40.0',
@@ -213,23 +237,24 @@ describe('HostsPanel', () => {
     await vi.waitFor(() => expect(host.querySelector('.etr-reason')).not.toBeNull());
 
     expect(host.querySelector('.etr-reason')?.textContent).toContain('0.40.0');
+    expect(host.querySelector('.etr-hint')).not.toBeNull();
     expect(host.querySelector('.etr-detail')?.textContent).toContain("unknown option '--probe'");
-    expect(host.querySelector('.etr-step--passed')).not.toBeNull();
+    expect(host.querySelector('.etr-step')).toBeNull();
   });
 
-  it.each([
-    ['executor_outdated', 0],
-    ['remote_busy', 1],
-  ] as const)('offers reconnect for %s only when retrying can help', async (failure, actions) => {
-    mountPanel({
-      hosts: [sshHost('devbox', { status: 'disconnected', connectError: 'raw', connectFailure: failure })],
+  it('offers failure guidance, reconnect, and edit in the expanded row', async () => {
+    const { connect } = mountPanel({
+      hosts: [sshHost('devbox', { status: 'disconnected', connectError: 'raw', connectFailure: 'authentication_failed' })],
     });
     await flush();
 
-    expect(host.querySelector('.re-row-details-text')).not.toBeNull();
-    expect(host.querySelector('.re-row-action')).toBeNull();
     await expandFailure();
-    expect(host.querySelectorAll('.re-row-action')).toHaveLength(actions);
+    expect(host.querySelector('.re-row-failure .etr-hint')).not.toBeNull();
+    host.querySelector<HTMLButtonElement>('.re-row-failure .re-row-reconnect')!.click();
+    await vi.waitFor(() => expect(connect).toHaveBeenCalledExactlyOnceWith('devbox'));
+    host.querySelector<HTMLButtonElement>('.re-row-failure .re-row-edit')!.click();
+    await nextTick();
+    expect(host.querySelector('.re-page-title')?.textContent).toContain('devbox');
   });
 
   it('renames a host without testing it, and omits the name when an unnamed host is unchanged', async () => {
@@ -402,8 +427,7 @@ describe('HostsPanel SSH config hosts', () => {
     await mountHosts();
     host.querySelector<HTMLButtonElement>('.re-back')!.click();
     await nextTick();
-    host.querySelector<HTMLButtonElement>('.re-row-main')!.click();
-    await nextTick();
+    await openRowEditor(0);
     host.querySelector<HTMLButtonElement>('.re-back')!.click();
     await nextTick();
     addButton().click();
@@ -453,7 +477,7 @@ describe('HostsPanel SSH config hosts', () => {
     await vi.waitFor(() => expect(save).toHaveBeenCalledWith(NEW_ID, expect.objectContaining({ name: 'gpu-2', host: 'gpu' })));
   });
 
-  it('shows a failed added host in its row with a way to fix it', async () => {
+  it('auto-expands a failed added host in its row with reconnect and edit actions', async () => {
     const save = vi.fn(async (hostId: string, definition: AppHostDefinition) => {
       hostsStore().byId = {
         ...hostsStore().byId,
@@ -462,9 +486,8 @@ describe('HostsPanel SSH config hosts', () => {
     });
     await mountHosts({ save });
     hostRow('gpu').querySelector<HTMLButtonElement>('.re-host-add')!.click();
-    await vi.waitFor(() => expect(host.querySelector('.re-row-details')).not.toBeNull());
-
-    host.querySelector('.re-row-details')!.closest('.re-row')!.querySelector<HTMLButtonElement>('.re-row-main')!.click();
+    await vi.waitFor(() => expect(host.querySelector('.re-row-failure .etr-hint')).not.toBeNull());
+    host.querySelector<HTMLButtonElement>('.re-row-failure .re-row-edit')!.click();
     await nextTick();
     const inputs = host.querySelectorAll<HTMLInputElement>('.re-page .ui-input');
     expect(inputs[0]!.value).toBe('gpu');
@@ -510,25 +533,45 @@ describe('HostsPanel SSH config hosts', () => {
     await flush();
 
     addButton().click();
-    await nextTick();
+    await vi.waitFor(() => expect(host.querySelector('.re-page .ui-input')).not.toBeNull());
     expect(host.querySelector('.re-hosts')).toBeNull();
-    expect(host.querySelector('.re-page')).not.toBeNull();
   });
 
-  it('shows the hosts directly with the source switcher when there are no hosts yet', async () => {
+  it('keeps the empty list on level 1 and opens the add subpage with persistent source tabs', async () => {
     mountPanel({ loadSshHosts: async () => hosts });
     await flush();
 
+    expect(host.querySelector('.re-empty')).not.toBeNull();
+    expect(host.querySelector('.re-hosts')).toBeNull();
+    addButton().click();
+    await nextTick();
+    expect(host.querySelector('.re-back')).not.toBeNull();
     expect(hostNames()).toEqual(['devbox', 'gpu', 'staging']);
-    expect(host.querySelector('.re-empty')).toBeNull();
-    expect(host.querySelector('.re-back')).toBeNull();
-    expect(host.querySelector('.re-head .ui-button')).toBeNull();
     const tabs = () => host.querySelectorAll<HTMLButtonElement>('.re-hosts-head [role="tab"]');
+    expect(tabs()).toHaveLength(2);
     tabs()[1]!.click();
     await nextTick();
-    expect(host.querySelector('.re-back')).toBeNull();
     expect(host.querySelectorAll('.re-page .ui-input')).toHaveLength(3);
-    expect(host.querySelectorAll('.re-foot-actions .ui-button')).toHaveLength(1);
+    expect(host.querySelectorAll('.re-foot-actions .ui-button')).toHaveLength(2);
+  });
+
+  it('keeps the source switcher visible with an empty state and reload button when ~/.ssh/config is missing or fully added', async () => {
+    const loadSshHosts = vi.fn<() => Promise<AppSshConfigHosts>>()
+      .mockResolvedValueOnce({ configPath: '/home/me/.ssh/config', exists: false, hosts: [] })
+      .mockResolvedValueOnce({ configPath: '/home/me/.ssh/config', exists: true, hosts: [{ alias: 'devbox' }] });
+    mountPanel({ hosts: [sshHost('devbox')], loadSshHosts });
+    await flush();
+
+    addButton().click();
+    await nextTick();
+    const tabs = () => host.querySelectorAll<HTMLButtonElement>('.re-hosts-head [role="tab"]');
+    expect(tabs()).toHaveLength(2);
+    tabs()[0]!.click();
+    await nextTick();
+    expect(host.querySelector('.re-hosts-note')?.textContent).toContain('No ~/.ssh/config found');
+
+    host.querySelector<HTMLButtonElement>('.re-hosts-refresh')!.click();
+    await vi.waitFor(() => expect(host.querySelector('.re-hosts-note')?.textContent).toContain('All hosts from ~/.ssh/config'));
   });
 
   it('picks an identity file starting in the SSH config folder', async () => {
@@ -549,28 +592,61 @@ describe('HostsPanel SSH config hosts', () => {
 });
 
 describe('HostsPanel navigation and row actions', () => {
-  it('offers New project on ready hosts and Reconnect on enabled hosts from the row menu only', async () => {
+  it('opens the add page for focused empty settings and resets the request after navigating away', async () => {
+    const { store } = mountPanel({
+      hosts: [],
+      loadSshHosts: async () => ({ configPath: '/home/me/.ssh/config', exists: true, hosts: [{ alias: 'devbox' }] }),
+    });
+    await flush();
+
+    store.requestFocus(null, { addIfEmpty: true });
+    await vi.waitFor(() => expect(host.querySelector('.re-hosts')).not.toBeNull());
+    expect(host.querySelector('.re-page .ui-input')).toBeNull();
+    expect(store.addIfEmpty).toBe(false);
+
+    host.querySelector<HTMLButtonElement>('.re-back')!.click();
+    store.requestFocus(null, { addIfEmpty: true });
+    expect(store.addIfEmpty).toBe(true);
+    store.requestFocus(null);
+    await vi.waitFor(() => expect(host.querySelector('.re-hosts')).not.toBeNull());
+    expect(store.addIfEmpty).toBe(false);
+  });
+
+  it('surfaces New project directly on ready rows without jumping to edit on row click, and expands focused hosts', async () => {
     const createProject = vi.fn();
-    const { connect } = mountPanel({
+    const { connect, store } = mountPanel({
       hosts: [
         sshHost('ready-box', { status: 'ready' }),
-        sshHost('idle-box', { status: 'pending' }),
+        sshHost('broken-box', { status: 'disconnected', connectError: 'refused', connectFailure: 'connection_refused' }),
         sshHost('paused', { enabled: false }),
       ],
       createProject,
     });
     await flush();
-    expect(host.querySelector('.re-row-action')).toBeNull();
 
-    await openRowMenu(2);
-    const disabledMenuItems = host.querySelectorAll('.re-row-menu .ui-menu-item').length;
-    await openRowMenu(1);
-    const idleMenuItems = host.querySelectorAll('.re-row-menu .ui-menu-item').length;
-    expect(idleMenuItems).toBeGreaterThan(disabledMenuItems);
-    await openRowMenu(0);
-    await vi.waitFor(() => expect(host.querySelectorAll('.re-row-menu .ui-menu-item').length).toBeGreaterThan(idleMenuItems));
-    [...host.querySelectorAll<HTMLButtonElement>('.re-row-menu .ui-menu-item')].find((item) => item.textContent?.includes('New project'))!.click();
+    host.querySelector<HTMLElement>('.re-row-lead')!.click();
+    await nextTick();
+    expect(host.querySelector('.re-page')).toBeNull();
+
+    const createButtons = host.querySelectorAll<HTMLButtonElement>('.re-row-create-project');
+    expect(createButtons).toHaveLength(3);
+    expect(createButtons[1]!.disabled).toBe(true);
+    createButtons[1]!.click();
+    createButtons[0]!.click();
     expect(createProject).toHaveBeenCalledExactlyOnceWith('ready-box');
+
+    store.requestFocus('broken-box');
+    await flush();
+    expect(store.focusHostId).toBeNull();
+    expect(host.querySelector('.re-row-failure')).not.toBeNull();
+
+    store.connecting = { 'broken-box': true };
+    await nextTick();
+    const retryingRow = [...host.querySelectorAll<HTMLElement>('.re-item')].find((item) => item.dataset.hostId === 'broken-box')!;
+    expect(retryingRow.querySelector('.re-row-state')?.textContent).toContain('Retrying');
+    expect(retryingRow.querySelector('.re-row-failure')).not.toBeNull();
+    store.connecting = {};
+    await nextTick();
 
     await openRowMenu(0);
     [...host.querySelectorAll<HTMLButtonElement>('.re-row-menu .ui-menu-item')].find((item) => item.textContent?.includes('Reconnect'))!.click();
@@ -629,12 +705,9 @@ describe('HostsPanel model setup', () => {
     const signOut = vi.fn<() => Promise<void>>()
       .mockRejectedValueOnce(new Error('offline'))
       .mockResolvedValueOnce(undefined);
-    const { signIn } = mountPanel({
+    const { signIn, loadAccount } = mountPanel({
       hosts: [sshHost('devbox', { status: 'ready' }), sshHost('named', { status: 'ready' }), sshHost('idle-box')],
-      accounts: {
-        devbox: { status: 'signedOut', modelsReady: true },
-        named: { status: 'signedIn', modelsReady: true },
-      },
+      accounts: { named: { status: 'signedIn', modelsReady: true } },
       signOut,
     });
     await flush();
@@ -645,6 +718,11 @@ describe('HostsPanel model setup', () => {
 
     await openMenu('devbox');
     expect(menuItem('.re-menu-sign-out')).toBeNull();
+    expect(menuItem('.re-menu-sign-in')).toBeNull();
+    expect(loadAccount).toHaveBeenCalledExactlyOnceWith('devbox');
+    hostsStore().accounts = { ...hostsStore().accounts, devbox: { status: 'signedOut', modelsReady: true } };
+    await openMenu('devbox');
+    await openMenu('devbox');
     expect(menuItem('.re-menu-copy')).not.toBeNull();
     menuItem('.re-menu-sign-in')!.click();
     await flush();
@@ -652,12 +730,12 @@ describe('HostsPanel model setup', () => {
     await vi.waitFor(() => expect(host.querySelector('.re-row-menu')).toBeNull());
 
     await openMenu('named');
-    expect(menuItem('.re-menu-sign-out')?.textContent).toContain('Sign out of Kimi');
     menuItem('.re-menu-sign-out')!.click();
     await vi.waitFor(() => expect(host.querySelector('[role="alert"]')).not.toBeNull());
     expect(signOut).toHaveBeenCalledExactlyOnceWith('named');
 
-    rowOf('named').querySelector<HTMLButtonElement>('.re-row-main')!.click();
+    await openMenu('named');
+    menuItem('.re-menu-edit')!.click();
     await flush();
     expect(host.querySelector('.re-page-title')?.textContent).toContain('named');
   });
@@ -721,10 +799,6 @@ describe('HostsPanel connection test steps', () => {
       return new Promise<AppHostTestResult>((resolve) => resolvers.push(() => resolve({ connected: true })));
     });
     return { test, signals, resolvers };
-  }
-
-  function stepStates(): string[] {
-    return [...host.querySelectorAll('.etr-step')].map((step) => [...step.classList].find((name) => name.startsWith('etr-step--'))!.replace('etr-step--', ''));
   }
 
   function cancelButton(): HTMLButtonElement {
@@ -801,7 +875,7 @@ describe('HostsPanel connection test steps', () => {
     expect(store.byId['devbox']).toMatchObject({ name: 'Build box', host: 'old.example.test' });
   });
 
-  it('distinguishes SSH failures from Kimi startup failures on the step list', async () => {
+  it('shows the failure itself without a step list', async () => {
     const test = vi.fn<() => Promise<AppHostTestResult>>()
       .mockResolvedValueOnce(failedTest('ssh failed', 'authentication_failed'))
       .mockResolvedValueOnce(failedTest('kimi: not found', 'executor_not_found'));
@@ -810,12 +884,14 @@ describe('HostsPanel connection test steps', () => {
 
     saveButton().click();
     await vi.waitFor(() => expect(host.querySelector('.etr-failure')).not.toBeNull());
-    expect(stepStates()).toEqual(['failed', 'pending']);
-    expect(host.querySelectorAll('.etr-step')).toHaveLength(2);
+    expect(host.querySelector('.etr-step')).toBeNull();
+    expect(host.querySelector('.etr-reason')?.textContent).toContain('SSH authentication failed');
+    expect(host.querySelector('.etr-install-command')).toBeNull();
 
     saveButton().click();
-    await vi.waitFor(() => expect(stepStates()).toEqual(['passed', 'failed']));
-    expect(host.querySelector('.etr-reason')).not.toBeNull();
+    await vi.waitFor(() => expect(host.querySelector('.etr-install-command')).not.toBeNull());
+    expect(host.querySelector('.etr-step')).toBeNull();
+    expect(host.querySelector('.etr-reason')?.textContent).toContain('Kimi Code CLI');
   });
 
   it('opens the raw output when an unclassified failure has no reason and copies it', async () => {

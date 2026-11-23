@@ -3,19 +3,27 @@ import { isAbortError, toLlmErrorMessage, toLlmSyntaxErrorMessage } from '#/llm/
 import type { DecodeSink, LlmModule, ProtocolReply } from '#/llm/protocol/protocol';
 import { withProtocolCapabilities } from '#/llm/protocol/rules/model';
 import type { LlmRequest } from '#/llm/request';
-import type { LlmErrorMessage, LlmRemoteErrorMessage, LlmStreamEvent, LlmTiming } from '#/llm/response';
+import type {
+  LlmDeltaEvent,
+  LlmErrorMessage,
+  LlmNoticeEvent,
+  LlmRemoteErrorMessage,
+  LlmTiming,
+} from '#/llm/response';
 import { clock } from '#/utils/clock';
 import { log } from '#/utils/log';
 
-export type LlmAttemptEvent =
-  | LlmStreamEvent
-  | { readonly type: 'attempt.sending' }
-  | { readonly type: 'attempt.tool_call_end'; readonly index?: number | string }
-  | { readonly type: 'attempt.failed'; readonly error: LlmErrorMessage; readonly rawError?: unknown };
+export type LlmGenerateEvent = Exclude<LlmDeltaEvent, { readonly type: 'llm.delta.tool_call_end' }> | LlmNoticeEvent;
 
-export interface LlmAttemptControl {
+export interface LlmGenerateFailure {
+  readonly error: LlmErrorMessage;
+  readonly rawError?: unknown;
+}
+
+export interface LlmGenerateControl {
   readonly signal: AbortSignal;
-  readonly onEvent?: (event: LlmAttemptEvent) => void;
+  readonly onEvent?: (event: LlmGenerateEvent) => void;
+  readonly onToolCallEnd?: (index?: number | string) => void;
 }
 
 function moduleOf(request: LlmRequest): LlmModule {
@@ -40,7 +48,7 @@ function remoteErrorOf(
 }
 
 interface EventSink extends DecodeSink {
-  readonly failed: () => boolean;
+  readonly failure: () => LlmGenerateFailure | undefined;
 }
 
 interface AttemptClock {
@@ -108,63 +116,61 @@ function createAttemptClock(): AttemptClock {
 }
 
 function createEventSink(
-  onEvent: ((event: LlmAttemptEvent) => void) | undefined,
+  control: Pick<LlmGenerateControl, 'onEvent' | 'onToolCallEnd'>,
   attemptClock: AttemptClock,
 ): EventSink {
+  const { onEvent, onToolCallEnd } = control;
   let messageId: string | undefined;
-  let failed = false;
+  let failure: LlmGenerateFailure | undefined;
   return {
     onDelta: (part) => {
       const arrivedAt = attemptClock.partArrived();
-      const event: LlmAttemptEvent = { type: 'llm.streaming.part', part };
+      const event: LlmGenerateEvent = { type: 'llm.delta.part', part };
       log.debug({ ...event }, 'llm event');
       onEvent?.(event);
       attemptClock.partConsumed(arrivedAt);
     },
     onFinish: (finish) => {
-      const event: LlmAttemptEvent = { type: 'llm.streaming.finish', finish };
+      const event: LlmGenerateEvent = { type: 'llm.delta.finish', finish };
       log.debug({ ...event }, 'llm event');
       onEvent?.(event);
     },
     onMessageId: (id) => {
       if (id === messageId) return;
       messageId = id;
-      const event: LlmAttemptEvent = { type: 'llm.streaming.message_id', messageId: id };
+      const event: LlmGenerateEvent = { type: 'llm.delta.message_id', messageId: id };
       log.debug({ ...event }, 'llm event');
       onEvent?.(event);
     },
     onUsage: (usage) => {
-      const event: LlmAttemptEvent = { type: 'llm.streaming.usage', usage };
+      const event: LlmGenerateEvent = { type: 'llm.delta.usage', usage };
       log.debug({ ...event }, 'llm event');
       onEvent?.(event);
     },
     onError: (message) => {
-      failed = true;
-      const event: LlmAttemptEvent = { type: 'attempt.failed', error: message };
-      log.info({ ...event }, 'llm event');
-      onEvent?.(event);
+      failure = { error: message };
+      log.info({ error: message }, 'llm decoder failed');
     },
     onToolCallEnd: (index) => {
-      const event: LlmAttemptEvent = { type: 'attempt.tool_call_end', index };
-      log.info({ ...event }, 'llm event');
-      onEvent?.(event);
+      log.info({ index }, 'llm tool call ended');
+      onToolCallEnd?.(index);
     },
-    failed: () => failed,
+    failure: () => failure,
   };
 }
 
 function receive<TBody>(
   request: LlmRequest,
   reply: ProtocolReply<TBody>,
-  onEvent: ((event: LlmAttemptEvent) => void) | undefined,
+  onEvent: ((event: LlmGenerateEvent) => void) | undefined,
 ): TBody {
   if (reply.headers !== undefined) {
-    const headersEvent: LlmAttemptEvent = { type: 'llm.streaming.headers', headers: reply.headers };
+    const headersEvent: LlmGenerateEvent = { type: 'llm.delta.response_header', headers: reply.headers };
     log.debug({ ...headersEvent }, 'llm event');
     onEvent?.(headersEvent);
     const requestId = request.protocol.base.requestId?.(reply.headers);
     if (typeof requestId === 'string' && requestId.length > 0) {
-      const requestIdEvent: LlmAttemptEvent = { type: 'llm.streaming.request_id', requestId };
+      const requestIdEvent: LlmGenerateEvent = { type: 'llm.delta.request_id', requestId };
       log.debug({ ...requestIdEvent }, 'llm event');
       onEvent?.(requestIdEvent);
     }
@@ -172,14 +178,17 @@ function receive<TBody>(
   return reply.body;
 }
 
-export async function generate(request: LlmRequest, control: LlmAttemptControl): Promise<void> {
+export async function generate(
+  request: LlmRequest,
+  control: LlmGenerateControl,
+): Promise<LlmGenerateFailure | undefined> {
   const { base, options, stream = true } = request.protocol;
-  const { signal, onEvent } = control;
+  const { signal, onEvent, onToolCallEnd } = control;
   const attemptClock = createAttemptClock();
   const emitTiming = (): void => {
     const timing = attemptClock.timing();
     if (timing === undefined) return;
-    const event: LlmAttemptEvent = { type: 'llm.timing', ...timing };
+    const event: LlmGenerateEvent = { type: 'llm.delta.timing', ...timing };
     log.info({ ...event }, 'llm event');
     onEvent?.(event);
   };
@@ -188,16 +197,15 @@ export async function generate(request: LlmRequest, control: LlmAttemptControl):
   try {
     encodedRequest = base.encode(module, {
       report: (notice) => {
-        const event: LlmAttemptEvent = { type: 'llm.notice', notice };
+        const event: LlmGenerateEvent = { type: 'llm.notice', notice };
         log.info({ ...event }, 'llm event');
         onEvent?.(event);
       },
     });
   } catch (error) {
-    const event: LlmAttemptEvent = { type: 'attempt.failed', error: toLlmSyntaxErrorMessage(error) };
-    log.info({ ...event }, 'llm event');
-    onEvent?.(event);
-    return;
+    const failure: LlmGenerateFailure = { error: toLlmSyntaxErrorMessage(error) };
+    log.info({ ...failure }, 'llm encode failed');
+    return failure;
   }
   let streamStarted = false;
   try {
@@ -207,11 +215,8 @@ export async function generate(request: LlmRequest, control: LlmAttemptControl):
       clientFactory === undefined
         ? base.client(endpoint, options)
         : clientFactory(endpoint);
-    const sink = createEventSink(onEvent, attemptClock);
+    const sink = createEventSink({ onEvent, onToolCallEnd }, attemptClock);
     attemptClock.sent();
-    const sending: LlmAttemptEvent = { type: 'attempt.sending' };
-    log.info({ ...sending }, 'llm event');
-    onEvent?.(sending);
     const chunks = stream
       ? receive(request, await base.sendStream(client, encodedRequest, signal), onEvent)
       : base.replay(receive(request, await base.send(client, encodedRequest, signal), onEvent));
@@ -219,21 +224,22 @@ export async function generate(request: LlmRequest, control: LlmAttemptControl):
     const decoder = base.decoder(module, sink);
     for await (const chunk of chunks) {
       decoder.push(chunk);
-      if (sink.failed()) {
+      const failure = sink.failure();
+      if (failure !== undefined) {
         emitTiming();
-        return;
+        return failure;
       }
     }
     decoder.end();
     emitTiming();
+    return sink.failure();
   } catch (error) {
     emitTiming();
-    const event: LlmAttemptEvent = {
-      type: 'attempt.failed',
+    const failure: LlmGenerateFailure = {
       error: remoteErrorOf(request, error, streamStarted ? 'stream' : undefined),
       rawError: error,
     };
-    log.info({ ...event, err: error }, 'llm event');
-    onEvent?.(event);
+    log.info({ ...failure, err: error }, 'llm transport failed');
+    return failure;
   }
 }

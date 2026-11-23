@@ -55,6 +55,7 @@ export interface ISessionMetadata {
   ): Promise<boolean>;
   setArchived(archived: boolean): Promise<void>;
   registerAgent(agentId: string, meta: AgentMeta): Promise<void>;
+  unregisterAgent(agentId: string): Promise<void>;
 }
 
 export const ISessionMetadata: ServiceIdentifier<ISessionMetadata> =

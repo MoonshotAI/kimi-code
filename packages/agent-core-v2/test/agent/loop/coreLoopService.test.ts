@@ -1,7 +1,8 @@
 import { createControlledPromise } from '@antfu/utils';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { ToolCall } from '@moonshot-ai/core/llm/message';
+import type { ContentPart, Message, ToolCall } from '@moonshot-ai/core/llm/message';
+import { emptyUsage } from '@moonshot-ai/core/llm/usage';
 import type { LoopRecordedEvent } from '#/agent/contextMemory/loopEventFold';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { LOOP_CONTROL_SECTION } from '#/agent/loop/configSection';
@@ -24,7 +25,9 @@ import type { ProcessTaskInfo } from '#/agent/task/types';
 
 import {
   createTestAgent,
+  findGenerateCallPrefixBreak,
   InMemoryWireRecordPersistence,
+  normalizeGenerateInput,
   wireRecordPersistenceServices,
   type TestAgentContext,
 } from '../../harness';
@@ -75,6 +78,54 @@ describe('core LoopService integration', () => {
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Hello again' }] });
     await ctx.untilTurnEnd();
     expect(ctx.llmCalls[1]!.tools).toEqual(firstTools);
+  });
+
+  it('previews the request content that the next turn sends to the provider', async () => {
+    const loop = ctx.get(IAgentLoopService);
+    const assistant = (content: ContentPart[], id: string, name: string): Message => ({
+      role: 'assistant',
+      content,
+      toolCalls: [{ type: 'function', id, name, arguments: '{}' }],
+      attributes: { usage: emptyUsage() },
+    });
+    loop.replaceHistory([
+      { role: 'user', content: [{ type: 'text', text: 'run it' }] },
+      assistant([{ type: 'text', text: 'Running.' }, { type: 'text', text: ' ' }], 'call_bash', 'Bash'),
+      { role: 'user', content: [{ type: 'text', text: 'sent while the tool ran' }] },
+      {
+        role: 'tool',
+        toolCallId: 'call_bash',
+        content: [{ type: 'text', text: 'ok' }],
+        attributes: { durationMs: 1500, note: 'Output truncated.' },
+      },
+      assistant([{ type: 'text', text: 'Reading.' }], 'call_read', 'Read'),
+      {
+        role: 'tool',
+        toolCallId: 'call_read',
+        content: [{ type: 'text', text: 'missing file' }],
+        attributes: { isError: true },
+      },
+      assistant([{ type: 'text', text: 'Looking.' }], 'call_media', 'ReadMediaFile'),
+      { role: 'tool', toolCallId: 'call_media', content: [{ type: 'text', text: '<image path="/tmp/shot.png"></image>' }] },
+      assistant([{ type: 'text', text: 'Trying again.' }], 'call_lost', 'Bash'),
+      { role: 'user', content: [{ type: 'text', text: 'continue' }] },
+    ], 'fork');
+    const preview = loop.previewRequestContent();
+
+    ctx.mockNextResponse({ type: 'text', text: 'done' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'next' }] });
+    await ctx.untilTurnEnd();
+
+    const sent = ctx.llmCalls.at(-1)!;
+    const previewed = normalizeGenerateInput({
+      systemPrompt: preview.systemPrompt,
+      tools: preview.tools
+        .filter((tool) => tool.deferred !== true)
+        .map(({ name, description, parameters }) => ({ name, description, parameters })),
+      history: preview.messages.map(({ attributes: _attributes, ...message }) => message),
+    });
+    expect(findGenerateCallPrefixBreak(previewed, sent)).toBeUndefined();
+    expect(sent.history.length).toBeGreaterThan(previewed.history.length);
   });
 
   it('executes a tool batch and continues with a second core step', async () => {

@@ -529,6 +529,7 @@ export interface SessionStatus {
   readonly planMode: boolean;
   readonly swarmMode?: boolean;
   readonly towerMode?: boolean;
+  readonly loopLifecycleEvents?: boolean;
   readonly contextTokens: number;
   readonly maxContextTokens: number;
   readonly contextUsage: number;

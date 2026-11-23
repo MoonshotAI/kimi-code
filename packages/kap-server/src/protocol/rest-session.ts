@@ -100,6 +100,7 @@ export const listSessionsQuerySchema = z
     activity: repeatedParam(sessionActivitySchema),
     updated_after: isoDateTimeSchema.optional(),
     updated_before: isoDateTimeSchema.optional(),
+    query: z.string().optional(),
     sort: sessionsSortSchema.optional(),
     view: sessionsViewSchema.optional(),
     group_page_size: z.coerce.number().int().min(1).max(IDS_PROJECTION_PAGE_SIZE_MAX).optional(),
@@ -416,6 +417,11 @@ export const waitSessionResponseSchema = z.object({
   timed_out: z.boolean(),
 });
 export type WaitSessionResponse = z.infer<typeof waitSessionResponseSchema>;
+
+export const sessionContinueResponseSchema = z.object({
+  continued: z.literal(true),
+});
+export type SessionContinueResponse = z.infer<typeof sessionContinueResponseSchema>;
 
 function fitsUtf8ByteLimit(value: string, limit: number): boolean {
   let bytes = 0;

@@ -2,12 +2,14 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync, writeFileSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { computeCanaryVersion, parseCanaryVersion } from './canary-release.mjs';
 
 const pkgPath = 'apps/desktop/package.json';
 const pkg = JSON.parse(readFileSync(pkgPath, 'utf8'));
 if (process.argv.includes('--stamp')) {
   const version = process.env.CANARY_VERSION;
-  if (!/^\d+\.\d+\.\d+-canary\.\d+\.\d+\.g[0-9a-f]{8}$/.test(version ?? '')) throw new Error('Invalid Canary version');
+  const legacy = /^\d+\.\d+\.\d+-canary\.\d+\.\d+\.g[0-9a-f]{8}$/.test(version ?? '');
+  if (!legacy && parseCanaryVersion(version ?? '') === null) throw new Error('Invalid Canary version');
   pkg.version = version;
   pkg.canarySourceBranch = process.env.GITHUB_REF_NAME ?? '';
   pkg.canarySourceCommit = process.env.GITHUB_SHA ?? '';
@@ -47,9 +49,10 @@ if (process.argv.includes('--stamp')) {
     }
   }
   if (!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(target ?? '')) throw new Error('Set a stable Canary target version');
-  const run = process.env.GITHUB_RUN_NUMBER;
-  const attempt = process.env.GITHUB_RUN_ATTEMPT;
-  const sha = process.env.GITHUB_SHA;
-  if (!/^[1-9]\d*$/.test(run ?? '') || !/^[1-9]\d*$/.test(attempt ?? '') || !/^[0-9a-f]{40}$/.test(sha ?? '')) throw new Error('Invalid build identity');
-  process.stdout.write(`version=${target}-canary.${run}.${attempt}.g${sha.slice(0, 8)}\n`);
+  const repository = process.env.GITHUB_REPOSITORY;
+  const runId = process.env.GITHUB_RUN_ID;
+  if (!/^[^/]+\/[^/]+$/.test(repository ?? '') || !/^[1-9]\d*$/.test(runId ?? '')) throw new Error('Invalid build identity');
+  const run = JSON.parse(execFileSync('gh', ['api', `repos/${repository}/actions/runs/${runId}`], { encoding: 'utf8' }));
+  const version = computeCanaryVersion({ baseVersion: target, publishedAt: run.created_at, sha: process.env.GITHUB_SHA });
+  process.stdout.write(`version=${version}\n`);
 }

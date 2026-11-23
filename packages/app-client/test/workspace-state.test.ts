@@ -1250,6 +1250,7 @@ describe('useWorkspaceState — startSessionAndActivateSkill', () => {
     expect(persistSessionProfile).toHaveBeenCalledWith(
       expect.objectContaining({ thinking: 'max', permissionMode: 'auto', swarmMode: true }),
       'sess_new',
+      true,
     );
     expect(persistSessionProfile.mock.calls[0]![0]).not.toHaveProperty('planMode', true);
     expect(state.planArmedBySession['sess_new']).toBe(true);

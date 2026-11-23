@@ -1,0 +1,57 @@
+{
+  "endings": {
+    "answered": { "kap": "completed", "acp": "end_turn" },
+    "cancelled": { "kap": "interrupted", "acp": "cancelled" }
+  },
+  "scenarios": [
+    {
+      "id": "first-turn",
+      "behavior": "A prompt gets the scripted answer, and the turn ends as answered.",
+      "capabilities": ["kap.websocket", "kap.session_wait"]
+    },
+    {
+      "id": "cancel-running-turn",
+      "behavior": "Cancelling while the model is still answering ends the turn as cancelled.",
+      "capabilities": []
+    },
+    {
+      "id": "reject-file-write",
+      "behavior": "A rejected file write leaves the file absent and tells the model, and the turn still ends as answered.",
+      "capabilities": ["kap.interactions_list"]
+    }
+  ],
+  "divergences": {},
+  "exempt": {
+    "kap.file_upload": "KAP uploads attachments to /files before the prompt, while ACP clients embed them in the prompt, so there is no shared step to compare.",
+    "kap.fs_query": "Workspace browsing for the desktop and web clients; ACP clients read the workspace themselves.",
+    "kap.mcp": "Not compared yet: KAP hosts configure MCP servers, while ACP clients pass them with each session.",
+    "kap.tasks": "Background task controls exist only in KAP.",
+    "kap.agent_close": "Side-channel (btw) agents exist only in KAP; ACP sessions have none to close.",
+    "kap.session_continue": "Continuing an interrupted or failed turn without a new user message is a KAP session action; ACP has no request for it.",
+    "acp.loadSession": "Not compared yet: KAP returns turn pages, while ACP replays session updates.",
+    "acp.promptCapabilities.image": "Not compared yet: KAP sends images as uploaded files.",
+    "acp.promptCapabilities.embeddedContext": "Embedded resources are an ACP prompt format with no KAP counterpart.",
+    "acp.sessionCapabilities.list": "Not compared yet.",
+    "acp.sessionCapabilities.resume": "Not compared yet.",
+    "acp.sessionCapabilities.close": "Not compared yet.",
+    "acp.sessionCapabilities.delete": "Not compared yet.",
+    "acp.sessionCapabilities.fork": "Not compared yet.",
+    "acp.sessionCapabilities.additionalDirectories": "Not compared yet.",
+    "acp.mcpCapabilities.http": "Not compared yet: ACP clients pass MCP servers with each session, while KAP hosts configure them.",
+    "acp.mcpCapabilities.sse": "Not compared yet: ACP clients pass MCP servers with each session, while KAP hosts configure them.",
+    "acp.auth.logout": "ACP clients sign out through the agent, KAP hosts through their OAuth routes."
+  },
+  "advertised": {
+    "kap": {
+      "websocket": true, "file_upload": true, "fs_query": true, "mcp": true, "tasks": true,
+      "interactions_list": true, "session_wait": true, "agent_close": true, "session_continue": true
+    },
+    "acp": {
+      "loadSession": true,
+      "promptCapabilities": { "image": true, "audio": false, "embeddedContext": true },
+      "sessionCapabilities": { "list": {}, "resume": {}, "close": {}, "delete": {}, "fork": {}, "additionalDirectories": {} },
+      "mcpCapabilities": { "http": true, "sse": true },
+      "auth": { "logout": {} }
+    }
+  }
+}

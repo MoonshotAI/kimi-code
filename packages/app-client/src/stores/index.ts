@@ -8,7 +8,7 @@ export { useTasksStore, tasksStore, setTasksHooks, type TasksHooks } from './tas
 export { useAgentStatesStore, agentStatesStore } from './agentStates';
 export { useFilesStore, filesStore, setFilesHooks, type FilesHooks } from './files';
 export { useConfigStore, configStore, setConfigHooks, type ConfigHooks } from './config';
-export { useHostsStore, hostsStore, hostDefinition, type HostAccount, type HostDisplayState, type HostProviderCopy } from './hosts';
+export { useHostsStore, hostsStore, setHostsHooks, hostDefinition, type HostAccount, type HostDisplayState, type HostProviderCopy, type HostSnapshotDiff, type HostsHooks } from './hosts';
 export { usePermissionsStore, permissionsStore } from './permissions';
 export { useWorkspacesStore, workspacesStore, setWorkspacesHooks, type WorkspacesHooks, type WorkspaceLifecycleEvent, type WorkspaceTrustError, type WorkspaceTrustResult } from './workspaces';
 export { usePromptStore, promptStore } from './prompt';
@@ -21,5 +21,11 @@ export { useGoalStore, goalStore, setGoalHooks, goalErrorMessage, type GoalHooks
 export { useWarningsStore, warningsStore, operationFailureNotice, warningDetail, warningKey } from './warnings';
 export { useSessionRatingStore, sessionRatingStore, enableSessionRating, SESSION_RATING_EVALUATION_DELAY_MS, SESSION_RATING_THANKS_VISIBLE_MS, SESSION_RATING_UNDO_WINDOW_MS, type SessionRatingOptions } from './sessionRating';
 export { useModelSwitchConfirmStore, modelSwitchConfirmStore, type ModelSwitchConfirmRequest, type ModelSwitchCompactionOutcome } from './modelSwitchConfirm';
-export { useSessionInfoStore, sessionInfoStore, type SessionFolderGitState, type SessionFolderInfoRow } from './sessionInfo';
+export {
+  useSessionInfoStore,
+  sessionInfoStore,
+  type SessionContextInfoState,
+  type SessionFolderGitState,
+  type SessionFolderInfoRow,
+} from './sessionInfo';
 export { usePinnedOrderStore, pinnedOrderStore } from './pinnedOrder';

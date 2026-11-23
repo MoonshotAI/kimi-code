@@ -473,7 +473,7 @@ export async function startStubModel(): Promise<StubModel> {
 
 export type PermissionMode = 'manual' | 'auto' | 'yolo';
 
-export function stubModelConfig(baseUrl: string, permissionMode?: PermissionMode): string {
+export function stubModelConfig(baseUrl: string, permissionMode?: PermissionMode, apiKey = 'sk-e2e'): string {
   return [
     'default_model = "e2e/stub"',
     ...(permissionMode === undefined ? [] : [`default_permission_mode = "${permissionMode}"`]),
@@ -481,7 +481,7 @@ export function stubModelConfig(baseUrl: string, permissionMode?: PermissionMode
     '[providers.e2e]',
     'type = "openai"',
     `base_url = "${baseUrl}"`,
-    'api_key = "sk-e2e"',
+    `api_key = "${apiKey}"`,
     '',
     '[models."e2e/stub"]',
     'provider = "e2e"',

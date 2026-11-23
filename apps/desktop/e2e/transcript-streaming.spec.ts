@@ -130,6 +130,8 @@ test('streamed replies show thinking, fold tool runs, and keep the reader in pla
     await relaunchAndSettle(app, THINK_PROMPT);
     const restored = app.window.getByRole('list').first();
     await expect(restored.getByText('Rollout line 80 of the plan.', { exact: true })).toBeAttached({ timeout: 30_000 });
+    await restored.hover();
+    await app.window.mouse.wheel(0, -100_000);
     await expect(restored.getByText(ANSWER, { exact: true })).toBeAttached();
     const toggle = restored.getByRole('button', { name: /^Thinking/ }).first();
     await expect(toggle).toHaveAttribute('aria-expanded', 'false');

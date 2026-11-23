@@ -26,8 +26,16 @@ const props = withDefaults(
     unread?: boolean;
     stateTag?: 'open' | 'done';
     compactPinned?: boolean;
+    showPinnedWorkspace?: boolean;
   }>(),
-  { approvalCount: 0, questionCount: 0, unread: false, stateTag: undefined, compactPinned: false },
+  {
+    approvalCount: 0,
+    questionCount: 0,
+    unread: false,
+    stateTag: undefined,
+    compactPinned: false,
+    showPinnedWorkspace: false,
+  },
 );
 
 const emit = defineEmits<{
@@ -45,13 +53,29 @@ const emit = defineEmits<{
   pin: [id: string];
 }>();
 
-const showSubRow = computed(() => !props.compactPinned && props.session.cwdLabel !== undefined);
-const isFlat = computed(() => showSubRow.value);
-const compactWorkspaceTooltip = computed(() => {
-  if (!props.compactPinned || renaming.value) return null;
+const isFlat = computed(() => !props.compactPinned && props.session.cwdLabel !== undefined);
+const resolvedPinnedWorkspaceLabel = computed(() => {
+  if (!props.compactPinned) return null;
   const label = props.session.workspaceName ?? props.session.cwdLabel;
   return label && label !== '-' ? label : null;
 });
+const showPinnedSubRow = computed(
+  () => props.showPinnedWorkspace && resolvedPinnedWorkspaceLabel.value !== null,
+);
+const compactWorkspaceTooltip = computed(() => {
+  if (!props.compactPinned || props.showPinnedWorkspace || renaming.value) return null;
+  return resolvedPinnedWorkspaceLabel.value;
+});
+const subLabel = computed(() =>
+  props.compactPinned
+    ? resolvedPinnedWorkspaceLabel.value
+    : (props.session.workspaceName ?? props.session.cwdLabel),
+);
+const showSubRow = computed(() => isFlat.value || showPinnedSubRow.value);
+const showSubIcon = computed(() => !props.compactPinned || props.session.hostId !== undefined);
+const showCompactPr = computed(
+  () => props.compactPinned && !showSubRow.value && !renaming.value && Boolean(props.session.pullRequest),
+);
 const displayStatus = computed(() =>
   renaming.value
     ? ('idle' as const)
@@ -427,6 +451,8 @@ function openPullRequest(): void {
       on: active,
       flat: isFlat,
       'compact-pinned': compactPinned,
+      'has-sub': showSubRow,
+      'has-compact-pr': showCompactPr,
       'has-badge': hasBadge,
     }"
     @click="emit('select', session.id)"
@@ -487,7 +513,7 @@ function openPullRequest(): void {
       </Tooltip>
 
       <button
-        v-if="compactPinned && !renaming && session.pullRequest"
+        v-if="showCompactPr && session.pullRequest"
         type="button"
         class="pr compact-pr"
         :class="`pr--${session.pullRequest.state}`"
@@ -570,14 +596,17 @@ function openPullRequest(): void {
       </span>
     </div>
 
-    <div v-if="showSubRow" class="sub">
-      <WorkspaceIcon class="sub-icon" :host-id="session.hostId" size="sm" status="none" />
-      <span class="sub-text">{{ session.workspaceName ?? session.cwdLabel }}</span>
+    <div v-if="showSubRow" class="sub" :class="{ 'sub--pinned': compactPinned }">
+      <WorkspaceIcon v-if="showSubIcon" class="sub-icon" :host-id="session.hostId" size="sm" status="none" />
+      <Tooltip v-if="showPinnedSubRow && !renaming" :text="subLabel">
+        <span class="sub-text">{{ subLabel }}</span>
+      </Tooltip>
+      <span v-else class="sub-text">{{ subLabel }}</span>
       <!-- PR association (v2 git domain): a small tag at the second line's
            right edge; click opens the PR (system browser / new tab). Open PRs
            stand out in success green, merged in purple, closed stays neutral. -->
       <button
-        v-if="session.pullRequest"
+        v-if="session.pullRequest && !(compactPinned && renaming)"
         type="button"
         class="pr"
         :class="`pr--${session.pullRequest.state}`"
@@ -593,7 +622,7 @@ function openPullRequest(): void {
          escapes the `overflow: hidden` on the collapsing `.group-sessions` list. -->
     <Teleport to="body">
       <Transition name="menu-pop">
-        <Menu ref="menuRef" v-if="menuOpen" class="menu" :style="menuStyle" @click.stop>
+        <Menu ref="menuRef" v-if="menuOpen" class="menu anchored-menu" :style="menuStyle" @click.stop>
         <MenuItem @click="openPickerFromMenu">
           <Icon name="emoji" size="sm" />
           {{ t('sidebar.setEmoji') }}
@@ -657,7 +686,7 @@ function openPullRequest(): void {
         <SessionEmojiPicker
           v-if="pickerOpen"
           ref="pickerRef"
-          class="picker"
+          class="picker anchored-menu"
           :style="pickerStyle"
           :current="emojiSplit.emoji"
           :removable="emojiSplit.rest.length > 0"
@@ -719,7 +748,10 @@ function openPullRequest(): void {
 .lead-icon {
   color: var(--color-text-muted);
 }
-.se.compact-pinned:hover .act {
+.se.compact-pinned.has-sub {
+  padding: var(--space-1-5) var(--se-pad-x);
+}
+.se.has-compact-pr:hover .act {
   min-width: calc(2 * var(--icon-button-sm) + 2px - (var(--se-pad-x) - var(--sb-action-inset, 3px)));
 }
 .unread-dot {
@@ -796,6 +828,10 @@ function openPullRequest(): void {
   font-size: var(--text-xs);
   line-height: var(--leading-tight);
   user-select: none;
+}
+.sub--pinned {
+  margin-top: var(--space-05);
+  padding-left: calc(var(--sb-gutter, 16px) + var(--sb-gap, 6px));
 }
 .sub-icon {
   flex: none;
@@ -922,35 +958,6 @@ function openPullRequest(): void {
     visibility 0s linear var(--duration-fast);
 }
 
-.menu {
-  position: fixed;
-  top: 0;
-  left: 0;
-  z-index: var(--z-dropdown);
-}
-.picker {
-  position: fixed;
-  top: 0;
-  left: 0;
-  z-index: var(--z-dropdown);
-}
-.menu-pop-enter-active {
-  transition:
-    opacity var(--duration-base) var(--ease-out),
-    transform var(--duration-base) var(--ease-out);
-}
-.menu-pop-leave-active {
-  transition:
-    opacity var(--duration-fast) var(--ease-out),
-    transform var(--duration-fast) var(--ease-out);
-  pointer-events: none;
-}
-.menu-pop-enter-from,
-.menu-pop-leave-to {
-  opacity: 0;
-  transform: scale(0.97) translateY(var(--menu-pop-shift, -2px));
-}
-
 .rename-wrap {
   position: relative;
   display: flex;
@@ -1031,3 +1038,5 @@ function openPullRequest(): void {
 }
 .sessions .se .rename-input { border-radius: var(--radius-sm); font-family: var(--sans); }
 </style>
+
+<style src="./lib/anchored-menu.css"></style>
