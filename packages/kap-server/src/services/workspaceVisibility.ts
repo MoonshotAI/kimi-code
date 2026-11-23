@@ -1,6 +1,6 @@
 import {
-  IWorkspaceAliases,
-  IWorkspaceService,
+  IProjectAliases,
+  IProjectService,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
 
@@ -9,10 +9,10 @@ export async function loadWorkspaceVisibility(core: Scope): Promise<{
   readonly registeredWorkspaceIds: ReadonlySet<string>;
   readonly visibleWorkspaceIds: ReadonlySet<string>;
 }> {
-  const workspaces = await core.accessor.get(IWorkspaceService).list();
+  const workspaces = await core.accessor.get(IProjectService).list();
   const registeredWorkspaceIds = new Set(workspaces.map((workspace) => workspace.id));
   const visibleWorkspaceIds = new Set(registeredWorkspaceIds);
-  const aliases = core.accessor.get(IWorkspaceAliases);
+  const aliases = core.accessor.get(IProjectAliases);
   const aliasIds = await Promise.all(
     workspaces.map((workspace) => aliases.resolveAliasIds(workspace.id)),
   );

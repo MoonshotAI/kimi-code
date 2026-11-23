@@ -26,7 +26,7 @@ import type { ProfileData } from '#/agent/profile/profile';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
 import { createReminderStub } from '../../features/reminder/stubs';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
-import { ISessionWorkspaceInfo } from '#/session/workspaceInfo/workspaceInfo';
+import { ISessionProjectInfo } from '#/session/projectInfo/projectInfo';
 import { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
 import { ISessionToolPolicy } from '#/session/sessionToolPolicy/sessionToolPolicy';
 import { ISessionToolPolicyGate } from '#/session/sessionToolPolicyGate/sessionToolPolicyGate';
@@ -249,7 +249,7 @@ function createHarness(options: {
         scope: (sub?: string): string =>
           sub ? `sessions/workspace-1/session-1/${sub}` : 'sessions/workspace-1/session-1',
       } satisfies ISessionContext);
-      reg.defineInstance(ISessionWorkspaceInfo, {
+      reg.defineInstance(ISessionProjectInfo, {
         _serviceBrand: undefined,
         ready: options.workspaceReady ?? Promise.resolve(),
         get additionalDirs() {
@@ -259,7 +259,7 @@ function createHarness(options: {
           return workspaceDirs.primaryByWorkspace;
         },
         onDidChange: workspaceDirsChange.event,
-      } satisfies ISessionWorkspaceInfo);
+      } satisfies ISessionProjectInfo);
       reg.defineInstance(IBootstrapService, {
         homeDir,
         getEnv: () => undefined,

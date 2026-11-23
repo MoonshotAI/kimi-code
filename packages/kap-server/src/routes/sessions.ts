@@ -21,7 +21,7 @@ import {
   SessionCreated,
   ISessionManager,
   IHostFileSystem,
-  IWorkspaceService,
+  IProjectService,
   IWireService,
   closeSessionById,
   drainSessionMetadataWrites,
@@ -51,8 +51,8 @@ import { wrapSystemReminder } from '@moonshot-ai/agent-core-v2/features/reminder
 import {
   legacySessionMetaScopeOf,
   sessionScopeOf,
-  workspacePersistenceScope,
-} from '@moonshot-ai/agent-core-v2/workspace/sessionLifecycle/internal/addressing';
+  projectPersistenceScope,
+} from '@moonshot-ai/agent-core-v2/project/sessionLifecycle/internal/addressing';
 import { SessionMetaUpdated } from '@moonshot-ai/agent-core-v2/session/sessionMetadata/sessionMetaEvents';
 import { sessionWorkDir } from '@moonshot-ai/agent-core-v2/session/workspaceContext/workspaceRoots';
 import { ErrorCode } from '../protocol/error-codes';
@@ -218,7 +218,7 @@ export function registerSessionsRoutes(
         return;
       }
 
-      const registry = core.accessor.get(IWorkspaceService);
+      const registry = core.accessor.get(IProjectService);
       let workDir: string;
       if (workspaceId !== undefined) {
         const workspace = await registry.get(workspaceId);
@@ -890,7 +890,7 @@ async function cancelSessionAction(
     if (targetAgentId !== MAIN_AGENT_ID) {
       const docs = core.accessor.get(IAtomicDocumentStore);
       const metaScope = sessionScopeOf(
-        workspacePersistenceScope(
+        projectPersistenceScope(
           core.accessor.get(IBootstrapService).scope('sessions'),
           summary.workspaceId,
         ),
@@ -1208,7 +1208,7 @@ async function isDirectory(core: Scope, path: string): Promise<boolean> {
 }
 
 async function sessionCwd(core: Scope, summary: SessionSummary): Promise<string | undefined> {
-  const workspace = await core.accessor.get(IWorkspaceService).get(summary.workspaceId);
+  const workspace = await core.accessor.get(IProjectService).get(summary.workspaceId);
   return sessionWorkDir(summary, workspace?.root);
 }
 

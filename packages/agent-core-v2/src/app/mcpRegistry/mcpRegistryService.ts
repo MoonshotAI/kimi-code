@@ -1,15 +1,15 @@
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
-import { canonicalWorkspaceRoot } from '#/_base/utils/paths';
+import { canonicalProjectRoot } from '#/_base/utils/paths';
 
 import { ErrorCodes, Error2 } from '#/errors';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { loadMcpServersDetailed } from '#/app/mcpConfig/configLoader';
 import { IMcpConfigStore } from '#/app/mcpConfig/configStore';
 import { IPluginService } from '#/app/plugin/plugin';
-import { IWorkspaceService } from '#/app/workspace/workspace';
+import { IProjectService } from '#/app/project/project';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
-import { IWorkspaceTrustStore } from '#/workspace/workspaceTrust/workspaceTrustStore';
+import { IProjectTrustStore } from '#/project/projectTrust/projectTrustStore';
 
 import {
   IMcpRegistryService,
@@ -25,13 +25,13 @@ export class McpRegistryService implements IMcpRegistryService {
     @IPluginService private readonly plugins: IPluginService,
     @IHostFileSystem private readonly fs: IHostFileSystem,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
-    @IWorkspaceTrustStore private readonly trust: IWorkspaceTrustStore,
-    @IWorkspaceService private readonly workspaces: IWorkspaceService,
+    @IProjectTrustStore private readonly trust: IProjectTrustStore,
+    @IProjectService private readonly projects: IProjectService,
   ) {}
 
   async list(query: McpRegistryQuery = {}): Promise<readonly McpRegistryEntry[]> {
     const out: McpRegistryEntry[] = [];
-    const dir = query.cwd === undefined ? undefined : await this.trustedProjectDir(canonicalWorkspaceRoot(query.cwd));
+    const dir = query.cwd === undefined ? undefined : await this.trustedProjectDir(canonicalProjectRoot(query.cwd));
 
     if (dir === undefined) {
       const userEntries = await this.store.list();
@@ -97,9 +97,9 @@ export class McpRegistryService implements IMcpRegistryService {
     const own = this.trust.forRoot(cwd);
     await own.refresh();
     if (own.isPersistedTrusted()) return cwd;
-    const { root } = await this.workspaces.peekImplicit(cwd);
+    const { root } = await this.projects.peekImplicit(cwd);
     if (!(await this.trust.forRoot(root).refresh())) return undefined;
-    return (await this.workspaces.projectDirAt({ root }, cwd)) ?? root;
+    return (await this.projects.projectDirAt({ root }, cwd)) ?? root;
   }
 }
 

@@ -10,8 +10,8 @@ import { ISessionIndex, type SessionSummary } from '#/app/sessionIndex/sessionIn
 import { ISessionManager } from '#/app/sessionManager/sessionManager';
 import {
   sessionDirOf,
-  workspacePersistenceScope,
-} from '#/workspace/sessionLifecycle/internal/addressing';
+  projectPersistenceScope,
+} from '#/project/sessionLifecycle/internal/addressing';
 import { ErrorCodes, Error2 } from '#/errors';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionRequestAttributionService } from '#/session/requestAttribution/requestAttribution';
@@ -118,7 +118,7 @@ export class SessionExportService implements ISessionExportService {
   private async flushLiveSession(summary: SessionSummary): Promise<ExportSessionDirectorySummary> {
     const sessionDir = sessionDirOf(
       this.bootstrap.homeDir,
-      workspacePersistenceScope(this.bootstrap.scope('sessions'), summary.workspaceId),
+      projectPersistenceScope(this.bootstrap.scope('sessions'), summary.workspaceId),
       summary.id,
     );
     let exportSummary: ExportSessionDirectorySummary = {

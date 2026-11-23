@@ -2,7 +2,7 @@ import { existsSync, readdirSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import { sessionIndexLine } from '@moonshot-ai/agent-core-v2/app/workspace/workspaceAlias';
+import { sessionIndexLine } from '@moonshot-ai/agent-core-v2/app/project/projectAlias';
 import { SESSION_META_VERSION } from '@moonshot-ai/agent-core-v2/session/sessionMetadata/sessionMetadata';
 
 import { targetSessionsDir } from './paths.js';

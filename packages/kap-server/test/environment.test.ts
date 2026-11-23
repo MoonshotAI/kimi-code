@@ -6,7 +6,7 @@ import { dirname, join } from 'node:path';
 import {
   closeSessionById,
   ISessionIndex,
-  IWorkspaceInstanceManager,
+  IProjectInstanceManager,
 } from '@moonshot-ai/agent-core-v2';
 import { say } from '@moonshot-ai/testkit/model';
 import { kapFixtures, type KapFixtures } from '@moonshot-ai/testkit/vitest';

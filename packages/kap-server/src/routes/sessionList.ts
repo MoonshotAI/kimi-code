@@ -5,7 +5,7 @@ import {
   IEnvironmentService,
   ISessionIndex,
   ISessionIndexMirror,
-  IWorkspaceAliases,
+  IProjectAliases,
   environmentBindingId,
   LOCAL_ENVIRONMENT_ID,
   setSessionArchivedBatch,
@@ -351,7 +351,7 @@ async function listSessionsHere(
 
       let workspaceIds: string[] | undefined;
       if (query.workspaceFilter !== undefined) {
-        const aliases = core.accessor.get(IWorkspaceAliases);
+        const aliases = core.accessor.get(IProjectAliases);
         const sets = await Promise.all(
           query.workspaceFilter.map((id) => aliases.resolveAliasIds(id)),
         );
@@ -442,7 +442,7 @@ async function listSessionsHere(
           readonly rep: SessionSummary;
           readonly items: SessionSummary[];
         }
-        const aliasService = core.accessor.get(IWorkspaceAliases);
+        const aliasService = core.accessor.get(IProjectAliases);
         const canonicalById = new Map<string, string>();
         const canonicalIdOf = async (workspaceId: string): Promise<string> => {
           let canonical = canonicalById.get(workspaceId);

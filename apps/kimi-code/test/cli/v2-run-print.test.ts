@@ -37,7 +37,7 @@ import {
   ISessionRunGate,
   ISessionManager,
   ITelemetryService,
-  IWorkspaceSessions,
+  IProjectSessions,
   InMemorySessionLockService,
   Error2,
   ErrorCodes,
@@ -322,7 +322,7 @@ function makeFakeHarness(toolUpdates = false) {
       },
     ],
     [ISessionIndex, { get: vi.fn(async () => undefined), listRecent: vi.fn(async () => ({ items: [] })) }],
-    [IWorkspaceSessions, { listForWorkdir: vi.fn(async () => ({ items: [] })) }],
+    [IProjectSessions, { listForWorkdir: vi.fn(async () => ({ items: [] })) }],
     [ISessionLockService, new InMemorySessionLockService()],
     [
       IAppendLogStore,
@@ -896,7 +896,7 @@ describe('runV2Print', () => {
     const { app, agentServices, appServices, planState } = makeFakeHarness();
     planState.active = true;
 
-    const workdirSessions = appServices.get(IWorkspaceSessions) as { listForWorkdir: ReturnType<typeof vi.fn> };
+    const workdirSessions = appServices.get(IProjectSessions) as { listForWorkdir: ReturnType<typeof vi.fn> };
     workdirSessions.listForWorkdir.mockResolvedValue({ items: [{ id: 'ses_9', cwd: process.cwd() }] });
 
     mocks.bootstrap.mockReturnValue({ app });
@@ -914,7 +914,7 @@ describe('runV2Print', () => {
     const stdout = writer();
     const stderr = writer();
     const { app, appServices } = makeFakeHarness();
-    const workdirSessions = appServices.get(IWorkspaceSessions) as { listForWorkdir: ReturnType<typeof vi.fn> };
+    const workdirSessions = appServices.get(IProjectSessions) as { listForWorkdir: ReturnType<typeof vi.fn> };
     workdirSessions.listForWorkdir.mockResolvedValue({ items: [{ id: 'ses_here', cwd: process.cwd() }] });
     const index = appServices.get(ISessionIndex) as { listRecent: ReturnType<typeof vi.fn> };
     const sessions = appServices.get(ISessionManager) as {

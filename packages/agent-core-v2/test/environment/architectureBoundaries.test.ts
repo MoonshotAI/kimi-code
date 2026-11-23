@@ -30,10 +30,10 @@ function sourceFiles(path: string): string[] {
 
 describe('environment architecture boundaries', () => {
   it('keeps Program out of the scoped service registry', () => {
-    const workspaceInstance = source('workspace/workspaceInstance/workspaceInstance.ts');
+    const workspaceInstance = source('project/projectInstance/projectInstance.ts');
     const program = source('program/program.ts');
     const dependencies = source('program/programDependencies.ts');
-    const workspaceSources = sourceFiles('workspace').map((path) => readFileSync(path, 'utf8')).join('\n');
+    const workspaceSources = sourceFiles('project').map((path) => readFileSync(path, 'utf8')).join('\n');
     expect(workspaceInstance).not.toContain('createScopedChildHandle');
     expect(program).not.toContain('ServicesAccessor');
     expect(program).not.toContain('readonly accessor');
@@ -76,7 +76,7 @@ describe('environment architecture boundaries', () => {
   });
 
   it('routes MCP and external FS through explicit environment selection', () => {
-    const mcp = source('workspace/workspaceMcp/workspaceMcpService.ts');
+    const mcp = source('project/projectMcp/projectMcpService.ts');
     const externalFs = kapSource('routes/fs.ts');
 
     expect(mcp).toContain('environmentResolver: this.environmentResolver');

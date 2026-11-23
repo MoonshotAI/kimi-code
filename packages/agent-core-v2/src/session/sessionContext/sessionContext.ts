@@ -1,7 +1,7 @@
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import type { ScopeSeed } from '#/_base/di/scope';
 
-export interface SessionWorkspaceAssociationSnapshot {
+export interface SessionProjectAssociationSnapshot {
   readonly sessionId: string;
   readonly workspaceId: string;
   readonly cwd: string;
@@ -21,9 +21,9 @@ export interface ISessionContext {
 export const ISessionContext: ServiceIdentifier<ISessionContext> =
   createDecorator<ISessionContext>('sessionContext');
 
-export function snapshotSessionWorkspaceAssociation(
+export function snapshotSessionProjectAssociation(
   context: ISessionContext,
-): SessionWorkspaceAssociationSnapshot {
+): SessionProjectAssociationSnapshot {
   return {
     sessionId: context.sessionId,
     workspaceId: context.workspaceId,

@@ -2,25 +2,25 @@ import { Emitter, type Event } from '#/_base/event';
 import type { EnvironmentBinding } from '#/environment/environment';
 import { LOCAL_ENVIRONMENT_ID, environmentBindingId } from '#/environment/environment';
 import { EnvironmentError, type EnvironmentGenerationSnapshot, type EnvironmentRegistryChange } from '#/environment/environmentRegistry';
-import type { SessionLifecycleService } from '#/workspace/sessionLifecycle/sessionLifecycleService';
-import type { IWorkspaceStateService } from '#/workspace/state/workspaceState';
-import type { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
-import type { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
-import type { IWorkspaceFsService } from '#/workspace/workspaceFs/fs';
-import type { IWorkspaceGitService } from '#/workspace/workspaceGit/workspaceGit';
-import type { IWorkspaceInstructionsService } from '#/workspace/workspaceInstructions/workspaceInstructions';
-import type { IWorkspaceTrust } from '#/workspace/workspaceTrust/workspaceTrust';
-import { WorkspaceTrustService } from '#/workspace/workspaceTrust/workspaceTrustService';
-import type { IWorkspaceTrustDisclosure } from '#/workspace/workspaceTrust/trustDisclosure';
-import { WorkspaceTrustDisclosureService } from '#/workspace/workspaceTrust/trustDisclosureService';
-import type { IPluginAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/pluginAgentProfileLoader';
-import { PluginAgentProfileLoaderService } from '#/workspace/workspaceAgentProfileLoader/pluginAgentProfileLoaderService';
-import type { IUserAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/userAgentProfileLoader';
-import { UserAgentProfileLoaderService } from '#/workspace/workspaceAgentProfileLoader/userAgentProfileLoaderService';
-import type { IWorkspaceAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/workspaceAgentProfileLoader';
-import { PluginSkillSource } from '#/features/skill/workspace/pluginSkillSource';
-import { EnvironmentSkillDiscovery } from '#/features/skill/workspace/environmentSkillDiscovery';
-import type { IWorkspaceSkillCatalog } from '#/features/skill/workspace/workspaceSkillCatalog';
+import type { SessionLifecycleService } from '#/project/sessionLifecycle/sessionLifecycleService';
+import type { IProjectStateService } from '#/project/state/projectState';
+import type { IProjectContext } from '#/project/projectContext/projectContext';
+import type { IProjectDirs } from '#/project/projectDirs/projectDirs';
+import type { IProjectFsService } from '#/project/projectFs/fs';
+import type { IProjectGitService } from '#/project/projectGit/projectGit';
+import type { IProjectInstructionsService } from '#/project/projectInstructions/projectInstructions';
+import type { IProjectTrust } from '#/project/projectTrust/projectTrust';
+import { ProjectTrustService } from '#/project/projectTrust/projectTrustService';
+import type { IProjectTrustDisclosure } from '#/project/projectTrust/trustDisclosure';
+import { ProjectTrustDisclosureService } from '#/project/projectTrust/trustDisclosureService';
+import type { IPluginAgentProfileLoader } from '#/project/projectAgentProfileLoader/pluginAgentProfileLoader';
+import { PluginAgentProfileLoaderService } from '#/project/projectAgentProfileLoader/pluginAgentProfileLoaderService';
+import type { IUserAgentProfileLoader } from '#/project/projectAgentProfileLoader/userAgentProfileLoader';
+import { UserAgentProfileLoaderService } from '#/project/projectAgentProfileLoader/userAgentProfileLoaderService';
+import type { IProjectAgentProfileLoader } from '#/project/projectAgentProfileLoader/projectAgentProfileLoader';
+import { PluginSkillSource } from '#/features/skill/project/pluginSkillSource';
+import { EnvironmentSkillDiscovery } from '#/features/skill/project/environmentSkillDiscovery';
+import type { IProjectSkillCatalog } from '#/features/skill/project/projectSkillCatalog';
 import { isVisibleAgentProfileSource } from '#/app/agentProfileCatalog/agentProfileRegistry';
 import type { IEnvironmentService } from '#/app/environment/environment';
 
@@ -81,7 +81,7 @@ interface ProgramGeneration extends ProgramHarness {
   readonly id: string;
   readonly workdirs: ProgramWorkdirs;
   readonly mcp: ProgramMcpSets;
-  readonly trust: IWorkspaceTrust;
+  readonly trust: IProjectTrust;
   readonly pluginAgentProfiles: IPluginAgentProfileLoader;
   readonly disposables: readonly { dispose(): void | Promise<void> }[];
   ready: boolean;
@@ -106,7 +106,7 @@ export class Program {
   constructor(
     readonly workspaceId: string,
     private readonly environments: IEnvironmentService,
-    private readonly context: IWorkspaceContext,
+    private readonly context: IProjectContext,
     private readonly dependencies: ProgramDependencies,
   ) {
     this.registrySubscription = environments.onDidChange((change) => this.onEnvironmentChange(change));
@@ -114,14 +114,14 @@ export class Program {
   }
 
   get status(): ProgramStatus { return this.currentStatus; }
-  get state(): IWorkspaceStateService { return this.requireGeneration().workdirs.project.state; }
-  get dirs(): IWorkspaceDirs { return this.requireGeneration().workdirs.project.dirs; }
-  get fs(): IWorkspaceFsService { return this.requireGeneration().workdirs.root.fs; }
-  get git(): IWorkspaceGitService { return this.requireGeneration().workdirs.root.git; }
-  get instructions(): IWorkspaceInstructionsService { return this.requireGeneration().workdirs.root.instructions; }
-  get trust(): IWorkspaceTrust { return this.requireGeneration().trust; }
-  get skills(): IWorkspaceSkillCatalog { return this.requireGeneration().workdirs.root.skills; }
-  get agentProfiles(): IWorkspaceAgentProfileLoader { return this.requireGeneration().workdirs.root.agentProfiles; }
+  get state(): IProjectStateService { return this.requireGeneration().workdirs.project.state; }
+  get dirs(): IProjectDirs { return this.requireGeneration().workdirs.project.dirs; }
+  get fs(): IProjectFsService { return this.requireGeneration().workdirs.root.fs; }
+  get git(): IProjectGitService { return this.requireGeneration().workdirs.root.git; }
+  get instructions(): IProjectInstructionsService { return this.requireGeneration().workdirs.root.instructions; }
+  get trust(): IProjectTrust { return this.requireGeneration().trust; }
+  get skills(): IProjectSkillCatalog { return this.requireGeneration().workdirs.root.skills; }
+  get agentProfiles(): IProjectAgentProfileLoader { return this.requireGeneration().workdirs.root.agentProfiles; }
   get userAgentProfiles(): IUserAgentProfileLoader { return this.requireGeneration().userAgentProfiles; }
   get sessionControllerGeneration(): string { return this.requireGeneration().id; }
 
@@ -303,7 +303,7 @@ export class Program {
       const harness: ProgramHarness = { userAgentProfiles, pluginSkills };
       const workdirs = new ProgramWorkdirs(this.environments, this.context, this.dependencies, harness, own);
       const { dirs, state } = workdirs.project;
-      const trust = own(new WorkspaceTrustService(dirs, this.dependencies.trustStore, state, this.dependencies.config));
+      const trust = own(new ProjectTrustService(dirs, this.dependencies.trustStore, state, this.dependencies.config));
       const mcp = own(new ProgramMcpSets(this.environments, this.context, this.dependencies, hostFs, dirs, trust));
       own(workdirs);
       return {
@@ -327,8 +327,8 @@ export class Program {
     }
   }
 
-  private trustDisclosureOf(view: ProgramWorkdir, trust: IWorkspaceTrust): IWorkspaceTrustDisclosure {
-    return new WorkspaceTrustDisclosureService(
+  private trustDisclosureOf(view: ProgramWorkdir, trust: IProjectTrust): IProjectTrustDisclosure {
+    return new ProjectTrustDisclosureService(
       { workspaceKey: this.workspaceId, contextKeys: [view.contextKey, view.configuredSources.contextKey] },
       view.hostFs,
       this.dependencies.bootstrap,

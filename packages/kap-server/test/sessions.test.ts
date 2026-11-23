@@ -48,8 +48,8 @@ import {
   ISessionTitleService,
   ISessionWorkdir,
   IWireService,
-  IWorkspaceInstanceManager,
-  IWorkspaceService,
+  IProjectInstanceManager,
+  IProjectService,
   MAIN_AGENT_ID,
   closeSessionById,
   getLiveSessionById,
@@ -587,7 +587,7 @@ describe('server-v2 /api/v1/sessions', () => {
       secondId = second.body.data.id;
       expect(second.body.data.workspace_id).toBe(first.body.data.workspace_id);
       expect(second.body.data.id).not.toBe(first.body.data.id);
-      const manager = (server as RunningServer).core.accessor.get(IWorkspaceInstanceManager);
+      const manager = (server as RunningServer).core.accessor.get(IProjectInstanceManager);
       const workspace = manager.get(first.body.data.workspace_id);
       expect(workspace).toBeDefined();
       await closeSessionById((server as RunningServer).core.accessor, firstId);
@@ -1909,7 +1909,7 @@ describe('server-v2 /api/v1/sessions', () => {
       const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
       const id = created.body.data.id;
       const workspaceId = created.body.data.workspace_id;
-      const manager = (server as RunningServer).core.accessor.get(IWorkspaceInstanceManager);
+      const manager = (server as RunningServer).core.accessor.get(IProjectInstanceManager);
       const workspace = manager.get(workspaceId);
       expect(workspace).toBeDefined();
       const mcp = getLiveSessionById((server as RunningServer).core.accessor, id)!.accessor.get(ISessionMcpHandle);
@@ -2040,7 +2040,7 @@ describe('server-v2 /api/v1/sessions', () => {
     it('start with its first session, serve every session, and stop with the last while the workspace stays open', async () => {
       const src = join(root, 'src');
       const elsewhere = await realpath(await mkdtemp(join(tmpdir(), 'kimi-server-v2-session-mcp-other-')));
-      const lease = await (server as RunningServer).core.accessor.get(IWorkspaceInstanceManager).acquire({ cwd: root });
+      const lease = await (server as RunningServer).core.accessor.get(IProjectInstanceManager).acquire({ cwd: root });
       try {
         await writeServer(src, 'own');
         await writeServer(elsewhere, 'elsewhere');
@@ -2130,7 +2130,7 @@ describe('server-v2 /api/v1/sessions', () => {
     }
     await closeSessionById((server as RunningServer).core.accessor, id);
     await (server as RunningServer).core.accessor
-      .get(IWorkspaceService)
+      .get(IProjectService)
       .delete(encodeWorkDirKey(cwd));
     await rm(cwd, { recursive: true, force: true });
 

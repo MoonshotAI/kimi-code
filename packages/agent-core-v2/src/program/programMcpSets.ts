@@ -4,9 +4,9 @@ import type { IEnvironmentService } from '#/app/environment/environment';
 import type { McpServerConfig } from '#/mcpCore/config-schema';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { isHostFsNotFound } from '#/os/interface/hostFsErrors';
-import type { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
-import type { McpDirs } from '#/workspace/workspaceMcpConfig/workspaceMcpConfig';
-import type { IWorkspaceTrust } from '#/workspace/workspaceTrust/workspaceTrust';
+import type { IProjectContext } from '#/project/projectContext/projectContext';
+import type { McpDirs } from '#/project/projectMcpConfig/projectMcpConfig';
+import type { IProjectTrust } from '#/project/projectTrust/projectTrust';
 
 import type { ProgramDependencies } from './programDependencies';
 import { ProgramMcp, type ProgramMcpLease } from './programMcp';
@@ -18,11 +18,11 @@ export class ProgramMcpSets {
 
   constructor(
     private readonly environments: IEnvironmentService,
-    private readonly context: IWorkspaceContext,
+    private readonly context: IProjectContext,
     private readonly dependencies: ProgramDependencies,
     private readonly hostFs: IHostFileSystem,
     private readonly dirs: McpDirs,
-    private readonly trust: IWorkspaceTrust,
+    private readonly trust: IProjectTrust,
   ) {
     this.primary = this.setFor(dirs);
   }
