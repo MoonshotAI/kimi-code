@@ -1545,6 +1545,7 @@ describe('runV2Print', () => {
           head: '1234567890abcdef',
           branch: undefined,
           missing: false,
+          managed: true,
         },
         repoRoot: '/tmp/repo',
         sourceRoot: '/tmp/repo',
@@ -1581,6 +1582,7 @@ describe('runV2Print', () => {
         });
       const listWt = vi.spyOn(SDKRpcClientV2.prototype, 'listWorktrees').mockResolvedValueOnce({
         repoRoot: created.repoRoot,
+        currentCheckoutRoot: created.repoRoot,
         bare: false,
         worktrees: [created.worktree],
       });
@@ -1620,6 +1622,7 @@ describe('runV2Print', () => {
       const runSetup = vi.spyOn(SDKRpcClientV2.prototype, 'runWorktreeSetupScript');
       const listWt = vi.spyOn(SDKRpcClientV2.prototype, 'listWorktrees').mockResolvedValueOnce({
         repoRoot: created.repoRoot,
+        currentCheckoutRoot: created.repoRoot,
         bare: false,
         worktrees: [created.worktree],
       });

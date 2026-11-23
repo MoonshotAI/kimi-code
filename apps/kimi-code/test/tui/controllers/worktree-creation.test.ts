@@ -23,7 +23,7 @@ const HEAD = 'abcdef1234567890';
 
 function createdWorktree(overrides: Partial<CreatedWorktree> = {}): CreatedWorktree {
   return {
-    worktree: { path: WORKTREE_PATH, name: 'fix-login', head: HEAD, branch: undefined, missing: false },
+    worktree: { path: WORKTREE_PATH, name: 'fix-login', head: HEAD, branch: undefined, missing: false, managed: true },
     repoRoot: '/repo',
     sourceRoot: '/repo',
     cwd: WORKTREE_PATH,

@@ -11,6 +11,7 @@ import {
   WorktreeExitController,
   type WorktreeExitHost,
 } from '#/tui/controllers/worktree-exit';
+import { quoteShellArg } from '#/utils/shell-quote';
 
 const ENTER = '\r';
 const DOWN = '\u001B[B';
@@ -277,7 +278,25 @@ describe('WorktreeExitController', () => {
     expect(formatWorktreeExit(controller.outcome!)).toEqual([
       'Kept worktree fix-login at ~/.kimi-code/worktrees/wd_repo/fix-login (detached HEAD).',
       '2 commits exist only in this worktree. To keep them on a branch:',
-      '  git -C ~/.kimi-code/worktrees/wd_repo/fix-login switch -c <branch-name>',
+      `  git -C ${quoteShellArg(WORKTREE)} switch -c <branch-name>`,
+    ]);
+  });
+
+  it('shell-quotes the full path in the retained-worktree git command when home has spaces or quotes', () => {
+    vi.stubEnv('HOME', "/Users/Example User's");
+    const spacedPath = "/Users/Example User's/.kimi-code/worktrees/wd_repo/fix-login";
+    expect(
+      formatWorktreeExit({
+        kind: 'kept',
+        name: 'fix-login',
+        path: spacedPath,
+        branch: undefined,
+        uniqueCommits: 1,
+      }),
+    ).toEqual([
+      'Kept worktree fix-login at ~/.kimi-code/worktrees/wd_repo/fix-login (detached HEAD).',
+      '1 commit exists only in this worktree. To keep it on a branch:',
+      `  git -C ${quoteShellArg(spacedPath)} switch -c <branch-name>`,
     ]);
   });
 

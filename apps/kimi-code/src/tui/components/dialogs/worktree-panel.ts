@@ -18,7 +18,6 @@ import {
   handleSelectableListMouse,
   type MouseRowRegion,
 } from '#/tui/utils/dialog-mouse';
-import { printableChar } from '#/tui/utils/printable-key';
 import { SearchableList } from '#/tui/utils/searchable-list';
 import { abbreviateHome } from '#/utils/paths';
 
@@ -48,11 +47,12 @@ export interface WorktreePanelOptions {
   readonly onCancel: () => void;
 }
 
-const HINT = '↑↓ navigate · Enter open · N new · D delete · Esc cancel';
+const HINT = '↑↓ navigate · Enter open · Ctrl+N new · Ctrl+X delete · Esc cancel';
 const NEW_ROW_LABEL = '+ New worktree';
 const MISSING_NOTICE = "This worktree's directory is missing. Delete it to clean up the git record.";
 const SOURCE_DELETE_NOTICE = "You can't delete the source checkout.";
 const CURRENT_DELETE_NOTICE = "You're in this worktree. Leave it first, or exit Kimi Code to clean it up.";
+const CURRENT_EXTERNAL_DELETE_NOTICE = "You're in this worktree. Switch to another checkout first.";
 const MIN_PATH_WIDTH = 12;
 
 export class WorktreePanelComponent extends DockSection implements Focusable {
@@ -66,9 +66,10 @@ export class WorktreePanelComponent extends DockSection implements Focusable {
     super(opts.layout);
     this.list = new SearchableList({
       items: opts.rows,
-      toSearchText: () => '',
+      toSearchText: rowSearchText,
       pageSize: opts.layout === undefined ? opts.pageSize : opts.layout.maxBodyRows,
       initialIndex: Math.max(0, opts.rows.findIndex((row) => row.kind !== 'new' && row.current)),
+      searchable: true,
     });
   }
 
@@ -81,7 +82,16 @@ export class WorktreePanelComponent extends DockSection implements Focusable {
   }
 
   handleInput(data: string): void {
+    if (matchesKey(data, Key.ctrl('c')) || matchesKey(data, Key.ctrl('d'))) {
+      this.opts.onCancel();
+      return;
+    }
     if (matchesKey(data, Key.escape)) {
+      if (this.list.clearQuery()) {
+        this.notice = undefined;
+        this.scrollBodyToTop();
+        return;
+      }
       this.opts.onCancel();
       return;
     }
@@ -90,17 +100,18 @@ export class WorktreePanelComponent extends DockSection implements Focusable {
       if (row !== undefined) this.open(row);
       return;
     }
-    const key = printableChar(data).toLowerCase();
-    if (key === 'n') {
+    if (matchesKey(data, Key.ctrl('n'))) {
       this.opts.onNew();
       return;
     }
-    if (key === 'd') {
+    if (matchesKey(data, Key.ctrl('x'))) {
       if (row !== undefined) this.delete(row);
       return;
     }
+    const previousQuery = this.list.view().query;
     if (this.list.handleKey(data)) {
       this.notice = undefined;
+      if (this.list.view().query !== previousQuery) this.scrollBodyToTop();
       this.ensureSelectedVisible();
     }
   }
@@ -133,10 +144,14 @@ export class WorktreePanelComponent extends DockSection implements Focusable {
   }
 
   private renderHead(width: number): string[] {
+    const view = this.list.view();
+    const titleSuffix = view.query.length === 0 ? '  (type to search)' : '';
+    const hint = view.query.length > 0 ? `Backspace clear · ${HINT}` : HINT;
     const lines = [
       currentTheme.fg('primary', '─'.repeat(width)),
-      currentTheme.boldFg('primary', ' Worktrees') + currentTheme.fg('textMuted', `  ${this.opts.repoName}`),
-      currentTheme.fg('textMuted', ` ${HINT}`),
+      currentTheme.boldFg('primary', ' Worktrees') +
+        currentTheme.fg('textMuted', `  ${this.opts.repoName}${titleSuffix}`),
+      currentTheme.fg('textMuted', ` ${hint}`),
     ];
     if (this.notice !== undefined) {
       for (const line of this.notice.text.split('\n')) {
@@ -144,6 +159,9 @@ export class WorktreePanelComponent extends DockSection implements Focusable {
       }
     }
     lines.push('');
+    if (view.query.length > 0) {
+      lines.push(currentTheme.fg('primary', ' Search: ') + currentTheme.fg('text', view.query));
+    }
     return lines;
   }
 
@@ -151,6 +169,10 @@ export class WorktreePanelComponent extends DockSection implements Focusable {
     const view = this.list.view();
     const startIndex = this.layout === undefined ? view.page.start : 0;
     const rows = this.layout === undefined ? view.items.slice(view.page.start, view.page.end) : view.items;
+    if (rows.length === 0) {
+      this.rowRegions = [];
+      return [currentTheme.fg('textMuted', '  No matching worktrees.')];
+    }
     const sideWidth = Math.max(0, ...rows.map((row) => visibleWidth(rowSidePlain(row))));
     const maxPathBudget = Math.max(MIN_PATH_WIDTH, width - 4 - (sideWidth > 0 ? sideWidth + 2 : 0));
     const pathWidth = Math.min(
@@ -219,11 +241,21 @@ export class WorktreePanelComponent extends DockSection implements Focusable {
     if (row.kind === 'source') {
       this.notice = { text: SOURCE_DELETE_NOTICE, tone: 'warning' };
     } else if (row.current) {
-      this.notice = { text: CURRENT_DELETE_NOTICE, tone: 'warning' };
+      this.notice = {
+        text: row.worktree.managed ? CURRENT_DELETE_NOTICE : CURRENT_EXTERNAL_DELETE_NOTICE,
+        tone: 'warning',
+      };
     } else {
       this.opts.onDelete(row);
     }
   }
+}
+
+function rowSearchText(row: WorktreePanelRow): string {
+  if (row.kind === 'new') return NEW_ROW_LABEL;
+  if (row.kind === 'source') return `${abbreviateHome(row.path)} ${row.path} source`;
+  const branch = row.worktree.branch ?? 'detached';
+  return `${row.worktree.name} ${abbreviateHome(row.worktree.path)} ${row.worktree.path} ${branch}`;
 }
 
 function rowPath(row: WorktreePanelTarget): string {
