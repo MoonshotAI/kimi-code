@@ -116,9 +116,14 @@ watch(
     () => client.status.value?.ctxMax,
     () => client.status.value?.modelId,
     () => client.activity.value,
+    () => client.compaction?.value?.status,
   ],
-  () => {
-    if (props.sessionId) void fetchContext('refresh', sessionObservationOptions(props.sessionId));
+  ([used, max, model, activity, compactStatus], [prevUsed, prevMax, prevModel, prevActivity, prevCompactStatus]) => {
+    if (!props.sessionId) return;
+    const settled = prevCompactStatus === 'running' && compactStatus !== 'running';
+    if (used !== prevUsed || max !== prevMax || model !== prevModel || activity !== prevActivity || settled) {
+      void fetchContext('refresh', sessionObservationOptions(props.sessionId));
+    }
   },
 );
 

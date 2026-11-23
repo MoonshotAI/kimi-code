@@ -9,7 +9,6 @@ export default {
   btw: { desc: 'Side chat: /btw <question> asks a forked side session', argHint: '[question]' },
   compact: { desc: 'Compact the conversation history', argHint: '[instructions]', requiresSession: 'Open a session to compact its history' },
   compactQueue: {
-    queued: 'Added to the queue — /compact will run in turn',
     alreadyQueued: 'A /compact is already queued',
     compacting: 'Compaction is already running — wait for it to finish',
     skippedAuto: 'Skipped the queued /compact — context was already auto-compacted',

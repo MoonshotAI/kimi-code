@@ -1925,9 +1925,12 @@ const todos = computed<TodoView[]>(() => {
     .map((item) => ({ title: item.title, status: item.status }));
 });
 
+const isMainCompactingOrStarting = (sessionId: string): boolean =>
+  mainCompacting(sessionId) || promptStore().isCompactStarting(sessionId);
+
 const compaction = computed<CompactionStatus | null>(() => {
   const sid = rawState.activeSessionId;
-  return sid && mainCompacting(sid) ? { status: 'running' } : null;
+  return sid && isMainCompactingOrStarting(sid) ? { status: 'running' } : null;
 });
 
 const connection = computed<ConnectionState>(() => connectionStore().connection);
@@ -2850,7 +2853,7 @@ const promptPipeline = usePromptPipeline(rawState, {
   mapSendAuthFailure,
   isMainTurnRunning: mainTurnRunning,
   hasUnechoedPrompt: (sessionId) => unechoedOptimisticMessages(sessionId).length > 0,
-  isCompacting: mainCompacting,
+  isCompacting: isMainCompactingOrStarting,
   isMainWaitForWaiting: mainWaitForWaiting,
   promptIdToAbort: mainPromptIdToAbort,
   lastAgentTurnId: (sessionId) => mainTurnsOf(sessionId).findLast((turn) => turn.kind === 'agent')?.turn_id,
@@ -2865,7 +2868,7 @@ const sessionActions = createSessionActions({
   upsertSessionSorted,
   promptBacklog: promptPipeline.promptBacklog,
   isCompactionRunning: (sessionId) =>
-    promptStore().isCompactFlushHeld(sessionId) || mainCompacting(sessionId),
+    promptStore().isCompactFlushHeld(sessionId) || isMainCompactingOrStarting(sessionId),
   flushQueue: promptPipeline.flushQueueHead,
 });
 

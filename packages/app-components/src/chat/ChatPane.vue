@@ -375,7 +375,8 @@ watch(
 onUnmounted(() => {
   if (sessionLoadingTimer) clearTimeout(sessionLoadingTimer);
 });
-const showMascot = computed(() => showWorking.value || props.turns.length > 0);
+const isCompacting = computed(() => props.compaction?.status === 'running');
+const showMascot = computed(() => showWorking.value || isCompacting.value || props.turns.length > 0);
 
 const localSettledSteerTurnIds = reactive(new Set<string>());
 
@@ -822,20 +823,35 @@ function canEditTurn(turn: ChatTurn): boolean {
   );
 }
 
-function compactionDividerLabel(turn: ChatTurn): string {
+function canOpenCompactionSummary(turn: ChatTurn): boolean {
+  return Boolean(turn.text && panelApi?.openCompaction !== undefined);
+}
+
+function isCompactionSummaryOpen(turn: ChatTurn): boolean {
+  return canOpenCompactionSummary(turn) && panelApi?.isCompactionOpen?.(turn.id) === true;
+}
+
+function compactionBaseLabel(turn: ChatTurn): string {
+  return turn.compaction?.trigger === 'auto'
+    ? t('conversation.compactedAuto')
+    : t('conversation.compactedPlain');
+}
+
+function compactionTokenDelta(turn: ChatTurn): string {
   const c = turn.compaction;
-  const base =
-    c?.trigger === 'auto' ? t('conversation.compactedAuto') : t('conversation.compactedPlain');
-  if (typeof c?.tokensBefore === 'number' && typeof c?.tokensAfter === 'number') {
-    return (
-      base +
-      t('conversation.compactedTokens', {
-        before: formatTokens(c.tokensBefore),
-        after: formatTokens(c.tokensAfter),
-      })
-    );
-  }
-  return base;
+  if (typeof c?.tokensBefore !== 'number' || typeof c?.tokensAfter !== 'number') return '';
+  return t('conversation.compactedTokens', {
+    before: formatTokens(c.tokensBefore),
+    after: formatTokens(c.tokensAfter),
+  });
+}
+
+function compactionSavedLabel(turn: ChatTurn): string {
+  const c = turn.compaction;
+  if (typeof c?.tokensBefore !== 'number' || typeof c?.tokensAfter !== 'number') return '';
+  const saved = c.tokensBefore - c.tokensAfter;
+  if (saved <= 0) return '';
+  return `-${formatTokens(saved)}`;
 }
 
 const copiedTurn = ref<string | null>(null);
@@ -1476,19 +1492,29 @@ function streamingTailIndex(turn: ChatTurn): number | null {
            compaction lookup: where the API is blanked (an embedded subagent
            transcript, whose turns the root lookup cannot resolve) the label
            stays a plain inert divider. -->
-      <div v-else-if="turn.role === 'compaction'" class="compact-divider turn-anchor" :data-turn-id="turn.id" role="separator">
-        <span class="cd-line" aria-hidden="true" />
-        <button
-          v-if="turn.text && panelApi?.openCompaction !== undefined"
-          type="button"
-          class="cd-label cd-btn"
-          @click="panelApi?.openCompaction?.({ turnId: turn.id })"
+      <div
+        v-else-if="turn.role === 'compaction'"
+        class="compact-divider compact-divider--compacted turn-anchor"
+        :data-turn-id="turn.id"
+        role="separator"
+      >
+        <component
+          :is="canOpenCompactionSummary(turn) ? 'button' : 'span'"
+          v-bind="canOpenCompactionSummary(turn) ? { type: 'button', 'aria-expanded': isCompactionSummaryOpen(turn) } : {}"
+          class="cd-card"
+          :class="{ 'cd-btn': canOpenCompactionSummary(turn), 'cd-open': isCompactionSummaryOpen(turn) }"
+          @click="canOpenCompactionSummary(turn) ? panelApi?.openCompaction?.({ turnId: turn.id }) : undefined"
         >
-          <span>{{ compactionDividerLabel(turn) }}</span>
-          <span class="cd-view">{{ t('conversation.viewSummary') }}</span>
-        </button>
-        <span v-else class="cd-label">{{ compactionDividerLabel(turn) }}</span>
-        <span class="cd-line" aria-hidden="true" />
+          <span class="cd-chip" aria-hidden="true">
+            <Icon name="collapse" size="sm" />
+          </span>
+          <span class="cd-title">{{ compactionBaseLabel(turn) }}</span>
+          <span v-if="compactionTokenDelta(turn)" class="cd-tokens">{{ compactionTokenDelta(turn) }}</span>
+          <span v-if="compactionSavedLabel(turn)" class="cd-saved">{{ compactionSavedLabel(turn) }}</span>
+          <span v-if="canOpenCompactionSummary(turn)" class="cd-chevron" aria-hidden="true">
+            <Icon name="chevron-right" size="sm" />
+          </span>
+        </component>
       </div>
 
       <!-- Cron notice — a turn triggered by a scheduled reminder, rendered as
@@ -1639,11 +1665,14 @@ function streamingTailIndex(turn: ChatTurn): number | null {
     <!-- Pending approvals are rendered in the bottom dock (ConversationPane),
          alongside questions, so both blocking prompts share one position. -->
 
-    <!-- Compaction in progress — body-sized activity notice -->
-    <ActivityNotice v-if="compaction" :ref="transcriptAux('compaction')" :label="t('conversation.compacting')" />
-
     <div v-if="showMascot" :ref="transcriptAux('working')" class="sending-placeholder">
-      <WorkingIndicator :label="showWorking ? workingLabel : ''" :idle="!showWorking" />
+      <WorkingIndicator
+        :label="isCompacting ? t('conversation.compacting') : showWorking ? workingLabel : ''"
+        :idle="!showWorking && !isCompacting"
+        :static-label="isCompacting"
+      >
+        <ActivityNotice v-if="isCompacting" />
+      </WorkingIndicator>
     </div>
 
     <!-- Inline queue — pending user messages shown after the running turn.
@@ -2064,17 +2093,67 @@ function streamingTailIndex(turn: ChatTurn): number | null {
   color: var(--muted);
   white-space: nowrap;
 }
-.cd-btn {
-  background: none;
-  border: none;
-  padding: 0;
-  cursor: pointer;
-  font: inherit;
-  font-size: var(--text-base);
-  color: var(--muted);
+.cd-card {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  max-width: 100%;
+  padding: 4px 8px 4px 5px;
+  border: var(--p-hairline) solid var(--color-line);
+  border-radius: var(--radius-md);
+  background: var(--color-bg);
+  font: var(--text-xs)/1.25 var(--font-ui);
+  color: var(--color-text-muted);
+  white-space: nowrap;
 }
-.cd-view { color: var(--color-accent); }
-.cd-btn:hover .cd-view { text-decoration: underline; }
+.cd-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--color-context-compaction) 13%, transparent);
+  color: var(--color-context-compaction);
+}
+.cd-title {
+  color: var(--color-text);
+  font-weight: var(--weight-medium);
+}
+.cd-tokens {
+  font-variant-numeric: tabular-nums;
+}
+.cd-saved {
+  padding: 1px 5px;
+  border-radius: var(--radius-xs);
+  background: var(--color-success-soft);
+  color: var(--color-success);
+  font-size: 11px;
+  font-weight: var(--weight-medium);
+  font-variant-numeric: tabular-nums;
+}
+.cd-chevron {
+  display: inline-flex;
+  color: var(--color-text-faint);
+}
+.cd-btn {
+  cursor: pointer;
+}
+.cd-card.cd-btn:hover {
+  background: var(--color-hover);
+  border-color: var(--color-line-strong);
+}
+.cd-card.cd-open {
+  border-color: var(--color-line-strong);
+}
+.cd-card.cd-open .cd-chevron {
+  color: var(--color-text);
+}
+.cd-card.cd-btn:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
+}
 
 .chat > .turn-failed {
   margin-top: var(--chat-turn-gap);
@@ -2435,9 +2514,10 @@ function streamingTailIndex(turn: ChatTurn): number | null {
     overflow: hidden;
     text-overflow: ellipsis;
   }
-  .cd-btn {
-    flex-direction: column;
-    gap: 4px;
+  .cd-card {
+    flex-wrap: wrap;
+    white-space: normal;
+    row-gap: 4px;
   }
   .u-edit-confirm {
     flex-wrap: wrap;
@@ -2451,8 +2531,7 @@ function streamingTailIndex(turn: ChatTurn): number | null {
   .chat-loading-text {
     font-size: var(--ui-font-size-lg);
   }
-  .cd-label,
-  .cd-btn {
+  .cd-label {
     font-size: var(--ui-font-size);
   }
 }

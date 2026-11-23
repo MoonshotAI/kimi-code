@@ -98,7 +98,7 @@ test('outline, transcript search, side chat and manual compaction work over one 
     hold.release();
     await expect(transcript.getByText(/^Context compacted/)).toBeVisible();
     await expect(progress).toBeHidden();
-    await transcript.getByRole('button', { name: 'View summary' }).click();
+    await transcript.getByRole('button', { name: /^Context compacted/ }).click();
     const panel = window.getByRole('complementary', { name: 'Detail panel' });
     await expect(panel.getByRole('tab', { name: /Compaction summary/ })).toHaveAttribute('aria-selected', 'true');
     await expect(panel.getByText(SUMMARY)).toBeVisible();
@@ -154,6 +154,6 @@ test('the compaction divider and its View summary button survive a relaunch', as
   const list = app.window.getByRole('list').first();
   await expect(list.getByText('Second answer.', { exact: true })).toBeVisible({ timeout: 30_000 });
   await expect(list.getByText(/^Context compacted/)).toBeVisible();
-  await list.getByRole('button', { name: 'View summary' }).click();
+  await list.getByRole('button', { name: /^Context compacted/ }).click();
   await expect(app.window.getByRole('complementary', { name: 'Detail panel' }).getByText(SUMMARY)).toBeVisible();
 });
