@@ -44,6 +44,17 @@ selfTest('waitIdle', {
         await product.expectReply('Recovered.');
       },
     },
+    'returns once the model service refused the request, without judging the turn': {
+      run: async ({ product, model }) => {
+        model.script(httpError(401), say('Recovered.'));
+        await product.send('Trigger an authentication failure.');
+        await product.waitIdle();
+        expect(model.requests('main').map((request) => request.state)).toEqual(['failed']);
+        await product.send('Try again.');
+        await product.waitIdle();
+        await product.expectReply('Recovered.');
+      },
+    },
   },
   negative: {
     'does not return while the model is still replying': {
