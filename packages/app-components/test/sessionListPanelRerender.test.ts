@@ -282,11 +282,7 @@ describe('SessionListPanel re-render scope', () => {
     expect(fakes.client.togglePinWorkspace).toHaveBeenCalledWith('ws-1');
   });
 
-  it.each([
-    { mode: 'flat', target: 's-1-0', rendered: true },
-    { mode: 'flat', target: 's-1-1', rendered: false },
-    { mode: 'grouped', target: 's-1-0', rendered: true },
-  ] as const)('locates search result $target in $mode mode (rendered: $rendered) without paging', async ({ mode, target, rendered }) => {
+  async function locateSearchResult(mode: 'flat' | 'grouped', target: string) {
     app?.unmount();
     saveSidebarViewMode(mode);
     saveCollapsedWorkspaces(['ws-1']);
@@ -307,16 +303,30 @@ describe('SessionListPanel re-render scope', () => {
     await nextTick();
     await nextTick();
 
+    return scroll;
+  }
+
+  it.each(['flat', 'grouped'] as const)('scrolls to and highlights a rendered search result in %s view', async (mode) => {
+    const target = 's-1-0';
+    const scroll = await locateSearchResult(mode, target);
+    const row = rowOf(target);
+
     expect(loadSidebarViewMode()).toBe(mode);
     expect(loadCollapsedWorkspaces()).toEqual(mode === 'flat' ? ['ws-1'] : []);
     expect(fakes.client.loadMoreSidebarFlatSessions).not.toHaveBeenCalled();
-    if (rendered) {
-      expect(scroll.mock.contexts).toEqual([rowOf(target)]);
-      expect(rowOf(target)?.classList.contains('se-locate-flash')).toBe(true);
-    } else {
-      expect(rowOf(target)).toBeNull();
-      expect(scroll).not.toHaveBeenCalled();
-    }
+    expect(scroll.mock.contexts).toEqual([row]);
+    expect(row?.classList.contains('se-locate-flash')).toBe(true);
+  });
+
+  it('keeps flat view without scrolling or loading more for a search result outside the rendered page', async () => {
+    const target = 's-1-1';
+    const scroll = await locateSearchResult('flat', target);
+
+    expect(loadSidebarViewMode()).toBe('flat');
+    expect(loadCollapsedWorkspaces()).toEqual(['ws-1']);
+    expect(fakes.client.loadMoreSidebarFlatSessions).not.toHaveBeenCalled();
+    expect(rowOf(target)).toBeNull();
+    expect(scroll).not.toHaveBeenCalled();
   });
 
   it('returns to Open before locating a session in a pinned workspace', async () => {
