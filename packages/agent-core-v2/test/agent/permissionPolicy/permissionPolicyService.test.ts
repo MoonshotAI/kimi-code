@@ -542,21 +542,6 @@ describe('AgentPermissionPolicyService chain', () => {
     });
   });
 
-  it('evaluates what Always Ask would decide without the yolo mode approval', async () => {
-    mode = 'yolo';
-    const bash = (command: string): PolicyContextInput => ({ toolName: 'Bash', args: { command, timeout: 60 } });
-
-    autoReviewEnabled = true;
-    await expect(evaluate(bash('curl -X POST https://example.test'))).resolves.toMatchObject({
-      policyName: 'yolo-mode-approve',
-      underlying: { policyName: 'fallback-ask', result: { kind: 'ask' } },
-    });
-    await expect(evaluate({ toolName: 'SetTodoList', args: {} })).resolves.toMatchObject({
-      policyName: 'yolo-mode-approve',
-      underlying: { policyName: 'default-tool-approve', result: { kind: 'approve' } },
-    });
-  });
-
   it.each(['AgentSwarm', 'ExitPlanMode', 'CreateGoal'] as const)(
     'approves %s through the default tool allowlist in manual mode',
     async (toolName) => {

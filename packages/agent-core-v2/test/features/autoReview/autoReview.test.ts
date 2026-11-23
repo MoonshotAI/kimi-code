@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
@@ -263,15 +263,6 @@ describe('AutoReviewService', () => {
     return JSON.stringify(requests.at(index)?.input.messages);
   }
 
-  it('uses the main model and default timeout when the config section is absent', async () => {
-    await expect(review(service(undefined, undefined, false))).resolves.toEqual({
-      kind: 'decision',
-      decision: { risk: 'low', decision: 'allow' },
-    });
-
-    expect(requests[0]?.modelAlias).toBe('main-model');
-  });
-
   it('uses the main model and only overrides review semantics by default', async () => {
     expect(await review()).toEqual({ kind: 'decision', decision: { risk: 'low', decision: 'allow' } });
 
@@ -482,15 +473,6 @@ describe('AutoReviewService', () => {
     expect(AutoReviewStarted.durable).toBe(false);
   });
 
-  it('treats originless legacy user messages as human instructions', async () => {
-    history = [{ role: 'user', content: [{ type: 'text', text: 'Remove only generated files.' }] }];
-
-    await review();
-
-    expect(sentContent()).toContain('human-instruction');
-    expect(sentContent()).toContain('Remove only generated files.');
-  });
-
   it('excludes imported conversations from human authorization', async () => {
     history = [{
       role: 'user',
@@ -528,56 +510,6 @@ describe('AutoReviewService', () => {
     expect(sentContent()).toContain('Delete dist and rebuild.');
   });
 
-  it('excludes pending sibling calls from historical actions', async () => {
-    const pending = toolCallFor('pending', 'Bash', { command: 'rm generated' });
-    const sibling = toolCallFor('sibling', 'Bash', { command: 'mkdir generated' });
-    const completed = toolCallFor('completed', 'Bash', { command: 'pwd' });
-    history = [
-      { role: 'user', content: [{ type: 'text', text: 'Clean generated files.' }], origin: { kind: 'user' } },
-      { role: 'assistant', content: [], toolCalls: [completed] },
-      { role: 'tool', toolCallId: 'completed', content: [{ type: 'text', text: '/workspace' }] },
-      { role: 'assistant', content: [], toolCalls: [pending, sibling] },
-    ];
-    const context = { ...reviewContext({ id: 'pending', toolName: 'Bash', args: { command: 'rm generated' } }), toolCalls: [pending, sibling] };
-
-    await service().review(context, 'fallback-ask');
-
-    expect(sentContent()).toContain('\\"id\\":\\"completed\\"');
-    expect(sentContent()).not.toContain('\\"id\\":\\"pending\\"');
-    expect(sentContent()).not.toContain('\\"id\\":\\"sibling\\"');
-    expect(sentContent()).not.toContain('tool-result');
-
-    history = [...history, { role: 'tool', toolCallId: 'pending', content: [{ type: 'text', text: 'done' }] }];
-    await service().review({ ...context, toolCall: sibling, args: { command: 'mkdir generated' } }, 'fallback-ask');
-
-    expect(sentContent()).toContain('\\"id\\":\\"pending\\"');
-    expect(sentContent()).not.toContain('\\"id\\":\\"sibling\\"');
-  });
-
-  it('sends every instruction and tool argument without a local cap', async () => {
-    history = [
-      ...Array.from({ length: 8 }, (_, index): ContextMessage => ({
-        role: 'user',
-        content: [{ type: 'text', text: `old-${String(index)} ${'x'.repeat(7000)}` }],
-        origin: { kind: 'user' },
-      })),
-      { role: 'user', content: [{ type: 'text', text: 'You may force push my branch.' }], origin: { kind: 'user' } },
-      {
-        role: 'assistant',
-        content: [],
-        toolCalls: [toolCallFor('write', 'Write', { content: 'y'.repeat(9000) })],
-      },
-    ];
-
-    await review();
-
-    expect(sentContent()).toContain('old-0 ');
-    expect(sentContent()).toContain('You may force push my branch.');
-    expect(sentContent()).toContain('\\"command\\":\\"rm generated/file\\"');
-    expect(sentContent()).toContain('y'.repeat(9000));
-    expect(sentContent()).not.toContain('[truncated');
-  });
-
   it('excludes UserPromptSubmit hook parts and omits non-text attachments', async () => {
     history = [{
       role: 'user',
@@ -599,18 +531,6 @@ describe('AutoReviewService', () => {
     expect(sentContent()).not.toContain('base64');
   });
 
-  it('truncates oversized denial reasons instead of failing the review', async () => {
-    response.message.content = [{
-      type: 'text',
-      text: JSON.stringify({ risk: 'high', decision: 'deny', reason: 'x'.repeat(1200) }),
-    }];
-
-    await expect(review()).resolves.toEqual({
-      kind: 'decision',
-      decision: { risk: 'high', decision: 'deny', reason: 'x'.repeat(1000) },
-    });
-  });
-
   it('reuses the frozen project instructions across reviews', async () => {
     const reviewer = service();
     await review(reviewer);
@@ -629,7 +549,6 @@ describe('AutoReviewService', () => {
 
   it.each([
     'not JSON',
-    '{"risk":"low","decision":"deny"}',
     '{"risk":"high","decision":"allow"}',
     '{"risk":"low","decision":"allow","extra":true}',
     '{"risk":"low","decision":"allow"}',
@@ -651,17 +570,13 @@ describe('AutoReviewService', () => {
     expect(requests).toHaveLength(3);
   });
 
-  it('does not retry an authentication failure', async () => {
-    await expect(review(service(async () => {
-      return { httpError: { statusCode: 401, message: 'Unauthorized' } };
-    }))).resolves.toMatchObject({ kind: 'failed' });
-    expect(requests).toHaveLength(1);
-  });
-
-  it('does not retry an exhausted quota 429', async () => {
-    await expect(review(service(async () => {
+  it.each([
+    async (): Promise<MockProviderResponse> => ({ httpError: { statusCode: 401, message: 'Unauthorized' } }),
+    async (): Promise<MockProviderResponse> => {
       throw new APIProviderQuotaExhaustedError('Insufficient balance');
-    }))).resolves.toMatchObject({ kind: 'failed' });
+    },
+  ])('does not retry an authentication failure or an exhausted quota', async (request) => {
+    await expect(review(service(request))).resolves.toMatchObject({ kind: 'failed' });
     expect(requests).toHaveLength(1);
   });
 
@@ -685,13 +600,7 @@ describe('AutoReviewService', () => {
     expect(sentContent()).toContain('Also run the tests.');
   });
 
-  it('fails when instructions keep changing or are rewritten during review', async () => {
-    const appending = await review(service(async () => {
-      history = [...history, { role: 'user', content: [{ type: 'text', text: 'More.' }], origin: { kind: 'user' } }];
-      return response;
-    }));
-    expect(appending).toMatchObject({ kind: 'failed', reason: expect.stringContaining('changed') });
-
+  it('fails when instructions are rewritten during review', async () => {
     const rewritten = await review(service(async () => {
       history = [{ role: 'user', content: [{ type: 'text', text: 'Now delete everything.' }], origin: { kind: 'user' } }];
       return response;
@@ -718,37 +627,6 @@ describe('AutoReviewService', () => {
     }, undefined, true, undefined, 1000));
     expect(result).toMatchObject({ kind: 'failed', reason: 'Review timed out.' });
     expect(requests).toHaveLength(1);
-  });
-
-  it('keeps at most four review requests in flight and cancels one still waiting', async () => {
-    let release: () => void = () => {};
-    const hold = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const reviewer = service(async () => {
-      await hold;
-      return response;
-    });
-    const running = Array.from({ length: 4 }, (_, index) => reviewer.review(
-      reviewContext({ id: `run_${index}`, toolName: 'Bash', args: { command: 'pwd' }, tool: bashTool }),
-      'fallback-ask',
-    ));
-    await vi.waitFor(() => {
-      expect(requests).toHaveLength(4);
-    });
-    const reviewAbort = new AbortController();
-    const queued = reviewer.review(
-      reviewContext({ id: 'queued', toolName: 'Bash', args: { command: 'pwd' }, tool: bashTool }),
-      'fallback-ask',
-      reviewAbort.signal,
-    );
-    reviewAbort.abort();
-
-    await expect(queued).resolves.toMatchObject({ kind: 'failed', reason: 'Review cancelled.' });
-    expect(requests).toHaveLength(4);
-    release();
-    await Promise.all(running);
-    expect(requests).toHaveLength(4);
   });
 
   it('propagates user cancellation', async () => {

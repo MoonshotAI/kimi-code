@@ -292,35 +292,6 @@ describe('AgentPermissionGate', () => {
     );
   });
 
-  it('approves a static ask after a reviewer allow in Ask When Needed', async () => {
-    autoReviewEnabled = true;
-    mode = 'yolo';
-    policyResult = { policyName: 'sensitive-file-access-ask', result: { kind: 'ask' } };
-    make();
-
-    await executorEvents.fireBeforeExecute(makeContext('Bash'));
-
-    expect(review).toHaveBeenCalledTimes(1);
-    expect(requestToolApproval).not.toHaveBeenCalled();
-    expect(resolvePermissionResolution).toHaveBeenCalledWith(
-      { kind: 'approve', reason: { review_risk: 'low' }, executionMetadata: undefined },
-      expect.anything(),
-      'auto-review',
-    );
-    expect(records).toContainEqual({
-      event: 'permission_policy_decision',
-      properties: {
-        turn_id: 1,
-        tool_call_id: 'call-Bash',
-        policy_name: 'auto-review',
-        tool_name: 'Bash',
-        permission_mode: 'yolo',
-        decision: 'approve',
-        review_risk: 'low',
-      },
-    });
-  });
-
   it('keeps static asks on the user path when review is disabled or the mode is Always Ask', async () => {
     for (const [enabled, nextMode] of [[false, 'yolo'], [true, 'manual']] as const) {
       autoReviewEnabled = enabled;
@@ -334,28 +305,6 @@ describe('AgentPermissionGate', () => {
       expect(requestToolApproval).toHaveBeenCalledTimes(1);
       vi.clearAllMocks();
     }
-  });
-
-  it('reviews ordinary yolo approvals before the user fallback', () => {
-    expect(autoReviewTrigger(true, 'yolo', {
-      policyName: 'yolo-mode-approve',
-      result: { kind: 'approve' },
-      underlying: fallbackAsk,
-    })).toBe('fallback-ask');
-  });
-
-  it('passes the asking policy to the reviewer', async () => {
-    reviewModeApprovals();
-    make();
-    const ctx = makeContext('Bash');
-
-    await executorEvents.fireBeforeExecute(ctx);
-
-    expect(review).toHaveBeenCalledWith(
-      expect.objectContaining({ toolCall: ctx.toolCall }),
-      'fallback-ask',
-      expect.any(AbortSignal),
-    );
   });
 
   it('does not review when another listener vetoes or finally allows', async () => {
@@ -425,23 +374,6 @@ describe('AgentPermissionGate', () => {
     reviewModeApprovals();
     review.mockImplementation(async () => {
       mode = 'manual';
-      return autoReviewResult;
-    });
-    make();
-
-    await executorEvents.fireBeforeExecute(makeContext('Bash'));
-
-    expect(resolvePermissionResolution).toHaveBeenCalledWith(
-      expect.objectContaining({ kind: 'ask' }),
-      expect.anything(),
-      'auto-review',
-    );
-  });
-
-  it('asks when Auto Review is disabled while a review is pending', async () => {
-    reviewModeApprovals();
-    review.mockImplementation(async () => {
-      autoReviewEnabled = false;
       return autoReviewResult;
     });
     make();

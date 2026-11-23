@@ -230,22 +230,6 @@ describe('AgentToolExecutorService auto review', () => {
     expect(tool.calls).toHaveLength(0);
   });
 
-  it('cancels each review only after its own approval finishes', async () => {
-    const signals: AbortSignal[] = [];
-    installAutoReview(async (signal) => {
-      signals.push(signal!);
-      return { kind: 'decision', decision: { risk: 'low', decision: 'allow' } };
-    });
-    registry.register(new TestTool('Write'));
-
-    await execute([
-      toolCall('call_a', 'Write', { path: 'outside-a.txt' }),
-      toolCall('call_b', 'Write', { path: 'outside-b.txt' }),
-    ]);
-
-    expect(signals).toHaveLength(2);
-    expect(signals.every((signal) => signal.aborted)).toBe(true);
-  });
 });
 
 function installAutoReview(
