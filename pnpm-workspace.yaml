@@ -5,6 +5,7 @@ packages:
   - apps/vis/server
   - apps/vis/web
   - tests/scenarios
+  - tests/e2e
   - docs
 
 catalog:
