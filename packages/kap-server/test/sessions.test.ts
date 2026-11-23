@@ -3996,6 +3996,11 @@ kapTest('reports the project root and where the agent works on every view of a s
   expect((await kap.wait(created.id, 0)).session).toMatchObject(location);
   const profile = await kap.rest.post<{ session: SessionWire }>(`/api/v1/sessions/${created.id}/profile`, { title: 'renamed' });
   expect(profile.session).toMatchObject(location);
+  const forked = await kap.rest.post<SessionWire>(`/api/v1/sessions/${created.id}:fork`, {});
+  expect(forked).toMatchObject({ workspace_root: root, environment_id: 'local', environment_cwd: packageDir });
+  await kap.rest.post(`/api/v1/sessions/${created.id}:archive`, {});
+  expect(await kap.rest.post<SessionWire>(`/api/v1/sessions/${created.id}:restore`, {})).toMatchObject(location);
+  expect(await kap.rest.post<SessionWire>(`/api/v1/sessions/${created.id}:reload`, {})).toMatchObject(location);
 
   const sessionFrame = (change: string) => socket.waitFor(
     (frame) => frame.type === 'session' && frame['change'] === change && (frame['session'] as SessionWire).id === created.id,
