@@ -135,6 +135,8 @@ test('a multi-line prompt is written, expanded, sent verbatim and recalled from 
 test.describe('next-prompt placeholder recall', () => {
   test.use({ appEnv: { KIMI_CODE_EXPERIMENTAL_PROMPT_PREDICTION: '1' } });
 
+  const idlePlaceholder = 'Type @ to reference files, or start with / for commands and skills';
+
   testWithProvider('shows predictions in the placeholder and waits for an in-flight recall without cancelling input', async ({ app, provider }) => {
     const tabPrediction = 'Recall this prediction with Tab';
     const rightPrediction = 'Recall this prediction with Right Arrow';
@@ -156,19 +158,19 @@ test.describe('next-prompt placeholder recall', () => {
     const placeholder = app.window.locator('.composer-placeholder-overlay');
     const transcript = app.window.getByRole('list').first();
 
-    await expect(placeholder).toHaveText('Type a message…');
+    await expect(placeholder).toHaveText(idlePlaceholder);
     await app.submit(OPENER);
     await predictionHold.reached();
-    await expect(placeholder).toHaveText('Type a message…');
+    await expect(placeholder).toHaveText(idlePlaceholder);
     await input.click();
     await app.window.keyboard.type('another draft');
     await expect(placeholder).toBeHidden();
     await app.window.keyboard.press('ControlOrMeta+a');
     await app.window.keyboard.press('Backspace');
     await app.window.keyboard.type(' ');
-    await expect(placeholder).toHaveText('Type a message…');
+    await expect(placeholder).toHaveText(idlePlaceholder);
     await app.window.keyboard.press('Tab');
-    await expect(placeholder).toHaveText('Type a message…');
+    await expect(placeholder).toHaveText(idlePlaceholder);
     predictionHold.release();
     await expect(lines).toHaveText([tabPrediction]);
     await expect(placeholder).toBeHidden();
@@ -217,7 +219,7 @@ test.describe('next-prompt placeholder recall', () => {
 
     await app.window.keyboard.press('Enter');
     await expect(transcript.getByText('Fourth answer.', { exact: true })).toBeVisible();
-    await expect(placeholder).toHaveText('Type a message…');
+    await expect(placeholder).toHaveText(idlePlaceholder);
     expect(provider.requests()).toHaveLength(8);
   });
 });
