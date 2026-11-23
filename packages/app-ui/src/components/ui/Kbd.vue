@@ -54,21 +54,6 @@ const displays = computed<KeyDisplay[]>(() => {
   gap: 3px;
   flex: none;
 }
-.ui-kbd__key {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: var(--kbd-min-width);
-  height: var(--kbd-height);
-  padding: 0 var(--kbd-padding-x);
-  border: var(--p-hairline) solid var(--color-line);
-  border-radius: var(--radius-xs);
-  background: transparent;
-  color: inherit;
-  font-family: var(--font-kbd);
-  font-size: var(--kbd-font-size);
-  line-height: var(--leading-solid);
-}
 .ui-kbd__key--icon :deep(.kw-icon) {
   flex: none;
   width: 16px;

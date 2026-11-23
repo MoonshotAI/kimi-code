@@ -4239,21 +4239,8 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
 }
 
 .ph :deep(.composer-placeholder-overlay kbd) {
-  display: inline-flex;
   vertical-align: top;
-  align-items: center;
-  justify-content: center;
-  min-width: var(--kbd-min-width);
-  height: var(--kbd-height);
   margin-top: max(0px, calc((var(--ph-line-height) - var(--kbd-height)) / 2));
-  padding: 0 var(--kbd-padding-x);
-  border: var(--p-hairline) solid var(--color-line);
-  border-radius: var(--radius-xs);
-  background: transparent;
-  color: inherit;
-  font-family: var(--font-kbd);
-  font-size: var(--kbd-font-size);
-  line-height: var(--leading-solid);
 }
 
 @supports (text-box: trim-both cap alphabetic) {

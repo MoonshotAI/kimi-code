@@ -1,7 +1,6 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
+import { computed, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { ensurePointerTracking, isSyntheticPointerMove } from '@moonshot-ai/app-ui';
 import { attachmentKindIconSvg } from '@moonshot-ai/app-composer/features/attachment';
 import { fileMentionIconSvg, mentionIconSvg, mentionMatchSpans, type MentionMatchSpan } from '@moonshot-ai/app-composer/features/mention';
 import type { MentionItem } from '@moonshot-ai/app-client/composables';
@@ -11,6 +10,8 @@ import { skillDirectoryName, skillIdentity, skillSourceKind } from '@moonshot-ai
 import AuthMedia from '../chat/AuthMedia.vue';
 import VideoRailPreview from '../chat/VideoRailPreview.vue';
 import ComposerMenuHints from './ComposerMenuHints.vue';
+import ComposerMenuSectionLabel from './ComposerMenuSectionLabel.vue';
+import { useComposerMenuScroll } from './menuScroll';
 
 export type { FileItem };
 
@@ -73,10 +74,6 @@ const searchingNeedsHeader = computed(() => {
   return last === undefined || rowSection(last) !== 'file';
 });
 
-function onMenuMouseDown(event: MouseEvent): void {
-  if (props.layout === 'popup') event.preventDefault();
-}
-
 function rowIcon(item: MentionItem): string {
   if (item.kind === 'browser') return iconSvg('browser', 'sm');
   if (item.kind === 'attachment') return attachmentKindIconSvg(item.attachment.entry.kind);
@@ -138,190 +135,18 @@ function dirSpans(file: FileItem): MentionMatchSpan[] {
   return mentionMatchSpans(rowDir(file.path), file.matchPositions, 0);
 }
 
-const scrollEl = ref<HTMLElement | null>(null);
-const menuEl = ref<HTMLElement | null>(null);
 const headEl = ref<HTMLElement | null>(null);
+const { scrollEl, menuEl, thumb, maskImage, scrollMaxHeight, showHints, onScroll, onRowPointerMove, onMenuMouseDown, onThumbPointerDown } = useComposerMenuScroll({
+  layout: () => props.layout,
+  items: () => props.items,
+  activeIndex: () => props.activeIndex,
+  maxHeightVar: '--p-mention-menu-h',
+  headEl,
+  refitOn: () => props.submenuTitle,
+  contentOn: () => [props.items, props.loading],
+  onHover: (index) => emit('hover', index),
+});
 defineExpose({ el: menuEl });
-const scrolledUp = ref(false);
-const canScrollDown = ref(false);
-let resizeObserver: ResizeObserver | null = null;
-
-const thumb = ref<{ top: number; height: number } | null>(null);
-
-function updateScrollState(): void {
-  const el = scrollEl.value;
-  if (!el) return;
-  scrolledUp.value = el.scrollTop > 0;
-  canScrollDown.value = el.scrollTop + el.clientHeight < el.scrollHeight - 1;
-  const { scrollTop, scrollHeight, clientHeight } = el;
-  if (scrollHeight <= clientHeight + 1) {
-    thumb.value = null;
-    return;
-  }
-  const menuStyle = getComputedStyle(el);
-  const inset =
-    parseFloat(menuStyle.getPropertyValue('--menu-scrollbar-track-inset')) || 0;
-  const minThumb =
-    parseFloat(menuStyle.getPropertyValue('--menu-scrollbar-thumb-min')) || 24;
-  const track = clientHeight - inset * 2;
-  const height = Math.max(minThumb, (clientHeight / scrollHeight) * track);
-  const maxScroll = scrollHeight - clientHeight;
-  const top = el.offsetTop + inset + (scrollTop / maxScroll) * (track - height);
-  thumb.value = { top, height };
-}
-
-function onScroll(): void {
-  updateScrollState();
-}
-
-function onRowPointerMove(event: PointerEvent, index: number): void {
-  if (isSyntheticPointerMove(event)) return;
-  emit('hover', index);
-}
-
-let activeThumbCleanup: (() => void) | null = null;
-
-function onThumbPointerDown(event: PointerEvent): void {
-  const el = scrollEl.value;
-  const current = thumb.value;
-  if (!el || !current) return;
-  event.preventDefault();
-  activeThumbCleanup?.();
-  const dragPointerId = event.pointerId;
-  (event.target as HTMLElement).setPointerCapture?.(event.pointerId);
-  const menuStyle = getComputedStyle(el);
-  const inset = parseFloat(menuStyle.getPropertyValue('--menu-scrollbar-track-inset')) || 0;
-  const trackRange = el.clientHeight - inset * 2 - current.height;
-  const scrollRange = el.scrollHeight - el.clientHeight;
-  const startY = event.clientY;
-  const startScrollTop = el.scrollTop;
-  const onMove = (ev: PointerEvent): void => {
-    if (ev.pointerId !== dragPointerId || trackRange <= 0) return;
-    el.scrollTop = startScrollTop + ((ev.clientY - startY) / trackRange) * scrollRange;
-  };
-  const onUp = (ev: PointerEvent): void => {
-    if (ev.pointerId !== dragPointerId) return;
-    stop();
-  };
-  const stop = (): void => {
-    window.removeEventListener('pointerup', onUp);
-    window.removeEventListener('pointermove', onMove);
-    window.removeEventListener('pointercancel', onUp);
-    if (activeThumbCleanup === stop) activeThumbCleanup = null;
-  };
-  activeThumbCleanup = stop;
-  window.addEventListener('pointermove', onMove);
-  window.addEventListener('pointerup', onUp);
-  window.addEventListener('pointercancel', onUp);
-}
-
-const maskImage = computed(() => {
-  const up = scrolledUp.value;
-  const down = canScrollDown.value;
-  const fade = 'var(--menu-scroll-fade)';
-  if (up && down) return `linear-gradient(to bottom, transparent 0, black ${fade}, black calc(100% - ${fade}), transparent 100%)`;
-  if (up) return `linear-gradient(to bottom, transparent, black ${fade})`;
-  if (down) return `linear-gradient(to top, transparent, black ${fade})`;
-  return undefined;
-});
-
-const scrollMaxHeight = ref('');
-const showHints = computed(() => props.layout === 'popup' && props.items.length > 0);
-
-function clampScrollToViewport(): void {
-  const menu = menuEl.value;
-  const scroll = scrollEl.value;
-  const parent = menu?.offsetParent as HTMLElement | null;
-  if (!menu || !scroll || !parent) return;
-  const menuStyle = getComputedStyle(menu);
-  const gap = parseFloat(menuStyle.getPropertyValue('--space-2')) || 8;
-  const margin = parseFloat(menuStyle.getPropertyValue('--space-2')) || 8;
-  const hints = menu.querySelector<HTMLElement>('.composer-menu-hints');
-  const hintsHeight = hints ? hints.offsetHeight + (parseFloat(getComputedStyle(hints).marginTop) || 0) : 0;
-  const chrome = (parseFloat(menuStyle.paddingTop) || 0) + (parseFloat(menuStyle.paddingBottom) || 0) + hintsHeight + (headEl.value?.offsetHeight ?? 0);
-  const cap = parseFloat(getComputedStyle(scroll).getPropertyValue('--p-mention-menu-h')) || Number.POSITIVE_INFINITY;
-  const viewportTop = window.visualViewport?.offsetTop ?? 0;
-  const available = parent.getBoundingClientRect().top - viewportTop - gap - margin - chrome;
-  scrollMaxHeight.value = `${Math.max(Math.floor(Math.min(cap, available)), 0)}px`;
-  void nextTick(() => {
-    updateScrollState();
-    scrollActiveIntoView();
-  });
-}
-
-onMounted(() => {
-  ensurePointerTracking();
-  if (props.layout === 'sheet') {
-    updateScrollState();
-    if (typeof ResizeObserver === 'function' && scrollEl.value) {
-      resizeObserver = new ResizeObserver(() => updateScrollState());
-      resizeObserver.observe(scrollEl.value);
-    }
-    return;
-  }
-  clampScrollToViewport();
-  updateScrollState();
-  if (typeof ResizeObserver === 'function' && scrollEl.value) {
-    resizeObserver = new ResizeObserver((entries) => {
-      for (const entry of entries) {
-        if (entry.target === scrollEl.value) updateScrollState();
-        else clampScrollToViewport();
-      }
-    });
-    resizeObserver.observe(scrollEl.value);
-    const parent = menuEl.value?.offsetParent;
-    if (parent) resizeObserver.observe(parent);
-  }
-  window.addEventListener('resize', clampScrollToViewport);
-  window.visualViewport?.addEventListener('resize', clampScrollToViewport);
-  window.visualViewport?.addEventListener('scroll', clampScrollToViewport);
-});
-onUnmounted(() => {
-  resizeObserver?.disconnect();
-  resizeObserver = null;
-  activeThumbCleanup?.();
-  window.removeEventListener('resize', clampScrollToViewport);
-  window.visualViewport?.removeEventListener('resize', clampScrollToViewport);
-  window.visualViewport?.removeEventListener('scroll', clampScrollToViewport);
-});
-
-function scrollActiveIntoView(): void {
-  const el = scrollEl.value;
-  if (!el) return;
-  const row = el.querySelectorAll<HTMLElement>('[role="option"]')[props.activeIndex];
-  if (!row) return;
-  const elRect = el.getBoundingClientRect();
-  const rowRect = row.getBoundingClientRect();
-  const top = rowRect.top - elRect.top + el.scrollTop;
-  const bottom = top + rowRect.height;
-  if (top < el.scrollTop) el.scrollTop = top;
-  else if (bottom > el.scrollTop + el.clientHeight) el.scrollTop = bottom - el.clientHeight;
-}
-
-watch(
-  () => props.activeIndex,
-  () => {
-    void nextTick(scrollActiveIntoView);
-  },
-);
-watch(
-  () => props.submenuTitle,
-  () => {
-    if (props.layout === 'popup') void nextTick(clampScrollToViewport);
-  },
-);
-watch(showHints, () => {
-  if (props.layout === 'popup') void nextTick(clampScrollToViewport);
-});
-watch(
-  () => [props.items, props.loading],
-  () => {
-    void nextTick(() => {
-      updateScrollState();
-      scrollActiveIntoView();
-    });
-  },
-);
 </script>
 
 <template>
@@ -349,14 +174,9 @@ watch(
       @scroll="onScroll"
     >
       <template v-for="(row, i) in props.items" :key="rowKey(row)">
-        <div
-          v-if="startsSection(i) && sectionLabel(row) !== ''"
-          class="mention-section-label"
-          :class="{ 'after-section': i > 0 }"
-          role="presentation"
-        >
+        <ComposerMenuSectionLabel v-if="startsSection(i) && sectionLabel(row) !== ''" class="mention-section-label" :after-section="i > 0">
           {{ sectionLabel(row) }}
-        </div>
+        </ComposerMenuSectionLabel>
         <div
           :id="`composer-mention-option-${i}`"
           class="mention-item"
@@ -433,14 +253,9 @@ watch(
         </div>
       </template>
       <template v-if="props.loading">
-        <div
-          v-if="searchingNeedsHeader"
-          class="mention-section-label"
-          :class="{ 'after-section': props.items.length > 0 }"
-          role="presentation"
-        >
+        <ComposerMenuSectionLabel v-if="searchingNeedsHeader" class="mention-section-label" :after-section="props.items.length > 0">
           {{ t('composer.addFiles') }}
-        </div>
+        </ComposerMenuSectionLabel>
         <div class="mention-searching dim" role="status">{{ searchingLabel }}</div>
       </template>
     </div>
@@ -502,46 +317,11 @@ watch(
   scrollbar-width: none;
 }
 .mention-scroll::-webkit-scrollbar { display: none; }
-.scroll-thumb {
-  position: absolute;
-  right: var(--menu-scrollbar-edge);
-  width: var(--menu-scrollbar-width);
-  border-radius: var(--radius-full);
-  background: var(--color-menu-scrollbar);
-  transition: background var(--duration-base) var(--ease-out);
-  cursor: default;
-  touch-action: none;
-  z-index: var(--z-raised);
-}
-.mention-menu:hover .scroll-thumb {
-  background: var(--color-menu-scrollbar-hover);
-}
-.scroll-thumb::before {
-  content: "";
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: calc(-1 * var(--space-2));
-  right: 0;
-}
 
 .mention-state {
   padding: var(--space-2) var(--space-1);
   font-family: var(--font-ui);
   font-size: var(--ui-b2);
-}
-
-.mention-section-label {
-  margin: 0 calc(-1 * var(--menu-row-hug));
-  padding: var(--space-1) var(--space-2) var(--space-05);
-  color: var(--color-text-muted);
-  font-family: var(--font-ui);
-  font-size: var(--text-xs);
-  font-weight: var(--weight-semibold);
-  line-height: var(--leading-tight);
-}
-.mention-section-label.after-section {
-  margin-top: var(--space-2);
 }
 
 .mention-submenu-head {
