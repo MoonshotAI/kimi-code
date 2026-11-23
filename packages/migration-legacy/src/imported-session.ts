@@ -1,3 +1,4 @@
+import { existsSync, readdirSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
@@ -6,7 +7,6 @@ import { SESSION_META_VERSION } from '@moonshot-ai/agent-core-v2/session/session
 import { targetSessionsDir } from './paths.js';
 import { ensureSessionIndexEntry } from './session-index.js';
 import { writeMainAgentWire } from './sessions/wire-writer.js';
-import { computeWorkdirBucket } from './sessions/workdir-bucket.js';
 
 export interface ImportedSessionMessage {
   readonly role: 'user' | 'assistant';
@@ -15,8 +15,10 @@ export interface ImportedSessionMessage {
 
 export interface ImportedSessionInput {
   readonly targetHome: string;
+  readonly projectId: string;
   readonly sessionId: string;
   readonly workDir: string;
+  readonly environmentCwd?: string;
   readonly title: string;
   readonly lastPrompt: string;
   readonly updatedAtMs: number;
@@ -24,12 +26,20 @@ export interface ImportedSessionInput {
   readonly custom: Readonly<Record<string, unknown>>;
 }
 
-export function importedSessionDir(targetHome: string, workDir: string, sessionId: string): string {
-  return join(targetSessionsDir(targetHome), computeWorkdirBucket(workDir), sessionId);
+export function importedSessionDir(targetHome: string, projectId: string, sessionId: string): string {
+  return join(targetSessionsDir(targetHome), projectId, sessionId);
+}
+
+export function isSessionImported(targetHome: string, sessionId: string): boolean {
+  const sessionsDir = targetSessionsDir(targetHome);
+  if (!existsSync(sessionsDir)) return false;
+  return readdirSync(sessionsDir).some((projectId) =>
+    existsSync(join(importedSessionDir(targetHome, projectId, sessionId), 'state.json')),
+  );
 }
 
 export async function writeImportedSession(input: ImportedSessionInput): Promise<string> {
-  const sessionDir = importedSessionDir(input.targetHome, input.workDir, input.sessionId);
+  const sessionDir = importedSessionDir(input.targetHome, input.projectId, input.sessionId);
   await writeMainAgentWire(sessionDir, {
     createdAtMs: input.updatedAtMs,
     messages: input.messages.map((message) => ({ role: message.role, content: message.content, toolCalls: [] })),
@@ -38,6 +48,7 @@ export async function writeImportedSession(input: ImportedSessionInput): Promise
     id: input.sessionId,
     version: SESSION_META_VERSION,
     cwd: input.workDir,
+    environmentCwd: input.environmentCwd,
     createdAt: input.updatedAtMs,
     updatedAt: input.updatedAtMs,
     archived: false,
