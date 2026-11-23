@@ -78,7 +78,6 @@ import { IConfigService } from '#/app/config/config';
 import { IFlagService } from '#/app/flag/flag';
 import { IWebSearchProviderService } from '#/app/auth/webSearch/webSearch';
 import { IAgentToolActivationService } from '#/agent/toolActivation/toolActivation';
-import { TOOL_SELECT_FLAG_ID } from '#/agent/toolSelect/flag';
 import { ISessionNotify } from '#/features/notify/sessionNotify';
 import { normalizeAgentProfile, type AgentProfile } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemetry';
@@ -786,13 +785,13 @@ describe('Agent tool description', () => {
   });
 
   it.each([
-    { enabled: false, primary: true, secondary: true, fork: false, expected: false },
-    { enabled: true, primary: false, secondary: false, fork: false, expected: false },
-    { enabled: true, primary: true, secondary: false, fork: false, expected: false },
-    { enabled: true, primary: true, secondary: false, fork: true, expected: false },
-    { enabled: true, primary: false, secondary: true, fork: false, expected: true },
-  ])('describes select_tools for eligible subagent models: $enabled/$primary/$secondary/$fork', async ({
-    enabled, primary, secondary, fork, expected,
+    { primary: true, secondary: true, fork: false, expected: true },
+    { primary: false, secondary: false, fork: false, expected: false },
+    { primary: true, secondary: false, fork: false, expected: false },
+    { primary: true, secondary: false, fork: true, expected: false },
+    { primary: false, secondary: true, fork: false, expected: true },
+  ])('describes select_tools for eligible subagent models: $primary/$secondary/$fork', async ({
+    primary, secondary, fork, expected,
   }) => {
     ctx = createTestAgent(
       {
@@ -810,9 +809,7 @@ describe('Agent tool description', () => {
       },
       appService(
         IFlagService,
-        stubFlag((id) =>
-          id === TOOL_SELECT_FLAG_ID ? enabled : id === SUBAGENT_FORK_FLAG_ID ? fork : true,
-        ),
+        stubFlag((id) => id === SUBAGENT_FORK_FLAG_ID ? fork : true),
       ),
       sessionService(ISessionAgentProfileCatalog, discoveredCatalog()),
     );
@@ -5369,16 +5366,18 @@ describe('Agent tools', () => {
         [emit] prompt.started                 { "time": "<time>", "agentId": "main", "promptId": "<msg-2>" }
         [emit] turn.step.started              { "time": "<time>", "agentId": "main", "turnId": 1, "step": 1, "stepId": "<uuid-8>" }
         [wire] tool_select.tools_changed      { "agentId": "main", "added": [], "removed": [ { "name": "Lookup", "description": "Look up a short test value.", "parameters": { "type": "object", "properties": { "query": { "type": "string" } }, "required": [ "query" ], "additionalProperties": false }, "source": "user", "origin": "initial" } ], "time": "<time>" }
+        [emit] context.spliced                { "time": "<time>", "agentId": "main", "start": 6, "deleteCount": 0, "messages": [ { "role": "user", "content": [ { "type": "text", "text": "<system-reminder>\\n<tools_removed>\\nLookup\\n</tools_removed>\\n\\nNo tools are currently available for dynamic loading in this session. Do not call select_tools or guess tool names; use the tools you already have. Only a later <tools_added> announcement can make new tools loadable.\\n</system-reminder>" } ], "origin": { "kind": "injection", "variant": "loadable-tools", "disclosure": { "kind": "delta", "revision": 1, "added": [], "removed": [ { "name": "Lookup", "description": "Look up a short test value.", "parameters": { "type": "object", "properties": { "query": { "type": "string" } }, "required": [ "query" ], "additionalProperties": false }, "source": "user", "origin": "initial" } ] } } } ] }
+        [wire] context.append_message         { "agentId": "main", "message": { "role": "user", "content": [ { "type": "text", "text": "<system-reminder>\\n<tools_removed>\\nLookup\\n</tools_removed>\\n\\nNo tools are currently available for dynamic loading in this session. Do not call select_tools or guess tool names; use the tools you already have. Only a later <tools_added> announcement can make new tools loadable.\\n</system-reminder>" } ], "toolCalls": [], "origin": { "kind": "injection", "variant": "loadable-tools", "disclosure": { "kind": "delta", "revision": 1, "added": [], "removed": [ { "name": "Lookup", "description": "Look up a short test value.", "parameters": { "type": "object", "properties": { "query": { "type": "string" } }, "required": [ "query" ], "additionalProperties": false }, "source": "user", "origin": "initial" } ] } } }, "time": "<time>" }
         [wire] context.append_loop_event      { "agentId": "main", "event": { "type": "step.begin", "uuid": "<uuid-9>", "turnId": "1", "step": 1 }, "time": "<time>" }
         [emit] assistant.delta                { "time": "<time>", "agentId": "main", "turnId": 1, "delta": "No lookup tool is available.", "block": 0 }
-        [emit] context.spliced                { "time": "<time>", "agentId": "main", "start": 6, "deleteCount": 0, "messages": [ { "role": "assistant", "content": [ { "type": "text", "text": "No lookup tool is available." } ], "toolCalls": [], "providerMessageId": "mock-3", "usage": { "inputOther": 158, "output": 10, "inputCacheRead": 0, "inputCacheCreation": 0 } } ] }
-        [emit] turn.step.completed            { "time": "<time>", "agentId": "main", "turnId": 1, "step": 1, "stepId": "<uuid-8>", "usage": { "inputOther": 158, "output": 10, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "end_turn", "providerFinishReason": "completed", "rawFinishReason": "stop" }
-        [emit] agent.status.updated           { "time": "<time>", "agentId": "main", "usage": { "byModel": { "mock-model": { "inputOther": 414, "output": 38, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 414, "output": 38, "inputCacheRead": 0, "inputCacheCreation": 0 }, "currentTurn": { "inputOther": 158, "output": 10, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
-        [emit] agent.status.updated           { "time": "<time>", "agentId": "main", "contextTokens": 168 }
+        [emit] context.spliced                { "time": "<time>", "agentId": "main", "start": 7, "deleteCount": 0, "messages": [ { "role": "assistant", "content": [ { "type": "text", "text": "No lookup tool is available." } ], "toolCalls": [], "providerMessageId": "mock-3", "usage": { "inputOther": 242, "output": 10, "inputCacheRead": 0, "inputCacheCreation": 0 } } ] }
+        [emit] turn.step.completed            { "time": "<time>", "agentId": "main", "turnId": 1, "step": 1, "stepId": "<uuid-8>", "usage": { "inputOther": 242, "output": 10, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "end_turn", "providerFinishReason": "completed", "rawFinishReason": "stop" }
+        [emit] agent.status.updated           { "time": "<time>", "agentId": "main", "usage": { "byModel": { "mock-model": { "inputOther": 498, "output": 38, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 498, "output": 38, "inputCacheRead": 0, "inputCacheCreation": 0 }, "currentTurn": { "inputOther": 242, "output": 10, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
+        [emit] agent.status.updated           { "time": "<time>", "agentId": "main", "contextTokens": 252 }
         [wire] context.append_loop_event      { "agentId": "main", "event": { "type": "content.part", "uuid": "<uuid-10>", "turnId": "1", "step": 1, "stepUuid": "<uuid-9>", "block": 0, "part": { "type": "text", "text": "No lookup tool is available." }, "startedAt": "<time>" }, "time": "<time>" }
-        [wire] usage.record                   { "agentId": "main", "model": "mock-model", "usage": { "inputOther": 158, "output": 10, "inputCacheRead": 0, "inputCacheCreation": 0 }, "usageScope": "turn", "time": "<time>" }
-        [wire] token_counting.measured        { "agentId": "main", "length": 7, "tokens": 168, "time": "<time>" }
-        [wire] context.append_loop_event      { "agentId": "main", "event": { "type": "step.end", "uuid": "<uuid-9>", "turnId": "1", "step": 1, "finishReason": "end_turn", "usage": { "inputOther": 158, "output": 10, "inputCacheRead": 0, "inputCacheCreation": 0 }, "messageId": "mock-3", "providerFinishReason": "completed", "rawFinishReason": "stop" }, "time": "<time>" }
+        [wire] usage.record                   { "agentId": "main", "model": "mock-model", "usage": { "inputOther": 242, "output": 10, "inputCacheRead": 0, "inputCacheCreation": 0 }, "usageScope": "turn", "time": "<time>" }
+        [wire] token_counting.measured        { "agentId": "main", "length": 8, "tokens": 252, "time": "<time>" }
+        [wire] context.append_loop_event      { "agentId": "main", "event": { "type": "step.end", "uuid": "<uuid-9>", "turnId": "1", "step": 1, "finishReason": "end_turn", "usage": { "inputOther": 242, "output": 10, "inputCacheRead": 0, "inputCacheCreation": 0 }, "messageId": "mock-3", "providerFinishReason": "completed", "rawFinishReason": "stop" }, "time": "<time>" }
         [wire] turn.ended                     { "agentId": "main", "turnId": 1, "reason": "completed", "time": "<time>" }
         [emit] turn.ended                     { "time": "<time>", "agentId": "main", "turnId": 1, "reason": "completed" }
       `);
@@ -5387,6 +5386,7 @@ describe('Agent tools', () => {
           <last>
           assistant: text "The lookup result is moon-result."
           user: text "Can you still use Lookup?"
+          user: text "<system-reminder>\\n<tools_removed>\\nLookup\\n</tools_removed>\\n\\nThe available tools changed during this session. The current model cannot load runtime tool additions with select_tools. Do not call select_tools. Use the tool definitions provided in this request. Removed tools may be unavailable or fail when called.\\n</system-reminder>"
       `);
     });
 
