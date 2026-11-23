@@ -41,6 +41,16 @@ selfTest('expectReply', {
         await product.expectReply('The command printed one line.');
       },
     },
+    'finds text in and around a bullet list in the reply': {
+      run: async ({ product, model }) => {
+        model.script(say('The plan has two steps:\n\n- gather the facts\n- write them down\n\nThat is the whole plan.'));
+        await product.send('Give me a plan as a list.');
+        await product.waitIdle();
+        await product.expectReply('The plan has two steps:');
+        await product.expectReply('write them down');
+        await product.expectReply('That is the whole plan.');
+      },
+    },
     'finds text after a horizontal rule in the reply': {
       run: async ({ product, model }) => {
         model.script(say('First section.\n\n---\n\nSecond section.'));
