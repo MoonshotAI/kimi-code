@@ -2,6 +2,7 @@ import {
   isMediaPart,
   mediaKeyOf,
   mediaOmissionOf,
+  mediaPlaceholderText,
   omitMediaPart,
   type ContentPart,
   type MediaPart,
@@ -17,18 +18,15 @@ import { sha256Hex } from '#/utils/hash';
 export const MEDIA_DEGRADE_KEEP_RECENT = 2;
 
 export const MEDIA_DEGRADED_PLACEHOLDERS = {
-  image_url:
-    '[image omitted: dropped to fit the provider request size limit; re-read the file to view it]',
-  audio_url:
-    '[audio omitted: dropped to fit the provider request size limit; re-read the file to hear it]',
-  video_url:
-    '[video omitted: dropped to fit the provider request size limit; re-read the file to view it]',
+  image_url: mediaPlaceholderText('image', 'degraded'),
+  audio_url: mediaPlaceholderText('audio', 'degraded'),
+  video_url: mediaPlaceholderText('video', 'degraded'),
 } as const;
 
 export const MEDIA_STRIPPED_PLACEHOLDERS = {
-  image_url: '[image omitted for provider compatibility; re-read the file to view it or get conversion guidance]',
-  audio_url: '[audio omitted for provider compatibility; re-read the file to hear it]',
-  video_url: '[video omitted for provider compatibility; re-read the file to view it]',
+  image_url: mediaPlaceholderText('image', 'stripped'),
+  audio_url: mediaPlaceholderText('audio', 'stripped'),
+  video_url: mediaPlaceholderText('video', 'stripped'),
 } as const;
 
 export type MediaReplacement = (part: MediaPart) => ContentPart | undefined;

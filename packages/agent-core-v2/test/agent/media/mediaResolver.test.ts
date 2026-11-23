@@ -1663,7 +1663,10 @@ describe('AgentMediaResolverService media labels', () => {
     }
   });
 
-  it('keeps the saved path of an omitted tool-result image after structure projection', async () => {
+  it.each([
+    { environmentId: LOCAL_ENVIRONMENT_ID, includeLocalPaths: true },
+    { environmentId: 'ssh-host', includeLocalPaths: false },
+  ])('renders an omitted tool-result image after structure projection in the $environmentId environment', async ({ environmentId, includeLocalPaths }) => {
     const toolPath = await plantCanonical('f_tool', '.png', PNG_BYTES);
     await plantCanonical('f_a', '.png', PNG_BYTES);
     await plantCanonical('f_b', '.png', PNG_BYTES);
@@ -1674,6 +1677,9 @@ describe('AgentMediaResolverService media labels', () => {
         ['f_b', { name: 'b.png', bytes: PNG_BYTES }],
       ]),
       sessionDir,
+      stubMediaStore(sessionDir),
+      [],
+      environmentId,
     );
     const { model, requester: base } = requester({ providerType: 'openai', baseUrl: 'https://example.test/v1' });
     const mockFetch = vi.fn<typeof fetch>()
@@ -1710,7 +1716,14 @@ describe('AgentMediaResolverService media labels', () => {
     expect(outcome.type).toBe('done');
     expect(attempts).toHaveLength(2);
     const retriedTool = attempts[1]!.find((message) => message.role === 'tool')!;
-    expect(retriedTool.content).toEqual([{ type: 'text', text: `<image path="${toolPath}"></image>` }]);
+    expect(retriedTool.content).toEqual([
+      {
+        type: 'text',
+        text: includeLocalPaths
+          ? `<image path="${toolPath}"></image>`
+          : '[image omitted: dropped to fit the provider request size limit; re-read the file to view it]',
+      },
+    ]);
   });
 
   it('precedes each user image and video with a name and path label while leaving tool results untouched', async () => {

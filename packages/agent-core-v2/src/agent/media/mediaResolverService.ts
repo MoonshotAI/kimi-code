@@ -133,7 +133,7 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
     request: InitializedLlmRequester,
     signal?: AbortSignal,
   ): Promise<readonly Message[]> {
-    const includeUserPaths = this.environmentBinding.current.environmentId === LOCAL_ENVIRONMENT_ID;
+    const includeLocalPaths = this.environmentBinding.current.environmentId === LOCAL_ENVIRONMENT_ID;
     const described = new Map<string, MediaLabel>();
     const describeMedia = async (fileId: string): Promise<MediaLabel> => {
       const cached = described.get(fileId);
@@ -141,7 +141,9 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
       const file = await this.mediaStore.open(fileId);
       const details = {
         name: file?.name,
-        path: file === undefined ? await this.mediaStore.resolveDisplayPath(fileId) : file.path,
+        path: includeLocalPaths
+          ? (file === undefined ? await this.mediaStore.resolveDisplayPath(fileId) : file.path)
+          : undefined,
       };
       described.set(fileId, details);
       return details;
@@ -161,10 +163,13 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
         }
         const kind: ResolvedMediaKind = part.type === 'image_url' ? 'image' : 'video';
         const daemonRef = daemonFileRefFromPart(part)?.ref;
-        const file = daemonRef === undefined ? {} : await describeMedia(daemonRef.fileId);
+        const explicitName = user ? mediaNameOf(part) : undefined;
+        const needFile =
+          daemonRef !== undefined && (includeLocalPaths || (user && explicitName === undefined));
+        const file = needFile ? await describeMedia(daemonRef.fileId) : {};
         const label: MediaLabel = {
-          name: user ? mediaNameOf(part) ?? file.name : undefined,
-          path: user && !includeUserPaths ? undefined : file.path,
+          name: user ? explicitName ?? file.name : undefined,
+          path: includeLocalPaths ? file.path : undefined,
         };
         const previous = message.content[partIndex - 1];
         const omitted = mediaOmissionOf(part);

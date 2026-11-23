@@ -50,17 +50,20 @@ export interface ThinkPart extends ContentPartBase {
 
 export interface ImageURLPart {
   type: 'image_url';
-  imageUrl: { url: string; id?: string; name?: string; omitted?: MediaPlaceholderReason };
+  imageUrl: { url: string; id?: string; name?: string };
+  omitted?: MediaPlaceholderReason;
 }
 
 export interface AudioURLPart {
   type: 'audio_url';
-  audioUrl: { url: string; id?: string; omitted?: MediaPlaceholderReason };
+  audioUrl: { url: string; id?: string };
+  omitted?: MediaPlaceholderReason;
 }
 
 export interface VideoURLPart {
   type: 'video_url';
-  videoUrl: { url: string; id?: string; name?: string; omitted?: MediaPlaceholderReason };
+  videoUrl: { url: string; id?: string; name?: string };
+  omitted?: MediaPlaceholderReason;
 }
 
 export type MediaPart = ImageURLPart | AudioURLPart | VideoURLPart;
@@ -91,18 +94,11 @@ export function mediaKeyOf(part: MediaPart): string {
 }
 
 export function mediaOmissionOf(part: MediaPart): MediaPlaceholderReason | undefined {
-  return mediaSourceOf(part).omitted;
+  return part.omitted;
 }
 
 export function omitMediaPart(part: MediaPart, reason: MediaPlaceholderReason): MediaPart {
-  switch (part.type) {
-    case 'image_url':
-      return { ...part, imageUrl: { ...part.imageUrl, omitted: reason } };
-    case 'audio_url':
-      return { ...part, audioUrl: { ...part.audioUrl, omitted: reason } };
-    case 'video_url':
-      return { ...part, videoUrl: { ...part.videoUrl, omitted: reason } };
-  }
+  return { ...part, omitted: reason };
 }
 
 export type MediaPlaceholderReason =
