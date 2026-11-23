@@ -99,6 +99,8 @@ jobs:
         run: npm pkg set version="$VERSION"
 
       - name: Install dependencies
+        env:
+          KIMI_SKIP_DESKTOP_PTY_REBUILD: ${{ github.workflow == 'Release' && '1' || '' }}
         run: pnpm install --frozen-lockfile
 
       - name: Setup macOS keychain (release only)

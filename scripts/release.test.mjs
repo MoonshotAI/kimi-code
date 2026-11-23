@@ -183,6 +183,20 @@ test('desktop only defers pnpm cache writes for a new CLI release, not a previou
   assert.match(readFileSync(f.env.GITHUB_OUTPUT, 'utf8'), /^cli-planned=false$/m);
 });
 
+test('only CLI-only installs opt out of the Electron rebuild', () => {
+  const f = fixture();
+  const marker = join(f.dir, 'electron-rebuilt');
+  const bin = join(f.dir, 'bin', process.platform === 'win32' ? 'electron-rebuild.cmd' : 'electron-rebuild');
+  writeFileSync(bin, process.platform === 'win32' ? '@echo off\r\ntype nul > "%REBUILD_MARKER%"\r\n' : '#!/bin/sh\ntouch "$REBUILD_MARKER"\n', { mode: 0o755 });
+  const script = fileURLToPath(new URL('../apps/desktop/scripts/rebuild-native.mjs', import.meta.url));
+  for (const skip of ['1', '']) {
+    const result = spawnSync(process.execPath, [script], { env: { ...f.env, REBUILD_MARKER: marker, KIMI_SKIP_DESKTOP_PTY_REBUILD: skip } });
+    assert.equal(result.status, 0, result.stderr.toString());
+    if (skip === '1') assert.throws(() => readFileSync(marker), { code: 'ENOENT' });
+    else assert.equal(readFileSync(marker).length, 0);
+  }
+});
+
 void test('workflow release titles use product names and full versions', () => {
   const workflow = (name) => readFileSync(fileURLToPath(new URL(`../.github/workflows/${name}`, import.meta.url)), 'utf8');
   const stable = workflow('release.yml');
