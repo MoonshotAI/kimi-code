@@ -498,6 +498,11 @@ export class Editor implements Component, Focusable {
 		}
 	}
 
+	clearHistory(): void {
+		this.history = [];
+		this.exitHistoryBrowsing();
+	}
+
 	private isEditorEmpty(): boolean {
 		return this.state.lines.length === 1 && this.state.lines[0] === "";
 	}
