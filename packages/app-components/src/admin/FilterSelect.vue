@@ -43,8 +43,8 @@ function pick(value: string): void {
     <span class="sa-select-label">{{ displayLabel }}</span>
     <Icon class="sa-select-chev" name="chevron-down" size="sm" />
   </button>
-  <Transition name="menu-pop">
-    <Menu v-if="open" ref="menuRef" class="sa-menu" :style="menuStyle" @click.stop>
+  <Transition name="ui-menu-pop">
+    <Menu v-if="open" ref="menuRef" class="ui-menu-floating sa-menu" :style="menuStyle" @click.stop>
       <MenuItem v-for="opt in options" :key="opt.value" @click="pick(opt.value)">
         <span class="sa-check">
           <Icon v-if="opt.value === modelValue" name="check" size="sm" />
@@ -81,12 +81,6 @@ function pick(value: string): void {
   color: var(--color-text-faint);
 }
 
-.sa-menu {
-  position: fixed;
-  top: 0;
-  left: 0;
-  z-index: var(--z-dropdown);
-}
 .sa-check {
   display: inline-flex;
   flex: none;

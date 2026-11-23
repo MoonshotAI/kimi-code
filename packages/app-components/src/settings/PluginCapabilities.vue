@@ -264,7 +264,7 @@ function confirmReset(): void {
 .plugin-capabilities__group-title {
   color: var(--color-text-muted);
   font-size: var(--text-sm);
-  font-weight: var(--weight-normal);
+  font-weight: var(--weight-regular);
 }
 
 .plugin-capabilities__list {

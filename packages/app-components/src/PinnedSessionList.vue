@@ -684,11 +684,11 @@ const {
       <span class="pinned-resize-bar" aria-hidden="true"></span>
     </div>
     <Teleport to="body">
-      <Transition name="menu-pop">
+      <Transition name="ui-menu-pop">
         <Menu
           v-if="menuOpen"
           ref="menuRef"
-          class="pinned-menu anchored-menu"
+          class="pinned-menu ui-menu-floating"
           :style="menuStyle"
           @click.stop
           @contextmenu.prevent.stop

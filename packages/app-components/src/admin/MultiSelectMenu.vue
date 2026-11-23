@@ -98,10 +98,10 @@ function toggleViaKeyboard(e: KeyboardEvent): void {
     <span v-else class="sa-select-label">{{ t('admin.allWorkspaces') }}</span>
     <Icon class="sa-select-chev" name="chevron-down" size="sm" />
   </div>
-  <Transition name="menu-pop">
+  <Transition name="ui-menu-pop">
     <!-- role=dialog: the panel leads with a search input, so it isn't a pure
          menu (Menu's own contract); its rows take role=button to match. -->
-    <Menu v-if="open" ref="menuRef" class="sa-menu" :style="menuStyle" role="dialog" @click.stop>
+    <Menu v-if="open" ref="menuRef" class="ui-menu-floating sa-menu" :style="menuStyle" role="dialog" @click.stop>
       <div class="sa-search">
         <Icon name="search" size="sm" />
         <input
@@ -207,13 +207,6 @@ function toggleViaKeyboard(e: KeyboardEvent): void {
   font-size: var(--text-xs);
 }
 
-.sa-menu {
-  position: fixed;
-  top: 0;
-  left: 0;
-  z-index: var(--z-dropdown);
-}
-
 .sa-search {
   display: flex;
   align-items: center;
@@ -250,22 +243,5 @@ function toggleViaKeyboard(e: KeyboardEvent): void {
   padding: 5px 9px;
   color: var(--color-text-faint);
   font-size: var(--text-sm);
-}
-
-.menu-pop-enter-active {
-  transition:
-    opacity var(--duration-base) var(--ease-out),
-    transform var(--duration-base) var(--ease-out);
-}
-.menu-pop-leave-active {
-  transition:
-    opacity var(--duration-fast) var(--ease-out),
-    transform var(--duration-fast) var(--ease-out);
-  pointer-events: none;
-}
-.menu-pop-enter-from,
-.menu-pop-leave-to {
-  opacity: 0;
-  transform: scale(0.97) translateY(var(--menu-pop-shift, -2px));
 }
 </style>

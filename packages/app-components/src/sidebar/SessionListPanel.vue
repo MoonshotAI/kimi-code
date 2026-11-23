@@ -1066,11 +1066,11 @@ defineExpose({
       @mouseenter="cancelWorkspaceHoverClose"
       @mouseleave="scheduleWorkspaceHoverClose"
     />
-    <Transition name="menu-pop">
+    <Transition name="ui-menu-pop">
       <Menu
         v-if="viewMenuOpen"
         ref="viewMenuRef"
-        class="view-menu anchored-menu"
+        class="view-menu ui-menu-floating"
         :style="viewMenuStyle"
         @click.stop
       >

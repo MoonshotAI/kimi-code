@@ -482,11 +482,11 @@ function onLogoClick(): void {
     </div>
 
     <!-- Dev backend switcher menu (position:fixed, anchored to the brand pill) -->
-    <Transition name="menu-pop">
+    <Transition name="ui-menu-pop">
       <Menu
         v-if="backendMenuOpen"
         ref="backendMenuRef"
-        class="backend-menu"
+        class="ui-menu-floating backend-menu"
         :style="backendMenuStyle"
         @click.stop
       >
@@ -847,12 +847,6 @@ function onLogoClick(): void {
   white-space: nowrap;
 }
 
-.backend-menu {
-  position: fixed;
-  top: 0;
-  left: 0;
-  z-index: var(--z-dropdown);
-}
 .section-menu-check {
   display: inline-flex;
   flex: none;
@@ -866,21 +860,5 @@ function onLogoClick(): void {
   margin-left: 8px;
   font-family: var(--mono);
   color: var(--color-text-muted);
-}
-.menu-pop-enter-active {
-  transition:
-    opacity var(--duration-base) var(--ease-out),
-    transform var(--duration-base) var(--ease-out);
-}
-.menu-pop-leave-active {
-  transition:
-    opacity var(--duration-fast) var(--ease-out),
-    transform var(--duration-fast) var(--ease-out);
-  pointer-events: none;
-}
-.menu-pop-enter-from,
-.menu-pop-leave-to {
-  opacity: 0;
-  transform: scale(0.97) translateY(var(--menu-pop-shift, -2px));
 }
 </style>

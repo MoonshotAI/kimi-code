@@ -740,8 +740,8 @@ void loadHosts();
       <Banner v-if="error" variant="danger" role="alert">{{ error }}</Banner>
       <Banner v-if="loadFailed" variant="warning">{{ t('settings.hosts.statusFailed') }}</Banner>
 
-      <Transition name="menu-pop">
-        <Menu v-if="rowMenuOpen && menuRow" ref="rowMenuRef" class="re-row-menu" :style="rowMenuStyle" @click.stop>
+      <Transition name="ui-menu-pop">
+        <Menu v-if="rowMenuOpen && menuRow" ref="rowMenuRef" class="ui-menu-floating re-row-menu" :style="rowMenuStyle" @click.stop>
           <MenuItem v-if="createProject && connectionState(menuRow) === 'ready'" @click="closeRowMenu(); createProject(menuRow.id)">
             <Icon name="folder-plus" size="sm" />{{ t('workspace.dialog.createTitle') }}
           </MenuItem>
@@ -814,7 +814,6 @@ void loadHosts();
 .re-row-failure :deep(.etr) { max-height: none; padding: 0; overflow: visible; background: none; border-radius: 0; }
 .re-row-failure-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
 .re-row-more.open { background: var(--color-hover); color: var(--color-text); }
-.re-row-menu { position: fixed; top: 0; left: 0; z-index: var(--z-dropdown); }
 .re-row-setup { display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-2); padding: 0 var(--space-3) var(--space-3) var(--space-4); font-family: var(--font-ui); }
 .re-row-setup-text { margin: 0; color: var(--color-text-muted); font-size: var(--text-xs); }
 .re-row-setup-text--danger { color: var(--color-danger); }
