@@ -33,3 +33,12 @@ it('highlights each query word and renders plain text without a query', async ()
     expect(html).not.toContain('<strong');
   }
 });
+
+
+it('renders only opted-in notes with the smaller text class', async () => {
+  const small = await render({ kind: 'note', id: 'effort-description', label: 'Effort description', size: 'xs' });
+  const regular = await render({ kind: 'note', id: 'downloads-empty', label: 'No downloads' });
+
+  expect(small).toContain('class="overlay-menu-copy is-note is-xs"');
+  expect(regular).toContain('class="overlay-menu-copy is-note"');
+});

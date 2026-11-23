@@ -6,6 +6,7 @@ import { authStore, type AuthCheckResult } from '../stores/auth';
 import { configStore } from '../stores/config';
 import { modelsStore } from '../stores/models';
 import { modelSwitchConfirmStore } from '../stores/modelSwitchConfirm';
+import { effortSwitchStore } from '../stores/effortSwitch';
 import { sessionListStore, type FiredSessionGroupPage } from '../stores/sessionList';
 import { sessionViewsStore } from '../stores/sessionViews';
 import { sessionsStore } from '../stores/sessions';
@@ -168,6 +169,7 @@ export function createWorkspaceBoot(rawState: ExtendedState, deps: WorkspaceBoot
       bootStage.value = 'server';
       void modelsStore().loadCatalogProviders();
       void modelSwitchConfirmStore().refresh({ signal: run.signal });
+      void effortSwitchStore().refresh({ signal: run.signal });
       await Promise.all([
         trace('server', 'health', () => api.getHealth()).catch(() => null),
         trace('server', 'server-meta', (reportError) => configStore().refreshServerMeta(reportError)),

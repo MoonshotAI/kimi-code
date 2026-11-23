@@ -44,7 +44,7 @@ import MobileSettingsSheet from './components/mobile/MobileSettingsSheet.vue';
 import OnboardingWizard from './components/onboarding/OnboardingWizard.vue';
 import { GlobalLoading } from '@moonshot-ai/app-components';
 import { useKimiWebClient, promptAttachmentToTurnAttachment, turnFileContentFetcher } from '@moonshot-ai/app-client/client';
-import { sessionViewsStore, workspacesStore, modelsStore, notificationsStore, authStore, sessionsStore, warningsStore, filesStore, permissionsStore, enableSessionRating, modelSwitchConfirmStore, hostsStore } from '@moonshot-ai/app-client/stores';
+import { sessionViewsStore, workspacesStore, modelsStore, notificationsStore, authStore, sessionsStore, warningsStore, filesStore, permissionsStore, enableSessionRating, modelSwitchConfirmStore, effortSwitchStore, hostsStore } from '@moonshot-ai/app-client/stores';
 import { FetchTurnFileContentKey, InsertPathMentionKey, ModelDisplayKey, OpenWithDefaultAppKey, ResolveSwarmMembersKey, RevealInFolderKey, SelectionContextMenuKey, SessionRatingKey, SubagentEffortKey } from '@moonshot-ai/app-client/contracts';
 import { OpenFileLinkKey, OpenHtmlFileInPanelKey, OpenLocalHtmlFileKey, OpenMarkdownImageKey, OpenSidebarBrowserUrlKey, ResolveImageKey } from '@moonshot-ai/app-core/contracts';
 import { getKimiWebApi } from './api';
@@ -210,6 +210,7 @@ const { mobileWorkspaceGroups, pinnedSessions, attentionBySession, attentionByWo
   storeToRefs(sessionViews);
 const { models, activeModels, starredModelIds, defaultModel } = storeToRefs(modelsStore());
 const { pending: modelSwitchConfirmPending } = storeToRefs(modelSwitchConfirmStore());
+const { pending: effortSwitchConfirmPending } = storeToRefs(effortSwitchStore());
 const { notifyEnabled, notifySound, notifyPermission } = storeToRefs(notificationsStore());
 const { setNotifyEnabled, setNotifySound } = notificationsStore();
 const { signedIn, managedProviderStatus, managedUserInfo } = storeToRefs(authStore());
@@ -1882,6 +1883,10 @@ function onToggleTower(): void {
   void client.toggleTowerMode();
 }
 
+function enableSwarmMode(): void {
+  if (!client.swarmMode.value) client.toggleSwarmMode();
+}
+
 async function handleCommand(payload: { cmd: string; attachments: PromptAttachment[]; restoreText?: string; skillName?: string; skillPath?: string; restoreEntries?: AttachmentEntry[]; snapshot?: ComposerDocumentSnapshot; editText?: string; delivery?: 'steer' | 'queue' }): Promise<void> {
   const { cmd, attachments, restoreText, restoreEntries, snapshot } = payload;
   if (cmd === '/compact' || cmd.startsWith('/compact ')) {
@@ -1905,12 +1910,12 @@ async function handleCommand(payload: { cmd: string; attachments: PromptAttachme
   }
   if (cmd === '/swarm' || cmd.startsWith('/swarm ')) {
     const arg = cmd.slice('/swarm'.length).trim();
-    if (arg === 'on') client.setSwarmMode(true);
+    if (arg === 'on') enableSwarmMode();
     else if (arg === 'off') client.setSwarmMode(false);
     else if (arg) {
       const originSid = client.activeSessionId.value;
       if (!(await passCommandGates(cmd, attachments, restoreText, restoreEntries, snapshot))) return;
-      client.setSwarmMode(true);
+      enableSwarmMode();
       const prompt = client.createPromptEnvelope(commandPromptContent(cmd, attachments, snapshot));
       if (payload.delivery === 'steer') {
         const generation = ++sendGeneration;
@@ -2613,8 +2618,21 @@ function openPr(url: string): void {
     <ModelSwitchConfirmDialog
       v-if="modelSwitchConfirmPending !== null"
       :open="true"
+      :session-type="modelSwitchConfirmPending.sessionType"
       :hint="modelSwitchConfirmPending.hint"
+      :warning="modelSwitchConfirmPending.warning"
       @select="modelSwitchConfirmStore().settle($event)"
+    />
+    <ModelSwitchConfirmDialog
+      v-if="effortSwitchConfirmPending !== null"
+      :open="true"
+      kind="effort"
+      :session-type="effortSwitchConfirmPending.sessionType"
+      :from-effort="effortSwitchConfirmPending.fromEffort"
+      :to-effort="effortSwitchConfirmPending.toEffort"
+      :hint="effortSwitchConfirmPending.hint"
+      :warning="effortSwitchConfirmPending.warning"
+      @select="action => { if (action !== 'compact') effortSwitchStore().settle(action) }"
     />
 
     <!-- Settings page (modal) -->

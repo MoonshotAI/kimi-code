@@ -993,14 +993,16 @@ it('preserves permission descriptions and model controls while rejecting invalid
     { kind: 'item', id: 'manual', label: 'Manual', description: 'Ask before making changes', selected: false, tone: 'warning' },
     { kind: 'section', id: 'provider', label: 'Provider' },
     { kind: 'choices', id: 'thinking', label: 'Thinking', value: 'effort-high', options: [{ id: 'effort-low', label: 'Low' }, { id: 'effort-high', label: 'High' }] },
-    { kind: 'note', id: 'cache', label: 'Switching models can change cached context.' },
+    { kind: 'note', id: 'cache', label: 'Switching models can change cached context.', size: 'xs' },
   ];
-  const parsed = asBrowserOverlayMenuRequest({ ...request, width: 520, items, footerStart: 2 });
-  expect(parsed).toMatchObject({ width: 520, items, footerStart: 2 });
+  const parsed = asBrowserOverlayMenuRequest({ ...request, width: 520, items, footerStart: 2, submitOnCtrlEnter: true });
+  expect(parsed).toMatchObject({ width: 520, items, footerStart: 2, submitOnCtrlEnter: true });
   expect(asBrowserOverlayMenuRequest({ ...request, width: 641, items })).toBeNull();
   expect(asBrowserOverlayMenuRequest({ ...request, items, footerStart: 5 })).toBeNull();
   expect(asBrowserOverlayMenuRequest({ ...request, items: [...items, { kind: 'item', id: 'effort-low', label: 'Duplicate' }] })).toBeNull();
   expect(asBrowserOverlayMenuRequest({ ...request, items: [{ ...items[0], description: 'x'.repeat(1025) }] })).toBeNull();
+  expect(asBrowserOverlayMenuRequest({ ...request, items: [{ kind: 'note', id: 'note', label: 'Note', size: 'large' }] })).toBeNull();
+  expect(asBrowserOverlayMenuRequest({ ...request, items, submitOnCtrlEnter: 'yes' })).toBeNull();
 });
 
 it('carries a bounded highlight query without per-item ranges', () => {
