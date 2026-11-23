@@ -28,7 +28,7 @@ export default {
   compacting: 'Compacting context…',
   compactedPlain: 'Context compacted',
   compactedAuto: 'Context auto-compacted',
-  compactedTokens: ' ({before} → {after} tokens)',
+  compactedTokens: '{before} → {after} tokens',
   viewSummary: 'View summary',
   undo: 'Undo',
   undoTooltip: 'Undo message',

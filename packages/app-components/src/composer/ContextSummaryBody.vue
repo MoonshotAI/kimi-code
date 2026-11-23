@@ -1,3 +1,16 @@
+<script lang="ts">
+export type CompactPhase = 'idle' | 'queued' | 'compacting';
+
+export function resolveCompactPhase(
+  compaction: { status?: string } | null | undefined,
+  queued: readonly { kind?: string }[] | undefined,
+): CompactPhase {
+  if (compaction?.status === 'running') return 'compacting';
+  if (queued?.some((item) => item.kind === 'compact')) return 'queued';
+  return 'idle';
+}
+</script>
+
 <script setup lang="ts">
 import { computed } from 'vue';
 import { useI18n } from 'vue-i18n';
@@ -12,12 +25,14 @@ const props = withDefaults(defineProps<{
   loading?: boolean;
   error?: string;
   canCompact?: boolean;
+  compactPhase?: CompactPhase;
   canOpenDetail?: boolean;
   showDivider?: boolean;
 }>(), {
   loading: false,
   error: '',
   canCompact: false,
+  compactPhase: 'idle',
   canOpenDetail: false,
   showDivider: false,
 });
@@ -30,12 +45,22 @@ const emit = defineEmits<{
 const { t } = useI18n();
 
 const hasContent = computed(() => (props.snapshot?.groups ?? []).some((group) => group.tokens > 0));
+const compactLabel = computed(() => {
+  if (props.compactPhase === 'compacting') return t('inspector.compactingContext');
+  if (props.compactPhase === 'queued') return t('inspector.compactQueued');
+  return t('inspector.compactContext');
+});
 </script>
 
 <template>
   <div class="ctx-summary">
     <div class="ctx-summary-body" :class="{ 'is-refreshing': loading && snapshot }">
-      <ContextComposition :snapshot="snapshot" :ctx-used="ctxUsed" :ctx-max="ctxMax" />
+      <ContextComposition
+        :snapshot="snapshot"
+        :ctx-used="ctxUsed"
+        :ctx-max="ctxMax"
+        :compacting="compactPhase === 'compacting'"
+      />
       <div v-if="loading && !snapshot" class="ctx-summary-loading">
         <Spinner size="sm" />
       </div>
@@ -55,10 +80,16 @@ const hasContent = computed(() => (props.snapshot?.groups ?? []).some((group) =>
         variant="secondary"
         size="xs"
         class="ctx-summary-btn"
-        :disabled="!canCompact"
+        :class="{
+          'is-compacting': compactPhase === 'compacting',
+          'is-queued': compactPhase === 'queued',
+        }"
+        :loading="compactPhase === 'compacting'"
+        :icon="compactPhase === 'queued' ? 'clock' : ''"
+        :disabled="compactPhase !== 'idle' || !canCompact"
         @click="emit('compact')"
       >
-        {{ t('inspector.compactContext') }}
+        {{ compactLabel }}
       </Button>
       <Button
         v-if="canOpenDetail"
@@ -118,5 +149,21 @@ const hasContent = computed(() => (props.snapshot?.groups ?? []).some((group) =>
 }
 .ctx-summary-btn {
   flex: 1;
+}
+.ctx-summary-btn.is-compacting:disabled {
+  opacity: 1;
+  background: var(--color-accent-soft);
+  border-color: var(--color-accent-bd);
+  color: var(--color-accent);
+  cursor: progress;
+}
+.ctx-summary-btn.is-compacting :deep(.ui-button__content) {
+  opacity: 1;
+}
+.ctx-summary-btn.is-queued:disabled {
+  opacity: 1;
+  background: var(--color-fill-1);
+  border-color: var(--color-line);
+  color: var(--color-text-muted);
 }
 </style>

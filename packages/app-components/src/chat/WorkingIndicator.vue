@@ -2,11 +2,17 @@
 defineProps<{
   label?: string;
   idle?: boolean;
+  decorative?: boolean;
 }>();
 </script>
 
 <template>
-  <div class="working-indicator" :class="{ idle }" role="status">
+  <div
+    class="working-indicator"
+    :class="{ idle }"
+    :role="decorative ? undefined : 'status'"
+    :aria-hidden="decorative || undefined"
+  >
     <span class="wi-face" aria-hidden="true">
       <span class="wi-eyes">
         <span class="wi-eye wi-eye--left" />
@@ -14,6 +20,7 @@ defineProps<{
       </span>
     </span>
     <span v-if="label" class="wi-label">{{ label }}</span>
+    <slot />
   </div>
 </template>
 
@@ -21,7 +28,8 @@ defineProps<{
 .working-indicator {
   display: inline-flex;
   align-items: center;
-  gap: var(--space-3);
+  flex-wrap: wrap;
+  gap: var(--space-1-5) var(--space-3);
   align-self: flex-start;
   font-family: var(--markdown-font-family);
   font-size: var(--markdown-body-font-size);

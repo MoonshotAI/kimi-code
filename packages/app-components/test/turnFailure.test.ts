@@ -47,6 +47,7 @@ vi.mock('@moonshot-ai/app-client/client', async () => {
 import { createKimiI18n } from '@moonshot-ai/app-i18n';
 import { SessionRatingKey } from '@moonshot-ai/app-client/contracts';
 import type { SessionRatingBinding } from '@moonshot-ai/app-client/contracts';
+import { panelApiKey, type PanelApi } from '@moonshot-ai/app-client/panel';
 import type { ChatTurn } from '@moonshot-ai/app-core/client/types';
 import ChatPane from '../src/chat/ChatPane.vue';
 
@@ -148,5 +149,66 @@ describe('ChatPane turn failure', () => {
     mount({ code: 'provider.api_error', message: '', statusCode: 400 });
     await nextTick();
     expect(host.querySelector('.tf-sub')).toBeNull();
+  });
+});
+
+describe('ChatPane compaction checkpoint card', () => {
+  it('renders a distinct checkpoint card with token reduction badge and opens summary on click', async () => {
+    const openCompaction = vi.fn();
+    const compactionTurn: ChatTurn = {
+      id: 'c1',
+      role: 'compaction',
+      text: 'Summary markdown',
+      compaction: { trigger: 'manual', tokensBefore: 95437, tokensAfter: 82944 },
+      createdAt: '2025-01-01T10:01:00.000Z',
+    };
+    app = createApp({
+      setup() {
+        provide(SessionRatingKey, ratingBinding);
+        provide(panelApiKey, { openCompaction } as unknown as PanelApi);
+        return () => h(ChatPane, { turns: [userTurn, compactionTurn], sessionId: 's1' } as never);
+      },
+    });
+    app.use(createKimiI18n({ locale: 'zh' }));
+    app.mount(host);
+    await nextTick();
+
+    const card = host.querySelector<HTMLButtonElement>('.compact-divider--compacted button.cd-card.cd-btn');
+    expect(card).not.toBeNull();
+    expect(card?.querySelector('.cd-title')?.textContent).toBe('上下文已压缩');
+    expect(card?.querySelector('.cd-tokens')?.textContent).toBe('93.2k → 81k tokens');
+    expect(card?.querySelector('.cd-saved')?.textContent).toBe('-12.2k');
+    expect(card?.querySelector('.cd-view')?.textContent).toBe('查看摘要');
+    expect(host.querySelector('.cd-meter')).toBeNull();
+
+    card!.click();
+    expect(openCompaction).toHaveBeenCalledExactlyOnceWith({ turnId: 'c1' });
+  });
+
+  it('omits savings badge and summary button when tokens did not decrease or summary cannot open', async () => {
+    const compactionTurn: ChatTurn = {
+      id: 'c2',
+      role: 'compaction',
+      text: '',
+      compaction: { trigger: 'auto', tokensBefore: 4096, tokensAfter: 4608 },
+      createdAt: '2025-01-01T10:02:00.000Z',
+    };
+    app = createApp({
+      setup() {
+        provide(SessionRatingKey, ratingBinding);
+        return () => h(ChatPane, { turns: [userTurn, compactionTurn], sessionId: 's1' } as never);
+      },
+    });
+    app.use(createKimiI18n({ locale: 'zh' }));
+    app.mount(host);
+    await nextTick();
+
+    const card = host.querySelector<HTMLElement>('.compact-divider--compacted span.cd-card');
+    expect(card).not.toBeNull();
+    expect(card?.classList.contains('cd-btn')).toBe(false);
+    expect(card?.querySelector('.cd-title')?.textContent).toBe('已自动压缩上下文');
+    expect(card?.querySelector('.cd-tokens')?.textContent).toBe('4k → 4.5k tokens');
+    expect(card?.querySelector('.cd-saved')).toBeNull();
+    expect(card?.querySelector('.cd-action')).toBeNull();
   });
 });

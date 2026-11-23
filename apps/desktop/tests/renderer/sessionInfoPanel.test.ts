@@ -11,6 +11,8 @@ import type { SessionContextInfoState, SessionFolderInfoRow } from '@moonshot-ai
 import SessionInfoContext from '../../src/renderer/components/chat/SessionInfoContext.vue';
 import SessionInfoFolder from '../../src/renderer/components/chat/SessionInfoFolder.vue';
 import SessionInfoPanel from '../../src/renderer/components/chat/SessionInfoPanel.vue';
+import { ActivityNotice } from '@moonshot-ai/app-components';
+import { resolveCompactPhase } from '@moonshot-ai/app-components/support';
 import sessionInfoFolderSource from '../../src/renderer/components/chat/SessionInfoFolder.vue?raw';
 import sessionInfoPanelSource from '../../src/renderer/components/chat/SessionInfoPanel.vue?raw';
 import sessionInfoTabsSource from '../../src/renderer/components/chat/SessionInfoTabs.vue?raw';
@@ -340,7 +342,9 @@ describe('SessionInfoPanel', () => {
 
   it('wires the overflow action to the right panel', () => {
     expect(conversationPaneSource).toContain('@show-tabs="emit(\'showTabs\')"');
+    expect(conversationPaneSource).toContain('preserveDraft: true');
     expect(appSource).toContain('@show-tabs="panel.showPanel"');
+    expect(appSource).not.toContain('commands.compactQueue.queued');
   });
 
   it('uses the sidebar width for the floating panel', () => {
@@ -643,6 +647,152 @@ describe('SessionInfoPanel', () => {
       .map((seg) => Number.parseFloat(seg.style.width));
     expect(widths[0]).toBeCloseTo(100 / 3, 5);
     expect(widths[1]).toBeCloseTo(200 / 3, 5);
+  });
+
+  it('keeps compact clickable while a turn is running and reflects queued and compacting phases', async () => {
+    useContextInspector().setContextInspectorEnabled(true);
+    const compact = vi.fn();
+    store.rows.mockReturnValue([readyRow()]);
+    store.foldersForSession.mockReturnValue([{ path: '/repo/a', primary: true }]);
+    store.contextState.mockReturnValue({
+      status: 'ready',
+      value: {
+        session_id: 's1',
+        agent_id: 'main',
+        captured_at: 1000,
+        tokens: { used: 120000, max: 1000000 },
+        groups: [{ role: 'user', count: 2, tokens: 120000 }],
+      },
+    });
+    const props = reactive({
+      sessionId: 's1',
+      mode: 'sidebar' as const,
+      running: true,
+      hasMessages: true,
+      compactPhase: 'idle' as 'idle' | 'queued' | 'compacting',
+    });
+    host = document.createElement('div');
+    document.body.append(host);
+    app = createApp({ render: () => h(SessionInfoPanel, { ...props, onCompact: compact }) });
+    app.use(createKimiI18n({ locale: 'zh' }));
+    app.provide(IconResolverKey, (name) => getIcon(name as IconName)?.component);
+    app.mount(host);
+    await nextTick();
+
+    const btn = () => host!.querySelector<HTMLButtonElement>('.ctx-summary-btn')!;
+    expect(btn().disabled).toBe(false);
+    expect(btn().textContent?.trim()).toBe('压缩上下文');
+    btn().click();
+    expect(compact).toHaveBeenCalledOnce();
+
+    props.compactPhase = resolveCompactPhase(null, [{ kind: 'compact' }]);
+    await nextTick();
+    expect(btn().disabled).toBe(true);
+    expect(btn().textContent?.trim()).toBe('等待压缩');
+
+    props.compactPhase = resolveCompactPhase({ status: 'running' }, [{ kind: 'compact' }]);
+    await nextTick();
+    expect(btn().disabled).toBe(true);
+    expect(btn().getAttribute('aria-busy')).toBe('true');
+    expect(btn().textContent?.trim()).toBe('正在压缩…');
+    expect(host!.querySelector('.ctx-composition.is-compacting')).not.toBeNull();
+
+    props.running = false;
+    props.compactPhase = 'idle';
+    await nextTick();
+    expect(store.refreshContext).toHaveBeenCalledWith('s1');
+
+    props.hasMessages = false;
+    await nextTick();
+    expect(btn().disabled).toBe(true);
+  });
+});
+
+describe('ActivityNotice compaction bar', () => {
+  it('condenses non-user blocks into one summary block, stitches user messages, and appends a continuation reminder', async () => {
+    vi.useFakeTimers();
+    try {
+      mount(ActivityNotice, {
+        label: '正在压缩上下文…',
+        tokens: 218000,
+        groups: [
+          { role: 'system', count: 1, tokens: 30000 },
+          { role: 'definition', count: 10, tokens: 60000 },
+          { role: 'user', count: 4, tokens: 28000 },
+          { role: 'assistant', count: 5, tokens: 40000 },
+          { role: 'tool', count: 8, tokens: 60000 },
+        ],
+      });
+      await nextTick();
+
+      expect(host!.querySelector('.wi-face')).not.toBeNull();
+      expect(host!.querySelector('.wi-label')?.textContent).toBe('正在压缩上下文…');
+      expect(host!.querySelector('.an-meta')?.textContent).toBe('213k');
+      const cells = () => [...host!.querySelectorAll<HTMLElement>('.an-cell')];
+      const summary = () => host!.querySelector<HTMLElement>('.an-summary')!;
+      const tail = () => host!.querySelector<HTMLElement>('.an-tail')!;
+
+      expect(cells()).toHaveLength(14);
+      expect(cells().filter((el) => el.dataset.cellKind === 'base')).toHaveLength(2);
+      expect(cells().filter((el) => el.dataset.cellKind === 'user')).toHaveLength(3);
+      expect(cells().filter((el) => el.dataset.cellKind === 'other')).toHaveLength(9);
+      expect(summary().classList.contains('is-hidden')).toBe(true);
+      expect(tail().classList.contains('is-hidden')).toBe(true);
+
+      await vi.advanceTimersByTimeAsync(700);
+      await nextTick();
+      expect(cells().some((el) => el.classList.contains('is-processing'))).toBe(true);
+      expect(cells().some((el) => el.classList.contains('is-absorbed'))).toBe(true);
+      expect(cells().some((el) => el.classList.contains('is-preserved'))).toBe(true);
+      expect(summary().classList.contains('is-condensing')).toBe(true);
+      expect(tail().classList.contains('is-hidden')).toBe(true);
+
+      await vi.advanceTimersByTimeAsync(900);
+      await nextTick();
+      const otherCells = cells().filter((el) => el.dataset.cellKind === 'other');
+      const userCells = cells().filter((el) => el.dataset.cellKind === 'user');
+      expect(otherCells.every((el) => el.classList.contains('is-absorbed'))).toBe(true);
+      expect(userCells.every((el) => el.classList.contains('is-stitched'))).toBe(true);
+      expect(summary().classList.contains('is-stitched')).toBe(true);
+
+      await vi.advanceTimersByTimeAsync(450);
+      await nextTick();
+      expect(tail().dataset.contextRole).toBe('reminder');
+      expect(tail().classList.contains('is-appended')).toBe(true);
+      expect(host!.querySelector('.an-meta')?.textContent).toBe('213k · 2秒');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('pauses stepping timers while the document is hidden and resumes when visible', async () => {
+    vi.useFakeTimers();
+    let visibility: DocumentVisibilityState = 'hidden';
+    Object.defineProperty(document, 'visibilityState', {
+      configurable: true,
+      get: () => visibility,
+    });
+    try {
+      mount(ActivityNotice, { label: '正在压缩上下文…', tokens: 65536 });
+      await nextTick();
+      expect(vi.getTimerCount()).toBe(0);
+
+      visibility = 'visible';
+      document.dispatchEvent(new Event('visibilitychange'));
+      await nextTick();
+      expect(vi.getTimerCount()).toBe(2);
+
+      visibility = 'hidden';
+      document.dispatchEvent(new Event('visibilitychange'));
+      await nextTick();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      Object.defineProperty(document, 'visibilityState', {
+        configurable: true,
+        value: 'visible',
+      });
+      vi.useRealTimers();
+    }
   });
 });
 

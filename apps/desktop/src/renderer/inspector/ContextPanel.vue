@@ -116,9 +116,19 @@ watch(
     () => client.status.value?.ctxMax,
     () => client.status.value?.modelId,
     () => client.activity.value,
+    () => client.compaction?.value?.status,
   ],
-  () => {
-    if (props.sessionId) void fetchContext('refresh', sessionObservationOptions(props.sessionId));
+  ([used, max, model, activity, compactStatus], [prevUsed, prevMax, prevModel, prevActivity, prevCompactStatus]) => {
+    if (!props.sessionId) return;
+    const baseChanged =
+      used !== prevUsed ||
+      max !== prevMax ||
+      model !== prevModel ||
+      activity !== prevActivity;
+    const compactSettled = prevCompactStatus === 'running' && compactStatus !== 'running';
+    if (baseChanged || compactSettled) {
+      void fetchContext('refresh', sessionObservationOptions(props.sessionId));
+    }
   },
 );
 
@@ -194,6 +204,7 @@ const remainingCount = computed(() => Math.max(0, total.value - items.value.leng
           :snapshot="summary"
           :ctx-used="client.status.value?.ctxUsed"
           :ctx-max="client.status.value?.ctxMax"
+          :compacting="client.compaction?.value?.status === 'running'"
           size="expanded"
           :selected-roles="selectedFilterRoles"
           @toggle="toggleRole"

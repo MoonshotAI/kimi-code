@@ -34,6 +34,7 @@ export interface ComposerCommandPayload {
   snapshot?: ComposerDocumentSnapshot;
   editText?: string;
   delivery?: 'steer' | 'queue';
+  preserveDraft?: boolean;
 }
 
 export type ComposerEmits = {
@@ -56,7 +57,7 @@ let composerMenuSequence = 0;
 import { useComposerNativeMenuHost } from './nativeMenus';
 import { applyModelMenuDraft } from './modelMenuDraft';
 import BrowserReferenceDetails from './BrowserReferenceDetails.vue';
-import ContextSummaryBody from './ContextSummaryBody.vue';
+import ContextSummaryBody, { resolveCompactPhase } from './ContextSummaryBody.vue';
 import { useBrowserReferenceDetails } from './browserReferenceDetails';
 import { BrowserScreenshotRecovery } from '@moonshot-ai/app-client/lib';
 import { useComposerBrowserReferenceHost, restoreBrowserCaptureBookmark, browserReferenceAnchor, type BrowserCaptureResource } from './browserReferences';
@@ -185,6 +186,8 @@ const working = client.working;
 const stopButtonVisible = computed(() => (isSideChat.value ? Boolean(props.workingOverride) : working.value));
 const starting = client.isStartingFirstPrompt;
 const queued = client.queued;
+const compacting = computed(() => client.compaction?.value?.status === 'running');
+const compactPhase = computed(() => resolveCompactPhase(client.compaction?.value, queued?.value));
 const searchFiles = client.searchFiles;
 const uploadImage = client.uploadImage;
 const status = client.status;
@@ -2627,14 +2630,30 @@ watch(sessionId, () => {
   closeCtxCard();
 });
 
+const canCompactContext = computed(() => {
+  if (!ctxCardOpen.value || !sessionId.value) return false;
+  if (running.value || client.turns?.value === undefined) return true;
+  return client.turns.value.length > 0;
+});
+
 watch(
-  [ctxCardOpen, sessionId, () => status.value?.ctxUsed, () => running.value],
-  ([open], [wasOpen]) => {
+  [ctxCardOpen, sessionId, () => status.value?.ctxUsed, () => running.value, compacting],
+  ([open, sid, used, isRunning, isCompacting], [wasOpen, prevSid, prevUsed, wasRunning, wasCompacting]) => {
     if (!open) {
       ctxLoading.value = false;
       return;
     }
-    void refreshCtxSnapshot(wasOpen ? sessionObservationOptions(sessionId.value ?? undefined) : undefined).then(() => {
+    if (
+      wasOpen &&
+      sid === prevSid &&
+      used === prevUsed &&
+      isRunning === wasRunning &&
+      isCompacting &&
+      !wasCompacting
+    ) {
+      return;
+    }
+    void refreshCtxSnapshot(wasOpen ? sessionObservationOptions(sid ?? undefined) : undefined).then(() => {
       if (ctxCardOpen.value) void nextTick(clampCtxCardToViewport);
     });
   },
@@ -2642,7 +2661,7 @@ watch(
 
 function handleCompactFromCard(): void {
   closeCtxCard();
-  client.compact();
+  emit('command', { cmd: '/compact', attachments: [], preserveDraft: true });
 }
 
 function handleOpenContextDetail(): void {
@@ -3607,7 +3626,7 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
                 @click.stop="toggleCtxCard"
                 @keydown="onCtxCardKeydown"
               >
-                <ContextRing :pct="pct" />
+                <ContextRing :pct="pct" :indeterminate="compacting" />
               </button>
               <span
                 v-else
@@ -3616,7 +3635,7 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
                 tabindex="0"
                 :aria-label="ctxTooltip"
               >
-                <ContextRing :pct="pct" />
+                <ContextRing :pct="pct" :indeterminate="compacting" />
               </span>
             </template>
           </Tooltip>
@@ -3825,7 +3844,8 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
               :ctx-max="status.ctxMax"
               :loading="ctxLoading"
               :error="ctxError"
-              :can-compact="Boolean(sessionId) && !running"
+              :can-compact="canCompactContext"
+              :compact-phase="compactPhase"
               :can-open-detail="canOpenContextDetail"
               show-divider
               @compact="handleCompactFromCard"

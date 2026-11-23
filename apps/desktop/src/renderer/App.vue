@@ -1825,21 +1825,22 @@ watch([client.sendFailureVerdict, isConfirmOpen], ([payload, confirmOpen]) => {
   void actOnGateVerdict(payload.verdict, undefined, payload.sessionId);
 });
 
-async function passAuthGate(text: string, attachments: PromptAttachment[], restoreText?: string, restoreEntries?: AttachmentEntry[], snapshot?: ComposerDocumentSnapshot): Promise<boolean> {
+async function passAuthGate(text: string, attachments: PromptAttachment[], restoreText?: string, restoreEntries?: AttachmentEntry[], snapshot?: ComposerDocumentSnapshot, preserveDraft = false): Promise<boolean> {
   const originSid = client.activeSessionId.value ?? undefined;
   const verdict = await client.ensureChatReady();
   if (verdict === 'ok') return true;
   if (verdict === 'server-auth-required') {
-    restoreDraftAtOrigin(originSid, text, attachments, restoreText, restoreEntries, snapshot);
+    if (!preserveDraft) restoreDraftAtOrigin(originSid, text, attachments, restoreText, restoreEntries, snapshot);
     return false;
   }
-  await actOnGateVerdict(verdict, () =>
-    restoreDraftAtOrigin(originSid, text, attachments, restoreText, restoreEntries, snapshot),
+  await actOnGateVerdict(
+    verdict,
+    preserveDraft ? undefined : () => restoreDraftAtOrigin(originSid, text, attachments, restoreText, restoreEntries, snapshot),
   );
   return false;
 }
 
-async function passWorkspaceGateForCommand(text: string, attachments: PromptAttachment[] = [], restoreText?: string, restoreEntries?: AttachmentEntry[], snapshot?: ComposerDocumentSnapshot): Promise<boolean> {
+async function passWorkspaceGateForCommand(text: string, attachments: PromptAttachment[] = [], restoreText?: string, restoreEntries?: AttachmentEntry[], snapshot?: ComposerDocumentSnapshot, preserveDraft = false): Promise<boolean> {
   if (client.activeSessionId.value || client.activeWorkspaceId.value) return true;
   const pick = await confirm({
     title: t('workspace.requiredTitle'),
@@ -1847,22 +1848,24 @@ async function passWorkspaceGateForCommand(text: string, attachments: PromptAtta
     confirmLabel: t('conversation.addWorkspace'),
     variant: 'primary',
   });
-  conversationPaneRef.value?.loadComposerForEdit(restoreText ?? text, toEditableAttachments(attachments), restoreEntries, snapshot);
+  if (!preserveDraft) {
+    conversationPaneRef.value?.loadComposerForEdit(restoreText ?? text, toEditableAttachments(attachments), restoreEntries, snapshot);
+  }
   if (pick) requestWorkspaceDialog();
   return false;
 }
 
-async function passCommandGates(text: string, attachments: PromptAttachment[] = [], restoreText?: string, restoreEntries?: AttachmentEntry[], snapshot?: ComposerDocumentSnapshot): Promise<boolean> {
+async function passCommandGates(text: string, attachments: PromptAttachment[] = [], restoreText?: string, restoreEntries?: AttachmentEntry[], snapshot?: ComposerDocumentSnapshot, preserveDraft = false): Promise<boolean> {
   const originSid = client.activeSessionId.value;
   const originWsId = client.activeWorkspaceId.value;
-  if (!(await passAuthGate(text, attachments, restoreText, restoreEntries, snapshot))) return false;
-  if (!(await passWorkspaceGateForCommand(text, attachments, restoreText, restoreEntries, snapshot))) return false;
+  if (!(await passAuthGate(text, attachments, restoreText, restoreEntries, snapshot, preserveDraft))) return false;
+  if (!(await passWorkspaceGateForCommand(text, attachments, restoreText, restoreEntries, snapshot, preserveDraft))) return false;
   if (client.activeSessionId.value !== originSid || client.activeWorkspaceId.value !== originWsId) {
-    restoreDraftAtOrigin(originSid ?? undefined, text, attachments, restoreText, restoreEntries, snapshot);
+    if (!preserveDraft) restoreDraftAtOrigin(originSid ?? undefined, text, attachments, restoreText, restoreEntries, snapshot);
     return false;
   }
   if (!useWorkspaceTrust().gateSubmitForTrust()) {
-    restoreDraftAtOrigin(originSid ?? undefined, text, attachments, restoreText, restoreEntries, snapshot);
+    if (!preserveDraft) restoreDraftAtOrigin(originSid ?? undefined, text, attachments, restoreText, restoreEntries, snapshot);
     return false;
   }
   return true;
@@ -1887,20 +1890,22 @@ function enableSwarmMode(): void {
   if (!client.swarmMode.value) client.toggleSwarmMode();
 }
 
-async function handleCommand(payload: { cmd: string; attachments: PromptAttachment[]; restoreText?: string; skillName?: string; skillPath?: string; restoreEntries?: AttachmentEntry[]; snapshot?: ComposerDocumentSnapshot; editText?: string; delivery?: 'steer' | 'queue' }): Promise<void> {
-  const { cmd, attachments, restoreText, restoreEntries, snapshot } = payload;
+async function handleCommand(payload: { cmd: string; attachments: PromptAttachment[]; restoreText?: string; skillName?: string; skillPath?: string; restoreEntries?: AttachmentEntry[]; snapshot?: ComposerDocumentSnapshot; editText?: string; delivery?: 'steer' | 'queue'; preserveDraft?: boolean }): Promise<void> {
+  const { cmd, attachments, restoreText, restoreEntries, snapshot, preserveDraft } = payload;
   if (cmd === '/compact' || cmd.startsWith('/compact ')) {
-    if (!(await passCommandGates(cmd, [], restoreText, restoreEntries, snapshot))) return;
+    if (!(await passCommandGates(cmd, [], restoreText, restoreEntries, snapshot, preserveDraft))) return;
     const result = client.compact(commandArgumentText(cmd, snapshot) || undefined);
     if (result === undefined) {
-      conversationPaneRef.value?.loadComposerForEdit(restoreText ?? cmd, toEditableAttachments(attachments), restoreEntries, snapshot);
+      if (!preserveDraft) {
+        conversationPaneRef.value?.loadComposerForEdit(restoreText ?? cmd, toEditableAttachments(attachments), restoreEntries, snapshot);
+      }
       client.notify({ severity: 'warning', title: t('commands.compact.requiresSession') });
       return;
     }
-    if (result === 'queued') {
-      client.notify({ severity: 'info', title: t('commands.compactQueue.queued') });
-    } else if (result === 'duplicate' || result === 'compacting') {
-      conversationPaneRef.value?.loadComposerForEdit(restoreText ?? cmd, toEditableAttachments(attachments), restoreEntries, snapshot);
+    if (result === 'duplicate' || result === 'compacting') {
+      if (!preserveDraft) {
+        conversationPaneRef.value?.loadComposerForEdit(restoreText ?? cmd, toEditableAttachments(attachments), restoreEntries, snapshot);
+      }
       client.notify({
         severity: 'warning',
         title: t(result === 'duplicate' ? 'commands.compactQueue.alreadyQueued' : 'commands.compactQueue.compacting'),

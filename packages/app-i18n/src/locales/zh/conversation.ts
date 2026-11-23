@@ -28,7 +28,7 @@ export default {
   compacting: '正在压缩上下文…',
   compactedPlain: '上下文已压缩',
   compactedAuto: '已自动压缩上下文',
-  compactedTokens: '（{before} → {after} tokens）',
+  compactedTokens: '{before} → {after} tokens',
   viewSummary: '查看摘要',
   undo: '撤销',
   undoTooltip: '撤回消息',
