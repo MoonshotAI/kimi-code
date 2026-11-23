@@ -71,7 +71,6 @@ interface CreationPlan {
   readonly path: string;
   readonly commit: string;
   readonly branch: string | undefined;
-  readonly branchExisted: boolean;
   readonly sourceDirty: boolean;
 }
 
@@ -160,10 +159,15 @@ export class WorktreeService implements IWorktreeService {
     throwIfCancelled(signal);
     await this.claimDirectory(plan.path);
     let copiedFiles: readonly string[];
+    let branchCreated = false;
     try {
       await this.addWorktree(plan, signal, (text) => {
         emit({ type: 'output', step: 'add', text });
       });
+      if (plan.branch !== undefined) {
+        await this.attachNewBranch(plan, signal);
+        branchCreated = true;
+      }
       emit({ type: 'step', step: 'add', status: 'finished' });
 
       emit({ type: 'step', step: 'include', status: 'started' });
@@ -171,7 +175,7 @@ export class WorktreeService implements IWorktreeService {
       throwIfCancelled(signal);
       emit({ type: 'step', step: 'include', status: 'finished' });
     } catch (error) {
-      await this.discardWorktree(plan).catch(() => {});
+      await this.discardWorktree(plan, branchCreated).catch(() => {});
       throw error;
     }
 
@@ -293,10 +297,6 @@ export class WorktreeService implements IWorktreeService {
     if (await taken(name)) throw alreadyExists(path);
 
     const branch = nonEmpty(input.branch);
-    const existingBranch =
-      branch === undefined
-        ? undefined
-        : await this.git(['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`], sourceRoot, { signal });
     const status = await this.git(['status', '--porcelain=v1', '-z'], sourceRoot, { signal });
     if (status.exitCode !== 0) throw gitFailed(`Could not read the status of ${sourceRoot}.`, status);
     return {
@@ -307,7 +307,6 @@ export class WorktreeService implements IWorktreeService {
       path,
       commit,
       branch,
-      branchExisted: existingBranch?.exitCode === 0,
       sourceDirty: status.stdout !== '',
     };
   }
@@ -348,13 +347,30 @@ export class WorktreeService implements IWorktreeService {
     signal: AbortSignal | undefined,
     onOutput: (text: string) => void,
   ): Promise<void> {
-    const target = plan.branch === undefined ? ['--detach'] : ['-b', plan.branch];
-    const added = await this.git(['worktree', 'add', ...target, plan.path, plan.commit], plan.sourceRoot, {
+    const added = await this.git(['worktree', 'add', '--detach', plan.path, plan.commit], plan.sourceRoot, {
       signal,
       onOutput,
       untimed: true,
     });
     if (added.exitCode !== 0) throw gitFailed(`git worktree add failed for ${plan.path}.`, added);
+  }
+
+  private async attachNewBranch(plan: CreationPlan, signal: AbortSignal | undefined): Promise<void> {
+    const branch = plan.branch!;
+    const ref = `refs/heads/${branch}`;
+    const valid = await this.git(['check-ref-format', '--branch', branch], plan.sourceRoot, { signal });
+    if (valid.exitCode !== 0) throw gitFailed(`Invalid branch name ${branch}.`, valid);
+    const created = await this.git(['update-ref', ref, plan.commit, ''], plan.sourceRoot, { signal });
+    if (created.exitCode !== 0) throw gitFailed(`Could not create branch ${branch}.`, created);
+    try {
+      const attached = await this.git(['symbolic-ref', 'HEAD', ref], plan.path, { signal });
+      if (attached.exitCode !== 0) {
+        throw gitFailed(`Could not switch worktree ${plan.path} to branch ${branch}.`, attached);
+      }
+    } catch (error) {
+      await this.git(['update-ref', '-d', ref, plan.commit], plan.sourceRoot).catch(() => {});
+      throw error;
+    }
   }
 
   private async copyIncludes(plan: CreationPlan, signal: AbortSignal | undefined): Promise<readonly string[]> {
@@ -386,25 +402,12 @@ export class WorktreeService implements IWorktreeService {
     }
   }
 
-  private async discardWorktree(plan: CreationPlan): Promise<void> {
-    const ownsBranch =
-      plan.branch !== undefined && !plan.branchExisted && (await this.worktreeOwnsBranch(plan));
+  private async discardWorktree(plan: CreationPlan, branchCreated: boolean): Promise<void> {
     await this.git(['worktree', 'remove', '--force', '--force', plan.path], plan.sourceRoot);
     await this.fs.remove(plan.path).catch(() => {});
-    if (ownsBranch && plan.branch !== undefined) {
-      await this.git(['branch', '-D', plan.branch], plan.sourceRoot);
+    if (branchCreated && plan.branch !== undefined) {
+      await this.git(['update-ref', '-d', `refs/heads/${plan.branch}`, plan.commit], plan.sourceRoot);
     }
-  }
-
-  private async worktreeOwnsBranch(plan: CreationPlan): Promise<boolean> {
-    const listed = await this.git(['worktree', 'list', '--porcelain'], plan.sourceRoot);
-    if (listed.exitCode !== 0) return false;
-    const wanted = await canonicalPath(this.fs, plan.path);
-    for (const entry of parseWorktreeList(listed.stdout)) {
-      if (entry.branch !== plan.branch) continue;
-      if (sameDir(await canonicalPath(this.fs, entry.path), wanted)) return true;
-    }
-    return false;
   }
 
   private async readRepository(cwd: string, repoRoot: string, signal?: AbortSignal): Promise<Repository> {
@@ -598,14 +601,19 @@ export class WorktreeService implements IWorktreeService {
 async function waitForProcess(proc: IHostProcess, options: RunOptions): Promise<RunResult> {
   let stdout = '';
   let stderr = '';
+  const emitOutput = (text: string): void => {
+    try {
+      options.onOutput?.(text);
+    } catch {}
+  };
   const output = Promise.all([
     drain(proc.stdout, (text) => {
       stdout += text;
-      options.onOutput?.(text);
+      emitOutput(text);
     }),
     drain(proc.stderr, (text) => {
       stderr += text;
-      options.onOutput?.(text);
+      emitOutput(text);
     }),
   ]).catch(() => {});
   proc.stdin.on('error', () => {});
