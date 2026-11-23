@@ -838,10 +838,10 @@ export interface AppConfig {
   raw?: Record<string, unknown>;
 }
 
-export interface AppGlobalAgentsMd {
+export interface EditableTextFile {
   path: string;
   content: string;
-  exists: boolean;
+  revision: string | null;
 }
 
 export interface AppSkill {
@@ -1003,6 +1003,7 @@ export interface AppSessionWarning {
 export interface MediaBlobOptions {
   prefixBytes?: number;
   signal?: AbortSignal;
+  cache?: RequestCache;
 }
 
 export interface ReadRequestOptions {
@@ -1173,8 +1174,8 @@ export interface KimiWebApi {
 
   getConfig(): Promise<AppConfig>;
   setConfig(patch: Partial<AppConfig>): Promise<AppConfig>;
-  getGlobalAgentsMd(): Promise<AppGlobalAgentsMd>;
-  writeGlobalAgentsMd(content: string): Promise<AppGlobalAgentsMd>;
+  readHostTextFile(path: string): Promise<EditableTextFile>;
+  writeHostTextFile(path: string, content: string, revision: string | null): Promise<{ revision: string }>;
 
   getAuth(): Promise<AuthResult>;
   startOAuthLogin(region?: OAuthRegion): Promise<OAuthLoginStartResult>;

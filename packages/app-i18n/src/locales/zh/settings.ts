@@ -286,7 +286,6 @@ export default {
   globalAgentsMdTitle: '全局 AGENTS.md',
   globalAgentsMdHint: '编辑全局的 AGENTS.md 文件，例如代码仓库的说明，你的开发规范',
   globalAgentsMdDescription: '编辑全局的 AGENTS.md 文件，例如代码仓库的说明，你的开发规范',
-  globalAgentsMdFilePath: '文件路径',
   globalAgentsMdLoading: '正在读取…',
   globalAgentsMdPlaceholder: '输入全局指令',
   globalAgentsMdSave: '保存',

@@ -200,14 +200,9 @@ Global Kimi-specific instructions can live at `$KIMI_CODE_HOME/AGENTS.md` (defau
 
 In the wide Desktop or Web layout, open **Settings → Agent & Sessions → Custom instructions → Global AGENTS.md** to edit the file on the connected server.
 
-API clients can use the same `/api/v1/global-agents-md` endpoint:
+API clients can get the server's `home_dir` from `GET /api/v1/meta`, then read `AGENTS.md` with `GET /api/v1/fs:content?path=<absolute-path>`. The response contains the raw file bytes. A missing file returns `40409` (HTTP 404).
 
-| Method | Request | Result |
-| --- | --- | --- |
-| `GET` | No body | `data` contains `path`, `content`, and `exists`. A missing file returns `content: ""` and `exists: false`. |
-| `PUT` | JSON with a required `content` string | Replaces the entire file, preserves UTF-8 text and whitespace, and creates the directory and file if needed. Returns the same fields with `exists: true`. An empty string empties the file without deleting it. |
-
-Check the response envelope's `code`: `0` means success, `40001` means invalid input, `40411` means permission denied, and `40906` means the target is a directory.
+To save, send the complete UTF-8 text as `text/plain` to `PUT /api/v1/fs:content` with the same `path` and a `revision` query parameter: the lowercase SHA-256 of the bytes you read, or `missing` to create a new file. Success returns `data.revision` for the next save. An empty body clears the file; a stale revision returns HTTP 412. Only the connected server's global `AGENTS.md` is writable. Other paths, symbolic links, and other environments are not allowed.
 
 ## Storage Location in the Session Directory
 

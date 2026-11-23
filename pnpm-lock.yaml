@@ -1010,6 +1010,9 @@ importers:
       '@fontsource-variable/schibsted-grotesk':
         specifier: ^5.3.0
         version: 5.3.0
+      '@moonshot-ai/core':
+        specifier: workspace:^
+        version: link:../core
       diff:
         specifier: 9.0.0
         version: 9.0.0

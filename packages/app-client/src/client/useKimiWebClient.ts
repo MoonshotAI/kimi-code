@@ -3620,8 +3620,9 @@ export function useKimiWebClient() {
     config,
     loadConfig: configStore().loadConfig,
     updateConfig: configStore().updateConfig,
-    getGlobalAgentsMd: () => getKimiWebApi().getGlobalAgentsMd(),
-    writeGlobalAgentsMd: (content: string) => getKimiWebApi().writeGlobalAgentsMd(content),
+    loadServerHome: async () => (await getKimiWebApi().getMeta()).homeDir,
+    readHostTextFile: (path: string) => getKimiWebApi().readHostTextFile(path),
+    writeHostTextFile: (path: string, content: string, revision: string | null) => getKimiWebApi().writeHostTextFile(path, content, revision),
 
     checkAuth: () => authStore().checkAuth(),
     probeManagedMembership: () => authStore().probeMembership(),

@@ -204,6 +204,7 @@ export class DaemonHttpClient {
       response = await fetch(url, {
         method: 'GET',
         headers,
+        cache: opts?.cache,
         signal: opts?.signal ? combinedSignal(REQUEST_TIMEOUT_MS, opts.signal) : timeoutSignal(),
       });
     } catch (err) {
@@ -724,6 +725,10 @@ export class DaemonHttpClient {
     return this.request<T>('PUT', path, body);
   }
 
+  async putText<T>(path: string, query: RestQuery, content: string): Promise<T> {
+    return this.request<T>('PUT', path, content, query, {}, 'text');
+  }
+
   async delete<T>(path: string): Promise<T> {
     return this.request<T>('DELETE', path);
   }
@@ -734,6 +739,7 @@ export class DaemonHttpClient {
     body?: unknown,
     query?: RestQuery,
     opts: DaemonRequestOptions = {},
+    format: 'json' | 'text' = 'json',
   ): Promise<T> {
     const allowCodes = opts.allowCodes ?? [];
     const timeoutMs = opts.timeoutMs ?? REQUEST_TIMEOUT_MS;
@@ -761,18 +767,18 @@ export class DaemonHttpClient {
       };
       this.addClientHeaders(headers);
       if (body !== undefined) {
-        headers['Content-Type'] = 'application/json; charset=utf-8';
+        headers['Content-Type'] = format === 'text' ? 'text/plain; charset=utf-8' : 'application/json; charset=utf-8';
       }
 
       const startedAt = Date.now();
-      this.tracer.restRequest?.({ method, path, url, requestId, headers: traceRequestHeaders(headers), body, queueMs });
+      this.tracer.restRequest?.({ method, path, url, requestId, headers: traceRequestHeaders(headers), body: format === 'text' ? undefined : body, queueMs });
 
       let response: Response;
       try {
         response = await fetch(url, {
           method,
           headers,
-          body: body !== undefined ? JSON.stringify(body) : undefined,
+          body: format === 'text' ? String(body) : body !== undefined ? JSON.stringify(body) : undefined,
           signal: callerSignal !== undefined ? combinedSignal(timeoutMs, callerSignal) : timeoutSignal(timeoutMs),
         });
       } catch (err) {

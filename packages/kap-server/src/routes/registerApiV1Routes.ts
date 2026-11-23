@@ -1,3 +1,4 @@
+import { resolve } from 'node:path';
 import { IBootstrapService, IConfigService, ITelemetryService, type Scope } from '@moonshot-ai/agent-core-v2';
 import { FiberState } from '@moonshot-ai/agent-core-v2/_base/di/fiber';
 import { IFeatureManager } from '@moonshot-ai/agent-core-v2/app/feature/featureManager';
@@ -17,7 +18,6 @@ import { registerContextRoutes } from './context';
 import { registerFileHistoryRoutes } from './fileHistory';
 import { registerFilesRoutes } from './files';
 import { registerFsRoutes } from './fs';
-import { registerGlobalAgentsMdRoutes } from './globalAgentsMd';
 import { registerInteractionsRoutes } from './interactions';
 import { registerDebugRoutes } from '../transport/registerDebugRoutes';
 import { registerMetaRoute } from './meta';
@@ -95,7 +95,7 @@ export async function registerApiV1Routes(
         product: opts.hostIdentity.productName,
         serverId: opts.serverId ?? ulid(),
         startedAt: new Date().toISOString(),
-        homeDir: core.accessor.get(IBootstrapService).homeDir,
+        homeDir: resolve(core.accessor.get(IBootstrapService).homeDir),
         dangerousBypassAuth: opts.dangerousBypassAuth === true,
         webTitle: opts.webTitle,
         getExperimentalFlags: async () => {
@@ -122,7 +122,6 @@ export async function registerApiV1Routes(
         opts.remoteControl.homeDir,
       );
       registerConfigRoutes(apiV1 as unknown as Parameters<typeof registerConfigRoutes>[0], core);
-      registerGlobalAgentsMdRoutes(apiV1 as unknown as Parameters<typeof registerGlobalAgentsMdRoutes>[0], core);
       registerClientConfigsRoutes(
         apiV1 as unknown as Parameters<typeof registerClientConfigsRoutes>[0],
         core,

@@ -170,30 +170,29 @@ describe('DaemonKimiWebApi.getMeta experimental_flags', () => {
   });
 });
 
+describe('host text editing', () => {
+  const path = '/custom home/AGENTS.md';
+  const content = '\uFEFF  保留空白\r\n';
 
-describe('DaemonKimiWebApi global AGENTS.md', () => {
-  it('GETs the global instruction snapshot', async () => {
-    const snapshot = { path: '/home/.kimi-code/AGENTS.md', content: '# Instructions\n', exists: true };
-    const fetchMock = vi.fn().mockResolvedValue(envelope(snapshot));
+  it('reads exact UTF-8 bytes and sends plain text with the observed revision', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(new Response(content)).mockResolvedValueOnce(envelope({ revision: 'new' }));
     vi.stubGlobal('fetch', fetchMock);
-
-    await expect(makeApi().getGlobalAgentsMd()).resolves.toEqual(snapshot);
-
-    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-    expect(url).toBe('http://test.local/api/v1/global-agents-md');
-    expect(init.method).toBe('GET');
+    const api = makeApi();
+    const snapshot = await api.readHostTextFile(path);
+    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({ cache: 'no-store' });
+    expect(snapshot).toMatchObject({ path, content, revision: expect.stringMatching(/^[a-f0-9]{64}$/) });
+    await expect(api.writeHostTextFile(path, content, snapshot.revision)).resolves.toEqual({ revision: 'new' });
+    const [url, init] = fetchMock.mock.calls[1] as [string, RequestInit];
+    expect(new URL(url).pathname).toBe('/api/v1/fs:content');
+    expect(new URL(url).searchParams.get('path')).toBe(path);
+    expect(new URL(url).searchParams.get('revision')).toBe(snapshot.revision);
+    expect(init).toMatchObject({ method: 'PUT', body: content, headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
   });
 
-  it('PUTs exact content and returns the saved snapshot', async () => {
-    const snapshot = { path: '/home/.kimi-code/AGENTS.md', content: '  保留空白\n', exists: true };
-    const fetchMock = vi.fn().mockResolvedValue(envelope(snapshot));
-    vi.stubGlobal('fetch', fetchMock);
-
-    await expect(makeApi().writeGlobalAgentsMd(snapshot.content)).resolves.toEqual(snapshot);
-
-    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-    expect(url).toBe('http://test.local/api/v1/global-agents-md');
-    expect(init.method).toBe('PUT');
-    expect(JSON.parse(init.body as string)).toEqual({ content: snapshot.content });
+  it('only treats FS_PATH_NOT_FOUND as a missing file', async () => {
+    const response = (code: number) => new Response(JSON.stringify({ code, msg: 'failed', data: null }), { status: 404 });
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(response(40409)).mockResolvedValueOnce(response(40411)));
+    await expect(makeApi().readHostTextFile(path)).resolves.toEqual({ path, content: '', revision: null });
+    await expect(makeApi().readHostTextFile(path)).rejects.toMatchObject({ code: 40411 });
   });
 });

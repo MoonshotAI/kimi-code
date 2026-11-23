@@ -206,14 +206,9 @@ ${plugin_sections}
 
 在桌面端或 Web 的宽屏布局中，打开「设置 → 智能体与会话 → 自定义指令 → 全局 AGENTS.md」，即可编辑当前连接服务端上的文件。
 
-API 客户端可以使用同一个 `/api/v1/global-agents-md` 接口：
+API 客户端可以从 `GET /api/v1/meta` 获取服务端的 `home_dir`，再通过 `GET /api/v1/fs:content?path=<绝对路径>` 读取该目录下的 `AGENTS.md`。响应是文件的原始字节；文件不存在时返回 `40409`（HTTP 404）。
 
-| 方法 | 请求 | 结果 |
-| --- | --- | --- |
-| `GET` | 无请求体 | `data` 包含 `path`、`content` 和 `exists`。文件不存在时返回 `content: ""` 和 `exists: false`。 |
-| `PUT` | JSON 对象，必填字符串字段 `content` | 整体替换文件，保留 UTF-8 文本及空白，必要时创建目录和文件。返回相同字段，其中 `exists: true`。传入空字符串会清空文件，不会删除它。 |
-
-检查响应中的 `code`：`0` 表示成功，`40001` 表示输入无效，`40411` 表示权限不足，`40906` 表示目标路径是目录。
+保存时，向 `PUT /api/v1/fs:content` 发送 `text/plain` 格式的完整 UTF-8 文本，查询参数传入相同的 `path` 和 `revision`。更新已有文件时，`revision` 是读取到的原始字节的小写 SHA-256；首次创建时传 `missing`。成功后用返回的 `data.revision` 继续保存。空正文会清空文件；版本过期返回 HTTP 412。只允许写入当前服务端的全局 `AGENTS.md`，不允许写入其他路径、符号链接或其他环境。
 
 ## 会话目录中的存储位置
 

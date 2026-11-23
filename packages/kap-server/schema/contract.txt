@@ -3338,6 +3338,40 @@ POST /api/v1/workspaces/{workspace_id}/untrust response 200<code=0>: shape 45693
 POST /api/v1/workspaces/{workspace_id}/untrust response 200<code=40410>: shape 3fb7704d
 POST /api/v1/workspaces/{workspace_id}/untrust: operation
 POST /api/v1/workspaces: operation
+PUT /api/v1/fs:content param query:environment_id: string minLength=1 optional
+PUT /api/v1/fs:content param query:path: string minLength=1
+PUT /api/v1/fs:content param query:revision: anyOf
+PUT /api/v1/fs:content param query:revision<#0>: enum "missing"
+PUT /api/v1/fs:content param query:revision<#1>: string pattern="^[0-9a-f]{64}$"
+PUT /api/v1/fs:content request: string
+PUT /api/v1/fs:content response 200: oneOf
+PUT /api/v1/fs:content response 200<code=0>.code: enum 0
+PUT /api/v1/fs:content response 200<code=0>.data.revision: string
+PUT /api/v1/fs:content response 200<code=0>.data: object closed
+PUT /api/v1/fs:content response 200<code=0>.details: any optional
+PUT /api/v1/fs:content response 200<code=0>.msg: string
+PUT /api/v1/fs:content response 200<code=0>.request_id: string
+PUT /api/v1/fs:content response 200<code=0>: object closed
+PUT /api/v1/fs:content response 200<code=40001>: shape a642160a
+PUT /api/v1/fs:content response 200<code=40301>.code: enum 40301
+PUT /api/v1/fs:content response 200<code=40301>.data: enum null nullable
+PUT /api/v1/fs:content response 200<code=40301>.details: any optional
+PUT /api/v1/fs:content response 200<code=40301>.msg: string
+PUT /api/v1/fs:content response 200<code=40301>.request_id: string
+PUT /api/v1/fs:content response 200<code=40301>: object closed
+PUT /api/v1/fs:content response 200<code=41201>.code: enum 41201
+PUT /api/v1/fs:content response 200<code=41201>.data: enum null nullable
+PUT /api/v1/fs:content response 200<code=41201>.details: any optional
+PUT /api/v1/fs:content response 200<code=41201>.msg: string
+PUT /api/v1/fs:content response 200<code=41201>.request_id: string
+PUT /api/v1/fs:content response 200<code=41201>: object closed
+PUT /api/v1/fs:content response 200<code=41302>.code: enum 41302
+PUT /api/v1/fs:content response 200<code=41302>.data: enum null nullable
+PUT /api/v1/fs:content response 200<code=41302>.details: any optional
+PUT /api/v1/fs:content response 200<code=41302>.msg: string
+PUT /api/v1/fs:content response 200<code=41302>.request_id: string
+PUT /api/v1/fs:content response 200<code=41302>: object closed
+PUT /api/v1/fs:content: operation
 PUT /api/v1/hosts/{id} param path:id: string pattern="^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"
 PUT /api/v1/hosts/{id} request.enabled: boolean optional
 PUT /api/v1/hosts/{id} request.host: string minLength=1

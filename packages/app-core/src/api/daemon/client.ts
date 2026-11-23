@@ -1,4 +1,5 @@
 
+import { sha256Hex } from '@moonshot-ai/core/utils/hash';
 import { buildRestUrl, buildWsUrl } from '../config';
 import { noopTracer } from '../../contracts';
 import type { ClientIdentity, CredentialStore, Tracer } from '../../contracts';
@@ -6,7 +7,7 @@ import type {
   AddProviderInput,
   AppCatalogProvider,
   AppConfig,
-  AppGlobalAgentsMd,
+  EditableTextFile,
   AppHost,
   AppHostConnectFailure,
   AppHostDefinition,
@@ -1846,12 +1847,23 @@ export class DaemonKimiWebApi implements KimiWebApi {
     return toAppConfig(data);
   }
 
-  async getGlobalAgentsMd(): Promise<AppGlobalAgentsMd> {
-    return await this.http.get<AppGlobalAgentsMd>('/global-agents-md');
+  async readHostTextFile(path: string): Promise<EditableTextFile> {
+    let blob: Blob;
+    try {
+      blob = await this.http.getBlob('/fs:content', { path }, { cache: 'no-store', maxBytes: HOST_READ_MAX_BYTES });
+    } catch (error) {
+      if (isDaemonApiError(error) && error.code === 40409) return { path, content: '', revision: null };
+      throw error;
+    }
+    if (blob.size > HOST_READ_MAX_BYTES) throw new FileTooLargeError({ size: blob.size, limit: HOST_READ_MAX_BYTES });
+    const bytes = new Uint8Array(await blob.arrayBuffer());
+    const content = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes);
+    if (content.includes('\0')) throw new Error('Cannot edit a binary file as text');
+    return { path, content, revision: sha256Hex(bytes) };
   }
 
-  async writeGlobalAgentsMd(content: string): Promise<AppGlobalAgentsMd> {
-    return await this.http.put<AppGlobalAgentsMd>('/global-agents-md', { content });
+  writeHostTextFile(path: string, content: string, revision: string | null): Promise<{ revision: string }> {
+    return this.http.putText('/fs:content', { path, revision: revision ?? 'missing' }, content);
   }
 
   async getAuth(): Promise<AuthResult> {

@@ -2,7 +2,8 @@
 import './settings-row-label.css';
 import { computed, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { useKimiWebClient } from '@moonshot-ai/app-client/client';
+import { toast, useKimiWebClient } from '@moonshot-ai/app-client/client';
+import { resolveLocalPath } from '@moonshot-ai/app-core/lib';
 import { useConfirmDialog } from '@moonshot-ai/app-client/composables';
 import { Button, Icon, Spinner, Textarea } from '@moonshot-ai/app-ui';
 import SettingsSubpage from './SettingsSubpage.vue';
@@ -21,7 +22,7 @@ const open = computed(() => page.page.value !== null);
 const draft = ref('');
 const savedContent = ref('');
 const filePath = ref('');
-const fileExists = ref(false);
+const revision = ref<string | null>(null);
 const loading = ref(false);
 const saving = ref(false);
 const loadError = ref('');
@@ -31,7 +32,7 @@ let operationGeneration = 0;
 const dirty = computed(() => !loading.value && loadError.value === '' && draft.value !== savedContent.value);
 const statusText = computed(() => {
   if (dirty.value) return t('settings.globalAgentsMdUnsaved');
-  if (!fileExists.value && !loading.value && loadError.value === '') return t('settings.globalAgentsMdCreateHint');
+  if (revision.value === null && !loading.value && loadError.value === '') return t('settings.globalAgentsMdCreateHint');
   return '';
 });
 
@@ -59,7 +60,7 @@ function reset(): void {
   draft.value = '';
   savedContent.value = '';
   filePath.value = '';
-  fileExists.value = false;
+  revision.value = null;
   loading.value = false;
   saving.value = false;
   loadError.value = '';
@@ -73,12 +74,14 @@ async function load(): Promise<void> {
   loadError.value = '';
   saveError.value = '';
   try {
-    const result = await client.getGlobalAgentsMd();
+    const home = await client.loadServerHome();
+    if (generation !== operationGeneration) return;
+    const result = await client.readHostTextFile(resolveLocalPath(home, 'AGENTS.md'));
     if (generation !== operationGeneration) return;
     draft.value = result.content;
     savedContent.value = result.content;
     filePath.value = result.path;
-    fileExists.value = result.exists;
+    revision.value = result.revision;
   } catch (error) {
     if (generation === operationGeneration) loadError.value = errorMessage(error);
   } finally {
@@ -111,14 +114,12 @@ async function onSave(): Promise<void> {
   saving.value = true;
   saveError.value = '';
   try {
-    const result = await client.writeGlobalAgentsMd(content);
+    const result = await client.writeHostTextFile(filePath.value, content, revision.value);
     if (generation !== operationGeneration) return;
-    savedContent.value = result.content;
-    filePath.value = result.path;
-    fileExists.value = result.exists;
+    savedContent.value = content;
+    revision.value = result.revision;
     if (draft.value === content) {
-      draft.value = result.content;
-      client.notify({ severity: 'success', title: t('settings.globalAgentsMdSaved') });
+      toast({ layout: 'bar', mode: 'replace', variant: 'success', title: t('settings.globalAgentsMdSaved') });
     }
   } catch (error) {
     if (generation === operationGeneration) saveError.value = errorMessage(error);
@@ -162,11 +163,6 @@ defineExpose({ confirmDiscard, reset });
     :description="t('settings.globalAgentsMdDescription')"
     @back="onBack"
   >
-    <div class="global-agents-md-path">
-      <span class="global-agents-md-path-label">{{ t('settings.globalAgentsMdFilePath') }}</span>
-      <code v-if="filePath" :title="filePath" dir="ltr">{{ filePath }}</code>
-    </div>
-
     <div v-if="loading" class="global-agents-md-loading" role="status">
       <Spinner size="sm" />
       <span>{{ t('settings.globalAgentsMdLoading') }}</span>
@@ -182,7 +178,7 @@ defineExpose({ confirmDiscard, reset });
       <Textarea
         :model-value="draft"
         class="global-agents-md-editor"
-        :rows="10"
+        :rows="12"
         :aria-label="t('settings.globalAgentsMdTitle')"
         :placeholder="t('settings.globalAgentsMdPlaceholder')"
         autocomplete="off"
@@ -242,31 +238,12 @@ defineExpose({ confirmDiscard, reset });
   font-weight: var(--weight-regular);
   line-height: var(--leading-tight);
 }
-.global-agents-md-path {
-  display: flex;
-  align-items: baseline;
-  gap: var(--space-2);
-  min-width: 0;
-  margin-bottom: var(--space-3);
-  color: var(--color-text-faint);
-  font-family: var(--font-ui);
-  font-size: var(--text-xs);
-}
-.global-agents-md-path-label { flex: none; }
-.global-agents-md-path code {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--color-text-muted);
-  font-family: var(--font-mono);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 .global-agents-md-loading {
   display: flex;
   align-items: center;
   justify-content: center;
   gap: var(--space-2);
-  min-height: 240px;
+  min-height: 280px;
   color: var(--color-text-muted);
   font-family: var(--font-ui);
   font-size: var(--text-sm);
@@ -292,7 +269,7 @@ defineExpose({ confirmDiscard, reset });
 .global-agents-md-load-error p.global-agents-md-error-detail,
 .global-agents-md-save-error p.global-agents-md-error-detail { margin-top: var(--space-1); }
 .global-agents-md-editor {
-  min-height: 240px;
+  min-height: 280px;
   font-family: var(--font-mono);
   font-size: var(--text-sm);
   line-height: var(--leading-relaxed);
@@ -316,6 +293,6 @@ defineExpose({ confirmDiscard, reset });
   .global-agents-md-row {
     align-items: flex-start;
   }
-  .global-agents-md-editor { min-height: 200px; }
+  .global-agents-md-editor { min-height: 240px; }
 }
 </style>

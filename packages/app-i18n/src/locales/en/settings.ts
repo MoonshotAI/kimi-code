@@ -286,7 +286,6 @@ export default {
   globalAgentsMdTitle: 'Global AGENTS.md',
   globalAgentsMdHint: 'Edit the global AGENTS.md file, such as repository instructions and your development conventions',
   globalAgentsMdDescription: 'Edit the global AGENTS.md file, such as repository instructions and your development conventions',
-  globalAgentsMdFilePath: 'File path',
   globalAgentsMdLoading: 'Loading…',
   globalAgentsMdPlaceholder: 'Enter global instructions',
   globalAgentsMdSave: 'Save',

@@ -5,18 +5,19 @@ import { createKimiI18n } from '@moonshot-ai/app-i18n';
 import { IconResolverKey } from '@moonshot-ai/app-ui';
 
 const fakes = vi.hoisted(() => ({
-  getGlobalAgentsMd: vi.fn(),
-  writeGlobalAgentsMd: vi.fn(),
-  notify: vi.fn(),
+  readHostTextFile: vi.fn(),
+  writeHostTextFile: vi.fn(),
+  toast: vi.fn(),
   confirm: vi.fn(),
 }));
 
 vi.mock('@moonshot-ai/app-client/client', () => ({
   useKimiWebClient: () => ({
-    getGlobalAgentsMd: fakes.getGlobalAgentsMd,
-    writeGlobalAgentsMd: fakes.writeGlobalAgentsMd,
-    notify: fakes.notify,
+    loadServerHome: async () => '/home/.kimi-code',
+    readHostTextFile: fakes.readHostTextFile,
+    writeHostTextFile: fakes.writeHostTextFile,
   }),
+  toast: fakes.toast,
 }));
 
 vi.mock('@moonshot-ai/app-client/composables', () => ({
@@ -33,20 +34,16 @@ beforeEach(() => {
     observe(): void {}
     disconnect(): void {}
   });
-  fakes.getGlobalAgentsMd.mockReset();
-  fakes.writeGlobalAgentsMd.mockReset();
-  fakes.notify.mockReset();
+  fakes.readHostTextFile.mockReset();
+  fakes.writeHostTextFile.mockReset();
+  fakes.toast.mockReset();
   fakes.confirm.mockReset();
-  fakes.getGlobalAgentsMd.mockResolvedValue({
+  fakes.readHostTextFile.mockResolvedValue({
     path: '/home/.kimi-code/AGENTS.md',
     content: '# Existing instructions\n',
-    exists: true,
+    revision: 'original',
   });
-  fakes.writeGlobalAgentsMd.mockImplementation(async (content: string) => ({
-    path: '/home/.kimi-code/AGENTS.md',
-    content,
-    exists: true,
-  }));
+  fakes.writeHostTextFile.mockResolvedValue({ revision: 'updated' });
   fakes.confirm.mockResolvedValue(true);
 });
 
@@ -98,13 +95,13 @@ function edit(context: Awaited<ReturnType<typeof mountSetting>>, value: string):
 describe('global AGENTS.md setting', () => {
   it('loads the current file when opened and saves exact edits', async () => {
     const context = await mountSetting();
-    expect(fakes.getGlobalAgentsMd).not.toHaveBeenCalled();
+    expect(fakes.readHostTextFile).not.toHaveBeenCalled();
 
     await openEditor(context);
 
-    expect(fakes.getGlobalAgentsMd).toHaveBeenCalledOnce();
+    expect(fakes.readHostTextFile).toHaveBeenCalledOnce();
+    expect(fakes.readHostTextFile).toHaveBeenCalledWith('/home/.kimi-code/AGENTS.md');
     expect(context.editor()?.value).toBe('# Existing instructions\n');
-    expect(context.page()?.textContent).toContain('/home/.kimi-code/AGENTS.md');
     expect(context.save().disabled).toBe(true);
 
     edit(context, '  Updated instructions\n\n');
@@ -113,18 +110,18 @@ describe('global AGENTS.md setting', () => {
     context.save().click();
     await flush();
 
-    expect(fakes.writeGlobalAgentsMd).toHaveBeenCalledWith('  Updated instructions\n\n');
+    expect(fakes.writeHostTextFile).toHaveBeenCalledWith('/home/.kimi-code/AGENTS.md', '  Updated instructions\n\n', 'original');
     expect(context.editor()?.value).toBe('  Updated instructions\n\n');
     expect(context.save().disabled).toBe(true);
-    expect(fakes.notify).toHaveBeenCalledWith({ severity: 'success', title: 'Saved' });
+    expect(fakes.toast).toHaveBeenCalledWith({ layout: 'bar', mode: 'replace', variant: 'success', title: 'Saved' });
     expect(context.page()?.textContent).not.toContain('Saved');
   });
 
   it('offers to create a missing file on first save', async () => {
-    fakes.getGlobalAgentsMd.mockResolvedValue({
+    fakes.readHostTextFile.mockResolvedValue({
       path: '/home/.kimi-code/AGENTS.md',
       content: '',
-      exists: false,
+      revision: null,
     });
     const context = await mountSetting();
     await openEditor(context);
@@ -137,13 +134,13 @@ describe('global AGENTS.md setting', () => {
     context.save().click();
     await flush();
 
-    expect(fakes.writeGlobalAgentsMd).toHaveBeenCalledWith('# New file\n');
-    expect(fakes.notify).toHaveBeenCalledWith({ severity: 'success', title: 'Saved' });
+    expect(fakes.writeHostTextFile).toHaveBeenCalledWith('/home/.kimi-code/AGENTS.md', '# New file\n', null);
+    expect(fakes.toast).toHaveBeenCalledWith({ layout: 'bar', mode: 'replace', variant: 'success', title: 'Saved' });
     expect(context.page()?.textContent).not.toContain('Saved');
   });
 
   it('keeps the editor available after a load failure and retries', async () => {
-    fakes.getGlobalAgentsMd.mockRejectedValueOnce(new Error('Permission denied'));
+    fakes.readHostTextFile.mockRejectedValueOnce(new Error('Permission denied'));
     const context = await mountSetting();
     await openEditor(context);
 
@@ -155,13 +152,13 @@ describe('global AGENTS.md setting', () => {
     retry.click();
     await flush();
 
-    expect(fakes.getGlobalAgentsMd).toHaveBeenCalledTimes(2);
+    expect(fakes.readHostTextFile).toHaveBeenCalledTimes(2);
     expect(context.editor()?.value).toBe('# Existing instructions\n');
   });
 
   it('keeps the editor enabled and preserves edits made while saving', async () => {
-    let resolveWrite: ((value: { path: string; content: string; exists: boolean }) => void) | undefined;
-    fakes.writeGlobalAgentsMd.mockImplementation(() => new Promise((resolve) => {
+    let resolveWrite: ((value: { revision: string }) => void) | undefined;
+    fakes.writeHostTextFile.mockImplementation(() => new Promise((resolve) => {
       resolveWrite = resolve;
     }));
     const context = await mountSetting();
@@ -176,16 +173,12 @@ describe('global AGENTS.md setting', () => {
     expect(context.save().textContent).toBe('Save');
 
     edit(context, '# Edited while saving\n');
-    resolveWrite?.({
-      path: '/home/.kimi-code/AGENTS.md',
-      content: '# First save\n',
-      exists: true,
-    });
+    resolveWrite?.({ revision: 'updated' });
     await flush();
 
     expect(context.editor()?.value).toBe('# Edited while saving\n');
     expect(context.save().disabled).toBe(false);
-    expect(fakes.notify).not.toHaveBeenCalled();
+    expect(fakes.toast).not.toHaveBeenCalled();
     expect(context.page()?.textContent).toContain('Unsaved changes');
   });
 
