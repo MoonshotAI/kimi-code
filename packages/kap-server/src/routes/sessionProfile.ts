@@ -61,7 +61,7 @@ export async function updateSessionProfile(
   return {
     id: meta.id,
     workspaceId: ctx.workspaceId,
-    root: ctx.cwd,
+    root: metadata.effectiveCwd,
     title: meta.title,
     lastPrompt: meta.lastPrompt,
     createdAt: meta.createdAt,

@@ -35587,7 +35587,7 @@
     },
     "/api/v1/workspace/fs:list": {
       "post": {
-        "description": "List files and directories in a workspace without a session. `workspace` accepts a registered workspace id or an absolute root (registered on the spot).",
+        "description": "List files and directories in a workspace without a session. `workspace` accepts a registered workspace id or an absolute directory, served in place without registering a workspace.",
         "operationId": "workspaceFsList",
         "requestBody": {
           "content": {
@@ -36104,7 +36104,7 @@
     },
     "/api/v1/workspace/fs:search": {
       "post": {
-        "description": "Search files in a workspace without a session. `workspace` accepts a registered workspace id or an absolute root (registered on the spot).",
+        "description": "Search files in a workspace without a session. `workspace` accepts a registered workspace id or an absolute directory, served in place without registering a workspace.",
         "operationId": "workspaceFsSearch",
         "requestBody": {
           "content": {
@@ -36431,7 +36431,7 @@
     },
     "/api/v1/workspace/fs:suggest": {
       "post": {
-        "description": "Suggest file and directory completion candidates in a workspace without a session. `workspace` accepts a registered workspace id or an absolute root (registered on the spot).",
+        "description": "Suggest file and directory completion candidates in a workspace without a session. `workspace` accepts a registered workspace id or an absolute directory, served in place without registering a workspace.",
         "operationId": "workspaceFsSuggest",
         "requestBody": {
           "content": {
@@ -37635,7 +37635,7 @@
     },
     "/api/v1/workspaces/{workspace_id}/primary": {
       "post": {
-        "description": "Promote a source folder to the primary directory (atomic swap; id and bucket unchanged)",
+        "description": "Promote a source folder to the primary directory (atomic swap; id and bucket unchanged). An implicit workspace keeps the directory it was opened from and is rejected with WORKSPACE_PRIMARY_IMMUTABLE",
         "parameters": [
           {
             "in": "path",
@@ -37835,6 +37835,38 @@
                         "code": {
                           "enum": [
                             40410
+                          ],
+                          "type": "number"
+                        },
+                        "data": {
+                          "enum": [
+                            null
+                          ],
+                          "nullable": true,
+                          "type": "string"
+                        },
+                        "details": {},
+                        "msg": {
+                          "type": "string"
+                        },
+                        "request_id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "msg",
+                        "data",
+                        "request_id"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "code": {
+                          "enum": [
+                            40941
                           ],
                           "type": "number"
                         },
