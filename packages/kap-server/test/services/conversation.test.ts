@@ -10,7 +10,7 @@ import {
   type IAgentScopeHandle,
 } from '@moonshot-ai/agent-core-v2';
 import type { CollectionView } from '@moonshot-ai/agent-core-v2/_base/di/collection';
-import { ContextAppendLoopEvent, ContextAppendMessage, ContextClear } from '@moonshot-ai/agent-core-v2/agent/contextMemory/contextEvents';
+import { ContextAppendLoopEvent, ContextAppendMessage, ContextClear, ContextUndo } from '@moonshot-ai/agent-core-v2/agent/contextMemory/contextEvents';
 import type { LoopRecordedEvent } from '@moonshot-ai/agent-core-v2/agent/contextMemory/loopEventFold';
 import { AssistantDelta, ThinkingDelta, ToolCallDelta } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
 import { TurnEnded, TurnPrompt } from '@moonshot-ai/agent-core-v2/agent/loop/turnOps';
@@ -1057,6 +1057,34 @@ describe('conversation feed', () => {
     expect(h.feed.feedbackTurn(second!.turn_id, 'explain:0')).toEqual({});
     expect(h.feed.feedbackTurn(third!.turn_id)).toMatchObject({ requestId: 'text-request' });
     expect(h.feed.feedbackTurn(fourth!.turn_id)).toEqual({});
+    h.dispatcher.dispose();
+  });
+
+  it.each([true, false])('preserves only provable reply attribution after undoing a steer (per-step records: %s)', async (perStep) => {
+    const first = { step: 1, role: 'step', provider: 'example', model: 'earlier', isKfc: false, requestId: 'first-request' };
+    const child = { ...first, role: 'subagent', model: 'helper', requestId: 'child-request' };
+    const last = { ...first, step: 2, model: 'later', requestId: 'last-request' };
+    const h = feedHarness([
+      turnPrompt(0, 'start'), userMessage('start', 'First question'),
+      stepBegin(0, 1, 'first'), contentPart(0, 1, 'first', { type: 'text', text: 'First reply' }),
+      stepEnd(0, 1, 'first', { finishReason: 'tool_use' }),
+      userMessage('followup', 'Follow-up question', { kind: 'user', inTurn: true }),
+      stepBegin(0, 2, 'last'), contentPart(0, 2, 'last', { type: 'text', text: 'Last reply' }),
+      stepEnd(0, 2, 'last', { finishReason: 'end_turn' }),
+      turnEnded(0, 'completed', { requestId: last.requestId, replyModel: last, modelSteps: perStep ? [first, child, last] : undefined }),
+    ]);
+    await h.dispatcher.restore();
+    await h.feed.ready;
+    const turnId = h.feed.turns()[0]!.turn_id;
+    expect(h.feed.feedbackTurn(turnId, 'last:0')).toMatchObject({ requestId: last.requestId });
+
+    await h.dispatcher.dispatch(new ContextUndo({ agentId: 'main', count: 1 }));
+
+    const retained = perStep ? { requestId: first.requestId, replyModel: first, modelSteps: [first, child] } : {};
+    expect(h.feed.feedbackTurn(turnId, 'first:0')).toEqual(retained);
+    await h.dispatcher.restore();
+    expect(h.feed.feedbackTurn(turnId, 'first:0')).toEqual(retained);
+    expect(h.feed.feedbackTurn(turnId, 'last:0')).toBeUndefined();
     h.dispatcher.dispose();
   });
 

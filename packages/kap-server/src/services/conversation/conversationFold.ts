@@ -296,11 +296,17 @@ export function undoConversationTurns(state: ConversationState, count: number): 
   if (anchor.itemCount > 0) {
     const turn = state.turns[anchorIndex]!;
     const steps = state.steps[turn.turn_id] ?? [];
-    state.feedbackAttribution.delete(turn.turn_id);
     turn.items.splice(anchor.itemCount);
     steps.splice(anchor.stepCount);
     turn.steps = turn.steps.filter((summary) => steps.some((step) => step.ended && step.index === summary.index));
     turn.usage = totalUsage(turn.steps);
+    const modelSteps = state.feedbackAttribution.get(turn.turn_id)?.modelSteps;
+    if (modelSteps === undefined) {
+      state.feedbackAttribution.delete(turn.turn_id);
+    } else {
+      const retained = new Set(steps.map(step => step.index));
+      state.feedbackAttribution.set(turn.turn_id, { modelSteps: modelSteps.filter(entry => retained.has(entry.step)) });
+    }
   }
   const cutIndex = anchor.itemCount > 0 ? anchorIndex + 1 : anchorIndex;
   const removed = new Set(state.turns.splice(cutIndex).map((turn) => turn.turn_id));
