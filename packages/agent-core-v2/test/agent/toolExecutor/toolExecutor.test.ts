@@ -235,15 +235,13 @@ describe('AgentToolExecutorService auto review', () => {
 function installAutoReview(
   result:
     | import('#/features/autoReview/review').AutoReviewResult
-    | ((signal?: AbortSignal) => Promise<import('#/features/autoReview/review').AutoReviewResult>),
+    | (() => Promise<import('#/features/autoReview/review').AutoReviewResult>),
 ): void {
   const permissions = disposables.add(new TestInstantiationService(undefined, false, ix));
   permissions.stub(IAgentPermissionModeService, stubPermissionModeService(() => 'auto'));
   permissions.stub(IFlagService, { enabled: () => true });
   permissions.stub(IAutoReviewService, {
-    review: typeof result === 'function'
-      ? (_context, _trigger, signal) => result(signal)
-      : async () => result,
+    review: typeof result === 'function' ? result : async () => result,
   });
   permissions.stub(IBootstrapService, stubBootstrap('/tmp', {}, { nonInteractive: true }));
   permissions.stub(IConfigService, { get: (() => undefined) as IConfigService['get'] });
@@ -281,7 +279,7 @@ function installAutoReview(
       createAutoReviewReviewer(
         permissions.get(IFlagService),
         permissions.get(IAgentPermissionModeService),
-        () => permissions.get(IAutoReviewService),
+        permissions.get(IAutoReviewService),
       ),
     ),
   );

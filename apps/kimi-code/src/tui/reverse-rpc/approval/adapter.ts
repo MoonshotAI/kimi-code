@@ -23,7 +23,6 @@ export function adaptApprovalRequest(event: ApprovalRequest): ApprovalPanelData 
     tool_call_id: event.toolCallId,
     tool_name: event.toolName,
     action: event.action,
-    approval_detail: event.approvalDetail,
     description: resolved.description,
     display: event.approvalDetail === undefined
       ? resolved.blocks

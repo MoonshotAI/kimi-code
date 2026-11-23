@@ -153,7 +153,7 @@
     "packages/agent-core-v2/test/app/workspace/workspaceService.test.ts": 1,
     "packages/agent-core-v2/test/environment/environmentRegistry.test.ts": 2,
     "packages/agent-core-v2/test/features/externalHooks/externalHooksRunner.test.ts": 1,
-    "packages/agent-core-v2/test/features/externalHooks/integration.test.ts": 3,
+    "packages/agent-core-v2/test/features/externalHooks/integration.test.ts": 2,
     "packages/agent-core-v2/test/features/feature.test.ts": 1,
     "packages/agent-core-v2/test/features/goal/goal.test.ts": 2,
     "packages/agent-core-v2/test/features/goal/goalFeature.test.ts": 15,

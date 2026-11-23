@@ -150,9 +150,7 @@ describe('AgentPermissionPolicyService chain', () => {
     const reviewer = createAutoReviewReviewer(
       stubFlag(() => autoReviewEnabled),
       stubPermissionModeService(() => mode),
-      () => {
-        throw new Error('unused');
-      },
+      { _serviceBrand: undefined, review: () => Promise.reject(new Error('unused')) },
     );
     return svc.evaluate(policyContext(input), reviewer.evaluateOptions?.());
   }
@@ -464,34 +462,21 @@ describe('AgentPermissionPolicyService chain', () => {
     });
   });
 
-  it('skips dangerous command detection in yolo when auto review is enabled', async () => {
+  it('keeps dangerous command detection above allow rules in yolo when auto review is enabled', async () => {
     mode = 'yolo';
     autoReviewEnabled = true;
     rules.push({ decision: 'allow', scope: 'user', pattern: 'Bash(rm *)' });
     sessionApprovalRulePatterns.push('Bash(shutdown -h now)');
 
-    await expect(evaluate({
-      toolName: 'Bash',
-      args: { command: 'rm -rf build', timeout: 60 },
-    })).resolves.toMatchObject({
-      policyName: 'user-configured-allow',
-      result: { kind: 'approve' },
-    });
-    await expect(evaluate({
-      toolName: 'Bash',
-      args: { command: 'shutdown -h now', timeout: 60 },
-    })).resolves.toMatchObject({
-      policyName: 'session-approval-history',
-      result: { kind: 'approve' },
-    });
-    await expect(evaluate({
-      toolName: 'Bash',
-      args: { command: 'reboot', timeout: 60 },
-    })).resolves.toMatchObject({
-      policyName: 'yolo-mode-approve',
-      result: { kind: 'approve' },
-      underlying: { policyName: 'fallback-ask', result: { kind: 'ask' } },
-    });
+    for (const command of ['rm -rf build', 'shutdown -h now']) {
+      await expect(evaluate({
+        toolName: 'Bash',
+        args: { command, timeout: 60 },
+      })).resolves.toMatchObject({
+        policyName: 'dangerous-command-ask',
+        result: { kind: 'ask' },
+      });
+    }
   });
 
   it('does not let session approval history exempt dangerous commands', async () => {

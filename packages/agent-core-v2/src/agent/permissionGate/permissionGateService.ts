@@ -30,7 +30,6 @@ export class AgentPermissionGate extends Service implements IAgentPermissionGate
     @IAgentToolExecutorService toolExecutor: IAgentToolExecutorService,
   ) {
     super();
-
     this._register(toolExecutor.registerHook({
       permitting: async (context) => {
         const decision = await runLegacyStarting(context, (event) => this.adjudicate(event));
@@ -54,16 +53,7 @@ export class AgentPermissionGate extends Service implements IAgentPermissionGate
   }
 
   private async adjudicate(event: BeforeToolExecuteEvent): Promise<void> {
-    let evaluation: PermissionPolicyEvaluation | undefined;
-    try {
-      evaluation = await this.evaluatePolicy(event);
-    } catch (error) {
-      event.veto({
-        output: `permitting hook failed for "${event.toolCall.name}": ${error instanceof Error ? error.message : String(error)}`,
-        isError: true,
-      });
-      return;
-    }
+    const evaluation = await this.policyService.evaluate(event, this.reviewer?.evaluateOptions?.());
     if (evaluation === undefined) return;
     const deferredReview = this.reviewer?.review(event, evaluation);
     if (deferredReview !== undefined) {
@@ -88,31 +78,9 @@ export class AgentPermissionGate extends Service implements IAgentPermissionGate
       event.pass(result.executionMetadata);
       return;
     }
-    if (policyName === 'user-configured-deny') {
-      event.waitUntil(() => this.toolApproval.resolvePermissionResolution(result, event, policyName));
-      return;
-    }
     const resolved = await this.toolApproval.resolvePermissionResolution(result, event, policyName);
     if (resolved?.veto !== undefined) {
       event.veto(resolved.veto);
-    }
-  }
-
-  private async evaluatePolicy(
-    event: BeforeToolExecuteEvent,
-  ): Promise<PermissionPolicyEvaluation | undefined> {
-    for (;;) {
-      const mode = this.modeService.mode;
-      const options = this.reviewer?.evaluateOptions?.();
-      const evaluation = await this.policyService.evaluate(event, options);
-      const nextOptions = this.reviewer?.evaluateOptions?.();
-      if (
-        this.modeService.mode === mode &&
-        nextOptions?.includeUnderlying === options?.includeUnderlying &&
-        nextOptions?.skipDangerousCommand === options?.skipDangerousCommand
-      ) {
-        return evaluation;
-      }
     }
   }
 

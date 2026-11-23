@@ -107,10 +107,6 @@ export interface ApprovalPanelData {
   tool_call_id: string;
   tool_name: string;
   action: string;
-  approval_detail?: {
-    title: string;
-    detail: string;
-  };
   description: string;
   display: DisplayBlock[];
   choices: ApprovalPanelChoice[];

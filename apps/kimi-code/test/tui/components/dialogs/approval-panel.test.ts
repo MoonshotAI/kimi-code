@@ -130,10 +130,6 @@ describe('ApprovalPanelComponent', () => {
         tool_name: 'Bash',
         action: 'run',
         description: '',
-        approval_detail: {
-          title: 'Auto Review: denied (medium risk)',
-          detail: 'Creating remote resources was not explicitly authorized.',
-        },
         display: [
           {
             type: 'review',

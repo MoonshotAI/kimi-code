@@ -13,7 +13,6 @@ export interface PermissionPolicyEvaluation {
 
 export interface PermissionPolicyEvaluateOptions {
   readonly includeUnderlying?: boolean;
-  readonly skipDangerousCommand?: boolean;
 }
 
 export interface IAgentPermissionPolicyService {

@@ -127,7 +127,7 @@ describe('AgentPermissionGate', () => {
         createAutoReviewReviewer(
           stubFlag(() => autoReviewEnabled),
           stubPermissionModeService(() => mode),
-          () => ({ _serviceBrand: undefined, review }),
+          { _serviceBrand: undefined, review },
         ),
       ),
     );
@@ -284,7 +284,7 @@ describe('AgentPermissionGate', () => {
 
     await executorEvents.fireBeforeExecute(makeContext('Bash'));
 
-    expect(review).toHaveBeenCalledWith(expect.anything(), 'sensitive-file-access-ask', expect.any(AbortSignal));
+    expect(review).toHaveBeenCalledWith(expect.anything(), 'sensitive-file-access-ask');
     expect(resolvePermissionResolution).toHaveBeenCalledWith(
       expect.objectContaining({ kind: 'ask' }),
       expect.anything(),
@@ -324,40 +324,27 @@ describe('AgentPermissionGate', () => {
   });
 
   it.each([
-    { mode: 'yolo', expected: 'ask' },
-    { mode: 'auto', expected: 'deny' },
-  ] as const)('maps reviewer denial and failure to $expected in $mode', ({ mode: nextMode, expected }) => {
-    expect(resolveAutoReview(
-      makeContext('Bash'),
-      modeApproval,
-      { kind: 'decision', decision: { risk: 'high', decision: 'deny' } },
-      nextMode,
-    )).toMatchObject({
-      policyName: 'auto-review',
-      result: { kind: expected },
-    });
-    expect(resolveAutoReview(
-      makeContext('Bash'),
-      modeApproval,
-      { kind: 'failed', reason: 'invalid JSON' },
-      nextMode,
-    )).toMatchObject({
-      policyName: 'auto-review',
-      result: { kind: expected },
-    });
-  });
-
-  it.each([
-    { from: 'auto', to: 'manual', expected: 'ask' },
-    { from: 'auto', to: 'yolo', expected: 'ask' },
-    { from: 'yolo', to: 'auto', expected: 'deny' },
-  ] as const)('uses $to when reviewer denial finishes after a mode switch', async ({ from, to, expected }) => {
+    { from: 'yolo', to: 'yolo', outcome: 'deny', expected: 'ask' },
+    { from: 'yolo', to: 'yolo', outcome: 'failed', expected: 'ask' },
+    { from: 'auto', to: 'auto', outcome: 'deny', expected: 'deny' },
+    { from: 'auto', to: 'auto', outcome: 'failed', expected: 'deny' },
+    { from: 'auto', to: 'yolo', outcome: 'deny', expected: 'ask' },
+    { from: 'yolo', to: 'auto', outcome: 'deny', expected: 'deny' },
+    { from: 'auto', to: 'manual', outcome: 'deny', expected: 'ask' },
+    { from: 'auto', to: 'manual', outcome: 'allow', expected: 'ask' },
+  ] as const)('resolves a $outcome review started in $from and finished in $to as $expected', async ({
+    from,
+    to,
+    outcome,
+    expected,
+  }) => {
     reviewModeApprovals();
     mode = from;
-    autoReviewResult = { kind: 'decision', decision: { risk: 'high', decision: 'deny' } };
     review.mockImplementation(async () => {
       mode = to;
-      return autoReviewResult;
+      return outcome === 'failed'
+        ? { kind: 'failed', reason: 'invalid JSON' }
+        : { kind: 'decision', decision: outcome === 'allow' ? { risk: 'low', decision: 'allow' } : { risk: 'high', decision: 'deny' } };
     });
     make();
 
@@ -366,49 +353,6 @@ describe('AgentPermissionGate', () => {
     expect(resolvePermissionResolution).toHaveBeenCalledWith(
       expect.objectContaining({ kind: expected }),
       expect.anything(),
-      'auto-review',
-    );
-  });
-
-  it('asks when Never Ask changes to Always Ask after a reviewer allow', async () => {
-    reviewModeApprovals();
-    review.mockImplementation(async () => {
-      mode = 'manual';
-      return autoReviewResult;
-    });
-    make();
-
-    await executorEvents.fireBeforeExecute(makeContext('Bash'));
-
-    expect(resolvePermissionResolution).toHaveBeenCalledWith(
-      expect.objectContaining({ kind: 'ask' }),
-      expect.anything(),
-      'auto-review',
-    );
-  });
-
-  it('does not consult the reviewer after a static denial', async () => {
-    autoReviewEnabled = true;
-    policyResult = { policyName: 'user-configured-deny', result: { kind: 'deny', message: 'nope' } };
-    make();
-
-    await executorEvents.fireBeforeExecute(makeContext('Bash'));
-
-    expect(review).not.toHaveBeenCalled();
-  });
-
-  it('vetoes a mode-approved call denied in Never Ask', async () => {
-    reviewModeApprovals();
-    autoReviewResult = { kind: 'decision', decision: { risk: 'high', decision: 'deny' } };
-    const blocked: BeforeExecuteDecision = { veto: { output: 'review denied', isError: true } };
-    resolvePermissionResolution.mockResolvedValue(blocked);
-    make();
-    const ctx = makeContext('Bash');
-
-    expect(await executorEvents.fireBeforeExecute(ctx)).toEqual(blocked);
-    expect(resolvePermissionResolution).toHaveBeenCalledWith(
-      expect.objectContaining({ kind: 'deny' }),
-      expect.objectContaining({ toolCall: ctx.toolCall }),
       'auto-review',
     );
   });

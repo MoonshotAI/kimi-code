@@ -62,9 +62,6 @@ export class AgentPermissionPolicyService
   ): Promise<PermissionPolicyEvaluation | undefined> {
     let modeHit: PermissionPolicyEvaluation | undefined;
     for (const policy of this.policies) {
-      if (options?.skipDangerousCommand === true && policy.name === 'dangerous-command-ask') {
-        continue;
-      }
       const result = await policy.evaluate(context);
       if (result === undefined) continue;
       const evaluation = { policyName: policy.name, result };

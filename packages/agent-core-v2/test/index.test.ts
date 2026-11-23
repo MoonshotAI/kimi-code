@@ -128,20 +128,11 @@ describe('Auto Review assembly', () => {
     vi.unstubAllEnvs();
   });
 
-  it('creates the reviewer service in an agent scope when enabled', async () => {
-    vi.stubEnv(AUTO_REVIEW_FLAG_ENV, '1');
+  it.each([undefined, '1'])('creates the reviewer service in an agent scope with %s flag env', async (env) => {
+    if (env !== undefined) vi.stubEnv(AUTO_REVIEW_FLAG_ENV, env);
     const ctx = createTestAgent();
     try {
-      expect(ctx.get(IAutoReviewService)).toBeDefined();
-    } finally {
-      await ctx.dispose();
-    }
-  });
-
-  it('keeps the reviewer disabled by default', async () => {
-    const ctx = createTestAgent();
-    try {
-      expect(ctx.get(IFlagService).enabled(AUTO_REVIEW_FLAG_ID)).toBe(false);
+      expect(ctx.get(IFlagService).enabled(AUTO_REVIEW_FLAG_ID)).toBe(env !== undefined);
       expect(ctx.get(IAutoReviewService)).toBeDefined();
     } finally {
       await ctx.dispose();

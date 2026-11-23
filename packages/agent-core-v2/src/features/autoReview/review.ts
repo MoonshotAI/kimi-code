@@ -14,7 +14,6 @@ export interface IAutoReviewService {
   review(
     context: ResolvedToolExecutionHookContext,
     trigger: string,
-    signal?: AbortSignal,
   ): Promise<AutoReviewResult>;
 }
 

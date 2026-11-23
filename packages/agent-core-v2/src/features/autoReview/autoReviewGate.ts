@@ -13,39 +13,23 @@ const AUTO_REVIEW_ORIGIN = 'auto-review';
 export function createAutoReviewReviewer(
   flags: IFlagService,
   modes: IAgentPermissionModeService,
-  reviewService: () => IAutoReviewService,
+  reviewService: IAutoReviewService,
   onApproved?: (toolCallId: string) => void,
 ): PermissionGateReviewer {
   return {
-    evaluateOptions: () => {
-      const reviewing = flags.enabled(AUTO_REVIEW_FLAG_ID) && modes.mode !== 'manual';
-      return {
-        includeUnderlying: reviewing,
-        skipDangerousCommand: reviewing && modes.mode === 'yolo',
-      };
-    },
+    evaluateOptions: () => ({
+      includeUnderlying: flags.enabled(AUTO_REVIEW_FLAG_ID) && modes.mode !== 'manual',
+    }),
     review: (context, evaluation) => {
       const trigger = autoReviewTrigger(flags.enabled(AUTO_REVIEW_FLAG_ID), modes.mode, evaluation);
       if (trigger === undefined) return undefined;
-      let pending: Promise<AutoReviewResult> | undefined;
-      const start = (): Promise<AutoReviewResult> => {
-        pending ??= reviewService().review(context, trigger, context.reviewSignal);
-        void pending.catch(() => undefined);
-        return pending;
-      };
-      context.deferReview(() => {
-        void start();
-      });
-      return async () => {
-        const review = await start();
-        return resolveAutoReview(
-          context,
-          evaluation,
-          review,
-          flags.enabled(AUTO_REVIEW_FLAG_ID) ? modes.mode : 'manual',
-          onApproved,
-        );
-      };
+      return async () => resolveAutoReview(
+        context,
+        evaluation,
+        await reviewService.review(context, trigger),
+        flags.enabled(AUTO_REVIEW_FLAG_ID) ? modes.mode : 'manual',
+        onApproved,
+      );
     },
   };
 }

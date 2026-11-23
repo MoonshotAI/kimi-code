@@ -18,7 +18,6 @@ import {
 } from '@moonshot-ai/core/llm/thinking';
 import type { TokenUsage } from '@moonshot-ai/core/llm/usage';
 import type { AssistantMessage, Message } from '@moonshot-ai/core/llm/message';
-import type { LlmRequestModel } from '@moonshot-ai/core/llm/request';
 import type { InitializedLlmRequestPart } from '@moonshot-ai/core/llm/requester';
 import { credentialRecovery } from '@moonshot-ai/core/llm/policy/credentials';
 import type { LlmOutcome } from '@moonshot-ai/core/llm/response';
@@ -26,7 +25,7 @@ import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompacti
 import { IAgentPermissionGate } from '#/agent/permissionGate/permissionGate';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { IModelCatalog } from '#/llm-adapter/model/catalog';
-import { resolveCompletionBudget } from '#/llm-adapter/model/completion-budget';
+import { resolveMaxOutputTokens } from '#/llm-adapter/model/completion-budget';
 import type { ModelOverrides } from '#/llm-adapter/model/model.types';
 import {
   requiresStrictThinkingValidation,
@@ -73,11 +72,15 @@ const MAX_REVIEW_ATTEMPTS = 3;
 const MAX_CONCURRENT_REVIEWS = 4;
 const MAX_GIT_STATUS_ENTRIES = 50;
 
-type ReviewAttempt = AutoReviewResult | { readonly kind: 'appended' } | ReviewFailure;
+type ReviewAttempt =
+  | Extract<AutoReviewResult, { readonly kind: 'decision' }>
+  | { readonly kind: 'appended' }
+  | ReviewFailure;
 
 interface ReviewFailure {
   readonly kind: 'failed';
   readonly reason: string;
+  readonly retryable: boolean;
   readonly error?: unknown;
 }
 
@@ -153,15 +156,13 @@ export class AutoReviewService extends Service implements IAutoReviewService {
     if (this.flags.enabled(AUTO_REVIEW_FLAG_ID)) {
       void this.loadProjectInstructions();
     }
-    if (typeof permissionGate.registerReviewer === 'function') {
-      this._register(
-        permissionGate.registerReviewer(
-          createAutoReviewReviewer(this.flags, this.modeService, () => this, (toolCallId) => {
-            this.approvedToolCallIds.add(toolCallId);
-          }),
-        ),
-      );
-    }
+    this._register(
+      permissionGate.registerReviewer(
+        createAutoReviewReviewer(this.flags, this.modeService, this, (toolCallId) => {
+          this.approvedToolCallIds.add(toolCallId);
+        }),
+      ),
+    );
   }
 
   private loadProjectInstructions(): Promise<ProjectInstructions> {
@@ -180,7 +181,6 @@ export class AutoReviewService extends Service implements IAutoReviewService {
   async review(
     context: ResolvedToolExecutionHookContext,
     trigger: string,
-    signal: AbortSignal = context.signal,
   ): Promise<AutoReviewResult> {
     const startedAt = Date.now();
     void this.dispatcher.dispatch(new AutoReviewStarted({
@@ -194,7 +194,7 @@ export class AutoReviewService extends Service implements IAutoReviewService {
       config?.model ??
       resolveSubagentModelPool(this.configService)?.defaultModel ??
       this.profile.resolveModelContext().modelAlias;
-    const result = await this.reviewWithDeadline(context, modelAlias, config?.timeoutMs ?? 30000, signal);
+    const result = await this.reviewWithDeadline(context, modelAlias, config?.timeoutMs ?? 30000);
     void this.dispatcher.dispatch(new AutoReviewCompleted({
       agentId: this.scopeContext.agentId,
       turnId: context.turnId,
@@ -231,9 +231,8 @@ export class AutoReviewService extends Service implements IAutoReviewService {
     context: ResolvedToolExecutionHookContext,
     modelAlias: string,
     timeoutMs: number,
-    signal: AbortSignal,
   ): Promise<AutoReviewResult> {
-    const deadline = createDeadlineAbortSignal(signal, timeoutMs);
+    const deadline = createDeadlineAbortSignal(context.signal, timeoutMs);
     let acquired = false;
     try {
       const projectInstructions = await this.loadProjectInstructions();
@@ -251,18 +250,23 @@ export class AutoReviewService extends Service implements IAutoReviewService {
             return { kind: 'failed', reason: 'The review context exceeded the model window.' };
           }
           if (deadline.signal.aborted) return this.deadlineFailure(deadline);
-          outcome = { kind: 'failed', reason: error instanceof Error ? error.message : String(error), error };
+          outcome = {
+            kind: 'failed',
+            reason: error instanceof Error ? error.message : String(error),
+            retryable: isRetryableGenerateError(error),
+            error,
+          };
         }
         if (outcome.kind === 'appended') {
           if (appended) return authorizationChanged();
           appended = true;
           continue;
         }
-        if (outcome.kind === 'decision' || attempt === MAX_REVIEW_ATTEMPTS || !retryableReview(outcome)) {
+        if (outcome.kind === 'decision' || attempt === MAX_REVIEW_ATTEMPTS || !outcome.retryable) {
           return reviewResult(outcome);
         }
         const delayMs = Math.min(
-          readRetryAfterMs('error' in outcome ? outcome.error : undefined) ?? retryBackoffDelay(attempt - 1),
+          readRetryAfterMs(outcome.error) ?? retryBackoffDelay(attempt - 1),
           deadline.remainingMs(),
         );
         if (delayMs <= 0 || deadline.signal.aborted) return this.deadlineFailure(deadline);
@@ -352,11 +356,13 @@ export class AutoReviewService extends Service implements IAutoReviewService {
         : authorizationChanged();
     }
     if (message.toolCalls.length > 0) {
-      return { kind: 'failed', reason: 'The reviewer attempted a tool call.' };
+      return { kind: 'failed', reason: 'The reviewer attempted a tool call.', retryable: false };
     }
     const text = message.content.filter((part) => part.type === 'text').map((part) => part.text).join('');
     const parsed = DecisionSchema.safeParse(parseReviewJson(text));
-    if (!parsed.success) return { kind: 'failed', reason: 'The reviewer returned an invalid decision.' };
+    if (!parsed.success) {
+      return { kind: 'failed', reason: 'The reviewer returned an invalid decision.', retryable: true };
+    }
     return { kind: 'decision', decision: parsed.data };
   }
 
@@ -417,16 +423,6 @@ export class AutoReviewService extends Service implements IAutoReviewService {
       model.providerType,
     );
     const thinkingEffort = resolveThinkingEffortForModel('off', undefined, model.spec, strict);
-    const budget = resolveCompletionBudget({
-      maxOutputSize: model.maxOutputSize,
-      maxCompletionTokensCap: overrides?.maxCompletionTokens,
-    });
-    const maxOutputTokens: LlmRequestModel['maxOutputTokens'] =
-      overrides?.maxCompletionTokens !== undefined && overrides.maxCompletionTokens <= 0
-        ? 'none'
-        : budget === undefined
-          ? undefined
-          : Math.max(1, budget);
     const sampling =
       overrides?.temperature === undefined && overrides?.topP === undefined
         ? undefined
@@ -443,7 +439,10 @@ export class AutoReviewService extends Service implements IAutoReviewService {
             thinkingEffort,
           ),
         },
-        maxOutputTokens,
+        maxOutputTokens: resolveMaxOutputTokens({
+          maxOutputSize: model.maxOutputSize,
+          maxCompletionTokensCap: overrides?.maxCompletionTokens,
+        }),
       },
     };
     const outcome = await this.protocols.request(model, params).with({
@@ -499,17 +498,12 @@ function parseReviewJson(text: string): unknown {
   }
 }
 
-function retryableReview(outcome: ReviewFailure): boolean {
-  if (outcome.error !== undefined) return isRetryableGenerateError(outcome.error);
-  return outcome.reason === 'The reviewer returned an invalid decision.';
-}
-
 function contextOverflow(error: unknown): boolean {
   return classifyApiError(error).kind === 'context_overflow';
 }
 
-function authorizationChanged(): AutoReviewResult {
-  return { kind: 'failed', reason: 'Authorization changed during review.' };
+function authorizationChanged(): ReviewFailure {
+  return { kind: 'failed', reason: 'Authorization changed during review.', retryable: false };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

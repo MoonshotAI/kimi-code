@@ -29,7 +29,7 @@ import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTok
 import { IAgentToolSelectService } from '#/agent/toolSelect/toolSelect';
 import { IModelCatalog } from '#/llm-adapter/model/catalog';
 import type { ModelOverrides } from '#/llm-adapter/model/model.types';
-import { resolveCompletionBudget } from '#/llm-adapter/model/completion-budget';
+import { resolveMaxOutputTokens } from '#/llm-adapter/model/completion-budget';
 import { IProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocol';
 import { getProviderDefinition } from '#/llm-adapter/provider/provider-definition';
 import { ISessionRequestAttributionService } from '#/session/requestAttribution/requestAttribution';
@@ -76,7 +76,6 @@ import {
 } from '#/agent/profile/profile';
 import type {
   LlmRequest as CoreLlmRequest,
-  LlmRequestModel,
   ThinkingEffort,
 } from '@moonshot-ai/core/llm/request';
 import type { ModelCapability } from '#/llm-adapter/contract/capability';
@@ -761,17 +760,10 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   ): RequesterBinding {
     const resolved = config.resolved;
     const model = this.modelCatalog.get(resolved.modelAlias);
-    const budget = resolveCompletionBudget({
+    const maxOutputTokens = resolveMaxOutputTokens({
       maxOutputSize: options.maxOutputSize ?? resolved.maxOutputSize,
       maxCompletionTokensCap: config.maxCompletionTokensCap,
     });
-    const maxCompletionTokensCap = config.maxCompletionTokensCap;
-    const optedOut = maxCompletionTokensCap !== undefined && maxCompletionTokensCap <= 0;
-    const maxOutputTokens: LlmRequestModel['maxOutputTokens'] = optedOut
-      ? 'none'
-      : budget === undefined
-        ? undefined
-        : Math.max(1, budget);
     const params: InitializedLlmRequestPart = {
       ...config.params,
       model: {

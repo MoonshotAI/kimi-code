@@ -135,7 +135,6 @@ describe('AutoReviewService', () => {
     model?: string,
     configured = true,
     secondaryModel?: SecondaryModelConfig,
-    timeoutMs = 30000,
   ): AutoReviewService {
     const registry = new ProtocolAdapterRegistry();
     let selectedAlias = 'main-model';
@@ -143,7 +142,7 @@ describe('AutoReviewService', () => {
       additionalServices: (reg) => {
         reg.definePartialInstance(IConfigService, {
           get: ((section: string) => {
-            if (section === AUTO_REVIEW_SECTION && configured) return { model, timeoutMs };
+            if (section === AUTO_REVIEW_SECTION && configured) return { model };
             if (section === SECONDARY_MODEL_SECTION) return secondaryModel;
             return undefined;
           }) as IConfigService['get'],
@@ -169,22 +168,14 @@ describe('AutoReviewService', () => {
           request: (target, params?: InitializedLlmRequestPart) => {
             const base = registry.request(target, params);
             return withMockProvider(base, createMockProvider(async (req, signal) => {
-              requests.push({
-                modelAlias: selectedAlias,
-                params: params?.model,
-                input: {
-                  systemPrompt: req.profile?.systemPrompt ?? '',
-                  tools: req.profile?.tools,
-                  messages: req.content.messages,
-                  responseFormat: req.model.responseFormat,
-                },
-              });
-              return request({
+              const input = {
                 systemPrompt: req.profile?.systemPrompt ?? '',
                 tools: req.profile?.tools,
                 messages: req.content.messages,
                 responseFormat: req.model.responseFormat,
-              }, signal);
+              };
+              requests.push({ modelAlias: selectedAlias, params: params?.model, input });
+              return request(input, signal);
             }));
           },
         });
@@ -304,9 +295,6 @@ describe('AutoReviewService', () => {
       allow: () => {},
       pass: () => {},
       waitUntil: () => {},
-      deferReview: () => {},
-      cancelReview: () => {},
-      reviewSignal: defaultSignal,
     };
     const pendingReview = registeredReviewer?.review(firstContext, {
       policyName: 'fallback-ask',
@@ -392,13 +380,6 @@ describe('AutoReviewService', () => {
       risk: 'medium',
       reason: 'Creating remote resources was not explicitly authorized.',
     })]);
-    expect(AutoReviewCompleted.durable).toBe(true);
-    expect(reviewEvents[0]?.serialize()).toMatchObject({
-      type: 'auto_review.decision',
-      toolCallId: expect.any(String),
-      decision: 'deny',
-      reason: 'Creating remote resources was not explicitly authorized.',
-    });
   });
 
   it('persists the failure reason when review cannot complete', async () => {
