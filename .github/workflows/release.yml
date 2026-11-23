@@ -226,8 +226,13 @@ jobs:
           node apps/kimi-code/scripts/update-catalog.mjs --out "$CATALOG_FILE"
           echo "KIMI_CODE_BUILT_IN_CATALOG_FILE=$CATALOG_FILE" >> "$GITHUB_ENV"
 
-      - name: Build packages
-        run: pnpm build
+      - name: Build publishable npm workspaces and their dependencies
+        shell: bash
+        run: |
+          publishable=$(pnpm -r list --depth -1 --json | jq -er '.[] | select(.private == false) | .name')
+          filters=()
+          while IFS= read -r pkg; do filters+=(--filter "${pkg}..."); done <<< "$publishable"
+          pnpm -r "${filters[@]}" run build
 
       - name: Create Release Pull Request or Publish to npm
         id: changesets
@@ -266,8 +271,12 @@ jobs:
     name: Native release artifact
     needs: candidate
     if: needs.candidate.outputs.publish == 'true' && needs.candidate.outputs.cli-tag != ''
+    permissions:
+      actions: read
+      contents: read
     uses: ./.github/workflows/_native-build.yml
     with:
+      web-ci-run-id: ${{ needs.candidate.outputs.ci-run-id }}
       upload-artifact-prefix: kimi-code-native
       retention-days: 7
       sign-macos: true
