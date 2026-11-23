@@ -2,4 +2,4 @@
 "kimi-code-app": minor
 ---
 
-Remove the experimental `fork` parameter from the `Agent` and `AgentSwarm` tools.
+Remove the experimental `fork` parameter that let `Agent` and `AgentSwarm` start subagents with the caller's conversation history.
