@@ -561,17 +561,7 @@ function toggleAutoSessionTitle(): void {
   z-index: 1;
   background-color: var(--color-accent-soft);
   box-shadow: inset 0 0 0 1.5px var(--color-accent-bd);
-  animation: mobile-settings-row-highlight var(--duration-flash) var(--ease-out);
-}
-@keyframes mobile-settings-row-highlight {
-  0% {
-    background-color: color-mix(in srgb, var(--color-accent) 18%, var(--color-surface));
-    box-shadow: inset 0 0 0 1.5px var(--color-accent);
-  }
-  100% {
-    background-color: var(--color-accent-soft);
-    box-shadow: inset 0 0 0 1.5px var(--color-accent-bd);
-  }
+  animation: ui-row-highlight var(--duration-flash) var(--ease-out);
 }
 @media (prefers-reduced-motion: reduce) {
   .card > .srow {

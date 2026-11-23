@@ -690,6 +690,34 @@ html[data-color-scheme="dark"] {
   --p-add-menu-h: var(--p-slash-menu-h);
 }
 
+@keyframes ui-fade-out {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+@keyframes ui-row-highlight {
+  0% {
+    background-color: color-mix(in srgb, var(--color-accent) 18%, var(--color-surface));
+    box-shadow: inset 0 0 0 1.5px var(--color-accent);
+  }
+  100% {
+    background-color: var(--color-accent-soft);
+    box-shadow: inset 0 0 0 1.5px var(--color-accent-bd);
+  }
+}
+@keyframes ui-row-flash {
+  0% { background: var(--color-accent-soft); }
+  100% { background: transparent; }
+}
+@keyframes ui-breathe {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+
 @media (max-resolution: 1.1dppx) {
   :root { --p-hairline: 1px; }
 }

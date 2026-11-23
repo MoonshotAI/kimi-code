@@ -751,11 +751,7 @@ const {
   border-radius: var(--radius-sm);
   background: var(--color-accent-soft);
   pointer-events: none;
-  animation: se-locate-fade var(--duration-flash) var(--ease-out) forwards;
-}
-@keyframes se-locate-fade {
-  from { opacity: 1; }
-  to { opacity: 0; }
+  animation: ui-fade-out var(--duration-flash) var(--ease-out) forwards;
 }
 @media (prefers-reduced-motion: reduce) {
   .se-locate-flash::before,

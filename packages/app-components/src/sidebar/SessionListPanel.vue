@@ -1249,11 +1249,7 @@ defineExpose({
   border-radius: var(--radius-sm);
   background: var(--color-accent-soft);
   pointer-events: none;
-  animation: ws-locate-fade var(--duration-flash) var(--ease-out) forwards;
-}
-@keyframes ws-locate-fade {
-  from { opacity: 1; }
-  to { opacity: 0; }
+  animation: ui-fade-out var(--duration-flash) var(--ease-out) forwards;
 }
 @media (prefers-reduced-motion: reduce) {
   .se-locate-flash::before,

@@ -785,11 +785,7 @@ void loadHosts();
 .re-row + .re-row, .re-item + .re-item { border-top: var(--p-hairline) solid var(--color-line); }
 .re-row:hover { background: var(--color-hover); }
 .re-item:has(> .re-row-setup, > .re-row-failure) > .re-row:hover { background: transparent; }
-.re-row.flash { animation: re-flash 1.2s var(--ease-out); }
-@keyframes re-flash {
-  0% { background: var(--color-accent-soft); }
-  100% { background: transparent; }
-}
+.re-row.flash { animation: ui-row-flash var(--duration-flash) var(--ease-out); }
 .re-row-lead { display: flex; flex: 1; align-items: center; gap: var(--space-2); min-width: 0; align-self: stretch; }
 .re-row-lead.expandable { cursor: pointer; }
 .re-row-copy { display: flex; flex: 1; flex-direction: column; gap: 3px; min-width: 0; }

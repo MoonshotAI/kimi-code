@@ -307,9 +307,5 @@ function onManagedRow(): void {
   color: var(--color-text-quaternary);
 }
 
-.pp-row.flash { animation: pp-flash 1.2s var(--ease-out); }
-@keyframes pp-flash {
-  0% { background: var(--color-accent-soft); }
-  100% { background: transparent; }
-}
+.pp-row.flash { animation: ui-row-flash var(--duration-flash) var(--ease-out); }
 </style>
