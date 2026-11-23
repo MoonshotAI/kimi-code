@@ -157,6 +157,7 @@ describe('imported external session is discoverable by agent-core-v2', () => {
   const write = () => writeImportedSession({
     targetHome,
     projectId: PROJECT_ID,
+    projectRoot: '/Users/example/main',
     sessionId: 'ses_example-source',
     workDir: WORK_DIR,
     environmentCwd: WORK_DIR,

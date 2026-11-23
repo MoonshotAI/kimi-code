@@ -18,8 +18,11 @@ export function cliFetchStubs(): FetchStub[] {
 export const TURN_FINISHED = 'Worked for ';
 
 export interface TerminalOptions {
+  readonly args?: readonly string[];
   readonly columns?: number;
   readonly rows?: number;
+  readonly cwd?: string;
+  readonly env?: Readonly<Record<string, string | undefined>>;
 }
 
 const KEYS = {
@@ -58,8 +61,9 @@ async function startTerminal(model: FakeModel, home: TestHome, options: Terminal
   const cli = TestProcess.start({
     label: 'CLI',
     command: kimiCliCommand(),
-    cwd: home.workspace,
-    env: kimiCliEnv(home, { KIMI_CODE_TUI_FULL_SCREEN: '0', COLUMNS: String(columns), LINES: String(rows) }),
+    args: options.args,
+    cwd: options.cwd ?? home.workspace,
+    env: kimiCliEnv(home, { KIMI_CODE_TUI_FULL_SCREEN: '0', COLUMNS: String(columns), LINES: String(rows), ...options.env }),
     logDir: home.root,
     stdin: true,
     fetchStubs: cliFetchStubs(),
@@ -152,3 +156,40 @@ export function terminalFixturesWith(options: TerminalOptions) {
 }
 
 export const terminalFixtures = terminalFixturesWith({});
+
+export interface LaunchedTerminal extends TerminalSession {
+  readonly modelName: string;
+  close(): Promise<void>;
+}
+
+export interface TerminalLaunchOptions extends TerminalOptions {
+  readonly readyText?: string;
+}
+
+export interface TerminalLaunchFixtures extends HomeFixtures, ModelFixtures {
+  launchTerminal: (options?: TerminalLaunchOptions) => Promise<LaunchedTerminal>;
+}
+
+export const terminalLaunchFixtures = {
+  ...homeFixtures(),
+  ...modelFixtures(),
+  launchTerminal: async (
+    { model, testHome, onTestFailed }: HomeFixtures & ModelFixtures & TestContext,
+    use: Use<(options?: TerminalLaunchOptions) => Promise<LaunchedTerminal>>,
+  ) => {
+    const launched: { readonly terminal: Awaited<ReturnType<typeof startTerminal>>; closing?: Promise<void> }[] = [];
+    onTestFailed(async () => {
+      for (const { terminal } of launched) process.stderr.write((await terminal.diagnostics()) + '\n');
+    });
+    try {
+      await use(async (options = {}) => {
+        const entry: (typeof launched)[number] = { terminal: await startTerminal(model, testHome, options) };
+        launched.push(entry);
+        await entry.terminal.waitForText(options.readyText ?? entry.terminal.modelName, TIMEOUTS.server);
+        return { ...entry.terminal, close: () => (entry.closing ??= entry.terminal.close()) };
+      });
+    } finally {
+      for (const entry of launched) await (entry.closing ??= entry.terminal.close());
+    }
+  },
+};

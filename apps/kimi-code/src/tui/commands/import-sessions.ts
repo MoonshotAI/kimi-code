@@ -17,7 +17,7 @@ export function handleImportSessionsCommand(host: SlashCommandHost): void {
     scan: () => scanImportableSessions({ kimiHome, ...homes, now }),
     run: async (candidates, hooks) => {
       const budget = importBudget(await host.harness.getConfig().catch(() => ({})));
-      const report = await importSessions(candidates, { kimiHome, ...budget, now, ...hooks });
+      const report = await importSessions(candidates, { harness: host.harness, ...budget, now, ...hooks });
       await Promise.all(
         report.imported.map((sessionId) => host.harness.listSessions({ sessionId }).catch(() => [])),
       );
