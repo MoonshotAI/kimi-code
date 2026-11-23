@@ -52,7 +52,7 @@ describe('PromptPredictionController', () => {
     controller.handleTurnEnded(turnEnded(7));
     expect(session.predictNextPrompt).not.toHaveBeenCalled();
     editor.setText('');
-    expect(editor.render(80).join('\n')).toContain('Tab to predict');
+    expect(editor.render(80).join('\n')).not.toContain('Tab to predict');
     expect(controller.handlePreInput('\t')).toBe(true);
     await vi.waitFor(() => expect(editor.getPromptPrediction()).toBeDefined());
     expect(session.predictNextPrompt).toHaveBeenCalledWith({
@@ -100,11 +100,11 @@ describe('PromptPredictionController', () => {
     editor.setText('');
     controller.handleTurnEnded(turnEnded(10));
     await vi.waitFor(() => expect(session.predictNextPrompt).toHaveBeenCalledTimes(4));
-    expect(editor.render(80).join('\n')).toContain('Tab to predict');
+    expect(editor.render(80).join('\n')).not.toContain('Tab to predict');
     expect(editor.render(80).join('\n')).not.toContain('Predicting next prompt…');
     editor.handleInput('x');
     editor.setText('');
-    expect(editor.render(80).join('\n')).toContain('Type a message… Tab to predict');
+    expect(editor.render(80).join('\n')).not.toContain('Tab to predict');
     expect(controller.handlePreInput('\t')).toBe(true);
     resolveRecalled('this suggestion is recalled');
     await vi.waitFor(() => expect(editor.getText()).toBe('this suggestion is recalled'));

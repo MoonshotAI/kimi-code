@@ -185,12 +185,7 @@ export class PromptPredictionController {
 
   private placeholder(): string | undefined {
     if (!this.canUseEditor()) return undefined;
-    if (this.active !== undefined) {
-      return this.active.parked ? 'Type a message… Tab to predict' : 'Tab to predict';
-    }
-    if (this.suggestion !== undefined) return this.suggestion.prediction;
-    if (this.latestTurn === undefined) return undefined;
-    return this.attempted.has(`${this.latestTurn.session.id}:${String(this.latestTurn.turnId)}`) ? undefined : 'Tab to predict';
+    return this.suggestion?.prediction;
   }
 
   private canUsePrediction(): boolean {
