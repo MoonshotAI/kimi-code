@@ -3789,7 +3789,7 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
 
           <!-- More models → open full picker -->
           <MenuItem class="md-row md-row-more" @click="closeDropdown(); emit('pickModel');">
-            <span class="md-check md-more-icon"><Icon name="list" size="sm" style="color: var(--dim)" /></span>
+            <span class="md-check md-more-icon"><Icon name="list" size="sm" style="color: var(--color-text-muted)" /></span>
             <span class="md-name">{{ t('status.moreModels') }}</span>
             <Icon class="md-more-arrow" name="chevron-right" size="sm" style="color: var(--md-more-arrow-color)" />
           </MenuItem>
@@ -3996,7 +3996,7 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
   border: var(--p-hairline) dashed var(--color-accent);
   background: var(--color-bg);
   color: var(--color-accent);
-  font-size: var(--ui-font-size-lg);
+  font-size: var(--ui-b1);
   font-weight: var(--weight-medium);
   box-shadow: var(--shadow-md);
 }
@@ -4013,7 +4013,7 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
   box-shadow: var(--shadow-xs);
   color: var(--color-text-muted);
   font-family: var(--font-ui);
-  font-size: var(--ui-font-size-sm);
+  font-size: var(--text-sm);
   line-height: var(--leading-normal);
   animation: composer-tip-in var(--duration-base) var(--ease-out);
 }
@@ -4121,7 +4121,7 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
   border: none;
   border-radius: 6px;
   background: transparent;
-  color: var(--dim);
+  color: var(--color-text-muted);
   cursor: pointer;
   padding: 0;
   transition: background 0.12s, color 0.12s;
@@ -4140,7 +4140,7 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
 .ph {
   --ph-leading: 1.5;
   --ph-line-height: calc(var(--content-font-size) * var(--ph-leading));
-  color: var(--faint);
+  color: var(--color-text-quaternary);
   caret-color: var(--color-text);
   position: relative;
   flex: 1;
@@ -4247,7 +4247,7 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
   background: var(--color-selected);
   color: var(--color-text);
   font-family: var(--font-ui);
-  font-size: var(--ui-font-size-sm);
+  font-size: var(--text-sm);
   font-weight: var(--weight-medium);
   line-height: var(--ph-line-height);
   white-space: nowrap;
@@ -4305,7 +4305,7 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
-  color: var(--muted);
+  color: var(--color-text-faint);
   pointer-events: none;
   user-select: none;
 }
@@ -4415,7 +4415,7 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
   border-radius: var(--radius-menu-row);
   background: none;
   cursor: pointer;
-  font-size: var(--ui-font-size);
+  font-size: var(--text-base);
   color: var(--color-text);
   text-align: left;
   transition: background var(--duration-base) var(--ease-out);
@@ -4445,7 +4445,7 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
   min-width: 0;
   margin-left: var(--space-1);
   color: var(--color-text-muted);
-  font-size: var(--ui-font-size-sm);
+  font-size: var(--text-sm);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -4609,7 +4609,7 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
   background: transparent;
   color: var(--color-text);
   font-family: var(--font-ui);
-  font-size: var(--ui-font-size);
+  font-size: var(--text-base);
   font-weight: var(--weight-medium);
   line-height: 1;
   white-space: nowrap;
@@ -4619,7 +4619,7 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
     color var(--duration-base) var(--ease-out);
 }
 .perm-pill {
-  font-size: var(--ui-font-size-sm);
+  font-size: var(--text-sm);
 }
 .perm-pill::after,
 .swarm-chip::after,
@@ -4687,7 +4687,7 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
 }
 
 .perm-pill.perm-manual {
-  color: var(--dim);
+  color: var(--color-text-muted);
 }
 .perm-pill.perm-yolo {
   color: var(--color-warning);
@@ -4841,7 +4841,7 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
   gap: var(--space-2);
 }
 .ctx-card-title {
-  font-size: var(--ui-font-size);
+  font-size: var(--text-base);
   font-weight: var(--weight-medium);
   color: var(--color-text);
 }
@@ -4880,7 +4880,7 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
   flex: none;
 }
 .model-pill .cv {
-  color: var(--faint);
+  color: var(--color-text-quaternary);
   flex: none;
   transition:
     transform var(--duration-base) var(--ease-out),
@@ -4888,7 +4888,7 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
 }
 .model-pill:hover .cv,
 .model-pill.open .cv {
-  color: var(--dim);
+  color: var(--color-text-muted);
 }
 .model-pill.open .cv {
   transform: rotate(180deg);
@@ -4955,7 +4955,7 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
 .md-section {
   padding: 4px 9px 2px;
   font-size: var(--text-xs);
-  color: var(--muted);
+  color: var(--color-text-faint);
   text-transform: uppercase;
   letter-spacing: 0.04em;
   font-weight: var(--weight-semibold);
@@ -4963,7 +4963,7 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
 
 .md-row {
   gap: 7px;
-  font-size: var(--ui-font-size);
+  font-size: var(--text-base);
   padding: 5px 9px;
   border-radius: var(--radius-dropdown-row);
 }
@@ -4975,12 +4975,12 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
 .md-row.is-current { background: var(--color-selected); }
 .md-note {
   margin-left: auto;
-  color: var(--muted);
-  font-size: var(--ui-font-size-xs);
+  color: var(--color-text-faint);
+  font-size: var(--text-xs);
 }
 
-.md-row-more { --md-more-arrow-color: var(--faint); }
-.md-row-more:hover { --md-more-arrow-color: var(--dim); }
+.md-row-more { --md-more-arrow-color: var(--color-text-quaternary); }
+.md-row-more:hover { --md-more-arrow-color: var(--color-text-muted); }
 .md-row-more .md-more-arrow {
   width: var(--p-ic-sm);
   height: var(--p-ic-sm);
@@ -5011,8 +5011,8 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
   transition: color var(--duration-base) var(--ease-out);
 }
 .md-provider {
-  color: var(--muted);
-  font-size: var(--ui-font-size-xs);
+  color: var(--color-text-faint);
+  font-size: var(--text-xs);
   flex: none;
 }
 .md-star {
@@ -5028,7 +5028,7 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
 
 .md-divider {
   height: 1px;
-  background: var(--line);
+  background: var(--color-line);
   margin: 3px 0;
 }
 
@@ -5043,7 +5043,7 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
 }
 .md-thinking .md-name {
   font-family: var(--font-ui);
-  font-size: var(--ui-font-size);
+  font-size: var(--text-base);
   color: var(--color-text);
   flex: none;
 }
@@ -5055,7 +5055,7 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
   width: 0;
   min-width: 100%;
   padding: 2px 7px 4px;
-  color: var(--muted);
+  color: var(--color-text-faint);
   font-size: var(--text-2xs);
   line-height: 1.4;
 }
@@ -5116,7 +5116,7 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
   width: var(--p-ic-sm);
   min-height: 1lh;
   color: var(--color-accent);
-  font-size: var(--ui-font-size);
+  font-size: var(--text-base);
   font-weight: var(--weight-medium);
   display: flex;
   align-items: center;
@@ -5137,7 +5137,7 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
   grid-column: 2;
   grid-row: 1;
   font-family: var(--font-ui);
-  font-size: var(--ui-font-size-sm);
+  font-size: var(--text-sm);
   font-weight: var(--weight-medium);
   line-height: var(--leading-tight);
 }
@@ -5151,7 +5151,7 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
   font-family: var(--font-ui);
   font-size: var(--text-xs);
   font-weight: var(--weight-caption);
-  color: var(--muted);
+  color: var(--color-text-faint);
   line-height: var(--leading-tight);
 }
 
@@ -5211,7 +5211,7 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
   }
   .model-pill,
   .attach-btn {
-    font-size: var(--ui-font-size);
+    font-size: var(--text-base);
   }
   .toolbar {
     gap: 6px;
@@ -5228,16 +5228,16 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
     max-width: min(40vw, 170px);
   }
   .md-row {
-    font-size: var(--ui-font-size);
+    font-size: var(--text-base);
   }
   .md-section {
-    font-size: var(--ui-font-size);
+    font-size: var(--text-base);
   }
   .md-thinking :deep(.ui-seg--xs .ui-seg__item) {
     padding: 0 var(--space-1-5);
   }
   .pd-name {
-    font-size: var(--ui-font-size);
+    font-size: var(--text-base);
   }
   .pd-desc {
     font-size: var(--text-xs);

@@ -378,7 +378,7 @@ const metaLabel = computed(() => {
   box-shadow: var(--shadow-sm);
   color: var(--color-text);
   font-family: var(--font-ui);
-  font-size: var(--ui-font-size-sm);
+  font-size: var(--text-sm);
   line-height: 1;
   cursor: pointer;
   user-select: none;

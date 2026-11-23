@@ -140,7 +140,7 @@ function onWorkspaceMouseLeave(): void {
 .ws-dir-name {
   flex: 1;
   min-width: 0;
-  font-size: var(--ui-font-size-sm);
+  font-size: var(--text-sm);
   font-weight: var(--weight-caption);
   line-height: var(--leading-tight);
   color: var(--color-text);
@@ -167,7 +167,7 @@ function onWorkspaceMouseLeave(): void {
   flex: 1;
   min-width: 0;
   font-family: var(--font-ui);
-  font-size: var(--ui-font-size-sm);
+  font-size: var(--text-sm);
   font-weight: var(--weight-caption);
   color: var(--color-text);
   background: var(--color-bg);
@@ -203,8 +203,8 @@ function onWorkspaceMouseLeave(): void {
 .empty {
   padding: var(--space-6) var(--space-3);
   text-align: center;
-  color: var(--faint);
-  font-size: calc(var(--ui-font-size) - 3px);
+  color: var(--color-text-quaternary);
+  font-size: calc(var(--text-base) - 3px);
   line-height: 1.6;
 }
 </style>

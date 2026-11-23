@@ -1246,7 +1246,7 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
   user-select: none;
 }
 .empty-hint-title {
-  font-size: calc(var(--ui-font-size) + 16px);
+  font-size: calc(var(--text-base) + 16px);
   font-optical-sizing: auto;
   font-weight: 600;
 }
@@ -1254,7 +1254,7 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
   display: inline-flex;
   align-items: center;
   gap: 9px;
-  color: var(--dim);
+  color: var(--color-text-muted);
   font-weight: 400;
 }
 .empty-logo {
@@ -1308,7 +1308,7 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
   border-radius: 10px;
   color: var(--color-text);
   font-family: inherit;
-  font-size: var(--ui-font-size-sm);
+  font-size: var(--text-sm);
   cursor: pointer;
   transition: color var(--duration-base) var(--ease-out);
 }
@@ -1412,7 +1412,7 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
 
 .ws-empty {
   padding: var(--space-3) var(--space-2);
-  color: var(--muted);
+  color: var(--color-text-faint);
   font-size: var(--text-sm);
   text-align: center;
   user-select: none;
@@ -1432,7 +1432,7 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
   font-family: var(--font-ui);
 }
 .ws-row > .kw-icon,
-.ws-row > .ws-icon { flex: none; color: var(--muted); }
+.ws-row > .ws-icon { flex: none; color: var(--color-text-faint); }
 .ws-row:hover { background: var(--color-hover); }
 .ws-row.on { background: var(--color-selected); }
 .ws-row:focus-visible { outline: none; box-shadow: var(--p-focus-ring); }
@@ -1462,7 +1462,7 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
   white-space: nowrap;
   font-size: var(--text-xs);
   font-weight: var(--weight-option-label);
-  color: var(--muted);
+  color: var(--color-text-faint);
   line-height: var(--leading-normal);
 }
 .ws-check {
@@ -1474,7 +1474,7 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
 .ws-divider {
   height: 1px;
   margin: var(--space-1) var(--space-2);
-  background: var(--line);
+  background: var(--color-line);
 }
 
 .ws-action {
@@ -1491,9 +1491,9 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
   font-family: var(--font-ui);
   font-size: var(--text-base);
   font-weight: var(--weight-medium);
-  color: var(--dim);
+  color: var(--color-text-muted);
 }
-.ws-action > .kw-icon { flex: none; color: var(--muted); }
+.ws-action > .kw-icon { flex: none; color: var(--color-text-faint); }
 .ws-action span {
   min-width: 0;
   overflow: hidden;
@@ -1501,7 +1501,7 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
   white-space: nowrap;
 }
 .ws-action:hover { background: var(--color-hover); color: var(--color-text); }
-.ws-action:hover > .kw-icon { color: var(--dim); }
+.ws-action:hover > .kw-icon { color: var(--color-text-muted); }
 .ws-action:focus-visible { outline: none; box-shadow: var(--p-focus-ring); }
 
 .newmsg-pill {
@@ -1514,8 +1514,8 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
   gap: 6px;
   padding: 6px 12px;
   border-radius: 999px;
-  border: var(--p-hairline) solid var(--line);
-  background: var(--panel);
+  border: var(--p-hairline) solid var(--color-line);
+  background: var(--color-surface);
   color: var(--color-text);
   font-size: var(--text-xs);
   font-weight: var(--weight-ui-strong);
@@ -1537,6 +1537,6 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
   transform: translateX(-50%) translateY(8px);
 }
 
-.con { background: var(--bg); }
-.newmsg-pill { font-family: var(--sans); }
+.con { background: var(--color-bg); }
+.newmsg-pill { font-family: var(--font-ui); }
 </style>

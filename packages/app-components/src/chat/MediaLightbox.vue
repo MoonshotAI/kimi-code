@@ -407,7 +407,7 @@ onBeforeUnmount(() => {
 .media-lightbox-name {
   max-width: 100%;
   color: var(--color-text-on-scrim);
-  font-size: var(--ui-font-size-xs);
+  font-size: var(--text-xs);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

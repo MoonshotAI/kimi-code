@@ -110,7 +110,7 @@ const wsName = computed<string>(() => props.workspace?.name ?? t('workspace.noWo
   display: flex;
   align-items: baseline;
   gap: 4px;
-  font-size: max(16px, var(--ui-font-size-xl));
+  font-size: max(16px, var(--text-lg));
   line-height: 1.25;
   white-space: nowrap;
 }

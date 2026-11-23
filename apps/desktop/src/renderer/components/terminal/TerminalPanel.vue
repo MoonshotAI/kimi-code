@@ -352,7 +352,7 @@ function onTabKeydown(event: KeyboardEvent, index: number): void {
   padding: 0 var(--space-1) 0 var(--space-2);
   border-radius: var(--radius-sm);
   color: var(--color-text-muted);
-  font-size: var(--ui-font-size-sm);
+  font-size: var(--text-sm);
 }
 .tp-tab:hover {
   background: var(--color-hover);
@@ -440,7 +440,7 @@ function onTabKeydown(event: KeyboardEvent, index: number): void {
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--color-danger);
-  font-size: var(--ui-font-size-xs);
+  font-size: var(--text-xs);
 }
 .tp-tail {
   margin-left: auto;
@@ -463,7 +463,7 @@ function onTabKeydown(event: KeyboardEvent, index: number): void {
   background: transparent;
   color: var(--color-text-faint);
   font-family: var(--font-ui);
-  font-size: var(--ui-font-size-sm);
+  font-size: var(--text-sm);
   cursor: pointer;
 }
 .tp-empty:hover {

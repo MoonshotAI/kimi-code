@@ -724,11 +724,11 @@ const {
 
 <style scoped>
 .pinned-options {
-  color: var(--faint);
+  color: var(--color-text-quaternary);
 }
 .pinned-options:hover,
 .pinned-options.open {
-  color: var(--dim);
+  color: var(--color-text-muted);
 }
 .pinned-options.open {
   background: var(--color-hover);
@@ -826,12 +826,12 @@ const {
 }
 .pinned-seam--top {
   top: 0;
-  border-top: var(--p-hairline) solid var(--line);
+  border-top: var(--p-hairline) solid var(--color-line);
   background: var(--pinned-seam-down);
 }
 .pinned-seam--bottom {
   bottom: 0;
-  border-bottom: var(--p-hairline) solid var(--line);
+  border-bottom: var(--p-hairline) solid var(--color-line);
   background: var(--pinned-seam-up);
 }
 .pinned-rows-wrap.scrolled .pinned-seam--top,

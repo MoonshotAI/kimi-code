@@ -1853,10 +1853,10 @@ function streamingTailIndex(turn: ChatTurn): number | null {
   justify-content: center;
   gap: 10px;
   padding: 24px 16px;
-  color: var(--faint);
+  color: var(--color-text-quaternary);
   text-align: center;
 }
-.chat-empty-text { font-size: var(--ui-font-size-sm); }
+.chat-empty-text { font-size: var(--text-sm); }
 
 .chat-loading {
   flex: 1;
@@ -1865,9 +1865,9 @@ function streamingTailIndex(turn: ChatTurn): number | null {
   justify-content: center;
   gap: 8px;
   padding: 24px 16px;
-  color: var(--muted);
+  color: var(--color-text-faint);
 }
-.chat-loading-text { font-size: var(--ui-font-size-sm); }
+.chat-loading-text { font-size: var(--text-sm); }
 
 .chat {
   text-autospace: normal;
@@ -2018,7 +2018,7 @@ function streamingTailIndex(turn: ChatTurn): number | null {
   box-shadow: var(--shadow-sm);
   color: var(--color-text);
   font-family: var(--font-ui);
-  font-size: var(--ui-font-size-sm);
+  font-size: var(--text-sm);
   line-height: 1;
   cursor: pointer;
   user-select: none;
@@ -2064,7 +2064,7 @@ function streamingTailIndex(turn: ChatTurn): number | null {
   display: block;
   flex: none;
 }
-.u-edit:hover { opacity: 1; color: var(--color-accent); background: var(--hover); }
+.u-edit:hover { opacity: 1; color: var(--color-accent); background: var(--color-hover); }
 .u-copy {
   display: inline-flex;
   align-items: center;
@@ -2083,7 +2083,7 @@ function streamingTailIndex(turn: ChatTurn): number | null {
   box-sizing: border-box;
 }
 .u-copy svg { display: block; flex: none; }
-.u-copy:hover { opacity: 1; color: var(--color-accent); background: var(--hover); }
+.u-copy:hover { opacity: 1; color: var(--color-accent); background: var(--color-hover); }
 .u-edit-wrap { display: flex; justify-content: flex-end; }
 
 .compact-divider {
@@ -2100,7 +2100,7 @@ function streamingTailIndex(turn: ChatTurn): number | null {
 .cd-line {
   flex: 1;
   height: 1px;
-  background: var(--line);
+  background: var(--color-line);
 }
 .cd-label {
   flex: none;
@@ -2109,7 +2109,7 @@ function streamingTailIndex(turn: ChatTurn): number | null {
   gap: 8px;
   max-width: 80%;
   font-size: var(--text-base);
-  color: var(--muted);
+  color: var(--color-text-faint);
   white-space: nowrap;
 }
 .cd-card {
@@ -2301,7 +2301,7 @@ function streamingTailIndex(turn: ChatTurn): number | null {
 .a-cpbtn:hover {
   opacity: 1;
   color: var(--color-accent);
-  background: var(--hover);
+  background: var(--color-hover);
 }
 .a-cpbtn svg {
   display: block;
@@ -2313,13 +2313,13 @@ function streamingTailIndex(turn: ChatTurn): number | null {
     margin-top: 6px;
   }
   .a-cpbtn {
-    font-size: var(--ui-font-size-sm);
+    font-size: var(--text-sm);
     padding: 8px 10px;
     margin: -4px -6px;
   }
 }
 .a-msg .msg {
-  font-size: var(--ui-font-size);
+  font-size: var(--text-base);
   line-height: var(--leading-prose);
   color: var(--color-text);
   font-weight: 500;
@@ -2488,7 +2488,7 @@ function streamingTailIndex(turn: ChatTurn): number | null {
   gap: 2px;
 }
 .skill-act-head {
-  font-size: var(--ui-font-size-sm);
+  font-size: var(--text-sm);
   font-weight: 500;
   color: var(--color-accent-hover);
   display: flex;
@@ -2501,7 +2501,7 @@ function streamingTailIndex(turn: ChatTurn): number | null {
 }
 .skill-act-args {
   font-size: var(--text-base);
-  color: var(--muted);
+  color: var(--color-text-faint);
   padding-left: 17px;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -2552,14 +2552,14 @@ function streamingTailIndex(turn: ChatTurn): number | null {
     max-width: calc(100vw - 28px);
   }
   .ts {
-    font-size: var(--ui-font-size-sm);
+    font-size: var(--text-sm);
   }
   .chat-empty-text,
   .chat-loading-text {
-    font-size: var(--ui-font-size-lg);
+    font-size: var(--ui-b1);
   }
   .cd-label {
-    font-size: var(--ui-font-size);
+    font-size: var(--text-base);
   }
 }
 
@@ -2578,8 +2578,8 @@ function streamingTailIndex(turn: ChatTurn): number | null {
   appearance: none;
   border: var(--p-hairline) solid var(--color-line);
   background: transparent;
-  color: var(--muted);
-  font-size: var(--ui-font-size-sm);
+  color: var(--color-text-faint);
+  font-size: var(--text-sm);
   padding: 4px 12px;
   border-radius: 999px;
   cursor: pointer;
@@ -2593,8 +2593,8 @@ function streamingTailIndex(turn: ChatTurn): number | null {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  color: var(--muted);
-  font-size: var(--ui-font-size-sm);
+  color: var(--color-text-faint);
+  font-size: var(--text-sm);
 }
 
 .chat { background: transparent; }
@@ -2632,7 +2632,7 @@ function streamingTailIndex(turn: ChatTurn): number | null {
   gap: 8px;
   padding: 0 6px;
   color: var(--color-text-faint);
-  font-size: var(--ui-font-size-xs);
+  font-size: var(--text-xs);
 }
 .q-title {
   display: inline-flex;
@@ -2690,7 +2690,7 @@ function streamingTailIndex(turn: ChatTurn): number | null {
   transition: background var(--duration-fast) var(--ease-out);
 }
 .q-bub:hover {
-  background: var(--hover);
+  background: var(--color-hover);
 }
 .q-content {
   display: flex;
@@ -2768,7 +2768,7 @@ function streamingTailIndex(turn: ChatTurn): number | null {
   border-radius: var(--radius-sm);
   border: var(--p-hairline) solid var(--color-line);
   color: var(--color-text-muted);
-  font-size: calc(var(--ui-font-size) - 3px);
+  font-size: calc(var(--text-base) - 3px);
   max-width: 160px;
   overflow: hidden;
   text-overflow: ellipsis;

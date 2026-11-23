@@ -402,9 +402,9 @@ function onDeleteWorkspace(ws: WorkspaceView): void {
   border: none;
   border-radius: var(--radius-md);
   color: var(--color-accent);
-  font-family: var(--sans);
+  font-family: var(--font-ui);
   font-weight: var(--weight-medium);
-  font-size: var(--ui-font-size);
+  font-size: var(--text-base);
   cursor: pointer;
   text-align: left;
 }
@@ -431,9 +431,9 @@ function onDeleteWorkspace(ws: WorkspaceView): void {
   padding: var(--space-6) var(--space-4);
   text-align: center;
   color: var(--color-text-faint);
-  font-size: var(--ui-font-size);
+  font-size: var(--text-base);
 }
-.mempty.small { padding: 10px 16px 12px var(--m-indent); text-align: left; font-size: var(--ui-font-size-xs); }
+.mempty.small { padding: 10px 16px 12px var(--m-indent); text-align: left; font-size: var(--text-xs); }
 
 .mgroup { padding-top: var(--space-2); }
 .mgh {
@@ -455,7 +455,7 @@ function onDeleteWorkspace(ws: WorkspaceView): void {
 .mgh-name {
   flex: none;
   max-width: 50%;
-  font-size: var(--ui-font-size-sm);
+  font-size: var(--text-sm);
   font-weight: var(--weight-medium);
   color: var(--color-text-muted);
   overflow: hidden;
@@ -495,7 +495,7 @@ function onDeleteWorkspace(ws: WorkspaceView): void {
 .srow .t {
   flex: 1;
   min-width: 0;
-  font-size: var(--ui-font-size-sm);
+  font-size: var(--text-sm);
   font-weight: var(--weight-caption);
   line-height: var(--leading-tight);
   color: var(--color-text);
@@ -543,7 +543,7 @@ function onDeleteWorkspace(ws: WorkspaceView): void {
 .att {
   flex: none;
   font-family: var(--font-mono);
-  font-size: max(9px, calc(var(--ui-font-size) - 4px));
+  font-size: max(9px, calc(var(--text-base) - 4px));
   color: var(--color-text-on-accent);
   background: var(--color-warning);
   border-radius: var(--radius-full);
@@ -599,7 +599,7 @@ function onDeleteWorkspace(ws: WorkspaceView): void {
   border: none;
   border-radius: var(--radius-md);
   color: var(--color-text-muted);
-  font-size: var(--ui-font-size);
+  font-size: var(--text-base);
   cursor: pointer;
   text-align: left;
 }

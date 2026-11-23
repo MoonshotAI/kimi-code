@@ -528,7 +528,7 @@ function onLogoClick(): void {
   --sb-pad-x: var(--space-4);
   --sb-gutter: 16px;
   --sb-gap: var(--space-2);
-  --sb-action-inset: calc((max(var(--ui-font-size-sm) * var(--leading-tight), var(--p-ic-md)) + 2 * var(--space-2) - var(--icon-button-sm)) / 2);
+  --sb-action-inset: calc((max(var(--text-sm) * var(--leading-tight), var(--p-ic-md)) + 2 * var(--space-2) - var(--icon-button-sm)) / 2);
   --sb-hover: var(--color-hover);
   --sb-selected: color-mix(in srgb, var(--color-selected) 75%, transparent);
   user-select: none;
@@ -558,7 +558,7 @@ function onLogoClick(): void {
   min-height: 0;
   width: 100%;
   box-sizing: border-box;
-  border-right: var(--p-hairline) solid var(--line);
+  border-right: var(--p-hairline) solid var(--color-line);
   container-type: inline-size;
   container-name: sidebar-col;
   position: relative;
@@ -615,7 +615,7 @@ function onLogoClick(): void {
   margin-left: auto;
 }
 .ch-name {
-  font-size: var(--ui-font-size);
+  font-size: var(--text-base);
   font-weight: 500;
   line-height: 22px;
   color: var(--color-text);
@@ -677,7 +677,7 @@ function onLogoClick(): void {
   background: transparent;
   color: var(--color-text);
   font-family: var(--font-ui);
-  font-size: var(--ui-font-size-sm);
+  font-size: var(--text-sm);
   font-weight: var(--weight-medium);
   line-height: var(--leading-tight);
   cursor: pointer;
@@ -737,7 +737,7 @@ function onLogoClick(): void {
   min-width: 0;
   color: var(--color-text);
   font-family: var(--font-ui);
-  font-size: var(--ui-font-size-sm);
+  font-size: var(--text-sm);
   font-weight: var(--weight-medium);
   line-height: var(--leading-tight);
   overflow: hidden;
@@ -774,7 +774,7 @@ function onLogoClick(): void {
   align-items: center;
   gap: var(--space-1);
   padding: var(--space-2) calc(var(--sb-inset) + var(--sb-action-inset)) var(--space-2) var(--sb-inset);
-  border-top: var(--p-hairline) solid var(--line);
+  border-top: var(--p-hairline) solid var(--color-line);
   background: var(--color-sidebar-bg);
 }
 .side-footer-account {
@@ -834,7 +834,7 @@ function onLogoClick(): void {
   border: var(--p-hairline) dashed var(--color-accent);
   background: var(--color-bg);
   color: var(--color-accent);
-  font-size: var(--ui-font-size-lg);
+  font-size: var(--ui-b1);
   font-weight: var(--weight-medium);
   box-shadow: var(--shadow-md);
 }
@@ -853,12 +853,12 @@ function onLogoClick(): void {
   width: 14px;
 }
 .backend-menu-name {
-  font-family: var(--mono);
+  font-family: var(--font-mono);
   font-weight: 500;
 }
 .backend-menu-url {
   margin-left: 8px;
-  font-family: var(--mono);
+  font-family: var(--font-mono);
   color: var(--color-text-muted);
 }
 </style>

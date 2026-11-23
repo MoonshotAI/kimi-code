@@ -1148,7 +1148,7 @@ defineExpose({
   transition-duration: var(--duration-slow);
 }
 .sessions-head--scrolled {
-  border-bottom-color: var(--line);
+  border-bottom-color: var(--color-line);
 }
 .sessions-head--scrolled::after { opacity: 1; }
 
@@ -1156,10 +1156,10 @@ defineExpose({
   margin-top: var(--space-1);
 }
 .side-section-toggle {
-  color: var(--faint);
+  color: var(--color-text-quaternary);
 }
 .side-section-toggle:hover {
-  color: var(--dim);
+  color: var(--color-text-muted);
 }
 .side-section-toggle svg {
   width: 13px;
@@ -1257,7 +1257,7 @@ defineExpose({
 .done-gh-name {
   flex: 1;
   min-width: 0;
-  font-size: var(--ui-font-size-sm);
+  font-size: var(--text-sm);
   font-weight: var(--weight-medium);
   line-height: var(--leading-tight);
   color: var(--color-text-muted);
@@ -1336,8 +1336,8 @@ defineExpose({
 .empty {
   padding: var(--space-6) var(--space-3);
   text-align: center;
-  color: var(--faint);
-  font-size: calc(var(--ui-font-size) - 3px);
+  color: var(--color-text-quaternary);
+  font-size: calc(var(--text-base) - 3px);
   line-height: 1.6;
 }
 

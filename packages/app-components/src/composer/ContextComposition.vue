@@ -143,7 +143,7 @@ const rows = computed(() => {
   font-variant-numeric: tabular-nums;
 }
 .ctx-usage-headline {
-  font-size: var(--ui-font-size);
+  font-size: var(--text-base);
   font-weight: var(--weight-medium);
   color: var(--color-text);
 }
