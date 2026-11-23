@@ -10,7 +10,7 @@
 
 - 两个语言版本分别放在 `docs/en/` 和 `docs/zh/` 下，路径和文件名互为镜像。
 - 主要栏目（导航栏 + 侧边栏）如下：
-  - Guides 包含 getting-started、migration、use-cases、interaction、sessions、feedback、tower、remote-environment，以及「多端与外部接入」下的 web、ides、other-agents。
+  - Guides 包含 getting-started、migration、use-cases、interaction、sessions、tower、remote-environment，以及「多端与外部接入」下的 web、ides、other-agents。
   - Customization: mcp, skills, plugins, datasource, agents, hooks
   - Configuration: config-files, providers, overrides, env-vars, data-locations
   - Reference: kimi-command, tools, slash-commands, keyboard
