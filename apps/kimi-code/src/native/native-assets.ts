@@ -16,8 +16,6 @@ import { join as joinPosix } from 'pathe';
 
 import { KIMI_BUILD_INFO } from '#/cli/build-info';
 import {
-  KAP_SEARCH_WORKER_ASSET,
-  MINIDB_TEXT_BUILD_WORKER_ASSET,
   NATIVE_ASSET_MANIFEST_VERSION as MANIFEST_VERSION,
   buildManifestKey,
 } from '../../scripts/native/manifest.mjs';
@@ -37,15 +35,10 @@ export interface NativeAssetPackage {
   readonly files: readonly NativeAssetFile[];
 }
 
-export interface NativeRuntimeAssetFile extends NativeAssetFile {
-  readonly key: string;
-}
-
 export interface NativeAssetManifest {
   readonly version: typeof NATIVE_ASSET_MANIFEST_VERSION;
   readonly target: string;
   readonly packages: readonly NativeAssetPackage[];
-  readonly runtimeFiles: readonly NativeRuntimeAssetFile[];
 }
 
 export interface NativeAssetSource {
@@ -184,11 +177,6 @@ export function validateNativeAssetManifest(
   if (!Array.isArray(manifestPackages)) {
     throw new TypeError('Invalid native asset manifest: packages must be an array');
   }
-  const manifestRuntimeFiles = manifest['runtimeFiles'];
-  if (!Array.isArray(manifestRuntimeFiles)) {
-    throw new TypeError('Invalid native asset manifest: runtimeFiles must be an array');
-  }
-
   const assetKeys = new Set<string>();
   const relativePaths = new Set<string>();
   const packageNames = new Set<string>();
@@ -214,26 +202,10 @@ export function validateNativeAssetManifest(
     };
   });
 
-  const runtimeKeys = new Set<string>();
-  const runtimeFiles = manifestRuntimeFiles.map((value, index): NativeRuntimeAssetFile => {
-    const label = `runtimeFiles[${index}]`;
-    const raw = manifestObject(value, label);
-    const key = manifestString(raw['key'], `${label}.key`);
-    if (runtimeKeys.has(key)) {
-      throw new Error(`Invalid native asset manifest: duplicate runtime key ${key}`);
-    }
-    runtimeKeys.add(key);
-    return {
-      ...validateAssetFile(raw, label, assetKeys, relativePaths),
-      key,
-    };
-  });
-
   return {
     version: NATIVE_ASSET_MANIFEST_VERSION,
     target,
     packages,
-    runtimeFiles,
   };
 }
 
@@ -371,10 +343,7 @@ export function ensureNativeAssetTree(options: NativeAssetOptions = {}): string 
 
   const cacheRoot = getNativeAssetCacheRoot(rawManifest, options);
   const sourceKeys = new Set(source.getAssetKeys());
-  const files = [
-    ...manifest.packages.flatMap((pkg) => pkg.files),
-    ...manifest.runtimeFiles,
-  ];
+  const files = manifest.packages.flatMap((pkg) => pkg.files);
   for (const file of files) {
     if (!sourceKeys.has(file.assetKey)) {
       throw new Error(`Native asset is missing: ${file.assetKey}`);
@@ -390,35 +359,6 @@ export function ensureNativeAssetTree(options: NativeAssetOptions = {}): string 
   }
   ensureEntryFile(cacheRoot);
   return cacheRoot;
-}
-
-export function getNativeRuntimeFile(
-  key: string,
-  options: NativeAssetOptions = {},
-): string | null {
-  const source = options.source ?? getSeaAssetSource();
-  if (source === null) return null;
-
-  const rawManifest =
-    options.manifest ?? getEmbeddedNativeAssetManifest(source, currentTarget());
-  if (rawManifest === null) return null;
-  const manifest = validateNativeAssetManifest(rawManifest);
-
-  const file = manifest.runtimeFiles.find((entry) => entry.key === key);
-  if (file === undefined) return null;
-
-  const cacheRoot = ensureNativeAssetTree({ ...options, source, manifest: rawManifest });
-  return cacheRoot === null ? null : resolveAssetPath(cacheRoot, file.relativePath);
-}
-
-export function getMinidbTextBuildWorkerFile(
-  options: NativeAssetOptions = {},
-): string | null {
-  return getNativeRuntimeFile(MINIDB_TEXT_BUILD_WORKER_ASSET.key, options);
-}
-
-export function getKapSearchWorkerFile(options: NativeAssetOptions = {}): string | null {
-  return getNativeRuntimeFile(KAP_SEARCH_WORKER_ASSET.key, options);
 }
 
 export function getNativePackageRoot(
@@ -438,6 +378,14 @@ export function getNativePackageRoot(
 
   const cacheRoot = ensureNativeAssetTree({ ...options, source, manifest: rawManifest });
   return cacheRoot === null ? null : resolveAssetPath(cacheRoot, pkg.root);
+}
+
+export function getSqliteNativeBinding(
+  options: NativeAssetOptions = {},
+  target = currentTarget(),
+): string | null {
+  const packageRoot = getNativePackageRoot('better-sqlite3', options);
+  return packageRoot === null ? null : join(packageRoot, 'prebuilds', `${target}.node`);
 }
 
 export function hasNativePackage(packageName: string, manifest: NativeAssetManifest): boolean {

@@ -11,7 +11,6 @@ const buildVisAssetPath = resolve(import.meta.dirname, '..', 'build-vis-asset.mj
 export async function runBundleStep() {
   await run(process.execPath, [buildVisAssetPath]);
   await run(process.execPath, [tsdownCliPath, '--config', 'tsdown.native.config.ts']);
-  await run(process.execPath, [tsdownCliPath, '--config', 'tsdown.worker.config.ts']);
   await run(process.execPath, [checkBundlePath]);
 }
 

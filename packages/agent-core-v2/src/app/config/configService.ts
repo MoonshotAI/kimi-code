@@ -695,7 +695,9 @@ export class ConfigService extends Disposable implements IConfigService {
     for (const section of this.registry.listSections()) {
       if (section.collectDiagnostics === undefined) continue;
       const rawSection = nextRawSnake[camelToSnake(section.domain)];
-      for (const diagnostic of section.collectDiagnostics(rawSection)) {
+      for (const diagnostic of section.collectDiagnostics(rawSection, (name) =>
+        this.bootstrap.getEnv(name),
+      )) {
         this.pushDiagnostic(diagnostic);
       }
     }

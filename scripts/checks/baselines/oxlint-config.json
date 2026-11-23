@@ -110,10 +110,7 @@
         "packages/minidb/src/trigram.ts",
         "packages/minidb/src/text-postings.ts",
         "packages/minidb/src/text-index/tokenize.ts",
-        "packages/minidb/src/gen-codec.ts",
-        "packages/kap-server/src/search/worker/**/*.ts",
-        "packages/kap-server/src/search/indexCore.ts",
-        "packages/kap-server/src/search/match.ts"
+        "packages/minidb/src/gen-codec.ts"
       ],
       "globals": null,
       "plugins": null,

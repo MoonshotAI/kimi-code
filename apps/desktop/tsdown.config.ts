@@ -8,7 +8,6 @@ const isDev = process.env.KIMI_DESKTOP_DEV === '1';
 const entries = {
   main: 'src/main/app/index.ts',
   preload: 'src/main/ipc/preload.ts',
-  'search-worker': '../../packages/kap-server/src/search/worker/entry.ts',
   'browser-receipt-worker': 'src/main/browser/browser-receipt-worker.ts',
   'browser-control-preload': 'src/main/browser/browser-control-preload.ts',
   'browser-overlay-preload': 'src/main/browser/browser-overlay-preload.ts',
