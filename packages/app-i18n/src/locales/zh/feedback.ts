@@ -17,7 +17,7 @@ export default {
   dropTitle: '拖到这里，添加到反馈',
   dropHint: '支持图片和视频，最多 5 个文件',
   dropFull: '请先移除部分附件再添加',
-  dataUse: '您的反馈可用于改进 Kimi Code',
+  dataUse: '您选择和提交的反馈内容将用于定位问题及改进Kimi Code',
   submitGlobal: '提交反馈',
   resubmit: '重新提交',
   submittingGlobal: '提交中…',
