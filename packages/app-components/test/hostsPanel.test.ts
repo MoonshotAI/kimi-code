@@ -425,10 +425,10 @@ describe('HostsPanel SSH config hosts', () => {
 
   it('keeps every configured host out of the list after navigating away and back', async () => {
     await mountHosts();
-    host.querySelector<HTMLButtonElement>('.re-back')!.click();
+    host.querySelector<HTMLButtonElement>('.re-nav')!.click();
     await nextTick();
     await openRowEditor(0);
-    host.querySelector<HTMLButtonElement>('.re-back')!.click();
+    host.querySelector<HTMLButtonElement>('.re-nav')!.click();
     await nextTick();
     addButton().click();
     await nextTick();
@@ -447,7 +447,7 @@ describe('HostsPanel SSH config hosts', () => {
     tabs()[1]!.click();
     await nextTick();
     expect(host.querySelector<HTMLInputElement>('.re-page .ui-input')?.value).toBe('draft');
-    host.querySelector<HTMLButtonElement>('.re-back')!.click();
+    host.querySelector<HTMLButtonElement>('.re-nav')!.click();
     await nextTick();
     expect(host.querySelector('.re-page')).toBeNull();
     expect(host.querySelector('.re-hosts')).toBeNull();
@@ -545,7 +545,7 @@ describe('HostsPanel SSH config hosts', () => {
     expect(host.querySelector('.re-hosts')).toBeNull();
     addButton().click();
     await nextTick();
-    expect(host.querySelector('.re-back')).not.toBeNull();
+    expect(host.querySelector('.re-nav')).not.toBeNull();
     expect(hostNames()).toEqual(['devbox', 'gpu', 'staging']);
     const tabs = () => host.querySelectorAll<HTMLButtonElement>('.re-hosts-head [role="tab"]');
     expect(tabs()).toHaveLength(2);
@@ -604,7 +604,7 @@ describe('HostsPanel navigation and row actions', () => {
     expect(host.querySelector('.re-page .ui-input')).toBeNull();
     expect(store.addIfEmpty).toBe(false);
 
-    host.querySelector<HTMLButtonElement>('.re-back')!.click();
+    host.querySelector<HTMLButtonElement>('.re-nav')!.click();
     store.requestFocus(null, { addIfEmpty: true });
     expect(store.addIfEmpty).toBe(true);
     store.requestFocus(null);
@@ -931,7 +931,7 @@ describe('HostsPanel connection test steps', () => {
   });
 
   it.each([
-    ['leaving the form', () => { host.querySelector<HTMLButtonElement>('.re-back')!.click(); }],
+    ['leaving the form', () => { host.querySelector<HTMLButtonElement>('.re-nav')!.click(); }],
     ['the panel going away', () => { app!.unmount(); app = undefined; }],
   ])('aborts a running test when %s', async (_label, leave) => {
     const { test, signals } = pendingTest();

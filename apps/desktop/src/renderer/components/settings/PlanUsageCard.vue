@@ -211,7 +211,7 @@ function resetHint(resetAt: string | undefined): string {
   border-radius: 2px;
 }
 .pu-swatch-blue {
-  background: var(--blue);
+  background: var(--color-accent);
 }
 .pu-swatch-text {
   background: var(--color-text);
@@ -229,7 +229,7 @@ function resetHint(resetAt: string | undefined): string {
   border-radius: 0 var(--radius-full) var(--radius-full) 0;
 }
 .pu-meter.pu-meter-stacked i.seg-code {
-  background: var(--blue);
+  background: var(--color-accent);
   border-radius: 0 var(--radius-full) var(--radius-full) 0;
 }
 .pu-value {

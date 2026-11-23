@@ -93,7 +93,7 @@ const buttonAttrs = computed(() => ({
 .ui-menu-item.is-selected:not(:disabled) { background: var(--color-selected); color: var(--color-text); }
 .ui-menu-item.is-danger { color: var(--color-danger); }
 .ui-menu-item.is-danger:hover:not(:disabled) { background: var(--color-hover); }
-.ui-menu-item :deep(svg) { display: block; width: 16px; height: 16px; flex: none; color: var(--muted); transition: color var(--duration-base); }
+.ui-menu-item :deep(svg) { display: block; width: 16px; height: 16px; flex: none; color: var(--color-text-faint); transition: color var(--duration-base); }
 .ui-menu-item:hover:not(:disabled):not(.is-active):not(.is-danger) :deep(svg) { color: var(--color-text-strong); }
 .ui-menu-item.is-active :deep(svg) { color: var(--color-text); }
 .ui-menu-item.is-danger :deep(svg) { color: var(--color-danger); }

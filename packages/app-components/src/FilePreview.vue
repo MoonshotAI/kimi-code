@@ -655,8 +655,8 @@ function menuDownload(): void {
   display: flex;
   flex-direction: column;
   height: 100%;
-  background: var(--bg);
-  font-family: var(--mono);
+  background: var(--color-bg);
+  font-family: var(--font-mono);
   min-width: 0;
   container-type: inline-size;
 }
@@ -699,18 +699,18 @@ function menuDownload(): void {
   align-items: center;
   justify-content: center;
   gap: 10px;
-  color: var(--muted);
-  font-size: var(--ui-font-size);
+  color: var(--color-text-faint);
+  font-size: var(--text-base);
 }
 
 .fp-assumed {
   flex: none;
   padding: 5px 12px;
-  font-family: var(--sans);
-  font-size: var(--ui-font-size);
-  color: var(--muted);
-  background: var(--panel);
-  border-bottom: var(--p-hairline) solid var(--line2);
+  font-family: var(--font-ui);
+  font-size: var(--text-base);
+  color: var(--color-text-faint);
+  background: var(--color-surface);
+  border-bottom: var(--p-hairline) solid var(--color-subtle);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -721,11 +721,11 @@ function menuDownload(): void {
 .fp-truncated {
   flex: none;
   padding: 5px 12px;
-  font-family: var(--sans);
-  font-size: var(--ui-font-size);
-  color: var(--color-warning, var(--muted));
-  background: var(--panel);
-  border-bottom: var(--p-hairline) solid var(--line2);
+  font-family: var(--font-ui);
+  font-size: var(--text-base);
+  color: var(--color-warning, var(--color-text-faint));
+  background: var(--color-surface);
+  border-bottom: var(--p-hairline) solid var(--color-subtle);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -752,7 +752,7 @@ function menuDownload(): void {
 }
 
 .fp-code {
-  background: var(--bg);
+  background: var(--color-bg);
 }
 
 .fp-code :deep(.hl-row.target),
@@ -773,12 +773,12 @@ function menuDownload(): void {
 }
 
 .fp-table-wrap {
-  background: var(--bg);
+  background: var(--color-bg);
 }
 .fp-table {
   border-collapse: collapse;
   min-width: 100%;
-  font: var(--code-font-size)/var(--leading-normal) var(--mono);
+  font: var(--code-font-size)/var(--leading-normal) var(--font-mono);
 }
 .fp-table th {
   position: sticky;
@@ -788,15 +788,15 @@ function menuDownload(): void {
   min-width: 44px;
   padding: 2px 8px;
   text-align: right;
-  color: var(--faint);
-  background: var(--panel);
-  border-right: var(--p-hairline) solid var(--line2);
+  color: var(--color-text-quaternary);
+  background: var(--color-surface);
+  border-right: var(--p-hairline) solid var(--color-subtle);
   user-select: none;
 }
 .fp-table td {
   padding: 2px 10px;
-  border-right: var(--p-hairline) solid var(--line2);
-  border-bottom: var(--p-hairline) solid var(--line2);
+  border-right: var(--p-hairline) solid var(--color-subtle);
+  border-bottom: var(--p-hairline) solid var(--color-subtle);
   white-space: pre;
 }
 
@@ -812,7 +812,7 @@ function menuDownload(): void {
   max-width: 100%;
   max-height: 100%;
   object-fit: contain;
-  border: var(--p-hairline) solid var(--line);
+  border: var(--p-hairline) solid var(--color-line);
   border-radius: 4px;
   background: var(--media-alpha-canvas);
 }
@@ -832,17 +832,17 @@ function menuDownload(): void {
   align-items: center;
   gap: 12px;
   padding: 20px 24px;
-  border: var(--p-hairline) solid var(--line);
+  border: var(--p-hairline) solid var(--color-line);
   border-radius: 6px;
-  background: var(--panel);
-  color: var(--muted);
-  font-size: var(--ui-font-size);
+  background: var(--color-surface);
+  color: var(--color-text-faint);
+  font-size: var(--text-base);
   margin: 32px auto;
   max-width: 480px;
 }
 
 .fp-binary-icon {
-  color: var(--faint);
+  color: var(--color-text-quaternary);
   flex: none;
 }
 .fp-error {
@@ -857,9 +857,9 @@ function menuDownload(): void {
 }
 
 .fp-empty,
-.fp-loading { font-family: var(--sans); }
+.fp-loading { font-family: var(--font-ui); }
 .fp-binary-card { border: var(--p-hairline) solid var(--color-line); border-radius: var(--radius-md); }
-.fp-binary-label { font-family: var(--sans); }
+.fp-binary-label { font-family: var(--font-ui); }
 .fp-image { border-radius: var(--radius-md); }
-.seg-btn { font-family: var(--sans); }
+.seg-btn { font-family: var(--font-ui); }
 </style>

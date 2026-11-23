@@ -4,7 +4,7 @@ import { useI18n } from 'vue-i18n';
 import type { AppProvider } from '@moonshot-ai/app-core/api';
 import { providerModelRows } from '@moonshot-ai/app-core/lib';
 import { useKimiWebClient } from '@moonshot-ai/app-client/client';
-import { Badge, Button, Icon } from '@moonshot-ai/app-ui';
+import { Badge, Button, Icon, IconButton } from '@moonshot-ai/app-ui';
 import ProviderBrandIcon from './ProviderBrandIcon.vue';
 
 const props = defineProps<{
@@ -59,9 +59,9 @@ function formatContext(size: string): string {
 <template>
   <div class="mpv">
     <div class="mpv-head">
-      <button type="button" class="mpv-back" @click="emit('cancel')">
+      <IconButton class="mpv-nav" size="sm" :label="t('settings.plugins.back')" @click="emit('cancel')">
         <Icon name="arrow-left" size="sm" />
-      </button>
+      </IconButton>
       <ProviderBrandIcon v-if="props.provider" :id="props.provider.id" size="sm" />
       <span class="mpv-title">{{ t('providers.kimiSubscription') }}</span>
       <Badge variant="neutral" size="sm">{{ t('providers.managedBuiltin') }}</Badge>
@@ -130,20 +130,7 @@ function formatContext(size: string): string {
   gap: var(--space-2);
   margin-bottom: var(--space-4);
 }
-.mpv-back {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 26px;
-  height: 26px;
-  margin-left: calc(-1 * var(--space-2));
-  border: none;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--color-text-muted);
-  cursor: pointer;
-}
-.mpv-back:hover { background: var(--color-hover); color: var(--color-text-strong); }
+.mpv-nav { margin-left: calc(-1 * var(--space-2)); }
 .mpv-title {
   font-family: var(--font-ui);
   font-size: var(--text-lg);
