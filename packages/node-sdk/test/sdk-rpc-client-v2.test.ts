@@ -1535,6 +1535,73 @@ key = "${titleOAuthRef.key}"
     }
   });
 
+  it('restores history when the saved model was removed without switching to the default', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-resume-model-'));
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+    tempDirs.push(homeDir, workDir);
+    const client = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
+    const sessionId = 'ses_resume_removed_model';
+    const retired = 'fixture/retired';
+    const available = 'fixture/available';
+    const config = `default_model = "${available}"
+
+[providers.fixture]
+type = "openai"
+base_url = "https://model.example.test/v1"
+
+[models."${available}"]
+provider = "fixture"
+model = "available"
+max_context_size = 32000
+max_input_size = 24000
+`;
+    const configPath = join(homeDir, 'config.toml');
+
+    try {
+      await writeFile(configPath, `${config}
+[models."${retired}"]
+provider = "fixture"
+model = "retired"
+max_context_size = 32000
+`);
+      await client.getConfig({ reload: true });
+      await client.createSession({ id: sessionId, workDir, model: retired });
+      await client.importContext({ sessionId, content: 'saved conversation history', source: 'fixture' });
+      await client.closeSession({ sessionId });
+
+      await writeFile(configPath, config);
+      await client.getConfig({ reload: true });
+      const resumed = await client.resumeSession({ id: sessionId });
+      expect(resumed.agents[MAIN_AGENT_ID]?.config.modelAlias).toBe(retired);
+      expect(JSON.stringify(resumed.agents[MAIN_AGENT_ID]?.replay)).toContain('saved conversation history');
+      await expect(client.getStatus({ sessionId })).resolves.toMatchObject({
+        model: retired,
+        maxContextTokens: 0,
+        contextUsage: 0,
+      });
+      const warning = expect.objectContaining({
+        code: 'session-model-unavailable',
+        message: expect.stringMatching(/fixture\/retired.*\/model/),
+        severity: 'warning',
+      });
+      await expect(client.getSessionWarnings({ sessionId })).resolves.toContainEqual(warning);
+      await expect(client.setModel({ sessionId, model: retired })).rejects.toMatchObject({ code: ErrorCodes.CONFIG_INVALID });
+
+      await client.setModel({ sessionId, model: available });
+      await expect(client.getStatus({ sessionId })).resolves.toMatchObject({ model: available, maxContextTokens: 24000 });
+      await expect(client.getSessionWarnings({ sessionId })).resolves.not.toContainEqual(warning);
+
+      await writeFile(configPath, config.replace('provider = "fixture"', 'provider = "missing"'));
+      await client.getConfig({ reload: true });
+      await expect(client.getStatus({ sessionId })).rejects.toMatchObject({
+        code: ErrorCodes.CONFIG_INVALID,
+        message: expect.stringContaining('Provider "missing"'),
+      });
+    } finally {
+      await client.close();
+    }
+  });
+
   it('resumes persisted wire state and recovers a legacy session with a missing default model', async () => {
     const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-resume-fold-'));
     const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));

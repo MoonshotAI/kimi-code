@@ -1067,6 +1067,23 @@ describe("VS Code Kimi harness integration (shares one in-process SDK home)", ()
     expect(resumed.id).toBe(plainSession.id);
   });
 
+  it("opens a saved session whose model is no longer configured", async () => {
+    const retired = "retired-test";
+    const rig = await createRuntimeRig([retired]);
+    const plain = await createPlainHarness(rig.homeDir);
+    const session = await plain.createSession({ workDir: rig.workDir, model: retired });
+    await session.importContext("saved conversation history", "fixture");
+    await session.close();
+
+    await writeProviderConfig(rig.homeDir, `${rig.provider.baseUrl}/v1`);
+    await rig.runtime.harness.getConfig({ reload: true });
+    const resumed = await openRuntimeSession(rig, session.id);
+
+    expect(resumed.id).toBe(session.id);
+    expect(JSON.stringify(resumed.session.getResumeState()?.agents.main?.replay)).toContain("saved conversation history");
+    await expect(resumed.session.getStatus()).resolves.toMatchObject({ model: retired, maxContextTokens: 0 });
+  });
+
   it("backfills approval flags for a session migrated before the metadata field existed", async () => {
     const rig = await createRuntimeRig();
     const legacySessionDir = join(rig.workDir, "legacy-session");
