@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { computed, inject, onBeforeUnmount, ref, useId } from 'vue';
+import { computed, inject, onBeforeUnmount, ref, useId, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { IconButton } from '@moonshot-ai/app-ui';
-import { DesktopFeedbackKey, type TurnFeedbackTarget } from '../../composables/useDesktopFeedback';
+import { DesktopFeedbackKey, type FeedbackForm, type TurnFeedbackTarget } from '../../composables/useDesktopFeedback';
 import TurnFeedbackPopover from './TurnFeedbackPopover.vue';
 
 const props = defineProps<{ target: TurnFeedbackTarget | undefined }>();
@@ -17,6 +17,20 @@ const activeRating = computed(() => {
 });
 const open = computed(() => feedback?.isPopoverOpen(props.target) === true);
 const pending = computed(() => state.value !== undefined && state.value.kind !== 'recorded');
+let prepared: { sessionId: string; form: Promise<FeedbackForm | null> } | undefined;
+
+function prepareForm(): void {
+  const sessionId = props.target?.sessionId;
+  if (sessionId !== undefined && feedback && !activeRating.value && prepared?.sessionId !== sessionId) {
+    prepared = { sessionId, form: feedback.loadForm(sessionId) };
+  }
+}
+
+function forgetForm(): void {
+  if (!open.value) prepared = undefined;
+}
+
+watch(open, forgetForm);
 
 onBeforeUnmount(() => {
   if (open.value) feedback?.closePopover(props.target);
@@ -49,6 +63,10 @@ onBeforeUnmount(() => {
       :aria-controls="open ? popoverId : undefined"
       aria-haspopup="dialog"
       :disabled="pending"
+      @pointerenter="prepareForm"
+      @focus="prepareForm"
+      @pointerleave="forgetForm"
+      @blur="forgetForm"
       @click="feedback.chooseRating(target, 'down')"
     >
       <span class="rating-icon rating-dislike" aria-hidden="true" />
@@ -60,6 +78,7 @@ onBeforeUnmount(() => {
         :key="target.replyId"
         :anchor="downButton.el"
         :target="target"
+        :prepared-form="prepared?.sessionId === target.sessionId ? prepared.form : undefined"
         :saving="state?.kind === 'saving'"
         :updating="state?.kind === 'updating'"
         @close="feedback.closePopover(target)"

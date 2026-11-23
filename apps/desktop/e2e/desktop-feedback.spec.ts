@@ -558,7 +558,7 @@ testWithProvider('requires a reason from the SSH host before submitting reply fe
   const { requests } = await openSshConversation(app, provider, { local: true, remote: true });
   const page = app.window;
   const configPath = '/api/v1/client-configs/feedback_form';
-  const pendingReasons = deferred();
+  let pendingReasons = deferred();
   const remoteReason = { id: 'remote_choice', label: { en: 'Remote reason', zh: '远程原因' } };
   const localGuide = 'https://example.com/local/feedback';
   const remoteGuide = 'https://example.com/remote/feedback';
@@ -578,16 +578,20 @@ testWithProvider('requires a reason from the SSH host before submitting reply fe
   const details = page.getByRole('dialog', { name: 'What could be better?' });
   const input = details.getByRole('textbox');
   const submit = details.getByRole('button', { name: 'Submit', exact: true });
+  const choices = details.getByRole('group').getByRole('button');
+  const layout = () => Promise.all([details.boundingBox(), input.boundingBox(), submit.boundingBox()]);
+  let beforeReasons: Awaited<ReturnType<typeof layout>>;
   try {
     expect.soft(new URL((await read).url()).pathname).toBe(hostProxy + configPath);
-    await expect(details.getByRole('button', { name: 'Incorrect or incomplete' })).toBeDisabled();
+    await expect(choices).toHaveCount(0);
     await input.fill('Example detail');
     await expect(submit).toBeDisabled();
+    beforeReasons = await layout();
   } finally {
     pendingReasons.resolve();
   }
-  const choices = details.getByRole('group').getByRole('button');
   await expect(choices).toHaveText([remoteReason.label.en]);
+  expect(await layout()).toEqual(beforeReasons);
   await expect(details.getByRole('link', { name: 'Learn more about what you submit' })).toHaveAttribute('href', remoteGuide);
   const reason = details.getByRole('button', { name: remoteReason.label.en, exact: true });
   await expect(submit).toBeDisabled();
@@ -613,6 +617,34 @@ testWithProvider('requires a reason from the SSH host before submitting reply fe
   await expect(submit).toBeDisabled();
   expect(requests).toHaveLength(writesBeforeTyping);
   await details.getByRole('button', { name: 'Close' }).click();
+  await expect(details).toBeHidden();
+
+  remoteReasons = Array.from({ length: 4 }, (_, i) => ({
+    id: `choice_${i}`, label: { en: `A longer description for response issue ${i}`, zh: `原因 ${i}` },
+  }));
+  pendingReasons = deferred();
+  await page.getByRole('button', { name: 'Remove dislike' }).click();
+  await expect(down).toBeEnabled();
+  await down.focus();
+  await down.press('Enter');
+  try {
+    await expect(details.getByRole('group')).toHaveAttribute('aria-busy', 'true');
+    await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => resolve())));
+    beforeReasons = await layout();
+  } finally {
+    pendingReasons.resolve();
+  }
+  await expect(choices).toHaveText(remoteReasons.map(reason => reason.label.en));
+  expect(await layout()).toEqual(beforeReasons);
+  await expect(choices.nth(1)).toBeInViewport();
+  await expect(choices.nth(1)).not.toBeInViewport({ ratio: 1 });
+  await choices.first().focus();
+  for (let i = 1; i < remoteReasons.length; i++) await page.keyboard.press('Tab');
+  await expect(choices.last()).toBeFocused();
+  await expect(choices.last()).toBeInViewport({ ratio: 1 });
+  await page.keyboard.press('Space');
+  await expect(submit).toBeEnabled();
+  await page.keyboard.press('Escape');
   await expect(details).toBeHidden();
 
   await openAccountFeedback(page);

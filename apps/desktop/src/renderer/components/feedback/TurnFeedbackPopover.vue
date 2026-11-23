@@ -1,14 +1,15 @@
 <script setup lang="ts">
-import { computed, inject, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, useId } from 'vue';
+import { computed, inject, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, useId, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useFontPrefs, useIsDark } from '@moonshot-ai/app-core';
-import { Button, Checkbox, IconButton, Menu, Pill, Textarea } from '@moonshot-ai/app-ui';
+import { Button, Checkbox, IconButton, Menu, Pill, Skeleton, Textarea } from '@moonshot-ai/app-ui';
 import { DesktopFeedbackKey, FEEDBACK_DESCRIPTION_LIMIT, type FeedbackForm, type TurnFeedbackTarget } from '../../composables/useDesktopFeedback';
 import FeedbackGuideLink from './FeedbackGuideLink.vue';
 
 const props = defineProps<{
   anchor: HTMLButtonElement;
   target: TurnFeedbackTarget;
+  preparedForm?: Promise<FeedbackForm | null>;
   saving: boolean;
   updating: boolean;
 }>();
@@ -23,11 +24,16 @@ const scrolls = ref(false);
 const deferPreview = ref(false);
 const position = shallowRef<{ top: number; left: number; maxHeight: number }>();
 const form = shallowRef<FeedbackForm | null>();
+const loadingWasVisible = ref(false);
 const builtinReasons = ['incorrect', 'missed_instructions', 'off_topic', 'lost_context', 'slow', 'other'] as const;
-const reasonOptions = computed(() => form.value?.reply_reasons.negative.map(reason => ({
-  id: reason.id,
-  label: locale.value.startsWith('zh') ? reason.label.zh : reason.label.en,
-})) ?? builtinReasons.map(id => ({ id, label: t(`feedback.reasons.${id}`) })));
+const reasonOptions = computed(() => {
+  if (form.value === undefined) return [];
+  if (form.value === null) return builtinReasons.map(id => ({ id, label: t(`feedback.reasons.${id}`) }));
+  return form.value.reply_reasons.negative.map(reason => ({
+    id: reason.id,
+    label: locale.value.startsWith('zh') ? reason.label.zh : reason.label.en,
+  }));
+});
 const selected = ref<string[]>([]);
 const detail = ref('');
 const includeSession = ref(false);
@@ -36,6 +42,7 @@ const countId = useId();
 const overLimit = computed(() => detail.value.length > FEEDBACK_DESCRIPTION_LIMIT);
 const canSubmit = computed(() => selected.value.length > 0 && !overLimit.value && !props.saving && !props.updating);
 let observer: ResizeObserver | undefined;
+let firstFrame: number;
 
 function measure(): void {
   const panel = menu.value?.el;
@@ -73,6 +80,8 @@ function escape(event: KeyboardEvent): void {
   emit('close');
 }
 
+watch(form, measure, { flush: 'post' });
+
 onMounted(() => {
   const panel = menu.value?.el;
   if (!panel) return;
@@ -86,13 +95,16 @@ onMounted(() => {
   document.addEventListener('scroll', measure, true);
   window.addEventListener('keydown', escape, true);
   window.addEventListener('resize', measure);
-  void feedback?.loadForm(props.target.sessionId).then(config => {
+  const request = props.preparedForm ?? feedback?.loadForm(props.target.sessionId);
+  void request?.then(config => {
     form.value = config;
   });
+  firstFrame = requestAnimationFrame(() => { loadingWasVisible.value = form.value === undefined; });
 });
 
 onBeforeUnmount(() => {
   observer?.disconnect();
+  cancelAnimationFrame(firstFrame);
   document.removeEventListener('click', outside, true);
   document.removeEventListener('scroll', measure, true);
   window.removeEventListener('keydown', escape, true);
@@ -135,13 +147,20 @@ async function submit(): Promise<void> {
       <span>{{ t('feedback.multipleReasons') }}</span>
       <IconButton size="sm" :label="t('common.close')" @click="emit('close')"><span class="feedback-close-glyph" aria-hidden="true" /></IconButton>
     </div>
-    <div class="feedback-reasons" role="group" :aria-label="t('feedback.multipleReasons')">
+    <div
+      class="feedback-reasons"
+      :class="{ 'feedback-reasons-loading-size': loadingWasVisible }"
+      role="group"
+      :aria-label="t('feedback.multipleReasons')"
+      :aria-busy="form === undefined || undefined"
+    >
+      <Skeleton v-if="form === undefined" width="8em" height="var(--feedback-reason-height)" />
       <Pill
         v-for="reason in reasonOptions"
         :key="reason.id"
         :active="selected.includes(reason.id)"
         :aria-pressed="selected.includes(reason.id)"
-        :disabled="updating || form === undefined"
+        :disabled="updating"
         @click="toggle(reason.id)"
       ><span>{{ reason.label }}</span></Pill>
     </div>
@@ -228,9 +247,21 @@ async function submit(): Promise<void> {
   mask: url('./assets/dialog-close.svg') center / contain no-repeat;
 }
 .feedback-reasons {
+  --feedback-reason-height: calc(1lh + 12px);
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-2);
+}
+.feedback-reasons-loading-size {
+  height: var(--feedback-reason-height);
+}
+.feedback-reasons-loading-size:has(.ui-pill + .ui-pill) {
+  align-content: start;
+  height: calc(var(--feedback-reason-height) + 10px);
+  margin-bottom: -10px;
+  row-gap: var(--space-1);
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 .feedback-reasons .ui-pill {
   --feedback-control-bg: var(--color-fill-1);
