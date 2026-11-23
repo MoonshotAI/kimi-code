@@ -838,6 +838,12 @@ export interface AppConfig {
   raw?: Record<string, unknown>;
 }
 
+export interface AppGlobalAgentsMd {
+  path: string;
+  content: string;
+  exists: boolean;
+}
+
 export interface AppSkill {
   name: string;
   description: string;
@@ -1167,6 +1173,8 @@ export interface KimiWebApi {
 
   getConfig(): Promise<AppConfig>;
   setConfig(patch: Partial<AppConfig>): Promise<AppConfig>;
+  getGlobalAgentsMd(): Promise<AppGlobalAgentsMd>;
+  writeGlobalAgentsMd(content: string): Promise<AppGlobalAgentsMd>;
 
   getAuth(): Promise<AuthResult>;
   startOAuthLogin(region?: OAuthRegion): Promise<OAuthLoginStartResult>;

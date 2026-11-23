@@ -6,6 +6,7 @@ import type {
   AddProviderInput,
   AppCatalogProvider,
   AppConfig,
+  AppGlobalAgentsMd,
   AppHost,
   AppHostConnectFailure,
   AppHostDefinition,
@@ -1843,6 +1844,14 @@ export class DaemonKimiWebApi implements KimiWebApi {
     }
     const data = await this.http.post<WireConfig>('/config', wirePatch);
     return toAppConfig(data);
+  }
+
+  async getGlobalAgentsMd(): Promise<AppGlobalAgentsMd> {
+    return await this.http.get<AppGlobalAgentsMd>('/global-agents-md');
+  }
+
+  async writeGlobalAgentsMd(content: string): Promise<AppGlobalAgentsMd> {
+    return await this.http.put<AppGlobalAgentsMd>('/global-agents-md', { content });
   }
 
   async getAuth(): Promise<AuthResult> {

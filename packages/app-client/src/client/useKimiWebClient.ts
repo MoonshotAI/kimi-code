@@ -3620,6 +3620,8 @@ export function useKimiWebClient() {
     config,
     loadConfig: configStore().loadConfig,
     updateConfig: configStore().updateConfig,
+    getGlobalAgentsMd: () => getKimiWebApi().getGlobalAgentsMd(),
+    writeGlobalAgentsMd: (content: string) => getKimiWebApi().writeGlobalAgentsMd(content),
 
     checkAuth: () => authStore().checkAuth(),
     probeManagedMembership: () => authStore().probeMembership(),

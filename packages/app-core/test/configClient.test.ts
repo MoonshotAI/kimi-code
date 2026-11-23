@@ -169,3 +169,31 @@ describe('DaemonKimiWebApi.getMeta experimental_flags', () => {
     expect(meta.webTitle).toBe('');
   });
 });
+
+
+describe('DaemonKimiWebApi global AGENTS.md', () => {
+  it('GETs the global instruction snapshot', async () => {
+    const snapshot = { path: '/home/.kimi-code/AGENTS.md', content: '# Instructions\n', exists: true };
+    const fetchMock = vi.fn().mockResolvedValue(envelope(snapshot));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(makeApi().getGlobalAgentsMd()).resolves.toEqual(snapshot);
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('http://test.local/api/v1/global-agents-md');
+    expect(init.method).toBe('GET');
+  });
+
+  it('PUTs exact content and returns the saved snapshot', async () => {
+    const snapshot = { path: '/home/.kimi-code/AGENTS.md', content: '  保留空白\n', exists: true };
+    const fetchMock = vi.fn().mockResolvedValue(envelope(snapshot));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(makeApi().writeGlobalAgentsMd(snapshot.content)).resolves.toEqual(snapshot);
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('http://test.local/api/v1/global-agents-md');
+    expect(init.method).toBe('PUT');
+    expect(JSON.parse(init.body as string)).toEqual({ content: snapshot.content });
+  });
+});

@@ -7,7 +7,7 @@ import { serverEndpointLabel } from '../../api/config';
 import { useDialogFocus } from '@moonshot-ai/app-components';
 import { useConfirmDialog } from '@moonshot-ai/app-client/composables';
 import LanguageSwitcher from './LanguageSwitcher.vue';
-import { BrowserTabTitleSetting, FontSettingsPage, FontSettingsRow, useSettingsSubpage } from '@moonshot-ai/app-components';
+import { BrowserTabTitleSetting, FontSettingsPage, FontSettingsRow, GlobalAgentsMdSetting, useSettingsSubpage } from '@moonshot-ai/app-components';
 import type { FontTarget } from '@moonshot-ai/app-core';
 import ShortcutsPanel from './ShortcutsPanel.vue';
 import type { ShortcutActionId } from '../../../shared/action-ids';
@@ -349,7 +349,7 @@ const { isConfirmOpen, confirm } = useConfirmDialog();
 function handleKeydown(e: KeyboardEvent): void {
   if (e.key === 'Escape' && !e.defaultPrevented && !isConfirmOpen.value && !remoteControl.conflictDialogOpen.value && !runtimeEnvironmentOpen.value) {
     e.stopPropagation();
-    emit('close');
+    void requestClose();
   }
 }
 onMounted(() => {
@@ -668,18 +668,30 @@ function toggleAutoSessionTitle(): void {
   emit('updateConfig', { autoSessionTitle: !enabled } as Partial<AppConfig>);
 }
 
-function setTab(tab: SettingsTab): void {
+const globalAgentsMdSettingRef = ref<InstanceType<typeof GlobalAgentsMdSetting> | null>(null);
+const globalAgentsMdOpen = ref(false);
+
+async function setTab(tab: SettingsTab): Promise<void> {
   if (tab !== activeTab.value) {
+    if (globalAgentsMdOpen.value && !(await globalAgentsMdSettingRef.value?.confirmDiscard())) return;
     clearHighlightTimer();
     highlightedSetting.value = null;
   }
   activeTab.value = tab;
 }
 
+async function requestClose(): Promise<void> {
+  if (globalAgentsMdOpen.value && !(await globalAgentsMdSettingRef.value?.confirmDiscard())) return;
+  emit('close');
+}
+
 const bodyRef = ref<HTMLElement | null>(null);
 const fontPage = useSettingsSubpage<FontTarget>(() => bodyRef.value);
 const fontPageTarget = fontPage.page;
-watch(activeTab, () => fontPage.reset());
+watch(activeTab, () => {
+  fontPage.reset();
+  globalAgentsMdSettingRef.value?.reset();
+});
 
 const client = useKimiWebClient();
 
@@ -778,7 +790,7 @@ function archiveTime(iso: string): string {
 </script>
 
 <template>
-  <Dialog :open="true" :close-on-esc="false" forward-esc :aria-label="t('settings.title')" size="xl" height="fixed" :panel-class="'settings-dialog'" :panel-style="fontPage.fitHeight.value === null ? undefined : { height: `${fontPage.fitHeight.value}px` }" :padded="false" level="grouped" @close="emit('close')">
+  <Dialog :open="true" :close-on-esc="false" forward-esc :aria-label="t('settings.title')" size="xl" height="fixed" :panel-class="'settings-dialog'" :panel-style="fontPage.fitHeight.value === null ? undefined : { height: `${fontPage.fitHeight.value}px` }" :padded="false" level="grouped" @close="requestClose">
     <div ref="dialogRef" class="sd">
       <nav class="settings-tabs" role="tablist" :aria-label="t('settings.title')">
         <header class="settings-tabs-header">
@@ -803,7 +815,7 @@ function archiveTime(iso: string): string {
 
       <section class="settings-region">
         <header class="settings-region-header">
-          <IconButton size="sm" :label="t('settings.close')" :tooltip="t('settings.close')" @click="emit('close')">
+          <IconButton size="sm" :label="t('settings.close')" :tooltip="t('settings.close')" @click="requestClose">
             <Icon name="close" size="md" />
           </IconButton>
         </header>
@@ -1076,6 +1088,7 @@ function archiveTime(iso: string): string {
         </section>
 
         <section v-show="activeTab === 'agent'" class="panel">
+          <div v-show="!globalAgentsMdOpen">
           <section class="sec">
             <div class="sec-head">
               <h3 class="sec-title">{{ t('settings.agentDefaults') }}</h3>
@@ -1152,7 +1165,11 @@ function archiveTime(iso: string): string {
             </div>
             </div>
           </section>
+          </div>
 
+          <GlobalAgentsMdSetting ref="globalAgentsMdSettingRef" @open-change="globalAgentsMdOpen = $event" />
+
+          <div v-show="!globalAgentsMdOpen">
           <section v-if="config" class="sec">
             <div class="sec-head">
               <h3 class="sec-title">{{ t('settings.secondaryModelSection') }}</h3>
@@ -1262,6 +1279,7 @@ function archiveTime(iso: string): string {
             </div>
             </div>
           </section>
+          </div>
         </section>
 
         <section v-show="activeTab === 'advanced'" class="panel">

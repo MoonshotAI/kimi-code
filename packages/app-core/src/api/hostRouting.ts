@@ -136,6 +136,8 @@ const ROUTES = {
   downloadHostFile: 'local',
   getConfig: 'local',
   setConfig: 'local',
+  getGlobalAgentsMd: 'local',
+  writeGlobalAgentsMd: 'local',
   getAuth: 'local',
   startOAuthLogin: 'local',
   pollOAuthLogin: 'local',
