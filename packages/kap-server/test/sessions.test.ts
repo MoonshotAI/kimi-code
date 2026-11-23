@@ -3938,6 +3938,7 @@ kapTest('a session whose saved model was removed opens with history and a model 
   expect(main.accessor.get(IAgentLoopService).getModel()).toBe('old');
 
   const first = await kap.connect();
+  await first.subscribe(session.id);
   await vi.waitFor(() => {
     expect(modelFrames.filter((frame) => frame['type'] === 'notice')).toHaveLength(1);
   });
@@ -3948,13 +3949,15 @@ kapTest('a session whose saved model was removed opens with history and a model 
     modelFrames.findIndex((frame) => frame['type'] === 'notice'),
   );
   const second = await kap.connect();
+  await second.subscribe(session.id);
   await new Promise((resolve) => setTimeout(resolve, 50));
-  expect(modelFrames.filter((frame) => frame['type'] === 'notice')).toHaveLength(1);
+  expect(first.frames.filter((frame) => frame['type'] === 'notice')).toHaveLength(1);
+  expect(second.frames.filter((frame) => frame['type'] === 'notice')).toHaveLength(1);
   await first.close();
   await second.close();
 
   model.script(say('after fallback'));
-  await kap.prompt(session.id, 'after fallback');
+  await kap.prompt(session.id, 'after fallback', { model: 'testkit' });
   await kap.waitIdle(session.id);
   expect(JSON.parse(model.requests().at(-1)!.rawBody).model).toBe('testkit-model');
 });
@@ -3986,6 +3989,7 @@ kapTest('a session with no default model opens with no displayed model and a mod
   expect(main.accessor.get(IAgentLoopService).getModel()).toBe('old');
 
   const channel = await kap.connect();
+  await channel.subscribe(session.id);
   await vi.waitFor(() => {
     expect(modelFrames.filter((frame) => frame['type'] === 'notice')).toHaveLength(1);
   });
