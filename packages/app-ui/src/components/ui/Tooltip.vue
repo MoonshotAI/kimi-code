@@ -9,6 +9,7 @@ withDefaults(
     text?: string | null;
     keys?: string[];
     placement?: Placement;
+    arrow?: boolean;
     maxWidth?: number;
     maxLines?: number;
   }>(),
@@ -32,6 +33,7 @@ const trigger = ref<HTMLElement>();
     :text="text"
     :keys="keys"
     :placement="placement"
+    :arrow="arrow"
     :max-width="maxWidth"
     :max-lines="maxLines"
   />

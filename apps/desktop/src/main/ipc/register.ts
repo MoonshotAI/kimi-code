@@ -56,6 +56,7 @@ import { log, redactUrlForLog } from '../diagnostics/log';
 import { updateServerRegionToken } from '../server/region';
 import { asProviderModelsFetchRequest, fetchProviderModelsViaNet } from '../system/provider-models-fetch';
 import { createRendererLogWriter } from '../diagnostics/renderer-log';
+import { collectFeedbackDiagnosticsArchive } from '../diagnostics/diagnostics-export';
 import { recordRendererMilestone } from '../diagnostics/startup-milestones';
 import { markCleanExit } from '../app/launch-state';
 import {
@@ -235,6 +236,12 @@ export function registerIpcHandlers(): void {
     if (typeof text !== 'string') return false;
     clipboard.writeText(text);
     return true;
+  });
+  ipcMain.handle(IPC.collectFeedbackDiagnostics, (event) => {
+    if (!isMainRendererSender(event.sender) || event.senderFrame !== event.sender.mainFrame) {
+      throw new Error('Feedback diagnostics are only available to the main window');
+    }
+    return collectFeedbackDiagnosticsArchive();
   });
   ipcMain.handle(IPC.serverCredential, (_event, token: unknown) => {
     if (typeof token === 'string' && token.length > 0) {

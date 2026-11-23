@@ -130,7 +130,7 @@ describe('Agent loop', () => {
       [wire] context.append_loop_event   { "agentId": "main", "event": { "type": "content.part", "uuid": "<uuid-3>", "turnId": "0", "step": 1, "stepUuid": "<uuid-2>", "block": 0, "part": { "type": "think", "think": "<think-1>", "reasoningKey": "reasoning_content" }, "startedAt": "<time>" }, "time": "<time>" }
       [wire] context.append_loop_event   { "agentId": "main", "event": { "type": "content.part", "uuid": "<uuid-4>", "turnId": "0", "step": 1, "stepUuid": "<uuid-2>", "block": 1, "part": { "type": "text", "text": "<text-1><text-2>" }, "startedAt": "<time>" }, "time": "<time>" }
       [wire] usage.record                { "agentId": "main", "model": "mock-model", "usage": { "inputOther": 3, "output": 10, "inputCacheRead": 0, "inputCacheCreation": 0 }, "usageScope": "turn", "time": "<time>" }
-      [emit] turn.ended                  { "time": "<time>", "agentId": "main", "turnId": 0, "reason": "completed" }
+      [emit] turn.ended                  { "time": "<time>", "agentId": "main", "turnId": 0, "reason": "completed", "replyModel": { "provider": "openai", "model": "mock-model" }, "modelSteps": [ { "model": "mock-model", "provider": "openai", "isKfc": false, "step": 1, "role": "step" } ] }
     `);
     expect(ctx.lastLlmInput()).toMatchInlineSnapshot(`
     system: <system-prompt>
@@ -217,7 +217,7 @@ describe('Agent loop', () => {
       [wire] context.append_loop_event   { "agentId": "main", "event": { "type": "content.part", "uuid": "<uuid-3>", "turnId": "0", "step": 1, "stepUuid": "<uuid-2>", "block": 0, "part": { "type": "text", "text": "blocked" }, "startedAt": "<time>" }, "time": "<time>" }
       [wire] usage.record                { "agentId": "main", "model": "mock-model", "usage": { "inputOther": 3, "output": 5, "inputCacheRead": 0, "inputCacheCreation": 0 }, "usageScope": "turn", "time": "<time>" }
       [wire] token_counting.measured     { "agentId": "main", "length": 2, "tokens": 8, "time": "<time>" }
-      [emit] turn.ended                  { "time": "<time>", "agentId": "main", "turnId": 0, "reason": "failed", "error": { "code": "provider.filtered", "message": "Provider safety policy blocked the response.", "name": "ProviderFilteredError", "details": { "finishReason": "filtered" }, "retryable": false }, "interruptReason": "filtered" }
+      [emit] turn.ended                  { "time": "<time>", "agentId": "main", "turnId": 0, "reason": "failed", "error": { "code": "provider.filtered", "message": "Provider safety policy blocked the response.", "name": "ProviderFilteredError", "details": { "finishReason": "filtered" }, "retryable": false }, "interruptReason": "filtered", "replyModel": { "provider": "openai", "model": "mock-model" }, "modelSteps": [ { "model": "mock-model", "provider": "openai", "isKfc": false, "step": 1, "role": "step" } ] }
     `);
 
     const stepCompleted = ctx.allEvents.find(
@@ -615,7 +615,7 @@ describe('Agent loop', () => {
       [wire] context.append_loop_event           { "agentId": "main", "event": { "type": "content.part", "uuid": "<uuid-7>", "turnId": "0", "step": 2, "stepUuid": "<uuid-6>", "block": 0, "part": { "type": "text", "text": "The lookup result is lookup-result." }, "startedAt": "<time>" }, "time": "<time>" }
       [wire] usage.record                        { "agentId": "main", "model": "mock-model", "usage": { "inputOther": 25, "output": 12, "inputCacheRead": 0, "inputCacheCreation": 0 }, "usageScope": "turn", "time": "<time>" }
       [wire] token_counting.measured             { "agentId": "main", "length": 4, "tokens": 37, "time": "<time>" }
-      [emit] turn.ended                          { "time": "<time>", "agentId": "main", "turnId": 0, "reason": "completed" }
+      [emit] turn.ended                          { "time": "<time>", "agentId": "main", "turnId": 0, "reason": "completed", "replyModel": { "provider": "openai", "model": "mock-model" }, "modelSteps": [ { "model": "mock-model", "provider": "openai", "isKfc": false, "step": 1, "role": "step" }, { "model": "mock-model", "provider": "openai", "isKfc": false, "step": 2, "role": "step" } ] }
     `);
     expect(registryRequest).toHaveBeenCalledTimes(1);
     expect(ctx.lastLlmInput()).toMatchInlineSnapshot(`
@@ -1926,6 +1926,31 @@ describe('turn telemetry', () => {
         (entry) => entry.type === 'turn.ended',
       );
       expect(record).toMatchObject({ requestId: 'trace-payload-completed' });
+    } finally {
+      await local.dispose();
+    }
+  });
+
+  it('persists the model and request ID for each reply step by default', async () => {
+    const local = createTestAgent();
+    try {
+      local.get(IAgentLoopService).update({ activeToolNames: [] });
+      local.mockNextProviderResponse({
+        parts: [{ type: 'text', text: 'Done' }],
+        requestId: 'example-request',
+      });
+      await local.rpc.prompt({ input: [{ type: 'text', text: 'Hello' }] });
+      await local.untilTurnEnd();
+      const record = (await local.persistedWireRecords()).find((entry) => entry.type === 'turn.ended');
+      expect(record?.['requestId']).toBe('example-request');
+      expect(record?.['modelSteps']).toStrictEqual([{
+        step: 1,
+        role: 'step',
+        model: 'mock-model',
+        provider: 'openai',
+        isKfc: false,
+        requestId: 'example-request',
+      }]);
     } finally {
       await local.dispose();
     }

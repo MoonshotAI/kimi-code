@@ -10,7 +10,7 @@ import {
   type IAgentScopeHandle,
 } from '@moonshot-ai/agent-core-v2';
 import type { CollectionView } from '@moonshot-ai/agent-core-v2/_base/di/collection';
-import { ContextAppendLoopEvent, ContextAppendMessage, ContextClear } from '@moonshot-ai/agent-core-v2/agent/contextMemory/contextEvents';
+import { ContextAppendLoopEvent, ContextAppendMessage, ContextClear, ContextUndo } from '@moonshot-ai/agent-core-v2/agent/contextMemory/contextEvents';
 import type { LoopRecordedEvent } from '@moonshot-ai/agent-core-v2/agent/contextMemory/loopEventFold';
 import { AssistantDelta, ThinkingDelta, ToolCallDelta } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
 import { TurnEnded, TurnPrompt } from '@moonshot-ai/agent-core-v2/agent/loop/turnOps';
@@ -1024,6 +1024,59 @@ async function runningTurn(h: FeedHarness): Promise<void> {
 }
 
 describe('conversation feed', () => {
+  it('only reuses the historical request ID when its step produced the rated reply', async () => {
+    const h = feedHarness([
+      turnPrompt(0, 'p0'), userMessage('p0', 'First question'),
+      stepBegin(0, 1, 'answer'), contentPart(0, 1, 'answer', { type: 'text', text: 'First answer' }),
+      stepEnd(0, 1, 'answer', { finishReason: 'end_turn' }), turnEnded(0, 'completed', { requestId: 'first-request' }),
+      turnPrompt(1, 'p1'), userMessage('p1', 'Second question'),
+      stepBegin(1, 1, 'explain'), contentPart(1, 1, 'explain', { type: 'text', text: 'I will read the file.' }),
+      toolCall(1, 1, 'explain', 'read', 'Read', { path: 'example.txt' }), toolResult('read', 'file content'),
+      stepEnd(1, 1, 'explain', { finishReason: 'tool_use' }), stepBegin(1, 2, 'failed'),
+      stepEnd(1, 2, 'failed', { finishReason: 'error' }), turnEnded(1, 'failed', { requestId: 'failed-request' }),
+      turnPrompt(2, 'p2'), userMessage('p2', 'Third question'), message('assistant', 'Plain answer'),
+      turnEnded(2, 'completed', { requestId: 'text-request' }),
+      turnPrompt(3, 'p3'), userMessage('p3', 'Fourth question'), message('assistant', 'A previous reply'),
+      turnEnded(3, 'failed', { requestId: 'unproven-request' }),
+    ]);
+    await h.dispatcher.restore();
+    await h.feed.ready;
+    const [first, second, third, fourth] = h.feed.turns();
+    expect(h.feed.feedbackTurn(first!.turn_id, 'answer:0')).toMatchObject({ requestId: 'first-request' });
+    expect(h.feed.feedbackTurn(second!.turn_id, 'explain:0')).toEqual({});
+    expect(h.feed.feedbackTurn(third!.turn_id)).toMatchObject({ requestId: 'text-request' });
+    expect(h.feed.feedbackTurn(fourth!.turn_id)).toEqual({});
+    h.dispatcher.dispose();
+  });
+
+  it.each([true, false])('preserves only provable reply attribution after undoing a steer (per-step records: %s)', async (perStep) => {
+    const first = { step: 1, role: 'step', provider: 'example', model: 'earlier', isKfc: false, requestId: 'first-request' };
+    const child = { ...first, role: 'subagent', model: 'helper', requestId: 'child-request' };
+    const last = { ...first, step: 2, model: 'later', requestId: 'last-request' };
+    const h = feedHarness([
+      turnPrompt(0, 'start'), userMessage('start', 'First question'),
+      stepBegin(0, 1, 'first'), contentPart(0, 1, 'first', { type: 'text', text: 'First reply' }),
+      stepEnd(0, 1, 'first', { finishReason: 'tool_use' }),
+      userMessage('followup', 'Follow-up question', { kind: 'user', inTurn: true }),
+      stepBegin(0, 2, 'last'), contentPart(0, 2, 'last', { type: 'text', text: 'Last reply' }),
+      stepEnd(0, 2, 'last', { finishReason: 'end_turn' }),
+      turnEnded(0, 'completed', { requestId: last.requestId, replyModel: last, modelSteps: perStep ? [first, child, last] : undefined }),
+    ]);
+    await h.dispatcher.restore();
+    await h.feed.ready;
+    const turnId = h.feed.turns()[0]!.turn_id;
+    expect(h.feed.feedbackTurn(turnId, 'last:0')).toMatchObject({ requestId: last.requestId });
+
+    await h.dispatcher.dispatch(new ContextUndo({ agentId: 'main', count: 1 }));
+
+    const retained = perStep ? { requestId: first.requestId, replyModel: first, modelSteps: [first, child] } : {};
+    expect(h.feed.feedbackTurn(turnId, 'first:0')).toEqual(retained);
+    await h.dispatcher.restore();
+    expect(h.feed.feedbackTurn(turnId, 'first:0')).toEqual(retained);
+    expect(h.feed.feedbackTurn(turnId, 'last:0')).toBeUndefined();
+    h.dispatcher.dispose();
+  });
+
   it('rejects ready when the first replay fails', async () => {
     const h = feedHarness([prompt(0, 'p1').serialize()]);
     h.failNextReplay();

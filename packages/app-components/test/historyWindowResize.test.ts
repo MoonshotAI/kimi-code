@@ -335,4 +335,53 @@ describe('HistoryWindow resize handling', () => {
     nestedApp.unmount();
     host.remove();
   });
+
+  it('keeps the row that owns an open dialog mounted while the dialog has focus outside the row', async () => {
+    const created = FakeResizeObserver.instances.length;
+    const many = Array.from({ length: 30 }, (_, index) => `row-${index}`);
+    for (const key of many) rowHeights.set(key, 100);
+    rootTop = -2500;
+    app?.unmount();
+    app = createApp(defineComponent({
+      setup() {
+        provide(HistoryScrollKey, adjust);
+        return () => h(HistoryWindow, { items: many, itemKey: (item: string) => item, enabled: true, estimate: () => 100 }, {
+          default: ({ item }: { item: string }) => h('div', item),
+        });
+      },
+    }));
+    app.use(createKimiI18n({ locale: 'en' }));
+    app.mount(scroller);
+    await runFrames();
+    const fresh = FakeResizeObserver.instances.slice(created).find(instance => instance.observed.has(scroller))!;
+    fresh.fire([scroller, root(), ...many.map(row).filter(Boolean)]);
+    await runFrames();
+
+    const target = row('row-25');
+    expect(target).not.toBeNull();
+    const button = document.createElement('button');
+    const dialog = document.createElement('div');
+    dialog.id = 'reply-dialog';
+    dialog.setAttribute('role', 'dialog');
+    dialog.tabIndex = -1;
+    scroller.append(dialog);
+    button.setAttribute('aria-haspopup', 'dialog');
+    button.setAttribute('aria-controls', dialog.id);
+    button.setAttribute('aria-expanded', 'true');
+    target.append(button);
+    dialog.focus();
+    await runFrames();
+
+    rootTop = 0;
+    scroller.dispatchEvent(new Event('scroll'));
+    await runFrames();
+    expect(row('row-25')).toBe(target);
+
+    button.setAttribute('aria-expanded', 'false');
+    row('row-0').focus();
+    await Promise.resolve();
+    scroller.dispatchEvent(new Event('scroll'));
+    await runFrames();
+    expect(row('row-25')).toBeNull();
+  });
 });

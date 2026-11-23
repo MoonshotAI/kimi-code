@@ -1,4 +1,4 @@
-import { computed, ref } from 'vue';
+import { computed, ref, shallowReactive } from 'vue';
 import { defineStore } from 'pinia';
 import type { AppHost, AppHostDefinition, AppHostTestResult, AppProviderCopyResult, AppSshConfigHosts, KimiWebApi, OAuthLoginStartResult, OAuthRegion } from '@moonshot-ai/app-core/api';
 import { hostDisplayName, hostDisplayState, isHostBlocked, logWarn, type HostDisplayState } from '@moonshot-ai/app-core/lib';
@@ -7,6 +7,8 @@ import { modelsStore } from './models';
 import { clientPinia } from './pinia';
 
 export type { HostDisplayState };
+
+const HOST_META_RETRY_DELAY_MS = 1_000;
 
 export type HostProviderCopy =
   | { readonly status: 'copying' | 'failed' }
@@ -42,6 +44,7 @@ export const useHostsStore = defineStore('kimi.hosts', () => {
   const connecting = ref<Record<string, boolean>>({});
   const providerCopies = ref<Record<string, HostProviderCopy>>({});
   const accounts = ref<Record<string, HostAccount>>({});
+  const feedbackSupport = shallowReactive(new Map<string, boolean | symbol>());
   const loginHostId = ref<string | null>(null);
   const focusHostId = ref<string | null>(null);
   const addIfEmpty = ref(false);
@@ -65,6 +68,11 @@ export const useHostsStore = defineStore('kimi.hosts', () => {
       if (byId.value[hostId]?.status !== 'ready') setAccount(hostId, undefined);
     }
     if (loginHostId.value !== null && byId.value[loginHostId.value]?.status !== 'ready') loginHostId.value = null;
+    for (const hostId of removed) feedbackSupport.delete(hostId);
+    for (const { id } of list) {
+      if (displayState(id) !== 'ready') feedbackSupport.delete(id);
+      else if (!feedbackSupport.has(id)) void loadFeedbackSupport(id);
+    }
     for (const hostId of becameReady) void loadAccount(hostId);
     for (const hostId of Object.keys(providerCopies.value)) {
       if (byId.value[hostId] === undefined) setProviderCopy(hostId, undefined);
@@ -139,6 +147,29 @@ export const useHostsStore = defineStore('kimi.hosts', () => {
       logWarn('[kimi-code] copying model providers to SSH host failed', hostId, err);
       if (stillCopying()) setProviderCopy(hostId, { status: 'failed' });
     }
+  }
+
+  async function loadFeedbackSupport(hostId: string, retry = true): Promise<void> {
+    const pending = Symbol();
+    feedbackSupport.set(hostId, pending);
+    try {
+      const { capabilities } = await getDeviceApi(hostId).getMeta();
+      if (feedbackSupport.get(hostId) === pending) feedbackSupport.set(hostId, capabilities?.['feedback'] === true);
+    } catch (err) {
+      if (feedbackSupport.get(hostId) !== pending) return;
+      if (retry) {
+        setTimeout(() => {
+          if (feedbackSupport.get(hostId) === pending) void loadFeedbackSupport(hostId, false);
+        }, HOST_META_RETRY_DELAY_MS);
+      } else {
+        feedbackSupport.delete(hostId);
+        logWarn('[kimi-code] loading SSH host metadata failed', hostId, err);
+      }
+    }
+  }
+
+  function supportsFeedback(hostId: string | undefined): boolean {
+    return hostId === undefined || feedbackSupport.get(hostId) === true;
   }
 
   function setAccount(hostId: string, account: HostAccount | undefined): void {
@@ -274,7 +305,7 @@ export const useHostsStore = defineStore('kimi.hosts', () => {
     return pending;
   }
 
-  return { byId, hosts, loaded, connecting, accounts, loginHostId, focusHostId, addIfEmpty, requestFocus, takeAddIfEmpty, loadAccount, signOut, openLogin, closeLogin, startLogin, pollLogin, cancelLogin, loginRegion, finishLogin, needsLogin, applySnapshot, load, connect, save, remove, test, loadSshConfig, providerCopies, copyProviders, hostFor, displayState, displayName, hostLabel, searchTerms, workspacePathLabel, unavailable, blocked };
+  return { byId, hosts, loaded, connecting, accounts, loginHostId, focusHostId, addIfEmpty, requestFocus, takeAddIfEmpty, loadAccount, signOut, openLogin, closeLogin, startLogin, pollLogin, cancelLogin, loginRegion, finishLogin, needsLogin, supportsFeedback, applySnapshot, load, connect, save, remove, test, loadSshConfig, providerCopies, copyProviders, hostFor, displayState, displayName, hostLabel, searchTerms, workspacePathLabel, unavailable, blocked };
 });
 
 export function hostsStore() {

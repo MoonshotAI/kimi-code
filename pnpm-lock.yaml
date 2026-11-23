@@ -1179,6 +1179,9 @@ importers:
       fastify:
         specifier: ^5.1.0
         version: 5.8.5
+      light-my-request:
+        specifier: ^6.6.0
+        version: 6.6.0
       pino:
         specifier: ^9.5.0
         version: 9.14.0

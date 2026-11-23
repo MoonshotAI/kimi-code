@@ -7,6 +7,7 @@ import { IFeatureManager } from '@moonshot-ai/agent-core-v2/app/feature/featureM
 import { getFeatureRecipes } from '@moonshot-ai/agent-core-v2/features/featureRegistry';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { metaCapabilitiesSchema } from '../src/protocol/rest-meta';
 import { type RunningServer, startServer } from '../src/start';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 import { authedFetch } from './helpers/auth';
@@ -244,7 +245,7 @@ describe('/api/v1/meta features', () => {
     expect(body.data.product).toBe(TEST_HOST_IDENTITY.productName);
   });
 
-  it('advertises interactions_list and session_wait capabilities and serves authenticated GET /api/v1/kap.md', async () => {
+  it('advertises supported capabilities, accepts older hosts, and serves authenticated GET /api/v1/kap.md', async () => {
     const base = await boot();
     const metaRes = await authedFetch(server as RunningServer, base, '/api/v1/meta');
     const metaBody = (await metaRes.json()) as {
@@ -254,6 +255,9 @@ describe('/api/v1/meta features', () => {
     expect(metaBody.code).toBe(0);
     expect(metaBody.data.capabilities['interactions_list']).toBe(true);
     expect(metaBody.data.capabilities['session_wait']).toBe(true);
+    const { feedback, ...olderHost } = metaBody.data.capabilities;
+    expect(feedback).toBe(true);
+    expect(metaCapabilitiesSchema.parse(olderHost)).toEqual(olderHost);
 
     const unauthed = await fetch(`${base}/api/v1/kap.md`);
     expect(unauthed.status).toBe(401);
@@ -264,5 +268,6 @@ describe('/api/v1/meta features', () => {
     const text = await specRes.text();
     expect(text.startsWith('# Kimi Agent Protocol (KAP) Runtime Guide')).toBe(true);
     expect(text).toContain('POST /api/v1/sessions/{session_id}:wait');
+    expect(text).toContain('POST /api/v1/feedback');
   });
 });

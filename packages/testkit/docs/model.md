@@ -46,6 +46,7 @@ test('reads a reply from the side lane', async ({ model }) => {
 | 要验证的行为 | 在主通道安排的脚本 | 可观察的结果 |
 |---|---|---|
 | 客户端逐块显示文本 | `model.script(say(['A', 'B']))` | 一次流式请求收到两块文本 |
+| 客户端记录服务端请求 ID | `model.script({ ...say('done'), headers: { 'x-request-id': 'example-request' } })` | 流式和非流式回复都带有指定的响应头 |
 | 工具结果回到模型 | `model.script(bash('echo hi'), say('done'))` | 真实引擎先执行工具，第二次请求携带对应的工具结果，然后回合结束 |
 | 引擎在服务暂时不可用时重试 | `model.script(httpError(503), say('recovered'))` | 主通道记录两次请求，同一回合的最终文本是 `recovered` |
 

@@ -267,7 +267,7 @@ describe('conversationToTurns', () => {
 
     expect(turns.map((value) => value.role)).toEqual(['user', 'assistant']);
     expect(turns[0]).toMatchObject({ id: 'p0', text: 'Check the build', promptIds: ['p0'] });
-    expect(turns[1]).toMatchObject({ daemonTurnId: 7, forkTurnIndex: 7, daemonTurnState: 'completed', thinking: 'thinking' });
+    expect(turns[1]).toMatchObject({ daemonTurnId: 7, forkTurnIndex: 7, daemonTurnState: 'completed', thinking: 'thinking', sourceTurnId: 't0' });
     expect(turns[1]?.tools).toEqual([expect.objectContaining({ id: 'call-1', name: 'Bash', status: 'ok', output: ['ok'] })]);
   });
 
@@ -553,10 +553,11 @@ describe('conversationToTurns', () => {
     expect(turns[1]?.blocks?.map((block) => [block.kind, block.kind === 'text' ? block.final === true : undefined])).toEqual([
       ['text', false], ['tool', undefined], ['text', true],
     ]);
+    expect(turns[1]).toMatchObject({ sourceTurnId: 't0', sourceReplyId: 'a1' });
     expect(turns[2]).toMatchObject({ steered: true, steerPhase: 'injected', promptIds: ['p1'], undoTurnId: undefined });
     expect(turns[0]).toMatchObject({ undoTurnId: 't0' });
     expect(turns[3]?.blocks?.map((block) => block.kind)).toEqual(['text', 'notification', 'text']);
-    expect(turns[3]).toMatchObject({ daemonTurnId: 1, forkTurnIndex: 2 });
+    expect(turns[3]).toMatchObject({ daemonTurnId: 1, forkTurnIndex: 2, sourceTurnId: 't1', sourceReplyId: 'a3' });
   });
 
   it('reads the subagent id of an agent call from its refs or its persisted result', () => {
@@ -595,7 +596,16 @@ describe('conversationToTurns', () => {
       turn(1, [answer('a1', 'more', 'running')], running),
     ]);
 
-    expect(reply).toMatchObject({ daemonTurnId: 1, forkTurnIndex: 2, daemonTurnState: 'running' });
+    expect(reply).toMatchObject({ daemonTurnId: 1, forkTurnIndex: 2, daemonTurnState: 'running', sourceTurnId: 't1' });
+  });
+
+  it('associates feedback with the body-producing turn when a later turn has only activity', () => {
+    const [, reply] = project([
+      turn(0, [opener('p0', 'go'), answer('a0', 'the answer')]),
+      turn(1, [tool('follow-up-tool')]),
+    ]);
+
+    expect(reply).toMatchObject({ sourceTurnId: 't0', forkTurnIndex: 2 });
   });
 
   it('carries the request debug of an item onto its block and keeps both when blocks merge', () => {
