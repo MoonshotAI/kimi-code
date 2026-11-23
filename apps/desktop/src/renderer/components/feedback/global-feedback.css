@@ -115,13 +115,13 @@
   line-height: var(--feedback-label-height);
 }
 
-.global-feedback-categories .ui-pill.is-active {
+.global-feedback-categories .ui-pill.is-active,
+.global-feedback-categories .ui-pill.is-active:hover:enabled {
   background: var(--feedback-blue-wash);
   color: var(--color-accent);
 }
 
-.global-feedback-categories .ui-pill:hover:not(:disabled) { background: var(--color-fill-2); }
-.global-feedback-categories .ui-pill.is-active:hover:not(:disabled) { background: var(--feedback-blue-wash); }
+.global-feedback-categories .ui-pill:not(.is-active):hover:enabled { background: var(--color-fill-2); }
 .global-feedback-categories:lang(zh) > :first-child { min-width: 90px; }
 .global-feedback-categories:lang(en) > :first-child { min-width: 46px; }
 .global-feedback-categories:lang(en) > :nth-child(2) { min-width: 123px; }

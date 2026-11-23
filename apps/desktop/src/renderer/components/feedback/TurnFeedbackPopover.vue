@@ -242,8 +242,9 @@ async function submit(): Promise<void> {
   font: inherit;
 }
 .feedback-reasons .ui-pill > span { overflow: hidden; text-overflow: ellipsis; }
-.feedback-reasons .ui-pill:hover:enabled { --feedback-control-bg: var(--color-fill-2); background: transparent; }
-.feedback-reasons .ui-pill.is-active {
+.feedback-reasons .ui-pill:not(.is-active):hover:enabled { --feedback-control-bg: var(--color-fill-2); background: transparent; }
+.feedback-reasons .ui-pill.is-active,
+.feedback-reasons .ui-pill.is-active:hover {
   --feedback-control-bg: color-mix(in srgb, var(--color-accent) 10%, transparent);
   background: transparent;
   color: var(--color-accent);

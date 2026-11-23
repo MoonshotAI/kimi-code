@@ -19,6 +19,18 @@ async function openAccountFeedback(page: Page): Promise<void> {
   await menu.getByRole('menuitem', { name: 'Feedback', exact: true }).click();
 }
 
+async function expectSelectedFeedbackPillOnHover(pill: Locator): Promise<void> {
+  const page = pill.page();
+  await expect(pill).toHaveAttribute('aria-pressed', 'true');
+  for (const colorScheme of ['dark', 'light'] as const) {
+    await page.emulateMedia({ colorScheme });
+    await page.mouse.move(0, 0);
+    const selected = await pill.screenshot({ animations: 'disabled', scale: 'css' });
+    await pill.hover();
+    expect((await pill.screenshot({ animations: 'disabled', scale: 'css' })).equals(selected)).toBe(true);
+  }
+}
+
 async function expectStableEditorOnFocus(input: Locator, editor = input): Promise<void> {
   await expect(input).not.toBeFocused();
   const box = await editor.boundingBox();
@@ -124,6 +136,7 @@ testWithProvider('submits global and reply feedback with opt-in attachments', as
   const dialog = page.getByRole('dialog', { name: 'Send feedback' });
   const guideUrl = 'https://www.kimi.com/code/docs/en/kimi-code/feedback.html';
   await expect(dialog.getByRole('link', { name: 'Learn more', exact: true })).toHaveAttribute('href', guideUrl);
+  await expectSelectedFeedbackPillOnHover(dialog.getByRole('button', { name: 'Bug', exact: true }));
   const notice = dialog.locator('.global-feedback-note');
   await expect(notice).toHaveText('The feedback content you select and submit will be used to identify issues and improve Kimi Code. Learn more');
   await expect(dialog).toHaveCSS('width', '560px');
@@ -200,6 +213,7 @@ testWithProvider('submits global and reply feedback with opt-in attachments', as
   await expect(replySubmit).toBeDisabled();
   const incorrect = details.getByRole('button', { name: 'Incorrect or incomplete' });
   await incorrect.click();
+  await expectSelectedFeedbackPillOnHover(incorrect);
   await expect(replySubmit).toBeEnabled();
   const initialHeight = await details.evaluate(el => el.clientHeight);
   const longDescription = `${'Example feedback. '.repeat(10)}\n`.repeat(12);
