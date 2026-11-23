@@ -148,6 +148,23 @@ describe('AgentReminderService', () => {
     expect(context.history()).toHaveLength(0);
   });
 
+  it('defers registered providers to the next step', async () => {
+    let calls = 0;
+    reminder.register('target', () => {
+      calls++;
+      return 'target reminder';
+    });
+
+    expect(calls).toBe(0);
+    expect(context.history()).toHaveLength(0);
+
+    await runInjectionStep();
+
+    expect(calls).toBe(1);
+    expect(context.history()).toHaveLength(1);
+    expect(context.history()[0]?.origin).toEqual({ kind: 'injection', variant: 'target' });
+  });
+
   it('passes the previous injection index back to the provider', async () => {
     const seen: Array<number | null> = [];
 
@@ -161,42 +178,6 @@ describe('AgentReminderService', () => {
 
     expect(seen).toEqual([null, 0]);
     expect(context.history()).toHaveLength(1);
-  });
-
-  it('reconciles only providers registered under the requested name while idle', async () => {
-    const seen: string[] = [];
-    reminder.register('target', () => {
-      seen.push('target');
-      return 'target reminder';
-    });
-    reminder.register('other', () => {
-      seen.push('other');
-      return 'other reminder';
-    });
-
-    await reminder.reconcileWhenIdle('target');
-    loop.flushReminders();
-
-    expect(seen).toEqual(['target']);
-    expect(context.history()).toHaveLength(1);
-    expect(context.history()[0]?.origin).toEqual({ kind: 'injection', variant: 'target' });
-  });
-
-  it('leaves reconciliation to the next step head when quiescence cannot be acquired', async () => {
-    let calls = 0;
-    reminder.register('target', () => {
-      calls++;
-      return 'target reminder';
-    });
-    loop.settled = async () => {
-      throw new Error('idle reconciliation must not wait for an active turn');
-    };
-    loop.tryAcquireQuiescence = () => undefined;
-
-    await reminder.reconcileWhenIdle('target');
-
-    expect(calls).toBe(0);
-    expect(context.history()).toHaveLength(0);
   });
 
   it('exposes all live injection positions alongside the newest one', async () => {

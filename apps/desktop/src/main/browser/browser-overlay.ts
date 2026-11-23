@@ -272,7 +272,7 @@ export function attachBrowserOverlayWindow(win: MainWindow): void {
   });
 }
 
-export function openBrowserOverlayMenu(request: BrowserOverlayMenuRequest): void {
+export function openBrowserOverlayMenu({ refresh, ...request }: BrowserOverlayMenuRequest): void {
   const entry = ensureEntry();
   const current = entry.current;
   if (current?.kind === 'menu' && current.menuId === request.menuId) {
@@ -280,6 +280,7 @@ export function openBrowserOverlayMenu(request: BrowserOverlayMenuRequest): void
     flushConfig(entry);
     return;
   }
+  if (refresh === true) return;
   if (entry.current !== null) hideEntry(entry, 'replaced', false);
   if (entry.closingRequestId !== null) {
     entry.closingRequestId = null;

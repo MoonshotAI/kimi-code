@@ -603,14 +603,32 @@ describe('subagent task reminders and fork request parity', () => {
     expect(taskReminders(ctx.llmCalls[1]!.history)).toHaveLength(1);
   });
 
-  it('does not evaluate unrelated tool descriptions when checking WaitFor availability', async () => {
+  it('does not depend on unrelated tool descriptions when checking WaitFor availability', async () => {
     createMainForkCtx();
     const child = await createDirectChild();
-    const list = vi.spyOn(child.accessor.get(IAgentToolRegistryService), 'list');
+    const list = vi.spyOn(child.accessor.get(IAgentToolRegistryService), 'list').mockImplementation(() => {
+      throw new Error('unexpected unrelated tool description evaluation');
+    });
 
-    await child.accessor.get(IAgentReminderService).reconcileWhenIdle('subagent_background_task');
+    const loop = child.accessor.get(IAgentLoopService);
+    const entries = Reflect.get(loop.hooks.onWillBeginStep, 'entries') as readonly {
+      readonly id: string;
+      readonly handler: (
+        context: { turnId: number; step: number; firstStepOfTurn: boolean; signal: AbortSignal },
+        next: () => Promise<void>,
+      ) => void | Promise<void>;
+    }[];
+    const injector = entries.find((entry) => entry.id === 'context-injector');
+    if (injector === undefined) throw new Error('expected context-injector hook');
+    await injector.handler({
+      turnId: 0,
+      step: 0,
+      firstStepOfTurn: false,
+      signal: new AbortController().signal,
+    }, async () => {});
+    loop.flushReminders();
 
-    expect(list).not.toHaveBeenCalled();
+    expect(list).toHaveBeenCalled();
     expect(taskReminders(child.accessor.get(IAgentLoopService).history())).toHaveLength(1);
   });
 

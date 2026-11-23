@@ -27,9 +27,11 @@ export interface BrowserOverlayMenuRegistration {
   highlightQuery?: () => string;
   onSelect: (itemId: string) => void;
   onClose?: (payload: BrowserOverlayClosed) => void;
+  onDismiss?: () => void;
   width?: number;
   autoWidth?: boolean;
   preserveFocus?: boolean;
+  submitOnCtrlEnter?: boolean;
   placement?: BrowserOverlayPlacement;
   offset?: number;
 }
@@ -177,6 +179,7 @@ export function registerBrowserOverlayMenu(
     pendingRefocus = false;
     finish({ refocus });
     registration.onClose?.(payload);
+    if (payload.reason === 'dismiss') registration.onDismiss?.();
   });
 
   function show(
@@ -197,7 +200,8 @@ export function registerBrowserOverlayMenu(
     refreshOpening = false,
   ): void {
     if (bridge === null || disposed) return;
-    if (!refreshOpening || !open.value || closePending.value) { nativeMenuId = randomUUID(); actionConsumed = false; }
+    const refreshing = refreshOpening && open.value && !closePending.value;
+    if (!refreshing) { nativeMenuId = randomUUID(); actionConsumed = false; }
     closePending.value = false;
     focusReturn.cancel();
     currentAnchor = { ...anchor };
@@ -212,6 +216,7 @@ export function registerBrowserOverlayMenu(
     }
     bridge.browserOverlayOpenMenu({
       menuId: nativeMenuId,
+      ...(refreshing ? { refresh: true } : {}),
       anchor,
       placement: options?.placement ?? registration.placement ?? 'bottom-end',
       offset: options?.offset ?? registration.offset ?? 4,
@@ -219,6 +224,7 @@ export function registerBrowserOverlayMenu(
       ...(registration.autoWidth === true ? { autoWidth: true } : {}),
       initialFocus: options?.initialFocus ?? 'none',
       preserveFocus: options?.preserveFocus ?? registration.preserveFocus,
+      submitOnCtrlEnter: registration.submitOnCtrlEnter === true ? true : undefined,
       items: registration.items(),
       ...(registration.footerStart === undefined ? {} : { footerStart: registration.footerStart() }),
       ...(registration.highlightQuery === undefined ? {} : { query: registration.highlightQuery().slice(0, 1024) }),

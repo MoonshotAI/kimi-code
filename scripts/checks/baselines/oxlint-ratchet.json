@@ -693,7 +693,6 @@
     "packages/agent-core-v2/test/app/git/gitService.test.ts": 1,
     "packages/agent-core-v2/test/wire/resume.test.ts": 1,
     "packages/app-client/test/mode-store.test.ts": 1,
-    "packages/app-client/test/modelSwitchConfirmGate.test.ts": 1,
     "packages/app-client/test/session-work-reconnect.test.ts": 1,
     "packages/app-client/test/workspace-state.test.ts": 1,
     "packages/app-components/test/composerMenuViewportClamp.test.ts": 1,

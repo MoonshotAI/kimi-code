@@ -265,7 +265,7 @@ describe('agent state frames', () => {
     const client = useKimiWebClient();
     await client.load();
     await flush();
-    client.setThinking('max');
+    await client.setThinking('max');
     const starting = client.startSessionAndSendPrompt(
       'workspace-1',
       client.createPromptEnvelope({ text: 'hello' }),

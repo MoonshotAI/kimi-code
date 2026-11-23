@@ -283,6 +283,11 @@ function onKeydown(event: KeyboardEvent): void {
   if (event.isComposing || event.keyCode === 229) return;
   const current = config.value;
   if (current === null) return;
+  if (current.kind === 'menu' && current.submitOnCtrlEnter === true && event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+    event.preventDefault();
+    dismiss('dismiss');
+    return;
+  }
   if (event.key === 'Escape') {
     if (current.kind === 'dialog' && current.loading === true) return;
     event.preventDefault();

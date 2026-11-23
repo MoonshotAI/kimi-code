@@ -10,6 +10,8 @@ import { createSessionActions } from '../client/sessionActions';
 import { usePromptPipeline } from '../client/usePromptPipeline';
 import type { ExtendedState } from '../client/types';
 import type { ChatGateVerdict } from '../lib/chatGate';
+import { configureWorkspaceHooks } from '../lib/workspaceHooks';
+import { workspaceModeActions } from '../lib/workspaceModeActions';
 import type {
   PersistSessionProfilePatch,
   UseModelProviderState,
@@ -17,9 +19,8 @@ import type {
 import type { UseSideChat } from '../client/useSideChat';
 import { useConfirmDialog } from '../composables/useConfirmDialog';
 import { authStore } from '../stores/auth';
-import { goalStore, setGoalHooks } from '../stores/goal';
-import { modeStore, setModeHooks } from '../stores/mode';
-import { permissionsStore, setPermissionsHooks } from '../stores/permissions';
+import { modeStore } from '../stores/mode';
+import { permissionsStore } from '../stores/permissions';
 import { promptStore } from '../stores/prompt';
 import { sessionListStore } from '../stores/sessionList';
 import { sessionsStore } from '../stores/sessions';
@@ -112,30 +113,16 @@ export function createWorkspaceRig(rawState: ExtendedState, deps: WorkspaceRigDe
     sessionSelection,
   });
   const { confirm } = useConfirmDialog();
-  setModeHooks({
+  configureWorkspaceHooks({
     persistSessionProfile: deps.persistSessionProfile,
-    confirmSwarmEnable: () =>
-      confirm({
-        title: t('workspace.swarmEnableTitle'),
-        message: t('workspace.swarmEnableConfirm'),
-        variant: 'primary',
-      }),
-  });
-  setGoalHooks({
-    pushOperationFailure: warningsStore().pushOperationFailure,
     confirmGoalStart: (objective) =>
       confirm({
         title: t('workspace.goalStartTitle'),
         message: t('workspace.goalStartConfirm', { objective }),
         variant: 'primary',
       }),
-    createDraftSession: promptPipeline.createDraftSession,
-    sendPrompt: promptPipeline.sendPrompt,
-    steerPromptDirect: promptPipeline.steerPromptDirect,
-    submitPromptInternal: promptPipeline.submitPromptInternal,
-    flushQueueHead: promptPipeline.flushQueueHead,
+    promptPipeline,
   });
-  setPermissionsHooks({ persistSessionProfile: deps.persistSessionProfile });
 
   async function sendTowerPrompt(text: string, editText?: string): Promise<void> {
     const sid = sessionsStore().activeSessionId;
@@ -193,18 +180,7 @@ export function createWorkspaceRig(rawState: ExtendedState, deps: WorkspaceRigDe
     abortCurrentPrompt: promptPipeline.abortCurrentPrompt,
     refreshSessionWarnings: warningsStore().refreshSessionWarnings,
     markSessionWarningShown: warningsStore().markSessionWarningShown,
-    setPlanMode: modeStore().setPlanMode,
-    togglePlanMode: modeStore().togglePlanMode,
-    setSwarmMode: modeStore().setSwarmMode,
-    toggleSwarmMode: modeStore().toggleSwarmMode,
-    setTowerMode: modeStore().setTowerMode,
-    toggleTowerMode: modeStore().toggleTowerMode,
-    sendTowerPrompt,
-    setGoalMode: modeStore().setGoalMode,
-    toggleGoalMode: modeStore().toggleGoalMode,
-    createGoal: goalStore().createGoal,
-    controlGoal: goalStore().controlGoal,
-    editGoalObjective: goalStore().editGoalObjective,
+    ...workspaceModeActions(sendTowerPrompt),
     setPermission: permissionsStore().setPermission,
     dismissWarning: warningsStore().dismissWarning,
     renameSession: sessionListStore().renameSession,

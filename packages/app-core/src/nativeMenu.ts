@@ -1,6 +1,7 @@
 export type NativeMenuItem =
   | { kind: 'separator' }
-  | { kind: 'section' | 'note'; id: string; label: string }
+  | { kind: 'section'; id: string; label: string }
+  | { kind: 'note'; id: string; label: string; size?: 'xs' }
   | { kind: 'choices'; icon?: string; id: string; label: string; value: string; options: { id: string; label: string }[] }
   | {
       kind: 'zoom';
@@ -32,4 +33,5 @@ export type NativeMenuItem =
       disabled?: boolean;
       selected?: boolean;
       danger?: boolean;
+      keepOpen?: boolean;
     };
