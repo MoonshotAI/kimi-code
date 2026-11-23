@@ -12,9 +12,9 @@ function sameMessages(left: readonly Message[], right: readonly Message[]): bool
   return left.length === right.length && left.every((message, index) => message === right[index]);
 }
 
-function isBlankText(part: ContentPart): boolean {
+function isBlankText(part: ContentPart, preserveSignedBlankText = true): boolean {
   return part.type === 'text' &&
-    part.meta?.['thought_signature_b64'] === undefined &&
+    (!preserveSignedBlankText || part.meta?.['thought_signature_b64'] === undefined) &&
     part.text.trim().length === 0;
 }
 
@@ -38,7 +38,7 @@ export function verifyToolExchanges(messages: readonly Message[]): readonly Mess
     if (answered.has(id)) {
       throw new SyntaxRequestFormatError(`Tool call '${id}' has more than one result.`);
     }
-    if (message.content.every(isBlankText)) {
+    if (message.content.every((part) => isBlankText(part))) {
       throw new SyntaxRequestFormatError(`Tool result for '${id}' is empty.`);
     }
     answered.add(id);
@@ -50,11 +50,16 @@ export function verifyToolExchanges(messages: readonly Message[]): readonly Mess
   return messages;
 }
 
-function dropBlankText(message: Message, report: LlmNoticeSink): ContentPart[] {
-  if (!message.content.some(isBlankText)) return message.content;
+function dropBlankText(
+  message: Message,
+  report: LlmNoticeSink,
+  preserveSignedBlankText: boolean,
+): ContentPart[] {
+  const blank = (part: ContentPart): boolean => isBlankText(part, preserveSignedBlankText);
+  if (!message.content.some(blank)) return message.content;
   const kept: ContentPart[] = [];
   for (const part of message.content) {
-    if (!isBlankText(part)) {
+    if (!blank(part)) {
       kept.push(part);
     } else if (part.type === 'text' && part.text.length > 0) {
       report({
@@ -73,10 +78,14 @@ function carriesStructure(message: Message): boolean {
   return message.role === 'tool';
 }
 
-export function cleanMessages(messages: readonly Message[], report: LlmNoticeSink): readonly Message[] {
+export function cleanMessages(
+  messages: readonly Message[],
+  report: LlmNoticeSink,
+  preserveSignedBlankText: boolean,
+): readonly Message[] {
   const out: Message[] = [];
   for (const message of messages) {
-    const content = dropBlankText(message, report);
+    const content = dropBlankText(message, report, preserveSignedBlankText);
     if (!carriesStructure(message)) {
       if (content.length === 0) continue;
       if (content.every(isVacuousContentPart)) {
@@ -130,6 +139,6 @@ export function pairToolExchanges(
 }
 
 export function legalizeStructure(messages: readonly Message[], report: LlmNoticeSink): readonly Message[] {
-  return pairToolExchanges(cleanMessages(messages, report), report);
+  return pairToolExchanges(cleanMessages(messages, report, true), report);
 }
 

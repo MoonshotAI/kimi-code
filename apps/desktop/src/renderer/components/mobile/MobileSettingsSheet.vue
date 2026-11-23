@@ -5,6 +5,7 @@ import type { ConversationStatus, PermissionMode } from '../../types';
 import type { AppModel, ManagedUserInfo, ThinkingLevel } from '../../api/types';
 import type { ColorScheme, FontScale } from '@moonshot-ai/app-client/client';
 import { useKimiWebClient } from '@moonshot-ai/app-client/client';
+import { effortSwitchStore } from '@moonshot-ai/app-client/stores';
 import { useActivityRunFolding, useConfirmDialog, usePasteImageAutoMention, useRunningSendMode, useTurnFolding, type RunningSendMode, type SettingsHighlightKey } from '@moonshot-ai/app-client/composables';
 import { track } from '../../lib/track';
 import {
@@ -38,6 +39,7 @@ function onRunningSendModeChange(mode: RunningSendMode): void {
 }
 
 const client = useKimiWebClient();
+const effortSwitchConfirmPending = computed(() => effortSwitchStore().pending);
 
 const props = withDefaults(
   defineProps<{
@@ -265,7 +267,7 @@ function toggleAutoSessionTitle(): void {
   <BottomSheet
     :model-value="modelValue"
     :title="view === 'providers' ? t('settings.tabs.providers') : t('mobile.settingsTitle')"
-    :close-on-esc="!isConfirmOpen && fontPageTarget === null"
+    :close-on-esc="!isConfirmOpen && effortSwitchConfirmPending === null && fontPageTarget === null"
     @update:model-value="emit('update:modelValue', $event)"
   >
     <template v-if="view === 'providers'">

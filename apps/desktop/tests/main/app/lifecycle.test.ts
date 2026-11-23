@@ -44,6 +44,8 @@ const mocks = vi.hoisted(() => {
     finalizeWindowLifecycle: vi.fn(),
     shutdownScreenshot: vi.fn(),
     shouldBlockQuit: vi.fn((): Promise<boolean> => Promise.resolve(false)),
+    confirmUpdateRestart: vi.fn(),
+    prepareSessionContinue: vi.fn(),
     isMarkedQuitting: vi.fn(() => false),
     isQuitConfirmSkipped: vi.fn(() => false),
     cancelQuitting: vi.fn(),
@@ -78,6 +80,9 @@ vi.mock('../../../src/main/server/connect', () => ({
   rendererDistRoot: '/renderer',
   closeServerHandle: mocks.closeServerHandle,
   shutdownServerTelemetry: mocks.shutdownServerTelemetry,
+}));
+vi.mock('../../../src/main/server/session-continue', () => ({
+  prepareSessionContinue: mocks.prepareSessionContinue,
 }));
 vi.mock('../../../src/main/window/main-window', () => ({
   createWindow: mocks.createWindow,
@@ -129,6 +134,7 @@ vi.mock('../../../src/main/window/window-lifecycle', () => ({
   finalizeWindowLifecycle: mocks.finalizeWindowLifecycle,
 }));
 vi.mock('../../../src/main/app/quit-confirm', () => ({
+  confirmUpdateRestart: mocks.confirmUpdateRestart,
   shouldBlockQuit: mocks.shouldBlockQuit,
 }));
 vi.mock('../../../src/main/system/prevent-lid-sleep', () => ({
@@ -210,6 +216,21 @@ describe('app second-instance routing', () => {
     main();
 
     expect(mocks.app.setAppUserModelId).toHaveBeenCalledWith('com.kimi.code.desktop.dev');
+  });
+
+  it('wires update restarts to the restart prompt and the session continue marker', async () => {
+    main();
+    mocks.ready();
+    await vi.waitFor(() => expect(initAutoUpdater).toHaveBeenCalledOnce());
+    const deps = vi.mocked(initAutoUpdater).mock.calls[0]![0];
+    const win = { id: 'main-window' };
+    mocks.getMainWindow.mockReturnValueOnce(win as never);
+
+    void deps.confirmRestart();
+    deps.prepareSessionContinue(['s1']);
+
+    expect(mocks.confirmUpdateRestart).toHaveBeenCalledWith(win);
+    expect(mocks.prepareSessionContinue).toHaveBeenCalledWith(['s1']);
   });
 
   it('starts Preview without either updater', async () => {

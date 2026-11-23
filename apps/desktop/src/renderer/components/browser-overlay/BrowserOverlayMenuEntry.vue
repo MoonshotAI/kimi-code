@@ -17,7 +17,10 @@ function segments(text: string, ranges?: readonly BrowserTextRange[]) {
 
 <template>
   <MenuItem v-if="item.kind === 'separator'" separator />
-  <div v-else-if="item.kind === 'section' || item.kind === 'note'" :class="['overlay-menu-copy', `is-${item.kind}`]">{{ item.label }}</div>
+  <div
+    v-else-if="item.kind === 'section' || item.kind === 'note'"
+    :class="['overlay-menu-copy', `is-${item.kind}`, { 'is-xs': item.kind === 'note' && item.size === 'xs' }]"
+  >{{ item.label }}</div>
   <div v-else-if="item.kind === 'choices'" class="overlay-menu-choices" :class="{ 'is-disabled': item.disabled }" role="group" :aria-label="item.label">
     <span class="overlay-menu-choice-label"><Icon v-if="item.icon" :name="item.icon" size="sm" aria-hidden="true" />{{ item.label }}<BrowserOverlayNotice v-if="item.notice" :message="item.notice.message" :link-label="item.notice.linkLabel" @open="emit('action', item.notice!.action)" /></span>
     <SegmentedControl :model-value="item.value" :options="item.options.map(option => ({ value: option.id, label: option.label }))" size="xs" :disabled="item.disabled" @update:model-value="emit('action', $event)" />
@@ -67,6 +70,7 @@ function segments(text: string, ranges?: readonly BrowserTextRange[]) {
 .overlay-menu-check { color: var(--color-accent); flex-shrink: 0; }
 .overlay-menu-copy { padding: var(--space-2) var(--menu-item-padding-inline); color: var(--color-text-muted); font-size: var(--text-sm); line-height: var(--leading-normal); white-space: normal; }
 .overlay-menu-copy.is-note { width: 0; min-width: 100%; box-sizing: border-box; overflow-wrap: anywhere; }
+.overlay-menu-copy.is-note.is-xs { font-size: var(--text-xs); }
 .overlay-menu-copy.is-section { font-weight: var(--weight-section-label); }
 .overlay-menu-choice-label { display: inline-flex; align-items: center; gap: var(--space-2); font-size: var(--text-sm); font-weight: var(--weight-option-label); line-height: var(--leading-tight); }
 .overlay-menu-choice-label :deep(svg) { color: var(--color-text-muted); flex: none; }

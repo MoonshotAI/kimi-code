@@ -79,7 +79,10 @@ describe('Preview distribution', () => {
 
   it('never initializes update listeners or an update feed, even with auto-download enabled', async () => {
     const updater = await import('../../../src/main/release/updater');
-    updater.initAutoUpdater(vi.fn(async () => false));
+    updater.initAutoUpdater({
+      confirmRestart: vi.fn(async () => ({ proceed: true, continueSessionIds: [] })),
+      prepareSessionContinue: vi.fn(),
+    });
     expect(await updater.requestUpdateCheck()).toEqual({ outcome: 'unsupported' });
     updater.requestUpdateDownload();
     await updater.requestUpdateInstall();

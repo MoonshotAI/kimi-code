@@ -109,6 +109,99 @@ describe('useSlashMenu — update', () => {
     slash.update();
     expect(slash.items.value.map((i) => i.name)).toContain('/skill:deploy');
   });
+
+  it('opens for the Chinese enumeration comma an IME types for the slash key', () => {
+    const { slash } = setup('、com');
+    slash.update();
+    expect(slash.open.value).toBe(true);
+    expect(slash.items.value.map((i) => i.name)).toContain('/compact');
+  });
+
+  it('stays closed for text that starts with 、 but matches no command', () => {
+    const { slash } = setup('、zzzznotacommand');
+    slash.update();
+    expect(slash.open.value).toBe(false);
+  });
+});
+
+describe('useSlashMenu — dismiss (Esc)', () => {
+  function type(ctx: ReturnType<typeof setup>, value: string): void {
+    ctx.text.value = value;
+    ctx.slash.update();
+  }
+
+  it('stays closed while the dismissed token keeps being edited', () => {
+    const ctx = setup('/co');
+    ctx.slash.update();
+    ctx.slash.dismiss();
+    expect(ctx.slash.open.value).toBe(false);
+    type(ctx, '/com');
+    expect(ctx.slash.open.value).toBe(false);
+  });
+
+  it('reopens once the slash is deleted and typed again', () => {
+    const ctx = setup('/co');
+    ctx.slash.update();
+    ctx.slash.dismiss();
+    type(ctx, '');
+    type(ctx, '/');
+    expect(ctx.slash.open.value).toBe(true);
+  });
+
+  it('a plain close does not suppress the next keystroke', () => {
+    const ctx = setup('/co');
+    ctx.slash.update();
+    ctx.slash.close();
+    type(ctx, '/com');
+    expect(ctx.slash.open.value).toBe(true);
+  });
+});
+
+describe('useSlashMenu — complete (Tab)', () => {
+  it('fills in the command name without running it and keeps the menu open', () => {
+    const { text, emitted, pushed, slash } = setup('/ne');
+    slash.update();
+    slash.complete({ name: '/new', desc: '' });
+    expect(text.value).toBe('/new');
+    expect(emitted).toEqual([]);
+    expect(pushed).toEqual([]);
+    expect(slash.open.value).toBe(true);
+    expect(slash.items.value[0]?.name).toBe('/new');
+  });
+
+  it('normalizes a 、 trigger to a slash', () => {
+    const { text, slash } = setup('、ne');
+    slash.update();
+    slash.complete({ name: '/new', desc: '' });
+    expect(text.value).toBe('/new');
+  });
+
+  it('inserts the skill pill for a name that cannot stay a single token', () => {
+    const inserted: string[] = [];
+    const { text, slash } = setup('/wri', [], (entry) => inserted.push(entry.name));
+    slash.update();
+    slash.complete({ name: '/skill:write goal', desc: '', isSkill: true, acceptsInput: true });
+    expect(inserted).toEqual(['write goal']);
+    expect(text.value).toBe('/wri');
+  });
+
+  it('keeps the completed variant active when two skills share a name', () => {
+    const skills: AppSkill[] = [
+      { name: 'review', description: 'First', path: '/a/review/SKILL.md', source: 'project' },
+      { name: 'review', description: 'Second', path: '/b/review/SKILL.md', source: 'project' },
+    ];
+    const { text, slash } = setup('/rev', skills);
+    slash.update();
+    const second = slash.items.value.find((item) => item.skillPath === '/b/review/SKILL.md')!;
+    slash.complete(second);
+    expect(text.value).toBe('/skill:review');
+    expect(slash.items.value[slash.active.value]?.skillPath).toBe('/b/review/SKILL.md');
+    slash.update();
+    expect(slash.items.value[slash.active.value]?.skillPath).toBe('/b/review/SKILL.md');
+    text.value = '/skill:revie';
+    slash.update();
+    expect(slash.active.value).toBe(0);
+  });
 });
 
 describe('useSlashMenu — select', () => {
@@ -119,6 +212,12 @@ describe('useSlashMenu — select', () => {
     expect(pushed).toEqual(['/new']);
     expect(emitted).toEqual(['/new']);
     expect(slash.open.value).toBe(false);
+  });
+
+  it('replaces a 、 trigger with the selected command', () => {
+    const { text, slash } = setup('、goal');
+    slash.select({ name: '/goal', desc: '', acceptsInput: true });
+    expect(text.value).toBe('/goal ');
   });
 
   it('acceptsInput: keeps the command in the box and does not emit yet', async () => {

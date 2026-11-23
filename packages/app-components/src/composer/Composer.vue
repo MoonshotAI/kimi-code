@@ -42,7 +42,6 @@ export type ComposerEmits = {
   steerQueued: [index: number];
   command: [payload: ComposerCommandPayload];
   interrupt: [];
-  continue: [];
   focusGoal: [];
   pickModel: [];
   login: [];
@@ -54,6 +53,7 @@ let composerMenuSequence = 0;
 
 <script setup lang="ts">
 import { useComposerNativeMenuHost } from './nativeMenus';
+import { applyModelMenuDraft } from './modelMenuDraft';
 import BrowserReferenceDetails from './BrowserReferenceDetails.vue';
 import ContextSummaryBody from './ContextSummaryBody.vue';
 import { useBrowserReferenceDetails } from './browserReferenceDetails';
@@ -67,7 +67,7 @@ import { measureNaturalWidth, prepareWithSegments } from '@chenglou/pretext';
 import { v4 as randomUUID } from 'uuid';
 import { computed, inject, nextTick, onMounted, onUnmounted, ref, shallowRef, useId, watch, watchEffect } from 'vue';
 import { useI18n } from 'vue-i18n';
-import type { ReadRequestOptions, SessionContextSummary } from '@moonshot-ai/app-core/api';
+import { MANAGED_KIMI_CODE_PROVIDER_ID, type ReadRequestOptions, type SessionContextSummary } from '@moonshot-ai/app-core/api';
 import { analyzeLeadingSlashCommand, basename, buildSlashItems, formatShortcutText, formatTokens, providerDisplayName } from '@moonshot-ai/app-core/lib';
 import { placeholderText } from '@moonshot-ai/app-core/lib';
 import { useAppearance, useContextInspector } from '@moonshot-ai/app-core';
@@ -79,15 +79,17 @@ import {
   effortLabel,
   isThinkingOn,
   modelThinkingAvailability,
+  resolveEffortDescription,
   segmentsFor,
+  thinkingLevelForModelSwitch,
 } from '@moonshot-ai/app-core/lib';
 import { openAgentSettings, openHostSettings, useInputHistory, useIsMobile, useRunningSendMode } from '@moonshot-ai/app-client/composables';
-import { useSlashMenu } from '@moonshot-ai/app-client/composables';
+import { slashMenuQuery, useSlashMenu } from '@moonshot-ai/app-client/composables';
 import { useMentionMenu, type MentionEntry } from '@moonshot-ai/app-client/composables';
 import { useComposerDraft } from '@moonshot-ai/app-client/composables';
 import { useAttachmentUpload, usePasteImageAutoMention } from '@moonshot-ai/app-client/composables';
 import { useKimiWebClient } from '@moonshot-ai/app-client/client';
-import { hostsStore } from '@moonshot-ai/app-client/stores';
+import { effortSwitchStore, hostsStore } from '@moonshot-ai/app-client/stores';
 import {
   createComposerEditor,
   discardStashedEditorState,
@@ -229,7 +231,7 @@ const placeholder = computed(() =>
           ? t('status.goalPlaceholder')
           : planArmed.value || planMode.value
             ? t('status.planPlaceholder')
-            : t('composer.placeholder')
+            : t(isMobile.value || isSideChat.value ? 'composer.placeholder' : 'composer.placeholderHints')
 );
 
 const emit = defineEmits<ComposerEmits>();
@@ -875,7 +877,10 @@ const {
   ranges: slashRanges,
   active: slashActive,
   update: updateSlashMenu,
+  close: closeSlashMenu,
+  dismiss: dismissSlashMenu,
   select: selectSlashCommand,
+  complete: completeSlashCommand,
 } = useSlashMenu({
   text,
   editorRef,
@@ -906,9 +911,7 @@ const {
   resolveDesc: (item) => (item.isSkill ? item.desc : t(item.desc)),
 });
 
-const slashQuery = computed(() =>
-  text.value.startsWith('/') && !text.value.includes(' ') ? text.value.slice(1) : '',
-);
+const slashQuery = computed(() => slashMenuQuery(text.value) ?? '');
 
 const menuAriaControls = computed(() => {
   if (slashOpen.value) return 'composer-slash-menu';
@@ -926,10 +929,11 @@ const {
   items: mentionItems,
   active: mentionActive,
   loading: mentionLoading,
-  fileStale: mentionFileStale,
+  query: mentionQuery,
   sessionMenuOpen: mentionSessionMenuOpen,
   update: updateMentionMenu,
   close: closeMentionMenu,
+  dismiss: dismissMentionMenu,
   select: selectMentionItem,
   complete: completeMentionItem,
   navigate: mentionNavigate,
@@ -1008,7 +1012,7 @@ watch(mentionOpen, (open) => {
   }
 });
 function onSlashSheetClose(): void {
-  slashOpen.value = false;
+  closeSlashMenu();
 }
 function onMentionSheetClose(): void {
   closeMentionMenu();
@@ -1024,15 +1028,35 @@ const mentionMenuEl = computed(() => mentionMenuRef.value?.el ?? null);
 trackMenuSurface(slashOpen, slashMenuEl);
 trackMenuSurface(mentionOpen, mentionMenuEl);
 
+function onTokenMenuOutsidePointerDown(e: PointerEvent): void {
+  const target = e.target as Node;
+  const inside = [editorHostRef.value, slashMenuEl.value, mentionMenuEl.value].some((el) => el?.contains(target) === true);
+  if (inside) return;
+  closeSlashMenu();
+  closeMentionMenu();
+}
+
+watch(
+  () => !isMobile.value && (slashOpen.value || mentionOpen.value),
+  (open) => {
+    if (open) document.addEventListener('pointerdown', onTokenMenuOutsidePointerDown, true);
+    else document.removeEventListener('pointerdown', onTokenMenuOutsidePointerDown, true);
+  },
+);
+
+onUnmounted(() => {
+  document.removeEventListener('pointerdown', onTokenMenuOutsidePointerDown, true);
+});
+
 watch(() => scopeId.value, () => {
   expanded.value = false;
-  slashOpen.value = false;
+  closeSlashMenu();
   closeMentionMenu();
 });
 
 function handleEditorBlur(): void {
   if (isMobile.value) return;
-  slashOpen.value = false;
+  closeSlashMenu();
   closeMentionMenu();
 }
 
@@ -1061,7 +1085,7 @@ function insertFolderPaths(paths: string[]): void {
     firstPos = undefined;
     if (plan.entry) ed.upsertAttachmentEntry(plan.entry);
   }
-  slashOpen.value = false;
+  closeSlashMenu();
   closeMentionMenu();
 }
 
@@ -1071,7 +1095,7 @@ function insertPathMention(path: string, kind: 'file' | 'folder'): void {
   if (!ed) return;
   const pos = document.activeElement === ed.dom ? (ed.selectionStart ?? ed.getText().length) : ed.getText().length;
   ed.insertMention({ kind, name: basename(path) || path, path }, { start: pos, end: pos });
-  slashOpen.value = false;
+  closeSlashMenu();
   closeMentionMenu();
   ed.focus({ preventScroll: true });
 }
@@ -1741,30 +1765,6 @@ const canSend = computed(() => {
   }).kind !== 'noop';
 });
 
-const showContinueButton = computed(
-  () =>
-    !isSideChat.value &&
-    props.submitDisabled !== true &&
-    !canSend.value &&
-    !goalMode.value &&
-    text.value.trim() === '' &&
-    activeAttachmentEntries.value.length === 0 &&
-    !pillGate.value.uploading &&
-    !pillGate.value.errored &&
-    !pillGate.value.missing &&
-    Boolean(client.canContinue?.value) &&
-    client.activeTurnEnd?.value?.outcome !== 'failed',
-);
-
-function handleSendOrContinue(): void {
-  if (showContinueButton.value) {
-    if (!passSubmitGate()) return;
-    emit('continue');
-    return;
-  }
-  handleSubmit();
-}
-
 const clearDispatchPolicy = {
   attachments: 'clear',
   mentionMenu: 'close',
@@ -1784,9 +1784,7 @@ function resetAfterDispatch(
       },
       clearDraft,
       clearDraftAttachments,
-      closeSlashMenu: () => {
-        slashOpen.value = false;
-      },
+      closeSlashMenu,
       closeMentionMenu,
       collapse: collapseAndRefit,
     },
@@ -2005,6 +2003,18 @@ function handleKeydown(e: KeyboardEvent): boolean {
     }
   }
 
+  if (
+    dropdownOpen.value &&
+    (!nativeModelMenu?.available || isMobile.value) &&
+    e.key === 'Enter' &&
+    (e.ctrlKey || e.metaKey)
+  ) {
+    e.preventDefault();
+    commitModelMenuDraft();
+    closeDropdown();
+    return true;
+  }
+
   if (e.key === 'Escape') {
     if (addMenuOpen.value) {
       e.preventDefault();
@@ -2031,11 +2041,11 @@ function handleKeydown(e: KeyboardEvent): boolean {
   if (slashOpen.value) {
     if (e.key === 'Escape') {
       e.preventDefault();
-      slashOpen.value = false;
+      dismissSlashMenu();
       return true;
     }
     if (e.key === 'Tab' && slashItems.value.length === 0) {
-      slashOpen.value = false;
+      closeSlashMenu();
       return false;
     }
   }
@@ -2050,10 +2060,16 @@ function handleKeydown(e: KeyboardEvent): boolean {
       slashActive.value = (slashActive.value - 1 + slashItems.value.length) % slashItems.value.length;
       return true;
     }
-    if (e.key === 'Enter' || e.key === 'Tab') {
+    if (e.key === 'Enter') {
       e.preventDefault();
       const item = slashItems.value[slashActive.value];
       if (item) selectSlashCommand(item);
+      return true;
+    }
+    if (e.key === 'Tab') {
+      e.preventDefault();
+      const item = slashItems.value[slashActive.value];
+      if (item) completeSlashCommand(item);
       return true;
     }
   }
@@ -2061,7 +2077,7 @@ function handleKeydown(e: KeyboardEvent): boolean {
   if (mentionOpen.value) {
     if (e.key === 'Escape') {
       e.preventDefault();
-      closeMentionMenu();
+      dismissMentionMenu();
       return true;
     }
     if (e.key === 'Backspace' && !e.shiftKey && !e.altKey && !e.metaKey && !e.ctrlKey && mentionSessionMenuOpen.value && getMentionToken()?.token === '') {
@@ -2072,6 +2088,10 @@ function handleKeydown(e: KeyboardEvent): boolean {
     if (e.key === 'Tab' && mentionItems.value.length === 0) {
       closeMentionMenu();
       return false;
+    }
+    if (e.key === 'Enter' && mentionItems.value.length === 0 && mentionLoading.value) {
+      e.preventDefault();
+      return true;
     }
     if (mentionItems.value.length > 0) {
       if (e.key === 'ArrowDown') {
@@ -2129,13 +2149,13 @@ function handleKeydown(e: KeyboardEvent): boolean {
         });
       }
       history.recallOlder();
-      slashOpen.value = false;
+      closeSlashMenu();
       return true;
     }
     if (e.key === 'ArrowDown' && browsing) {
       e.preventDefault();
       history.recallNewer();
-      slashOpen.value = false;
+      closeSlashMenu();
       if (!history.isBrowsing()) {
         const snapshot = historyEntrySnapshot;
         historyEntrySnapshot = null;
@@ -2178,7 +2198,7 @@ function insertNewlineAtCaret(): void {
   editor.insertNewlineAtCaret();
 }
 
-const sendLabel = computed(() => t(showContinueButton.value ? 'composer.continue' : 'composer.send'));
+const sendLabel = computed(() => t('composer.send'));
 const hasUpload = computed(() => !!uploadImage);
 
 const dropdownOpen = ref(false);
@@ -2287,7 +2307,7 @@ const anyPopupOpen = computed(
 );
 
 function closeOverlays(): void {
-  slashOpen.value = false;
+  closeSlashMenu();
   closeMentionMenu();
   closeAddMenu();
   closeDropdown();
@@ -2388,7 +2408,7 @@ function toggleAddMenu(): void {
     closeDropdown();
     closePermDropdown();
     ctxCardOpen.value = false;
-    slashOpen.value = false;
+    closeSlashMenu();
     closeMentionMenu();
     document.addEventListener('click', onDocClick, true);
     void nextTick(() => {
@@ -2516,6 +2536,9 @@ function onDocClick(e: MouseEvent): void {
   const insideToolbar = toolbarRef.value?.contains(target) ?? false;
   const insideAddMenu = addMenuRef.value?.contains(target) ?? false;
   if (!insideToolbar && !insideAddMenu) {
+    if (dropdownOpen.value && (!nativeModelMenu?.available || isMobile.value)) {
+      commitModelMenuDraft();
+    }
     closeDropdown();
     closePermDropdown();
     closeCtxCard();
@@ -2612,12 +2635,31 @@ function onCtxCardKeydown(event: KeyboardEvent): void {
 const currentModel = computed(() =>
   models.value?.find((m) => m.id === status.value?.modelId),
 );
-const thinkingAvailability = computed(() => modelThinkingAvailability(currentModel.value));
-const thinkingSegments = computed(() => segmentsFor(currentModel.value));
+const draftModelId = ref(status.value?.modelId);
+const draftEffortSegment = ref<string>();
+const menuModel = computed(() =>
+  models.value?.find((model) => model.id === draftModelId.value) ?? currentModel.value,
+);
+const thinkingAvailability = computed(() => modelThinkingAvailability(menuModel.value));
+const thinkingSegments = computed(() => segmentsFor(menuModel.value));
 const thinkingLevel = computed(() => effectiveThinkingLevel(currentModel.value, thinking.value));
+const menuDefaultThinkingLevel = computed(() => effectiveThinkingLevel(
+  menuModel.value,
+  thinkingLevelForModelSwitch(
+    menuModel.value,
+    thinking.value,
+    menuModel.value?.id !== currentModel.value?.id,
+    sessionId.value === null || sessionId.value === undefined ? client.config.value?.thinking : undefined,
+  ),
+));
+const menuThinkingLevel = computed(() =>
+  draftEffortSegment.value === undefined
+    ? menuDefaultThinkingLevel.value
+    : commitLevel(menuModel.value, draftEffortSegment.value),
+);
 const activeThinkingSegment = computed(() => {
   const segs = thinkingSegments.value;
-  return segs.includes(thinkingLevel.value) ? thinkingLevel.value : '';
+  return segs.includes(menuThinkingLevel.value) ? menuThinkingLevel.value : '';
 });
 const thinkingOn = computed(() => isThinkingOn(thinkingLevel.value));
 const thinkingReadonly = computed(
@@ -2632,11 +2674,34 @@ const thinkingSuffix = computed(() => {
 });
 function setThinkingSegment(draft: string): void {
   if (thinkingReadonly.value) return;
-  client.setThinking(commitLevel(currentModel.value, draft));
+  draftEffortSegment.value = draft;
 }
 const thinkingOptions = computed(() =>
   thinkingSegments.value.map((seg) => ({ value: seg, label: effortLabel(seg) })),
 );
+const effortDescription = computed(() => {
+  if (menuModel.value?.provider !== MANAGED_KIMI_CODE_PROVIDER_ID) return undefined;
+  const effort = activeThinkingSegment.value || menuThinkingLevel.value;
+  return resolveEffortDescription(effortSwitchStore().config, effort, locale.value === 'zh' ? 'zh' : 'en');
+});
+function commitModelMenuDraft(): void {
+  const modelId = draftModelId.value;
+  if (modelId === undefined) return;
+  const effort = draftEffortSegment.value !== undefined && menuThinkingLevel.value !== menuDefaultThinkingLevel.value
+    ? menuThinkingLevel.value
+    : undefined;
+  void applyModelMenuDraft(
+    { modelId, effort },
+    {
+      currentModelId: status.value?.modelId,
+      currentSessionId: sessionId.value,
+      getCurrentModelId: () => status.value?.modelId,
+      getCurrentSessionId: () => sessionId.value,
+      selectModel: (id) => client.selectModel(id),
+      setThinking: (level) => client.setThinking(level),
+    },
+  );
+}
 
 const planOn = computed(() => planArmed.value === true || planMode.value === true);
 const swarmOn = computed(() => swarmMode.value === true);
@@ -2939,6 +3004,46 @@ const showAllModels = computed(() => showPickModel.value || currentProvider.valu
 const unstarredGroups = computed(() =>
   showAllModels.value ? groupUnstarredModelsByProvider(models.value ?? [], starredIds.value ?? []) : [],
 );
+const fallbackModelEntries = computed(() => {
+  const entries: (
+    | { kind: 'section'; key: string; label: string }
+    | { kind: 'divider'; key: string }
+    | {
+        kind: 'model';
+        key: string;
+        model: NonNullable<typeof models.value>[number];
+        showProvider: boolean;
+        starred: boolean;
+      }
+  )[] = [];
+  if (starredOtherModels.value.length > 0) {
+    entries.push({ kind: 'section', key: 'starred', label: t('status.starredModels') });
+    for (const model of starredOtherModels.value) {
+      entries.push({ kind: 'model', key: `model:${model.id}`, model, showProvider: true, starred: true });
+    }
+    entries.push({ kind: 'divider', key: 'starred-divider' });
+  }
+  if (showAllModels.value) {
+    unstarredGroups.value.forEach((group, index) => {
+      entries.push({ kind: 'section', key: `provider:${index}`, label: providerDisplayName(group.provider, t) });
+      for (const model of group.models) {
+        entries.push({ kind: 'model', key: `model:${model.id}`, model, showProvider: false, starred: false });
+      }
+    });
+  } else if (providerModels.value.length > 0) {
+    entries.push({ kind: 'section', key: 'provider', label: providerDisplayName(currentProvider.value, t) });
+    for (const model of providerModels.value) {
+      entries.push({
+        kind: 'model',
+        key: `model:${model.id}`,
+        model,
+        showProvider: false,
+        starred: isStarred(model.id),
+      });
+    }
+  }
+  return entries;
+});
 
 const modelDropdownRef = ref<MenuHandle | null>(null);
 const permDropdownRef = ref<MenuHandle | null>(null);
@@ -3083,6 +3188,8 @@ watch(ctxCardOpen, async (open) => {
 
 watch(dropdownOpen, async (open) => {
   if (!open) return;
+  draftModelId.value = status.value?.modelId;
+  draftEffortSegment.value = undefined;
   modelMenuDropDown.value = false;
   modelMenuMaxWidth.value = '';
   modelMenuMaxHeight.value = '';
@@ -3125,6 +3232,17 @@ onUnmounted(() => {
 });
 
 function onModelDropdownKeydown(event: KeyboardEvent): void {
+  if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+    event.preventDefault();
+    commitModelMenuDraft();
+    closeDropdown();
+    return;
+  }
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    closeDropdown();
+    return;
+  }
   if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
   const rows = Array.from(
     menuElement(modelDropdownRef.value)?.querySelectorAll<HTMLElement>('.md-row:not(:disabled)') ?? [],
@@ -3138,8 +3256,8 @@ function onModelDropdownKeydown(event: KeyboardEvent): void {
 }
 
 function selectModel(modelId: string): void {
-  void client.selectModel(modelId);
-  closeDropdown();
+  if (modelId !== draftModelId.value) draftEffortSegment.value = undefined;
+  draftModelId.value = modelId;
 }
 const nativeMenuHost = useComposerNativeMenuHost();
 const nativeMenuId = `composer-${++composerMenuSequence}`;
@@ -3157,7 +3275,7 @@ const nativeModelIds = new Map<string, string>();
 function nativeModelItem(model: NonNullable<typeof models.value>[number], detail = false): NativeMenuItem {
   let id = nativeModelIds.get(model.id);
   if (id === undefined) { id = `model-${nativeModelIds.size}`; nativeModelIds.set(model.id, id); }
-  return { kind: 'item', id, label: model.displayName ?? model.model, selected: model.id === status.value?.modelId, starred: isStarred(model.id), ...(detail ? { detail: model.provider } : {}) };
+  return { kind: 'item', id, label: model.displayName ?? model.model, selected: model.id === draftModelId.value, starred: isStarred(model.id), keepOpen: true, ...(detail ? { detail: model.provider } : {}) };
 }
 const nativeModelList = computed<NativeMenuItem[]>(() => {
   const items: NativeMenuItem[] = [];
@@ -3182,14 +3300,15 @@ const nativeModelItems = computed<NativeMenuItem[]>(() => [
   ...(thinkingSegments.value.length > 1 && thinkingAvailability.value !== 'unsupported' ? [{
     kind: 'choices' as const, id: 'thinking', label: t('status.thinkingLabel'), value: activeThinkingSegment.value ? `thinking-${activeThinkingSegment.value}` : '',
     options: thinkingOptions.value.map(option => ({ id: `thinking-${option.value}`, label: option.label })),
-  }] : [{ kind: 'note' as const, id: 'thinking-note', label: `${t('status.thinkingLabel')} · ${thinkingAvailability.value === 'unsupported' ? t('status.modeNotSupported') : effortLabel(thinkingSegments.value[0] ?? thinkingLevel.value)}` }]),
-  { kind: 'separator' },
-  { kind: 'note', id: 'cache-note', label: t('status.cacheNote') },
+  }] : [{ kind: 'note' as const, id: 'thinking-note', label: `${t('status.thinkingLabel')} · ${thinkingAvailability.value === 'unsupported' ? t('status.modeNotSupported') : effortLabel(thinkingSegments.value[0] ?? menuThinkingLevel.value)}` }]),
+  ...(effortDescription.value === undefined ? [] : [
+    { kind: 'note' as const, id: 'effort-description', label: effortDescription.value, size: 'xs' as const },
+  ]),
   { kind: 'separator' },
   { kind: 'item', id: 'more-models', label: t('status.moreModels'), icon: 'list' },
 ]);
 const nativeModelMenu = nativeMenuHost?.register({
-  id: `${nativeMenuId}-models`, width: 200, autoWidth: true, placement: 'top-end',
+  id: `${nativeMenuId}-models`, width: 200, autoWidth: true, placement: 'top-end', submitOnCtrlEnter: true,
   items: () => nativeModelItems.value,
   footerStart: () => nativeModelList.value.length,
   onSelect: id => {
@@ -3200,6 +3319,7 @@ const nativeModelMenu = nativeMenuHost?.register({
       if (model !== undefined) selectModel(model);
     }
   },
+  onDismiss: commitModelMenuDraft,
 });
 if (nativePermissionMenu !== undefined) watch(nativePermissionMenu.open, open => { permDropdownOpen.value = open; });
 if (nativeModelMenu !== undefined) watch(nativeModelMenu.open, open => { dropdownOpen.value = open; });
@@ -3267,7 +3387,7 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
           :items="mentionItems"
           :active-index="mentionActive"
           :loading="mentionLoading"
-          :stale="mentionFileStale"
+          :query="mentionQuery"
           :submenu-title="mentionSubmenuTitle"
           @select="selectMentionItem"
           @hover="mentionNavigate"
@@ -3414,8 +3534,10 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
           </Transition>
 
           <span v-if="swarmOn && !isSideChat" class="swarm-chip">
-            <Icon class="swarm-ic" name="sparkles" size="md" />
-            <span class="swarm-label">{{ t('status.swarmLabel') }}</span>
+            <Tooltip :text="t('status.swarmTooltip')">
+              <Icon class="swarm-ic" name="sparkles" size="md" />
+              <span class="swarm-label">{{ t('status.swarmLabel') }}</span>
+            </Tooltip>
             <IconButton
               class="swarm-x"
               size="sm"
@@ -3578,13 +3700,10 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
             class="send"
             :class="{ 'is-starting': starting }"
             :aria-label="sendLabel"
-            :disabled="starting || (!canSend && !showContinueButton)"
-            @click="handleSendOrContinue()"
+            :disabled="starting || !canSend"
+            @click="handleSubmit()"
           >
             <Spinner v-if="starting" size="sm" />
-            <svg v-else-if="showContinueButton" class="send-continue" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-              <path d="M9 8.25A1 1 0 0 1 10.543 7.41L16.343 11.16A1 1 0 0 1 16.343 12.84L10.543 16.59A1 1 0 0 1 9 15.75V8.25Z" fill="currentColor" />
-            </svg>
             <Icon v-else name="send" size="sm" />
           </button>
           </Tooltip>
@@ -3604,54 +3723,20 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
           <!-- Scrollable model list — capped so a large provider catalog
                can't push the controls below out of the viewport. -->
           <div class="md-list">
-            <!-- Starred models from other providers -->
-            <div v-if="starredOtherModels.length > 0" class="md-section">{{ t('status.starredModels') }}</div>
-            <MenuItem
-              v-for="m in starredOtherModels"
-              :key="m.id"
-              class="md-row"
-              :class="{ 'is-current': m.id === status.modelId }"
-              :active="m.id === status.modelId"
-              @click="selectModel(m.id)"
-            >
-              <span class="md-check"><Icon v-if="m.id === status.modelId" name="check" size="sm" style="color: var(--color-accent)" /></span>
-              <span class="md-name">{{ m.displayName ?? m.model }}</span>
-              <span class="md-provider">{{ providerDisplayName(m.provider, t) }}</span>
-              <Icon class="md-star" name="star" size="sm" style="color: var(--star)" />
-            </MenuItem>
-
-            <div v-if="starredOtherModels.length > 0" class="md-divider" />
-
-            <!-- Current provider models -->
-            <template v-if="showAllModels">
-              <template v-for="group in unstarredGroups" :key="group.provider">
-                <div class="md-section">{{ providerDisplayName(group.provider, t) }}</div>
-                <MenuItem
-                  v-for="m in group.models"
-                  :key="m.id"
-                  class="md-row"
-                  :class="{ 'is-current': m.id === status.modelId }"
-                  :active="m.id === status.modelId"
-                  @click="selectModel(m.id)"
-                >
-                  <span class="md-check"><Icon v-if="m.id === status.modelId" name="check" size="sm" style="color: var(--color-accent)" /></span>
-                  <span class="md-name">{{ m.displayName ?? m.model }}</span>
-                </MenuItem>
-              </template>
-            </template>
-            <template v-else>
-              <div v-if="providerModels.length > 0" class="md-section">{{ providerDisplayName(currentProvider, t) }}</div>
+            <template v-for="entry in fallbackModelEntries" :key="entry.key">
+              <div v-if="entry.kind === 'section'" class="md-section">{{ entry.label }}</div>
+              <div v-else-if="entry.kind === 'divider'" class="md-divider" />
               <MenuItem
-                v-for="m in providerModels"
-                :key="m.id"
+                v-else
                 class="md-row"
-                :class="{ 'is-current': m.id === status.modelId }"
-                :active="m.id === status.modelId"
-                @click="selectModel(m.id)"
+                :class="{ 'is-current': entry.model.id === draftModelId }"
+                :active="entry.model.id === draftModelId"
+                @click="selectModel(entry.model.id)"
               >
-                <span class="md-check"><Icon v-if="m.id === status.modelId" name="check" size="sm" style="color: var(--color-accent)" /></span>
-                <span class="md-name">{{ m.displayName ?? m.model }}</span>
-                <Icon v-if="isStarred(m.id)" class="md-star" name="star" size="sm" style="color: var(--star)" />
+                <span class="md-check"><Icon v-if="entry.model.id === draftModelId" name="check" size="sm" style="color: var(--color-accent)" /></span>
+                <span class="md-name">{{ entry.model.displayName ?? entry.model.model }}</span>
+                <span v-if="entry.showProvider" class="md-provider">{{ providerDisplayName(entry.model.provider, t) }}</span>
+                <Icon v-if="entry.starred" class="md-star" name="star" size="sm" style="color: var(--star)" />
               </MenuItem>
             </template>
           </div>
@@ -3674,11 +3759,10 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
               size="xs"
               @update:model-value="setThinkingSegment"
             />
-            <span v-else class="md-note">{{ effortLabel(thinkingSegments[0] ?? thinkingLevel) }}</span>
+            <span v-else class="md-note">{{ effortLabel(thinkingSegments[0] ?? menuThinkingLevel) }}</span>
           </div>
 
-          <div class="md-divider" />
-          <div class="md-cache-note">{{ t('status.cacheNote') }}</div>
+          <div v-if="effortDescription" class="md-effort-description">{{ effortDescription }}</div>
 
           <div class="md-divider" />
 
@@ -3810,7 +3894,7 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
         :items="mentionItems"
         :active-index="mentionActive"
         :loading="mentionLoading"
-        :stale="mentionFileStale"
+        :query="mentionQuery"
         :submenu-title="mentionSubmenuTitle"
         @select="selectMentionItem"
         @hover="mentionNavigate"
@@ -4032,6 +4116,8 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
 }
 
 .ph {
+  --ph-leading: 1.5;
+  --ph-line-height: calc(var(--content-font-size) * var(--ph-leading));
   color: var(--faint);
   caret-color: var(--color-text);
   position: relative;
@@ -4046,7 +4132,7 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
   max-height: calc(var(--app-height, 100dvh) / 4);
   overflow-y: auto;
   scrollbar-width: none;
-  line-height: 1.5;
+  line-height: var(--ph-leading);
   margin-bottom: 6px;
   user-select: text;
 }
@@ -4130,10 +4216,10 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
   align-items: center;
   gap: var(--space-1);
   vertical-align: top;
-  height: calc(var(--content-font-size) * 1.5);
+  height: var(--ph-line-height);
   margin-left: calc(-1 * var(--space-05));
   margin-right: var(--space-1-5);
-  padding: 0 calc((var(--content-font-size) * 1.5 - var(--wm-x-size)) / 2) 0 var(--space-2);
+  padding: 0 calc((var(--ph-line-height) - var(--wm-x-size)) / 2) 0 var(--space-2);
   border: none;
   border-radius: var(--radius-full);
   background: var(--color-selected);
@@ -4141,7 +4227,7 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
   font-family: var(--font-ui);
   font-size: var(--ui-font-size-sm);
   font-weight: var(--weight-medium);
-  line-height: calc(var(--content-font-size) * 1.5);
+  line-height: var(--ph-line-height);
   white-space: nowrap;
   user-select: none;
 }
@@ -4207,19 +4293,17 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
 }
 
 .ph :deep(.composer-placeholder-overlay kbd) {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: var(--kbd-min-width);
-  height: var(--kbd-height);
-  padding: 0 var(--kbd-padding-x);
-  border: var(--p-hairline) solid var(--color-line);
-  border-radius: var(--radius-xs);
-  background: transparent;
-  color: inherit;
-  font-family: var(--font-kbd);
-  font-size: var(--kbd-font-size);
-  line-height: var(--leading-solid);
+  vertical-align: top;
+  margin-top: max(0px, calc((var(--ph-line-height) - var(--kbd-height)) / 2));
+}
+
+@supports (text-box: trim-both cap alphabetic) {
+  .ph :deep(.composer-placeholder-overlay kbd) {
+    display: inline-block;
+    padding-top: calc((var(--kbd-height) - 1cap) / 2 - var(--p-hairline));
+    text-align: center;
+    text-box: trim-both cap alphabetic;
+  }
 }
 
 .composer.expanded .ph {
@@ -4958,12 +5042,12 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
   margin-left: auto;
 }
 
-.md-cache-note {
+.md-effort-description {
   width: 0;
   min-width: 100%;
   padding: 2px 7px 4px;
   color: var(--muted);
-  font-size: var(--ui-font-size-xs);
+  font-size: var(--text-2xs);
   line-height: 1.4;
 }
 

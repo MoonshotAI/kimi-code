@@ -1,6 +1,6 @@
 import type { AssistantMessage, Message, ToolCall } from '#/llm/message';
 import type { LlmOutcome } from '#/llm/response';
-import type { ToolResult } from './contract/hook';
+import type { HookToolResult } from './contract/hook';
 import type { Cause } from './contract/outcome';
 
 export type Fields = Record<string, unknown>;
@@ -19,7 +19,7 @@ export function isCause(value: unknown): value is Cause {
   );
 }
 
-export function isToolResult(value: unknown): value is ToolResult {
+export function isHookToolResult(value: unknown): value is HookToolResult {
   return (
     isObject(value) &&
     Array.isArray(value['content']) &&

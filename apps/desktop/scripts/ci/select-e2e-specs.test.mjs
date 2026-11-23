@@ -6,10 +6,13 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
+import { parse } from 'yaml';
+
 import { LABEL, selectJourneys } from './select-e2e-specs.mjs';
 
 const exists = path => !path.includes('deleted');
 const script = fileURLToPath(new URL('./select-e2e-specs.mjs', import.meta.url));
+const workflow = parse(readFileSync(fileURLToPath(new URL('../../../../.github/workflows/desktop-e2e.yml', import.meta.url)), 'utf8'));
 
 await test('runs every journey outside pull requests', () => {
   assert.deepEqual(selectJourneys({ pullRequest: false, labelled: false, changed: [] }), { mode: 'full', specs: [], reason: 'not a pull request' });
@@ -88,4 +91,11 @@ await test('writes the mode and the specs to the workflow output', () => {
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+await test('reports the journeys unless the run was cancelled or the plan chose none', () => {
+  const condition = workflow.jobs.result.if;
+  assert.doesNotMatch(condition, /always\(\)/);
+  assert.match(condition, /!cancelled\(\)/);
+  assert.match(condition, /needs\.plan\.outputs\.mode != 'none'/);
 });

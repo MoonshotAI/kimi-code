@@ -568,9 +568,9 @@ export function dismissBrowserOverlay(contents: WebContents, request: BrowserOve
 export function submitBrowserOverlayForm(contents: WebContents, action: BrowserOverlayFormAction): void {
   const entry = liveEntry();
   const current = entry?.current;
-  if (entry === null || current?.kind !== 'dialog' || entry.view.webContents !== contents || current.requestId !== action.requestId || current.input === undefined || current.loading === true) return;
+  if (entry === null || current?.kind !== 'dialog' || entry.view.webContents !== contents || current.requestId !== action.requestId || (current.input === undefined && current.checkbox === undefined) || current.loading === true) return;
   if (action.action === 'auxiliary' && (current.auxiliary === undefined || current.auxiliary.disabled)) return;
-  const payload: BrowserOverlayDialogAction = { dialogId: current.dialogId, action: action.action, value: current.input.readOnly ? current.input.value : action.value, checked: current.checkbox === undefined ? undefined : current.checkbox.disabled || current.input.readOnly ? current.checkbox.checked : action.checked ?? current.checkbox.checked };
+  const payload: BrowserOverlayDialogAction = { dialogId: current.dialogId, action: action.action, value: current.input === undefined ? undefined : current.input.readOnly ? current.input.value : action.value, checked: current.checkbox === undefined ? undefined : current.checkbox.disabled || current.input?.readOnly ? current.checkbox.checked : action.checked ?? current.checkbox.checked };
   liveHost()?.webContents.send(IPC.browserOverlayDialogAction, payload);
 }
 

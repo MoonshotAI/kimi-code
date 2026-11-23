@@ -1,8 +1,10 @@
 import { once } from 'node:events';
+import { writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 
 import { deferred } from '@moonshot-ai/testkit/fixtures';
 import type { KapFrame, KapItem, KapSocket, KapTurn, KapTurnsPage } from '@moonshot-ai/testkit/kap';
-import { agent, bash, held, httpError, say, think, withUsage } from '@moonshot-ai/testkit/model';
+import { agent, bash, call, held, httpError, say, think, todoList, withUsage } from '@moonshot-ai/testkit/model';
 import { test as base, describe, expect } from 'vitest';
 
 import { scenarioFixtures, type ScenarioFixtures } from './support/scenario';
@@ -152,6 +154,37 @@ describe('conversation over KAP', () => {
     });
   });
 
+  test('retries invalid tool arguments without retaining failed attempt output or usage', async ({ kap, model }) => {
+    model.script(
+      withUsage({ input: 2, output: 1 }, call('Bash', {}, { rawArguments: '{"command":', text: 'I will call Bash' })),
+      withUsage({ input: 4, output: 3 }, bash('echo testkit-ok')),
+      withUsage({ input: 6, output: 2 }, say('done')),
+    );
+    const session = await kap.createSession();
+
+    await kap.prompt(session.id, 'run it');
+    await kap.waitIdle(session.id);
+
+    expect(model.requests('main')).toHaveLength(3);
+    expect(model.request(1).view.system).toContain('not executed');
+    const [turn] = await kap.turns(session.id);
+    const toolCalls = turn?.items.filter((item) => item.type === 'tool_call') ?? [];
+    expect(toolCalls).toHaveLength(1);
+    expect(toolCalls[0]).toMatchObject({ name: 'Bash', outcome: 'completed', output: 'testkit-ok\n' });
+    const assistantText = turn?.items
+      .filter((item) => item.type === 'assistant_message')
+      .map((item) => item['text'])
+      .join('') ?? '';
+    expect(assistantText).not.toContain('I will call Bash');
+    expect(assistantText).toContain('done');
+    const steps = (turn?.['steps'] ?? []) as readonly { usage?: Record<string, unknown> }[];
+    const usages = steps.flatMap((step) => step.usage === undefined ? [] : [step.usage]);
+    expect(usages).toMatchObject([
+      { input_other: 4, output: 3 },
+      { input_other: 6, output: 2 },
+    ]);
+  });
+
   test('waits for approval in manual mode, shows it on the tool item and runs the tool once approved', async ({ kap, model }) => {
     model.script(bash('echo approved-run'), say('done'));
     const socket = await kap.connect();
@@ -236,17 +269,162 @@ describe('conversation over KAP', () => {
     ]);
   });
 
-  test('cancels a turn while the model request is in flight', async ({ kap, model }) => {
+  test('cancels a turn while the model request is in flight and has nothing to cancel once idle', async ({ kap, model }) => {
     model.script(held('slow', say('never sent')));
+    const socket = await kap.connect();
     const session = await kap.createSession();
+    expect(session).toMatchObject({ cwd: kap.home.workspace, activity: 'idle' });
+    await socket.subscribe(session.id);
 
     await kap.prompt(session.id, 'wait for it');
     await model.hold('slow').reached();
+    const started = await socket.waitFor((frame) => frame.type === 'turn.started' && frame['session_id'] === session.id);
+    const turnId = turnOf(started)?.turn_id;
     await expect(kap.cancel(session.id)).resolves.toEqual({ cancelled: true });
     const idle = await kap.waitIdle(session.id);
 
     expect(idle.last_turn_outcome).toBe('interrupted');
     await expect.poll(() => model.request(0).state).toBe('aborted');
+    await socket.waitFor((frame) => isMainTurnEnd(frame, session.id) && turnOf(frame)?.turn_id === turnId);
+    expect(socket.turns(session.id).find((turn) => turn.turn_id === turnId)).toMatchObject({
+      status: 'ended',
+      outcome: 'interrupted',
+      end_reason: 'user_cancelled',
+    });
+    await expect(kap.cancel(session.id)).resolves.toEqual({ cancelled: false });
+    expect(await kap.session(session.id)).toMatchObject({ activity: 'idle', last_turn_outcome: 'interrupted' });
+  });
+
+  test('keeps a background command running on cancel until the client also asks to stop background work, then tells the model it was stopped', async ({ kap, model }) => {
+    model.script(bash({ command: 'sleep 10', description: 'long sleep', run_in_background: true }), say('started it'), say('noted the stop'));
+    const socket = await kap.connect();
+    const session = await kap.createSession();
+    await socket.subscribe(session.id);
+
+    await kap.prompt(session.id, 'start a long command in the background');
+    const task = await socket.waitFor((frame) => frame.type === 'task' && frame['status'] === 'running' && frame['detached'] === true);
+    await socket.waitFor((frame) => isMainTurnEnd(frame, session.id));
+    const lastTaskFrame = () => socket.frames.filter((frame) => frame.type === 'task' && frame['task_id'] === task['task_id']).at(-1);
+
+    await expect(kap.cancel(session.id)).resolves.toEqual({ cancelled: false });
+    expect(lastTaskFrame()?.['status']).toBe('running');
+    expect(await kap.session(session.id)).toMatchObject({ activity: 'background' });
+    const beforeStop = socket.mark();
+    await expect(kap.cancel(session.id, { includeBackground: true })).resolves.toEqual({ cancelled: true });
+    await socket.waitFor((frame) => frame.type === 'task' && frame['task_id'] === task['task_id'] && frame['status'] === 'ended');
+    expect(lastTaskFrame()?.['outcome']).toBe('killed');
+    await socket.waitFor((frame) => isMainTurnEnd(frame, session.id), { after: beforeStop });
+    const [, notified] = await kap.turns(session.id);
+    expect(notified?.items.map((item) => item.type)).toEqual(['notification', 'assistant_message']);
+    expect(notified?.items[0]).toMatchObject({
+      type: 'notification',
+      notification_type: 'task.killed',
+      source: { kind: 'background_task', id: task['task_id'] },
+      task_id: task['task_id'],
+    });
+  });
+
+  test('streams background task output to task.watch by byte offset, resumes from since_offset and replays it once the task ended', async ({ kap, model }) => {
+    const ready = '  VITE ready\n';
+    const local = '  ➜  Local: http://localhost:5173/\n';
+    const hmr = '4:42:10 PM [vite] hmr update /src/App.vue\n';
+    const waitForFile = (name: string) => `until [ -e ${name} ]; do sleep 0.05; done`;
+    model.script(
+      bash({
+        command: [printLine(ready), waitForFile('local.go'), printLine(local), waitForFile('hmr.go'), printLine(hmr), 'sleep 30'].join('; '),
+        description: 'npm run dev',
+        run_in_background: true,
+      }),
+      say('dev server started'),
+      say('noted the stop'),
+    );
+    const socket = await kap.connect();
+    const session = await kap.createSession();
+    await socket.subscribe(session.id);
+    const watch = (watcher: KapSocket, agentId: string, taskId: string, sinceOffset?: number) =>
+      watcher.command({ type: 'task.watch', session_id: session.id, agent_id: agentId, task_id: taskId, ...(sinceOffset === undefined ? {} : { since_offset: sinceOffset }) });
+    const nextOutput = (watcher: KapSocket, taskId: string, after: number) =>
+      watcher.waitFor((frame) => isTaskOutput(frame, taskId) && frame['text'] !== '', { after });
+    const outputsBefore = (watcher: KapSocket, taskId: string, after: number, offset: number) =>
+      watcher.frames.slice(after).filter((frame) => isTaskOutput(frame, taskId) && Number(frame['offset']) < offset);
+
+    await kap.prompt(session.id, 'start the dev server');
+    const task = await socket.waitFor((frame) => frame.type === 'task' && frame['agent_id'] === 'main' && frame['status'] === 'running' && frame['detached'] === true);
+    await socket.waitFor((frame) => isMainTurnEnd(frame, session.id));
+    const taskId = String(task['task_id']);
+
+    const first = await kap.connect();
+    let after = first.mark();
+    await watch(first, 'main', taskId);
+    expect(await nextOutput(first, taskId, after)).toMatchObject({ session_id: session.id, agent_id: 'main', task_id: taskId, offset: 0, text: ready });
+    after = first.mark();
+    await writeFile(join(kap.home.workspace, 'local.go'), '');
+    expect(await nextOutput(first, taskId, after)).toMatchObject({ offset: Buffer.byteLength(ready), text: local });
+    await first.close();
+
+    await writeFile(join(kap.home.workspace, 'hmr.go'), '');
+    const since = Buffer.byteLength(ready) + Buffer.byteLength(local);
+    const second = await kap.connect();
+    after = second.mark();
+    await watch(second, 'main', taskId, since);
+    expect(await nextOutput(second, taskId, after)).toMatchObject({ offset: since, text: hmr });
+    expect(outputsBefore(second, taskId, after, since)).toEqual([]);
+    await expect(watch(second, 'main', 'bash-00000000')).rejects.toMatchObject({ response: { code: 40406 } });
+    await second.close();
+
+    const beforeStop = socket.mark();
+    await expect(kap.cancel(session.id, { includeBackground: true })).resolves.toEqual({ cancelled: true });
+    await socket.waitFor((frame) => frame.type === 'task' && frame['task_id'] === taskId && frame['status'] === 'ended');
+    const third = await kap.connect();
+    after = third.mark();
+    expect(await watch(third, 'main', taskId)).toMatchObject({
+      code: 0,
+      task: { task_id: taskId, kind: 'shell', status: 'ended', outcome: 'killed', description: 'npm run dev' },
+    });
+    expect(await nextOutput(third, taskId, after)).toMatchObject({ offset: 0, text: `${ready}${local}${hmr}` });
+    await third.close();
+    await socket.waitFor((frame) => isMainTurnEnd(frame, session.id), { after: beforeStop });
+  });
+
+  test('lets task.watch read a task only through the agent that owns it', async ({ kap, model }) => {
+    const testRun = ' RUN  v3.2.4\n';
+    model.script(agent({ prompt: 'run the tests in watch mode', description: 'tests' }), say('tests are running'));
+    model.lane('subagent').script(
+      bash({ command: `${printLine(testRun)}; sleep 30`, description: 'pnpm test --watch', run_in_background: true }),
+      held('child-reply', say('watching')),
+      say('the test run was stopped'),
+    );
+    const socket = await kap.connect();
+    const session = await kap.createSession();
+    await socket.subscribe(session.id);
+
+    await kap.prompt(session.id, 'run the tests in the background');
+    await model.hold('child-reply').reached();
+    const delegation = (await kap.turns(session.id)).flatMap((turn) => turn.items).find((item) => item.type === 'tool_call' && item['name'] === 'Agent');
+    const childId = childAgentIdOf(delegation);
+    await socket.subscribe(session.id, { agentIds: [childId] });
+    const childTasks = (await socket.waitFor((frame) => frame.type === 'task.list' && frame['agent_id'] === childId))['tasks'] as readonly { readonly task_id: string; readonly status: string }[];
+    expect(childTasks).toEqual([expect.objectContaining({ status: 'running' })]);
+    const childTaskId = childTasks[0]!.task_id;
+
+    const watcher = await kap.connect();
+    const watch = (agentId: string) => watcher.command({ type: 'task.watch', session_id: session.id, agent_id: agentId, task_id: childTaskId });
+    await expect(watch('main')).rejects.toMatchObject({ response: { code: 40406 } });
+    const after = watcher.mark();
+    await watch(childId);
+    expect(await watcher.waitFor((frame) => isTaskOutput(frame, childTaskId) && frame['text'] !== '', { after })).toMatchObject({
+      session_id: session.id,
+      agent_id: childId,
+      task_id: childTaskId,
+      offset: 0,
+      text: testRun,
+    });
+    await watcher.close();
+
+    model.hold('child-reply').release();
+    await socket.waitFor((frame) => frame.type === 'turn.ended' && frame['session_id'] === session.id && frame['agent_id'] === childId);
+    await expect(kap.cancel(session.id, { agentId: childId, includeBackground: true })).resolves.toEqual({ cancelled: true });
+    await socket.waitFor((frame) => isMainTurnEnd(frame, session.id));
   });
 
   test('cancels a request while its script is preparing a reply and starts the next turn', async ({ kap, model }) => {
@@ -378,6 +556,59 @@ describe('conversation over KAP', () => {
     expect(JSON.stringify(turn?.['error'])).toContain('testkit rejects this request');
   });
 
+  test('continues an interrupted or failed turn and refuses when nothing is left to continue or a turn is running', async ({ kap, model }) => {
+    model.script(
+      held('interrupted-answer', say(['half-1 ', 'half-2']), 1),
+      say('resumed reply'),
+      httpError(400, { message: 'synthetic upstream error' }),
+      say('resumed reply'),
+      httpError(400, { message: 'synthetic upstream error' }),
+      say('resumed reply'),
+    );
+    model.lane('compaction').script(say('compacted summary'));
+    const socket = await kap.connect();
+    const session = await kap.createSession();
+    await socket.subscribe(session.id);
+    const resume = () => kap.rest.post<{ readonly continued: boolean }>(`/api/v1/sessions/${session.id}:continue`, {});
+    const lastTurnAfter = async <T>(action: () => Promise<T>): Promise<{ readonly result: T; readonly turn: KapTurn | undefined }> => {
+      const mark = socket.mark();
+      const result = await action();
+      await socket.waitFor((frame) => isMainTurnEnd(frame, session.id), { after: mark });
+      return { result, turn: socket.turns(session.id).at(-1) };
+    };
+
+    await expect(resume()).rejects.toMatchObject({ code: 40940 });
+    await kap.prompt(session.id, 'interrupt me');
+    await model.hold('interrupted-answer').reached();
+    await expect(resume()).rejects.toMatchObject({ code: 40901 });
+    const interrupted = await lastTurnAfter(() => kap.cancel(session.id));
+    expect(interrupted.turn).toMatchObject({ status: 'ended', outcome: 'interrupted' });
+
+    const continued = await lastTurnAfter(resume);
+    expect(continued.result).toEqual({ continued: true });
+    expect(socket.turns(session.id).length).toBeGreaterThanOrEqual(2);
+    expect(continued.turn?.['outcome']).toBe('completed');
+    expect(continued.turn?.items.filter((item) => item.type === 'user_message')).toEqual([]);
+    expect(continued.turn?.items.find((item) => item.type === 'assistant_message')?.['text']).toBe('resumed reply');
+    await expect(resume()).rejects.toMatchObject({ code: 40940 });
+
+    expect((await lastTurnAfter(() => kap.prompt(session.id, 'trigger failure'))).turn).toMatchObject({ status: 'ended', outcome: 'failed' });
+    const afterFailure = await lastTurnAfter(resume);
+    expect(afterFailure.result).toEqual({ continued: true });
+    expect(afterFailure.turn).toMatchObject({ status: 'ended', outcome: 'completed' });
+    await kap.undo(session.id, socket.turns(session.id)[0]!.turn_id);
+    await expect(resume()).rejects.toMatchObject({ code: 40940 });
+
+    expect((await lastTurnAfter(() => kap.prompt(session.id, 'trigger failure before compact'))).turn).toMatchObject({
+      status: 'ended',
+      outcome: 'failed',
+    });
+    expect((await lastTurnAfter(() => kap.compact(session.id))).turn).toMatchObject({ kind: 'system', outcome: 'completed' });
+    const afterCompaction = await lastTurnAfter(resume);
+    expect(afterCompaction.result).toEqual({ continued: true });
+    expect(afterCompaction.turn).toMatchObject({ kind: 'agent', status: 'ended', outcome: 'completed' });
+  });
+
   test('keeps the conversation across a server restart', async ({ kap, model }) => {
     model.script(say('first answer'), say('second answer'));
     const session = await kap.createSession();
@@ -449,6 +680,77 @@ describe('conversation over KAP', () => {
     await socket.waitFor((frame) => isMainTurnEnd(frame, session.id) && turnOf(frame)?.turn_id === turns.at(-1)?.turn_id);
     expect(socket.turns(session.id)).toEqual(turns);
   });
+
+  test('resumes a foreground subagent with its prior context after a server restart', async ({ kap, model }) => {
+    model.script(agent({ prompt: 'remember the token quartz-7731 and reply with ok', description: 'child' }), say('noted'));
+    model.lane('subagent').script(say('ok, remembered'));
+    const session = await kap.createSession();
+    const agentCalls = async () => (await kap.turns(session.id)).flatMap((turn) => turn.items).filter((item) => item.type === 'tool_call' && item['name'] === 'Agent');
+
+    await kap.prompt(session.id, 'spawn the child');
+    await kap.waitIdle(session.id);
+    const [spawn] = await agentCalls();
+    expect(spawn?.['agent_refs']).toEqual([expect.objectContaining({ agent_id: expect.any(String), role: 'child' })]);
+    const childId = childAgentIdOf(spawn);
+
+    await kap.restart();
+    model.script(agent({ prompt: 'recall the token', description: 'child again', resume: childId }), say('the child remembered'));
+    model.lane('subagent').script(say('the token is quartz-7731'));
+    await kap.prompt(session.id, 'resume the child');
+    await kap.waitIdle(session.id);
+
+    const resumed = model.requests('subagent')[1];
+    expect(resumed?.texts('user').join('\n')).toContain('remember the token quartz-7731 and reply with ok');
+    expect(resumed?.texts('assistant')).toContain('ok, remembered');
+    expect(resumed?.userTextsSinceReply.join('\n')).toContain('recall the token');
+    const calls = await agentCalls();
+    expect(calls).toHaveLength(2);
+    expect(String(calls[1]?.['output'])).toContain(`agent_id: ${childId}`);
+    expect(String(calls[1]?.['output'])).toContain('the token is quartz-7731');
+    const childTurns = await kap.turns(session.id, childId);
+    expect(childTurns.map((turn) => turn.items[0]?.['text'])).toEqual(['remember the token quartz-7731 and reply with ok', 'recall the token']);
+  });
+
+  test('sends a new subscriber the idle main agent and its empty todo list, then pushes TodoList writes', async ({ kap, model }) => {
+    model.script(todoList([{ title: 'write tests', status: 'in_progress' }, { title: 'ship', status: 'pending' }]), say('planned'));
+    const socket = await kap.connect();
+    const session = await kap.createSession();
+    const isTodoFrame = (frame: KapFrame) => frame.type === 'todo' && frame['session_id'] === session.id && frame['agent_id'] === 'main';
+    await socket.subscribe(session.id);
+    expect(await socket.waitFor((frame) => isMainAgentFrame(frame, session.id))).toMatchObject({ type: 'agent', session_id: session.id, status: 'idle' });
+    expect(await socket.waitFor(isTodoFrame)).toMatchObject({ type: 'todo', session_id: session.id, items: [] });
+
+    await kap.prompt(session.id, 'plan the work');
+    await kap.waitIdle(session.id);
+    await socket.waitFor((frame) => isTodoFrame(frame) && (frame['items'] as readonly unknown[]).length > 0);
+    expect(socket.frames.filter(isTodoFrame).at(-1)?.['items']).toEqual([
+      { title: 'write tests', status: 'in_progress' },
+      { title: 'ship', status: 'pending' },
+    ]);
+  });
+
+  test('closes a side agent with an ended agent frame and refuses to close the main agent', async ({ kap }) => {
+    const session = await kap.createSession();
+    const side = await kap.rest.post<{ readonly agent_id: string }>(`/api/v1/sessions/${session.id}:btw`, {});
+    const sideAgent = `/api/v1/sessions/${session.id}/agents/${encodeURIComponent(side.agent_id)}`;
+    const isSideAgentFrame = (frame: KapFrame) => frame.type === 'agent' && frame['session_id'] === session.id && frame['agent_id'] === side.agent_id;
+    const socket = await kap.connect();
+    await socket.subscribe(session.id, { agentIds: [side.agent_id] });
+    await socket.waitFor(isSideAgentFrame);
+
+    await expect(kap.rest.post(`/api/v1/sessions/${session.id}/agents/main:close`, {})).rejects.toMatchObject({ code: 40939 });
+    expect(await kap.rest.post(`${sideAgent}:close`, {})).toEqual({ closed: true });
+    await socket.waitFor((frame) => isSideAgentFrame(frame) && frame['status'] === 'ended');
+    expect(socket.frames.filter(isSideAgentFrame).at(-1)).toMatchObject({
+      type: 'agent',
+      session_id: session.id,
+      agent_id: side.agent_id,
+      status: 'ended',
+      compacting: false,
+    });
+    await expect(kap.rest.post(`${sideAgent}:close`, {})).rejects.toMatchObject({ code: 40401 });
+    await expect(kap.rest.get(`${sideAgent}/turns`)).rejects.toMatchObject({ code: 40401 });
+  });
 });
 
 function snapshotOf(socket: KapSocket, sessionId: string): KapFrame | undefined {
@@ -469,4 +771,16 @@ function isMainAgentFrame(frame: KapFrame, sessionId: string): boolean {
 
 function isMainTurnEnd(frame: KapFrame, sessionId: string): boolean {
   return frame.type === 'turn.ended' && frame['session_id'] === sessionId && frame['agent_id'] === 'main';
+}
+
+function isTaskOutput(frame: KapFrame, taskId: string): boolean {
+  return frame.type === 'task.output' && frame['task_id'] === taskId;
+}
+
+function childAgentIdOf(item: KapItem | undefined): string {
+  return String((item?.['agent_refs'] as readonly { readonly agent_id: string }[] | undefined)?.[0]?.agent_id);
+}
+
+function printLine(line: string): string {
+  return `printf '%s\\n' '${line.trimEnd()}'`;
 }

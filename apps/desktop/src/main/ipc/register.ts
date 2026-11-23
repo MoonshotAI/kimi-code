@@ -296,12 +296,16 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IPC.quitConfirmResponse, (event, payload: unknown) => {
     if (event.sender !== getMainWindow()?.webContents) return;
     if (payload === null || typeof payload !== 'object') return;
-    const { choice, requestId } = payload as { choice?: unknown; requestId?: unknown };
+    const { choice, requestId, continueSessions } = payload as {
+      choice?: unknown;
+      requestId?: unknown;
+      continueSessions?: unknown;
+    };
     if (
       (choice === 'quit' || choice === 'cancel' || choice === 'unavailable') &&
       typeof requestId === 'number'
     ) {
-      resolveQuitConfirmResponse(choice, requestId);
+      resolveQuitConfirmResponse(choice, requestId, continueSessions === true);
     }
   });
   ipcMain.handle(IPC.updateGetStatus, () => getUpdateStatus());

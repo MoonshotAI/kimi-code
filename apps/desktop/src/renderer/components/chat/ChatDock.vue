@@ -694,7 +694,6 @@ defineExpose({ loadForEdit, insertQuote, insertScreenshotAnnotation, insertPathM
         @steer-queued="emit('steerQueued', $event)"
         @command="emit('command', $event)"
         @interrupt="emit('interrupt')"
-        @continue="emit('continue')"
         @focus-goal="emit('focusGoal')"
         @pick-model="emit('pickModel')"
         @login="emit('login')"

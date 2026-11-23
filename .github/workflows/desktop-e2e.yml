@@ -123,7 +123,7 @@ jobs:
   result:
     name: Desktop E2E journeys (optional)
     needs: [plan, journeys]
-    if: always() && needs.plan.outputs.mode != 'none'
+    if: ${{ !cancelled() && needs.plan.outputs.mode != 'none' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

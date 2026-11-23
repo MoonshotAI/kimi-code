@@ -9,7 +9,7 @@ import {
   type ToolCall,
 } from '@moonshot-ai/core/llm/message';
 import { resolveEndpoint } from '@moonshot-ai/core/llm/endpoint';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, test as base, vi } from 'vitest';
 
 import {
   DefaultCompactionStrategy,
@@ -35,18 +35,21 @@ import {
   findGenerateCallPrefixBreak,
   hostEnvironmentServices,
   createMockProvider,
+  permissionModeServices,
   providerHttpError,
   sessionServices,
   testAgent as createTestAgent,
+  testkitAgentFixtures,
+  type TestkitAgentFixtures,
   type MockProviderResponse,
 } from '../../harness';
+import { call, say } from '@moonshot-ai/testkit/model';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
 import { renderCompactionInstruction } from '#/agent/fullCompaction/compactionInstruction';
 import { IAgentToolSelectAnnouncementsService } from '#/agent/toolSelect/toolSelectAnnouncements';
 import { IAgentToolSelectService } from '#/agent/toolSelect/toolSelect';
-import { TOOL_SELECT_FLAG_ENV } from '#/agent/toolSelect/flag';
 import {
   IAgentFullCompactionService,
   IModelOAuthTokens,
@@ -59,6 +62,7 @@ import {
   type ToolExecution,
 } from '#/index';
 import { IAgentLoopService } from '#/agent/loop/loop';
+import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IWireService } from '#/wire/wire';
 import { IAgentTodoService } from '#/features/todo/todoService';
 import { IAgentGoalService } from '#/features/goal/goalService';
@@ -1587,6 +1591,77 @@ describe('FullCompaction', () => {
     ]);
     await ctx.expectResumeMatches();
   });
+
+  const testkitTest = base.extend<TestkitAgentFixtures>(testkitAgentFixtures(permissionModeServices('yolo')));
+
+  testkitTest(
+    'sends turn and compaction requests the same raw history for a failed turn with unanswered tool calls',
+    async ({ agent: ctx, model }) => {
+      const lookupTool: ExecutableTool<{ query: string }> = {
+        name: 'Lookup',
+        description: 'Look up a short test value.',
+        parameters: {
+          type: 'object',
+          properties: { query: { type: 'string' } },
+          required: ['query'],
+          additionalProperties: false,
+        },
+        resolveExecution: () => ({
+          approvalRule: 'Lookup',
+          execute: async () => ({ output: 'lookup-result' }),
+        }),
+      };
+      ctx.get(IAgentToolRegistryService).register(lookupTool);
+      const hook = ctx.get(IAgentToolExecutorService).registerHook({
+        beforeExecute: () => {
+          throw new Error('beforeExecute blew up');
+        },
+      });
+      try {
+        model.script(call('Lookup', { query: 'moon' }, { id: 'call_dangling', text: 'I will call Lookup.' }));
+        await ctx.rpc.prompt({ input: [{ type: 'text', text: 'run lookup' }] });
+        await ctx.untilTurnEnd();
+      } finally {
+        hook.dispose();
+      }
+
+      const loop = ctx.get(IAgentLoopService);
+      const raw = loop.rawHistory();
+      expect(raw.map((message) => message.role)).toEqual(['user', 'assistant']);
+      const rawAssistant = raw[1];
+      expect(rawAssistant?.role === 'assistant' ? rawAssistant.toolCalls.map((toolCall) => toolCall.id) : []).toEqual([
+        'call_dangling',
+      ]);
+      const projectedAssistant = loop.history().find((message) => message.role === 'assistant');
+      expect(projectedAssistant?.role === 'assistant' ? projectedAssistant.toolCalls : []).toEqual([]);
+
+      model.script(say('turn two ok'));
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'continue' }] });
+      await ctx.untilTurnEnd();
+
+      model.lane('compaction').script(say('Summary after failed turn.'));
+      const compacted = ctx.once('full_compaction.complete');
+      const completed = ctx.once('compaction.completed');
+      await ctx.rpc.beginCompaction({});
+      await compacted;
+      await completed;
+
+      const turnRequest = model.requests('main')[1]!;
+      const compactionRequest = model.requests('compaction')[0]!;
+      for (const request of [turnRequest, compactionRequest]) {
+        const messages = request.view.messages;
+        const assistantIndex = messages.findIndex((message) => message.role === 'assistant');
+        expect(messages[assistantIndex]?.calls.map((entry) => entry.id)).toEqual(['call_dangling']);
+        const placeholder = messages[assistantIndex + 1];
+        expect(placeholder).toMatchObject({ role: 'tool', callId: 'call_dangling' });
+        expect(placeholder?.text).toContain('Tool result is not available in the current context');
+      }
+      expect(compactionRequest.view.messages.slice(0, turnRequest.view.messages.length)).toEqual(
+        turnRequest.view.messages,
+      );
+      await ctx.expectResumeMatches();
+    },
+  );
 
   it('keeps messages appended while compacting an unchanged prefix', async () => {
     const ctx = testAgent();
@@ -4830,13 +4905,12 @@ describe('FullCompaction prompt-cache prefix', () => {
     loadSchema: boolean,
     media: (typeof MEDIA_SCENARIOS)[number],
   ): Promise<TestAgentContext> {
-    vi.stubEnv(TOOL_SELECT_FLAG_ENV, toolSelect ? '1' : '0');
     const ctx = testAgent({
       initialConfig: { providers: {}, loopControl: { reservedContextSize: 0 } },
     });
     ctx.configure({
       provider: CATALOGUED_PROVIDER,
-      modelCapabilities: { ...CATALOGUED_MODEL_CAPABILITIES, dynamically_loaded_tools: true },
+      modelCapabilities: { ...CATALOGUED_MODEL_CAPABILITIES, dynamically_loaded_tools: toolSelect },
     });
     await ctx.restorePersisted();
     await ctx.rpc.setPermission({ mode: 'yolo' });
@@ -4920,4 +4994,42 @@ describe('FullCompaction prompt-cache prefix', () => {
       expect(findGenerateCallPrefixBreak(lastLoopCall, compactionCall)).toBeUndefined();
     },
   );
+
+  it('skips automatic compaction for aborted steps and preserves it for normal steps', async () => {
+    const ctx = testAgent({ initialConfig: { loopControl: { compactionTriggerRatio: 0.5 } } });
+    const compaction = ctx.get(IAgentFullCompactionService) as IAgentFullCompactionService & {
+      strategy: { shouldCompact: () => boolean };
+    };
+    const shouldCompact = vi.spyOn(compaction.strategy, 'shouldCompact').mockReturnValue(true);
+    const begin = vi.spyOn(compaction, 'begin').mockReturnValue(true);
+    let nextCalls = 0;
+    const registration = ctx.get(IAgentLoopService).hooks.onDidFinishStep.register('test-next', async (_ctx, next) => {
+      nextCalls += 1;
+      await next();
+    });
+    const context = (signal: AbortSignal) => ({
+      turnId: 0,
+      step: 1,
+      firstStepOfTurn: true,
+      signal,
+      usage: { inputOther: 0, output: 0, inputCacheRead: 0, inputCacheCreation: 0 },
+      finishReason: 'completed' as const,
+      tools: [],
+      stopTurn: false,
+    });
+
+    const aborted = new AbortController();
+    aborted.abort('cancelled');
+    await ctx.get(IAgentLoopService).hooks.onDidFinishStep.run(context(aborted.signal));
+    expect(nextCalls).toBe(1);
+    expect(begin).not.toHaveBeenCalled();
+    expect(shouldCompact).not.toHaveBeenCalled();
+
+    await ctx.get(IAgentLoopService).hooks.onDidFinishStep.run(context(new AbortController().signal));
+    expect(nextCalls).toBe(2);
+    expect(shouldCompact).toHaveBeenCalledOnce();
+    expect(begin).toHaveBeenCalledOnce();
+    expect(begin).toHaveBeenCalledWith({ source: 'auto' });
+    registration.dispose();
+  });
 });

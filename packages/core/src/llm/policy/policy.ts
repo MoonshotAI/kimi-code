@@ -1,5 +1,5 @@
 import { estimateUsedContextTokens } from '#/llm/context-usage';
-import type { ToolDescription } from '#/llm/message';
+import { createSystemMessage, type SystemMessage, type ToolDescription } from '#/llm/message';
 import { isAbortError, toLlmErrorMessage } from '#/llm/protocol/errors';
 import type { LlmRequest } from '#/llm/request';
 import type { LlmOutcome, LlmRunEvent, LlmRunRequested, LlmRunStarted } from '#/llm/response';
@@ -23,7 +23,7 @@ import {
   type LlmRetryable,
   type LlmRetryOptions,
 } from './retry';
-import { settleLlmRequest } from './settle';
+import { runAttempt } from './settle';
 
 export type LlmPolicyList<T> = readonly T[] | (() => readonly T[]);
 
@@ -106,7 +106,7 @@ export function llmStartedEvent(request: LlmRequest): LlmRunStarted {
       ? undefined
       : sha256Hex(
           encoder.encode(
-            JSON.stringify(profile.tools.filter((tool) => tool.deferred !== true).map(toolSignature)),
+            JSON.stringify(profile.tools.map(toolSignature)),
           ),
         );
   return {
@@ -186,6 +186,30 @@ export async function runLlmRequest(
   return outcome;
 }
 
+/**
+ * Drives the attempts of one LLM request.
+ *
+ * For each attempt, applies recovery and resolvers, adds any temporary correction,
+ * calls runAttempt, emits request/retry events, and enforces retry delays,
+ * attempt limits, and cancellation.
+ *
+ * Invariants:
+ * - Each attempt settles through an independent accumulator.
+ * - Retry partial assistant messages never enter conversation history; only the final outcome can.
+ * - Failed-attempt usage never contributes to a successful outcome or session usage.
+ * - Invalid tool calls never execute; corrections use only a temporary SystemMessage.
+ * - Bounded invalid-argument retries are immediate; infinite retries use Retry-After or backoff.
+ * - Cancellation prevents further attempts, including while waiting for a retry delay.
+ * - Final non-invalid failures may be salvaged; invalid-argument failures retain no text.
+ *
+ * State:
+ * buildAttempt(N) -> apply recovery/resolvers -> settle
+ *   done/aborted       -> return outcome
+ *   failed + recovery  -> record recovery -> emit retry -> buildAttempt(1)
+ *   failed + retryable -> emit retry -> wait -> buildAttempt(N + 1)
+ *   failed + terminal  -> return failed
+ *   abort at any point -> return aborted
+ */
 async function runAttempts(
   request: LlmRequest,
   control: LlmRunControl,
@@ -195,10 +219,20 @@ async function runAttempts(
   const policy = request.policy ?? {};
   const ledger = createRecoveryLedger(recoveries.read(request));
   let attempt = 1;
+  // Currently only set for invalid tool-call arguments to guide the next generation.
+  let toolArgumentCorrectionMessage: SystemMessage | undefined;
   const maxAttempts = resolveMaxAttempts(policy.retry);
-
   while (!signal.aborted) {
-    const recoveredRequest = ledger.apply(request);
+    const requestForAttempt = toolArgumentCorrectionMessage === undefined
+      ? request
+      : {
+          ...request,
+          content: {
+            ...request.content,
+            messages: [...request.content.messages, toolArgumentCorrectionMessage],
+          },
+        };
+    const recoveredRequest = ledger.apply(requestForAttempt);
     let resolvedRequest = recoveredRequest;
     let recoveryRequest = recoveredRequest;
     for (const resolver of listOf(policy.resolvers)) {
@@ -234,9 +268,16 @@ async function runAttempts(
       },
       'llm attempt',
     );
-    const result = await settleLlmRequest(resolvedRequest, { signal, onEvent });
+    const result = await runAttempt(resolvedRequest, { signal, onEvent });
     if (result.type === 'done' || result.type === 'aborted') {
       return result;
+    }
+    // Invalid arguments set a temporary correction. It survives transient failures
+    // without a salvaged message and is cleared when another failure has output.
+    if (result.error.kind === 'invalid_tool_arguments') {
+      toolArgumentCorrectionMessage = createSystemMessage(result.error.message);
+    } else if (result.message !== undefined) {
+      toolArgumentCorrectionMessage = undefined;
     }
 
     const proposal = proposeFirst(listOf(policy.recoveries), {
@@ -270,10 +311,13 @@ async function runAttempts(
     }
 
     if (shouldRetry(policy.retry, attempt, result.error, listOf(policy.retryables))) {
-      const delayMs = readRetryAfterMs(result.error) ?? retryBackoffDelay(attempt - 1);
+      const invalidToolArguments = result.error.kind === 'invalid_tool_arguments';
+      const delayMs = invalidToolArguments && policy.retry?.infiniteRetry !== true
+        ? 0
+        : (readRetryAfterMs(result.error) ?? retryBackoffDelay(attempt - 1));
       const retry: LlmRunEvent = {
         type: 'llm.retry',
-        reason: 'backoff',
+        reason: invalidToolArguments ? 'invalid_tool_arguments' : 'backoff',
         failedAttempt: attempt,
         nextAttempt: attempt + 1,
         maxAttempts,

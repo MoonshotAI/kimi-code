@@ -1,13 +1,15 @@
 import { describe, expect, it } from 'vitest';
 
-import { createUserMessage, extractText, type Message, type ToolCall, type ToolMessage } from '@moonshot-ai/core/llm/message';
+import { createUserMessage, extractText, type ToolCall, type ToolMessage } from '@moonshot-ai/core/llm/message';
 import type {
   Loop,
   LoopEmitted,
   LoopLlmRequester,
   StepStartingEvent,
   ToolBatchStartingEvent,
+  TurnHooks,
 } from '@moonshot-ai/core/loop/index';
+import { createTurnHookRegistry } from '@moonshot-ai/core/loop/index';
 import { createMockProviderRequester, type MockProviderResponse } from '../../../harness/scripted-generate';
 import { createTestLoop as createLoop, loopHookRegistry } from './factory';
 import type { LoopToolContext } from '@moonshot-ai/core/loop/create-loop';
@@ -40,9 +42,14 @@ const done = (text: string, toolCalls: ToolCall[] = []): MockProviderResponse =>
 const call = (id: string, name: string): ToolCall => ({ type: 'function', id, name, arguments: '{}' });
 
 describe('step.starting', () => {
-  it('fires once per step with the current messages and profile', async () => {
+  it('fires once per step with current input and awaits blocking hooks in order', async () => {
     const tool = { name: 'lookup', description: 'Find things', parameters: { type: 'object', properties: {} } };
     const seen: StepStartingEvent[] = [];
+    const order: string[] = [];
+    let announceFirst!: () => void;
+    const firstStarted = new Promise<void>((resolve) => { announceFirst = resolve; });
+    let releaseFirst!: () => void;
+    const firstRelease = new Promise<void>((resolve) => { releaseFirst = resolve; });
     const scripted = requester([done('', [call('c1', 'lookup')]), done('end')]);
     const loop = createLoop({
       requester: scripted,
@@ -51,15 +58,32 @@ describe('step.starting', () => {
       hooks: [
         {
           point: 'step.starting',
-          hook: (event) => {
+          id: 'first',
+          hook: async (event) => {
             seen.push(event);
+            order.push(`first:${event.step}`);
+            if (event.step !== 1) return;
+            announceFirst();
+            await firstRelease;
+          },
+        },
+        {
+          point: 'step.starting',
+          id: 'second',
+          hook: (event) => {
+            order.push(`second:${event.step}`);
           },
         },
       ],
     });
     loop.setSystemPrompt('sp');
     const entry = prompt('hello');
-    expect((await loop.runTurn(entry)).type).toBe('done');
+    const running = loop.runTurn(entry);
+    await firstStarted;
+    expect(order).toEqual(['first:1']);
+    releaseFirst();
+    expect((await running).type).toBe('done');
+    expect(order).toEqual(['first:1', 'second:1', 'first:2', 'second:2']);
     expect(seen.map((event) => [event.turnId, event.step])).toEqual([
       [0, 1],
       [0, 2],
@@ -101,33 +125,7 @@ describe('step.starting', () => {
     await loop.close();
   });
 
-  it('applies history rewrites during step start and an in-flight request', async () => {
-    let sent: Message[] = [];
-    const capturing = createMockProviderRequester((request) => {
-      sent = [...request.content.messages];
-      return done('ok');
-    });
-    const rewritten = prompt('rewritten');
-    const events: LoopEmitted[] = [];
-    const loop = createLoop({
-      requester: capturing,
-      executor: successfulExecutor(['lookup', 'alpha', 'beta', 'work'], ''),
-      hooks: [
-        {
-          point: 'step.starting',
-          id: 'compaction',
-          hook: (event) => ({ messages: [...event.messages.slice(0, -1), rewritten] }),
-        },
-      ],
-    });
-    loop.subscribe((event) => events.push(event));
-    expect((await loop.runTurn(prompt('original'))).type).toBe('done');
-    const settled = events.find((event) => event.type === 'context.settled');
-    expect(settled).toMatchObject({ messages: [rewritten], reason: 'compaction' });
-    expect(sent.map((message) => extractText(message))).toEqual(['rewritten']);
-    expect(loop.state.messages[0]).toBe(rewritten);
-    await loop.close();
-
+  it('applies history replacement during an in-flight request', async () => {
     let requestStarted!: () => void;
     const started = new Promise<void>((resolve) => { requestStarted = resolve; });
     let finishRequest!: () => void;
@@ -690,8 +688,8 @@ describe('notify turn handoff', () => {
             if (event.turnId !== 0) return;
             loop.submit(first);
             loop.submit(second);
-            loop.sendNow(['second', 'first']);
-            loop.sendNow(['first']);
+            loop.sendNowQueued(['second', 'first']);
+            loop.sendNowQueued(['first']);
           },
         },
       ],
@@ -743,6 +741,39 @@ describe('notify turn handoff', () => {
     expect(events[reminder]).toMatchObject({ turnId: 0, step: 2, message: { role: 'user' } });
     expect(events.filter((event) => event.type === 'turn.ended').map((event) => event.turnId)).toEqual([0]);
     await loop.close();
+  });
+
+  it('keeps recorded notifications parked until later intake releases them', async () => {
+    const events: LoopEmitted[] = [];
+    const loop = createLoop({
+      requester: requester([done('first'), done('queued')]),
+      executor: createExecutor({}),
+    });
+    loop.subscribe((event) => events.push(event));
+    try {
+      expect((await loop.runTurn(prompt('first'))).type).toBe('done');
+      expect(loop.state.held).toBe(false);
+
+      loop.recordNotification(prompt('restored'));
+
+      expect(loop.state.turn).toBeUndefined();
+      expect(events.filter((event) => event.type === 'turn.started').map((event) => event.turnId)).toEqual([0]);
+
+      const followup = once(loop, (event) => event.type === 'turn.ended' && event.turnId === 2);
+      loop.submit(prompt('queued'));
+      await followup;
+
+      expect(events.filter((event) => event.type === 'turn.started').map((event) => [event.turnId, event.trigger])).toEqual([
+        [0, 'normal'],
+        [1, 'normal'],
+        [2, 'notify'],
+      ]);
+      expect(events.find((event) => event.type === 'turn.ended' && event.turnId === 2)).toMatchObject({
+        outcome: { type: 'done', cause: { by: 'loop', reason: 'prompt_only' } },
+      });
+    } finally {
+      await loop.close();
+    }
   });
 
   it('resumes interrupted and queued turns before a prompt-only notification', async () => {
@@ -861,5 +892,62 @@ describe('notify turn handoff', () => {
       message: prompt('new input'),
     });
     await loop.close();
+  });
+
+  it('delivers turn.ended after the loop settles and keeps scheduling afterwards', async () => {
+    const settled: Array<{ status: string; activeTurn: number | undefined }> = [];
+    const failures: unknown[] = [];
+    const loop = createLoop({
+      requester: requester([done('one'), done('two')]),
+      executor: createExecutor({}),
+      onListenerError: (error) => failures.push(error),
+    });
+    loop.subscribe((event) => {
+      if (event.type !== 'turn.ended') return;
+      settled.push({ status: loop.state.status, activeTurn: loop.state.turn?.id });
+      throw new Error('listener boom');
+    });
+    expect((await loop.runTurn(prompt('one'))).type).toBe('done');
+    expect(settled).toEqual([{ status: 'idle', activeTurn: undefined }]);
+    expect(failures).toHaveLength(1);
+    expect(loop.state.status).toBe('idle');
+    expect((await loop.runTurn(prompt('two'))).type).toBe('done');
+    expect(settled).toHaveLength(2);
+    expect(failures).toHaveLength(2);
+    await loop.close();
+
+    const events: LoopEmitted[] = [];
+    const queued = createLoop({
+      requester: requester([done('first'), done('second')]),
+      executor: createExecutor({}),
+    });
+    queued.subscribe((event) => events.push(event));
+    queued.subscribe((event) => {
+      if (event.type === 'turn.started' && event.turnId === 0) queued.submit(prompt('next'));
+    });
+    const followup = once(queued, (event) => event.type === 'turn.ended' && event.turnId === 1);
+    expect((await queued.runTurn(prompt('work'))).type).toBe('done');
+    await followup;
+    const terminal = events.findIndex((event) => event.type === 'turn.ended' && event.turnId === 0);
+    const restarted = events.findIndex((event) => event.type === 'turn.started' && event.turnId === 1);
+    expect(terminal).toBeGreaterThanOrEqual(0);
+    expect(restarted).toBeGreaterThan(terminal);
+    await queued.close();
+  });
+});
+
+describe('turn host hooks', () => {
+  it('registers once and rejects any further registration', () => {
+    const registry = createTurnHookRegistry();
+    const hooks: TurnHooks = {
+      starting: async () => undefined,
+      requesting: async () => undefined,
+      continuing: async () => undefined,
+      ending: async () => undefined,
+    };
+    registry.registerTurnHooks(hooks);
+    expect(registry.list()).toHaveLength(4);
+    expect(() => registry.registerTurnHooks(hooks)).toThrow('turn hooks already registered');
+    expect(registry.list()).toHaveLength(4);
   });
 });

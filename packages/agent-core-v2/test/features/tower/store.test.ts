@@ -3575,57 +3575,70 @@ describe('concurrent state writes', () => {
     type LockDriver = { withStateLock: <T>(fn: () => Promise<T>) => Promise<T> };
     const drive = <T>(s: TowerStore, fn: () => Promise<T>): Promise<T> =>
       (s as unknown as LockDriver).withStateLock(fn);
+    const hold = (
+      s: TowerStore,
+    ): { readonly entered: Promise<void>; readonly release: () => void; readonly run: Promise<void> } => {
+      let markEntered!: () => void;
+      const entered = new Promise<void>((resolve) => {
+        markEntered = resolve;
+      });
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const run = drive(s, async () => {
+        markEntered();
+        await gate;
+      });
+      return { entered, release, run };
+    };
     const lockPath = `${store.abs(STATE_FILE)}.lock`;
-    const first = new TowerStore(repo);
     const impatient = new TowerStore(repo, { stateLockTimeoutMs: 150, stateLockPollMs: 20 });
-    const second = new TowerStore(repo);
 
-    let markEntered!: () => void;
-    const entered = new Promise<void>((resolve) => {
-      markEntered = resolve;
-    });
-    let openGate!: () => void;
-    const gate = new Promise<void>((resolve) => {
-      openGate = resolve;
-    });
-    const firstRun = drive(first, async () => {
-      markEntered();
-      await gate;
-    });
-    await entered;
-
+    const staleDuringCreate = hold(new TowerStore(repo));
+    await staleDuringCreate.entered;
     await expect(drive(impatient, async () => undefined)).rejects.toThrow(/tower state lock/);
-
     await rm(lockPath, { force: true });
-    let releaseSecond!: () => void;
-    const secondGate = new Promise<void>((resolve) => {
-      releaseSecond = resolve;
-    });
-    const secondRun = drive(second, async () => {
-      await secondGate;
-    });
 
-    const published = /pid=\d+ since=\S+ token=[0-9a-f-]+/;
-    const deadline = Date.now() + 5_000;
-    let heldContent = '';
-    for (;;) {
-      try {
-        heldContent = await readFile(lockPath, 'utf8');
-      } catch {
-        heldContent = '';
-      }
-      if (published.test(heldContent) || Date.now() >= deadline) break;
-      await delay(10);
+    const staleAfterWrite = hold(new TowerStore(repo));
+    await staleAfterWrite.entered;
+    await rm(lockPath, { force: true });
+
+    const probe = await open(store.abs(STATE_FILE), 'r');
+    const fileHandlePrototype = Object.getPrototypeOf(probe) as FileHandle;
+    await probe.close();
+    const originalWrite = fileHandlePrototype.writeFile;
+    let windowOpened = false;
+    let contentAfterStaleRelease: unknown;
+    const writeSpy = vi.spyOn(fileHandlePrototype, 'writeFile').mockImplementation(
+      (async function (this: FileHandle, data: string, options?: BufferEncoding) {
+        if (!windowOpened && data.startsWith('pid=')) {
+          windowOpened = true;
+          staleDuringCreate.release();
+          await staleDuringCreate.run;
+          contentAfterStaleRelease = await readFile(lockPath, 'utf8').catch((error: unknown) => error);
+        }
+        return originalWrite.call(this, data, options);
+      }) as typeof originalWrite,
+    );
+    const holder = hold(new TowerStore(repo));
+    try {
+      await holder.entered;
+    } finally {
+      writeSpy.mockRestore();
     }
-    expect(heldContent).toMatch(published);
 
-    openGate();
-    await firstRun;
+    expect(windowOpened).toBe(true);
+    expect(contentAfterStaleRelease).toBe('');
+    const heldContent = await readFile(lockPath, 'utf8');
+    expect(heldContent).toMatch(/pid=\d+ since=\S+ token=[0-9a-f-]+/);
 
+    staleAfterWrite.release();
+    await staleAfterWrite.run;
     expect(await readFile(lockPath, 'utf8')).toBe(heldContent);
 
-    releaseSecond();
-    await secondRun;
+    holder.release();
+    await holder.run;
     await expect(readFile(lockPath, 'utf8')).rejects.toThrow(/ENOENT/);
   });
 });

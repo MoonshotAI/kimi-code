@@ -1,4 +1,4 @@
-import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
   AppAgentState,
   AppEvent,
@@ -59,7 +59,7 @@ async function compileClientModules(): Promise<void> {
   await Promise.all([import('../src/client/useKimiWebClient'), import('../src/stores/warnings')]);
 }
 
-beforeAll(compileClientModules);
+await compileClientModules();
 
 beforeEach(() => {
   setKimiClientDeps({ api: () => clientApiMock as unknown as KimiWebApi, t: (key) => key });
@@ -576,58 +576,26 @@ describe('echoed steer prompt pruning', () => {
 });
 
 describe('session continuation', () => {
-  it('exposes canContinue for interrupted or failed turns and bridges working state across continueSession', async () => {
+  it('bridges working state across continueSession', async () => {
     const h = await boot();
     const continueSession = vi.fn(async () => ({ continued: true as const }));
     clientApiMock['continueSession'] = continueSession;
 
-    expect(h.client.canContinue.value).toBe(false);
-
     h.frame('s1', {
       type: 'turns',
-      turns: [endedTurn(0)],
+      turns: [endedTurn(0, { outcome: 'interrupted', end_reason: 'user_cancelled' })],
       has_more: false,
     });
-    await vi.waitFor(() => expect(h.client.activeTurnEnd.value).toMatchObject({ outcome: 'completed' }));
-    expect(h.client.canContinue.value).toBe(false);
-
-    h.frame('s1', {
-      type: 'turns',
-      turns: [endedTurn(0, { outcome: 'failed', end_reason: 'blocked' })],
-      has_more: false,
-    });
-    await vi.waitFor(() => expect(h.client.activeTurnEnd.value).toMatchObject({ outcome: 'failed', end_reason: 'blocked' }));
-    expect(h.client.canContinue.value).toBe(false);
-
-    h.frame('s1', {
-      type: 'turns',
-      turns: [
-        endedTurn(0, { outcome: 'interrupted', end_reason: 'user_cancelled' }),
-        {
-          turn_id: 't_compact',
-          ordinal: 1,
-          kind: 'system',
-          status: 'ended',
-          outcome: 'completed',
-          started_at: AT,
-          ended_at: AT,
-          steps: [],
-          items: [],
-        },
-      ],
-      has_more: false,
-    });
-    await vi.waitFor(() => expect(h.client.canContinue.value).toBe(true));
+    await vi.waitFor(() => expect(h.client.activeTurnEnd.value).toMatchObject({ outcome: 'interrupted' }));
 
     await expect(h.client.continueSession('s1')).resolves.toBe('ok');
     expect(continueSession).toHaveBeenCalledWith('s1');
     expect(h.client.working.value).toBe(true);
-    expect(h.client.canContinue.value).toBe(false);
 
     h.agentStatus('s1', 'running');
     h.frame('s1', {
       type: 'turn.started',
-      turn: { turn_id: 't_cont', ordinal: 2, turn_number: 1, kind: 'agent', status: 'running', started_at: AT, steps: [] },
+      turn: { turn_id: 't_cont', ordinal: 1, turn_number: 1, kind: 'agent', status: 'running', started_at: AT, steps: [] },
     });
     expect(h.client.working.value).toBe(true);
 
@@ -635,7 +603,7 @@ describe('session continuation', () => {
       type: 'turn.ended',
       turn: {
         turn_id: 't_cont',
-        ordinal: 2,
+        ordinal: 1,
         turn_number: 1,
         kind: 'agent',
         status: 'ended',
@@ -647,6 +615,5 @@ describe('session continuation', () => {
     });
     h.agentStatus('s1', 'idle');
     await vi.waitFor(() => expect(h.client.working.value).toBe(false));
-    expect(h.client.canContinue.value).toBe(false);
   });
 });

@@ -296,13 +296,13 @@ function turnReason(outcome: TurnOutcome): 'completed' | 'cancelled' | 'failed' 
   }
 }
 
-function toolArguments(entry: AssistantMessage, toolCallId: string): unknown {
+function toolArguments(entry: AssistantMessage, toolCallId: string): { args: unknown; argsRaw?: string } {
   const args = entry.toolCalls.find((call) => call.id === toolCallId)?.arguments;
-  if (args === undefined || args === null) return undefined;
+  if (args === undefined || args === null) return { args: undefined };
   try {
-    return JSON.parse(args) as unknown;
+    return { args: JSON.parse(args) as unknown, argsRaw: args };
   } catch {
-    return args;
+    return { args, argsRaw: args };
   }
 }
 
@@ -430,7 +430,7 @@ export class LoopJournal {
           toolCallId: event.toolCall.id,
           rawId: event.toolCall.rawId,
           name: event.toolCall.name,
-          args: toolArguments(assistant, event.toolCall.id),
+          ...toolArguments(assistant, event.toolCall.id),
           extras: event.toolCall.extras,
           display: event.display as ToolInputDisplay | undefined,
         });
@@ -569,7 +569,7 @@ export class LoopJournal {
           toolCallId,
           rawId: toolCall?.rawId,
           name: toolCall?.name ?? toolCallId,
-          args: toolArguments(assistant, toolCallId),
+          ...toolArguments(assistant, toolCallId),
           extras: toolCall?.extras,
         });
       }

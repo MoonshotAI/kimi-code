@@ -133,15 +133,15 @@ describe('experimental feature command handlers', () => {
     const host = makeHost();
     host.harness.getExperimentalFeatures.mockResolvedValue([
       feature({ id: 'wait_for', enabled: true }),
-      feature({ id: 'subagent_fork', enabled: true }),
+      feature({ id: 'tool-select', enabled: true }),
       feature({ id: 'tower', enabled: false }),
     ]);
 
-    await applyExperimentalFeatureChanges(host, [{ id: 'subagent_fork', enabled: true }]);
+    await applyExperimentalFeatureChanges(host, [{ id: 'tool-select', enabled: true }]);
 
     expect(host.track).toHaveBeenCalledWith('experimental_features_apply', {
       changed: 1,
-      flags: 'subagent_fork,wait_for',
+      flags: 'tool-select,wait_for',
     });
   });
 

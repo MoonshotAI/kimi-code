@@ -31,4 +31,11 @@ export default {
     'Sessions are still in progress and will be interrupted. Remote Control is also running — quitting the app will stop it',
   quitConfirmQuit: 'Quit',
   quitConfirmCancel: 'Cancel',
+  updateRestartTitle: 'Restart and update Kimi Code?',
+  updateRestartMessage: 'Sessions are still in progress on this machine and will be interrupted by the restart.',
+  updateRestartMessageSessions: 'These sessions are still in progress and will be interrupted by the restart:',
+  updateRestartMoreSessions: 'and {count} more',
+  updateRestartMessageRemoteControl: 'Remote Control is running and will be interrupted by the restart',
+  updateRestartContinueSessions: 'Continue these sessions after restart',
+  updateRestartConfirm: 'Restart & Update',
 } as const;

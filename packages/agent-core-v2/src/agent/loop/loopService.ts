@@ -10,7 +10,7 @@ import { abortError, isUserCancellation, userCancellationReason } from '#/_base/
 import { toErrorMessage } from '#/_base/errors/errorMessage';
 import { parseBooleanEnv } from '#/_base/utils/env';
 import { AgentLoopRequestObserver } from './requestObservation';
-import { createAgentMediaPolicy, hideReadMediaFile, type AgentMediaPolicy, type AgentMediaPolicyFactory } from './mediaPolicy';
+import { createAgentMediaPolicy, type AgentMediaPolicy, type AgentMediaPolicyFactory } from './mediaPolicy';
 import {
   agentLLMRequestLogFields,
   type CoreLoopRequester,
@@ -21,14 +21,12 @@ import {
   type ResolvedRequestContext,
 } from './requesterContract';
 import { AgentLoopProjector } from './projector';
-import { project } from './projection';
 import { createStructureRecovery, createStructureResolver } from './projectionPolicy';
 import { createToolSelectResolver } from './toolSelectPolicy';
 import { RequestMetadataTracker, requestMetadataHeaders } from './requestMetadata';
 import { IAgentMediaResolverService } from '#/agent/media/mediaResolver';
 import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
 import { IAgentToolSelectService } from '#/agent/toolSelect/toolSelect';
-import { READ_MEDIA_FILE_TOOL_NAME } from '#/agent/tools/read-media-file/read-media-file';
 import { IModelCatalog } from '#/llm-adapter/model/catalog';
 import type { ModelOverrides } from '#/llm-adapter/model/model.types';
 import { resolveCompletionBudget } from '#/llm-adapter/model/completion-budget';
@@ -79,7 +77,6 @@ import {
 import type {
   LlmRequest as CoreLlmRequest,
   LlmRequestModel,
-  ModelCapability as LlmModelCapability,
   ThinkingEffort,
 } from '@moonshot-ai/core/llm/request';
 import type { ModelCapability } from '#/llm-adapter/contract/capability';
@@ -103,6 +100,7 @@ import { IEventService } from '#/app/event/event';
 import { IPluginService } from '#/app/plugin/plugin';
 import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionRunGate } from '#/session/sessionActivity/sessionRunGate';
+import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import { applyPromptMetadataUpdate } from '#/session/sessionMetadata/promptMetadata';
@@ -243,14 +241,10 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     this.mediaPolicyFactory = (model, request) => createAgentMediaPolicy(mediaResolver, model, request);
     this.requester = {
       coreRequester: (options) => this.coreRequester(options),
-      prepareOperation: async (options, signal) => {
+      prepareOperation: async (options, _signal) => {
         if (this.loop === undefined) throw new BugIndicatingError('Agent loop is not started');
         const config = this.requestConfigSnapshot();
-        const baseline = options.tools ?? this.loop.state.profile.tools;
-        const visible = options.tools === undefined && baseline !== undefined
-          ? this.operationTools(baseline, config.resolved.model.capability)
-          : baseline;
-        const tools = await this.prepareTools(signal, config.resolved.model.capability, visible);
+        const tools = options.tools ?? this.baselineTools();
         return this.loop.operation((runtime) => {
           const requester = this.coreRequester({ ...options, runtime, tools, config });
           return requester.snapshot?.() ?? requester;
@@ -453,21 +447,18 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   }
 
   history(): readonly ContextMessage[] {
-    const source = this.loop?.state.messages ?? this.journal.snapshot().input.messages ?? [];
-    return this.turns.history(source);
+    return this.turns.history(this.rawHistory());
+  }
+
+  rawHistory(): readonly Message[] {
+    return this.loop?.state.messages ?? this.journal.snapshot().input.messages ?? [];
   }
 
   previewRequestContent(): LoopRequestContent {
-    const capabilities = this.data().modelCapabilities;
-    const disclosure = this.toolSelect.enabled(capabilities);
-    const source = this.loop?.state.messages ?? this.journal.snapshot().input.messages ?? [];
-    const tools = this.toolSelect.requestTools(this.baselineTools(), disclosure, true, source);
-    const messages = this.toolSelect.shapeHistory(source, disclosure, tools);
-    const mediaInput = capabilities.image_in || capabilities.video_in;
     return {
       systemPrompt: this.loop?.state.profile.systemPrompt || this.getSystemPrompt(),
-      tools: mediaInput ? tools : tools.filter((tool) => tool.name !== READ_MEDIA_FILE_TOOL_NAME),
-      messages: project(mediaInput ? messages : hideReadMediaFile(messages)),
+      tools: this.baselineTools(),
+      messages: this.rawHistory(),
     };
   }
 
@@ -499,7 +490,13 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       await this.wire.drainPersisted().catch(() => undefined);
       const snapshot = this.journal.snapshot();
       this.profileAdapter.restore(snapshot);
-      const tools = initialTools === undefined ? this.toolSelect.initialTools() : [...initialTools];
+      let tools: readonly Tool[];
+      if (initialTools === undefined) {
+        await this.instantiation.invokeFunction((accessor) => accessor.get(ISessionMcpHandle).ready);
+        tools = this.toolSelect.initialTools();
+      } else {
+        tools = [...initialTools];
+      }
       const taskHistory = this.instantiation.invokeFunction((accessor) => accessor.get(IAgentTaskHistoryService));
       await taskHistory.reconcile();
       const completions = await restoreTaskCompletions({
@@ -635,7 +632,6 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         return { type: 'turn', turnId: turn.id, step: turn.step };
       },
       runtime,
-      dynamicTools: true,
       onSnapshot: (config) => {
         this.turns.thinkingEffort = config.resolved.thinkingLevel;
       },
@@ -653,34 +649,6 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       systemPrompt: this.getSystemPrompt(),
       maxCompletionTokensCap: this.config.get<ModelOverrides>('modelOverrides')?.maxCompletionTokens,
     };
-  }
-
-  private operationTools(
-    baseline: readonly Tool[],
-    capabilities: LlmModelCapability | undefined,
-  ): readonly Tool[] {
-    const disclosure = this.toolSelect.enabled(capabilities);
-    const active = new Set(this.toolSelect.defaultTools(disclosure).map((tool) => tool.name));
-    return baseline.filter((tool) => active.has(tool.name));
-  }
-
-  private async prepareTools(
-    signal: AbortSignal,
-    capabilities: LlmModelCapability | undefined,
-    base?: readonly Tool[],
-  ): Promise<readonly Tool[]> {
-    await this.toolSelect.prepareForRequest(signal);
-    return this.toolsForCapabilities(capabilities, base);
-  }
-
-  private toolsForCapabilities(
-    capabilities: LlmModelCapability | undefined,
-    base?: readonly Tool[],
-  ): readonly Tool[] {
-    const disclosure = this.toolSelect.enabled(capabilities);
-    const tools = base ?? this.toolSelect.defaultTools(disclosure);
-    if (capabilities?.image_in === true || capabilities?.video_in === true) return tools;
-    return tools.filter((tool) => tool.name !== READ_MEDIA_FILE_TOOL_NAME);
   }
 
   private coreRequester(options: CoreLoopRequesterOptions): CoreLoopRequester {
@@ -734,7 +702,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         mediaPolicy.recovery,
       ],
       resolvers: [
-        createToolSelectResolver(this.toolSelect, request.dynamicTools),
+        createToolSelectResolver(this.toolSelect),
         mediaPolicy.toolResolver,
         createStructureResolver(this.projector),
         mediaPolicy.resolver,
@@ -839,7 +807,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       (rest.content?.messages === undefined
         ? this.tokenCounting.get(this.scopeContext.agentContext).size
         : undefined);
-    const messages = rest.content?.messages ?? this.history().map(historyEntryFromContext);
+    const messages = rest.content?.messages ?? this.rawHistory();
     const tools = rest.profile?.tools ?? options.tools;
     return {
       request: binding.requestMetadata
@@ -858,7 +826,6 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       promptCacheProbe: options.promptCacheProbe,
       source,
       logFields: agentLLMRequestLogFields(source),
-      dynamicTools: options.dynamicTools ?? false,
       runtime: options.runtime,
     };
   }
@@ -1140,7 +1107,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     if (loop.state.turn?.id !== activeTurnId || ![...ids].every((id) => pendingNormal.has(id) || pendingNotify.has(id))) {
       throw new Error2(ErrorCodes.PROMPT_NOT_FOUND, 'one or more prompts are no longer pending');
     }
-    loop.sendNow(promptIds);
+    loop.sendNowQueued(promptIds);
   }
 
   remind(...messages: readonly Message[]): void {

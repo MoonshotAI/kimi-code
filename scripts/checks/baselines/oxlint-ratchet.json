@@ -97,7 +97,6 @@
     "apps/desktop/src/main/app/lifecycle.ts": 1,
     "apps/desktop/src/shared/browser-data.ts": 1,
     "apps/desktop/tests/main/browser/browser-view.test.ts": 1,
-    "apps/desktop/tests/renderer/useQuitConfirm.test.ts": 1,
     "apps/kimi-code/test/cli/options.test.ts": 1,
     "apps/kimi-code/test/cli/update/native-swap.test.ts": 1,
     "apps/kimi-code/test/cli/update/preflight.test.ts": 1,
@@ -177,7 +176,6 @@
     "packages/agent-core-v2/test/program/program.test.ts": 1,
     "packages/agent-core-v2/test/remote/providerFactory.test.ts": 6,
     "packages/agent-core-v2/test/session/agentLifecycle/agentLifecycle.test.ts": 3,
-    "packages/agent-core-v2/test/session/subagent/forkParity.test.ts": 1,
     "packages/agent-core-v2/test/session/subagent/spawn.test.ts": 1,
     "packages/agent-core-v2/test/session/subagent/subagentScopeCache.test.ts": 2,
     "packages/agent-core-v2/test/session/workspaceContext/agentWorkspaceContext.test.ts": 1,
@@ -245,7 +243,6 @@
     "packages/core/src/loop/tool/tasks.ts": 1,
     "packages/core/src/store/append-log.ts": 1,
     "packages/core/src/utils/wait.ts": 1,
-    "packages/kap-server/test/conversationContract.e2e.test.ts": 1,
     "packages/kap-server/test/hosts.test.ts": 2,
     "packages/product/test/session-rating.test.ts": 1,
     "packages/remote-control/test/remote-control.test.ts": 12,
@@ -392,9 +389,6 @@
     "packages/agent-core-v2/src/features/skill/catalog/skillRoots.ts": 6,
     "packages/agent-core-v2/src/features/skill/workspace/environmentSkillDiscovery.ts": 9
   },
-  "oxc/bad-comparison-sequence": {
-    "packages/kap-server/test/conversationContract.e2e.test.ts": 1
-  },
   "oxc/no-accumulating-spread": {
     "apps/vscode/webview-ui/src/components/MCPServersModal.tsx": 2,
     "packages/agent-core-v2/src/app/plugin/marketplaceService.ts": 1,
@@ -403,8 +397,7 @@
   "promise/no-callback-in-promise": {
     "apps/desktop/src/renderer/components/browser/PanelBrowserTab.vue": 1,
     "apps/desktop/tests/main/browser/browser-view.test.ts": 1,
-    "packages/agent-core-v2/src/os/backends/remote/remoteProcess.ts": 2,
-    "packages/core/src/loop/loop-actor.ts": 1
+    "packages/agent-core-v2/src/os/backends/remote/remoteProcess.ts": 2
   },
   "promise/no-promise-in-callback": {
     "apps/desktop/e2e/fixtures/model.ts": 1,
@@ -671,7 +664,6 @@
     "packages/app-client/src/lib/draftRestore.ts": 1,
     "packages/core/src/tool/tool-executor.ts": 1,
     "packages/kap-server/src/middleware/securityHeaders.ts": 1,
-    "packages/kap-server/test/conversationContract.e2e.test.ts": 1,
     "packages/klient/examples/kimi-select-tools.ts": 1,
     "packages/klient/src/contract/types.ts": 1,
     "packages/minidb/src/gen-codec.ts": 1
@@ -693,7 +685,6 @@
     "packages/agent-core-v2/test/app/git/gitService.test.ts": 1,
     "packages/agent-core-v2/test/wire/resume.test.ts": 1,
     "packages/app-client/test/mode-store.test.ts": 1,
-    "packages/app-client/test/modelSwitchConfirmGate.test.ts": 1,
     "packages/app-client/test/session-work-reconnect.test.ts": 1,
     "packages/app-client/test/workspace-state.test.ts": 1,
     "packages/app-components/test/composerMenuViewportClamp.test.ts": 1,

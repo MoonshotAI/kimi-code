@@ -108,8 +108,6 @@ describe('context routes on restored sessions and dynamic tools', () => {
   let home: string | undefined;
   let base: string;
 
-  const TOOL_SELECT_ENV = 'KIMI_CODE_EXPERIMENTAL_TOOL_SELECT';
-
   beforeAll(async () => {
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-context-'));
     const modelCatalog: IModelCatalog = {
@@ -141,7 +139,6 @@ describe('context routes on restored sessions and dynamic tools', () => {
       },
     };
     const seeds: ScopeSeed = [[IModelCatalog, modelCatalog]];
-    process.env[TOOL_SELECT_ENV] = '1';
     server = await startServer({
       hostIdentity: TEST_HOST_IDENTITY,
       host: '127.0.0.1',
@@ -154,7 +151,6 @@ describe('context routes on restored sessions and dynamic tools', () => {
   });
 
   afterAll(async () => {
-    delete process.env[TOOL_SELECT_ENV];
     if (server !== undefined) {
       await server.close();
       server = undefined;
@@ -397,7 +393,7 @@ describe('context routes on restored sessions and dynamic tools', () => {
     expect(page.items.some((entry) => entry.preview.includes('inspect me'))).toBe(true);
   });
 
-  it('shows messages the way the model receives them', async () => {
+  it('shows messages as stored in the session context', async () => {
     const sid = await createSession();
 
     const live = getLiveSessionById(server!.core.accessor, sid)!;
@@ -438,7 +434,7 @@ describe('context routes on restored sessions and dynamic tools', () => {
 
     const page = await getJson<ContextItemsResponse>(`/api/v1/sessions/${sid}/context/items`);
     expect(page.items.map((entry) => entry.role)).toEqual([
-      'system', 'user', 'assistant', 'tool', 'user', 'assistant', 'tool', 'assistant', 'tool', 'user',
+      'system', 'user', 'assistant', 'user', 'tool', 'assistant', 'tool', 'assistant', 'user',
     ]);
     const toolTexts = await Promise.all(
       page.items
@@ -448,11 +444,7 @@ describe('context routes on restored sessions and dynamic tools', () => {
           return detail.parts.map((part) => part.text).join('\n');
         }),
     );
-    expect(toolTexts).toEqual([
-      'Wall time: 1.500 seconds\nok\nOutput truncated.',
-      '<system>ERROR: Tool execution failed.</system>\nmissing file',
-      'Tool result is not available in the current context. Do not assume the tool completed successfully.',
-    ]);
+    expect(toolTexts).toEqual(['ok', 'missing file']);
   });
 
   it('groups user-role messages by where they came from, in context order', async () => {

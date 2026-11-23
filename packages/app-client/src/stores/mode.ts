@@ -12,7 +12,6 @@ import {
 } from '@moonshot-ai/app-core/lib';
 import type { PersistSessionProfilePatch } from '../client/useModelProviderState';
 import { clientPinia } from './pinia';
-import { permissionsStore } from './permissions';
 import { sessionsStore } from './sessions';
 
 safeRemove(STORAGE_KEYS.thinking);
@@ -22,7 +21,7 @@ export interface ModeHooks {
     patch: PersistSessionProfilePatch,
     sessionId?: string,
   ) => Promise<boolean>;
-  confirmSwarmEnable?: () => Promise<boolean>;
+  notifySwarmEnabled?: () => void;
 }
 
 let modeHooks: ModeHooks | null = null;
@@ -208,18 +207,22 @@ export const useModeStore = defineStore('kimi.mode', () => {
     setPlanMode(!current);
   }
 
-  async function toggleSwarmMode(): Promise<void> {
+  function enableSwarmMode(): void {
     const sid = sessionsStore().activeSessionId;
     const current = sid ? (swarmModeBySession.value[sid] ?? false) : draftModes.swarmMode;
-    const on = !current;
-    const swarmPermMode = sid
-      ? permissionsStore().forSession(sid)
-      : permissionsStore().forDraft();
-    if (on && (swarmPermMode === undefined || swarmPermMode === 'manual')) {
-      const ok = await (modeHooks?.confirmSwarmEnable?.() ?? false);
-      if (!ok) return;
+    if (current) return;
+    setSwarmMode(true);
+    modeHooks?.notifySwarmEnabled?.();
+  }
+
+  function toggleSwarmMode(): void {
+    const sid = sessionsStore().activeSessionId;
+    const current = sid ? (swarmModeBySession.value[sid] ?? false) : draftModes.swarmMode;
+    if (current) {
+      setSwarmMode(false);
+      return;
     }
-    setSwarmMode(on);
+    enableSwarmMode();
   }
 
   function toggleGoalMode(): void {
@@ -281,6 +284,7 @@ export const useModeStore = defineStore('kimi.mode', () => {
     setSwarmMode,
     setTowerMode,
     setGoalMode,
+    enableSwarmMode,
     togglePlanMode,
     toggleSwarmMode,
     toggleGoalMode,

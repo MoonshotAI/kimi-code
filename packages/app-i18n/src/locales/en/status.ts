@@ -23,6 +23,7 @@ export default {
   planEmptyIdle: 'No plan yet — turn plan mode on and the agent’s plan will show up here.',
   swarmLabel: 'Swarm',
   swarmDismiss: 'Turn off Swarm',
+  swarmTooltip: 'High usage: runs many sub-agents in parallel',
   towerLabel: 'Tower',
   towerDismiss: 'Turn off Tower',
   modeOff: 'Off',

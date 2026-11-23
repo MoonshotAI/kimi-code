@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as slowDisk } from 'node:timers/promises';
@@ -9,9 +9,9 @@ import { mcpResultToExecutableOutput } from '@moonshot-ai/agent-core-v2/agent/mc
 import { renderToolResultForModel } from '@moonshot-ai/agent-core-v2/agent/contextMemory/toolResultRender';
 import { IReadTool, ReadInputSchema, type ReadInput } from '@moonshot-ai/agent-core-v2/agent/tools/os/read/read';
 
-import { say } from '@moonshot-ai/testkit/model';
+import { agent, say } from '@moonshot-ai/testkit/model';
 import { kapFixtures, type KapFixtures } from '@moonshot-ai/testkit/vitest';
-import { afterAll, afterEach, beforeAll, describe, expect, it, test as base, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, test as base, vi } from 'vitest';
 
 import {
   Error2,
@@ -38,6 +38,7 @@ import {
   ISessionActivityView,
   ISessionIndexMirror,
   ISessionManager,
+  ISessionMcpHandle,
   ISessionMetadata,
   ISessionPromptPredictionService,
   ISessionTitleService,
@@ -1423,8 +1424,9 @@ describe('server-v2 /api/v1/sessions', () => {
       const manager = (server as RunningServer).core.accessor.get(IWorkspaceInstanceManager);
       const workspace = manager.get(workspaceId);
       expect(workspace).toBeDefined();
-      await workspace!.program.mcp.ready;
-      const connections = workspace!.program.mcp.connectionManager();
+      const mcp = getLiveSessionById((server as RunningServer).core.accessor, id)!.accessor.get(ISessionMcpHandle);
+      await mcp.ready;
+      const connections = mcp.connectionManager;
       await vi.waitFor(() => {
         expect(connections.list().some((entry) => entry.name === 'fixture' && entry.status === 'connected')).toBe(true);
       });
@@ -1463,8 +1465,9 @@ describe('server-v2 /api/v1/sessions', () => {
       };
       const replacement = replacementLease.instance;
       expect(replacement).not.toBe(workspace);
-      await replacement.program.mcp.ready;
-      const replacementConnections = replacement.program.mcp.connectionManager();
+      const replacementMcp = (await replacement.program.acquireMcp()).service;
+      await replacementMcp.ready;
+      const replacementConnections = replacementMcp.connectionManager();
       await vi.waitFor(() => {
         expect(replacementConnections.list().some((entry) => entry.name === 'fixture' && entry.status === 'connected')).toBe(true);
       });
@@ -1495,6 +1498,104 @@ describe('server-v2 /api/v1/sessions', () => {
       await rm(cwd, { recursive: true, force: true });
     }
   }, 30_000);
+
+  describe('MCP servers of a workspace', () => {
+    const fixture = new URL('../../agent-core-v2/test/mcpCore/fixtures/mock-stdio-server.mjs', import.meta.url).pathname;
+    let root: string;
+    let opened: string[];
+    let spawned: IHostProcess[];
+
+    async function writeServer(dir: string, name: string): Promise<void> {
+      await mkdir(join(dir, '.kimi-code'), { recursive: true });
+      await writeFile(
+        join(dir, '.kimi-code', 'mcp.json'),
+        JSON.stringify({ mcpServers: { [name]: { command: process.execPath, args: [fixture] } } }),
+      );
+    }
+
+    async function openSession(pinned?: string): Promise<{ id: string; statuses: () => Record<string, string> }> {
+      const created = await postJson<SessionWire>('/api/v1/sessions', {
+        metadata: { cwd: root },
+        ...(pinned === undefined ? {} : { environment_id: 'local', environment_cwd: pinned }),
+      });
+      expect(created.body.code).toBe(0);
+      const { id } = created.body.data;
+      opened.push(id);
+      const mcp = getLiveSessionById((server as RunningServer).core.accessor, id)!.accessor.get(ISessionMcpHandle);
+      await mcp.ready;
+      return {
+        id,
+        statuses: () => Object.fromEntries(mcp.connectionManager.list().map((entry) => [entry.name, entry.status])),
+      };
+    }
+
+    beforeEach(async () => {
+      vi.stubEnv('KIMI_CODE_TRUST_WORKSPACE', '1');
+      root = await realpath(await mkdtemp(join(tmpdir(), 'kimi-server-v2-session-mcp-')));
+      await writeServer(root, 'home');
+      opened = [];
+      spawned = [];
+      const hostProcesses = (server as RunningServer).core.accessor.get(IHostProcessService);
+      const spawn = hostProcesses.spawn.bind(hostProcesses);
+      vi.spyOn(hostProcesses, 'spawn').mockImplementation(async (command, args, options) => {
+        const child = await spawn(command, args, options);
+        if (command === process.execPath && args?.[0] === fixture) spawned.push(child);
+        return child;
+      });
+    });
+
+    afterEach(async () => {
+      for (const id of opened) await closeSessionById((server as RunningServer).core.accessor, id);
+      await rm(root, { recursive: true, force: true });
+    });
+
+    it('start with its first session, serve every session, and stop with the last while the workspace stays open', async () => {
+      const src = join(root, 'src');
+      const elsewhere = await realpath(await mkdtemp(join(tmpdir(), 'kimi-server-v2-session-mcp-other-')));
+      const lease = await (server as RunningServer).core.accessor.get(IWorkspaceInstanceManager).acquire({ root });
+      try {
+        await writeServer(src, 'own');
+        await writeServer(elsewhere, 'elsewhere');
+        await lease.instance.program.ready;
+        expect(spawned).toHaveLength(0);
+
+        const sessions = [await openSession(), await openSession(src), await openSession(elsewhere)];
+        expect(sessions.map((session) => session.statuses())).toEqual([
+          { home: 'connected' },
+          { home: 'connected' },
+          { home: 'connected' },
+        ]);
+        expect(spawned).toHaveLength(1);
+
+        const last = sessions.pop()!;
+        for (const { id } of sessions) {
+          expect((await postJson(`/api/v1/sessions/${id}:archive`)).body.code).toBe(0);
+        }
+        expect(last.statuses()).toEqual({ home: 'connected' });
+
+        expect((await postJson(`/api/v1/sessions/${last.id}:archive`)).body.code).toBe(0);
+        await vi.waitFor(() => {
+          expect(spawned[0]!.exitCode).not.toBeNull();
+        }, 20_000);
+        expect(last.statuses()).toEqual({});
+      } finally {
+        lease.dispose();
+        await rm(elsewhere, { recursive: true, force: true });
+      }
+    }, 30_000);
+
+    it('do not start to fork or archive a session that is not open', async () => {
+      const closed = await openSession();
+      await closeSessionById((server as RunningServer).core.accessor, closed.id);
+      expect(spawned).toHaveLength(1);
+
+      expect((await postJson(`/api/v1/sessions/${closed.id}:fork`, {})).body.code).toBe(0);
+      expect((await postJson(`/api/v1/sessions/${closed.id}:archive`)).body.code).toBe(0);
+
+      await openSession();
+      expect(spawned).toHaveLength(2);
+    }, 30_000);
+  });
 
   it('resumes a session whose workspace root is gone (root validity deferred to binding) and still archives it', async () => {
     const cwd = join(home as string, 'gone-ws');
@@ -3751,4 +3852,27 @@ kapTest(':wait reports a finished turn only after the session wrote it to disk, 
   const sessionDir = sessionDirOf(kap.server.core.accessor.get(IBootstrapService).homeDir, `sessions/${session.workspace_id}`, session.id);
   const wire = await readFile(join(sessionDir, 'agents', MAIN_AGENT_ID, 'wire.jsonl'), 'utf8');
   expect(wire.split('\n').filter((line) => line !== '').map((line) => (JSON.parse(line) as { type: string }).type)).toContain('turn.ended');
+});
+
+kapTest('loads a persisted subagent only when the Agent tool resumes it after a restart', { timeout: 30_000 }, async ({ kap, model }) => {
+  model.script(agent({ prompt: 'remember the token', description: 'child' }), say('noted'));
+  model.lane('subagent').script(say('remembered'));
+  const session = await kap.createSession();
+  await kap.prompt(session.id, 'spawn the child');
+  await kap.waitIdle(session.id);
+  const spawn = (await kap.turns(session.id)).flatMap((turn) => turn.items).find((item) => item.type === 'tool_call' && item['name'] === 'Agent');
+  expect(spawn?.['agent_refs']).toEqual([expect.objectContaining({ agent_id: expect.any(String), role: 'child' })]);
+  const childId = String((spawn?.['agent_refs'] as readonly { readonly agent_id: string }[] | undefined)?.[0]?.agent_id);
+
+  await kap.restart();
+  const resumed = await resumeSessionById(kap.server.core.accessor, session.id);
+  expect(resumed).toBeDefined();
+  const agents = resumed!.accessor.get(IAgentLifecycleService);
+  expect(agents.handleOf(childId)).toBeUndefined();
+
+  model.script(agent({ prompt: 'recall the token', description: 'child again', resume: childId }), say('done'));
+  model.lane('subagent').script(say('the token'));
+  await kap.prompt(session.id, 'resume the child');
+  await kap.waitIdle(session.id);
+  expect(agents.handleOf(childId)).toBeDefined();
 });
