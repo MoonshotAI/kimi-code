@@ -56,10 +56,12 @@ jobs:
       checks: read
     outputs:
       publish: ${{ steps.trigger.outputs.publish }}
+      cli-tag: ${{ steps.cli.outputs.tag }}
     steps:
       - uses: actions/checkout@v6
         with:
           ref: ${{ github.sha }}
+          fetch-depth: 0
       - uses: actions/setup-node@v6
         with:
           node-version-file: .nvmrc
@@ -68,6 +70,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: node scripts/release-trigger.mjs
+      - name: Plan native build for the tested commit
+        if: steps.trigger.outputs.publish == 'true'
+        id: cli
+        run: node scripts/release.mjs plan-cli
 
   desktop-release:
     name: Desktop release plan
@@ -77,7 +83,7 @@ jobs:
     outputs:
       build: ${{ steps.prepare.outputs.build }}
       tag: ${{ steps.prepare.outputs.tag }}
-      cli-planned: ${{ steps.prepare.outputs.cli-planned }}
+      cli-planned: ${{ needs.candidate.outputs.cli-tag != '' }}
     env:
       GH_TOKEN: ${{ github.token }}
     permissions:
@@ -244,13 +250,19 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ steps.kimi-release.outputs.tag }}
+          PLANNED_TAG: ${{ needs.candidate.outputs.cli-tag }}
           RELEASE_VERSION: ${{ steps.kimi-release.outputs.version }}
-        run: gh release edit "$RELEASE_TAG" --title "Kimi Code CLI ${RELEASE_VERSION}"
+        run: |
+          if [[ "$RELEASE_TAG" != "$PLANNED_TAG" ]]; then
+            echo 'Published CLI tag does not match the planned native build' >&2
+            exit 1
+          fi
+          gh release edit "$RELEASE_TAG" --title "Kimi Code CLI ${RELEASE_VERSION}"
 
   native-artifacts:
     name: Native release artifact
-    needs: release
-    if: needs.release.outputs.kimi_native_release == 'true'
+    needs: candidate
+    if: needs.candidate.outputs.publish == 'true' && needs.candidate.outputs.cli-tag != ''
     uses: ./.github/workflows/_native-build.yml
     with:
       upload-artifact-prefix: kimi-code-native

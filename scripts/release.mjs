@@ -23,6 +23,18 @@ for (const pkg of plan.packages) {
     throw new Error(`Release plan no longer matches ${pkg.path}`);
   }
 }
+if (command === 'plan-cli') {
+  const cli = plan.packages.find((entry) => entry.name === '@moonshot-ai/kimi-code');
+  let tag = '';
+  if (cli) {
+    const name = `${cli.name}@${cli.version}`;
+    const ref = spawnSync('git', ['rev-parse', '--verify', '--quiet', `refs/tags/${name}^{commit}`], { encoding: 'utf8' });
+    if (ref.status === 1 || (ref.status === 0 && ref.stdout.trim() === sha)) tag = name;
+    else if (ref.status !== 0) throw new Error(`Could not resolve ${name}`);
+  }
+  appendFileSync(process.env.GITHUB_OUTPUT, `tag=${tag}\n`);
+  process.exit(0);
+}
 const packages = plan.packages.filter((pkg) => pkg.name === 'kimi-code-app');
 if (packages.length > 1) throw new Error('Release plan lists kimi-code-app more than once');
 if (packages.length === 0) {
@@ -88,10 +100,7 @@ if (command === 'check') {
       if (!release) throw new Error(`Release ${tag} was not created`);
     }
     if (pkg.name === 'kimi-code-app') {
-      const cli = plan.packages.find((entry) => entry.name === '@moonshot-ai/kimi-code');
-      const cliTag = cli && spawnSync('git', ['rev-parse', '--verify', '--quiet', `refs/tags/${cli.name}@${cli.version}^{commit}`], { encoding: 'utf8' });
-      const cliPlanned = cliTag?.status === 1 || (cliTag?.status === 0 && cliTag.stdout.trim() === sha);
-      appendFileSync(process.env.GITHUB_OUTPUT, `build=${release.isDraft}\ntag=${tag}\ncli-planned=${cliPlanned}\n`);
+      appendFileSync(process.env.GITHUB_OUTPUT, `build=${release.isDraft}\ntag=${tag}\n`);
     }
   }
 } else if (command === 'finish') {
