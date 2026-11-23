@@ -6,6 +6,7 @@ import { defineState } from '#/state/state';
 import { estimateTokensForMessage } from "#/llm-adapter/contract/tokens";
 import { buildCompactionSummaryText, buildContextCompactionShape, isRealUserInput } from '#/agent/contextMemory/compactionHandoff';
 import { ContextApplyCompaction } from '#/agent/contextMemory/contextEvents';
+import { newMessageId } from '#/agent/contextMemory/messageId';
 import { contextFromHistoryEntry, historyFromContext } from '#/agent/loop/history';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
@@ -14,6 +15,7 @@ import { llmErrorName, llmErrorRequestId, type LlmOutcome } from '@moonshot-ai/c
 import { retryBackoffDelay, sleepForRetry } from '#/_base/utils/retry';
 import { IAgentLoopService, type LoopErrorContext } from '#/agent/loop/loop';
 import { TurnStarted } from '#/agent/loop/turnEvents';
+import { LoopIdle } from '#/agent/loop/loopOps';
 import { TurnEnded } from '#/agent/loop/turnOps';
 import { isAbortError } from '#/_base/utils/abort';
 import type { ProfileModelContext } from '#/agent/profile/profile';
@@ -52,6 +54,7 @@ import {
   IAgentFullCompactionService,
   type FullCompactionInput,
   type FullCompactionTask,
+  type ManualCompactionRequest,
 } from './fullCompaction';
 import {
   RuntimeCompactionStrategy,
@@ -138,6 +141,7 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
 
   private readonly strategy: CompactionStrategy;
   private _compacting: ActiveCompaction | null = null;
+  private readonly manualQueue: Array<{ promptId: string; instruction?: string }> = [];
 
   constructor(
     @ISessionTokenCountingService private readonly tokenCounting: ISessionTokenCountingService,
@@ -176,6 +180,11 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
     this._register(
       this.eventBus.subscribe(TurnEnded, () => {
         this.activeTurnId = undefined;
+      }),
+    );
+    this._register(
+      this.eventBus.subscribe(LoopIdle, () => {
+        void this.drainManualQueue();
       }),
     );
     this._register(
@@ -340,6 +349,47 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
   }
 
   begin(input: FullCompactionInput): boolean {
+    return this.start(input, input.source === 'manual');
+  }
+
+  requestManual(instruction?: string): ManualCompactionRequest {
+    const loop = this.loopService.snapshot();
+    if (this._compacting !== null || this.manualQueue.length > 0) {
+      throw new Error2(ErrorCodes.COMPACTION_UNABLE, 'A compaction is already running or queued.');
+    }
+    if (loop.state === 'idle' && !loop.hasPendingRequests && !loop.paused) {
+      if (!this.begin({ source: 'manual', instruction })) {
+        throw new Error2(ErrorCodes.COMPACTION_UNABLE, 'A compaction is already running or queued.');
+      }
+      return { acceptedAs: 'compact', promptId: newMessageId() };
+    }
+    const promptId = newMessageId();
+    this.manualQueue.push({ promptId, instruction });
+    return { acceptedAs: 'queue', promptId };
+  }
+
+  private async drainManualQueue(signal?: AbortSignal, turnId?: number): Promise<void> {
+    if (this._compacting !== null) return;
+    const head = this.manualQueue.shift();
+    if (head === undefined) return;
+    try {
+      if (!this.start({ source: 'manual', instruction: head.instruction }, false)) return;
+    } catch (error) {
+      void this.dispatcher.dispatch(
+        new AgentErrorEvent({ ...toKimiErrorPayload(error), agentId: this.agent.agentId }),
+      );
+      return;
+    }
+    try {
+      await this.block(signal, turnId);
+    } catch (error) {
+      void this.dispatcher.dispatch(
+        new AgentErrorEvent({ ...toKimiErrorPayload(error), agentId: this.agent.agentId }),
+      );
+    }
+  }
+
+  private start(input: FullCompactionInput, quiesce: boolean): boolean {
     if (this._compacting) return false;
     const data: CompactionBeginData = { source: input.source, instruction: input.instruction };
     if (data.source === 'manual') {
@@ -347,11 +397,9 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
     }
     if (!this.reserveCompactionSlot(data.source)) return false;
 
-    const tokenCount = this.validateCompactionStart(data.source);
-    const quiescence = data.source === 'manual'
-      ? this.loopService.tryAcquireQuiescence()
-      : undefined;
-    if (data.source === 'manual' && quiescence === undefined) {
+    const tokenCount = this.validateCompactionStart(data.source, quiesce);
+    const quiescence = quiesce ? this.loopService.tryAcquireQuiescence() : undefined;
+    if (quiesce && quiescence === undefined) {
       throw new Error2(
         ErrorCodes.COMPACTION_UNABLE,
         'Cannot compact while a turn is active or another context change is running. Wait for it to finish, then retry.',
@@ -392,12 +440,12 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
     return this.compactionCountInTurn <= this.strategy.maxCompactionPerTurn;
   }
 
-  private validateCompactionStart(source: CompactionBeginData['source']): number {
+  private validateCompactionStart(source: CompactionBeginData['source'], requireIdle = true): number {
     const history = this.loopService.rawHistory();
     if (history.length === 0) {
       throw new Error2(ErrorCodes.COMPACTION_UNABLE, 'No messages to compact in current history.');
     }
-    if (source === 'manual' && this.loopService.snapshot().state !== 'idle') {
+    if (requireIdle && source === 'manual' && this.loopService.snapshot().state !== 'idle') {
       throw new Error2(
         ErrorCodes.COMPACTION_UNABLE,
         'Cannot compact while a turn is active. Wait for it to finish, then retry.',
@@ -508,6 +556,7 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
 
   private async beforeStep(signal: AbortSignal, turnId?: number): Promise<void> {
     this.activeTurnId = turnId;
+    await this.drainManualQueue(signal, turnId);
     this.checkAutoCompaction();
     if (this.strategy.shouldBlock(this.tokenCountWithPending())) {
       await this.block(signal, turnId);

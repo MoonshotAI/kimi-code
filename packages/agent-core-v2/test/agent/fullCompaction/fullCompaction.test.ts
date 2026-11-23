@@ -43,7 +43,7 @@ import {
   type TestkitAgentFixtures,
   type MockProviderResponse,
 } from '../../harness';
-import { batch, call, say } from '@moonshot-ai/testkit/model';
+import { batch, call, held, httpError, say } from '@moonshot-ai/testkit/model';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
@@ -56,6 +56,7 @@ import {
   ITelemetryService,
   IAgentToolRegistryService,
   DYNAMIC_TOOL_SCHEMA_VARIANT,
+  MAX_COMPACTION_RETRY_ATTEMPTS,
   normalizeAgentProfile,
   type ExecutableTool,
   type ResolvedAgentProfile,
@@ -351,6 +352,157 @@ describe('FullCompaction', () => {
     await ctx.untilTurnEnd();
     expect(ctx.get(IAgentLoopService).snapshot().activeTurnId).toBeUndefined();
   });
+
+  const testkitQueuedTest = base.extend<TestkitAgentFixtures>(
+    testkitAgentFixtures(permissionModeServices('yolo')),
+  );
+
+  testkitQueuedTest(
+    'queues a manual compaction while a turn is active and runs it at the next step boundary',
+    async ({ agent: ctx, model }) => {
+      ctx.get(IAgentToolRegistryService).register(lookupTool());
+      ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
+      ctx.appendExchange(2, 'old user two', 'old assistant two', 40);
+      model.script(
+        held(
+          'lookup-call',
+          call('Lookup', { query: 'moon' }, { id: 'call_lookup', text: 'I will wait for the tool.' }),
+        ),
+      );
+
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Start the active turn' }] });
+      const turnHold = model.hold('lookup-call');
+      await turnHold.reached();
+      const compaction = ctx.get(IAgentFullCompactionService);
+
+      const accepted = compaction.requestManual('Keep the important test facts.');
+      expect(accepted.acceptedAs).toBe('queue');
+      expect(accepted.promptId.length).toBeGreaterThan(0);
+      expect(compaction.compacting).toBeNull();
+      expect(eventIndex(ctx.newEvents(), 'full_compaction.begin')).toBe(-1);
+
+      const completed = ctx.once('compaction.completed');
+      model.lane('compaction').script(say('Compacted summary.'));
+      model.script(say('Turn done.'));
+      turnHold.release();
+      await completed;
+      const events = await ctx.untilTurnEnd();
+
+      expect(eventIndex(events, 'full_compaction.begin')).toBeGreaterThanOrEqual(0);
+      expect(ctx.get(IAgentLoopService).snapshot().activeTurnId).toBeUndefined();
+      expect(ctx.context.history().some((message) => messageText(message).includes('Compacted summary.'))).toBe(true);
+      expect(messageText(ctx.context.history().at(-1))).toBe('Turn done.');
+      await ctx.expectResumeMatches();
+    },
+  );
+
+  testkitQueuedTest(
+    'rejects a duplicate manual compaction request while one is queued or running',
+    async ({ agent: ctx, model }) => {
+      ctx.get(IAgentToolRegistryService).register(lookupTool());
+      ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
+      ctx.appendExchange(2, 'old user two', 'old assistant two', 40);
+      model.script(
+        held(
+          'lookup-call',
+          call('Lookup', { query: 'moon' }, { id: 'call_lookup', text: 'I will wait for the tool.' }),
+        ),
+      );
+
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Start the active turn' }] });
+      const turnHold = model.hold('lookup-call');
+      await turnHold.reached();
+      const compaction = ctx.get(IAgentFullCompactionService);
+
+      expect(compaction.requestManual().acceptedAs).toBe('queue');
+      expect(() => compaction.requestManual()).toThrow(
+        expect.objectContaining({ code: 'compaction.unable' }),
+      );
+
+      const completed = ctx.once('compaction.completed');
+      model.lane('compaction').script(say('Compacted summary.'));
+      model.script(say('Turn done.'));
+      turnHold.release();
+      await completed;
+      await ctx.untilTurnEnd();
+
+      const secondCompleted = ctx.once('compaction.completed');
+      model.lane('compaction').script(say('Second summary.'));
+      const running = compaction.requestManual();
+      expect(running.acceptedAs).toBe('compact');
+      expect(compaction.compacting).not.toBeNull();
+      expect(() => compaction.requestManual()).toThrow(
+        expect.objectContaining({ code: 'compaction.unable' }),
+      );
+      await secondCompleted;
+    },
+  );
+
+  testkitQueuedTest(
+    'runs a queued manual compaction when the loop goes idle',
+    async ({ agent: ctx, model }) => {
+      ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
+      ctx.appendExchange(2, 'old user two', 'old assistant two', 40);
+      model.script(held('final-response', say('Turn done.')));
+
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Start the active turn' }] });
+      const turnHold = model.hold('final-response');
+      await turnHold.reached();
+      const compaction = ctx.get(IAgentFullCompactionService);
+      expect(compaction.requestManual().acceptedAs).toBe('queue');
+
+      const completed = ctx.once('compaction.completed');
+      model.lane('compaction').script(say('Compacted summary.'));
+      turnHold.release();
+      await ctx.untilTurnEnd();
+      await completed;
+
+      expect(model.requests('main')).toHaveLength(1);
+      expect(model.requests('compaction')).toHaveLength(1);
+      expect(ctx.get(IAgentLoopService).snapshot().state).toBe('idle');
+      expect(ctx.context.history().some((message) => messageText(message).includes('Compacted summary.'))).toBe(true);
+      await ctx.expectResumeMatches();
+    },
+  );
+
+  testkitQueuedTest(
+    'reports a queued manual compaction failure and keeps later turns intact',
+    async ({ agent: ctx, model }) => {
+      ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
+      ctx.appendExchange(2, 'old user two', 'old assistant two', 40);
+      model.script(held('final-response', say('Turn done.')), say('Next turn done.'));
+      model.lane('compaction').script(
+        ...Array.from({ length: MAX_COMPACTION_RETRY_ATTEMPTS }, () =>
+          httpError(500, { message: 'compaction exploded' }),
+        ),
+      );
+
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Start the active turn' }] });
+      const turnHold = model.hold('final-response');
+      await turnHold.reached();
+      const compaction = ctx.get(IAgentFullCompactionService);
+      expect(compaction.requestManual().acceptedAs).toBe('queue');
+
+      const failed = ctx.once('error');
+      turnHold.release();
+      await ctx.untilTurnEnd();
+      await failed;
+
+      expect(ctx.compactHistory()).toEqual([
+        { role: 'user', text: 'old user one' },
+        { role: 'assistant', text: 'old assistant one' },
+        { role: 'user', text: 'old user two' },
+        { role: 'assistant', text: 'old assistant two' },
+        { role: 'user', text: 'Start the active turn' },
+        { role: 'assistant', text: 'Turn done.' },
+      ]);
+      expect(compaction.compacting).toBeNull();
+
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Next turn' }] });
+      await ctx.untilTurnEnd();
+      expect(messageText(ctx.context.history().at(-1))).toBe('Next turn done.');
+    },
+  );
 
   it('projects the compacted prefix before sending the summary request', async () => {
     const ctx = testAgent();
@@ -4020,6 +4172,23 @@ function bashCall(): ToolCall {
     id: 'call_bash',
     name: 'Bash',
     arguments: JSON.stringify({ command: 'printf should-not-run', timeout: 60 }),
+  };
+}
+
+function lookupTool(): ExecutableTool<{ query: string }> {
+  return {
+    name: 'Lookup',
+    description: 'Look up a short test value.',
+    parameters: {
+      type: 'object',
+      properties: { query: { type: 'string' } },
+      required: ['query'],
+      additionalProperties: false,
+    },
+    resolveExecution: () => ({
+      approvalRule: 'Lookup',
+      execute: async () => ({ output: 'lookup-result' }),
+    }),
   };
 }
 
