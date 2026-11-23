@@ -597,7 +597,7 @@ export class StreamingUIController {
       toolCall,
       undefined,
       state.ui,
-      state.appState.workDir,
+      state.appState.cwd,
     );
     if (state.transcriptContainer.toolOutputExpanded) tc.setExpanded(true);
     markTranscriptComponentTurnId(tc, toolCall.turnId ?? this._currentTurnId);
@@ -645,7 +645,7 @@ export class StreamingUIController {
         matchedCall,
         result,
         state.ui,
-        state.appState.workDir,
+        state.appState.cwd,
       );
       if (state.transcriptContainer.toolOutputExpanded) completed.setExpanded(true);
       markTranscriptComponentTurnId(completed, matchedCall.turnId ?? this._currentTurnId);

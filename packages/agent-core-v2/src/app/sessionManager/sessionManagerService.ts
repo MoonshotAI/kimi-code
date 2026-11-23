@@ -15,6 +15,7 @@ import type { SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
 import { ISessionLockService, type SessionLockLease } from '#/persistence/interface/sessionLock';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionActivityView } from '#/session/sessionActivity/sessionActivity';
+import { IWorktreeService } from '#/app/worktree/worktree';
 import {
   type CreateChildSessionOptions,
   type ForkSessionOptions,
@@ -76,12 +77,13 @@ export class SessionManager implements ISessionManager {
     @ISessionIndex private readonly index: ISessionIndex,
     @IEnvironmentDeclarationService private readonly environmentDeclarations: IEnvironmentDeclarationService,
     @IEnvironmentService private readonly environments: IEnvironmentService,
+    @IWorktreeService private readonly worktrees: IWorktreeService,
     @IHostFileSystem private readonly hostFs: IHostFileSystem,
     @ISessionLockService private readonly sessionLocks: ISessionLockService,
   ) {}
 
-  async resolveCreationEnvironment(options: CreateManagedSessionOptions) {
-    const opened = await this.openCreation(options);
+  async resolveCreationEnvironment(requested: CreateManagedSessionOptions) {
+    const opened = await this.openCreation(await this.placeInSourceProject(requested));
     opened.lease.dispose();
     return {
       workspaceId: opened.workspaceId,
@@ -90,7 +92,8 @@ export class SessionManager implements ISessionManager {
     };
   }
 
-  async create(options: CreateManagedSessionOptions): Promise<ISessionScopeHandle> {
+  async create(requested: CreateManagedSessionOptions): Promise<ISessionScopeHandle> {
+    const options = await this.placeInSourceProject(requested);
     const opened = await this.openCreation(options);
     try {
       const effective = opened.environmentId === undefined && opened.environmentCwd === undefined
@@ -108,6 +111,21 @@ export class SessionManager implements ISessionManager {
     } finally {
       opened.lease.dispose();
     }
+  }
+
+  private async placeInSourceProject(options: CreateManagedSessionOptions): Promise<CreateManagedSessionOptions> {
+    const { workDir, environmentCwd } = options;
+    if (workDir === undefined || options.workspaceId !== undefined) return options;
+    if (options.environmentId !== undefined && options.environmentId !== LOCAL_ENVIRONMENT_ID) return options;
+    const project = await this.worktrees.locate(workDir).catch(() => undefined);
+    const target = environmentCwd === undefined ? project : await this.worktrees.locate(environmentCwd).catch(() => undefined);
+    if (project?.worktree === undefined && target?.worktree === undefined) return options;
+    return {
+      ...options,
+      workDir: project?.workDir ?? workDir,
+      environmentId: LOCAL_ENVIRONMENT_ID,
+      environmentCwd: target?.cwd ?? environmentCwd ?? workDir,
+    };
   }
 
   private async openCreation(options: CreateManagedSessionOptions) {

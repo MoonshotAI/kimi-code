@@ -23,7 +23,7 @@ export interface PluginUpdateNotifierSession {
 
 export interface PluginUpdateNotifierDeps {
   readonly getSession: () => PluginUpdateNotifierSession | undefined;
-  readonly workDir: string;
+  readonly getWorkDir: () => string;
   readonly notify: (message: string) => void;
   readonly loadMarketplace?: () => Promise<PluginMarketplace>;
   readonly reloadPlugins?: () => Promise<unknown>;
@@ -163,7 +163,7 @@ export class PluginUpdateNotifier {
     const load = this.deps.loadMarketplace;
     if (load !== undefined) return load();
     return loadPluginMarketplace({
-      workDir: this.deps.workDir,
+      workDir: this.deps.getWorkDir(),
       reconcileAvailability: async (changed) => {
         if (!changed) return;
         await this.deps.reloadPlugins?.();

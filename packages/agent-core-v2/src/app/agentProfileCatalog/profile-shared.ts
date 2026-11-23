@@ -1,4 +1,5 @@
 import { renderPrompt } from '#/_base/utils/render-prompt';
+import { worktreeNote } from '#/app/worktree/worktreeNote';
 
 import {
   DEFAULT_AGENT_PROFILE_NAME,
@@ -157,6 +158,7 @@ export function systemPromptVars(
   const skills = context.skills ?? '';
   const pluginSections = context.pluginSections ?? '';
   const additionalDirsInfo = context.additionalDirsInfo ?? '';
+  const worktreeSourceRoot = context.worktreeSourceRoot ?? '';
   const agentsMd = context.agentsMd ?? '';
   const todoListGuidance = context.todoListActive === true ? `${TODO_LIST_GUIDANCE}\n\n` : '';
   const deliveringWorkSection =
@@ -178,6 +180,7 @@ export function systemPromptVars(
     windows_notes: context.osKind === 'Windows' ? `\n\n${WINDOWS_NOTES}\n\n` : '',
     shell: shellName.length > 0 ? `${shellName} (\`${shellPath}\`)` : '',
     cwd: context.cwd ?? '',
+    worktree_section: worktreeSourceRoot.length > 0 ? `\n\n${worktreeNote(worktreeSourceRoot)}` : '',
     cwd_listing: context.cwdListing ?? '',
     agents_md: agentsMd,
     agents_section:

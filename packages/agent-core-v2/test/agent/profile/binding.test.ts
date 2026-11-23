@@ -1,9 +1,15 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { execFileSync } from 'node:child_process';
+import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, normalize } from 'pathe';
 
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { encodeWorkDirKey } from '#/_base/utils/workdir-slug';
+import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
+import { bootstrapSeed } from '#/app/bootstrap/bootstrap';
+import { IWorkspaceService, type Workspace } from '#/app/workspace/workspace';
+import { worktreeNote } from '#/app/worktree/worktreeNote';
 import { Emitter, Event } from '#/_base/event';
 import { InstantiationService } from '#/_base/di/instantiationService';
 import { ServiceCollection } from '#/_base/di/serviceCollection';
@@ -46,14 +52,18 @@ import type { ExecutableTool, ToolExecution, ToolResult, ToolSource } from '#/to
 import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
 
 import { deferredAgentIdentityStub } from '../../app/agentIdentity/stubs';
+import { stubClientIdentity } from '../../app/bootstrap/stubs';
+import { fakeEnvironment, stubAgentEnvironment } from '../../environment/stubs';
 import {
   InMemoryWireRecordPersistence,
   agentService,
   appService,
+  appServices,
   createTestAgent,
   hostEnvironmentServices,
   sessionService,
   type TestAgentContext,
+  type TestAgentServiceOverride,
 } from '../../harness';
 
 const MOCK_MODEL = 'mock-model';
@@ -1645,5 +1655,182 @@ describe('change-notifier belief seeding', () => {
     });
 
     expect(seedBeliefs).not.toHaveBeenCalled();
+  });
+});
+
+describe('AgentProfileService worktree note', () => {
+  const harnessWorkspaceId = 'test-workspace';
+  const cwdParagraphEnd = 'never use shell commands to read, copy, or transmit secret files.';
+  let root: string;
+  let kimiHome: string;
+  let repo: string;
+
+  function git(cwd: string, ...args: string[]): string {
+    return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+  }
+
+  async function initRepo(dir: string): Promise<void> {
+    await mkdir(join(dir, 'packages', 'foo'), { recursive: true });
+    await writeFile(join(dir, 'packages', 'foo', 'a.txt'), 'x\n', 'utf-8');
+    git(dir, 'init', '-q', '-b', 'main');
+    git(dir, 'config', 'user.email', 'test@example.com');
+    git(dir, 'config', 'user.name', 'Test');
+    git(dir, 'config', 'commit.gpgsign', 'false');
+    git(dir, 'add', '.');
+    git(dir, 'commit', '-q', '-m', 'init');
+  }
+
+  function addWorktree(path: string, ...args: string[]): string {
+    git(repo, 'worktree', 'add', '-q', ...args, path);
+    return path;
+  }
+
+  function addKimiWorktree(name: string, ...args: string[]): string {
+    return addWorktree(join(kimiHome, 'worktrees', encodeWorkDirKey(repo), name), ...args);
+  }
+
+  function sessionProject(projectRoot: string): TestAgentServiceOverride {
+    const workspace: Workspace = {
+      id: harnessWorkspaceId,
+      root: projectRoot,
+      name: 'project',
+      kind: 'implicit',
+      additionalDirs: [],
+      createdAt: 0,
+      lastOpenedAt: 0,
+    };
+    return appServices((reg) => {
+      reg.definePartialInstance(IWorkspaceService, {
+        get: async (id: string) => (id === workspace.id ? workspace : undefined),
+      });
+    });
+  }
+
+  async function boundPrompt(
+    cwd: string,
+    flag: '0' | '1',
+    profile = DEFAULT_AGENT_PROFILE_NAME,
+    ...overrides: readonly TestAgentServiceOverride[]
+  ): Promise<string> {
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_WORKTREE', flag);
+    const agent = createTestAgent(
+      hostEnvironmentServices(root),
+      appServices((reg) => {
+        for (const [id, value] of bootstrapSeed({
+          homeDir: kimiHome,
+          cwd,
+          osHomeDir: root,
+          env: process.env,
+          clientIdentity: stubClientIdentity,
+        })) {
+          reg.defineInstance(id, value);
+        }
+      }),
+      ...overrides,
+      { cwd },
+    );
+    try {
+      await agent.get(IAgentLoopService).bindProfile({ profile, model: MOCK_MODEL });
+      return agent.get(IAgentLoopService).getSystemPrompt();
+    } finally {
+      await agent.dispose();
+    }
+  }
+
+  beforeEach(async () => {
+    root = await realpath(await mkdtemp(join(tmpdir(), 'kimi-worktree-note-')));
+    kimiHome = join(root, 'kimi-home');
+    repo = join(root, 'repo');
+    await initRepo(repo);
+  });
+
+  afterEach(async () => {
+    vi.unstubAllEnvs();
+    await rm(root, { recursive: true, force: true });
+  });
+
+  it('adds the note after the working directory only while the worktree flag is on', async () => {
+    const worktree = addKimiWorktree('feature', '--detach');
+
+    const off = await boundPrompt(worktree, '0');
+    const on = await boundPrompt(worktree, '1');
+
+    expect(off).toContain(`The current working directory is \`${worktree}\``);
+    expect(off).not.toContain('git worktree');
+    expect(on).toBe(off.replace(cwdParagraphEnd, `${cwdParagraphEnd}\n\n${worktreeNote(repo)}`));
+  });
+
+  it('leaves prompts outside Kimi worktrees unchanged with the worktree flag on', async () => {
+    const linked = addWorktree(join(root, 'linked'), '--detach');
+    const plain = join(root, 'plain');
+    await mkdir(plain);
+
+    for (const cwd of [repo, join(repo, 'packages', 'foo'), linked, plain]) {
+      expect(await boundPrompt(cwd, '1')).toBe(await boundPrompt(cwd, '0'));
+    }
+  });
+
+  it('keeps a worktree prompt identical to the plain prompt of its project up to the working directory', async () => {
+    const worktree = addKimiWorktree('feature', '-b', 'wt-note-branch');
+    const marker = 'The current working directory is `';
+
+    const plain = await boundPrompt(repo, '1');
+    const inWorktree = await boundPrompt(worktree, '1');
+
+    expect(inWorktree.indexOf(marker)).toBeGreaterThan(0);
+    expect(inWorktree.slice(0, inWorktree.indexOf(marker))).toBe(plain.slice(0, plain.indexOf(marker)));
+    expect(inWorktree).toContain(worktreeNote(repo));
+    expect(inWorktree).not.toContain('wt-note-branch');
+    expect(inWorktree).not.toContain(git(repo, 'rev-parse', 'HEAD'));
+  });
+
+  it.each(['coder', 'explore', 'plan'])('adds the note to the %s subagent prompt', async (profile) => {
+    const worktree = addKimiWorktree('feature', '--detach');
+
+    expect(await boundPrompt(worktree, '1', profile)).toContain(
+      `${cwdParagraphEnd}\n\n${worktreeNote(repo)}`,
+    );
+  });
+
+  it('names the checkout holding the session project directory as the source', async () => {
+    const linked = addWorktree(join(root, 'linked'), '--detach');
+    const worktree = addKimiWorktree('feature', '--detach');
+
+    const prompt = await boundPrompt(
+      worktree,
+      '1',
+      DEFAULT_AGENT_PROFILE_NAME,
+      sessionProject(join(linked, 'packages', 'foo')),
+    );
+
+    expect(prompt).toContain(worktreeNote(linked));
+  });
+
+  it('names the main checkout when the project directory is not another checkout of the repository', async () => {
+    const other = join(root, 'other');
+    await initRepo(other);
+    const worktree = addKimiWorktree('feature', '--detach');
+
+    for (const project of [join(worktree, 'packages', 'foo'), other]) {
+      expect(
+        await boundPrompt(worktree, '1', DEFAULT_AGENT_PROFILE_NAME, sessionProject(project)),
+      ).toContain(worktreeNote(repo));
+    }
+  });
+
+  it('keeps the note out of prompts rendered on a remote environment', async () => {
+    const worktree = addKimiWorktree('feature', '--detach');
+    const remote = agentService(
+      IAgentEnvironmentService,
+      stubAgentEnvironment(fakeEnvironment('ssh-box', 'g1', { capabilities: [] }), {
+        workDir: worktree,
+        isAvailable: () => false,
+      }),
+    );
+
+    const prompt = await boundPrompt(worktree, '1', DEFAULT_AGENT_PROFILE_NAME, remote);
+
+    expect(prompt).toContain(`The current working directory is \`${worktree}\``);
+    expect(prompt).not.toContain('git worktree');
   });
 });

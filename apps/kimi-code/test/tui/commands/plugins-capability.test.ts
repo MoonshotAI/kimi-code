@@ -107,7 +107,7 @@ function fakeHost(overrides: {
     restoreEditor,
     mountEditorReplacement,
     state: {
-      appState: { workDir: '/workspace' },
+      appState: { workDir: '/workspace', cwd: '/workspace' },
       ui: { requestRender: () => renders.push(1) },
       transcriptContainer: {
         addChild: (entry: Component) => transcriptEntries.push(entry),

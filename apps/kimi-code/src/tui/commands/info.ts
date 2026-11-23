@@ -97,7 +97,7 @@ export async function handleFeedbackCommand(host: SlashCommandHost): Promise<voi
       os: `${osType()} ${osRelease()}`,
       model: host.state.appState.model.length > 0 ? host.state.appState.model : null,
       attachmentLevel: level,
-      workDir: host.state.appState.workDir,
+      workDir: host.state.appState.cwd,
       installSource: await detectInstallSource(),
       shellEnv: detectShellEnvironment(),
     };
@@ -198,7 +198,7 @@ export async function showMcpServers(host: SlashCommandHost): Promise<void> {
     if (host.session !== undefined) {
       servers = await host.session.listMcpServers();
     } else {
-      servers = await host.harness.listWorkspaceMcpServers(host.state.appState.workDir);
+      servers = await host.harness.listWorkspaceMcpServers(host.state.appState.cwd);
     }
   } catch (error) {
     host.showError(`Failed to load MCP servers: ${formatErrorMessage(error)}`);

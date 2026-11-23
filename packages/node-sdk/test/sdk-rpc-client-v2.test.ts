@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process';
 import { mkdir, mkdtemp, readdir, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join, relative } from 'node:path';
+import { basename, dirname, join, relative } from 'node:path';
 import { promisify } from 'node:util';
 
 import {
@@ -18,6 +18,7 @@ import {
   fromKimiErrorPayload,
   isDaemonFileUrl,
   isKimiError,
+  KIMI_ERROR_INFO,
   KimiHarness,
   limitAgentReplayByTurns,
   SDKRpcClientBase,
@@ -25,6 +26,7 @@ import {
   Session,
   toKimiErrorPayload,
   type Event,
+  type WorktreeCreateEvent,
 } from '#/index';
 import { foldAgentWireReplay } from '#/v2/resume-replay';
 import {
@@ -58,6 +60,7 @@ import {
   IWorkspaceService,
   MAIN_AGENT_ID,
   OsProcessErrors,
+  WorktreeErrors,
   APIProviderRateLimitError,
   APIStatusError,
 } from '@moonshot-ai/agent-core-v2';
@@ -1644,6 +1647,48 @@ key = "${titleOAuthRef.key}"
         workDir,
         model: 'acme/missing',
       })).rejects.toMatchObject({ code: ErrorCodes.CONFIG_INVALID });
+    } finally {
+      await client.close();
+    }
+  });
+
+  it('reads the history of a session whose working directory is gone without opening it', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-history-'));
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+    const cwd = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-history-cwd-'));
+    tempDirs.push(homeDir, workDir, cwd);
+    const client = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
+
+    try {
+      await client.createSession({ id: 'ses_history', workDir, environmentId: 'local', environmentCwd: cwd });
+      await client.importContext({ sessionId: 'ses_history', content: 'first imported turn', source: "session 'source-a'" });
+      await client.importContext({ sessionId: 'ses_history', content: 'second imported turn', source: "session 'source-b'" });
+      await client.closeSession({ sessionId: 'ses_history' });
+      await rm(cwd, { recursive: true, force: true });
+      await expect(client.resumeSession({ id: 'ses_history' })).rejects.toMatchObject({
+        code: 'environment.invalid_cwd',
+      });
+      const wirePath = join(await findSessionDir(homeDir, 'ses_history'), 'agents', MAIN_AGENT_ID, 'wire.jsonl');
+
+      const full = await client.readSessionHistory({ id: 'ses_history' });
+      const expectedFull = await foldAgentWireReplay(wirePath);
+      expect(full).toEqual({
+        replay: expectedFull.replay,
+        userTurnCount: expectedFull.userTurnCount,
+        replayWarning: undefined,
+        replayError: undefined,
+      });
+      expect(JSON.stringify(full.replay)).toContain('first imported turn');
+
+      const limited = await client.readSessionHistory({ id: 'ses_history', replayTurnLimit: 1 });
+      expect(limited.replay).toEqual((await foldAgentWireReplay(wirePath, 1)).replay);
+      expect(JSON.stringify(limited.replay)).toContain('second imported turn');
+      expect(JSON.stringify(limited.replay)).not.toContain('first imported turn');
+      expect(getLiveSessionById(client.engineAccessor, 'ses_history')).toBeUndefined();
+
+      await expect(client.readSessionHistory({ id: 'ses_missing' })).rejects.toMatchObject({
+        code: ErrorCodes.SESSION_NOT_FOUND,
+      });
     } finally {
       await client.close();
     }
@@ -4074,3 +4119,170 @@ async function writeSkill(dir: string, name: string): Promise<void> {  await mkd
     'utf-8',
   );
 }
+
+describe('KimiHarness worktrees', () => {
+  const exec = promisify(execFile);
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  async function git(cwd: string, ...args: string[]): Promise<string> {
+    const identity = ['-c', 'user.email=worktree-test@example.com', '-c', 'user.name=Worktree Test'];
+    const { stdout } = await exec('git', [...identity, '-c', 'commit.gpgsign=false', ...args], { cwd });
+    return stdout;
+  }
+
+  async function makeWorktreeHarness(): Promise<{ harness: KimiHarness; homeDir: string; repo: string }> {
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_WORKTREE', '1');
+    const { harness, homeDir } = await makeHarness();
+    const repo = await realpath(await mkdtemp(join(tmpdir(), 'kimi-sdk-worktree-repo-')));
+    tempDirs.push(repo);
+    await mkdir(join(repo, 'packages', 'foo'), { recursive: true });
+    await writeFile(join(repo, 'packages', 'foo', 'a.txt'), 'x\n');
+    await git(repo, 'init', '-q', '-b', 'main');
+    await git(repo, 'add', '.');
+    await git(repo, 'commit', '-q', '-m', 'init');
+    return { harness, homeDir, repo };
+  }
+
+  it('declares every engine worktree error code', () => {
+    expect(Object.keys(KIMI_ERROR_INFO)).toEqual(expect.arrayContaining(Object.values(WorktreeErrors.codes)));
+  });
+
+  it('creates a worktree, reporting the check, add and include steps in order', async () => {
+    const { harness, homeDir, repo } = await makeWorktreeHarness();
+    try {
+      const events: WorktreeCreateEvent[] = [];
+      const created = await harness.createWorktree(
+        { cwd: join(repo, 'packages', 'foo'), name: 'feat-a' },
+        { onEvent: (event) => events.push(event) },
+      );
+
+      expect(events.flatMap((event) => (event.type === 'step' ? [`${event.step}:${event.status}`] : []))).toEqual([
+        'check:started',
+        'check:finished',
+        'add:started',
+        'add:finished',
+        'include:started',
+        'include:finished',
+      ]);
+      expect(events.some((event) => event.type === 'output' && event.step === 'add')).toBe(true);
+      expect(basename(created.worktree.path)).toBe('feat-a');
+      expect(dirname(dirname(created.worktree.path))).toBe(join(await realpath(homeDir), 'worktrees'));
+      expect(created.cwd).toBe(join(created.worktree.path, 'packages', 'foo'));
+      expect(await git(repo, 'worktree', 'list', '--porcelain')).toContain(`worktree ${created.worktree.path}\n`);
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it('resolves a Kimi worktree directory to its source directory, where the project sessions are listed', async () => {
+    const { harness, homeDir, repo } = await makeWorktreeHarness();
+    try {
+      const source = join(repo, 'packages', 'foo');
+      const session = await harness.createSession({ workDir: source });
+      await harness.closeSession(session.id);
+      const created = await harness.createWorktree({ cwd: source, name: 'feat-a' });
+      const root = created.worktree.path;
+      const worktree = { root, name: 'feat-a', repoRoot: repo };
+
+      expect(await harness.resolveWorkLocation(repo)).toStrictEqual({ workDir: repo, cwd: repo });
+      const linked = join(repo, '..', `${basename(repo)}-linked`);
+      tempDirs.push(linked);
+      await git(repo, 'worktree', 'add', '-q', '--detach', linked);
+      const linkedRoot = await realpath(linked);
+      expect(await harness.resolveWorkLocation(linkedRoot)).toStrictEqual({ workDir: linkedRoot, cwd: linkedRoot });
+
+      const location = await harness.resolveWorkLocation(created.cwd);
+      expect(location).toStrictEqual({ workDir: source, cwd: created.cwd, worktree });
+      expect((await harness.listSessions({ workDir: location.workDir })).map((item) => item.id)).toEqual([session.id]);
+
+      const deeper = join(created.cwd, 'only-here', 'deeper');
+      await mkdir(deeper, { recursive: true });
+      expect(await harness.resolveWorkLocation(deeper)).toStrictEqual({ workDir: source, cwd: deeper, worktree });
+      await mkdir(join(root, 'top-only'));
+      expect((await harness.resolveWorkLocation(join(root, 'top-only'))).workDir).toBe(repo);
+
+      const spelledThroughHome = join(homeDir, relative(await realpath(homeDir), created.cwd));
+      expect(await harness.resolveWorkLocation(spelledThroughHome)).toStrictEqual({
+        workDir: source,
+        cwd: created.cwd,
+        worktree,
+      });
+
+      vi.stubEnv('KIMI_CODE_EXPERIMENTAL_WORKTREE', '0');
+      expect(await harness.resolveWorkLocation(created.cwd)).toStrictEqual({ workDir: created.cwd, cwd: created.cwd });
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it('reads skills and MCP servers for a worktree directory without making it a project', async () => {
+    const { harness, homeDir, repo } = await makeWorktreeHarness();
+    try {
+      const created = await harness.createWorktree({ cwd: repo, name: 'feat-a' });
+      await writeSkill(join(created.worktree.path, '.kimi-code', 'skills', 'worktree-skill'), 'worktree-skill');
+
+      expect((await harness.listWorkspaceSkills(created.worktree.path)).map((skill) => skill.name)).toContain('worktree-skill');
+      await harness.listWorkspaceMcpServers(created.worktree.path);
+      const catalog = JSON.parse(await readFile(join(homeDir, 'projects.json'), 'utf8')) as {
+        projects: Record<string, { root: string }>;
+      };
+      expect(Object.values(catalog.projects).map((project) => project.root)).toEqual([repo]);
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it('restates worktree engine errors as KimiError with their details', async () => {
+    const { harness, repo } = await makeWorktreeHarness();
+    try {
+      const created = await harness.createWorktree({ cwd: repo, name: 'feat-a' });
+
+      const duplicate: unknown = await harness.createWorktree({ cwd: repo, name: 'feat-a' }).catch((error: unknown) => error);
+      expect(isKimiError(duplicate)).toBe(true);
+      expect(duplicate).toMatchObject({
+        code: ErrorCodes.WORKTREE_ALREADY_EXISTS,
+        details: { path: created.worktree.path },
+      });
+      await expect(harness.createWorktree({ cwd: repo, name: 'feat/login' })).rejects.toMatchObject({
+        name: 'KimiError',
+        code: ErrorCodes.WORKTREE_INVALID_NAME,
+        details: { name: 'feat/login', reason: 'slash' },
+      });
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it('lists, inspects and removes a worktree', async () => {
+    const { harness, repo } = await makeWorktreeHarness();
+    try {
+      const created = await harness.createWorktree({ cwd: repo, name: 'feat-a' });
+      const path = created.worktree.path;
+      const head = (await git(repo, 'rev-parse', 'HEAD')).trim();
+      const listing = { repoRoot: repo, worktrees: [{ path, name: 'feat-a', head, branch: undefined, missing: false }] };
+      expect(await harness.listWorktrees(repo)).toEqual(listing);
+      expect(await harness.listWorktrees(path)).toEqual(listing);
+
+      await writeFile(join(path, 'scratch.txt'), 'draft\n');
+      const target = { repoRoot: repo, path, deleteBranch: false };
+      expect(await harness.inspectWorktreeRemoval(target)).toMatchObject({
+        path,
+        missing: false,
+        uncommittedFiles: 1,
+        uniqueCommits: 0,
+      });
+      await expect(
+        harness.removeWorktree({ ...target, discard: { uncommittedFiles: 0, uniqueCommits: 0 } }),
+      ).rejects.toMatchObject({ code: ErrorCodes.WORKTREE_HAS_UNCOMMITTED, details: { path, uncommittedFiles: 1 } });
+
+      await harness.removeWorktree({ ...target, discard: { uncommittedFiles: 1, uniqueCommits: 0 } });
+      expect(await harness.listWorktrees(repo)).toEqual({ repoRoot: repo, worktrees: [] });
+      await expect(readdir(path)).rejects.toMatchObject({ code: 'ENOENT' });
+    } finally {
+      await harness.close();
+    }
+  });
+});

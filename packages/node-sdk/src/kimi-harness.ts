@@ -37,11 +37,13 @@ import type {
   PluginInfo,
   PluginSummary,
   ReloadSummary,
+  ReadSessionHistoryInput,
   RenameSessionInput,
   ResumeSessionInput,
   ReloadSessionInput,
   RefreshProviderModelsOptions,
   RefreshProviderModelsResponse,
+  SessionHistory,
   SessionSummary,
   SessionSummaryPage,
   SkillSummary,
@@ -59,6 +61,18 @@ import type {
   WorkspaceTrustInfo,
   WorkspaceTrustInfoOptions,
 } from '#/types';
+import type {
+  CreatedWorktree,
+  CreateWorktreeInput,
+  CreateWorktreeOptions,
+  InspectWorktreeRemovalInput,
+  RemoveWorktreeInput,
+  RunSetupScriptInput,
+  RunSetupScriptOptions,
+  WorkLocation,
+  WorktreeListing,
+  WorktreeRemovalCheck,
+} from '#/worktree';
 
 export interface KimiHarnessEnvironmentOptions {
   readonly identity?: KimiHostIdentity;
@@ -223,6 +237,10 @@ export class KimiHarness {
     return session;
   }
 
+  async readSessionHistory(input: ReadSessionHistoryInput): Promise<SessionHistory> {
+    return this.rpc.readSessionHistory({ ...input, id: normalizeSessionId(input.id) });
+  }
+
   async reloadSession(input: ReloadSessionInput): Promise<Session> {
     const id = normalizeSessionId(input.id);
     const active = this.activeSessions.get(id);
@@ -374,6 +392,33 @@ export class KimiHarness {
    */
   async getGitPullRequest(workDir: string, input: GitQueryInput = {}): Promise<GitPullRequest | null> {
     return this.rpc.getGitPullRequest(workDir, input);
+  }
+
+  async resolveWorkLocation(cwd: string): Promise<WorkLocation> {
+    return this.rpc.resolveWorkLocation(cwd);
+  }
+
+  async listWorktrees(cwd: string): Promise<WorktreeListing> {
+    return this.rpc.listWorktrees(cwd);
+  }
+
+  async createWorktree(input: CreateWorktreeInput, options?: CreateWorktreeOptions): Promise<CreatedWorktree> {
+    return this.rpc.createWorktree(input, options);
+  }
+
+  async runWorktreeSetupScript(
+    input: RunSetupScriptInput,
+    options?: RunSetupScriptOptions,
+  ): Promise<{ readonly exitCode: number }> {
+    return this.rpc.runWorktreeSetupScript(input, options);
+  }
+
+  async inspectWorktreeRemoval(input: InspectWorktreeRemovalInput): Promise<WorktreeRemovalCheck> {
+    return this.rpc.inspectWorktreeRemoval(input);
+  }
+
+  async removeWorktree(input: RemoveWorktreeInput): Promise<void> {
+    return this.rpc.removeWorktree(input);
   }
 
   /**

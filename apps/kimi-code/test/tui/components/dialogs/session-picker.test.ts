@@ -1163,4 +1163,23 @@ describe('SessionPickerComponent', () => {
       }
     });
   });
+
+  it('tags worktree and missing working directories after the directory', () => {
+    const component = new SessionPickerComponent({
+      sessions: [
+        { id: 'ses_wt', title: 'In a worktree', work_dir: '/tmp/wt/x', worktree: 'x', updated_at: 0 },
+        { id: 'ses_gone', title: 'Gone', work_dir: '/tmp/gone', missing: true, updated_at: 0 },
+        { id: 'ses_plain', title: 'Plain', work_dir: '/tmp/project', updated_at: 0 },
+      ],
+      loading: false,
+      currentSessionId: '',
+      onSelect: vi.fn(),
+      onCancel: vi.fn(),
+    });
+
+    const lines = renderPlain(component).split('\n');
+    expect(lines.find((line) => line.includes('ses_wt'))).toMatch(/\/tmp\/wt\/x {3}worktree x$/);
+    expect(lines.find((line) => line.includes('ses_gone'))).toMatch(/\/tmp\/gone {3}missing$/);
+    expect(lines.find((line) => line.includes('ses_plain'))).toMatch(/\/tmp\/project$/);
+  });
 });

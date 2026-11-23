@@ -71,11 +71,13 @@ import type {
   PromptInput,
   PromptSkillActivation,
   PromptSubmissionResult,
+  ReadSessionHistoryInput,
   RenameSessionInput,
   ResumeSessionInput,
   ResumedSessionSummary,
   RefreshProviderModelsOptions,
   RefreshProviderModelsResponse,
+  SessionHistory,
   SessionSummary,
   SessionSummaryPage,
   SessionEnvironmentsInfo,
@@ -92,6 +94,18 @@ import type {
   WorkspaceTrustInfo,
   WorkspaceTrustInfoOptions,
 } from '#/types';
+import type {
+  CreatedWorktree,
+  CreateWorktreeInput,
+  CreateWorktreeOptions,
+  InspectWorktreeRemovalInput,
+  RemoveWorktreeInput,
+  RunSetupScriptInput,
+  RunSetupScriptOptions,
+  WorkLocation,
+  WorktreeListing,
+  WorktreeRemovalCheck,
+} from '#/worktree';
 
 const MAIN_AGENT_ID = 'main';
 
@@ -211,6 +225,8 @@ export abstract class SDKRpcClientBase {
   abstract resumeSession(input: ResumeSessionInput): Promise<ResumedSessionSummary>;
 
   abstract reloadSession(input: ReloadSessionRpcInput): Promise<ResumedSessionSummary>;
+
+  abstract readSessionHistory(input: ReadSessionHistoryInput): Promise<SessionHistory>;
 
   abstract forkSession(input: ForkSessionInput): Promise<SessionSummary>;
 
@@ -458,6 +474,21 @@ export abstract class SDKRpcClientBase {
   abstract getGitStatus(workDir: string, input: GitQueryInput): Promise<GitStatusSummary | null>;
 
   abstract getGitPullRequest(workDir: string, input: GitQueryInput): Promise<GitPullRequest | null>;
+
+  abstract resolveWorkLocation(cwd: string): Promise<WorkLocation>;
+
+  abstract listWorktrees(cwd: string): Promise<WorktreeListing>;
+
+  abstract createWorktree(input: CreateWorktreeInput, options?: CreateWorktreeOptions): Promise<CreatedWorktree>;
+
+  abstract runWorktreeSetupScript(
+    input: RunSetupScriptInput,
+    options?: RunSetupScriptOptions,
+  ): Promise<{ readonly exitCode: number }>;
+
+  abstract inspectWorktreeRemoval(input: InspectWorktreeRemovalInput): Promise<WorktreeRemovalCheck>;
+
+  abstract removeWorktree(input: RemoveWorktreeInput): Promise<void>;
 
   abstract listBackgroundTasks(
     input: SessionIdRpcInput & { activeOnly?: boolean; limit?: number },

@@ -257,6 +257,7 @@ export class WorkspaceInstanceManager implements IWorkspaceInstanceManager {
         appState: this.appState,
         bootstrap: this.bootstrap,
         config: this.config,
+        flags: this.flags,
         git: this.git,
         identity: this.identity,
         log: this.log,

@@ -7,14 +7,19 @@ import { promisify } from 'node:util';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { Event } from '#/_base/event';
+import { encodeWorkDirKey } from '#/_base/utils/workdir-slug';
 import { InstantiationService } from '#/_base/di/instantiationService';
 import { ServiceCollection } from '#/_base/di/serviceCollection';
 import { AgentProfileRegistryService } from '#/app/agentProfileCatalog/agentProfileRegistryService';
 import { noopTelemetryService } from '#/app/telemetry/telemetry';
+import { WORKTREE_FLAG_ID } from '#/app/worktree/worktree';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { HostProcessService } from '#/os/backends/node-local/hostProcessService';
 import { HostFsError, OsFsErrors } from '#/os/interface/hostFsErrors';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
+import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
+import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
+import { IAgentMcpService } from '#/agent/mcp/mcp';
 import type { IEnvironmentService } from '#/app/environment/environment';
 import { Program, type ProgramWorkdir } from '#/program/program';
 import type { ProgramSessionControllerInput } from '#/program/programDependencies';
@@ -24,6 +29,8 @@ import { EnvironmentRegistry } from '#/environment/environmentRegistry';
 import { FileSkillDiscovery } from '#/features/skill/catalog/fileSkillDiscovery';
 import { UserFileSkillSource } from '#/features/skill/catalog/userFileSkillSource';
 import { fakeEnvironment } from '../environment/stubs';
+import { createTestAgent, sessionService } from '../harness';
+import { cwdStdioFixture, stdioFixture } from '../mcpCore/stubs';
 import { noopLogger } from '../wire/stubs';
 import type { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
 import { writeWorkspaceTrust } from '#/workspace/workspaceTrust/trustRecord';
@@ -32,6 +39,7 @@ import type { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
 import type { IWorkspaceFsService } from '#/workspace/workspaceFs/fs';
 import type { IWorkspaceGitService } from '#/workspace/workspaceGit/workspaceGit';
 import type { IWorkspaceInstructionsService } from '#/workspace/workspaceInstructions/workspaceInstructions';
+import type { IWorkspaceMcpService } from '#/workspace/workspaceMcp/workspaceMcp';
 import type { IWorkspaceMcpConfigService } from '#/workspace/workspaceMcpConfig/workspaceMcpConfig';
 import type { IUserAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/userAgentProfileLoader';
 import type { IWorkspaceAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/workspaceAgentProfileLoader';
@@ -331,6 +339,8 @@ interface LocalityFixture {
   readonly remoteAltRoot: string;
   readonly homeDir: string;
   readonly remoteHomeDir: string;
+  readonly kimiHome: string;
+  readonly flags: Set<string>;
   readonly replaceLocal: (generation: string) => Promise<void>;
   readonly cleanup: () => Promise<void>;
 }
@@ -361,7 +371,13 @@ function scopedFs(base: string, realBase: string, inner: IHostFileSystem, additi
   };
 }
 
-async function localityFixture(options: { readonly remoteCwd?: string } = {}): Promise<LocalityFixture> {
+interface LocalityFixtureOptions {
+  readonly remoteCwd?: string;
+  readonly trusted?: boolean;
+  readonly prepareLocal?: (paths: { readonly localRoot: string; readonly kimiHome: string }) => Promise<void>;
+}
+
+async function localityFixture(options: LocalityFixtureOptions = {}): Promise<LocalityFixture> {
   const base = await mkdtemp(join(tmpdir(), 'kimi-program-locality-'));
   const localRoot = join(base, 'local');
   const remoteRoot = join(base, 'target');
@@ -415,6 +431,7 @@ async function localityFixture(options: { readonly remoteCwd?: string } = {}): P
   await writeFile(join(kimiHome, 'mcp.json'), mcpJson('user-server'));
 
   await execFileAsync('git', ['init', '-b', 'main', remoteRoot]);
+  await options.prepareLocal?.({ localRoot, kimiHome });
 
   const docsRecords = new Map<string, unknown>();
   const docs = {
@@ -422,8 +439,11 @@ async function localityFixture(options: { readonly remoteCwd?: string } = {}): P
     get: async <T,>(scope: string, key: string) => docsRecords.get(`${scope}/${key}`) as T | undefined,
     set: async <T,>(scope: string, key: string, value: T) => { docsRecords.set(`${scope}/${key}`, value); },
     delete: async (scope: string, key: string) => { docsRecords.delete(`${scope}/${key}`); },
+    list: async (scope: string, prefix = '') => [...docsRecords.keys()]
+      .filter((path) => path.startsWith(`${scope}/${prefix}`))
+      .map((path) => path.slice(scope.length + 1)),
   };
-  await writeWorkspaceTrust(docs as never, localRoot, Date.now());
+  if (options.trusted !== false) await writeWorkspaceTrust(docs as never, localRoot, Date.now());
 
   const localGitCalls: string[] = [];
   const localGit = {
@@ -437,6 +457,7 @@ async function localityFixture(options: { readonly remoteCwd?: string } = {}): P
 
   const registry = new EnvironmentRegistry();
   const controllerInputs: ProgramSessionControllerInput[] = [];
+  const flags = new Set<string>();
   const profileContainer = new InstantiationService(new ServiceCollection(), true);
   const profileRegistry = profileContainer.createInstance(AgentProfileRegistryService);
   const profileRegistrations: { readonly sourceId: string; readonly profiles: readonly string[] }[] = [];
@@ -447,7 +468,14 @@ async function localityFixture(options: { readonly remoteCwd?: string } = {}): P
     get: () => undefined,
     onDidSectionChange: () => ({ dispose: () => {} }),
   };
-  const trustStore = new WorkspaceTrustStore(docs as never, noopTelemetryService, bootstrap as never, config as never);
+  const trustStore = new WorkspaceTrustStore(
+    docs as never,
+    noopTelemetryService,
+    bootstrap as never,
+    config as never,
+    { enabled: () => false } as never,
+    {} as never,
+  );
   const userSkills = new UserFileSkillSource(
     new FileSkillDiscovery(noopLogger),
     bootstrap as never,
@@ -461,6 +489,7 @@ async function localityFixture(options: { readonly remoteCwd?: string } = {}): P
       appState: undefined,
       bootstrap,
       config,
+      flags: { enabled: (id: string) => flags.has(id) },
       git: { current: localGit, onDidChange: Event.None },
       identity: {
         _serviceBrand: undefined,
@@ -469,6 +498,7 @@ async function localityFixture(options: { readonly remoteCwd?: string } = {}): P
       },
       log: noopLogger,
       oauth: {
+        now: () => Date.now(),
         onEvent: () => () => {},
         setConfigurationSource: () => {},
         removeConfigurationSource: () => {},
@@ -561,6 +591,8 @@ async function localityFixture(options: { readonly remoteCwd?: string } = {}): P
     remoteAltRoot,
     homeDir,
     remoteHomeDir,
+    kimiHome,
+    flags,
     replaceLocal: async (generation: string) => {
       await localRegistration.remove();
       registry.register(Object.assign(
@@ -795,4 +827,173 @@ describe('Program local generation and remote workdirs', () => {
       await fixture.cleanup();
     }
   });
+});
+
+const cwdServer = { command: process.execPath, args: [cwdStdioFixture] };
+
+async function git(cwd: string, ...args: string[]): Promise<void> {
+  await execFileAsync('git', ['-c', 'user.email=test@example.com', '-c', 'user.name=Test', '-c', 'commit.gpgsign=false', ...args], { cwd });
+}
+
+async function worktreeFixture(options: { readonly trusted?: boolean } = {}): Promise<LocalityFixture & { readonly worktree: string }> {
+  let worktree = '';
+  const fixture = await localityFixture({
+    trusted: options.trusted,
+    prepareLocal: async ({ localRoot, kimiHome }) => {
+      await writeFile(join(localRoot, '.mcp.json'), JSON.stringify({ mcpServers: { shared: cwdServer } }));
+      await writeFile(join(localRoot, 'localextra', '.gitkeep'), '');
+      await git(localRoot, 'init', '-q', '-b', 'main');
+      await git(localRoot, 'add', '.');
+      await git(localRoot, 'commit', '-q', '-m', 'init');
+      worktree = join(kimiHome, 'worktrees', encodeWorkDirKey(await realpath(localRoot)), 'wt');
+      await git(localRoot, 'worktree', 'add', '-q', '--detach', worktree);
+      await mkdir(join(worktree, 'sub', '.kimi-code'), { recursive: true });
+      await writeFile(join(worktree, 'sub', '.kimi-code', 'mcp.json'), JSON.stringify({ mcpServers: { local: cwdServer } }));
+    },
+  });
+  fixture.flags.add(WORKTREE_FLAG_ID);
+  return { ...fixture, worktree };
+}
+
+async function serverCwd(mcp: IWorkspaceMcpService, name: string): Promise<string> {
+  const resolved = mcp.connectionManager().resolved(name);
+  if (resolved === undefined) throw new Error(`${name} is not connected`);
+  const result = await resolved.client.callTool('get_cwd', {});
+  return (result.content[0] as { readonly text: string }).text;
+}
+
+function serverNames(mcp: IWorkspaceMcpService): string[] {
+  return mcp.connectionManager().list().map((entry) => entry.name).toSorted();
+}
+
+function answers(client: { callTool(name: string, args: Record<string, unknown>): Promise<unknown> }): Promise<boolean> {
+  return Promise.resolve().then(() => client.callTool('get_cwd', {})).then(() => true, () => false);
+}
+
+describe('Program worktree MCP', () => {
+  it('runs the MCP servers of a Kimi worktree session from the worktree while the project keeps its own processes', async () => {
+    const fixture = await worktreeFixture();
+    try {
+      const project = fixture.program.mcp;
+      await project.ready;
+      const projectClient = project.connectionManager().resolved('shared')?.client;
+      expect(await serverCwd(project, 'shared')).toBe(await realpath(fixture.localRoot));
+
+      const view = await fixture.workdir(join(fixture.worktree, 'sub'), 'local', false);
+      await view.mcp!.ready;
+
+      expect(await serverCwd(view.mcp!, 'shared')).toBe(await realpath(fixture.worktree));
+      expect(await serverCwd(view.mcp!, 'local')).toBe(await realpath(join(fixture.worktree, 'sub')));
+      expect(serverNames(view.mcp!)).toEqual(['local', 'shared', 'user-server']);
+      expect(serverNames(project)).toEqual(['shared', 'user-server']);
+      expect(project.connectionManager().resolved('shared')?.client).toBe(projectClient);
+      expect(await serverCwd(project, 'shared')).toBe(await realpath(fixture.localRoot));
+    } finally {
+      await fixture.cleanup();
+    }
+  }, 30000);
+
+  it('shares one MCP set between the sessions of a worktree and stops it after the last one leaves', async () => {
+    const fixture = await worktreeFixture();
+    try {
+      const cwd = join(fixture.worktree, 'sub');
+      const first = await fixture.workdir(cwd, 'local', false);
+      const second = await fixture.workdir(cwd, 'local', false);
+      expect(second.mcp).toBe(first.mcp);
+      await first.mcp!.ready;
+      const client = first.mcp!.connectionManager().resolved('local')!.client;
+
+      first.dispose();
+      expect(second.mcp!.connectionManager().resolved('local')?.client).toBe(client);
+      expect(await answers(client)).toBe(true);
+
+      second.dispose();
+      await vi.waitFor(async () => { expect(await answers(client)).toBe(false); }, { timeout: 10000 });
+      const next = await fixture.workdir(cwd, 'local', false);
+      expect(next.mcp).not.toBe(first.mcp);
+    } finally {
+      await fixture.cleanup();
+    }
+  }, 30000);
+
+  it('waits for the worktree MCP servers to stop when the program is disposed', async () => {
+    const fixture = await worktreeFixture();
+    const view = await fixture.workdir(join(fixture.worktree, 'sub'), 'local', false);
+    await view.mcp!.ready;
+    const client = view.mcp!.connectionManager().resolved('local')!.client;
+
+    await fixture.cleanup();
+
+    expect(await answers(client)).toBe(false);
+  }, 30000);
+
+  it('reads the project MCP config of the worktree once the project is trusted, without trusting the worktree', async () => {
+    const fixture = await worktreeFixture({ trusted: false });
+    try {
+      const view = await fixture.workdir(join(fixture.worktree, 'sub'), 'local', false);
+      await view.mcp!.ready;
+      expect(serverNames(view.mcp!)).toEqual(['user-server']);
+
+      await fixture.program.trust.trust();
+
+      await vi.waitFor(() => { expect(serverNames(view.mcp!)).toEqual(['local', 'shared', 'user-server']); }, { timeout: 10000 });
+    } finally {
+      await fixture.cleanup();
+    }
+  }, 30000);
+
+  it('sends the same MCP tool definitions in name order on every request whatever order the worktree servers connect in', async () => {
+    const fixture = await worktreeFixture();
+    const tools = join(fixture.worktree, 'tools');
+    const server = (env?: Record<string, string>) => ({ command: process.execPath, args: [stdioFixture], env });
+    await mkdir(join(tools, '.kimi-code'), { recursive: true });
+    await writeFile(join(tools, '.kimi-code', 'mcp.json'), JSON.stringify({
+      mcpServers: { alpha: server({ KIMI_TEST_MCP_START_DELAY_MS: '500' }), beta: server() },
+    }));
+    const view = await fixture.workdir(tools, 'local', false);
+    const mcpTools = [
+      'mcp__alpha__boom', 'mcp__alpha__echo', 'mcp__alpha__read_env', 'mcp__alpha__whoami',
+      'mcp__beta__boom', 'mcp__beta__echo', 'mcp__beta__read_env', 'mcp__beta__whoami',
+      'mcp__shared__get_cwd',
+    ];
+    const handle = view.mcp!.sessionHandle();
+    const ctx = createTestAgent(sessionService(ISessionMcpHandle, handle));
+    try {
+      ctx.get(IAgentMcpService);
+      await handle.ready;
+      await vi.waitFor(() => {
+        expect(ctx.get(IAgentToolRegistryService).list().map((tool) => tool.name).filter((name) => name.startsWith('mcp__'))).toHaveLength(mcpTools.length);
+      });
+      ctx.configure({ tools: ['Read', ...mcpTools.toReversed()] });
+      for (const text of ['first', 'second']) {
+        ctx.mockNextResponse({ type: 'text', text });
+        await ctx.rpc.prompt({ input: [{ type: 'text', text }] });
+        await ctx.untilTurnEnd();
+      }
+
+      expect(ctx.llmCalls).toHaveLength(2);
+      expect((ctx.llmCalls[0]!.tools ?? []).map((tool) => tool.name)).toEqual([...mcpTools, 'Read']);
+      expect(JSON.stringify(ctx.llmCalls[1]!.tools)).toBe(JSON.stringify(ctx.llmCalls[0]!.tools));
+    } finally {
+      await ctx.dispose();
+      await fixture.cleanup();
+    }
+  }, 30000);
+
+  it('keeps sessions on the project MCP set outside a Kimi worktree, on remote targets, and while the flag is off', async () => {
+    const fixture = await worktreeFixture();
+    try {
+      const linked = join(fixture.homeDir, 'linked');
+      await git(fixture.localRoot, 'worktree', 'add', '-q', '--detach', linked);
+
+      expect((await fixture.workdir(join(fixture.localRoot, 'localextra'), 'local', false)).mcp).toBeUndefined();
+      expect((await fixture.workdir(linked, 'local', false)).mcp).toBeUndefined();
+      expect((await fixture.workdir(fixture.remoteRoot)).mcp).toBeUndefined();
+
+      fixture.flags.delete(WORKTREE_FLAG_ID);
+      expect((await fixture.workdir(fixture.worktree, 'local', false)).mcp).toBeUndefined();
+    } finally {
+      await fixture.cleanup();
+    }
+  }, 30000);
 });

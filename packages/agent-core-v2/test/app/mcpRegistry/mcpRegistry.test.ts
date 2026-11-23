@@ -10,6 +10,8 @@ import { Event } from '#/_base/event';
 import { encodeWorkDirKey } from '#/_base/utils/workdir-slug';
 import { createServices } from '#/_base/di/test';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
+import { IFlagService } from '#/app/flag/flag';
+import { stubFlag } from '../flag/stubs';
 import { IConfigService } from '#/app/config/config';
 import {
   IMcpConfigStore,
@@ -108,6 +110,7 @@ describe('McpRegistryService', () => {
               ? { requireTrust: workspaceTrustEnabled }
               : undefined) as T) as IConfigService['get'],
         });
+        reg.defineInstance(IFlagService, stubFlag());
         reg.define(IWorkspaceTrustStore, WorkspaceTrustStore);
         reg.define(IMcpRegistryService, McpRegistryService);
       },

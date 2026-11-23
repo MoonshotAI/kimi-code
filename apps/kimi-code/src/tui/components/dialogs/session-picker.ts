@@ -18,6 +18,9 @@ export interface SessionRow {
   readonly title: string | null;
   readonly last_prompt?: string | null;
   readonly work_dir: string;
+  readonly project_work_dir?: string;
+  readonly worktree?: string;
+  readonly missing?: boolean;
   readonly updated_at: number;
   readonly metadata?: Readonly<Record<string, unknown>> | undefined;
 }
@@ -42,7 +45,7 @@ function homeAlias(path: string): string {
   return path;
 }
 
-function truncatePathLeft(path: string, maxWidth: number): string {
+export function truncatePathLeft(path: string, maxWidth: number): string {
   if (maxWidth <= 0) return '';
   if (visibleWidth(path) <= maxWidth) return path;
   if (maxWidth === 1) return ELLIPSIS;
@@ -476,13 +479,20 @@ export class SessionPickerComponent extends Container implements Focusable {
     const idLineWidth = indentWidth + idWidth;
     const aliasedDir = homeAlias(session.work_dir);
     const dirWidth = visibleWidth(aliasedDir);
+    const tags = [
+      session.worktree === undefined ? '' : currentTheme.fg('accent', `worktree ${session.worktree}`),
+      session.missing === true ? currentTheme.fg('warning', 'missing') : '',
+    ].filter((tag) => tag.length > 0);
+    const tagText = tags.length === 0 ? '' : metaGap + tags.join(' ');
+    const tagWidth = visibleWidth(tagText);
 
-    if (idLineWidth + metaGapWidth + dirWidth <= width) {
+    if (idLineWidth + metaGapWidth + dirWidth + tagWidth <= width) {
       card.push(
         indent +
           currentTheme.fg('textMuted', fullId) +
           currentTheme.fg('textDim', metaGap) +
-          currentTheme.fg('textMuted', aliasedDir),
+          currentTheme.fg('textMuted', aliasedDir) +
+          tagText,
       );
     } else {
       card.push(
@@ -492,9 +502,9 @@ export class SessionPickerComponent extends Container implements Focusable {
             truncateToWidth(fullId, Math.max(idWidth, width - indentWidth), ELLIPSIS),
           ),
       );
-      const dirBudget = Math.max(8, width - indentWidth);
+      const dirBudget = Math.max(8, width - indentWidth - tagWidth);
       const dir = truncatePathLeft(aliasedDir, dirBudget);
-      card.push(indent + currentTheme.fg('textMuted', dir));
+      card.push(indent + currentTheme.fg('textMuted', dir) + tagText);
     }
 
     const rawPrompt = session.last_prompt?.trim();

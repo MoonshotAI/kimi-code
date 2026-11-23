@@ -35,6 +35,7 @@ export class FileProjectLocalConfigService implements IProjectLocalConfigService
     @IBootstrapService bootstrap: IBootstrapService,
     @IHostFileSystem private readonly fs: IHostFileSystem,
     private readonly homeDir = bootstrap.osHomeDir,
+    private readonly projectDir?: string,
   ) {}
 
   async readAdditionalDirs(workDir: string): Promise<ProjectAdditionalDirsLoadResult> {
@@ -125,7 +126,7 @@ export class FileProjectLocalConfigService implements IProjectLocalConfigService
   }
 
   private async findProjectRoot(workDir: string): Promise<string> {
-    const initial = normalize(workDir);
+    const initial = normalize(this.projectDir ?? workDir);
     let current = initial;
 
     while (true) {

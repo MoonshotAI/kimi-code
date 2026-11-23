@@ -300,7 +300,7 @@ export class Program {
       const userAgentProfiles = own(new UserAgentProfileLoaderService(this.dependencies.bootstrap, hostFs, this.dependencies.log, this.dependencies.builtinAgentProfiles, this.context, this.dependencies.agentProfiles));
       const pluginAgentProfiles = own(new PluginAgentProfileLoaderService(this.dependencies.plugins, hostFs, this.dependencies.log, userAgentProfiles, this.context, this.dependencies.agentProfiles));
       const harness: ProgramHarness = { userAgentProfiles, explicitSkills, extraSkills, pluginSkills };
-      const workdirs = new ProgramWorkdirs(this.environments, this.context, this.dependencies, harness, own);
+      const workdirs = new ProgramWorkdirs(this.environments, this.context, this.dependencies, harness, own, () => trust);
       const root = workdirs.root;
       const explicitAgentProfiles = own(new ExplicitAgentProfileLoaderService(this.context, root.dirs, this.dependencies.bootstrap, hostFs, this.dependencies.log, userAgentProfiles, this.dependencies.agentProfiles));
       const extraAgentProfiles = own(new ExtraAgentProfileLoaderService(this.dependencies.config, this.context, root.dirs, this.dependencies.bootstrap, hostFs, this.dependencies.log, userAgentProfiles, this.dependencies.agentProfiles));

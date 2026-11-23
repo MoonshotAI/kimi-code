@@ -1,12 +1,16 @@
 import { randomUUID } from 'node:crypto';
 
-import { basename, isAbsolute } from 'pathe';
+import { basename, isAbsolute, join } from 'pathe';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { ILogService } from '#/_base/log/log';
 import { encodeWorkDirKey, isWorkDirKey, workspaceRootKey } from '#/_base/utils/workdir-slug';
+import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IEventService } from '#/app/event/event';
+import { IFlagService } from '#/app/flag/flag';
 import { IProjectLocalConfigService } from '#/app/projectLocalConfig/projectLocalConfig';
+import { WORKTREE_FLAG_ID } from '#/app/worktree/worktree';
+import { canonicalPath } from '#/app/worktree/worktreeCheckout';
 import { ErrorCodes, Error2, unwrapErrorCause } from '#/errors';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
@@ -46,6 +50,8 @@ export class WorkspaceService implements IWorkspaceService {
     @IProjectLocalConfigService private readonly localConfig: IProjectLocalConfigService,
     @ILogService private readonly log: ILogService,
     @IEventService private readonly event: IEventService,
+    @IFlagService private readonly flags: IFlagService,
+    @IBootstrapService private readonly bootstrap: IBootstrapService,
   ) {}
 
   list(): Promise<readonly Workspace[]> {
@@ -397,9 +403,11 @@ export class WorkspaceService implements IWorkspaceService {
   ): Promise<boolean> {
     let changed = false;
     const now = Date.now();
+    const worktreeParents = await this.worktreeParentKeys();
     for (const entry of await readSessionIndexEntries(this.storage)) {
       if (!isAbsolute(entry.workDir)) continue;
       if (!isImplicitBucketSessionLine(entry)) continue;
+      if (isBelowAny(entry.workDir, worktreeParents)) continue;
       const id = encodeWorkDirKey(entry.workDir);
       if (byId.has(id) || deletedIds.has(id)) continue;
       byId.set(id, {
@@ -420,9 +428,11 @@ export class WorkspaceService implements IWorkspaceService {
     const result = new Map<string, Workspace>();
     const now = Date.now();
     const seenRootKeys = new Set<string>();
+    const worktreeParents = await this.worktreeParentKeys();
     for (const entry of await readSessionIndexEntries(this.storage)) {
       if (!isAbsolute(entry.workDir)) continue;
       if (!isImplicitBucketSessionLine(entry)) continue;
+      if (isBelowAny(entry.workDir, worktreeParents)) continue;
       const rootKey = workspaceRootKey(entry.workDir);
       if (seenRootKeys.has(rootKey)) continue;
       seenRootKeys.add(rootKey);
@@ -438,6 +448,12 @@ export class WorkspaceService implements IWorkspaceService {
       });
     }
     return result;
+  }
+
+  private async worktreeParentKeys(): Promise<readonly string[]> {
+    if (!this.flags.enabled(WORKTREE_FLAG_ID)) return [];
+    const parent = join(this.bootstrap.homeDir, 'worktrees');
+    return [...new Set([workspaceRootKey(parent), workspaceRootKey(await canonicalPath(this.hostFs, parent))])];
   }
 
   private async requireDirectory(root: string): Promise<void> {
@@ -495,6 +511,11 @@ export class WorkspaceService implements IWorkspaceService {
     );
     return next;
   }
+}
+
+function isBelowAny(path: string, parentKeys: readonly string[]): boolean {
+  const key = workspaceRootKey(path);
+  return parentKeys.some((parent) => key.startsWith(`${parent}/`));
 }
 
 registerScopedService(

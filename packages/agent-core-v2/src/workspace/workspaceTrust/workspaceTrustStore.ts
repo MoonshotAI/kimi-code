@@ -5,8 +5,12 @@ import { Emitter } from '#/_base/event';
 import { canonicalWorkspaceRoot } from '#/_base/utils/paths';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
+import { IFlagService } from '#/app/flag/flag';
 import { LifecycleScope } from '#/app/scopes';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
+import { WORKTREE_FLAG_ID } from '#/app/worktree/worktree';
+import { resolveWorktreeCheckout } from '#/app/worktree/worktreeCheckout';
+import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 
 import {
@@ -40,6 +44,7 @@ class WorkspaceTrustEntry extends Disposable implements IWorkspaceTrustEntry {
   private readonly root: string;
   private readonly envTrusted: boolean;
   private trusted = false;
+  private inherited?: IWorkspaceTrustEntry;
   private mutationTail: Promise<void> = Promise.resolve();
   private readonly changeEmitter = this._register(new Emitter<WorkspaceTrustChange>());
   readonly onDidChange = this.changeEmitter.event;
@@ -50,6 +55,7 @@ class WorkspaceTrustEntry extends Disposable implements IWorkspaceTrustEntry {
     private readonly telemetry: ITelemetryService,
     bootstrap: IBootstrapService,
     private readonly config: IConfigService,
+    private readonly inheritFrom: (root: string) => Promise<IWorkspaceTrustEntry | undefined>,
   ) {
     super();
     this.root = root;
@@ -59,10 +65,13 @@ class WorkspaceTrustEntry extends Disposable implements IWorkspaceTrustEntry {
   get ready(): Promise<void> {
     if (this.initialization !== undefined) return this.initialization;
     const recovering = this.initializationFailed;
-    const initialization = readWorkspaceTrust(this.docs, this.root, this.telemetry).then((trusted) => {
+    const initialization = Promise.all([
+      readWorkspaceTrust(this.docs, this.root, this.telemetry),
+      this.resolveInherited(),
+    ]).then(([trusted]) => {
       this.trusted = trusted;
       this.initializationFailed = false;
-      if (recovering) this.changeEmitter.fire({ trusted });
+      if (recovering) this.changeEmitter.fire({ trusted: this.isPersistedTrusted() });
     });
     this.initialization = initialization;
     void initialization.catch(() => {
@@ -73,11 +82,11 @@ class WorkspaceTrustEntry extends Disposable implements IWorkspaceTrustEntry {
   }
 
   isPersistedTrusted(): boolean {
-    return this.trusted;
+    return this.trusted || (this.inherited?.isPersistedTrusted() ?? false);
   }
 
   isTrusted(): boolean {
-    return !this.trustGateEnabled() || this.envTrusted || this.trusted;
+    return !this.trustGateEnabled() || this.envTrusted || this.isPersistedTrusted();
   }
 
   async get(): Promise<boolean> {
@@ -95,21 +104,22 @@ class WorkspaceTrustEntry extends Disposable implements IWorkspaceTrustEntry {
       const trusted = await readWorkspaceTrust(this.docs, this.root, this.telemetry);
       if (this.trusted === trusted) return;
       this.trusted = trusted;
-      this.changeEmitter.fire({ trusted });
+      this.changeEmitter.fire({ trusted: this.isPersistedTrusted() });
     });
     this.mutationTail = refresh;
     await refresh;
+    await this.inherited?.refresh();
     return this.isTrusted();
   }
 
   onConfigChange(): void {
     if (!this.trustGateEnabled()) {
-      this.changeEmitter.fire({ trusted: this.trusted });
+      this.changeEmitter.fire({ trusted: this.isPersistedTrusted() });
       return;
     }
     void this.ready
       .catch(() => undefined)
-      .then(() => this.changeEmitter.fire({ trusted: this.trusted }));
+      .then(() => this.changeEmitter.fire({ trusted: this.isPersistedTrusted() }));
   }
 
   trust(): Promise<void> {
@@ -124,6 +134,17 @@ class WorkspaceTrustEntry extends Disposable implements IWorkspaceTrustEntry {
     return workspaceTrustRequired(this.config);
   }
 
+  private async resolveInherited(): Promise<void> {
+    if (this.inherited !== undefined) return;
+    const inherited = await this.inheritFrom(this.root);
+    if (inherited === undefined || this.inherited !== undefined) return;
+    await inherited.ready;
+    this.inherited = inherited;
+    this._register(inherited.onDidChange(() => {
+      this.changeEmitter.fire({ trusted: this.isPersistedTrusted() });
+    }));
+  }
+
   private mutate(trusted: boolean): Promise<void> {
     const mutation = this.mutationTail.catch(() => {}).then(async () => {
       await this.ready;
@@ -134,7 +155,7 @@ class WorkspaceTrustEntry extends Disposable implements IWorkspaceTrustEntry {
         await deleteWorkspaceTrust(this.docs, this.root);
       }
       this.trusted = trusted;
-      this.changeEmitter.fire({ trusted });
+      this.changeEmitter.fire({ trusted: this.isPersistedTrusted() });
       this.telemetry.track2('workspace_trust_changed', { trusted });
     });
     this.mutationTail = mutation;
@@ -221,6 +242,8 @@ export class WorkspaceTrustStore extends Disposable implements IWorkspaceTrustSt
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
     @IConfigService private readonly config: IConfigService,
+    @IFlagService private readonly flags: IFlagService,
+    @IHostFileSystem private readonly hostFs: IHostFileSystem,
   ) {
     super();
     this._register(this.config.onDidSectionChange((event) => {
@@ -233,9 +256,23 @@ export class WorkspaceTrustStore extends Disposable implements IWorkspaceTrustSt
     const key = canonicalWorkspaceRoot(root);
     const existing = this.entries.get(key);
     if (existing !== undefined) return existing;
-    const entry = this._register(new WorkspaceTrustEntry(root, this.docs, this.telemetry, this.bootstrap, this.config));
+    const entry = this._register(new WorkspaceTrustEntry(
+      root,
+      this.docs,
+      this.telemetry,
+      this.bootstrap,
+      this.config,
+      (child) => this.mainCheckoutEntry(child),
+    ));
     this.entries.set(key, entry);
     return entry;
+  }
+
+  private async mainCheckoutEntry(root: string): Promise<IWorkspaceTrustEntry | undefined> {
+    if (!this.flags.enabled(WORKTREE_FLAG_ID)) return undefined;
+    const checkout = await resolveWorktreeCheckout(this.hostFs, this.bootstrap.homeDir, root);
+    if (checkout === undefined || checkout.kind === 'main') return undefined;
+    return this.forRoot(checkout.repoRoot);
   }
 
   forRoots(roots: readonly string[]): IWorkspaceTrustEntry {

@@ -101,7 +101,7 @@ describe('PluginUpdateNotifier', () => {
   function makeNotifier(harness: ReturnType<typeof makeHarness>) {
     return new PluginUpdateNotifier({
       getSession: () => harness.session,
-      workDir: tempDir,
+      getWorkDir: () => tempDir,
       notify: harness.notify,
       loadMarketplace: harness.loadMarketplace,
       stateFile,
@@ -315,7 +315,7 @@ describe('PluginUpdateNotifier', () => {
     const refreshPluginCommands = vi.fn(async () => undefined);
     const notifier = new PluginUpdateNotifier({
       getSession: () => harness.session,
-      workDir: tempDir,
+      getWorkDir: () => tempDir,
       notify: harness.notify,
       reloadPlugins,
       refreshPluginCommands,

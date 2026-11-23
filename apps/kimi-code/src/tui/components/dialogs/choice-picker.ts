@@ -26,12 +26,17 @@ export interface ChoiceOption {
   readonly descriptionTone?: ColorToken;
 }
 
+export interface ChoiceNoticeLine {
+  readonly text: string;
+  readonly tone: ColorToken;
+}
+
 export interface ChoicePickerOptions {
   readonly title: string;
   readonly hint?: string;
   readonly formatHint?: (text: string) => string;
-  readonly notice?: string | { readonly markdown: string };
-  readonly noticeTone?: 'success' | 'warning';
+  readonly notice?: string | { readonly markdown: string } | { readonly lines: readonly ChoiceNoticeLine[] };
+  readonly noticeTone?: 'success' | 'warning' | 'text';
   readonly options: readonly ChoiceOption[];
   readonly currentValue?: string;
   readonly initialValue?: string;
@@ -41,6 +46,7 @@ export interface ChoicePickerOptions {
   readonly onSelect: (value: string) => void;
   readonly onSessionOnlySelect?: (value: string) => void;
   readonly onCancel: () => void;
+  readonly onExitKey?: () => void;
 }
 
 interface ChoiceRegion {
@@ -99,6 +105,10 @@ export class ChoicePickerComponent implements Component, Focusable {
     if (matchesKey(data, Key.escape)) {
       if (this.list.clearQuery()) return;
       this.opts.onCancel();
+      return;
+    }
+    if (this.opts.onExitKey !== undefined && (matchesKey(data, Key.ctrl('c')) || matchesKey(data, Key.ctrl('d')))) {
+      this.opts.onExitKey();
       return;
     }
     if (matchesKey(data, Key.alt('s')) && this.opts.onSessionOnlySelect !== undefined) {
@@ -204,7 +214,15 @@ export class ChoicePickerComponent implements Component, Focusable {
       );
     }
     const notice = this.opts.notice;
-    if (typeof notice === 'object') {
+    if (typeof notice === 'object' && 'lines' in notice) {
+      const noticeWidth = Math.max(1, width - 1);
+      lines.push('');
+      for (const noticeLine of notice.lines) {
+        for (const wrapped of wrapDescription(noticeLine.text, noticeWidth)) {
+          lines.push(currentTheme.fg(noticeLine.tone, ` ${wrapped}`));
+        }
+      }
+    } else if (typeof notice === 'object') {
       const markdown = new Markdown(
         notice.markdown,
         0,

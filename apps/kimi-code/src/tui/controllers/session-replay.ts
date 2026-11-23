@@ -5,6 +5,7 @@ import type {
   GoalChange,
   PermissionMode,
   ResumedAgentState,
+  SessionHistory,
   Session,
   ToolCall,
   ToolInputDisplay,
@@ -194,7 +195,24 @@ export class SessionReplayRenderer {
     state.ui.requestRender();
   }
 
-  private renderRecords(agent: ResumedAgentState): void {
+  renderHistory(history: SessionHistory): void {
+    this.host.setAppState({ isReplaying: true });
+    try {
+      if (history.replayError !== undefined) {
+        this.host.showError(`Failed to replay session history: ${history.replayError}`);
+        return;
+      }
+      if (history.replayWarning !== undefined) {
+        this.host.showStatus?.(`Warning: ${history.replayWarning}`, 'warning');
+      }
+      this.renderRecords(history);
+      this.host.mergeAllTurnSteps();
+    } finally {
+      this.host.setAppState({ isReplaying: false });
+    }
+  }
+
+  private renderRecords(agent: Pick<ResumedAgentState, 'replay'>): void {
     const context = createReplayRenderContext();
     const records = [...preserveBundleHookResults(agent.replay, REPLAY_TURN_LIMIT)];
     for (let i = 0; i < records.length; i++) {

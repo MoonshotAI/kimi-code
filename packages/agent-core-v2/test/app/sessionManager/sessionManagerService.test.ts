@@ -34,6 +34,7 @@ import type {
 import type { SessionLifecycleService } from '#/workspace/sessionLifecycle/sessionLifecycleService';
 import type { WorkspaceInstance } from '#/workspace/workspaceInstance/workspaceInstance';
 import type { IWorkspaceInstanceManager } from '#/workspace/workspaceInstance/workspaceInstanceManager';
+import type { IWorktreeService } from '#/app/worktree/worktree';
 
 
 function environmentRegistryOf(workspaces: IWorkspaceInstanceManager): EnvironmentRegistry | undefined {
@@ -77,6 +78,7 @@ function makeSessionManager(
       log,
     ),
     environments,
+    { locate: async (cwd: string) => ({ workDir: cwd, cwd }) } as unknown as IWorktreeService,
     overrides.hostFs ??
       ({
         _serviceBrand: undefined,

@@ -1,4 +1,5 @@
-import { mkdtempSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, realpathSync } from 'node:fs';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'pathe';
@@ -15,11 +16,13 @@ import { FileProjectLocalConfigService } from '#/persistence/backends/node-fs/pr
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService, type ConfigSectionChangedEvent } from '#/app/config/config';
+import { IFlagService } from '#/app/flag/flag';
 import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemetry';
 import { FileSkillDiscovery } from '#/features/skill/catalog/fileSkillDiscovery';
 import { InMemorySkillCatalog } from '#/features/skill/catalog/registry';
 import { projectRootsForDirs } from '#/features/skill/catalog/skillRoots';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
+import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IWorkspaceStateService } from '#/workspace/state/workspaceState';
 import { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
 import { WORKSPACE_TRUST_SECTION } from '#/workspace/workspaceTrust/configSection';
@@ -45,6 +48,7 @@ import {
 
 import { stubBootstrap } from '../../app/bootstrap/stubs';
 import { stubConfigService } from '../../app/config/stubs';
+import { stubFlag } from '../../app/flag/stubs';
 import { registerStateServices } from '../../state/stubs';
 import { stubLog } from '../../_base/log/stubs';
 
@@ -126,6 +130,8 @@ describe('WorkspaceTrustService', () => {
           new JsonAtomicDocumentStore(new FileStorageService(homeDir)),
         );
         reg.defineInstance(ITelemetryService, noopTelemetryService);
+        reg.defineInstance(IFlagService, stubFlag());
+        reg.define(IHostFileSystem, HostFileSystem);
         if (sharedStore === undefined) {
           reg.define(IWorkspaceTrustStore, WorkspaceTrustStore);
         } else {
@@ -364,6 +370,8 @@ describe('WorkspaceTrustService', () => {
       noopTelemetryService,
       stubBootstrap(homeDir),
       trustConfigService(),
+      stubFlag(),
+      new HostFileSystem(),
     ));
     const entry = trustStore.forRoot(cwd);
 
@@ -397,6 +405,8 @@ describe('WorkspaceTrustService', () => {
       noopTelemetryService,
       stubBootstrap(homeDir),
       trustConfigService(),
+      stubFlag(),
+      new HostFileSystem(),
     ));
     const entry = store.forRoot(cwd);
     const events: WorkspaceTrustChange[] = [];
@@ -509,6 +519,8 @@ describe('WorkspaceTrustService', () => {
       noopTelemetryService,
       stubBootstrap(homeDir),
       trustConfigService(),
+      stubFlag(),
+      new HostFileSystem(),
     ));
     const entry = store.forRoot(firstRoot);
 
@@ -537,6 +549,8 @@ describe('WorkspaceTrustService', () => {
       noopTelemetryService,
       stubBootstrap(homeDir),
       trustConfigService(),
+      stubFlag(),
+      new HostFileSystem(),
     ));
     const entry = store.forRoot(cwd);
     const events: WorkspaceTrustChange[] = [];
@@ -564,6 +578,8 @@ describe('WorkspaceTrustService', () => {
       telemetry,
       stubBootstrap(homeDir),
       trustConfigService(),
+      stubFlag(),
+      new HostFileSystem(),
     ));
     const entry = store.forRoot(cwd);
 
@@ -717,5 +733,64 @@ describe('WorkspaceTrustService', () => {
     } finally {
       await rm(secondary, { recursive: true, force: true });
     }
+  });
+
+  function repoWithLinkedWorktree(): { repo: string; linked: string } {
+    const base = realpathSync(cwd);
+    const repo = join(base, 'repo');
+    const linked = join(base, 'linked');
+    execFileSync('git', ['init', '-q', '-b', 'main', repo], { stdio: 'ignore' });
+    execFileSync(
+      'git',
+      ['-c', 'user.email=t@example.com', '-c', 'user.name=T', '-c', 'commit.gpgsign=false', 'commit', '-q', '--allow-empty', '-m', 'init'],
+      { cwd: repo, stdio: 'ignore' },
+    );
+    execFileSync('git', ['worktree', 'add', '-q', '--detach', linked, 'HEAD'], { cwd: repo, stdio: 'ignore' });
+    return { repo, linked };
+  }
+
+  function worktreeTrustStore(worktreeFlag: boolean): WorkspaceTrustStore {
+    return disposables.add(new WorkspaceTrustStore(
+      new JsonAtomicDocumentStore(new FileStorageService(homeDir)),
+      noopTelemetryService,
+      stubBootstrap(homeDir),
+      trustConfigService(),
+      stubFlag(worktreeFlag),
+      new HostFileSystem(),
+    ));
+  }
+
+  it('trusts a linked worktree through its trusted main checkout when the worktree flag is on', async () => {
+    const { repo, linked } = repoWithLinkedWorktree();
+    const store = worktreeTrustStore(true);
+    const entry = store.forRoot(linked);
+    const events: WorkspaceTrustChange[] = [];
+    disposables.add(entry.onDidChange((event) => events.push(event)));
+
+    await expect(entry.get()).resolves.toBe(false);
+    await store.forRoot(repo).trust();
+
+    await expect(entry.get()).resolves.toBe(true);
+    expect(entry.isPersistedTrusted()).toBe(true);
+    expect(events).toEqual([{ trusted: true }]);
+    await expect(worktreeTrustStore(true).forRoot(linked).get()).resolves.toBe(true);
+  });
+
+  it('records trust given inside a linked worktree on the worktree itself', async () => {
+    const { repo, linked } = repoWithLinkedWorktree();
+    await worktreeTrustStore(true).forRoot(linked).trust();
+
+    const fresh = worktreeTrustStore(true);
+    await expect(fresh.forRoot(linked).get()).resolves.toBe(true);
+    await expect(fresh.forRoot(repo).get()).resolves.toBe(false);
+  });
+
+  it('judges a linked worktree only by its own record when the worktree flag is off', async () => {
+    const { repo, linked } = repoWithLinkedWorktree();
+    const store = worktreeTrustStore(false);
+    await store.forRoot(repo).trust();
+
+    await expect(store.forRoot(linked).get()).resolves.toBe(false);
+    await expect(store.forRoot(repo).get()).resolves.toBe(true);
   });
 });

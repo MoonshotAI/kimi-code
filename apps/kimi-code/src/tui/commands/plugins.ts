@@ -313,7 +313,7 @@ async function loadMarketplaceCatalog(
 ): Promise<void> {
   try {
     const catalog = await loadPluginMarketplace({
-      workDir: host.state.appState.workDir,
+      workDir: host.state.appState.cwd,
       source,
       reconcileAvailability: async (changed) => {
         if (!changed) return;
@@ -772,7 +772,7 @@ async function installPluginFromSource(
   const session = await resolvePluginApi(host);
   const beforeList = await session.listPlugins();
   const summary = await session.installPlugin({
-    source: resolvePluginInstallSource(source, host.state.appState.workDir),
+    source: resolvePluginInstallSource(source, host.state.appState.cwd),
   });
   showPluginInstallResult(host, beforeList, summary);
 }

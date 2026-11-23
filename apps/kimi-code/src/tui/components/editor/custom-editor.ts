@@ -132,6 +132,7 @@ export class CustomEditor extends Editor {
   private argumentHints: ReadonlyMap<string, string> = new Map();
   private skillCommandNames: ReadonlySet<string> = new Set();
   private promptPrediction: string | undefined;
+  private placeholder: string | undefined;
   private currentSubmitKey: SubmitKey = 'enter';
 
   get submitKey(): SubmitKey {
@@ -148,6 +149,10 @@ export class CustomEditor extends Editor {
 
   setPromptPrediction(text: string | undefined): void {
     this.promptPrediction = text;
+  }
+
+  setPlaceholder(text: string | undefined): void {
+    this.placeholder = text;
   }
 
   getPromptPrediction(): string | undefined {
@@ -294,6 +299,11 @@ export class CustomEditor extends Editor {
       const line = lines[firstContentIdx];
       if (line !== undefined) {
         lines[firstContentIdx] = injectPromptPrediction(line, this.promptPrediction, width);
+      }
+    } else if (this.placeholder !== undefined && this.getText().length === 0) {
+      const line = lines[firstContentIdx];
+      if (line !== undefined) {
+        lines[firstContentIdx] = injectPromptPrediction(line, this.placeholder, width);
       }
     }
     const firstContent = lines[firstContentIdx];

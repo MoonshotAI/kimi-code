@@ -13,6 +13,8 @@ import { Event } from '#/_base/event';
 import { createServices } from '#/_base/di/test';
 import { ILogService } from '#/_base/log/log';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
+import { IFlagService } from '#/app/flag/flag';
+import { stubFlag } from '../flag/stubs';
 import {
   IAgentIdentity,
   type AgentIdentitySnapshot,
@@ -145,6 +147,7 @@ describe('McpManagementService', () => {
           list: async () => [],
         });
         reg.defineInstance(ITelemetryService, noopTelemetryService);
+        reg.defineInstance(IFlagService, stubFlag());
         reg.define(IWorkspaceTrustStore, WorkspaceTrustStore);
         reg.define(IMcpRegistryService, McpRegistryService);
         reg.defineInstance(IMcpOAuthService, oauth);

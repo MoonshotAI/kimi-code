@@ -13,6 +13,7 @@ import {
   IConfigService,
   IEventBus,
   IEventDispatcher,
+  IFlagService,
   IHostFileSystem,
   IOAuthToolkit,
   ISessionIndex,
@@ -35,6 +36,7 @@ import {
   resolveKimiHome,
   resolvePrintBackgroundMode,
   setClampedTimeout,
+  WORKTREE_FLAG_ID,
   type Error2,
   type Event2,
   type IAgentScopeHandle,
@@ -52,7 +54,7 @@ import {
   createKimiDeviceId,
   KIMI_CODE_PROVIDER_NAME,
 } from '@moonshot-ai/kimi-code-oauth';
-import { SDKRpcClientV2 } from '@moonshot-ai/kimi-code-sdk';
+import { SDKRpcClientV2, type CreatedWorktree, type WorkLocation } from '@moonshot-ai/kimi-code-sdk';
 import {
   initializeTelemetry,
   setCrashPhase,
@@ -76,13 +78,14 @@ import type {
   ToolUpdated,
   ToolResultEvent,
 } from '@moonshot-ai/agent-core-v2/agent/toolExecutor/toolExecutorEvents';
-import { resolve } from 'pathe';
+import { relative, resolve } from 'pathe';
 
 import {
   CLI_SHUTDOWN_TIMEOUT_MS,
   CLI_USER_AGENT_PRODUCT,
   PROMPT_CLEANUP_TIMEOUT_MS,
 } from '#/constant/app';
+import { WORKTREE_LISTED_FILES, WORKTREE_SHORT_SHA_LENGTH } from '#/constant/worktree';
 import { currentKimiProfile, currentKimiRegionResolution } from '#/utils/region';
 
 import {
@@ -101,7 +104,7 @@ import {
 } from '../run-prompt';
 import { createKimiCodeHostIdentity } from '../host-identity';
 
-import { resolveOutputFormat } from '../options';
+import { resolveOutputFormat, worktreeFlagOffError } from '../options';
 import type { CLIOptions, PromptOutputFormat } from '../options';
 import {
   type PromptOutput,
@@ -162,6 +165,10 @@ export async function runV2Print(
   for (const diagnostic of configService.diagnostics()) {
     stderr.write(`${diagnostic.severity === 'error' ? 'Error' : 'Warning'}: ${diagnostic.message}\n`);
   }
+  if (opts.worktree !== undefined && !services.get(IFlagService).enabled(WORKTREE_FLAG_ID)) {
+    await client.close();
+    throw worktreeFlagOffError();
+  }
 
   let restorePermission = async (): Promise<void> => {};
   let quiesceAgents = async (): Promise<void> => {};
@@ -196,6 +203,7 @@ export async function runV2Print(
   };
   removeTerminationCleanup = installPromptTerminationCleanup(promptProcess, cleanup);
 
+  let worktree: CreatedWorktree | undefined;
   try {
     telemetryService = services.get(ITelemetryService);
     if (telemetryEnabled) {
@@ -226,12 +234,32 @@ export async function runV2Print(
       });
     }
 
+    const located = await client.resolveWorkLocation(workDir);
+    if (opts.worktree !== undefined) {
+      const prepared = await preparePrintWorktree(client, services, opts, located, stderr);
+      worktree = prepared.created;
+      if (!prepared.ready) {
+        process.exitCode = 1;
+        return;
+      }
+    }
+
     try {
-      const gated = await listTrustGatedMcpServers(services, workDir, homeDir);
+      const gated = await listTrustGatedMcpServers(services, located.workDir, worktree?.cwd ?? workDir, homeDir);
       if (gated.length > 0) stderr.write(formatTrustGatedMcpWarning(gated));
     } catch {}
 
-    let resolved = await resolveNativeSession(services, opts, workDir, defaultModel, stderr);
+    const environmentCwd = worktree?.cwd ?? (located.worktree === undefined ? undefined : located.cwd);
+    let resolved = await resolveNativeSession(
+      services,
+      environmentCwd === undefined || opts.environment !== undefined
+        ? opts
+        : { ...opts, environment: 'local', environmentCwd },
+      workDir,
+      located.workDir,
+      defaultModel,
+      stderr,
+    );
     const { previousPermissionMode } = resolved;
     if (previousPermissionMode !== undefined) {
       restorePermission = async () => {
@@ -298,8 +326,79 @@ export async function runV2Print(
       duration_ms: Date.now() - startedAt,
     });
   } finally {
+    if (worktree !== undefined) await reportPrintWorktree(client, worktree, stderr);
     await cleanup();
   }
+}
+
+async function preparePrintWorktree(
+  client: SDKRpcClientV2,
+  services: ServicesAccessor,
+  opts: CLIOptions,
+  location: WorkLocation,
+  stderr: PromptOutput,
+): Promise<{ readonly created?: CreatedWorktree; readonly ready: boolean }> {
+  let created: CreatedWorktree;
+  try {
+    created = await client.createWorktree({ cwd: location.cwd, name: opts.worktree, base: opts.worktreeBase });
+  } catch (error) {
+    stderr.write(`error: ${error instanceof Error ? error.message : String(error)}\n`);
+    return { ready: false };
+  }
+  const copied = created.copiedFiles;
+  if (copied.length > 0) {
+    const listed = copied.slice(0, WORKTREE_LISTED_FILES).join(', ');
+    const more = copied.length > WORKTREE_LISTED_FILES ? ` +${String(copied.length - WORKTREE_LISTED_FILES)} more` : '';
+    stderr.write(`Copied ${String(copied.length)} ${copied.length === 1 ? 'file' : 'files'} from .worktreeinclude: ${listed}${more}\n`);
+  }
+  if (created.sourceDirty) {
+    stderr.write(`Uncommitted changes in ${created.sourceRoot} stay there. Use git stash to bring them over.\n`);
+  }
+  if (created.cwdFallback) {
+    const subdir = relative(created.sourceRoot, location.cwd);
+    stderr.write(`${subdir} doesn't exist at this commit, so the session starts at the worktree root.\n`);
+  }
+  if (created.setupScript === undefined) return { created, ready: true };
+  const script = relative(created.sourceRoot, created.setupScript);
+  if (!(await isWorkspaceTrusted(services, location.workDir))) {
+    stderr.write(
+      `Warning: this folder is not trusted; skipped the worktree setup script ${script}.\n` +
+        '  Run `kimi` here and choose "Trust this folder", or set KIMI_CODE_TRUST_WORKSPACE=1, to run it.\n',
+    );
+    return { created, ready: true };
+  }
+  try {
+    const { exitCode } = await client.runWorktreeSetupScript(
+      { worktreePath: created.worktree.path, sourceRoot: created.sourceRoot },
+      { onOutput: (text) => stderr.write(text) },
+    );
+    if (exitCode === 0) return { created, ready: true };
+    stderr.write(`error: The worktree setup script ${script} exited with code ${String(exitCode)}.\n`);
+  } catch (error) {
+    stderr.write(`error: ${error instanceof Error ? error.message : String(error)}\n`);
+  }
+  return { created, ready: false };
+}
+
+async function isWorkspaceTrusted(services: ServicesAccessor, workDir: string): Promise<boolean> {
+  const lease = await services.get(IWorkspaceInstanceManager).acquire({ root: workDir });
+  try {
+    return await lease.instance.program.trust.get();
+  } finally {
+    lease.dispose();
+  }
+}
+
+async function reportPrintWorktree(
+  client: SDKRpcClientV2,
+  created: CreatedWorktree,
+  stderr: PromptOutput,
+): Promise<void> {
+  const listing = await client.listWorktrees(created.repoRoot).catch(() => undefined);
+  const current = listing?.worktrees.find((entry) => entry.path === created.worktree.path) ?? created.worktree;
+  const head = current.head ?? created.worktree.head ?? '';
+  const checkout = current.branch ?? `detached at ${head.slice(0, WORKTREE_SHORT_SHA_LENGTH)}`;
+  stderr.write(`Worktree: ${current.path} (${checkout})\n`);
 }
 
 interface ResolvedNativeSession {
@@ -314,6 +413,7 @@ async function resolveNativeSession(
   services: ServicesAccessor,
   opts: CLIOptions,
   workDir: string,
+  projectDir: string,
   defaultModel: string | undefined,
   stderr: PromptOutput,
 ): Promise<ResolvedNativeSession> {
@@ -386,7 +486,10 @@ async function resolveNativeSession(
     if (target === undefined) {
       throw new Error(`Session "${opts.session}" not found.`);
     }
-    if (target.cwd !== undefined && resolve(target.cwd) !== resolve(workDir)) {
+    const otherDir = target.cwd !== undefined && resolve(target.cwd) !== resolve(workDir);
+    if (otherDir && services.get(IFlagService).enabled(WORKTREE_FLAG_ID)) {
+      stderr.write(`Switched to ${target.cwd} to resume this session.\n`);
+    } else if (otherDir) {
       stderr.write(
         `Session "${opts.session}" was created under a different directory.\n` +
           `  cd "${target.cwd}" && kimi -r ${opts.session}\n\n`,
@@ -435,7 +538,7 @@ async function resolveNativeSession(
 
   const model = requireConfiguredModel(opts.model, defaultModel);
   const session = await sessions.create({
-    workDir,
+    workDir: projectDir,
     additionalDirs: opts.addDirs?.length ? opts.addDirs : undefined,
     mainAgentBinding: {
       profile: agentProfileName ?? 'agent',
@@ -468,6 +571,7 @@ export interface TrustGatedMcpServer {
 export async function listTrustGatedMcpServers(
   services: ServicesAccessor,
   workDir: string,
+  cwd: string,
   homeDir: string,
 ): Promise<readonly TrustGatedMcpServer[]> {
   const lease = await services
@@ -477,8 +581,8 @@ export async function listTrustGatedMcpServers(
     if (await lease.instance.program.trust.get()) return [];
     const fs = services.get(IHostFileSystem);
     const [paths, loaded] = await Promise.all([
-      resolveMcpJsonPaths({ fs, cwd: workDir, homeDir }),
-      loadMcpServersDetailed({ fs, cwd: workDir, homeDir, includeProject: true }),
+      resolveMcpJsonPaths({ fs, cwd, homeDir }),
+      loadMcpServersDetailed({ fs, cwd, homeDir, includeProject: true }),
     ]);
     const projectPaths = new Set([paths.projectRoot, paths.project]);
     return Object.entries(loaded.servers)

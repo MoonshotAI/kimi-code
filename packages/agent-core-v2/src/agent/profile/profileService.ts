@@ -31,6 +31,10 @@ import { IConfigService } from '#/app/config/config';
 import type { LoopControl } from '#/agent/loop/configSection';
 import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import { EnvironmentWorkspaceView } from '#/environment/environmentWorkspaceView';
+import { LOCAL_ENVIRONMENT_ID } from '#/environment/environment';
+import { IFlagService } from '#/app/flag/flag';
+import { IWorkspaceService } from '#/app/workspace/workspace';
+import { IWorktreeService, WORKTREE_FLAG_ID } from '#/app/worktree/worktree';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import type { ToolSource } from '#/tool/toolContract';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
@@ -161,6 +165,9 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     @IAgentAgentsMdReminderService private readonly agentsMdReminder: IAgentAgentsMdReminderService,
     @IProviderDiscoveryService private readonly discovery: IProviderDiscoveryService,
     @IInstantiationService private readonly instantiation: IInstantiationService,
+    @IFlagService private readonly flags: IFlagService,
+    @IWorktreeService private readonly worktrees: IWorktreeService,
+    @IWorkspaceService private readonly workspaces: IWorkspaceService,
   ) {
     super();
     this.states.contributeState(profileAgentsMdWarningKey);
@@ -839,6 +846,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     return {
       ...base,
       cwd: view.workDir,
+      worktreeSourceRoot: await this.worktreeSourceRoot(view),
       osKind: env.osKind,
       shellName: env.shellName,
       shellPath: env.shellPath,
@@ -853,6 +861,19 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
       todoListActive: this.isToolActiveForProfile(profile, TODO_LIST_TOOL_NAME),
       planModeAvailable: this.isToolActiveForProfile(profile, EXIT_PLAN_MODE_TOOL_NAME),
     };
+  }
+
+  private async worktreeSourceRoot(view: EnvironmentWorkspaceView): Promise<string | undefined> {
+    if (view.binding.environmentId !== LOCAL_ENVIRONMENT_ID || !this.flags.enabled(WORKTREE_FLAG_ID)) {
+      return undefined;
+    }
+    const checkout = await this.worktrees.resolveCheckout(view.workDir);
+    if (checkout?.kind !== 'managed') return undefined;
+    const project = await this.workspaces.get(this.sessionContext.workspaceId);
+    const source = project === undefined ? undefined : await this.worktrees.resolveCheckout(project.root);
+    return source?.repoRoot === checkout.repoRoot && source.checkoutRoot !== checkout.checkoutRoot
+      ? source.checkoutRoot
+      : checkout.repoRoot;
   }
 
   private async workspaceInstructionsSnapshot(): Promise<LoadedAgentsMd> {

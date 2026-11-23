@@ -142,6 +142,7 @@ export interface SlashCommandHost {
   readonly sessionReplacementInFlight: boolean;
   switchToSession(session: Session, message: string): Promise<void>;
   reloadCurrentSessionView(session: Session, message: string): Promise<void>;
+  refreshWorkLocation(): Promise<void>;
   beginSessionRequest(): void;
   failSessionRequest(message: string): void;
   sendQueuedMessage(session: Session, item: QueuedMessage): void;
@@ -165,11 +166,13 @@ export interface SlashCommandHost {
   refreshTerminalThemeTracking(): void;
 
   stop(exitCode?: number): Promise<void>;
+  requestExit(): Promise<void>;
   setExitOpenUrl(url: string): void;
   setExitForegroundTask(task: (exitCode: number) => Promise<void>): void;
   showHelpPanel(): void;
   createNewSession(): Promise<void>;
   showSessionPicker(): Promise<void>;
+  showWorktreePanel(): Promise<void>;
   sendNormalUserInput(text: string, preExtracted?: ExtractionResult, delivery?: FollowUpDelivery): void;
   sendInlineSkillUserInput(
     text: string,
@@ -360,7 +363,7 @@ async function handleBuiltInSlashCommand(
   }
   switch (name) {
     case 'exit':
-      void host.stop();
+      void host.requestExit();
       return;
     case 'help':
       host.showHelpPanel();
@@ -384,6 +387,9 @@ async function handleBuiltInSlashCommand(
     }
     case 'sessions':
       void host.showSessionPicker();
+      return;
+    case 'worktree':
+      await host.showWorktreePanel();
       return;
     case 'tasks':
       void host.tasksBrowserController.show();

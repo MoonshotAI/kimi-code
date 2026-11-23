@@ -23,6 +23,7 @@ import type { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceCo
 import { WorkspaceDirsService } from '#/workspace/workspaceDirs/workspaceDirsService';
 
 import { stubBootstrap } from '../../app/bootstrap/stubs';
+import { stubFlag } from '../../app/flag/stubs';
 
 const noopLog = {
   error: () => {},
@@ -66,6 +67,8 @@ describe('WorkspaceDirsService (registry source)', () => {
       localConfig,
       noopLog,
       noopEvent,
+      stubFlag(),
+      bootstrap,
     );
   });
 
@@ -82,6 +85,7 @@ describe('WorkspaceDirsService (registry source)', () => {
     kind: 'managed' | 'implicit' = 'implicit',
     environmentId = 'local',
     followsPrimary = environmentId === 'local',
+    projectDirs = false,
   ): WorkspaceDirsService {
     const bootstrap = stubBootstrap(homeDir);
     const hostFs = new HostFileSystem();
@@ -103,6 +107,7 @@ describe('WorkspaceDirsService (registry source)', () => {
         new WorkspaceStateService(),
         environmentId,
         followsPrimary,
+        projectDirs,
       ),
     );
   }
@@ -417,6 +422,17 @@ describe('WorkspaceDirsService (registry source)', () => {
     expect(pinned.additionalDirs).toEqual([]);
     expect(pinned.sessionInfo().primaryByWorkspace).toEqual({});
     expect(following.additionalDirs).toEqual([dirA]);
+  });
+
+  it('gives a worktree view the directories remembered for its project', async () => {
+    const project = await workspaces.createOrTouch(dirA);
+    await workspaces.update(project.id, { additionalDirs: [dirB] });
+    const worktree = createDirs(dirC, project.id, 'implicit', 'local', false, true);
+    await worktree.ready;
+
+    expect(worktree.primary).toBe(dirC);
+    expect(worktree.additionalDirs).toEqual([dirB]);
+    expect(worktree.sessionInfo().primaryByWorkspace).toEqual({});
   });
 
   it('keeps the complete directory set when the primary changes from the original cwd', async () => {

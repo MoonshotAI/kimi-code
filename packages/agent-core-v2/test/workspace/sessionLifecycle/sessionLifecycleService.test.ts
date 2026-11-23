@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { noopTelemetryService } from '#/app/telemetry/telemetry';
+import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
 import { SessionLifecycleService } from '#/workspace/sessionLifecycle/sessionLifecycleService';
 
 const { createScopedChildHandleMock } = vi.hoisted(() => ({
@@ -105,6 +106,62 @@ describe('SessionLifecycleService', () => {
       expect(workspaceDirs.mergeAdditionalDirs).toHaveBeenCalledWith('/workspace', ['/additional']);
     } finally {
       await materialize.catch(() => undefined);
+      service.dispose();
+      createScopedChildHandleMock.mockReset();
+    }
+  });
+
+  it('seeds the session MCP handle from the MCP set of its workdir, falling back to the workspace set', async () => {
+    const ready = Promise.resolve();
+    const projectHandle = { name: 'project' };
+    const worktreeHandle = { name: 'worktree' };
+    const seeded: unknown[] = [];
+    createScopedChildHandleMock.mockReset();
+    createScopedChildHandleMock.mockImplementation(
+      (_instantiation: unknown, _scope: unknown, _id: unknown, options: { readonly seeds: readonly (readonly [unknown, unknown])[] }) => {
+        seeded.push(new Map(options.seeds).get(ISessionMcpHandle));
+        return { accessor: { get: () => ({ ready }) }, dispose: vi.fn() };
+      },
+    );
+    const workdir = (mcp?: { sessionHandle(): unknown }) => ({
+      dirs: { ready, mergeAdditionalDirs: async () => {}, sessionInfo: () => ({}) },
+      skills: { sessionData: () => ({}) },
+      contextKey: 'local:/workspace',
+      fs: {},
+      instructions: { sessionProvider: () => ({}) },
+      agentProfiles: { ready },
+      mcp,
+      dispose: vi.fn(),
+    });
+    const service = new SessionLifecycleService(
+      ...([
+        undefined,
+        { workspaceId: 'wm_test', persistenceScope: 'sessions/wm_test' },
+        { homeDir: '/home' },
+        { ready, assertValid: () => {}, get: () => undefined },
+        ...Array.from({ length: 9 }, () => undefined),
+        noopTelemetryService,
+        undefined,
+        { ready },
+        { ready },
+        { ready },
+        { ready },
+        { sessionHandle: () => projectHandle },
+        { ready },
+        { ready },
+      ] as unknown as ConstructorParameters<typeof SessionLifecycleService>)
+    );
+    const materialize = (sessionId: string, opened: ReturnType<typeof workdir>): Promise<unknown> => (
+      service as unknown as {
+        materializeSession(options: { sessionId: string; workDir: string }, environment: undefined, workdir: unknown): Promise<unknown>;
+      }
+    ).materializeSession({ sessionId, workDir: '/workspace' }, undefined, opened);
+
+    try {
+      await materialize('session_worktree', workdir({ sessionHandle: () => worktreeHandle }));
+      await materialize('session_project', workdir());
+      expect(seeded).toEqual([worktreeHandle, projectHandle]);
+    } finally {
       service.dispose();
       createScopedChildHandleMock.mockReset();
     }

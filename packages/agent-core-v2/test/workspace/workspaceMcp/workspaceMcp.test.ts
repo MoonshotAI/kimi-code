@@ -433,10 +433,12 @@ describe('WorkspaceMcpService', () => {
     function willCreateEvent(
       servers: Record<string, McpServerConfig>,
       sessionCwd: string,
+      handle: ISessionMcpHandle,
       workspaceId = 'test-workspace',
     ) {
       const seeds = new Map<unknown, unknown>([
         [ISessionEphemeralMcpServers, servers],
+        [ISessionMcpHandle, handle],
         [
           ISessionContext,
           makeSessionContext({
@@ -472,7 +474,7 @@ describe('WorkspaceMcpService', () => {
       const sessionCwd = mkdtempSync(join(tmpdir(), 'kimi-session-mcp-cwd-'));
       const servers = { eph: stdioServer() };
       const sessionOverlay = vi.spyOn(service, 'sessionOverlay');
-      const { event, contributed, disposers } = willCreateEvent(servers, sessionCwd);
+      const { event, contributed, disposers } = willCreateEvent(servers, sessionCwd, service.sessionHandle());
       assemblyEvents.fire(event);
 
       expect(sessionOverlay).toHaveBeenCalledWith(servers, { stdioCwd: cwd, sessionId: 's1' });
@@ -495,7 +497,7 @@ describe('WorkspaceMcpService', () => {
       await service.ready;
 
       const sessionOverlay = vi.spyOn(service, 'sessionOverlay');
-      const { event, contributed, disposers } = willCreateEvent({}, cwd);
+      const { event, contributed, disposers } = willCreateEvent({}, cwd, service.sessionHandle());
       assemblyEvents.fire(event);
 
       expect(sessionOverlay).not.toHaveBeenCalled();
@@ -512,6 +514,7 @@ describe('WorkspaceMcpService', () => {
       const { event, contributed, disposers } = willCreateEvent(
         { eph: stdioServer() },
         cwd,
+        service.sessionHandle(),
         'other-workspace',
       );
       assemblyEvents.fire(event);
@@ -519,6 +522,27 @@ describe('WorkspaceMcpService', () => {
       expect(sessionOverlay).not.toHaveBeenCalled();
       expect(contributed.size).toBe(0);
       expect(disposers).toHaveLength(0);
+    });
+
+    it('leaves a session seeded with another MCP set to that set', async () => {
+      const service = createService();
+      manager = service.connectionManager();
+      await service.ready;
+
+      const other = new McpConnectionManager();
+      const sessionOverlay = vi.spyOn(service, 'sessionOverlay');
+      const { event, contributed, disposers } = willCreateEvent({ eph: stdioServer() }, cwd, {
+        _serviceBrand: undefined,
+        ready: Promise.resolve(),
+        connectionManager: other,
+        isBaselineServer: () => true,
+      });
+      assemblyEvents.fire(event);
+
+      expect(sessionOverlay).not.toHaveBeenCalled();
+      expect(contributed.size).toBe(0);
+      expect(disposers).toHaveLength(0);
+      await other.shutdown();
     });
   });
 

@@ -36,9 +36,13 @@ export interface EnvironmentSlotState {
   readonly connectError?: string;
 }
 
+export type WorkLocation = Pick<AppState, 'workDir' | 'cwd' | 'worktree'>;
+
 export interface AppState {
   model: string;
   workDir: string;
+  cwd: string;
+  worktree?: { readonly root: string; readonly name: string; readonly repoRoot: string };
   additionalDirs: readonly string[];
   sessionId: string;
   permissionMode: PermissionMode;
@@ -341,6 +345,7 @@ export interface TUIStartupOptions {
   readonly agentFiles?: readonly string[];
   readonly environment?: string;
   readonly environmentCwd?: string;
+  readonly worktree?: { readonly name: string; readonly base?: string };
   readonly startupNotice?: string;
 }
 

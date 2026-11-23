@@ -22,6 +22,7 @@ import {
   IEventBus,
   IEventDispatcher,
   IEventService,
+  IFlagService,
   IFileSystemStorageService,
   IHostFileSystem,
   ILogService,
@@ -47,6 +48,8 @@ import {
   type BootstrapInput,
   type Event2,
 } from '@moonshot-ai/agent-core-v2';
+
+import { IWorktreeService } from '@moonshot-ai/agent-core-v2/app/worktree/worktree';
 
 import { CLI_SHUTDOWN_TIMEOUT_MS, CLI_USER_AGENT_PRODUCT } from '#/constant/app';
 
@@ -356,6 +359,8 @@ function makeFakeHarness(toolUpdates = false) {
     [ILogService, { warn: vi.fn() }],
     [IMcpOAuthService, { shutdown: vi.fn(async () => {}) }],
     [ISessionIndexMirror, { drain: vi.fn(async () => {}) }],
+    [IFlagService, { enabled: vi.fn(() => false) }],
+    [IWorktreeService, { locate: vi.fn(async (cwd: string) => ({ workDir: cwd, cwd })) }],
     [
       IRegionService,
       {
@@ -645,6 +650,60 @@ describe('runV2Print', () => {
     });
   });
 
+  it('starts a session launched inside a Kimi worktree in its source project', async () => {
+    const stdout = writer();
+    const stderr = writer();
+    const { app, appServices } = makeFakeHarness();
+    (appServices.get(IWorktreeService) as { locate: ReturnType<typeof vi.fn> }).locate.mockResolvedValue({
+      workDir: '/tmp/source-project',
+      cwd: process.cwd(),
+      worktree: { root: process.cwd(), name: 'x', repoRoot: '/tmp/source-project' },
+    });
+    mocks.bootstrap.mockReturnValue({ app });
+    mocks.ensureMainAgent.mockResolvedValue({ agentId: 'main', generation: 1 });
+
+    await runV2Print(opts() as never, '1.2.3-test', { stdout, stderr });
+
+    const sessions = appServices.get(ISessionManager) as { create: ReturnType<typeof vi.fn> };
+    expect(sessions.create).toHaveBeenCalledWith(
+      expect.objectContaining({ workDir: '/tmp/source-project', environmentId: 'local', environmentCwd: process.cwd() }),
+    );
+    const instances = appServices.get(IWorkspaceInstanceManager) as { acquire: ReturnType<typeof vi.fn> };
+    expect(instances.acquire).toHaveBeenCalledWith({ root: '/tmp/source-project' });
+    expect(instances.acquire).not.toHaveBeenCalledWith({ root: process.cwd() });
+  });
+
+  it('says what creating the worktree copied and left behind', async () => {
+    const stdout = writer();
+    const stderr = writer();
+    const { app, appServices } = makeFakeHarness();
+    (appServices.get(IFlagService) as { enabled: ReturnType<typeof vi.fn> }).enabled.mockReturnValue(true);
+    const source = '/tmp/source-project';
+    const path = '/tmp/kimi-worktrees/x';
+    Object.assign(appServices.get(IWorktreeService) as object, {
+      locate: vi.fn(async () => ({ workDir: source, cwd: `${source}/packages/foo` })),
+      create: vi.fn(async () => ({
+        worktree: { path, name: 'x', head: 'abcdef1234567', branch: undefined, missing: false },
+        repoRoot: source,
+        sourceRoot: source,
+        cwd: path,
+        cwdFallback: true,
+        copiedFiles: ['.env', 'a.env', 'b.env', 'c.env'],
+        sourceDirty: true,
+        setupScript: undefined,
+      })),
+    });
+    mocks.bootstrap.mockReturnValue({ app });
+    mocks.ensureMainAgent.mockResolvedValue({ agentId: 'main', generation: 1 });
+
+    await runV2Print(opts({ worktree: 'x' }) as never, '1.2.3-test', { stdout, stderr });
+
+    expect(stderr.text()).toContain('Copied 4 files from .worktreeinclude: .env, a.env, b.env +1 more\n');
+    expect(stderr.text()).toContain(`Uncommitted changes in ${source} stay there. Use git stash to bring them over.\n`);
+    expect(stderr.text()).toContain("packages/foo doesn't exist at this commit, so the session starts at the worktree root.\n");
+    expect(stderr.text()).toContain(`Worktree: ${path} (detached at abcdef1)\n`);
+  });
+
   it('does not materialize a main agent after fresh profile binding fails', async () => {
     const stdout = writer();
     const stderr = writer();
@@ -881,6 +940,67 @@ describe('runV2Print', () => {
     expect(planState.active).toBe(true);
     const loop = agentServices.get(IAgentLoopService) as { submit: ReturnType<typeof vi.fn> };
     expect(loop.submit).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps rejecting a resume from another directory while the worktree flag is off', async () => {
+    const stdout = writer();
+    const stderr = writer();
+    const { app, agentServices, appServices } = makeFakeHarness();
+    const index = appServices.get(ISessionIndex) as { get: ReturnType<typeof vi.fn> };
+    index.get.mockResolvedValue({ id: 'ses_1', cwd: '/tmp/kimi-other-project' });
+    mocks.bootstrap.mockReturnValue({ app });
+    mocks.ensureMainAgent.mockResolvedValue({ agentId: 'main', generation: 1 });
+
+    const failure = await runV2Print(opts({ session: 'ses_1' }) as never, '1.2.3-test', { stdout, stderr }).then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+
+    expect(String(failure)).toContain('Session "ses_1" was created under a different directory.');
+    expect(stderr.text()).toContain('cd "/tmp/kimi-other-project" && kimi -r ses_1');
+    expect((appServices.get(ISessionManager) as { resume: ReturnType<typeof vi.fn> }).resume).not.toHaveBeenCalled();
+    expect((agentServices.get(IAgentLoopService) as { submit: ReturnType<typeof vi.fn> }).submit).not.toHaveBeenCalled();
+  });
+
+  it('resumes a session from another directory in its own directory when the worktree flag is on', async () => {
+    const stdout = writer();
+    const stderr = writer();
+    const { app, agentServices, appServices } = makeFakeHarness();
+    const flags = appServices.get(IFlagService) as { enabled: ReturnType<typeof vi.fn> };
+    flags.enabled.mockReturnValue(true);
+    const index = appServices.get(ISessionIndex) as { get: ReturnType<typeof vi.fn> };
+    index.get.mockResolvedValue({ id: 'ses_1', cwd: '/tmp/kimi-other-project' });
+    mocks.bootstrap.mockReturnValue({ app });
+    mocks.ensureMainAgent.mockResolvedValue({ agentId: 'main', generation: 1 });
+
+    await runV2Print(opts({ session: 'ses_1' }) as never, '1.2.3-test', { stdout, stderr });
+
+    expect(flags.enabled).toHaveBeenCalledWith('worktree');
+    expect(stderr.text()).toContain('Switched to /tmp/kimi-other-project to resume this session.');
+    expect(stderr.text()).not.toContain('different directory');
+    expect((appServices.get(ISessionManager) as { resume: ReturnType<typeof vi.fn> }).resume).toHaveBeenCalledWith('ses_1', undefined);
+    expect((agentServices.get(IAgentLoopService) as { submit: ReturnType<typeof vi.fn> }).submit).toHaveBeenCalledTimes(1);
+  });
+
+  it('continues the latest session working in this directory and skips sessions working elsewhere', async () => {
+    const stdout = writer();
+    const stderr = writer();
+    const { app, appServices } = makeFakeHarness();
+    const index = appServices.get(ISessionIndex) as { listRecent: ReturnType<typeof vi.fn> };
+    index.listRecent.mockResolvedValue({
+      items: [
+        { id: 'ses_worktree', cwd: '/tmp/kimi-home/worktrees/wd_project/x' },
+        { id: 'ses_here', cwd: process.cwd() },
+      ],
+    });
+    mocks.bootstrap.mockReturnValue({ app });
+    mocks.ensureMainAgent.mockResolvedValue({ agentId: 'main', generation: 1 });
+
+    await runV2Print(opts({ continue: true }) as never, '1.2.3-test', { stdout, stderr });
+
+    const sessions = appServices.get(ISessionManager) as { resume: ReturnType<typeof vi.fn> };
+    expect(sessions.resume).toHaveBeenCalledTimes(1);
+    expect(sessions.resume).toHaveBeenCalledWith('ses_here', undefined);
   });
 
   it('says nothing about Plan mode when the resumed session is not in Plan mode', async () => {

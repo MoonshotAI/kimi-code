@@ -22,6 +22,7 @@ import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { IEventService } from '#/app/event/event';
+import { IFlagService } from '#/app/flag/flag';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IProjectLocalConfigService } from '#/app/projectLocalConfig/projectLocalConfig';
 import { IWorkspaceService, type Workspace } from '#/app/workspace/workspace';
@@ -35,6 +36,7 @@ import {
 import { IWorkspaceAliases } from '#/app/workspaceAliases/workspaceAliases';
 import { WorkspaceAliasesService } from '#/app/workspaceAliases/workspaceAliasesService';
 import { stubBootstrap } from '../bootstrap/stubs';
+import { stubFlag } from '../flag/stubs';
 
 interface SessionIndexLine {
   readonly sessionId: string;
@@ -105,6 +107,7 @@ describe('WorkspaceAliasesService (file-backed)', () => {
       stubPair(ILogService, noopLog),
       ...(persistence !== undefined ? [stubPair(IWorkspacePersistence, persistence)] : []),
       stubPair(IHostFileSystem, hostFs),
+      stubPair(IFlagService, stubFlag()),
       stubPair(
         IProjectLocalConfigService,
         new FileProjectLocalConfigService(stubBootstrap(homeDir), hostFs),

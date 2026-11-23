@@ -25,6 +25,7 @@ import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { IEventService } from '#/app/event/event';
+import { IFlagService } from '#/app/flag/flag';
 import type { Event2 } from '#/app/event/event2';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IProjectLocalConfigService } from '#/app/projectLocalConfig/projectLocalConfig';
@@ -37,6 +38,7 @@ import {
   type PersistedWorkspaceEntry,
 } from '#/app/workspace/workspacePersistence';
 import { stubBootstrap } from '../bootstrap/stubs';
+import { stubFlag } from '../flag/stubs';
 
 interface SessionIndexLine {
   readonly sessionId: string;
@@ -109,6 +111,7 @@ describe('WorkspaceService (file-backed)', () => {
         },
         subscribe: () => ({ dispose: () => {} }),
       } as unknown as IEventService),
+      stubPair(IFlagService, stubFlag()),
     ]);
     currentHost = host;
     return host.app.accessor.get(IWorkspaceService);

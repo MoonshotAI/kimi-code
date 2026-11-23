@@ -7,7 +7,7 @@ import type { EnvironmentStatus as SessionEnvironmentStatus } from '@moonshot-ai
 import type { RemoteEnvironmentEntry } from '@moonshot-ai/agent-core-v2/remote/declaration/remoteEnvironmentDeclaration';
 import type { KimiHostIdentity, OAuthRefreshOutcome } from '@moonshot-ai/kimi-code-oauth';
 
-import type { ResumeSessionResult } from '#/replay';
+import type { ResumedAgentState, ResumeSessionResult } from '#/replay';
 import type { PermissionMode } from '#/permission';
 import type {
   TelemetryClient,
@@ -400,6 +400,16 @@ export interface ResumeSessionInput {
   readonly sessionStartedProperties?: TelemetryProperties;
 }
 
+export interface ReadSessionHistoryInput {
+  readonly id: string;
+  readonly replayTurnLimit?: number;
+}
+
+export type SessionHistory = Pick<
+  ResumedAgentState,
+  'replay' | 'userTurnCount' | 'replayWarning' | 'replayError'
+>;
+
 export interface ReloadSessionInput extends ResumeSessionInput {
   readonly forcePluginSessionStartReminder?: boolean;
 }
@@ -551,6 +561,7 @@ export interface SessionSummary {
   readonly titleKind?: SessionTitleKind;
   readonly lastPrompt?: string;
   readonly workDir: string;
+  readonly projectWorkDir?: string;
   readonly sessionDir: string;
   readonly createdAt: number;
   readonly updatedAt: number;

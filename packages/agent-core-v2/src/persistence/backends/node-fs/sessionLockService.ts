@@ -1,4 +1,3 @@
-import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -11,6 +10,7 @@ import { parseBooleanEnv } from '#/_base/utils/env';
 import { LifecycleScope } from '#/app/scopes';
 
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
+import { processStampAlive } from '#/persistence/backends/node-fs/processLiveness';
 import {
   ISessionLockService,
   SessionLockHolds,
@@ -34,24 +34,6 @@ const UNREADABLE_HOLDER: SessionLockHolder = {
 type ClaimOutcome =
   | { readonly claimed: true }
   | { readonly claimed: false; readonly holder: SessionLockHolder | undefined };
-
-function pidAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'EPERM') return false;
-  }
-  if (process.platform === 'win32') return true;
-  try {
-    const stat = execFileSync('ps', ['-p', String(pid), '-o', 'stat='], {
-      encoding: 'utf8',
-      timeout: 1000,
-    });
-    return !stat.trim().startsWith('Z');
-  } catch {
-    return true;
-  }
-}
 
 const CLIENT_DISPLAY_NAMES: Record<string, string> = {
   kimi_code_cli: 'Kimi Code CLI',
@@ -207,10 +189,7 @@ export class SessionLockService extends SessionLockHolds {
   }
 
   private alive(holder: SessionLockHolder): boolean {
-    if (holder.hostname !== '' && holder.hostname !== this.hostname) return true;
-    if (!pidAlive(holder.pid)) return false;
-    const bootTime = Date.now() - os.uptime() * 1000;
-    return holder.startedAt >= bootTime;
+    return processStampAlive(holder, this.hostname);
   }
 
   private payload(token: string): string {

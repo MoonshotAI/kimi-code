@@ -84,6 +84,21 @@ export const ErrorCodes = {
 
   SHELL_GIT_BASH_NOT_FOUND: 'shell.git_bash_not_found',
 
+  WORKTREE_DISABLED: 'worktree.disabled',
+  WORKTREE_NOT_GIT_REPO: 'worktree.not_git_repo',
+  WORKTREE_NO_MAIN_CHECKOUT: 'worktree.no_main_checkout',
+  WORKTREE_NO_COMMITS: 'worktree.no_commits',
+  WORKTREE_BASE_NOT_FOUND: 'worktree.base_not_found',
+  WORKTREE_INVALID_NAME: 'worktree.invalid_name',
+  WORKTREE_ALREADY_EXISTS: 'worktree.already_exists',
+  WORKTREE_GIT_FAILED: 'worktree.git_failed',
+  WORKTREE_INCLUDE_FAILED: 'worktree.include_failed',
+  WORKTREE_CANCELLED: 'worktree.cancelled',
+  WORKTREE_NOT_FOUND: 'worktree.not_found',
+  WORKTREE_HAS_UNCOMMITTED: 'worktree.has_uncommitted',
+  WORKTREE_HAS_UNIQUE_COMMITS: 'worktree.has_unique_commits',
+  WORKTREE_IN_USE: 'worktree.in_use',
+
   NOT_IMPLEMENTED: 'not_implemented',
   INTERNAL: 'internal',
 } as const;
@@ -480,6 +495,91 @@ export const KIMI_ERROR_INFO = {
     retryable: false,
     public: true,
     action: 'Install Git for Windows from https://gitforwindows.org/ or set KIMI_SHELL_PATH to a bash.exe.',
+  },
+
+  'worktree.disabled': {
+    title: 'Worktrees are disabled',
+    retryable: false,
+    public: true,
+    action: 'Set KIMI_CODE_EXPERIMENTAL_WORKTREE=1 or enable "worktree" under [experimental] in config.toml.',
+  },
+  'worktree.not_git_repo': {
+    title: 'Not a git repository',
+    retryable: false,
+    public: true,
+    action: 'Run this from inside a git repository.',
+  },
+  'worktree.no_main_checkout': {
+    title: 'Repository has no main checkout',
+    retryable: false,
+    public: true,
+    action: 'Use a repository whose .git is a directory (not bare, not a submodule, not a separate git dir).',
+  },
+  'worktree.no_commits': {
+    title: 'Repository has no commits',
+    retryable: false,
+    public: true,
+    action: 'Make a first commit, or pick another starting point.',
+  },
+  'worktree.base_not_found': {
+    title: 'Starting point not found',
+    retryable: false,
+    public: true,
+    action: 'Pick an existing commit, branch or tag as the starting point.',
+  },
+  'worktree.invalid_name': {
+    title: 'Invalid worktree name',
+    retryable: false,
+    public: true,
+    action: 'Use letters, digits, dots, dashes and underscores, without a slash.',
+  },
+  'worktree.already_exists': {
+    title: 'Worktree already exists',
+    retryable: false,
+    public: true,
+    action: 'Pick another name, or enter the existing worktree.',
+  },
+  'worktree.git_failed': {
+    title: 'Git command failed',
+    retryable: true,
+    public: true,
+    action: 'Read the git output in the error details, fix the cause, then retry.',
+  },
+  'worktree.include_failed': {
+    title: 'Copying .worktreeinclude files failed',
+    retryable: true,
+    public: true,
+    action: 'Check .worktreeinclude and the error details, then retry.',
+  },
+  'worktree.cancelled': {
+    title: 'Worktree creation cancelled',
+    retryable: true,
+    public: true,
+    action: 'Start the creation again when ready.',
+  },
+  'worktree.not_found': {
+    title: 'Worktree not found',
+    retryable: false,
+    public: true,
+    action: 'List the Kimi worktrees of this repository and check the path.',
+  },
+  'worktree.has_uncommitted': {
+    title: 'Worktree has uncommitted changes',
+    retryable: false,
+    public: true,
+    action: 'Commit the changes, or confirm discarding them.',
+  },
+  'worktree.has_unique_commits': {
+    title: 'Worktree has commits found nowhere else',
+    retryable: false,
+    public: true,
+    action: 'Push or merge the commits, or confirm discarding them.',
+  },
+  'worktree.in_use': {
+    title: 'Worktree is open in another session',
+    retryable: false,
+    public: true,
+    action: 'Close the other Kimi Code sessions working in this worktree, then try again.',
   },
 
   not_implemented: {

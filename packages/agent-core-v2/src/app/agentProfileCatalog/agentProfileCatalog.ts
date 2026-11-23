@@ -11,6 +11,7 @@ export interface AgentProfilePromptPrefixContext {
 
 export interface AgentProfileContext {
   readonly cwd?: string;
+  readonly worktreeSourceRoot?: string;
   readonly cwdListing?: string;
   readonly agentsMd?: string;
   readonly additionalDirsInfo?: string;

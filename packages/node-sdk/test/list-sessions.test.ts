@@ -203,6 +203,36 @@ describe('KimiHarness.listSessions', () => {
       await client.close();
     }
   });
+  it('reports the root of the project each session belongs to', async () => {
+    const homeDir = await makeTempDir();
+    const workDir = await makeTempDir();
+    const elsewhere = await makeTempDir();
+    const harness = createKimiHarness({
+      identity: TEST_IDENTITY,
+      homeDir,
+    });
+
+    try {
+      const created = await harness.createSession({ id: 'ses_project_root', workDir });
+      await harness.createSession({
+        id: 'ses_project_pinned',
+        workDir,
+        environmentId: 'local',
+        environmentCwd: elsewhere,
+      });
+      expect(created.summary?.projectWorkDir).toBe(workDir);
+
+      const sessions = await harness.listSessions();
+      expect(
+        sessions.map(({ id, projectWorkDir }) => ({ id, projectWorkDir })).toSorted((a, b) => a.id.localeCompare(b.id)),
+      ).toEqual([
+        { id: 'ses_project_pinned', projectWorkDir: workDir },
+        { id: 'ses_project_root', projectWorkDir: workDir },
+      ]);
+    } finally {
+      await harness.close();
+    }
+  });
 });
 
 describe('SDKRpcClientV2.listSessionsPage', () => {

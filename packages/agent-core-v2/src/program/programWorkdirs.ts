@@ -3,6 +3,8 @@ import { Event } from '#/_base/event';
 import type { IEnvironmentService } from '#/app/environment/environment';
 import type { IGitService } from '#/app/git/git';
 import { GitService } from '#/app/git/gitService';
+import { WORKTREE_FLAG_ID } from '#/app/worktree/worktree';
+import { canonicalPath, resolveWorktreeCheckout } from '#/app/worktree/worktreeCheckout';
 import { LOCAL_ENVIRONMENT_ID, environmentBindingId } from '#/environment/environment';
 import type { IExplicitFileSkillSource } from '#/features/skill/workspace/explicitFileSkillSource';
 import type { IExtraFileSkillSource } from '#/features/skill/workspace/extraFileSkillSource';
@@ -28,6 +30,10 @@ import { WorkspaceInstructionsService } from '#/workspace/workspaceInstructions/
 import type { IUserAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/userAgentProfileLoader';
 import type { IWorkspaceAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/workspaceAgentProfileLoader';
 import { WorkspaceAgentProfileLoaderService } from '#/workspace/workspaceAgentProfileLoader/workspaceAgentProfileLoaderService';
+import type { IWorkspaceMcpService } from '#/workspace/workspaceMcp/workspaceMcp';
+import { WorkspaceMcpService } from '#/workspace/workspaceMcp/workspaceMcpService';
+import { WorkspaceMcpConfigService } from '#/workspace/workspaceMcpConfig/workspaceMcpConfigService';
+import type { IWorkspaceTrust } from '#/workspace/workspaceTrust/workspaceTrust';
 
 import type { ProgramDependencies } from './programDependencies';
 
@@ -48,6 +54,7 @@ export interface ProgramView {
   readonly instructions: IWorkspaceInstructionsService;
   readonly skills: IWorkspaceSkillCatalog;
   readonly agentProfiles: IWorkspaceAgentProfileLoader;
+  readonly mcp?: IWorkspaceMcpService;
 }
 
 export interface ProgramWorkdir {
@@ -59,6 +66,7 @@ export interface ProgramWorkdir {
   readonly instructions: IWorkspaceInstructionsService;
   readonly skills: IWorkspaceSkillCatalog;
   readonly agentProfiles: IWorkspaceAgentProfileLoader;
+  readonly mcp?: IWorkspaceMcpService;
   dispose(): void;
 }
 
@@ -78,6 +86,7 @@ interface ProgramViewInput extends ProgramHarness {
   readonly hostFs: IHostFileSystem;
   readonly environmentId: string;
   readonly followsPrimary: boolean;
+  readonly worktree: boolean;
   readonly homeDir?: string;
   readonly git: LiveRef<IGitService>;
   readonly instructionsHost: HostEnvironmentInfo;
@@ -85,11 +94,13 @@ interface ProgramViewInput extends ProgramHarness {
   readonly watch: boolean;
   readonly projectAgentProfiles: boolean;
   readonly contextKey: string;
+  readonly ownsMcp: boolean;
 }
 
 export class ProgramWorkdirs {
   readonly root: ProgramView;
   private readonly entries = new Map<string, ProgramWorkdirEntry>();
+  private readonly disposals = new Set<Promise<void>>();
 
   constructor(
     private readonly environments: IEnvironmentService,
@@ -97,6 +108,7 @@ export class ProgramWorkdirs {
     private readonly dependencies: ProgramDependencies,
     private readonly harness: ProgramHarness,
     ownRoot: Own,
+    private readonly projectTrust: () => IWorkspaceTrust,
   ) {
     this.root = this.build(ownRoot, LOCAL_ENVIRONMENT_ID, context.cwd, true);
     this.entries.set(workdirContextKey(LOCAL_ENVIRONMENT_ID, context.cwd, true), { view: this.root, disposables: [], references: 1 });
@@ -104,6 +116,8 @@ export class ProgramWorkdirs {
 
   async acquire(environmentId: string, cwd: string, followsPrimary = environmentId === LOCAL_ENVIRONMENT_ID): Promise<ProgramWorkdir> {
     const contextKey = workdirContextKey(environmentId, cwd, followsPrimary);
+    const worktree = environmentId === LOCAL_ENVIRONMENT_ID && !followsPrimary && this.dependencies.flags.enabled(WORKTREE_FLAG_ID) && await this.inKimiWorktree(cwd);
+    const ownsMcp = worktree && !(await this.isProjectRoot(cwd));
     let entry = this.entries.get(contextKey);
     const stale = entry !== undefined && !watchable(environmentId);
     if (entry === undefined) {
@@ -113,9 +127,9 @@ export class ProgramWorkdirs {
         return value;
       };
       try {
-        entry = { view: this.build(own, environmentId, cwd, followsPrimary), disposables, references: 0 };
+        entry = { view: this.build(own, environmentId, cwd, followsPrimary, worktree, ownsMcp), disposables, references: 0 };
       } catch (error) {
-        disposeAll(disposables);
+        this.release(disposables);
         throw error;
       }
       this.entries.set(contextKey, entry);
@@ -132,13 +146,14 @@ export class ProgramWorkdirs {
       instructions: acquired.view.instructions,
       skills: acquired.view.skills,
       agentProfiles: acquired.view.agentProfiles,
+      mcp: acquired.view.mcp,
       dispose: () => {
         if (released) return;
         released = true;
         acquired.references -= 1;
         if (acquired.references > 0 || this.entries.get(contextKey) !== acquired) return;
         this.entries.delete(contextKey);
-        disposeAll(acquired.disposables);
+        this.release(acquired.disposables);
       },
     };
     if (stale) {
@@ -156,12 +171,33 @@ export class ProgramWorkdirs {
     for (const { view } of this.entries.values()) await reloadView(view);
   }
 
-  dispose(): void {
-    for (const entry of [...this.entries.values()].toReversed()) disposeAll(entry.disposables);
+  async dispose(): Promise<void> {
+    for (const entry of [...this.entries.values()].toReversed()) this.release(entry.disposables);
     this.entries.clear();
+    await Promise.all(this.disposals);
   }
 
-  private build(own: Own, environmentId: string, cwd: string, followsPrimary: boolean): ProgramView {
+  private release(disposables: readonly Disposable[]): void {
+    const disposal = disposeAll(disposables).then((errors) => {
+      for (const error of errors) this.dependencies.log.error('program workdir disposal failed', { error });
+    }).finally(() => {
+      this.disposals.delete(disposal);
+    });
+    this.disposals.add(disposal);
+  }
+
+  private async inKimiWorktree(cwd: string): Promise<boolean> {
+    const fs = this.environments.inspect({ environmentId: LOCAL_ENVIRONMENT_ID }).fs!;
+    const checkout = await resolveWorktreeCheckout(fs, this.dependencies.bootstrap.homeDir, cwd);
+    return checkout?.kind === 'managed';
+  }
+
+  private async isProjectRoot(cwd: string): Promise<boolean> {
+    const fs = this.environments.inspect({ environmentId: LOCAL_ENVIRONMENT_ID }).fs!;
+    return await canonicalPath(fs, cwd) === await canonicalPath(fs, this.context.cwd);
+  }
+
+  private build(own: Own, environmentId: string, cwd: string, followsPrimary: boolean, worktree = false, ownsMcp = false): ProgramView {
     const lease = this.environments.acquire({ environmentId }, PROGRAM_CAPABILITIES);
     try {
       const hostFs = lease.environment.fs!;
@@ -173,6 +209,7 @@ export class ProgramWorkdirs {
         hostFs,
         environmentId,
         followsPrimary,
+        worktree,
         homeDir: lease.environment.host?.homeDir ?? '',
         git: inProcess
           ? this.dependencies.git
@@ -182,6 +219,7 @@ export class ProgramWorkdirs {
         watch: inProcess,
         projectAgentProfiles: trustCovered,
         contextKey: workdirContextKey(environmentId, cwd, followsPrimary),
+        ownsMcp,
         userAgentProfiles: this.harness.userAgentProfiles,
         explicitSkills: this.harness.explicitSkills,
         extraSkills: this.harness.extraSkills,
@@ -194,8 +232,8 @@ export class ProgramWorkdirs {
 
   private buildView(own: Own, input: ProgramViewInput): ProgramView {
     const state = own(new WorkspaceStateService(this.dependencies.appState));
-    const localConfig = new FileProjectLocalConfigService(this.dependencies.bootstrap, input.hostFs, input.homeDir);
-    const dirs = own(new WorkspaceDirsService(input.context, localConfig, this.dependencies.workspaces, this.dependencies.workspaceStore, this.dependencies.log, state, input.environmentId, input.followsPrimary));
+    const localConfig = new FileProjectLocalConfigService(this.dependencies.bootstrap, input.hostFs, input.homeDir, input.worktree ? this.context.cwd : undefined);
+    const dirs = own(new WorkspaceDirsService(input.context, localConfig, this.dependencies.workspaces, this.dependencies.workspaceStore, this.dependencies.log, state, input.environmentId, input.followsPrimary, input.worktree));
     const git = new WorkspaceGitService(dirs, input.git);
     const fs = new WorkspaceFsService(input.context, dirs, input.hostFs, this.environments, this.dependencies.telemetry, git, input.environmentId);
     const instructions = own(new WorkspaceInstructionsService(dirs, input.hostFs, input.instructionsHost, this.dependencies.bootstrap, this.dependencies.log, state, input.personalFs, input.watch));
@@ -204,7 +242,16 @@ export class ProgramWorkdirs {
       : { _serviceBrand: undefined, ready: Promise.resolve(), reload: () => Promise.resolve() };
     const workspaceSkills = own(new WorkspaceRootSkillSource(new EnvironmentSkillDiscovery(this.dependencies.log, input.hostFs), input.context, this.dependencies.config, this.dependencies.bootstrap, dirs, input.hostFs, this.dependencies.log, input.watch));
     const skills = own(new WorkspaceSkillCatalogService(this.dependencies.builtinSkills, this.dependencies.userSkills, input.explicitSkills, input.extraSkills, workspaceSkills, input.pluginSkills, state));
-    return { state, localConfig, hostFs: input.hostFs, dirs, git, fs, instructions, skills, agentProfiles };
+    const mcp = input.ownsMcp ? this.buildMcp(own, input, dirs) : undefined;
+    return { state, localConfig, hostFs: input.hostFs, dirs, git, fs, instructions, skills, agentProfiles, mcp };
+  }
+
+  private buildMcp(own: Own, input: ProgramViewInput, dirs: IWorkspaceDirs): IWorkspaceMcpService {
+    const { bootstrap, plugins, log, config, configStore, oauth, telemetry, identity, sessionManager } = this.dependencies;
+    const mcpConfig = own(new WorkspaceMcpConfigService(dirs, bootstrap, plugins, log, config, input.hostFs, this.projectTrust(), configStore, oauth));
+    const mcp = new WorkspaceMcpService(input.context, dirs, this.environments, mcpConfig, oauth, log, telemetry, identity, sessionManager);
+    own({ dispose: () => mcp.disposeAsync() });
+    return mcp;
   }
 }
 
@@ -224,6 +271,8 @@ async function reloadView(view: ProgramView): Promise<void> {
   await view.agentProfiles.reload().catch(() => undefined);
 }
 
-function disposeAll(disposables: readonly Disposable[]): void {
-  for (const disposable of disposables.toReversed()) void disposable.dispose();
+async function disposeAll(disposables: readonly Disposable[]): Promise<unknown[]> {
+  const results = disposables.toReversed().map(async (disposable) => disposable.dispose());
+  const settled = await Promise.allSettled(results);
+  return settled.filter((result) => result.status === 'rejected').map((result): unknown => result.reason);
 }

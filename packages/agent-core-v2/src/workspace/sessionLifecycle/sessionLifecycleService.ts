@@ -33,6 +33,8 @@ import { IConfigService } from '#/app/config/config';
 import { IProjectLocalConfigService } from '#/app/projectLocalConfig/projectLocalConfig';
 import { IEventService } from '#/app/event/event';
 import { IFlagService } from '#/app/flag/flag';
+import { ISessionPresence, SESSION_PRESENCE_DIR } from '#/app/sessionPresence/sessionPresence';
+import { WORKTREE_FLAG_ID } from '#/app/worktree/worktree';
 import { CHILD_SESSION_KIND,
   CHILD_SESSION_KIND_KEY,
   ISessionIndex,
@@ -334,7 +336,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
             }),
             [ISessionSkillCatalogData, workdir.skills.sessionData()],
             [ISessionInstructionsProvider, workdir.instructions.sessionProvider()],
-            [ISessionMcpHandle, this.workspaceMcp.sessionHandle()],
+            [ISessionMcpHandle, (workdir.mcp ?? this.workspaceMcp).sessionHandle()],
             [ISessionWorkspaceInfo, dirs.sessionInfo()],
             [ISessionWorkdir, {
               _serviceBrand: undefined,
@@ -350,6 +352,12 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
               'telemetry:session-context',
             );
             container.anchorKernelEntry(() => { workdir.dispose(); }, 'sessionLifecycle:workdir');
+            if (this.flags.enabled(WORKTREE_FLAG_ID)) {
+              const presence = container
+                .invokeFunction((accessor) => accessor.get(ISessionPresence))
+                .markOpen(sessionDir);
+              container.anchorKernelEntry(() => presence.dispose(), 'sessionLifecycle:presence');
+            }
             this._onWillCreateSession.fire({
               sessionId: opts.sessionId,
               onDidCreateScope: scopeCreated.event,
@@ -1036,7 +1044,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     const fileWrites: Promise<void>[] = [];
     for (const entry of entries) {
       const rel = relBase === '' ? entry.name : `${relBase}/${entry.name}`;
-      if (rel === 'state.json' || rel === 'logs' || rel === 'upcoming-goals.json') {
+      if (rel === 'state.json' || rel === 'logs' || rel === 'upcoming-goals.json' || rel === SESSION_PRESENCE_DIR) {
         continue;
       }
       if (excludeWire && entry.name === AGENT_WIRE_RECORD_KEY) continue;

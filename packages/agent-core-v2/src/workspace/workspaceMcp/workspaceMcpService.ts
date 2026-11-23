@@ -128,6 +128,7 @@ export class WorkspaceMcpService extends Disposable implements IWorkspaceMcpServ
         if (context.workspaceId !== this.workspaceId) return;
         const servers = event.readSeed(ISessionEphemeralMcpServers);
         if (Object.keys(servers).length === 0) return;
+        if (event.readSeed(ISessionMcpHandle).connectionManager !== this.manager) return;
         const overlay = this.sessionOverlay(servers, {
           stdioCwd: this.dirs.primary,
           sessionId: context.sessionId,

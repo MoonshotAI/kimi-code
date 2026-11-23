@@ -1,9 +1,10 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { stripVTControlCharacters } from 'node:util';
 
 import chalk from 'chalk';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 
 import { buildWeightedTips, FooterComponent } from '#/tui/components/chrome/footer';
 import { ALL_TIPS, TRANSCRIPT_GROUPING_TIP } from '#/tui/constant/tips';
@@ -67,6 +68,7 @@ function setDanceView(colored: boolean, phase: number): void {
 const appState: AppState = {
   version: '1.2.3',
   workDir: '/tmp/project',
+  cwd: '/tmp/project',
   additionalDirs: [],
   sessionId: 'ses-1',
   sessionTitle: null,
@@ -508,7 +510,7 @@ describe('FooterComponent environment slot', () => {
   });
 
   function footerWith(environment: AppState['environment']): FooterComponent {
-    return new FooterComponent({ ...appState, workDir: repoDir, environment });
+    return new FooterComponent({ ...appState, workDir: repoDir, cwd: repoDir, environment });
   }
 
   it('renders the remote identifier ahead of the cwd without a type prefix', () => {
@@ -541,6 +543,7 @@ describe('FooterComponent environment slot', () => {
       {
         ...appState,
         workDir: repoDir,
+        cwd: repoDir,
         environment: { environmentId: 'dev-box', type: 'ssh', status: 'connecting' },
       },
       onRefresh,
@@ -548,5 +551,76 @@ describe('FooterComponent environment slot', () => {
     footer.dispose();
     vi.advanceTimersByTime(BRAILLE_SPINNER_INTERVAL_MS * 5);
     expect(onRefresh).not.toHaveBeenCalled();
+  });
+});
+
+describe('FooterComponent worktree location', () => {
+  const worktree = { root: '/tmp/wt/fix-login', name: 'fix-login', repoRoot: '/tmp/project' };
+  const statusOn = (branch: string) => ({
+    branch,
+    dirty: true,
+    ahead: 0,
+    behind: 0,
+    diffAdded: 3,
+    diffDeleted: 1,
+    pullRequest: null,
+  });
+  const previousChalkLevel = chalk.level;
+
+  beforeEach(() => {
+    chalk.level = 3;
+  });
+
+  afterEach(() => {
+    chalk.level = previousChalkLevel;
+  });
+
+  function footerAt(state: Partial<AppState>, branch: string | null): FooterComponent {
+    gitStatusMocks.createGitStatusCache.mockImplementation(() => ({
+      getStatus: () => (branch === null ? null : statusOn(branch)),
+      refresh: vi.fn(),
+      dispose: vi.fn(),
+    }));
+    const footer = new FooterComponent({ ...appState, ...state });
+    footer.setGitBinding((current) => ({ key: current.cwd, source: gitSource }));
+    onTestFinished(() => {
+      footer.dispose();
+    });
+    return footer;
+  }
+
+  it('names the worktree in the cwd slot and marks a detached HEAD', () => {
+    const footer = footerAt({ cwd: worktree.root, worktree }, '');
+    const rendered = footer.render(160)[0] ?? '';
+    expect(stripVTControlCharacters(rendered)).toContain('worktree fix-login  detached [+3 -1]');
+    expect(rendered).toContain(chalk.hex(darkColors.accent)('fix-login'));
+    expect(stripVTControlCharacters(rendered)).not.toContain('/tmp/wt');
+  });
+
+  it('appends the path below the worktree root', () => {
+    const footer = footerAt({ cwd: `${worktree.root}/packages/foo`, worktree }, 'feat/login');
+    expect(stripVTControlCharacters(footer.render(160)[0] ?? '')).toContain('worktree fix-login/packages/foo  feat/login [+3 -1]');
+  });
+
+  it('keeps the plain cwd and hides a detached HEAD outside a worktree', () => {
+    const footer = footerAt({ cwd: '/tmp/project' }, '');
+    const rendered = stripVTControlCharacters(footer.render(160)[0] ?? '');
+    expect(rendered).toContain('/tmp/project');
+    expect(rendered).not.toContain('worktree');
+    expect(rendered).not.toContain('detached');
+  });
+
+  it('shows the remote cwd while a remote environment is bound', () => {
+    const footer = footerAt(
+      {
+        cwd: worktree.root,
+        worktree,
+        environment: { environmentId: 'dev-box', type: 'ssh', status: 'ready', cwd: '/remote/work' },
+      },
+      'main',
+    );
+    const rendered = stripVTControlCharacters(footer.render(160)[0] ?? '');
+    expect(rendered).toContain('/remote/work');
+    expect(rendered).not.toContain('worktree fix-login');
   });
 });

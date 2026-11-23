@@ -17,6 +17,7 @@ import type {
   PromptPart,
   PromptSubmissionResult,
   Session,
+  SessionSummary,
   SkillSummary,
   ThinkingEffort,
   TurnEndedEvent,
@@ -157,6 +158,9 @@ import { StagingLeaseTracker, type StagingLease } from './controllers/staging-le
 import { StreamingUIController } from './controllers/streaming-ui';
 import { SurveyController } from './controllers/survey-controller';
 import { TasksBrowserController } from './controllers/tasks-browser';
+import { WorktreeCreationController } from './controllers/worktree-creation';
+import { WorktreeExitController } from './controllers/worktree-exit';
+import { WorktreePanelController } from './controllers/worktree-panel';
 import { installRainbowDance } from './easter-eggs/dance';
 import { adaptPanelResponse } from './reverse-rpc/approval/adapter';
 import { ApprovalController } from './reverse-rpc/approval/controller';
@@ -188,6 +192,7 @@ import {
   type SteerOutcome,
   type StepRetryState,
   type TranscriptEntry,
+  type WorkLocation,
 } from './types';
 import { workingLabel } from './utils/activity-label';
 import { hasDispose } from './utils/component-capabilities';
@@ -220,6 +225,15 @@ import { REPLAY_FETCH_TURN_LIMIT } from './utils/message-replay';
 import { hasPatchChanges } from './utils/object-patch';
 import { beginScreenTakeover, endScreenTakeover, type ScreenTakeover } from './utils/screen-takeover';
 import { sessionRowsForPicker } from './utils/session-picker-rows';
+import {
+  findContinueSession,
+  planResume,
+  READ_ONLY_PLACEHOLDER,
+  readOnlyNotice,
+  sessionLocationTags,
+  switchedNotice,
+  type ResumePlan,
+} from './utils/session-location';
 import { isSessionOccupiedError } from './utils/session-lock-errors';
 import { formatStepRetryDetail, formatStepRetryLabel } from './utils/step-retry';
 import { formatBashOutputForDisplay } from './utils/shell-output';
@@ -268,6 +282,8 @@ export interface KimiTUIStartupInput {
   readonly animationFrameRate?: number;
   readonly version: string;
   readonly workDir: string;
+  readonly cwd?: string;
+  readonly worktree?: AppState['worktree'];
   readonly startupNotice?: string;
   readonly migrationPlan?: MigrationPlan | null;
   readonly migrateOnly?: boolean;
@@ -309,6 +325,8 @@ function createInitialAppState(input: KimiTUIStartupInput): AppState {
   return {
     model: '',
     workDir: input.workDir,
+    cwd: input.cwd ?? input.workDir,
+    worktree: input.worktree,
     additionalDirs: [...(input.additionalDirs ?? [])],
     sessionId: '',
     permissionMode: startupPermission,
@@ -421,6 +439,8 @@ export class KimiTUI {
   private readonly migrateOnly: boolean;
   private readonly telemetryDisabled: boolean;
   private startupNotice: string | undefined;
+  private startupResume?: { readonly target: SessionSummary; readonly plan: ResumePlan };
+  private readOnlySession?: { readonly id: string; readonly cwd: string };
   private lastActivityMode: string | undefined;
   private currentLoadingTip: { kind: LoadingTipKind; tip: string | undefined } | undefined =
     undefined;
@@ -444,6 +464,9 @@ export class KimiTUI {
   readonly editorKeyboard: EditorKeyboardController;
   readonly modelMigration: ModelMigrationController;
   readonly promptPredictionController: PromptPredictionController;
+  readonly worktreeCreation: WorktreeCreationController;
+  readonly worktreePanel: WorktreePanelController;
+  readonly worktreeExit: WorktreeExitController;
   private editorReplacementOnDisplaced: (() => void) | undefined;
   private editorReplacementOnReplaced: (() => void) | undefined;
   private editorReplacementOwner: ReverseRpcModalOwner | undefined;
@@ -462,6 +485,8 @@ export class KimiTUI {
   public onExit?: (exitCode?: number) => Promise<void>;
 
   public exitOpenUrl: string | undefined;
+
+  public exitError: string | undefined;
 
   public exitForegroundTask: ((exitCode: number) => Promise<void>) | undefined;
 
@@ -510,6 +535,10 @@ export class KimiTUI {
         agentFiles: startupInput.cliOptions.agentFiles,
         environment: startupInput.cliOptions.environment,
         environmentCwd: startupInput.cliOptions.environmentCwd,
+        worktree:
+          startupInput.cliOptions.worktree === undefined
+            ? undefined
+            : { name: startupInput.cliOptions.worktree, base: startupInput.cliOptions.worktreeBase },
         startupNotice: startupInput.startupNotice,
       },
     };
@@ -582,6 +611,9 @@ export class KimiTUI {
     });
     this.modelMigration = new ModelMigrationController(this);
     this.promptPredictionController = new PromptPredictionController(this);
+    this.worktreeCreation = new WorktreeCreationController(this);
+    this.worktreePanel = new WorktreePanelController(this);
+    this.worktreeExit = new WorktreeExitController(this);
     this.editorKeyboard = new EditorKeyboardController(this, this.imageStore);
     this.editorKeyboard.install();
     this.buildLayout();
@@ -618,7 +650,7 @@ export class KimiTUI {
         : async (query: string) => {
             const session = this.session;
             if (session === undefined) return undefined;
-            const result = await this.harness.suggestFiles(this.state.appState.workDir, {
+            const result = await this.harness.suggestFiles(this.state.appState.cwd, {
               query,
               sessionId: session.id,
               followGitignore: false,
@@ -627,7 +659,7 @@ export class KimiTUI {
           };
     const provider = new FileMentionProvider(
       slashCommands,
-      this.state.appState.workDir,
+      this.state.appState.cwd,
       this.fdPath,
       this.state.appState.additionalDirs,
       () => this.state.appState.inputMode,
@@ -662,13 +694,13 @@ export class KimiTUI {
     const local = this.environmentIdOf(state.environment) === 'local';
     const sessionId = state.sessionId === '' ? undefined : state.sessionId;
     if (sessionId === undefined && !local) return null;
-    const { workDir } = state;
+    const { cwd } = state;
     return {
-      key: [sessionId ?? '', workDir, local ? 'local' : 'remote'].join('\0'),
+      key: [sessionId ?? '', cwd, local ? 'local' : 'remote'].join('\0'),
       source: {
-        status: () => this.harness.getGitStatus(workDir, { sessionId }),
-        pullRequest: () => this.harness.getGitPullRequest(workDir, { sessionId }),
-        localWorkDir: local ? workDir : undefined,
+        status: () => this.harness.getGitStatus(cwd, { sessionId }),
+        pullRequest: () => this.harness.getGitPullRequest(cwd, { sessionId }),
+        localWorkDir: local ? cwd : undefined,
       },
     };
   }
@@ -681,7 +713,7 @@ export class KimiTUI {
   async refreshSkillCommands(session?: SkillListSession): Promise<void> {
     if (session === undefined) {
       try {
-        const skills = await this.harness.listWorkspaceSkills(this.state.appState.workDir);
+        const skills = await this.harness.listWorkspaceSkills(this.state.appState.cwd);
         this.applySkillCommands(skills);
       } catch {}
       return;
@@ -783,6 +815,7 @@ export class KimiTUI {
     let trustPromptStartedLoop = false;
     try {
       startupTrace('trustPrompt:begin');
+      await this.locateStartupSession();
       trustPromptStartedLoop = await this.maybeRunWorkspaceTrustPrompt();
       startupTrace('trustPrompt:end');
 
@@ -1090,6 +1123,13 @@ export class KimiTUI {
       await this.sessionReplay.hydrateFromReplay(this.requireSession());
       this.applyStartupPermissionAndPlanToAppState();
     }
+    if (this.startupResume?.plan.kind === 'switch') {
+      this.showStatus(switchedNotice(this.startupResume.plan.location.cwd));
+    }
+    if (this.startupResume?.plan.kind === 'read-only') {
+      await this.openReadOnlySession(this.startupResume.target, this.startupResume.plan.cwd);
+    }
+    this.startupResume = undefined;
     const resumeState = this.session?.getResumeState();
     this.surveyController.seedFromResumedAgents(resumeState?.sessionMetadata.agents ?? {});
     if (resumeState?.warning !== undefined) {
@@ -1112,6 +1152,7 @@ export class KimiTUI {
     void this.backgroundRefreshPromise?.then(() => {
       this.modelMigration.request();
     });
+    if (this.options.startup.worktree !== undefined) void this.worktreeCreation.run(this.options.startup.worktree);
   }
 
   private async showSessionWarnings(session: Session): Promise<void> {
@@ -1129,6 +1170,24 @@ export class KimiTUI {
     const warning = await detectTmuxKeyboardWarning();
     if (warning === undefined || this.aborted) return;
     this.showStatus(warning, 'warning');
+  }
+
+  private async locateStartupSession(): Promise<void> {
+    const id = this.options.startup.sessionFlag;
+    if (id === undefined || id === '') return;
+    setExperimentalFeatures(await this.harness.getExperimentalFeatures());
+    if (!isExperimentalFlagEnabled('worktree')) return;
+    const [target] = await this.harness.listSessions({ sessionId: id });
+    if (target !== undefined) await this.planStartupResume(target);
+  }
+
+  private async planStartupResume(target: SessionSummary): Promise<void> {
+    const plan = await planResume(this.harness, target, this.state.appState);
+    this.startupResume = { target, plan };
+    if (plan.kind === 'switch') {
+      const { workDir, cwd, worktree } = plan.location;
+      this.setAppState({ workDir, cwd, worktree });
+    }
   }
 
   private async init(): Promise<boolean> {
@@ -1150,8 +1209,11 @@ export class KimiTUI {
     let session: Session | undefined;
     let shouldReplayHistory = false;
     const isResumeStartup = startup.sessionFlag !== undefined || startup.continueLast;
+    const workingDirEnvironment = this.workingDirEnvironment();
     const createSessionOptions: MutableCreateSessionOptions = {
       workDir,
+      environmentId: workingDirEnvironment?.environmentId,
+      environmentCwd: workingDirEnvironment?.environmentCwd,
       model: startup.model,
       permission: startup.auto ? 'auto' : startup.yolo ? 'yolo' : undefined,
       planMode: startup.plan ? true : undefined,
@@ -1171,15 +1233,17 @@ export class KimiTUI {
         }
 
         if (startup.sessionFlag !== undefined) {
-          const sessions = await this.harness.listSessions({
-            sessionId: startup.sessionFlag,
-            workDir,
-          });
+          const sessions = this.startupResume === undefined
+            ? await this.harness.listSessions({
+              sessionId: startup.sessionFlag,
+              workDir,
+            })
+            : [this.startupResume.target];
           const target = sessions[0];
           if (target === undefined) {
             throw new Error(`Session "${startup.sessionFlag}" not found.`);
           }
-          if (resolve(target.workDir) !== resolve(workDir)) {
+          if (this.startupResume === undefined && resolve(target.workDir) !== resolve(workDir)) {
             this.state.ui.stop();
             process.stderr.write(
               `${currentTheme.fg(
@@ -1192,6 +1256,10 @@ export class KimiTUI {
               `Session "${startup.sessionFlag}" was created under a different directory.`,
             );
           }
+          if (this.startupResume?.plan.kind === 'read-only') {
+            this.state.startupState = 'ready';
+            return false;
+          }
           session = await this.harness.resumeSession({
             id: startup.sessionFlag,
             additionalDirs: createSessionOptions.additionalDirs,
@@ -1199,9 +1267,11 @@ export class KimiTUI {
           });
           shouldReplayHistory = true;
         } else {
-          const page = await this.harness.listSessionsPage({ workDir, limit: 1 });
-          const target = page.items[0];
+          const target = isExperimentalFlagEnabled('worktree')
+            ? await findContinueSession(this.harness, this.state.appState.cwd)
+            : (await this.harness.listSessionsPage({ workDir, limit: 1 })).items[0];
           if (target !== undefined) {
+            if (isExperimentalFlagEnabled('worktree')) await this.planStartupResume(target);
             session = await this.harness.resumeSession({
               id: target.id,
               additionalDirs: createSessionOptions.additionalDirs,
@@ -1248,6 +1318,10 @@ export class KimiTUI {
     return shouldReplayHistory;
   }
 
+  requestExit(): Promise<void> {
+    return this.worktreeExit.exit();
+  }
+
   async stop(exitCode?: number): Promise<void> {
     if (this.isShuttingDown) return;
     this.isShuttingDown = true;
@@ -1272,6 +1346,7 @@ export class KimiTUI {
     this.streamingUI.resetToolUi();
     this.disposeTranscriptChildren();
     this.promptPredictionController.dispose();
+    this.worktreeCreation.dispose();
     this.editorKeyboard.dispose();
     this.surveyController.dispose();
     this.surveySettingSubscription?.();
@@ -1434,6 +1509,11 @@ export class KimiTUI {
   }
 
   handleUserInput(text: string, delivery: FollowUpDelivery = 'default'): void {
+    if (this.worktreeCreation.busy && text.trim().length > 0) {
+      this.state.editor.setText(text);
+      this.showStatus('Wait for the worktree to finish setting up.');
+      return;
+    }
     const wasBashMode = this.state.appState.inputMode === 'bash';
     if (wasBashMode) {
       this.state.editor.inputMode = 'prompt';
@@ -1579,6 +1659,7 @@ export class KimiTUI {
     delivery: FollowUpDelivery = 'default',
   ): Promise<void> {
     if (this.btwPanelController.sendUserInput(text)) return;
+    if (this.refuseInReadOnly()) return;
     if (this.state.appState.model.trim().length === 0) {
       this.showError(LLM_NOT_SET_MESSAGE);
       return;
@@ -1652,6 +1733,7 @@ export class KimiTUI {
     delivery: FollowUpDelivery = 'default',
   ): Promise<void> {
     if (this.btwPanelController.sendUserInput(text, activations)) return;
+    if (this.refuseInReadOnly()) return;
     if (this.state.appState.model.trim().length === 0) {
       this.showError(LLM_NOT_SET_MESSAGE);
       return;
@@ -3042,6 +3124,40 @@ export class KimiTUI {
     this.state.ui.requestRender();
   }
 
+  async refreshWorkLocation(): Promise<void> {
+    const { cwd } = this.state.appState;
+    const location = await this.harness.resolveWorkLocation(cwd);
+    await this.applyWorkLocation(location.worktree === undefined ? { workDir: cwd, cwd } : location);
+  }
+
+  async applyWorkLocation(location: WorkLocation): Promise<void> {
+    const projectChanged = location.workDir !== this.state.appState.workDir;
+    this.setAppState({ workDir: location.workDir, cwd: location.cwd, worktree: location.worktree });
+    await this.resolveCreationEnvironment();
+    this.setupAutocomplete();
+    await this.refreshSkillCommands(this.session);
+    if (projectChanged) {
+      this.state.editor.clearHistory();
+      this.inputHistoryEntries = [];
+      this.lastHistoryEntry = undefined;
+      await this.loadPersistedInputHistory();
+    }
+  }
+
+  async startSessionAt(location: WorkLocation): Promise<boolean> {
+    const { workDir, cwd, worktree } = this.state.appState;
+    const replaced = this.session;
+    await this.applyWorkLocation(location);
+    if (replaced === undefined) return true;
+    await this.createNewSession({
+      environmentId: 'local',
+      environmentCwd: location.cwd === location.workDir ? undefined : location.cwd,
+    });
+    if (this.session !== replaced) return true;
+    await this.applyWorkLocation({ workDir, cwd, worktree });
+    return false;
+  }
+
   patchLivePane(patch: Partial<LivePaneState>): void {
     if (!hasPatchChanges(this.state.livePane, patch)) return;
     Object.assign(this.state.livePane, patch);
@@ -3071,11 +3187,7 @@ export class KimiTUI {
   async hydrateLazyConfigDefaults(includeModel = true): Promise<void> {
     const { startup } = this.options;
     const config = await this.harness.getConfig({ reload: true });
-    this.creationEnvironment = await this.harness.resolveSessionEnvironment({
-      workDir: this.state.appState.workDir,
-      environmentId: startup.environment,
-      environmentCwd: startup.environmentCwd,
-    });
+    await this.resolveCreationEnvironment();
     this.refreshSlashCommandAutocomplete();
     const patch: Partial<AppState> = includeModel
       ? lazyModelSelection(config, startup.model ?? config.defaultModel)
@@ -3095,6 +3207,22 @@ export class KimiTUI {
   }
 
   private creationEnvironment?: { readonly environmentId: string; readonly cwd?: string };
+
+  private async resolveCreationEnvironment(): Promise<void> {
+    const { startup } = this.options;
+    const workingDirEnvironment = this.workingDirEnvironment();
+    this.creationEnvironment = await this.harness.resolveSessionEnvironment({
+      workDir: this.state.appState.workDir,
+      environmentId: workingDirEnvironment?.environmentId ?? startup.environment,
+      environmentCwd: workingDirEnvironment?.environmentCwd ?? startup.environmentCwd,
+    });
+  }
+
+  private workingDirEnvironment(): { readonly environmentId: string; readonly environmentCwd: string } | undefined {
+    const { workDir, cwd } = this.state.appState;
+    if (cwd === workDir || this.options.startup.environment !== undefined) return undefined;
+    return { environmentId: 'local', environmentCwd: cwd };
+  }
 
   private async environmentForNewSession(): Promise<
     { readonly environmentId: string; readonly environmentCwd?: string } | undefined
@@ -3165,7 +3293,14 @@ export class KimiTUI {
       options.environmentId = inherited.environmentId;
       options.environmentCwd = inherited.environmentCwd;
     }
-    return this.harness.createSession(options);
+    const workingDirEnvironment = this.workingDirEnvironment();
+    if (workingDirEnvironment !== undefined) {
+      options.environmentId = workingDirEnvironment.environmentId;
+      options.environmentCwd = workingDirEnvironment.environmentCwd;
+    }
+    const session = await this.harness.createSession(options);
+    this.worktreeExit.noteNewSession(session.id);
+    return session;
   }
 
   promptSshPassword(environmentId: string): Promise<string | undefined> {
@@ -3173,12 +3308,19 @@ export class KimiTUI {
   }
 
   async ensureSession(): Promise<Session | undefined> {
+    if (this.refuseInReadOnly()) return undefined;
     if (this.ensureSessionPromise !== null) return this.ensureSessionPromise;
     if (this.session !== undefined) return this.session;
     this.ensureSessionPromise = this.lazyCreateSession().finally(() => {
       this.ensureSessionPromise = null;
     });
     return this.ensureSessionPromise;
+  }
+
+  private refuseInReadOnly(): boolean {
+    if (this.readOnlySession === undefined) return false;
+    this.showStatus(readOnlyNotice(this.readOnlySession.cwd), 'warning');
+    return true;
   }
 
   async waitForSessionAssembly(): Promise<void> {
@@ -3237,6 +3379,8 @@ export class KimiTUI {
     session: Session,
     initialUserTurnCount = session.getResumeState()?.agents[MAIN_AGENT_ID]?.userTurnCount,
   ): Promise<void> {
+    this.readOnlySession = undefined;
+    this.state.editor.setPlaceholder(undefined);
     const previous = this.unloadCurrentSession('switching session');
     await previous?.close();
     if (previous !== undefined) this.staging.releaseAll();
@@ -3397,6 +3541,7 @@ export class KimiTUI {
         page.items,
         this.state.appState.sessionId,
         this.hasSessionContent(),
+        isExperimentalFlagEnabled('worktree') ? await sessionLocationTags(this.harness, page.items) : undefined,
       );
     } catch (error) {
       log.warn('failed to fetch sessions for picker', { error: String(error) });
@@ -3438,6 +3583,7 @@ export class KimiTUI {
         page.items,
         this.state.appState.sessionId,
         this.hasSessionContent(),
+        isExperimentalFlagEnabled('worktree') ? await sessionLocationTags(this.harness, page.items) : undefined,
       );
       this.state.sessions = [...this.state.sessions, ...rows];
       this.sessionPickerComponent?.appendSessions(rows);
@@ -3507,9 +3653,9 @@ export class KimiTUI {
     }
   }
 
-  private async resumeSession(targetSessionId: string): Promise<boolean> {
+  private async resumeSession(targetSessionId: string, plan?: ResumePlan): Promise<boolean> {
     await this.waitForSessionAssembly();
-    if (targetSessionId === this.state.appState.sessionId) {
+    if (targetSessionId === this.state.appState.sessionId && this.readOnlySession === undefined) {
       this.showStatus('Already on this session.');
       return true;
     }
@@ -3522,6 +3668,11 @@ export class KimiTUI {
       return false;
     }
 
+    if (plan?.kind === 'read-only') {
+      const title = this.state.sessions.find((row) => row.id === targetSessionId)?.title;
+      await this.openReadOnlySession({ id: targetSessionId, title: title ?? undefined }, plan.cwd);
+      return true;
+    }
     let session: Session;
     try {
       this.showStatus(`Resuming session ${targetSessionId}…`);
@@ -3543,8 +3694,29 @@ export class KimiTUI {
       return false;
     }
 
+    if (plan?.kind === 'switch') {
+      await this.applyWorkLocation(plan.location);
+      await this.switchToSession(session, switchedNotice(plan.location.cwd));
+      return true;
+    }
     await this.switchToSession(session, `Resumed session (${session.id}).`);
     return true;
+  }
+
+  private async openReadOnlySession(
+    target: Pick<SessionSummary, 'id' | 'title'>,
+    cwd: string,
+  ): Promise<void> {
+    const history = await this.harness.readSessionHistory({ id: target.id });
+    await this.closeSession('opening a read-only session');
+    this.resetSessionRuntime();
+    this.readOnlySession = { id: target.id, cwd };
+    this.setAppState({ sessionId: target.id, sessionTitle: target.title ?? null });
+    this.updateTerminalTitle();
+    this.clearTranscriptAndRedraw();
+    this.sessionReplay.renderHistory(history);
+    this.showStatus(readOnlyNotice(cwd), 'warning');
+    this.state.editor.setPlaceholder(READ_ONLY_PLACEHOLDER);
   }
 
   async switchToSession(session: Session, statusMessage: string): Promise<void> {
@@ -3761,7 +3933,7 @@ export class KimiTUI {
             entry.toolCallData,
             entry.toolCallData.result,
             this.state.ui,
-            this.state.appState.workDir,
+            this.state.appState.cwd,
           );
           if (this.state.transcriptContainer.toolOutputExpanded) tc.setExpanded(true);
           return tc;
@@ -4148,6 +4320,11 @@ export class KimiTUI {
 
   showError(message: string): void {
     this.showStatus(`Error: ${message}`, 'error');
+  }
+
+  exitWithError(message: string): void {
+    this.exitError = message;
+    void this.stop(1);
   }
 
   showLoginProgressSpinner(label: string): LoginProgressSpinnerHandle {
@@ -4820,6 +4997,15 @@ export class KimiTUI {
   private sessionPickerComponent: SessionPickerComponent | undefined;
   private sessionsPageFetchInFlight: Promise<boolean> | undefined;
 
+  async showWorktreePanel(): Promise<void> {
+    if (this.refuseInReadOnly()) return;
+    if (this.environmentIdOf(this.state.appState.environment) !== 'local') {
+      this.showStatus("Worktrees aren't available for remote environments.", 'warning');
+      return;
+    }
+    await this.worktreePanel.open();
+  }
+
   async showSessionPicker(): Promise<void> {
     await this.openSessionPicker({
       applyStartupModes: false,
@@ -4997,15 +5183,22 @@ export class KimiTUI {
     applyStartupModes: boolean,
   ): Promise<void> {
     this.sessionPickerScopeRequestToken += 1;
-    if (resolve(session.work_dir) !== resolve(this.state.appState.workDir)) {
+    const plan = isExperimentalFlagEnabled('worktree')
+      ? await planResume(
+        this.harness,
+        { workDir: session.work_dir, projectWorkDir: session.project_work_dir },
+        this.state.appState,
+      )
+      : undefined;
+    if (plan === undefined && resolve(session.work_dir) !== resolve(this.state.appState.workDir)) {
       await this.showResumeOtherWorkDirHint(session);
       if (applyStartupModes) await this.stop(0);
       return;
     }
 
-    const switched = await this.resumeSession(session.id);
+    const switched = await this.resumeSession(session.id, plan);
     if (!switched) return;
-    if (applyStartupModes) {
+    if (applyStartupModes && this.readOnlySession === undefined) {
       await this.applyStartupModesToResumedSession(this.requireSession());
       this.applyStartupPermissionAndPlanToAppState();
     }

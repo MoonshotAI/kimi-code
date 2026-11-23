@@ -153,6 +153,7 @@ import { ITowerRateLimitService } from '@moonshot-ai/agent-core-v2/features/towe
 import { readTowerStatusSummary } from '@moonshot-ai/agent-core-v2/features/tower/tools/status/statusReader';
 import { loadMcpServers } from '@moonshot-ai/agent-core-v2/app/mcpConfig/configLoader';
 import { IGitService } from '@moonshot-ai/agent-core-v2/app/git/git';
+import { IWorktreeService } from '@moonshot-ai/agent-core-v2/app/worktree/worktree';
 import { fsSuggestRequestSchema } from '@moonshot-ai/agent-core-v2/workspace/workspaceFs/fs';
 import { ILogService } from '@moonshot-ai/agent-core-v2/_base/log/log';
 import { IAppendLogStore } from '@moonshot-ai/agent-core-v2/persistence/interface/appendLogStore';
@@ -347,12 +348,14 @@ import type {
   PluginSummary,
   PromptSubmissionResult,
   ReloadSummary,
+  ReadSessionHistoryInput,
   RenameSessionInput,
   ResumeSessionInput,
   ResumedAgentState,
   ResumedSessionSummary,
   SessionPlan,
   SessionStatus,
+  SessionHistory,
   SessionSummary,
   SessionSummaryPage,
   SessionEnvironmentsInfo,
@@ -392,6 +395,18 @@ import {
   v2SummaryToSessionSummary,
 } from '#/v2/session-mapper';
 import { SessionEventWiring } from '#/v2/session-wiring';
+import type {
+  CreatedWorktree,
+  CreateWorktreeInput,
+  CreateWorktreeOptions,
+  InspectWorktreeRemovalInput,
+  RemoveWorktreeInput,
+  RunSetupScriptInput,
+  RunSetupScriptOptions,
+  WorkLocation,
+  WorktreeListing,
+  WorktreeRemovalCheck,
+} from '#/worktree';
 
 export interface SDKRpcClientV2Options {
   readonly homeDir?: string;
@@ -727,6 +742,23 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     }
   }
 
+  private async withWorkdirView<T>(
+    operation: string,
+    cwd: string,
+    use: (view: Pick<WorkspaceInstance['program'], 'skills' | 'mcp'>) => Promise<T>,
+  ): Promise<T> {
+    const location = await this.engineAccessor.get(IWorktreeService).locate(normalizeRequiredWorkDir(operation, cwd));
+    if (location.worktree === undefined) return this.withWorkspaceInstance(operation, cwd, (handler) => use(handler.program));
+    return this.withWorkspaceInstance(operation, location.workDir, async (handler) => {
+      const workdir = await handler.program.acquireWorkdir('local', location.cwd, false);
+      try {
+        return await use({ skills: workdir.skills, mcp: workdir.mcp ?? handler.program.mcp });
+      } finally {
+        workdir.dispose();
+      }
+    });
+  }
+
   /**
    * Through the workspace instance's `IWorkspaceSkillCatalog` — the engine's
    * own merged view (builtin / user / explicit / extra / workspace-root /
@@ -735,10 +767,9 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    * materializes the instance anyway.
    */
   override async listWorkspaceSkills(workDir: string): Promise<readonly SkillSummary[]> {
-    return this.withWorkspaceInstance('listWorkspaceSkills', workDir, async (handler) => {
-      const catalog = handler.program.skills;
-      await catalog.ready;
-      return catalog.catalog.listSkills().map(summarizeSkill);
+    return this.withWorkdirView('listWorkspaceSkills', workDir, async ({ skills }) => {
+      await skills.ready;
+      return skills.catalog.listSkills().map(summarizeSkill);
     });
   }
 
@@ -822,6 +853,36 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
         ? this.requireLiveSession(input.sessionId).accessor.get(ISessionWorkdir).fs.pullRequest({})
         : this.engineAccessor.get(IGitService).pullRequest(normalizeRequiredWorkDir('getGitPullRequest', workDir)),
     );
+  }
+
+  override async resolveWorkLocation(cwd: string): Promise<WorkLocation> {
+    const resolved = normalizeRequiredWorkDir('resolveWorkLocation', cwd);
+    await this.configReady;
+    return this.engineAccessor.get(IWorktreeService).locate(resolved);
+  }
+
+  override async listWorktrees(cwd: string): Promise<WorktreeListing> {
+    return withKimiErrors(this.engineAccessor.get(IWorktreeService).list(normalizeRequiredWorkDir('listWorktrees', cwd)));
+  }
+
+  override async createWorktree(input: CreateWorktreeInput, options?: CreateWorktreeOptions): Promise<CreatedWorktree> {
+    const cwd = normalizeRequiredWorkDir('createWorktree', input.cwd);
+    return withKimiErrors(this.engineAccessor.get(IWorktreeService).create({ ...input, cwd }, options));
+  }
+
+  override async runWorktreeSetupScript(
+    input: RunSetupScriptInput,
+    options?: RunSetupScriptOptions,
+  ): Promise<{ readonly exitCode: number }> {
+    return withKimiErrors(this.engineAccessor.get(IWorktreeService).runSetupScript(input, options));
+  }
+
+  override async inspectWorktreeRemoval(input: InspectWorktreeRemovalInput): Promise<WorktreeRemovalCheck> {
+    return withKimiErrors(this.engineAccessor.get(IWorktreeService).inspectRemoval(input));
+  }
+
+  override async removeWorktree(input: RemoveWorktreeInput): Promise<void> {
+    return withKimiErrors(this.engineAccessor.get(IWorktreeService).remove(input));
   }
 
   /**
@@ -1259,12 +1320,14 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     const ctx = handle.accessor.get(ISessionContext);
     const workspace = handle.accessor.get(ISessionWorkspaceContext);
     const liveOutcome = handle.accessor.get(ISessionActivityView).state().lastTurnReason;
+    const project = await this.klient.global.workspaces.get(ctx.workspaceId);
     return {
       id: meta.id,
       title: meta.title,
       titleKind: meta.titleKind,
       lastPrompt: meta.lastPrompt,
       workDir: ctx.cwd,
+      projectWorkDir: project === undefined ? undefined : normalizeWorkDir(project.root),
       sessionDir: ctx.sessionDir,
       createdAt: meta.createdAt,
       updatedAt: meta.updatedAt,
@@ -1503,7 +1566,8 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     item: V2SessionSummary,
     workspacesById: ReadonlyMap<string, { readonly root: string }>,
   ): SessionSummary | undefined {
-    const workDir = item.cwd ?? workspacesById.get(item.workspaceId)?.root;
+    const projectRoot = workspacesById.get(item.workspaceId)?.root;
+    const workDir = item.cwd ?? projectRoot;
     if (workDir === undefined) return undefined;
     const liveHandle = getLiveSessionById(this.engineAccessor, item.id);
     const effectiveItem =
@@ -1516,6 +1580,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     const bootstrapService = this.engineAccessor.get(IBootstrapService);
     return v2SummaryToSessionSummary(effectiveItem, {
       workDir,
+      projectWorkDir: projectRoot === undefined ? undefined : normalizeWorkDir(projectRoot),
       sessionDir: sessionDirOf(
         bootstrapService.homeDir,
         workspacePersistenceScope(bootstrapService.scope('sessions'), item.workspaceId),
@@ -1775,6 +1840,17 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
         );
       })
       .catch(() => undefined);
+  }
+
+  override async readSessionHistory(input: ReadSessionHistoryInput): Promise<SessionHistory> {
+    const folded = await this.startMainWireFold(input.id, input.replayTurnLimit);
+    if (folded === undefined) throw SDKRpcClientV2.sessionNotFound(input.id);
+    return {
+      replay: folded.replay,
+      userTurnCount: folded.userTurnCount,
+      replayWarning: folded.warning,
+      replayError: folded.error,
+    };
   }
 
   /**
@@ -3058,8 +3134,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    * Same `McpServerEntry`-as-`McpServerInfo` cast as listMcpServers.
    */
   override async listWorkspaceMcpServers(workDir: string): Promise<readonly McpServerInfo[]> {
-    return this.withWorkspaceInstance('listWorkspaceMcpServers', workDir, async (handler) => {
-      const mcp = handler.program.mcp;
+    return this.withWorkdirView('listWorkspaceMcpServers', workDir, async ({ mcp }) => {
       await mcp.ready;
       return mcp.connectionManager().list() as readonly McpServerInfo[];
     });
@@ -3216,6 +3291,14 @@ function restateEngineError(error: unknown): unknown {
     details: error.details as Record<string, unknown> | undefined,
     cause: error.cause,
   });
+}
+
+async function withKimiErrors<T>(call: Promise<T>): Promise<T> {
+  try {
+    return await call;
+  } catch (error) {
+    throw restateEngineError(error);
+  }
 }
 
 /**

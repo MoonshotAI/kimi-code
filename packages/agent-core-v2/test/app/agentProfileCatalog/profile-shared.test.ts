@@ -69,6 +69,7 @@ describe('systemPromptVars', () => {
     const vars = systemPromptVars({}, { skillActive: true });
 
     expect(vars['cwd']).toBe('');
+    expect(vars['worktree_section']).toBe('');
     expect(vars['cwd_listing']).toBe('');
     expect(vars['shell']).toBe('');
     expect(vars['agents_md']).toBe('');
@@ -193,6 +194,20 @@ describe('renderPromptTemplateResult', () => {
     expect(result.text).toBe('custom\n\nBASE');
     expect(result.environment).toEqual({ cwd: '/work' });
   });
+
+  it('hands custom templates the same worktree section as the builtin template', () => {
+    const template = 'cwd=${cwd}${worktree_section}|';
+    const context: AgentProfileContext = { cwd: '/worktrees/feature', worktreeSourceRoot: '/src/repo' };
+    const section = systemPromptVars(context, { skillActive: true })['worktree_section'];
+
+    expect(section).toContain('`/src/repo`');
+    expect(renderPromptTemplateResult(template, context, { skillActive: true }).text).toBe(
+      `cwd=/worktrees/feature${section}|`,
+    );
+    expect(renderPromptTemplateResult(template, { cwd: '/src/repo' }, { skillActive: true }).text).toBe(
+      'cwd=/src/repo|',
+    );
+  });
 });
 
 describe('renderSystemPromptResult', () => {
@@ -283,6 +298,29 @@ describe('renderSystemPromptResult', () => {
     expect(renderSystemPromptResult('', {}, { skillActive: true }).text).not.toContain(
       '# Plugin Instructions',
     );
+  });
+
+  it('adds the worktree note as its own paragraph after the working directory', () => {
+    const prompt = renderSystemPromptResult(
+      '',
+      { cwd: '/worktrees/feature', worktreeSourceRoot: '/src/repo' },
+      { skillActive: true },
+    ).text;
+
+    expect(prompt).toContain(
+      'The current working directory is `/worktrees/feature`. The dedicated tools skip VCS metadata and refuse well-known secret files such as `.env` and SSH private keys. `Bash` enforces none of these guards — never use shell commands to read, copy, or transmit secret files.\n\n' +
+        'This directory is a git worktree, a separate checkout of the repository whose source checkout is `/src/repo`. Run commands and edit files here. Do not `cd` into the source checkout or change files there. `git stash` is shared by every worktree of this repository.\n\n' +
+        'The directory listing of current working directory is:',
+    );
+  });
+
+  it('runs the working directory paragraph straight into the listing outside a worktree', () => {
+    const prompt = renderSystemPromptResult('', { cwd: '/src/repo' }, { skillActive: true }).text;
+
+    expect(prompt).toContain(
+      'never use shell commands to read, copy, or transmit secret files.\n\nThe directory listing of current working directory is:',
+    );
+    expect(prompt).not.toContain('git worktree');
   });
 
   it('renders the builtin template with no leftover placeholders', () => {

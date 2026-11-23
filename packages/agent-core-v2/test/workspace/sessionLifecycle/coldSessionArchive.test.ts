@@ -31,6 +31,7 @@ import type { SessionCreatedEvent } from '#/workspace/sessionLifecycle/sessionLi
 import type { SessionLifecycleService } from '#/workspace/sessionLifecycle/sessionLifecycleService';
 import type { WorkspaceInstance } from '#/workspace/workspaceInstance/workspaceInstance';
 import type { IWorkspaceInstanceManager } from '#/workspace/workspaceInstance/workspaceInstanceManager';
+import type { IWorktreeService } from '#/app/worktree/worktree';
 
 function accessor(
   entries: ReadonlyArray<readonly [ServiceIdentifier<unknown>, unknown]>,
@@ -254,6 +255,7 @@ function sessionManagerResuming(sessionId: string): SessionManager {
       { _serviceBrand: undefined, warn: () => {}, info: () => {}, error: () => {} } as unknown as ILogService,
     ),
     environments,
+    { locate: async (cwd: string) => ({ workDir: cwd, cwd }) } as unknown as IWorktreeService,
     {
       _serviceBrand: undefined,
       stat: async () => ({ isFile: false, isDirectory: true, size: 0 }),

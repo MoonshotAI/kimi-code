@@ -65,6 +65,7 @@ export class WorkspaceDirsService implements IWorkspaceDirs {
     @IWorkspaceStateService private readonly states: IWorkspaceStateService,
     private readonly environmentId = LOCAL_ENVIRONMENT_ID,
     private readonly followsPrimary = environmentId === LOCAL_ENVIRONMENT_ID,
+    private readonly projectDirs = false,
   ) {
     this.states.contributeState(workspaceDirsFileDirsKey);
     this.states.contributeState(workspaceDirsEphemeralDirsKey);
@@ -267,6 +268,16 @@ export class WorkspaceDirsService implements IWorkspaceDirs {
         const key = workspaceRootKey(dir);
         if (this.followsPrimary && currentEntry && key === primaryKey) continue;
         if ((!this.followsPrimary || !currentEntry) && key === cwdKey) continue;
+        if (dirs.some((kept) => workspaceRootKey(kept) === key)) continue;
+        dirs.push(dir);
+      }
+    }
+    const project = this.projectDirs ? entries.find((entry) => entry.id === this.workspace.workspaceId) : undefined;
+    if (project !== undefined) {
+      const projectRootKey = workspaceRootKey(project.root);
+      for (const dir of project.additionalDirs) {
+        const key = workspaceRootKey(dir);
+        if (key === cwdKey || key === projectRootKey) continue;
         if (dirs.some((kept) => workspaceRootKey(kept) === key)) continue;
         dirs.push(dir);
       }

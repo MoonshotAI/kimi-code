@@ -166,7 +166,7 @@ export class SessionEventHandler {
       pluginUpdateNotifier ??
       new PluginUpdateNotifier({
         getSession: () => this.host.session,
-        workDir: host.state.appState.workDir,
+        getWorkDir: () => host.state.appState.cwd,
         reloadPlugins: async () => host.session?.reloadPlugins(),
         refreshPluginCommands: async () => host.refreshPluginCommands(host.session),
         notify: (message) => {
