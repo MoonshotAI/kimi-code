@@ -55,7 +55,8 @@ import {
   type TurnInterruptReason,
 } from './turnEvents';
 import { AgentErrorEvent } from '#/agent/mcp/mcpEvents';
-import { TurnEnded, TurnPrompt } from './turnOps';
+import { TurnEnded, TurnPrompt, type TurnReplyModel } from './turnOps';
+import type { ISessionRequestAttributionService } from '#/session/requestAttribution/requestAttribution';
 import { ErrorCodes, Error2, isError2, toKimiErrorPayload } from '#/errors';
 import type {
   AfterStepContext,
@@ -128,6 +129,7 @@ interface ActiveTurn {
   mode: 'agent' | 'plan' | undefined;
   providerType: string | undefined;
   protocol: string | undefined;
+  replyModel?: { requestId?: string; model: TurnReplyModel };
 }
 
 type MutableTurn = {
@@ -135,6 +137,7 @@ type MutableTurn = {
 };
 
 export interface TurnProjectionOptions {
+  readonly attribution: ISessionRequestAttributionService;
   readonly dispatcher: IEventDispatcher;
   readonly events: IEventBus;
   readonly scopeContext: IAgentScopeContext;
@@ -661,7 +664,9 @@ export class AgentTurnProjection {
         step.providerFinishReason = attributes?.finish?.finishReason ?? step.providerFinishReason;
         step.rawFinishReason = attributes?.finish?.rawFinishReason ?? step.rawFinishReason;
         step.messageId = attributes?.messageId ?? step.messageId;
-        this.lastRequestId = this.activeRequestTrace?.requestId;
+        const requestId = this.activeRequestTrace?.requestId;
+        this.lastRequestId = requestId;
+        turn.replyModel = attributes?.model === undefined ? undefined : { requestId, model: attributes.model };
         const toolCalls = step.entry.toolCalls;
         if (toolCalls.length === 0 && attributes?.partial !== true) this.endOrInterruptStep(turn, step, step.providerFinishReason ?? 'completed');
         else if (toolCalls.length > 0) step.pendingToolIds = new Set(toolCalls.map((call) => call.id));
@@ -916,6 +921,7 @@ export class AgentTurnProjection {
     const durationMs = promptOnly ? 0 : Date.now() - turn.startedAt;
     const error = result.type === 'failed' ? toKimiErrorPayload(result.error) : undefined;
     const requestId = this.turnRequestId(promptOnly, result.type === 'cancelled', result.type === 'completed');
+    const modelSteps = this.options.attribution.finishModelSteps(this.options.scopeContext.agentId, turn.id);
     const interruptReason = result.type === 'completed' ? undefined : interruptReasonFor(result);
     const turnEnded = this.options.dispatcher.dispatch(new TurnEnded({
       agentId: this.options.scopeContext.agentId,
@@ -926,6 +932,8 @@ export class AgentTurnProjection {
       interruptReason,
       stopReason: result.type === 'completed' ? result.stopReason : undefined,
       requestId,
+      replyModel: modelSteps !== undefined && turn.replyModel?.requestId === requestId ? turn.replyModel?.model : undefined,
+      modelSteps,
     }));
     if (error !== undefined) void this.options.dispatcher.dispatch(new AgentErrorEvent({ ...error, agentId: this.options.scopeContext.agentId }));
     this.options.prompts.complete(turn.id, result);

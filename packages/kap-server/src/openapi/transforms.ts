@@ -108,7 +108,12 @@ export function transformOpenApiDocument(
   const paths = asRecord(document['paths']);
   if (paths === undefined) return document;
 
-  patchFileUpload(paths);
+  patchFileUpload(paths, '/api/v1/files', fileUploadMultipartSchema);
+  patchFileUpload(paths, '/api/v1/feedback/{feedback_id}/attachments', {
+    type: 'object',
+    properties: { file: binarySchema },
+    required: ['file'],
+  });
   patchFileDownload(paths);
   patchKapSpec(paths);
   patchSessionExport(paths);
@@ -154,15 +159,19 @@ function patchSessionExport(paths: Record<string, unknown>): void {
   });
 }
 
-function patchFileUpload(paths: Record<string, unknown>): void {
-  const operation = getOperation(paths, '/api/v1/files', 'post');
+function patchFileUpload(
+  paths: Record<string, unknown>,
+  path: string,
+  schema: Record<string, unknown>,
+): void {
+  const operation = getOperation(paths, path, 'post');
   if (operation === undefined) return;
 
   operation['requestBody'] = {
     required: true,
     content: {
       'multipart/form-data': {
-        schema: fileUploadMultipartSchema,
+        schema,
       },
     },
   };
