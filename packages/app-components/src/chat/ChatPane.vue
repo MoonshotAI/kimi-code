@@ -2549,7 +2549,7 @@ function streamingTailIndex(turn: ChatTurn): number | null {
 }
 .top-sentinel-btn {
   appearance: none;
-  border: var(--p-hairline) solid var(--border);
+  border: var(--p-hairline) solid var(--color-line);
   background: transparent;
   color: var(--muted);
   font-size: var(--ui-font-size-sm);
@@ -2559,8 +2559,8 @@ function streamingTailIndex(turn: ChatTurn): number | null {
   transition: color 0.15s ease, border-color 0.15s ease;
 }
 .top-sentinel-btn:hover {
-  color: var(--fg);
-  border-color: var(--fg);
+  color: var(--color-text);
+  border-color: var(--color-text);
 }
 .top-sentinel-text {
   display: inline-flex;

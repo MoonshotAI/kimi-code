@@ -64,7 +64,6 @@
   --markdown-inline-code-background: var(--color-selected);
   --markdown-code-background: light-dark(#ffffff, #292929);
   --markdown-code-header-background: light-dark(rgb(255 255 255 / 90%), rgb(41 41 41 / 90%));
-  --markdown-code-action-background: light-dark(rgb(255 255 255 / 90%), rgb(41 41 41 / 90%));
   --markdown-code-action-hover-background: light-dark(rgb(0 0 0 / 3%), rgb(255 255 255 / 5%));
   --markdown-code-toggle-background: light-dark(rgb(0 0 0 / 5%), rgb(255 255 255 / 10%));
   --markdown-code-toggle-selected-background: light-dark(#ffffff, #4d4d4d);
@@ -133,8 +132,6 @@
   --markdown-code-toggle-item-padding-inline: 0.75rem;
   --markdown-code-toggle-item-padding-block: 0.0625rem;
   --markdown-code-toggle-item-min-width: 2rem;
-  --markdown-code-toggle-item-gap: 0.25rem;
-  --markdown-code-toggle-item-radius: 1rem;
   --markdown-code-toggle-item-inactive-radius: 0.25rem;
   --markdown-code-toggle-preview-radius: 1.25rem;
   --markdown-code-backdrop-blur: 0.9375rem;
