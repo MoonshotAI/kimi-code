@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { computed, inject, onBeforeUnmount, ref, useId, watch } from 'vue';
+import { computed, inject, onBeforeUnmount, ref, useId } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { IconButton } from '@moonshot-ai/app-ui';
-import { DesktopFeedbackKey, type FeedbackForm, type TurnFeedbackTarget } from '../../composables/useDesktopFeedback';
+import { DesktopFeedbackKey, type TurnFeedbackTarget } from '../../composables/useDesktopFeedback';
 import TurnFeedbackPopover from './TurnFeedbackPopover.vue';
 
 const props = defineProps<{ target: TurnFeedbackTarget | undefined }>();
@@ -17,20 +17,11 @@ const activeRating = computed(() => {
 });
 const open = computed(() => feedback?.isPopoverOpen(props.target) === true);
 const pending = computed(() => state.value !== undefined && state.value.kind !== 'recorded');
-let prepared: { sessionId: string; form: Promise<FeedbackForm | null> } | undefined;
 
-function prepareForm(): void {
+function prefetchForm(): void {
   const sessionId = props.target?.sessionId;
-  if (sessionId !== undefined && feedback && !activeRating.value && prepared?.sessionId !== sessionId) {
-    prepared = { sessionId, form: feedback.loadForm(sessionId) };
-  }
+  if (sessionId !== undefined && feedback) feedback.prefetchForm(sessionId);
 }
-
-function forgetForm(): void {
-  if (!open.value) prepared = undefined;
-}
-
-watch(open, forgetForm);
 
 onBeforeUnmount(() => {
   if (open.value) feedback?.closePopover(props.target);
@@ -47,6 +38,8 @@ onBeforeUnmount(() => {
       tooltip-arrow
       :pressed="activeRating === 'up'"
       :disabled="pending"
+      @pointerenter="prefetchForm"
+      @focus="prefetchForm"
       @click="feedback.chooseRating(target, 'up')"
     >
       <span class="rating-icon rating-like" aria-hidden="true" />
@@ -63,10 +56,8 @@ onBeforeUnmount(() => {
       :aria-controls="open ? popoverId : undefined"
       aria-haspopup="dialog"
       :disabled="pending"
-      @pointerenter="prepareForm"
-      @focus="prepareForm"
-      @pointerleave="forgetForm"
-      @blur="forgetForm"
+      @pointerenter="prefetchForm"
+      @focus="prefetchForm"
       @click="feedback.chooseRating(target, 'down')"
     >
       <span class="rating-icon rating-dislike" aria-hidden="true" />
@@ -78,7 +69,6 @@ onBeforeUnmount(() => {
         :key="target.replyId"
         :anchor="downButton.el"
         :target="target"
-        :prepared-form="prepared?.sessionId === target.sessionId ? prepared.form : undefined"
         :saving="state?.kind === 'saving'"
         :updating="state?.kind === 'updating'"
         @close="feedback.closePopover(target)"
