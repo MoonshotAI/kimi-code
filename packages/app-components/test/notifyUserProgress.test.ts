@@ -57,7 +57,7 @@ describe('NotifyUser progress row', () => {
     await nextTick();
     expect(el.querySelector('.pg-title')?.textContent).toBe('Root cause found');
     expect(el.querySelector('.pg-time')?.textContent).toMatch(/^\d{2}:\d{2}$/);
-    expect(el.querySelector('.pg-dot')).not.toBeNull();
+    expect(el.querySelector('.kw-dot--unread')).not.toBeNull();
     expect(el.querySelector('.tool-line')?.classList.contains('open')).toBe(false);
     expect(el.querySelector('.md-stub')?.textContent).toBe('Two refreshes reuse one token.');
 
@@ -115,7 +115,7 @@ describe('NotifyUser progress row', () => {
     );
     await nextTick();
     expect(el.querySelector('.pg-title')).toBeNull();
-    expect(el.querySelector('.pg-dot')).toBeNull();
+    expect(el.querySelector('.kw-dot--unread')).toBeNull();
     expect(el.textContent).toContain('tools.label.notify_user');
   });
 });

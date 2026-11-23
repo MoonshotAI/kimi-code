@@ -2,7 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { copyTextToClipboard } from '@moonshot-ai/app-core/lib';
-import { IconButton, Icon, Input, Pill, Select } from '@moonshot-ai/app-ui';
+import { IconButton, Icon, Input, Pill, Select, StatusDot } from '@moonshot-ai/app-ui';
 import {
   clearTrace,
   downloadTraceLog,
@@ -210,7 +210,7 @@ function clearAll(): void {
         :class="{ stale: heartbeat.stale }"
         :title="t('panel.inspector.heartbeatHint', { count: heartbeat.count })"
       >
-        <span class="insp-heartbeat-dot" />
+        <StatusDot :status="heartbeat.stale ? 'error' : 'ok'" size="sm" />
         {{ t('panel.inspector.heartbeat', { age: heartbeat.age }) }}
       </span>
       <div class="insp-actions">
@@ -337,17 +337,8 @@ function clearAll(): void {
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
-.insp-heartbeat-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--color-success);
-}
 .insp-heartbeat.stale {
   color: var(--color-danger);
-}
-.insp-heartbeat.stale .insp-heartbeat-dot {
-  background: var(--color-danger);
 }
 .insp-actions {
   margin-left: auto;

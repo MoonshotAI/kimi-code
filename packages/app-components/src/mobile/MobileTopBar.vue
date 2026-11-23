@@ -3,7 +3,7 @@ import { computed } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { WorkspaceView } from '@moonshot-ai/app-core/client/types';
 import type { SessionDisplayStatus } from '@moonshot-ai/app-core/lib';
-import { Badge, Icon, IconButton, Spinner } from '@moonshot-ai/app-ui';
+import { Badge, Icon, IconButton, Spinner, StatusDot } from '@moonshot-ai/app-ui';
 
 const { t } = useI18n();
 
@@ -37,7 +37,7 @@ const wsName = computed<string>(() => props.workspace?.name ?? t('workspace.noWo
         <Badge v-else-if="status === 'awaiting-question'" variant="info" size="sm">{{ t('workspace.awaitingAnswer') }}</Badge>
         <Spinner v-else-if="status === 'running'" size="sm" />
         <Badge v-else-if="status === 'aborted'" variant="danger" size="sm">{{ t('workspace.aborted') }}</Badge>
-        <span v-else-if="status === 'unread'" class="unread-dot" />
+        <StatusDot v-else-if="status === 'unread'" status="unread" />
       </span>
       <span class="tb-line">
         <span class="dir" :class="{ solo: !sessionTitle }">{{ wsName }}</span>
@@ -142,12 +142,5 @@ const wsName = computed<string>(() => props.workspace?.name ?? t('workspace.noWo
   flex: none;
   align-self: center;
   color: var(--color-text-faint);
-}
-
-.unread-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: var(--radius-full);
-  background: var(--color-accent);
 }
 </style>

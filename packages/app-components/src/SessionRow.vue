@@ -3,7 +3,7 @@ import { computed, nextTick, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { Session } from '@moonshot-ai/app-core/client/types';
 import { copyTextToClipboard } from '@moonshot-ai/app-core/lib';
-import { Badge, Icon, IconButton, Menu, MenuItem, Spinner, Tooltip, useImeComposition } from '@moonshot-ai/app-ui';
+import { Badge, Icon, IconButton, Menu, MenuItem, Spinner, StatusDot, Tooltip, useImeComposition } from '@moonshot-ai/app-ui';
 import { applySessionEmoji, splitSessionEmoji } from '@moonshot-ai/app-core/lib';
 import SessionEmojiPicker from './SessionEmojiPicker.vue';
 import WorkspaceIcon from './WorkspaceIcon.vue';
@@ -555,7 +555,7 @@ function openPullRequest(): void {
         <span v-if="!hasStatus" class="ts">{{ session.time }}</span>
         <span v-else-if="showBusySpinner || showUnreadDot" class="st">
           <Spinner v-if="showBusySpinner" size="sm" />
-          <span v-else class="unread-dot" data-testid="session-unread" />
+          <StatusDot v-else status="unread" data-testid="session-unread" />
         </span>
         <span v-if="!renaming" class="ha">
           <template v-if="stateTag === 'done'">
@@ -754,13 +754,6 @@ function openPullRequest(): void {
 .se.has-compact-pr:hover .act {
   min-width: calc(2 * var(--icon-button-sm) + 2px - (var(--se-pad-x) - var(--sb-action-inset, 3px)));
 }
-.unread-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: var(--radius-full);
-  background: var(--color-accent);
-}
-
 .ha .complete-btn:hover {
   color: var(--color-success);
 }

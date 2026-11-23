@@ -9,7 +9,7 @@ import { OpenFileLinkKey, ResolveImageKey } from '@moonshot-ai/app-core/contract
 import { OpenInServiceKey, OpenWithDefaultAppKey } from '@moonshot-ai/app-client/contracts';
 import { useWarningsStore, workspacesStore } from '@moonshot-ai/app-client/stores';
 import { isOfficeDocumentPath } from '@moonshot-ai/app-core/preview';
-import { Button, Icon, IconButton, Menu, MenuItem, PanelHeader, SegmentedControl } from '@moonshot-ai/app-ui';
+import { Button, Icon, IconButton, Menu, MenuItem, PanelHeader, SegmentedControl, Spinner } from '@moonshot-ai/app-ui';
 import { stripLeadingSlash } from './lib/displayPath';
 import HighlightedCode from './HighlightedCode.vue';
 import HtmlOpenActions from './HtmlOpenActions.vue';
@@ -530,7 +530,7 @@ function menuDownload(): void {
         </div>
 
         <div v-else-if="loading" class="fp-loading">
-          <span class="spinner"></span>
+          <Spinner size="sm" aria-hidden="true" />
           <span>{{ t('filePreview.loading') }}</span>
         </div>
 
@@ -856,18 +856,6 @@ function menuDownload(): void {
   flex-direction: column;
   padding: 24px;
   text-align: center;
-}
-
-@keyframes spin { to { transform: rotate(360deg); } }
-
-.spinner {
-  display: inline-block;
-  width: 14px;
-  height: 14px;
-  border: var(--p-hairline) solid var(--line);
-  border-top-color: var(--color-accent);
-  border-radius: 50%;
-  animation: spin 0.7s linear infinite;
 }
 
 @media (max-width: 640px) {

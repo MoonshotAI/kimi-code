@@ -125,7 +125,8 @@ function deviceMeta(device: RcDevice): string {
         :disabled="refreshing"
         @click="onRefresh"
       >
-        <Icon name="refresh" :class="{ 'rc-devices__refreshing': refreshing }" />
+        <Spinner v-if="refreshing" size="xs" />
+        <Icon v-else name="refresh" />
       </IconButton>
     </div>
 
@@ -284,12 +285,6 @@ function deviceMeta(device: RcDevice): string {
   color: var(--color-text);
   font-size: var(--text-base);
   font-weight: var(--weight-medium);
-}
-.rc-devices__refreshing {
-  animation: rc-device-refresh-spin 700ms linear infinite;
-}
-@keyframes rc-device-refresh-spin {
-  to { transform: rotate(360deg); }
 }
 .rc-devices__center,
 .rc-devices__empty {
@@ -462,9 +457,6 @@ function deviceMeta(device: RcDevice): string {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .rc-devices__refreshing {
-    animation: none;
-  }
   .rc-device-menu-pop-enter-active,
   .rc-device-menu-pop-leave-active {
     transition: none;
