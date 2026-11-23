@@ -13,11 +13,10 @@ export const worktreeSetupRequestSchema = z.object({
   source_branch: z.string().min(1),
   include_local_changes: z.boolean().optional(),
   use_remote: z.boolean().optional(),
-  run_setup_script: z.boolean().optional(),
 });
 export type WorktreeSetupRequest = z.infer<typeof worktreeSetupRequestSchema>;
 
-export const worktreeSetupStepKindSchema = z.enum(['fetch', 'prune', 'create', 'changes', 'script']);
+export const worktreeSetupStepKindSchema = z.enum(['fetch', 'prune', 'create', 'changes']);
 export type WorktreeSetupStepKind = z.infer<typeof worktreeSetupStepKindSchema>;
 
 export const worktreeSetupStepStateSchema = z.enum([
@@ -46,8 +45,6 @@ export const worktreeSetupFailureKindSchema = z.enum([
   'conflict',
   'disk_full',
   'create_failed',
-  'script_failed',
-  'script_timeout',
 ]);
 export type WorktreeSetupFailureKind = z.infer<typeof worktreeSetupFailureKindSchema>;
 
@@ -55,7 +52,6 @@ export const worktreeSetupFailureSchema = z.object({
   kind: worktreeSetupFailureKindSchema,
   remote_ref: z.string().optional(),
   conflict_files: z.array(z.string()).optional(),
-  exit_code: z.number().int().optional(),
   timeout_seconds: z.number().int().positive().optional(),
 });
 export type WorktreeSetupFailure = z.infer<typeof worktreeSetupFailureSchema>;
@@ -65,13 +61,9 @@ export const worktreeSetupStatusSchema = z.enum([
   'ready',
   'failed',
   'stopped',
-  'awaiting_script_confirmation',
   'local',
 ]);
 export type WorktreeSetupStatus = z.infer<typeof worktreeSetupStatusSchema>;
-
-export const worktreeSetupScriptOutcomeSchema = z.enum(['none', 'ran', 'skipped', 'pending']);
-export type WorktreeSetupScriptOutcome = z.infer<typeof worktreeSetupScriptOutcomeSchema>;
 
 export const worktreeSetupSchema = z.object({
   status: worktreeSetupStatusSchema,
@@ -83,8 +75,6 @@ export const worktreeSetupSchema = z.object({
   ended_at: isoDateTimeSchema.optional(),
   stopped_step: worktreeSetupStepKindSchema.optional(),
   failure: worktreeSetupFailureSchema.optional(),
-  script: worktreeSetupScriptOutcomeSchema,
-  script_content: z.string().optional(),
 });
 export type WorktreeSetup = z.infer<typeof worktreeSetupSchema>;
 

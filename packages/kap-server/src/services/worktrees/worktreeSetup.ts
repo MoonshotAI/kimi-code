@@ -100,7 +100,7 @@ export function pickWorktreeTarget(
   }
 }
 
-export function setStep(
+function setStep(
   progress: SetupProgress,
   kind: WorktreeSetupStepKind,
   patch: Partial<SetupStep>,
@@ -112,7 +112,7 @@ export function setStep(
   progress.notify(outputOnly);
 }
 
-export async function runStepCommand(
+async function runStepCommand(
   progress: SetupProgress,
   kind: WorktreeSetupStepKind,
   run: (onOutput: (tail: string) => void) => Promise<CommandResult>,

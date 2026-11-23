@@ -78,8 +78,6 @@ export const sessionWorktreeActionSchema = z.enum([
   'retry',
   'cancel',
   'use_local',
-  'skip_script',
-  'run_script',
   'recreate',
 ]);
 export type SessionWorktreeAction = z.infer<typeof sessionWorktreeActionSchema>;
@@ -102,16 +100,3 @@ export const deleteSessionWorktreeOutcomeSchema = z.object({
   output: z.string().optional(),
 });
 export type DeleteSessionWorktreeOutcome = z.infer<typeof deleteSessionWorktreeOutcomeSchema>;
-
-export const worktreeSetupScriptSchema = z.object({
-  path: z.string().min(1),
-  exists: z.boolean(),
-  content: z.string().optional(),
-  needs_confirmation: z.boolean().optional(),
-});
-export type WorktreeSetupScript = z.infer<typeof worktreeSetupScriptSchema>;
-
-export const saveWorktreeSetupScriptRequestSchema = z.object({
-  content: z.string().max(1_048_576),
-});
-export type SaveWorktreeSetupScriptRequest = z.infer<typeof saveWorktreeSetupScriptRequestSchema>;

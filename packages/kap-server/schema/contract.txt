@@ -722,7 +722,7 @@ GET /api/v1/sessions response 200<code=0>.data: anyOf
 GET /api/v1/sessions response 200<code=0>.data<#0>.has_more: boolean
 GET /api/v1/sessions response 200<code=0>.data<#0>.items: array
 GET /api/v1/sessions response 200<code=0>.data<#0>.items[]: anyOf
-GET /api/v1/sessions response 200<code=0>.data<#0>.items[]<#0>: shape 0135f309
+GET /api/v1/sessions response 200<code=0>.data<#0>.items[]<#0>: shape 6d1191c8
 GET /api/v1/sessions response 200<code=0>.data<#0>.items[]<#1>.archived: boolean
 GET /api/v1/sessions response 200<code=0>.data<#0>.items[]<#1>.host_id: string optional
 GET /api/v1/sessions response 200<code=0>.data<#0>.items[]<#1>.id: string minLength=1
@@ -736,7 +736,7 @@ GET /api/v1/sessions response 200<code=0>.data<#1>.groups: array
 GET /api/v1/sessions response 200<code=0>.data<#1>.groups[].host_id: string optional
 GET /api/v1/sessions response 200<code=0>.data<#1>.groups[].sessions: array
 GET /api/v1/sessions response 200<code=0>.data<#1>.groups[].sessions[]: anyOf
-GET /api/v1/sessions response 200<code=0>.data<#1>.groups[].sessions[]<#0>: shape 0135f309
+GET /api/v1/sessions response 200<code=0>.data<#1>.groups[].sessions[]<#0>: shape 6d1191c8
 GET /api/v1/sessions response 200<code=0>.data<#1>.groups[].sessions[]<#1>.archived: boolean
 GET /api/v1/sessions response 200<code=0>.data<#1>.groups[].sessions[]<#1>.host_id: string optional
 GET /api/v1/sessions response 200<code=0>.data<#1>.groups[].sessions[]<#1>.id: string minLength=1
@@ -770,7 +770,7 @@ GET /api/v1/sessions response 200<code=50005>: object closed
 GET /api/v1/sessions/{session_id} param path:session_id: string minLength=1
 GET /api/v1/sessions/{session_id} param query:hosts: enum "include" optional
 GET /api/v1/sessions/{session_id} response 200: oneOf
-GET /api/v1/sessions/{session_id} response 200<code=0>: shape 491fb2ef
+GET /api/v1/sessions/{session_id} response 200<code=0>: shape c00d92bc
 GET /api/v1/sessions/{session_id} response 200<code=40001>: shape d4845858
 GET /api/v1/sessions/{session_id} response 200<code=40401>: shape 2bda561c
 GET /api/v1/sessions/{session_id} response 200<code=50005>.code: enum 50005
@@ -1424,20 +1424,6 @@ GET /api/v1/workspaces/{workspace_id}/trust response 200: oneOf
 GET /api/v1/workspaces/{workspace_id}/trust response 200<code=0>: shape 4569305c
 GET /api/v1/workspaces/{workspace_id}/trust response 200<code=40410>: shape 3fb7704d
 GET /api/v1/workspaces/{workspace_id}/trust: operation
-GET /api/v1/workspaces/{workspace_id}/worktree-setup-script param path:workspace_id: string pattern="^wd_[a-z0-9._-]+_[0-9a-f]{12}$|^wm_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
-GET /api/v1/workspaces/{workspace_id}/worktree-setup-script response 200: oneOf
-GET /api/v1/workspaces/{workspace_id}/worktree-setup-script response 200<code=0>.code: enum 0
-GET /api/v1/workspaces/{workspace_id}/worktree-setup-script response 200<code=0>.data.content: string optional
-GET /api/v1/workspaces/{workspace_id}/worktree-setup-script response 200<code=0>.data.exists: boolean
-GET /api/v1/workspaces/{workspace_id}/worktree-setup-script response 200<code=0>.data.needs_confirmation: boolean optional
-GET /api/v1/workspaces/{workspace_id}/worktree-setup-script response 200<code=0>.data.path: string minLength=1
-GET /api/v1/workspaces/{workspace_id}/worktree-setup-script response 200<code=0>.data: object closed
-GET /api/v1/workspaces/{workspace_id}/worktree-setup-script response 200<code=0>.details: any optional
-GET /api/v1/workspaces/{workspace_id}/worktree-setup-script response 200<code=0>.msg: string
-GET /api/v1/workspaces/{workspace_id}/worktree-setup-script response 200<code=0>.request_id: string
-GET /api/v1/workspaces/{workspace_id}/worktree-setup-script response 200<code=0>: object closed
-GET /api/v1/workspaces/{workspace_id}/worktree-setup-script response 200<code=40410>: shape 3fb7704d
-GET /api/v1/workspaces/{workspace_id}/worktree-setup-script: operation
 GET /api/v1/workspaces: operation
 GET /api/v1/worktrees param query:refresh: enum "sizes" optional
 GET /api/v1/worktrees response 200.code: enum 0
@@ -2342,13 +2328,12 @@ POST /api/v1/sessions request.metadata{*}: any optional
 POST /api/v1/sessions request.title: string minLength=1 optional
 POST /api/v1/sessions request.workspace_id: string pattern="^wd_[a-z0-9._-]+_[0-9a-f]{12}$|^wm_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$" optional
 POST /api/v1/sessions request.worktree.include_local_changes: boolean optional
-POST /api/v1/sessions request.worktree.run_setup_script: boolean optional
 POST /api/v1/sessions request.worktree.source_branch: string minLength=1
 POST /api/v1/sessions request.worktree.use_remote: boolean optional
 POST /api/v1/sessions request.worktree: object optional
 POST /api/v1/sessions request: object
 POST /api/v1/sessions response 200: oneOf
-POST /api/v1/sessions response 200<code=0>: shape 491fb2ef
+POST /api/v1/sessions response 200<code=0>: shape c00d92bc
 POST /api/v1/sessions response 200<code=40001>: shape d4845858
 POST /api/v1/sessions response 200<code=40113>: shape ffc7e294
 POST /api/v1/sessions response 200<code=40409>: shape 197643f0
@@ -2511,7 +2496,7 @@ POST /api/v1/sessions/{session_id}/profile response 200<code=0>.data.agent.swarm
 POST /api/v1/sessions/{session_id}/profile response 200<code=0>.data.agent.thinking: string optional
 POST /api/v1/sessions/{session_id}/profile response 200<code=0>.data.agent.tower_mode: boolean
 POST /api/v1/sessions/{session_id}/profile response 200<code=0>.data.agent: object closed
-POST /api/v1/sessions/{session_id}/profile response 200<code=0>.data.session: shape 0135f309
+POST /api/v1/sessions/{session_id}/profile response 200<code=0>.data.session: shape 6d1191c8
 POST /api/v1/sessions/{session_id}/profile response 200<code=0>.data: object closed
 POST /api/v1/sessions/{session_id}/profile response 200<code=0>.details: any optional
 POST /api/v1/sessions/{session_id}/profile response 200<code=0>.msg: string
@@ -2833,7 +2818,7 @@ POST /api/v1/sessions/{session_id}/title/generate: operation
 POST /api/v1/sessions/{session_id}/worktree:cancel param path:session_id: string minLength=1
 POST /api/v1/sessions/{session_id}/worktree:cancel request: object
 POST /api/v1/sessions/{session_id}/worktree:cancel response 200: oneOf
-POST /api/v1/sessions/{session_id}/worktree:cancel response 200<code=0>: shape 491fb2ef
+POST /api/v1/sessions/{session_id}/worktree:cancel response 200<code=0>: shape c00d92bc
 POST /api/v1/sessions/{session_id}/worktree:cancel response 200<code=40001>: shape a642160a
 POST /api/v1/sessions/{session_id}/worktree:cancel response 200<code=40401>: shape 2bda561c
 POST /api/v1/sessions/{session_id}/worktree:cancel response 200<code=40410>: shape 3fb7704d
@@ -2847,7 +2832,7 @@ POST /api/v1/sessions/{session_id}/worktree:cancel: operation
 POST /api/v1/sessions/{session_id}/worktree:recreate param path:session_id: string minLength=1
 POST /api/v1/sessions/{session_id}/worktree:recreate request: object
 POST /api/v1/sessions/{session_id}/worktree:recreate response 200: oneOf
-POST /api/v1/sessions/{session_id}/worktree:recreate response 200<code=0>: shape 491fb2ef
+POST /api/v1/sessions/{session_id}/worktree:recreate response 200<code=0>: shape c00d92bc
 POST /api/v1/sessions/{session_id}/worktree:recreate response 200<code=40001>: shape a642160a
 POST /api/v1/sessions/{session_id}/worktree:recreate response 200<code=40401>: shape 2bda561c
 POST /api/v1/sessions/{session_id}/worktree:recreate response 200<code=40410>: shape 3fb7704d
@@ -2863,7 +2848,7 @@ POST /api/v1/sessions/{session_id}/worktree:retry request.include_local_changes:
 POST /api/v1/sessions/{session_id}/worktree:retry request.use_remote: boolean optional
 POST /api/v1/sessions/{session_id}/worktree:retry request: object
 POST /api/v1/sessions/{session_id}/worktree:retry response 200: oneOf
-POST /api/v1/sessions/{session_id}/worktree:retry response 200<code=0>: shape 491fb2ef
+POST /api/v1/sessions/{session_id}/worktree:retry response 200<code=0>: shape c00d92bc
 POST /api/v1/sessions/{session_id}/worktree:retry response 200<code=40001>: shape a642160a
 POST /api/v1/sessions/{session_id}/worktree:retry response 200<code=40401>: shape 2bda561c
 POST /api/v1/sessions/{session_id}/worktree:retry response 200<code=40410>: shape 3fb7704d
@@ -2874,38 +2859,10 @@ POST /api/v1/sessions/{session_id}/worktree:retry response 200<code=40932>: shap
 POST /api/v1/sessions/{session_id}/worktree:retry response 200<code=40936>: shape 9bd41b04
 POST /api/v1/sessions/{session_id}/worktree:retry response 200<code=40938>: shape 3a0bc7bd
 POST /api/v1/sessions/{session_id}/worktree:retry: operation
-POST /api/v1/sessions/{session_id}/worktree:run_script param path:session_id: string minLength=1
-POST /api/v1/sessions/{session_id}/worktree:run_script request: object
-POST /api/v1/sessions/{session_id}/worktree:run_script response 200: oneOf
-POST /api/v1/sessions/{session_id}/worktree:run_script response 200<code=0>: shape 491fb2ef
-POST /api/v1/sessions/{session_id}/worktree:run_script response 200<code=40001>: shape a642160a
-POST /api/v1/sessions/{session_id}/worktree:run_script response 200<code=40401>: shape 2bda561c
-POST /api/v1/sessions/{session_id}/worktree:run_script response 200<code=40410>: shape 3fb7704d
-POST /api/v1/sessions/{session_id}/worktree:run_script response 200<code=40901>: shape e90ff74c
-POST /api/v1/sessions/{session_id}/worktree:run_script response 200<code=40930>: shape 9d70335c
-POST /api/v1/sessions/{session_id}/worktree:run_script response 200<code=40931>: shape 212b52bd
-POST /api/v1/sessions/{session_id}/worktree:run_script response 200<code=40932>: shape e9b3b59d
-POST /api/v1/sessions/{session_id}/worktree:run_script response 200<code=40936>: shape 9bd41b04
-POST /api/v1/sessions/{session_id}/worktree:run_script response 200<code=40938>: shape 3a0bc7bd
-POST /api/v1/sessions/{session_id}/worktree:run_script: operation
-POST /api/v1/sessions/{session_id}/worktree:skip_script param path:session_id: string minLength=1
-POST /api/v1/sessions/{session_id}/worktree:skip_script request: object
-POST /api/v1/sessions/{session_id}/worktree:skip_script response 200: oneOf
-POST /api/v1/sessions/{session_id}/worktree:skip_script response 200<code=0>: shape 491fb2ef
-POST /api/v1/sessions/{session_id}/worktree:skip_script response 200<code=40001>: shape a642160a
-POST /api/v1/sessions/{session_id}/worktree:skip_script response 200<code=40401>: shape 2bda561c
-POST /api/v1/sessions/{session_id}/worktree:skip_script response 200<code=40410>: shape 3fb7704d
-POST /api/v1/sessions/{session_id}/worktree:skip_script response 200<code=40901>: shape e90ff74c
-POST /api/v1/sessions/{session_id}/worktree:skip_script response 200<code=40930>: shape 9d70335c
-POST /api/v1/sessions/{session_id}/worktree:skip_script response 200<code=40931>: shape 212b52bd
-POST /api/v1/sessions/{session_id}/worktree:skip_script response 200<code=40932>: shape e9b3b59d
-POST /api/v1/sessions/{session_id}/worktree:skip_script response 200<code=40936>: shape 9bd41b04
-POST /api/v1/sessions/{session_id}/worktree:skip_script response 200<code=40938>: shape 3a0bc7bd
-POST /api/v1/sessions/{session_id}/worktree:skip_script: operation
 POST /api/v1/sessions/{session_id}/worktree:use_local param path:session_id: string minLength=1
 POST /api/v1/sessions/{session_id}/worktree:use_local request: object
 POST /api/v1/sessions/{session_id}/worktree:use_local response 200: oneOf
-POST /api/v1/sessions/{session_id}/worktree:use_local response 200<code=0>: shape 491fb2ef
+POST /api/v1/sessions/{session_id}/worktree:use_local response 200<code=0>: shape c00d92bc
 POST /api/v1/sessions/{session_id}/worktree:use_local response 200<code=40001>: shape a642160a
 POST /api/v1/sessions/{session_id}/worktree:use_local response 200<code=40401>: shape 2bda561c
 POST /api/v1/sessions/{session_id}/worktree:use_local response 200<code=40410>: shape 3fb7704d
@@ -3249,7 +3206,7 @@ POST /api/v1/sessions/{session_id}:delete response 200<code=40940>: shape b0ef3a
 POST /api/v1/sessions/{session_id}:delete: operation
 POST /api/v1/sessions/{session_id}:reload param path:session_id: string minLength=1
 POST /api/v1/sessions/{session_id}:reload response 200: oneOf
-POST /api/v1/sessions/{session_id}:reload response 200<code=0>: shape 491fb2ef
+POST /api/v1/sessions/{session_id}:reload response 200<code=0>: shape c00d92bc
 POST /api/v1/sessions/{session_id}:reload response 200<code=40001>: shape d4845858
 POST /api/v1/sessions/{session_id}:reload response 200<code=40110>: shape bf00a2c5
 POST /api/v1/sessions/{session_id}:reload response 200<code=40111>: shape 00776ba9
@@ -3329,7 +3286,7 @@ POST /api/v1/sessions/{session_id}:wait response 200<code=0>.data.pending_intera
 POST /api/v1/sessions/{session_id}:wait response 200<code=0>.data.pending_interactions[]<#1>.session_id: string minLength=1
 POST /api/v1/sessions/{session_id}:wait response 200<code=0>.data.pending_interactions[]<#1>.tool_call_id: string minLength=1 optional
 POST /api/v1/sessions/{session_id}:wait response 200<code=0>.data.pending_interactions[]<#1>: object closed
-POST /api/v1/sessions/{session_id}:wait response 200<code=0>.data.session: shape 0135f309
+POST /api/v1/sessions/{session_id}:wait response 200<code=0>.data.session: shape 6d1191c8
 POST /api/v1/sessions/{session_id}:wait response 200<code=0>.data.timed_out: boolean
 POST /api/v1/sessions/{session_id}:wait response 200<code=0>.data: object closed
 POST /api/v1/sessions/{session_id}:wait response 200<code=0>.details: any optional
@@ -3709,23 +3666,6 @@ PUT /api/v1/providers/{provider_id} response 200<code=40921>.msg: string
 PUT /api/v1/providers/{provider_id} response 200<code=40921>.request_id: string
 PUT /api/v1/providers/{provider_id} response 200<code=40921>: object closed
 PUT /api/v1/providers/{provider_id}: operation
-PUT /api/v1/workspaces/{workspace_id}/worktree-setup-script param path:workspace_id: string pattern="^wd_[a-z0-9._-]+_[0-9a-f]{12}$|^wm_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
-PUT /api/v1/workspaces/{workspace_id}/worktree-setup-script request.content: string maxLength=1048576
-PUT /api/v1/workspaces/{workspace_id}/worktree-setup-script request: object
-PUT /api/v1/workspaces/{workspace_id}/worktree-setup-script response 200: oneOf
-PUT /api/v1/workspaces/{workspace_id}/worktree-setup-script response 200<code=0>.code: enum 0
-PUT /api/v1/workspaces/{workspace_id}/worktree-setup-script response 200<code=0>.data.content: string optional
-PUT /api/v1/workspaces/{workspace_id}/worktree-setup-script response 200<code=0>.data.exists: boolean
-PUT /api/v1/workspaces/{workspace_id}/worktree-setup-script response 200<code=0>.data.needs_confirmation: boolean optional
-PUT /api/v1/workspaces/{workspace_id}/worktree-setup-script response 200<code=0>.data.path: string minLength=1
-PUT /api/v1/workspaces/{workspace_id}/worktree-setup-script response 200<code=0>.data: object closed
-PUT /api/v1/workspaces/{workspace_id}/worktree-setup-script response 200<code=0>.details: any optional
-PUT /api/v1/workspaces/{workspace_id}/worktree-setup-script response 200<code=0>.msg: string
-PUT /api/v1/workspaces/{workspace_id}/worktree-setup-script response 200<code=0>.request_id: string
-PUT /api/v1/workspaces/{workspace_id}/worktree-setup-script response 200<code=0>: object closed
-PUT /api/v1/workspaces/{workspace_id}/worktree-setup-script response 200<code=40001>: shape a642160a
-PUT /api/v1/workspaces/{workspace_id}/worktree-setup-script response 200<code=40410>: shape 3fb7704d
-PUT /api/v1/workspaces/{workspace_id}/worktree-setup-script: operation
 ws client message pong.type: const "pong"
 ws client message pong: object
 ws client message subscribe.agent_ids: array minItems=1 optional
@@ -4211,30 +4151,26 @@ ws server message session_event<session>.session.worktree.setup.commands_ran: in
 ws server message session_event<session>.session.worktree.setup.ended_at: string optional
 ws server message session_event<session>.session.worktree.setup.failure.conflict_files: array optional
 ws server message session_event<session>.session.worktree.setup.failure.conflict_files[]: string
-ws server message session_event<session>.session.worktree.setup.failure.exit_code: integer minimum=-9007199254740991 maximum=9007199254740991 optional
-ws server message session_event<session>.session.worktree.setup.failure.kind: enum "conflict"|"create_failed"|"disk_full"|"fetch_failed"|"fetch_timeout"|"script_failed"|"script_timeout"
+ws server message session_event<session>.session.worktree.setup.failure.kind: enum "conflict"|"create_failed"|"disk_full"|"fetch_failed"|"fetch_timeout"
 ws server message session_event<session>.session.worktree.setup.failure.remote_ref: string optional
 ws server message session_event<session>.session.worktree.setup.failure.timeout_seconds: integer maximum=9007199254740991 exclusiveMinimum=0 optional
 ws server message session_event<session>.session.worktree.setup.failure: object optional
 ws server message session_event<session>.session.worktree.setup.purpose: enum "create"|"recreate"
 ws server message session_event<session>.session.worktree.setup.request.include_local_changes: boolean optional
-ws server message session_event<session>.session.worktree.setup.request.run_setup_script: boolean optional
 ws server message session_event<session>.session.worktree.setup.request.source_branch: string minLength=1
 ws server message session_event<session>.session.worktree.setup.request.use_remote: boolean optional
 ws server message session_event<session>.session.worktree.setup.request: object
-ws server message session_event<session>.session.worktree.setup.script: enum "none"|"pending"|"ran"|"skipped"
-ws server message session_event<session>.session.worktree.setup.script_content: string optional
 ws server message session_event<session>.session.worktree.setup.started_at: string
-ws server message session_event<session>.session.worktree.setup.status: enum "awaiting_script_confirmation"|"failed"|"local"|"ready"|"running"|"stopped"
+ws server message session_event<session>.session.worktree.setup.status: enum "failed"|"local"|"ready"|"running"|"stopped"
 ws server message session_event<session>.session.worktree.setup.steps: array
 ws server message session_event<session>.session.worktree.setup.steps[].command: string optional
-ws server message session_event<session>.session.worktree.setup.steps[].kind: enum "changes"|"create"|"fetch"|"prune"|"script"
+ws server message session_event<session>.session.worktree.setup.steps[].kind: enum "changes"|"create"|"fetch"|"prune"
 ws server message session_event<session>.session.worktree.setup.steps[].output: string optional
 ws server message session_event<session>.session.worktree.setup.steps[].ref: string optional
 ws server message session_event<session>.session.worktree.setup.steps[].state: enum "done"|"failed"|"pending"|"running"|"skipped"|"stopped"
 ws server message session_event<session>.session.worktree.setup.steps[].timed_out: boolean optional
 ws server message session_event<session>.session.worktree.setup.steps[]: object
-ws server message session_event<session>.session.worktree.setup.stopped_step: enum "changes"|"create"|"fetch"|"prune"|"script" optional
+ws server message session_event<session>.session.worktree.setup.stopped_step: enum "changes"|"create"|"fetch"|"prune" optional
 ws server message session_event<session>.session.worktree.setup: object
 ws server message session_event<session>.session.worktree: object optional
 ws server message session_event<session>.session: object
@@ -4561,32 +4497,6 @@ shape 00776ba9.data: enum null nullable
 shape 00776ba9.details: any optional
 shape 00776ba9.msg: string
 shape 00776ba9.request_id: string
-shape 0135f309.activity: enum "background"|"idle"|"turn"
-shape 0135f309.archived: boolean optional
-shape 0135f309.archived_at: any optional
-shape 0135f309.created_at: any
-shape 0135f309.cwd: string
-shape 0135f309.git.branch: string optional
-shape 0135f309.git.pull_request: shape 1b0e86ef optional
-shape 0135f309.git: object closed optional
-shape 0135f309.host_id: string optional
-shape 0135f309.id: string minLength=1
-shape 0135f309.last_prompt: string optional
-shape 0135f309.last_turn_outcome: enum "completed"|"failed"|"interrupted" optional
-shape 0135f309.metadata: object optional
-shape 0135f309.metadata{*}: any optional
-shape 0135f309.pending_interaction: enum "approval"|"none"|"question" optional
-shape 0135f309.title: string
-shape 0135f309.updated_at: any
-shape 0135f309.workspace_id: string pattern="^wd_[a-z0-9._-]+_[0-9a-f]{12}$|^wm_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
-shape 0135f309.worktree: shape 04a012c1 optional
-shape 04a012c1.base: shape baf5c2fe optional
-shape 04a012c1.branch: string minLength=1 optional
-shape 04a012c1.branch_missing: boolean optional
-shape 04a012c1.included_local_changes: boolean optional
-shape 04a012c1.missing: boolean optional
-shape 04a012c1.path: string minLength=1 optional
-shape 04a012c1.setup: shape b1e4b758
 shape 0631faa8.name: string minLength=1 optional
 shape 0631faa8.source: oneOf
 shape 0631faa8.source<#0>: shape 2128f315
@@ -4667,6 +4577,12 @@ shape 2bda561c.data: enum null nullable
 shape 2bda561c.details: any optional
 shape 2bda561c.msg: string
 shape 2bda561c.request_id: string
+shape 2fd6bf30.command: string optional
+shape 2fd6bf30.kind: enum "changes"|"create"|"fetch"|"prune"
+shape 2fd6bf30.output: string optional
+shape 2fd6bf30.ref: string optional
+shape 2fd6bf30.state: enum "done"|"failed"|"pending"|"running"|"skipped"|"stopped"
+shape 2fd6bf30.timed_out: boolean optional
 shape 334778dd.content: array
 shape 334778dd.content[]: oneOf
 shape 334778dd.content[]<file>: shape 89bafe20
@@ -4706,6 +4622,13 @@ shape 3fb7704d.request_id: string
 shape 4235e1c4.message: string
 shape 4235e1c4.name: string
 shape 4235e1c4.status_code: integer minimum=-9007199254740991 maximum=9007199254740991 optional
+shape 42650730.base: shape baf5c2fe optional
+shape 42650730.branch: string minLength=1 optional
+shape 42650730.branch_missing: boolean optional
+shape 42650730.included_local_changes: boolean optional
+shape 42650730.missing: boolean optional
+shape 42650730.path: string minLength=1 optional
+shape 42650730.setup: shape 4a5a9e10
 shape 432b4abe.description: string
 shape 432b4abe.display_name: string
 shape 432b4abe.id: string
@@ -4725,11 +4648,19 @@ shape 4569305c.data: object closed
 shape 4569305c.details: any optional
 shape 4569305c.msg: string
 shape 4569305c.request_id: string
-shape 491fb2ef.code: enum 0
-shape 491fb2ef.data: shape 0135f309
-shape 491fb2ef.details: any optional
-shape 491fb2ef.msg: string
-shape 491fb2ef.request_id: string
+shape 4a5a9e10.commands_ran: integer minimum=0 maximum=9007199254740991
+shape 4a5a9e10.ended_at: any optional
+shape 4a5a9e10.failure: shape ab3381f2 optional
+shape 4a5a9e10.purpose: enum "create"|"recreate"
+shape 4a5a9e10.request: shape 4c612eee
+shape 4a5a9e10.started_at: any
+shape 4a5a9e10.status: enum "failed"|"local"|"ready"|"running"|"stopped"
+shape 4a5a9e10.steps: array
+shape 4a5a9e10.steps[]: shape 2fd6bf30
+shape 4a5a9e10.stopped_step: enum "changes"|"create"|"fetch"|"prune" optional
+shape 4c612eee.include_local_changes: boolean optional
+shape 4c612eee.source_branch: string minLength=1
+shape 4c612eee.use_remote: boolean optional
 shape 4c937256.code: integer minimum=-9007199254740991 maximum=9007199254740991
 shape 4c937256.data: enum null nullable
 shape 4c937256.details: any optional
@@ -4751,17 +4682,30 @@ shape 647cc887.data: enum null nullable
 shape 647cc887.details: any optional
 shape 647cc887.msg: string
 shape 647cc887.request_id: string
-shape 692c05e7.conflict_files: array optional
-shape 692c05e7.conflict_files[]: string
-shape 692c05e7.exit_code: integer minimum=-9007199254740991 maximum=9007199254740991 optional
-shape 692c05e7.kind: enum "conflict"|"create_failed"|"disk_full"|"fetch_failed"|"fetch_timeout"|"script_failed"|"script_timeout"
-shape 692c05e7.remote_ref: string optional
-shape 692c05e7.timeout_seconds: integer maximum=9007199254740991 exclusiveMinimum=true optional
 shape 6c14572c.code: enum 40408
 shape 6c14572c.data: enum null nullable
 shape 6c14572c.details: any optional
 shape 6c14572c.msg: string
 shape 6c14572c.request_id: string
+shape 6d1191c8.activity: enum "background"|"idle"|"turn"
+shape 6d1191c8.archived: boolean optional
+shape 6d1191c8.archived_at: any optional
+shape 6d1191c8.created_at: any
+shape 6d1191c8.cwd: string
+shape 6d1191c8.git.branch: string optional
+shape 6d1191c8.git.pull_request: shape 1b0e86ef optional
+shape 6d1191c8.git: object closed optional
+shape 6d1191c8.host_id: string optional
+shape 6d1191c8.id: string minLength=1
+shape 6d1191c8.last_prompt: string optional
+shape 6d1191c8.last_turn_outcome: enum "completed"|"failed"|"interrupted" optional
+shape 6d1191c8.metadata: object optional
+shape 6d1191c8.metadata{*}: any optional
+shape 6d1191c8.pending_interaction: enum "approval"|"none"|"question" optional
+shape 6d1191c8.title: string
+shape 6d1191c8.updated_at: any
+shape 6d1191c8.workspace_id: string pattern="^wd_[a-z0-9._-]+_[0-9a-f]{12}$|^wm_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+shape 6d1191c8.worktree: shape 42650730 optional
 shape 73b4450c.code: enum 40927
 shape 73b4450c.data: enum null nullable
 shape 73b4450c.details: any optional
@@ -4834,10 +4778,6 @@ shape 90bfd007.data: enum null nullable
 shape 90bfd007.details: any optional
 shape 90bfd007.msg: string
 shape 90bfd007.request_id: string
-shape 91124220.include_local_changes: boolean optional
-shape 91124220.run_setup_script: boolean optional
-shape 91124220.source_branch: string minLength=1
-shape 91124220.use_remote: boolean optional
 shape 9284928a.code: enum 40419
 shape 9284928a.data: enum null nullable
 shape 9284928a.details: any optional
@@ -4909,6 +4849,11 @@ shape aaa33e5e.request_build_ms: number optional
 shape aaa33e5e.server_decode_ms: number optional
 shape aaa33e5e.server_first_token_ms: number optional
 shape aaa33e5e.stream_ms: number optional
+shape ab3381f2.conflict_files: array optional
+shape ab3381f2.conflict_files[]: string
+shape ab3381f2.kind: enum "conflict"|"create_failed"|"disk_full"|"fetch_failed"|"fetch_timeout"
+shape ab3381f2.remote_ref: string optional
+shape ab3381f2.timeout_seconds: integer maximum=9007199254740991 exclusiveMinimum=true optional
 shape aca164b0.args: array optional
 shape aca164b0.args[]: string
 shape aca164b0.command: string minLength=1
@@ -4949,18 +4894,6 @@ shape b0ef3a47.data: enum null nullable
 shape b0ef3a47.details: any optional
 shape b0ef3a47.msg: string
 shape b0ef3a47.request_id: string
-shape b1e4b758.commands_ran: integer minimum=0 maximum=9007199254740991
-shape b1e4b758.ended_at: any optional
-shape b1e4b758.failure: shape 692c05e7 optional
-shape b1e4b758.purpose: enum "create"|"recreate"
-shape b1e4b758.request: shape 91124220
-shape b1e4b758.script: enum "none"|"pending"|"ran"|"skipped"
-shape b1e4b758.script_content: string optional
-shape b1e4b758.started_at: any
-shape b1e4b758.status: enum "awaiting_script_confirmation"|"failed"|"local"|"ready"|"running"|"stopped"
-shape b1e4b758.steps: array
-shape b1e4b758.steps[]: shape bc3a3a07
-shape b1e4b758.stopped_step: enum "changes"|"create"|"fetch"|"prune"|"script" optional
 shape b2693cc2.additional_dirs: array
 shape b2693cc2.additional_dirs[]: string
 shape b2693cc2.created_at: any
@@ -4991,12 +4924,6 @@ shape b8eb6785.task_id: string optional
 shape baf5c2fe.commit: string minLength=1 optional
 shape baf5c2fe.ref: string minLength=1
 shape baf5c2fe.remote: boolean
-shape bc3a3a07.command: string optional
-shape bc3a3a07.kind: enum "changes"|"create"|"fetch"|"prune"|"script"
-shape bc3a3a07.output: string optional
-shape bc3a3a07.ref: string optional
-shape bc3a3a07.state: enum "done"|"failed"|"pending"|"running"|"skipped"|"stopped"
-shape bc3a3a07.timed_out: boolean optional
 shape bd9a967a.code: enum 0
 shape bd9a967a.data: enum null nullable
 shape bd9a967a.details: any optional
@@ -5020,6 +4947,11 @@ shape bf00a2c5.data: enum null nullable
 shape bf00a2c5.details: any optional
 shape bf00a2c5.msg: string
 shape bf00a2c5.request_id: string
+shape c00d92bc.code: enum 0
+shape c00d92bc.data: shape 6d1191c8
+shape c00d92bc.details: any optional
+shape c00d92bc.msg: string
+shape c00d92bc.request_id: string
 shape c3b3188f.code: enum 40912
 shape c3b3188f.data: enum null nullable
 shape c3b3188f.details: any optional

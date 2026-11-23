@@ -47,7 +47,7 @@ export function settleInterruptedSetup(stored: StoredSessionWorktree): StoredSes
   );
   const ended_at = new Date().toISOString();
   const created = stored.setup.purpose === 'create' && stored.path !== undefined;
-  if (created && interrupted?.kind !== 'script') {
+  if (created) {
     return { ...rest, setup: { ...stored.setup, steps, status: 'ready', ended_at } };
   }
   const setup: WorktreeSetup = {

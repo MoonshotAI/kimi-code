@@ -15,19 +15,15 @@ import {
   lookupWorktreeResponseSchema,
   removeWorktreeRequestSchema,
   removeWorktreeResponseSchema,
-  saveWorktreeSetupScriptRequestSchema,
   sessionWorktreeActionSchema,
   sessionWorktreeRetryRequestSchema,
   workspaceGitBranchesResponseSchema,
   worktreeRemoveFailedDetailsSchema,
-  worktreeSetupScriptSchema,
-  type WorktreeSetupScript,
   type SessionWorktreeAction,
 } from '../protocol/rest-worktree';
 import { sessionSchema } from '../protocol/session';
 import { isDirty, isRepoRoot, listLocalBranches } from '../services/worktrees/gitRefs';
 import type { SessionWorktreeService } from '../services/worktrees/sessionWorktreeService';
-import { readSetupScript, setupScriptPath } from '../services/worktrees/setupScript';
 import { WorktreeError } from '../services/worktrees/worktreeError';
 import { sendMappedError as sendSessionMappedError, sessionConflictErrors } from './sessionErrors';
 import { readWireSession } from './sessions';
@@ -50,14 +46,6 @@ interface WorktreeRouteHost {
       reply: { send(payload: unknown): unknown },
     ) => Promise<void> | void,
   ): unknown;
-  put(
-    path: string,
-    options: { preHandler: unknown[]; schema?: Record<string, unknown> },
-    handler: (
-      req: { id: string; body: unknown; params: unknown },
-      reply: { send(payload: unknown): unknown },
-    ) => Promise<void> | void,
-  ): unknown;
 }
 
 const sessionIdParamSchema = z.object({ session_id: z.string().min(1) });
@@ -69,8 +57,6 @@ const SESSION_WORKTREE_ACTION_DESCRIPTIONS: Readonly<Record<SessionWorktreeActio
   retry: 'Start a fresh worktree setup after a failed or stopped one; the body may override use_remote and include_local_changes',
   cancel: 'Stop the running worktree setup and remove what it created',
   use_local: 'Give up the worktree and keep working in the workspace root',
-  skip_script: 'Skip the setup script and mark the worktree ready',
-  run_script: 'Run (or confirm and run) the setup script again without recreating the worktree',
   recreate: 'Recreate a missing worktree directory from its recorded branch',
 };
 
@@ -310,87 +296,5 @@ export function registerWorktreeRoutes(
     lookupRoute.path,
     lookupRoute.options,
     lookupRoute.handler as Parameters<WorktreeRouteHost['post']>[2],
-  );
-
-  const describeSetupScript = async (root: string): Promise<WorktreeSetupScript> => {
-    const content = await readSetupScript(root);
-    return {
-      path: setupScriptPath(root),
-      exists: content !== undefined,
-      content,
-      needs_confirmation:
-        content === undefined ? undefined : await worktrees.scripts.needsConfirmation(root, content),
-    };
-  };
-
-  const getScriptRoute = defineRoute(
-    {
-      method: 'GET',
-      path: '/workspaces/{workspace_id}/worktree-setup-script',
-      params: workspaceIdParamSchema,
-      success: { data: worktreeSetupScriptSchema },
-      errors: {
-        [ErrorCode.WORKSPACE_NOT_FOUND]: {},
-      },
-      description:
-        'Read the project setup script (.kimi/setup.sh in the workspace root) that runs as the last step of creating a worktree. needs_confirmation tells whether its current content must be confirmed on this machine before it runs',
-      tags: ['worktrees'],
-    },
-    async (req, reply) => {
-      const workspace = await core.accessor.get(IWorkspaceService).get(req.params.workspace_id);
-      if (workspace === undefined) {
-        reply.send(
-          errEnvelope(
-            ErrorCode.WORKSPACE_NOT_FOUND,
-            `workspace ${req.params.workspace_id} does not exist`,
-            req.id,
-          ),
-        );
-        return;
-      }
-      reply.send(okEnvelope(await describeSetupScript(workspace.root), req.id));
-    },
-  );
-  app.get(
-    getScriptRoute.path,
-    getScriptRoute.options,
-    getScriptRoute.handler as Parameters<WorktreeRouteHost['get']>[2],
-  );
-
-  const saveScriptRoute = defineRoute(
-    {
-      method: 'PUT',
-      path: '/workspaces/{workspace_id}/worktree-setup-script',
-      params: workspaceIdParamSchema,
-      body: saveWorktreeSetupScriptRequestSchema,
-      success: { data: worktreeSetupScriptSchema },
-      errors: {
-        [ErrorCode.VALIDATION_FAILED]: {},
-        [ErrorCode.WORKSPACE_NOT_FOUND]: {},
-      },
-      description:
-        'Save the project setup script to .kimi/setup.sh in the workspace root; blank content removes it. A script saved here runs on this machine without confirmation until its content changes',
-      tags: ['worktrees'],
-    },
-    async (req, reply) => {
-      const workspace = await core.accessor.get(IWorkspaceService).get(req.params.workspace_id);
-      if (workspace === undefined) {
-        reply.send(
-          errEnvelope(
-            ErrorCode.WORKSPACE_NOT_FOUND,
-            `workspace ${req.params.workspace_id} does not exist`,
-            req.id,
-          ),
-        );
-        return;
-      }
-      await worktrees.scripts.save(workspace.root, req.body.content);
-      reply.send(okEnvelope(await describeSetupScript(workspace.root), req.id));
-    },
-  );
-  app.put(
-    saveScriptRoute.path,
-    saveScriptRoute.options,
-    saveScriptRoute.handler as Parameters<WorktreeRouteHost['put']>[2],
   );
 }

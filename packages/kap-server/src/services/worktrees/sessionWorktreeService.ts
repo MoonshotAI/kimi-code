@@ -24,13 +24,6 @@ import { branchExists, isRepoRoot } from './gitRefs';
 import { repointSession } from './sessionRepoint';
 import { publishSessionUpdated } from './sessionUpdates';
 import {
-  SetupScriptStore,
-  readSetupScript,
-  runSetupScript,
-  setupScriptCommand,
-  setupScriptHash,
-} from './setupScript';
-import {
   forgetWorktreeFacts,
   liveWorktreeBranch,
   refreshWorktreeFacts,
@@ -58,7 +51,6 @@ const OUTPUT_PUBLISH_INTERVAL_MS = 250;
 
 export interface SessionWorktreeServiceOptions {
   readonly fetchTimeoutMs?: number;
-  readonly scriptTimeoutMs?: number;
   readonly logger?: Pick<ServerLogger, 'warn'>;
 }
 
@@ -157,7 +149,6 @@ function withoutPending(stored: StoredSessionWorktree): StoredSessionWorktree {
 export class SessionWorktreeService {
   readonly registry: WorktreeRegistry;
   readonly inventory: WorktreeInventory;
-  readonly scripts: SetupScriptStore;
   private readonly runs = new Map<string, { controller: AbortController; done: Promise<void> }>();
   private closed = false;
 
@@ -167,7 +158,6 @@ export class SessionWorktreeService {
   ) {
     this.registry = new WorktreeRegistry(this.worktreesHome);
     this.inventory = new WorktreeInventory(core, this);
-    this.scripts = new SetupScriptStore(this.worktreesHome);
   }
 
   get worktreesHome(): string {
@@ -205,16 +195,6 @@ export class SessionWorktreeService {
       request,
       fetchTimeoutMs: this.options.fetchTimeoutMs,
     });
-    const script = await readSetupScript(workspace.root);
-    const runsScript = script !== undefined && request.run_setup_script !== false;
-    const steps = creation.plannedSteps();
-    if (script !== undefined && runsScript) {
-      steps.push({
-        kind: 'script',
-        state: 'pending',
-        command: setupScriptCommand(workspace.root, script, this.osHomeDir),
-      });
-    }
     return {
       workspaceId: workspace.id,
       creation,
@@ -225,10 +205,9 @@ export class SessionWorktreeService {
           status: 'running',
           purpose: 'create',
           request,
-          steps,
+          steps: creation.plannedSteps(),
           commands_ran: 0,
           started_at: new Date().toISOString(),
-          script: script === undefined ? 'none' : runsScript ? 'pending' : 'skipped',
         },
       },
     };
@@ -276,7 +255,7 @@ export class SessionWorktreeService {
       ...withoutPending(stored),
       setup: ended(stored.setup, 'failed', {
         stopped_step: kind,
-        failure: { kind: kind === 'script' ? 'script_failed' : 'create_failed' },
+        failure: { kind: 'create_failed' },
       }),
     }));
   }
@@ -325,109 +304,7 @@ export class SessionWorktreeService {
       await this.discardCreated(recorder, created, error);
       return;
     }
-    await this.runScript(recorder, signal);
-  }
-
-  private async runScript(
-    recorder: SetupRecorder,
-    signal: AbortSignal,
-    approvedHash?: string,
-  ): Promise<void> {
-    const { repo_root: repoRoot, path } = recorder.current;
-    const step = recorder.steps.find((candidate) => candidate.kind === 'script');
-    if (step === undefined || path === undefined) {
-      await recorder.update((stored) => ({ ...stored, setup: ended(stored.setup, 'ready') }));
-      return;
-    }
-    const content = await readSetupScript(repoRoot);
-    if (content === undefined) {
-      step.state = 'skipped';
-      await recorder.update((stored) => ({
-        ...stored,
-        setup: ended(stored.setup, 'ready', { script: 'none', script_content: undefined }),
-      }));
-      return;
-    }
-    if (setupScriptHash(content) === approvedHash) {
-      await this.scripts.confirm(repoRoot, content);
-    } else if (await this.scripts.needsConfirmation(repoRoot, content)) {
-      step.state = 'pending';
-      step.command = setupScriptCommand(repoRoot, content, this.osHomeDir);
-      await recorder.update((stored) => ({
-        ...stored,
-        setup: ended(stored.setup, 'awaiting_script_confirmation', {
-          script: 'pending',
-          script_content: content,
-          stopped_step: undefined,
-          failure: undefined,
-        }),
-      }));
-      return;
-    }
-    const outcome = await runSetupScript(
-      {
-        repoRoot,
-        worktreePath: path,
-        content,
-        osHomeDir: this.osHomeDir,
-        timeoutMs: this.options.scriptTimeoutMs,
-      },
-      recorder,
-      signal,
-    );
-    if (outcome.kind !== 'done') {
-      await this.finishUnsuccessfully(recorder, outcome);
-      return;
-    }
-    await recorder.update((stored) => ({
-      ...stored,
-      setup: ended(stored.setup, 'ready', { script: 'ran', script_content: undefined }),
-    }));
-  }
-
-  private async beginScript(sessionId: string, stored: StoredSessionWorktree): Promise<void> {
-    const approvedHash =
-      stored.setup.status === 'awaiting_script_confirmation' && stored.setup.script_content !== undefined
-        ? setupScriptHash(stored.setup.script_content)
-        : undefined;
-    const next: StoredSessionWorktree = {
-      ...stored,
-      setup: {
-        ...stored.setup,
-        status: 'running',
-        steps: stored.setup.steps.map((step) =>
-          step.kind === 'script'
-            ? { kind: step.kind, state: 'pending' as const, command: step.command }
-            : step,
-        ),
-        ended_at: undefined,
-        stopped_step: undefined,
-        failure: undefined,
-        script: 'pending',
-        script_content: undefined,
-      },
-    };
-    await writeStoredWorktree(this.core, sessionId, () => next);
-    this.launch(sessionId, next, (recorder, signal) => this.runScript(recorder, signal, approvedHash));
-  }
-
-  private async skipScript(sessionId: string): Promise<void> {
-    await writeStoredWorktree(this.core, sessionId, (current) =>
-      current === undefined
-        ? undefined
-        : {
-            ...current,
-            setup: ended(current.setup, 'ready', {
-              steps: current.setup.steps.map((step) =>
-                step.kind === 'script' ? { ...step, state: 'skipped' as const } : step,
-              ),
-              script: 'skipped',
-              script_content: undefined,
-              stopped_step: undefined,
-              failure: undefined,
-            }),
-          },
-    );
+    await recorder.update((stored) => ({ ...stored, setup: ended(stored.setup, 'ready') }));
   }
 
   private async discardCreated(
@@ -513,7 +390,7 @@ export class SessionWorktreeService {
           return;
         }
         if (stored.path !== undefined) {
-          throw stateInvalid('the worktree already exists; run or skip the setup script instead');
+          throw stateInvalid('the worktree already exists');
         }
         const workspace = await this.core.accessor.get(IWorkspaceService).get(summary.workspaceId);
         if (workspace === undefined) {
@@ -555,19 +432,6 @@ export class SessionWorktreeService {
         await this.beginRecreate(sessionId, stored, missing);
         return;
       }
-      case 'skip_script':
-      case 'run_script': {
-        const pausedAtScript =
-          stored.path !== undefined &&
-          (status === 'awaiting_script_confirmation' ||
-            (halted && stored.setup.stopped_step === 'script'));
-        if (!pausedAtScript) {
-          throw stateInvalid(`worktree setup is ${status}; no setup script is waiting to be run or skipped`);
-        }
-        if (action === 'skip_script') await this.skipScript(sessionId);
-        else await this.beginScript(sessionId, stored);
-        return;
-      }
     }
   }
 
@@ -594,7 +458,6 @@ export class SessionWorktreeService {
         }),
         commands_ran: 0,
         started_at: new Date().toISOString(),
-        script: 'none',
       },
     };
     await writeStoredWorktree(this.core, sessionId, () => next);

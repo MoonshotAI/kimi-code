@@ -2570,20 +2570,13 @@
                                   },
                                   "type": "array"
                                 },
-                                "exit_code": {
-                                  "maximum": 9007199254740991,
-                                  "minimum": -9007199254740991,
-                                  "type": "integer"
-                                },
                                 "kind": {
                                   "enum": [
                                     "fetch_failed",
                                     "fetch_timeout",
                                     "conflict",
                                     "disk_full",
-                                    "create_failed",
-                                    "script_failed",
-                                    "script_timeout"
+                                    "create_failed"
                                   ],
                                   "type": "string"
                                 },
@@ -2613,9 +2606,6 @@
                                 "include_local_changes": {
                                   "type": "boolean"
                                 },
-                                "run_setup_script": {
-                                  "type": "boolean"
-                                },
                                 "source_branch": {
                                   "minLength": 1,
                                   "type": "string"
@@ -2629,18 +2619,6 @@
                               ],
                               "type": "object"
                             },
-                            "script": {
-                              "enum": [
-                                "none",
-                                "ran",
-                                "skipped",
-                                "pending"
-                              ],
-                              "type": "string"
-                            },
-                            "script_content": {
-                              "type": "string"
-                            },
                             "started_at": {
                               "type": "string"
                             },
@@ -2650,7 +2628,6 @@
                                 "ready",
                                 "failed",
                                 "stopped",
-                                "awaiting_script_confirmation",
                                 "local"
                               ],
                               "type": "string"
@@ -2666,8 +2643,7 @@
                                       "fetch",
                                       "prune",
                                       "create",
-                                      "changes",
-                                      "script"
+                                      "changes"
                                     ],
                                     "type": "string"
                                   },
@@ -2705,8 +2681,7 @@
                                 "fetch",
                                 "prune",
                                 "create",
-                                "changes",
-                                "script"
+                                "changes"
                               ],
                               "type": "string"
                             }
@@ -2717,8 +2692,7 @@
                             "request",
                             "steps",
                             "commands_ran",
-                            "started_at",
-                            "script"
+                            "started_at"
                           ],
                           "type": "object"
                         }

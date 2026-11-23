@@ -14699,20 +14699,13 @@
                                                         },
                                                         "type": "array"
                                                       },
-                                                      "exit_code": {
-                                                        "maximum": 9007199254740991,
-                                                        "minimum": -9007199254740991,
-                                                        "type": "integer"
-                                                      },
                                                       "kind": {
                                                         "enum": [
                                                           "fetch_failed",
                                                           "fetch_timeout",
                                                           "conflict",
                                                           "disk_full",
-                                                          "create_failed",
-                                                          "script_failed",
-                                                          "script_timeout"
+                                                          "create_failed"
                                                         ],
                                                         "type": "string"
                                                       },
@@ -14743,9 +14736,6 @@
                                                       "include_local_changes": {
                                                         "type": "boolean"
                                                       },
-                                                      "run_setup_script": {
-                                                        "type": "boolean"
-                                                      },
                                                       "source_branch": {
                                                         "minLength": 1,
                                                         "type": "string"
@@ -14759,18 +14749,6 @@
                                                     ],
                                                     "type": "object"
                                                   },
-                                                  "script": {
-                                                    "enum": [
-                                                      "none",
-                                                      "ran",
-                                                      "skipped",
-                                                      "pending"
-                                                    ],
-                                                    "type": "string"
-                                                  },
-                                                  "script_content": {
-                                                    "type": "string"
-                                                  },
                                                   "started_at": {},
                                                   "status": {
                                                     "enum": [
@@ -14778,7 +14756,6 @@
                                                       "ready",
                                                       "failed",
                                                       "stopped",
-                                                      "awaiting_script_confirmation",
                                                       "local"
                                                     ],
                                                     "type": "string"
@@ -14795,8 +14772,7 @@
                                                             "fetch",
                                                             "prune",
                                                             "create",
-                                                            "changes",
-                                                            "script"
+                                                            "changes"
                                                           ],
                                                           "type": "string"
                                                         },
@@ -14834,8 +14810,7 @@
                                                       "fetch",
                                                       "prune",
                                                       "create",
-                                                      "changes",
-                                                      "script"
+                                                      "changes"
                                                     ],
                                                     "type": "string"
                                                   }
@@ -14846,8 +14821,7 @@
                                                   "request",
                                                   "steps",
                                                   "commands_ran",
-                                                  "started_at",
-                                                  "script"
+                                                  "started_at"
                                                 ],
                                                 "type": "object"
                                               }
@@ -15081,20 +15055,13 @@
                                                               },
                                                               "type": "array"
                                                             },
-                                                            "exit_code": {
-                                                              "maximum": 9007199254740991,
-                                                              "minimum": -9007199254740991,
-                                                              "type": "integer"
-                                                            },
                                                             "kind": {
                                                               "enum": [
                                                                 "fetch_failed",
                                                                 "fetch_timeout",
                                                                 "conflict",
                                                                 "disk_full",
-                                                                "create_failed",
-                                                                "script_failed",
-                                                                "script_timeout"
+                                                                "create_failed"
                                                               ],
                                                               "type": "string"
                                                             },
@@ -15125,9 +15092,6 @@
                                                             "include_local_changes": {
                                                               "type": "boolean"
                                                             },
-                                                            "run_setup_script": {
-                                                              "type": "boolean"
-                                                            },
                                                             "source_branch": {
                                                               "minLength": 1,
                                                               "type": "string"
@@ -15141,18 +15105,6 @@
                                                           ],
                                                           "type": "object"
                                                         },
-                                                        "script": {
-                                                          "enum": [
-                                                            "none",
-                                                            "ran",
-                                                            "skipped",
-                                                            "pending"
-                                                          ],
-                                                          "type": "string"
-                                                        },
-                                                        "script_content": {
-                                                          "type": "string"
-                                                        },
                                                         "started_at": {},
                                                         "status": {
                                                           "enum": [
@@ -15160,7 +15112,6 @@
                                                             "ready",
                                                             "failed",
                                                             "stopped",
-                                                            "awaiting_script_confirmation",
                                                             "local"
                                                           ],
                                                           "type": "string"
@@ -15177,8 +15128,7 @@
                                                                   "fetch",
                                                                   "prune",
                                                                   "create",
-                                                                  "changes",
-                                                                  "script"
+                                                                  "changes"
                                                                 ],
                                                                 "type": "string"
                                                               },
@@ -15216,8 +15166,7 @@
                                                             "fetch",
                                                             "prune",
                                                             "create",
-                                                            "changes",
-                                                            "script"
+                                                            "changes"
                                                           ],
                                                           "type": "string"
                                                         }
@@ -15228,8 +15177,7 @@
                                                         "request",
                                                         "steps",
                                                         "commands_ran",
-                                                        "started_at",
-                                                        "script"
+                                                        "started_at"
                                                       ],
                                                       "type": "object"
                                                     }
@@ -15555,9 +15503,6 @@
                       "include_local_changes": {
                         "type": "boolean"
                       },
-                      "run_setup_script": {
-                        "type": "boolean"
-                      },
                       "source_branch": {
                         "minLength": 1,
                         "type": "string"
@@ -15745,20 +15690,13 @@
                                           },
                                           "type": "array"
                                         },
-                                        "exit_code": {
-                                          "maximum": 9007199254740991,
-                                          "minimum": -9007199254740991,
-                                          "type": "integer"
-                                        },
                                         "kind": {
                                           "enum": [
                                             "fetch_failed",
                                             "fetch_timeout",
                                             "conflict",
                                             "disk_full",
-                                            "create_failed",
-                                            "script_failed",
-                                            "script_timeout"
+                                            "create_failed"
                                           ],
                                           "type": "string"
                                         },
@@ -15789,9 +15727,6 @@
                                         "include_local_changes": {
                                           "type": "boolean"
                                         },
-                                        "run_setup_script": {
-                                          "type": "boolean"
-                                        },
                                         "source_branch": {
                                           "minLength": 1,
                                           "type": "string"
@@ -15805,18 +15740,6 @@
                                       ],
                                       "type": "object"
                                     },
-                                    "script": {
-                                      "enum": [
-                                        "none",
-                                        "ran",
-                                        "skipped",
-                                        "pending"
-                                      ],
-                                      "type": "string"
-                                    },
-                                    "script_content": {
-                                      "type": "string"
-                                    },
                                     "started_at": {},
                                     "status": {
                                       "enum": [
@@ -15824,7 +15747,6 @@
                                         "ready",
                                         "failed",
                                         "stopped",
-                                        "awaiting_script_confirmation",
                                         "local"
                                       ],
                                       "type": "string"
@@ -15841,8 +15763,7 @@
                                               "fetch",
                                               "prune",
                                               "create",
-                                              "changes",
-                                              "script"
+                                              "changes"
                                             ],
                                             "type": "string"
                                           },
@@ -15880,8 +15801,7 @@
                                         "fetch",
                                         "prune",
                                         "create",
-                                        "changes",
-                                        "script"
+                                        "changes"
                                       ],
                                       "type": "string"
                                     }
@@ -15892,8 +15812,7 @@
                                     "request",
                                     "steps",
                                     "commands_ran",
-                                    "started_at",
-                                    "script"
+                                    "started_at"
                                   ],
                                   "type": "object"
                                 }
@@ -16602,20 +16521,13 @@
                                           },
                                           "type": "array"
                                         },
-                                        "exit_code": {
-                                          "maximum": 9007199254740991,
-                                          "minimum": -9007199254740991,
-                                          "type": "integer"
-                                        },
                                         "kind": {
                                           "enum": [
                                             "fetch_failed",
                                             "fetch_timeout",
                                             "conflict",
                                             "disk_full",
-                                            "create_failed",
-                                            "script_failed",
-                                            "script_timeout"
+                                            "create_failed"
                                           ],
                                           "type": "string"
                                         },
@@ -16646,9 +16558,6 @@
                                         "include_local_changes": {
                                           "type": "boolean"
                                         },
-                                        "run_setup_script": {
-                                          "type": "boolean"
-                                        },
                                         "source_branch": {
                                           "minLength": 1,
                                           "type": "string"
@@ -16662,18 +16571,6 @@
                                       ],
                                       "type": "object"
                                     },
-                                    "script": {
-                                      "enum": [
-                                        "none",
-                                        "ran",
-                                        "skipped",
-                                        "pending"
-                                      ],
-                                      "type": "string"
-                                    },
-                                    "script_content": {
-                                      "type": "string"
-                                    },
                                     "started_at": {},
                                     "status": {
                                       "enum": [
@@ -16681,7 +16578,6 @@
                                         "ready",
                                         "failed",
                                         "stopped",
-                                        "awaiting_script_confirmation",
                                         "local"
                                       ],
                                       "type": "string"
@@ -16698,8 +16594,7 @@
                                               "fetch",
                                               "prune",
                                               "create",
-                                              "changes",
-                                              "script"
+                                              "changes"
                                             ],
                                             "type": "string"
                                           },
@@ -16737,8 +16632,7 @@
                                         "fetch",
                                         "prune",
                                         "create",
-                                        "changes",
-                                        "script"
+                                        "changes"
                                       ],
                                       "type": "string"
                                     }
@@ -16749,8 +16643,7 @@
                                     "request",
                                     "steps",
                                     "commands_ran",
-                                    "started_at",
-                                    "script"
+                                    "started_at"
                                   ],
                                   "type": "object"
                                 }
@@ -22475,20 +22368,13 @@
                                               },
                                               "type": "array"
                                             },
-                                            "exit_code": {
-                                              "maximum": 9007199254740991,
-                                              "minimum": -9007199254740991,
-                                              "type": "integer"
-                                            },
                                             "kind": {
                                               "enum": [
                                                 "fetch_failed",
                                                 "fetch_timeout",
                                                 "conflict",
                                                 "disk_full",
-                                                "create_failed",
-                                                "script_failed",
-                                                "script_timeout"
+                                                "create_failed"
                                               ],
                                               "type": "string"
                                             },
@@ -22519,9 +22405,6 @@
                                             "include_local_changes": {
                                               "type": "boolean"
                                             },
-                                            "run_setup_script": {
-                                              "type": "boolean"
-                                            },
                                             "source_branch": {
                                               "minLength": 1,
                                               "type": "string"
@@ -22535,18 +22418,6 @@
                                           ],
                                           "type": "object"
                                         },
-                                        "script": {
-                                          "enum": [
-                                            "none",
-                                            "ran",
-                                            "skipped",
-                                            "pending"
-                                          ],
-                                          "type": "string"
-                                        },
-                                        "script_content": {
-                                          "type": "string"
-                                        },
                                         "started_at": {},
                                         "status": {
                                           "enum": [
@@ -22554,7 +22425,6 @@
                                             "ready",
                                             "failed",
                                             "stopped",
-                                            "awaiting_script_confirmation",
                                             "local"
                                           ],
                                           "type": "string"
@@ -22571,8 +22441,7 @@
                                                   "fetch",
                                                   "prune",
                                                   "create",
-                                                  "changes",
-                                                  "script"
+                                                  "changes"
                                                 ],
                                                 "type": "string"
                                               },
@@ -22610,8 +22479,7 @@
                                             "fetch",
                                             "prune",
                                             "create",
-                                            "changes",
-                                            "script"
+                                            "changes"
                                           ],
                                           "type": "string"
                                         }
@@ -22622,8 +22490,7 @@
                                         "request",
                                         "steps",
                                         "commands_ran",
-                                        "started_at",
-                                        "script"
+                                        "started_at"
                                       ],
                                       "type": "object"
                                     }
@@ -29230,20 +29097,13 @@
                                           },
                                           "type": "array"
                                         },
-                                        "exit_code": {
-                                          "maximum": 9007199254740991,
-                                          "minimum": -9007199254740991,
-                                          "type": "integer"
-                                        },
                                         "kind": {
                                           "enum": [
                                             "fetch_failed",
                                             "fetch_timeout",
                                             "conflict",
                                             "disk_full",
-                                            "create_failed",
-                                            "script_failed",
-                                            "script_timeout"
+                                            "create_failed"
                                           ],
                                           "type": "string"
                                         },
@@ -29274,9 +29134,6 @@
                                         "include_local_changes": {
                                           "type": "boolean"
                                         },
-                                        "run_setup_script": {
-                                          "type": "boolean"
-                                        },
                                         "source_branch": {
                                           "minLength": 1,
                                           "type": "string"
@@ -29290,18 +29147,6 @@
                                       ],
                                       "type": "object"
                                     },
-                                    "script": {
-                                      "enum": [
-                                        "none",
-                                        "ran",
-                                        "skipped",
-                                        "pending"
-                                      ],
-                                      "type": "string"
-                                    },
-                                    "script_content": {
-                                      "type": "string"
-                                    },
                                     "started_at": {},
                                     "status": {
                                       "enum": [
@@ -29309,7 +29154,6 @@
                                         "ready",
                                         "failed",
                                         "stopped",
-                                        "awaiting_script_confirmation",
                                         "local"
                                       ],
                                       "type": "string"
@@ -29326,8 +29170,7 @@
                                               "fetch",
                                               "prune",
                                               "create",
-                                              "changes",
-                                              "script"
+                                              "changes"
                                             ],
                                             "type": "string"
                                           },
@@ -29365,8 +29208,7 @@
                                         "fetch",
                                         "prune",
                                         "create",
-                                        "changes",
-                                        "script"
+                                        "changes"
                                       ],
                                       "type": "string"
                                     }
@@ -29377,8 +29219,7 @@
                                     "request",
                                     "steps",
                                     "commands_ran",
-                                    "started_at",
-                                    "script"
+                                    "started_at"
                                   ],
                                   "type": "object"
                                 }
@@ -29909,20 +29750,13 @@
                                           },
                                           "type": "array"
                                         },
-                                        "exit_code": {
-                                          "maximum": 9007199254740991,
-                                          "minimum": -9007199254740991,
-                                          "type": "integer"
-                                        },
                                         "kind": {
                                           "enum": [
                                             "fetch_failed",
                                             "fetch_timeout",
                                             "conflict",
                                             "disk_full",
-                                            "create_failed",
-                                            "script_failed",
-                                            "script_timeout"
+                                            "create_failed"
                                           ],
                                           "type": "string"
                                         },
@@ -29953,9 +29787,6 @@
                                         "include_local_changes": {
                                           "type": "boolean"
                                         },
-                                        "run_setup_script": {
-                                          "type": "boolean"
-                                        },
                                         "source_branch": {
                                           "minLength": 1,
                                           "type": "string"
@@ -29969,18 +29800,6 @@
                                       ],
                                       "type": "object"
                                     },
-                                    "script": {
-                                      "enum": [
-                                        "none",
-                                        "ran",
-                                        "skipped",
-                                        "pending"
-                                      ],
-                                      "type": "string"
-                                    },
-                                    "script_content": {
-                                      "type": "string"
-                                    },
                                     "started_at": {},
                                     "status": {
                                       "enum": [
@@ -29988,7 +29807,6 @@
                                         "ready",
                                         "failed",
                                         "stopped",
-                                        "awaiting_script_confirmation",
                                         "local"
                                       ],
                                       "type": "string"
@@ -30005,8 +29823,7 @@
                                               "fetch",
                                               "prune",
                                               "create",
-                                              "changes",
-                                              "script"
+                                              "changes"
                                             ],
                                             "type": "string"
                                           },
@@ -30044,8 +29861,7 @@
                                         "fetch",
                                         "prune",
                                         "create",
-                                        "changes",
-                                        "script"
+                                        "changes"
                                       ],
                                       "type": "string"
                                     }
@@ -30056,8 +29872,7 @@
                                     "request",
                                     "steps",
                                     "commands_ran",
-                                    "started_at",
-                                    "script"
+                                    "started_at"
                                   ],
                                   "type": "object"
                                 }
@@ -30595,20 +30410,13 @@
                                           },
                                           "type": "array"
                                         },
-                                        "exit_code": {
-                                          "maximum": 9007199254740991,
-                                          "minimum": -9007199254740991,
-                                          "type": "integer"
-                                        },
                                         "kind": {
                                           "enum": [
                                             "fetch_failed",
                                             "fetch_timeout",
                                             "conflict",
                                             "disk_full",
-                                            "create_failed",
-                                            "script_failed",
-                                            "script_timeout"
+                                            "create_failed"
                                           ],
                                           "type": "string"
                                         },
@@ -30639,9 +30447,6 @@
                                         "include_local_changes": {
                                           "type": "boolean"
                                         },
-                                        "run_setup_script": {
-                                          "type": "boolean"
-                                        },
                                         "source_branch": {
                                           "minLength": 1,
                                           "type": "string"
@@ -30655,18 +30460,6 @@
                                       ],
                                       "type": "object"
                                     },
-                                    "script": {
-                                      "enum": [
-                                        "none",
-                                        "ran",
-                                        "skipped",
-                                        "pending"
-                                      ],
-                                      "type": "string"
-                                    },
-                                    "script_content": {
-                                      "type": "string"
-                                    },
                                     "started_at": {},
                                     "status": {
                                       "enum": [
@@ -30674,7 +30467,6 @@
                                         "ready",
                                         "failed",
                                         "stopped",
-                                        "awaiting_script_confirmation",
                                         "local"
                                       ],
                                       "type": "string"
@@ -30691,8 +30483,7 @@
                                               "fetch",
                                               "prune",
                                               "create",
-                                              "changes",
-                                              "script"
+                                              "changes"
                                             ],
                                             "type": "string"
                                           },
@@ -30730,8 +30521,7 @@
                                         "fetch",
                                         "prune",
                                         "create",
-                                        "changes",
-                                        "script"
+                                        "changes"
                                       ],
                                       "type": "string"
                                     }
@@ -30742,1366 +30532,7 @@
                                     "request",
                                     "steps",
                                     "commands_ran",
-                                    "started_at",
-                                    "script"
-                                  ],
-                                  "type": "object"
-                                }
-                              },
-                              "required": [
-                                "setup"
-                              ],
-                              "type": "object"
-                            }
-                          },
-                          "required": [
-                            "id",
-                            "workspace_id",
-                            "cwd",
-                            "title",
-                            "created_at",
-                            "updated_at",
-                            "activity"
-                          ],
-                          "type": "object"
-                        },
-                        "details": {},
-                        "msg": {
-                          "type": "string"
-                        },
-                        "request_id": {
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "code",
-                        "msg",
-                        "data",
-                        "request_id"
-                      ],
-                      "type": "object"
-                    },
-                    {
-                      "additionalProperties": false,
-                      "properties": {
-                        "code": {
-                          "enum": [
-                            40001
-                          ],
-                          "type": "number"
-                        },
-                        "data": {
-                          "enum": [
-                            null
-                          ],
-                          "nullable": true,
-                          "type": "string"
-                        },
-                        "details": {},
-                        "msg": {
-                          "type": "string"
-                        },
-                        "request_id": {
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "code",
-                        "msg",
-                        "data",
-                        "request_id"
-                      ],
-                      "type": "object"
-                    },
-                    {
-                      "additionalProperties": false,
-                      "properties": {
-                        "code": {
-                          "enum": [
-                            40401
-                          ],
-                          "type": "number"
-                        },
-                        "data": {
-                          "enum": [
-                            null
-                          ],
-                          "nullable": true,
-                          "type": "string"
-                        },
-                        "details": {},
-                        "msg": {
-                          "type": "string"
-                        },
-                        "request_id": {
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "code",
-                        "msg",
-                        "data",
-                        "request_id"
-                      ],
-                      "type": "object"
-                    },
-                    {
-                      "additionalProperties": false,
-                      "properties": {
-                        "code": {
-                          "enum": [
-                            40410
-                          ],
-                          "type": "number"
-                        },
-                        "data": {
-                          "enum": [
-                            null
-                          ],
-                          "nullable": true,
-                          "type": "string"
-                        },
-                        "details": {},
-                        "msg": {
-                          "type": "string"
-                        },
-                        "request_id": {
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "code",
-                        "msg",
-                        "data",
-                        "request_id"
-                      ],
-                      "type": "object"
-                    },
-                    {
-                      "additionalProperties": false,
-                      "properties": {
-                        "code": {
-                          "enum": [
-                            40901
-                          ],
-                          "type": "number"
-                        },
-                        "data": {
-                          "enum": [
-                            null
-                          ],
-                          "nullable": true,
-                          "type": "string"
-                        },
-                        "details": {},
-                        "msg": {
-                          "type": "string"
-                        },
-                        "request_id": {
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "code",
-                        "msg",
-                        "data",
-                        "request_id"
-                      ],
-                      "type": "object"
-                    },
-                    {
-                      "additionalProperties": false,
-                      "properties": {
-                        "code": {
-                          "enum": [
-                            40930
-                          ],
-                          "type": "number"
-                        },
-                        "data": {
-                          "enum": [
-                            null
-                          ],
-                          "nullable": true,
-                          "type": "string"
-                        },
-                        "details": {},
-                        "msg": {
-                          "type": "string"
-                        },
-                        "request_id": {
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "code",
-                        "msg",
-                        "data",
-                        "request_id"
-                      ],
-                      "type": "object"
-                    },
-                    {
-                      "additionalProperties": false,
-                      "properties": {
-                        "code": {
-                          "enum": [
-                            40931
-                          ],
-                          "type": "number"
-                        },
-                        "data": {
-                          "enum": [
-                            null
-                          ],
-                          "nullable": true,
-                          "type": "string"
-                        },
-                        "details": {},
-                        "msg": {
-                          "type": "string"
-                        },
-                        "request_id": {
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "code",
-                        "msg",
-                        "data",
-                        "request_id"
-                      ],
-                      "type": "object"
-                    },
-                    {
-                      "additionalProperties": false,
-                      "properties": {
-                        "code": {
-                          "enum": [
-                            40932
-                          ],
-                          "type": "number"
-                        },
-                        "data": {
-                          "enum": [
-                            null
-                          ],
-                          "nullable": true,
-                          "type": "string"
-                        },
-                        "details": {},
-                        "msg": {
-                          "type": "string"
-                        },
-                        "request_id": {
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "code",
-                        "msg",
-                        "data",
-                        "request_id"
-                      ],
-                      "type": "object"
-                    },
-                    {
-                      "additionalProperties": false,
-                      "properties": {
-                        "code": {
-                          "enum": [
-                            40936
-                          ],
-                          "type": "number"
-                        },
-                        "data": {
-                          "enum": [
-                            null
-                          ],
-                          "nullable": true,
-                          "type": "string"
-                        },
-                        "details": {},
-                        "msg": {
-                          "type": "string"
-                        },
-                        "request_id": {
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "code",
-                        "msg",
-                        "data",
-                        "request_id"
-                      ],
-                      "type": "object"
-                    },
-                    {
-                      "additionalProperties": false,
-                      "properties": {
-                        "code": {
-                          "enum": [
-                            40938
-                          ],
-                          "type": "number"
-                        },
-                        "data": {
-                          "enum": [
-                            null
-                          ],
-                          "nullable": true,
-                          "type": "string"
-                        },
-                        "details": {},
-                        "msg": {
-                          "type": "string"
-                        },
-                        "request_id": {
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "code",
-                        "msg",
-                        "data",
-                        "request_id"
-                      ],
-                      "type": "object"
-                    }
-                  ]
-                }
-              }
-            },
-            "description": "Default Response"
-          }
-        },
-        "tags": [
-          "worktrees"
-        ]
-      }
-    },
-    "/api/v1/sessions/{session_id}/worktree:run_script": {
-      "post": {
-        "description": "Run (or confirm and run) the setup script again without recreating the worktree. Returns the updated session",
-        "operationId": "runSessionWorktreeRunScriptAction",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "session_id",
-            "required": true,
-            "schema": {
-              "minLength": 1,
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "properties": {},
-                "type": "object"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "oneOf": [
-                    {
-                      "additionalProperties": false,
-                      "properties": {
-                        "code": {
-                          "enum": [
-                            0
-                          ],
-                          "type": "number"
-                        },
-                        "data": {
-                          "additionalProperties": false,
-                          "properties": {
-                            "activity": {
-                              "enum": [
-                                "idle",
-                                "turn",
-                                "background"
-                              ],
-                              "type": "string"
-                            },
-                            "archived": {
-                              "type": "boolean"
-                            },
-                            "archived_at": {},
-                            "created_at": {},
-                            "cwd": {
-                              "type": "string"
-                            },
-                            "git": {
-                              "additionalProperties": false,
-                              "properties": {
-                                "branch": {
-                                  "type": "string"
-                                },
-                                "pull_request": {
-                                  "additionalProperties": false,
-                                  "properties": {
-                                    "number": {
-                                      "maximum": 9007199254740991,
-                                      "minimum": -9007199254740991,
-                                      "type": "integer"
-                                    },
-                                    "state": {
-                                      "enum": [
-                                        "open",
-                                        "closed",
-                                        "merged"
-                                      ],
-                                      "type": "string"
-                                    },
-                                    "url": {
-                                      "type": "string"
-                                    }
-                                  },
-                                  "required": [
-                                    "number",
-                                    "state",
-                                    "url"
-                                  ],
-                                  "type": "object"
-                                }
-                              },
-                              "type": "object"
-                            },
-                            "host_id": {
-                              "type": "string"
-                            },
-                            "id": {
-                              "minLength": 1,
-                              "type": "string"
-                            },
-                            "last_prompt": {
-                              "type": "string"
-                            },
-                            "last_turn_outcome": {
-                              "enum": [
-                                "completed",
-                                "interrupted",
-                                "failed"
-                              ],
-                              "type": "string"
-                            },
-                            "metadata": {
-                              "additionalProperties": {},
-                              "type": "object"
-                            },
-                            "pending_interaction": {
-                              "enum": [
-                                "none",
-                                "approval",
-                                "question"
-                              ],
-                              "type": "string"
-                            },
-                            "title": {
-                              "type": "string"
-                            },
-                            "updated_at": {},
-                            "workspace_id": {
-                              "pattern": "^wd_[a-z0-9._-]+_[0-9a-f]{12}$|^wm_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
-                              "type": "string"
-                            },
-                            "worktree": {
-                              "additionalProperties": false,
-                              "properties": {
-                                "base": {
-                                  "additionalProperties": false,
-                                  "properties": {
-                                    "commit": {
-                                      "minLength": 1,
-                                      "type": "string"
-                                    },
-                                    "ref": {
-                                      "minLength": 1,
-                                      "type": "string"
-                                    },
-                                    "remote": {
-                                      "type": "boolean"
-                                    }
-                                  },
-                                  "required": [
-                                    "ref",
-                                    "remote"
-                                  ],
-                                  "type": "object"
-                                },
-                                "branch": {
-                                  "minLength": 1,
-                                  "type": "string"
-                                },
-                                "branch_missing": {
-                                  "type": "boolean"
-                                },
-                                "included_local_changes": {
-                                  "type": "boolean"
-                                },
-                                "missing": {
-                                  "type": "boolean"
-                                },
-                                "path": {
-                                  "minLength": 1,
-                                  "type": "string"
-                                },
-                                "setup": {
-                                  "additionalProperties": false,
-                                  "properties": {
-                                    "commands_ran": {
-                                      "maximum": 9007199254740991,
-                                      "minimum": 0,
-                                      "type": "integer"
-                                    },
-                                    "ended_at": {},
-                                    "failure": {
-                                      "additionalProperties": false,
-                                      "properties": {
-                                        "conflict_files": {
-                                          "items": {
-                                            "type": "string"
-                                          },
-                                          "type": "array"
-                                        },
-                                        "exit_code": {
-                                          "maximum": 9007199254740991,
-                                          "minimum": -9007199254740991,
-                                          "type": "integer"
-                                        },
-                                        "kind": {
-                                          "enum": [
-                                            "fetch_failed",
-                                            "fetch_timeout",
-                                            "conflict",
-                                            "disk_full",
-                                            "create_failed",
-                                            "script_failed",
-                                            "script_timeout"
-                                          ],
-                                          "type": "string"
-                                        },
-                                        "remote_ref": {
-                                          "type": "string"
-                                        },
-                                        "timeout_seconds": {
-                                          "exclusiveMinimum": true,
-                                          "maximum": 9007199254740991,
-                                          "type": "integer"
-                                        }
-                                      },
-                                      "required": [
-                                        "kind"
-                                      ],
-                                      "type": "object"
-                                    },
-                                    "purpose": {
-                                      "enum": [
-                                        "create",
-                                        "recreate"
-                                      ],
-                                      "type": "string"
-                                    },
-                                    "request": {
-                                      "additionalProperties": false,
-                                      "properties": {
-                                        "include_local_changes": {
-                                          "type": "boolean"
-                                        },
-                                        "run_setup_script": {
-                                          "type": "boolean"
-                                        },
-                                        "source_branch": {
-                                          "minLength": 1,
-                                          "type": "string"
-                                        },
-                                        "use_remote": {
-                                          "type": "boolean"
-                                        }
-                                      },
-                                      "required": [
-                                        "source_branch"
-                                      ],
-                                      "type": "object"
-                                    },
-                                    "script": {
-                                      "enum": [
-                                        "none",
-                                        "ran",
-                                        "skipped",
-                                        "pending"
-                                      ],
-                                      "type": "string"
-                                    },
-                                    "script_content": {
-                                      "type": "string"
-                                    },
-                                    "started_at": {},
-                                    "status": {
-                                      "enum": [
-                                        "running",
-                                        "ready",
-                                        "failed",
-                                        "stopped",
-                                        "awaiting_script_confirmation",
-                                        "local"
-                                      ],
-                                      "type": "string"
-                                    },
-                                    "steps": {
-                                      "items": {
-                                        "additionalProperties": false,
-                                        "properties": {
-                                          "command": {
-                                            "type": "string"
-                                          },
-                                          "kind": {
-                                            "enum": [
-                                              "fetch",
-                                              "prune",
-                                              "create",
-                                              "changes",
-                                              "script"
-                                            ],
-                                            "type": "string"
-                                          },
-                                          "output": {
-                                            "type": "string"
-                                          },
-                                          "ref": {
-                                            "type": "string"
-                                          },
-                                          "state": {
-                                            "enum": [
-                                              "pending",
-                                              "running",
-                                              "done",
-                                              "failed",
-                                              "stopped",
-                                              "skipped"
-                                            ],
-                                            "type": "string"
-                                          },
-                                          "timed_out": {
-                                            "type": "boolean"
-                                          }
-                                        },
-                                        "required": [
-                                          "kind",
-                                          "state"
-                                        ],
-                                        "type": "object"
-                                      },
-                                      "type": "array"
-                                    },
-                                    "stopped_step": {
-                                      "enum": [
-                                        "fetch",
-                                        "prune",
-                                        "create",
-                                        "changes",
-                                        "script"
-                                      ],
-                                      "type": "string"
-                                    }
-                                  },
-                                  "required": [
-                                    "status",
-                                    "purpose",
-                                    "request",
-                                    "steps",
-                                    "commands_ran",
-                                    "started_at",
-                                    "script"
-                                  ],
-                                  "type": "object"
-                                }
-                              },
-                              "required": [
-                                "setup"
-                              ],
-                              "type": "object"
-                            }
-                          },
-                          "required": [
-                            "id",
-                            "workspace_id",
-                            "cwd",
-                            "title",
-                            "created_at",
-                            "updated_at",
-                            "activity"
-                          ],
-                          "type": "object"
-                        },
-                        "details": {},
-                        "msg": {
-                          "type": "string"
-                        },
-                        "request_id": {
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "code",
-                        "msg",
-                        "data",
-                        "request_id"
-                      ],
-                      "type": "object"
-                    },
-                    {
-                      "additionalProperties": false,
-                      "properties": {
-                        "code": {
-                          "enum": [
-                            40001
-                          ],
-                          "type": "number"
-                        },
-                        "data": {
-                          "enum": [
-                            null
-                          ],
-                          "nullable": true,
-                          "type": "string"
-                        },
-                        "details": {},
-                        "msg": {
-                          "type": "string"
-                        },
-                        "request_id": {
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "code",
-                        "msg",
-                        "data",
-                        "request_id"
-                      ],
-                      "type": "object"
-                    },
-                    {
-                      "additionalProperties": false,
-                      "properties": {
-                        "code": {
-                          "enum": [
-                            40401
-                          ],
-                          "type": "number"
-                        },
-                        "data": {
-                          "enum": [
-                            null
-                          ],
-                          "nullable": true,
-                          "type": "string"
-                        },
-                        "details": {},
-                        "msg": {
-                          "type": "string"
-                        },
-                        "request_id": {
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "code",
-                        "msg",
-                        "data",
-                        "request_id"
-                      ],
-                      "type": "object"
-                    },
-                    {
-                      "additionalProperties": false,
-                      "properties": {
-                        "code": {
-                          "enum": [
-                            40410
-                          ],
-                          "type": "number"
-                        },
-                        "data": {
-                          "enum": [
-                            null
-                          ],
-                          "nullable": true,
-                          "type": "string"
-                        },
-                        "details": {},
-                        "msg": {
-                          "type": "string"
-                        },
-                        "request_id": {
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "code",
-                        "msg",
-                        "data",
-                        "request_id"
-                      ],
-                      "type": "object"
-                    },
-                    {
-                      "additionalProperties": false,
-                      "properties": {
-                        "code": {
-                          "enum": [
-                            40901
-                          ],
-                          "type": "number"
-                        },
-                        "data": {
-                          "enum": [
-                            null
-                          ],
-                          "nullable": true,
-                          "type": "string"
-                        },
-                        "details": {},
-                        "msg": {
-                          "type": "string"
-                        },
-                        "request_id": {
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "code",
-                        "msg",
-                        "data",
-                        "request_id"
-                      ],
-                      "type": "object"
-                    },
-                    {
-                      "additionalProperties": false,
-                      "properties": {
-                        "code": {
-                          "enum": [
-                            40930
-                          ],
-                          "type": "number"
-                        },
-                        "data": {
-                          "enum": [
-                            null
-                          ],
-                          "nullable": true,
-                          "type": "string"
-                        },
-                        "details": {},
-                        "msg": {
-                          "type": "string"
-                        },
-                        "request_id": {
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "code",
-                        "msg",
-                        "data",
-                        "request_id"
-                      ],
-                      "type": "object"
-                    },
-                    {
-                      "additionalProperties": false,
-                      "properties": {
-                        "code": {
-                          "enum": [
-                            40931
-                          ],
-                          "type": "number"
-                        },
-                        "data": {
-                          "enum": [
-                            null
-                          ],
-                          "nullable": true,
-                          "type": "string"
-                        },
-                        "details": {},
-                        "msg": {
-                          "type": "string"
-                        },
-                        "request_id": {
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "code",
-                        "msg",
-                        "data",
-                        "request_id"
-                      ],
-                      "type": "object"
-                    },
-                    {
-                      "additionalProperties": false,
-                      "properties": {
-                        "code": {
-                          "enum": [
-                            40932
-                          ],
-                          "type": "number"
-                        },
-                        "data": {
-                          "enum": [
-                            null
-                          ],
-                          "nullable": true,
-                          "type": "string"
-                        },
-                        "details": {},
-                        "msg": {
-                          "type": "string"
-                        },
-                        "request_id": {
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "code",
-                        "msg",
-                        "data",
-                        "request_id"
-                      ],
-                      "type": "object"
-                    },
-                    {
-                      "additionalProperties": false,
-                      "properties": {
-                        "code": {
-                          "enum": [
-                            40936
-                          ],
-                          "type": "number"
-                        },
-                        "data": {
-                          "enum": [
-                            null
-                          ],
-                          "nullable": true,
-                          "type": "string"
-                        },
-                        "details": {},
-                        "msg": {
-                          "type": "string"
-                        },
-                        "request_id": {
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "code",
-                        "msg",
-                        "data",
-                        "request_id"
-                      ],
-                      "type": "object"
-                    },
-                    {
-                      "additionalProperties": false,
-                      "properties": {
-                        "code": {
-                          "enum": [
-                            40938
-                          ],
-                          "type": "number"
-                        },
-                        "data": {
-                          "enum": [
-                            null
-                          ],
-                          "nullable": true,
-                          "type": "string"
-                        },
-                        "details": {},
-                        "msg": {
-                          "type": "string"
-                        },
-                        "request_id": {
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "code",
-                        "msg",
-                        "data",
-                        "request_id"
-                      ],
-                      "type": "object"
-                    }
-                  ]
-                }
-              }
-            },
-            "description": "Default Response"
-          }
-        },
-        "tags": [
-          "worktrees"
-        ]
-      }
-    },
-    "/api/v1/sessions/{session_id}/worktree:skip_script": {
-      "post": {
-        "description": "Skip the setup script and mark the worktree ready. Returns the updated session",
-        "operationId": "runSessionWorktreeSkipScriptAction",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "session_id",
-            "required": true,
-            "schema": {
-              "minLength": 1,
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "properties": {},
-                "type": "object"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "oneOf": [
-                    {
-                      "additionalProperties": false,
-                      "properties": {
-                        "code": {
-                          "enum": [
-                            0
-                          ],
-                          "type": "number"
-                        },
-                        "data": {
-                          "additionalProperties": false,
-                          "properties": {
-                            "activity": {
-                              "enum": [
-                                "idle",
-                                "turn",
-                                "background"
-                              ],
-                              "type": "string"
-                            },
-                            "archived": {
-                              "type": "boolean"
-                            },
-                            "archived_at": {},
-                            "created_at": {},
-                            "cwd": {
-                              "type": "string"
-                            },
-                            "git": {
-                              "additionalProperties": false,
-                              "properties": {
-                                "branch": {
-                                  "type": "string"
-                                },
-                                "pull_request": {
-                                  "additionalProperties": false,
-                                  "properties": {
-                                    "number": {
-                                      "maximum": 9007199254740991,
-                                      "minimum": -9007199254740991,
-                                      "type": "integer"
-                                    },
-                                    "state": {
-                                      "enum": [
-                                        "open",
-                                        "closed",
-                                        "merged"
-                                      ],
-                                      "type": "string"
-                                    },
-                                    "url": {
-                                      "type": "string"
-                                    }
-                                  },
-                                  "required": [
-                                    "number",
-                                    "state",
-                                    "url"
-                                  ],
-                                  "type": "object"
-                                }
-                              },
-                              "type": "object"
-                            },
-                            "host_id": {
-                              "type": "string"
-                            },
-                            "id": {
-                              "minLength": 1,
-                              "type": "string"
-                            },
-                            "last_prompt": {
-                              "type": "string"
-                            },
-                            "last_turn_outcome": {
-                              "enum": [
-                                "completed",
-                                "interrupted",
-                                "failed"
-                              ],
-                              "type": "string"
-                            },
-                            "metadata": {
-                              "additionalProperties": {},
-                              "type": "object"
-                            },
-                            "pending_interaction": {
-                              "enum": [
-                                "none",
-                                "approval",
-                                "question"
-                              ],
-                              "type": "string"
-                            },
-                            "title": {
-                              "type": "string"
-                            },
-                            "updated_at": {},
-                            "workspace_id": {
-                              "pattern": "^wd_[a-z0-9._-]+_[0-9a-f]{12}$|^wm_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
-                              "type": "string"
-                            },
-                            "worktree": {
-                              "additionalProperties": false,
-                              "properties": {
-                                "base": {
-                                  "additionalProperties": false,
-                                  "properties": {
-                                    "commit": {
-                                      "minLength": 1,
-                                      "type": "string"
-                                    },
-                                    "ref": {
-                                      "minLength": 1,
-                                      "type": "string"
-                                    },
-                                    "remote": {
-                                      "type": "boolean"
-                                    }
-                                  },
-                                  "required": [
-                                    "ref",
-                                    "remote"
-                                  ],
-                                  "type": "object"
-                                },
-                                "branch": {
-                                  "minLength": 1,
-                                  "type": "string"
-                                },
-                                "branch_missing": {
-                                  "type": "boolean"
-                                },
-                                "included_local_changes": {
-                                  "type": "boolean"
-                                },
-                                "missing": {
-                                  "type": "boolean"
-                                },
-                                "path": {
-                                  "minLength": 1,
-                                  "type": "string"
-                                },
-                                "setup": {
-                                  "additionalProperties": false,
-                                  "properties": {
-                                    "commands_ran": {
-                                      "maximum": 9007199254740991,
-                                      "minimum": 0,
-                                      "type": "integer"
-                                    },
-                                    "ended_at": {},
-                                    "failure": {
-                                      "additionalProperties": false,
-                                      "properties": {
-                                        "conflict_files": {
-                                          "items": {
-                                            "type": "string"
-                                          },
-                                          "type": "array"
-                                        },
-                                        "exit_code": {
-                                          "maximum": 9007199254740991,
-                                          "minimum": -9007199254740991,
-                                          "type": "integer"
-                                        },
-                                        "kind": {
-                                          "enum": [
-                                            "fetch_failed",
-                                            "fetch_timeout",
-                                            "conflict",
-                                            "disk_full",
-                                            "create_failed",
-                                            "script_failed",
-                                            "script_timeout"
-                                          ],
-                                          "type": "string"
-                                        },
-                                        "remote_ref": {
-                                          "type": "string"
-                                        },
-                                        "timeout_seconds": {
-                                          "exclusiveMinimum": true,
-                                          "maximum": 9007199254740991,
-                                          "type": "integer"
-                                        }
-                                      },
-                                      "required": [
-                                        "kind"
-                                      ],
-                                      "type": "object"
-                                    },
-                                    "purpose": {
-                                      "enum": [
-                                        "create",
-                                        "recreate"
-                                      ],
-                                      "type": "string"
-                                    },
-                                    "request": {
-                                      "additionalProperties": false,
-                                      "properties": {
-                                        "include_local_changes": {
-                                          "type": "boolean"
-                                        },
-                                        "run_setup_script": {
-                                          "type": "boolean"
-                                        },
-                                        "source_branch": {
-                                          "minLength": 1,
-                                          "type": "string"
-                                        },
-                                        "use_remote": {
-                                          "type": "boolean"
-                                        }
-                                      },
-                                      "required": [
-                                        "source_branch"
-                                      ],
-                                      "type": "object"
-                                    },
-                                    "script": {
-                                      "enum": [
-                                        "none",
-                                        "ran",
-                                        "skipped",
-                                        "pending"
-                                      ],
-                                      "type": "string"
-                                    },
-                                    "script_content": {
-                                      "type": "string"
-                                    },
-                                    "started_at": {},
-                                    "status": {
-                                      "enum": [
-                                        "running",
-                                        "ready",
-                                        "failed",
-                                        "stopped",
-                                        "awaiting_script_confirmation",
-                                        "local"
-                                      ],
-                                      "type": "string"
-                                    },
-                                    "steps": {
-                                      "items": {
-                                        "additionalProperties": false,
-                                        "properties": {
-                                          "command": {
-                                            "type": "string"
-                                          },
-                                          "kind": {
-                                            "enum": [
-                                              "fetch",
-                                              "prune",
-                                              "create",
-                                              "changes",
-                                              "script"
-                                            ],
-                                            "type": "string"
-                                          },
-                                          "output": {
-                                            "type": "string"
-                                          },
-                                          "ref": {
-                                            "type": "string"
-                                          },
-                                          "state": {
-                                            "enum": [
-                                              "pending",
-                                              "running",
-                                              "done",
-                                              "failed",
-                                              "stopped",
-                                              "skipped"
-                                            ],
-                                            "type": "string"
-                                          },
-                                          "timed_out": {
-                                            "type": "boolean"
-                                          }
-                                        },
-                                        "required": [
-                                          "kind",
-                                          "state"
-                                        ],
-                                        "type": "object"
-                                      },
-                                      "type": "array"
-                                    },
-                                    "stopped_step": {
-                                      "enum": [
-                                        "fetch",
-                                        "prune",
-                                        "create",
-                                        "changes",
-                                        "script"
-                                      ],
-                                      "type": "string"
-                                    }
-                                  },
-                                  "required": [
-                                    "status",
-                                    "purpose",
-                                    "request",
-                                    "steps",
-                                    "commands_ran",
-                                    "started_at",
-                                    "script"
+                                    "started_at"
                                   ],
                                   "type": "object"
                                 }
@@ -32632,20 +31063,13 @@
                                           },
                                           "type": "array"
                                         },
-                                        "exit_code": {
-                                          "maximum": 9007199254740991,
-                                          "minimum": -9007199254740991,
-                                          "type": "integer"
-                                        },
                                         "kind": {
                                           "enum": [
                                             "fetch_failed",
                                             "fetch_timeout",
                                             "conflict",
                                             "disk_full",
-                                            "create_failed",
-                                            "script_failed",
-                                            "script_timeout"
+                                            "create_failed"
                                           ],
                                           "type": "string"
                                         },
@@ -32676,9 +31100,6 @@
                                         "include_local_changes": {
                                           "type": "boolean"
                                         },
-                                        "run_setup_script": {
-                                          "type": "boolean"
-                                        },
                                         "source_branch": {
                                           "minLength": 1,
                                           "type": "string"
@@ -32692,18 +31113,6 @@
                                       ],
                                       "type": "object"
                                     },
-                                    "script": {
-                                      "enum": [
-                                        "none",
-                                        "ran",
-                                        "skipped",
-                                        "pending"
-                                      ],
-                                      "type": "string"
-                                    },
-                                    "script_content": {
-                                      "type": "string"
-                                    },
                                     "started_at": {},
                                     "status": {
                                       "enum": [
@@ -32711,7 +31120,6 @@
                                         "ready",
                                         "failed",
                                         "stopped",
-                                        "awaiting_script_confirmation",
                                         "local"
                                       ],
                                       "type": "string"
@@ -32728,8 +31136,7 @@
                                               "fetch",
                                               "prune",
                                               "create",
-                                              "changes",
-                                              "script"
+                                              "changes"
                                             ],
                                             "type": "string"
                                           },
@@ -32767,8 +31174,7 @@
                                         "fetch",
                                         "prune",
                                         "create",
-                                        "changes",
-                                        "script"
+                                        "changes"
                                       ],
                                       "type": "string"
                                     }
@@ -32779,8 +31185,7 @@
                                     "request",
                                     "steps",
                                     "commands_ran",
-                                    "started_at",
-                                    "script"
+                                    "started_at"
                                   ],
                                   "type": "object"
                                 }
@@ -37009,20 +35414,13 @@
                                           },
                                           "type": "array"
                                         },
-                                        "exit_code": {
-                                          "maximum": 9007199254740991,
-                                          "minimum": -9007199254740991,
-                                          "type": "integer"
-                                        },
                                         "kind": {
                                           "enum": [
                                             "fetch_failed",
                                             "fetch_timeout",
                                             "conflict",
                                             "disk_full",
-                                            "create_failed",
-                                            "script_failed",
-                                            "script_timeout"
+                                            "create_failed"
                                           ],
                                           "type": "string"
                                         },
@@ -37053,9 +35451,6 @@
                                         "include_local_changes": {
                                           "type": "boolean"
                                         },
-                                        "run_setup_script": {
-                                          "type": "boolean"
-                                        },
                                         "source_branch": {
                                           "minLength": 1,
                                           "type": "string"
@@ -37069,18 +35464,6 @@
                                       ],
                                       "type": "object"
                                     },
-                                    "script": {
-                                      "enum": [
-                                        "none",
-                                        "ran",
-                                        "skipped",
-                                        "pending"
-                                      ],
-                                      "type": "string"
-                                    },
-                                    "script_content": {
-                                      "type": "string"
-                                    },
                                     "started_at": {},
                                     "status": {
                                       "enum": [
@@ -37088,7 +35471,6 @@
                                         "ready",
                                         "failed",
                                         "stopped",
-                                        "awaiting_script_confirmation",
                                         "local"
                                       ],
                                       "type": "string"
@@ -37105,8 +35487,7 @@
                                               "fetch",
                                               "prune",
                                               "create",
-                                              "changes",
-                                              "script"
+                                              "changes"
                                             ],
                                             "type": "string"
                                           },
@@ -37144,8 +35525,7 @@
                                         "fetch",
                                         "prune",
                                         "create",
-                                        "changes",
-                                        "script"
+                                        "changes"
                                       ],
                                       "type": "string"
                                     }
@@ -37156,8 +35536,7 @@
                                     "request",
                                     "steps",
                                     "commands_ran",
-                                    "started_at",
-                                    "script"
+                                    "started_at"
                                   ],
                                   "type": "object"
                                 }
@@ -38530,20 +36909,13 @@
                                               },
                                               "type": "array"
                                             },
-                                            "exit_code": {
-                                              "maximum": 9007199254740991,
-                                              "minimum": -9007199254740991,
-                                              "type": "integer"
-                                            },
                                             "kind": {
                                               "enum": [
                                                 "fetch_failed",
                                                 "fetch_timeout",
                                                 "conflict",
                                                 "disk_full",
-                                                "create_failed",
-                                                "script_failed",
-                                                "script_timeout"
+                                                "create_failed"
                                               ],
                                               "type": "string"
                                             },
@@ -38574,9 +36946,6 @@
                                             "include_local_changes": {
                                               "type": "boolean"
                                             },
-                                            "run_setup_script": {
-                                              "type": "boolean"
-                                            },
                                             "source_branch": {
                                               "minLength": 1,
                                               "type": "string"
@@ -38590,18 +36959,6 @@
                                           ],
                                           "type": "object"
                                         },
-                                        "script": {
-                                          "enum": [
-                                            "none",
-                                            "ran",
-                                            "skipped",
-                                            "pending"
-                                          ],
-                                          "type": "string"
-                                        },
-                                        "script_content": {
-                                          "type": "string"
-                                        },
                                         "started_at": {},
                                         "status": {
                                           "enum": [
@@ -38609,7 +36966,6 @@
                                             "ready",
                                             "failed",
                                             "stopped",
-                                            "awaiting_script_confirmation",
                                             "local"
                                           ],
                                           "type": "string"
@@ -38626,8 +36982,7 @@
                                                   "fetch",
                                                   "prune",
                                                   "create",
-                                                  "changes",
-                                                  "script"
+                                                  "changes"
                                                 ],
                                                 "type": "string"
                                               },
@@ -38665,8 +37020,7 @@
                                             "fetch",
                                             "prune",
                                             "create",
-                                            "changes",
-                                            "script"
+                                            "changes"
                                           ],
                                           "type": "string"
                                         }
@@ -38677,8 +37031,7 @@
                                         "request",
                                         "steps",
                                         "commands_ran",
-                                        "started_at",
-                                        "script"
+                                        "started_at"
                                       ],
                                       "type": "object"
                                     }
@@ -42587,279 +40940,6 @@
         },
         "tags": [
           "workspaces"
-        ]
-      }
-    },
-    "/api/v1/workspaces/{workspace_id}/worktree-setup-script": {
-      "get": {
-        "description": "Read the project setup script (.kimi/setup.sh in the workspace root) that runs as the last step of creating a worktree. needs_confirmation tells whether its current content must be confirmed on this machine before it runs",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "workspace_id",
-            "required": true,
-            "schema": {
-              "pattern": "^wd_[a-z0-9._-]+_[0-9a-f]{12}$|^wm_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "oneOf": [
-                    {
-                      "additionalProperties": false,
-                      "properties": {
-                        "code": {
-                          "enum": [
-                            0
-                          ],
-                          "type": "number"
-                        },
-                        "data": {
-                          "additionalProperties": false,
-                          "properties": {
-                            "content": {
-                              "type": "string"
-                            },
-                            "exists": {
-                              "type": "boolean"
-                            },
-                            "needs_confirmation": {
-                              "type": "boolean"
-                            },
-                            "path": {
-                              "minLength": 1,
-                              "type": "string"
-                            }
-                          },
-                          "required": [
-                            "path",
-                            "exists"
-                          ],
-                          "type": "object"
-                        },
-                        "details": {},
-                        "msg": {
-                          "type": "string"
-                        },
-                        "request_id": {
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "code",
-                        "msg",
-                        "data",
-                        "request_id"
-                      ],
-                      "type": "object"
-                    },
-                    {
-                      "additionalProperties": false,
-                      "properties": {
-                        "code": {
-                          "enum": [
-                            40410
-                          ],
-                          "type": "number"
-                        },
-                        "data": {
-                          "enum": [
-                            null
-                          ],
-                          "nullable": true,
-                          "type": "string"
-                        },
-                        "details": {},
-                        "msg": {
-                          "type": "string"
-                        },
-                        "request_id": {
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "code",
-                        "msg",
-                        "data",
-                        "request_id"
-                      ],
-                      "type": "object"
-                    }
-                  ]
-                }
-              }
-            },
-            "description": "Default Response"
-          }
-        },
-        "tags": [
-          "worktrees"
-        ]
-      },
-      "put": {
-        "description": "Save the project setup script to .kimi/setup.sh in the workspace root; blank content removes it. A script saved here runs on this machine without confirmation until its content changes",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "workspace_id",
-            "required": true,
-            "schema": {
-              "pattern": "^wd_[a-z0-9._-]+_[0-9a-f]{12}$|^wm_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "properties": {
-                  "content": {
-                    "maxLength": 1048576,
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "content"
-                ],
-                "type": "object"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "oneOf": [
-                    {
-                      "additionalProperties": false,
-                      "properties": {
-                        "code": {
-                          "enum": [
-                            0
-                          ],
-                          "type": "number"
-                        },
-                        "data": {
-                          "additionalProperties": false,
-                          "properties": {
-                            "content": {
-                              "type": "string"
-                            },
-                            "exists": {
-                              "type": "boolean"
-                            },
-                            "needs_confirmation": {
-                              "type": "boolean"
-                            },
-                            "path": {
-                              "minLength": 1,
-                              "type": "string"
-                            }
-                          },
-                          "required": [
-                            "path",
-                            "exists"
-                          ],
-                          "type": "object"
-                        },
-                        "details": {},
-                        "msg": {
-                          "type": "string"
-                        },
-                        "request_id": {
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "code",
-                        "msg",
-                        "data",
-                        "request_id"
-                      ],
-                      "type": "object"
-                    },
-                    {
-                      "additionalProperties": false,
-                      "properties": {
-                        "code": {
-                          "enum": [
-                            40001
-                          ],
-                          "type": "number"
-                        },
-                        "data": {
-                          "enum": [
-                            null
-                          ],
-                          "nullable": true,
-                          "type": "string"
-                        },
-                        "details": {},
-                        "msg": {
-                          "type": "string"
-                        },
-                        "request_id": {
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "code",
-                        "msg",
-                        "data",
-                        "request_id"
-                      ],
-                      "type": "object"
-                    },
-                    {
-                      "additionalProperties": false,
-                      "properties": {
-                        "code": {
-                          "enum": [
-                            40410
-                          ],
-                          "type": "number"
-                        },
-                        "data": {
-                          "enum": [
-                            null
-                          ],
-                          "nullable": true,
-                          "type": "string"
-                        },
-                        "details": {},
-                        "msg": {
-                          "type": "string"
-                        },
-                        "request_id": {
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "code",
-                        "msg",
-                        "data",
-                        "request_id"
-                      ],
-                      "type": "object"
-                    }
-                  ]
-                }
-              }
-            },
-            "description": "Default Response"
-          }
-        },
-        "tags": [
-          "worktrees"
         ]
       }
     },

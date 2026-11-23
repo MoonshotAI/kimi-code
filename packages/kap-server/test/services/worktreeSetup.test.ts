@@ -1,12 +1,11 @@
 import { existsSync } from 'node:fs';
-import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { listLocalBranches, resolveRemoteRef } from '../../src/services/worktrees/gitRefs';
-import { runSetupScript } from '../../src/services/worktrees/setupScript';
 import {
   WorktreeCreation,
   abbreviateHome,
@@ -186,39 +185,5 @@ describe('worktree setup engine', () => {
       'never-pushed': undefined,
       'local-upstream': undefined,
     });
-  });
-
-  it('stops a setup script that runs past its time limit', async () => {
-    const root = await createRepo('script-timeout');
-    await mkdir(join(root, '.kimi'));
-    const content = '#!/bin/sh\necho before\nsleep 30\n';
-    await writeFile(join(root, '.kimi', 'setup.sh'), content);
-    const progress: SetupProgress = {
-      steps: [{ kind: 'script', state: 'pending' }],
-      commandsRan: 0,
-      notify: () => {},
-    };
-
-    const outcome = await runSetupScript(
-      { repoRoot: root, worktreePath: root, content, osHomeDir: scratch, timeoutMs: 400 },
-      progress,
-      new AbortController().signal,
-    );
-
-    expect(outcome).toEqual({
-      kind: 'failed',
-      step: 'script',
-      failure: { kind: 'script_timeout', timeout_seconds: 1 },
-    });
-    expect(progress.steps).toEqual([
-      {
-        kind: 'script',
-        state: 'failed',
-        command: '/bin/sh ~/script-timeout/.kimi/setup.sh',
-        output: 'before\n',
-        timed_out: true,
-      },
-    ]);
-    expect(progress.commandsRan).toBe(1);
   });
 });
