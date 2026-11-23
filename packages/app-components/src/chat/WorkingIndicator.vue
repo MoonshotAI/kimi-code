@@ -2,17 +2,12 @@
 defineProps<{
   label?: string;
   idle?: boolean;
-  decorative?: boolean;
+  staticLabel?: boolean;
 }>();
 </script>
 
 <template>
-  <div
-    class="working-indicator"
-    :class="{ idle }"
-    :role="decorative ? undefined : 'status'"
-    :aria-hidden="decorative || undefined"
-  >
+  <div class="working-indicator" :class="{ idle, 'static-label': staticLabel }" role="status">
     <span class="wi-face" aria-hidden="true">
       <span class="wi-eyes">
         <span class="wi-eye wi-eye--left" />
@@ -72,7 +67,8 @@ defineProps<{
 }
 
 .working-indicator.idle .wi-eyes,
-.working-indicator.idle .wi-eye {
+.working-indicator.idle .wi-eye,
+.working-indicator.static-label .wi-label {
   animation: none;
 }
 

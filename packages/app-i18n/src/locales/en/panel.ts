@@ -1,5 +1,6 @@
 export default {
   compactionUnavailable: 'Summary content is not loaded. Load the corresponding history in the conversation.',
+  compactionInstruction: 'Focus',
   terminalRestoreFailed: 'Could not create terminal',
   closeOthers: 'Close Other Tabs',
   closeToRight: 'Close Tabs to the Right',

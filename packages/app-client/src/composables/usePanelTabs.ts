@@ -652,8 +652,25 @@ export function usePanelTabs({ client, sideWidth, t, locale, onTabRemoved, onBro
     return (tab?.payload as CompactionTabPayload | undefined)?.text ?? null;
   }
 
+  function isCompactionPanelOpen(turnId: string): boolean {
+    const active = activeTab.value;
+    return (
+      panelVisible.value &&
+      active?.type === 'compaction' &&
+      (active.payload as CompactionTabPayload | undefined)?.turnId === turnId
+    );
+  }
+
   function openCompactionPanel(target: { turnId: string }): void {
     openTab('compaction', { turnId: target.turnId, text: compactionPanelTextOf(target.turnId) ?? undefined } satisfies CompactionTabPayload);
+  }
+
+  function toggleCompactionPanel(target: { turnId: string }): void {
+    if (isCompactionPanelOpen(target.turnId)) {
+      hidePanel();
+      return;
+    }
+    openCompactionPanel(target);
   }
 
   function agentConversationStateOf(target: AgentTabPayload): {
@@ -1443,7 +1460,9 @@ export function usePanelTabs({ client, sideWidth, t, locale, onTabRemoved, onBro
     showPanel,
     toggleExpanded,
     compactionPanelTextOf,
+    isCompactionPanelOpen,
     openCompactionPanel,
+    toggleCompactionPanel,
     agentPanelMemberOf,
     agentPanelTurnsOf,
     agentPanelLoadingOf,

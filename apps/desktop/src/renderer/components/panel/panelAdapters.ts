@@ -189,8 +189,17 @@ export function panelTabProps(tab: PanelTab, ctx: PanelAdapterCtx): Record<strin
     }
     case 'compaction': {
       const payload = tab.payload as CompactionTabPayload;
+      const turn = client.turns.value.find(
+        (candidate) => candidate.id === payload.turnId && candidate.role === 'compaction',
+      );
       const text = panel.compactionPanelTextOf(payload.turnId);
-      return { text };
+      return {
+        turnId: payload.turnId,
+        text,
+        compaction: turn?.compaction,
+        cwd: client.status.value.cwd,
+        openFile: ctx.openFile,
+      };
     }
     case 'agent': {
       const payload = tab.payload as AgentTabPayload;

@@ -50,6 +50,7 @@ import type { SessionRatingBinding } from '@moonshot-ai/app-client/contracts';
 import { panelApiKey, type PanelApi } from '@moonshot-ai/app-client/panel';
 import type { ChatTurn } from '@moonshot-ai/app-core/client/types';
 import ChatPane from '../src/chat/ChatPane.vue';
+import CompactionPanel from '../src/chat/CompactionPanel.vue';
 
 const raw = `{
   "error": {
@@ -153,8 +154,12 @@ describe('ChatPane turn failure', () => {
 });
 
 describe('ChatPane compaction checkpoint card', () => {
-  it('renders a distinct checkpoint card with token reduction badge and opens summary on click', async () => {
-    const openCompaction = vi.fn();
+  it('renders a borderless-line checkpoint card with chevron-only indicator and toggles open state', async () => {
+    const state = reactive({ openTurnId: null as string | null });
+    const openCompaction = vi.fn(({ turnId }: { turnId: string }) => {
+      state.openTurnId = state.openTurnId === turnId ? null : turnId;
+    });
+    const isCompactionOpen = (turnId: string) => state.openTurnId === turnId;
     const compactionTurn: ChatTurn = {
       id: 'c1',
       role: 'compaction',
@@ -165,7 +170,7 @@ describe('ChatPane compaction checkpoint card', () => {
     app = createApp({
       setup() {
         provide(SessionRatingKey, ratingBinding);
-        provide(panelApiKey, { openCompaction } as unknown as PanelApi);
+        provide(panelApiKey, { openCompaction, isCompactionOpen } as unknown as PanelApi);
         return () => h(ChatPane, { turns: [userTurn, compactionTurn], sessionId: 's1' } as never);
       },
     });
@@ -173,19 +178,32 @@ describe('ChatPane compaction checkpoint card', () => {
     app.mount(host);
     await nextTick();
 
+    const divider = host.querySelector<HTMLElement>('.compact-divider--compacted');
+    expect(divider?.querySelector('.cd-line')).toBeNull();
     const card = host.querySelector<HTMLButtonElement>('.compact-divider--compacted button.cd-card.cd-btn');
     expect(card).not.toBeNull();
     expect(card?.querySelector('.cd-title')?.textContent).toBe('上下文已压缩');
     expect(card?.querySelector('.cd-tokens')?.textContent).toBe('93.2k → 81k tokens');
     expect(card?.querySelector('.cd-saved')?.textContent).toBe('-12.2k');
-    expect(card?.querySelector('.cd-view')?.textContent).toBe('查看摘要');
-    expect(host.querySelector('.cd-meter')).toBeNull();
+    expect(card?.querySelector('.cd-view')).toBeNull();
+    expect(card?.querySelector('.cd-chevron')).not.toBeNull();
+    expect(card?.getAttribute('aria-expanded')).toBe('false');
+    expect(card?.classList.contains('cd-open')).toBe(false);
 
     card!.click();
+    await nextTick();
     expect(openCompaction).toHaveBeenCalledExactlyOnceWith({ turnId: 'c1' });
+    expect(card?.getAttribute('aria-expanded')).toBe('true');
+    expect(card?.classList.contains('cd-open')).toBe(true);
+
+    card!.click();
+    await nextTick();
+    expect(openCompaction).toHaveBeenCalledTimes(2);
+    expect(card?.getAttribute('aria-expanded')).toBe('false');
+    expect(card?.classList.contains('cd-open')).toBe(false);
   });
 
-  it('omits savings badge and summary button when tokens did not decrease or summary cannot open', async () => {
+  it('omits savings badge and chevron when tokens did not decrease or summary cannot open', async () => {
     const compactionTurn: ChatTurn = {
       id: 'c2',
       role: 'compaction',
@@ -209,6 +227,62 @@ describe('ChatPane compaction checkpoint card', () => {
     expect(card?.querySelector('.cd-title')?.textContent).toBe('已自动压缩上下文');
     expect(card?.querySelector('.cd-tokens')?.textContent).toBe('4k → 4.5k tokens');
     expect(card?.querySelector('.cd-saved')).toBeNull();
-    expect(card?.querySelector('.cd-action')).toBeNull();
+    expect(card?.querySelector('.cd-chevron')).toBeNull();
+  });
+});
+
+describe('CompactionPanel', () => {
+  it('renders clean markdown body without redundant header chrome and strips legacy system wrappers', async () => {
+    app = createApp({
+      setup() {
+        return () =>
+          h(CompactionPanel, {
+            turnId: 'c1',
+            text: 'The conversation so far has been compacted to free up context. What follows is your own working summary.\n\n## Handoff\n- Updated `src/App.vue`\n\n<system-reminder>wire pointer</system-reminder>',
+            compaction: {
+              trigger: 'manual',
+              tokensBefore: 143360,
+              tokensAfter: 100352,
+            },
+            cwd: '/workspace',
+          });
+      },
+    });
+    app.use(createKimiI18n({ locale: 'zh' }));
+    app.mount(host);
+    await nextTick();
+
+    expect(host.querySelector('.cp-focus')).toBeNull();
+    const bodyText = host.querySelector('.cp-doc .msg')?.textContent ?? '';
+    expect(bodyText).toContain('## Handoff');
+    expect(bodyText).not.toContain('The conversation so far has been compacted');
+    expect(bodyText).not.toContain('system-reminder');
+  });
+
+  it('shows custom instruction line only when provided and EmptyState when summary text is unavailable', async () => {
+    const state = reactive({
+      text: 'Summary body' as string | null,
+      instruction: 'Keep database schema constraints' as string | undefined,
+    });
+    app = createApp({
+      setup() {
+        return () =>
+          h(CompactionPanel, {
+            turnId: 'c1',
+            text: state.text,
+            compaction: { trigger: 'manual', instruction: state.instruction },
+          });
+      },
+    });
+    app.use(createKimiI18n({ locale: 'zh' }));
+    app.mount(host);
+    await nextTick();
+
+    expect(host.querySelector('.cp-focus-text')?.textContent).toBe('Keep database schema constraints');
+
+    state.text = null;
+    await nextTick();
+    expect(host.querySelector('.cp-empty')).not.toBeNull();
+    expect(host.textContent).toContain('摘要内容尚未加载');
   });
 });

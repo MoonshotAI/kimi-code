@@ -1166,9 +1166,14 @@ provide(panelApiKey, {
     panel.openTurnDiff(payload);
   },
   openCompaction: (target) => {
+    if (panel.isCompactionPanelOpen(target.turnId)) {
+      panel.hidePanel();
+      return;
+    }
     closeDockWorkPanel();
     panel.openCompactionPanel(target);
   },
+  isCompactionOpen: (turnId) => panel.isCompactionPanelOpen(turnId),
   openDiff: () => {
     closeDockWorkPanel();
     panel.openDiffDetail();

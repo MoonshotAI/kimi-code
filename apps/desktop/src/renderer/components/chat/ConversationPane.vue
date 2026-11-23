@@ -4,10 +4,10 @@ import { computed, inject, nextTick, onMounted, onUnmounted, provide, ref, watch
 import { useI18n } from 'vue-i18n';
 import type { ChatTurn, ConversationStatus, OpenMediaRequest, QueuedPromptView, TaskItem, TurnAttachment, UIQuestion } from '../../types';
 import type { QuestionResponse } from '../../api/types';
-import { useContextInspector, useSidebarTabs } from '@moonshot-ai/app-core';
+import { useSidebarTabs } from '@moonshot-ai/app-core';
 import { ChatPane } from '@moonshot-ai/app-components';
 import { HostNotice, resolveCompactPhase, WorkspaceIcon } from '@moonshot-ai/app-components/support';
-import { hostsStore, sessionInfoStore } from '@moonshot-ai/app-client/stores';
+import { hostsStore } from '@moonshot-ai/app-client/stores';
 import { isWideTableLayoutActive, useWideTableToc } from '@moonshot-ai/app-components';
 import { ErrorBoundary } from '@moonshot-ai/app-components';
 import ChatHeader from './ChatHeader.vue';
@@ -121,17 +121,7 @@ const turnActive = client.turnActive;
 const starting = client.isStartingFirstPrompt;
 const sessionLoading = client.sessionLoading;
 const compaction = client.compaction;
-const { contextInspectorEnabled } = useContextInspector();
 const compactPhase = computed(() => resolveCompactPhase(compaction.value, props.queued));
-const activeContextTokens = computed(() =>
-  compactPhase.value === 'compacting' ? props.status.ctxUsed : undefined,
-);
-const activeContextGroups = computed(() => {
-  if (compactPhase.value !== 'compacting' || !props.sessionId || !contextInspectorEnabled.value) {
-    return undefined;
-  }
-  return sessionInfoStore().contextState?.(props.sessionId)?.value?.groups;
-});
 const hasMoreMessages = client.hasMoreMessages;
 const loadingMore = client.loadingMoreMessages;
 const workspaces = client.workspacesView;
@@ -995,8 +985,6 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
               :working="working"
               :session-loading="sessionLoading"
               :compaction="compaction"
-              :context-tokens="activeContextTokens"
-              :context-groups="activeContextGroups"
               :has-more-messages="hasMoreMessages"
               :loading-more="loadingMore"
               :loading-more-error="loadingMoreError"

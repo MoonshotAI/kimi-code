@@ -708,64 +708,49 @@ describe('SessionInfoPanel', () => {
   });
 });
 
-describe('ActivityNotice compaction bar', () => {
-  it('condenses non-user blocks into one summary block, stitches user messages, and appends a continuation reminder', async () => {
+describe('ActivityNotice compaction indicator', () => {
+  it('renders a static compaction label with the mascot and shows only elapsed duration once a second passes', async () => {
     vi.useFakeTimers();
     try {
-      mount(ActivityNotice, {
-        label: '正在压缩上下文…',
-        tokens: 218000,
-        groups: [
-          { role: 'system', count: 1, tokens: 30000 },
-          { role: 'definition', count: 10, tokens: 60000 },
-          { role: 'user', count: 4, tokens: 28000 },
-          { role: 'assistant', count: 5, tokens: 40000 },
-          { role: 'tool', count: 8, tokens: 60000 },
-        ],
-      });
+      mount(ActivityNotice, { label: '正在压缩上下文…' });
       await nextTick();
 
+      const indicator = host!.querySelector('.working-indicator');
+      expect(indicator?.classList.contains('static-label')).toBe(true);
       expect(host!.querySelector('.wi-face')).not.toBeNull();
       expect(host!.querySelector('.wi-label')?.textContent).toBe('正在压缩上下文…');
-      expect(host!.querySelector('.an-meta')?.textContent).toBe('213k');
-      const cells = () => [...host!.querySelectorAll<HTMLElement>('.an-cell')];
-      const summary = () => host!.querySelector<HTMLElement>('.an-summary')!;
-      const tail = () => host!.querySelector<HTMLElement>('.an-tail')!;
+      expect(host!.querySelector('.an-meta')).toBeNull();
+      expect(host!.querySelector('.an-track')).toBeNull();
 
-      expect(cells()).toHaveLength(14);
-      expect(cells().filter((el) => el.dataset.cellKind === 'base')).toHaveLength(2);
-      expect(cells().filter((el) => el.dataset.cellKind === 'user')).toHaveLength(3);
-      expect(cells().filter((el) => el.dataset.cellKind === 'other')).toHaveLength(9);
-      expect(summary().classList.contains('is-hidden')).toBe(true);
-      expect(tail().classList.contains('is-hidden')).toBe(true);
-
-      await vi.advanceTimersByTimeAsync(700);
+      await vi.advanceTimersByTimeAsync(1000);
       await nextTick();
-      expect(cells().some((el) => el.classList.contains('is-processing'))).toBe(true);
-      expect(cells().some((el) => el.classList.contains('is-absorbed'))).toBe(true);
-      expect(cells().some((el) => el.classList.contains('is-preserved'))).toBe(true);
-      expect(summary().classList.contains('is-condensing')).toBe(true);
-      expect(tail().classList.contains('is-hidden')).toBe(true);
+      expect(host!.querySelector('.an-meta')?.textContent).toBe('1秒');
 
-      await vi.advanceTimersByTimeAsync(900);
+      await vi.advanceTimersByTimeAsync(2000);
       await nextTick();
-      const otherCells = cells().filter((el) => el.dataset.cellKind === 'other');
-      const userCells = cells().filter((el) => el.dataset.cellKind === 'user');
-      expect(otherCells.every((el) => el.classList.contains('is-absorbed'))).toBe(true);
-      expect(userCells.every((el) => el.classList.contains('is-stitched'))).toBe(true);
-      expect(summary().classList.contains('is-stitched')).toBe(true);
-
-      await vi.advanceTimersByTimeAsync(450);
-      await nextTick();
-      expect(tail().dataset.contextRole).toBe('reminder');
-      expect(tail().classList.contains('is-appended')).toBe(true);
-      expect(host!.querySelector('.an-meta')?.textContent).toBe('213k · 2秒');
+      expect(host!.querySelector('.an-meta')?.textContent).toBe('3秒');
     } finally {
       vi.useRealTimers();
     }
   });
 
-  it('pauses stepping timers while the document is hidden and resumes when visible', async () => {
+  it('renders only the elapsed duration badge when slotted without a label', async () => {
+    vi.useFakeTimers();
+    try {
+      mount(ActivityNotice, {});
+      await nextTick();
+      expect(host!.querySelector('.working-indicator')).toBeNull();
+      expect(host!.querySelector('.an-meta')).toBeNull();
+
+      await vi.advanceTimersByTimeAsync(2000);
+      await nextTick();
+      expect(host!.querySelector('.an-meta')?.textContent).toBe('2秒');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('pauses the elapsed timer while the document is hidden and refreshes immediately when visible', async () => {
     vi.useFakeTimers();
     let visibility: DocumentVisibilityState = 'hidden';
     Object.defineProperty(document, 'visibilityState', {
@@ -773,14 +758,16 @@ describe('ActivityNotice compaction bar', () => {
       get: () => visibility,
     });
     try {
-      mount(ActivityNotice, { label: '正在压缩上下文…', tokens: 65536 });
+      mount(ActivityNotice, { label: '正在压缩上下文…' });
       await nextTick();
       expect(vi.getTimerCount()).toBe(0);
 
+      await vi.advanceTimersByTimeAsync(4000);
       visibility = 'visible';
       document.dispatchEvent(new Event('visibilitychange'));
       await nextTick();
-      expect(vi.getTimerCount()).toBe(2);
+      expect(vi.getTimerCount()).toBe(1);
+      expect(host!.querySelector('.an-meta')?.textContent).toBe('4秒');
 
       visibility = 'hidden';
       document.dispatchEvent(new Event('visibilitychange'));

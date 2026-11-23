@@ -1972,6 +1972,35 @@ it('keeps a missing summary empty in storage until its history is loaded', () =>
   expect(panel.compactionPanelTextOf('summary')).toBe('Loaded summary');
 });
 
+it('toggles the sidebar closed when clicking an already active compaction summary and switches otherwise', () => {
+  const client = createClient();
+  client.turns.value = [
+    { id: 'c1', role: 'compaction', text: 'Summary 1' } as ChatTurn,
+    { id: 'c2', role: 'compaction', text: 'Summary 2' } as ChatTurn,
+  ];
+  const panel = createPanel(client);
+
+  expect(panel.isCompactionPanelOpen('c1')).toBe(false);
+  panel.toggleCompactionPanel({ turnId: 'c1' });
+  expect(panel.panelVisible.value).toBe(true);
+  expect(panel.isCompactionPanelOpen('c1')).toBe(true);
+
+  panel.toggleCompactionPanel({ turnId: 'c2' });
+  expect(panel.panelVisible.value).toBe(true);
+  expect(panel.isCompactionPanelOpen('c1')).toBe(false);
+  expect(panel.isCompactionPanelOpen('c2')).toBe(true);
+
+  panel.openTab('file', { path: '/a.ts' });
+  expect(panel.isCompactionPanelOpen('c2')).toBe(false);
+  panel.toggleCompactionPanel({ turnId: 'c2' });
+  expect(panel.panelVisible.value).toBe(true);
+  expect(panel.isCompactionPanelOpen('c2')).toBe(true);
+
+  panel.toggleCompactionPanel({ turnId: 'c2' });
+  expect(panel.panelVisible.value).toBe(false);
+  expect(panel.isCompactionPanelOpen('c2')).toBe(false);
+});
+
 it('releases active and background context resources once on destruction', async () => {
   const scope = effectScope();
   const client = createClient();

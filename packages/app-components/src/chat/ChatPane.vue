@@ -7,7 +7,7 @@ import { composerSnapshotFromMetadata, rebindComposerSnapshotMedia } from '@moon
 import { computed, inject, nextTick, onMounted, onUnmounted, provide, reactive, ref, watch, watchSyncEffect, type Component } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { ChatTurn, ApprovalBlock, OpenMediaRequest, ToolMedia, QueuedPromptView, TurnAttachment, UIQuestion } from '@moonshot-ai/app-core/client/types';
-import type { AppSessionRatingResponse, SessionContextGroup } from '@moonshot-ai/app-core/api';
+import type { AppSessionRatingResponse } from '@moonshot-ai/app-core/api';
 import { collectTurnImages, formatProviderErrorMessage, turnAttachmentToMedia } from '@moonshot-ai/app-core/client';
 import ToolCall from './ToolCall.vue';
 import { BrowserToolContextKey } from './tool-calls/browserToolContext';
@@ -121,8 +121,6 @@ const props = withDefaults(
     working?: boolean;
     sessionLoading?: boolean;
     compaction?: { status: 'running' } | null;
-    contextTokens?: number;
-    contextGroups?: readonly SessionContextGroup[];
     hasMoreMessages?: boolean;
     loadingMore?: boolean;
     loadingMoreError?: boolean;
@@ -829,6 +827,10 @@ function canOpenCompactionSummary(turn: ChatTurn): boolean {
   return Boolean(turn.text && panelApi?.openCompaction !== undefined);
 }
 
+function isCompactionSummaryOpen(turn: ChatTurn): boolean {
+  return canOpenCompactionSummary(turn) && panelApi?.isCompactionOpen?.(turn.id) === true;
+}
+
 function compactionBaseLabel(turn: ChatTurn): string {
   return turn.compaction?.trigger === 'auto'
     ? t('conversation.compactedAuto')
@@ -1498,9 +1500,9 @@ function streamingTailIndex(turn: ChatTurn): number | null {
       >
         <component
           :is="canOpenCompactionSummary(turn) ? 'button' : 'span'"
-          v-bind="canOpenCompactionSummary(turn) ? { type: 'button' } : {}"
+          v-bind="canOpenCompactionSummary(turn) ? { type: 'button', 'aria-expanded': isCompactionSummaryOpen(turn) } : {}"
           class="cd-card"
-          :class="{ 'cd-btn': canOpenCompactionSummary(turn) }"
+          :class="{ 'cd-btn': canOpenCompactionSummary(turn), 'cd-open': isCompactionSummaryOpen(turn) }"
           @click="canOpenCompactionSummary(turn) ? panelApi?.openCompaction?.({ turnId: turn.id }) : undefined"
         >
           <span class="cd-chip" aria-hidden="true">
@@ -1509,12 +1511,10 @@ function streamingTailIndex(turn: ChatTurn): number | null {
           <span class="cd-title">{{ compactionBaseLabel(turn) }}</span>
           <span v-if="compactionTokenDelta(turn)" class="cd-tokens">{{ compactionTokenDelta(turn) }}</span>
           <span v-if="compactionSavedLabel(turn)" class="cd-saved">{{ compactionSavedLabel(turn) }}</span>
-          <span v-if="canOpenCompactionSummary(turn)" class="cd-action">
-            <span class="cd-view">{{ t('conversation.viewSummary') }}</span>
-            <Icon name="chevron-right" size="sm" class="cd-chevron" aria-hidden="true" />
+          <span v-if="canOpenCompactionSummary(turn)" class="cd-chevron" aria-hidden="true">
+            <Icon name="chevron-right" size="sm" />
           </span>
         </component>
-        <span class="cd-line" aria-hidden="true" />
       </div>
 
       <!-- Cron notice — a turn triggered by a scheduled reminder, rendered as
@@ -1669,12 +1669,9 @@ function streamingTailIndex(turn: ChatTurn): number | null {
       <WorkingIndicator
         :label="isCompacting ? t('conversation.compacting') : showWorking ? workingLabel : ''"
         :idle="!showWorking && !isCompacting"
+        :static-label="isCompacting"
       >
-        <ActivityNotice
-          v-if="isCompacting"
-          :tokens="contextTokens"
-          :groups="contextGroups"
-        />
+        <ActivityNotice v-if="isCompacting" />
       </WorkingIndicator>
     </div>
 
@@ -2097,22 +2094,17 @@ function streamingTailIndex(turn: ChatTurn): number | null {
   color: var(--muted);
   white-space: nowrap;
 }
-.compact-divider--compacted .cd-line {
-  height: 0;
-  background: none;
-  border-top: 1px dashed var(--color-line);
-}
 .cd-card {
   appearance: none;
   flex: none;
   display: inline-flex;
   align-items: center;
   gap: 7px;
-  max-width: calc(100% - 24px);
-  padding: 4px 10px 4px 5px;
+  max-width: 100%;
+  padding: 4px 8px 4px 5px;
   border: var(--p-hairline) solid var(--color-line);
   border-radius: var(--radius-md);
-  background: var(--color-fill-1);
+  background: var(--color-bg);
   font-family: var(--font-ui);
   font-size: var(--text-xs);
   line-height: 1.25;
@@ -2160,30 +2152,37 @@ function streamingTailIndex(turn: ChatTurn): number | null {
   font-variant-numeric: tabular-nums;
   line-height: 1.3;
 }
-.cd-action {
+.cd-chevron {
+  flex: none;
   display: inline-flex;
   align-items: center;
-  gap: 2px;
-  margin-left: 2px;
-  padding-left: 8px;
-  border-left: var(--p-hairline) solid var(--color-line);
-  color: var(--color-accent);
-  font-weight: var(--weight-medium);
+  justify-content: center;
+  margin-left: 1px;
+  color: var(--color-text-faint);
+  transition:
+    color var(--duration-fast) var(--ease-out),
+    transform var(--duration-fast) var(--ease-out);
 }
-.cd-chevron {
+.cd-chevron :deep(svg) {
   width: 12px;
   height: 12px;
-  transition: transform var(--duration-fast) var(--ease-out);
 }
 .cd-btn {
   cursor: pointer;
 }
 .cd-card.cd-btn:hover {
-  background: var(--color-selected);
+  background: var(--color-hover);
+  border-color: var(--color-line-strong);
+}
+.cd-card.cd-open {
   border-color: var(--color-line-strong);
 }
 .cd-card.cd-btn:hover .cd-chevron {
+  color: var(--color-text-muted);
   transform: translateX(1.5px);
+}
+.cd-card.cd-open .cd-chevron {
+  color: var(--color-text);
 }
 .cd-card.cd-btn:active {
   transform: translateY(0.5px);
