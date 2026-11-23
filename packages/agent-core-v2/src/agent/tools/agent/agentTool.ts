@@ -65,15 +65,9 @@ import { emitAgentRunSpawned, mirrorAgentRun, SubagentStarted } from '#/session/
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { ISessionSubagentService } from '#/session/subagent/subagent';
 import {
-  FORK_EXPERIMENTAL_UNAVAILABLE,
-  forkIncompatibility,
-} from '#/session/subagent/spawn';
-import { SUBAGENT_FORK_FLAG_ID } from '#/session/subagent/flag';
-import {
   formatSubagentTimeoutDescription,
   resolveSubagentModelPool,
   resolveSubagentTimeoutMs,
-  stripSubagentForkParameter,
   type SubagentModelSource,
 } from '#/session/subagent/configSection';
 import {
@@ -114,10 +108,8 @@ export type SubagentHandle = {
 import AGENT_BACKGROUND_DISABLED_DESCRIPTION from './agent-background-disabled.md?raw';
 import AGENT_BACKGROUND_DESCRIPTION from './agent-background-enabled.md?raw';
 import AGENT_DESCRIPTION_BASE from './agent.md?raw';
-import AGENT_FORK_DESCRIPTION from './agent-fork.md?raw';
 
 const SUBAGENT_TOOL_PARAMETERS = toInputJsonSchema(SubagentToolInputSchema);
-const SUBAGENT_TOOL_PARAMETERS_NO_FORK = stripSubagentForkParameter(SUBAGENT_TOOL_PARAMETERS);
 const READ_MEDIA_FILE_TOOL_NAME = 'ReadMediaFile';
 const MCP_GLOB_MAGIC = /[*?[\]{}!@+()]/;
 
@@ -130,9 +122,7 @@ export class SubagentTool implements ISubagentTool {
   readonly name: string = 'Agent';
 
   get parameters(): Record<string, unknown> {
-    return this.flags.enabled(SUBAGENT_FORK_FLAG_ID)
-      ? SUBAGENT_TOOL_PARAMETERS
-      : SUBAGENT_TOOL_PARAMETERS_NO_FORK;
+    return SUBAGENT_TOOL_PARAMETERS;
   }
 
   private readonly callerAgentId: string;
@@ -174,9 +164,6 @@ export class SubagentTool implements ISubagentTool {
       ? AGENT_BACKGROUND_DESCRIPTION
       : AGENT_BACKGROUND_DISABLED_DESCRIPTION;
     let description = `${AGENT_DESCRIPTION_BASE}\n\n${backgroundDescription}`;
-    if (this.flags.enabled(SUBAGENT_FORK_FLAG_ID)) {
-      description += `\n\n${AGENT_FORK_DESCRIPTION}`;
-    }
     const own = this.loop.data();
     const catalogProfiles = this.catalogProfiles();
     const allowlist = this.effectiveAllowlist(own);
@@ -283,15 +270,6 @@ export class SubagentTool implements ISubagentTool {
     if (resumeAgentId !== undefined && args.model !== undefined) {
       return { output: RESUME_WITH_MODEL_UNAVAILABLE, isError: true };
     }
-    if (args.fork === true) {
-      if (!this.flags.enabled(SUBAGENT_FORK_FLAG_ID)) {
-        return { output: FORK_EXPERIMENTAL_UNAVAILABLE, isError: true };
-      }
-      const forkError = forkIncompatibility(args, this.loop.data());
-      if (forkError !== undefined) {
-        return { output: forkError, isError: true };
-      }
-    }
     return { requestedProfileName, resumeAgentId };
   }
 
@@ -302,10 +280,7 @@ export class SubagentTool implements ISubagentTool {
 
     const profileNameForDisplay = resumeAgentId !== undefined
       ? (await this.resumeProfileName(resumeAgentId)) ?? RESUMED_LABEL
-      : (requestedProfileName ??
-          (args.fork === true
-            ? (this.loop.data().profileName ?? DEFAULT_PROFILE_NAME)
-            : DEFAULT_PROFILE_NAME));
+      : requestedProfileName ?? DEFAULT_PROFILE_NAME;
     const prefix = args.run_in_background === true ? 'Launching background' : 'Launching';
     let stop: ((context: {
       readonly reason: unknown;
@@ -368,7 +343,6 @@ export class SubagentTool implements ISubagentTool {
         callerAgentId: this.callerAgentId,
         profileName: args.subagent_type,
         model: args.model,
-        fork: args.fork === true,
       });
       const spawned = await this.subagents.spawn({
         callerAgentId: this.callerAgentId,
@@ -557,7 +531,6 @@ export class SubagentTool implements ISubagentTool {
           parentToolCallId: toolCallId,
           description: args.description,
           runInBackground,
-          fork: args.fork === true,
           model: handle.model,
           modelSource: handle.modelSource,
           taskId,

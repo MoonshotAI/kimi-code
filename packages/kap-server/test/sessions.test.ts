@@ -9,7 +9,7 @@ import { mcpResultToExecutableOutput } from '@moonshot-ai/agent-core-v2/agent/mc
 import { renderToolResultForModel } from '@moonshot-ai/agent-core-v2/agent/contextMemory/toolResultRender';
 import { IReadTool, ReadInputSchema, type ReadInput } from '@moonshot-ai/agent-core-v2/agent/tools/os/read/read';
 
-import { say } from '@moonshot-ai/testkit/model';
+import { agent, say } from '@moonshot-ai/testkit/model';
 import { kapFixtures, type KapFixtures } from '@moonshot-ai/testkit/vitest';
 import { afterAll, afterEach, beforeAll, describe, expect, it, test as base, vi } from 'vitest';
 
@@ -3751,4 +3751,27 @@ kapTest(':wait reports a finished turn only after the session wrote it to disk, 
   const sessionDir = sessionDirOf(kap.server.core.accessor.get(IBootstrapService).homeDir, `sessions/${session.workspace_id}`, session.id);
   const wire = await readFile(join(sessionDir, 'agents', MAIN_AGENT_ID, 'wire.jsonl'), 'utf8');
   expect(wire.split('\n').filter((line) => line !== '').map((line) => (JSON.parse(line) as { type: string }).type)).toContain('turn.ended');
+});
+
+kapTest('loads a persisted subagent only when the Agent tool resumes it after a restart', { timeout: 30_000 }, async ({ kap, model }) => {
+  model.script(agent({ prompt: 'remember the token', description: 'child' }), say('noted'));
+  model.lane('subagent').script(say('remembered'));
+  const session = await kap.createSession();
+  await kap.prompt(session.id, 'spawn the child');
+  await kap.waitIdle(session.id);
+  const spawn = (await kap.turns(session.id)).flatMap((turn) => turn.items).find((item) => item.type === 'tool_call' && item['name'] === 'Agent');
+  expect(spawn?.['agent_refs']).toEqual([expect.objectContaining({ agent_id: expect.any(String), role: 'child' })]);
+  const childId = String((spawn?.['agent_refs'] as readonly { readonly agent_id: string }[] | undefined)?.[0]?.agent_id);
+
+  await kap.restart();
+  const resumed = await resumeSessionById(kap.server.core.accessor, session.id);
+  expect(resumed).toBeDefined();
+  const agents = resumed!.accessor.get(IAgentLifecycleService);
+  expect(agents.handleOf(childId)).toBeUndefined();
+
+  model.script(agent({ prompt: 'recall the token', description: 'child again', resume: childId }), say('done'));
+  model.lane('subagent').script(say('the token'));
+  await kap.prompt(session.id, 'resume the child');
+  await kap.waitIdle(session.id);
+  expect(agents.handleOf(childId)).toBeDefined();
 });
