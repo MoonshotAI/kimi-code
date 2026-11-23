@@ -35,6 +35,7 @@ export function normalizeWorkDir(workDir: string): string {
 /** v1 summary fields the v2 index summary does not carry, resolved by the caller. */
 export interface SessionSummaryFacts {
   readonly workDir: string;
+  readonly projectWorkDir?: string;
   readonly sessionDir: string;
   readonly additionalDirs?: readonly string[];
 }
@@ -48,6 +49,7 @@ export function v2SummaryToSessionSummary(
     title: summary.title,
     lastPrompt: summary.lastPrompt,
     workDir: facts.workDir,
+    projectWorkDir: facts.projectWorkDir,
     sessionDir: facts.sessionDir,
     createdAt: summary.createdAt,
     updatedAt: summary.updatedAt,
