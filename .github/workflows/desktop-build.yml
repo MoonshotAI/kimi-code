@@ -49,6 +49,10 @@ on:
   # release.yml 通过 workflow_call 调用本 workflow 打发版产物。
   workflow_call:
     inputs:
+      renderer-ci-run-id:
+        description: 'Successful release-branch push CI run containing the Desktop renderer for this SHA'
+        type: string
+        default: ''
       pnpm-cache-restore-only:
         description: 'The CLI native jobs save the pnpm stores for this release'
         type: boolean
@@ -218,6 +222,9 @@ jobs:
   package:
     name: Build installers (${{ matrix.target }})
     needs: matrix-source
+    permissions:
+      actions: read
+      contents: read
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -259,6 +266,15 @@ jobs:
       - name: Install dependencies
         # postinstall 会自动跑 electron-rebuild。
         run: pnpm install --frozen-lockfile
+
+      - name: Download Desktop renderer from the verified push CI
+        if: inputs.renderer-ci-run-id != ''
+        uses: actions/download-artifact@v8
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.renderer-ci-run-id }}
+          name: desktop-renderer-${{ github.sha }}
+          path: apps/desktop/desktop-dist
 
       - name: Setup macOS keychain (Developer ID)
         if: runner.os == 'macOS'
@@ -329,7 +345,8 @@ jobs:
           AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
           AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
           AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
-        run: pnpm --filter kimi-code-app run dist --publish never
+          DIST_SCRIPT: ${{ inputs.renderer-ci-run-id && 'dist:prebuilt-renderer' || 'dist' }}
+        run: pnpm --filter kimi-code-app run "$DIST_SCRIPT" --publish never
 
       - name: Set macOS updater minimum system version
         if: runner.os == 'macOS' && !inputs.preview

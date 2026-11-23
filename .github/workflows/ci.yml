@@ -48,6 +48,24 @@ jobs:
         run: pnpm exec vitest run apps/kimi-code/test/e2e/tui tests/scenarios/cold-recovery.test.ts
         env:
           TESTKIT_CLI_BUILD: dist
+      - name: Save CLI Web assets for the tested release commit
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release/')
+        uses: actions/upload-artifact@v7
+        with:
+          name: cli-web-${{ github.sha }}
+          path: apps/kimi-code/dist-web/
+          if-no-files-found: error
+          retention-days: 7
+          overwrite: true
+      - name: Save the Desktop renderer for the tested release commit
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release/')
+        uses: actions/upload-artifact@v7
+        with:
+          name: desktop-renderer-${{ github.sha }}
+          path: apps/desktop/desktop-dist/
+          if-no-files-found: error
+          retention-days: 7
+          overwrite: true
 
   test:
     runs-on: ubuntu-latest
