@@ -13,6 +13,7 @@ export default {
         role: 'assistant',
         content: [
           { type: 'text', text: 'answer', meta: { thought_signature_b64: 'sig-text' } },
+          { type: 'text', text: '', meta: { thought_signature_b64: 'sig-empty' } },
           { type: 'think', think: 'reason', encrypted: 'sig-think' },
         ],
         toolCalls: [{
@@ -45,6 +46,7 @@ export default {
           role: 'model',
           parts: [
             { text: 'answer', thoughtSignature: 'sig-text' },
+            { text: '', thoughtSignature: 'sig-empty' },
             { text: 'reason', thought: true, thoughtSignature: 'sig-think' },
             {
               functionCall: { id: 'native-call', name: 'weather', args: { city: 'sf' } },

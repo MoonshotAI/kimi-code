@@ -5,6 +5,7 @@ import type { PassContext, PassRunner } from '../pipeline';
 import type { LlmModule } from '../protocol';
 import { legalizeMedia, relocateToolMedia, type MediaSupport } from './media';
 import { legalizeModel, type ModelLegality } from './model';
+import { cleanMessages } from './structure';
 import { legalizeToolCallIds, type ToolCallIdPolicy } from './tool-call-ids';
 import { legalizeTools } from './tools';
 
@@ -15,6 +16,7 @@ export type PatternSet<TOptions> = (
 
 export interface LegalizeSpec<TOptions> {
   readonly media: MediaSupport;
+  readonly preserveSignedBlankText?: boolean;
   readonly toolCallId?: ToolCallIdPolicy;
   readonly patterns?: PatternSet<TOptions>;
   readonly thinkingHistory?: PatternSet<TOptions>;
@@ -33,7 +35,10 @@ export function legalize<TOptions>(
   const relocated = pass.messages('relocate-tool-media', mediaLegal, (messages) =>
     relocateToolMedia(messages, spec.media),
   );
-  const idsLegal = pass.messages('legalize-tool-call-ids', relocated, (messages) =>
+  const structuralLegal = pass.messages('legalize-structure', relocated, (messages, ctx) =>
+    cleanMessages(messages, ctx.report, spec.preserveSignedBlankText === true),
+  );
+  const idsLegal = pass.messages('legalize-tool-call-ids', structuralLegal, (messages) =>
     legalizeToolCallIds(messages, spec.toolCallId),
   );
   const patternsLegal = pass.messages('legalize-patterns', idsLegal, (messages, ctx) => {
