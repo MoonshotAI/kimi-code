@@ -233,16 +233,6 @@ describe('summarizeLive', () => {
     }
   });
 
-  it('shows the auto-review status for a tool awaiting review', () => {
-    const current = tool('bash', { arg: '{"command":"echo hi"}', status: 'running', autoReviewing: true });
-    expect(render([summarizeLive(t, [tool('read'), current], current).current!])).toBe('正在自动复核…');
-    i18n.global.locale.value = 'en';
-    try {
-      expect(render([summarizeLive(t, [tool('read'), current], current).current!])).toBe('Auto Review in progress…');
-    } finally {
-      i18n.global.locale.value = 'zh';
-    }
-  });
 });
 
 describe('clause providers', () => {

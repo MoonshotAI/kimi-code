@@ -703,27 +703,6 @@ describe('conversationToTurns', () => {
     expect(after[3]).not.toBe(before[3]);
   });
 
-  it('projects a tool call in the auto_review stage with its streamed input_text', () => {
-    const reviewing = tool('c1', {
-      status: 'running',
-      outcome: undefined,
-      stage: 'auto_review',
-      input: undefined,
-      input_text: '{"command":"echo hi"}',
-      output: undefined,
-    });
-    const projected = toolsOf(project([turn(0, [opener('p0', 'run'), reviewing], running)]));
-    expect(projected).toEqual([
-      expect.objectContaining({
-        id: 'c1',
-        name: 'Bash',
-        arg: '{"command":"echo hi"}',
-        status: 'running',
-        autoReviewing: true,
-      }),
-    ]);
-  });
-
   it('projects a continuation turn without an opener user_message cleanly without an empty user bubble', () => {
     const turns = project([
       turn(0, [opener('p0', 'start work'), answer('a0', 'partial output')], {

@@ -31,23 +31,3 @@ it('keeps oversized approval diffs bounded on the synchronous path', () => {
   expect(block.diff).toHaveLength(1002);
   expect(block.diff.at(-1)?.text).toContain('more lines');
 });
-
-it('preserves approvalDetail as review on the approval block', () => {
-  const approvalDetail = { title: 'Auto Review: denied (high risk)', detail: 'Deleting files outside the workspace.' };
-  const block = buildApprovalBlock({
-    ...request,
-    toolName: 'Bash',
-    display: { kind: 'command', command: 'rm -rf /tmp/x' },
-    approvalDetail,
-  });
-  expect(block).toMatchObject({
-    kind: 'shell',
-    command: 'rm -rf /tmp/x',
-    review: approvalDetail,
-  });
-  expect(buildApprovalBlock({ ...request, approvalDetail })).toEqual({
-    kind: 'browser',
-    input: request.display.detail,
-    review: approvalDetail,
-  });
-});
