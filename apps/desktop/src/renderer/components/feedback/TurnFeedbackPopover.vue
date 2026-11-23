@@ -258,12 +258,11 @@ async function submit(): Promise<void> {
   min-height: 96px;
   padding: 10px 12px 8px;
   border-radius: var(--radius-dock-pill);
-}
-.feedback-editor.is-scrollable { gap: var(--space-2); }
-.feedback-editor:focus-within {
-  outline: 1px solid var(--color-accent);
+  outline: 1px solid transparent;
   outline-offset: -1px;
 }
+.feedback-editor.is-scrollable { gap: var(--space-2); }
+.feedback-editor:focus-within { outline-color: var(--color-accent); }
 .feedback-editor .ui-textarea {
   min-height: 20px;
   max-height: calc(240px - 26px - 1.5 * var(--ui-c1));
