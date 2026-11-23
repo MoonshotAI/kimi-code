@@ -182,6 +182,7 @@ export interface ToolMessageAttributes extends MessageAttributes {
   isError?: true;
   stopTurn?: true;
   detached?: true;
+  durationMs?: number;
 }
 
 export interface AssistantMessageAttributes extends MessageAttributes {
