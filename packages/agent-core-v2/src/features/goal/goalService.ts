@@ -31,9 +31,13 @@ import type { PermissionMode } from '#/agent/permissionPolicy/types';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
-import { registerLegacyStarting } from '#/agent/toolExecutor/legacyHooks';
+import {
+  legacyExecutionContext,
+  legacyStartingDecision,
+  type LegacyDecisionContext,
+} from '#/agent/toolExecutor/legacyHooks';
 import { parseToolCallArguments } from '#/tool/tool-args-parse';
-import type { BeforeToolExecuteEvent } from '#/agent/toolExecutor/toolHooks';
+import type { ToolStartingDecision } from '#/tool/executor';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { WAIT_FOR_FLAG_ID } from '#/agent/tools/task/task-wait/flag';
@@ -792,10 +796,10 @@ function isActiveGoal(context: GoalOperationContext, goalId: string): boolean {
   return state?.status === 'active' && state.goalId === goalId;
 }
 
-function isStaleGoalToolCall(context: GoalOperationContext, ctx: BeforeToolExecuteEvent): boolean {
-  const toolName = ctx.toolCall.name;
+function isStaleGoalToolCall(context: GoalOperationContext, ctx: LegacyDecisionContext): boolean {
+  const toolName = ctx.call.name;
   if (!isGoalMutationTool(toolName)) return false;
-  const goalId = goalTurnTarget(context, ctx.turnId);
+  const goalId = goalTurnTarget(context, ctx.context.turnId);
   if (goalId === undefined) return false;
   return context.runtime.getState().goal?.goalId !== goalId;
 }
@@ -1164,15 +1168,16 @@ function createGoalEffectHandlers(runtime: AgentActorContext<GoalRuntimeState>) 
     },
     beforeStep: (step: BeforeStepContext) => handleBeforeStep(context, step),
     afterStep: (step: AfterStepContext) => { handleAfterStep(context, step); },
-    approval: (event: BeforeToolExecuteEvent) => {
+    approval: async (toolContext: LegacyDecisionContext): Promise<ToolStartingDecision | void> => {
       const permissionMode = runtime.get(IAgentPermissionModeService);
       if (
-        event.toolCall.name !== 'CreateGoal' ||
+        toolContext.call.name !== 'CreateGoal' ||
         permissionMode.mode === 'auto' ||
-        event.execution.display?.kind !== 'goal_start'
+        toolContext.prepared.kind !== 'execute' ||
+        toolContext.prepared.execution.display?.kind !== 'goal_start'
       ) return;
-      event.waitUntil(async () => runtime.get(IAgentToolApprovalService).requestToolApproval(
-        event,
+      const decision = await runtime.get(IAgentToolApprovalService).requestToolApproval(
+        legacyExecutionContext(toolContext),
         {
           kind: 'ask',
           resolveApproval: (approval) => {
@@ -1183,15 +1188,15 @@ function createGoalEffectHandlers(runtime: AgentActorContext<GoalRuntimeState>) 
           },
         },
         'goal-start-review-ask',
-      ));
+      );
+      return legacyStartingDecision(toolContext, decision);
     },
-    veto: (event: BeforeToolExecuteEvent) => {
-      if (isStaleGoalToolCall(context, event)) {
-        event.veto({ output: GOAL_STALE_TOOL_RESULT });
-        return;
+    veto: (toolContext: LegacyDecisionContext): ToolStartingDecision | void => {
+      if (isStaleGoalToolCall(context, toolContext)) {
+        return legacyStartingDecision(toolContext, { veto: { output: GOAL_STALE_TOOL_RESULT } });
       }
-      if (context.effects.budgetGraceTurns.has(event.turnId)) {
-        event.veto({ output: GOAL_BUDGET_TOOLS_REJECTED_MESSAGE });
+      if (context.effects.budgetGraceTurns.has(toolContext.context.turnId)) {
+        return legacyStartingDecision(toolContext, { veto: { output: GOAL_BUDGET_TOOLS_REJECTED_MESSAGE } });
       }
     },
     toolCompleted: (step: AfterStepContext) => {
@@ -1263,8 +1268,8 @@ const goalEffects = fromCallback(({
       await next();
     }));
     const tools = input.runtime.get(IAgentToolExecutorService);
-    disposables.push(registerLegacyStarting(tools, handlers.approval));
-    disposables.push(registerLegacyStarting(tools, handlers.veto));
+    disposables.push(tools.registerHook({ starting: (toolContext) => handlers.veto(toolContext) }));
+    disposables.push(tools.registerHook({ starting: (toolContext) => handlers.approval(toolContext) }));
     disposables.push(input.runtime.get(IEventBus).subscribe(TurnEnded, handlers.turnEnded));
     handlers.normalize();
   }
