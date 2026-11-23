@@ -107,7 +107,7 @@ export class WorkspaceMcpService extends Disposable implements IWorkspaceMcpServ
       } catch (error) {
         disposalError = error;
       }
-      await this.manager.shutdown();
+      await this.manager.dispose();
       if (disposalError !== undefined) {
         throw disposalError instanceof Error
           ? disposalError
@@ -190,7 +190,7 @@ export class WorkspaceMcpService extends Disposable implements IWorkspaceMcpServ
       },
       shutdown: () => {
         unsubscribeOAuth();
-        return sessionManager.shutdown();
+        return sessionManager.dispose();
       },
     };
   }

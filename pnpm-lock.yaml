@@ -281,16 +281,6 @@ importers:
         version: 4.3.6
 
   apps/kimi-code:
-    dependencies:
-      chokidar:
-        specifier: ^4.0.3
-        version: 4.0.3
-      qrcode:
-        specifier: ^1.5.4
-        version: 1.5.4
-      ws:
-        specifier: ^8.18.0
-        version: 8.20.0
     devDependencies:
       '@moonshot-ai/acp-server':
         specifier: workspace:^
@@ -355,6 +345,9 @@ importers:
       chalk:
         specifier: ^5.4.1
         version: 5.6.2
+      chokidar:
+        specifier: ^4.0.3
+        version: 4.0.3
       cli-highlight:
         specifier: ^2.1.11
         version: 2.1.11
@@ -373,6 +366,9 @@ importers:
       postject:
         specifier: 1.0.0-alpha.6
         version: 1.0.0-alpha.6
+      qrcode:
+        specifier: ^1.5.4
+        version: 1.5.4
       semver:
         specifier: ^7.7.4
         version: 7.7.4
@@ -382,6 +378,9 @@ importers:
       tsx:
         specifier: ^4.21.0
         version: 4.21.0
+      ws:
+        specifier: ^8.18.0
+        version: 8.20.0
       yazl:
         specifier: ^3.3.1
         version: 3.3.1

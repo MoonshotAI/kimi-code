@@ -326,6 +326,7 @@ export class AgentTurnProjection {
     if (turn === undefined) return undefined;
     const step = turn.current;
     if (step === undefined) return undefined;
+    if (event.draft.type === 'aborted') return undefined;
     if (event.draft.type !== 'failed') {
       const finishReason = step.providerFinishReason ?? 'completed';
       const context: AfterStepContext = {

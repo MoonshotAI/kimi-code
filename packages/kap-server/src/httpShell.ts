@@ -26,6 +26,7 @@ import { createAuthFailureLimiter, type AuthFailureLimiter } from './middleware/
 import { createSecurityHeadersHook } from './middleware/securityHeaders';
 import { resolveRequestId } from './request-id';
 import { registerRequestLogging } from './requestLogging';
+import { assertWebAssets } from './routes/webAssets';
 import { classify, type BindClass } from './security/bindClassify';
 import {
   createAuthTokenService,
@@ -165,27 +166,14 @@ export async function prepareHttpShell(opts: HttpShellOptions): Promise<Prepared
   const homeDir = resolveKimiHome(opts.homeDir);
   const serverVersion = opts.serverVersion ?? getServerVersion();
   const disableAuth = opts.disableAuth === true || opts.socketPath !== undefined;
-  const registration: InstanceRegistration =
-    opts.socketPath !== undefined
-      ? { serverId: 'socket', update: async () => {}, release: async () => {} }
-      : opts.skipInstanceRegistry === true
-        ? { serverId: ulid(), update: async () => {}, release: async () => {} }
-        : await createInstanceRegistry({
-            instancesDir: opts.instancesDir ?? join(homeDir, 'server', 'instances'),
-          }).register({
-            pid: process.pid,
-            host,
-            port: requestedPort,
-            startedAt: Date.now(),
-            serverVersion,
-            product: opts.hostIdentity.productName,
-          });
   const exposureClass = classify(host, { bindClass: opts.bindClass });
   if (exposureClass !== 'loopback' && opts.insecureNoTls !== true) {
-    await registration.release();
     throw new Error(
       `Refusing to bind ${host} (${exposureClass}) without TLS; terminate TLS at a reverse proxy or pass --insecure-no-tls.`,
     );
+  }
+  if (opts.webAssetsDir !== undefined) {
+    await assertWebAssets(opts.webAssetsDir);
   }
   const enableShutdown = exposureClass === 'loopback' || opts.allowRemoteShutdown === true;
   const logger = opts.logger ?? createServerLogger({ level: opts.logLevel ?? 'info' });
@@ -201,8 +189,6 @@ export async function prepareHttpShell(opts: HttpShellOptions): Promise<Prepared
       'uncaughtException',
     );
   };
-  const authFailureLimiter =
-    exposureClass === 'loopback' ? undefined : createAuthFailureLimiter({ logger });
   const configPath = resolveConfigPath({ homeDir, configPath: opts.configPath });
 
   let authTokenService: IAuthTokenService;
@@ -218,6 +204,23 @@ export async function prepareHttpShell(opts: HttpShellOptions): Promise<Prepared
     authTokenService = createAuthTokenService({ tokenStore, passwordHash });
   }
   const validateCredential = createCredentialValidator(authTokenService, opts.rpcToken);
+  const registration: InstanceRegistration =
+    opts.socketPath !== undefined
+      ? { serverId: 'socket', update: async () => {}, release: async () => {} }
+      : opts.skipInstanceRegistry === true
+        ? { serverId: ulid(), update: async () => {}, release: async () => {} }
+        : await createInstanceRegistry({
+            instancesDir: opts.instancesDir ?? join(homeDir, 'server', 'instances'),
+          }).register({
+            pid: process.pid,
+            host,
+            port: requestedPort,
+            startedAt: Date.now(),
+            serverVersion,
+            product: opts.hostIdentity.productName,
+          });
+  const authFailureLimiter =
+    exposureClass === 'loopback' ? undefined : createAuthFailureLimiter({ logger });
 
   if (exposureClass !== 'loopback') {
     logger.warn(

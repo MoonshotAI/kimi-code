@@ -33,28 +33,25 @@ import { clearTurnFileHistorySession } from './turnFileHistory';
 import { ackSwarmPending, foldDaemonSwarmMode } from '@moonshot-ai/app-core/lib';
 import { ackTowerPending, foldDaemonTowerMode } from '@moonshot-ai/app-core/lib';
 import {
+  effectiveThinkingLevel,
+  matchEffortSwitchRule,
   matchModelSwitchRule,
   resolveModelSwitchHint,
+  resolveModelSwitchWarning,
   upstreamModelIdFromConfigModels,
   type ModelSwitchAction,
   type ModelSwitchRule,
 } from '@moonshot-ai/app-core/lib';
 import { detect as detectKimiLocale } from '@moonshot-ai/app-i18n';
 import { modelSwitchConfirmStore } from '../stores/modelSwitchConfirm';
+import { effortSwitchStore } from '../stores/effortSwitch';
 import { ackPlanPending, foldDaemonPlanMode } from '@moonshot-ai/app-core/lib';
 import {
-  draftAttachmentsStorageKey,
-  draftSnapshotStorageKey,
-  draftStorageKey,
-  composerSessionScope,
-  safeGetJson,
   safeGetString,
   safeRemove,
-  safeSetJson,
   safeSetString,
   STORAGE_KEYS,
 } from '@moonshot-ai/app-core/lib';
-import { discardStashedEditorState } from '@moonshot-ai/app-composer/runtime';
 import { sessionTasksToAppTasks, subagentDisplayName } from '@moonshot-ai/app-core/client';
 import {
   conversationTurnError,
@@ -91,6 +88,8 @@ import { createSessionActions } from './sessionActions';
 import { usePromptPipeline } from './usePromptPipeline';
 import { useConfirmDialog } from '../composables/useConfirmDialog';
 import { persistComposerDraftSnapshot } from '../lib/composerDraftLifecycle';
+import { configureWorkspaceHooks } from '../lib/workspaceHooks';
+import { workspaceModeActions } from '../lib/workspaceModeActions';
 import { closeSessionBusyWindow, openSessionBusyWindow } from '../lib/perfTracking';
 import { waitForSessionExecution, type SessionExecutionState } from '../lib/sessionExecutionReadiness';
 import { sessionMentionCandidates as buildSessionMentionCandidates, type SessionMentionCandidate } from '../lib/sessionReferences';
@@ -103,9 +102,9 @@ import { workspacesStore, setWorkspacesHooks } from '../stores/workspaces';
 import { approvalsStore, setApprovalsHooks } from '../stores/approvals';
 import { filesStore } from '../stores/files';
 import { modelsStore } from '../stores/models';
-import { modeStore, setModeHooks } from '../stores/mode';
+import { modeStore } from '../stores/mode';
 import { warningsStore, warningDetail } from '../stores/warnings';
-import { goalStore, setGoalHooks } from '../stores/goal';
+import { goalStore } from '../stores/goal';
 import { configStore, setConfigHooks } from '../stores/config';
 import { hostsStore, setHostsHooks } from '../stores/hosts';
 import { tasksStore, setTasksHooks } from '../stores/tasks';
@@ -113,7 +112,7 @@ import { agentStatesStore } from '../stores/agentStates';
 import { setFilesHooks } from '../stores/files';
 import { authStore, setAuthHooks } from '../stores/auth';
 import { computeGateVerdict, mapDaemonAuthError, AUTH_MODEL_NOT_RESOLVED_CODE, type ChatGateInput, type ChatGateVerdict } from '../lib/chatGate';
-import { permissionsStore, setPermissionsHooks } from '../stores/permissions';
+import { permissionsStore } from '../stores/permissions';
 import { promptStore } from '../stores/prompt';
 import {
   connectionStore,
@@ -1739,7 +1738,12 @@ const turns = computed<ChatTurn[]>(() => {
   if (!sid) return [];
   const conversation = activeMainConversation();
   if (conversation === null) return [];
-  const options = { sessionId: sid, getFileUrl: getFileUrlById, getSessionMediaUrl };
+  const options = {
+    sessionId: sid,
+    getFileUrl: getFileUrlById,
+    getSessionMediaUrl,
+    swarmMode: modeStore().swarmModeBySession[sid] ?? false,
+  };
   const base = mainConversationProjector(conversation.view.turns, options);
   const uncovered = unechoedOptimisticMessages(sid);
   if (uncovered.length === 0) return base;
@@ -1760,20 +1764,6 @@ const continuePending = computed<boolean>(() => {
 const working = computed<boolean>(
   () => inFlight.value || turnActive.value || promptPending.value || continuePending.value,
 );
-
-const canContinue = computed<boolean>(() => {
-  const sid = rawState.activeSessionId;
-  if (!sid) return false;
-  const session = rawState.sessions.find((s) => s.id === sid);
-  if (session?.archived === true) return false;
-  if (working.value || activity.value !== 'idle' || queued.value.length > 0) return false;
-  const lastAgentTurn = activeMainConversation()?.view.turns.findLast((turn) => turn.kind === 'agent');
-  if (lastAgentTurn?.status !== 'ended') return false;
-  return (
-    lastAgentTurn.outcome === 'interrupted' ||
-    (lastAgentTurn.outcome === 'failed' && lastAgentTurn.end_reason !== 'blocked')
-  );
-});
 
 watch(
   [() => rawState.activeSessionId, working],
@@ -2191,41 +2181,32 @@ async function applySelectModel(modelId: string): Promise<void> {
 
 function matchedModelSwitchRuleForActiveSession(
   modelId: string,
-): { rule: ModelSwitchRule; fromDisplay: string; toDisplay: string } | undefined {
+): { rule: ModelSwitchRule; fromDisplay: string; toDisplay: string; sessionType: 'old' | 'new' } | undefined {
   const sid = rawState.activeSessionId;
-  if (sid === null || sid === undefined) return undefined;
-  const session = rawState.sessions.find((s) => s.id === sid);
-  if (session === undefined || session.lastPrompt === undefined) return undefined;
-  if (session.model === modelId) return undefined;
+  const session = sid === null || sid === undefined ? undefined : rawState.sessions.find((s) => s.id === sid);
+  if (sid !== null && sid !== undefined && session === undefined) return undefined;
   const store = modelsStore();
-  const fromEntry = store.activeModels.find((m) => m.id === session.model);
+  const fromModel = session === undefined ? store.resolveSendModel(undefined, { includeDraft: true }) : session.model;
+  if (fromModel === null || fromModel === modelId) return undefined;
+  const fromEntry = store.activeModels.find((m) => m.id === fromModel);
   const toEntry = store.activeModels.find((m) => m.id === modelId);
   if (fromEntry === undefined || toEntry === undefined) return undefined;
   const configModels = configStore().config?.models;
-  const fromUpstream = upstreamModelIdFromConfigModels(configModels, session.model);
+  const fromUpstream = upstreamModelIdFromConfigModels(configModels, fromModel);
   const toUpstream = upstreamModelIdFromConfigModels(configModels, modelId);
   if (fromUpstream === undefined || toUpstream === undefined) return undefined;
-  const rule = matchModelSwitchRule(modelSwitchConfirmStore().peek(), fromUpstream, toUpstream);
+  const hasConversationHistory =
+    session !== undefined &&
+    (session.lastPrompt !== undefined || session.messageCount > 0 || session.usage.turnCount > 0);
+  const sessionType = hasConversationHistory ? 'old' : 'new';
+  const rule = matchModelSwitchRule(modelSwitchConfirmStore().peek(), fromUpstream, toUpstream, sessionType);
   if (rule === undefined) return undefined;
   return {
     rule,
     fromDisplay: fromEntry.displayName ?? fromEntry.model,
     toDisplay: toEntry.displayName ?? toEntry.model,
+    sessionType,
   };
-}
-
-function migrateSessionDraftToNewSession(sid: string | null | undefined): void {
-  if (sid === null || sid === undefined) return;
-  const text = safeGetString(draftStorageKey(sid));
-  if (text !== null) safeSetString(draftStorageKey(undefined), text);
-  else safeRemove(draftStorageKey(undefined));
-  const snapshot = safeGetJson(draftSnapshotStorageKey(sid));
-  if (snapshot !== null) safeSetJson(draftSnapshotStorageKey(undefined), snapshot);
-  else safeRemove(draftSnapshotStorageKey(undefined));
-  const attachments = safeGetJson(draftAttachmentsStorageKey(sid));
-  if (attachments !== null) safeSetJson(draftAttachmentsStorageKey(undefined), attachments);
-  else safeRemove(draftAttachmentsStorageKey(undefined));
-  discardStashedEditorState(composerSessionScope(undefined));
 }
 
 async function runModelSwitchAction(
@@ -2241,12 +2222,6 @@ async function runModelSwitchAction(
       return;
     case 'continue':
       if (isSuperseded()) return;
-      await applySelectModel(modelId);
-      return;
-    case 'new':
-      if (isSuperseded()) return;
-      migrateSessionDraftToNewSession(triggerSid);
-      workspacesStore().clearActiveSession();
       await applySelectModel(modelId);
       return;
     case 'compact': {
@@ -2303,18 +2278,95 @@ async function runModelSwitchAction(
 async function selectModel(modelId: string): Promise<void> {
   modelSelectGeneration += 1;
   const generation = modelSelectGeneration;
+  const triggerSid = rawState.activeSessionId;
+  const readiness: Promise<unknown>[] = [];
+  if (modelSwitchConfirmStore().needsLoad()) readiness.push(modelSwitchConfirmStore().refresh());
+  if (configStore().config === null) readiness.push(configStore().loadConfig());
+  if (readiness.length > 0) {
+    await Promise.all(readiness);
+    if (generation !== modelSelectGeneration || rawState.activeSessionId !== triggerSid) return;
+  }
   const matched = matchedModelSwitchRuleForActiveSession(modelId);
   if (matched === undefined) {
     await applySelectModel(modelId);
     return;
   }
-  const triggerSid = rawState.activeSessionId;
   const action = await modelSwitchConfirmStore().requestConfirm({
     fromModel: matched.fromDisplay,
     toModel: matched.toDisplay,
+    sessionType: matched.sessionType,
     hint: resolveModelSwitchHint(matched.rule, detectKimiLocale()),
+    warning: resolveModelSwitchWarning(matched.rule, detectKimiLocale()),
   });
   await runModelSwitchAction(action, modelId, triggerSid, generation);
+}
+
+function effortModelIdForSession(sessionId: string | null | undefined): string | undefined {
+  const store = modelsStore();
+  const activeSession = sessionId
+    ? rawState.sessions.find((session) => session.id === sessionId)
+    : undefined;
+  const rawModel =
+    activeSession === undefined
+      ? store.draftModel ?? store.activeDefaultModel
+      : activeSession.model || store.activeDefaultModel;
+  if (rawModel === null || rawModel === undefined || rawModel.length === 0) return undefined;
+  return (
+    store.activeModels.find((model) => model.id === rawModel)?.id ??
+    store.activeModels.find((model) => model.model === rawModel)?.id ??
+    rawModel
+  );
+}
+
+let effortSelectGeneration = 0;
+
+async function setThinking(level: ThinkingLevel): Promise<void> {
+  effortSelectGeneration += 1;
+  const generation = effortSelectGeneration;
+  const triggerSid = rawState.activeSessionId;
+  const triggerModelId = effortModelIdForSession(triggerSid);
+  const fromThinking = rawState.thinking;
+  const store = modelsStore();
+  const modelEntry = store.activeModels.find((model) => model.id === triggerModelId);
+  if (modelEntry?.provider !== MANAGED_KIMI_CODE_PROVIDER_ID) {
+    modelProvider.setThinking(level);
+    return;
+  }
+  const fromEffort = effectiveThinkingLevel(modelEntry, fromThinking);
+  if (fromEffort === level) {
+    modelProvider.setThinking(level);
+    return;
+  }
+  const isStale = () =>
+    generation !== effortSelectGeneration ||
+    rawState.activeSessionId !== triggerSid ||
+    effortModelIdForSession(triggerSid) !== triggerModelId ||
+    rawState.thinking !== fromThinking;
+  if (effortSwitchStore().needsLoad()) await effortSwitchStore().refresh();
+  if (isStale()) return;
+  const activeSession = rawState.sessions.find((session) => session.id === triggerSid);
+  const currentModel = store.activeModels.find((model) => model.id === triggerModelId);
+  if (currentModel?.provider !== MANAGED_KIMI_CODE_PROVIDER_ID) {
+    modelProvider.setThinking(level);
+    return;
+  }
+  const hasConversationHistory =
+    activeSession !== undefined &&
+    (activeSession.lastPrompt !== undefined || activeSession.messageCount > 0 || activeSession.usage.turnCount > 0);
+  const sessionType = hasConversationHistory ? 'old' : 'new';
+  const rule = matchEffortSwitchRule(effortSwitchStore().peek(), fromEffort, level, sessionType);
+  if (rule === undefined) {
+    modelProvider.setThinking(level);
+    return;
+  }
+  const action = await effortSwitchStore().requestConfirm({
+    fromEffort,
+    toEffort: level,
+    sessionType,
+    hint: resolveModelSwitchHint(rule, detectKimiLocale()),
+    warning: resolveModelSwitchWarning(rule, detectKimiLocale()),
+  });
+  if (action === 'continue' && !isStale()) modelProvider.setThinking(level);
 }
 
 let ensureChatReadyFlight: { sid: string | undefined; promise: Promise<EnsureChatReadyResult> } | null = null;
@@ -2837,30 +2889,16 @@ const workspaceBoot = createWorkspaceBoot(rawState, {
 });
 
 const { confirm } = useConfirmDialog();
-setModeHooks({
+configureWorkspaceHooks({
   persistSessionProfile,
-  confirmSwarmEnable: () =>
-    confirm({
-      title: t('workspace.swarmEnableTitle'),
-      message: t('workspace.swarmEnableConfirm'),
-      variant: 'primary',
-    }),
-});
-setGoalHooks({
-  pushOperationFailure: warningsStore().pushOperationFailure,
   confirmGoalStart: (objective) =>
     confirm({
       title: t('workspace.goalStartTitle'),
       message: t('workspace.goalStartConfirm', { objective }),
       variant: 'primary',
     }),
-  createDraftSession: promptPipeline.createDraftSession,
-  sendPrompt: promptPipeline.sendPrompt,
-  steerPromptDirect: promptPipeline.steerPromptDirect,
-  submitPromptInternal: promptPipeline.submitPromptInternal,
-  flushQueueHead: promptPipeline.flushQueueHead,
+  promptPipeline,
 });
-setPermissionsHooks({ persistSessionProfile });
 setFilesHooks({ pushOperationFailure: warningsStore().pushOperationFailure });
 setConfigHooks({ pushOperationFailure: warningsStore().pushOperationFailure });
 setApprovalsHooks({ pushOperationFailure: warningsStore().pushOperationFailure });
@@ -3336,7 +3374,6 @@ export function useKimiWebClient() {
     activeTurnError,
     activeTurnRetry,
     activeTurnEnd,
-    canContinue,
     inFlight,
     working,
     isStartingFirstPrompt,
@@ -3486,19 +3523,8 @@ export function useKimiWebClient() {
     taskOutputOf: taskOutputStream.outputOf,
 
     setPermission: permissionsStore().setPermission,
-    setThinking: modelProvider.setThinking,
-    setPlanMode: modeStore().setPlanMode,
-    togglePlanMode: modeStore().togglePlanMode,
-    setSwarmMode: modeStore().setSwarmMode,
-    toggleSwarmMode: modeStore().toggleSwarmMode,
-    setTowerMode: modeStore().setTowerMode,
-    toggleTowerMode: modeStore().toggleTowerMode,
-    sendTowerPrompt,
-    setGoalMode: modeStore().setGoalMode,
-    toggleGoalMode: modeStore().toggleGoalMode,
-    createGoal: goalStore().createGoal,
-    controlGoal: goalStore().controlGoal,
-    editGoalObjective: goalStore().editGoalObjective,
+    setThinking,
+    ...workspaceModeActions(sendTowerPrompt),
     enqueue: promptPipeline.enqueue,
     renameSession: sessionListStore().renameSession,
     regenerateSessionTitle: sessionListStore().regenerateSessionTitle,

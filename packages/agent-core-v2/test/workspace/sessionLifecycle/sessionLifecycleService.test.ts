@@ -37,6 +37,7 @@ describe('SessionLifecycleService', () => {
       fs: {},
       instructions: { sessionProvider: () => ({}) },
       agentProfiles: { ready },
+      mcp: { sessionHandle: () => ({}) },
       dispose: vi.fn(),
     };
     const handle = {
@@ -69,7 +70,7 @@ describe('SessionLifecycleService', () => {
         { ready },
         { ready },
         { ready },
-        { sessionHandle: () => ({}) },
+        undefined,
         { ready },
         { ready },
         undefined,

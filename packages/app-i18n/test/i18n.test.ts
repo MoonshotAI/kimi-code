@@ -25,6 +25,17 @@ describe('createKimiI18n', () => {
     expect(i18n.global.t('settings.pasteImageAutoMentionHint')).toBe('在输入框中粘贴图片时自动添加 @ 提及');
   });
 
+  it('renders effort switch confirmation titles in en and zh', () => {
+    const i18n = createKimiI18n({ locale: 'en' });
+    expect(i18n.global.t('model.switchEffortConfirmTitle', { from: 'high', to: 'max' })).toBe(
+      'Confirm effort switch from high to max?',
+    );
+    i18n.global.locale.value = 'zh';
+    expect(i18n.global.t('model.switchEffortConfirmTitle', { from: 'high', to: 'max' })).toBe(
+      '确认把思考强度由 high 切换到 max？',
+    );
+  });
+
   it('renders the /goal description in full (pipe chars are escaped literals, not plural separators)', () => {
     const i18n = createKimiI18n({ locale: 'en' });
     expect(i18n.global.t('commands.goal.desc')).toBe(

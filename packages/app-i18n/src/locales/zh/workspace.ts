@@ -11,8 +11,8 @@ export default {
   removeWorkspaceConfirmHostOffline:
     '将「{name}」从侧边栏移除\n当前无法连接 {device}，仅从本应用侧边栏隐藏该项目；主机上的文件夹和文件不会被删除。',
   removeAction: '移除',
-  swarmEnableTitle: '启用 swarm 模式？',
-  swarmEnableConfirm: 'Agent 将并行运行多个子 agent。',
+  swarmEnabledMessage: '高消耗：Swarm 适合大规模并行的任务，消耗可能是普通任务的很多倍。建议先从小任务开始，用完记得关闭 swarm。',
+  swarmEnabledTitle: 'Swarm 模式已开启',
   goalStartTitle: '启动 goal？',
   goalStartConfirm: '「{objective}」——Agent 将自主执行。',
   newInGroup: '在此项目新建会话',

@@ -27,11 +27,11 @@ description: 在 kimi-code 仓库里创建或更新 PR 时使用：如何写出�
    - 改动让用户看到的界面或输出变了的，准备视觉证据，见"UI/UX 变化的视觉证据"。
 
 4. 按模板各节写描述。描述用用户当前使用的语言，行为变化表也一样；只有三样固定：PR 标题保持英文 Conventional Commit，changeset 保持英文（见 `gen-changesets` skill），节标题沿用模板原文。
+   - **Screenshots / Recordings**：模板里没有这一节。有可见的 UI/UX 变化时作为第一节放在描述最前面（Requirement or Bug 之前），让 reviewer 打开 PR 先看到效果；没有就不加，见"UI/UX 变化的视觉证据"。
    - **Requirement or Bug**：两三句话讲清谁遇到了什么问题、这个 PR 之后能做到什么；有 issue 的写 `Resolve #<number>`，再补一句背景。解决办法留给 Code Changes。
    - **Bug Reproduction Steps**：只有 bug 类 PR 需要；feature 写 `N/A`。步骤已在 issue 里的写 `See linked issue`。
    - **Root Cause**：只有 bug 类 PR 需要；feature 写 `N/A`。说明根因，以及这是根本修复还是绕过。机制要靠时序或状态才说得清的，用图，见"代码变更的可视化大纲"。
    - **Code Changes**：先判断要不要先建立整体理解，再讲具体变化，见"讲清楚改动"。
-   - **Screenshots / Recordings**：模板里没有这一节。有可见的 UI/UX 变化时加在 Code Changes 后面，没有就不加，见"UI/UX 变化的视觉证据"。
    - **Behavior Changes and Affected Users**：先填行为变化表，再列受影响模块与测试覆盖，见"行为变化与受影响人群"。验证只写结论：覆盖了哪些场景、哪些没验证；测试文件清单、全量运行结果和修复过程放进折叠块。
    - **Checklist**：勾上所有适用的项。
 
@@ -190,7 +190,7 @@ interface SessionEvents {
 | GIF | 只用于交互和时序：按键、展开折叠、流式输出、动画 | 本机有录屏工具就录；没有就退回关键帧截图或文本快照，不为此装工具 |
 
 写法：
-- 加在 Code Changes 后面，节标题 `## Screenshots / Recordings`。
+- 作为第一节放在描述最前面（Requirement or Bug 之前），节标题 `## Screenshots / Recordings`。
 - 改动前后用两列表格并排；全新的界面只放改动后。每组图前用一句话说明该看哪里。
 - 证据来自 PR 分支的真实运行或测试渲染，不要手画示意图冒充。文本快照保持原样，不手工调整对齐。
 - GIF 只录能说明问题的几秒，体积控制在几 MB 内。

@@ -98,6 +98,33 @@ describe('browser overlay menu renderer adapter', () => {
     scope.stop();
   });
 
+  it('calls onDismiss only when the menu is dismissed outside', async () => {
+    const { registerBrowserOverlayMenu } = await import('../../src/renderer/lib/browserOverlayMenu');
+    const onDismiss = vi.fn();
+    const scope = effectScope();
+    const menu = scope.run(() =>
+      registerBrowserOverlayMenu({
+        id: 'panel-tabs.dismiss-test',
+        items: () => [{ kind: 'item', id: 'one', label: 'One' }],
+        onSelect: vi.fn(),
+        onDismiss,
+        submitOnCtrlEnter: true,
+      }),
+    )!;
+
+    for (const reason of ['escape', 'action', 'programmatic'] as const) {
+      menu.showAt({ x: 100, y: 40, width: 20, height: 20 });
+      closedListener?.({ menuId: openMenu.mock.lastCall![0].menuId, reason });
+    }
+    expect(onDismiss).not.toHaveBeenCalled();
+
+    menu.showAt({ x: 100, y: 40, width: 20, height: 20 });
+    closedListener?.({ menuId: openMenu.mock.lastCall![0].menuId, reason: 'dismiss' });
+    expect(onDismiss).toHaveBeenCalledOnce();
+    expect(openMenu).toHaveBeenLastCalledWith(expect.objectContaining({ submitOnCtrlEnter: true }));
+    scope.stop();
+  });
+
   it('keeps composite actions open and refreshes their declarative value', async () => {
     const { registerBrowserOverlayMenu } = await import('../../src/renderer/lib/browserOverlayMenu');
     let value = '100%';

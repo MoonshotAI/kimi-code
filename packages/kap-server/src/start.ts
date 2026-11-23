@@ -157,11 +157,6 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     [...logSeed(logging), ...(opts.seeds ?? [])],
   );
   const environments = core.accessor.get(IEnvironmentService);
-  const remoteEnvironmentProvider = await environments.addProvider(
-    new RemoteEnvironmentProviderFactory({
-      clientVersion: serverVersion,
-    }),
-  );
   const legacyAcpBindingSubscription = core.accessor
     .get(ISessionManager)
     .onDidCreateSession?.((event) => {
@@ -228,6 +223,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   }
 
   let rpcServer: UnixRpcServer | undefined;
+  let remoteEnvironmentProvider: { dispose(): Promise<void> } | undefined;
   let closePromise: Promise<void> | undefined;
 
   const performClose = async (): Promise<void> => {
@@ -266,8 +262,9 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
       await core.accessor.get(IMcpOAuthService).shutdown();
       const appendLogStore = core.accessor.get(IAppendLogStore);
       legacyAcpBindingSubscription?.dispose();
-      await remoteEnvironmentProvider.dispose();
+      await remoteEnvironmentProvider?.dispose();
       core.dispose();
+      await core.instantiation.disposeAsync();
       await appendLogStore.drainRetirements();
       await drainSessionIndexMirror();
       await drainGlobalSearchDisposals();
@@ -403,25 +400,6 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     });
   }
 
-  await registerOpenApi();
-
-  await registerApiV1Routes(app, core, {
-    serverId: registration.serverId,
-    serverVersion,
-    hostIdentity: opts.hostIdentity,
-    debugEndpoints,
-    enableShutdown,
-    remoteControl,
-    onShutdown: requestClose,
-    drainIdleSessions,
-    hostBridges,
-    conversations,
-    sessionRating,
-    dangerousBypassAuth: opts.disableAuth === true,
-    managedHost: opts.managedBy === 'ensure-daemon',
-    webTitle: opts.webTitle,
-  });
-
   const wssV1 = registerWsV1(core, {
     registry: connectionRegistry,
     broadcaster,
@@ -459,25 +437,50 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     await broadcaster.close();
   });
 
-  registerHostProxyRoutes(app, hostBridges);
-
-  app.get('/asyncapi.json', async (_req, reply) => {
-    return reply
-      .type('application/json')
-      .send(createAsyncApiDocument({ version: serverVersion, serverHost: host }));
-  });
-
-  app.get('/openapi.json', async (_req, reply) => {
-    const openApiDocument = (app as unknown as { swagger(): unknown }).swagger();
-    return reply.type('application/json').send(openApiDocument);
-  });
-
-  if (opts.webAssetsDir !== undefined) {
-    await registerWebAssetRoutes(app, opts.webAssetsDir);
-  }
-
   let boundPort = 0;
   try {
+    remoteEnvironmentProvider = await environments.addProvider(
+      new RemoteEnvironmentProviderFactory({
+        clientVersion: serverVersion,
+      }),
+    );
+
+    await registerOpenApi();
+
+    await registerApiV1Routes(app, core, {
+      serverId: registration.serverId,
+      serverVersion,
+      hostIdentity: opts.hostIdentity,
+      debugEndpoints,
+      enableShutdown,
+      remoteControl,
+      onShutdown: requestClose,
+      drainIdleSessions,
+      hostBridges,
+      conversations,
+      sessionRating,
+      dangerousBypassAuth: opts.disableAuth === true,
+      managedHost: opts.managedBy === 'ensure-daemon',
+      webTitle: opts.webTitle,
+    });
+
+    registerHostProxyRoutes(app, hostBridges);
+
+    app.get('/asyncapi.json', async (_req, reply) => {
+      return reply
+        .type('application/json')
+        .send(createAsyncApiDocument({ version: serverVersion, serverHost: host }));
+    });
+
+    app.get('/openapi.json', async (_req, reply) => {
+      const openApiDocument = (app as unknown as { swagger(): unknown }).swagger();
+      return reply.type('application/json').send(openApiDocument);
+    });
+
+    if (opts.webAssetsDir !== undefined) {
+      registerWebAssetRoutes(app, opts.webAssetsDir);
+    }
+
     if (opts.socketPath !== undefined) {
       await app.ready();
       rpcServer = await startUnixRpcServer(opts.socketPath, {

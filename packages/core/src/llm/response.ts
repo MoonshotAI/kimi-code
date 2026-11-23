@@ -239,6 +239,7 @@ export interface LlmRequestSummary {
   readonly messageCount: number;
 }
 
+// Emitted before resolvers; toolsHash describes the initial request profile, not the provider payload.
 export type LlmRunStarted = { readonly type: 'llm.started' } & LlmRequestSummary;
 
 export type LlmRequestProjection =
@@ -248,6 +249,7 @@ export type LlmRequestProjection =
   | 'strict-media-degraded'
   | 'strict-media-stripped';
 
+// Emitted after resolvers for each attempt, before legalization and provider encoding.
 export type LlmRunRequested = {
   readonly type: 'llm.requested';
   readonly kind?: 'loop' | 'compaction' | 'prediction';

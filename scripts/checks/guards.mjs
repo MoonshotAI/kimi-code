@@ -13,7 +13,7 @@ const REGISTRY_FILE = 'scripts/checks/registry.json';
 const LEVEL_NAMES = { allow: 'off', off: 'off', warn: 'warn', deny: 'error', error: 'error' };
 const LEVEL_RANKS = { off: 0, warn: 1, error: 2 };
 const KIND_ORDER = { weakened: 0, changed: 1, strengthened: 2 };
-const DIFFED_KEYS = new Set(['$schema', 'categories', 'plugins', 'rules', 'overrides', 'ignorePatterns']);
+const DIFFED_KEYS = new Set(['$schema', 'categories', 'plugins', 'jsPlugins', 'rules', 'overrides', 'ignorePatterns']);
 const RUNS_AFTER_FAILURE = /\balways\(\)|!\s*cancelled\(\)/;
 
 function sortKeys(value) {
@@ -103,6 +103,7 @@ export function diffConfigs(before, after) {
   const findings = [
     ...diffRules(before.categories, after.categories, 'category '),
     ...diffMembers(before.plugins, after.plugins, 'plugin', 'changed', 'weakened'),
+    ...diffMembers(before.jsPlugins, after.jsPlugins, 'JS plugin', 'changed', 'weakened'),
     ...diffRules(before.rules, after.rules, ''),
     ...diffOverrides(before.overrides, after.overrides),
     ...diffMembers(before.ignorePatterns, after.ignorePatterns, 'ignore pattern', 'weakened', 'strengthened'),
@@ -283,10 +284,12 @@ function runOxlint(args) {
   return JSON.parse(result.stdout);
 }
 
+export function normalizeConfig(printed, catalog) {
+  return sortKeys(expandOverridePlugins({ ...printed, jsPlugins: printed.jsPlugins?.toSorted() }, catalog));
+}
+
 function readEffectiveConfig() {
-  const config = runOxlint(['--type-aware', '--print-config']);
-  const catalog = runOxlint(['--rules', '--format', 'json']);
-  return sortKeys(expandOverridePlugins(config, catalog));
+  return normalizeConfig(runOxlint(['--type-aware', '--print-config']), runOxlint(['--rules', '--format', 'json']));
 }
 
 export function main(args) {

@@ -15,13 +15,15 @@ vi.mock('electron-updater', () => ({ autoUpdater: {} }));
 vi.mock('../../../src/main/window/main-window', () => ({ sendToRenderer: vi.fn(), markQuitting: vi.fn() }));
 vi.mock('../../../src/main/diagnostics/track', () => ({ trackDesktopEvent: trackMock, trySendDesktopEvent: vi.fn() }));
 
-import { fetchReleaseNotes, startAutoUpdater, updateChannelFromVersion, UPDATE_CHECK_TIMED_OUT, type ReleaseNotes, type UpdateController, type UpdateStatus } from '../../../src/main/release/updater';
+import { fetchReleaseNotes, startAutoUpdater, updateChannelFromVersion, UPDATE_CHECK_TIMED_OUT, type ReleaseNotes, type RestartDecision, type UpdateController, type UpdateStatus } from '../../../src/main/release/updater';
 import { log } from '../../../src/main/diagnostics/log';
 import { setServerRegionSource } from '../../../src/main/server/region';
 import { markQuitting } from '../../../src/main/window/main-window';
 import { isUpdateRolloutEligible, UNCOVERED_ROLLOUT_DELAY_SECONDS, rolloutBucket, rolloutDelayForBucket, type UpdateRolloutInfo } from '../../../src/main/release/update-rollout';
 
-const shouldBlockQuitMock = vi.fn<() => Promise<boolean>>();
+const confirmRestartMock = vi.fn<() => Promise<RestartDecision>>();
+const prepareSessionContinueMock = vi.fn<(sessionIds: readonly string[]) => void>();
+const restartDeps = { confirmRestart: confirmRestartMock, prepareSessionContinue: prepareSessionContinueMock };
 const markQuittingMock = vi.mocked(markQuitting);
 
 async function flush(): Promise<void> {
@@ -49,7 +51,7 @@ function setup(overrides: { initialDelayMs?: number; intervalMs?: number; autoDo
   const controller = startAutoUpdater({
     updater,
     send: (status) => sent.push(status),
-    shouldBlockQuit: shouldBlockQuitMock,
+    ...restartDeps,
     resolveDeviceId: () => 'device-a',
     isPackaged: true,
     ...overrides,
@@ -63,7 +65,8 @@ function setup(overrides: { initialDelayMs?: number; intervalMs?: number; autoDo
 beforeEach(() => {
   vi.useFakeTimers();
   trackMock.mockClear();
-  shouldBlockQuitMock.mockReset().mockResolvedValue(false);
+  confirmRestartMock.mockReset().mockResolvedValue({ proceed: true, continueSessionIds: [] });
+  prepareSessionContinueMock.mockReset();
   markQuittingMock.mockClear();
 });
 
@@ -77,7 +80,7 @@ describe('startAutoUpdater', () => {
     const controller = startAutoUpdater({
       updater,
       send: () => {},
-      shouldBlockQuit: shouldBlockQuitMock,
+      ...restartDeps,
       isPackaged: false,
     });
     expect(controller).toBeNull();
@@ -248,10 +251,14 @@ describe('startAutoUpdater', () => {
     });
 
     await controller.install();
-    expect(shouldBlockQuitMock).toHaveBeenCalledOnce();
+    expect(confirmRestartMock).toHaveBeenCalledOnce();
+    expect(prepareSessionContinueMock).toHaveBeenCalledExactlyOnceWith([]);
     expect(markQuittingMock).toHaveBeenCalledOnce();
     expect(updater.quitAndInstall).toHaveBeenCalledWith(true, true);
-    expect(shouldBlockQuitMock.mock.invocationCallOrder[0]).toBeLessThan(
+    expect(confirmRestartMock.mock.invocationCallOrder[0]).toBeLessThan(
+      prepareSessionContinueMock.mock.invocationCallOrder[0]!,
+    );
+    expect(prepareSessionContinueMock.mock.invocationCallOrder[0]).toBeLessThan(
       markQuittingMock.mock.invocationCallOrder[0]!,
     );
     expect(markQuittingMock.mock.invocationCallOrder[0]).toBeLessThan(
@@ -259,18 +266,62 @@ describe('startAutoUpdater', () => {
     );
   });
 
+  it('records the sessions chosen in the restart prompt before installing', async () => {
+    const { updater, controller } = setup();
+    updater.emit('update-downloaded', { version: '1.2.3' });
+    confirmRestartMock.mockResolvedValue({ proceed: true, continueSessionIds: ['s1', 's2'] });
+
+    await controller.install();
+
+    expect(prepareSessionContinueMock).toHaveBeenCalledExactlyOnceWith(['s1', 's2']);
+    expect(prepareSessionContinueMock.mock.invocationCallOrder[0]).toBeLessThan(
+      updater.quitAndInstall.mock.invocationCallOrder[0]!,
+    );
+  });
+
+  it('still installs when recording the sessions to continue fails', async () => {
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => {});
+    const { updater, controller } = setup();
+    updater.emit('update-downloaded', { version: '1.2.3' });
+    confirmRestartMock.mockResolvedValue({ proceed: true, continueSessionIds: ['s1', 's2'] });
+    prepareSessionContinueMock.mockImplementation(() => {
+      throw new Error('disk full');
+    });
+
+    await controller.install();
+
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('disk full'));
+    expect(markQuittingMock).toHaveBeenCalledOnce();
+    expect(updater.quitAndInstall).toHaveBeenCalledWith(true, true);
+    warn.mockRestore();
+  });
+
+  it('installs without continuing sessions when the restart confirmation fails', async () => {
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => {});
+    const { updater, controller } = setup();
+    updater.emit('update-downloaded', { version: '1.2.3' });
+    confirmRestartMock.mockRejectedValue(new Error('server gone'));
+
+    await controller.install();
+
+    expect(prepareSessionContinueMock).toHaveBeenCalledExactlyOnceWith([]);
+    expect(updater.quitAndInstall).toHaveBeenCalledWith(true, true);
+    warn.mockRestore();
+  });
+
   it('keeps the update ready when quit confirmation is cancelled and allows retrying', async () => {
     const { updater, controller } = setup();
     updater.emit('update-downloaded', { version: '1.2.3' });
-    shouldBlockQuitMock.mockResolvedValue(true);
+    confirmRestartMock.mockResolvedValue({ proceed: false, continueSessionIds: [] });
 
     await controller.install();
 
     expect(controller.getStatus().state).toBe('downloaded');
+    expect(prepareSessionContinueMock).not.toHaveBeenCalled();
     expect(markQuittingMock).not.toHaveBeenCalled();
     expect(updater.quitAndInstall).not.toHaveBeenCalled();
 
-    shouldBlockQuitMock.mockResolvedValue(false);
+    confirmRestartMock.mockResolvedValue({ proceed: true, continueSessionIds: [] });
     await controller.install();
     expect(markQuittingMock).toHaveBeenCalledOnce();
     expect(updater.quitAndInstall).toHaveBeenCalledOnce();
@@ -279,16 +330,16 @@ describe('startAutoUpdater', () => {
   it('runs only one quit check while update installation is pending', async () => {
     const { updater, controller } = setup();
     updater.emit('update-downloaded', { version: '1.2.3' });
-    let resolveCheck!: (blocked: boolean) => void;
-    shouldBlockQuitMock.mockReturnValue(new Promise((resolve) => {
+    let resolveCheck!: (decision: RestartDecision) => void;
+    confirmRestartMock.mockReturnValue(new Promise((resolve) => {
       resolveCheck = resolve;
     }));
 
     const first = controller.install();
     const second = controller.install();
-    expect(shouldBlockQuitMock).toHaveBeenCalledOnce();
+    expect(confirmRestartMock).toHaveBeenCalledOnce();
 
-    resolveCheck(false);
+    resolveCheck({ proceed: true, continueSessionIds: [] });
     await Promise.all([first, second]);
     expect(markQuittingMock).toHaveBeenCalledOnce();
     expect(updater.quitAndInstall).toHaveBeenCalledOnce();
@@ -650,7 +701,7 @@ describe('late region source follow-up', () => {
       const controller = startAutoUpdater({
         updater,
         send: () => {},
-        shouldBlockQuit: shouldBlockQuitMock,
+        ...restartDeps,
         isPackaged: true,
         initialDelayMs: 600_000,
         intervalMs: 600_000,
@@ -697,7 +748,7 @@ describe('feed switching (resolveFeedUrl)', () => {
     const controller = startAutoUpdater({
       updater,
       send: (status) => sent.push(status),
-      shouldBlockQuit: shouldBlockQuitMock,
+      ...restartDeps,
       isPackaged: true,
       initialDelayMs: opts.initialDelayMs ?? 1_000,
       intervalMs: 60_000,

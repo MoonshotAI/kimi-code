@@ -205,6 +205,7 @@ describe('convertOpenAIError', () => {
       'messages.142: `tool_use` ids were found without `tool_result` blocks immediately after: toolu_01MWFhDRqdbB4nzCJNuWYiun',
       'messages: `tool_use` ids must be unique',
       'text content blocks must be non-empty',
+      'Invalid request: text content is empty',
       'first message must use the `user` role',
       'roles must alternate',
       "tool_call_id 'call_abc123' is not found",

@@ -323,7 +323,7 @@ export async function startWebGateway(opts: WebGatewayStartOptions): Promise<Run
   );
 
   if (opts.webAssetsDir !== undefined) {
-    await registerWebAssetRoutes(app, opts.webAssetsDir);
+    registerWebAssetRoutes(app, opts.webAssetsDir);
   }
 
   let boundPort = 0;

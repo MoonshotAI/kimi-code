@@ -37,6 +37,7 @@ export class WorkspaceMcpConfigService extends Disposable implements IWorkspaceM
   private fileServers = new Map<string, McpServerConfig>();
   private pluginServers = new Map<string, McpServerConfig>();
   private disabledOAuthServers = new Map<string, McpServerConfig>();
+  private disposed = false;
   private current: Readonly<Record<string, McpServerConfig>> = {};
   private untrustedOAuthServers: Readonly<Record<string, McpServerConfig>> | undefined;
   private initializationComplete = false;
@@ -62,7 +63,12 @@ export class WorkspaceMcpConfigService extends Disposable implements IWorkspaceM
   ) {
     super();
     this.oauth.setConfigurationSource(this, []);
-    this._register({ dispose: () => this.oauth.removeConfigurationSource(this) });
+    this._register({
+      dispose: () => {
+        this.disposed = true;
+        this.oauth.removeConfigurationSource(this);
+      },
+    });
     this.ready = this.initialize().catch((error: unknown) => {
       this.log.error('mcp config initial load failed', { error });
     });
@@ -369,6 +375,7 @@ export class WorkspaceMcpConfigService extends Disposable implements IWorkspaceM
   }
 
   private syncOAuthConfiguration(): void {
+    if (this.disposed) return;
     const retained = this.untrustedOAuthServers ?? {};
     this.oauth.setConfigurationSource(
       this,

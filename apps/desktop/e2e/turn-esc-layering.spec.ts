@@ -41,7 +41,7 @@ test('Esc closes the top layer first and only a double Esc stops the running tur
   await input.click();
   await app.window.keyboard.type('/');
   const menu = app.window.getByRole('listbox');
-  await expect(menu.getByRole('option', { name: /^\/compact / })).toBeVisible();
+  await expect(menu.getByRole('option', { name: /^compact / })).toBeVisible();
   await app.window.keyboard.press('Escape');
   await expect(menu).toBeHidden();
   await expect(input).toHaveAttribute('aria-expanded', 'false');

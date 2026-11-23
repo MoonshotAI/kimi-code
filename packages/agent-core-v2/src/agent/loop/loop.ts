@@ -283,6 +283,8 @@ export interface IAgentLoopService extends EffectiveProfileReader {
 
   history(): readonly ContextMessage[];
 
+  rawHistory(): readonly Message[];
+
   previewRequestContent(): LoopRequestContent;
 
   historyRevision(): number;

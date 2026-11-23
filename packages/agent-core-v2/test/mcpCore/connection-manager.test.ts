@@ -667,6 +667,28 @@ describe('McpConnectionManager', () => {
     }
   }, 15000);
 
+  it('starts no server once disposed', async () => {
+    const cm = createManager();
+    const spawn = vi.spyOn(testProcess, 'spawn');
+    const seen: string[] = [];
+    cm.onStatusChange((entry) => {
+      seen.push(`${entry.name}:${entry.status}`);
+    });
+    try {
+      await cm.dispose();
+
+      await cm.connectAll({ late: stdioConfig() });
+      await cm.connect('later', stdioConfig());
+
+      expect(spawn).not.toHaveBeenCalled();
+      expect(cm.list()).toEqual([]);
+      expect(seen).toEqual([]);
+    } finally {
+      spawn.mockRestore();
+      await cm.shutdown();
+    }
+  });
+
   it('shutdown cancels in-flight startup without late status updates', async () => {
     const cm = createManager();
     const seen: Array<{ name: string; status: McpServerEntry['status'] }> = [];

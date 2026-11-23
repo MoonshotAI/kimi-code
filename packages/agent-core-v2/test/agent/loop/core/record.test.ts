@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { createUserMessage, extractText, type ToolCall } from '@moonshot-ai/core/llm/message';
+import type { LoopToolExecutor } from '@moonshot-ai/core/loop/create-loop';
 import {
   loopProjection,
   toLoopRecord,
@@ -178,5 +179,71 @@ describe('loop record', () => {
       [2, 'aborted'],
       [3, 'done'],
     ]);
+  });
+
+  it('force abort settles only unfinished foreground tool calls and ignores late results', async () => {
+    let settleStuck!: (result: ToolReturn) => void;
+    let stuckCompletion: Promise<unknown> | undefined;
+    const delegated = executorFrom(['fast', 'stuck'], (context) => {
+      if (context.call.name === 'fast') {
+        return Promise.resolve({ content: textToolContent('fast ok') });
+      }
+      return new Promise<ToolReturn>((resolve) => {
+        settleStuck = resolve;
+      });
+    });
+    const executor: LoopToolExecutor = {
+      execute: (toolCall, context) => {
+        const handler = delegated.execute(toolCall, context);
+        if (toolCall.name === 'stuck') stuckCompletion = handler.wait();
+        return handler;
+      },
+    };
+    const loop = createLoop({
+      requester: requester([done('', [call('call-fast', 'fast'), call('call-stuck', 'stuck')])]),
+      executor,
+    });
+    const events: LoopEmitted[] = [];
+    loop.subscribe((event) => events.push(event));
+    const fastEnded = once(loop, (event) => event.type === 'tool.ended' && event.toolCallId === 'call-fast');
+    const stuckStarted = once(loop, (event) => event.type === 'tool.started' && event.toolCall.id === 'call-stuck');
+    const running = loop.runTurn(prompt('work'));
+    await Promise.all([fastEnded, stuckStarted]);
+
+    loop.abort('graceful');
+    loop.abort('force');
+
+    await expect(running).resolves.toMatchObject({ type: 'aborted', reason: 'graceful' });
+    await loop.waitForIdle();
+    expect(events.filter((event) => event.type === 'tool.ended' && event.toolCallId === 'call-fast')).toHaveLength(1);
+    expect(events.filter((event) => event.type === 'tool.ended' && event.toolCallId === 'call-stuck')).toHaveLength(1);
+    expect(events.find((event) => event.type === 'tool.ended' && event.toolCallId === 'call-fast')).toMatchObject({
+      outcome: { type: 'succeeded' },
+    });
+    expect(events.find((event) => event.type === 'tool.ended' && event.toolCallId === 'call-stuck')).toMatchObject({
+      outcome: { type: 'aborted', reason: 'graceful' },
+    });
+    expect(events.filter((event) => event.type === 'turn.ended')).toHaveLength(1);
+    const toolMessages = loop.state.messages.filter((message) => message.role === 'tool');
+    expect(toolMessages.map((message) => extractText(message))).toEqual(['fast ok', 'Tool "stuck" was aborted']);
+
+    const terminalEventCount = events.filter((event) =>
+      event.type === 'tool.started' ||
+      event.type === 'tool.ended' ||
+      event.type === 'message.appended' ||
+      event.type === 'step.ended' ||
+      event.type === 'turn.ended'
+    ).length;
+    settleStuck({ content: textToolContent('late result') });
+    await stuckCompletion;
+    await Promise.resolve();
+    expect(events.filter((event) =>
+      event.type === 'tool.started' ||
+      event.type === 'tool.ended' ||
+      event.type === 'message.appended' ||
+      event.type === 'step.ended' ||
+      event.type === 'turn.ended'
+    )).toHaveLength(terminalEventCount);
+    await loop.close();
   });
 });

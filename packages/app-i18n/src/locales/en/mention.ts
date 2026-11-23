@@ -1,11 +1,13 @@
 export default {
   searching: 'Searching…',
+  searchingFor: 'Searching for “{query}”…',
   noMatch: 'No matches',
   skills: 'Skills',
   sessions: 'Sessions',
   backToMentions: 'Back',
   global: 'Global',
   builtin: 'Built-in',
+  plugin: 'Plugin',
   openSkill: 'Open skill file',
   copyPath: 'Copy path',
   attachmentUploadFailed: 'Couldn’t add attachment. Remove it or drop the file in again to retry',

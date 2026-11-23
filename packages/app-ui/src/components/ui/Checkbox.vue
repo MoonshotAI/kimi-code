@@ -19,14 +19,14 @@ const emit = defineEmits<{ 'update:modelValue': [value: boolean] }>();
       @change="emit('update:modelValue', ($event.target as HTMLInputElement).checked)"
     />
     <span class="ui-check__box" aria-hidden="true">
-      <Icon v-if="modelValue" name="check" size="md" />
+      <Icon name="check" size="md" />
     </span>
     <span v-if="$slots.default" class="ui-check__label"><slot /></span>
   </label>
 </template>
 
 <style scoped>
-.ui-check { display: inline-flex; align-items: center; gap: var(--space-2); cursor: pointer; }
+.ui-check { display: inline-flex; align-items: center; gap: var(--space-2); cursor: pointer; user-select: none; -webkit-user-select: none; }
 .ui-check.is-disabled { opacity: 0.5; cursor: not-allowed; }
 .ui-check__input { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
 .ui-check__box {
@@ -45,6 +45,7 @@ const emit = defineEmits<{ 'update:modelValue': [value: boolean] }>();
 }
 .ui-check.is-on .ui-check__box { background: var(--color-accent); border-color: var(--color-accent); }
 .ui-check__input:focus-visible + .ui-check__box { box-shadow: var(--p-focus-ring); }
-.ui-check__box svg { width: 12px; height: 12px; }
+.ui-check__box svg { width: 12px; height: 12px; visibility: hidden; }
+.ui-check.is-on .ui-check__box svg { visibility: visible; }
 .ui-check__label { font-family: var(--font-ui); font-size: var(--text-base); color: var(--color-text); }
 </style>

@@ -869,6 +869,25 @@ describe('browser overlay lifecycle', () => {
     expect(host.webContents.send).toHaveBeenLastCalledWith(IPC.browserOverlayDialogAction, { dialogId: 'annotation', action: 'confirm', value: 'Original', checked: true });
   });
 
+  it('routes the checkbox choice of a dialog without a text field and refuses forms from plain dialogs', () => {
+    const host = createHost();
+    attachBrowserOverlayWindow(host as never);
+    const view = mocks.FakeWebContentsView.instances[0]!;
+    markBrowserOverlayReady(view.webContents as never);
+    openBrowserOverlayDialog({
+      dialogId: 'global-confirm:1', title: 'Restart to update?', confirmLabel: 'Restart', cancelLabel: 'Cancel', closeLabel: 'Close',
+      checkbox: { label: 'Continue these sessions after restarting', checked: true },
+    });
+    host.webContents.send.mockClear();
+    submitBrowserOverlayForm(view.webContents as never, { requestId: 1, action: 'confirm', value: 'ignored', checked: false });
+    expect(host.webContents.send).toHaveBeenCalledExactlyOnceWith(IPC.browserOverlayDialogAction, { dialogId: 'global-confirm:1', action: 'confirm', value: undefined, checked: false });
+
+    openBrowserOverlayDialog({ dialogId: 'global-confirm:2', title: 'Delete session?', confirmLabel: 'Delete', cancelLabel: 'Cancel', closeLabel: 'Close' });
+    host.webContents.send.mockClear();
+    submitBrowserOverlayForm(view.webContents as never, { requestId: 2, action: 'confirm', value: '' });
+    expect(host.webContents.send).not.toHaveBeenCalled();
+  });
+
   it('keeps annotation native bounds stable across animated content sizes', () => {
     const host = createHost();
     attachBrowserOverlayWindow(host as never);
@@ -993,14 +1012,16 @@ it('preserves permission descriptions and model controls while rejecting invalid
     { kind: 'item', id: 'manual', label: 'Manual', description: 'Ask before making changes', selected: false, tone: 'warning' },
     { kind: 'section', id: 'provider', label: 'Provider' },
     { kind: 'choices', id: 'thinking', label: 'Thinking', value: 'effort-high', options: [{ id: 'effort-low', label: 'Low' }, { id: 'effort-high', label: 'High' }] },
-    { kind: 'note', id: 'cache', label: 'Switching models can change cached context.' },
+    { kind: 'note', id: 'cache', label: 'Switching models can change cached context.', size: 'xs' },
   ];
-  const parsed = asBrowserOverlayMenuRequest({ ...request, width: 520, items, footerStart: 2 });
-  expect(parsed).toMatchObject({ width: 520, items, footerStart: 2 });
+  const parsed = asBrowserOverlayMenuRequest({ ...request, width: 520, items, footerStart: 2, submitOnCtrlEnter: true });
+  expect(parsed).toMatchObject({ width: 520, items, footerStart: 2, submitOnCtrlEnter: true });
   expect(asBrowserOverlayMenuRequest({ ...request, width: 641, items })).toBeNull();
   expect(asBrowserOverlayMenuRequest({ ...request, items, footerStart: 5 })).toBeNull();
   expect(asBrowserOverlayMenuRequest({ ...request, items: [...items, { kind: 'item', id: 'effort-low', label: 'Duplicate' }] })).toBeNull();
   expect(asBrowserOverlayMenuRequest({ ...request, items: [{ ...items[0], description: 'x'.repeat(1025) }] })).toBeNull();
+  expect(asBrowserOverlayMenuRequest({ ...request, items: [{ kind: 'note', id: 'note', label: 'Note', size: 'large' }] })).toBeNull();
+  expect(asBrowserOverlayMenuRequest({ ...request, items, submitOnCtrlEnter: 'yes' })).toBeNull();
 });
 
 it('carries a bounded highlight query without per-item ranges', () => {

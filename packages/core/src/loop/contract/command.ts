@@ -22,15 +22,3 @@ export interface LoopInput {
   readonly historyRevision?: number;
   readonly unfinished?: UnfinishedTurn;
 }
-
-export type LoopCommand =
-  | { type: 'input.run_turn'; message: UserMessage }
-  | { type: 'input.submit'; message: UserMessage }
-  | { type: 'input.cancel'; promptId: string }
-  | { type: 'input.steer'; promptIds: readonly string[] }
-  | { type: 'input.notify'; message: UserMessage }
-  | { type: 'input.remind'; message: RemindMessage }
-  | { type: 'input.abort_tool'; toolCallId: string }
-  | { type: 'input.detach_tool'; toolCallId: string }
-  | { type: 'input.set_context'; messages: Message[] }
-  | { type: 'input.set_system_prompt'; systemPrompt: string };

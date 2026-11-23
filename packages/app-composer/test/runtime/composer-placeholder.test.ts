@@ -48,7 +48,7 @@ describe('composer placeholder overlay', () => {
       '<script>alert(1)</script>Press <kbd>Ctrl</kbd>+<kbd>S</kbd>',
     );
     expect(el.innerHTML).toBe(
-      '&lt;script&gt;alert(1)&lt;/script&gt;Press <kbd>Ctrl</kbd>+<kbd>S</kbd>',
+      '&lt;script&gt;alert(1)&lt;/script&gt;Press <kbd class="ui-kbd__key">Ctrl</kbd>+<kbd class="ui-kbd__key">S</kbd>',
     );
   });
 

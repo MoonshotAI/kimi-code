@@ -7,7 +7,51 @@ const clientApiMock: Record<string, unknown> = {};
 
 const CLOUD_CONFIG = {
   enable: true,
-  rules: [{ from: 'k3', to: 'k3-256k', hint: { en: 'Cache note.', zh: '缓存提示。' } }],
+  rules: [
+    {
+      from: 'k3',
+      to: 'k3-256k',
+      session_type: 'old',
+      hint: { en: 'Cache note.', zh: '缓存提示。' },
+      warning: { en: 'Highspeed note.', zh: '高速提示。' },
+    },
+  ],
+};
+
+const NEW_SESSION_CLOUD_CONFIG = {
+  enable: true,
+  rules: [
+    {
+      from: 'k3',
+      to: 'k3-256k',
+      session_type: 'new',
+      hint: { en: 'Highspeed note.', zh: '高速提示。' },
+      warning: { en: 'Old-session warning.', zh: '旧会话警告。' },
+    },
+  ],
+};
+
+const EFFORT_CLOUD_CONFIG = {
+  descriptions: {
+    enable: true,
+    items: {
+      low: { en: 'Light reasoning.', zh: '轻量思考。' },
+      high: { en: 'Deeper reasoning.', zh: '深入思考。' },
+      max: { en: 'Maximum reasoning.', zh: '最大思考强度。' },
+    },
+  },
+  confirm: {
+    enable: true,
+    rules: [
+      {
+        from: '*',
+        to: '*',
+        session_type: 'all',
+        hint: { en: 'Effort hint.', zh: '思考强度提示。' },
+        warning: { en: 'Effort warning.', zh: '思考强度警告。' },
+      },
+    ],
+  },
 };
 
 const CONFIG_MODELS = {
@@ -48,20 +92,6 @@ function makeSession(patch: Record<string, unknown> = {}): AppSession {
   } as unknown as AppSession;
 }
 
-function makeLocalStorage(): Storage {
-  const data = new Map<string, string>();
-  return {
-    getItem: (key) => data.get(key) ?? null,
-    setItem: (key, value) => void data.set(key, String(value)),
-    removeItem: (key) => void data.delete(key),
-    clear: () => data.clear(),
-    key: (index) => [...data.keys()][index] ?? null,
-    get length() {
-      return data.size;
-    },
-  } as Storage;
-}
-
 beforeEach(() => {
   setKimiClientDeps({ api: () => clientApiMock as unknown as KimiWebApi, t: (key) => key });
   for (const key of Object.keys(clientApiMock)) delete clientApiMock[key];
@@ -84,7 +114,7 @@ function stubEventConnection(): void {
   }));
 }
 
-async function freshGate(options: { config?: unknown } = {}) {
+async function freshGate(options: { config?: unknown; effortConfig?: unknown } = {}) {
   vi.stubGlobal('WebSocket', class {});
   vi.resetModules();
   stubEventConnection();
@@ -93,10 +123,14 @@ async function freshGate(options: { config?: unknown } = {}) {
   const { sessionsStore } = await import('../src/stores/sessions');
   const { configStore } = await import('../src/stores/config');
   const { modelSwitchConfirmStore } = await import('../src/stores/modelSwitchConfirm');
+  const { effortSwitchStore } = await import('../src/stores/effortSwitch');
   const client = useKimiWebClient();
   const msc = modelSwitchConfirmStore();
+  const effort = effortSwitchStore();
   msc.resetForTest();
+  effort.resetForTest();
   msc.config = ('config' in options ? options.config : CLOUD_CONFIG) as never;
+  effort.config = ('effortConfig' in options ? options.effortConfig : undefined) as never;
   modelsStore().setModels(MODELS as never);
   configStore().config = { models: CONFIG_MODELS } as never;
   clientApiMock.updateSession = vi.fn(async () => ({}));
@@ -107,8 +141,10 @@ async function freshGate(options: { config?: unknown } = {}) {
   return {
     client,
     msc,
+    effort,
     sessions: sessionsStore(),
     models: modelsStore(),
+    configStore: configStore(),
     updateSession: clientApiMock.updateSession as ReturnType<typeof vi.fn>,
   };
 }
@@ -130,7 +166,9 @@ describe('model switch confirm gate', () => {
     expect(gate.msc.pending).toMatchObject({
       fromModel: 'K3',
       toModel: 'K3-256k',
+      sessionType: 'old',
       hint: 'Cache note.',
+      warning: 'Highspeed note.',
     });
     expect(gate.updateSession).not.toHaveBeenCalled();
 
@@ -152,16 +190,6 @@ describe('model switch confirm gate', () => {
       'sess-1',
       expect.objectContaining({ model: 'kimi-code/k3-256k' }),
     );
-  });
-
-  it('switches directly when the session has never seen a prompt', async () => {
-    const gate = await freshGate();
-    activateSession(gate, { lastPrompt: undefined });
-
-    await gate.client.selectModel('kimi-code/k3-256k');
-
-    expect(gate.msc.pending).toBeNull();
-    expect(gate.updateSession).toHaveBeenCalled();
   });
 
   it('gates a rule-matched switch even while the session is busy', async () => {
@@ -225,20 +253,118 @@ describe('model switch confirm gate', () => {
     expect(gate.msc.pending).toBeNull();
   });
 
-  it('starts a new session, carries the draft over, and switches the draft model', async () => {
-    vi.stubGlobal('localStorage', makeLocalStorage());
-    const gate = await freshGate();
-    activateSession(gate);
-    const { draftStorageKey } = await import('@moonshot-ai/app-core/lib');
-    localStorage.setItem(draftStorageKey('sess-1'), 'draft keep me');
+  it('gates a session without prompts as a new session', async () => {
+    const gate = await freshGate({ config: NEW_SESSION_CLOUD_CONFIG });
+    activateSession(gate, { lastPrompt: undefined });
 
     const p = gate.client.selectModel('kimi-code/k3-256k');
-    gate.msc.settle('new');
-    await p;
 
-    expect(gate.sessions.activeSessionId).toBeUndefined();
-    expect(localStorage.getItem(draftStorageKey(undefined))).toBe('draft keep me');
+    expect(gate.msc.pending).toMatchObject({
+      fromModel: 'K3',
+      toModel: 'K3-256k',
+      sessionType: 'new',
+      hint: 'Highspeed note.',
+      warning: 'Old-session warning.',
+    });
+    gate.msc.settle('continue');
+    await p;
+    expect(gate.updateSession).toHaveBeenCalledWith(
+      'sess-1',
+      expect.objectContaining({ model: 'kimi-code/k3-256k' }),
+    );
+  });
+
+  it('gates a draft-model switch without an active session', async () => {
+    const gate = await freshGate({ config: NEW_SESSION_CLOUD_CONFIG });
+    gate.models.setDraftModel('kimi-code/k3');
+
+    const p = gate.client.selectModel('kimi-code/k3-256k');
+
+    expect(gate.msc.pending).toMatchObject({
+      fromModel: 'K3',
+      toModel: 'K3-256k',
+      sessionType: 'new',
+      hint: 'Highspeed note.',
+      warning: 'Old-session warning.',
+    });
+    expect(gate.models.draftModel).toBe('kimi-code/k3');
+    gate.msc.settle('continue');
+    await p;
     expect(gate.models.draftModel).toBe('kimi-code/k3-256k');
+    expect(gate.updateSession).not.toHaveBeenCalled();
+  });
+
+  it('loads missing cloud and model config before matching', async () => {
+    const gate = await freshGate({ config: undefined });
+    gate.configStore.config = null;
+    clientApiMock.getConfig = vi.fn(async () => ({ models: CONFIG_MODELS }));
+    clientApiMock.getClientConfig = vi.fn(async () => NEW_SESSION_CLOUD_CONFIG);
+    gate.models.setDraftModel('kimi-code/k3');
+
+    const p = gate.client.selectModel('kimi-code/k3-256k');
+
+    await vi.waitFor(() => {
+      expect(gate.msc.pending).toMatchObject({ sessionType: 'new', hint: 'Highspeed note.' });
+    });
+    expect(clientApiMock.getConfig).toHaveBeenCalled();
+    expect(clientApiMock.getClientConfig).toHaveBeenCalled();
+    gate.msc.settle('continue');
+    await p;
+    expect(gate.models.draftModel).toBe('kimi-code/k3-256k');
+  });
+
+  it('discards an older selection that was waiting for config', async () => {
+    const gate = await freshGate({ config: undefined });
+    activateSession(gate);
+    let release!: () => void;
+    clientApiMock.getClientConfig = vi.fn(
+      () =>
+        new Promise((resolve) => {
+          release = () => resolve(null);
+        }),
+    );
+
+    const first = gate.client.selectModel('kimi-code/k3-256k');
+    const second = gate.client.selectModel('kimi-code/k3');
+    release();
+    await Promise.all([first, second]);
+
+    expect(gate.updateSession).toHaveBeenCalledTimes(1);
+    expect(gate.updateSession).toHaveBeenCalledWith('sess-1', expect.objectContaining({ model: 'kimi-code/k3' }));
+  });
+
+  it('discards a selection when the session changes while config is loading', async () => {
+    const gate = await freshGate({ config: undefined });
+    activateSession(gate);
+    let release!: () => void;
+    clientApiMock.getClientConfig = vi.fn(
+      () =>
+        new Promise((resolve) => {
+          release = () => resolve(null);
+        }),
+    );
+
+    const selection = gate.client.selectModel('kimi-code/k3-256k');
+    activateSession(gate, { id: 'sess-2' });
+    release();
+    await selection;
+
+    expect(gate.msc.pending).toBeNull();
+    expect(gate.updateSession).not.toHaveBeenCalled();
+  });
+
+  it('treats a session with messages but no lastPrompt as old', async () => {
+    const gate = await freshGate();
+    activateSession(gate, { lastPrompt: undefined, messageCount: 3 });
+
+    const p = gate.client.selectModel('kimi-code/k3-256k');
+
+    await vi.waitFor(() => {
+      expect(gate.msc.pending).toMatchObject({ sessionType: 'old', hint: 'Cache note.' });
+    });
+    gate.msc.settle('cancel');
+    await p;
+    expect(gate.updateSession).not.toHaveBeenCalled();
   });
 
   it('switches only after the compaction completes', async () => {
@@ -401,40 +527,119 @@ describe('model switch confirm gate', () => {
     expect(gate.updateSession).not.toHaveBeenCalled();
   });
 
-  it('replaces the new-session draft wholesale and clears stale target keys', async () => {
-    vi.stubGlobal('localStorage', makeLocalStorage());
-    const gate = await freshGate();
-    activateSession(gate);
-    const { draftStorageKey, draftSnapshotStorageKey, draftAttachmentsStorageKey } = await import('@moonshot-ai/app-core/lib');
-    localStorage.setItem(draftStorageKey('sess-1'), 'fresh text');
-    localStorage.setItem(draftSnapshotStorageKey(undefined), '{"stale":true}');
-    localStorage.setItem(draftAttachmentsStorageKey(undefined), '[{"stale":true}]');
+});
 
-    const p = gate.client.selectModel('kimi-code/k3-256k');
-    gate.msc.settle('new');
-    await p;
 
-    expect(localStorage.getItem(draftStorageKey(undefined))).toBe('fresh text');
-    expect(localStorage.getItem(draftSnapshotStorageKey(undefined))).toBeNull();
-    expect(localStorage.getItem(draftAttachmentsStorageKey(undefined))).toBeNull();
+describe('effort switch confirm gate', () => {
+  function useEffortModels(gate: Gate, provider: string): void {
+    gate.models.setModels(
+      MODELS.map((model) => ({
+        ...model,
+        provider,
+        capabilities: ['thinking'],
+        supportEfforts: ['low', 'high', 'max'],
+        defaultEffort: 'high',
+      })) as never,
+    );
+  }
+
+  function useManagedModels(gate: Gate): void {
+    useEffortModels(gate, 'managed:kimi-code');
+  }
+
+  async function setCurrentHigh(gate: Gate): Promise<void> {
+    useEffortModels(gate, 'kimi-code');
+    await gate.client.setThinking('high');
+    useManagedModels(gate);
+  }
+
+  it('keeps effort unchanged on cancel and applies it on continue for an OAuth model', async () => {
+    const cancelled = await freshGate({ effortConfig: EFFORT_CLOUD_CONFIG });
+    activateSession(cancelled);
+    await setCurrentHigh(cancelled);
+
+    const cancelPending = cancelled.client.setThinking('max');
+    expect(cancelled.effort.pending).toMatchObject({
+      fromEffort: 'high',
+      toEffort: 'max',
+      sessionType: 'old',
+      hint: 'Effort hint.',
+      warning: 'Effort warning.',
+    });
+    expect(cancelled.client.thinking.value).toBe('high');
+    cancelled.effort.settle('cancel');
+    await cancelPending;
+    expect(cancelled.client.thinking.value).toBe('high');
+
+    const continued = await freshGate({ effortConfig: EFFORT_CLOUD_CONFIG });
+    activateSession(continued);
+    await setCurrentHigh(continued);
+    const continuePending = continued.client.setThinking('max');
+    continued.effort.settle('continue');
+    await continuePending;
+    expect(continued.client.thinking.value).toBe('max');
   });
 
-  it('drops the stashed new-session editor state so the migrated draft is the restore source', async () => {
-    vi.stubGlobal('localStorage', makeLocalStorage());
-    const gate = await freshGate();
+  it('switches effort directly for a non-OAuth model', async () => {
+    const gate = await freshGate({ effortConfig: EFFORT_CLOUD_CONFIG });
     activateSession(gate);
-    const { draftStorageKey, composerSessionScope } = await import('@moonshot-ai/app-core/lib');
-    const { stashEditorState, takeEditorState } = await import('../../app-composer/src/runtime/editorStateCache');
-    localStorage.setItem(draftStorageKey('sess-1'), 'migrated text');
-    const scope = composerSessionScope(undefined);
-    stashEditorState(scope, {} as Parameters<typeof stashEditorState>[1]);
+    useEffortModels(gate, 'kimi-code');
+    await gate.client.setThinking('high');
 
-    const p = gate.client.selectModel('kimi-code/k3-256k');
-    gate.msc.settle('new');
-    await p;
+    await gate.client.setThinking('max');
 
-    expect(takeEditorState(scope)).toBeUndefined();
-    expect(localStorage.getItem(draftStorageKey(undefined))).toBe('migrated text');
+    expect(gate.effort.pending).toBeNull();
+    expect(gate.client.thinking.value).toBe('max');
   });
 
+  it('shows hint and warning for a new-session effort confirmation', async () => {
+    const gate = await freshGate({ effortConfig: EFFORT_CLOUD_CONFIG });
+    activateSession(gate, { lastPrompt: undefined });
+    await setCurrentHigh(gate);
+
+    const pending = gate.client.setThinking('max');
+
+    expect(gate.effort.pending).toMatchObject({
+      sessionType: 'new',
+      hint: 'Effort hint.',
+      warning: 'Effort warning.',
+    });
+    gate.effort.settle('cancel');
+    await pending;
+    expect(gate.client.thinking.value).toBe('high');
+  });
+
+  it('uses the default OAuth model when the active session has no model yet', async () => {
+    const gate = await freshGate({ effortConfig: EFFORT_CLOUD_CONFIG });
+    activateSession(gate, { model: '' });
+    await setCurrentHigh(gate);
+    gate.models.setDefaultModel('kimi-code/k3');
+
+    const pending = gate.client.setThinking('max');
+
+    expect(gate.effort.pending).toMatchObject({ fromEffort: 'high', toEffort: 'max', sessionType: 'old' });
+    gate.effort.settle('cancel');
+    await pending;
+  });
+
+  it('discards an effort selection when the session changes while config is loading', async () => {
+    const gate = await freshGate({ effortConfig: undefined });
+    activateSession(gate);
+    await setCurrentHigh(gate);
+    let release!: () => void;
+    clientApiMock.getClientConfig = vi.fn(
+      () =>
+        new Promise((resolve) => {
+          release = () => resolve(EFFORT_CLOUD_CONFIG);
+        }),
+    );
+
+    const pending = gate.client.setThinking('max');
+    activateSession(gate, { id: 'sess-2' });
+    release();
+    await pending;
+
+    expect(gate.effort.pending).toBeNull();
+    expect(gate.client.thinking.value).toBe('high');
+  });
 });
