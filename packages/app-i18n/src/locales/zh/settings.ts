@@ -86,6 +86,8 @@ export default {
     sessionMentionsHint: "在 {'@'} 菜单中搜索并引用其他会话，agent 会自行读取被引用会话的记录",
     contextInspector: '上下文用量',
     contextInspectorHint: '在输入框圆环和会话信息中显示上下文的用量和组成，并可逐条查看模型收到的内容',
+    promptPrediction: '提示词预测',
+    promptPredictionHint: '回合完成后预测你接下来可能输入的内容，显示在输入框占位提示中，按 Tab 或右方向键填入',
   },
   plugins: {
     localOnlyHint: '插件和 MCP 服务器仅对本机项目生效，SSH 主机上的项目使用各主机自己的配置',

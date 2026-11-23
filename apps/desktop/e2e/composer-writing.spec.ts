@@ -1,6 +1,7 @@
 import { held as holdReply, say as reply } from '@moonshot-ai/testkit/model';
 import { expect, test, testWithProvider } from './fixtures/app';
 import { messageProblems, say } from './fixtures/model';
+import { closeSettings, openSettings } from './fixtures/settings';
 import { sidebarOf } from './fixtures/sessions';
 
 const LINES = ['Plan the migration:', '- move the config loader', '- rename the env flags', '- update the docs', '- keep the old flags working'];
@@ -221,5 +222,60 @@ test.describe('next-prompt placeholder recall', () => {
     await expect(transcript.getByText('Fourth answer.', { exact: true })).toBeVisible();
     await expect(placeholder).toHaveText(idlePlaceholder);
     expect(provider.requests()).toHaveLength(8);
+  });
+});
+
+test.describe('prompt prediction lab toggle', () => {
+  const idlePlaceholder = 'Type @ to reference files, or start with / for commands and skills';
+
+  testWithProvider('the lab switch gates prediction requests precisely', async ({ app, provider }) => {
+    const toggledPrediction = 'Toggle controlled prediction';
+    provider.script(
+      reply('First answer.'),
+      prediction(toggledPrediction),
+      reply('Second answer.'),
+      reply('Third answer.'),
+    );
+    const predictionRequests = () =>
+      provider.requests().filter((request) => request.texts('user').some((text) => text.includes('SUGGESTION MODE')));
+    const placeholder = app.window.locator('.composer-placeholder-overlay');
+    const transcript = app.window.getByRole('list').first();
+
+    await test.step('a completed turn with the switch off sends no prediction request', async () => {
+      await app.submit(OPENER);
+      await expect(transcript.getByText('First answer.', { exact: true })).toBeVisible();
+      await expect(placeholder).toHaveText(idlePlaceholder);
+      expect(provider.requests()).toHaveLength(1);
+      expect(predictionRequests()).toHaveLength(0);
+    });
+
+    await test.step('turning the switch on in the Lab predicts the completed turn', async () => {
+      const dialog = await openSettings(app.window, 'Lab');
+      const toggle = dialog.getByRole('switch', { name: 'Prompt prediction' });
+      await expect(toggle).toHaveAttribute('aria-checked', 'false');
+      await toggle.click();
+      await expect(toggle).toHaveAttribute('aria-checked', 'true');
+      await closeSettings(app.window);
+      const request = await provider.waitForRequest(1);
+      expect(request.texts('user').some((text) => text.includes('SUGGESTION MODE'))).toBe(true);
+      await expect(placeholder).toHaveText(toggledPrediction);
+    });
+
+    await test.step('turning the switch off hides the prediction and later turns send no prediction request', async () => {
+      const dialog = await openSettings(app.window, 'Lab');
+      const toggle = dialog.getByRole('switch', { name: 'Prompt prediction' });
+      await expect(toggle).toHaveAttribute('aria-checked', 'true');
+      await toggle.click();
+      await expect(toggle).toHaveAttribute('aria-checked', 'false');
+      await closeSettings(app.window);
+      await expect(placeholder).toHaveText(idlePlaceholder);
+      await app.submit(SECOND);
+      await expect(transcript.getByText('Second answer.', { exact: true })).toBeVisible();
+      await app.submit('Third prompt');
+      await expect(transcript.getByText('Third answer.', { exact: true })).toBeVisible();
+      await expect(placeholder).toHaveText(idlePlaceholder);
+      expect(provider.requests()).toHaveLength(4);
+      expect(predictionRequests()).toHaveLength(1);
+    });
   });
 });
