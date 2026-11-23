@@ -99,8 +99,12 @@ async function inspectPluginAuthorization(pluginId: string): Promise<PluginAutho
   );
   const statuses = capabilities.mcpServers.map((item) => {
     const inspected = inspectedByName.get(item.runtimeName);
+    const offline = offlineByName.get(item.runtimeName);
+    if (inspected === 'not-applicable' && offline === 'oauth-required') {
+      return { name: item.runtimeName, authStatus: offline };
+    }
     const authStatus = inspected === undefined || inspected === 'unavailable'
-      ? offlineByName.get(item.runtimeName) ?? 'unavailable'
+      ? offline ?? 'unavailable'
       : inspected;
     return { name: item.runtimeName, authStatus };
   });
@@ -429,7 +433,7 @@ export function useMcpAuthorization() {
           openBlocked: undefined,
           cancelled: true,
         };
-        await refresh().catch(() => undefined);
+        await refresh(target.pluginId).catch(() => undefined);
       } catch (error) {
         states[target.runtimeName] = {
           ...states[target.runtimeName],

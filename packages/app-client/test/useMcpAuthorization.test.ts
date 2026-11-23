@@ -371,29 +371,26 @@ describe('useMcpAuthorization', () => {
     expect(open).toHaveBeenCalledTimes(1);
   });
 
-  it('uses a successful inspection instead of an offline OAuth marker', async () => {
-    apiMock.getPluginInfo.mockResolvedValue({
-      skills: [],
-      mcpServers: [{
-        name: target.serverName,
-        runtimeName: target.runtimeName,
-        enabled: true,
-        transport: 'http',
-      }],
-    });
-    apiMock.getMcpAuthStatuses.mockResolvedValue([
-      { name: target.runtimeName, authStatus: 'oauth-required' },
-    ]);
-    apiMock.inspectMcpAuthStatuses.mockResolvedValue([
-      { name: target.runtimeName, authStatus: 'not-applicable' },
-    ]);
-    const auth = useMcpAuthorization();
+  it.each(['oauth-required', 'not-applicable'] as const)(
+    'honors the offline %s state when the server accepts anonymous connections',
+    async (offlineStatus) => {
+      apiMock.getPluginInfo.mockResolvedValue({
+        skills: [],
+        mcpServers: [{ name: target.serverName, runtimeName: target.runtimeName, enabled: true, transport: 'http' }],
+      });
+      apiMock.getMcpAuthStatuses.mockResolvedValue([{ name: target.runtimeName, authStatus: offlineStatus }]);
+      apiMock.inspectMcpAuthStatuses.mockResolvedValue([{ name: target.runtimeName, authStatus: 'not-applicable' }]);
+      const auth = useMcpAuthorization();
 
-    await auth.authorizePlugin('vercel');
-
-    expect(apiMock.beginMcpAuth).not.toHaveBeenCalled();
-    expect(open).not.toHaveBeenCalled();
-  });
+      await auth.refresh(target.pluginId);
+      expect(auth.states[target.runtimeName]?.status).toBe(offlineStatus);
+      expect(apiMock.beginMcpAuth).not.toHaveBeenCalled();
+      await auth.authorizePlugin(target.pluginId);
+      const expectedFlows = offlineStatus === 'oauth-required' ? 1 : 0;
+      expect(apiMock.beginMcpAuth).toHaveBeenCalledTimes(expectedFlows);
+      expect(open).toHaveBeenCalledTimes(expectedFlows);
+    },
+  );
 
   it('shares a flow across runtime names without reopening or cancelling peers', async () => {
     const completion = deferred<null>();
@@ -627,8 +624,19 @@ describe('useMcpAuthorization', () => {
       expect(auth.states[target.runtimeName]?.status).toBe('oauth-authorized');
     });
 
+    apiMock.getPluginInfo.mockResolvedValue({
+      skills: [],
+      mcpServers: [{ name: target.serverName, runtimeName: target.runtimeName, enabled: true, transport: 'http' }],
+    });
+    apiMock.getMcpAuthStatuses.mockResolvedValue([{ name: target.runtimeName, authStatus: 'not-applicable' }]);
+    apiMock.inspectMcpAuthStatuses.mockResolvedValue([{ name: target.runtimeName, authStatus: 'oauth-required' }]);
     await auth.reset(target);
 
+    expect(apiMock.inspectMcpAuthStatuses).toHaveBeenCalledWith([
+      { source: 'plugin', pluginId: target.pluginId, serverName: target.serverName },
+    ]);
+    expect(apiMock.beginMcpAuth).toHaveBeenCalledTimes(1);
+    expect(open).toHaveBeenCalledTimes(1);
     expect(apiMock.resetMcpAuth).toHaveBeenCalledWith({
       source: 'plugin',
       pluginId: 'vercel',
