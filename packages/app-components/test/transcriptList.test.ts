@@ -249,6 +249,30 @@ describe('TranscriptList', () => {
     expect(rowEl('a45')).toBe(row);
   });
 
+  it('keeps the row that owns an open dialog mounted while the dialog has focus outside the row', async () => {
+    const row = rowEl('a45')!;
+    const button = document.createElement('button');
+    const dialog = document.createElement('div');
+    dialog.id = 'reply-dialog';
+    dialog.setAttribute('role', 'dialog');
+    dialog.tabIndex = -1;
+    scroller.append(dialog);
+    button.setAttribute('aria-haspopup', 'dialog');
+    button.setAttribute('aria-controls', dialog.id);
+    button.setAttribute('aria-expanded', 'true');
+    row.append(button);
+    dialog.focus();
+    await settle();
+
+    await userScrollTo(0);
+    expect(rowEl('a45')).toBe(row);
+
+    button.setAttribute('aria-expanded', 'false');
+    rowEl('a0')!.focus();
+    await settle();
+    expect(rowEl('a45')).toBeNull();
+  });
+
   it('renders every row while renderAll is on', async () => {
     props.renderAll = true;
     await settle();

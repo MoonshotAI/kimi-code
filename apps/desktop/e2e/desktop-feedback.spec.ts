@@ -1,4 +1,4 @@
-import type { Locator } from '@playwright/test';
+import type { Locator, Page } from '@playwright/test';
 import { deferred } from '@moonshot-ai/testkit/fixtures';
 import { held, say, type FakeModel } from '@moonshot-ai/testkit/model';
 
@@ -8,6 +8,16 @@ import { sessionRowById } from './fixtures/sessions';
 import { waitForSettledReply } from './fixtures/transcript';
 
 const envelope = (data: unknown) => ({ code: 0, msg: '', data });
+
+async function openAccountMenu(page: Page): Promise<Locator> {
+  await page.locator('.user-menu-trigger').click();
+  return page.getByRole('menu').filter({ has: page.getByRole('menuitem', { name: /^Settings/ }) });
+}
+
+async function openAccountFeedback(page: Page): Promise<void> {
+  const menu = await openAccountMenu(page);
+  await menu.getByRole('menuitem', { name: 'Feedback', exact: true }).click();
+}
 
 async function expectStableEditorOnFocus(input: Locator, editor = input): Promise<void> {
   await expect(input).not.toBeFocused();
@@ -100,20 +110,24 @@ testWithProvider('submits global and reply feedback with opt-in attachments', as
   });
   await page.reload();
 
-  const feedbackButton = page.getByRole('button', { name: 'Send feedback' });
-  await feedbackButton.click();
+  await expect(page.getByRole('button', { name: 'Send feedback', exact: true })).toHaveCount(0);
+  const account = await openAccountMenu(page);
+  const preferences = account.getByRole('menuitem').filter({ hasText: /Settings|Appearance|Language|Feedback/ });
+  await expect(preferences).toHaveText([/^Settings/, /^Appearance/, /^Language/, 'Feedback']);
+  await account.getByRole('menuitem', { name: 'Feedback', exact: true }).click();
   await expect(page.getByRole('dialog', { name: 'Sign in to Kimi Code' })).toBeVisible();
   expect(feedbackRequests).toHaveLength(0);
 
   signedIn = true;
   await page.reload();
-  await feedbackButton.click();
+  await openAccountFeedback(page);
   const dialog = page.getByRole('dialog', { name: 'Send feedback' });
   const guideUrl = 'https://www.kimi.com/code/docs/en/kimi-code/feedback.html';
   await expect(dialog.getByRole('link', { name: 'Learn more', exact: true })).toHaveAttribute('href', guideUrl);
-  await expect(dialog.locator('.global-feedback-note')).toHaveText('Your feedback helps improve Kimi Code Learn more');
+  const notice = dialog.locator('.global-feedback-note');
+  await expect(notice).toHaveText('The feedback content you select and submit will be used to identify issues and improve Kimi Code. Learn more');
   await expect(dialog).toHaveCSS('width', '560px');
-  await expect(dialog).toHaveCSS('height', '484px');
+  await expect(dialog).toHaveCSS('height', '502px');
   await expect(dialog.getByRole('checkbox', { name: /Submit diagnostic logs/ })).not.toBeChecked();
   await expect(dialog.getByRole('checkbox', { name: /Submit this conversation/ })).toHaveCount(0);
   const description = dialog.getByRole('textbox', { name: 'Description' });
@@ -183,6 +197,10 @@ testWithProvider('submits global and reply feedback with opt-in attachments', as
   await replyDescription.press('Tab');
   await expectStableEditorOnFocus(replyDescription, replyEditor);
   const replySubmit = details.getByRole('button', { name: 'Submit', exact: true });
+  await expect(replySubmit).toBeDisabled();
+  const incorrect = details.getByRole('button', { name: 'Incorrect or incomplete' });
+  await incorrect.click();
+  await expect(replySubmit).toBeEnabled();
   const initialHeight = await details.evaluate(el => el.clientHeight);
   const longDescription = `${'Example feedback. '.repeat(10)}\n`.repeat(12);
   await replyDescription.fill(longDescription);
@@ -200,8 +218,7 @@ testWithProvider('submits global and reply feedback with opt-in attachments', as
   await expectVisibleCheckmark(app, details.getByRole('checkbox'));
   await replyConversationLabel.click();
   await replyDescription.fill('');
-  const incorrect = details.getByRole('button', { name: 'Incorrect or incomplete' });
-  await incorrect.click();
+  await expect(replySubmit).toBeEnabled();
   const retryDetail = 'Details to keep after a failed submission';
   await replyDescription.fill(retryDetail);
   failSubmission = true;
@@ -224,7 +241,7 @@ testWithProvider('submits global and reply feedback with opt-in attachments', as
     { path: '/api/v1/feedback/22', method: 'PATCH', body: { kind: 'cancel' } },
   ]);
 
-  await feedbackButton.click();
+  await openAccountFeedback(page);
   await dialog.getByRole('textbox', { name: 'Description' }).fill('Issue with an attachment');
   const image = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg==', 'base64');
   const picker = dialog.locator('input[type="file"]');
@@ -267,7 +284,7 @@ testWithProvider('submits global and reply feedback with opt-in attachments', as
   expect(feedbackRequests.at(-1)?.body).toMatchObject({ client: 'desktop', upload_logs: true, upload_session: false });
 
   const originalSession = await app.sessionId();
-  await feedbackButton.click();
+  await openAccountFeedback(page);
   await dialog.getByRole('button', { name: 'Feature request' }).click();
   await dialog.getByRole('button', { name: 'Cancel' }).click();
   await page.getByRole('button', { name: /^New Session/ }).first().click();
@@ -276,7 +293,7 @@ testWithProvider('submits global and reply feedback with opt-in attachments', as
   await expect(page.getByText('The next answer.', { exact: true })).toBeVisible();
   const nextSession = await app.sessionId();
   expect(nextSession).not.toBe(originalSession);
-  await feedbackButton.click();
+  await openAccountFeedback(page);
   await expect(dialog.getByRole('button', { name: 'Feature request' })).toHaveAttribute('aria-pressed', 'true');
   await dialog.getByRole('textbox', { name: 'Description' }).fill('Keep the original conversation');
   await dialog.getByRole('button', { name: 'Submit', exact: true }).click();
@@ -285,15 +302,15 @@ testWithProvider('submits global and reply feedback with opt-in attachments', as
 
   const conversationOption = dialog.getByRole('checkbox', { name: 'Submit this conversation' });
   const conversationLabel = dialog.getByText('Submit this conversation', { exact: true });
-  await feedbackButton.click();
+  await openAccountFeedback(page);
   await dialog.getByRole('textbox', { name: 'Description' }).fill('Attach the conversation I choose');
   await dialog.getByRole('button', { name: 'Cancel' }).click();
   await sessionRowById(app, originalSession).click();
   await expect(page.getByText('A completed answer.', { exact: true })).toBeVisible();
-  await feedbackButton.click();
+  await openAccountFeedback(page);
   await conversationLabel.click();
   await dialog.getByRole('button', { name: 'Cancel' }).click();
-  await feedbackButton.click();
+  await openAccountFeedback(page);
   await expect(conversationOption).toBeChecked();
   await dialog.getByRole('button', { name: 'Submit', exact: true }).click();
   await expect(receipt(25)).toBeVisible();
@@ -301,17 +318,17 @@ testWithProvider('submits global and reply feedback with opt-in attachments', as
   expect(sessionUploads).toEqual([{ path: '/api/v1/feedback/25/attachments/session', body: { session_id: originalSession } }]);
   expect(feedbackRequests.at(-1)?.body).toMatchObject({ session_id: originalSession, upload_session: true });
 
-  await feedbackButton.click();
+  await openAccountFeedback(page);
   await dialog.getByRole('textbox', { name: 'Description' }).fill('Keep the text across conversations');
   await conversationLabel.click();
   await dialog.getByRole('button', { name: 'Cancel' }).click();
   await page.getByRole('button', { name: /^New Session/ }).first().click();
-  await feedbackButton.click();
+  await openAccountFeedback(page);
   await expect(conversationOption).toHaveCount(0);
   await dialog.getByRole('button', { name: 'Cancel' }).click();
   await sessionRowById(app, nextSession).click();
   await expect(page.getByText('The next answer.', { exact: true })).toBeVisible();
-  await feedbackButton.click();
+  await openAccountFeedback(page);
   await expect(conversationOption).not.toBeChecked();
   await expect(dialog.getByRole('textbox', { name: 'Description' })).toHaveValue('Keep the text across conversations');
   await dialog.getByRole('button', { name: 'Submit', exact: true }).click();
@@ -327,7 +344,7 @@ testWithProvider('submits global and reply feedback with opt-in attachments', as
   await expect(page.getByRole('dialog', { name: 'Sign in to Kimi Code' })).toBeHidden();
   await expect(page.getByRole('button', { name: 'Good response' })).toBeVisible();
 
-  await feedbackButton.click();
+  await openAccountFeedback(page);
   await description.fill('Keep this draft if access is denied');
   await dialog.getByRole('button', { name: 'Submit', exact: true }).click();
   await expect(dialog.getByRole('alert')).toHaveText('The feedback service denied access');
@@ -397,12 +414,63 @@ async function openSshConversation(app: DesktopApp, provider: FakeModel, flags: 
   return { sessionId, requests };
 }
 
+testWithProvider('keeps reply feedback visible while scrolling the conversation', async ({ app, provider }) => {
+  const page = app.window;
+  await page.route('**/api/v1/meta', route => route.fulfill({ json: envelope({
+    server_version: '2.6.3', capabilities: {}, experimental_flags: { desktop_feedback: true },
+  }) }));
+  await page.route('**/api/v1/auth', route => route.fulfill({ json: envelope({
+    models_ready: true, providers_count: 1, managed_provider: { status: 'authenticated' },
+  }) }));
+  await page.route('**/api/v1/client-configs/feedback_form', route => route.fulfill({ status: 404 }));
+  await page.route('**/api/v1/feedback**', route => route.fulfill({ json: envelope({ feedback_id: 1 }) }));
+  await page.reload();
+  const lastLine = 'End of the example';
+  const paragraphs = Array.from({ length: 60 }, (_, i) => `Example paragraph ${i + 1}.`);
+  provider.script(say([...paragraphs, lastLine].join('\n\n')));
+  await app.submit('Write the example paragraphs');
+  await waitForSettledReply(page, lastLine);
+  const down = page.getByRole('button', { name: 'Poor response' });
+  const active = page.getByRole('button', { name: 'Remove dislike' });
+  const dialog = page.getByRole('dialog', { name: 'What could be better?' });
+  const panes = page.locator('.panes');
+  await down.click();
+  const reason = dialog.getByRole('button', { name: 'Incorrect or incomplete' });
+  await reason.click();
+  const top = (item: Locator) => item.evaluate(el => el.getBoundingClientRect().top);
+  const anchorBefore = await top(active);
+  const dialogBefore = await top(dialog);
+  await panes.evaluate(el => el.scrollBy(0, -32));
+  await expect.poll(() => top(active)).toBeGreaterThan(anchorBefore);
+  await expect.poll(() => top(dialog)).toBeGreaterThan(dialogBefore);
+  await panes.evaluate(el => el.scrollTo(0, 0));
+  await expect(active).not.toBeInViewport();
+  await expect(dialog).toBeInViewport({ ratio: 1 });
+  await expect(reason).toHaveAttribute('aria-pressed', 'true');
+  await panes.evaluate(el => el.scrollTo(0, el.scrollHeight));
+  await expect(active).toBeInViewport();
+  await expect(dialog).toBeInViewport({ ratio: 1 });
+  await page.keyboard.press('Escape');
+  await expect(dialog).toBeHidden();
+  await active.click();
+  await down.click();
+  await dialog.getByRole('button', { name: 'Close' }).click();
+  await expect(dialog).toBeHidden();
+  await active.click();
+  await down.click();
+  await expect(dialog).toBeVisible();
+  await page.getByRole('combobox', { name: 'Message input' }).click();
+  await expect(dialog).toBeHidden();
+});
+
 testWithProvider('local feedback remains available when the SSH conversation host disables it', async ({ app, provider }) => {
   const { requests } = await openSshConversation(app, provider, { local: true, remote: false });
   const page = app.window;
   await expect(page.getByRole('button', { name: 'Good response' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Poor response' })).toHaveCount(0);
-  await expect(page.getByRole('button', { name: 'Send feedback' })).toBeVisible();
+  const account = await openAccountMenu(page);
+  await expect(account.getByRole('menuitem', { name: 'Feedback', exact: true })).toBeVisible();
+  await page.keyboard.press('Escape');
   const input = page.getByRole('combobox', { name: 'Message input' });
   await input.fill('/feedback');
   await input.press('Enter');
@@ -419,7 +487,9 @@ testWithProvider('local feedback remains available when the SSH conversation hos
 testWithProvider('the SSH conversation accepts reply feedback when local feedback is disabled', async ({ app, provider }) => {
   const { sessionId, requests } = await openSshConversation(app, provider, { local: false, remote: true });
   const page = app.window;
-  await expect(page.getByRole('button', { name: 'Send feedback' })).toHaveCount(0);
+  const account = await openAccountMenu(page);
+  await expect(account.getByRole('menuitem', { name: 'Feedback', exact: true })).toHaveCount(0);
+  await page.keyboard.press('Escape');
   const input = page.getByRole('combobox', { name: 'Message input' });
   await input.fill('/');
   await expect(page.getByRole('listbox')).toBeVisible();
@@ -435,7 +505,7 @@ testWithProvider('the SSH conversation accepts reply feedback when local feedbac
 testWithProvider('attaches an SSH conversation to the locally submitted feedback', async ({ app, provider }) => {
   const { sessionId, requests } = await openSshConversation(app, provider, { local: true, remote: true });
   const page = app.window;
-  await page.getByRole('button', { name: 'Send feedback' }).click();
+  await openAccountFeedback(page);
   const dialog = page.getByRole('dialog', { name: 'Send feedback' });
   await dialog.getByRole('textbox', { name: 'Description' }).fill('Include this conversation');
   await dialog.getByText('Submit this conversation', { exact: true }).click();
@@ -446,7 +516,7 @@ testWithProvider('attaches an SSH conversation to the locally submitted feedback
   ]);
 });
 
-testWithProvider('uses the SSH host’s reason choices and accepts text while the configuration loads', async ({ app, provider }) => {
+testWithProvider('requires a reason from the SSH host before submitting reply feedback', async ({ app, provider }) => {
   const { requests } = await openSshConversation(app, provider, { local: true, remote: true });
   const page = app.window;
   const configPath = '/api/v1/client-configs/feedback_form';
@@ -474,14 +544,20 @@ testWithProvider('uses the SSH host’s reason choices and accepts text while th
     expect.soft(new URL((await read).url()).pathname).toBe(hostProxy + configPath);
     await expect(details.getByRole('button', { name: 'Incorrect or incomplete' })).toBeDisabled();
     await input.fill('Example detail');
-    await expect(submit).toBeEnabled();
+    await expect(submit).toBeDisabled();
   } finally {
     pendingReasons.resolve();
   }
   const choices = details.getByRole('group').getByRole('button');
   await expect(choices).toHaveText([remoteReason.label.en]);
   await expect(details.getByRole('link', { name: 'Learn more about what you submit' })).toHaveAttribute('href', remoteGuide);
-  await details.getByRole('button', { name: remoteReason.label.en, exact: true }).click();
+  const reason = details.getByRole('button', { name: remoteReason.label.en, exact: true });
+  await expect(submit).toBeDisabled();
+  await reason.click();
+  await expect(submit).toBeEnabled();
+  await reason.click();
+  await expect(submit).toBeDisabled();
+  await reason.click();
   await submit.click();
   await expect(details).toBeHidden();
   expect(requests.at(-1)).toEqual({
@@ -494,12 +570,14 @@ testWithProvider('uses the SSH host’s reason choices and accepts text while th
   await down.click();
   await expect(details).toBeVisible();
   await expect(details.getByRole('group').getByRole('button')).toHaveCount(0);
+  const writesBeforeTyping = requests.length;
   await input.fill('Text only');
-  await submit.click();
+  await expect(submit).toBeDisabled();
+  expect(requests).toHaveLength(writesBeforeTyping);
+  await details.getByRole('button', { name: 'Close' }).click();
   await expect(details).toBeHidden();
-  expect(requests.at(-1)?.body).toEqual({ kind: 'details', reasons: [], content: 'Text only', upload_session: false });
 
-  await page.getByRole('button', { name: 'Send feedback', exact: true }).click();
+  await openAccountFeedback(page);
   const global = page.getByRole('dialog', { name: 'Send feedback' });
   await expect(global.getByRole('link', { name: 'Learn more', exact: true })).toHaveAttribute('href', localGuide);
 });

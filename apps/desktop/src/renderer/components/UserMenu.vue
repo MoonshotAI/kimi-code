@@ -19,9 +19,11 @@ import { track } from '@moonshot-ai/app-client/contracts';
 import { openUpgrade } from '@moonshot-ai/app-core/lib';
 import { Badge, Button, Icon, Kbd, Menu, MenuItem, Spinner } from '@moonshot-ai/app-ui';
 
+defineProps<{ feedbackEnabled?: boolean }>();
 const emit = defineEmits<{
   login: [];
   openSettings: [];
+  openFeedback: [];
 }>();
 
 const { t, locale } = useI18n();
@@ -282,6 +284,11 @@ function onOpenSettings(): void {
   emit('openSettings');
 }
 
+function onOpenFeedback(): void {
+  closeMenu();
+  emit('openFeedback');
+}
+
 async function onLogout(): Promise<void> {
   closeMenu();
   await confirm({
@@ -345,6 +352,11 @@ async function onLogout(): Promise<void> {
           <MenuItem separator />
         </template>
 
+        <MenuItem @click="onOpenSettings" @mouseenter="scheduleSubmenuClose">
+          <Icon name="settings" size="sm" />
+          <span class="user-menu-item-label">{{ t('settings.title') }}</span>
+          <Kbd v-if="settingsShortcutKeys.length > 0" :keys="settingsShortcutKeys" />
+        </MenuItem>
         <MenuItem
           :ref="setRowRef('theme')"
           aria-haspopup="true"
@@ -377,10 +389,9 @@ async function onLogout(): Promise<void> {
           <span class="user-menu-row-value">{{ currentLanguageLabel }}</span>
           <Icon name="chevron-right" size="sm" />
         </MenuItem>
-        <MenuItem @click="onOpenSettings" @mouseenter="scheduleSubmenuClose">
-          <Icon name="settings" size="sm" />
-          <span class="user-menu-item-label">{{ t('settings.title') }}</span>
-          <Kbd v-if="settingsShortcutKeys.length > 0" :keys="settingsShortcutKeys" />
+        <MenuItem v-if="feedbackEnabled" @click="onOpenFeedback" @mouseenter="scheduleSubmenuClose">
+          <span class="user-menu-feedback-icon" aria-hidden="true" />
+          <span class="user-menu-item-label">{{ t('feedback.menuLabel') }}</span>
         </MenuItem>
         <template v-if="signedIn && !rcMode">
           <MenuItem separator />
@@ -619,12 +630,22 @@ html.macos-desktop.vibrancy .user-menu-avatar {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.user-menu-item-label:has(+ .user-menu-row-value) {
+  flex: 1 0 auto;
+}
+.user-menu-feedback-icon {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  background: currentColor;
+  mask: url('./feedback/assets/sidebar-feedback.svg') center / contain no-repeat;
+}
 .user-menu-login-label {
   color: var(--color-accent);
 }
 
 .user-menu-row-value {
-  flex: none;
+  flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;

@@ -1,4 +1,5 @@
 export default {
+  menuLabel: 'Feedback',
   send: 'Send feedback',
   category: 'Feedback type',
   categories: {
@@ -17,7 +18,7 @@ export default {
   dropTitle: 'Drop to add to feedback',
   dropHint: 'Images and videos, up to 5 files',
   dropFull: 'Remove an attachment before adding more',
-  dataUse: 'Your feedback helps improve Kimi Code',
+  dataUse: 'The feedback content you select and submit will be used to identify issues and improve Kimi Code.',
   submitGlobal: 'Submit',
   resubmit: 'Resubmit',
   submittingGlobal: 'Submitting…',
@@ -47,9 +48,9 @@ export default {
   undoUp: 'Remove like',
   undoDown: 'Remove dislike',
   detailTitle: 'What could be better?',
-  multipleReasons: 'Select all that apply',
+  multipleReasons: 'Select one or more',
   detail: 'Additional details',
-  detailPlaceholder: 'What went wrong, and what did you expect? Your feedback helps Kimi improve',
+  detailPlaceholder: '(Optional) What went wrong, and what did you expect? Your feedback helps Kimi improve',
   uploadConversation: 'Also submit this conversation',
   submitDetails: 'Submit',
   resubmitDetails: 'Retry',

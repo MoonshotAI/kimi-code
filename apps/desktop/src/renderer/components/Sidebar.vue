@@ -451,19 +451,13 @@ function onLogoClick(): void {
            the settings entry pinned at its right edge. -->
       <div class="side-footer" :class="{ 'side-footer--shadowed': panelRef?.sessionsCanScrollDown }">
         <div class="side-footer-account">
-          <UserMenu @login="emit('login')" @open-settings="emit('openSettings')" />
+          <UserMenu
+            :feedback-enabled="feedbackEnabled"
+            @login="emit('login')"
+            @open-settings="emit('openSettings')"
+            @open-feedback="emit('openFeedback')"
+          />
         </div>
-        <IconButton
-          v-if="feedbackEnabled"
-          class="side-feedback"
-          size="sm"
-          :label="t('feedback.send')"
-          :tooltip="t('feedback.send')"
-          tooltip-arrow
-          @click.stop="emit('openFeedback')"
-        >
-          <span class="side-feedback-icon" aria-hidden="true" />
-        </IconButton>
         <IconButton
           class="side-footer-settings"
           size="sm"
@@ -791,12 +785,6 @@ function onLogoClick(): void {
 }
 .side-footer-settings {
   flex: none;
-}
-.side-feedback { width: 24px; height: 24px; color: var(--color-send-bg); }
-.side-feedback-icon {
-  width: 16px; height: 16px;
-  background: currentColor;
-  mask: url('./feedback/assets/sidebar-feedback.svg') center / contain no-repeat;
 }
 .side-footer::before {
   content: '';

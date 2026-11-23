@@ -1,4 +1,5 @@
 export default {
+  menuLabel: '反馈',
   send: '发送反馈',
   category: '反馈类型',
   categories: {
@@ -47,9 +48,9 @@ export default {
   undoUp: '取消点赞',
   undoDown: '取消点踩',
   detailTitle: '哪里不够好？',
-  multipleReasons: '可多选',
+  multipleReasons: '至少选一项，可多选',
   detail: '补充说明',
-  detailPlaceholder: '说说哪里不好、你期望的结果是什么，你的反馈将帮助 Kimi 做得更好',
+  detailPlaceholder: '（选填）说说哪里不好、你期望的结果是什么，你的反馈将帮助 Kimi 做得更好',
   uploadConversation: '同时提交本次会话记录',
   submitDetails: '提交',
   resubmitDetails: '重新提交',

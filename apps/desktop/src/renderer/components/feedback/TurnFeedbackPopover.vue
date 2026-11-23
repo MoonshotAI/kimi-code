@@ -33,7 +33,7 @@ const includeSession = ref(false);
 const retry = ref(false);
 const countId = useId();
 const overLimit = computed(() => detail.value.length > FEEDBACK_DESCRIPTION_LIMIT);
-const canSubmit = computed(() => !props.saving && !props.updating && !overLimit.value && (selected.value.length > 0 || detail.value.trim().length > 0));
+const canSubmit = computed(() => selected.value.length > 0 && !overLimit.value && !props.saving && !props.updating);
 let observer: ResizeObserver | undefined;
 
 function measure(): void {
@@ -43,14 +43,16 @@ function measure(): void {
   if (input) scrolls.value = input.scrollHeight > Number.parseFloat(getComputedStyle(input).maxHeight);
   const anchor = props.anchor.getBoundingClientRect();
   const margin = 8;
-  const below = window.innerHeight - anchor.bottom - 2 * margin;
-  const above = anchor.top - 2 * margin;
+  const belowTop = Math.max(margin, anchor.bottom + margin);
+  const aboveBottom = Math.min(window.innerHeight - margin, anchor.top - margin);
+  const below = window.innerHeight - margin - belowTop;
+  const above = aboveBottom - margin;
   const height = panel.scrollHeight;
   const opensBelow = height <= below || (height > above && below >= above);
   const maxHeight = Math.max(1, opensBelow ? below : above);
   position.value = {
     left: Math.max(margin, Math.min(anchor.left - margin, window.innerWidth - panel.offsetWidth - margin)),
-    top: opensBelow ? anchor.bottom + margin : anchor.top - margin - Math.min(height, maxHeight),
+    top: opensBelow ? belowTop : aboveBottom - Math.min(height, maxHeight),
     maxHeight,
   };
 }
@@ -79,8 +81,8 @@ onMounted(() => {
   observer.observe(panel);
   observer.observe(props.anchor);
   if (editor.value?.el) observer.observe(editor.value.el);
-  document.addEventListener('pointerdown', outside, true);
-  document.addEventListener('scroll', outside, true);
+  document.addEventListener('click', outside, true);
+  document.addEventListener('scroll', measure, true);
   window.addEventListener('keydown', escape, true);
   window.addEventListener('resize', measure);
   void feedback?.loadForm(props.target.sessionId).then(config => {
@@ -90,8 +92,8 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   observer?.disconnect();
-  document.removeEventListener('pointerdown', outside, true);
-  document.removeEventListener('scroll', outside, true);
+  document.removeEventListener('click', outside, true);
+  document.removeEventListener('scroll', measure, true);
   window.removeEventListener('keydown', escape, true);
   window.removeEventListener('resize', measure);
   if (menu.value?.el?.contains(document.activeElement) && !props.anchor.disabled) props.anchor.focus({ preventScroll: true });
