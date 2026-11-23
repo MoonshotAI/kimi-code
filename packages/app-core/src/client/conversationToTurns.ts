@@ -521,12 +521,7 @@ function compactionTurn(item: CompactionItem, no: number): ChatTurn {
     role: 'compaction',
     no,
     text: item.summary ?? '',
-    compaction: {
-      trigger: item.trigger,
-      tokensBefore: item.tokens_before,
-      tokensAfter: item.tokens_after,
-      ...(item.instruction !== undefined ? { instruction: item.instruction } : {}),
-    },
+    compaction: { trigger: item.trigger, tokensBefore: item.tokens_before, tokensAfter: item.tokens_after },
   };
 }
 

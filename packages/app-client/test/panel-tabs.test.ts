@@ -1981,22 +1981,22 @@ it('toggles the sidebar closed when clicking an already active compaction summar
   const panel = createPanel(client);
 
   expect(panel.isCompactionPanelOpen('c1')).toBe(false);
-  panel.toggleCompactionPanel({ turnId: 'c1' });
+  panel.openCompactionPanel({ turnId: 'c1' });
   expect(panel.panelVisible.value).toBe(true);
   expect(panel.isCompactionPanelOpen('c1')).toBe(true);
 
-  panel.toggleCompactionPanel({ turnId: 'c2' });
+  panel.openCompactionPanel({ turnId: 'c2' });
   expect(panel.panelVisible.value).toBe(true);
   expect(panel.isCompactionPanelOpen('c1')).toBe(false);
   expect(panel.isCompactionPanelOpen('c2')).toBe(true);
 
   panel.openTab('file', { path: '/a.ts' });
   expect(panel.isCompactionPanelOpen('c2')).toBe(false);
-  panel.toggleCompactionPanel({ turnId: 'c2' });
+  panel.openCompactionPanel({ turnId: 'c2' });
   expect(panel.panelVisible.value).toBe(true);
   expect(panel.isCompactionPanelOpen('c2')).toBe(true);
 
-  panel.toggleCompactionPanel({ turnId: 'c2' });
+  panel.openCompactionPanel({ turnId: 'c2' });
   expect(panel.panelVisible.value).toBe(false);
   expect(panel.isCompactionPanelOpen('c2')).toBe(false);
 });

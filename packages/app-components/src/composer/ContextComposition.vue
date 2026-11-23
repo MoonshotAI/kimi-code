@@ -11,10 +11,8 @@ const props = withDefaults(defineProps<{
   ctxMax?: number;
   size?: 'compact' | 'expanded';
   selectedRoles?: readonly string[];
-  compacting?: boolean;
 }>(), {
   size: 'compact',
-  compacting: false,
 });
 
 const emit = defineEmits<{
@@ -69,7 +67,7 @@ const rows = computed(() => {
 </script>
 
 <template>
-  <div class="ctx-composition" :class="[`is-${size}`, { 'is-compacting': compacting }]">
+  <div class="ctx-composition" :class="`is-${size}`">
     <div v-if="usage" class="ctx-usage">
       <span class="ctx-usage-headline">{{ usage.headline }}</span>
       <span class="ctx-usage-trailing">
@@ -160,31 +158,10 @@ const rows = computed(() => {
 }
 
 .ctx-composition-bar {
-  position: relative;
   display: flex;
   gap: 1px;
   height: var(--space-1-5);
   overflow: hidden;
-  contain: paint;
-  border-radius: 1px;
-}
-.is-compacting .ctx-composition-bar::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background: var(--ctx-compacting-sheen);
-  transform: translateX(-100%);
-  animation: ctx-bar-sweep 1.5s var(--ease-in-out) infinite;
-  pointer-events: none;
-}
-@keyframes ctx-bar-sweep {
-  0% { transform: translateX(-100%); }
-  100% { transform: translateX(100%); }
-}
-@media (prefers-reduced-motion: reduce) {
-  .is-compacting .ctx-composition-bar::after {
-    animation: none;
-  }
 }
 .ctx-composition-seg,
 .ctx-composition-free {

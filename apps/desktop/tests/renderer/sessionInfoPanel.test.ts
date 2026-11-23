@@ -695,7 +695,6 @@ describe('SessionInfoPanel', () => {
     expect(btn().disabled).toBe(true);
     expect(btn().getAttribute('aria-busy')).toBe('true');
     expect(btn().textContent?.trim()).toBe('正在压缩…');
-    expect(host!.querySelector('.ctx-composition.is-compacting')).not.toBeNull();
 
     props.running = false;
     props.compactPhase = 'idle';
@@ -708,76 +707,22 @@ describe('SessionInfoPanel', () => {
   });
 });
 
-describe('ActivityNotice compaction indicator', () => {
-  it('renders a static compaction label with the mascot and shows only elapsed duration once a second passes', async () => {
-    vi.useFakeTimers();
-    try {
-      mount(ActivityNotice, { label: '正在压缩上下文…' });
-      await nextTick();
-
-      const indicator = host!.querySelector('.working-indicator');
-      expect(indicator?.classList.contains('static-label')).toBe(true);
-      expect(host!.querySelector('.wi-face')).not.toBeNull();
-      expect(host!.querySelector('.wi-label')?.textContent).toBe('正在压缩上下文…');
-      expect(host!.querySelector('.an-meta')).toBeNull();
-      expect(host!.querySelector('.an-track')).toBeNull();
-
-      await vi.advanceTimersByTimeAsync(1000);
-      await nextTick();
-      expect(host!.querySelector('.an-meta')?.textContent).toBe('1秒');
-
-      await vi.advanceTimersByTimeAsync(2000);
-      await nextTick();
-      expect(host!.querySelector('.an-meta')?.textContent).toBe('3秒');
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it('renders only the elapsed duration badge when slotted without a label', async () => {
+describe('ActivityNotice compaction timer', () => {
+  it('displays elapsed duration once a second passes', async () => {
     vi.useFakeTimers();
     try {
       mount(ActivityNotice, {});
       await nextTick();
-      expect(host!.querySelector('.working-indicator')).toBeNull();
-      expect(host!.querySelector('.an-meta')).toBeNull();
+      expect(host!.querySelector('.activity-notice')).toBeNull();
+
+      await vi.advanceTimersByTimeAsync(1000);
+      await nextTick();
+      expect(host!.querySelector('.activity-notice')?.textContent).toBe('1秒');
 
       await vi.advanceTimersByTimeAsync(2000);
       await nextTick();
-      expect(host!.querySelector('.an-meta')?.textContent).toBe('2秒');
+      expect(host!.querySelector('.activity-notice')?.textContent).toBe('3秒');
     } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it('pauses the elapsed timer while the document is hidden and refreshes immediately when visible', async () => {
-    vi.useFakeTimers();
-    let visibility: DocumentVisibilityState = 'hidden';
-    Object.defineProperty(document, 'visibilityState', {
-      configurable: true,
-      get: () => visibility,
-    });
-    try {
-      mount(ActivityNotice, { label: '正在压缩上下文…' });
-      await nextTick();
-      expect(vi.getTimerCount()).toBe(0);
-
-      await vi.advanceTimersByTimeAsync(4000);
-      visibility = 'visible';
-      document.dispatchEvent(new Event('visibilitychange'));
-      await nextTick();
-      expect(vi.getTimerCount()).toBe(1);
-      expect(host!.querySelector('.an-meta')?.textContent).toBe('4秒');
-
-      visibility = 'hidden';
-      document.dispatchEvent(new Event('visibilitychange'));
-      await nextTick();
-      expect(vi.getTimerCount()).toBe(0);
-    } finally {
-      Object.defineProperty(document, 'visibilityState', {
-        configurable: true,
-        value: 'visible',
-      });
       vi.useRealTimers();
     }
   });

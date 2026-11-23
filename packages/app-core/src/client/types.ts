@@ -213,13 +213,6 @@ export interface TurnAttachment {
   mediaOrdinal?: number;
 }
 
-export interface CompactionTurnData {
-  trigger?: 'manual' | 'auto';
-  instruction?: string;
-  tokensBefore?: number;
-  tokensAfter?: number;
-}
-
 export interface ChatTurn {
   id: string;
   clientMetadata?: readonly Readonly<Record<string, unknown>>[];
@@ -241,7 +234,7 @@ export interface ChatTurn {
   daemonTurnState?: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
   attachments?: TurnAttachment[];
   inlineAttachments?: TurnAttachment[];
-  compaction?: CompactionTurnData;
+  compaction?: { trigger?: 'manual' | 'auto'; tokensBefore?: number; tokensAfter?: number };
   createdAt?: string;
   endedAt?: string;
   durationMs?: number;

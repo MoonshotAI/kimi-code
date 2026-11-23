@@ -2080,7 +2080,6 @@ function streamingTailIndex(turn: ChatTurn): number | null {
 }
 .cd-line {
   flex: 1;
-  min-width: var(--space-4);
   height: 1px;
   background: var(--line);
 }
@@ -2096,7 +2095,6 @@ function streamingTailIndex(turn: ChatTurn): number | null {
 }
 .cd-card {
   appearance: none;
-  flex: none;
   display: inline-flex;
   align-items: center;
   gap: 7px;
@@ -2105,20 +2103,11 @@ function streamingTailIndex(turn: ChatTurn): number | null {
   border: var(--p-hairline) solid var(--color-line);
   border-radius: var(--radius-md);
   background: var(--color-bg);
-  font-family: var(--font-ui);
-  font-size: var(--text-xs);
-  line-height: 1.25;
+  font: var(--text-xs)/1.25 var(--font-ui);
   color: var(--color-text-muted);
-  text-align: left;
   white-space: nowrap;
-  box-sizing: border-box;
-  transition:
-    background-color var(--duration-fast) var(--ease-out),
-    border-color var(--duration-fast) var(--ease-out),
-    transform var(--duration-fast) var(--ease-out);
 }
 .cd-chip {
-  flex: none;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -2128,21 +2117,14 @@ function streamingTailIndex(turn: ChatTurn): number | null {
   background: color-mix(in srgb, var(--color-context-compaction) 13%, transparent);
   color: var(--color-context-compaction);
 }
-.cd-chip :deep(svg) {
-  width: 12px;
-  height: 12px;
-}
 .cd-title {
   color: var(--color-text);
   font-weight: var(--weight-medium);
 }
 .cd-tokens {
-  color: var(--color-text-muted);
   font-variant-numeric: tabular-nums;
 }
 .cd-saved {
-  display: inline-flex;
-  align-items: center;
   padding: 1px 5px;
   border-radius: var(--radius-xs);
   background: var(--color-success-soft);
@@ -2150,22 +2132,10 @@ function streamingTailIndex(turn: ChatTurn): number | null {
   font-size: 11px;
   font-weight: var(--weight-medium);
   font-variant-numeric: tabular-nums;
-  line-height: 1.3;
 }
 .cd-chevron {
-  flex: none;
   display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  margin-left: 1px;
   color: var(--color-text-faint);
-  transition:
-    color var(--duration-fast) var(--ease-out),
-    transform var(--duration-fast) var(--ease-out);
-}
-.cd-chevron :deep(svg) {
-  width: 12px;
-  height: 12px;
 }
 .cd-btn {
   cursor: pointer;
@@ -2177,15 +2147,8 @@ function streamingTailIndex(turn: ChatTurn): number | null {
 .cd-card.cd-open {
   border-color: var(--color-line-strong);
 }
-.cd-card.cd-btn:hover .cd-chevron {
-  color: var(--color-text-muted);
-  transform: translateX(1.5px);
-}
 .cd-card.cd-open .cd-chevron {
   color: var(--color-text);
-}
-.cd-card.cd-btn:active {
-  transform: translateY(0.5px);
 }
 .cd-card.cd-btn:focus-visible {
   outline: 2px solid var(--color-accent);

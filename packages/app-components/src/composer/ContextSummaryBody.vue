@@ -55,12 +55,7 @@ const compactLabel = computed(() => {
 <template>
   <div class="ctx-summary">
     <div class="ctx-summary-body" :class="{ 'is-refreshing': loading && snapshot }">
-      <ContextComposition
-        :snapshot="snapshot"
-        :ctx-used="ctxUsed"
-        :ctx-max="ctxMax"
-        :compacting="compactPhase === 'compacting'"
-      />
+      <ContextComposition :snapshot="snapshot" :ctx-used="ctxUsed" :ctx-max="ctxMax" />
       <div v-if="loading && !snapshot" class="ctx-summary-loading">
         <Spinner size="sm" />
       </div>

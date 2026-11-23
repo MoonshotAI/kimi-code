@@ -254,7 +254,6 @@ html[data-color-scheme="dark"] {
   --space-6: 24px;
   --space-8: 32px;
   --radius-context-segment: 2px;
-  --ctx-compacting-sheen: linear-gradient(90deg, transparent, color-mix(in srgb, var(--color-bg) 55%, transparent), transparent);
   --browser-annotation-label-max-width: 360px;
   --browser-annotation-popover-width: 26rem;
   --browser-annotation-popover-preview-height: 180px;

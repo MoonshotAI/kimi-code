@@ -1,6 +1,5 @@
 export default {
   compactionUnavailable: '摘要内容尚未加载，请在对话中加载相应的历史记录。',
-  compactionInstruction: '压缩重点',
   terminalRestoreFailed: '无法创建终端',
   closeOthers: '关闭其他标签页',
   closeToRight: '关闭右侧标签页',

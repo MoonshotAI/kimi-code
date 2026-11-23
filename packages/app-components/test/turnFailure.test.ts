@@ -232,53 +232,23 @@ describe('ChatPane compaction checkpoint card', () => {
 });
 
 describe('CompactionPanel', () => {
-  it('renders clean markdown body without redundant header chrome and strips legacy system wrappers', async () => {
+  it('strips legacy wrappers, renders markdown, and shows EmptyState when unavailable', async () => {
+    const state = reactive({
+      text: 'The conversation so far has been compacted to free up context. What follows is your own working summary.\n\n## Handoff\n- Updated `src/App.vue`\n\n<system-reminder>wire pointer</system-reminder>' as string | null,
+    });
     app = createApp({
       setup() {
-        return () =>
-          h(CompactionPanel, {
-            turnId: 'c1',
-            text: 'The conversation so far has been compacted to free up context. What follows is your own working summary.\n\n## Handoff\n- Updated `src/App.vue`\n\n<system-reminder>wire pointer</system-reminder>',
-            compaction: {
-              trigger: 'manual',
-              tokensBefore: 143360,
-              tokensAfter: 100352,
-            },
-            cwd: '/workspace',
-          });
+        return () => h(CompactionPanel, { turnId: 'c1', text: state.text, cwd: '/workspace' });
       },
     });
     app.use(createKimiI18n({ locale: 'zh' }));
     app.mount(host);
     await nextTick();
 
-    expect(host.querySelector('.cp-focus')).toBeNull();
     const bodyText = host.querySelector('.cp-doc .msg')?.textContent ?? '';
     expect(bodyText).toContain('## Handoff');
     expect(bodyText).not.toContain('The conversation so far has been compacted');
     expect(bodyText).not.toContain('system-reminder');
-  });
-
-  it('shows custom instruction line only when provided and EmptyState when summary text is unavailable', async () => {
-    const state = reactive({
-      text: 'Summary body' as string | null,
-      instruction: 'Keep database schema constraints' as string | undefined,
-    });
-    app = createApp({
-      setup() {
-        return () =>
-          h(CompactionPanel, {
-            turnId: 'c1',
-            text: state.text,
-            compaction: { trigger: 'manual', instruction: state.instruction },
-          });
-      },
-    });
-    app.use(createKimiI18n({ locale: 'zh' }));
-    app.mount(host);
-    await nextTick();
-
-    expect(host.querySelector('.cp-focus-text')?.textContent).toBe('Keep database schema constraints');
 
     state.text = null;
     await nextTick();
