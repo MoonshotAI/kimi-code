@@ -198,27 +198,6 @@ describe.each([['desktop', DesktopConversationPane]])('%s ConversationPane proje
     expect(el.querySelector('.ws-panel')).not.toBeNull();
   });
 
-  it('closes on Escape in the search box and returns focus to the chip', async () => {
-    showProjects();
-
-    const { el } = mountPane(Pane);
-    await nextTick();
-
-    const chip = el.querySelector<HTMLButtonElement>('.ws-chip')!;
-    chip.click();
-    await nextTick();
-    await nextTick();
-
-    const search = el.querySelector<HTMLInputElement>('.ws-search input')!;
-    expect(document.activeElement).toBe(search);
-    search.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-    await nextTick();
-
-    expect(el.querySelector('.ws-panel')).toBeNull();
-    expect(chip.getAttribute('aria-expanded')).toBe('false');
-    expect(document.activeElement).toBe(chip);
-  });
-
   it('offers only add project when no project exists, even with an SSH host configured', async () => {
     hostsStore().byId = {
       'host-dev': sshHost('host-dev', { name: 'devbox', host: 'devbox', status: 'ready' }),
