@@ -117,7 +117,7 @@ export class LegacyExecutableToolAdapter<Input = unknown>
       return {
         type: 'synthetic',
         prepared: { kind: 'synthetic', result, durationMs: 0 },
-        result: legacyResult(result, this.name),
+        result: { ...legacyResult(result, this.name), durationMs: 0 },
       };
     }
     return {
@@ -139,7 +139,9 @@ export class LegacyExecutableToolAdapter<Input = unknown>
     context: ToolExecuteContext<Input, LegacyToolAgentContext, LegacyToolFields, LegacyToolPreparation>,
   ): Promise<ToolReturn> {
     const prepared = context.prepared;
-    if (prepared.kind === 'synthetic') return legacyResult(prepared.result, this.name);
+    if (prepared.kind === 'synthetic') {
+      return { ...legacyResult(prepared.result, this.name), durationMs: prepared.durationMs };
+    }
     const execution = prepared.execution;
     const startedAt = this.now();
     prepared.startedAt = startedAt;
@@ -170,7 +172,7 @@ export class LegacyExecutableToolAdapter<Input = unknown>
       }
       const finalized = await this.finalize(context.call.id, coerceLegacyResult(result, this.name));
       prepared.result = finalized;
-      return legacyResult(finalized, this.name);
+      return { ...legacyResult(finalized, this.name), durationMs: prepared.durationMs };
     } finally {
       prepared.durationMs ??= Math.max(0, this.now() - startedAt);
       const cancellation = prepared.cancellation;
@@ -184,21 +186,30 @@ export class LegacyExecutableToolAdapter<Input = unknown>
   stopping(context: ToolStoppingContext<LegacyToolFields, LegacyToolPreparation>): void {
     const prepared = context.snapshot().prepared;
     if (prepared?.kind !== 'execute') {
-      context.abandon();
+      context.abandon(undefined, prepared?.durationMs ?? 0);
       return;
     }
     prepared.execution.stopping?.({
       reason: context.reason,
-      abandon: (result) => context.abandon(result === undefined ? undefined : legacyResult(result, this.name)),
+      abandon: (result) => {
+        context.abandon(
+          result === undefined ? undefined : legacyResult(result, this.name),
+          this.measure(prepared),
+        );
+      },
     });
     const cancellation = prepared.cancellation ??= {};
     cancellation.timer = setTimeout(() => {
       cancellation.timer = undefined;
-      if (prepared.startedAt !== undefined) {
-        prepared.durationMs ??= Math.max(0, this.now() - prepared.startedAt);
-      }
-      context.abandon();
+      context.abandon(undefined, this.measure(prepared));
     }, LEGACY_ABORT_GRACE_MS);
+  }
+
+  private measure(prepared: Extract<LegacyToolPreparation, { kind: 'execute' }>): number {
+    prepared.durationMs ??= prepared.startedAt === undefined
+      ? 0
+      : Math.max(0, this.now() - prepared.startedAt);
+    return prepared.durationMs;
   }
 
   private async finalize(
