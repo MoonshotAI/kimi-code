@@ -14,6 +14,10 @@ export class FileWriteError extends Error {
 const forbidden = () => new FileWriteError(ErrorCode.FS_WRITE_NOT_ALLOWED, 'Writing this file is not allowed');
 const changed = () => new FileWriteError(ErrorCode.FS_CONTENT_CHANGED, 'File changed since it was opened; reload before saving');
 
+function hasFsCode(error: unknown, code: string): boolean {
+  return typeof error === 'object' && error !== null && 'code' in error && error.code === code;
+}
+
 export class WritableHostFiles {
   private readonly allowed: ReadonlySet<string>;
   private pending: Promise<unknown> = Promise.resolve();
@@ -30,8 +34,8 @@ export class WritableHostFiles {
   }
 
   private async replaceChecked(path: string, content: string, revision: string): Promise<{ revision: string }> {
-    const original = await lstat(path).catch((err: NodeJS.ErrnoException) => {
-      if (err.code === 'ENOENT') return null;
+    const original = await lstat(path).catch((err: unknown) => {
+      if (hasFsCode(err, 'ENOENT')) return null;
       throw err;
     });
     if (original && !original.isFile()) throw forbidden();
@@ -63,13 +67,15 @@ export class WritableHostFiles {
         }
         await rename(tmp, path);
       } else {
-        await link(tmp, path).catch((err: NodeJS.ErrnoException) => {
-          if (err.code === 'EEXIST') throw changed();
+        await link(tmp, path).catch((err: unknown) => {
+          if (hasFsCode(err, 'EEXIST')) throw changed();
           throw err;
         });
       }
     } finally {
-      await unlink(tmp).catch((err: NodeJS.ErrnoException) => { if (err.code !== 'ENOENT') throw err; });
+      await unlink(tmp).catch((err: unknown) => {
+        if (!hasFsCode(err, 'ENOENT')) throw err;
+      });
     }
     return { revision: sha256Hex(bytes) };
   }

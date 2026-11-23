@@ -81,7 +81,7 @@ describe('PUT /api/v1/fs:content', () => {
     expect((await put(file, 'new', digest('older'))).status).toBe(412);
     expect(await readFile(file, 'utf8')).toBe('edited');
     const results = await Promise.all(['one', 'two'].map(text => put(file, text, digest('edited'))));
-    expect(results.map(r => r.status).sort()).toEqual([200, 412]);
+    expect(results.map(r => r.status).toSorted()).toEqual([200, 412]);
   });
 
   it('requires a revision, authenticated request and text payload', async () => {
