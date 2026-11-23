@@ -1,0 +1,5 @@
+{
+  "extends": "../../tsconfig.json",
+  "include": ["playwright.config.ts", "support/**/*.ts", "surfaces/**/*.ts", "scenarios/**/*.ts", "self-test/**/*.ts"],
+  "exclude": ["node_modules"]
+}

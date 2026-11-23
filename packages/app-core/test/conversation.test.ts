@@ -92,6 +92,31 @@ const project = (turns: ConversationTurn[]): ChatTurn[] =>
 
 const toolsOf = (turns: ChatTurn[]) => turns.flatMap((chatTurn) => chatTurn.tools ?? []);
 
+describe('chat MCP authorization', () => {
+  const request = { serverName: 'example', waitId: 'wait-1', authorizationUrl: 'https://example.test/authorize?state=test', expiresAt: 2_000_000_000_000 };
+  const display = { kind: 'generic', summary: 'Authenticate example', detail: { kind: 'mcp_oauth', serverName: 'example' } };
+  const call = tool('auth-1', { ...running, name: 'mcp__example__authenticate', input: {}, output: undefined, stage: 'executing', display });
+  const start: ConversationView = { turns: [turn(0, [opener('p0', 'use example'), call], running)], hasMore: false };
+  const fields = { 'mcp.oauth.authorization_url': request };
+
+  it('exposes the action before output arrives and drops it when the tool ends', () => {
+    const waiting = applyConversationFrame(start, { type: 'item.updated', turn_id: 't0', item_id: 'auth-1', set: { fields } });
+    expect(toolsOf(project(waiting.turns.slice()))[0]?.mcpAuth).toMatchObject({ phase: 'waiting', request });
+    const ended = applyConversationFrame(waiting, { type: 'item.ended', turn_id: 't0', item: { ...call, status: 'ended', outcome: 'completed' } });
+    expect(toolsOf(project(ended.turns.slice()))[0]?.mcpAuth).toEqual({ phase: 'connected', serverName: 'example' });
+  });
+
+  it.each(['file:///tmp/auth', 'http://example.test/authorize', 'https://user:pass@example.test', 'javascript:void(0)'])('rejects an unsafe authorization URL: %s', (authorizationUrl) => {
+    const item = { ...call, fields: { 'mcp.oauth.authorization_url': { ...request, authorizationUrl } } };
+    expect(toolsOf(project([turn(0, [item], running)]))[0]?.mcpAuth).toEqual({ serverName: 'example', phase: 'unavailable' });
+  });
+
+  it('does not turn tool names, output or model arguments into an authorization action', () => {
+    const untrusted = { ...call, fields, display: undefined, input: display, output: request.authorizationUrl };
+    expect(toolsOf(project([turn(0, [untrusted], running)]))[0]?.mcpAuth).toBeUndefined();
+  });
+});
+
 describe('conversation reducer', () => {
   it('applies turn and item frames while keeping untouched turns by identity', () => {
     const first = turn(0, [opener('p0', 'hello'), answer('s0:0', 'hi')]);
@@ -242,7 +267,7 @@ describe('conversationToTurns', () => {
 
     expect(turns.map((value) => value.role)).toEqual(['user', 'assistant']);
     expect(turns[0]).toMatchObject({ id: 'p0', text: 'Check the build', promptIds: ['p0'] });
-    expect(turns[1]).toMatchObject({ daemonTurnId: 7, forkTurnIndex: 7, daemonTurnState: 'completed', thinking: 'thinking' });
+    expect(turns[1]).toMatchObject({ daemonTurnId: 7, forkTurnIndex: 7, daemonTurnState: 'completed', thinking: 'thinking', sourceTurnId: 't0' });
     expect(turns[1]?.tools).toEqual([expect.objectContaining({ id: 'call-1', name: 'Bash', status: 'ok', output: ['ok'] })]);
   });
 
@@ -576,10 +601,11 @@ describe('conversationToTurns', () => {
     expect(turns[1]?.blocks?.map((block) => [block.kind, block.kind === 'text' ? block.final === true : undefined])).toEqual([
       ['text', false], ['tool', undefined], ['text', true],
     ]);
+    expect(turns[1]).toMatchObject({ sourceTurnId: 't0', sourceReplyId: 'a1' });
     expect(turns[2]).toMatchObject({ steered: true, steerPhase: 'injected', promptIds: ['p1'], undoTurnId: undefined });
     expect(turns[0]).toMatchObject({ undoTurnId: 't0' });
     expect(turns[3]?.blocks?.map((block) => block.kind)).toEqual(['text', 'notification', 'text']);
-    expect(turns[3]).toMatchObject({ daemonTurnId: 1, forkTurnIndex: 2 });
+    expect(turns[3]).toMatchObject({ daemonTurnId: 1, forkTurnIndex: 2, sourceTurnId: 't1', sourceReplyId: 'a3' });
   });
 
   it('reads the subagent id of an agent call from its refs or its persisted result', () => {
@@ -618,7 +644,16 @@ describe('conversationToTurns', () => {
       turn(1, [answer('a1', 'more', 'running')], running),
     ]);
 
-    expect(reply).toMatchObject({ daemonTurnId: 1, forkTurnIndex: 2, daemonTurnState: 'running' });
+    expect(reply).toMatchObject({ daemonTurnId: 1, forkTurnIndex: 2, daemonTurnState: 'running', sourceTurnId: 't1' });
+  });
+
+  it('associates feedback with the body-producing turn when a later turn has only activity', () => {
+    const [, reply] = project([
+      turn(0, [opener('p0', 'go'), answer('a0', 'the answer')]),
+      turn(1, [tool('follow-up-tool')]),
+    ]);
+
+    expect(reply).toMatchObject({ sourceTurnId: 't0', forkTurnIndex: 2 });
   });
 
   it('carries the request debug of an item onto its block and keeps both when blocks merge', () => {

@@ -2,6 +2,7 @@ export const IPC = {
   theme: 'kimi:theme',
   openExternal: 'kimi:open-external',
   writeClipboardText: 'kimi:write-clipboard-text',
+  collectFeedbackDiagnostics: 'kimi:feedback-diagnostics-collect',
   failureToast: 'kimi:failure-toast',
   serverCredential: 'kimi:server-credential',
   dialogOpen: 'kimi:dialog-open',

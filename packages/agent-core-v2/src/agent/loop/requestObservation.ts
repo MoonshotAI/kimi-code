@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { isManagedKimiCodeBaseUrl } from '@moonshot-ai/kimi-code-oauth';
 
 import { ILogService, type LogContext } from '#/_base/log/log';
 import { isAbortError } from '#/_base/utils/abort';
@@ -125,7 +126,15 @@ export class AgentLoopRequestObserver {
   setRequestId(source: AgentLLMRequestSource, requestId: string | undefined, active = true): void {
     if (source.type !== 'turn') return;
     this.telemetry.setContext({ request_id: active ? requestId : undefined });
-    this.attribution.noteActiveRequest(this.scopeContext.agentId, requestId, active);
+    this.attribution.noteActiveRequest(this.scopeContext.agentId, requestId, active, source);
+  }
+
+  noteModel(request: ResolvedRequestContext): void {
+    const { source, model } = request;
+    if (source.type !== 'turn' || source.step === undefined) return;
+    this.attribution.noteModel(this.scopeContext.agentId, source.turnId, source.step, {
+      model: model.spec.name, provider: model.protocol, isKfc: isManagedKimiCodeBaseUrl(model.endpoint.baseUrl),
+    });
   }
 
   recordAttempt(
@@ -571,6 +580,7 @@ export class AgentRequestObservation {
 
   prepare(context: ResolvedRequestContext): void {
     this.context = context;
+    this.observer.noteModel(context);
   }
 
   get currentRequestId(): string | undefined {

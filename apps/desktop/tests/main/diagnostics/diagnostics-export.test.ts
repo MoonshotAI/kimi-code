@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdir, mkdtemp, readdir, utimes, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, symlink, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -16,7 +16,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('electron', () => ({
-  app: { getPath: (name: 'downloads' | 'temp') => mocks.paths[name], getLocale: () => 'en-US' },
+  app: { getPath: (name: 'downloads' | 'temp') => mocks.paths[name], getLocale: () => 'en-US', getVersion: () => '1.2.3' },
   dialog: { showMessageBox: mocks.showMessageBox, showErrorBox: vi.fn() },
   shell: { showItemInFolder: mocks.showItemInFolder, openPath: mocks.openPath },
 }));
@@ -25,6 +25,7 @@ vi.mock('../../../src/main/window/main-window', () => ({ getMainWindow: () => mo
 
 import {
   collectDiagnosticsEntries,
+  collectFeedbackDiagnosticsArchive,
   diagnosticsFileName,
   exportDiagnostics,
   openLogsFolder,
@@ -150,6 +151,38 @@ describe('diagnosticsFileName', () => {
   it('stamps the archive with the local time', () => {
     expect(diagnosticsFileName(new Date(2026, 9, 29, 8, 5, 9))).toBe('kimi-code-diagnostics-20261029-080509.zip');
   });
+});
+
+it('collects only the selected feedback diagnostic scope and cleans the temporary archive', async () => {
+  const home = await seedHome();
+  vi.stubEnv('KIMI_CODE_HOME', home);
+  const logs = join(home, 'logs');
+  await symlink(join(logs, 'feedback-upload.log'), join(logs, 'kimi-code.log.3'), 'file');
+  await mkdir(join(logs, 'kimi-code.log.4'));
+
+  const archive = await collectFeedbackDiagnosticsArchive();
+  expect(await readdir(mocks.paths.temp)).toEqual([]);
+  const path = join(mocks.paths.downloads, archive.fileName);
+  await writeFile(path, new Uint8Array(archive.bytes));
+  const zip = await readZip(path);
+
+  expect([...zip.keys()]).toEqual([
+    'logs/kimi-code-desktop.log', 'logs/kimi-code-desktop.log.1', 'logs/kimi-code.log', 'logs/kimi-code.log.2', 'diagnostics.json',
+  ]);
+  expect(JSON.parse(zip.get('diagnostics.json') ?? '')).toMatchObject({ version: '1.2.3', platform: process.platform });
+});
+
+it('omits logs when the feedback log directory is a symbolic link', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'kimi-export-home-'));
+  const source = join(home, 'sample-logs');
+  await put(join(source, 'kimi-code.log'), 'local sample');
+  await symlink(source, join(home, 'logs'), 'junction');
+  vi.stubEnv('KIMI_CODE_HOME', home);
+
+  const archive = await collectFeedbackDiagnosticsArchive();
+  const path = join(mocks.paths.downloads, archive.fileName);
+  await writeFile(path, new Uint8Array(archive.bytes));
+  expect([...(await readZip(path)).keys()]).toEqual(['diagnostics.json']);
 });
 
 describe('exportDiagnostics', () => {

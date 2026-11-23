@@ -1,11 +1,12 @@
 name: E2E smoke
 
+# Automatic triggers are temporarily disabled while the E2E suite is replaced.
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-  pull_request:
-  merge_group:
+  # push:
+  #   branches: [main]
+  # pull_request:
+  # merge_group:
 
 permissions:
   contents: read

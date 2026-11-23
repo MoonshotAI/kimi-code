@@ -182,8 +182,8 @@ async function boot(opts: { deferPages?: boolean; sessionIds?: string[] } = {}) 
   if (opts.deferPages !== true) await vi.waitFor(() => expect(client.sessionLoading.value).toBe(false));
 
   const frame = (sid: string, next: ConversationFrame) => handlers!.onConversation?.(sid, 'main', next);
-  const agentStatus = (sid: string, status: AppAgentState['status'] | 'compacting') =>
-    handlers!.onAgentState?.(sid, 'main', status === 'compacting' ? agentState('idle', { compacting: true }) : agentState(status));
+  const agentStatus = (sid: string, status: AppAgentState['status'] | 'compacting', extra: Partial<AppAgentState> = {}) =>
+    handlers!.onAgentState?.(sid, 'main', status === 'compacting' ? agentState('idle', { ...extra, compacting: true }) : agentState(status, extra));
   const header = (ordinal: number, outcome?: ConversationOutcome): ConversationTurnHeader => ({
     turn_id: `t${ordinal}`,
     ordinal,
@@ -212,6 +212,27 @@ async function boot(opts: { deferPages?: boolean; sessionIds?: string[] } = {}) 
 }
 
 describe('conversation events in the client', () => {
+  it('opens a live MCP wait only for the foreground client that sent the prompt, never for a snapshot or a greeting alone', async () => {
+    const h = await boot();
+    const openExternal = vi.fn(async () => {});
+    vi.stubGlobal('window', { kimiDesktop: { openExternal } });
+    vi.stubGlobal('document', { visibilityState: 'visible', hasFocus: () => true });
+    await h.client.sendPrompt(h.client.createPromptEnvelope({ text: 'hi' }));
+    h.startTurn('s1', 0, h.sentPromptId(0), 'hi');
+    expect(openExternal).not.toHaveBeenCalled();
+    const call = { type: 'tool_call', item_id: 'auth', status: 'running', name: 'mcp__example__authenticate', created_at: AT, started_at: AT, stage: 'executing', display: { kind: 'generic', detail: { kind: 'mcp_oauth', serverName: 'example' } } } as const;
+    const request = { serverName: 'example', waitId: 'test-wait', expiresAt: Date.now() + 60_000, authorizationUrl: 'https://auth.example.test/authorize?state=test' };
+    const fields = { 'mcp.oauth.authorization_url': request };
+    const update = { type: 'item.updated', turn_id: 't0', item_id: 'auth', set: { fields } } as const;
+    h.frame('s1', { type: 'item.started', turn_id: 't0', item: call });
+    h.frame('s1', update);
+    h.frame('s1', update);
+    expect(openExternal.mock.calls).toEqual([[request.authorizationUrl]]);
+    h.frame('s1', { type: 'turns', has_more: false, turns: [endedTurn(1, { status: 'running', outcome: undefined, items: [opener('another-client', 'use example'), { ...call, fields }] })] });
+    h.frame('s1', { ...update, turn_id: 't1' });
+    expect(openExternal).toHaveBeenCalledTimes(1);
+  });
+
   it('settles a local turn whose terminal frames beat the POST response', async () => {
     const h = await boot();
     const { notificationsStore } = await import('../src/stores/notifications');
@@ -532,6 +553,55 @@ describe('model turn error notices', () => {
         message: 'boom',
       }),
     ]);
+  });
+});
+
+describe('model availability notices', () => {
+  it('opens the model picker from the unavailable-model confirmation dialog', async () => {
+    const h = await boot();
+    const { useConfirmDialog } = await import('../src/composables/useConfirmDialog');
+    const { registerModelPickerOpener } = await import('../src/client/deps');
+    const open = vi.fn(async () => {});
+    registerModelPickerOpener(open);
+    const { current, runAction } = useConfirmDialog();
+
+    h.frame('s1', { type: 'notice', level: 'warning', code: 'model.not_configured', title: 'old-model' });
+
+    expect(current.value).toMatchObject({
+      title: 'warnings.modelUnavailable.title',
+      message: 'warnings.modelUnavailable.message',
+      confirmLabel: 'warnings.modelUnavailable.change',
+      variant: 'primary',
+    });
+    await runAction();
+    expect(open).toHaveBeenCalledWith('s1');
+    expect(current.value).toBeNull();
+    expect(h.warningsStore().warnings).toEqual([]);
+  });
+
+  it('keeps unavailable state after a failed profile write', async () => {
+    const h = await boot();
+    h.frame('s1', { type: 'notice', level: 'warning', code: 'model.not_configured', title: 'old-model' });
+    expect(h.client.status.value.model).toBe('—');
+
+    clientApiMock['updateSession'] = vi.fn(async () => {
+      throw new Error('offline');
+    });
+    await h.client.selectModel('stub');
+    expect(h.client.unavailableModelBySession.value['s1']).toBe('old-model');
+  });
+
+  it('clears unavailable state after a successful write or a valid agent state', async () => {
+    const h = await boot();
+    h.frame('s1', { type: 'notice', level: 'warning', code: 'model.not_configured', title: 'old-model' });
+    clientApiMock['updateSession'] = vi.fn(async () => ({ id: 's1' }));
+    await h.client.selectModel('stub');
+    expect(h.client.unavailableModelBySession.value['s1']).toBeUndefined();
+
+    h.frame('s1', { type: 'notice', level: 'warning', code: 'model.not_configured', title: 'old-model' });
+    expect(h.client.status.value.model).toBe('—');
+    h.agentStatus('s1', 'idle', { model: 'stub' });
+    expect(h.client.unavailableModelBySession.value['s1']).toBeUndefined();
   });
 });
 

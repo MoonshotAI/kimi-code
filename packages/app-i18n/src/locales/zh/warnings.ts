@@ -49,6 +49,11 @@ export default {
   providerRefreshFailedTitle: '模型列表刷新失败',
   sendFailedTitle: '发送失败',
   sendFailedNoDefaultModelMessage: '默认模型未配置，请到设置中重新选择模型',
+  modelUnavailable: {
+    title: '会话模型不可用',
+    message: '{model} 已失效。更换模型后可继续当前会话',
+    change: '更换模型',
+  },
   sessionOccupied: {
     title: '会话被占用',
     message: '该会话正在被其他 Kimi Code 进程使用；请停止其他进程中的会话或退出该进程后重试',

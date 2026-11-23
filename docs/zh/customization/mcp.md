@@ -79,6 +79,8 @@ workspace 级 MCP server 启动时连不上或意外断连时，会自动按指�
 
 HTTP 与 SSE server 支持通过 `headers` 或 `bearerTokenEnvVar` 提供静态凭证。需要 OAuth 时，运行 `/mcp-config login <server-name>` 完成浏览器授权。
 
+在本机聊天中，如果 Agent 调用 MCP 授权工具，允许执行工具后，还需要在服务商的网页上确认授权。桌面端会尝试打开系统浏览器；网页端可点击聊天卡片上的「打开授权页」。如果浏览器没有打开或被误关，点击同一按钮即可继续，不用重新发送消息。
+
 Plugins 也可以在 manifest 中声明 MCP servers。Plugin 声明的 servers 默认启用，可以在 `/plugins` 中禁用或重新启用：禁用或移除后，已打开会话中的工具调用会失败并返回移除提示；新增或启用 server 会立即连接到已打开的会话。详见 [Plugins](./plugins.md#plugin-中的-mcp-servers)。
 
 ::: warning 注意

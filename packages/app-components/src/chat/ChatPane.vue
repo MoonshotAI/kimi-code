@@ -165,6 +165,11 @@ const props = withDefaults(
   },
 );
 
+defineSlots<{
+  'assistant-reply-actions'?: (props: { turn: ChatTurn | undefined }) => unknown;
+  'assistant-reply-status'?: (props: { turn: ChatTurn | undefined }) => unknown;
+}>();
+
 const topSentinelRef = ref<HTMLElement | null>(null);
 let topSentinelObserver: IntersectionObserver | null = null;
 
@@ -978,13 +983,22 @@ function stableAssistantRun(index: number): ChatTurn[] {
   return run;
 }
 
-function assistantRunFinalText(index: number): string {
-  const run = assistantRunEndingAt(index);
-  for (let i = run.length - 1; i >= 0; i -= 1) {
-    const text = turnVisibleFinalText(run[i]!);
-    if (text) return text;
+function assistantRunFinal(index: number): { turn: ChatTurn; text: string } | undefined {
+  for (let position = index; position >= 0; position -= 1) {
+    const turn = props.turns[position];
+    if (turn?.role !== 'assistant') break;
+    const text = turnVisibleFinalText(turn);
+    if (text) return { turn, text };
   }
-  return '';
+}
+
+function assistantRunFinalText(index: number): string {
+  return assistantRunFinal(index)?.text ?? '';
+}
+
+function assistantRunFinalTurn(index: number): ChatTurn | undefined {
+  const last = assistantRunFinal(index);
+  return last?.text.trim() ? last.turn : undefined;
 }
 
 function assistantRunHasOutput(index: number): boolean {
@@ -1605,7 +1619,11 @@ function streamingTailIndex(turn: ChatTurn): number | null {
               <Icon name="git-fork" size="sm" />
             </button>
             </Tooltip>
+            <div v-if="$slots['assistant-reply-actions']" class="a-reply-actions">
+              <slot name="assistant-reply-actions" :turn="assistantRunFinalTurn(ti)" />
+            </div>
             <span v-if="turnTimeLabel(turn)" class="a-time">{{ turnTimeLabel(turn) }}</span>
+            <slot v-if="$slots['assistant-reply-status']" name="assistant-reply-status" :turn="assistantRunFinalTurn(ti)" />
           </div>
           <Transition name="sr-fade">
             <SessionRatingRow
@@ -2231,6 +2249,14 @@ function streamingTailIndex(turn: ChatTurn): number | null {
   display: flex;
   align-items: center;
   gap: 6px;
+}
+.a-reply-actions { display: contents; }
+.a-msg-meta:has(> .a-reply-actions > *) { gap: 2px; }
+.a-msg-meta:has(> .a-reply-actions > *) .a-time {
+  margin-inline: 6px;
+  color: light-dark(rgb(0 0 0 / 45%), rgb(255 255 255 / 42%));
+  font-size: var(--ui-c1);
+  line-height: 1.5;
 }
 .chat > .sr-tailrow {
   margin-top: 6px;

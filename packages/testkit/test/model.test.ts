@@ -98,6 +98,21 @@ describe('replies', () => {
     expect(model.callId(0, 0)).toBe('call_0_0');
   });
 
+  it.each([true, false])('returns the scripted request ID with stream=%s', async (stream) => {
+    const model = fakeModel();
+    model.script({ ...say('done'), headers: { 'x-request-id': 'example-request' } });
+    const response = await clientOf(model).chat.completions.create({
+      model: 'testkit-model',
+      messages: [{ role: 'user', content: 'hello' }],
+      tools: TOOLS,
+      stream,
+    }).asResponse();
+    expect(response.headers.get('x-request-id')).toBe('example-request');
+    expect(response.headers.get('content-type')).toContain(stream ? 'text/event-stream' : 'application/json');
+    expect(await response.text()).toContain('done');
+    model.verify();
+  });
+
   it('emits parallel calls in order, or interleaves their argument pieces', async () => {
     const model = fakeModel();
     const parallel = batch(call('Bash', { command: 'a' }, { argumentChunks: 2 }), call('Bash', { command: 'b' }, { argumentChunks: 2 }));
