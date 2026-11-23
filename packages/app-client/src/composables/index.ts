@@ -1,4 +1,5 @@
 export * from './useIsMobile';
+export * from './chatMcpAuthorization';
 export * from './useViewportWidth';
 export * from './useFollowScroll';
 export * from './useResizable';

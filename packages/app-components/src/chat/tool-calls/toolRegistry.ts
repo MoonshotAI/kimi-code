@@ -5,6 +5,7 @@ import AgentTool from './AgentTool.vue';
 import AskUserTool from './AskUserTool.vue';
 import BashTool from './BashTool.vue';
 import EditTool from './EditTool.vue';
+import McpAuthorizationTool from './McpAuthorizationTool.vue';
 import GenericTool from './GenericTool.vue';
 import BrowserTool from './BrowserTool.vue';
 import { isBrowserTool } from './browserToolPresentation';
@@ -27,6 +28,7 @@ import SelectToolsTool from './SelectToolsTool.vue';
 type ToolRenderer = Component;
 
 export function resolveToolRenderer(tool: ToolCall, options?: { notifyUserEnabled?: boolean }): ToolRenderer {
+  if (tool.mcpAuth) return McpAuthorizationTool;
   if (isBrowserTool(tool)) return BrowserTool;
   if (tool.media && tool.status === 'ok') return MediaTool;
   switch (normalizeToolName(tool.name)) {

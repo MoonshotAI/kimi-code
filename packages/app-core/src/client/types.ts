@@ -74,7 +74,19 @@ export type WorkspaceScope = 'current' | 'all';
 
 export type ToolStatus = 'ok' | 'running' | 'error' | 'cancelled';
 
+export interface McpAuthRequest {
+  serverName: string;
+  waitId: string;
+  authorizationUrl: string;
+  expiresAt: number;
+}
+
+export type McpAuthCard =
+  | { phase: 'waiting'; serverName: string; request: McpAuthRequest }
+  | { phase: 'approval' | 'preparing' | 'unavailable' | 'reconnecting' | 'connected' | 'failed' | 'cancelled' | 'expired' | 'reconnectFailed'; serverName: string };
+
 export interface ToolCall {
+  mcpAuth?: McpAuthCard;
   id: string;
   name: string;
   arg: string;

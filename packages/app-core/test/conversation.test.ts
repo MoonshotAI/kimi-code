@@ -92,6 +92,31 @@ const project = (turns: ConversationTurn[]): ChatTurn[] =>
 
 const toolsOf = (turns: ChatTurn[]) => turns.flatMap((chatTurn) => chatTurn.tools ?? []);
 
+describe('chat MCP authorization', () => {
+  const request = { serverName: 'example', waitId: 'wait-1', authorizationUrl: 'https://example.test/authorize?state=test', expiresAt: 2_000_000_000_000 };
+  const display = { kind: 'generic', summary: 'Authenticate example', detail: { kind: 'mcp_oauth', serverName: 'example' } };
+  const call = tool('auth-1', { ...running, name: 'mcp__example__authenticate', input: {}, output: undefined, stage: 'executing', display });
+  const start: ConversationView = { turns: [turn(0, [opener('p0', 'use example'), call], running)], hasMore: false };
+  const fields = { 'mcp.oauth.authorization_url': request };
+
+  it('exposes the action before output arrives and drops it when the tool ends', () => {
+    const waiting = applyConversationFrame(start, { type: 'item.updated', turn_id: 't0', item_id: 'auth-1', set: { fields } });
+    expect(toolsOf(project(waiting.turns.slice()))[0]?.mcpAuth).toMatchObject({ phase: 'waiting', request });
+    const ended = applyConversationFrame(waiting, { type: 'item.ended', turn_id: 't0', item: { ...call, status: 'ended', outcome: 'completed' } });
+    expect(toolsOf(project(ended.turns.slice()))[0]?.mcpAuth).toEqual({ phase: 'connected', serverName: 'example' });
+  });
+
+  it.each(['file:///tmp/auth', 'http://example.test/authorize', 'https://user:pass@example.test', 'javascript:void(0)'])('rejects an unsafe authorization URL: %s', (authorizationUrl) => {
+    const item = { ...call, fields: { 'mcp.oauth.authorization_url': { ...request, authorizationUrl } } };
+    expect(toolsOf(project([turn(0, [item], running)]))[0]?.mcpAuth).toEqual({ serverName: 'example', phase: 'unavailable' });
+  });
+
+  it('does not turn tool names, output or model arguments into an authorization action', () => {
+    const untrusted = { ...call, fields, display: undefined, input: display, output: request.authorizationUrl };
+    expect(toolsOf(project([turn(0, [untrusted], running)]))[0]?.mcpAuth).toBeUndefined();
+  });
+});
+
 describe('conversation reducer', () => {
   it('applies turn and item frames while keeping untouched turns by identity', () => {
     const first = turn(0, [opener('p0', 'hello'), answer('s0:0', 'hi')]);

@@ -109,7 +109,7 @@ describe('createMcpAuthTool', () => {
     expect(final.output).toMatch(/DCR unsupported/);
   });
 
-  it('returns isError and surfaces the URL when complete rejects', async () => {
+  it('returns the error without saving the authorization URL when complete rejects', async () => {
     const oauthService = fakeOAuthService(async () => ({
       waitId: 'auth-wait',
       authorizationUrl: new URL('https://example.com/authorize?state=abc'),
@@ -125,7 +125,7 @@ describe('createMcpAuthTool', () => {
     const final = await result;
     expect(final.isError).toBe(true);
     expect(final.output).toMatch(/timed out/);
-    expect(final.output).toMatch(/https:\/\/example\.com\/authorize/);
+    expect(final.output).not.toContain('https://example.com/authorize');
   });
 
   it('returns isError when reconnect after success fails', async () => {
@@ -144,5 +144,6 @@ describe('createMcpAuthTool', () => {
     const final = await result;
     expect(final.isError).toBe(true);
     expect(final.output).toMatch(/reconnect failed/);
+    expect(final.note).toBe('mcp.oauth.reconnect_failed');
   });
 });

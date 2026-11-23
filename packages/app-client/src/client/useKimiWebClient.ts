@@ -90,6 +90,7 @@ import { createSessionSelection } from './sessionSelection';
 import { sessionReadScope, workspaceReadScope } from './observationScope';
 import { createSessionActions } from './sessionActions';
 import { usePromptPipeline } from './usePromptPipeline';
+import { createChatMcpAutoOpen } from '../composables/chatMcpAuthorization';
 import { useConfirmDialog } from '../composables/useConfirmDialog';
 import { persistComposerDraftSnapshot } from '../lib/composerDraftLifecycle';
 import { closeSessionBusyWindow, openSessionBusyWindow } from '../lib/perfTracking';
@@ -1360,9 +1361,22 @@ function createOnConnectionChangeHandler(): KimiEventHandlers['onConnectionChang
 }
 
 function createOnConversationHandler(): NonNullable<KimiEventHandlers['onConversation']> {
+  const autoOpen = createChatMcpAutoOpen();
   return (sessionId, agentId, frame) => {
-    if (agentId === MAIN_AGENT_ID) mainConversations.handleFrame(sessionId, agentId, frame);
-    else auxiliaryConversations.handleFrame(sessionId, agentId, frame);
+    if (agentId !== MAIN_AGENT_ID) {
+      auxiliaryConversations.handleFrame(sessionId, agentId, frame);
+      return;
+    }
+    mainConversations.handleFrame(sessionId, agentId, frame);
+    if (frame.type === 'turns') {
+      autoOpen(frame, undefined, false);
+      return;
+    }
+    if (frame.type !== 'item.updated' || frame.set.fields === undefined) return;
+    const entry = mainConversationOf(sessionId);
+    if (!entry?.loaded) return;
+    const turn = entry.view.turns.findLast(candidate => candidate.turn_id === frame.turn_id);
+    autoOpen(frame, turn, isUserWatching(sessionId) && rawState.sessions.some(row => row.id === sessionId) && chatHostId(sessionId) === undefined);
   };
 }
 
