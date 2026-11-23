@@ -5,7 +5,7 @@ import { ProfileError, ProfileErrors } from '#/agent/profile/profile';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { TOOLS_SECTION, type ToolsConfig } from './configSection';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
-import { runLegacyStarting } from '#/agent/toolExecutor/legacyHooks';
+import { legacyStartingDecision } from '#/agent/toolExecutor/legacyHooks';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IConfigService } from '#/app/config/config';
 import { ISessionToolPolicy } from '#/session/sessionToolPolicy/sessionToolPolicy';
@@ -45,7 +45,7 @@ export class AgentToolPolicyService extends Disposable implements IAgentToolPoli
           : this.isToolActive(name, source);
         if (active) return undefined;
         const text = `Tool "${name}" is disabled by the active tool policy`;
-        return runLegacyStarting(context, (event) => event.veto({ output: text, isError: true }));
+        return legacyStartingDecision(context, { veto: { output: text, isError: true } });
       },
     }));
   }

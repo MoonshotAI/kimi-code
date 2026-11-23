@@ -26,9 +26,8 @@ import { IEventBus } from '#/app/event/eventBus';
 import { AgentEvent2 } from '#/app/event/event2';
 import type { ExecutableToolResult } from '#/tool/toolContract';
 import type { ResolvedToolExecutionHookContext, ToolDidExecuteContext } from '#/agent/toolExecutor/toolHooks';
-import { denyToolExecution } from '#/agent/toolExecutor/beforeToolExecuteEvent';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
-import { legacyDidExecuteContext, registerLegacyStarting } from '#/agent/toolExecutor/legacyHooks';
+import { legacyDidExecuteContext, legacyDenyDecision, legacyExecutionContext } from '#/agent/toolExecutor/legacyHooks';
 import { toKimiErrorPayload } from '#/errors';
 import { fromCorePart } from '#human/message';
 import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
@@ -202,9 +201,12 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
   }
 
   private registerToolHooks(toolExecutor: IAgentToolExecutorService): void {
-    this._register(registerLegacyStarting(toolExecutor, async (event) => {
-      const reason = await this.runPreToolUse(event);
-      if (reason !== undefined) event.veto(denyToolExecution(reason));
+    this._register(toolExecutor.registerHook({
+      starting: async (context) => {
+        const reason = await this.runPreToolUse(legacyExecutionContext(context));
+        if (reason === undefined) return;
+        return legacyDenyDecision(context, reason);
+      },
     }));
     this._register(toolExecutor.registerHook({
       afterExecute: (context) => {

@@ -268,8 +268,10 @@ describe('AgentTowerService', () => {
     ctx: ResolvedToolExecutionHookContext,
   ): Promise<BeforeExecuteDecision | undefined> {
     disposables.add(
-      executorEvents.executor.registerLegacyStarting(() => {
-        permissionGateRan = true;
+      executorEvents.executor.registerHook({
+        permitting: () => {
+          permissionGateRan = true;
+        },
       }),
     );
     return executorEvents.fireBeforeExecute(ctx);

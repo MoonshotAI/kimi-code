@@ -12,7 +12,7 @@ import type {
 import { toLegacyToolReturn } from '#/tool/executor';
 import type { ExecutableToolResult } from '#/tool/toolContract';
 
-import { BeforeToolExecuteEmitter } from './beforeToolExecuteEvent';
+import { BeforeToolExecuteEmitter, denyToolExecution } from './beforeToolExecuteEvent';
 import type {
   BeforeExecuteDecision,
   BeforeToolExecuteEvent,
@@ -76,6 +76,16 @@ export function legacyStartingDecision(
 
 export function legacySkipPermitting(): ToolStartingDecision {
   return { skipPermitting: true };
+}
+
+export function legacyDenyDecision(
+  context: LegacyDecisionContext,
+  message: string,
+): ToolStartingDecision {
+  return {
+    reject: message,
+    result: toLegacyToolReturn(denyToolExecution(message), context.call.name),
+  };
 }
 
 export async function runLegacyBeforeExecute(

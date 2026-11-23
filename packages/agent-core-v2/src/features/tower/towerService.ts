@@ -16,10 +16,9 @@ import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import type { AgentTaskInfo } from '#/agent/task/types';
 import { TaskTerminatedNotice } from '#/agent/task/taskOps';
-import { denyToolExecution } from '#/agent/toolExecutor/beforeToolExecuteEvent';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { agentTaskInfo } from '#/agent/task/handler';
-import { registerLegacyStarting } from '#/agent/toolExecutor/legacyHooks';
+import { legacyDenyDecision } from '#/agent/toolExecutor/legacyHooks';
 import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
 import { IConfigService } from '#/app/config/config';
 import { IEventBus, ISessionEventBus } from '#/app/event/eventBus';
@@ -238,178 +237,183 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
       }),
     );
     this._register(
-      registerLegacyStarting(toolExecutor, (event) => {
-        if (this.flags.enabled(TOWER_FLAG_ID)) return;
-        if (!TOWER_FLAG_VETO_TOOLS.has(event.toolCall.name)) return;
-        event.veto(
-          denyToolExecution(
+      toolExecutor.registerHook({
+        starting: (context) => {
+          if (this.flags.enabled(TOWER_FLAG_ID)) return;
+          if (!TOWER_FLAG_VETO_TOOLS.has(context.call.name)) return;
+          return legacyDenyDecision(
+            context,
             this.toolApproval.formatDenyMessage(
               'The tower experiment is disabled — tower tools are inert. Re-enable the experiment (a restart is required if it was just turned on) before driving the tower protocol.',
             ),
-          ),
-        );
+          );
+        },
       }),
     );
     this._register(
-      registerLegacyStarting(toolExecutor, (event) => {
-        if (!this.flags.enabled(TOWER_FLAG_ID)) return;
-        if (!this.isActive) return;
-        if (event.toolCall.name !== 'TodoList') return;
-        event.veto(
-          denyToolExecution(
+      toolExecutor.registerHook({
+        starting: (context) => {
+          if (!this.flags.enabled(TOWER_FLAG_ID)) return;
+          if (!this.isActive) return;
+          if (context.call.name !== 'TodoList') return;
+          return legacyDenyDecision(
+            context,
             this.toolApproval.formatDenyMessage(
               'TodoList is not available while tower mode is active — mission state lives in the tower protocol (TowerPlan/TowerMission/TowerStatus, MISSIONS.md), and todo semantics would serialize the fleet. Spawn every dependency-unblocked mission now, then end your turn: worker completions wake you.',
             ),
-          ),
-        );
+          );
+        },
       }),
     );
     this._register(
-      registerLegacyStarting(toolExecutor, (event) => {
-        if (!this.flags.enabled(TOWER_FLAG_ID)) return;
-        if (!this.isActive) return;
-        if (event.toolCall.name !== 'AgentSwarm') return;
-        event.veto(
-          denyToolExecution(
+      toolExecutor.registerHook({
+        starting: (context) => {
+          if (!this.flags.enabled(TOWER_FLAG_ID)) return;
+          if (!this.isActive) return;
+          if (context.call.name !== 'AgentSwarm') return;
+          return legacyDenyDecision(
+            context,
             this.toolApproval.formatDenyMessage(
               'AgentSwarm is not available while tower mode is active — swarm and tower modes are mutually exclusive, and the tower fleet runs through TowerSpawn, one mission per worker in its own worktree. If the work genuinely needs a swarm instead, exit tower mode first.',
             ),
-          ),
-        );
+          );
+        },
       }),
     );
     this._register(
-      registerLegacyStarting(toolExecutor, (event) => {
-        if (!this.flags.enabled(TOWER_FLAG_ID)) return;
-        if (!this.isActive) return;
-        if (event.toolCall.name === 'CreateGoal') {
-          event.veto(
-            denyToolExecution(
+      toolExecutor.registerHook({
+        starting: (context) => {
+          if (!this.flags.enabled(TOWER_FLAG_ID)) return;
+          if (!this.isActive) return;
+          if (context.call.name === 'CreateGoal') {
+            return legacyDenyDecision(
+              context,
               this.toolApproval.formatDenyMessage(
                 'CreateGoal is not available while tower mode is active — tower mode and goals are mutually exclusive, and the previously active goal was paused when tower mode entered. If the work genuinely needs a goal instead, exit tower mode first.',
               ),
-            ),
-          );
-          return;
-        }
-        if (event.toolCall.name !== 'UpdateGoal') return;
-        const args = event.args;
-        if (typeof args !== 'object' || args === null) return;
-        if ((args as { readonly status?: unknown }).status !== 'active') return;
-        event.veto(
-          denyToolExecution(
+            );
+          }
+          if (context.call.name !== 'UpdateGoal') return;
+          const args: unknown = context.args;
+          if (typeof args !== 'object' || args === null) return;
+          if ((args as { readonly status?: unknown }).status !== 'active') return;
+          return legacyDenyDecision(
+            context,
             this.toolApproval.formatDenyMessage(
               'Resuming a goal is not available while tower mode is active — tower mode and goals are mutually exclusive. If the work genuinely needs the goal instead, exit tower mode first.',
             ),
-          ),
-        );
+          );
+        },
       }),
     );
     this._register(
-      registerLegacyStarting(toolExecutor, async (event) => {
-        if (!this.flags.enabled(TOWER_FLAG_ID)) return;
-        if (!this.isActive) return;
-        if (event.toolCall.name !== 'Agent') return;
-        const args = event.args;
-        if (typeof args !== 'object' || args === null) return;
-        const resume = (args as { readonly resume?: unknown }).resume;
-        if (typeof resume !== 'string') return;
-        const resumeId = resume.trim();
-        if (resumeId.length === 0) return;
-        const store = newTowerStore(this.sessionCtx);
-        const resolved = await store.load().then(
-          (state) => {
-            const entry = store.resolveAgent(state, resumeId);
-            if (entry === undefined) return undefined;
-            const branch =
-              entry.branch ??
-              entry.reviewTarget ??
-              state.missions.find((mission) => mission.id === entry.missionId)?.branch;
-            return { entry, branch };
-          },
-          () => undefined,
-        );
-        if (resolved === undefined) return;
-        if (resolved.branch !== undefined && this.isBranchLeased(resolved.branch)) {
-          event.veto(
-            denyToolExecution(
+      toolExecutor.registerHook({
+        starting: async (context) => {
+          if (!this.flags.enabled(TOWER_FLAG_ID)) return;
+          if (!this.isActive) return;
+          if (context.call.name !== 'Agent') return;
+          const args: unknown = context.args;
+          if (typeof args !== 'object' || args === null) return;
+          const resume = (args as { readonly resume?: unknown }).resume;
+          if (typeof resume !== 'string') return;
+          const resumeId = resume.trim();
+          if (resumeId.length === 0) return;
+          const store = newTowerStore(this.sessionCtx);
+          const resolved = await store.load().then(
+            (state) => {
+              const entry = store.resolveAgent(state, resumeId);
+              if (entry === undefined) return undefined;
+              const branch =
+                entry.branch ??
+                entry.reviewTarget ??
+                state.missions.find((mission) => mission.id === entry.missionId)?.branch;
+              return { entry, branch };
+            },
+            () => undefined,
+          );
+          if (resolved === undefined) return;
+          if (resolved.branch !== undefined && this.isBranchLeased(resolved.branch)) {
+            return legacyDenyDecision(
+              context,
               this.toolApproval.formatDenyMessage(
                 `Cannot resume tower agent "${resolved.entry.name}" while branch "${resolved.branch}" is leased by a merge/rebase — no agent was started; retry after that operation finishes`,
               ),
-            ),
-          );
-          return;
-        }
-        if ((args as { readonly run_in_background?: unknown }).run_in_background === true) return;
-        const backgroundAvailable =
-          this.toolPolicy.isToolActive('TaskList') &&
-          this.toolPolicy.isToolActive('TaskOutput') &&
-          this.toolPolicy.isToolActive('TaskStop');
-        if (!backgroundAvailable) return;
-        event.veto(
-          denyToolExecution(
+            );
+          }
+          if ((args as { readonly run_in_background?: unknown }).run_in_background === true) return;
+          const backgroundAvailable =
+            this.toolPolicy.isToolActive('TaskList') &&
+            this.toolPolicy.isToolActive('TaskOutput') &&
+            this.toolPolicy.isToolActive('TaskStop');
+          if (!backgroundAvailable) return;
+          return legacyDenyDecision(
+            context,
             this.toolApproval.formatDenyMessage(
               `Resuming tower agent "${resolved.entry.name}" in the foreground would freeze the tower until it finishes — pass run_in_background=true instead; its completion (and any inbox traffic) will wake you.`,
             ),
-          ),
-        );
+          );
+        },
       }),
     );
     this._register(
-      registerLegacyStarting(toolExecutor, async (event) => {
-        if (this.loop.data().profileName !== TOWER_WORKER_PROFILE) return;
-        const toolName = event.toolCall.name;
-        if (toolName !== 'Write' && toolName !== 'Edit') return;
+      toolExecutor.registerHook({
+        starting: async (context) => {
+          if (this.loop.data().profileName !== TOWER_WORKER_PROFILE) return;
+          const toolName = context.call.name;
+          if (toolName !== 'Write' && toolName !== 'Edit') return;
+          if (context.prepared.kind !== 'execute') return;
 
-        const store = newTowerStore(this.sessionCtx);
-        const entry = await store
-          .load()
-          .then(
-            (state) => store.resolveAgent(state, this.agentCtx.agentId),
-            () => undefined,
-          );
-        const slot = entry?.worktree;
-        if (slot === undefined) return;
-        const worktree = store.abs(join(WORKTREES_DIR, slot));
+          const store = newTowerStore(this.sessionCtx);
+          const entry = await store
+            .load()
+            .then(
+              (state) => store.resolveAgent(state, this.agentCtx.agentId),
+              () => undefined,
+            );
+          const slot = entry?.worktree;
+          if (slot === undefined) return;
+          const worktree = store.abs(join(WORKTREES_DIR, slot));
 
-        const escapes = (event.execution.accesses ?? [])
-          .filter(
-            (access): access is ToolFileAccess =>
-              access.kind === 'file' &&
-              (access.operation === 'write' || access.operation === 'readwrite'),
-          )
-          .filter((access) => !isWithinDirectory(access.path, worktree));
-        if (escapes.length === 0) return;
-        event.veto(
-          denyToolExecution(
+          const escapes = (context.prepared.accesses ?? [])
+            .filter(
+              (access): access is ToolFileAccess =>
+                access.kind === 'file' &&
+                (access.operation === 'write' || access.operation === 'readwrite'),
+            )
+            .filter((access) => !isWithinDirectory(access.path, worktree));
+          if (escapes.length === 0) return;
+          return legacyDenyDecision(
+            context,
             this.toolApproval.formatDenyMessage(
               `tower workers may only write inside their own worktree (${worktree}) — denied: ` +
                 `${escapes.map((access) => access.path).join(', ')}. ` +
                 'Out-of-scope changes are not yours to make: file them with TowerFinding or ask the tower via TowerSend.',
             ),
-          ),
-        );
+          );
+        },
       }),
     );
     this._register(
-      registerLegacyStarting(toolExecutor, async (event) => {
-        if (event.toolCall.name !== 'Bash') return;
-        const args = event.args;
-        if (typeof args !== 'object' || args === null) return;
-        const command = (args as { readonly command?: unknown }).command;
-        if (typeof command !== 'string' || !commandNeedsTowerGuard(command)) return;
-        const mainCheckout = resolveTowerRepoRoot(this.sessionCtx.cwd);
-        if (!(await towerWorkspaceOwned(join(mainCheckout, STATE_FILE)))) return;
-        const cwdArg = (args as { readonly cwd?: unknown }).cwd;
-        const cwd =
-          typeof cwdArg === 'string'
-            ? this.resolveBashGuardCwd(cwdArg)
-            : (this.workspaceCtx?.workDir ?? this.sessionCtx.cwd);
-        const reason = analyzeTowerBashCommand({ command, cwd, mainCheckout }, (source) =>
-          this.bashParser.parse(source, TOWER_BASH_GUARD_PARSE_OPTIONS),
-        );
-        if (reason === undefined) return;
-        event.veto(denyToolExecution(this.toolApproval.formatDenyMessage(reason)));
+      toolExecutor.registerHook({
+        starting: async (context) => {
+          if (context.call.name !== 'Bash') return;
+          const args: unknown = context.args;
+          if (typeof args !== 'object' || args === null) return;
+          const command = (args as { readonly command?: unknown }).command;
+          if (typeof command !== 'string' || !commandNeedsTowerGuard(command)) return;
+          const mainCheckout = resolveTowerRepoRoot(this.sessionCtx.cwd);
+          if (!(await towerWorkspaceOwned(join(mainCheckout, STATE_FILE)))) return;
+          const cwdArg = (args as { readonly cwd?: unknown }).cwd;
+          const cwd =
+            typeof cwdArg === 'string'
+              ? this.resolveBashGuardCwd(cwdArg)
+              : (this.workspaceCtx?.workDir ?? this.sessionCtx.cwd);
+          const reason = analyzeTowerBashCommand({ command, cwd, mainCheckout }, (source) =>
+            this.bashParser.parse(source, TOWER_BASH_GUARD_PARSE_OPTIONS),
+          );
+          if (reason === undefined) return;
+          return legacyDenyDecision(context, this.toolApproval.formatDenyMessage(reason));
+        },
       }),
     );
   }

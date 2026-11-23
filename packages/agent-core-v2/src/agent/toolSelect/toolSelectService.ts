@@ -12,7 +12,7 @@ import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { isMcpToolName, type ToolInfo } from '#/tool/toolContract';
 import { toLegacyToolReturn } from '#/tool/executor';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
-import { legacyRejectedResult, runLegacyStarting } from '#/agent/toolExecutor/legacyHooks';
+import { legacyRejectedResult, legacyStartingDecision } from '#/agent/toolExecutor/legacyHooks';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
@@ -90,7 +90,7 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
         const text = this.describeUnavailableTool(context.call.name);
         return text === undefined
           ? undefined
-          : runLegacyStarting(context, (event) => event.veto({ output: text, isError: true }));
+          : legacyStartingDecision(context, { veto: { output: text, isError: true } });
       },
       afterExecute: (context) => {
         const text = this.describeMissingTool(context.call.name);
