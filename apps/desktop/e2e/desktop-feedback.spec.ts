@@ -1,9 +1,11 @@
 import type { Locator } from '@playwright/test';
 import { deferred } from '@moonshot-ai/testkit/fixtures';
-import { expect, test, type DesktopApp } from './fixtures/app';
+import { held, say, type FakeModel } from '@moonshot-ai/testkit/model';
+
+import { expect, testWithProvider, type DesktopApp } from './fixtures/app';
 import { captureClipboardWrites } from './fixtures/clipboard';
-import type { StubModel } from './fixtures/model';
-import { sendAndFinish, sessionRowById } from './fixtures/sessions';
+import { sessionRowById } from './fixtures/sessions';
+import { waitForSettledReply } from './fixtures/transcript';
 
 const envelope = (data: unknown) => ({ code: 0, msg: '', data });
 
@@ -19,7 +21,7 @@ async function expectVisibleCheckmark(app: DesktopApp, checkbox: Locator): Promi
   expect(pixels.tip).not.toBe(pixels.fill);
 }
 
-test('submits global and reply feedback with opt-in attachments', async ({ app, model }) => {
+testWithProvider('submits global and reply feedback with opt-in attachments', async ({ app, provider }) => {
   const page = app.window;
   const feedbackRequests: Array<{ path: string; method: string; body: unknown }> = [];
   const uploaded: Array<{ kind: string | null; bytes: Buffer }> = [];
@@ -139,12 +141,17 @@ test('submits global and reply feedback with opt-in attachments', async ({ app, 
   ]);
   expect(uploaded).toHaveLength(0);
 
-  const answer = model.queueReply(['A completed', ' answer.'], { holdAfterFirstChunk: true });
+  provider.script(held('first-chunk', say(['A completed', ' answer.']), 1));
   await app.submit('Inspect the issue');
-  await expect(page.getByText('A completed', { exact: true })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Good response' })).toBeHidden();
-  await expect(page.getByRole('button', { name: 'Poor response' })).toBeHidden();
-  answer.release();
+  const firstChunk = provider.hold('first-chunk');
+  await firstChunk.reached();
+  try {
+    await expect(page.getByText('A completed', { exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Good response' })).toBeHidden();
+    await expect(page.getByRole('button', { name: 'Poor response' })).toBeHidden();
+  } finally {
+    firstChunk.release();
+  }
   await expect(page.getByText('A completed answer.', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Poor response' }).click();
   const details = page.getByRole('dialog', { name: 'What could be better?' });
@@ -242,7 +249,7 @@ test('submits global and reply feedback with opt-in attachments', async ({ app, 
   await dialog.getByRole('button', { name: 'Feature request' }).click();
   await dialog.getByRole('button', { name: 'Cancel' }).click();
   await page.getByRole('button', { name: /^New Session/ }).first().click();
-  model.queueReply(['The next answer.']);
+  provider.script(say('The next answer.'));
   await app.submit('Start another conversation');
   await expect(page.getByText('The next answer.', { exact: true })).toBeVisible();
   const nextSession = await app.sessionId();
@@ -317,10 +324,13 @@ const hostProxy = `/api/v1/hosts/${hostId}/proxy`;
 type OwnedRecord = { host_id?: string };
 type SessionDirectory = OwnedRecord & { items?: OwnedRecord[]; groups?: (OwnedRecord & { sessions: OwnedRecord[] })[] };
 
-async function openSshConversation(app: DesktopApp, model: StubModel, flags: { local: boolean; remote: boolean }) {
+async function openSshConversation(app: DesktopApp, provider: FakeModel, flags: { local: boolean; remote: boolean }) {
   const page = app.window;
   const reply = 'The remote task finished.';
-  const sessionId = await sendAndFinish(app, model, 'Check the task', reply);
+  provider.script(say(reply));
+  await app.submit('Check the task');
+  await waitForSettledReply(page, reply);
+  const sessionId = await app.sessionId();
   const requests: Array<{ path: string; body: unknown }> = [];
   await page.addInitScript(prefix => {
     window.WebSocket = class extends WebSocket {
@@ -365,8 +375,8 @@ async function openSshConversation(app: DesktopApp, model: StubModel, flags: { l
   return { sessionId, requests };
 }
 
-test('local feedback remains available when the SSH conversation host disables it', async ({ app, model }) => {
-  const { requests } = await openSshConversation(app, model, { local: true, remote: false });
+testWithProvider('local feedback remains available when the SSH conversation host disables it', async ({ app, provider }) => {
+  const { requests } = await openSshConversation(app, provider, { local: true, remote: false });
   const page = app.window;
   await expect(page.getByRole('button', { name: 'Good response' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Poor response' })).toHaveCount(0);
@@ -384,8 +394,8 @@ test('local feedback remains available when the SSH conversation host disables i
   expect(requests).toEqual([{ path: '/api/v1/feedback', body: expect.objectContaining({ kind: 'global', source: 'command', upload_session: false }) }]);
 });
 
-test('the SSH conversation accepts reply feedback when local feedback is disabled', async ({ app, model }) => {
-  const { sessionId, requests } = await openSshConversation(app, model, { local: false, remote: true });
+testWithProvider('the SSH conversation accepts reply feedback when local feedback is disabled', async ({ app, provider }) => {
+  const { sessionId, requests } = await openSshConversation(app, provider, { local: false, remote: true });
   const page = app.window;
   await expect(page.getByRole('button', { name: 'Send feedback' })).toHaveCount(0);
   const input = page.getByRole('combobox', { name: 'Message input' });
@@ -400,8 +410,8 @@ test('the SSH conversation accepts reply feedback when local feedback is disable
   expect(requests).toEqual([{ path: `${hostProxy}/api/v1/feedback`, body: expect.objectContaining({ kind: 'turn', session_id: sessionId, rating: 'up' }) }]);
 });
 
-test('attaches an SSH conversation to the locally submitted feedback', async ({ app, model }) => {
-  const { sessionId, requests } = await openSshConversation(app, model, { local: true, remote: true });
+testWithProvider('attaches an SSH conversation to the locally submitted feedback', async ({ app, provider }) => {
+  const { sessionId, requests } = await openSshConversation(app, provider, { local: true, remote: true });
   const page = app.window;
   await page.getByRole('button', { name: 'Send feedback' }).click();
   const dialog = page.getByRole('dialog', { name: 'Send feedback' });
@@ -414,8 +424,8 @@ test('attaches an SSH conversation to the locally submitted feedback', async ({ 
   ]);
 });
 
-test('uses the SSH host’s reason choices and accepts text while the configuration loads', async ({ app, model }) => {
-  const { requests } = await openSshConversation(app, model, { local: true, remote: true });
+testWithProvider('uses the SSH host’s reason choices and accepts text while the configuration loads', async ({ app, provider }) => {
+  const { requests } = await openSshConversation(app, provider, { local: true, remote: true });
   const page = app.window;
   const configPath = '/api/v1/client-configs/desktop_feedback_reasons';
   const pendingReasons = deferred();

@@ -7,7 +7,8 @@ import { join } from 'node:path';
 
 import { closeSessionById, IOAuthService, ISessionExportService, MAIN_AGENT_ID, sessionDirOf } from '@moonshot-ai/agent-core-v2';
 import { OAuthUnauthorizedError } from '@moonshot-ai/kimi-code-oauth';
-import { afterAll, assert, beforeAll, describe, expect, it, type TestContext, vi } from 'vitest';
+import { agent, createFakeModel, held, say, type ReplyStep } from '@moonshot-ai/testkit/model';
+import { afterAll, afterEach, assert, beforeAll, describe, expect, it, type TestContext, vi } from 'vitest';
 
 import { ErrorCode } from '../src/protocol/error-codes';
 import type { HostSession } from '../src/services/hosts/hostSession';
@@ -17,9 +18,8 @@ import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 
 const token = 'test-feedback-access-token';
 
-interface ModelReply {
-  content: string;
-  tool_calls?: { index: number; id: string; type: 'function'; function: { name: string; arguments: string } }[];
+function withRequestId(id: string, step: ReplyStep): ReplyStep {
+  return { ...step, headers: { 'x-request-id': id } };
 }
 
 describe('desktop feedback', () => {
@@ -27,7 +27,6 @@ describe('desktop feedback', () => {
   let home: string;
   let gatewayOrigin: string;
   let signedIn = true;
-  let lastRequestId = 0;
   let lastFeedbackId = 0;
   let lastUploadId = 0;
   const ownedFeedback = new Set<number>();
@@ -37,8 +36,8 @@ describe('desktop feedback', () => {
   const created: Record<string, unknown>[] = [];
   const updates: Record<string, unknown>[] = [];
   const completed: Record<string, unknown>[] = [];
-  const modelReplies: ModelReply[] = [];
-  let managedReply: (() => Promise<ModelReply>) | undefined;
+  const model = createFakeModel();
+  const managed = model.route('managed', req => req.path.startsWith('/managed/'));
   const gateway = createServer((req, res) => {
     void handleGateway(req, res).catch(() => {
       res.writeHead(500).end();
@@ -52,23 +51,6 @@ describe('desktop feedback', () => {
     }
     const data = Buffer.concat(chunks);
     const path = req.url ?? '';
-    if (path === '/v1/chat/completions' || path === '/managed/v1/chat/completions') {
-      const id = `request-${++lastRequestId}`;
-      const reply = path.startsWith('/managed/') && managedReply !== undefined
-        ? await managedReply()
-        : modelReplies.shift() ?? { content: 'reply' };
-      const event = JSON.stringify({
-        id: 'reply',
-        object: 'chat.completion.chunk',
-        created: 1,
-        model: 'stub',
-        choices: [{ index: 0, delta: { role: 'assistant', ...reply }, finish_reason: reply.tool_calls ? 'tool_calls' : 'stop' }],
-        usage: { prompt_tokens: 10, completion_tokens: 4, total_tokens: 14 },
-      });
-      res.writeHead(200, { 'content-type': 'text/event-stream', 'x-request-id': id });
-      res.end(`data: ${event}\n\ndata: [DONE]\n\n`);
-      return;
-    }
     if (path.startsWith('/storage/') && (req.method === 'PUT' || req.method === 'POST')) {
       if (req.headers.authorization !== undefined) {
         res.writeHead(403).end();
@@ -122,7 +104,9 @@ describe('desktop feedback', () => {
     const address = gateway.address();
     if (address === null || typeof address === 'string') throw new Error('No test gateway port.');
     gatewayOrigin = `http://127.0.0.1:${address.port}`;
-    vi.stubEnv('KIMI_CODE_BASE_URL', `${gatewayOrigin}/managed/v1`);
+    await model.listen();
+    const managedBaseUrl = `${model.origin}/managed/v1`;
+    vi.stubEnv('KIMI_CODE_BASE_URL', managedBaseUrl);
     vi.stubEnv('KIMI_CODE_EXPERIMENTAL_DESKTOP_FEEDBACK', '1');
     vi.stubEnv('KIMI_CODE_FEEDBACK_BASE_URL', `${gatewayOrigin}/coding/v1/`);
     vi.stubEnv('KIMI_CODE_MODEL_CATALOG_REFRESH_ON_START', '0');
@@ -132,7 +116,7 @@ describe('desktop feedback', () => {
 
 [providers.stub]
 type = "openai"
-base_url = "${gatewayOrigin}/v1"
+base_url = "${model.baseUrl}"
 api_key = "test-model-key"
 
 [models.stub]
@@ -147,7 +131,7 @@ max_context_size = 100000
 
 [providers.alternate-provider]
 type = "openai"
-base_url = "${gatewayOrigin}/managed/v1"
+base_url = "${managedBaseUrl}"
 api_key = "test-model-key"
 
 [secondary_model]
@@ -183,8 +167,11 @@ default_model = "alternate"
     });
   });
 
+  afterEach(() => model.verify());
+
   afterAll(async () => {
     await server?.close();
+    await model.close();
     await new Promise<void>((resolve, reject) => {
       gateway.close((error) => {
         if (error === undefined) resolve();
@@ -436,6 +423,8 @@ default_model = "alternate"
       }, { timeout: 5_000 });
     }
 
+    model.script(withRequestId('request-1', say('First reply.')));
+    managed.script(withRequestId('request-2', say('Second reply.')));
     const historical = await replyTo('first prompt', 1, 'stub');
     const newer = await replyTo('second prompt', 2, 'alternate');
     const newerRating = await request('POST', '/feedback', {
@@ -497,24 +486,21 @@ default_model = "alternate"
     }, { timeout: 5_000 });
   }
 
-  function delegate(background = false): ModelReply {
-    return {
-      content: 'I will consult a helper.',
-      tool_calls: [{
-        index: 0, id: 'delegate', type: 'function',
-        function: { name: 'Agent', arguments: JSON.stringify({ description: 'Review example', prompt: 'Review the example.', run_in_background: background }) },
-      }],
-    };
+  function delegate(background = false): ReplyStep {
+    return agent(
+      { description: 'Review example', prompt: 'Review the example.', run_in_background: background },
+      { id: 'delegate', text: 'I will consult a helper.' },
+    );
   }
 
   async function rateDelegatedReplies(recordSteps: boolean) {
     const { data: session } = await request<{ id: string }>('POST', '/sessions', { metadata: { cwd: home } });
-    const initialRequest = lastRequestId;
-    modelReplies.push(
-      delegate(),
-      { content: 'The helper reviewed the example.' },
-      { content: 'The review is complete.' },
+    const prefix = recordSteps ? 'recorded' : 'legacy';
+    model.script(
+      withRequestId(`${prefix}-delegate`, delegate()),
+      withRequestId(`${prefix}-final`, say('The review is complete.')),
     );
+    managed.script(withRequestId(`${prefix}-helper`, say('The helper reviewed the example.')));
     vi.stubEnv('KIMI_CODE_EXPERIMENTAL_DESKTOP_FEEDBACK', recordSteps ? '1' : '0');
     let turn: Awaited<ReturnType<typeof completedTurn>>;
     try {
@@ -536,12 +522,12 @@ default_model = "alternate"
     };
     const final = await rate('The review is complete.');
     const earlier = await rate('I will consult a helper.');
-    return { final, earlier, initialRequest };
+    return { final, earlier };
   }
 
   it('recovers only recorded identifiers when reopening a session without model steps', async () => {
-    const { final, earlier, initialRequest } = await rateDelegatedReplies(false);
-    expect(final).toMatchObject({ model: null, info: { request_id: `request-${initialRequest + 3}` } });
+    const { final, earlier } = await rateDelegatedReplies(false);
+    expect(final).toMatchObject({ model: null, info: { request_id: 'legacy-final' } });
     expect(final).not.toHaveProperty('info.is_kfc');
     expect(final).not.toHaveProperty('info.participating_models');
     expect(earlier).toHaveProperty('model', null);
@@ -549,52 +535,51 @@ default_model = "alternate"
   });
 
   it('attributes the selected reply to the recorded step and its dispatched models after reopening', async () => {
-    const { final, earlier, initialRequest } = await rateDelegatedReplies(true);
+    const { final, earlier } = await rateDelegatedReplies(true);
     const main = { role: 'step', provider: 'openai', model_id: 'stub', is_kfc: false };
     const child = { role: 'subagent', provider: 'openai', model_id: 'different-model', is_kfc: true };
     expect(final).toMatchObject({
       info: {
-        model_id: 'stub', is_kfc: false, request_id: `request-${initialRequest + 3}`,
+        model_id: 'stub', is_kfc: false, request_id: 'recorded-final',
         participating_models: [{ ...main, step: 1 }, { ...child, step: 1 }, { ...main, step: 2 }],
       },
     });
     expect(earlier).toMatchObject({
-      info: { request_id: `request-${initialRequest + 1}`, participating_models: [{ ...main, step: 1 }, { ...child, step: 1 }] },
+      info: { request_id: 'recorded-delegate', participating_models: [{ ...main, step: 1 }, { ...child, step: 1 }] },
     });
   });
 
   it('records a dispatched background model before it returns and keeps it out of a later reply', async () => {
     const { data: session } = await request<{ id: string }>('POST', '/sessions', { metadata: { cwd: home } });
-    let release: (() => void) | undefined;
-    const pending = new Promise<void>(resolve => { release = resolve; });
-    let childStarted = false;
-    managedReply = async () => {
-      childStarted = true;
-      await pending;
-      return { content: 'A later helper result.' };
-    };
+    model.script(
+      withRequestId('background-delegate', delegate(true)),
+      withRequestId('background-running', say('The helper is running.')),
+      withRequestId('separate-reply', say('A separate reply.')),
+      withRequestId('background-notification', say('The helper has finished.')),
+    );
+    managed.script(held('background-result', withRequestId('background-helper', say('A later helper result.'))));
+    const result = model.hold('background-result');
     try {
-      modelReplies.push(delegate(true), { content: 'The helper is running.' });
       const base = `/sessions/${session.id}`;
       await request('POST', `${base}/prompts`, { content: [{ type: 'text', text: 'Start a background helper.' }], permission_mode: 'yolo' });
       const first = await completedTurn(session.id, 'The helper is running.');
-      await vi.waitFor(() => expect(childStarted).toBe(true));
+      await result.reached();
       const rate = async (turnId: string) => {
         const rating = await request('POST', '/feedback', { kind: 'turn', session_id: session.id, turn_id: turnId, rating: 'up' });
         expect(rating.code).toBe(0);
         return created.at(-1);
       };
       const main = { role: 'step', model_id: 'stub', is_kfc: false };
-      expect(await rate(first.turn_id)).toMatchObject({ info: { participating_models: [
-        { ...main, step: 1 }, { role: 'subagent', model_id: 'different-model', is_kfc: true }, { ...main, step: 2 },
-      ] } });
-      modelReplies.push({ content: 'A separate reply.' });
+      expect(await rate(first.turn_id)).toMatchObject({ info: {
+        request_id: 'background-running',
+        participating_models: [{ ...main, step: 1 }, { role: 'subagent', model_id: 'different-model', is_kfc: true }, { ...main, step: 2 }],
+      } });
       await request('POST', `${base}/prompts`, { content: [{ type: 'text', text: 'A separate question.' }], permission_mode: 'yolo' });
       const next = await completedTurn(session.id, 'A separate reply.');
-      expect(await rate(next.turn_id)).toMatchObject({ info: { participating_models: [{ ...main, step: 1 }] } });
+      expect(await rate(next.turn_id)).toMatchObject({ info: { request_id: 'separate-reply', participating_models: [{ ...main, step: 1 }] } });
     } finally {
-      release?.();
-      managedReply = undefined;
+      result.release();
     }
+    await completedTurn(session.id, 'The helper has finished.');
   });
 });
