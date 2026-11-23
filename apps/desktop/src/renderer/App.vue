@@ -1883,6 +1883,10 @@ function onToggleTower(): void {
   void client.toggleTowerMode();
 }
 
+function enableSwarmMode(): void {
+  if (!client.swarmMode.value) client.toggleSwarmMode();
+}
+
 async function handleCommand(payload: { cmd: string; attachments: PromptAttachment[]; restoreText?: string; skillName?: string; skillPath?: string; restoreEntries?: AttachmentEntry[]; snapshot?: ComposerDocumentSnapshot; editText?: string; delivery?: 'steer' | 'queue' }): Promise<void> {
   const { cmd, attachments, restoreText, restoreEntries, snapshot } = payload;
   if (cmd === '/compact' || cmd.startsWith('/compact ')) {
@@ -1906,12 +1910,12 @@ async function handleCommand(payload: { cmd: string; attachments: PromptAttachme
   }
   if (cmd === '/swarm' || cmd.startsWith('/swarm ')) {
     const arg = cmd.slice('/swarm'.length).trim();
-    if (arg === 'on') client.enableSwarmMode();
+    if (arg === 'on') enableSwarmMode();
     else if (arg === 'off') client.setSwarmMode(false);
     else if (arg) {
       const originSid = client.activeSessionId.value;
       if (!(await passCommandGates(cmd, attachments, restoreText, restoreEntries, snapshot))) return;
-      client.enableSwarmMode();
+      enableSwarmMode();
       const prompt = client.createPromptEnvelope(commandPromptContent(cmd, attachments, snapshot));
       if (payload.delivery === 'steer') {
         const generation = ++sendGeneration;

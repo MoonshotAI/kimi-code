@@ -29,7 +29,7 @@ function parseIdList(raw: unknown): string | string[] | undefined {
   return raw as string[];
 }
 
-function parseLocalizedString(raw: unknown): ModelSwitchLocalizedString | null | undefined {
+export function parseModelSwitchLocalizedString(raw: unknown): ModelSwitchLocalizedString | null | undefined {
   if (raw === undefined) return undefined;
   if (typeof raw !== 'object' || raw === null) return null;
   const record = raw as Record<string, unknown>;
@@ -49,8 +49,8 @@ function parseRule(raw: unknown): ModelSwitchRule | undefined {
   const sessionType = record['session_type'];
   if (from === undefined || to === undefined) return undefined;
   if (sessionType !== 'old' && sessionType !== 'new' && sessionType !== 'all') return undefined;
-  const hint = parseLocalizedString(record['hint']);
-  const warning = parseLocalizedString(record['warning']);
+  const hint = parseModelSwitchLocalizedString(record['hint']);
+  const warning = parseModelSwitchLocalizedString(record['warning']);
   if (hint === null || warning === null) return undefined;
   return {
     from,
@@ -81,15 +81,16 @@ export function matchModelSwitchRule(
   toModelId: string,
   sessionType: Exclude<ModelSwitchSessionType, 'all'>,
 ): ModelSwitchRule | undefined {
-  if (config === undefined || !config.enable) return undefined;
-  const hit = (ids: string | string[], id: string): boolean =>
-    ids === '*' || (typeof ids === 'string' ? ids === id : ids.includes(id));
-  return config.rules.find(
-    (rule) =>
-      (rule.session_type === 'all' || rule.session_type === sessionType) &&
-      hit(rule.from, fromModelId) &&
-      hit(rule.to, toModelId),
-  );
+  if (config?.enable !== true) return undefined;
+  const includesModel = (candidates: string | string[], modelId: string): boolean => {
+    if (candidates === '*') return true;
+    return Array.isArray(candidates) ? candidates.includes(modelId) : candidates === modelId;
+  };
+  for (const rule of config.rules) {
+    if (rule.session_type !== 'all' && rule.session_type !== sessionType) continue;
+    if (includesModel(rule.from, fromModelId) && includesModel(rule.to, toModelId)) return rule;
+  }
+  return undefined;
 }
 
 export function upstreamModelIdFromConfigModels(

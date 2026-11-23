@@ -1,6 +1,7 @@
 import {
   matchModelSwitchRule,
   parseModelSwitchConfirmConfig,
+  parseModelSwitchLocalizedString,
   type ModelSwitchConfirmConfig,
   type ModelSwitchLocalizedString,
   type ModelSwitchRule,
@@ -20,18 +21,6 @@ export interface EffortSwitchConfig {
   confirm: ModelSwitchConfirmConfig;
 }
 
-function parseLocalizedString(raw: unknown): ModelSwitchLocalizedString | null | undefined {
-  if (raw === undefined) return undefined;
-  if (typeof raw !== 'object' || raw === null) return null;
-  const record = raw as Record<string, unknown>;
-  if (record['en'] !== undefined && typeof record['en'] !== 'string') return null;
-  if (record['zh'] !== undefined && typeof record['zh'] !== 'string') return null;
-  return {
-    en: typeof record['en'] === 'string' ? record['en'] : undefined,
-    zh: typeof record['zh'] === 'string' ? record['zh'] : undefined,
-  };
-}
-
 function parseDescriptions(raw: unknown): EffortSwitchConfig['descriptions'] {
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
     return { enable: false, items: {} };
@@ -41,11 +30,20 @@ function parseDescriptions(raw: unknown): EffortSwitchConfig['descriptions'] {
   const rawItems = record['items'];
   if (typeof rawItems === 'object' && rawItems !== null && !Array.isArray(rawItems)) {
     for (const [effort, value] of Object.entries(rawItems)) {
-      const parsed = parseLocalizedString(value);
+      const parsed = parseModelSwitchLocalizedString(value);
       if (parsed !== null && parsed !== undefined) items[effort] = parsed;
     }
   }
   return { enable: record['enable'] === true, items };
+}
+
+export function matchEffortSwitchRule(
+  config: EffortSwitchConfig | undefined,
+  fromEffort: string,
+  toEffort: string,
+  sessionType: Exclude<ModelSwitchSessionType, 'all'>,
+): EffortSwitchRule | undefined {
+  return matchModelSwitchRule(config?.confirm, fromEffort, toEffort, sessionType);
 }
 
 export function parseEffortSwitchConfig(raw: unknown): EffortSwitchConfig {
@@ -57,15 +55,6 @@ export function parseEffortSwitchConfig(raw: unknown): EffortSwitchConfig {
     descriptions: parseDescriptions(record['descriptions']),
     confirm: parseModelSwitchConfirmConfig(record['confirm']),
   };
-}
-
-export function matchEffortSwitchRule(
-  config: EffortSwitchConfig | undefined,
-  fromEffort: string,
-  toEffort: string,
-  sessionType: Exclude<ModelSwitchSessionType, 'all'>,
-): EffortSwitchRule | undefined {
-  return matchModelSwitchRule(config?.confirm, fromEffort, toEffort, sessionType);
 }
 
 export function resolveEffortDescription(

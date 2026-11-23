@@ -70,7 +70,8 @@ describe('Composer model menu drafts', () => {
     expect(composer).toContain('onDismiss: commitModelMenuDraft');
     expect(composer).toContain('submitOnCtrlEnter: true');
     expect(composer).toContain('keepOpen: true');
-    expect(composer).toContain('m.id === draftModelId');
+    expect(composer).toContain('entry.model.id === draftModelId');
+    expect(composer).toContain('fallbackModelEntries');
   });
 
   it('uses cloud effort descriptions instead of the static cache note', () => {

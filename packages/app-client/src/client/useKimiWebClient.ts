@@ -88,6 +88,8 @@ import { createSessionActions } from './sessionActions';
 import { usePromptPipeline } from './usePromptPipeline';
 import { useConfirmDialog } from '../composables/useConfirmDialog';
 import { persistComposerDraftSnapshot } from '../lib/composerDraftLifecycle';
+import { configureWorkspaceHooks } from '../lib/workspaceHooks';
+import { workspaceModeActions } from '../lib/workspaceModeActions';
 import { closeSessionBusyWindow, openSessionBusyWindow } from '../lib/perfTracking';
 import { waitForSessionExecution, type SessionExecutionState } from '../lib/sessionExecutionReadiness';
 import { sessionMentionCandidates as buildSessionMentionCandidates, type SessionMentionCandidate } from '../lib/sessionReferences';
@@ -100,9 +102,9 @@ import { workspacesStore, setWorkspacesHooks } from '../stores/workspaces';
 import { approvalsStore, setApprovalsHooks } from '../stores/approvals';
 import { filesStore } from '../stores/files';
 import { modelsStore } from '../stores/models';
-import { modeStore, setModeHooks } from '../stores/mode';
+import { modeStore } from '../stores/mode';
 import { warningsStore, warningDetail } from '../stores/warnings';
-import { goalStore, setGoalHooks } from '../stores/goal';
+import { goalStore } from '../stores/goal';
 import { configStore, setConfigHooks } from '../stores/config';
 import { hostsStore, setHostsHooks } from '../stores/hosts';
 import { tasksStore, setTasksHooks } from '../stores/tasks';
@@ -110,7 +112,7 @@ import { agentStatesStore } from '../stores/agentStates';
 import { setFilesHooks } from '../stores/files';
 import { authStore, setAuthHooks } from '../stores/auth';
 import { computeGateVerdict, mapDaemonAuthError, AUTH_MODEL_NOT_RESOLVED_CODE, type ChatGateInput, type ChatGateVerdict } from '../lib/chatGate';
-import { permissionsStore, setPermissionsHooks } from '../stores/permissions';
+import { permissionsStore } from '../stores/permissions';
 import { promptStore } from '../stores/prompt';
 import {
   connectionStore,
@@ -2901,30 +2903,16 @@ const workspaceBoot = createWorkspaceBoot(rawState, {
 });
 
 const { confirm } = useConfirmDialog();
-setModeHooks({
+configureWorkspaceHooks({
   persistSessionProfile,
-  notifySwarmEnabled: () =>
-    warningsStore().pushWarning({
-      severity: 'warning',
-      title: t('workspace.swarmEnabledTitle'),
-      message: t('workspace.swarmEnabledMessage'),
-    }),
-});
-setGoalHooks({
-  pushOperationFailure: warningsStore().pushOperationFailure,
   confirmGoalStart: (objective) =>
     confirm({
       title: t('workspace.goalStartTitle'),
       message: t('workspace.goalStartConfirm', { objective }),
       variant: 'primary',
     }),
-  createDraftSession: promptPipeline.createDraftSession,
-  sendPrompt: promptPipeline.sendPrompt,
-  steerPromptDirect: promptPipeline.steerPromptDirect,
-  submitPromptInternal: promptPipeline.submitPromptInternal,
-  flushQueueHead: promptPipeline.flushQueueHead,
+  promptPipeline,
 });
-setPermissionsHooks({ persistSessionProfile });
 setFilesHooks({ pushOperationFailure: warningsStore().pushOperationFailure });
 setConfigHooks({ pushOperationFailure: warningsStore().pushOperationFailure });
 setApprovalsHooks({ pushOperationFailure: warningsStore().pushOperationFailure });
@@ -3551,19 +3539,7 @@ export function useKimiWebClient() {
 
     setPermission: permissionsStore().setPermission,
     setThinking,
-    setPlanMode: modeStore().setPlanMode,
-    togglePlanMode: modeStore().togglePlanMode,
-    setSwarmMode: modeStore().setSwarmMode,
-    enableSwarmMode: modeStore().enableSwarmMode,
-    toggleSwarmMode: modeStore().toggleSwarmMode,
-    setTowerMode: modeStore().setTowerMode,
-    toggleTowerMode: modeStore().toggleTowerMode,
-    sendTowerPrompt,
-    setGoalMode: modeStore().setGoalMode,
-    toggleGoalMode: modeStore().toggleGoalMode,
-    createGoal: goalStore().createGoal,
-    controlGoal: goalStore().controlGoal,
-    editGoalObjective: goalStore().editGoalObjective,
+    ...workspaceModeActions(sendTowerPrompt),
     enqueue: promptPipeline.enqueue,
     renameSession: sessionListStore().renameSession,
     regenerateSessionTitle: sessionListStore().regenerateSessionTitle,

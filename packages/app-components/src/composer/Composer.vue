@@ -2999,6 +2999,46 @@ const showAllModels = computed(() => showPickModel.value || currentProvider.valu
 const unstarredGroups = computed(() =>
   showAllModels.value ? groupUnstarredModelsByProvider(models.value ?? [], starredIds.value ?? []) : [],
 );
+const fallbackModelEntries = computed(() => {
+  const entries: (
+    | { kind: 'section'; key: string; label: string }
+    | { kind: 'divider'; key: string }
+    | {
+        kind: 'model';
+        key: string;
+        model: NonNullable<typeof models.value>[number];
+        showProvider: boolean;
+        starred: boolean;
+      }
+  )[] = [];
+  if (starredOtherModels.value.length > 0) {
+    entries.push({ kind: 'section', key: 'starred', label: t('status.starredModels') });
+    for (const model of starredOtherModels.value) {
+      entries.push({ kind: 'model', key: `model:${model.id}`, model, showProvider: true, starred: true });
+    }
+    entries.push({ kind: 'divider', key: 'starred-divider' });
+  }
+  if (showAllModels.value) {
+    unstarredGroups.value.forEach((group, index) => {
+      entries.push({ kind: 'section', key: `provider:${index}`, label: providerDisplayName(group.provider, t) });
+      for (const model of group.models) {
+        entries.push({ kind: 'model', key: `model:${model.id}`, model, showProvider: false, starred: false });
+      }
+    });
+  } else if (providerModels.value.length > 0) {
+    entries.push({ kind: 'section', key: 'provider', label: providerDisplayName(currentProvider.value, t) });
+    for (const model of providerModels.value) {
+      entries.push({
+        kind: 'model',
+        key: `model:${model.id}`,
+        model,
+        showProvider: false,
+        starred: isStarred(model.id),
+      });
+    }
+  }
+  return entries;
+});
 
 const modelDropdownRef = ref<MenuHandle | null>(null);
 const permDropdownRef = ref<MenuHandle | null>(null);
@@ -3681,54 +3721,20 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
           <!-- Scrollable model list — capped so a large provider catalog
                can't push the controls below out of the viewport. -->
           <div class="md-list">
-            <!-- Starred models from other providers -->
-            <div v-if="starredOtherModels.length > 0" class="md-section">{{ t('status.starredModels') }}</div>
-            <MenuItem
-              v-for="m in starredOtherModels"
-              :key="m.id"
-              class="md-row"
-              :class="{ 'is-current': m.id === draftModelId }"
-              :active="m.id === draftModelId"
-              @click="selectModel(m.id)"
-            >
-              <span class="md-check"><Icon v-if="m.id === draftModelId" name="check" size="sm" style="color: var(--color-accent)" /></span>
-              <span class="md-name">{{ m.displayName ?? m.model }}</span>
-              <span class="md-provider">{{ providerDisplayName(m.provider, t) }}</span>
-              <Icon class="md-star" name="star" size="sm" style="color: var(--star)" />
-            </MenuItem>
-
-            <div v-if="starredOtherModels.length > 0" class="md-divider" />
-
-            <!-- Current provider models -->
-            <template v-if="showAllModels">
-              <template v-for="group in unstarredGroups" :key="group.provider">
-                <div class="md-section">{{ providerDisplayName(group.provider, t) }}</div>
-                <MenuItem
-                  v-for="m in group.models"
-                  :key="m.id"
-                  class="md-row"
-                  :class="{ 'is-current': m.id === draftModelId }"
-                  :active="m.id === draftModelId"
-                  @click="selectModel(m.id)"
-                >
-                  <span class="md-check"><Icon v-if="m.id === draftModelId" name="check" size="sm" style="color: var(--color-accent)" /></span>
-                  <span class="md-name">{{ m.displayName ?? m.model }}</span>
-                </MenuItem>
-              </template>
-            </template>
-            <template v-else>
-              <div v-if="providerModels.length > 0" class="md-section">{{ providerDisplayName(currentProvider, t) }}</div>
+            <template v-for="entry in fallbackModelEntries" :key="entry.key">
+              <div v-if="entry.kind === 'section'" class="md-section">{{ entry.label }}</div>
+              <div v-else-if="entry.kind === 'divider'" class="md-divider" />
               <MenuItem
-                v-for="m in providerModels"
-                :key="m.id"
+                v-else
                 class="md-row"
-                :class="{ 'is-current': m.id === draftModelId }"
-                :active="m.id === draftModelId"
-                @click="selectModel(m.id)"
+                :class="{ 'is-current': entry.model.id === draftModelId }"
+                :active="entry.model.id === draftModelId"
+                @click="selectModel(entry.model.id)"
               >
-                <span class="md-check"><Icon v-if="m.id === draftModelId" name="check" size="sm" style="color: var(--color-accent)" /></span>
-                <span class="md-name">{{ m.displayName ?? m.model }}</span>
-                <Icon v-if="isStarred(m.id)" class="md-star" name="star" size="sm" style="color: var(--star)" />
+                <span class="md-check"><Icon v-if="entry.model.id === draftModelId" name="check" size="sm" style="color: var(--color-accent)" /></span>
+                <span class="md-name">{{ entry.model.displayName ?? entry.model.model }}</span>
+                <span v-if="entry.showProvider" class="md-provider">{{ providerDisplayName(entry.model.provider, t) }}</span>
+                <Icon v-if="entry.starred" class="md-star" name="star" size="sm" style="color: var(--star)" />
               </MenuItem>
             </template>
           </div>
