@@ -257,9 +257,8 @@ async function submit(): Promise<void> {
 }
 .feedback-reasons-loading-size:has(.ui-pill + .ui-pill) {
   align-content: start;
-  height: calc(var(--feedback-reason-height) + 10px);
-  margin-bottom: -10px;
-  row-gap: var(--space-1);
+  height: calc(var(--feedback-reason-height) + var(--space-3));
+  margin-bottom: calc(0px - var(--space-3));
   overflow-y: auto;
   overscroll-behavior: contain;
 }
