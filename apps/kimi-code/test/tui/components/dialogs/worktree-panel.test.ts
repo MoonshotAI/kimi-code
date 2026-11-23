@@ -18,6 +18,9 @@ const ENTER = '\r';
 const ESC = '\u001B';
 const TAB = '\t';
 const DOWN = '\u001B[B';
+const CTRL_N = '\u000E';
+const CTRL_X = '\u0018';
+const BACKSPACE = '\u007F';
 
 const ROOT = '/home/me/.kimi-code/worktrees/wd_repo';
 const APC = /\u001B_[^\u0007]*\u0007/g;
@@ -43,6 +46,7 @@ function worktree(name: string, overrides: Partial<KimiWorktree> = {}): KimiWork
     head: 'abc1234567890',
     branch: undefined,
     missing: false,
+    managed: true,
     ...overrides,
   };
 }
@@ -111,8 +115,8 @@ describe('WorktreePanelComponent', () => {
     const { text } = makePanel();
     const lines = text().split('\n');
 
-    expect(lines[1]).toBe(' Worktrees  repo');
-    expect(lines[2]).toBe(' ↑↓ navigate · Enter open · N new · D delete · Esc cancel');
+    expect(lines[1]).toBe(' Worktrees  repo  (type to search)');
+    expect(lines[2]).toBe(' ↑↓ navigate · Enter open · Ctrl+N new · Ctrl+X delete · Esc cancel');
     const body = lines.filter((line) => line.startsWith('  ')).map((line) => line.trimEnd());
     expect(body).toEqual([
       '  ❯ ~/code/repo                               source ← current',
@@ -160,42 +164,86 @@ describe('WorktreePanelComponent', () => {
     expect(text()).not.toContain('directory is missing');
   });
 
-  it('opens the form from N, n, and the new row', () => {
+  it('opens the form from Ctrl+N and the new row', () => {
     const { panel, handlers } = makePanel();
-    panel.handleInput('N');
-    panel.handleInput('n');
+    panel.handleInput(CTRL_N);
     for (let i = 0; i < 4; i += 1) panel.handleInput(DOWN);
     panel.handleInput(ENTER);
 
-    expect(handlers.onNew).toHaveBeenCalledTimes(3);
+    expect(handlers.onNew).toHaveBeenCalledTimes(2);
   });
 
   it('refuses to delete the source checkout or the current worktree', () => {
     const source = makePanel();
-    source.panel.handleInput('d');
+    source.panel.handleInput(CTRL_X);
     expect(source.text()).toContain(" You can't delete the source checkout.");
 
     const current = makePanel('fix-login');
-    current.panel.handleInput('D');
+    current.panel.handleInput(CTRL_X);
     expect(current.text()).toContain(
       " You're in this worktree. Leave it first, or exit Kimi Code to clean it up.",
     );
 
+    const externalCurrent = makePanel('external', {
+      rows: [
+        {
+          kind: 'worktree',
+          worktree: worktree('external', { path: '/home/me/.herdr/worktrees/repo/external', managed: false }),
+          current: true,
+        },
+        { kind: 'source', path: '/home/me/code/repo', current: false },
+        { kind: 'new' },
+      ],
+    });
+    externalCurrent.panel.handleInput(CTRL_X);
+    expect(externalCurrent.text()).toContain(
+      " You're in this worktree. Switch to another checkout first.",
+    );
+
     expect(source.handlers.onDelete).not.toHaveBeenCalled();
     expect(current.handlers.onDelete).not.toHaveBeenCalled();
+    expect(externalCurrent.handlers.onDelete).not.toHaveBeenCalled();
   });
 
-  it('deletes another worktree, missing or not, with D', () => {
+  it('deletes another worktree, missing or not, with Ctrl+X', () => {
     const { panel, handlers } = makePanel();
     panel.handleInput(DOWN);
-    panel.handleInput('D');
+    panel.handleInput(CTRL_X);
     panel.handleInput(DOWN);
     panel.handleInput(DOWN);
-    panel.handleInput('d');
+    panel.handleInput(CTRL_X);
 
     expect(
       handlers.onDelete.mock.calls.map(([row]) => (row as { worktree: KimiWorktree }).worktree.name),
     ).toEqual(['fix-login', 'gone']);
+  });
+
+  it('filters worktrees by typing, clears the query on Backspace or first Esc, and reports empty matches', () => {
+    const { panel, handlers, text } = makePanel();
+    for (const ch of 'feat/ui') panel.handleInput(ch);
+
+    expect(text()).toContain(' Search: feat/ui');
+    expect(text()).toContain('Backspace clear · ↑↓ navigate');
+    expect(text()).toContain('feat-ui');
+    expect(text()).not.toContain('fix-login');
+
+    panel.handleInput(ENTER);
+    expect(handlers.onOpen).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'worktree', worktree: worktree('feat-ui', { branch: 'feat/ui' }) }),
+    );
+
+    panel.handleInput(BACKSPACE);
+    expect(text()).toContain(' Search: feat/u');
+    panel.handleInput(ESC);
+    expect(handlers.onCancel).not.toHaveBeenCalled();
+    expect(text()).not.toContain(' Search:');
+    expect(text()).toContain('fix-login');
+
+    for (const ch of 'zzzz-none') panel.handleInput(ch);
+    expect(text()).toContain('No matching worktrees.');
+    panel.handleInput(ESC);
+    panel.handleInput(ESC);
+    expect(handlers.onCancel).toHaveBeenCalledTimes(1);
   });
 
   it('shows a notice under the hint and closes on Esc', () => {

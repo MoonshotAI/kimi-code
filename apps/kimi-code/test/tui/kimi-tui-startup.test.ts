@@ -4872,8 +4872,8 @@ describe('KimiTUI work location', () => {
 
   describe('/worktree', () => {
     const DOWN = '\u001B[B';
-    const UP = '\u001B[A';
     const ENTER = '\r';
+    const CTRL_X = '\u0018';
 
     function removalCheck(
       worktree: string,
@@ -4899,11 +4899,22 @@ describe('KimiTUI work location', () => {
     ) {
       const mocks = {
         listWorktrees: vi.fn(
-          async (_cwd: string): Promise<WorktreeListing> => ({
+          async (cwd: string): Promise<WorktreeListing> => ({
             repoRoot: project,
+            currentCheckoutRoot:
+              cwd === worktree || cwd.startsWith(`${worktree}/`) || cwd.startsWith(`${worktree}\\`)
+                ? worktree
+                : project,
             bare,
             worktrees: [
-              { path: worktree, name: 'fix-login', head: 'abc1234', branch: undefined, missing: false },
+              {
+                path: worktree,
+                name: 'fix-login',
+                head: 'abc1234',
+                branch: undefined,
+                missing: false,
+                managed: true,
+              },
             ],
           }),
         ),
@@ -5008,7 +5019,7 @@ describe('KimiTUI work location', () => {
       });
 
       const back = await openPanel(driver);
-      back.handleInput(UP);
+      back.handleInput(DOWN);
       back.handleInput(ENTER);
 
       await vi.waitFor(() => {
@@ -5062,10 +5073,77 @@ describe('KimiTUI work location', () => {
       await vi.waitFor(() => {
         expect(driver.state.appState.workDir).toBe(join(worktree, 'pkg'));
       });
-      await enter(UP);
+      await enter(DOWN);
       await vi.waitFor(() => {
         expect(driver.state.appState.workDir).toBe(join(project, 'pkg'));
       });
+    });
+
+    it('pins an external linked checkout as current, preserves ..cache subdirs, and keeps external worktrees unmanaged', async () => {
+      const project = tempDir('kimi-location-project-');
+      const managed = tempDir('kimi-location-managed-');
+      const external = tempDir('kimi-location-external-');
+      mkdirSync(join(external, '..cache'));
+      mkdirSync(join(managed, '..cache'));
+      const { harness, listWorktrees } = worktreeHarness(project, managed);
+      listWorktrees.mockImplementation(async (cwd: string): Promise<WorktreeListing> => ({
+        repoRoot: project,
+        currentCheckoutRoot:
+          cwd === managed || cwd.startsWith(`${managed}/`)
+            ? managed
+            : cwd === external || cwd.startsWith(`${external}/`)
+              ? external
+              : project,
+        bare: false,
+        worktrees: [
+          {
+            path: managed,
+            name: 'managed-wt',
+            head: 'abc1234',
+            branch: undefined,
+            missing: false,
+            managed: true,
+          },
+          {
+            path: external,
+            name: 'external-wt',
+            head: 'def5678',
+            branch: 'feat/external',
+            missing: false,
+            managed: false,
+          },
+        ],
+      }));
+      const driver = await startAt(join(external, '..cache'), harness, {}, {
+        projectRoot: project,
+        isGitRepo: true,
+      });
+
+      const panel = await openPanel(driver);
+      const rendered = panelText(driver);
+      expect(rendered).toMatch(/external-wt|feat\/external ← current/);
+      expect(rendered).not.toMatch(/source ← current/);
+
+      panel.handleInput(DOWN);
+      panel.handleInput(DOWN);
+      panel.handleInput(ENTER);
+      await vi.waitFor(() => {
+        expect(driver.state.appState.workDir).toBe(join(managed, '..cache'));
+      });
+      expect(driver.state.appState.worktree).toEqual({
+        root: managed,
+        name: 'managed-wt',
+        repoRoot: project,
+      });
+
+      const backToExternal = await openPanel(driver);
+      backToExternal.handleInput(DOWN);
+      backToExternal.handleInput(DOWN);
+      backToExternal.handleInput(ENTER);
+      await vi.waitFor(() => {
+        expect(driver.state.appState.workDir).toBe(join(external, '..cache'));
+      });
+      expect(driver.state.appState.worktree).toBeUndefined();
     });
 
     it('reports why the panel cannot open', async () => {
@@ -5109,10 +5187,15 @@ describe('KimiTUI work location', () => {
       const driver = await startAt(project, harness);
       await driver.ensureSession();
       const panel = await openPanel(driver);
-      listWorktrees.mockResolvedValueOnce({ repoRoot: project, bare: false, worktrees: [] });
+      listWorktrees.mockResolvedValueOnce({
+        repoRoot: project,
+        currentCheckoutRoot: project,
+        bare: false,
+        worktrees: [],
+      });
 
       panel.handleInput(DOWN);
-      panel.handleInput('d');
+      panel.handleInput(CTRL_X);
       const prompt = await choose(driver, [DOWN, ENTER]);
 
       expect(prompt).toContain('Delete worktree fix-login?');
@@ -5156,13 +5239,13 @@ describe('KimiTUI work location', () => {
       const panel = await openPanel(driver);
 
       panel.handleInput(DOWN);
-      panel.handleInput('d');
+      panel.handleInput(CTRL_X);
       await vi.waitFor(() => {
         expect(panelText(driver)).toContain('fix-login is open in another Kimi Code window.');
       });
       expect(slot(driver, ChoicePickerComponent)).toBeUndefined();
 
-      panel.handleInput('d');
+      panel.handleInput(CTRL_X);
       await choose(driver, [DOWN, ENTER]);
       await vi.waitFor(() => {
         expect(removeWorktree).toHaveBeenCalledOnce();
@@ -5171,6 +5254,101 @@ describe('KimiTUI work location', () => {
         expect(panelText(driver)).toContain('fix-login is open in another Kimi Code window.');
       });
       expect(panelText(driver)).toContain(basename(worktree));
+    });
+
+    it('resumes a same-project session from /sessions even when its directory was deleted and resolveSessionEnvironment rejects missing paths', async () => {
+      const project = tempDir('kimi-missing-resume-project-');
+      const missingDir = join(project, 'deleted-worktree');
+      const resumed = makeSession({ id: 'ses-missing' });
+      const harness = makeHarness(makeSession({ id: 'ses-current' }), {
+        listSessionsPage: vi.fn(async () => ({
+          items: [
+            {
+              id: 'ses-missing',
+              title: 'Deleted worktree session',
+              workDir: missingDir,
+              projectWorkDir: project,
+              updatedAt: Date.now(),
+            },
+          ],
+          nextCursor: undefined,
+        })),
+        resumeSession: vi.fn(async () => resumed),
+        resolveSessionEnvironment: vi.fn(async (input: { workDir: string }) => {
+          if (input.workDir === missingDir) {
+            throw new Error(`Working directory does not exist: ${missingDir}`);
+          }
+          return { environmentId: 'local' };
+        }),
+        resolveWorkLocation: vi.fn(async (cwd: string) => ({
+          cwd,
+          projectRoot: project,
+          isGitRepo: true,
+        })),
+      });
+      const driver = await startAt(project, harness, {}, { projectRoot: project, isGitRepo: true });
+      await (driver as unknown as { showSessionPicker(): Promise<void> }).showSessionPicker();
+
+      const picker = driver.state.editorContainer.children[0] as { handleInput(data: string): void };
+      picker.handleInput(ENTER);
+
+      await vi.waitFor(() => {
+        expect(driver.state.appState.sessionId).toBe('ses-missing');
+      });
+      expect(driver.state.appState.workDir).toBe(missingDir);
+      expect(transcriptText(driver)).toContain('no longer exists');
+    });
+
+    it('keeps the latest tab sessions when an earlier slower tab query resolves later', async () => {
+      const project = tempDir('kimi-tab-race-project-');
+      let resolveProject!: (page: { items: Array<{ id: string; title: string; workDir: string; updatedAt: number }>; nextCursor?: string }) => void;
+      const projectPage = new Promise<{
+        items: Array<{ id: string; title: string; workDir: string; updatedAt: number }>;
+        nextCursor?: string;
+      }>((resolvePromise) => {
+        resolveProject = resolvePromise;
+      });
+      const harness = makeHarness(makeSession({ id: 'ses-current' }), {
+        listSessionsPage: vi.fn(async (input: { workDir?: string; scope?: string }) => {
+          if (input.scope === 'project') return projectPage;
+          if (input.workDir === undefined) {
+            return {
+              items: [{ id: 'ses-all', title: 'All tab item', workDir: '/tmp/other', updatedAt: Date.now() }],
+              nextCursor: 'cursor-all',
+            };
+          }
+          return {
+            items: [{ id: 'ses-cwd', title: 'Cwd tab item', workDir: project, updatedAt: Date.now() }],
+            nextCursor: undefined,
+          };
+        }),
+      });
+      const driver = await startAt(project, harness, {}, { projectRoot: project, isGitRepo: true });
+      await (driver as unknown as { showSessionPicker(): Promise<void> }).showSessionPicker();
+
+      const selectScope = (
+        driver as unknown as {
+          selectSessionPickerScope(scope: 'cwd' | 'project' | 'all', id: string): Promise<void>;
+        }
+      ).selectSessionPickerScope.bind(driver);
+
+      const staleProject = selectScope('project', 'ses-cwd');
+      const newerAll = selectScope('all', 'ses-cwd');
+      await newerAll;
+      expect(driver.state.sessionsScope).toBe('all');
+      expect(driver.state.sessions.map((row) => row.id)).toEqual(['ses-all']);
+      expect(driver.state.sessionsNextCursor).toBe('cursor-all');
+
+      resolveProject({
+        items: [{ id: 'ses-project-stale', title: 'Stale project item', workDir: project, updatedAt: Date.now() }],
+        nextCursor: 'cursor-project-stale',
+      });
+      await staleProject;
+
+      expect(driver.state.sessionsScope).toBe('all');
+      expect(driver.state.sessions.map((row) => row.id)).toEqual(['ses-all']);
+      expect(driver.state.sessionsNextCursor).toBe('cursor-all');
+      expect(driver.state.loadingSessions).toBe(false);
     });
   });
 

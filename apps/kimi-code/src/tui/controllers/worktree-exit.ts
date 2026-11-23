@@ -13,6 +13,7 @@ import type { AppState } from '#/tui/types';
 import { formatErrorMessage } from '#/tui/utils/event-payload';
 import { sessionWorktree } from '#/tui/utils/session-work-dir';
 import { abbreviateHome } from '#/utils/paths';
+import { quoteShellArg } from '#/utils/shell-quote';
 
 import type { WorktreeCreationController } from './worktree-creation';
 import { inspectWorktreeRemoval, removeWorktree } from './worktree-removal';
@@ -178,14 +179,14 @@ export class WorktreeExitController {
 export function formatWorktreeExit(outcome: WorktreeExitOutcome): string[] {
   switch (outcome.kind) {
     case 'kept': {
-      const path = abbreviateHome(outcome.path);
+      const displayPath = abbreviateHome(outcome.path);
       const checkout = outcome.branch === undefined ? 'detached HEAD' : `branch ${outcome.branch}`;
-      const lines = [`Kept worktree ${outcome.name} at ${path} (${checkout}).`];
+      const lines = [`Kept worktree ${outcome.name} at ${displayPath} (${checkout}).`];
       if (outcome.branch === undefined && outcome.uniqueCommits > 0) {
         const one = outcome.uniqueCommits === 1;
         lines.push(
           `${outcome.uniqueCommits} ${one ? 'commit exists' : 'commits exist'} only in this worktree. To keep ${one ? 'it' : 'them'} on a branch:`,
-          `  git -C ${path} switch -c <branch-name>`,
+          `  git -C ${quoteShellArg(outcome.path)} switch -c <branch-name>`,
         );
       }
       return lines;

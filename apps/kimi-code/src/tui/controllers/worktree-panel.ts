@@ -4,6 +4,7 @@ import { basename, isAbsolute, join, relative } from 'node:path';
 import {
   ErrorCodes,
   isKimiError,
+  sameDir,
   type KimiHarness,
   type WorktreeListing,
 } from '@moonshot-ai/kimi-code-sdk';
@@ -69,7 +70,7 @@ export class WorktreePanelController {
     if (listing === undefined) return;
     this.panel = new WorktreePanelComponent({
       repoName: basename(listing.repoRoot),
-      rows: panelRows(listing, this.host.state.appState),
+      rows: panelRows(listing),
       pageSize: WORKTREE_PANEL_PAGE_SIZE,
       layout:
         this.host.state.dockContainer === undefined
@@ -97,7 +98,7 @@ export class WorktreePanelController {
     const destination = await destinationFor(listing, row, this.host.state.appState);
     this.close();
     if (!(await this.host.startSessionAt(destination.location))) return;
-    this.host.showStatus(arrivalNotice(destination.location, listing.repoRoot));
+    this.host.showStatus(arrivalNotice(row, listing.repoRoot));
     if (destination.missingSubdir !== undefined) {
       this.host.showStatus(missingSubdirNotice(destination.missingSubdir, row.kind), 'warning');
     }
@@ -179,7 +180,7 @@ export class WorktreePanelController {
         return;
       }
       const refreshed = await this.fetchListing();
-      if (refreshed !== undefined) panel.setRows(panelRows(refreshed, this.host.state.appState));
+      if (refreshed !== undefined) panel.setRows(panelRows(refreshed));
       this.notify({ text: `Deleted ${name}.`, tone: 'success' });
     } finally {
       this.busy = false;
@@ -234,31 +235,40 @@ export class WorktreePanelController {
   }
 }
 
+function isOutsideRoot(rel: string): boolean {
+  return rel === '..' || rel.startsWith('../') || rel.startsWith('..\\') || isAbsolute(rel);
+}
+
 async function relativeInside(root: string, dir: string): Promise<string | undefined> {
   const direct = relative(root, dir);
-  if (!direct.startsWith('..') && !isAbsolute(direct)) return direct;
+  if (!isOutsideRoot(direct)) return direct;
   const [realRoot, realDir] = await Promise.all([
     realpath(root).catch(() => root),
     realpath(dir).catch(() => dir),
   ]);
   const resolved = relative(realRoot, realDir);
-  return resolved.startsWith('..') || isAbsolute(resolved) ? undefined : resolved;
+  return isOutsideRoot(resolved) ? undefined : resolved;
 }
 
-function panelRows(
-  listing: WorktreeListing,
-  appState: Pick<AppState, 'worktree'>,
-): WorktreePanelRow[] {
-  const sourceRows: WorktreePanelRow[] = listing.bare
-    ? []
-    : [{ kind: 'source', path: listing.repoRoot, current: appState.worktree === undefined }];
+function panelRows(listing: WorktreeListing): WorktreePanelRow[] {
+  const sourceRow: WorktreePanelRow | undefined = listing.bare
+    ? undefined
+    : {
+        kind: 'source',
+        path: listing.repoRoot,
+        current: sameDir(listing.currentCheckoutRoot, listing.repoRoot),
+      };
+  const worktreeRows: WorktreeRow[] = listing.worktrees.map((worktree) => ({
+    kind: 'worktree',
+    worktree,
+    current: sameDir(listing.currentCheckoutRoot, worktree.path),
+  }));
+  const currentWorktree = worktreeRows.find((row) => row.current);
+  const otherWorktrees = worktreeRows.filter((row) => !row.current);
   return [
-    ...sourceRows,
-    ...listing.worktrees.map((worktree) => ({
-      kind: 'worktree' as const,
-      worktree,
-      current: worktree.path === appState.worktree?.root,
-    })),
+    ...(currentWorktree === undefined ? [] : [currentWorktree]),
+    ...(sourceRow === undefined ? [] : [sourceRow]),
+    ...otherWorktrees,
     { kind: 'new' },
   ];
 }
@@ -266,15 +276,14 @@ function panelRows(
 async function destinationFor(
   listing: WorktreeListing,
   row: WorktreePanelTarget,
-  appState: Pick<AppState, 'workDir' | 'worktree'>,
+  appState: Pick<AppState, 'workDir'>,
 ): Promise<Destination> {
-  const currentRoot = appState.worktree?.root ?? listing.repoRoot;
-  const subdir = await relativeInside(currentRoot, appState.workDir);
+  const subdir = await relativeInside(listing.currentCheckoutRoot, appState.workDir);
   const targetRoot = row.kind === 'source' ? listing.repoRoot : row.worktree.path;
   const worktree =
-    row.kind === 'source'
-      ? undefined
-      : { root: row.worktree.path, name: row.worktree.name, repoRoot: listing.repoRoot };
+    row.kind === 'worktree' && row.worktree.managed
+      ? { root: row.worktree.path, name: row.worktree.name, repoRoot: listing.repoRoot }
+      : undefined;
   if (subdir === undefined || subdir === '') {
     return {
       location: { cwd: targetRoot, projectRoot: listing.repoRoot, isGitRepo: true, worktree },
@@ -289,10 +298,10 @@ async function destinationFor(
       };
 }
 
-function arrivalNotice(location: WorkLocation, repoRoot: string): string {
-  return location.worktree === undefined
+function arrivalNotice(row: WorktreePanelTarget, repoRoot: string): string {
+  return row.kind === 'source'
     ? `Back in ${abbreviateHome(repoRoot)}`
-    : `Now working in worktree ${location.worktree.name}`;
+    : `Now working in worktree ${row.worktree.name}`;
 }
 
 function missingSubdirNotice(subdir: string, target: WorktreePanelTarget['kind']): string {
