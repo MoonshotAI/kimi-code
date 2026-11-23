@@ -1,0 +1,17 @@
+{
+  "name": "@moonshot-ai/e2e",
+  "version": "0.0.0",
+  "private": true,
+  "description": "End-to-end scenarios: simulated user input against the real product processes, with the testkit fake model as the only fake.",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "playwright test"
+  },
+  "devDependencies": {
+    "@moonshot-ai/pi-tui": "workspace:^",
+    "@moonshot-ai/testkit": "workspace:^",
+    "@playwright/test": "1.63.0"
+  }
+}

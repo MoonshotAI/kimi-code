@@ -1,0 +1,65 @@
+name: E2E
+
+on:
+  workflow_dispatch:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build (optional)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run build
+      - uses: actions/upload-artifact@v7
+        with:
+          name: e2e-cli
+          path: |
+            apps/kimi-code/dist/
+            apps/kimi-code/native/
+          if-no-files-found: error
+          retention-days: 1
+
+  tui:
+    name: TUI (optional)
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - uses: actions/download-artifact@v8
+        with:
+          name: e2e-cli
+          path: apps/kimi-code
+      - name: Run the scenarios and driver self-tests on the TUI
+        run: pnpm --filter @moonshot-ai/e2e exec playwright test --project=tui
+        env:
+          TESTKIT_CLI_BUILD: dist
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: e2e-tui-failure
+          path: |
+            tests/e2e/test-results/
+            tests/e2e/playwright-report/
+          retention-days: 7
