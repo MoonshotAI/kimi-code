@@ -63,6 +63,7 @@ export type LoopRecordedEvent =
       readonly argsRaw?: string;
       readonly extras?: Record<string, unknown>;
       readonly display?: ToolInputDisplay;
+      readonly callIndex?: number;
       readonly uuid?: string;
       readonly turnId?: string;
       readonly step?: number;
@@ -82,11 +83,23 @@ export type LoopRecordedEvent =
 export interface LoopEventFoldSink {
   openAssistant(time: number | undefined): void;
   appendOpenContent(part: ContentPart): void;
-  appendOpenToolCall(call: ToolCall, display?: ToolInputDisplay): void;
+  appendOpenToolCall(call: ToolCall, display?: ToolInputDisplay, callIndex?: number): void;
   dropOpenAssistant(): void;
   sealOpenAssistant(meta?: AssistantSealMeta): void;
   pushToolMessage(message: ContextMessage, time: number | undefined): void;
   pushMessage(message: ContextMessage, time: number | undefined): void;
+}
+
+export function reorderByEmissionIndex(
+  toolCalls: readonly ToolCall[],
+  callIndices: readonly (number | undefined)[],
+): ToolCall[] {
+  if (toolCalls.length === 0) return [...toolCalls];
+  if (!toolCalls.every((_, index) => callIndices[index] !== undefined)) return [...toolCalls];
+  return toolCalls
+    .map((call, index) => ({ call, callIndex: callIndices[index]! }))
+    .toSorted((a, b) => a.callIndex - b.callIndex)
+    .map((entry) => entry.call);
 }
 
 export interface LoopEventFold {
@@ -193,7 +206,7 @@ function createLoopEventFoldWithState(
             extras: event.extras,
             rawId: event.rawId,
           };
-          sink.appendOpenToolCall(call, event.display);
+          sink.appendOpenToolCall(call, event.display, event.callIndex);
           pending.set(event.toolCallId, event.name);
           openHasToolCalls = true;
           return;
@@ -309,6 +322,7 @@ function createFoldSink(initial: readonly ContextMessage[], initialMutable: bool
   };
   setMutable(initialMutable);
   let openIndex = findOpenAssistantIndex(initial);
+  let openToolCallIndices: (number | undefined)[] = [];
   const updateOpen = (update: (message: ContextMessage) => ContextMessage): void => {
     if (openIndex === -1) return;
     if (mutable) {
@@ -332,13 +346,15 @@ function createFoldSink(initial: readonly ContextMessage[], initialMutable: bool
         ]);
       }
       openIndex = current.length - 1;
+      openToolCallIndices = [];
     },
     appendOpenContent: (part) => {
       updateOpen((message) => ({ ...message, content: [...message.content, part] }));
     },
-    appendOpenToolCall: (call, display) => {
+    appendOpenToolCall: (call, display, callIndex) => {
       updateOpen((message) => {
         if (message.role !== 'assistant') return message;
+        openToolCallIndices = [...openToolCallIndices, callIndex];
         return {
           ...message,
           toolCalls: [...message.toolCalls, call],
@@ -357,16 +373,21 @@ function createFoldSink(initial: readonly ContextMessage[], initialMutable: bool
         current = Object.freeze([...current.slice(0, openIndex), ...current.slice(openIndex + 1)]);
       }
       openIndex = -1;
+      openToolCallIndices = [];
     },
     sealOpenAssistant: (meta) => {
       updateOpen((message) => ({
         ...message,
+        ...(message.role === 'assistant'
+          ? { toolCalls: reorderByEmissionIndex(message.toolCalls, openToolCallIndices) }
+          : {}),
         usage: meta?.usage,
         llmTiming: meta?.llmTiming,
         providerMessageId: meta?.providerMessageId,
         partial: undefined,
       }));
       openIndex = -1;
+      openToolCallIndices = [];
     },
     pushToolMessage: (message) => {
       if (mutable) {

@@ -7,7 +7,7 @@ import {
   selectRecentUserMessages,
 } from './compactionHandoff';
 import { cutTurnUndo, wireLinesOf } from '#/agent/undo/turnUndo';
-import { createLoopEventFold, type LoopRecordedEvent } from './loopEventFold';
+import { createLoopEventFold, reorderByEmissionIndex, type LoopRecordedEvent } from './loopEventFold';
 import type { ContextMessage } from './types';
 
 export interface ContextTranscript {
@@ -39,6 +39,7 @@ export function createContextTranscriptReducer(): ContextTranscriptReducer {
   let foldedLength = 0;
   let clearFloor = 0;
   let openEntry: MutableEntry | undefined;
+  let openToolCallIndices: (number | undefined)[] = [];
 
   const push = (...entries: MutableEntry[]): void => {
     transcript.push(...entries);
@@ -48,18 +49,22 @@ export function createContextTranscriptReducer(): ContextTranscriptReducer {
   const fold = createLoopEventFold({
     openAssistant: (time) => {
       openEntry = { message: { role: 'assistant', content: [], toolCalls: [] }, time };
+      openToolCallIndices = [];
       push(openEntry);
     },
     appendOpenContent: (part) => {
       openEntry?.message.content.push(part);
     },
-    appendOpenToolCall: (call) => {
-      if (openEntry?.message.role === 'assistant') openEntry.message.toolCalls.push(call);
+    appendOpenToolCall: (call, _display, callIndex) => {
+      if (openEntry?.message.role !== 'assistant') return;
+      openEntry.message.toolCalls.push(call);
+      openToolCallIndices = [...openToolCallIndices, callIndex];
     },
     dropOpenAssistant: () => {
       if (openEntry === undefined) return;
       const index = transcript.indexOf(openEntry);
       openEntry = undefined;
+      openToolCallIndices = [];
       if (index === -1) return;
       transcript.splice(index, 1);
       foldedLength = Math.max(0, foldedLength - 1);
@@ -68,11 +73,13 @@ export function createContextTranscriptReducer(): ContextTranscriptReducer {
       if (openEntry !== undefined) {
         openEntry.message = {
           ...openEntry.message,
+          toolCalls: reorderByEmissionIndex(openEntry.message.toolCalls, openToolCallIndices),
           ...(meta?.usage === undefined ? {} : { usage: meta.usage }),
           ...(meta?.llmTiming === undefined ? {} : { llmTiming: meta.llmTiming }),
         };
       }
       openEntry = undefined;
+      openToolCallIndices = [];
     },
     pushToolMessage: (message, time) => {
       push({ message: { ...message, toolCalls: [] }, time });

@@ -421,6 +421,7 @@ export class LoopJournal {
         this.ensureStepStarted(event.turnId, event.step, step);
         const uuid = randomUUID();
         this.toolCallUuids.set(event.toolCall.id, uuid);
+        const callIndex = assistant.toolCalls.findIndex((call) => call.id === event.toolCall.id);
         this.writeLoopEvent({
           type: 'tool.call',
           uuid,
@@ -433,6 +434,7 @@ export class LoopJournal {
           ...toolArguments(assistant, event.toolCall.id),
           extras: event.toolCall.extras,
           display: event.display as ToolInputDisplay | undefined,
+          ...(callIndex >= 0 ? { callIndex } : {}),
         });
         return;
       }
@@ -559,7 +561,8 @@ export class LoopJournal {
         this.ensureStepStarted(event.turnId, event.step, step);
         const uuid = randomUUID();
         this.toolCallUuids.set(toolCallId, uuid);
-        const toolCall = assistant.toolCalls.find((call) => call.id === toolCallId);
+        const callIndex = assistant.toolCalls.findIndex((call) => call.id === toolCallId);
+        const toolCall = callIndex >= 0 ? assistant.toolCalls[callIndex] : undefined;
         this.writeLoopEvent({
           type: 'tool.call',
           uuid,
@@ -571,6 +574,7 @@ export class LoopJournal {
           name: toolCall?.name ?? toolCallId,
           ...toolArguments(assistant, toolCallId),
           extras: toolCall?.extras,
+          ...(callIndex >= 0 ? { callIndex } : {}),
         });
       }
       this.appendContextMessage(entry);

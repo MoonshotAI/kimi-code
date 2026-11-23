@@ -1,4 +1,5 @@
 import type { LoopRecordedEvent } from '#/agent/contextMemory/loopEventFold';
+import { reorderByEmissionIndex } from '#/agent/contextMemory/loopEventFold';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import type { CompactionResult } from '#/agent/fullCompaction/types';
 import type { PermissionApprovalResultRecord } from '#/agent/permissionRules/permissionRules';
@@ -147,6 +148,7 @@ class WireReplayFoldState {
   readonly toolStore: Record<string, unknown> = {};
   private history: ContextMessage[] = [];
   private readonly openSteps = new Map<string, ContextMessage>();
+  private readonly openStepCallIndices = new Map<string, (number | undefined)[]>();
   private readonly pendingToolResultIds = new Set<string>();
   private deferredMessages: { readonly message: ContextMessage; readonly turnId?: number }[] = [];
   private goal: FoldGoalState | undefined;
@@ -304,10 +306,17 @@ class WireReplayFoldState {
         const message: ContextMessage = { role: 'assistant', content: [], toolCalls: [] };
         this.pushHistory([message], time);
         this.openSteps.set(event.uuid, message);
+        this.openStepCallIndices.set(event.uuid, []);
         return;
       }
       case 'step.end': {
+        const openStep = this.openSteps.get(event.uuid);
+        const callIndices = this.openStepCallIndices.get(event.uuid);
+        if (openStep !== undefined && openStep.role === 'assistant' && callIndices !== undefined) {
+          openStep.toolCalls = reorderByEmissionIndex(openStep.toolCalls, callIndices);
+        }
         this.openSteps.delete(event.uuid);
+        this.openStepCallIndices.delete(event.uuid);
         this.flushDeferredMessages(time);
         return;
       }
@@ -337,6 +346,8 @@ class WireReplayFoldState {
             event.argsRaw ?? (event.args === undefined ? null : JSON.stringify(event.args)),
           extras: event.extras,
         });
+        const callIndices = this.openStepCallIndices.get(event.stepUuid);
+        if (callIndices !== undefined) callIndices.push(event.callIndex);
         if (event.display !== undefined) {
           openStep.toolCallDisplays ??= {};
           openStep.toolCallDisplays[event.toolCallId] = event.display;
