@@ -149,7 +149,7 @@ import { ITowerRateLimitService } from '@moonshot-ai/agent-core-v2/features/towe
 import { readTowerStatusSummary } from '@moonshot-ai/agent-core-v2/features/tower/tools/status/statusReader';
 import { loadMcpServers } from '@moonshot-ai/agent-core-v2/app/mcpConfig/configLoader';
 import { IGitService } from '@moonshot-ai/agent-core-v2/app/git/git';
-import { fsSuggestRequestSchema } from '@moonshot-ai/agent-core-v2/workspace/workspaceFs/fs';
+import { fsSuggestRequestSchema } from '@moonshot-ai/agent-core-v2/project/projectFs/fs';
 import { ILogService } from '@moonshot-ai/agent-core-v2/_base/log/log';
 import { IAppendLogStore } from '@moonshot-ai/agent-core-v2/persistence/interface/appendLogStore';
 import { ISessionLockService } from '@moonshot-ai/agent-core-v2/persistence/interface/sessionLock';
@@ -212,9 +212,9 @@ import {
   ISessionWorkspaceContext,
   ITelemetryService,
   ISessionActivityView,
-  IWorkspaceInstanceManager,
-  IWorkspaceService,
-  IWorkspaceSessions,
+  IProjectInstanceManager,
+  IProjectService,
+  IProjectSessions,
   IEnvironmentService,
   IEnvironmentDeclarationService,
   closeSessionById,
@@ -227,7 +227,7 @@ import {
   reloadProgramForSession,
   resumeSessionById,
   sessionDirOf,
-  workspacePersistenceScope,
+  projectPersistenceScope,
   logSeed,
   MAIN_AGENT_ID,
   prepareSystemPromptContext,
@@ -252,8 +252,8 @@ import {
   type Scope,
   type ServicesAccessor,
   type SessionSummary as V2SessionSummary,
-  type WorkspaceInstance,
-  type WorkspaceInstanceLease,
+  type ProjectInstance,
+  type ProjectInstanceLease,
 } from '@moonshot-ai/agent-core-v2';
 import {
   RPCError,
@@ -418,7 +418,7 @@ export interface SDKRpcClientV2Options {
 const MAX_TIMER_DELAY_MS = 0x7fffffff;
 
 interface LeasedWorkdir {
-  readonly instance: WorkspaceInstance;
+  readonly instance: ProjectInstance;
   readonly workdir: ProgramDisclosedWorkdir;
 }
 
@@ -721,18 +721,18 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   ): Promise<T> {
     const dir = normalizeRequiredWorkDir(operation, workDir);
     await assertUsableWorkDir(this.engineAccessor.get(IHostFileSystem), dir);
-    const lease = await this.engineAccessor.get(IWorkspaceInstanceManager).acquire({ cwd: dir });
+    const lease = await this.engineAccessor.get(IProjectInstanceManager).acquire({ cwd: dir });
     return this.leaseWorkdir(lease, dir, use);
   }
 
   private async isMissingWithoutProject(dir: string): Promise<boolean> {
     const stat = await this.engineAccessor.get(IHostFileSystem).stat(dir).catch(() => undefined);
     if (stat !== undefined) return false;
-    return (await this.engineAccessor.get(IWorkspaceService).peekImplicit(dir)).project === undefined;
+    return (await this.engineAccessor.get(IProjectService).peekImplicit(dir)).project === undefined;
   }
 
   private async leaseWorkdir<T>(
-    lease: WorkspaceInstanceLease,
+    lease: ProjectInstanceLease,
     dir: string,
     use: (leased: LeasedWorkdir) => Promise<T>,
   ): Promise<T> {
@@ -766,7 +766,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   override async getWorkspaceAdditionalDirs(workDir: string): Promise<readonly string[]> {
     const dir = normalizeRequiredWorkDir('getWorkspaceAdditionalDirs', workDir);
     if (await this.isMissingWithoutProject(dir)) return [];
-    const lease = await this.engineAccessor.get(IWorkspaceInstanceManager).acquire({ cwd: dir });
+    const lease = await this.engineAccessor.get(IProjectInstanceManager).acquire({ cwd: dir });
     return this.leaseWorkdir(lease, dir, async ({ workdir }) => {
       await workdir.dirs.ready;
       return [...workdir.dirs.additionalDirs];
@@ -981,7 +981,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   override async resolveSessionPlacement(workDir: string): Promise<SessionPlacement> {
     const dir = normalizeRequiredWorkDir('resolveSessionPlacement', workDir);
     await assertUsableWorkDir(this.engineAccessor.get(IHostFileSystem), dir);
-    const workspaces = this.engineAccessor.get(IWorkspaceService);
+    const workspaces = this.engineAccessor.get(IProjectService);
     const project = (await workspaces.peekImplicit(dir)).project ?? (await workspaces.resolveImplicit(dir));
     return { projectId: project.id, projectRoot: project.root, workDir: dir, environmentCwd: workDirToPin(dir, project.root) };
   }
@@ -1522,7 +1522,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     const toSummaries = (items: readonly V2SessionSummary[]): SessionSummary[] =>
       items.flatMap((item) => this.mapIndexSummary(item, workspacesById) ?? []);
     if (workDir !== undefined && input.sessionId === undefined) {
-      const page = await this.engineAccessor.get(IWorkspaceSessions).listForWorkdir(workDir, {
+      const page = await this.engineAccessor.get(IProjectSessions).listForWorkdir(workDir, {
         includeArchived: input.includeArchived,
         limit: input.limit,
         before: input.before,
@@ -1575,7 +1575,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       workDir,
       sessionDir: sessionDirOf(
         bootstrapService.homeDir,
-        workspacePersistenceScope(bootstrapService.scope('sessions'), item.workspaceId),
+        projectPersistenceScope(bootstrapService.scope('sessions'), item.workspaceId),
         item.id,
       ),
     });
@@ -1823,7 +1823,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
         if (summary === undefined) return undefined;
         const sessionDir = sessionDirOf(
           bootstrap.homeDir,
-          workspacePersistenceScope(bootstrap.scope('sessions'), summary.workspaceId),
+          projectPersistenceScope(bootstrap.scope('sessions'), summary.workspaceId),
           sessionId,
         );
         return foldAgentWireReplay(
@@ -1902,7 +1902,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   }
 
   private async refreshPluginSessionStarts(excludedSessionId?: string): Promise<void> {
-    const workspaces = this.engineAccessor.get(IWorkspaceInstanceManager);
+    const workspaces = this.engineAccessor.get(IProjectInstanceManager);
     await Promise.all(
       workspaces.list().map(async (handler) => {
         const sessions = this.engineAccessor
@@ -1954,7 +1954,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     const workspaceId = handle.accessor.get(ISessionContext).workspaceId;
     const { environmentId, cwd } = handle.accessor.get(ISessionWorkdir);
     const lease = await this.engineAccessor
-      .get(IWorkspaceInstanceManager)
+      .get(IProjectInstanceManager)
       .acquire({ workspaceId });
     try {
       if (environmentId !== 'local' || cwd === undefined) {

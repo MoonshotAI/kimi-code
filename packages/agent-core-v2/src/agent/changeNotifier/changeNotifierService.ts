@@ -20,7 +20,7 @@ import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnviro
 import { IAgentEnvironmentBindingService } from '#/agent/environmentBinding/environmentBinding';
 import { resolveEffectiveWorkspaceRoots, type EffectiveWorkspaceRoots } from '#/session/workspaceContext/workspaceRoots';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
-import { ISessionWorkspaceInfo } from '#/session/workspaceInfo/workspaceInfo';
+import { ISessionProjectInfo } from '#/session/projectInfo/projectInfo';
 import { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
 import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
@@ -58,14 +58,14 @@ interface AgentsMdChanges {
   readonly added: readonly string[];
 }
 
-interface WorkspacePrimaryChange {
+interface ProjectPrimaryChange {
   readonly workspaceId: string;
   readonly from: string;
   readonly to: string;
 }
 
-interface WorkspaceDirsChanges {
-  readonly primary: readonly WorkspacePrimaryChange[];
+interface ProjectDirsChanges {
+  readonly primary: readonly ProjectPrimaryChange[];
   readonly added: readonly string[];
   readonly removed: readonly string[];
 }
@@ -91,7 +91,7 @@ export class AgentChangeNotifierService extends Disposable implements IAgentChan
     @IHostEnvironment private readonly localEnvironment: IHostEnvironment,
     @IConfigService private readonly config: IConfigService,
     @ISessionContext private readonly sessionContext: ISessionContext,
-    @ISessionWorkspaceInfo private readonly workspaceInfo: ISessionWorkspaceInfo,
+    @ISessionProjectInfo private readonly projectInfo: ISessionProjectInfo,
     @ISessionInstructionsProvider private readonly instructions: ISessionInstructionsProvider,
     @ISessionToolPolicy private readonly sessionToolPolicy: ISessionToolPolicy,
     @ISessionToolPolicyGate private readonly toolPolicyGate: ISessionToolPolicyGate,
@@ -117,7 +117,7 @@ export class AgentChangeNotifierService extends Disposable implements IAgentChan
       }),
     );
     this._register(
-      this.workspaceInfo.onDidChange(() => {
+      this.projectInfo.onDidChange(() => {
         void this.notifyWorkspaceDirsChanges();
       }),
     );
@@ -325,10 +325,10 @@ export class AgentChangeNotifierService extends Disposable implements IAgentChan
   private async notifyWorkspaceDirsChangesNow(): Promise<void> {
     if (this.scopeContext.agentId !== MAIN_AGENT_ID || this.muted) return;
     try {
-      await this.workspaceInfo.ready;
+      await this.projectInfo.ready;
       if (this.muted) return;
-      const primaryByWorkspace = { ...this.workspaceInfo.primaryByWorkspace };
-      const additionalDirs = [...this.workspaceInfo.additionalDirs];
+      const primaryByWorkspace = { ...this.projectInfo.primaryByWorkspace };
+      const additionalDirs = [...this.projectInfo.additionalDirs];
       const snapshot = this.snapshot;
       if (
         samePrimarySnapshot(snapshot.workspacePrimaryByWorkspace, primaryByWorkspace) &&
@@ -354,7 +354,7 @@ export class AgentChangeNotifierService extends Disposable implements IAgentChan
       ) {
         return;
       }
-      const changes = diffWorkspaceDirs(
+      const changes = diffProjectDirs(
         snapshot.workspacePrimaryByWorkspace ?? {},
         snapshot.workspaceAdditionalDirs ?? [],
         primaryByWorkspace,
@@ -371,11 +371,11 @@ export class AgentChangeNotifierService extends Disposable implements IAgentChan
       const roots = resolveEffectiveWorkspaceRoots(
         this.sessionContext,
         binding,
-        this.workspaceInfo,
+        this.projectInfo,
         host,
       );
       this.reminder.notify(
-        workspaceDirsChangeText(changes, roots, this.sessionContext.workspaceId, binding.cwd !== undefined),
+        projectDirsChangeText(changes, roots, this.sessionContext.workspaceId, binding.cwd !== undefined),
         { variant: WORKSPACE_DIRS_CHANGE_VARIANT },
       );
     } catch (error) {
@@ -390,7 +390,7 @@ export class AgentChangeNotifierService extends Disposable implements IAgentChan
 
   private async seedBeliefsNow(seed: BeliefsSeed): Promise<void> {
     try {
-      await this.workspaceInfo.ready;
+      await this.projectInfo.ready;
       const files = hashAgentsMdContents(splitAgentsMdFiles(seed.agentsMd, seed.agentsMdPaths));
       const snapshot = this.snapshot;
       await this.recordSnapshot({
@@ -399,9 +399,9 @@ export class AgentChangeNotifierService extends Disposable implements IAgentChan
         skillsHash: hashText(seed.skillsListing),
         subagentNames: this.agentCatalog.list().map((profile) => profile.name),
         workspacePrimaryByWorkspace:
-          snapshot.workspacePrimaryByWorkspace ?? { ...this.workspaceInfo.primaryByWorkspace },
+          snapshot.workspacePrimaryByWorkspace ?? { ...this.projectInfo.primaryByWorkspace },
         workspaceAdditionalDirs:
-          snapshot.workspaceAdditionalDirs ?? [...this.workspaceInfo.additionalDirs],
+          snapshot.workspaceAdditionalDirs ?? [...this.projectInfo.additionalDirs],
       });
     } catch (error) {
       this.log.warn('change notifier belief seeding failed', { error });
@@ -603,13 +603,13 @@ function directoryDifference(
   });
 }
 
-function diffWorkspaceDirs(
+function diffProjectDirs(
   previousPrimary: Readonly<Record<string, string>>,
   previousDirs: readonly string[],
   currentPrimary: Readonly<Record<string, string>>,
   currentDirs: readonly string[],
-): WorkspaceDirsChanges {
-  const primary: WorkspacePrimaryChange[] = [];
+): ProjectDirsChanges {
+  const primary: ProjectPrimaryChange[] = [];
   for (const workspaceId of Object.keys(currentPrimary).toSorted()) {
     const from = previousPrimary[workspaceId];
     const to = currentPrimary[workspaceId];
@@ -628,8 +628,8 @@ function diffWorkspaceDirs(
   };
 }
 
-function workspaceDirsChangeText(
-  changes: WorkspaceDirsChanges,
+function projectDirsChangeText(
+  changes: ProjectDirsChanges,
   roots: EffectiveWorkspaceRoots,
   workspaceId: string,
   explicitCwd: boolean,

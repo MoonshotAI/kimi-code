@@ -17,7 +17,7 @@ import { HostProcessService } from '#/os/backends/node-local/hostProcessService'
 import { HostFsError, OsFsErrors } from '#/os/interface/hostFsErrors';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import type { IEnvironmentService } from '#/app/environment/environment';
-import { projectDirAt } from '#/app/workspace/projectWorkDir';
+import { projectDirAt } from '#/app/project/projectWorkDir';
 import { Program, type ProgramDisclosedWorkdir, type ProgramWorkdir } from '#/program/program';
 import type { ProgramSessionControllerInput } from '#/program/programDependencies';
 import type { ProgramMcpLease } from '#/program/programMcp';
@@ -30,18 +30,18 @@ import { UserFileSkillSource } from '#/features/skill/catalog/userFileSkillSourc
 import { linkedWorktree, mainCheckout } from '../app/git/checkoutLayouts';
 import { fakeEnvironment } from '../environment/stubs';
 import { noopLogger } from '../wire/stubs';
-import type { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
-import { writeWorkspaceTrust } from '#/workspace/workspaceTrust/trustRecord';
-import { WorkspaceTrustStore } from '#/workspace/workspaceTrust/workspaceTrustStore';
-import type { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
-import type { IWorkspaceFsService } from '#/workspace/workspaceFs/fs';
-import type { IWorkspaceGitService } from '#/workspace/workspaceGit/workspaceGit';
-import type { IWorkspaceInstructionsService } from '#/workspace/workspaceInstructions/workspaceInstructions';
+import type { IProjectContext } from '#/project/projectContext/projectContext';
+import { writeProjectTrust } from '#/project/projectTrust/trustRecord';
+import { ProjectTrustStore } from '#/project/projectTrust/projectTrustStore';
+import type { IProjectDirs } from '#/project/projectDirs/projectDirs';
+import type { IProjectFsService } from '#/project/projectFs/fs';
+import type { IProjectGitService } from '#/project/projectGit/projectGit';
+import type { IProjectInstructionsService } from '#/project/projectInstructions/projectInstructions';
 import { SessionAgentProfileCatalogService } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalogService';
-import { EXTRA_AGENT_DIRS_SECTION } from '#/workspace/workspaceAgentProfileLoader/configSection';
-import type { IUserAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/userAgentProfileLoader';
-import type { IWorkspaceAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/workspaceAgentProfileLoader';
-import type { IWorkspaceSkillCatalog } from '#/features/skill/workspace/workspaceSkillCatalog';
+import { EXTRA_AGENT_DIRS_SECTION } from '#/project/projectAgentProfileLoader/configSection';
+import type { IUserAgentProfileLoader } from '#/project/projectAgentProfileLoader/userAgentProfileLoader';
+import type { IProjectAgentProfileLoader } from '#/project/projectAgentProfileLoader/projectAgentProfileLoader';
+import type { IProjectSkillCatalog } from '#/features/skill/project/projectSkillCatalog';
 
 beforeEach(() => { vi.stubEnv('KIMI_CODE_WATCH', 'false'); });
 afterEach(() => { vi.unstubAllEnvs(); });
@@ -56,7 +56,7 @@ function deferred(): { readonly promise: Promise<void>; resolve(): void; reject(
   return { promise, resolve, reject };
 }
 
-function programWorkspace(cwd: string): IWorkspaceContext {
+function programWorkspace(cwd: string): IProjectContext {
   return {
     _serviceBrand: undefined,
     workspaceId: 'workspace',
@@ -308,12 +308,12 @@ describe('Program', () => {
 const execFileAsync = promisify(execFile);
 
 interface GenerationAccess {
-  readonly fs: IWorkspaceFsService;
-  readonly git: IWorkspaceGitService;
-  readonly instructions: IWorkspaceInstructionsService;
-  readonly skills: IWorkspaceSkillCatalog;
-  readonly dirs: IWorkspaceDirs;
-  readonly agentProfiles: IWorkspaceAgentProfileLoader;
+  readonly fs: IProjectFsService;
+  readonly git: IProjectGitService;
+  readonly instructions: IProjectInstructionsService;
+  readonly skills: IProjectSkillCatalog;
+  readonly dirs: IProjectDirs;
+  readonly agentProfiles: IProjectAgentProfileLoader;
   readonly userAgentProfiles: IUserAgentProfileLoader;
 }
 
@@ -431,7 +431,7 @@ async function localityFixture(options: LocalityOptions = {}): Promise<LocalityF
     delete: async (scope: string, key: string) => { docsRecords.delete(`${scope}/${key}`); },
     list: async (scope: string) => [...docsRecords.keys()].flatMap((key) => key.startsWith(`${scope}/`) ? [key.slice(scope.length + 1)] : []),
   };
-  await writeWorkspaceTrust(docs as never, localRoot, Date.now());
+  await writeProjectTrust(docs as never, localRoot, Date.now());
 
   const localGitCalls: string[] = [];
   const localGit = {
@@ -456,7 +456,7 @@ async function localityFixture(options: LocalityOptions = {}): Promise<LocalityF
     get: (section: string) => options.config?.[section],
     onDidSectionChange: () => ({ dispose: () => {} }),
   };
-  const trustStore = new WorkspaceTrustStore(docs as never, noopTelemetryService, bootstrap as never, config as never);
+  const trustStore = new ProjectTrustStore(docs as never, noopTelemetryService, bootstrap as never, config as never);
   const userSkills = new UserFileSkillSource(
     new FileSkillDiscovery(noopLogger),
     bootstrap as never,

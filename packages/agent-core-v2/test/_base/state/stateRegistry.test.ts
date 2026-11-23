@@ -12,8 +12,8 @@ import { StateRegistry, type StateChange } from '#/_base/state/stateRegistry';
 import { defineState } from '#/state/state';
 import { IAppStateService } from '#/app/state/appState';
 import { AppStateService } from '#/app/state/appStateService';
-import { IWorkspaceStateService } from '#/workspace/state/workspaceState';
-import { WorkspaceStateService } from '#/workspace/state/workspaceStateService';
+import { IProjectStateService } from '#/project/state/projectState';
+import { ProjectStateService } from '#/project/state/projectStateService';
 import { ISessionStateService } from '#/session/state/sessionState';
 import { SessionStateService } from '#/session/state/sessionStateService';
 import { IAgentStateService } from '#/agent/state/agentState';
@@ -234,8 +234,8 @@ describe('state services (scoped)', () => {
     );
     registerScopedService(
       LifecycleScope.App,
-      IWorkspaceStateService,
-      WorkspaceStateService,
+      IProjectStateService,
+      ProjectStateService,
       ScopeActivation.OnScopeCreated,
       'state',
     );
@@ -268,7 +268,7 @@ describe('state services (scoped)', () => {
   it('resolves a distinct state service per scope tier', () => {
     const appState = host.app.accessor.get(IAppStateService);
     const { workspace, session, agent } = createChain();
-    const workspaceState = workspace.accessor.get(IWorkspaceStateService);
+    const workspaceState = workspace.accessor.get(IProjectStateService);
     const sessionState = session.accessor.get(ISessionStateService);
     const agentState = agent.accessor.get(IAgentStateService);
     expect(appState).not.toBe(workspaceState);
@@ -284,7 +284,7 @@ describe('state services (scoped)', () => {
     sessionState.set(sessionKey, 'live');
     expect(sessionState.get(sessionKey)).toBe('live');
     expect(agent.accessor.get(IAgentStateService).has(sessionKey)).toBe(false);
-    expect(workspace.accessor.get(IWorkspaceStateService).has(sessionKey)).toBe(false);
+    expect(workspace.accessor.get(IProjectStateService).has(sessionKey)).toBe(false);
     expect(host.app.accessor.get(IAppStateService).has(sessionKey)).toBe(false);
   });
 
@@ -331,7 +331,7 @@ describe('state services (scoped)', () => {
     it('rejects replayable keys on the base registry and non-agent scopes', () => {
       expect(() => new StateRegistry().contributeState(replayableKey)).toThrow(BugIndicatingError);
       expect(() => new AppStateService().contributeState(replayableKey)).toThrow(BugIndicatingError);
-      expect(() => new WorkspaceStateService().contributeState(replayableKey)).toThrow(
+      expect(() => new ProjectStateService().contributeState(replayableKey)).toThrow(
         BugIndicatingError,
       );
       expect(() => new SessionStateService().contributeState(replayableKey)).toThrow(

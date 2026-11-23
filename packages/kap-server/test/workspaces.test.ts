@@ -14,7 +14,7 @@ import {
   IAtomicDocumentStore,
   ISessionMcpHandle,
   type ISessionScopeHandle,
-  IWorkspaceInstanceManager,
+  IProjectInstanceManager,
   resumeSessionById,
 } from '@moonshot-ai/agent-core-v2';
 import { encodeWorkDirKey } from '@moonshot-ai/agent-core-v2/_base/utils/workdir-slug';
@@ -531,7 +531,7 @@ describe('server-v2 /api/v1/workspaces', () => {
       const created = await postJson<WorkspaceWire>('/api/v1/workspaces', { root });
       expect(created.body.code).toBe(0);
       const id = created.body.data.id;
-      const manager = (server as RunningServer).core.accessor.get(IWorkspaceInstanceManager);
+      const manager = (server as RunningServer).core.accessor.get(IProjectInstanceManager);
       const acquire = vi.spyOn(manager, 'acquire').mockRejectedValue(
         new Error('runtime environment unavailable'),
       );
@@ -656,7 +656,7 @@ describe('server-v2 /api/v1/workspaces', () => {
       const id = created.body.data.id;
       const docs = (server as RunningServer).core.accessor.get(IAtomicDocumentStore);
       await docs.set('workspace-trust', encodeWorkDirKey(root), { root, trustedAt: 1 });
-      const manager = (server as RunningServer).core.accessor.get(IWorkspaceInstanceManager);
+      const manager = (server as RunningServer).core.accessor.get(IProjectInstanceManager);
       const read = docs.get.bind(docs);
       let shouldFail = true;
       let failed = false;
@@ -711,7 +711,7 @@ describe('server-v2 /api/v1/workspaces', () => {
       const created = await postJson<WorkspaceWire>('/api/v1/workspaces', { root });
       const id = created.body.data.id;
       const docs = (server as RunningServer).core.accessor.get(IAtomicDocumentStore);
-      const manager = (server as RunningServer).core.accessor.get(IWorkspaceInstanceManager);
+      const manager = (server as RunningServer).core.accessor.get(IProjectInstanceManager);
       const read = docs.get.bind(docs);
       let shouldFail = true;
       let failed = false;
@@ -755,7 +755,7 @@ describe('server-v2 /api/v1/workspaces', () => {
     const created = await postJson<WorkspaceWire>('/api/v1/workspaces', { root });
     expect(created.body.code).toBe(0);
     const id = created.body.data.id;
-    const manager = (server as RunningServer).core.accessor.get(IWorkspaceInstanceManager);
+    const manager = (server as RunningServer).core.accessor.get(IProjectInstanceManager);
     let release: (() => void) | undefined;
     try {
       const lease = await manager.acquire({ workspaceId: id });
@@ -854,7 +854,7 @@ describe('server-v2 /api/v1/workspaces', () => {
       expect(result.isError).not.toBe(true);
       return JSON.stringify(result.output);
     };
-    const manager = (server as RunningServer).core.accessor.get(IWorkspaceInstanceManager);
+    const manager = (server as RunningServer).core.accessor.get(IProjectInstanceManager);
     const lease = await manager.acquire({ workspaceId });
     const instance = lease.instance;
     const program = instance.program;

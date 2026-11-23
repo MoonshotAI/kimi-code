@@ -6,15 +6,15 @@ export const SESSION_INDEX_SCHEMA_VERSION = 3;
 
 export const PARENT_INDEX_NAME = 'byParent';
 
-export interface SessionWorkspaceCounts {
+export interface SessionProjectCounts {
   readonly active: number;
   readonly archived: number;
 }
 
 export function addSessionCounts(
-  base: SessionWorkspaceCounts | undefined,
-  delta: SessionWorkspaceCounts,
-): SessionWorkspaceCounts {
+  base: SessionProjectCounts | undefined,
+  delta: SessionProjectCounts,
+): SessionProjectCounts {
   return {
     active: Math.max(0, (base?.active ?? 0) + delta.active),
     archived: Math.max(0, (base?.archived ?? 0) + delta.archived),

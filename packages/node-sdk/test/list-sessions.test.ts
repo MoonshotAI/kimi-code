@@ -13,7 +13,7 @@ import {
   ISessionIndex,
   ISessionIndexMirror,
   ISessionManager,
-  IWorkspaceService,
+  IProjectService,
 } from '@moonshot-ai/agent-core-v2';
 
 import { createKimiHarness, SDKRpcClientV2 } from '#/index';
@@ -166,7 +166,7 @@ describe('KimiHarness.listSessions', () => {
     try {
       const legacyWorkDir = `${workDir}/.`;
       const workspace = await client.engineAccessor
-        .get(IWorkspaceService)
+        .get(IProjectService)
         .resolveImplicit(legacyWorkDir);
       await client.engineAccessor.get(ISessionManager).create({
         workspaceId: workspace.id,
@@ -189,7 +189,7 @@ describe('KimiHarness.listSessions', () => {
     const client = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
 
     try {
-      const registry = client.engineAccessor.get(IWorkspaceService);
+      const registry = client.engineAccessor.get(IProjectService);
       const projectM = await registry.create({ root: dirA, additionalDirs: [dirB], name: 'M' });
       const projectN = await registry.create({ root: dirC, additionalDirs: [dirA], name: 'N' });
       const sessionManager = client.engineAccessor.get(ISessionManager);
@@ -215,7 +215,7 @@ describe('KimiHarness.listSessions', () => {
 
     try {
       const managed = await client.engineAccessor
-        .get(IWorkspaceService)
+        .get(IProjectService)
         .create({ root: managedRoot, additionalDirs: [], name: 'Managed' });
       await client.engineAccessor
         .get(ISessionManager)
@@ -244,7 +244,7 @@ describe('KimiHarness.listSessions', () => {
       await client.closeSession({ sessionId: created.id });
       await rm(worktree, { recursive: true });
 
-      const projects = await client.engineAccessor.get(IWorkspaceService).list();
+      const projects = await client.engineAccessor.get(IProjectService).list();
       expect((await client.listSessions({ workDir: worktree })).map((item) => [item.id, item.workDir])).toEqual([
         ['ses_worktree', worktree],
       ]);
@@ -254,7 +254,7 @@ describe('KimiHarness.listSessions', () => {
       expect((await client.listSessions({ workDir: worktree })).map((item) => item.id).toSorted()).toEqual(
         ['ses_worktree', fork.id].toSorted(),
       );
-      expect(await client.engineAccessor.get(IWorkspaceService).list()).toEqual(projects);
+      expect(await client.engineAccessor.get(IProjectService).list()).toEqual(projects);
     } finally {
       await client.close();
     }
@@ -267,7 +267,7 @@ describe('KimiHarness.listSessions', () => {
     const client = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
 
     try {
-      const workspaces = client.engineAccessor.get(IWorkspaceService);
+      const workspaces = client.engineAccessor.get(IProjectService);
       const sessionManager = client.engineAccessor.get(ISessionManager);
       const { id: workspaceId } = await workspaces.create({ root: main, additionalDirs: [moved], name: 'Managed' });
       await sessionManager.create({ workspaceId, workDir: main, sessionId: 'ses_root' });
