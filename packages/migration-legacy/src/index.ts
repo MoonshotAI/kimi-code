@@ -8,6 +8,7 @@ export { defaultPlansSourceDir } from './steps/plans.js';
 export { runMigration, type RunMigrationInput } from './run-migration.js';
 export {
   importedSessionDir,
+  isSessionImported,
   writeImportedSession,
   type ImportedSessionInput,
   type ImportedSessionMessage,

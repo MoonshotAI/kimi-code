@@ -1322,6 +1322,9 @@ importers:
       '@moonshot-ai/klient':
         specifier: workspace:^
         version: link:../klient
+      '@moonshot-ai/testkit':
+        specifier: workspace:^
+        version: link:../testkit
       '@types/yazl':
         specifier: ^2.4.6
         version: 2.4.6
