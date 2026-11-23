@@ -183,7 +183,7 @@ void test('desktop only defers pnpm cache writes for a new CLI release, not a pr
   assert.match(readFileSync(f.env.GITHUB_OUTPUT, 'utf8'), /^cli-planned=false$/m);
 });
 
-test('only CLI-only installs opt out of the Electron rebuild', () => {
+void test('only CLI-only installs opt out of the Electron rebuild', () => {
   const f = fixture();
   const marker = join(f.dir, 'electron-rebuilt');
   const bin = join(f.dir, 'bin', process.platform === 'win32' ? 'electron-rebuild.cmd' : 'electron-rebuild');
