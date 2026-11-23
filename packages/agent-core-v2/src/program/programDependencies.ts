@@ -23,9 +23,9 @@ import type { IExtraAgentProfileLoader } from '#/workspace/workspaceAgentProfile
 import type { IExplicitAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/explicitAgentProfileLoader';
 import type { IPluginAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/pluginAgentProfileLoader';
 import type { IUserAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/userAgentProfileLoader';
-import type { IWorkspaceMcpService } from '#/workspace/workspaceMcp/workspaceMcp';
 import type { IWorkspaceTrust } from '#/workspace/workspaceTrust/workspaceTrust';
 import type { IWorkspaceTrustStore } from '#/workspace/workspaceTrust/workspaceTrustStore';
+import type { ProgramMcpLease } from './programMcp';
 import type { ProgramWorkdir } from './programWorkdirs';
 
 export interface ProgramSessionControllerInput {
@@ -34,7 +34,7 @@ export interface ProgramSessionControllerInput {
   readonly explicitAgentProfiles: IExplicitAgentProfileLoader;
   readonly userAgentProfiles: IUserAgentProfileLoader;
   readonly pluginAgentProfiles: IPluginAgentProfileLoader;
-  readonly mcp: IWorkspaceMcpService;
+  readonly acquireMcp: () => Promise<ProgramMcpLease>;
   readonly trust: IWorkspaceTrust;
   readonly acquireWorkdir: (environmentId: string, cwd: string, followsPrimary?: boolean) => Promise<ProgramWorkdir>;
   readonly onDispose: () => void;

@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'pathe';
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 
-import { DisposableStore } from '#/_base/di/lifecycle';
+import { DisposableStore, type IDisposable } from '#/_base/di/lifecycle';
 import { createServices } from '#/_base/di/test';
 import { AsyncEmitter, Emitter } from '#/_base/event';
 import { ILogService } from '#/_base/log/log';
@@ -539,6 +539,46 @@ describe('WorkspaceMcpConfigService', () => {
         expect(serviceA.servers()).toHaveProperty('alpha');
       });
       expect((await oauth.tokenState('alpha', url)).hasTokens).toBe(true);
+    } finally {
+      cwd = cwdA;
+      await oauth.dispose();
+    }
+  });
+
+  it('forgets the OAuth identities of a service disposed while it was still loading', async () => {
+    const url = 'https://mcp.example.test/mcp';
+    const config: McpServerConfig = { transport: 'http', url, auth: 'oauth' };
+    const oauth = new McpOAuthService({ store: createMemoryMcpOAuthStore() });
+    await oauth.getProvider('alpha', url).saveTokens({ access_token: 'a', token_type: 'Bearer' });
+    const cwdA = cwd;
+    try {
+      await writeProjectConfig({ alpha: config });
+      let releaseTrust!: () => void;
+      const trustGate = new Promise<void>((resolve) => {
+        releaseTrust = resolve;
+      });
+      const serviceA = createService(undefined, () => trustGate, undefined, oauth);
+      (serviceA as unknown as IDisposable).dispose();
+      releaseTrust();
+      await serviceA.ready;
+
+      cwd = mkdtempSync(join(tmpdir(), 'kimi-workspace-mcp-config-cwd-b-'));
+      await writeProjectConfig({ alpha: config });
+      const serviceB = createService(undefined, undefined, undefined, oauth);
+      await serviceB.ready;
+      await writeProjectConfig({});
+      watchFires.get(cwd)?.fire({
+        path: join(cwd, '.kimi-code', 'mcp.json'),
+        action: 'modified',
+        kind: 'file',
+      });
+      await vi.waitFor(() => {
+        expect(serviceB.servers()).toEqual({});
+      });
+
+      await vi.waitFor(async () => {
+        expect((await oauth.tokenState('alpha', url)).hasTokens).toBe(false);
+      });
     } finally {
       cwd = cwdA;
       await oauth.dispose();

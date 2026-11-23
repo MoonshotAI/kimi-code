@@ -8,7 +8,9 @@ import {
   ISessionIndex,
   IWorkspaceInstanceManager,
 } from '@moonshot-ai/agent-core-v2';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { say } from '@moonshot-ai/testkit/model';
+import { kapFixtures, type KapFixtures } from '@moonshot-ai/testkit/vitest';
+import { afterAll, beforeAll, describe, expect, it, test as base } from 'vitest';
 
 import { type RunningServer, startServer } from '../src/start';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
@@ -53,6 +55,11 @@ function resolveTsxCli(): string {
 function resolveExecServerFixture(): string {
   const packageJson = require.resolve('@moonshot-ai/agent-core-v2/package.json');
   return join(dirname(packageJson), 'test', 'remote', 'fixtures', 'exec-server-child.ts');
+}
+
+function resolveMcpServerFixture(): string {
+  const packageJson = require.resolve('@moonshot-ai/agent-core-v2/package.json');
+  return join(dirname(packageJson), 'test', 'mcpCore', 'fixtures', 'mock-stdio-server.mjs');
 }
 
 function configToml(): string {
@@ -186,4 +193,35 @@ describe('server-v2 /api/v1 environment routes', () => {
       expect(cwdOnly.body.msg).toContain('environment_cwd');
     });
   });
+});
+
+const kapTest = base.extend<KapFixtures<RunningServer>>(kapFixtures({
+  startServer,
+  config: {
+    extra: {
+      environments: {
+        slow: {
+          command: '/bin/sh',
+          args: ['-c', 'sleep 1; exec "$@"', 'sh', process.execPath, resolveTsxCli(), resolveExecServerFixture()],
+          env: { EXEC_SERVER_VERSION: '9.9.9-test' },
+        },
+      },
+    },
+  },
+}));
+
+kapTest('offers the MCP tools of the project in the first request of a session whose environment connects slower than the servers start', { timeout: 60_000 }, async ({ kap, model }) => {
+  await writeFile(join(kap.home.dataDir, 'mcp.json'), JSON.stringify({
+    mcpServers: { slow: { command: process.execPath, args: [resolveMcpServerFixture()], env: { KIMI_TEST_MCP_START_DELAY_MS: '300' } } },
+  }));
+  model.script(say('done'));
+  const session = await kap.rest.post<SessionWire>('/api/v1/sessions', {
+    cwd: kap.home.workspace,
+    environment_id: 'slow',
+    environment_cwd: kap.home.workspace,
+  });
+  await kap.prompt(session.id, 'hi');
+  await kap.waitIdle(session.id);
+
+  expect(model.requests()[0]!.tools).toContain('mcp__slow__echo');
 });
