@@ -3,7 +3,7 @@ import { test } from 'node:test';
 
 import { stringify } from 'yaml';
 
-import { checkFanIn, checkWiring, diffConfigs, expandOverridePlugins } from './guards.mjs';
+import { checkFanIn, checkWiring, diffConfigs, expandOverridePlugins, normalizeConfig } from './guards.mjs';
 
 function config(patch = {}) {
   return {
@@ -97,6 +97,29 @@ await test('diffConfigs reports an override whose file list changed as removed a
     'changed: override **/*.spec.ts: added',
     'changed: override **/*.test.ts: removed',
   ]);
+});
+
+await test('diffConfigs reports nothing when only the order of the JS plugins differs', () => {
+  const before = config({ jsPlugins: ['./scripts/a-lint-plugin.mjs', './apps/b-lint-plugin.mjs'] });
+  const after = config({ jsPlugins: ['./apps/b-lint-plugin.mjs', './scripts/a-lint-plugin.mjs'] });
+  assert.deepEqual(diffConfigs(before, after), []);
+});
+
+await test('diffConfigs reports a removed JS plugin as weakened and an added one as changed', () => {
+  const before = config({ jsPlugins: ['./scripts/a-lint-plugin.mjs', './apps/b-lint-plugin.mjs'] });
+  const after = config({ jsPlugins: ['./apps/b-lint-plugin.mjs', './apps/c-lint-plugin.mjs'] });
+  assert.deepEqual(kindsAndDetails(diffConfigs(before, after)), [
+    'weakened: JS plugin removed: ./scripts/a-lint-plugin.mjs',
+    'changed: JS plugin added: ./apps/c-lint-plugin.mjs',
+  ]);
+});
+
+await test('normalizeConfig records the JS plugins in one order whatever order oxlint prints them in', () => {
+  const printed = (jsPlugins) => config({ jsPlugins });
+  assert.deepEqual(
+    normalizeConfig(printed(['./scripts/a-lint-plugin.mjs', './apps/b-lint-plugin.mjs']), []),
+    normalizeConfig(printed(['./apps/b-lint-plugin.mjs', './scripts/a-lint-plugin.mjs']), []),
+  );
 });
 
 await test('diffConfigs reports a change in any other top-level key, such as options', () => {
