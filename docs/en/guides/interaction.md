@@ -72,7 +72,7 @@ Approvals are not triggered for regular tool calls in Ask When Needed mode, nor 
 
 ### The three permission modes
 
-**Always Ask mode** (formerly Manual) is the default: read-only operations run automatically, including shell commands such as `ls` or `cat` that can be statically proven to only read files; every other action, such as editing files or running other commands, asks for your confirmation one by one. Use it when you want full control over every change. To keep confirming those read-only commands, add an `ask` rule for them in [Configuration files](../configuration/config-files.md#permission).
+**Always Ask mode** (formerly Manual) is the default: read-only operations run automatically, including shell commands such as `ls`, `cat`, `rg`, `find`, or `git status` that can be statically proven to be read-only; every other action, such as editing files or running other commands, asks for your confirmation one by one. Use it when you want full control over every change. To keep confirming those read-only commands, add an `ask` rule for them in [Configuration files](../configuration/config-files.md#permission).
 
 **Ask When Needed mode** (formerly YOLO), enabled with `/yolo`, auto-approves regular tool calls, making it suitable for batch tasks you know are safe. It still asks before sensitive actions — accessing sensitive files such as `.env` or SSH keys, running dangerous commands such as `shutdown` or `rm -rf`, or exiting Plan mode — and the agent can still ask you questions.
 

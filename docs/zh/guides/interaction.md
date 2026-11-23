@@ -72,7 +72,7 @@ Agent 调用会产生副作用的工具（修改文件、执行命令等）时�
 
 ### 三种权限模式
 
-**"Always Ask"**（始终询问，原 Manual）是默认模式：只读操作自动放行，包括 `ls`、`cat` 这类能静态确认只读取文件的 shell 命令；修改文件、执行其他命令等操作都会逐一向你确认，适合需要全程掌控每个改动的场景。如需继续逐次确认这些只读命令，可以在[配置文件](../configuration/config-files.md#permission)中为它们添加 `ask` 规则。
+**"Always Ask"**（始终询问，原 Manual）是默认模式：只读操作自动放行，包括 `ls`、`cat`、`rg`、`find`、`git status` 这类能静态确认只读的 shell 命令；修改文件、执行其他命令等操作都会逐一向你确认，适合需要全程掌控每个改动的场景。如需继续逐次确认这些只读命令，可以在[配置文件](../configuration/config-files.md#permission)中为它们添加 `ask` 规则。
 
 **"Ask When Needed"**（必要时询问，原 YOLO）用 `/yolo` 开启，自动批准普通工具调用，适合已知安全的批处理任务。敏感操作仍会询问——例如访问 `.env`、SSH 私钥等敏感文件、执行 `shutdown`、`rm -rf` 这类危险命令，或退出 Plan 模式——Agent 也仍可能向你提问。
 

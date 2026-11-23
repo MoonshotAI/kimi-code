@@ -412,6 +412,7 @@ describe('AgentPermissionPolicyService chain', () => {
     'pwd',
     'whoami',
     'alias',
+    'kimi --version',
     'node --version',
     'python3 --version',
     'ip addr',
@@ -419,6 +420,47 @@ describe('AgentPermissionPolicyService chain', () => {
     'history 20',
     'arch',
     'ifconfig',
+    'uname -a',
+    'id -u',
+    'date -u +%Y-%m-%d',
+    'which node',
+    'command -v node',
+    'command ls -la',
+    'timeout 5 rg foo src',
+    'docker ps -a',
+    'docker images -q',
+    'grep -E \'foo|bar\' src/main.ts',
+    'grep "a.*b()" src/main.ts',
+    'echo "a; b"',
+    'rg \'foo|bar\' src',
+    'rg --files src',
+    'find src -name \'*.ts\' -type f',
+    'fd \'\\.ts$\' src',
+    'tree -L 2 src',
+    'sort -u notes.txt',
+    'file notes.txt',
+    'jq -r \'.name\' package.json',
+    'sed -n \'1,50p\' notes.txt',
+    'LC_ALL=C grep -E \'foo|bar\' notes.txt | sort -u',
+    'NO_COLOR=1 rg foo src',
+    'GIT_PAGER=cat git log -5 --oneline',
+    'git status -sb',
+    'git diff',
+    'git diff HEAD~1 --stat',
+    'git log -n 5 --oneline --decorate',
+    'git log --format=\'%h %s\'',
+    'git show HEAD~1',
+    'git branch -a',
+    'git branch --show-current',
+    'git tag -l \'v*\'',
+    'git rev-parse --show-toplevel',
+    'git ls-files',
+    'git blame src/main.ts',
+    'git remote -v',
+    'git stash list',
+    'git stash show --stat',
+    'git worktree list --porcelain',
+    'git --no-pager log -5',
     'cat <<\'EOF\'\nhello\nEOF',
   ])('approves safe read-only invocation `%s`', async (command) => {
     await expect(evaluate({
@@ -465,7 +507,42 @@ describe('AgentPermissionPolicyService chain', () => {
     'ls *.ts',
     'cat --output=out.txt notes.txt',
     'cat --output out.txt notes.txt',
-    'git diff',
+    'tail -f notes.txt',
+    'sort -o out.txt notes.txt',
+    'tree -o out.txt src',
+    'jq -f filter.jq package.json',
+    'jq -n env',
+    'sed -i \'s/a/b/\' notes.txt',
+    'sed \'1w out.txt\' notes.txt',
+    'date -s \'2026-01-01\'',
+    'date 010100002026',
+    'rg --no-ignore secret .',
+    'rg --hidden secret .',
+    'rg -u secret .',
+    'rg --pre cat foo .',
+    'fd -x rm',
+    'fd --hidden .',
+    'fd --no-ignore .',
+    'find . -delete',
+    'find . -exec rm {} ;',
+    'find . -fprint out.txt',
+    'git branch new-branch',
+    'git branch -D main',
+    'git tag v1.0',
+    'git remote add origin https://example.com/repo.git',
+    'git stash pop',
+    'git worktree add ../other',
+    'git -c core.pager=cat status',
+    'git -C /tmp status',
+    'git --git-dir=.git status',
+    'git diff --output=out.txt',
+    'git log --format=\'%G?\'',
+    'git log --pretty=custom',
+    'GIT_PAGER=evil git log',
+    'LC_ALL=/etc/passwd grep foo notes.txt',
+    'timeout -s KILL 5 ls',
+    'cat notes.txt\u202e',
+    'cat notes.txt\u0000',
   ])('keeps the existing approval result for `%s`', async (command) => {
     await expect(evaluate({
       toolName: 'Bash',
@@ -776,6 +853,44 @@ describe('AgentPermissionPolicyService git cwd write approval', () => {
     'grep --directories=recurse secret .',
     'diff -r left right',
     'diff --recursive left right',
+    'rg foo src',
+    'find src -name \'*.ts\'',
+    'fd \'\\.ts$\' src',
+  ])('approves recursive search commands on non-sensitive targets: %s', async (command) => {
+    await expect(evaluate({
+      toolName: 'Bash',
+      args: { command },
+    })).resolves.toMatchObject({
+      policyName: 'bash-read-only-approve',
+      result: { kind: 'approve' },
+    });
+  });
+
+  it.each([
+    'grep -r secret .env',
+    'grep -r secret .git',
+    'grep -C 3 secret .env',
+    'rg secret .env',
+    'rg -e secret .git',
+    'rg -f .env foo',
+    'fd . .git',
+    'fd --search-path .git foo',
+    'find .git -type f',
+    'find .env -type f',
+    'find -f .git',
+    'find -O3 .git -type f',
+    'diff -X .env left right',
+    'diff --from-fil=.env /dev/null',
+    'cat --files0-fro=.env',
+    'cat ".en\\\nv"',
+    'cd ~/.g\\it',
+    'sort .env',
+    'jq \'.a\' .env',
+    'sed -n \'1,5p\' .env',
+    'git diff --no-index /dev/null .env',
+    'git show HEAD:.env',
+    'git log -p .env',
+    'cd sub && git status',
     'strings @args',
     'strings -- @args',
     'cat notes.txt | strings @args',
@@ -871,6 +986,20 @@ describe('AgentPermissionPolicyService git cwd write approval', () => {
     expect(analyzeBashReadOnly(new BashParserService().parse(command))).toEqual({
       paths,
       readsCwd: false,
+    });
+  });
+
+  it('asks for git commands when cwd has bare-repo indicators', async () => {
+    const bareDir = join(workspaceDir, 'bare-like');
+    await mkdir(join(bareDir, 'objects'), { recursive: true });
+    await writeFile(join(bareDir, 'HEAD'), 'ref: refs/heads/main\n');
+
+    await expect(evaluate({
+      toolName: 'Bash',
+      args: { command: 'git status', cwd: bareDir },
+    })).resolves.toMatchObject({
+      policyName: 'fallback-ask',
+      result: { kind: 'ask' },
     });
   });
 
@@ -1240,6 +1369,23 @@ describe('AgentPermissionPolicyService with Windows Git Bash paths', () => {
       toolName: 'Bash',
       args: { command: 'cat notes.txt', cwd: '/tmp' },
     })).resolves.toMatchObject({ policyName: 'fallback-ask', result: { kind: 'ask' } });
+  });
+
+  it('rejects Windows UNC, WebDAV, and NT device paths before approving reads', async () => {
+    for (const command of [
+      'cat //example.test/share/notes.txt',
+      'cat \'\\\\example.test\\share\\notes.txt\'',
+      'cat \'\\??\\C:\\Windows\\win.ini\'',
+      'cat //example.test@SSL@443/DavWWWRoot/notes.txt',
+      'find . -newer //example.test/share/x',
+      'cat notes.txt',
+    ]) {
+      const cwd = command === 'cat notes.txt' ? '//example.test/share' : undefined;
+      await expect(evaluate({
+        toolName: 'Bash',
+        args: cwd === undefined ? { command } : { command, cwd },
+      })).resolves.toMatchObject({ policyName: 'fallback-ask', result: { kind: 'ask' } });
+    }
   });
 
   it('translates a mounted Git Bash path before checking git control paths', async () => {
