@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises';
 
 import {
   IAgentCronService,
+  IAgentExternalHooksService,
   IAgentGoalService,
   IAgentLifecycleService,
   IAgentLoopService,
@@ -560,6 +561,7 @@ async function runNativeTurn(
       const taskConfig = resolveAgentTaskConfig(configService);
       const goalService = agent.accessor.get(IAgentGoalService);
       const cronService = agent.accessor.get(IAgentCronService);
+      const externalHooks = agent.accessor.get(IAgentExternalHooksService);
       try {
         await applyPrintBackgroundPolicy({
           mode: resolvePrintBackgroundMode(configService),
@@ -573,7 +575,15 @@ async function runNativeTurn(
           now: () => Date.now(),
           goalActive: () => goalService.getGoal().goal?.status === 'active',
           cronNextFireAt: () => cronService.getNextFireTime(),
-          turnActive: () => loop.snapshot().state === 'running',
+          turnActive: () => {
+            const snapshot = loop.snapshot();
+            return (
+              snapshot.state === 'running' ||
+              snapshot.queue.length > 0 ||
+              snapshot.notificationCount > 0
+            );
+          },
+          drainStopHooks: () => externalHooks.drainStopHooks(),
         });
       } catch (error) {
         if (error instanceof PrintSteeredTurnFailedError) {
@@ -805,6 +815,7 @@ export interface PrintBackgroundPolicyInput {
   readonly goalActive?: () => boolean;
   readonly cronNextFireAt?: () => number | null;
   readonly turnActive?: () => boolean;
+  readonly drainStopHooks?: () => Promise<void>;
 }
 
 export async function applyPrintBackgroundPolicy(
@@ -815,6 +826,7 @@ export async function applyPrintBackgroundPolicy(
   let lastPastFireAt: number | undefined;
   let cronWedged = false;
   for (;;) {
+    await input.drainStopHooks?.();
     if (input.turnActive?.() === true) {
       const ended = await input.turnEndings.next(deadline - input.now(), input.skipTurnId);
       if (ended !== null && ended.reason !== 'completed') {

@@ -2,7 +2,7 @@ import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, test as base, vi } from 'vitest';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { Disposable, DisposableStore } from '#/_base/di/lifecycle';
@@ -15,6 +15,7 @@ import {
 import { AsyncEmitter, Emitter, Event, type IWaitUntil } from '#/_base/event';
 import { emptyUsage } from '@moonshot-ai/core/llm/usage';
 import type { ToolCall } from '@moonshot-ai/core/llm/message';
+import { say } from '@moonshot-ai/testkit/model';
 import { appendContext, stubContextMemory } from '../../agent/contextMemory/stubs';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import {
@@ -81,7 +82,7 @@ import {
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import { IModelService } from '#/llm-adapter/model/model';
 
-import { createTestAgent } from '../../harness';
+import { createTestAgent, testkitAgentFixtures, type TestkitAgentFixtures } from '../../harness';
 import { stubBootstrap } from '../../app/bootstrap/stubs';
 import { registerLogServices } from '../../_base/log/stubs';
 import { stubLoopWithHooks, stubToolExecutor } from '../../agent/loop/stubs';
@@ -271,6 +272,28 @@ function activateAgentEventBus(ix: TestInstantiationService): IEventBus {
   return ix.get(IEventBus);
 }
 
+let stopHookDrainCalls = 0;
+
+const stopHookDrainFixtures = testkitAgentFixtures({
+  hookEngine: {
+    trigger: async () => [],
+    fireAndForgetTrigger: async () => [],
+    triggerBlock: async (event: string) => {
+      if (event !== 'Stop') return undefined;
+      stopHookDrainCalls += 1;
+      await new Promise<void>((resolve) => setTimeout(resolve, 20));
+      return stopHookDrainCalls === 1 ? { block: true, reason: 'continue from Stop' } : undefined;
+    },
+  },
+});
+
+const stopHookDrainTest = base.extend<TestkitAgentFixtures>(stopHookDrainFixtures);
+
+const completedTurnEnd = expect.objectContaining({
+  event: 'turn.ended',
+  args: expect.objectContaining({ reason: 'completed' }),
+});
+
 describe('IExternalHooksRunnerService integration', () => {
   it('blocks a dangerous Bash command and allows a safe one via a PreToolUse script hook', async () => {
     const engine = makeHookRunner([
@@ -446,6 +469,31 @@ describe('IExternalHooksRunnerService integration', () => {
     } finally {
       await ctx.dispose();
     }
+  });
+
+  stopHookDrainTest('drains a slow blocking Stop hook so its continuation turn is observable', async ({
+    agent,
+    model,
+  }) => {
+    model.script(say('First final answer.'), say('Continued answer.'));
+    await agent.rpc.prompt({ input: [{ type: 'text', text: 'first turn' }] });
+    expect(await agent.untilTurnEnd()).toContainEqual(completedTurnEnd);
+    const loop = agent.get(IAgentLoopService);
+    const hooks = agent.get(IAgentExternalHooksService);
+    await hooks.drainStopHooks();
+    const snapshot = loop.snapshot();
+    expect(
+      snapshot.state === 'running' || snapshot.queue.length > 0 || snapshot.notificationCount > 0,
+    ).toBe(true);
+    expect(await agent.untilTurnEnd()).toContainEqual(completedTurnEnd);
+    expect(stopHookDrainCalls).toBe(1);
+    expect(agent.contextData().history).toContainEqual(
+      expect.objectContaining({
+        role: 'user',
+        content: [{ type: 'text', text: 'continue from Stop' }],
+        origin: { kind: 'system_trigger', name: 'stop_hook' },
+      }),
+    );
   });
 
   it('passes permission approval contexts through to PermissionRequest and PermissionResult hooks', async () => {

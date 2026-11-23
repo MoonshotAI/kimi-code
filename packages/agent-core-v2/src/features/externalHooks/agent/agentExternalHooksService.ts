@@ -117,6 +117,14 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
     this.registerListeners();
   }
 
+  async drainStopHooks(): Promise<void> {
+    for (;;) {
+      const current = this.stopHookQueue;
+      await current;
+      if (this.stopHookQueue === current) return;
+    }
+  }
+
   private sessionTitle: string | undefined;
 
   private hookFailureWarned = false;
