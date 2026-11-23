@@ -47,16 +47,19 @@ export class SessionRunGateService extends Disposable implements ISessionRunGate
     this.checkWritable();
   }
 
-  private checkWritable(): void {
-    const sessionId = this.ctx.sessionId;
-    const stale = this.agents
+  private isStale(): boolean {
+    return this.agents
       .list()
       .some(
         (agent) =>
           this.agents.handleOf(agent.agentId)?.accessor.get(IWireService).externallyModified() ??
           false,
       );
-    if (!stale) return;
+  }
+
+  private checkWritable(): void {
+    const sessionId = this.ctx.sessionId;
+    if (!this.isStale()) return;
     this.sessionLocks.release(sessionId);
     throw new Error2(
       SessionErrors.codes.SESSION_STALE,
@@ -72,7 +75,10 @@ export class SessionRunGateService extends Disposable implements ISessionRunGate
 
   tryAcquire(): SessionLockLease | undefined {
     if (!this.sessionLocks.tryHold(this.ctx.sessionId)) return undefined;
-    this.checkWritable();
+    if (this.isStale()) {
+      this.sessionLocks.release(this.ctx.sessionId);
+      return undefined;
+    }
     return this.sessionLocks.lease(this.ctx.sessionId);
   }
 

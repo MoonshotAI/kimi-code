@@ -113,6 +113,8 @@ interface LogState {
   ready: Promise<void>;
   retirement: Promise<void> | undefined;
   knownLength: number | undefined;
+  ownAppendedBytes: number;
+  rewriteEpoch: number;
   inFlightBytes: number;
   rewriteInFlight: number | undefined;
   guardWarned: boolean;
@@ -196,6 +198,8 @@ export class AppendLogStore {
     await this.flushLog(scope, key);
     const state = this.state(scope, key);
     const lengthAtStart = this.diskLength(scope, key);
+    const appendedAtStart = state.ownAppendedBytes;
+    const rewriteEpochAtStart = state.rewriteEpoch;
     try {
       const onTruncate = options?.onTruncate;
       const textDecoder = new TextDecoder();
@@ -232,9 +236,11 @@ export class AppendLogStore {
         }
       }
     } finally {
-      const disk = this.diskLength(scope, key);
-      if (disk !== undefined) {
-        state.knownLength = lengthAtStart === disk ? disk : (lengthAtStart ?? 0);
+      if (state.rewriteEpoch === rewriteEpochAtStart && lengthAtStart !== undefined) {
+        const disk = this.diskLength(scope, key);
+        if (disk !== undefined) {
+          state.knownLength = lengthAtStart + (state.ownAppendedBytes - appendedAtStart);
+        }
       }
     }
   }
@@ -278,6 +284,7 @@ export class AppendLogStore {
         state.storageFailure = undefined;
         state.recovery = undefined;
         state.knownLength = encoded.length;
+        state.rewriteEpoch++;
         return true;
       } catch (error) {
         state.rewriteInFlight = undefined;
@@ -379,6 +386,8 @@ export class AppendLogStore {
         ready,
         retirement: undefined,
         knownLength: undefined,
+        ownAppendedBytes: 0,
+        rewriteEpoch: 0,
         inFlightBytes: 0,
         rewriteInFlight: undefined,
         guardWarned: false,
@@ -542,11 +551,13 @@ export class AppendLogStore {
       const externallyModifiedAtStart =
         recovery?.externallyModifiedAtStart ?? this.externallyModified(scope, key);
       try {
-        state.inFlightBytes = encoded.length - offset;
+        const written = encoded.length - offset;
+        state.inFlightBytes = written;
         await this.storage.append(scope, key, encoded.subarray(offset), { durable: true });
         state.inFlightBytes = 0;
         state.recovery = undefined;
         wrote = true;
+        state.ownAppendedBytes += written;
         if (state.knownLength !== undefined) state.knownLength += encoded.length;
         if (wroteBox !== undefined) wroteBox.value = true;
       } catch (error) {

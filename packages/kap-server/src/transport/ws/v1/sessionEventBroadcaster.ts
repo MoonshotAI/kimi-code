@@ -28,6 +28,7 @@ import {
   IWorkspaceService,
   followSessionLifecycles,
   getLiveSessionById,
+  reloadOnStale,
   resumeSessionById,
   interactions,
   toDisposable,
@@ -215,8 +216,11 @@ export class SessionEventBroadcaster {
   ): Promise<void> {
     let session: ISessionScopeHandle | undefined;
     try {
-      session = await resumeSessionById(this.opts.core.accessor, sessionId);
-      if (session !== undefined) await ensureMainAgent(session);
+      session = await reloadOnStale(this.opts.core.accessor, sessionId, async () => {
+        const handle = await resumeSessionById(this.opts.core.accessor, sessionId);
+        if (handle !== undefined) await ensureMainAgent(handle);
+        return handle;
+      });
     } catch (error) {
       this.opts.logger?.warn(
         { sessionId, err: error instanceof Error ? error.message : String(error) },
@@ -282,7 +286,9 @@ export class SessionEventBroadcaster {
       state.targets.get(target)?.get(agentId) === subscription && subscription.generation === generation;
     let feed: ConversationFeed;
     try {
-      feed = await this.opts.conversations.feed(state.sessionId, agentId);
+      feed = await reloadOnStale(this.opts.core.accessor, state.sessionId, () =>
+        this.opts.conversations.feed(state.sessionId, agentId),
+      );
     } catch (error) {
       if (!current()) return;
       this.opts.logger?.warn(

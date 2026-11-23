@@ -216,6 +216,13 @@ describe('SessionRunGateService', () => {
     expect(serviceA.held(SID)).toBe(false);
   });
 
+  it('returns undefined and releases the lock from tryAcquire when the wire changed on disk', async () => {
+    await readAll();
+    writeExternally(`${JSON.stringify({ type: 'metadata', protocol_version: 1 })}\n`);
+    expect(gate().tryAcquire()).toBeUndefined();
+    expect(serviceA.held(SID)).toBe(false);
+  });
+
   it('releases a direct hold when idle but retains an operation lease until released', async () => {
     vi.useFakeTimers();
     try {

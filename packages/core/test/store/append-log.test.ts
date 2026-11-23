@@ -899,6 +899,51 @@ describe('AppendLogStore session lock integration', () => {
     expect(log.externallyModified(SCOPE, KEY)).toBe(true);
   });
 
+  it('does not report external modification when own append lands while reading', async () => {
+    const path = join(homeDir, SCOPE, KEY);
+    writeFileSync(path, `${JSON.stringify({ n: 1 })}\n`);
+    const originalReadStream = storage.readStream.bind(storage);
+    storage.readStream = async function* (scope, key, range) {
+      yield* originalReadStream(scope, key, range);
+      log.append<Rec>(scope, key, { n: 2 });
+      await log.flush();
+    };
+
+    await readAll();
+
+    expect(log.externallyModified(SCOPE, KEY)).toBe(false);
+  });
+
+  it('still detects external modification alongside an own append while reading', async () => {
+    const path = join(homeDir, SCOPE, KEY);
+    writeFileSync(path, `${JSON.stringify({ n: 1 })}\n`);
+    const originalReadStream = storage.readStream.bind(storage);
+    storage.readStream = async function* (scope, key, range) {
+      yield* originalReadStream(scope, key, range);
+      log.append<Rec>(scope, key, { n: 2 });
+      await log.flush();
+      appendFileSync(path, `${JSON.stringify({ n: 3 })}\n`);
+    };
+
+    await readAll();
+
+    expect(log.externallyModified(SCOPE, KEY)).toBe(true);
+  });
+
+  it('does not overwrite known length when a rewrite finishes while reading', async () => {
+    const path = join(homeDir, SCOPE, KEY);
+    writeFileSync(path, `${JSON.stringify({ n: 1 })}\n${JSON.stringify({ n: 2 })}\n`);
+    const originalReadStream = storage.readStream.bind(storage);
+    storage.readStream = async function* (scope, key, range) {
+      yield* originalReadStream(scope, key, range);
+      await log.rewrite<Rec>(scope, key, [{ n: 1 }]);
+    };
+
+    await readAll();
+
+    expect(log.externallyModified(SCOPE, KEY)).toBe(false);
+  });
+
   it('resets known length after rewrite', async () => {
     log.append<Rec>(SCOPE, KEY, { n: 1 });
     await log.flush();

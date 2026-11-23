@@ -11,6 +11,7 @@ import type {
   SessionActivityState,
 } from '@moonshot-ai/agent-core-v2';
 import {
+  Error2,
   ErrorCodes,
   INTERACTION_TAG_SESSION_ID,
   LifecycleScope,
@@ -34,6 +35,7 @@ import {
   ISessionManager,
   ISessionTokenCountingService,
   ISessionUsageService,
+  ITelemetryService,
   IWorkspaceInstanceManager,
   IWorkspaceService,
   IWorkspaceSessions,
@@ -508,19 +510,21 @@ function makeCore(
     },
     dispose: () => {},
   };
+  const sessionManager = {
+    get: sessionFor,
+    resume: async (sessionId: string) => sessionFor(sessionId),
+    close: async (_sessionId: string) => {},
+    list: () => [...sessions.keys()].map((sessionId) => sessionFor(sessionId)),
+    onWillDeleteSession: managerEvents?.onWillDeleteSession,
+    onDidCreateSession: managerEvents?.onDidCreateSession,
+    onDidCloseSession: managerEvents?.onDidCloseSession,
+    onDidArchiveSession: managerEvents?.onDidArchiveSession,
+  };
   const accessor = {
     get(token: unknown): unknown {
       if (token === IEventService) return eventBus;
       if (token === ISessionManager) {
-        return {
-          get: sessionFor,
-          resume: async (sessionId: string) => sessionFor(sessionId),
-          list: () => [...sessions.keys()].map((sessionId) => sessionFor(sessionId)),
-          onWillDeleteSession: managerEvents?.onWillDeleteSession,
-          onDidCreateSession: managerEvents?.onDidCreateSession,
-          onDidCloseSession: managerEvents?.onDidCloseSession,
-          onDidArchiveSession: managerEvents?.onDidArchiveSession,
-        };
+        return sessionManager;
       }
       if (token === IWorkspaceInstanceManager) {
         return {
@@ -542,6 +546,9 @@ function makeCore(
       }
       if (token === IWorkspaceService) {
         return { get: async () => ({ root: '/repo/a' }) };
+      }
+      if (token === ITelemetryService) {
+        return { withContext: () => ({ track2: () => {} }) };
       }
       if (token === IConfigService) {
         return { ready: Promise.resolve(), getAll: () => ({}) };
@@ -1681,6 +1688,43 @@ describe('SessionEventBroadcaster', () => {
 
       expect(pagesOf(frames)).toHaveLength(1);
       expect(feed.listeners.size).toBe(1);
+    });
+
+    it('reloads a stale session and succeeds on subscribe', async () => {
+      openMainAgent();
+      const feed = new FakeFeed();
+      feed.turns = [endedTurn('t0', 0)];
+      conversations.serve('s1', 'main', feed);
+      const manager = core.accessor.get(ISessionManager);
+      const close = vi.spyOn(manager, 'close');
+      const resume = vi.spyOn(manager, 'resume');
+      resume.mockRejectedValueOnce(new Error2(ErrorCodes.SESSION_STALE, 'stale'));
+      const { target, frames } = recordingTarget();
+
+      await bc.subscribe('s1', target, ['main']);
+      await vi.waitFor(() => expect(pagesOf(frames)).toHaveLength(1));
+
+      expect(close).toHaveBeenCalledWith('s1');
+      expect(types(frames)).not.toContain('turns.failed');
+      expect(pagesOf(frames)[0]).toMatchObject({ session_id: 's1', agent_id: 'main', turns: [{ turn_id: 't0' }] });
+    });
+
+    it('reloads a stale session when syncing a conversation feed instead of emitting turns.failed', async () => {
+      openMainAgent();
+      const feed = new FakeFeed();
+      feed.turns = [endedTurn('t0', 0)];
+      conversations.serve('s1', 'main', feed);
+      const manager = core.accessor.get(ISessionManager);
+      const close = vi.spyOn(manager, 'close');
+      vi.spyOn(conversations, 'feed').mockRejectedValueOnce(new Error2(ErrorCodes.SESSION_STALE, 'stale'));
+      const { target, frames } = recordingTarget();
+
+      await bc.subscribe('s1', target, ['main']);
+      await vi.waitFor(() => expect(pagesOf(frames)).toHaveLength(1));
+
+      expect(close).toHaveBeenCalledWith('s1');
+      expect(types(frames)).not.toContain('turns.failed');
+      expect(pagesOf(frames)[0]).toMatchObject({ session_id: 's1', agent_id: 'main', turns: [{ turn_id: 't0' }] });
     });
 
     it('follows the replacement feed of a recreated agent and reports one that fails to load', async () => {
