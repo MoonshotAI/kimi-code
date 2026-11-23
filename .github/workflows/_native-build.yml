@@ -13,6 +13,10 @@ on:
         required: false
         type: number
         default: 3
+      web-ci-run-id:
+        description: 'Verified release push CI run that built CLI Web assets for this commit'
+        type: string
+        default: ''
       sign-macos:
         description: 'Whether to sign + notarize macOS builds (requires Apple secrets)'
         required: false
@@ -51,9 +55,8 @@ on:
       AZURE_CLIENT_SECRET:
         required: false
 
-permissions:
-  contents: read
-
+# Callers grant contents: read; only the stable release also grants actions: read
+# to download the Web assets from its verified push CI run.
 jobs:
   native-bundle:
     name: Native bundle (${{ matrix.target }})
@@ -118,12 +121,21 @@ jobs:
           node apps/kimi-code/scripts/update-catalog.mjs --out "$CATALOG_FILE"
           echo "KIMI_CODE_BUILT_IN_CATALOG_FILE=$CATALOG_FILE" >> "$GITHUB_ENV"
 
+      - name: Download CLI Web assets from the verified push CI
+        if: inputs.web-ci-run-id != ''
+        uses: actions/download-artifact@v8
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.web-ci-run-id }}
+          name: cli-web-${{ github.sha }}
+          path: apps/kimi-code/dist-web
+
       - name: Build Kimi web assets
-        # The SEA blob step embeds apps/kimi-code/dist-web. Build it from the
-        # desktop renderer's web variant, then verify it is in place.
-        run: |
-          node apps/kimi-code/scripts/sync-web-dist.mjs
-          node apps/kimi-code/scripts/check-web-assets.mjs
+        if: inputs.web-ci-run-id == ''
+        run: node apps/kimi-code/scripts/sync-web-dist.mjs
+
+      - name: Verify CLI Web assets before embedding
+        run: node apps/kimi-code/scripts/check-web-assets.mjs
 
       - name: Build native executable (release profile, macOS signed)
         if: runner.os == 'macOS' && inputs.sign-macos
