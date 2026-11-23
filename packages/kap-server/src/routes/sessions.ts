@@ -40,6 +40,7 @@ import {
   type IDisposable,
   type ISessionScopeHandle,
   type Scope,
+  type SessionSummary,
 } from '@moonshot-ai/agent-core-v2';
 import type { ServerResponse } from 'node:http';
 import { ISessionLockService } from '@moonshot-ai/agent-core-v2/persistence/interface/sessionLock';
@@ -281,16 +282,10 @@ export function registerSessionsRoutes(
             if (appliesSettings) await applyAgentConfigToSession(session, settings);
           },
         });
-        const metadata = handle.accessor.get(ISessionMetadata);
-        if (typeof body.title === 'string') await metadata.setTitle(body.title);
-        const meta = await metadata.read();
-        const sessionId = meta.id;
-        const context = handle.accessor.get(ISessionContext);
-        const session = toWireSession(
-          { ...meta, workspaceId: context.workspaceId, workspaceRoot: resolved.root },
-          context.cwd,
-          resolveSessionFacts(core, sessionId),
-        );
+        if (typeof body.title === 'string') {
+          await handle.accessor.get(ISessionMetadata).setTitle(body.title);
+        }
+        const session = await toLiveWireSession(core, handle);
         core.accessor.get(IEventService).publish(
           new SessionCreated({ payload: { agentId: 'main', sessionId: session.id, session } }),
         );
@@ -657,13 +652,7 @@ async function readWaitSnapshot(
   const pendingInteractions = listPendingInteractions(id);
   let baseSession: Session;
   if (live !== undefined) {
-    const meta = await live.accessor.get(ISessionMetadata).read();
-    const ctx = live.accessor.get(ISessionContext);
-    baseSession = toWireSession(
-      { ...meta, workspaceId: ctx.workspaceId, workspaceRoot: await workspaceRootOf(core, ctx.workspaceId) },
-      ctx.cwd,
-      resolveSessionFacts(core, id),
-    );
+    baseSession = await toLiveWireSession(core, live);
   } else {
     const summary = await core.accessor.get(ISessionIndex).get(id);
     if (summary === undefined) {
@@ -1106,17 +1095,7 @@ async function restoreSessionAction(ctx: SessionActionCtx): Promise<void> {
   if (restored === undefined) {
     throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${id} does not exist`);
   }
-  const meta = await restored.accessor.get(ISessionMetadata).read();
-  const sessionCtx = restored.accessor.get(ISessionContext);
-  const session = toWireSession(
-    {
-      ...meta,
-      workspaceId: sessionCtx.workspaceId,
-      workspaceRoot: await workspaceRootOf(core, sessionCtx.workspaceId),
-    },
-    sessionCtx.cwd,
-    resolveSessionFacts(core, meta.id),
-  );
+  const session = await toLiveWireSession(core, restored);
   requestLog(req)?.info({ session_id: id, action: 'restore' }, 'session action completed');
   reply.send(okEnvelope(session, req.id));
 }
@@ -1208,17 +1187,7 @@ async function reloadSessionAction(ctx: SessionActionCtx): Promise<void> {
       .notifyAllChanges({ previousSubagentNames: reloadGuard?.previousSubagentNames });
     main.accessor.get(IAgentLoopService).flushReminders();
   }
-  const meta = await handle.accessor.get(ISessionMetadata).read();
-  const sessionCtx = handle.accessor.get(ISessionContext);
-  const session = toWireSession(
-    {
-      ...meta,
-      workspaceId: sessionCtx.workspaceId,
-      workspaceRoot: await workspaceRootOf(core, sessionCtx.workspaceId),
-    },
-    sessionCtx.cwd,
-    resolveSessionFacts(core, meta.id),
-  );
+  const session = await toLiveWireSession(core, handle);
   requestLog(req)?.info({ session_id: id, action: 'reload' }, 'session action completed');
   reply.send(okEnvelope(session, req.id));
 }
@@ -1245,20 +1214,8 @@ async function refreshWorkspaceCatalogs(
   );
 }
 
-export interface SessionWireFields {
-  readonly id: string;
-  readonly workspaceId: string;
+export interface SessionWireFields extends Omit<SessionSummary, 'cwd'> {
   readonly workspaceRoot?: string;
-  readonly environmentId?: string;
-  readonly environmentCwd?: string;
-  readonly title?: string;
-  readonly lastPrompt?: string;
-  readonly createdAt: number;
-  readonly updatedAt: number;
-  readonly archived: boolean;
-  readonly archivedAt?: number;
-  readonly custom?: Record<string, unknown>;
-  readonly lastTurnReason?: 'completed' | 'cancelled' | 'failed';
 }
 
 export function toWireSession(
@@ -1292,6 +1249,17 @@ export function toWireSession(
     metadata: buildWireMetadata(fields.custom),
     git,
   };
+}
+
+async function toLiveWireSession(core: Scope, session: ISessionScopeHandle): Promise<Session> {
+  const meta = await session.accessor.get(ISessionMetadata).read();
+  const ctx = session.accessor.get(ISessionContext);
+  const workspaceRoot = await workspaceRootOf(core, ctx.workspaceId);
+  return toWireSession(
+    { ...meta, workspaceId: ctx.workspaceId, workspaceRoot },
+    ctx.cwd,
+    resolveSessionFacts(core, meta.id),
+  );
 }
 
 export interface SessionFacts {
@@ -1343,14 +1311,6 @@ function normalizeOptional(value: string | undefined): string | undefined {
   return trimmed.length === 0 ? undefined : trimmed;
 }
 
-function buildWireMetadata(
-  custom: Record<string, unknown> | undefined,
-): Record<string, unknown> | undefined {
-  if (custom === undefined) return undefined;
-  const { goal: _drop, ...rest } = custom as { goal?: unknown; [key: string]: unknown };
-  return Object.keys(rest).length === 0 ? undefined : rest;
-}
-
 interface RequestedWorkspaceRoot {
   readonly path: string;
   readonly value: string;
@@ -1363,6 +1323,14 @@ function requestedWorkspaceRoots(body: SessionCreate): RequestedWorkspaceRoot[] 
     { path: 'metadata.cwd', value: typeof metadataCwd === 'string' ? metadataCwd : undefined },
     { path: 'workspace_root', value: body.workspace_root },
   ].filter((root): root is RequestedWorkspaceRoot => root.value !== undefined);
+}
+
+function buildWireMetadata(
+  custom: Record<string, unknown> | undefined,
+): Record<string, unknown> | undefined {
+  if (custom === undefined) return undefined;
+  const { goal: _drop, ...rest } = custom as { goal?: unknown; [key: string]: unknown };
+  return Object.keys(rest).length === 0 ? undefined : rest;
 }
 
 function buildValidationEnvelope(
