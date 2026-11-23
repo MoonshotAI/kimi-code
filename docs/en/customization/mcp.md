@@ -79,6 +79,8 @@ When a workspace-level MCP server cannot be reached at startup or drops unexpect
 
 HTTP and SSE servers support providing static credentials via `headers` or `bearerTokenEnvVar`. When OAuth is needed, run `/mcp-config login <server-name>` to complete browser-based authorization.
 
+In a local chat, approving an MCP authentication tool lets the tool run; you still need to authorize access on the provider's website. The desktop app tries to open your browser. In the web UI, choose **Open authorization page** in the chat. If the browser does not open or you close the tab, use the same button to continue without sending another message.
+
 Plugins can also declare MCP servers in their manifest. Servers declared by a plugin are enabled by default and can be disabled or re-enabled in `/plugins`: disabling or removing one makes calls from open sessions fail with a removal notice, and adding or enabling a server connects it in open sessions right away. See [Plugins](./plugins.md#mcp-servers-in-plugins) for details.
 
 ::: warning Note

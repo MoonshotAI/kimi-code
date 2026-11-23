@@ -1252,6 +1252,26 @@ describe('conversation feed', () => {
     expect(h.events.at(-1)).toMatchObject({ type: 'item.updated', item_id: 'call-1', set: { task_id: 'bash-p81' } });
   });
 
+  it('delivers the pending OAuth URL both live and on reconnect without retaining it on completion', async () => {
+    const h = feedHarness([]);
+    await runningTurn(h);
+    const display = { kind: 'generic', summary: 'Authenticate example', detail: { kind: 'mcp_oauth', serverName: 'example' } } as const;
+    await h.dispatcher.dispatch(loopEvent({ type: 'tool.call', stepUuid: 's1', toolCallId: 'call-1', name: 'mcp__example__authenticate', args: {}, display, turnId: '0', step: 1 }));
+    await flushed();
+    const request = { waitId: 'wait-1', serverName: 'example', authorizationUrl: 'https://auth.example.test/authorize?state=test', expiresAt: Date.now() + 60_000 };
+    const fields = { 'mcp.oauth.authorization_url': request };
+    await h.dispatcher.dispatch(updated(fields));
+    await h.dispatcher.dispatch(updated({ ...fields, status: 'Waiting for callback' }));
+    expect(h.events).toContainEqual(expect.objectContaining({ type: 'item.updated', item_id: 'call-1', set: { fields } }));
+    expect((await h.feed.page(undefined, 20)).turns[0]?.items[1]).toMatchObject({ status: 'running', display, fields });
+    await h.dispatcher.dispatch(loopEvent({ type: 'tool.result', toolCallId: 'call-1', result: { output: 'Connected' } }));
+    await flushed();
+    const ended = (await h.feed.page(undefined, 20)).turns[0]?.items[1];
+    expect(ended).toMatchObject({ status: 'ended', display });
+    expect(JSON.stringify(ended)).not.toContain(request.authorizationUrl);
+    h.dispatcher.dispose();
+  });
+
   it('streams a tool call through its stages, input, output and fields', async () => {
     const h = feedHarness([]);
     await runningTurn(h);
