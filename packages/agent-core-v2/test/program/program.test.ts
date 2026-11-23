@@ -32,7 +32,6 @@ import type { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
 import type { IWorkspaceFsService } from '#/workspace/workspaceFs/fs';
 import type { IWorkspaceGitService } from '#/workspace/workspaceGit/workspaceGit';
 import type { IWorkspaceInstructionsService } from '#/workspace/workspaceInstructions/workspaceInstructions';
-import type { IWorkspaceMcpConfigService } from '#/workspace/workspaceMcpConfig/workspaceMcpConfig';
 import type { IUserAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/userAgentProfileLoader';
 import type { IWorkspaceAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/workspaceAgentProfileLoader';
 import type { IWorkspaceSkillCatalog } from '#/features/skill/workspace/workspaceSkillCatalog';
@@ -114,8 +113,7 @@ function setup(readiness = new Map<string, Promise<void>>(), order: string[] = [
     return {
       id,
       workdirs: { root, reload: async () => {}, dispose: () => {} },
-      mcpConfig: { ...behavior, servers: () => ({}) },
-      mcp: behavior,
+      mcp: { ...behavior, servers: () => ({}) },
       trust: { ...behavior, isTrusted: () => false },
       userAgentProfiles: behavior,
       pluginAgentProfiles: behavior,
@@ -226,8 +224,7 @@ describe('Program', () => {
         } };
         instructions: { snapshot: { agentsMdPaths?: readonly string[] } };
       } };
-      mcpConfig: { servers(): Record<string, unknown> };
-      mcp: unknown;
+      mcp: { servers(): Record<string, unknown> };
     };
     const skill = { source: 'workspace' };
     generation.workdirs.root.skills.catalog.listSkills = () => [skill];
@@ -235,14 +232,12 @@ describe('Program', () => {
     generation.workdirs.root.skills.catalog.getSkippedByPolicy = () => [];
     generation.workdirs.root.skills.catalog.getSkillRoots = () => ['/workspace/.agents/skills'];
     generation.workdirs.root.instructions.snapshot = { agentsMdPaths: ['/workspace/AGENTS.md'] };
-    generation.mcpConfig.servers = () => ({ baseline: {} });
+    generation.mcp.servers = () => ({ baseline: {} });
     await program.ready;
     await Promise.resolve();
 
     expect(program.skills).toBe(generation.workdirs.root.skills);
     expect(program.instructions).toBe(generation.workdirs.root.instructions);
-    expect(program.mcpConfig).toBe(generation.mcpConfig);
-    expect(program.mcp).toBe(generation.mcp);
     expect(program.snapshot()).toMatchObject({
       workspaceId: 'workspace',
       binding: { environmentId: 'local' },
@@ -309,7 +304,6 @@ const execFileAsync = promisify(execFile);
 interface GenerationAccess {
   readonly fs: IWorkspaceFsService;
   readonly git: IWorkspaceGitService;
-  readonly mcpConfig: IWorkspaceMcpConfigService;
   readonly instructions: IWorkspaceInstructionsService;
   readonly skills: IWorkspaceSkillCatalog;
   readonly dirs: IWorkspaceDirs;
@@ -422,6 +416,7 @@ async function localityFixture(options: { readonly remoteCwd?: string } = {}): P
     get: async <T,>(scope: string, key: string) => docsRecords.get(`${scope}/${key}`) as T | undefined,
     set: async <T,>(scope: string, key: string, value: T) => { docsRecords.set(`${scope}/${key}`, value); },
     delete: async (scope: string, key: string) => { docsRecords.delete(`${scope}/${key}`); },
+    list: async (scope: string) => [...docsRecords.keys()].flatMap((key) => key.startsWith(`${scope}/`) ? [key.slice(scope.length + 1)] : []),
   };
   await writeWorkspaceTrust(docs as never, localRoot, Date.now());
 
@@ -535,9 +530,9 @@ async function localityFixture(options: { readonly remoteCwd?: string } = {}): P
 
   const local = (): GenerationAccess => {
     const generation = (program as unknown as {
-      generation: { workdirs: { root: GenerationAccess }; mcpConfig: IWorkspaceMcpConfigService; userAgentProfiles: IUserAgentProfileLoader };
+      generation: { workdirs: { root: GenerationAccess }; userAgentProfiles: IUserAgentProfileLoader };
     }).generation;
-    return { ...generation.workdirs.root, mcpConfig: generation.mcpConfig, userAgentProfiles: generation.userAgentProfiles };
+    return { ...generation.workdirs.root, userAgentProfiles: generation.userAgentProfiles };
   };
   const workdirs: ProgramWorkdir[] = [];
   let controller: { dispose(): void } | undefined;
@@ -594,7 +589,6 @@ async function awaitLocality(generation: GenerationAccess): Promise<void> {
     generation.instructions.ready,
     generation.skills.ready,
     generation.dirs.ready,
-    generation.mcpConfig.ready,
     generation.agentProfiles.ready,
     generation.userAgentProfiles.ready,
   ]);
@@ -614,7 +608,10 @@ describe('Program local generation and remote workdirs', () => {
 
       expect(local.skills.catalog.listSkills().map((skill) => skill.name)).toEqual(['local-skill', 'user-skill']);
       expect(local.dirs.additionalDirs).toEqual([join(fixture.localRoot, 'localextra')]);
-      expect(Object.keys(local.mcpConfig.servers()).toSorted()).toEqual(['local-project-server', 'user-server']);
+      const mcp = await fixture.program.acquireMcp();
+      await mcp.service.ready;
+      expect(mcp.service.connectionManager().list().map((entry) => entry.name).toSorted()).toEqual(['local-project-server', 'user-server']);
+      mcp.dispose();
       expect(fixture.profileRegistrations.filter((entry) => entry.sourceId === 'workspace')).toEqual([
         { sourceId: 'workspace', profiles: ['local-agent'] },
       ]);
@@ -714,6 +711,28 @@ describe('Program local generation and remote workdirs', () => {
       expect(following.instructions.snapshot.agentsMd).not.toContain('pinned project instructions');
       expect(pinned.instructions.snapshot.agentsMd).toContain('pinned project instructions');
       expect(pinned.instructions.snapshot.agentsMd).not.toContain('local project instructions');
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
+  it('opens the MCP servers of the project with the first session and shares them until the last one is done', async () => {
+    const fixture = await localityFixture({ remoteCwd: undefined });
+    try {
+      await fixture.program.ready;
+      expect(fixture.program.snapshot().sources.mcpServers).toEqual([]);
+
+      const controller = fixture.program.createSessionController();
+      const input = fixture.controllerInputs.at(-1)!;
+      const sessions = [await input.acquireMcp(), await input.acquireMcp()];
+      await sessions[0]!.service.ready;
+
+      expect(sessions[1]!.service).toBe(sessions[0]!.service);
+      expect([...fixture.program.snapshot().sources.mcpServers].toSorted()).toEqual(['local-project-server', 'user-server']);
+
+      for (const session of sessions) session.dispose();
+      expect(fixture.program.snapshot().sources.mcpServers).toEqual([]);
+      controller.dispose();
     } finally {
       await fixture.cleanup();
     }

@@ -6,7 +6,7 @@ import { defineState } from '#/state/state';
 import { estimateTokensForMessage } from "#/llm-adapter/contract/tokens";
 import { buildCompactionSummaryText, buildContextCompactionShape, isRealUserInput } from '#/agent/contextMemory/compactionHandoff';
 import { ContextApplyCompaction } from '#/agent/contextMemory/contextEvents';
-import { historyFromContext } from '#/agent/loop/history';
+import { contextFromHistoryEntry, historyFromContext } from '#/agent/loop/history';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
 import type { LLMRequestTrace } from '#/llm-adapter/contract/request-trace';
@@ -275,7 +275,7 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
   }
 
   private currentRequestTokens(): number {
-    return this.historyRequestTokens(this.loopService.history());
+    return this.historyRequestTokens(this.loopService.rawHistory());
   }
 
   private historyRequestTokens(messages: readonly Message[]): number {
@@ -393,7 +393,7 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
   }
 
   private validateCompactionStart(source: CompactionBeginData['source']): number {
-    const history = this.loopService.history();
+    const history = this.loopService.rawHistory();
     if (history.length === 0) {
       throw new Error2(ErrorCodes.COMPACTION_UNABLE, 'No messages to compact in current history.');
     }
@@ -633,7 +633,8 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
   ): Promise<CompactionResult> {
     const startedAt = Date.now();
     this.loopService.flushReminders();
-    const originalHistory = [...this.loopService.history()];
+    const originalRaw = [...this.loopService.rawHistory()];
+    const originalHistory = originalRaw.map((entry) => contextFromHistoryEntry(entry));
     const tokensBefore = this.historyRequestTokens(originalHistory);
     let retryCount = 0;
     let thinkingEffort = this.loopService.data().thinkingLevel;
@@ -778,7 +779,7 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
         );
       }
 
-      if (!historySafeToCompact(this.loopService.history(), originalHistory)) {
+      if (!historySafeToCompact(this.loopService.rawHistory(), originalRaw)) {
         const active = this._compacting;
         if (active !== null) {
           this.cancelActive(active);
@@ -798,12 +799,13 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
           (recoveryFooter === undefined ? 0 : this.tokenCounting.estimateText(recoveryFooter));
       const dropped = droppedCount === 0 ? undefined : droppedCount;
       this.loopService.flushReminders();
-      const currentHistory = [...this.loopService.history()];
-      if (!historySafeToCompact(currentHistory, originalHistory)) {
+      const currentRaw = this.loopService.rawHistory();
+      if (!historySafeToCompact(currentRaw, originalRaw)) {
         const active = this._compacting;
         if (active !== null) this.cancelActive(active);
         throw compactionCancelledReason(active);
       }
+      const currentHistory = currentRaw.map((entry) => contextFromHistoryEntry(entry));
       const compacted = buildContextCompactionShape(currentHistory, {
         summary,
         contextSummary,
@@ -950,7 +952,7 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
 
   private tokenCountWithPending(): number {
     const counted = this.tokenCounting.get(agentContextOfScope(this.agent)).size;
-    const usageAnchored = this.usageAnchoredRequestTokens(this.loopService.history());
+    const usageAnchored = this.usageAnchoredRequestTokens(this.loopService.rawHistory());
     return usageAnchored === undefined ? counted : Math.max(counted, usageAnchored);
   }
 }
@@ -1103,13 +1105,14 @@ function collectSummary(outcome: Extract<LlmOutcome, { type: 'done' }>): Compact
 }
 
 function historySafeToCompact(
-  current: readonly ContextMessage[],
-  original: readonly ContextMessage[],
+  current: readonly Message[],
+  original: readonly Message[],
 ): boolean {
   if (current.length < original.length) return false;
   if (!original.every((message, index) => message === current[index])) return false;
   return current
     .slice(original.length)
+    .map((message) => contextFromHistoryEntry(message))
     .every((message) => isRealUserInput(message) || message.origin?.kind === 'injection');
 }
 

@@ -249,6 +249,10 @@ class FakeLoopService extends StubEffectiveProfileReader implements IAgentLoopSe
     return [];
   }
 
+  rawHistory(): readonly Message[] {
+    return [];
+  }
+
   previewRequestContent(): LoopRequestContent {
     return { systemPrompt: '', tools: [], messages: this.history() };
   }
@@ -354,6 +358,10 @@ class FakeContextMemory extends FakeLoopService {
   private revision = 0;
 
   override history(): readonly ContextMessage[] {
+    return this.messages;
+  }
+
+  override rawHistory(): readonly Message[] {
     return this.messages;
   }
 
