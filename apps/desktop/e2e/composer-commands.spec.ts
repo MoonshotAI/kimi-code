@@ -3,7 +3,7 @@ import { held, say } from './fixtures/model';
 import { sidebarOf } from './fixtures/sessions';
 
 const OPENER = 'Kick off the release work';
-const BUILT_INS = ['/new', '/clear', '/plan', '/goal', '/compact', '/undo', '/fork', '/export', '/status'];
+const BUILT_INS = ['new', 'clear', 'plan', 'goal', 'compact', 'undo', 'fork', 'export', 'status'];
 
 test('slash commands and the Add menu drive status, plan mode, goals and a fresh session', async ({ app, model }) => {
   const goalTurn = model.hold('composer-goal-turn');
@@ -30,9 +30,9 @@ test('slash commands and the Add menu drive status, plan mode, goals and a fresh
     await expect(slashMenu.getByRole('option').first()).toHaveAttribute('aria-selected', 'true');
     await app.snapshot('slash-menu');
     await window.keyboard.type('st');
-    await expect(slashMenu.getByRole('option', { name: /^\/status / })).toBeVisible();
-    await expect(slashMenu.getByRole('option', { name: /^\/plan / })).toBeHidden();
-    await expect(slashMenu.getByRole('option', { name: /^\/new / })).toBeHidden();
+    await expect(slashMenu.getByRole('option', { name: /^status / })).toBeVisible();
+    await expect(slashMenu.getByRole('option', { name: /^plan / })).toBeHidden();
+    await expect(slashMenu.getByRole('option', { name: /^new / })).toBeHidden();
     await app.snapshot('slash-filtered');
     await window.keyboard.press('Escape');
     await expect(slashMenu).toBeHidden();
@@ -95,7 +95,7 @@ test('slash commands and the Add menu drive status, plan mode, goals and a fresh
     await app.snapshot('plan-panel');
     await exitMode.click();
     await expect(planIndicator).toBeHidden();
-    await expect(input).toHaveAttribute('aria-placeholder', 'Type a message…');
+    await expect(input).toHaveAttribute('aria-placeholder', 'Type @ to reference files, or start with / for commands and skills');
   });
 
   await test.step('the Add menu lists its entries and its Plan item toggles plan mode', async () => {
