@@ -154,7 +154,7 @@ test('prepares a draft and retries an interrupted release from the same SHA', ()
   assert.match(readFileSync(join(f.dir, 'output'), 'utf8'), /build=false/);
 });
 
-test('desktop only defers pnpm cache writes for a new CLI release, not a previously tagged version', () => {
+void test('desktop only defers pnpm cache writes for a new CLI release, not a previously tagged version', () => {
   const f = fixture();
   const git = (...args) => {
     const result = spawnSync('git', args, { cwd: f.dir, encoding: 'utf8' });
