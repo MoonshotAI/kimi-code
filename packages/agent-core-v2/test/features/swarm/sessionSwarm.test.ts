@@ -1045,7 +1045,7 @@ describe('AgentRunBatch swarm item forwarding', () => {
       description: 'Review #1 (subagent)',
       swarmItem,
       runInBackground: false,
-      plan: { profileName: 'subagent', model: 'mock-model', thinking: 'off', fork: false },
+      plan: { profileName: 'subagent', model: 'mock-model', thinking: 'off' },
     };
   }
 
@@ -1205,7 +1205,7 @@ describe('SessionSwarmService metadata compatibility', () => {
 
     expect(spawnAgent).toHaveBeenCalledWith({
       callerAgentId: 'main',
-      plan: { profileName: 'coder', model: 'kimi-test', thinking: 'medium', fork: false },
+      plan: { profileName: 'coder', model: 'kimi-test', thinking: 'medium' },
       labels: { parentAgentId: 'main', swarmItem: 'src/a.ts' },
       prompt: 'Review the file',
     });
@@ -1272,7 +1272,7 @@ describe('SessionSwarmService metadata compatibility', () => {
     const spawnTask: SessionSwarmSpawnTask = {
       ...spawnSessionTask('src/a.ts'),
       kind: 'spawn',
-      plan: { profileName: 'coder', model: 'provider/pool', thinking: 'low', fork: false },
+      plan: { profileName: 'coder', model: 'provider/pool', thinking: 'low' },
     };
 
     await expect(
@@ -1284,7 +1284,7 @@ describe('SessionSwarmService metadata compatibility', () => {
 
     expect(spawnAgent).toHaveBeenCalledWith(
       expect.objectContaining({
-        plan: { profileName: 'coder', model: 'provider/pool', thinking: 'low', fork: false },
+        plan: { profileName: 'coder', model: 'provider/pool', thinking: 'low' },
       }),
     );
     expect(eventBus.publish).toHaveBeenCalledWith(
@@ -2283,7 +2283,7 @@ function spawnSessionTask(swarmItem?: string): SessionSwarmSpawnTask {
     swarmIndex: 1,
     swarmItem,
     runInBackground: false,
-    plan: { profileName: 'coder', model: 'kimi-test', thinking: 'medium', fork: false },
+    plan: { profileName: 'coder', model: 'kimi-test', thinking: 'medium' },
   };
 }
 
@@ -2356,7 +2356,6 @@ function subagentStub(
     planSpawn: vi.fn(async (input: SubagentSpawnPlanInput) => ({
       profileName: input.profileName ?? 'coder',
       model: input.model ?? 'kimi-test',
-      fork: input.fork === true,
     })),
     spawn: vi.fn(async (opts: SpawnSubagentOptions) => {
       const handle = agentHandle('agent-new', lifecycle, eventBus, {
@@ -2645,6 +2644,6 @@ function queuedAgentRunTask(index: number): QueuedAgentRunTask<number> {
     prompt: `Review item-${String(index)}`,
     description: `Review #${String(index)}`,
     runInBackground: false,
-    plan: { profileName: 'coder', model: 'mock-model', thinking: 'off', fork: false },
+    plan: { profileName: 'coder', model: 'mock-model', thinking: 'off' },
   };
 }

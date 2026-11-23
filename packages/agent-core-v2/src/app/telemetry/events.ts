@@ -500,7 +500,6 @@ export interface FsSuggestNodeFallbackEvent {
 export interface SubagentCreatedEvent {
   subagent_name: string;
   run_in_background: boolean;
-  fork: boolean;
   agent_id: string;
   parent_agent_id: string;
   parent_tool_call_id: string;
@@ -1358,13 +1357,12 @@ export const telemetryEventDefinitions = {
     properties: {
       subagent_name: 'Profile name of the subagent',
       run_in_background: 'Whether the subagent runs in the background',
-      fork: 'Whether the subagent was forked with a snapshot of the parent conversation history',
       agent_id: 'Child agent id',
       parent_agent_id: 'Parent (caller) agent id',
       parent_tool_call_id: "Tool call id of the launching call in the parent agent; '' when not launched from a tool call",
       model: 'Model alias the subagent binds to (secondary-model choice or inherited caller model); omitted when no binding was resolved',
       model_source:
-        "How the bound model was chosen: 'inherited' = caller's own model (no pool or fork), 'secondary_pool' = [secondary_model.models] pool pick; omitted when no binding resolution happened (e.g. resume)",
+        "How the bound model was chosen: 'inherited' = caller's own model (no pool), 'secondary_pool' = [secondary_model.models] pool pick; omitted when no binding resolution happened (e.g. resume)",
     },
   }),
   mcp_connected: defineTelemetryEvent<McpConnectedEvent>({

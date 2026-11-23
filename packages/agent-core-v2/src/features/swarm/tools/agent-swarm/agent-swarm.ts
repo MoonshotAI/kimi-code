@@ -36,12 +36,6 @@ export const AgentSwarmToolInputSchema = z
       .describe(
         `Values used to fill ${PROMPT_TEMPLATE_PLACEHOLDER}. Each item launches one new subagent.`,
       ),
-    fork: z
-      .boolean()
-      .optional()
-      .describe(
-        'Start every item-spawned subagent with a snapshot of your completed conversation history, inheriting your current agent type, model, and tool set.',
-      ),
     resume_agent_ids: z
       .record(z.string().trim().min(1), z.string().trim().min(1))
       .optional()
