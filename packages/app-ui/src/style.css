@@ -253,6 +253,8 @@ html[data-color-scheme="dark"] {
   --space-5: 20px;
   --space-6: 24px;
   --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
   --radius-context-segment: 2px;
   --browser-annotation-label-max-width: 360px;
   --browser-annotation-popover-width: 26rem;
