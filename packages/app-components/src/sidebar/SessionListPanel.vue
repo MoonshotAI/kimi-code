@@ -1234,29 +1234,6 @@ defineExpose({
 .ws-drop-target.drop-before { box-shadow: inset 0 2px 0 var(--color-accent); }
 .ws-drop-target.drop-after { box-shadow: inset 0 -2px 0 var(--color-accent); }
 
-.se-locate-flash,
-.ws-drop-target.ws-locate-flash :deep(.gh),
-.pin-workspace.ws-locate-flash :deep(.gh) {
-  isolation: isolate;
-}
-.se-locate-flash::before,
-.ws-drop-target.ws-locate-flash :deep(.gh)::before,
-.pin-workspace.ws-locate-flash :deep(.gh)::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  z-index: -1;
-  border-radius: var(--radius-sm);
-  background: var(--color-accent-soft);
-  pointer-events: none;
-  animation: ui-fade-out var(--duration-flash) var(--ease-out) forwards;
-}
-@media (prefers-reduced-motion: reduce) {
-  .se-locate-flash::before,
-  .ws-drop-target.ws-locate-flash :deep(.gh)::before,
-  .pin-workspace.ws-locate-flash :deep(.gh)::before { animation: none; }
-}
-
 .done-gh {
   display: flex;
   align-items: center;
@@ -1367,3 +1344,5 @@ defineExpose({
 </style>
 
 <style src="../lib/anchored-menu.css"></style>
+
+<style scoped src="../lib/locate-flash.css"></style>

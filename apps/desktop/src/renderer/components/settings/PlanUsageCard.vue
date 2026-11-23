@@ -94,7 +94,7 @@ function resetHint(resetAt: string | undefined): string {
   <template v-else>
   <section class="sec">
     <h3 class="sec-title">{{ t('settings.planUsage.title') }}</h3>
-    <div class="settings-group">
+    <div class="settings-group settings-group-divided">
       <div v-if="loading" class="pu-row pu-state">
         <Spinner size="sm" />
       </div>
@@ -141,7 +141,7 @@ function resetHint(resetAt: string | undefined): string {
 
   <section v-if="wallet !== null" class="sec">
     <h3 class="sec-title">{{ t('settings.planUsage.boosterTitle') }}</h3>
-    <div class="settings-group">
+    <div class="settings-group settings-group-divided">
       <div class="pu-row">
         <span class="pu-main">
           <span class="pu-label">{{ t('settings.planUsage.monthlyUsed') }}</span>
@@ -179,21 +179,9 @@ function resetHint(resetAt: string | undefined): string {
 
 <style scoped src="@moonshot-ai/app-components/settings-common.css"></style>
 
+<style scoped src="@moonshot-ai/app-components/plan-usage.css"></style>
+
 <style scoped>
-.sec {
-  margin-bottom: var(--space-5);
-}
-.pu-row {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  min-height: 52px;
-  padding: var(--space-3) var(--space-4);
-  border-top: var(--p-hairline) solid var(--color-line);
-}
-.pu-row:first-child {
-  border-top: none;
-}
 .pu-state {
   color: var(--color-text-muted);
   font-size: var(--text-sm);
@@ -203,21 +191,6 @@ function resetHint(resetAt: string | undefined): string {
   min-width: 0;
 }
 .pu-empty {
-  color: var(--color-text-faint);
-}
-.pu-main {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-}
-.pu-label {
-  font-size: var(--text-sm);
-  color: var(--color-text);
-}
-.pu-hint {
-  font-size: var(--text-xs);
   color: var(--color-text-faint);
 }
 .pu-legend {

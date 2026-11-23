@@ -23,30 +23,4 @@ const { t } = useI18n();
 
 <style scoped src="./settings-common.css"></style>
 
-<style scoped>
-.sec {
-  margin-bottom: var(--space-5);
-}
-.pu-row {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  min-height: 52px;
-  padding: var(--space-3) var(--space-4);
-}
-.pu-main {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-}
-.pu-label {
-  font-size: var(--text-sm);
-  color: var(--color-text);
-}
-.pu-hint {
-  font-size: var(--text-xs);
-  color: var(--color-text-faint);
-}
-</style>
+<style scoped src="./plan-usage.css"></style>

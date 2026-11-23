@@ -14,6 +14,16 @@
   min-height: 38px;
   padding: var(--space-1) 0;
 }
+.settings-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  padding: var(--space-4) 0;
+  color: var(--color-text-muted);
+  font-family: var(--font-ui);
+  font-size: var(--text-base);
+}
 .settings-group {
   overflow: hidden;
   border-radius: var(--radius-xl);

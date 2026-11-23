@@ -336,7 +336,7 @@ async function submitRegistry(): Promise<void> {
     />
 
     <div v-show="source === 'catalog'" class="ap-catalog">
-      <div v-if="catalogState === 'loading'" class="ap-center">
+      <div v-if="catalogState === 'loading'" class="settings-loading">
         <Spinner size="sm" />
         <span>{{ t('providers.catalog.loading') }}</span>
       </div>
@@ -494,6 +494,8 @@ async function submitRegistry(): Promise<void> {
   </div>
 </template>
 
+<style scoped src="./settings-common.css"></style>
+
 <style scoped>
 .ap { display: flex; flex-direction: column; }
 
@@ -564,16 +566,6 @@ async function submitRegistry(): Promise<void> {
 }
 
 .ap-catalog { display: flex; flex-direction: column; gap: var(--space-3); }
-.ap-center {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-2);
-  padding: var(--space-4) 0;
-  color: var(--color-text-muted);
-  font-family: var(--font-ui);
-  font-size: var(--text-base);
-}
 .ap-error {
   display: flex;
   flex-direction: column;

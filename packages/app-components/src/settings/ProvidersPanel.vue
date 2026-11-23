@@ -108,7 +108,7 @@ function onManagedRow(): void {
         </Button>
       </div>
 
-      <div v-if="loading" class="pp-loading">
+      <div v-if="loading" class="settings-loading">
         <Spinner size="sm" />
         <span>{{ t('providers.loading') }}</span>
       </div>
@@ -205,18 +205,6 @@ function onManagedRow(): void {
   color: var(--color-text);
 }
 .pp-group-title:first-of-type { margin-top: 0; }
-
-.pp-loading {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-2);
-  padding: var(--space-4) 0;
-  color: var(--color-text-muted);
-  font-family: var(--font-ui);
-  font-size: var(--text-base);
-}
-
 
 .pp-row {
   display: flex;

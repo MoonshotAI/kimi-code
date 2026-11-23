@@ -738,28 +738,6 @@ const {
   height: 13px;
 }
 
-.se-locate-flash,
-.pin-workspace.ws-locate-flash :deep(.gh) {
-  isolation: isolate;
-}
-.se-locate-flash::before,
-.pin-workspace.ws-locate-flash :deep(.gh)::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  z-index: -1;
-  border-radius: var(--radius-sm);
-  background: var(--color-accent-soft);
-  pointer-events: none;
-  animation: ui-fade-out var(--duration-flash) var(--ease-out) forwards;
-}
-@media (prefers-reduced-motion: reduce) {
-  .se-locate-flash::before,
-  .pin-workspace.ws-locate-flash :deep(.gh)::before {
-    animation: none;
-  }
-}
-
 .pinned-rows {
   max-height: 40vh;
   overflow-y: auto;
@@ -917,3 +895,5 @@ const {
 </style>
 
 <style src="./lib/anchored-menu.css"></style>
+
+<style scoped src="./lib/locate-flash.css"></style>
