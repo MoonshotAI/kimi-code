@@ -211,7 +211,14 @@ describe('WorktreeService', () => {
       const created = await service.create({ cwd: repo, name: 'fix-login' }, { onEvent: (event) => events.push(event) });
 
       const path = join(kimiDir(), 'fix-login');
-      expect(created.worktree).toEqual({ path, name: 'fix-login', head, branch: undefined, missing: false });
+      expect(created.worktree).toEqual({
+        path,
+        name: 'fix-login',
+        head,
+        branch: undefined,
+        missing: false,
+        managed: true,
+      });
       expect(created.repoRoot).toBe(realRepo);
       expect(created.sourceRoot).toBe(realRepo);
       expect(created.cwd).toBe(path);
@@ -351,8 +358,12 @@ describe('WorktreeService', () => {
 
         const listing = await service.list(created.worktree.path);
         expect(listing.repoRoot).toBe(realBare);
+        expect(listing.currentCheckoutRoot).toBe(created.worktree.path);
         expect(listing.bare).toBe(true);
-        expect(listing.worktrees.map((worktree) => worktree.name)).toEqual(['from-bare']);
+        expect(listing.worktrees.map(({ name, managed }) => ({ name, managed }))).toEqual([
+          { name: 'from-bare', managed: true },
+          { name: 'bare-linked', managed: false },
+        ]);
 
         const check = await service.inspectRemoval({ repoRoot: realBare, path: created.worktree.path, deleteBranch: false });
         expect(check.uncommittedFiles).toBe(0);
@@ -583,20 +594,43 @@ describe('WorktreeService', () => {
   });
 
   describe('list', () => {
-    it('lists only Kimi worktrees, sorted by name, and marks missing ones', async () => {
+    it('lists managed Kimi worktrees before external linked worktrees, sorted by name, and marks missing ones', async () => {
       const beta = await create({ name: 'beta' });
       const alpha = await create({ name: 'alpha', branch: 'alpha-branch' });
-      git(repo, 'worktree', 'add', '-q', '--detach', join(root, 'user-worktree'), 'HEAD');
+      const external = join(root, 'aaa-user-worktree');
+      git(repo, 'worktree', 'add', '-q', '--detach', external, 'HEAD');
       rmSync(beta.worktree.path, { recursive: true, force: true });
 
       const listing = await service.list(join(repo));
 
       expect(listing.repoRoot).toBe(realRepo);
+      expect(listing.currentCheckoutRoot).toBe(realRepo);
       expect(listing.bare).toBe(false);
       expect(listing.worktrees).toEqual([
         { ...alpha.worktree, branch: 'alpha-branch' },
         { ...beta.worktree, missing: true },
+        {
+          path: realpathSync(external),
+          name: 'aaa-user-worktree',
+          head: alpha.worktree.head,
+          branch: undefined,
+          missing: false,
+          managed: false,
+        },
       ]);
+
+      const fromExternal = await service.list(external);
+      expect(fromExternal.currentCheckoutRoot).toBe(realpathSync(external));
+      expect(fromExternal.worktrees).toEqual(listing.worktrees);
+    });
+
+    it('allows creating a managed worktree with the same name as an external linked worktree', async () => {
+      const external = join(root, 'shared-name');
+      git(repo, 'worktree', 'add', '-q', '--detach', external, 'HEAD');
+
+      const created = await create({ name: 'shared-name' });
+      expect(created.worktree.managed).toBe(true);
+      expect(created.worktree.path).toBe(join(kimiDir(), 'shared-name'));
     });
 
     it('lists the same worktrees from inside a Kimi worktree', async () => {
@@ -605,6 +639,7 @@ describe('WorktreeService', () => {
       const listing = await service.list(created.worktree.path);
 
       expect(listing.repoRoot).toBe(realRepo);
+      expect(listing.currentCheckoutRoot).toBe(created.worktree.path);
       expect(listing.worktrees.map((worktree) => worktree.name)).toEqual(['inside']);
     });
 
@@ -998,11 +1033,43 @@ describe('WorktreeService', () => {
       expect(branches(repo)).toContain('locked-branch');
     });
 
-    it('rejects paths that are not Kimi worktrees of the repository', async () => {
+    it('inspects and removes external linked worktrees of the repository', async () => {
       const userWorktree = join(root, 'user-worktree');
-      git(repo, 'worktree', 'add', '-q', '--detach', userWorktree, 'HEAD');
+      git(repo, 'worktree', 'add', '-q', '-b', 'user-branch', userWorktree, 'HEAD');
+      const realUserWorktree = realpathSync(userWorktree);
+      writeFileSync(join(userWorktree, 'draft.txt'), 'draft\n');
 
-      for (const path of [userWorktree, repo, join(kimiDir(), 'never-created')]) {
+      const check = await service.inspectRemoval({
+        repoRoot: realRepo,
+        path: userWorktree,
+        deleteBranch: true,
+      });
+      expect(check).toMatchObject({
+        path: realUserWorktree,
+        missing: false,
+        branch: 'user-branch',
+        uncommittedFiles: 1,
+        uniqueCommits: 0,
+      });
+      expect((await failure(service.remove(removal(userWorktree, { deleteBranch: true })))).code).toBe(
+        'worktree.has_uncommitted',
+      );
+
+      await service.remove(
+        removal(userWorktree, { deleteBranch: true, discard: { uncommittedFiles: 1, uniqueCommits: 0 } }),
+      );
+      expect(existsSync(userWorktree)).toBe(false);
+      expect(branches(repo)).toEqual(['main']);
+    });
+
+    it('rejects paths that are not linked worktrees of the repository', async () => {
+      const otherRepo = join(root, 'other-repo');
+      initRepo(otherRepo);
+      commitFile(otherRepo, 'README.md', 'other\n');
+      const otherWorktree = join(root, 'other-worktree');
+      git(otherRepo, 'worktree', 'add', '-q', '--detach', otherWorktree, 'HEAD');
+
+      for (const path of [otherWorktree, repo, join(kimiDir(), 'never-created')]) {
         const error = await failure(service.inspectRemoval({ repoRoot: realRepo, path, deleteBranch: false }));
         expect(error.code).toBe('worktree.not_found');
       }

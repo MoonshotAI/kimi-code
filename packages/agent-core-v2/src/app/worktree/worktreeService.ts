@@ -58,7 +58,7 @@ interface Repository {
   readonly entries: readonly PorcelainWorktree[];
 }
 
-interface KimiEntry {
+interface LinkedEntry {
   readonly entry: PorcelainWorktree;
   readonly worktree: KimiWorktree;
 }
@@ -140,10 +140,15 @@ export class WorktreeService implements IWorktreeService {
     const checkout = await this.resolveCheckout(cwd);
     if (checkout === undefined) throw notGitRepo(cwd);
     const repo = await this.readRepository(checkout.checkoutRoot, checkout.repoRoot);
-    const worktrees = (await this.kimiEntries(repo))
+    const worktrees = (await this.linkedEntries(repo))
       .map(({ worktree }) => worktree)
-      .toSorted((a, b) => a.name.localeCompare(b.name));
-    return { repoRoot: repo.root, bare: repo.bare, worktrees };
+      .toSorted(compareWorktrees);
+    return {
+      repoRoot: repo.root,
+      currentCheckoutRoot: checkout.checkoutRoot,
+      bare: repo.bare,
+      worktrees,
+    };
   }
 
   async create(input: CreateWorktreeInput, options: CreateWorktreeOptions = {}): Promise<CreatedWorktree> {
@@ -184,7 +189,7 @@ export class WorktreeService implements IWorktreeService {
     const cwdFallback = !(await this.isDirectory(mappedCwd));
     const setupScript = join(plan.sourceRoot, SETUP_SCRIPT);
     return {
-      worktree: { path: plan.path, name: plan.name, head: plan.commit, branch: plan.branch, missing: false },
+      worktree: { path: plan.path, name: plan.name, head: plan.commit, branch: plan.branch, missing: false, managed: true },
       repoRoot: plan.repoRoot,
       sourceRoot: plan.sourceRoot,
       cwd: cwdFallback ? plan.path : mappedCwd,
@@ -218,14 +223,14 @@ export class WorktreeService implements IWorktreeService {
 
   async inspectRemoval(input: InspectWorktreeRemovalInput): Promise<WorktreeRemovalCheck> {
     const repo = await this.readRepository(input.repoRoot, input.repoRoot);
-    const target = await this.findKimiEntry(repo, input.path);
+    const target = await this.findLinkedEntry(repo, input.path);
     return this.measureRemoval(repo, target, input.deleteBranch, input.excludeSessionId);
   }
 
   async remove(input: RemoveWorktreeInput): Promise<void> {
     this.requireEnabled();
     const repo = await this.readRepository(input.repoRoot, input.repoRoot);
-    const target = await this.findKimiEntry(repo, input.path);
+    const target = await this.findLinkedEntry(repo, input.path);
     const check = await this.measureRemoval(repo, target, input.deleteBranch, input.excludeSessionId);
     if (check.openSessionIds.length > 0) {
       throw new Error2(
@@ -285,7 +290,11 @@ export class WorktreeService implements IWorktreeService {
     const worktreesDir = this.worktreesDir(repo.root);
     await this.fs.mkdir(worktreesDir, { recursive: true });
     const parent = await canonicalPath(this.fs, worktreesDir);
-    const registered = new Set((await this.kimiEntries(repo)).map(({ worktree }) => worktree.name));
+    const registered = new Set(
+      (await this.linkedEntries(repo))
+        .filter(({ worktree }) => worktree.managed)
+        .map(({ worktree }) => worktree.name),
+    );
     const taken = async (candidate: string): Promise<boolean> =>
       registered.has(candidate) || (await this.exists(join(parent, candidate)));
     let name = explicitName ?? generateWorktreeName();
@@ -417,33 +426,33 @@ export class WorktreeService implements IWorktreeService {
     return { root: await canonicalPath(this.fs, repoRoot), bare: main.bare, entries };
   }
 
-  private async kimiEntries(repo: Repository): Promise<readonly KimiEntry[]> {
+  private async linkedEntries(repo: Repository): Promise<readonly LinkedEntry[]> {
     const parent = await canonicalPath(this.fs, this.worktreesDir(repo.root));
-    const found: KimiEntry[] = [];
+    const found: LinkedEntry[] = [];
     for (const entry of repo.entries.slice(1)) {
       const lstat = await this.fs.lstat(entry.path).catch(() => undefined);
       if (lstat?.isSymbolicLink === true) continue;
       const path = await canonicalPath(this.fs, entry.path);
-      if (!sameDir(dirname(path), parent)) continue;
       const missing = entry.prunable || lstat?.isDirectory !== true;
+      const managed = sameDir(dirname(path), parent);
       found.push({
         entry,
-        worktree: { path, name: basename(path), head: entry.head, branch: entry.branch, missing },
+        worktree: { path, name: basename(path), head: entry.head, branch: entry.branch, missing, managed },
       });
     }
     return found;
   }
 
-  private async findKimiEntry(repo: Repository, path: string): Promise<KimiEntry> {
+  private async findLinkedEntry(repo: Repository, path: string): Promise<LinkedEntry> {
     const normalized = resolve(path);
     const lstat = await this.fs.lstat(normalized).catch(() => undefined);
     const wanted = lstat?.isSymbolicLink === true ? undefined : await canonicalPath(this.fs, normalized);
     const match =
       wanted === undefined
         ? undefined
-        : (await this.kimiEntries(repo)).find(({ worktree }) => sameDir(worktree.path, wanted));
+        : (await this.linkedEntries(repo)).find(({ worktree }) => sameDir(worktree.path, wanted));
     if (match === undefined) {
-      throw new Error2(ErrorCodes.WORKTREE_NOT_FOUND, `${path} is not a Kimi worktree of ${repo.root}.`, {
+      throw new Error2(ErrorCodes.WORKTREE_NOT_FOUND, `${path} is not a linked worktree of ${repo.root}.`, {
         details: { path, repoRoot: repo.root },
       });
     }
@@ -452,7 +461,7 @@ export class WorktreeService implements IWorktreeService {
 
   private async measureRemoval(
     repo: Repository,
-    target: KimiEntry,
+    target: LinkedEntry,
     deleteBranch: boolean,
     excludeSessionId?: string,
   ): Promise<WorktreeRemovalCheck> {
@@ -519,7 +528,7 @@ export class WorktreeService implements IWorktreeService {
     return modified;
   }
 
-  private async countUniqueCommits(repo: Repository, target: KimiEntry, deleteBranch: boolean): Promise<number> {
+  private async countUniqueCommits(repo: Repository, target: LinkedEntry, deleteBranch: boolean): Promise<number> {
     const { branch, head } = target.worktree;
     if (head === undefined) return 0;
     const otherHeads = repo.entries
@@ -695,6 +704,11 @@ async function drain(stream: AsyncIterable<Uint8Array | string>, sink: (text: st
   }
   const rest = decoder.decode();
   if (rest !== '') sink(rest);
+}
+
+function compareWorktrees(a: KimiWorktree, b: KimiWorktree): number {
+  if (a.managed !== b.managed) return a.managed ? -1 : 1;
+  return a.name.localeCompare(b.name) || a.path.localeCompare(b.path);
 }
 
 function localProgram(command: string, cwd: string): string | undefined {
