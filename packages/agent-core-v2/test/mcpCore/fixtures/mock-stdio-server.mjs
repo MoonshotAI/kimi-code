@@ -1,3 +1,4 @@
+import { connect } from 'node:net';
 import { setTimeout as sleep } from 'node:timers/promises';
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -7,6 +8,15 @@ import { z } from 'zod';
 const delayMs = Number.parseInt(process.env['KIMI_TEST_MCP_START_DELAY_MS'] ?? '0', 10);
 if (delayMs > 0) {
   await sleep(delayMs);
+}
+
+const startGatePort = process.env['KIMI_TEST_MCP_START_GATE_PORT'];
+if (startGatePort !== undefined) {
+  const startGate = connect(Number(startGatePort), '127.0.0.1');
+  startGate.on('error', () => {});
+  await new Promise((resolve) => {
+    startGate.once('close', resolve);
+  });
 }
 
 if (process.env['KIMI_TEST_MCP_IGNORE_SIGTERM'] === '1') {

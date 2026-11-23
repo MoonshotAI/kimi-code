@@ -25,7 +25,7 @@ import {
   type Session,
 } from '@moonshot-ai/kimi-code-sdk';
 import chalk from 'chalk';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ApprovalPanelComponent } from '#/tui/components/dialogs/approval-panel';
 import { CacheHintDialogComponent } from '#/tui/components/dialogs/cache-hint-dialog';
@@ -2271,6 +2271,216 @@ describe('KimiTUI message flow', () => {
 
     expect(harness.createSession).toHaveBeenCalledTimes(1);
     expect(driver.getCurrentSessionId()).toBe('ses-lazy');
+  });
+
+  describe('feedback while the lazy session starts', () => {
+    const FAINT = '\u001B[2m';
+    let previousChalkLevel: typeof chalk.level;
+
+    beforeEach(() => {
+      previousChalkLevel = chalk.level;
+      chalk.level = 3;
+    });
+
+    afterEach(() => {
+      chalk.level = previousChalkLevel;
+    });
+
+    function lineWith(lines: readonly string[], needle: string): number {
+      return lines.findIndex((line) => stripSgr(line).includes(needle));
+    }
+
+    async function startingDriver(
+      session = makeSession({ id: 'ses-lazy' }),
+      harnessOverrides: Record<string, unknown> = {},
+    ) {
+      const startupInput: KimiTUIStartupInput = {
+        ...makeStartupInput(),
+        cliOptions: { ...makeStartupInput().cliOptions, model: 'k2' },
+      };
+      const made = await makeDriver(session, harnessOverrides, startupInput);
+      let resolveCreate!: (created: typeof session) => void;
+      let rejectCreate!: (error: Error) => void;
+      made.harness.createSession.mockImplementationOnce(
+        () => new Promise((resolve, reject) => {
+          resolveCreate = resolve;
+          rejectCreate = reject;
+        }),
+      );
+      return {
+        ...made,
+        release: () => resolveCreate(session),
+        fail: (error: Error) => rejectCreate(error),
+      };
+    }
+
+    it('shows the first message faded above a "Starting a new session…" spinner until the session is ready (v2 engine)', async () => {
+      const { driver, harness, session, release } = await startingDriver();
+
+      driver.handleUserInput('first-while-starting');
+      await vi.waitFor(() => {
+        expect(harness.createSession).toHaveBeenCalledTimes(1);
+      });
+
+      const pending = renderTranscript(driver).split('\n');
+      const message = lineWith(pending, 'first-while-starting');
+      expect(message).toBeGreaterThanOrEqual(0);
+      expect(pending[message]).toContain(FAINT);
+      expect(lineWith(pending, 'Starting a new session…')).toBeGreaterThan(message);
+
+      release();
+      await vi.waitFor(() => {
+        expect(session.prompt).toHaveBeenCalledWith('first-while-starting', { promptId: undefined });
+      });
+      const ready = renderTranscript(driver).split('\n');
+      expect(lineWith(ready, 'Starting a new session…')).toBe(-1);
+      expect(lineWith(ready, 'Session ready.')).toBe(-1);
+      expect(countOccurrences(stripSgr(ready.join('\n')), 'first-while-starting')).toBe(1);
+      expect(ready[lineWith(ready, 'first-while-starting')]).not.toContain(FAINT);
+    });
+
+    it('clears the echo and spinner but keeps the error when the session fails to start (v2 engine)', async () => {
+      const { driver, harness, session, fail } = await startingDriver();
+
+      driver.state.editor.setText('doomed-while-starting');
+      driver.state.editor.handleInput('\r');
+      await vi.waitFor(() => {
+        expect(harness.createSession).toHaveBeenCalledTimes(1);
+      });
+      const pending = stripSgr(renderTranscript(driver));
+      expect(pending).toContain('doomed-while-starting');
+      expect(pending).toContain('Starting a new session…');
+
+      fail(new Error('create failed'));
+      await vi.waitFor(() => {
+        expect(stripSgr(renderTranscript(driver))).toContain('Failed to start a session: create failed');
+      });
+      const failed = stripSgr(renderTranscript(driver));
+      expect(failed).not.toContain('doomed-while-starting');
+      expect(failed).not.toContain('Starting a new session…');
+      expect(failed).not.toContain('Session setup failed.');
+      expect(driver.state.editor.getText()).toBe('');
+      expect(session.prompt).not.toHaveBeenCalled();
+    });
+
+    it('echoes each message sent while the session starts, then sends the first and queues the rest (v2 engine)', async () => {
+      const { driver, harness, session, release } = await startingDriver();
+
+      driver.handleUserInput('first-while-starting');
+      await vi.waitFor(() => {
+        expect(harness.createSession).toHaveBeenCalledTimes(1);
+      });
+      driver.handleUserInput('second-while-starting');
+
+      const pending = renderTranscript(driver).split('\n');
+      const first = lineWith(pending, 'first-while-starting');
+      const second = lineWith(pending, 'second-while-starting');
+      expect(first).toBeGreaterThanOrEqual(0);
+      expect(second).toBeGreaterThan(first);
+      expect(lineWith(pending, 'Starting a new session…')).toBeGreaterThan(second);
+      expect(pending[first]).toContain(FAINT);
+      expect(pending[second]).toContain(FAINT);
+
+      release();
+      await vi.waitFor(() => {
+        expect(session.prompt).toHaveBeenCalledWith('first-while-starting', { promptId: undefined });
+      });
+      expect(session.prompt).toHaveBeenCalledTimes(1);
+      expect(driver.state.queuedMessages).toEqual([
+        expect.objectContaining({ text: 'second-while-starting' }),
+      ]);
+      const ready = stripSgr(renderTranscript(driver));
+      expect(countOccurrences(ready, 'first-while-starting')).toBe(1);
+      expect(ready).not.toContain('second-while-starting');
+      expect(ready).not.toContain('Starting a new session…');
+    });
+
+    it('echoes a skill message in send order with the messages after it, then sends it first (v2 engine)', async () => {
+      const { driver, harness, session, release } = await startingDriver(makeSession({ id: 'ses-lazy' }), {
+        listWorkspaceSkills: vi.fn(async () => [
+          { name: 'review', description: 'Review skill', path: '/work/review/SKILL.md', source: 'project', workspaceDir: '/work', scopes: ['tui'] },
+        ]),
+        listPluginCommands: vi.fn(async () => []),
+      });
+      await (driver as unknown as { refreshSkillCommands(): Promise<void> }).refreshSkillCommands();
+
+      driver.handleUserInput('/skill:review skill-while-starting');
+      await vi.waitFor(() => {
+        expect(harness.createSession).toHaveBeenCalledTimes(1);
+      });
+      driver.handleUserInput('plain-after-skill');
+
+      const pending = renderTranscript(driver).split('\n');
+      const skill = lineWith(pending, '/skill:review skill-while-starting');
+      const plain = lineWith(pending, 'plain-after-skill');
+      expect(skill).toBeGreaterThanOrEqual(0);
+      expect(pending[skill]).toContain(FAINT);
+      expect(plain).toBeGreaterThan(skill);
+      expect(lineWith(pending, 'Starting a new session…')).toBeGreaterThan(plain);
+
+      release();
+      await vi.waitFor(() => {
+        expect(session.promptWithSkills).toHaveBeenCalledWith('/skill:review skill-while-starting', [
+          expect.objectContaining({ name: 'review' }),
+        ]);
+      });
+      expect(session.prompt).not.toHaveBeenCalled();
+      expect(driver.state.queuedMessages).toEqual([
+        expect.objectContaining({ text: 'plain-after-skill' }),
+      ]);
+      const ready = stripSgr(renderTranscript(driver));
+      expect(countOccurrences(ready, '/skill:review skill-while-starting')).toBe(1);
+      expect(ready).not.toContain('plain-after-skill');
+      expect(ready).not.toContain('Starting a new session…');
+    });
+
+    it('shows an attached image in the pending echo the way the sent message shows it (v2 engine)', async () => {
+      setCapabilities({ images: null, trueColor: true, hyperlinks: false });
+      const { driver, harness, session, release } = await startingDriver();
+      const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
+      const attachment = stagedImage(imageStore, 'file-echo');
+
+      driver.handleUserInput(`describe ${attachment.placeholder}`);
+      await vi.waitFor(() => {
+        expect(harness.createSession).toHaveBeenCalledTimes(1);
+      });
+      expect(countOccurrences(stripSgr(renderTranscript(driver)), attachment.placeholder)).toBe(2);
+
+      release();
+      await vi.waitFor(() => {
+        expect(session.prompt).toHaveBeenCalledOnce();
+      });
+      expect(countOccurrences(stripSgr(renderTranscript(driver)), attachment.placeholder)).toBe(2);
+    });
+
+    it.each([
+      { entry: 'a shell command', input: 'echo starting-shell', bash: true, result: '$ echo starting-shell' },
+      { entry: 'a session-requiring slash command', input: '/plan on', bash: false, result: 'Plan mode: ON' },
+    ])('shows the spinner without an echo for $entry (v2 engine)', async ({ input, bash, result }) => {
+      const { driver, harness, release } = await startingDriver(makeSession({
+        id: 'ses-lazy',
+        runShellCommand: vi.fn(async () => ({ stdout: '', stderr: '', isError: false })),
+        getPlan: vi.fn(async () => null),
+      }));
+      if (bash) {
+        driver.state.appState.inputMode = 'bash';
+        driver.state.editor.inputMode = 'bash';
+      }
+
+      driver.handleUserInput(input);
+      await vi.waitFor(() => {
+        expect(harness.createSession).toHaveBeenCalledTimes(1);
+      });
+      const pending = stripSgr(renderTranscript(driver));
+      expect(pending).toContain('Starting a new session…');
+      expect(pending).not.toContain(input);
+
+      release();
+      await vi.waitFor(() => {
+        expect(stripSgr(renderTranscript(driver))).toContain(result);
+      });
+      expect(stripSgr(renderTranscript(driver))).not.toContain('Starting a new session…');
+    });
   });
 
   it('waits out the in-flight lazy creation before /new (v2 engine)', async () => {
@@ -16511,6 +16721,54 @@ describe('KimiTUI environment slot', () => {
     expect(stripSgr(renderTranscript(driver))).toContain('Failed to start a session: connect failed');
     expect(stripSgr(renderTranscript(driver))).not.toContain('hello-remote-world');
     expect(driver.state.appState.streamingPhase).toBe('idle');
+  });
+
+  async function connectingDriver(outcome: 'ready' | 'failed') {
+    const lazySession = environmentSession({ id: 'ses-lazy' });
+    const startupInput: KimiTUIStartupInput = {
+      ...makeStartupInput(),
+      cliOptions: { ...makeStartupInput().cliOptions, model: 'k2', environment: 'dev-box' },
+    };
+    let settle!: () => void;
+    const createSession = vi.fn(() => new Promise((resolve, reject) => {
+      settle = outcome === 'ready'
+        ? () => resolve(lazySession)
+        : () => reject(new Error('connect failed'));
+    }));
+    const { driver } = await makeDriver(lazySession, { createSession }, startupInput);
+    await vi.waitFor(() => {
+      expect(createSession).toHaveBeenCalledTimes(1);
+    });
+    return { driver, lazySession, settle: () => settle() };
+  }
+
+  it('keeps the remote "Connecting to" spinner without an echo, then ends it with "Session ready."', async () => {
+    const { driver, lazySession, settle } = await connectingDriver('ready');
+
+    driver.handleUserInput('remote-while-connecting');
+    const pending = stripSgr(renderTranscript(driver));
+    expect(pending).toContain('Connecting to dev-box…');
+    expect(pending).not.toContain('remote-while-connecting');
+    expect(pending).not.toContain('Starting a new session…');
+
+    settle();
+    await vi.waitFor(() => {
+      expect(lazySession.prompt).toHaveBeenCalledWith('remote-while-connecting', { promptId: undefined });
+    });
+    const lines = renderTranscript(driver).split('\n').map(stripSgr);
+    const ready = lines.findIndex((line) => line.includes('✓ Session ready.'));
+    expect(ready).toBeGreaterThanOrEqual(0);
+    expect(lines.findIndex((line) => line.includes('remote-while-connecting'))).toBeGreaterThan(ready);
+  });
+
+  it('ends the remote "Connecting to" spinner with "Session setup failed." when the session cannot start', async () => {
+    const { driver, settle } = await connectingDriver('failed');
+
+    settle();
+    await vi.waitFor(() => {
+      expect(stripSgr(renderTranscript(driver))).toContain('Failed to start a session: connect failed');
+    });
+    expect(stripSgr(renderTranscript(driver))).toContain('✗ Session setup failed.');
   });
 });
 

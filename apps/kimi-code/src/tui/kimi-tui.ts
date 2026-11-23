@@ -28,6 +28,7 @@ import type {
 import { isTelemetryDisabledByEnv } from '@moonshot-ai/kimi-telemetry';
 import type { MigrationPlan } from '@moonshot-ai/migration-legacy';
 import {
+  Container,
   deleteAllKittyImages,
   type Component,
   type Focusable,
@@ -135,6 +136,7 @@ import {
   LLM_NOT_SET_MESSAGE,
   MAIN_AGENT_ID,
   MAX_AUTO_TITLE_ATTEMPTS,
+  NEW_SESSION_PROGRESS_LABEL,
   NO_ACTIVE_SESSION_MESSAGE,
   PRODUCT_NAME,
   SESSION_LIST_PAGE_SIZE,
@@ -406,6 +408,7 @@ export class KimiTUI {
   state: TUIState;
   private hasSessionHistory = false;
   private ensureSessionPromise: Promise<Session | undefined> | null = null;
+  private messagesAwaitingSession?: Container;
   private newSessionPromise: Promise<void> | null = null;
   private readonly cacheHint = new CacheHintController(this);
   private readonly staging: StagingLeaseTracker;
@@ -1696,7 +1699,9 @@ export class KimiTUI {
     }
     let session = this.session;
     if (session === undefined) {
-      session = await this.ensureSession();
+      const pendingSession = this.ensureSession();
+      this.echoMessageAwaitingSession(text, extraction.imageAttachmentIds);
+      session = await pendingSession;
       if (session === undefined) {
         this.staging.release(stagingLease);
         return;
@@ -1767,7 +1772,9 @@ export class KimiTUI {
     if (this.cacheHint.maybeInterceptOnSubmit(text, extraction, activations)) return;
     let session = this.session;
     if (session === undefined) {
-      session = await this.ensureSession();
+      const pendingSession = this.ensureSession();
+      this.echoMessageAwaitingSession(text, extraction.imageAttachmentIds, activations);
+      session = await pendingSession;
       if (session === undefined) {
         this.staging.releaseMedia([
           ...extraction.imageAttachmentIds, ...extraction.videoAttachmentIds,
@@ -3355,9 +3362,7 @@ export class KimiTUI {
 
   private async lazyCreateSession(): Promise<Session | undefined> {
     const environmentId = this.creationEnvironment?.environmentId ?? this.options.startup.environment;
-    const progress = environmentId !== undefined && environmentId !== 'local'
-      ? this.showProgressSpinner(`Connecting to ${environmentId}…`)
-      : undefined;
+    const progress = this.showSessionStartProgress(environmentId);
     let ready = false;
     try {
       let session: Session;
@@ -3392,8 +3397,49 @@ export class KimiTUI {
       ready = true;
       return session;
     } finally {
-      progress?.stop({ ok: ready, label: ready ? 'Session ready.' : 'Session setup failed.' });
+      progress.end(ready);
     }
+  }
+
+  private showSessionStartProgress(environmentId: string | undefined): { end(ready: boolean): void } {
+    if (environmentId !== undefined && environmentId !== 'local') {
+      const spinner = this.showProgressSpinner(`Connecting to ${environmentId}…`);
+      return {
+        end: (ready) => spinner.stop({ ok: ready, label: ready ? 'Session ready.' : 'Session setup failed.' }),
+      };
+    }
+    const messages = new Container();
+    this.state.transcriptContainer.addChild(messages);
+    this.messagesAwaitingSession = messages;
+    const spinner = this.showProgressSpinner(NEW_SESSION_PROGRESS_LABEL);
+    return {
+      end: () => {
+        this.messagesAwaitingSession = undefined;
+        this.state.transcriptContainer.removeChild(messages);
+        spinner.dismiss();
+      },
+    };
+  }
+
+  private echoMessageAwaitingSession(
+    text: string,
+    imageAttachmentIds: readonly number[],
+    activations: readonly InlineSkillActivation[] = [],
+  ): void {
+    const messages = this.messagesAwaitingSession;
+    if (messages === undefined) return;
+    const echo = this.createTranscriptComponent({
+      id: nextTranscriptId(),
+      kind: 'user',
+      renderMode: 'plain',
+      content: text,
+      imageAttachmentIds,
+      skillNames: activations.map((activation) => activation.skillName),
+      steerPending: true,
+    });
+    if (echo === null) return;
+    messages.addChild(echo);
+    this.state.ui.requestRender();
   }
 
   async setSession(
@@ -3851,7 +3897,7 @@ export class KimiTUI {
     readonly environmentId: string;
     readonly environmentCwd?: string;
   }): Promise<void> {
-    const progress = this.showProgressSpinner('Starting a new session…');
+    const progress = this.showProgressSpinner(NEW_SESSION_PROGRESS_LABEL);
     let ready = false;
     try {
       let session: Session;
