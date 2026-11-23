@@ -4,10 +4,12 @@ import type { IncomingHttpHeaders, IncomingMessage, OutgoingHttpHeaders } from '
 import { createServer, type Socket } from 'node:net';
 import { dirname } from 'node:path';
 import type { Duplex } from 'node:stream';
+import { createServer as createTlsServer } from 'node:tls';
 
 import type { FastifyInstance } from 'fastify';
 import type { WebSocket, WebSocketServer } from 'ws';
 
+import { IPC_PSK_IDENTITY, IPC_TLS_OPTIONS } from './ipcTls';
 import { HOST_RPC_MAX_BODY_BYTES, JsonlRpcStream } from './jsonlRpcStream';
 import { WS_DEBUG_PATH } from './ws/debug/registerWsDebug';
 import { WS_PATH as WS_PATH_V1 } from './ws/v1/registerWsV1';
@@ -257,17 +259,29 @@ export function attachRpcStream(stream: Duplex, opts: RpcStreamOptions): void {
   );
 }
 
-export async function startUnixRpcServer(
+export async function startIpcRpcServer(
   socketPath: string,
   opts: RpcStreamOptions,
+  psk?: Buffer,
 ): Promise<{ close(): Promise<void> }> {
-  await mkdir(dirname(socketPath), { recursive: true, mode: 0o700 });
-  await rm(socketPath, { force: true });
-  const clients = new Set<Socket>();
-  const server = createServer((socket) => {
-    clients.add(socket);
-    socket.on('close', () => clients.delete(socket));
+  if (process.platform !== 'win32') {
+    await mkdir(dirname(socketPath), { recursive: true, mode: 0o700 });
+    await rm(socketPath, { force: true });
+  }
+  const accept = (socket: Socket): void => {
     attachRpcStream(socket, opts);
+  };
+  const server = psk === undefined
+    ? createServer(accept)
+    : createTlsServer({
+        ...IPC_TLS_OPTIONS,
+        handshakeTimeout: 2_000,
+        pskCallback: (_socket, identity) => identity === IPC_PSK_IDENTITY ? psk : null,
+      }, accept).on('tlsClientError', (_error, socket) => socket.destroy());
+  const clients = new Set<Socket>();
+  server.on('connection', (socket: Socket) => {
+    clients.add(socket);
+    socket.once('close', () => clients.delete(socket));
   });
   await new Promise<void>((resolve, reject) => {
     server.once('error', reject);
@@ -276,11 +290,13 @@ export async function startUnixRpcServer(
       resolve();
     });
   });
-  await chmod(socketPath, 0o600).catch(() => {});
-  const boundIno = await stat(socketPath).then(
-    (info) => info.ino,
-    () => undefined,
-  );
+  if (process.platform !== 'win32') await chmod(socketPath, 0o600).catch(() => {});
+  const boundIno = process.platform === 'win32'
+    ? undefined
+    : await stat(socketPath).then(
+        (info) => info.ino,
+        () => undefined,
+      );
   return {
     async close() {
       for (const client of clients) client.destroy();
@@ -290,10 +306,12 @@ export async function startUnixRpcServer(
           resolve();
         });
       });
-      const currentIno = await stat(socketPath).then(
-        (info) => info.ino,
-        () => undefined,
-      );
+      const currentIno = process.platform === 'win32'
+        ? undefined
+        : await stat(socketPath).then(
+            (info) => info.ino,
+            () => undefined,
+          );
       if (boundIno !== undefined && currentIno === boundIno) {
         await rm(socketPath, { force: true });
       }

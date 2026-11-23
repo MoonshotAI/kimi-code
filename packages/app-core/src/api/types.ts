@@ -770,6 +770,7 @@ export type AppHostConnectFailure =
   | 'authentication_failed'
   | 'host_key_changed'
   | 'executor_not_found'
+  | 'executor_not_found_windows'
   | 'executor_outdated'
   | 'remote_busy'
   | 'remote_start_failed'

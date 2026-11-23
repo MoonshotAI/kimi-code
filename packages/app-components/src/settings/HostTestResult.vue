@@ -7,6 +7,7 @@ import { Icon, Spinner } from '@moonshot-ai/app-ui';
 
 const UPDATE_COMMAND = 'kimi upgrade';
 const INSTALL_COMMAND = 'curl -fsSL https://code.kimi.com/kimi-code/install.sh | bash';
+const WINDOWS_INSTALL_COMMAND = 'irm https://code.kimi.com/kimi-code/install.ps1 | iex';
 
 const props = defineProps<{
   state: 'running' | 'failed';
@@ -23,12 +24,14 @@ const commandCopied = ref(false);
 let copiedTimer = 0;
 let commandCopiedTimer = 0;
 
-const command = computed(() => props.failure === 'executor_not_found'
-  ? INSTALL_COMMAND
-  : props.failure === 'executor_outdated'
-    ? UPDATE_COMMAND
-    : '');
-const commandLabel = computed(() => props.failure === 'executor_not_found'
+const isInstallFailure = computed(() => props.failure === 'executor_not_found' || props.failure === 'executor_not_found_windows');
+const command = computed(() => {
+  if (props.failure === 'executor_not_found_windows') return WINDOWS_INSTALL_COMMAND;
+  if (props.failure === 'executor_not_found') return INSTALL_COMMAND;
+  if (props.failure === 'executor_outdated') return UPDATE_COMMAND;
+  return '';
+});
+const commandLabel = computed(() => isInstallFailure.value
   ? 'settings.hosts.copyInstallCommand'
   : 'settings.hosts.copyUpdateCommand');
 
@@ -78,7 +81,7 @@ onUnmounted(() => {
           v-if="command"
           type="button"
           class="etr-action etr-command"
-          :class="failure === 'executor_not_found' ? 'etr-install-command' : 'etr-update-command'"
+          :class="isInstallFailure ? 'etr-install-command' : 'etr-update-command'"
           :title="command"
           @click.stop="copyCommand"
         >{{ t(commandCopied ? 'settings.copied' : commandLabel) }}</button>

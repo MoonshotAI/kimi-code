@@ -18,6 +18,7 @@ export type HostConnectFailure =
   | 'authentication_failed'
   | 'host_key_changed'
   | 'executor_not_found'
+  | 'executor_not_found_windows'
   | 'executor_outdated'
   | 'remote_busy'
   | 'remote_start_failed'
@@ -27,8 +28,16 @@ interface BootstrapMarker {
   readonly protocol: number | undefined;
   readonly api_level?: number;
   readonly version?: string;
+  readonly windows_ipc?: boolean;
   readonly error?: string;
   readonly message?: string;
+}
+
+type SshPlatform = 'posix' | 'windows';
+
+interface PlatformDetection {
+  readonly platform?: SshPlatform;
+  readonly inconclusiveFailure?: HostConnectError;
 }
 
 export class HostConnectError extends Error {
@@ -79,13 +88,27 @@ function shQuote(value: string): string {
   return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
+function powerShellCommand(script: string): string {
+  return `powershell -NoLogo -NoProfile -NonInteractive -EncodedCommand ${Buffer.from(script, 'utf16le').toString('base64')}`;
+}
+
 export function remoteBinCommand(remoteBin: string | undefined): string {
   const bin = remoteBin ?? DEFAULT_REMOTE_BIN;
   if (BARE_BIN.test(bin)) return bin;
   return bin.startsWith('~/') ? `"$HOME"/${shQuote(bin.slice(2))}` : shQuote(bin);
 }
 
-export function remoteKimiCommand(remoteBin: string | undefined, subcommand: string): string {
+export function remoteKimiCommand(remoteBin: string | undefined, subcommand: string, platform: SshPlatform = 'posix'): string {
+  if (platform === 'windows') {
+    const configured = remoteBin ?? '~/.kimi-code/bin/kimi.exe';
+    const literal = (value: string) => `'${value.replaceAll(/['‘’]/g, '$&$&')}'`;
+    const bin = BARE_BIN.test(configured)
+      ? literal(configured)
+      : configured.startsWith('~/') || configured.startsWith('~\\')
+        ? `($env:USERPROFILE + ${literal(configured.slice(1))})`
+        : literal(configured);
+    return powerShellCommand(`$ErrorActionPreference = 'Stop'; & ${bin} --version; & ${bin} ${subcommand}; exit $LASTEXITCODE`);
+  }
   const bin = remoteBinCommand(remoteBin);
   return `${bin} --version; ${bin} ${subcommand}`;
 }
@@ -97,7 +120,7 @@ export function classifySshFailure(stderr: string, exitCode: number | null): Hos
   if (/Connection refused/i.test(stderr)) return 'connection_refused';
   if (/No route to host|Network is unreachable/i.test(stderr)) return 'host_unreachable';
   if (/timed out/i.test(stderr)) return 'connect_timeout';
-  if (exitCode === 126 || exitCode === 127) return 'executor_not_found';
+  if (exitCode === 126 || exitCode === 127 || /not recognized as an internal or external command|is not recognized as the name of a cmdlet/i.test(stderr)) return 'executor_not_found';
   if (/unknown command|unknown option|too many arguments|excess arguments|has been deprecated/i.test(stderr)) return 'executor_outdated';
   return 'unknown';
 }
@@ -128,12 +151,13 @@ function outdatedError(version: string | undefined): HostConnectError {
   );
 }
 
-export function checkBootstrapOutput(stdout: string): boolean {
+export function checkBootstrapOutput(stdout: string, platform: SshPlatform = 'posix'): boolean {
   const marker = readMarker(stdout);
   if (marker === undefined) return false;
   const version = marker.version ?? readVersionLine(stdout);
   if (marker.protocol === undefined || marker.protocol < HOST_PROTOCOL_VERSION) throw outdatedError(version);
   if (marker.api_level === undefined || marker.api_level < HOST_API_LEVEL) throw outdatedError(version);
+  if (platform === 'windows' && marker.windows_ipc !== true) throw outdatedError(version);
   if (marker.error !== undefined) {
     throw new HostConnectError(
       ENSURE_DAEMON_FAILURES[marker.error] ?? 'unknown',
@@ -150,11 +174,17 @@ interface SshResult {
   readonly stderr: string;
 }
 
-function sshFailure(result: SshResult): HostConnectError {
+function sshFailure(result: SshResult, detection?: PlatformDetection): HostConnectError {
+  const failure = classifySshFailure(result.stderr, result.code);
+  const version = readVersionLine(result.stdout);
+  const inconclusiveProbe = detection?.inconclusiveFailure;
+  if (inconclusiveProbe !== undefined && version === undefined && (failure === 'executor_not_found' || failure === 'executor_outdated')) {
+    return inconclusiveProbe;
+  }
   return new HostConnectError(
-    classifySshFailure(result.stderr, result.code),
+    failure === 'executor_not_found' && detection?.platform === 'windows' ? 'executor_not_found_windows' : failure,
     result.stderr.trim() || `ssh exited with code ${String(result.code)}`,
-    readVersionLine(result.stdout),
+    version,
   );
 }
 
@@ -239,6 +269,7 @@ export class SshKapBridge {
   private reconnectGeneration = 0;
   private readonly sshProgram: string;
   private readonly env: NodeJS.ProcessEnv;
+  private platformValue: Promise<PlatformDetection> | undefined;
 
   constructor(
     private readonly entry: HostEntry,
@@ -301,18 +332,55 @@ export class SshKapBridge {
   }
 
   async probe(): Promise<void> {
+    const detection = await this.platform();
+    const { platform } = detection;
     const result = await this.collect(
-      [
-        '-T',
-        ...SSH_OPTIONS,
-        ...identityArgs(this.entry),
-        this.entry.host,
-        remoteKimiCommand(this.entry.remoteBin, 'server ensure-daemon --probe'),
-      ],
+      this.commandArgs(remoteKimiCommand(this.entry.remoteBin, 'server ensure-daemon --probe', platform)),
       VERSION_TIMEOUT_MS,
     );
-    if (checkBootstrapOutput(result.stdout)) return;
-    throw sshFailure(result);
+    if (checkBootstrapOutput(result.stdout, platform)) return;
+    throw sshFailure(result, detection);
+  }
+
+  private platform(): Promise<PlatformDetection> {
+    this.platformValue ??= this.detectPlatform().then(
+      (detection) => {
+        if (detection.platform === undefined) this.platformValue = undefined;
+        return detection;
+      },
+      (error: unknown) => {
+        this.platformValue = undefined;
+        throw error;
+      },
+    );
+    return this.platformValue;
+  }
+
+  private commandArgs(command: string): string[] {
+    return ['-T', ...SSH_OPTIONS, ...identityArgs(this.entry), this.entry.host, command];
+  }
+
+  private async detectPlatform(): Promise<PlatformDetection> {
+    const probes = ['uname -s', powerShellCommand("if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) { [Console]::WriteLine('KIMI_WINDOWS') }")];
+    for (const [index, command] of probes.entries()) {
+      const result = await this.collect(this.commandArgs(command), VERSION_TIMEOUT_MS);
+      if (result.code === null) throw sshFailure(result);
+      if (result.code === 255) {
+        const error = sshFailure(result);
+        if (error.failure === 'unknown') return { inconclusiveFailure: error };
+        if (error.failure === 'authentication_failed' || error.failure === 'executor_not_found' || error.failure === 'executor_outdated') return {};
+        throw error;
+      }
+      if (result.code !== 0) continue;
+      const output = result.stdout.trim().split(/\r?\n/).at(-1) ?? '';
+      if (index === 0) {
+        if (/^(?:MINGW|MSYS|CYGWIN|Windows_NT)/i.test(output)) return { platform: 'windows' };
+        if (/^(?:Linux|Darwin|FreeBSD|OpenBSD|NetBSD|DragonFly|SunOS|AIX)$/.test(output)) return { platform: 'posix' };
+      } else if (output === 'KIMI_WINDOWS') {
+        return { platform: 'windows' };
+      }
+    }
+    return {};
   }
 
   private update(status: HostStatus, failure?: HostConnectFailure, error?: string): void {
@@ -350,19 +418,17 @@ export class SshKapBridge {
     }
   }
 
-  private openSession(): Promise<ActiveHostSession> {
-    if (this.disposed) return Promise.reject(new HostConnectError('unknown', 'host bridge disposed'));
+  private async openSession(): Promise<ActiveHostSession> {
+    if (this.disposed) throw new HostConnectError('unknown', 'host bridge disposed');
+    const detection = await this.platform();
+    const { platform } = detection;
+    if (this.disposed) throw new HostConnectError('unknown', 'host bridge disposed');
+    const command = remoteKimiCommand(this.entry.remoteBin, 'server ensure-daemon', platform);
     return new Promise<ActiveHostSession>((resolve, reject) => {
       const child = spawn(
         this.sshProgram,
-        [
-          '-T',
-          ...SSH_OPTIONS,
-          ...identityArgs(this.entry),
-          this.entry.host,
-          remoteKimiCommand(this.entry.remoteBin, 'server ensure-daemon'),
-        ],
-        { stdio: ['pipe', 'pipe', 'pipe'], env: this.env },
+        this.commandArgs(command),
+        { stdio: ['pipe', 'pipe', 'pipe'], env: this.env, windowsHide: true },
       );
       this.track(child);
       if (this.disposed) {
@@ -406,7 +472,7 @@ export class SshKapBridge {
         if (typeof marker !== 'object' || marker === null) return;
         preMarkerStdout = bootstrap.toString('utf8', 0, lineEnd + 1);
         try {
-          if (!checkBootstrapOutput(preMarkerStdout)) return;
+          if (!checkBootstrapOutput(preMarkerStdout, platform)) return;
 
           clearTimeout(timer);
           child.stdout?.off('data', onStdout);
@@ -425,7 +491,7 @@ export class SshKapBridge {
         if (bootstrap.length > 0) {
           preMarkerStdout = bootstrap.toString('utf8');
           try {
-            checkBootstrapOutput(preMarkerStdout);
+            checkBootstrapOutput(preMarkerStdout, platform);
           } catch (error) {
             finishReject(error instanceof HostConnectError ? error : new HostConnectError('unknown', String(error)));
           }
@@ -443,7 +509,7 @@ export class SshKapBridge {
         if (!settled) {
           settled = true;
           preMarkerStdout ||= bootstrap.toString('utf8');
-          reject(sshFailure({ code, stdout: preMarkerStdout, stderr }));
+          reject(sshFailure({ code, stdout: preMarkerStdout, stderr }, detection));
           return;
         }
         if (activeSession !== undefined) {
@@ -495,7 +561,7 @@ export class SshKapBridge {
 
   private collect(args: readonly string[], timeoutMs: number): Promise<SshResult> {
     return new Promise((resolve) => {
-      const child = spawn(this.sshProgram, args, { stdio: ['ignore', 'pipe', 'pipe'], env: this.env });
+      const child = spawn(this.sshProgram, args, { stdio: ['ignore', 'pipe', 'pipe'], env: this.env, windowsHide: true });
       this.track(child);
       let stdout = '';
       let stderr = '';

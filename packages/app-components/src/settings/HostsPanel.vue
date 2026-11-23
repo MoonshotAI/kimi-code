@@ -596,7 +596,7 @@ void loadHosts();
         </button>
         <div v-if="advancedOpen" class="re-advanced-body">
           <Field :label="t('settings.hosts.binLabel')" :hint="t('settings.hosts.binHint')">
-            <Input v-model="remoteBin" size="sm" placeholder="~/.kimi-code/bin/kimi" :disabled="busy || testing" autocomplete="off" autocapitalize="off" spellcheck="false" @update:model-value="clearResult" />
+            <Input v-model="remoteBin" size="sm" :disabled="busy || testing" autocomplete="off" autocapitalize="off" spellcheck="false" @update:model-value="clearResult" />
           </Field>
         </div>
       </div>

@@ -1,6 +1,8 @@
-import { lstatSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, rmSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { lstatSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { PassThrough } from 'node:stream';
 
 import chalk, { Chalk } from 'chalk';
@@ -13,11 +15,13 @@ import { HOST_API_LEVEL, HOST_PROTOCOL_VERSION } from '@moonshot-ai/kap-server';
 
 import { registerWebCommand } from '#/cli/sub/web';
 import {
+  connectDaemonSocket,
   daemonSocketPath,
   ensureDaemon,
   type DaemonConnection,
   type EnsureDaemonDeps,
 } from '#/cli/sub/web/ensure-daemon';
+import { loadWindowsIpcKey, windowsDaemonCommandLine } from '#/cli/sub/web/windows-daemon';
 import type { LegacyKillDeps } from '#/cli/sub/web/legacy-kill';
 import type {
   RemoteControlCloseReason,
@@ -95,7 +99,7 @@ describe('kimi web', () => {
       const line = String(write.mock.calls.at(-1)?.[0]);
       expect(line.startsWith('__KIMI_ENSURE_DAEMON__')).toBe(true);
       const payload = JSON.parse(line.slice('__KIMI_ENSURE_DAEMON__'.length)) as Record<string, unknown>;
-      expect(payload).toEqual({ protocol: HOST_PROTOCOL_VERSION, api_level: HOST_API_LEVEL, version: expect.any(String) });
+      expect(payload).toEqual({ protocol: HOST_PROTOCOL_VERSION, api_level: HOST_API_LEVEL, version: expect.any(String), windows_ipc: process.platform === 'win32' ? true : undefined });
     } finally {
       write.mockRestore();
     }
@@ -1156,6 +1160,64 @@ describe('`kimi server ensure-daemon`', () => {
     };
   }
 
+  it('uses the same Windows named pipe for aliases of one data directory', async () => {
+    const data = mkdtempSync(join(homeDir, 'data-'));
+    const other = mkdtempSync(join(homeDir, 'other-'));
+    const alias = join(homeDir, 'alias');
+    symlinkSync(data, alias, process.platform === 'win32' ? 'junction' : 'dir');
+
+    const pipe = await daemonSocketPath(data, 'win32');
+    expect(pipe).toMatch(/^\\\\\.\\pipe\\kimi-daemon-[a-f0-9]{16}$/);
+    expect(await daemonSocketPath(data + '/.', 'win32')).toBe(pipe);
+    expect(await daemonSocketPath(alias, 'win32')).toBe(pipe);
+    expect(await daemonSocketPath(other, 'win32')).not.toBe(pipe);
+  });
+
+  it.runIf(process.platform === 'win32')('persists one complete Windows IPC key across concurrent loads', async () => {
+    const pipe = await daemonSocketPath(homeDir, 'win32');
+    const file = `${createHash('sha256').update(pipe).digest('hex')}.key`;
+    const localAppData = process.env['LOCALAPPDATA'];
+    try {
+      const [first, second] = await Promise.all([loadWindowsIpcKey(pipe), loadWindowsIpcKey(pipe)]);
+      expect(first).toHaveLength(32);
+      expect(second).toEqual(first);
+      expect(await loadWindowsIpcKey(pipe)).toEqual(first);
+    } finally {
+      if (localAppData !== undefined) {
+        rmSync(join(localAppData, 'KimiCode.SshIpc', file), { force: true });
+      }
+    }
+  });
+
+  it('builds a PowerShell command line for a Windows daemon with spaces in its path', () => {
+    const commandLine = windowsDaemonCommandLine(
+      ['C:\\Program Files\\Kimi\\kimi.exe', 'server', '--socket', '\\\\.\\pipe\\kimi-test'],
+      'C:\\Users\\test\\.kimi-code\\server\\ensure-daemon.log',
+    );
+    expect(commandLine).toMatch(/^"[^"]+\\powershell\.exe" -NoLogo -NoProfile -NonInteractive -Command "/i);
+    expect(commandLine).toContain(`& 'C:\\Program Files\\Kimi\\kimi.exe' 'server' '--socket' '\\\\.\\pipe\\kimi-test'`);
+    expect(commandLine).toContain(`*> 'C:\\Users\\test\\.kimi-code\\server\\ensure-daemon.log'`);
+  });
+
+  it('refuses to use an unauthenticated daemon socket', async () => {
+    const socketPath = process.platform === 'win32'
+      ? `\\\\.\\pipe\\${basename(homeDir)}`
+      : join(homeDir, 'daemon.sock');
+    const server = createServer((socket) => {
+      socket.destroy();
+    });
+    await new Promise<void>((resolve) => {
+      server.listen(socketPath, resolve);
+    });
+    try {
+      await expect(connectDaemonSocket(socketPath, Buffer.alloc(32, 1))).rejects.toThrow('Windows IPC authentication failed');
+    } finally {
+      await new Promise<void>((resolve) => {
+        server.close(() => { resolve(); });
+      });
+    }
+  });
+
   it('reuses a live daemon socket of the same version without spawning', async () => {
     const conn = connection();
     const deps = makeDeps({
@@ -1167,6 +1229,24 @@ describe('`kimi server ensure-daemon`', () => {
       stream: conn.stream,
     });
     expect(deps.spawnServer).not.toHaveBeenCalled();
+  });
+
+  it.runIf(process.platform === 'win32')('reuses a Windows daemon through an equivalent data path', async () => {
+    const daemons = new Map<string, DaemonConnection>();
+    const data = join(homeDir, 'data');
+    const deps = makeDeps({
+      homeDir: data,
+      connectSocket: async (socketPath) => daemons.get(socketPath),
+      spawnServer: vi.fn((socketPath) => {
+        daemons.set(socketPath, connection());
+      }),
+    });
+
+    const first = await ensureDaemon(deps);
+    const second = await ensureDaemon({ ...deps, homeDir: data.replaceAll('\\', '/') + '/.' });
+
+    expect(second.stream).toBe(first.stream);
+    expect(deps.spawnServer).toHaveBeenCalledOnce();
   });
 
   it('spawns a new server when the socket is absent and waits until it connects', async () => {
@@ -1184,7 +1264,7 @@ describe('`kimi server ensure-daemon`', () => {
       stream: spawned.stream,
     });
     expect(deps.spawnServer).toHaveBeenCalledWith(
-      daemonSocketPath(homeDir),
+      await daemonSocketPath(homeDir),
       join(homeDir, 'server', 'ensure-daemon.log'),
       join(homeDir, 'server', 'forwarded-ssh-agent.sock'),
     );
