@@ -68,7 +68,7 @@ export function createMcpAuthTool(options: CreateMcpAuthToolOptions): Executable
         try {
           await reconnect(signal);
         } catch (reconnectError) {
-          return errorResult(serverName, reconnectError, 'mcp.oauth.reconnect_failed');
+          return errorResult(serverName, reconnectError, signal.aborted ? 'mcp.oauth.cancelled' : 'mcp.oauth.reconnect_failed');
         }
         return {
           output:
@@ -111,7 +111,7 @@ export function createMcpAuthTool(options: CreateMcpAuthToolOptions): Executable
     try {
       await reconnect(signal);
     } catch (error) {
-      return errorResult(serverName, error, 'mcp.oauth.reconnect_failed');
+      return errorResult(serverName, error, signal.aborted ? 'mcp.oauth.cancelled' : 'mcp.oauth.reconnect_failed');
     }
 
     return {

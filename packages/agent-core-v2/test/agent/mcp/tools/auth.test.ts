@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 
 import { AlreadyAuthorizedError, type BeginAuthorizationResult, type McpOAuthService } from '#/mcpCore/oauth/service';
 import { LegacyExecutableToolAdapter, ToolExecutor } from '#/tool/executor';
+import { executeTool } from '../../../mcpCore/stubs';
 
 function fakeOAuthService(
   begin: (
@@ -126,6 +127,29 @@ describe('createMcpAuthTool', () => {
     expect(final.isError).toBe(true);
     expect(final.output).toMatch(/timed out/);
     expect(final.output).not.toContain('https://example.com/authorize');
+  });
+
+  it.each(['new grant', 'existing grant'] as const)('reports cancellation during reconnect (%s)', async (grant) => {
+    const controller = new AbortController();
+    const tool = createMcpAuthTool({
+      serverName: 'example',
+      serverUrl: 'https://example.com/mcp',
+      oauthService: fakeOAuthService(() => {
+        if (grant === 'existing grant') throw new AlreadyAuthorizedError('example');
+        return {
+          waitId: 'auth-wait',
+          authorizationUrl: new URL('https://example.com/authorize'),
+          complete: async () => undefined,
+          cancel: async () => undefined,
+        };
+      }),
+      reconnect: async (signal) => {
+        controller.abort();
+        signal?.throwIfAborted();
+      },
+    });
+    const result = executeTool(tool, { turnId: 0, toolCallId: 'tc', args: {}, signal: controller.signal });
+    await expect(result).resolves.toMatchObject({ isError: true, note: 'mcp.oauth.cancelled' });
   });
 
   it('returns isError when reconnect after success fails', async () => {
