@@ -46,28 +46,6 @@ function sseText(text: string): string {
   );
 }
 
-function sseTextChunks(...parts: readonly string[]): string {
-  return sseLines(
-    ...parts.map((text) =>
-      JSON.stringify({
-        id: 'chatcmpl-mock',
-        object: 'chat.completion.chunk',
-        created: 1,
-        model: 'mock',
-        choices: [{ index: 0, delta: { role: 'assistant', content: text }, finish_reason: null }],
-      }),
-    ),
-    JSON.stringify({
-      id: 'chatcmpl-mock',
-      object: 'chat.completion.chunk',
-      created: 1,
-      model: 'mock',
-      choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
-      usage: { prompt_tokens: 10, completion_tokens: 4, total_tokens: 14 },
-    }),
-  );
-}
-
 function sseToolCall(id: string, name: string, args: string): string {
   return sseLines(
     JSON.stringify({
@@ -100,47 +78,22 @@ function sseToolCall(id: string, name: string, args: string): string {
 interface LlmRoute {
   readonly match: (body: string) => boolean;
   readonly respond: () => string;
-  readonly status?: number;
-  readonly delayMs?: number;
-  readonly pause?: { readonly afterEvents: number; readonly ms: number };
 }
 
 interface MockLlm {
   readonly port: number;
-  readonly hits: string[];
   readonly close: () => Promise<void>;
 }
 
 async function startMockLlm(routes: readonly LlmRoute[], fallback: () => string = () => sseText('ok')): Promise<MockLlm> {
-  const hits: string[] = [];
   const server: Server = createServer((req: IncomingMessage, res: ServerResponse) => {
     const chunks: Buffer[] = [];
     req.on('data', (chunk: Buffer) => chunks.push(chunk));
     req.on('end', () => {
       const body = Buffer.concat(chunks).toString('utf8');
-      hits.push(body);
-      const route = routes.find((r) => r.match(body));
-      const respond = route?.respond ?? fallback;
-      const pause = route?.pause;
-      const send = (): void => {
-        if (route?.status !== undefined && route.status !== 200) {
-          res.writeHead(route.status, { 'content-type': 'application/json' });
-          res.end(respond());
-          return;
-        }
-        res.writeHead(200, { 'content-type': 'text/event-stream' });
-        if (pause === undefined) {
-          res.end(respond());
-          return;
-        }
-        const events = respond().split(/(?<=\n\n)/);
-        res.write(events.slice(0, pause.afterEvents).join(''));
-        setTimeout(() => {
-          res.end(events.slice(pause.afterEvents).join(''));
-        }, pause.ms);
-      };
-      if (route?.delayMs !== undefined) setTimeout(send, route.delayMs);
-      else send();
+      const respond = routes.find((r) => r.match(body))?.respond ?? fallback;
+      res.writeHead(200, { 'content-type': 'text/event-stream' });
+      res.end(respond());
     });
   });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -148,7 +101,6 @@ async function startMockLlm(routes: readonly LlmRoute[], fallback: () => string 
   if (address === null || typeof address === 'object' === false) throw new Error('no llm port');
   return {
     port: address.port,
-    hits,
     close: () => new Promise<void>((resolve) => server.close(() => resolve())),
   };
 }
@@ -201,66 +153,6 @@ const textOf = (item: any): string => String(item.text ?? '');
 const toolItems = (page: TurnsPage, name?: string): any[] =>
   page.turns.flatMap((turn) => turn.items).filter((item: any) => item.type === 'tool_call' && (name === undefined || item.name === name));
 
-function replayFrames(frames: readonly any[]): any[] {
-  let turns: any[] = [];
-  const turnOf = (turnId: string): any => turns.find((turn) => turn.turn_id === turnId);
-  const itemOf = (frame: any): any => turnOf(frame.turn_id)?.items.find((item: any) => item.item_id === frame.item_id);
-  for (const frame of frames) {
-    switch (frame.type) {
-      case 'turns':
-        turns = structuredClone(frame.turns);
-        break;
-      case 'turns.removed':
-        turns = turns.filter((turn) => !frame.turn_ids.includes(turn.turn_id));
-        break;
-      case 'turn.started':
-      case 'turn.ended': {
-        const index = turns.findIndex((turn) => turn.turn_id === frame.turn.turn_id);
-        const turn = { ...structuredClone(frame.turn), items: index === -1 ? [] : turns[index].items };
-        if (index === -1) turns.push(turn);
-        else turns[index] = turn;
-        turns.sort((a, b) => a.ordinal - b.ordinal);
-        break;
-      }
-      case 'turn.updated': {
-        const turn = turnOf(frame.turn_id);
-        if (turn === undefined) break;
-        if (frame.step !== undefined) {
-          turn.steps = [...turn.steps.filter((step: any) => step.index !== frame.step.index), frame.step].toSorted((a: any, b: any) => a.index - b.index);
-        }
-        if (frame.retry === undefined) delete turn.retry;
-        else turn.retry = frame.retry;
-        break;
-      }
-      case 'item.started':
-      case 'item.ended': {
-        const turn = turnOf(frame.turn_id);
-        if (turn === undefined) break;
-        const index = turn.items.findIndex((item: any) => item.item_id === frame.item.item_id);
-        if (index === -1) turn.items.push(structuredClone(frame.item));
-        else turn.items[index] = structuredClone(frame.item);
-        break;
-      }
-      case 'item.updated': {
-        const item = itemOf(frame);
-        if (item !== undefined) Object.assign(item, structuredClone(frame.set));
-        break;
-      }
-      case 'item.delta': {
-        const item = itemOf(frame);
-        if (item !== undefined) item[frame.field] = (item[frame.field] ?? '') + frame.delta;
-        break;
-      }
-      case 'item.removed': {
-        const turn = turnOf(frame.turn_id);
-        if (turn !== undefined) turn.items = turn.items.filter((item: any) => item.item_id !== frame.item_id);
-        break;
-      }
-    }
-  }
-  return turns;
-}
-
 const getSessionFacts = async (server: RunningServer, base: string, sid: string): Promise<{ busy: boolean; pending_interaction?: string }> => {
   const session = await rest<{ activity: 'idle' | 'turn' | 'background'; pending_interaction?: string }>(
     server,
@@ -294,73 +186,11 @@ async function until(label: string, fn: () => Promise<boolean> | boolean, timeou
   }
 }
 
-interface ConversationChannel {
-  readonly tasks: any[];
-  readonly agents: any[];
-  readonly todos: any[];
-  turns(): any[];
-  close(): void;
-}
-
-const CONVERSATION_FRAME_TYPES = new Set([
-  'turns',
-  'turns.removed',
-  'turn.started',
-  'turn.updated',
-  'turn.ended',
-  'item.started',
-  'item.updated',
-  'item.ended',
-  'item.delta',
-  'item.removed',
-  'turns.failed',
-  'notice',
-]);
-
 function rawToString(data: RawData): string {
   if (typeof data === 'string') return data;
   if (Buffer.isBuffer(data)) return data.toString('utf8');
   if (Array.isArray(data)) return Buffer.concat(data).toString('utf8');
   return Buffer.from(data as ArrayBuffer).toString('utf8');
-}
-
-async function subscribeConversation(
-  server: RunningServer,
-  sid: string,
-  agentId: string = MAIN_AGENT_ID,
-): Promise<ConversationChannel> {
-  const ws = new WebSocket(`ws://127.0.0.1:${server.port}/api/v1/ws`, [`kimi-code.bearer.${bearerToken(server)}`]);
-  const conversation: any[] = [];
-  const tasks: any[] = [];
-  const agents: any[] = [];
-  const todos: any[] = [];
-  ws.on('message', (data) => {
-    let frame: any;
-    try {
-      frame = JSON.parse(rawToString(data));
-    } catch {
-      return;
-    }
-    if (CONVERSATION_FRAME_TYPES.has(frame.type) && frame.agent_id === agentId) conversation.push(frame);
-    if (frame.type === 'task') tasks.push(frame);
-    if (frame.type === 'agent' && frame.agent_id === agentId) agents.push(frame);
-    if (frame.type === 'todo' && frame.agent_id === agentId) todos.push(frame);
-  });
-  await new Promise<void>((resolve, reject) => {
-    ws.once('open', () => {
-      resolve();
-    });
-    ws.once('error', reject);
-  });
-  ws.send(JSON.stringify({ type: 'subscribe', request_id: 'sub-1', session_id: sid, agent_ids: [agentId] }));
-  await until('turns frame', () => conversation.some((frame) => frame.type === 'turns'), 15000);
-  return {
-    tasks,
-    agents,
-    todos,
-    turns: () => replayFrames(conversation),
-    close: () => ws.close(),
-  };
 }
 
 interface FrameSocket {
@@ -439,48 +269,6 @@ describe('conversation contract e2e', () => {
 
   const idle = (server: RunningServer, base: string, sid: string) =>
     until('session idle', async () => !(await getSessionFacts(server, base, sid)).busy);
-
-  function dumpState(page: TurnsPage, hits: string[]): string {
-    const turns = page.turns.map((turn) => ({
-      id: turn.turn_id,
-      status: `${turn.status}/${turn.outcome ?? ''}`,
-      items: turn.items.map((item: any) => `${item.type}:${item.name ?? ''}:${item.status}`),
-    }));
-    const markers = hits
-      .map((hit) => /"content":"([^"]{0,60})/.exec(hit)?.[1] ?? hit.slice(0, 60))
-      .slice(0, 8);
-    return `${JSON.stringify(turns)}\nllm hits (${hits.length}): ${JSON.stringify(markers)}`;
-  }
-
-  const idleOrDump = async (server: RunningServer, base: string, sid: string): Promise<void> => {
-    try {
-      await idle(server, base, sid);
-    } catch (error) {
-      const page = await getTurns(server, base, sid);
-      throw new Error(`${(error as Error).message}\nturns at timeout: ${dumpState(page, llm?.hits ?? [])}`, { cause: error });
-    }
-  };
-
-  it('S10: a fresh session sends main agent frames on subscribe and a TodoList write reaches subscribers as a todo frame', async () => {
-    const todos = '{"todos":[{"title":"write tests","status":"in_progress"},{"title":"ship","status":"pending"}]}';
-    await boot([
-      { match: (body) => !body.includes('call_todo'), respond: () => sseToolCall('call_todo', 'TodoList', todos) },
-      { match: () => true, respond: () => sseText('planned') },
-    ]);
-    const sid = await createSession(server!, base);
-    const channel = await subscribeConversation(server!, sid);
-    await until('main agent frames', () => channel.agents.length > 0 && channel.todos.length > 0);
-    expect(channel.agents[0]).toMatchObject({ type: 'agent', session_id: sid, status: 'idle' });
-    expect(channel.todos[0]).toMatchObject({ type: 'todo', session_id: sid, items: [] });
-    await submitPrompt(server!, base, sid, 'plan the work');
-    await idleOrDump(server!, base, sid);
-    await until('todo frame', () => (channel.todos.at(-1)?.items.length ?? 0) > 0);
-    expect(channel.todos.at(-1)!.items).toEqual([
-      { title: 'write tests', status: 'in_progress' },
-      { title: 'ship', status: 'pending' },
-    ]);
-    channel.close();
-  });
 
   it('S9: task.watch streams a running task output and resumes from since_offset', async () => {
     const sid = await createSession(server!, base);
@@ -636,309 +424,4 @@ describe('conversation contract e2e', () => {
       'recall the token',
     ]);
   }, 60000);
-
-  it('S11: sessions/{id}:cancel stops a running turn, is idempotent once idle, and stops background tasks when include_background is true', async () => {
-    await boot([
-      {
-        match: (body) => body.includes('slow turn'),
-        respond: () => sseTextChunks('part-1 ', 'part-2'),
-        pause: { afterEvents: 1, ms: 5000 },
-      },
-    ]);
-    const created = await rest<{ id: string; cwd: string; activity: string }>(server!, base, '/api/v1/sessions', {
-      method: 'POST',
-      body: { cwd: '/tmp' },
-    });
-    expect(created.cwd).toBe('/tmp');
-    expect(created.activity).toBe('idle');
-    const sid = created.id;
-
-    const channel = await subscribeConversation(server!, sid);
-    await submitPrompt(server!, base, sid, 'slow turn');
-    await until('running turn started', () => channel.turns().some((t) => t.status === 'running'));
-    const turnId = channel.turns().find((t) => t.status === 'running')!.turn_id as string;
-
-    const first = await rest<{ cancelled: boolean }>(
-      server!,
-      base,
-      `/api/v1/sessions/${encodeURIComponent(sid)}:cancel`,
-      { method: 'POST', body: {} },
-    );
-    expect(first).toEqual({ cancelled: true });
-    await until(
-      'turn ended as interrupted',
-      () => channel.turns().find((t) => t.turn_id === turnId)?.status === 'ended',
-    );
-    expect(channel.turns().find((t) => t.turn_id === turnId)).toMatchObject({
-      status: 'ended',
-      outcome: 'interrupted',
-      end_reason: 'user_cancelled',
-    });
-
-    const second = await rest<{ cancelled: boolean }>(
-      server!,
-      base,
-      `/api/v1/sessions/${encodeURIComponent(sid)}:cancel`,
-      { method: 'POST', body: {} },
-    );
-    expect(second).toEqual({ cancelled: false });
-
-    const sessionAfter = await rest<{ activity: string; last_turn_outcome?: string }>(
-      server!,
-      base,
-      `/api/v1/sessions/${encodeURIComponent(sid)}`,
-    );
-    expect(sessionAfter.activity).toBe('idle');
-    expect(sessionAfter.last_turn_outcome).toBe('interrupted');
-
-    const main = getLiveSessionById(server!.core.accessor, sid)!
-      .accessor.get(IAgentLifecycleService)
-      .handleOf(MAIN_AGENT_ID)!;
-    main.accessor.get(IAgentPermissionModeService).setMode('yolo');
-    const bgHandler = main.accessor.get(IAgentToolExecutorService).executor.execute(
-      {
-        type: 'function',
-        id: 'call_bg_1',
-        name: 'Bash',
-        arguments: JSON.stringify({
-          command: 'sleep 10',
-          description: 'long sleep',
-          run_in_background: true,
-        }),
-      },
-      { origin: 'loop', turnId: 1 },
-    );
-    await bgHandler;
-    const bgTaskId = bgHandler.taskId;
-    await until(
-      'background task running',
-      () => channel.tasks.some((t) => t.task_id === bgTaskId && t.status === 'running' && t.detached === true),
-    );
-
-    const keepBg = await rest<{ cancelled: boolean }>(
-      server!,
-      base,
-      `/api/v1/sessions/${encodeURIComponent(sid)}:cancel`,
-      { method: 'POST', body: {} },
-    );
-    expect(keepBg).toEqual({ cancelled: false });
-    expect(
-      channel.tasks.filter((t) => t.task_id === bgTaskId).at(-1)?.status,
-    ).toBe('running');
-
-    const stopBg = await rest<{ cancelled: boolean }>(
-      server!,
-      base,
-      `/api/v1/sessions/${encodeURIComponent(sid)}:cancel`,
-      { method: 'POST', body: { include_background: true } },
-    );
-    expect(stopBg).toEqual({ cancelled: true });
-    await until(
-      'background task stopped',
-      () => channel.tasks.filter((t) => t.task_id === bgTaskId).at(-1)?.status === 'ended',
-    );
-    expect(channel.tasks.filter((t) => t.task_id === bgTaskId).at(-1)?.outcome).toBe('killed');
-
-    channel.close();
-  });
-
-  it('S12: agents/{agent_id}:close closes a btw side agent, emits status ended, and rejects non-btw agents with 40939', async () => {
-    await boot([{ match: () => true, respond: () => sseText('side answer') }]);
-    const sid = await createSession(server!, base);
-    const btw = await rest<{ agent_id: string }>(
-      server!,
-      base,
-      `/api/v1/sessions/${encodeURIComponent(sid)}:btw`,
-      { method: 'POST', body: {} },
-    );
-    const channel = await subscribeConversation(server!, sid, btw.agent_id);
-    await until('btw initial agent frame', () => channel.agents.length > 0);
-
-    const closeMainRes = await fetch(
-      `${base}/api/v1/sessions/${encodeURIComponent(sid)}/agents/main:close`,
-      { method: 'POST', headers: authHeaders(server!), body: '{}' },
-    );
-    expect(((await closeMainRes.json()) as { code: number }).code).toBe(40939);
-
-    const closed = await rest<{ closed: true }>(
-      server!,
-      base,
-      `/api/v1/sessions/${encodeURIComponent(sid)}/agents/${encodeURIComponent(btw.agent_id)}:close`,
-      { method: 'POST', body: {} },
-    );
-    expect(closed).toEqual({ closed: true });
-    await until('btw ended agent frame', () => channel.agents.at(-1)?.status === 'ended');
-    expect(channel.agents.at(-1)).toMatchObject({
-      type: 'agent',
-      session_id: sid,
-      agent_id: btw.agent_id,
-      status: 'ended',
-      compacting: false,
-    });
-
-    const closeAgainRes = await fetch(
-      `${base}/api/v1/sessions/${encodeURIComponent(sid)}/agents/${encodeURIComponent(btw.agent_id)}:close`,
-      { method: 'POST', headers: authHeaders(server!), body: '{}' },
-    );
-    expect(((await closeAgainRes.json()) as { code: number }).code).toBe(40401);
-
-    const turnsAfterCloseRes = await fetch(
-      `${base}/api/v1/sessions/${encodeURIComponent(sid)}/agents/${encodeURIComponent(btw.agent_id)}/turns`,
-      { headers: authHeaders(server!) },
-    );
-    expect(((await turnsAfterCloseRes.json()) as { code: number }).code).toBe(40401);
-    channel.close();
-  });
-
-  it('S13: sessions/{id}:continue resumes interrupted or failed turns, rejects idle/completed with 40940 and busy with 40901', async () => {
-    let failNow = false;
-    await boot([
-      {
-        match: () => failNow,
-        status: 400,
-        respond: () => JSON.stringify({ error: { message: 'synthetic upstream error' } }),
-      },
-      {
-        match: (body) => body.includes('Summarize the conversation'),
-        respond: () => sseText('compacted summary'),
-      },
-      {
-        match: (body) => body.includes('Continue the interrupted work from where it stopped'),
-        respond: () => sseText('resumed reply'),
-      },
-      {
-        match: (body) => body.includes('interrupt me'),
-        respond: () => sseTextChunks('half-1 ', 'half-2'),
-        pause: { afterEvents: 1, ms: 5000 },
-      },
-    ]);
-
-    const sid = await createSession(server!, base);
-    const channel = await subscribeConversation(server!, sid);
-
-    const freshRes = await fetch(
-      `${base}/api/v1/sessions/${encodeURIComponent(sid)}:continue`,
-      {
-        method: 'POST',
-        headers: authHeaders(server!, { 'content-type': 'application/json' }),
-        body: '{}',
-      },
-    );
-    expect(((await freshRes.json()) as { code: number }).code).toBe(40940);
-
-    await submitPrompt(server!, base, sid, 'interrupt me');
-    await until('running turn started', () => channel.turns().some((t) => t.status === 'running'));
-
-    const busyRes = await fetch(
-      `${base}/api/v1/sessions/${encodeURIComponent(sid)}:continue`,
-      {
-        method: 'POST',
-        headers: authHeaders(server!, { 'content-type': 'application/json' }),
-        body: '{}',
-      },
-    );
-    expect(((await busyRes.json()) as { code: number }).code).toBe(40901);
-
-    await rest(server!, base, `/api/v1/sessions/${encodeURIComponent(sid)}:cancel`, {
-      method: 'POST',
-      body: {},
-    });
-    await until(
-      'first turn interrupted',
-      () => channel.turns().at(-1)?.status === 'ended' && channel.turns().at(-1)?.outcome === 'interrupted',
-    );
-
-    const continued = await rest<{ continued: true }>(
-      server!,
-      base,
-      `/api/v1/sessions/${encodeURIComponent(sid)}:continue`,
-      { method: 'POST', body: {} },
-    );
-    expect(continued).toEqual({ continued: true });
-
-    await until(
-      'continuation turn completed',
-      () => channel.turns().length >= 2 && channel.turns().at(-1)?.status === 'ended',
-    );
-    const continuedTurn = channel.turns().at(-1)!;
-    expect(continuedTurn.outcome).toBe('completed');
-    expect(continuedTurn.items.some((item: any) => item.type === 'user_message')).toBe(false);
-    expect(continuedTurn.items.find((item: any) => item.type === 'assistant_message')?.text).toBe('resumed reply');
-
-    const completedRes = await fetch(
-      `${base}/api/v1/sessions/${encodeURIComponent(sid)}:continue`,
-      {
-        method: 'POST',
-        headers: authHeaders(server!, { 'content-type': 'application/json' }),
-        body: '{}',
-      },
-    );
-    expect(((await completedRes.json()) as { code: number }).code).toBe(40940);
-
-    failNow = true;
-    await submitPrompt(server!, base, sid, 'trigger failure');
-    await until(
-      'failed turn ended',
-      () => channel.turns().at(-1)?.status === 'ended' && channel.turns().at(-1)?.outcome === 'failed',
-    );
-    failNow = false;
-
-    const continuedAfterFail = await rest<{ continued: true }>(
-      server!,
-      base,
-      `/api/v1/sessions/${encodeURIComponent(sid)}:continue`,
-      { method: 'POST', body: {} },
-    );
-    expect(continuedAfterFail).toEqual({ continued: true });
-    await until(
-      'continuation after failure completed',
-      () => channel.turns().at(-1)?.status === 'ended' && channel.turns().at(-1)?.outcome === 'completed',
-    );
-
-    const firstTurnId = channel.turns()[0]!.turn_id;
-    await rest(server!, base, `/api/v1/sessions/${encodeURIComponent(sid)}:undo`, {
-      method: 'POST',
-      body: { turn_id: firstTurnId },
-    });
-    const afterUndoRes = await fetch(
-      `${base}/api/v1/sessions/${encodeURIComponent(sid)}:continue`,
-      {
-        method: 'POST',
-        headers: authHeaders(server!, { 'content-type': 'application/json' }),
-        body: '{}',
-      },
-    );
-    expect(((await afterUndoRes.json()) as { code: number }).code).toBe(40940);
-
-    failNow = true;
-    await submitPrompt(server!, base, sid, 'trigger failure before compact');
-    await until(
-      'second failed turn ended',
-      () => channel.turns().at(-1)?.status === 'ended' && channel.turns().at(-1)?.outcome === 'failed',
-    );
-    failNow = false;
-
-    await rest(server!, base, `/api/v1/sessions/${encodeURIComponent(sid)}:compact`, {
-      method: 'POST',
-      body: {},
-    });
-    await until(
-      'compaction system turn recorded',
-      () => channel.turns().at(-1)?.kind === 'system' && channel.turns().at(-1)?.outcome === 'completed',
-    );
-
-    const continuedAfterCompact = await rest<{ continued: true }>(
-      server!,
-      base,
-      `/api/v1/sessions/${encodeURIComponent(sid)}:continue`,
-      { method: 'POST', body: {} },
-    );
-    expect(continuedAfterCompact).toEqual({ continued: true });
-    await until(
-      'continuation after compaction completed',
-      () => channel.turns().at(-1)?.kind === 'agent' && channel.turns().at(-1)?.status === 'ended' && channel.turns().at(-1)?.outcome === 'completed',
-    );
-
-    channel.close();
-  });
 }, 90000);

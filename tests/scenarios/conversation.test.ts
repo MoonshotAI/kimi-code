@@ -2,7 +2,7 @@ import { once } from 'node:events';
 
 import { deferred } from '@moonshot-ai/testkit/fixtures';
 import type { KapFrame, KapItem, KapSocket, KapTurn, KapTurnsPage } from '@moonshot-ai/testkit/kap';
-import { agent, bash, call, held, httpError, say, think, withUsage } from '@moonshot-ai/testkit/model';
+import { agent, bash, call, held, httpError, say, think, todoList, withUsage } from '@moonshot-ai/testkit/model';
 import { test as base, describe, expect } from 'vitest';
 
 import { scenarioFixtures, type ScenarioFixtures } from './support/scenario';
@@ -267,17 +267,49 @@ describe('conversation over KAP', () => {
     ]);
   });
 
-  test('cancels a turn while the model request is in flight', async ({ kap, model }) => {
+  test('cancels a turn while the model request is in flight and has nothing to cancel once idle', async ({ kap, model }) => {
     model.script(held('slow', say('never sent')));
+    const socket = await kap.connect();
     const session = await kap.createSession();
+    expect(session).toMatchObject({ cwd: kap.home.workspace, activity: 'idle' });
+    await socket.subscribe(session.id);
 
     await kap.prompt(session.id, 'wait for it');
     await model.hold('slow').reached();
+    const started = await socket.waitFor((frame) => frame.type === 'turn.started' && frame['session_id'] === session.id);
+    const turnId = turnOf(started)?.turn_id;
     await expect(kap.cancel(session.id)).resolves.toEqual({ cancelled: true });
     const idle = await kap.waitIdle(session.id);
 
     expect(idle.last_turn_outcome).toBe('interrupted');
     await expect.poll(() => model.request(0).state).toBe('aborted');
+    await socket.waitFor((frame) => isMainTurnEnd(frame, session.id) && turnOf(frame)?.turn_id === turnId);
+    expect(socket.turns(session.id).find((turn) => turn.turn_id === turnId)).toMatchObject({
+      status: 'ended',
+      outcome: 'interrupted',
+      end_reason: 'user_cancelled',
+    });
+    await expect(kap.cancel(session.id)).resolves.toEqual({ cancelled: false });
+    expect(await kap.session(session.id)).toMatchObject({ activity: 'idle', last_turn_outcome: 'interrupted' });
+  });
+
+  test('keeps a background command running on cancel until the client also asks to stop background work', async ({ kap, model }) => {
+    model.script(bash({ command: 'sleep 10', description: 'long sleep', run_in_background: true }), say('started it'));
+    const socket = await kap.connect();
+    const session = await kap.createSession();
+    await socket.subscribe(session.id);
+
+    await kap.prompt(session.id, 'start a long command in the background');
+    const task = await socket.waitFor((frame) => frame.type === 'task' && frame['status'] === 'running' && frame['detached'] === true);
+    await socket.waitFor((frame) => isMainTurnEnd(frame, session.id));
+    const lastTaskFrame = () => socket.frames.filter((frame) => frame.type === 'task' && frame['task_id'] === task['task_id']).at(-1);
+
+    await expect(kap.cancel(session.id)).resolves.toEqual({ cancelled: false });
+    expect(lastTaskFrame()?.['status']).toBe('running');
+    expect(await kap.session(session.id)).toMatchObject({ activity: 'background' });
+    await expect(kap.cancel(session.id, { includeBackground: true })).resolves.toEqual({ cancelled: true });
+    await socket.waitFor((frame) => frame.type === 'task' && frame['task_id'] === task['task_id'] && frame['status'] === 'ended');
+    expect(lastTaskFrame()?.['outcome']).toBe('killed');
   });
 
   test('cancels a request while its script is preparing a reply and starts the next turn', async ({ kap, model }) => {
@@ -409,6 +441,59 @@ describe('conversation over KAP', () => {
     expect(JSON.stringify(turn?.['error'])).toContain('testkit rejects this request');
   });
 
+  test('continues an interrupted or failed turn and refuses when nothing is left to continue or a turn is running', async ({ kap, model }) => {
+    model.script(
+      held('interrupted-answer', say(['half-1 ', 'half-2']), 1),
+      say('resumed reply'),
+      httpError(400, { message: 'synthetic upstream error' }),
+      say('resumed reply'),
+      httpError(400, { message: 'synthetic upstream error' }),
+      say('resumed reply'),
+    );
+    model.lane('compaction').script(say('compacted summary'));
+    const socket = await kap.connect();
+    const session = await kap.createSession();
+    await socket.subscribe(session.id);
+    const resume = () => kap.rest.post<{ readonly continued: boolean }>(`/api/v1/sessions/${session.id}:continue`, {});
+    const lastTurnAfter = async <T>(action: () => Promise<T>): Promise<{ readonly result: T; readonly turn: KapTurn | undefined }> => {
+      const mark = socket.mark();
+      const result = await action();
+      await socket.waitFor((frame) => isMainTurnEnd(frame, session.id), { after: mark });
+      return { result, turn: socket.turns(session.id).at(-1) };
+    };
+
+    await expect(resume()).rejects.toMatchObject({ code: 40940 });
+    await kap.prompt(session.id, 'interrupt me');
+    await model.hold('interrupted-answer').reached();
+    await expect(resume()).rejects.toMatchObject({ code: 40901 });
+    const interrupted = await lastTurnAfter(() => kap.cancel(session.id));
+    expect(interrupted.turn).toMatchObject({ status: 'ended', outcome: 'interrupted' });
+
+    const continued = await lastTurnAfter(resume);
+    expect(continued.result).toEqual({ continued: true });
+    expect(socket.turns(session.id).length).toBeGreaterThanOrEqual(2);
+    expect(continued.turn?.['outcome']).toBe('completed');
+    expect(continued.turn?.items.filter((item) => item.type === 'user_message')).toEqual([]);
+    expect(continued.turn?.items.find((item) => item.type === 'assistant_message')?.['text']).toBe('resumed reply');
+    await expect(resume()).rejects.toMatchObject({ code: 40940 });
+
+    expect((await lastTurnAfter(() => kap.prompt(session.id, 'trigger failure'))).turn).toMatchObject({ status: 'ended', outcome: 'failed' });
+    const afterFailure = await lastTurnAfter(resume);
+    expect(afterFailure.result).toEqual({ continued: true });
+    expect(afterFailure.turn).toMatchObject({ status: 'ended', outcome: 'completed' });
+    await kap.undo(session.id, socket.turns(session.id)[0]!.turn_id);
+    await expect(resume()).rejects.toMatchObject({ code: 40940 });
+
+    expect((await lastTurnAfter(() => kap.prompt(session.id, 'trigger failure before compact'))).turn).toMatchObject({
+      status: 'ended',
+      outcome: 'failed',
+    });
+    expect((await lastTurnAfter(() => kap.compact(session.id))).turn).toMatchObject({ kind: 'system', outcome: 'completed' });
+    const afterCompaction = await lastTurnAfter(resume);
+    expect(afterCompaction.result).toEqual({ continued: true });
+    expect(afterCompaction.turn).toMatchObject({ kind: 'agent', status: 'ended', outcome: 'completed' });
+  });
+
   test('keeps the conversation across a server restart', async ({ kap, model }) => {
     model.script(say('first answer'), say('second answer'));
     const session = await kap.createSession();
@@ -479,6 +564,47 @@ describe('conversation over KAP', () => {
     expect(agentTool?.['agent_refs']).toEqual([expect.objectContaining({ agent_id: task['child_agent_id'], role: 'child' })]);
     await socket.waitFor((frame) => isMainTurnEnd(frame, session.id) && turnOf(frame)?.turn_id === turns.at(-1)?.turn_id);
     expect(socket.turns(session.id)).toEqual(turns);
+  });
+
+  test('sends a new subscriber the idle main agent and its empty todo list, then pushes TodoList writes', async ({ kap, model }) => {
+    model.script(todoList([{ title: 'write tests', status: 'in_progress' }, { title: 'ship', status: 'pending' }]), say('planned'));
+    const socket = await kap.connect();
+    const session = await kap.createSession();
+    const isTodoFrame = (frame: KapFrame) => frame.type === 'todo' && frame['session_id'] === session.id && frame['agent_id'] === 'main';
+    await socket.subscribe(session.id);
+    expect(await socket.waitFor((frame) => isMainAgentFrame(frame, session.id))).toMatchObject({ type: 'agent', session_id: session.id, status: 'idle' });
+    expect(await socket.waitFor(isTodoFrame)).toMatchObject({ type: 'todo', session_id: session.id, items: [] });
+
+    await kap.prompt(session.id, 'plan the work');
+    await kap.waitIdle(session.id);
+    await socket.waitFor((frame) => isTodoFrame(frame) && (frame['items'] as readonly unknown[]).length > 0);
+    expect(socket.frames.filter(isTodoFrame).at(-1)?.['items']).toEqual([
+      { title: 'write tests', status: 'in_progress' },
+      { title: 'ship', status: 'pending' },
+    ]);
+  });
+
+  test('closes a side agent with an ended agent frame and refuses to close the main agent', async ({ kap }) => {
+    const session = await kap.createSession();
+    const side = await kap.rest.post<{ readonly agent_id: string }>(`/api/v1/sessions/${session.id}:btw`, {});
+    const sideAgent = `/api/v1/sessions/${session.id}/agents/${encodeURIComponent(side.agent_id)}`;
+    const isSideAgentFrame = (frame: KapFrame) => frame.type === 'agent' && frame['session_id'] === session.id && frame['agent_id'] === side.agent_id;
+    const socket = await kap.connect();
+    await socket.subscribe(session.id, { agentIds: [side.agent_id] });
+    await socket.waitFor(isSideAgentFrame);
+
+    await expect(kap.rest.post(`/api/v1/sessions/${session.id}/agents/main:close`, {})).rejects.toMatchObject({ code: 40939 });
+    expect(await kap.rest.post(`${sideAgent}:close`, {})).toEqual({ closed: true });
+    await socket.waitFor((frame) => isSideAgentFrame(frame) && frame['status'] === 'ended');
+    expect(socket.frames.filter(isSideAgentFrame).at(-1)).toMatchObject({
+      type: 'agent',
+      session_id: session.id,
+      agent_id: side.agent_id,
+      status: 'ended',
+      compacting: false,
+    });
+    await expect(kap.rest.post(`${sideAgent}:close`, {})).rejects.toMatchObject({ code: 40401 });
+    await expect(kap.rest.get(`${sideAgent}/turns`)).rejects.toMatchObject({ code: 40401 });
   });
 });
 
