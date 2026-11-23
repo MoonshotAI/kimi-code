@@ -145,7 +145,7 @@ export class WsConnectionV1 implements BroadcastTarget {
   }
 
   private enqueueControl(task: () => Promise<void>): void {
-    this.controlQueue = this.controlQueue.then(task).catch(() => {
+    this.controlQueue = this.controlQueue.then(() => (this.closed ? undefined : task())).catch(() => {
     });
   }
 

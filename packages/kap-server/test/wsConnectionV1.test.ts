@@ -378,6 +378,32 @@ describe('WsConnectionV1 control frames', () => {
     expect(removals).toEqual([conn]);
     expect(conn.subscriptionSessionIds).toEqual([]);
   });
+
+  it('skips subscribes still queued when the socket closes', async () => {
+    const socket = new FakeSocket();
+    const subscribed: string[] = [];
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const broadcaster = makeBroadcaster({
+      subscribe: async (sessionId: string, _target: unknown, _agentIds: readonly string[], accepted?: () => void) => {
+        subscribed.push(sessionId);
+        if (sessionId === 's1') await held;
+        accepted?.();
+      },
+    });
+    makeConn(socket, { broadcaster });
+
+    socket.emit('message', command('subscribe', { session_id: 's1' }, 'r1'));
+    socket.emit('message', command('subscribe', { session_id: 's2' }, 'r2'));
+    await vi.waitFor(() => expect(subscribed).toEqual(['s1']));
+    socket.emit('close');
+    release();
+    await new Promise((resolve) => setTimeout(resolve, 30));
+
+    expect(subscribed).toEqual(['s1']);
+  });
 });
 
 describe('WsConnectionV1 outbound buffer', () => {
