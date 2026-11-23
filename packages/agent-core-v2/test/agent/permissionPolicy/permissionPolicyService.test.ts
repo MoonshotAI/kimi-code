@@ -431,8 +431,10 @@ describe('AgentPermissionPolicyService chain', () => {
     'docker images -q',
     'grep -E \'foo|bar\' src/main.ts',
     'grep "a.*b()" src/main.ts',
+    'grep \'\' notes.txt',
     'echo "a; b"',
     'rg \'foo|bar\' src',
+    'rg \'\' src',
     'rg --files src',
     'find src -name \'*.ts\' -type f',
     'fd \'\\.ts$\' src',
@@ -543,6 +545,9 @@ describe('AgentPermissionPolicyService chain', () => {
     'timeout -s KILL 5 ls',
     'cat notes.txt\u202e',
     'cat notes.txt\u0000',
+    'cat \'\'',
+    'pwd \'\'',
+    'sed -n \'\' notes.txt',
   ])('keeps the existing approval result for `%s`', async (command) => {
     await expect(evaluate({
       toolName: 'Bash',
@@ -604,6 +609,11 @@ describe('AgentPermissionPolicyService chain', () => {
     'cat -n .env',
     'cat ~/.ssh/id_rsa',
     'cat .git/config',
+    'grep \'\' .env',
+    'rg \'\' .env',
+    'fd \'\' .git',
+    'jq \'\' .env',
+    'sed -n \'\' .env',
   ])('does not approve a read of a sensitive file or git control path: %s', async (command) => {
     await expect(evaluate({
       toolName: 'Bash',

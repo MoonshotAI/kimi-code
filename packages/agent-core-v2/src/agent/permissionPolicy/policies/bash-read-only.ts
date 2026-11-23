@@ -450,12 +450,15 @@ function analyzeUnwrappedInvocation(
   if (name === 'cd') {
     if (args.length > 1) return undefined;
     const target = args[0] ?? '~';
-    if (target.startsWith('-') || (target.startsWith('~') && target !== '~' && !target.startsWith('~/'))) {
+    if (
+      target.length === 0 ||
+      target.startsWith('-') ||
+      (target.startsWith('~') && target !== '~' && !target.startsWith('~/'))
+    ) {
       return undefined;
     }
     return { paths: [...basePaths, target], readsCwd: true, usesGit: false, isCd: true };
   }
-  const nonEmpty = args.filter((text) => text.length > 0);
   if (EXACT_READ_ONLY_INVOCATIONS.some(
     (invocation) => invocation[0] === name
       && invocation.length === args.length + 1
@@ -464,7 +467,7 @@ function analyzeUnwrappedInvocation(
     return { paths: [...basePaths], readsCwd: false, usesGit: false, isCd: false };
   }
   if (NO_ARG_READ_ONLY_COMMANDS.has(name)) {
-    return nonEmpty.length === 0
+    return args.length === 0
       ? { paths: [...basePaths], readsCwd: false, usesGit: false, isCd: false }
       : undefined;
   }
@@ -479,7 +482,7 @@ function analyzeUnwrappedInvocation(
       : undefined;
   }
   if (name === 'ifconfig') {
-    return nonEmpty.length === 0 || (nonEmpty.length === 1 && /^[a-zA-Z][a-zA-Z0-9_.:-]*$/.test(nonEmpty[0]!))
+    return args.length === 0 || (args.length === 1 && /^[a-zA-Z][a-zA-Z0-9_.:-]*$/.test(args[0]!))
       ? { paths: [...basePaths], readsCwd: false, usesGit: false, isCd: false }
       : undefined;
   }
@@ -487,39 +490,39 @@ function analyzeUnwrappedInvocation(
     return { paths: [...basePaths], readsCwd: false, usesGit: false, isCd: false };
   }
   if (name === 'docker') {
-    return analyzeDocker(nonEmpty, basePaths);
+    return analyzeDocker(args, basePaths);
   }
   if (name === 'git') {
-    return analyzeGit(nonEmpty, basePaths);
+    return analyzeGit(args, basePaths);
   }
   if (name === 'sed') {
-    return analyzeSed(nonEmpty, basePaths);
+    return analyzeSed(args, basePaths);
   }
   if (name === 'find') {
-    return analyzeFind(nonEmpty, basePaths);
+    return analyzeFind(args, basePaths);
   }
   if (name === 'rg') {
-    return analyzeRg(nonEmpty, basePaths);
+    return analyzeRg(args, basePaths);
   }
   if (name === 'fd' || name === 'fdfind') {
-    return analyzeFd(nonEmpty, basePaths);
+    return analyzeFd(args, basePaths);
   }
   if (name === 'grep' || name === 'egrep' || name === 'fgrep') {
-    return analyzeGrep(nonEmpty, basePaths);
+    return analyzeGrep(args, basePaths);
   }
   if (name === 'uniq') {
-    return analyzeUniq(nonEmpty, basePaths);
+    return analyzeUniq(args, basePaths);
   }
   const zeroFileSpec = ZERO_FILE_COMMAND_SPECS[name];
   if (zeroFileSpec !== undefined) {
-    return analyzeZeroFileCommand(name, nonEmpty, zeroFileSpec, basePaths);
+    return analyzeZeroFileCommand(name, args, zeroFileSpec, basePaths);
   }
   const fileSpec = FILE_COMMAND_SPECS[name];
   if (fileSpec !== undefined) {
-    return analyzeSpecFileCommand(name, nonEmpty, fileSpec, basePaths);
+    return analyzeSpecFileCommand(name, args, fileSpec, basePaths);
   }
   if (!BASIC_FILE_READ_COMMANDS.has(name)) return undefined;
-  const basicPaths = analyzeBasicFileCommand(name, nonEmpty, basePaths);
+  const basicPaths = analyzeBasicFileCommand(name, args, basePaths);
   if (basicPaths === undefined) return undefined;
   return {
     paths: basicPaths,
