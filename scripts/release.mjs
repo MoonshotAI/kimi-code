@@ -24,8 +24,23 @@ for (const pkg of plan.packages) {
     throw new Error(`Release plan no longer matches ${pkg.path}`);
   }
 }
+const cli = plan.packages.find((entry) => entry.name === '@moonshot-ai/kimi-code');
+if (command === 'check-cli-retry') {
+  const tag = process.env.RELEASE_TAG;
+  if (!(Number(process.env.GITHUB_RUN_ATTEMPT) > 1)) throw new Error('Native release recovery requires a rerun');
+  if (!cli || tag !== `${cli.name}@${cli.version}`) throw new Error('CLI tag does not match the release plan');
+  if (!verifyTag(tag)) throw new Error(`Missing tag for ${tag}`);
+  const registryVersion = JSON.parse(execFileSync('npm', ['view', tag, 'version', '--json', '--registry=https://registry.npmjs.org', '--prefer-online'], { encoding: 'utf8' }));
+  if (registryVersion !== cli.version) throw new Error(`npm did not confirm ${tag}`);
+  const release = api(`releases/tags/${encodeURIComponent(tag)}`);
+  const uploaded = new Set(release.assets.filter(asset => asset.state === 'uploaded' && asset.size > 0).map(asset => asset.name));
+  const files = readdirSync('dist-native-release').filter(name => name.startsWith('kimi-code-'));
+  if (files.length === 0) throw new Error('No native release files to upload');
+  const complete = uploaded.has('manifest.json') && files.every(name => uploaded.has(name));
+  appendFileSync(process.env.GITHUB_OUTPUT, `complete=${complete}\n`);
+  process.exit(0);
+}
 if (command === 'plan-cli') {
-  const cli = plan.packages.find((entry) => entry.name === '@moonshot-ai/kimi-code');
   let tag = '';
   if (cli) {
     const name = `${cli.name}@${cli.version}`;

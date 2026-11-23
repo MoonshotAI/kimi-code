@@ -192,7 +192,6 @@ jobs:
     outputs:
       packages_published: ${{ steps.changesets.outputs.published }}
       kimi_native_release: ${{ steps.kimi-release.outputs.should_publish }}
-      kimi_release_tag: ${{ steps.kimi-release.outputs.tag }}
     permissions:
       contents: write
       pull-requests: write
@@ -331,9 +330,12 @@ jobs:
   publish-native-assets:
     name: Publish native release assets
     needs:
+      - candidate
       - release
       - compress-native
-    if: needs.release.outputs.kimi_native_release == 'true'
+    if: needs.candidate.outputs.cli-tag != '' && (needs.release.outputs.kimi_native_release == 'true' || github.run_attempt > 1)
+    env:
+      RELEASE_TAG: ${{ needs.candidate.outputs.cli-tag }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -350,15 +352,22 @@ jobs:
           merge-multiple: true
 
       - name: Merge the six platform manifests
-        env:
-          RELEASE_TAG: ${{ needs.release.outputs.kimi_release_tag }}
         run: node apps/kimi-code/scripts/native/merge-platform-manifests.mjs dist-native-release "$RELEASE_TAG"
 
-      - name: Upload assets to GitHub Release
+      - name: Verify previously published CLI before retrying the upload
+        id: retry
+        if: needs.release.outputs.kimi_native_release != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ needs.release.outputs.kimi_release_tag }}
-        run: gh release upload "$RELEASE_TAG" dist-native-release/kimi-code-* dist-native-release/manifest.json --clobber
+        run: node scripts/release.mjs check-cli-retry
+
+      - name: Upload assets to GitHub Release
+        if: needs.release.outputs.kimi_native_release == 'true' || steps.retry.outputs.complete == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "$RELEASE_TAG" dist-native-release/kimi-code-* --clobber
+          gh release upload "$RELEASE_TAG" dist-native-release/manifest.json --clobber
 
   deploy-docs:
     needs: publish-native-assets
