@@ -12,6 +12,15 @@ selfTest('expectReply', {
         await product.expectReply('The sky is blue.');
       },
     },
+    'finds text in a later paragraph of the reply': {
+      run: async ({ product, model }) => {
+        model.script(say('The first paragraph.\n\nThe second paragraph.'));
+        await product.send('Answer in two paragraphs.');
+        await product.waitIdle();
+        await product.expectReply('The first paragraph.');
+        await product.expectReply('The second paragraph.');
+      },
+    },
   },
   negative: {
     'fails when the assistant replied with something else': {

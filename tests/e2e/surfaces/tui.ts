@@ -1,4 +1,5 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -21,12 +22,11 @@ import { offlineStubs } from './offline';
 
 const COLUMNS = 120;
 const ROWS = 40;
-const EXIT_MARKER = 'E2E_CLI_EXIT=';
 const SCROLLBACK_LINES = 1000;
 const OUTPUT_TAIL = 64 * 1024;
 const RECENT_INPUTS = 12;
 
-const KEYS = { enter: '\r', escape: '\x1b', interrupt: '\x03', approveOnce: '1', reject: '3' } as const;
+const KEYS = { enter: '\r', escape: '\x1b', interrupt: '\x03', approveOnce: '1', reject: '3', toggleDetails: '\x0f' } as const;
 
 const USER_MARK = '❯';
 const DONE_MARK = '●';
@@ -35,7 +35,12 @@ const TRANSCRIPT_MARKS = [USER_MARK, DONE_MARK, FAILED_MARK] as const;
 
 const APPROVAL_PANEL = '↵ confirm';
 const ACTIVITY = /^\s*[\u{1F311}-\u{1F318}\u2800-\u28FF]/u;
+const CHROME = /^[╭─]/;
 const TOOL_CARD = /^(?:Used |Using |Truncated |Ran a command|Running a command|Read(?:ing)? \d+ files?)/;
+const READ_GROUP = /^Read(?:ing)? \d+ files?/;
+const READ_GROUP_FILE = /^[├└]─ (.+?)(?: · (.+))?$/;
+const READ_GROUP_PENDING = 'reading…';
+const READ_GROUP_FAILED = 'failed';
 const TURN_COMPLETED = 'Worked for ';
 const TURN_STOPPED = 'Interrupted by user';
 const TURN_FAILED = 'Error: [';
@@ -53,6 +58,11 @@ interface Block {
   readonly mark: (typeof TRANSCRIPT_MARKS)[number];
   readonly head: string;
   readonly text: string;
+}
+
+interface GroupedRead {
+  readonly path: string;
+  readonly status: ToolStatus | undefined;
 }
 
 interface Turn {
@@ -90,9 +100,9 @@ function blocksOf(screen: Screen): Block[] {
       const head = line.slice(mark.length).trim();
       open = { mark, head, text: head };
       blocks.push(open);
-    } else if (line === '') {
+    } else if (CHROME.test(line) || ACTIVITY.test(line) || line.startsWith(TURN_COMPLETED)) {
       open = undefined;
-    } else if (open !== undefined) {
+    } else if (line !== '' && open !== undefined) {
       open.text = `${open.text}\n${line}`;
     }
   }
@@ -137,6 +147,26 @@ function showsTool(screen: Screen, expectation: ToolExpectation): boolean {
   );
 }
 
+function groupedReads(screen: Screen): GroupedRead[] {
+  return latestTurn(screen)
+    .filter((block) => READ_GROUP.test(block.head))
+    .flatMap((block) => block.text.split('\n'))
+    .flatMap((line): GroupedRead[] => {
+      const file = READ_GROUP_FILE.exec(line);
+      if (file?.[1] === undefined) return [];
+      if (file[2] === READ_GROUP_PENDING) return [{ path: file[1], status: undefined }];
+      return [{ path: file[1], status: file[2] === READ_GROUP_FAILED ? 'failed' : 'done' }];
+    });
+}
+
+function showsReadGroup(screen: Screen): boolean {
+  return latestTurn(screen).some((block) => READ_GROUP.test(block.head));
+}
+
+function showsGroupedRead(screen: Screen, expectation: ToolExpectation): boolean {
+  return groupedReads(screen).some((file) => file.path === expectation.target && file.status === expectation.status);
+}
+
 function showsReply(screen: Screen, text: string): boolean {
   return latestTurn(screen).some(
     (block) => block.mark === DONE_MARK && !TOOL_CARD.test(block.head) && squash(block.text).includes(squash(text)),
@@ -151,6 +181,7 @@ function latestTurnEntries(screen: Screen): string {
 class TuiDriver implements SurfaceDriver {
   private readonly child: ChildProcessWithoutNullStreams;
   private readonly networkLog: string;
+  private readonly exitStatus: RegExp;
   private readonly terminal = new VirtualTerminal(COLUMNS, ROWS);
   private readonly inputs: string[] = [];
   private output = '';
@@ -158,9 +189,10 @@ class TuiDriver implements SurfaceDriver {
   private released = false;
   private turn: Turn | undefined;
 
-  constructor(child: ChildProcessWithoutNullStreams, networkLog: string) {
+  constructor(child: ChildProcessWithoutNullStreams, networkLog: string, exitMarker: string) {
     this.child = child;
     this.networkLog = networkLog;
+    this.exitStatus = new RegExp(`${exitMarker}(\\d+)`);
     child.stdout.setEncoding('utf8').on('data', (text: string) => {
       this.output = (this.output + text).slice(-OUTPUT_TAIL);
       this.terminal.write(text);
@@ -232,12 +264,13 @@ class TuiDriver implements SurfaceDriver {
 
   async expectTool(expectation: ToolExpectation): Promise<void> {
     const wanted = `${expectation.name} on ${JSON.stringify(expectation.target)} with status ${expectation.status}`;
-    const settled = await this.settle(`the tool ${wanted}`, (screen) => (showsTool(screen, expectation) ? true : undefined));
-    if ('over' in settled) {
-      throw this.failure(
-        `expectTool() did not find ${wanted}. The turn ended and it shows:\n${latestTurnEntries(settled.over)}`,
-        settled.over,
-      );
+    const settled = await this.settle(`the tool ${wanted}`, (screen) => {
+      if (showsTool(screen, expectation)) return 'card' as const;
+      return expectation.name === 'Read' && showsReadGroup(screen) && !showsApproval(screen) ? ('group' as const) : undefined;
+    });
+    const missing = 'over' in settled ? settled.over : settled.found === 'group' ? await this.missingGroupedRead(expectation, wanted) : undefined;
+    if (missing !== undefined) {
+      throw this.failure(`expectTool() did not find ${wanted}. The turn ended and it shows:\n${latestTurnEntries(missing)}`, missing);
     }
   }
 
@@ -300,6 +333,20 @@ class TuiDriver implements SurfaceDriver {
         ].join('\n'),
       },
     ];
+  }
+
+  private async missingGroupedRead(expectation: ToolExpectation, wanted: string): Promise<Screen | undefined> {
+    this.write(KEYS.toggleDetails);
+    try {
+      await this.wait('the grouped reads to list their files', (screen) => (groupedReads(screen).length > 0 ? true : undefined));
+      const settled = await this.settle(`the tool ${wanted} among the grouped reads`, (screen) =>
+        showsGroupedRead(screen, expectation) ? true : undefined,
+      );
+      return 'over' in settled ? settled.over : undefined;
+    } finally {
+      this.write(KEYS.toggleDetails);
+      await this.wait('the grouped reads to fold again', (screen) => (groupedReads(screen).length === 0 ? true : undefined));
+    }
   }
 
   private async answerApproval(verb: string, key: string, recorded: string): Promise<void> {
@@ -376,7 +423,7 @@ class TuiDriver implements SurfaceDriver {
   }
 
   private exitCode(): number | undefined {
-    const match = new RegExp(`${EXIT_MARKER}(\\d+)`).exec(this.output);
+    const match = this.exitStatus.exec(this.output);
     return match?.[1] === undefined ? undefined : Number(match[1]);
   }
 
@@ -404,14 +451,15 @@ export async function startTui({ home }: SurfaceLaunch): Promise<SurfaceDriver> 
   const launcher = join(home.root, 'tui-launch.sh');
   const preloads = [...(command.imports ?? []), NETWORK_GUARD_PRELOAD.href].flatMap((specifier) => ['--import', specifier]);
   const cli = [process.execPath, ...preloads, command.entry].map(quote).join(' ');
-  await writeFile(launcher, [`stty cols ${COLUMNS} rows ${ROWS}`, cli, `printf '\\n${EXIT_MARKER}%s\\n' "$?"`, ''].join('\n'));
+  const exitMarker = `E2E_CLI_EXIT_${randomUUID()}=`;
+  await writeFile(launcher, [`stty cols ${COLUMNS} rows ${ROWS}`, cli, `printf '\\n${exitMarker}%s\\n' "$?"`, ''].join('\n'));
   const child = spawn('/bin/sh', ['-c', `cat | ${insidePseudoTerminal(launcher)}`], {
     cwd: home.workspace,
     detached: true,
     stdio: ['pipe', 'pipe', 'pipe'],
     env: { ...kimiCliEnv(home, { TERM: 'xterm-256color' }), ...command.env, ...networkGuardEnv(networkLog, offlineStubs()) },
   });
-  const driver = new TuiDriver(child, networkLog);
+  const driver = new TuiDriver(child, networkLog, exitMarker);
   try {
     await driver.ready();
   } catch (error) {

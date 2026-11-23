@@ -13,6 +13,17 @@ selfTest('waitIdle', {
         await product.expectReply('All done.');
       },
     },
+    'keeps following a conversation that mentions a process exit status': {
+      run: async ({ product, model }) => {
+        model.script(say('The shell printed E2E_CLI_EXIT=0 at the end.'), say('Still running.'));
+        await product.send('Explain what E2E_CLI_EXIT=0 means.');
+        await product.waitIdle();
+        await product.expectReply('The shell printed E2E_CLI_EXIT=0 at the end.');
+        await product.send('Are you still running?');
+        await product.waitIdle();
+        await product.expectReply('Still running.');
+      },
+    },
     'returns once a turn has failed, without judging it': {
       run: async ({ product, model }) => {
         model.script(httpError(400), say('Recovered.'));
