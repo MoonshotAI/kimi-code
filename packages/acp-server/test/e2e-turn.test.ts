@@ -96,7 +96,7 @@ describe('acp-server real prompt turn (scripted LLM)', () => {
       type: 'function',
       id: 'call_1',
       name: 'Bash',
-      arguments: '{"command":"printf hello_from_bash > approval-probe.txt"}',
+      arguments: '{"command":"echo hello_from_bash"}',
     });
     scripted!.mockNextText('ran it');
 
@@ -213,7 +213,7 @@ describe('acp-server real prompt turn (scripted LLM)', () => {
       type: 'function',
       id: 'call_busy',
       name: 'Bash',
-      arguments: '{"command":"printf busy_probe > approval-probe.txt"}',
+      arguments: '{"command":"echo busy_probe"}',
     });
     scripted!.mockNextText('done');
 
