@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { closeSessionById, IOAuthService, ISessionExportService, MAIN_AGENT_ID, sessionDirOf } from '@moonshot-ai/agent-core-v2';
-import { OAuthUnauthorizedError } from '@moonshot-ai/kimi-code-oauth';
+import { FileTokenStorage, OAuthUnauthorizedError, resolveKimiCodeOAuthRef, resolveKimiTokenStorageName } from '@moonshot-ai/kimi-code-oauth';
 import { deferred } from '@moonshot-ai/testkit/fixtures';
 import { agent, createFakeModel, held, say, type ReplyStep } from '@moonshot-ai/testkit/model';
 import { afterAll, afterEach, assert, beforeAll, describe, expect, it, type TestContext, vi } from 'vitest';
@@ -19,6 +19,39 @@ import { authHeaders } from './helpers/auth';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 
 const token = 'test-feedback-access-token';
+
+it('sends feedback to the configured managed deployment with its scoped OAuth credentials', async ({ onTestFinished }) => {
+  const baseUrl = 'https://api.example.test/coding/v1';
+  const oauthHost = 'https://auth.example.test';
+  const ref = resolveKimiCodeOAuthRef({ baseUrl, oauthHost });
+  const home = await mkdtemp(join(tmpdir(), 'kimi-feedback-deployment-'));
+  onTestFinished(() => rm(home, { recursive: true, force: true }));
+  await writeFile(join(home, 'config.toml'), `[providers."managed:kimi-code"]
+type = "kimi"
+base_url = "${baseUrl}"
+oauth = { storage = "file", key = "${ref.key}", oauth_host = "${oauthHost}" }
+`);
+  await new FileTokenStorage(join(home, 'credentials')).save(resolveKimiTokenStorageName({ oauthKey: ref.key }), {
+    accessToken: token, refreshToken: 'test-refresh', expiresAt: Math.floor(Date.now() / 1_000) + 3_600,
+    expiresIn: 3_600, scope: '', tokenType: 'Bearer',
+  });
+  vi.stubEnv('KIMI_OAUTH_HOST', undefined);
+  onTestFinished(() => vi.unstubAllEnvs());
+  const requests = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+    const request = new Request(input, init);
+    if (request.url !== `${baseUrl}/feedback`) throw new Error('Unexpected outbound request');
+    if (request.headers.get('authorization') !== `Bearer ${token}`) return new Response(null, { status: 401 });
+    return Response.json({ feedback_id: 17 });
+  });
+  onTestFinished(() => { requests.mockRestore(); });
+  const server = await startServer({ hostIdentity: TEST_HOST_IDENTITY, host: '127.0.0.1', port: 0, homeDir: home, logLevel: 'silent', skipInstanceRegistry: true });
+  onTestFinished(() => server.close());
+  const result = await server.app.inject({
+    method: 'POST', url: '/api/v1/feedback', headers: authHeaders(server),
+    payload: { kind: 'global', source: 'sidebar', category: 'bug', content: 'Deployment feedback' },
+  });
+  expect(result.json()).toMatchObject({ code: 0, data: { feedback_id: 17 } });
+});
 
 function withRequestId(id: string, step: ReplyStep): ReplyStep {
   return { ...step, headers: { 'x-request-id': id } };

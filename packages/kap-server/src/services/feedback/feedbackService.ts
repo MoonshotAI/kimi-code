@@ -16,10 +16,11 @@ import {
   fetchCreateFeedbackUploadUrl,
   fetchSubmitFeedback,
   fetchUpdateFeedback,
-  isManagedKimiCodeBaseUrl,
   KIMI_CODE_PROVIDER_NAME,
   kimiCodeFeedbackUrl,
   OAuthUnauthorizedError,
+  resolveKimiCodeRuntimeAuth,
+  type ManagedKimiOAuthRef,
   type SubmitFeedbackBody,
 } from '@moonshot-ai/kimi-code-oauth';
 import type { z } from 'zod';
@@ -38,9 +39,9 @@ export class FeedbackError extends Error {
   }
 }
 
-export async function requireFeedbackToken(core: Scope): Promise<string> {
+export async function requireFeedbackToken(core: Scope, oauthRef?: ManagedKimiOAuthRef): Promise<string> {
   const oauth = core.accessor.get(IOAuthService);
-  const tokenProvider = oauth.resolveTokenProvider(KIMI_CODE_PROVIDER_NAME);
+  const tokenProvider = oauth.resolveTokenProvider(KIMI_CODE_PROVIDER_NAME, oauthRef);
   if (tokenProvider === undefined) {
     throw new FeedbackError(ErrorCode.AUTH_TOKEN_MISSING, 'Sign in to Kimi to send feedback.');
   }
@@ -55,11 +56,14 @@ export async function requireFeedbackToken(core: Scope): Promise<string> {
 }
 
 export async function openFeedbackGateway(core: Scope): Promise<FeedbackGateway> {
-  const token = await requireFeedbackToken(core);
-  const configuredUrl = core.accessor.get(IProviderService).get(KIMI_CODE_PROVIDER_NAME)?.baseUrl;
-  const managedUrl = isManagedKimiCodeBaseUrl(configuredUrl) ? configuredUrl : undefined;
+  const provider = core.accessor.get(IProviderService).get(KIMI_CODE_PROVIDER_NAME);
+  const auth = resolveKimiCodeRuntimeAuth({
+    configuredBaseUrl: provider?.baseUrl,
+    configuredOAuthRef: provider?.oauth,
+  });
   const override = core.accessor.get(IBootstrapService).getEnv('KIMI_CODE_FEEDBACK_BASE_URL');
-  return new FeedbackGateway(feedbackUrl(override ?? managedUrl), token);
+  const url = feedbackUrl(override ?? auth.baseUrl);
+  return new FeedbackGateway(url, await requireFeedbackToken(core, auth.oauthRef));
 }
 
 export class FeedbackGateway {
