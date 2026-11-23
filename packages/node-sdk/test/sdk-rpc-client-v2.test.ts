@@ -5325,13 +5325,19 @@ describe('KimiHarness worktrees', () => {
       const created = await harness.createWorktree({ cwd: repo, name: 'feat-a' });
       const path = created.worktree.path;
       const head = (await git(repo, 'rev-parse', 'HEAD')).trim();
-      const listing = {
+      const worktrees = [{ path, name: 'feat-a', head, branch: undefined, missing: false, managed: true }];
+      expect(await harness.listWorktrees(repo)).toEqual({
         repoRoot: repo,
+        currentCheckoutRoot: repo,
         bare: false,
-        worktrees: [{ path, name: 'feat-a', head, branch: undefined, missing: false }],
-      };
-      expect(await harness.listWorktrees(repo)).toEqual(listing);
-      expect(await harness.listWorktrees(path)).toEqual(listing);
+        worktrees,
+      });
+      expect(await harness.listWorktrees(path)).toEqual({
+        repoRoot: repo,
+        currentCheckoutRoot: path,
+        bare: false,
+        worktrees,
+      });
 
       await writeFile(join(path, 'scratch.txt'), 'draft\n');
       const target = { repoRoot: repo, path, deleteBranch: false };
@@ -5346,7 +5352,12 @@ describe('KimiHarness worktrees', () => {
       ).rejects.toMatchObject({ code: ErrorCodes.WORKTREE_HAS_UNCOMMITTED, details: { path, uncommittedFiles: 1 } });
 
       await harness.removeWorktree({ ...target, discard: { uncommittedFiles: 1, uniqueCommits: 0 } });
-      expect(await harness.listWorktrees(repo)).toEqual({ repoRoot: repo, bare: false, worktrees: [] });
+      expect(await harness.listWorktrees(repo)).toEqual({
+        repoRoot: repo,
+        currentCheckoutRoot: repo,
+        bare: false,
+        worktrees: [],
+      });
       await expect(readdir(path)).rejects.toMatchObject({ code: 'ENOENT' });
     } finally {
       await harness.close();

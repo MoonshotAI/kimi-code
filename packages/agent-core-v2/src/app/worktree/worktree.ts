@@ -18,10 +18,12 @@ export interface KimiWorktree {
   readonly head: string | undefined;
   readonly branch: string | undefined;
   readonly missing: boolean;
+  readonly managed: boolean;
 }
 
 export interface WorktreeListing {
   readonly repoRoot: string;
+  readonly currentCheckoutRoot: string;
   readonly bare: boolean;
   readonly worktrees: readonly KimiWorktree[];
 }
