@@ -241,4 +241,20 @@ describe('FlagService', () => {
     expect(flags.snapshot()).toEqual({ example_flag: false });
     expect(flags.explain('obsolete_flag')).toBeUndefined();
   });
+
+  it('rejects the retired subagent_fork config with removal guidance', async () => {
+    const { config } = makeFlags();
+
+    await expect(
+      config.set(EXPERIMENTAL_SECTION, { subagent_fork: true }),
+    ).rejects.toMatchObject({
+      issues: [
+        expect.objectContaining({
+          path: ['subagent_fork'],
+          message:
+            'The experimental flag "subagent_fork" was removed. Remove it from [experimental] in config.toml.',
+        }),
+      ],
+    });
+  });
 });
