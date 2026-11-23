@@ -215,6 +215,23 @@ describe('WorkspaceMcpService', () => {
     expect(manager.get('beta')?.status).toBe('connected');
   }, 20000);
 
+  it('connects nothing from a config change still queued when the service is disposed', async () => {
+    const service = createService();
+    manager = service.connectionManager();
+    await service.ready;
+    const spawn = vi.spyOn(HostProcessService.prototype, 'spawn');
+
+    const applied = configChanges.fireAsync(
+      { upsert: { beta: stdioServer() }, remove: [] },
+      new AbortController().signal,
+    );
+    await (service as WorkspaceMcpService).disposeAsync();
+    await applied;
+
+    expect(spawn).not.toHaveBeenCalled();
+    expect(manager.get('beta')).toBeUndefined();
+  }, 20000);
+
   it('reconnects only default-cwd baseline stdio servers when primary changes', async () => {
     current = {
       defaulted: stdioServer(),
@@ -414,6 +431,19 @@ describe('WorkspaceMcpService', () => {
     expect(view.get('eph')).toBeUndefined();
     expect(view.get('base')?.status).toBe('connected');
   }, 20000);
+
+  it('sessionOverlay starts no ephemeral server once shut down before its first load', async () => {
+    const service = createService();
+    manager = service.connectionManager();
+    await service.ready;
+    const spawn = vi.spyOn(HostProcessService.prototype, 'spawn');
+
+    const overlay = service.sessionOverlay({ eph: stdioServer() });
+    await overlay.shutdown();
+    await overlay.handle.ready;
+
+    expect(spawn).not.toHaveBeenCalled();
+  });
 
   it('tags overlay stdio resources with the session id while workspace servers stay untagged', async () => {
     current = { base: stdioServer() };
