@@ -1965,6 +1965,10 @@ function streamingTailIndex(turn: ChatTurn): number | null {
   white-space: nowrap;
 }
 .u-steer-receipt.is-accepted { color: var(--color-accent); }
+.u-meta .u-edit {
+  min-height: 20px;
+  box-sizing: border-box;
+}
 .u-meta :deep(.msg-time) {
   min-height: 20px;
   padding: 0 0 0 3px;
