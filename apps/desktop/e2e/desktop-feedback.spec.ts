@@ -202,6 +202,17 @@ testWithProvider('submits global and reply feedback with opt-in attachments', as
   await expect(details.getByRole('link', { name: 'Learn more about what you submit' })).toHaveAttribute('href', guideUrl);
   await expect(details).toHaveCSS('width', '400px');
   await expect(details.getByRole('checkbox', { name: 'Also submit this conversation' })).not.toBeChecked();
+  const heading = details.getByText('What could be better?', { exact: true });
+  for (const [colorScheme, fontSize, lineHeight, sectionGap] of [
+    ['dark', '14px', '20px', '12px'],
+    ['light', '16px', '24px', '16px'],
+  ] as const) {
+    await page.emulateMedia({ colorScheme });
+    await expect(heading).toHaveCSS('font-size', fontSize);
+    await expect(heading).toHaveCSS('line-height', lineHeight);
+    await expect(details).toHaveCSS('row-gap', sectionGap);
+    await expect(details.getByRole('group')).toHaveCSS('gap', '8px');
+  }
   await app.snapshot('reply-feedback');
   const replyDescription = details.getByRole('textbox');
   const replyEditor = details.locator('.feedback-editor');
