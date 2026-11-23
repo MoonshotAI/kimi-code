@@ -2,11 +2,12 @@ import { randomInt } from 'node:crypto';
 
 import { Error2, ErrorCodes } from '#/errors';
 
-type WorktreeNameViolation = 'slash' | 'length' | 'chars' | 'edge' | 'dots';
+type WorktreeNameViolation = 'slash' | 'length' | 'chars' | 'edge' | 'dots' | 'reserved';
 
 const MAX_NAME_LENGTH = 64;
 const RANDOM_ALPHABET = 'abcdefghijklmnopqrstuvwxyz0123456789';
 const RANDOM_LENGTH = 4;
+const WINDOWS_DEVICE_NAME = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/;
 
 const NAME_RULES: readonly {
   readonly reason: WorktreeNameViolation;
@@ -37,6 +38,11 @@ const NAME_RULES: readonly {
     reason: 'dots',
     violatedBy: (name) => name.includes('..'),
     rule: 'it cannot contain ".."',
+  },
+  {
+    reason: 'reserved',
+    violatedBy: (name) => WINDOWS_DEVICE_NAME.test(name),
+    rule: 'it is a reserved Windows device name',
   },
 ];
 

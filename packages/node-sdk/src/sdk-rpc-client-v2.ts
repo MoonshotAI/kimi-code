@@ -213,6 +213,7 @@ import {
   ISessionWorkspaceContext,
   ITelemetryService,
   ISessionActivityView,
+  IProjectAliases,
   IProjectInstanceManager,
   IProjectService,
   IProjectSessions,
@@ -1564,8 +1565,16 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   override async listSessionsPage(input: ListSessionsOptions = {}): Promise<SessionSummaryPage> {
     const workDir =
       input.workDir === undefined ? undefined : normalizeRequiredWorkDir('listSessions', input.workDir);
-    const workspacesById = new Map(
-      (await this.klient.global.workspaces.list()).map((workspace) => [workspace.id, workspace]),
+    const workspaces = await this.klient.global.workspaces.list();
+    const aliases = this.engineAccessor.get(IProjectAliases);
+    const workspacesById = new Map<string, { readonly root: string }>();
+    await Promise.all(
+      workspaces.map(async (workspace) => {
+        workspacesById.set(workspace.id, workspace);
+        for (const aliasId of await aliases.resolveAliasIds(workspace.id)) {
+          workspacesById.set(aliasId, workspace);
+        }
+      }),
     );
     const toSummaries = (items: readonly V2SessionSummary[]): SessionSummary[] =>
       items.flatMap((item) => this.mapIndexSummary(item, workspacesById) ?? []);

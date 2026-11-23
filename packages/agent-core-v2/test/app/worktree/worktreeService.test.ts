@@ -98,6 +98,8 @@ describe('worktree names', () => {
   it('lowercases a valid name and keeps it otherwise unchanged', () => {
     expect(normalizeWorktreeName('Fix_Login-1')).toBe('fix_login-1');
     expect(normalizeWorktreeName('  release-1.2 ')).toBe('release-1.2');
+    expect(normalizeWorktreeName('config')).toBe('config');
+    expect(normalizeWorktreeName('com10')).toBe('com10');
   });
 
   it.each([
@@ -109,6 +111,13 @@ describe('worktree names', () => {
     ['a.', 'edge'],
     ['a..b', 'dots'],
     ['a'.repeat(65), 'length'],
+    ['con', 'reserved'],
+    ['NUL', 'reserved'],
+    ['aux', 'reserved'],
+    ['prn', 'reserved'],
+    ['com1', 'reserved'],
+    ['lpt9', 'reserved'],
+    ['con.txt', 'reserved'],
   ])('rejects %j with reason %s', (input, reason) => {
     let thrown: unknown;
     try {
@@ -422,6 +431,11 @@ describe('WorktreeService', () => {
       const fallback = await create({ name: 'fallback', cwd: join(repo, 'scratch', 'deep') });
       expect(fallback.cwd).toBe(fallback.worktree.path);
       expect(fallback.cwdFallback).toBe(true);
+
+      commitFile(repo, '..cache/data.txt', 'ok\n');
+      const dotdot = await create({ name: 'dotdot', cwd: join(repo, '..cache') });
+      expect(dotdot.cwd).toBe(join(dotdot.worktree.path, '..cache'));
+      expect(dotdot.cwdFallback).toBe(false);
     });
 
     it.skipIf(isWindows)('copies ignored files listed in .worktreeinclude and nothing else', async () => {
@@ -822,22 +836,36 @@ describe('WorktreeService', () => {
     it('counts edits that skip-worktree or assume-unchanged hide from git status', async () => {
       const created = await create({ name: 'hidden-edits' });
       const wt = created.worktree.path;
-      for (const file of ['skipped.txt', 'assumed.txt', 'untouched.txt', 'sparse.txt']) commitFile(wt, file, 'committed\n');
+      for (const file of ['skipped.txt', 'assumed.txt', 'assumed-deleted.txt', 'assumed-dir.txt', 'untouched.txt', 'sparse.txt']) {
+        commitFile(wt, file, 'committed\n');
+      }
       git(repo, 'branch', 'keep', git(wt, 'rev-parse', 'HEAD'));
       git(wt, 'update-index', '--skip-worktree', 'skipped.txt', 'sparse.txt');
-      git(wt, 'update-index', '--assume-unchanged', 'assumed.txt', 'untouched.txt');
+      git(wt, 'update-index', '--assume-unchanged', 'assumed.txt', 'assumed-deleted.txt', 'assumed-dir.txt', 'untouched.txt');
       writeFileSync(join(wt, 'skipped.txt'), 'local edit\n');
       writeFileSync(join(wt, 'assumed.txt'), 'local edit\n');
+      rmSync(join(wt, 'assumed-deleted.txt'));
+      rmSync(join(wt, 'assumed-dir.txt'));
+      mkdirSync(join(wt, 'assumed-dir.txt'));
       rmSync(join(wt, 'sparse.txt'));
       expect(git(wt, 'status', '--porcelain')).toBe('');
 
       const seen = await service.inspectRemoval({ repoRoot: realRepo, path: wt, deleteBranch: false });
-      expect(seen.uncommittedFiles).toBe(2);
+      expect(seen.uncommittedFiles).toBe(4);
       expect((await failure(service.remove(removal(wt)))).code).toBe('worktree.has_uncommitted');
       expect(readFileSync(join(wt, 'skipped.txt'), 'utf8')).toBe('local edit\n');
 
-      await service.remove(removal(wt, { discard: { uncommittedFiles: 2, uniqueCommits: 0 } }));
+      await service.remove(removal(wt, { discard: { uncommittedFiles: 4, uniqueCommits: 0 } }));
       expect(existsSync(wt)).toBe(false);
+    });
+
+    it('refuses removal while the worktree flag is off', async () => {
+      const created = await create({ name: 'flag-off-remove' });
+      flagEnabled = false;
+
+      const error = await failure(service.remove(removal(created.worktree.path)));
+      expect(error.code).toBe('worktree.disabled');
+      expect(existsSync(created.worktree.path)).toBe(true);
     });
 
     it('counts commits that only a detached worktree holds', async () => {
