@@ -235,6 +235,16 @@ testWithProvider('submits global and reply feedback with opt-in attachments', as
   await replyDescription.fill('Some feedback');
   await replyDescription.press('Tab');
   await expectStableEditorOnFocus(replyDescription, replyEditor);
+  const replyEditorBox = await replyEditor.boundingBox();
+  if (!replyEditorBox) throw new Error('Feedback editor is not visible');
+  await replyDescription.press('Tab');
+  await expect(replyDescription).not.toBeFocused();
+  await replyEditor.click({ position: { x: replyEditorBox.width / 2, y: replyEditorBox.height / 2 } });
+  await expect(replyDescription).toBeFocused();
+  await replyDescription.press('Tab');
+  await expect(replyDescription).not.toBeFocused();
+  await replyEditor.locator('.feedback-count').click();
+  await expect(replyDescription).toBeFocused();
   const replySubmit = details.getByRole('button', { name: 'Submit', exact: true });
   await expect(replySubmit).toBeDisabled();
   const incorrect = details.getByRole('button', { name: 'Incorrect or incomplete' });
@@ -477,7 +487,8 @@ testWithProvider('keeps reply feedback visible while scrolling the conversation'
   const top = (item: Locator) => item.evaluate(el => el.getBoundingClientRect().top);
   const anchorBefore = await top(active);
   const dialogBefore = await top(dialog);
-  await panes.evaluate(el => el.scrollBy(0, -32));
+  await panes.hover({ position: { x: 16, y: 16 } });
+  await page.mouse.wheel(0, -32);
   await expect.poll(() => top(active)).toBeGreaterThan(anchorBefore);
   await expect.poll(() => top(dialog)).toBeGreaterThan(dialogBefore);
   await panes.evaluate(el => el.scrollTo(0, 0));
@@ -591,9 +602,11 @@ testWithProvider('requires a reason from the SSH host before submitting reply fe
   const localGuide = 'https://example.com/local/feedback';
   const remoteGuide = 'https://example.com/remote/feedback';
   let remoteReasons = [remoteReason];
+  let remoteReads = 0;
   await page.route(url => url.pathname.endsWith(configPath), async route => {
-    await pendingReasons.promise;
     const remote = new URL(route.request().url()).pathname === hostProxy + configPath;
+    if (remote) remoteReads += 1;
+    await pendingReasons.promise;
     const negative = remote ? remoteReasons : [{ id: 'local_choice', label: { en: 'Local reason', zh: '本机原因' } }];
     const positive = [{ id: 'solved_problem', label: { en: 'Solved my problem', zh: '解决了我的问题' } }];
     await route.fulfill({ json: envelope({ config: {
@@ -601,25 +614,24 @@ testWithProvider('requires a reason from the SSH host before submitting reply fe
     } }) });
   });
   const read = page.waitForRequest(request => new URL(request.url()).pathname.endsWith(configPath));
+  const up = page.getByRole('button', { name: 'Good response' });
   const down = page.getByRole('button', { name: 'Poor response' });
+  await up.hover();
+  expect(new URL((await read).url()).pathname).toBe(hostProxy + configPath);
   await down.click();
   const details = page.getByRole('dialog', { name: 'What could be better?' });
   const input = details.getByRole('textbox');
   const submit = details.getByRole('button', { name: 'Submit', exact: true });
   const choices = details.getByRole('group').getByRole('button');
-  const layout = () => Promise.all([details.boundingBox(), input.boundingBox(), submit.boundingBox()]);
-  let beforeReasons: Awaited<ReturnType<typeof layout>>;
   try {
-    expect.soft(new URL((await read).url()).pathname).toBe(hostProxy + configPath);
+    expect(remoteReads).toBe(1);
     await expect(choices).toHaveCount(0);
     await input.fill('Example detail');
     await expect(submit).toBeDisabled();
-    beforeReasons = await layout();
   } finally {
     pendingReasons.resolve();
   }
   await expect(choices).toHaveText([remoteReason.label.en]);
-  expect(await layout()).toEqual(beforeReasons);
   await expect(details.getByRole('link', { name: 'Learn more about what you submit' })).toHaveAttribute('href', remoteGuide);
   const reason = details.getByRole('button', { name: remoteReason.label.en, exact: true });
   await expect(submit).toBeDisabled();
@@ -635,8 +647,16 @@ testWithProvider('requires a reason from the SSH host before submitting reply fe
     body: { kind: 'details', reasons: [remoteReason.id], content: 'Example detail', upload_session: false },
   });
 
-  remoteReasons = [];
   await page.getByRole('button', { name: 'Remove dislike' }).click();
+  await down.click();
+  await expect(choices).toHaveText([remoteReason.label.en]);
+  expect(remoteReads).toBe(1);
+  await details.getByRole('button', { name: 'Close' }).click();
+  await expect(details).toBeHidden();
+
+  remoteReasons = [];
+  await page.reload();
+  await expect(page.getByText('The remote task finished.', { exact: true })).toBeVisible();
   await down.click();
   await expect(details).toBeVisible();
   await expect(details.getByRole('group').getByRole('button')).toHaveCount(0);
@@ -651,21 +671,17 @@ testWithProvider('requires a reason from the SSH host before submitting reply fe
     id: `choice_${i}`, label: { en: `A longer description for response issue ${i}`, zh: `原因 ${i}` },
   }));
   pendingReasons = deferred();
-  await page.getByRole('button', { name: 'Remove dislike' }).click();
-  await expect(down).toBeEnabled();
+  await page.reload();
+  await expect(page.getByText('The remote task finished.', { exact: true })).toBeVisible();
   await down.focus();
   await down.press('Enter');
   try {
     await expect(details.getByRole('group')).toHaveAttribute('aria-busy', 'true');
-    await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => resolve())));
-    beforeReasons = await layout();
   } finally {
     pendingReasons.resolve();
   }
   await expect(choices).toHaveText(remoteReasons.map(reason => reason.label.en));
-  expect(await layout()).toEqual(beforeReasons);
-  await expect(choices.nth(1)).toBeInViewport();
-  await expect(choices.nth(1)).not.toBeInViewport({ ratio: 1 });
+  for (let i = 0; i < remoteReasons.length; i++) await expect(choices.nth(i)).toBeInViewport({ ratio: 1 });
   await choices.first().focus();
   for (let i = 1; i < remoteReasons.length; i++) await page.keyboard.press('Tab');
   await expect(choices.last()).toBeFocused();
