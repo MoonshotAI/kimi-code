@@ -1252,6 +1252,7 @@ GET /api/v1/sessions/{session_id}/prompts response 200: oneOf
 GET /api/v1/sessions/{session_id}/prompts response 200<code=0>.code: enum 0
 GET /api/v1/sessions/{session_id}/prompts response 200<code=0>.data.active.content: array
 GET /api/v1/sessions/{session_id}/prompts response 200<code=0>.data.active.content[]: oneOf
+GET /api/v1/sessions/{session_id}/prompts response 200<code=0>.data.active.content[]<audio>: shape 686a6c9c
 GET /api/v1/sessions/{session_id}/prompts response 200<code=0>.data.active.content[]<file>: shape 89bafe20
 GET /api/v1/sessions/{session_id}/prompts response 200<code=0>.data.active.content[]<image>: shape 0631faa8
 GET /api/v1/sessions/{session_id}/prompts response 200<code=0>.data.active.content[]<text>.text: string
@@ -1269,7 +1270,7 @@ GET /api/v1/sessions/{session_id}/prompts response 200<code=0>.data.active.statu
 GET /api/v1/sessions/{session_id}/prompts response 200<code=0>.data.active.user_message_id: string minLength=1
 GET /api/v1/sessions/{session_id}/prompts response 200<code=0>.data.active: object nullable closed
 GET /api/v1/sessions/{session_id}/prompts response 200<code=0>.data.queued: array
-GET /api/v1/sessions/{session_id}/prompts response 200<code=0>.data.queued[]: shape 334778dd
+GET /api/v1/sessions/{session_id}/prompts response 200<code=0>.data.queued[]: shape ace810ef
 GET /api/v1/sessions/{session_id}/prompts response 200<code=0>.data: object closed
 GET /api/v1/sessions/{session_id}/prompts response 200<code=0>.details: any optional
 GET /api/v1/sessions/{session_id}/prompts response 200<code=0>.msg: string
@@ -2496,6 +2497,21 @@ POST /api/v1/sessions/{session_id}/prompts param path:session_id: string minLeng
 POST /api/v1/sessions/{session_id}/prompts request.agent_id: string minLength=1 optional
 POST /api/v1/sessions/{session_id}/prompts request.content: array minItems=1
 POST /api/v1/sessions/{session_id}/prompts request.content[]: oneOf
+POST /api/v1/sessions/{session_id}/prompts request.content[]<audio>.name: string minLength=1 optional
+POST /api/v1/sessions/{session_id}/prompts request.content[]<audio>.source: oneOf
+POST /api/v1/sessions/{session_id}/prompts request.content[]<audio>.source<#0>: shape 54fae70b
+POST /api/v1/sessions/{session_id}/prompts request.content[]<audio>.source<#1>: shape e5d0e0f3
+POST /api/v1/sessions/{session_id}/prompts request.content[]<audio>.source<#2>.file_id: string minLength=1
+POST /api/v1/sessions/{session_id}/prompts request.content[]<audio>.source<#2>.kind: enum "file"
+POST /api/v1/sessions/{session_id}/prompts request.content[]<audio>.source<#2>: object
+POST /api/v1/sessions/{session_id}/prompts request.content[]<audio>.source<#3>.file_id: string minLength=1
+POST /api/v1/sessions/{session_id}/prompts request.content[]<audio>.source<#3>.kind: enum "session_media"
+POST /api/v1/sessions/{session_id}/prompts request.content[]<audio>.source<#3>: object
+POST /api/v1/sessions/{session_id}/prompts request.content[]<audio>.source<#4>.kind: enum "path"
+POST /api/v1/sessions/{session_id}/prompts request.content[]<audio>.source<#4>.path: string minLength=1
+POST /api/v1/sessions/{session_id}/prompts request.content[]<audio>.source<#4>: object
+POST /api/v1/sessions/{session_id}/prompts request.content[]<audio>.type: enum "audio"
+POST /api/v1/sessions/{session_id}/prompts request.content[]<audio>: object
 POST /api/v1/sessions/{session_id}/prompts request.content[]<file>: shape d7619c7e
 POST /api/v1/sessions/{session_id}/prompts request.content[]<image>: shape 7f82b9f5
 POST /api/v1/sessions/{session_id}/prompts request.content[]<text>.text: string
@@ -2537,7 +2553,7 @@ POST /api/v1/sessions/{session_id}/prompts request.thinking: string minLength=1 
 POST /api/v1/sessions/{session_id}/prompts request: object
 POST /api/v1/sessions/{session_id}/prompts response 200: oneOf
 POST /api/v1/sessions/{session_id}/prompts response 200<code=0>.code: enum 0
-POST /api/v1/sessions/{session_id}/prompts response 200<code=0>.data: shape 334778dd
+POST /api/v1/sessions/{session_id}/prompts response 200<code=0>.data: shape ace810ef
 POST /api/v1/sessions/{session_id}/prompts response 200<code=0>.details: any optional
 POST /api/v1/sessions/{session_id}/prompts response 200<code=0>.msg: string
 POST /api/v1/sessions/{session_id}/prompts response 200<code=0>.request_id: string
@@ -2668,6 +2684,21 @@ POST /api/v1/sessions/{session_id}/steer param path:session_id: string minLength
 POST /api/v1/sessions/{session_id}/steer request.agent_id: string minLength=1 optional
 POST /api/v1/sessions/{session_id}/steer request.content: array minItems=1
 POST /api/v1/sessions/{session_id}/steer request.content[]: oneOf
+POST /api/v1/sessions/{session_id}/steer request.content[]<audio>.name: string minLength=1 optional
+POST /api/v1/sessions/{session_id}/steer request.content[]<audio>.source: oneOf
+POST /api/v1/sessions/{session_id}/steer request.content[]<audio>.source<#0>: shape 54fae70b
+POST /api/v1/sessions/{session_id}/steer request.content[]<audio>.source<#1>: shape e5d0e0f3
+POST /api/v1/sessions/{session_id}/steer request.content[]<audio>.source<#2>.file_id: string minLength=1
+POST /api/v1/sessions/{session_id}/steer request.content[]<audio>.source<#2>.kind: enum "file"
+POST /api/v1/sessions/{session_id}/steer request.content[]<audio>.source<#2>: object
+POST /api/v1/sessions/{session_id}/steer request.content[]<audio>.source<#3>.file_id: string minLength=1
+POST /api/v1/sessions/{session_id}/steer request.content[]<audio>.source<#3>.kind: enum "session_media"
+POST /api/v1/sessions/{session_id}/steer request.content[]<audio>.source<#3>: object
+POST /api/v1/sessions/{session_id}/steer request.content[]<audio>.source<#4>.kind: enum "path"
+POST /api/v1/sessions/{session_id}/steer request.content[]<audio>.source<#4>.path: string minLength=1
+POST /api/v1/sessions/{session_id}/steer request.content[]<audio>.source<#4>: object
+POST /api/v1/sessions/{session_id}/steer request.content[]<audio>.type: enum "audio"
+POST /api/v1/sessions/{session_id}/steer request.content[]<audio>: object
 POST /api/v1/sessions/{session_id}/steer request.content[]<file>: shape d7619c7e
 POST /api/v1/sessions/{session_id}/steer request.content[]<image>: shape 7f82b9f5
 POST /api/v1/sessions/{session_id}/steer request.content[]<text>.text: string
@@ -2709,7 +2740,7 @@ POST /api/v1/sessions/{session_id}/steer request.thinking: string minLength=1 op
 POST /api/v1/sessions/{session_id}/steer request: object
 POST /api/v1/sessions/{session_id}/steer response 200: oneOf
 POST /api/v1/sessions/{session_id}/steer response 200<code=0>.code: enum 0
-POST /api/v1/sessions/{session_id}/steer response 200<code=0>.data: shape 334778dd
+POST /api/v1/sessions/{session_id}/steer response 200<code=0>.data: shape ace810ef
 POST /api/v1/sessions/{session_id}/steer response 200<code=0>.details: any optional
 POST /api/v1/sessions/{session_id}/steer response 200<code=0>.msg: string
 POST /api/v1/sessions/{session_id}/steer response 200<code=0>.request_id: string
@@ -4326,23 +4357,6 @@ shape 2bda561c.data: enum null nullable
 shape 2bda561c.details: any optional
 shape 2bda561c.msg: string
 shape 2bda561c.request_id: string
-shape 334778dd.content: array
-shape 334778dd.content[]: oneOf
-shape 334778dd.content[]<file>: shape 89bafe20
-shape 334778dd.content[]<image>: shape 0631faa8
-shape 334778dd.content[]<text>.text: string
-shape 334778dd.content[]<text>.type: enum "text"
-shape 334778dd.content[]<text>: object closed
-shape 334778dd.content[]<thinking>: shape 5cd46836
-shape 334778dd.content[]<tool_result>: shape b29a9b49
-shape 334778dd.content[]<tool_use>: shape 2a2cb87a
-shape 334778dd.content[]<video>: shape e66636c8
-shape 334778dd.created_at: any
-shape 334778dd.metadata: object optional
-shape 334778dd.metadata{*}: any optional
-shape 334778dd.prompt_id: string minLength=1
-shape 334778dd.status: enum "blocked"|"failed"|"queued"|"running"
-shape 334778dd.user_message_id: string minLength=1
 shape 3941565c.ended_at: string optional
 shape 3941565c.finish_reason: string optional
 shape 3941565c.index: integer maximum=9007199254740991 exclusiveMinimum=0
@@ -4406,6 +4420,20 @@ shape 66b4a738.data: object closed
 shape 66b4a738.details: any optional
 shape 66b4a738.msg: string
 shape 66b4a738.request_id: string
+shape 686a6c9c.name: string minLength=1 optional
+shape 686a6c9c.source: oneOf
+shape 686a6c9c.source<#0>: shape 2128f315
+shape 686a6c9c.source<#1>: shape 3c3e0d22
+shape 686a6c9c.source<#2>.file_id: string minLength=1
+shape 686a6c9c.source<#2>.kind: enum "file"
+shape 686a6c9c.source<#2>: object closed
+shape 686a6c9c.source<#3>.file_id: string minLength=1
+shape 686a6c9c.source<#3>.kind: enum "session_media"
+shape 686a6c9c.source<#3>: object closed
+shape 686a6c9c.source<#4>.kind: enum "path"
+shape 686a6c9c.source<#4>.path: string minLength=1
+shape 686a6c9c.source<#4>: object closed
+shape 686a6c9c.type: enum "audio"
 shape 6c14572c.code: enum 40408
 shape 6c14572c.data: enum null nullable
 shape 6c14572c.details: any optional
@@ -4586,6 +4614,24 @@ shape aca164b0.executor: enum "kaos"|"local" optional
 shape aca164b0.startup_timeout_ms: integer minimum=1 maximum=2147483647 optional
 shape aca164b0.tool_timeout_ms: integer minimum=1 maximum=2147483647 optional
 shape aca164b0.transport: enum "stdio"
+shape ace810ef.content: array
+shape ace810ef.content[]: oneOf
+shape ace810ef.content[]<audio>: shape 686a6c9c
+shape ace810ef.content[]<file>: shape 89bafe20
+shape ace810ef.content[]<image>: shape 0631faa8
+shape ace810ef.content[]<text>.text: string
+shape ace810ef.content[]<text>.type: enum "text"
+shape ace810ef.content[]<text>: object closed
+shape ace810ef.content[]<thinking>: shape 5cd46836
+shape ace810ef.content[]<tool_result>: shape b29a9b49
+shape ace810ef.content[]<tool_use>: shape 2a2cb87a
+shape ace810ef.content[]<video>: shape e66636c8
+shape ace810ef.created_at: any
+shape ace810ef.metadata: object optional
+shape ace810ef.metadata{*}: any optional
+shape ace810ef.prompt_id: string minLength=1
+shape ace810ef.status: enum "blocked"|"failed"|"queued"|"running"
+shape ace810ef.user_message_id: string minLength=1
 shape b0617deb.auth: enum "oauth" optional
 shape b0617deb.bearer_token_env_var: string minLength=1 optional
 shape b0617deb.deferred: boolean optional

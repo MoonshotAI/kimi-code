@@ -212,6 +212,7 @@ interface TestMediaResolution {
 function requester(opts: {
   videoIn?: boolean;
   imageIn?: boolean;
+  audioIn?: boolean;
   protocol?: Protocol;
   providerType?: string;
   baseUrl?: string;
@@ -230,6 +231,7 @@ function requester(opts: {
       capability: {
         video_in: opts.videoIn ?? true,
         image_in: opts.imageIn ?? true,
+        audio_in: opts.audioIn ?? true,
       },
       thinking: { alwaysThinking: false },
       maxContextSize: 1000,
@@ -618,6 +620,67 @@ describe('AgentMediaResolverService video strategy', () => {
 
     expect(firstPart(out)).toEqual(msPart('prov-1'));
     expect(upload).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('AgentMediaResolverService audio strategy', () => {
+  const AUDIO_BYTES = Buffer.from('fake wav bytes');
+  const AUDIO_CAPABILITY_HINT =
+    '[audio omitted: the current model does not support audio input; use a model with audio input capability or convert the file to text]';
+
+  function audioMessage(url: string): Message {
+    return { role: 'user', content: [{ type: 'audio_url', audioUrl: { url } }] };
+  }
+
+  it('inlines a kimi-file audio reference as a base64 data url for an audio-capable model', async () => {
+    const res = resolver(new Map([[FILE_ID, { name: 'clip.wav', bytes: AUDIO_BYTES }]]));
+    const message = audioMessage(buildKimiFileUrl(FILE_ID));
+
+    const first = await resolveMedia(res, [message], requester({}));
+    const second = await resolveMedia(res, [message], requester({}));
+
+    const expected = {
+      type: 'audio_url',
+      audioUrl: { url: `data:audio/wav;base64,${AUDIO_BYTES.toString('base64')}` },
+    };
+    expect(firstPart(first)).toEqual(expected);
+    expect(firstPart(second)).toEqual(expected);
+  });
+
+  it('degrades to a capability hint when the current model cannot accept audio', async () => {
+    const canonical = await plantCanonical(FILE_ID, '.wav', AUDIO_BYTES);
+    const res = resolver(new Map([[FILE_ID, { name: 'clip.wav', bytes: AUDIO_BYTES }]]), sessionDir);
+    const message = audioMessage(buildKimiFileUrl(FILE_ID));
+
+    const capable = await resolveMedia(res, [message], requester({}));
+    expect(capable[0]!.content.some((part) => part.type === 'audio_url')).toBe(true);
+
+    const incapable = await resolveMedia(res, [message], requester({ audioIn: false }));
+    expect(firstPart(incapable)).toEqual({
+      type: 'text',
+      text: `${AUDIO_CAPABILITY_HINT}\n<audio path="${canonical}"></audio>`,
+    });
+  });
+
+  it('degrades to a path tag when the stored file is not recognizable audio', async () => {
+    const canonical = await plantCanonical(FILE_ID, '.bin', AUDIO_BYTES);
+    const res = resolver(new Map([[FILE_ID, { name: 'blob.bin', bytes: AUDIO_BYTES }]]), sessionDir);
+
+    const out = await resolveMedia(res, [audioMessage(buildKimiFileUrl(FILE_ID))], requester({}));
+
+    expect(firstPart(out)).toEqual({
+      type: 'text',
+      text: `<audio path="${canonical}"></audio>`,
+    });
+  });
+
+  it('degrades to the unavailable text when the reference is stale', async () => {
+    const res = resolver(new Map());
+    const out = await resolveMedia(res, [audioMessage(buildKimiFileUrl('missing'))], requester({}));
+    expect(firstPart(out)).toEqual({
+      type: 'text',
+      text: '[audio omitted: the uploaded file is no longer available]',
+    });
   });
 });
 

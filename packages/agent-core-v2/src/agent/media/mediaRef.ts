@@ -83,6 +83,10 @@ export function mediaKindForPath(path: string): 'image' | 'video' | 'audio' | un
   return undefined;
 }
 
+export function audioMimeForPath(path: string): string | undefined {
+  return AUDIO_MIME_BY_SUFFIX[mediaSuffix(path)];
+}
+
 export function mediaKindForMime(mimeType: string): 'image' | 'video' | 'audio' | undefined {
   const semi = mimeType.indexOf(';');
   const base = (semi === -1 ? mimeType : mimeType.slice(0, semi)).trim().toLowerCase();
@@ -123,7 +127,7 @@ export function parseDaemonFileUrl(url: string): DaemonFileRef | undefined {
 
 export function daemonFileRefFromPart(
   part: ContentPart,
-): { readonly kind: 'image' | 'video'; readonly ref: DaemonFileRef } | undefined {
+): { readonly kind: 'image' | 'video' | 'audio'; readonly ref: DaemonFileRef } | undefined {
   if (part.type === 'image_url') {
     const ref = parseDaemonFileUrl(part.imageUrl.url);
     return ref === undefined ? undefined : { kind: 'image', ref };
@@ -131,6 +135,10 @@ export function daemonFileRefFromPart(
   if (part.type === 'video_url') {
     const ref = parseDaemonFileUrl(part.videoUrl.url);
     return ref === undefined ? undefined : { kind: 'video', ref };
+  }
+  if (part.type === 'audio_url') {
+    const ref = parseDaemonFileUrl(part.audioUrl.url);
+    return ref === undefined ? undefined : { kind: 'audio', ref };
   }
   return undefined;
 }

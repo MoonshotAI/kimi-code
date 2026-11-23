@@ -40,6 +40,7 @@ import { IBlobStore } from '#/persistence/interface/blobStore';
 import { detectFileType, MEDIA_SNIFF_BYTES } from './file-type';
 import { isDataUrl, isModelAcceptedImageMime, normalizeImageMime } from './image-format-policy';
 import {
+  audioMimeForPath,
   buildDaemonFileUrl,
   buildMediaOpenTag,
   buildMediaTag,
@@ -66,6 +67,8 @@ const VIDEO_UNAVAILABLE_TEXT =
   '[video omitted: the uploaded file is no longer available]';
 const IMAGE_UNAVAILABLE_TEXT =
   '[image omitted: the uploaded file is no longer available]';
+const AUDIO_UNAVAILABLE_TEXT =
+  '[audio omitted: the uploaded file is no longer available]';
 const IMAGE_MEMO_MAX_BYTES = 8 * 1024 * 1024;
 const IMAGE_MEMO_MAX_TOTAL_BYTES = 64 * 1024 * 1024;
 const REQUEST_MEDIA_BUDGET_BYTES = 20 * 1024 * 1024;
@@ -84,7 +87,7 @@ export const mediaBudgetDroppedKey = defineState<Set<string>>(
   () => new Set(),
 );
 
-type ResolvedMediaKind = 'image' | 'video';
+type ResolvedMediaKind = 'image' | 'video' | 'audio';
 
 interface MediaBudgetEntry {
   readonly messageIndex: number;
@@ -157,11 +160,12 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
       const user = message.role === 'user';
       const position: MediaPosition = message.role === 'tool' ? 'tool_result' : 'content';
       for (const [partIndex, part] of message.content.entries()) {
-        if (part.type !== 'image_url' && part.type !== 'video_url') {
+        if (part.type !== 'image_url' && part.type !== 'video_url' && part.type !== 'audio_url') {
           messageSlots.push([part]);
           continue;
         }
-        const kind: ResolvedMediaKind = part.type === 'image_url' ? 'image' : 'video';
+        const kind: ResolvedMediaKind =
+          part.type === 'image_url' ? 'image' : part.type === 'video_url' ? 'video' : 'audio';
         const daemonRef = daemonFileRefFromPart(part)?.ref;
         const explicitName = user ? mediaNameOf(part) : undefined;
         const needFile =
@@ -189,7 +193,9 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
         const resolved =
           kind === 'video'
             ? await this.resolveVideoPart(daemonRef, model, request, position, label, signal)
-            : await this.resolveImagePart(daemonRef, model, request, position, label, signal);
+            : kind === 'audio'
+              ? await this.resolveAudioPart(daemonRef, model, request, position, label, signal)
+              : await this.resolveImagePart(daemonRef, model, request, position, label, signal);
         budgetEntries.push({
           messageIndex,
           slotIndex: messageSlots.length,
@@ -573,6 +579,80 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
     }
   }
 
+  private async resolveAudioPart(
+    ref: DaemonFileRef,
+    model: Model,
+    request: InitializedLlmRequester,
+    position: MediaPosition,
+    label: MediaLabel,
+    signal: AbortSignal | undefined,
+  ): Promise<ContentPart> {
+    const support = mediaSupportForRequest(request, 'audio', position);
+    if (model.spec.capability?.audio_in !== true || support === undefined) {
+      this.telemetry.track2('media_resolve_fallback', {
+        kind: 'audio',
+        reason: 'unsupported',
+        model: model.spec.name,
+      });
+      return model.spec.capability?.audio_in === true
+        ? audioTag(label)
+        : unsupportedMedia('audio', label);
+    }
+    const cacheKey = `audio\0${ref.fileId}\0${model.providerType ?? model.protocol}\0${model.protocol}`;
+    const memoed = this.resolved.get(cacheKey);
+    if (memoed !== undefined && memoed.type === 'text') return audioTag(label);
+    const { part, memoize } = await this.resolveAudioUncached(ref, label, model, support, signal);
+    if (memoize) this.resolved.set(cacheKey, part);
+    return part;
+  }
+
+  private async resolveAudioUncached(
+    ref: DaemonFileRef,
+    label: MediaLabel,
+    model: Model,
+    support: MediaKindSupport,
+    signal: AbortSignal | undefined,
+  ): Promise<{ part: ContentPart; memoize: boolean }> {
+    let source: { readonly bytes: Buffer; readonly filename: string };
+    try {
+      source = await this.readMedia(ref, signal);
+    } catch {
+      signal?.throwIfAborted();
+      this.telemetry.track2('media_resolve_fallback', {
+        kind: 'audio',
+        reason: 'read_failed',
+        model: model.spec.name,
+      });
+      return { part: audioTag(label), memoize: true };
+    }
+
+    const mimeType = audioMimeForPath(source.filename) ?? (await this.storedAudioMime(ref));
+    if (mimeType === undefined || !mediaAcceptsMime(support, mimeType)) {
+      this.telemetry.track2('media_resolve_fallback', {
+        kind: 'audio',
+        reason: 'invalid',
+        model: model.spec.name,
+      });
+      return { part: audioTag(label), memoize: true };
+    }
+    if (!support.sources.includes('inline')) {
+      return { part: audioTag(label), memoize: true };
+    }
+    return {
+      part: {
+        type: 'audio_url',
+        audioUrl: { url: `data:${mimeType};base64,${source.bytes.toString('base64')}` },
+      },
+      memoize: false,
+    };
+  }
+
+  private async storedAudioMime(ref: DaemonFileRef): Promise<string | undefined> {
+    const file = await this.mediaStore.open(ref.fileId).catch(() => undefined);
+    const mediaType = file?.mediaType.split(';')[0]?.trim().toLowerCase();
+    return mediaType !== undefined && mediaType.startsWith('audio/') ? mediaType : undefined;
+  }
+
   private async readMedia(
     ref: DaemonFileRef,
     signal: AbortSignal | undefined,
@@ -689,7 +769,9 @@ function inlineMediaBudgetEntry(
   messageIndex: number,
   slotIndex: number,
 ): MediaBudgetEntry | undefined {
-  if (part.type !== 'image_url' && part.type !== 'video_url') return undefined;
+  if (part.type !== 'image_url' && part.type !== 'video_url' && part.type !== 'audio_url') {
+    return undefined;
+  }
   const url = mediaUrlOf(part);
   if (!isDataUrl(url)) return undefined;
   const hash = createHash('sha256').update(kind).update('\0').update(url).digest('hex');
@@ -697,7 +779,7 @@ function inlineMediaBudgetEntry(
 }
 
 function inlinePartBytes(part: ContentPart): number {
-  if (part.type !== 'image_url' && part.type !== 'video_url') return 0;
+  if (part.type !== 'image_url' && part.type !== 'video_url' && part.type !== 'audio_url') return 0;
   const url = mediaUrlOf(part);
   return isDataUrl(url) ? url.length : 0;
 }
@@ -718,6 +800,10 @@ function degradedImage(label: MediaLabel): ContentPart {
 
 function videoTag(label: MediaLabel): ContentPart {
   return pathTagOr(VIDEO_UNAVAILABLE_TEXT, 'video', label);
+}
+
+function audioTag(label: MediaLabel): ContentPart {
+  return pathTagOr(AUDIO_UNAVAILABLE_TEXT, 'audio', label);
 }
 
 function msFileIdFromUrl(url: string): string | undefined {

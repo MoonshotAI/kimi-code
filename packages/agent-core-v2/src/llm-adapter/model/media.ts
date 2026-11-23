@@ -1,5 +1,11 @@
 import { resolveEndpoint } from '@moonshot-ai/core/llm/endpoint';
-import type { ContentPart, ImageURLPart, MediaKind, VideoURLPart } from '@moonshot-ai/core/llm/message';
+import {
+  isMediaPart,
+  type ContentPart,
+  type ImageURLPart,
+  type MediaKind,
+  type VideoURLPart,
+} from '@moonshot-ai/core/llm/message';
 import type { ImageUploadInput, VideoUploadInput } from '#human/media/upload';
 import {
   acceptsMime,
@@ -105,7 +111,7 @@ export function mediaAcceptsSource(
   support: MediaKindSupport,
   part: ContentPart,
 ): boolean {
-  if (part.type !== 'image_url' && part.type !== 'video_url') return false;
+  if (!isMediaPart(part)) return false;
   return acceptsSource(support, part);
 }
 

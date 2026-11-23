@@ -203,7 +203,7 @@ export type TurnBlock = (
 ) & { streaming?: boolean; debug?: readonly ConversationRequestDebug[] };
 
 export interface TurnAttachment {
-  kind: 'image' | 'video' | 'file';
+  kind: 'image' | 'video' | 'audio' | 'file';
   url: string;
   fileId?: string;
   sessionId?: string;

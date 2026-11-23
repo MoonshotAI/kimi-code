@@ -58,6 +58,13 @@ export const videoContentSchema = z.object({
 });
 export type VideoContent = z.infer<typeof videoContentSchema>;
 
+export const audioContentSchema = z.object({
+  type: z.literal('audio'),
+  source: imageSourceSchema,
+  name: z.string().min(1).optional(),
+});
+export type AudioContent = z.infer<typeof audioContentSchema>;
+
 export const fileContentSchema = z
   .object({
     type: z.literal('file'),
@@ -100,6 +107,7 @@ export const messageContentSchema = z.discriminatedUnion('type', [
   toolResultContentSchema,
   imageContentSchema,
   videoContentSchema,
+  audioContentSchema,
   fileContentSchema,
   thinkingContentSchema,
 ]);

@@ -37,6 +37,7 @@ import type { ContentPart } from '@moonshot-ai/core/llm/message';
 import {
   IMAGE_MIME_BY_SUFFIX,
   VIDEO_MIME_BY_SUFFIX,
+  AUDIO_MIME_BY_SUFFIX,
 } from '@moonshot-ai/agent-core-v2/agent/media/mediaRef';
 import { isSensitiveFile } from '@moonshot-ai/agent-core-v2/tool/path-access';
 import type { IHostFileSystem } from '@moonshot-ai/agent-core-v2/os/interface/hostFileSystem';
@@ -50,7 +51,10 @@ export async function assertPromptFileRefs(content: WireContent, store: IFileSer
   for (const part of content) {
     if (part.type === 'file') {
       if (part.file_id !== undefined) await store.get(part.file_id);
-    } else if ((part.type === 'image' || part.type === 'video') && part.source.kind === 'file') {
+    } else if (
+      (part.type === 'image' || part.type === 'video' || part.type === 'audio') &&
+      part.source.kind === 'file'
+    ) {
       const file = await store.get(part.source.file_id);
       assertMediaFile(file, part.type);
     }
@@ -77,7 +81,10 @@ export function contentHasPathRefs(content: WireContent): boolean {
 
 function promptPartPath(part: WireContent[number]): string | undefined {
   if (part.type === 'file') return part.path;
-  if ((part.type === 'image' || part.type === 'video') && part.source.kind === 'path') {
+  if (
+    (part.type === 'image' || part.type === 'video' || part.type === 'audio') &&
+    part.source.kind === 'path'
+  ) {
     return part.source.path;
   }
   return undefined;
@@ -103,7 +110,7 @@ export async function resolvePromptSessionMediaRefs(
   let changed = false;
   for (const part of content) {
     if (
-      (part.type !== 'image' && part.type !== 'video') ||
+      (part.type !== 'image' && part.type !== 'video' && part.type !== 'audio') ||
       part.source.kind !== 'session_media'
     ) {
       resolved.push(part);
@@ -131,6 +138,9 @@ export function contentToCoreParts(content: WireContent): ContentPart[] {
     else if (part.type === 'video' && part.source.kind === 'url') parts.push({ type: 'video_url', videoUrl: { url: part.source.url, id: part.source.id, name: part.name } });
     else if (part.type === 'video' && part.source.kind === 'base64') parts.push({ type: 'video_url', videoUrl: { url: `data:${part.source.media_type};base64,${part.source.data}`, name: part.name } });
     else if (part.type === 'video' && part.source.kind === 'session_media') parts.push({ type: 'video_url', videoUrl: { url: buildDaemonFileUrl(part.source.file_id), id: part.source.file_id, name: part.name } });
+    else if (part.type === 'audio' && part.source.kind === 'url') parts.push({ type: 'audio_url', audioUrl: { url: part.source.url, id: part.source.id } });
+    else if (part.type === 'audio' && part.source.kind === 'base64') parts.push({ type: 'audio_url', audioUrl: { url: `data:${part.source.media_type};base64,${part.source.data}` } });
+    else if (part.type === 'audio' && part.source.kind === 'session_media') parts.push({ type: 'audio_url', audioUrl: { url: buildDaemonFileUrl(part.source.file_id), id: part.source.file_id } });
   }
   return parts.map(toCorePart);
 }
@@ -489,7 +499,33 @@ export async function resolvePromptMediaFiles(
         continue;
       }
 
-      if ((part.type !== 'image' && part.type !== 'video') || part.source.kind !== 'file') {
+      if (part.type === 'audio' && part.source.kind === 'path') {
+        const sourcePath = part.source.path;
+        const { resolvedPath } = await statAttachmentFile(sourcePath);
+        const mediaType = pathMediaMime(sourcePath, undefined, 'audio');
+        if (!mediaType.startsWith('audio/')) {
+          throw new Error2('validation.failed', `${sourcePath} is ${mediaType}, not an audio file`);
+        }
+        const saved = await store
+          .save(createReadStream(resolvedPath), basename(sourcePath), { mimeType: mediaType })
+          .catch((error: unknown) => {
+            if (isFsError(error)) throw fileNotFoundError(sourcePath);
+            throw error;
+          });
+        ownedFileIds.add(saved.id);
+        content.push({
+          type: 'audio',
+          source: { kind: 'url', url: buildDaemonFileUrl(saved.id) },
+          name: part.name ?? basename(sourcePath),
+        });
+        changed = true;
+        continue;
+      }
+
+      if (
+        (part.type !== 'image' && part.type !== 'video' && part.type !== 'audio') ||
+        part.source.kind !== 'file'
+      ) {
         content.push(part);
         continue;
       }
@@ -571,7 +607,7 @@ export async function resolvePromptMediaFiles(
       }
 
       content.push({
-        type: 'video',
+        type: part.type,
         source: { kind: 'url', url: buildDaemonFileUrl(file.meta.id) },
         name: part.name ?? file.meta.name,
       });
@@ -633,12 +669,15 @@ function imageExtensionForMime(mediaType: string): string {
 function pathMediaMime(
   sourcePath: string,
   data: Uint8Array | undefined,
-  kind: 'image' | 'video',
+  kind: 'image' | 'video' | 'audio',
 ): string {
   const suffix = extname(sourcePath).toLowerCase();
   if (kind === 'image') {
     if (suffix === '.svg') return 'image/svg+xml';
     const declared = IMAGE_MIME_BY_SUFFIX[suffix];
+    if (declared !== undefined) return declared;
+  } else if (kind === 'audio') {
+    const declared = AUDIO_MIME_BY_SUFFIX[suffix];
     if (declared !== undefined) return declared;
   } else {
     const declared = VIDEO_MIME_BY_SUFFIX[suffix];
@@ -660,11 +699,11 @@ async function readFileOrStream(file: GetResult): Promise<Buffer> {
   return Buffer.concat(chunks);
 }
 
-function assertMediaFile(file: GetResult, expected: 'image' | 'video'): void {
-  const prefix = expected === 'video' ? 'video/' : 'image/';
+function assertMediaFile(file: GetResult, expected: 'image' | 'video' | 'audio'): void {
+  const prefix = `${expected}/`;
   if (file.meta.media_type.toLowerCase().startsWith(prefix)) return;
   throw new Error2(
     'validation.failed',
-    `file ${file.meta.id} is ${file.meta.media_type}, not ${expected === 'video' ? 'a video' : 'an image'}`,
+    `file ${file.meta.id} is ${file.meta.media_type}, not ${expected === 'video' ? 'a video' : expected === 'audio' ? 'an audio file' : 'an image'}`,
   );
 }

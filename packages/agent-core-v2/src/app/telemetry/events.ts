@@ -669,7 +669,7 @@ export interface WebFetchFallbackEvent {
 }
 
 export interface MediaResolveFallbackEvent {
-  kind: 'image' | 'video';
+  kind: 'image' | 'video' | 'audio';
   reason: 'unsupported' | 'read_failed' | 'upload_failed' | 'invalid';
   model?: string;
 }
