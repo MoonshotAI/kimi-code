@@ -18,12 +18,14 @@ import { SessionBtwService } from '#/features/btw/btwService';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
 import type { ToolCall } from '#human/message';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
-import { ErrorCodes } from '#/errors';
+import { ErrorCodes, Error2 } from '#/errors';
 import {
   IAgentLifecycleService,
   type AgentScopeCreatedEvent,
 } from '#/session/agentLifecycle/agentLifecycle';
+import { ISessionRunGate } from '#/session/sessionActivity/sessionRunGate';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
+import { SessionErrors } from '#/session/errors';
 
 import { stubToolExecutorEvents, type ToolExecutorEventStubs } from '../../agent/toolExecutor/stubs';
 import { stubAgentContext } from '../../agent/agentContext/stubs';
@@ -32,6 +34,8 @@ describe('SessionBtwService', () => {
   let disposables: DisposableStore;
   let ix: TestInstantiationService;
   let fork: ReturnType<typeof vi.fn>;
+  let acquire: ReturnType<typeof vi.fn>;
+  let releaseLease: ReturnType<typeof vi.fn>;
   let appendReminder: ReturnType<typeof vi.fn>;
   let formatDenyMessage: ReturnType<typeof vi.fn>;
   let executorEvents: ToolExecutorEventStubs;
@@ -119,6 +123,14 @@ describe('SessionBtwService', () => {
       read: async () => ({ id: 's1', createdAt: 0, updatedAt: 0, archived: false, agents: {} }),
       unregisterAgent: vi.fn(async () => {}),
     } as unknown as ISessionMetadata);
+    releaseLease = vi.fn();
+    acquire = vi.fn(() => ({ release: releaseLease }));
+    ix.stub(ISessionRunGate, {
+      _serviceBrand: undefined,
+      begin: vi.fn(),
+      acquire,
+      tryAcquire: vi.fn(),
+    } as unknown as ISessionRunGate);
     ix.set(ISessionBtwService, new SyncDescriptor(SessionBtwService));
   });
   afterEach(() => disposables.dispose());
@@ -134,6 +146,26 @@ describe('SessionBtwService', () => {
     expect(appendReminder).toHaveBeenCalledWith(SIDE_QUESTION_SYSTEM_REMINDER, {
       variant: 'btw',
     });
+  });
+
+  it('holds the session run gate while forking and releases it afterwards', async () => {
+    await ix.get(ISessionBtwService).start();
+
+    expect(acquire).toHaveBeenCalledTimes(1);
+    expect(releaseLease).toHaveBeenCalledTimes(1);
+    expect(acquire.mock.invocationCallOrder[0]).toBeLessThan(fork.mock.invocationCallOrder[0]!);
+    expect(fork.mock.invocationCallOrder[0]).toBeLessThan(releaseLease.mock.invocationCallOrder[0]!);
+  });
+
+  it('rejects with session.stale before forking when the session was updated by another client', async () => {
+    acquire.mockImplementationOnce(() => {
+      throw new Error2(SessionErrors.codes.SESSION_STALE, 'stale');
+    });
+
+    await expect(ix.get(ISessionBtwService).start()).rejects.toMatchObject({
+      code: SessionErrors.codes.SESSION_STALE,
+    });
+    expect(fork).not.toHaveBeenCalled();
   });
 
   it('vetoes non-read-only tool calls on the child through the btw deny listener', async () => {

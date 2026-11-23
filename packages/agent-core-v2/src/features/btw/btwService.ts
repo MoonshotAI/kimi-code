@@ -7,6 +7,7 @@ import { registerLegacyStarting } from '#/agent/toolExecutor/legacyHooks';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { ErrorCodes, Error2 } from '#/errors';
 import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
+import { ISessionRunGate } from '#/session/sessionActivity/sessionRunGate';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 
 import {
@@ -24,6 +25,7 @@ export class SessionBtwService extends Disposable implements ISessionBtwService 
   constructor(
     @IAgentLifecycleService private readonly agentLifecycle: IAgentLifecycleService,
     @ISessionMetadata private readonly sessionMetadata: ISessionMetadata,
+    @ISessionRunGate private readonly runGate: ISessionRunGate,
   ) {
     super();
     this._register(
@@ -50,10 +52,12 @@ export class SessionBtwService extends Disposable implements ISessionBtwService 
     if (main === undefined) {
       throw new Error2(ErrorCodes.AGENT_NOT_FOUND, 'Main agent was not found');
     }
-    const childContext = await this.agentLifecycle.fork(
-      main.accessor.get(IAgentScopeContext).agentContext,
-      { labels: { [BTW_AGENT_LABEL]: 'true' } },
-    );
+    const lease = this.runGate.acquire();
+    const childContext = await this.agentLifecycle
+      .fork(main.accessor.get(IAgentScopeContext).agentContext, {
+        labels: { [BTW_AGENT_LABEL]: 'true' },
+      })
+      .finally(() => lease.release());
     const child = this.agentLifecycle.handleOf(childContext.agentId)!;
     child.accessor
       .get(IAgentReminderService)

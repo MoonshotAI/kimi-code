@@ -82,10 +82,8 @@ export function registerConversationRoutes(
     async (req, reply) => {
       const { session_id, agent_id } = req.params;
       try {
-        const page = await reloadOnStale(core.accessor, session_id, async () => {
-          const feed = await conversations.feed(session_id, agent_id);
-          return feed.page(req.query.before_ordinal, req.query.page_size ?? DEFAULT_PAGE_TURNS);
-        });
+        const feed = await conversations.feed(session_id, agent_id);
+        const page = await feed.page(req.query.before_ordinal, req.query.page_size ?? DEFAULT_PAGE_TURNS);
         reply.send(okEnvelope(page, req.id));
       } catch (error) {
         sendMappedError(reply, req, error);

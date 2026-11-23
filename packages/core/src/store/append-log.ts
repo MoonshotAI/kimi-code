@@ -113,8 +113,6 @@ interface LogState {
   ready: Promise<void>;
   retirement: Promise<void> | undefined;
   knownLength: number | undefined;
-  ownAppendedBytes: number;
-  rewriteEpoch: number;
   inFlightBytes: number;
   rewriteInFlight: number | undefined;
   guardWarned: boolean;
@@ -198,49 +196,39 @@ export class AppendLogStore {
     await this.flushLog(scope, key);
     const state = this.state(scope, key);
     const lengthAtStart = this.diskLength(scope, key);
-    const appendedAtStart = state.ownAppendedBytes;
-    const rewriteEpochAtStart = state.rewriteEpoch;
-    try {
-      const onTruncate = options?.onTruncate;
-      const textDecoder = new TextDecoder();
-      let pending = '';
-      let lineNumber = 0;
-      for await (const chunk of this.storage.readStream(scope, key)) {
-        pending += textDecoder.decode(chunk, { stream: true });
-        let newlineIndex = pending.indexOf('\n');
-        while (newlineIndex !== -1) {
-          const raw = pending.slice(0, newlineIndex);
-          pending = pending.slice(newlineIndex + 1);
-          lineNumber++;
-          let record: R | undefined;
-          try {
-            record = this.parseLine<R>(raw, scope, key, lineNumber, false);
-          } catch (error) {
-            if (onTruncate === undefined) throw error;
-            onTruncate({ lineNumber, reason: 'corrupted', cause: error });
-            return;
-          }
-          if (record !== undefined) yield record;
-          newlineIndex = pending.indexOf('\n');
-        }
-      }
-      pending += textDecoder.decode();
-      if (pending.length > 0) {
+    if (lengthAtStart !== undefined) state.knownLength = lengthAtStart;
+    const onTruncate = options?.onTruncate;
+    const textDecoder = new TextDecoder();
+    let pending = '';
+    let lineNumber = 0;
+    for await (const chunk of this.storage.readStream(scope, key)) {
+      pending += textDecoder.decode(chunk, { stream: true });
+      let newlineIndex = pending.indexOf('\n');
+      while (newlineIndex !== -1) {
+        const raw = pending.slice(0, newlineIndex);
+        pending = pending.slice(newlineIndex + 1);
         lineNumber++;
-        const record = this.parseLine<R>(pending, scope, key, lineNumber, true);
-        if (record !== undefined) {
-          yield record;
-        } else if (onTruncate !== undefined) {
-          const line = pending.endsWith('\r') ? pending.slice(0, -1) : pending;
-          if (line.length > 0) onTruncate({ lineNumber, reason: 'truncated' });
+        let record: R | undefined;
+        try {
+          record = this.parseLine<R>(raw, scope, key, lineNumber, false);
+        } catch (error) {
+          if (onTruncate === undefined) throw error;
+          onTruncate({ lineNumber, reason: 'corrupted', cause: error });
+          return;
         }
+        if (record !== undefined) yield record;
+        newlineIndex = pending.indexOf('\n');
       }
-    } finally {
-      if (state.rewriteEpoch === rewriteEpochAtStart && lengthAtStart !== undefined) {
-        const disk = this.diskLength(scope, key);
-        if (disk !== undefined) {
-          state.knownLength = lengthAtStart + (state.ownAppendedBytes - appendedAtStart);
-        }
+    }
+    pending += textDecoder.decode();
+    if (pending.length > 0) {
+      lineNumber++;
+      const record = this.parseLine<R>(pending, scope, key, lineNumber, true);
+      if (record !== undefined) {
+        yield record;
+      } else if (onTruncate !== undefined) {
+        const line = pending.endsWith('\r') ? pending.slice(0, -1) : pending;
+        if (line.length > 0) onTruncate({ lineNumber, reason: 'truncated' });
       }
     }
   }
@@ -284,7 +272,6 @@ export class AppendLogStore {
         state.storageFailure = undefined;
         state.recovery = undefined;
         state.knownLength = encoded.length;
-        state.rewriteEpoch++;
         return true;
       } catch (error) {
         state.rewriteInFlight = undefined;
@@ -386,8 +373,6 @@ export class AppendLogStore {
         ready,
         retirement: undefined,
         knownLength: undefined,
-        ownAppendedBytes: 0,
-        rewriteEpoch: 0,
         inFlightBytes: 0,
         rewriteInFlight: undefined,
         guardWarned: false,
@@ -551,13 +536,11 @@ export class AppendLogStore {
       const externallyModifiedAtStart =
         recovery?.externallyModifiedAtStart ?? this.externallyModified(scope, key);
       try {
-        const written = encoded.length - offset;
-        state.inFlightBytes = written;
+        state.inFlightBytes = encoded.length - offset;
         await this.storage.append(scope, key, encoded.subarray(offset), { durable: true });
         state.inFlightBytes = 0;
         state.recovery = undefined;
         wrote = true;
-        state.ownAppendedBytes += written;
         if (state.knownLength !== undefined) state.knownLength += encoded.length;
         if (wroteBox !== undefined) wroteBox.value = true;
       } catch (error) {

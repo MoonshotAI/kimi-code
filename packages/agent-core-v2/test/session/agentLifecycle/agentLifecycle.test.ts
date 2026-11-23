@@ -63,6 +63,7 @@ import { ensureMainAgent } from '#/session/agentLifecycle/mainAgent';
 import { getOrRestoreAgent } from '#/session/agentLifecycle/getOrRestoreAgent';
 import { ISessionBtwService, SIDE_QUESTION_SYSTEM_REMINDER } from '#/features/btw/btw';
 import { SessionBtwService } from '#/features/btw/btwService';
+import { ISessionRunGate } from '#/session/sessionActivity/sessionRunGate';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
 import { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
@@ -1660,6 +1661,12 @@ describe('AgentLifecycleService', () => {
       _serviceBrand: undefined,
       formatDenyMessage: (message: string) => message,
     } as unknown as IAgentToolApprovalService);
+    ix.stub(ISessionRunGate, {
+      _serviceBrand: undefined,
+      begin: () => {},
+      acquire: () => ({ release: () => {} }),
+      tryAcquire: () => undefined,
+    } as unknown as ISessionRunGate);
     ix.set(ISessionBtwService, new SyncDescriptor(SessionBtwService));
     const svc = ix.get(IAgentLifecycleService);
     await svc.create({ agentId: 'main' });
