@@ -55,7 +55,7 @@ export class PromptPredictionController {
 
   private startPrediction(): boolean {
     const target = this.latestTurn;
-    if (target === undefined || this.host.session !== target.session || !this.canUseEditor()) return false;
+    if (target === undefined || this.host.session !== target.session || !this.canUsePrediction()) return false;
     const key = `${target.session.id}:${String(target.turnId)}`;
     if (this.attempted.has(key)) return false;
     this.attempted.add(key);
@@ -113,7 +113,6 @@ export class PromptPredictionController {
         this.host.state.ui.requestRender();
         return true;
       }
-      if (key === 'tab') return this.startPrediction();
     }
     return false;
   }

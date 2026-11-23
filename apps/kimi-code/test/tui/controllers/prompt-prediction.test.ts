@@ -50,15 +50,15 @@ describe('PromptPredictionController', () => {
     editor.setText('draft before prediction');
     nextPrediction = () => Promise.resolve('请修复失败的测试\n并补充回归覆盖');
     controller.handleTurnEnded(turnEnded(7));
-    expect(session.predictNextPrompt).not.toHaveBeenCalled();
-    editor.setText('');
-    expect(editor.render(80).join('\n')).not.toContain('Tab to predict');
-    expect(controller.handlePreInput('\t')).toBe(true);
-    await vi.waitFor(() => expect(editor.getPromptPrediction()).toBeDefined());
+    await vi.waitFor(() => expect(session.predictNextPrompt).toHaveBeenCalledTimes(1));
     expect(session.predictNextPrompt).toHaveBeenCalledWith({
       predictionId: expect.any(String),
       expectedTurnId: 7,
     });
+    editor.setText('');
+    expect(editor.render(80).join('\n')).not.toContain('Tab to predict');
+    await vi.waitFor(() => expect(editor.getPromptPrediction()).toBeDefined());
+    expect(editor.render(80).join('\n')).toContain('请修复失败的测试');
     expect(controller.handlePreInput('\t')).toBe(true);
     expect(editor.getText()).toBe('请修复失败的测试\n并补充回归覆盖');
     expect(editor.getPromptPrediction()).toBeUndefined();
