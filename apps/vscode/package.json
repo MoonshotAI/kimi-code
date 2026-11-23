@@ -129,6 +129,11 @@
         "icon": "$(add)"
       },
       {
+        "command": "kimi.newConversationInPanel",
+        "title": "Kimi Code: New Conversation in This Tab",
+        "icon": "$(add)"
+      },
+      {
         "command": "kimi.showLogs",
         "title": "Kimi Code: Show Logs",
         "icon": "$(output)"
@@ -189,6 +194,18 @@
         {
           "command": "kimi.newConversation",
           "when": "view == kimi.webview",
+          "group": "navigation"
+        }
+      ],
+      "editor/title": [
+        {
+          "command": "kimi.openInTab",
+          "when": "kimi.panelActive",
+          "group": "navigation"
+        },
+        {
+          "command": "kimi.newConversationInPanel",
+          "when": "kimi.panelActive",
           "group": "navigation"
         }
       ],
