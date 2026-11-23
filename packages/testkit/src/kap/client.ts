@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+
 import { TestkitError, WaitTimeoutError } from '#/errors';
 import { TIMEOUTS } from '#/fixtures/timeouts';
 import { sleep } from '#/fixtures/wait';
@@ -90,11 +92,12 @@ export class KapClient {
   }
 
   prompt(sessionId: string, input: string | readonly KapContentPart[], options: PromptOptions = {}): Promise<KapPromptItem> {
-    return this.rest.post<KapPromptItem>(`${sessionPath(sessionId)}/prompts`, promptBody(input, options));
+    const promptId = options.promptId ?? randomUUID();
+    return this.rest.put<KapPromptItem>(`${sessionPath(sessionId)}/prompts/${encodeURIComponent(promptId)}`, promptBody(input, options));
   }
 
   steer(sessionId: string, input: string | readonly KapContentPart[], options: PromptOptions = {}): Promise<KapPromptItem> {
-    return this.rest.post<KapPromptItem>(`${sessionPath(sessionId)}/steer`, promptBody(input, options));
+    return this.rest.post<KapPromptItem>(`${sessionPath(sessionId)}/steer`, { ...promptBody(input, options), prompt_id: options.promptId });
   }
 
   prompts(sessionId: string): Promise<KapPromptQueue> {
@@ -205,7 +208,6 @@ function promptBody(input: string | readonly KapContentPart[], options: PromptOp
     agent_id: options.agentId,
     model: options.model,
     permission_mode: options.permissionMode,
-    prompt_id: options.promptId,
     thinking: options.thinking,
   };
 }

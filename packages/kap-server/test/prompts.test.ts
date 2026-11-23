@@ -69,6 +69,8 @@ interface PromptItemWire {
   content: unknown;
   created_at: string;
   metadata?: Record<string, unknown>;
+  accepted_as?: 'turn' | 'steer' | 'queue';
+  turn_id?: string;
 }
 
 type PromptContentPart =
@@ -263,8 +265,11 @@ describe('server-v2 /api/v1 prompts', () => {
     }
   });
 
+  let promptSeq = 0;
+  const nextPromptId = (): string => `p_${String(++promptSeq)}`;
+
   async function call<T>(
-    method: 'GET' | 'POST',
+    method: 'GET' | 'POST' | 'PUT',
     path: string,
     arg?: unknown,
   ): Promise<{ status: number; body: Envelope<T> }> {
@@ -328,11 +333,15 @@ describe('server-v2 /api/v1 prompts', () => {
       const id = await createSession(home as string);
       await createMainAgent(id);
 
-      const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+      const promptId = nextPromptId();
+      const submitted = await call<PromptItemWire>('PUT', `/api/v1/sessions/${id}/prompts/${promptId}`, {
         content: [{ type: 'text', text: 'hello' }],
       });
       expect(submitted.body.code).toBe(0);
-      expect(submitted.body.data.prompt_id).toMatch(/^msg_/);
+      expect(submitted.body.data.prompt_id).toBe(promptId);
+      expect(submitted.body.data.accepted_as).toBe('turn');
+      const turns = await call<{ turns: { turn_id: string }[] }>('GET', `/api/v1/sessions/${id}/agents/main/turns`);
+      expect(submitted.body.data.turn_id).toBe(turns.body.data.turns.at(-1)?.turn_id);
       expect(submitted.body.data.status).toBe('running');
       expect(submitted.body.data.user_message_id).toBe(submitted.body.data.prompt_id);
       const session = getLiveSessionById(server!.core.accessor, id)!;
@@ -377,7 +386,7 @@ describe('server-v2 /api/v1 prompts', () => {
     const exit = vi.spyOn(swarm, 'exit');
     const submit = vi.spyOn(loop, 'submit');
     const post = (swarmMode: boolean) =>
-      call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+      call<PromptItemWire>('PUT', `/api/v1/sessions/${id}/prompts/${nextPromptId()}`, {
         content: [{ type: 'text', text: 'hello' }],
         swarm_mode: swarmMode,
       });
@@ -405,7 +414,7 @@ describe('server-v2 /api/v1 prompts', () => {
     const id = await createSession(home as string);
     await createMainAgent(id);
 
-    const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+    const submitted = await call<PromptItemWire>('PUT', `/api/v1/sessions/${id}/prompts/${nextPromptId()}`, {
       content: [{ type: 'text', text: 'hello' }],
       model: 'stub',
     });
@@ -418,7 +427,7 @@ describe('server-v2 /api/v1 prompts', () => {
     await createMainAgent(id);
     await setSessionModel(id, 'stub');
 
-    const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+    const submitted = await call<PromptItemWire>('PUT', `/api/v1/sessions/${id}/prompts/${nextPromptId()}`, {
       content: [{ type: 'text', text: 'hello' }],
     });
     expect(submitted.body.code).toBe(0);
@@ -430,7 +439,7 @@ describe('server-v2 /api/v1 prompts', () => {
     await createMainAgent(id);
     await setSessionModel(id, 'stub');
 
-    const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+    const submitted = await call<PromptItemWire>('PUT', `/api/v1/sessions/${id}/prompts/${nextPromptId()}`, {
       content: [{ type: 'text', text: 'hello' }],
     });
     expect(submitted.body.code).toBe(0);
@@ -450,7 +459,7 @@ describe('server-v2 /api/v1 prompts', () => {
       if (event.type === 'turn.ended') ended.push(event as (typeof ended)[number]);
       if (event.type === 'prompt.completed') completed.push(event as (typeof completed)[number]);
     });
-    const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+    const submitted = await call<PromptItemWire>('PUT', `/api/v1/sessions/${id}/prompts/${nextPromptId()}`, {
       content: [{ type: 'text', text: 'hello' }],
     });
     expect(submitted.body.code).toBe(0);
@@ -481,7 +490,7 @@ describe('server-v2 /api/v1 prompts', () => {
       if (event.type === 'turn.ended') ended.push(event as (typeof ended)[number]);
       if (event.type === 'prompt.completed') completed.push(event as (typeof completed)[number]);
     });
-    const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+    const submitted = await call<PromptItemWire>('PUT', `/api/v1/sessions/${id}/prompts/${nextPromptId()}`, {
       content: [{ type: 'text', text: 'hello' }],
     });
     expect(submitted.body.code).toBe(0);
@@ -502,12 +511,13 @@ describe('server-v2 /api/v1 prompts', () => {
     const id = await createSession(home as string);
     await createMainAgent(id);
 
-    const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+    const promptId = nextPromptId();
+    const submitted = await call<PromptItemWire>('PUT', `/api/v1/sessions/${id}/prompts/${promptId}`, {
       content: [{ type: 'text', text: 'Review this change.' }],
       skills: [{ name: 'update-config' }, { name: 'check-kimi-code-docs' }],
     });
     expect(submitted.body.code).toBe(0);
-    expect(submitted.body.data.prompt_id).toMatch(/^msg_/);
+    expect(submitted.body.data.prompt_id).toBe(promptId);
     expect(['running', 'queued']).toContain(submitted.body.data.status);
     expect(submitted.body.data.content).toEqual([{ type: 'text', text: 'Review this change.' }]);
 
@@ -613,7 +623,7 @@ describe('server-v2 /api/v1 prompts', () => {
       await next();
     });
     try {
-      const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+      const submitted = await call<PromptItemWire>('PUT', `/api/v1/sessions/${id}/prompts/${nextPromptId()}`, {
         content: [{ type: 'text', text: 'hello' }],
       });
       expect(submitted.body.code).toBe(0);
@@ -646,7 +656,7 @@ describe('server-v2 /api/v1 prompts', () => {
       await next();
     });
     try {
-      await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+      await call<PromptItemWire>('PUT', `/api/v1/sessions/${id}/prompts/${nextPromptId()}`, {
         content: [{ type: 'text', text: 'active' }],
         model: 'stub',
       });
@@ -685,9 +695,8 @@ describe('server-v2 /api/v1 prompts', () => {
       throw new Error2(ErrorCodes.SESSION_STALE, 'stale');
     });
 
-    const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+    const submitted = await call<PromptItemWire>('PUT', `/api/v1/sessions/${id}/prompts/submission-1`, {
       content: [{ type: 'text', text: 'hello' }],
-      prompt_id: 'submission-1',
     });
 
     expect(submitted.body.code).toBe(0);
@@ -707,7 +716,7 @@ describe('server-v2 /api/v1 prompts', () => {
         browserReferences: [{ id: 'ref-example', captureId: 'capture-example', comment: 'Example comment' }],
       },
     };
-    const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+    const submitted = await call<PromptItemWire>('PUT', `/api/v1/sessions/${id}/prompts/${nextPromptId()}`, {
       content: [{ type: 'text', text: 'Visible prompt' }],
       metadata,
       skills: withSkills ? [{ name: 'update-config' }] : undefined,
@@ -741,7 +750,7 @@ describe('server-v2 /api/v1 prompts', () => {
     if (mainHandle === undefined) throw new Error('main agent not found');
     const child = await lifecycle.fork(agentContextOf(mainHandle));
 
-    const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+    const submitted = await call<PromptItemWire>('PUT', `/api/v1/sessions/${id}/prompts/${nextPromptId()}`, {
       content: [{ type: 'text', text: 'bundled side question' }],
       agent_id: child.agentId,
       skills: [{ name: 'update-config' }],
@@ -757,15 +766,13 @@ describe('server-v2 /api/v1 prompts', () => {
     const id = await createSession(home as string);
     await createMainAgent(id);
 
-    const first = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+    const first = await call<PromptItemWire>('PUT', `/api/v1/sessions/${id}/prompts/submission-1`, {
       content: [{ type: 'text', text: 'first prompt' }],
-      prompt_id: 'submission-1',
     });
     expect(first.body.code).toBe(0);
 
-    const duplicate = await call<null>('POST', `/api/v1/sessions/${id}/prompts`, {
+    const duplicate = await call<null>('PUT', `/api/v1/sessions/${id}/prompts/submission-1`, {
       content: [{ type: 'text', text: 'must not become metadata' }],
-      prompt_id: 'submission-1',
     });
     expect(duplicate.body.code).toBe(40927);
 
@@ -775,9 +782,8 @@ describe('server-v2 /api/v1 prompts', () => {
     await closeSessionById(server!.core.accessor, id);
     expect(getLiveSessionById(server!.core.accessor, id)).toBeUndefined();
 
-    const afterResume = await call<null>('POST', `/api/v1/sessions/${id}/prompts`, {
+    const afterResume = await call<null>('PUT', `/api/v1/sessions/${id}/prompts/submission-1`, {
       content: [{ type: 'text', text: 'must not survive a cold resume' }],
-      prompt_id: 'submission-1',
     });
     expect(afterResume.body.code).toBe(40927);
     const resumed = await resumeSessionById(server!.core.accessor, id);
@@ -788,13 +794,14 @@ describe('server-v2 /api/v1 prompts', () => {
     const id = await createSession(home as string);
     await createMainAgent(id);
     await setSessionModel(id, 'stub');
-    const request = { content: [{ type: 'text', text: 'only once' }], prompt_id: 'submission-2' };
+    const request = { content: [{ type: 'text', text: 'only once' }] };
+    const path = `/api/v1/sessions/${id}/prompts/submission-2`;
 
     const [first, again] = await Promise.all([
-      call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, request),
-      call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, request),
+      call<PromptItemWire>('PUT', path, request),
+      call<PromptItemWire>('PUT', path, request),
     ]);
-    const later = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, request);
+    const later = await call<PromptItemWire>('PUT', path, request);
 
     expect(first.body.code).toBe(0);
     expect(again.body).toEqual({ ...first.body, request_id: again.body.request_id });
@@ -812,7 +819,7 @@ describe('server-v2 /api/v1 prompts', () => {
     const id = await createSession(home as string);
     await createMainAgent(id);
 
-    const submitted = await call<null>('POST', `/api/v1/sessions/${id}/prompts`, {
+    const submitted = await call<null>('PUT', `/api/v1/sessions/${id}/prompts/${nextPromptId()}`, {
       content: [{ type: 'text', text: 'Review this change.' }],
       skills: [{ name: 'does-not-exist' }],
     });
@@ -828,7 +835,7 @@ describe('server-v2 /api/v1 prompts', () => {
     const id = await createSession(home as string);
     await createMainAgent(id);
 
-    const submitted = await call<null>('POST', `/api/v1/sessions/${id}/prompts`, {
+    const submitted = await call<null>('PUT', `/api/v1/sessions/${id}/prompts/${nextPromptId()}`, {
       content: [{ type: 'text', text: 'Review this change.' }],
       permission_mode: 'yolo',
       skills: [{ name: 'does-not-exist' }],
@@ -847,7 +854,7 @@ describe('server-v2 /api/v1 prompts', () => {
     await server!.core.accessor.get(IConfigService).reload();
     const id = await createSession(home as string);
 
-    const submitted = await call<null>('POST', `/api/v1/sessions/${id}/prompts`, {
+    const submitted = await call<null>('PUT', `/api/v1/sessions/${id}/prompts/${nextPromptId()}`, {
       content: [{ type: 'text', text: 'Review this change.' }],
       skills: [{ name: 'does-not-exist' }],
     });
@@ -861,17 +868,15 @@ describe('server-v2 /api/v1 prompts', () => {
     const id = await createSession(home as string);
     await createMainAgent(id);
 
-    const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+    const submitted = await call<PromptItemWire>('PUT', `/api/v1/sessions/${id}/prompts/submission-1`, {
       content: [{ type: 'text', text: 'Review this change.' }],
-      prompt_id: 'submission-1',
       skills: [{ name: 'update-config' }],
     });
     expect(submitted.body.code).toBe(0);
     expect(submitted.body.data.prompt_id).toBe('submission-1');
 
-    const duplicate = await call<null>('POST', `/api/v1/sessions/${id}/prompts`, {
+    const duplicate = await call<null>('PUT', `/api/v1/sessions/${id}/prompts/submission-1`, {
       content: [{ type: 'text', text: 'Review it again.' }],
-      prompt_id: 'submission-1',
       skills: [{ name: 'update-config' }],
     });
     expect(duplicate.body.code).toBe(40927);
@@ -933,7 +938,7 @@ describe('server-v2 /api/v1 prompts', () => {
 
     const prompts = ['先搭一个 Vite 项目', '加上路由', '现在配一下 ESLint'];
     for (const text of prompts) {
-      const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+      const submitted = await call<PromptItemWire>('PUT', `/api/v1/sessions/${id}/prompts/${nextPromptId()}`, {
         content: [{ type: 'text', text }],
       });
       expect(submitted.body.code).toBe(0);
@@ -952,7 +957,7 @@ describe('server-v2 /api/v1 prompts', () => {
     const id = await createSession(home as string);
     const session = getLiveSessionById(server!.core.accessor, id);
 
-    const { body } = await call<null>('POST', `/api/v1/sessions/${id}/prompts`, {
+    const { body } = await call<null>('PUT', `/api/v1/sessions/${id}/prompts/${nextPromptId()}`, {
       model: 'stub',
       content: [
         { type: 'text', text: 'look' },
@@ -980,7 +985,7 @@ describe('server-v2 /api/v1 prompts', () => {
     const uploaded = (await uploadRes.json()) as Envelope<{ id: string }>;
     expect(uploaded.code).toBe(0);
 
-    const { body } = await call<null>('POST', `/api/v1/sessions/${id}/prompts`, {
+    const { body } = await call<null>('PUT', `/api/v1/sessions/${id}/prompts/${nextPromptId()}`, {
       model: 'stub',
       content: [
         { type: 'text', text: 'watch this' },
@@ -1005,7 +1010,7 @@ describe('server-v2 /api/v1 prompts', () => {
     const uploaded = (await uploadRes.json()) as Envelope<{ id: string }>;
     expect(uploaded.code).toBe(0);
 
-    const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+    const submitted = await call<PromptItemWire>('PUT', `/api/v1/sessions/${id}/prompts/${nextPromptId()}`, {
       content: [
         { type: 'text', text: 'what happens in this video?' },
         { type: 'video', source: { kind: 'file', file_id: uploaded.data.id } },
@@ -1032,7 +1037,7 @@ describe('server-v2 /api/v1 prompts', () => {
     const uploaded = await uploadFile(bigPng, 'image/png', 'big.png');
     expect(uploaded.size).toBe(bigPng.length);
 
-    const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+    const submitted = await call<PromptItemWire>('PUT', `/api/v1/sessions/${id}/prompts/${nextPromptId()}`, {
       content: [{ type: 'image', source: { kind: 'file', file_id: uploaded.id } }],
     });
     expect(submitted.body.code).toBe(0);
@@ -1101,7 +1106,7 @@ describe('server-v2 /api/v1 prompts', () => {
     });
 
     try {
-      const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+      const submitted = await call<PromptItemWire>('PUT', `/api/v1/sessions/${id}/prompts/${nextPromptId()}`, {
         content: [
           { type: 'image', source: { kind: 'file', file_id: first.id } },
           { type: 'image', source: { kind: 'file', file_id: second.id } },
@@ -1126,7 +1131,7 @@ describe('server-v2 /api/v1 prompts', () => {
     const smallPng = solidPng(10, 10);
     const uploaded = await uploadFile(smallPng, 'image/png', 'small.png');
 
-    const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+    const submitted = await call<PromptItemWire>('PUT', `/api/v1/sessions/${id}/prompts/${nextPromptId()}`, {
       content: [{ type: 'image', source: { kind: 'file', file_id: uploaded.id } }],
     });
     expect(submitted.body.code).toBe(0);
@@ -1150,14 +1155,14 @@ describe('server-v2 /api/v1 prompts', () => {
     const smallPng = solidPng(10, 10);
     const uploaded = await uploadFile(smallPng, 'image/png', 'small.png');
 
-    const first = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+    const first = await call<PromptItemWire>('PUT', `/api/v1/sessions/${id}/prompts/${nextPromptId()}`, {
       content: [{ type: 'image', source: { kind: 'file', file_id: uploaded.id } }],
     });
     expect(first.body.code).toBe(0);
     await expectSessionMedia(server!, id, `${uploaded.id}.png`, smallPng);
     await server!.core.accessor.get(IFileService).delete(uploaded.id);
 
-    const replayed = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+    const replayed = await call<PromptItemWire>('PUT', `/api/v1/sessions/${id}/prompts/${nextPromptId()}`, {
       content: [
         { type: 'text', text: 'replay the stored image' },
         { type: 'image', source: { kind: 'session_media', file_id: uploaded.id } },
@@ -1202,7 +1207,7 @@ describe('server-v2 /api/v1 prompts', () => {
     await mkdir(mediaDir, { recursive: true });
     await chmod(mediaDir, 0o555);
     try {
-      const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+      const submitted = await call<PromptItemWire>('PUT', `/api/v1/sessions/${id}/prompts/${nextPromptId()}`, {
         content: [{ type: 'image', source: { kind: 'file', file_id: uploaded.id } }],
       });
       expect(submitted.body.code).toBe(0);
@@ -1233,7 +1238,7 @@ describe('server-v2 /api/v1 prompts', () => {
     await createMainAgent(id);
     const bigPng = solidPng(3600, 1800);
 
-    const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+    const submitted = await call<PromptItemWire>('PUT', `/api/v1/sessions/${id}/prompts/${nextPromptId()}`, {
       content: [
         {
           type: 'image',
@@ -1280,7 +1285,7 @@ describe('server-v2 /api/v1 prompts', () => {
     const id = await createSession(home as string);
     await createMainAgent(id);
 
-    const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+    const submitted = await call<PromptItemWire>('PUT', `/api/v1/sessions/${id}/prompts/${nextPromptId()}`, {
       content: [
         {
           type: 'image',
@@ -1317,7 +1322,7 @@ describe('server-v2 /api/v1 prompts', () => {
     await createMainAgent(id);
     await setSessionModel(id, 'kimi-vision');
 
-    const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+    const submitted = await call<PromptItemWire>('PUT', `/api/v1/sessions/${id}/prompts/${nextPromptId()}`, {
       content: [
         {
           type: 'image',
@@ -1343,7 +1348,7 @@ describe('server-v2 /api/v1 prompts', () => {
     await createMainAgent(id);
     await setSessionModel(id, 'stub');
 
-    const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+    const submitted = await call<PromptItemWire>('PUT', `/api/v1/sessions/${id}/prompts/${nextPromptId()}`, {
       model: 'kimi-vision',
       content: [
         {
@@ -1369,7 +1374,7 @@ describe('server-v2 /api/v1 prompts', () => {
     const id = await createSession(home as string);
     await createMainAgent(id);
 
-    const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+    const submitted = await call<PromptItemWire>('PUT', `/api/v1/sessions/${id}/prompts/${nextPromptId()}`, {
       content: [
         {
           type: 'image',
@@ -1393,7 +1398,7 @@ describe('server-v2 /api/v1 prompts', () => {
     await (server as RunningServer).core.accessor.get(IConfigService).reload();
     const id = await createSession(home as string);
 
-    const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+    const submitted = await call<PromptItemWire>('PUT', `/api/v1/sessions/${id}/prompts/${nextPromptId()}`, {
       content: [
         {
           type: 'image',
@@ -1425,7 +1430,7 @@ describe('server-v2 /api/v1 prompts', () => {
     const uploaded = (await uploadRes.json()) as Envelope<{ id: string }>;
     expect(uploaded.code).toBe(0);
 
-    const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+    const submitted = await call<PromptItemWire>('PUT', `/api/v1/sessions/${id}/prompts/${nextPromptId()}`, {
       content: [{ type: 'image', source: { kind: 'file', file_id: uploaded.data.id }, name: 'renamed.avif' }],
     });
     expect(submitted.body.code).toBe(0);
@@ -1443,7 +1448,7 @@ describe('server-v2 /api/v1 prompts', () => {
     const id = await createSession(home as string);
     await createMainAgent(id);
 
-    const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+    const submitted = await call<PromptItemWire>('PUT', `/api/v1/sessions/${id}/prompts/${nextPromptId()}`, {
       content: [{ type: 'image', source: { kind: 'url', url: 'https://example.com/pic.avif' } }],
     });
     expect(submitted.body.code).toBe(0);
@@ -1485,7 +1490,7 @@ describe('server-v2 /api/v1 prompts', () => {
     const pdfBytes = Buffer.from('%PDF-1.4 fake pdf bytes');
     const uploaded = await uploadFile(pdfBytes, 'application/pdf', 'report.pdf');
 
-    const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+    const submitted = await call<PromptItemWire>('PUT', `/api/v1/sessions/${id}/prompts/${nextPromptId()}`, {
       content: [
         { type: 'text', text: 'summarize this' },
         { type: 'file', file_id: uploaded.id, name: 'report.pdf', media_type: 'application/pdf', size: pdfBytes.length },
@@ -1514,7 +1519,7 @@ describe('server-v2 /api/v1 prompts', () => {
     const svgBytes = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"></svg>');
     const uploaded = await uploadFile(svgBytes, 'image/svg+xml', 'vector.svg');
 
-    const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+    const submitted = await call<PromptItemWire>('PUT', `/api/v1/sessions/${id}/prompts/${nextPromptId()}`, {
       content: [{ type: 'image', source: { kind: 'file', file_id: uploaded.id } }],
     });
     expect(submitted.body.code).toBe(0);
@@ -1537,7 +1542,7 @@ describe('server-v2 /api/v1 prompts', () => {
     await createMainAgent(id);
     const data = avifBytes();
 
-    const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+    const submitted = await call<PromptItemWire>('PUT', `/api/v1/sessions/${id}/prompts/${nextPromptId()}`, {
       content: [
         {
           type: 'image',
@@ -1571,7 +1576,7 @@ describe('server-v2 /api/v1 prompts', () => {
     const scriptBytes = Buffer.from('#!/bin/sh\necho hi');
     const uploaded = await uploadFile(scriptBytes, 'text/plain', '../../etc/evil.sh');
 
-    const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+    const submitted = await call<PromptItemWire>('PUT', `/api/v1/sessions/${id}/prompts/${nextPromptId()}`, {
       content: [
         { type: 'file', file_id: uploaded.id, name: '../../etc/evil.sh', media_type: 'text/plain', size: scriptBytes.length },
       ],
@@ -1595,7 +1600,7 @@ describe('server-v2 /api/v1 prompts', () => {
       const bytes = Buffer.from('path attachment body');
       await writeFile(sourcePath, bytes);
 
-      const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+      const submitted = await call<PromptItemWire>('PUT', `/api/v1/sessions/${id}/prompts/${nextPromptId()}`, {
         content: [
           { type: 'text', text: 'read this' },
           { type: 'file', path: sourcePath },
@@ -1639,7 +1644,7 @@ describe('server-v2 /api/v1 prompts', () => {
   it('rejects a relative attachment path', async () => {
     const id = await createSession(home as string);
 
-    const { body } = await call<null>('POST', `/api/v1/sessions/${id}/prompts`, {
+    const { body } = await call<null>('PUT', `/api/v1/sessions/${id}/prompts/${nextPromptId()}`, {
       content: [{ type: 'file', path: 'relative/notes.txt' }],
     });
     expect(body.code).toBe(40001);
@@ -1650,7 +1655,7 @@ describe('server-v2 /api/v1 prompts', () => {
     const secretPath = join(home as string, '.env');
     await writeFile(secretPath, 'TOKEN=secret');
 
-    const { body } = await call<null>('POST', `/api/v1/sessions/${id}/prompts`, {
+    const { body } = await call<null>('PUT', `/api/v1/sessions/${id}/prompts/${nextPromptId()}`, {
       content: [{ type: 'file', path: secretPath }],
     });
     expect(body.code).toBe(40001);
@@ -1659,7 +1664,7 @@ describe('server-v2 /api/v1 prompts', () => {
   it('rejects a missing attachment path with 40407', async () => {
     const id = await createSession(home as string);
 
-    const { body } = await call<null>('POST', `/api/v1/sessions/${id}/prompts`, {
+    const { body } = await call<null>('PUT', `/api/v1/sessions/${id}/prompts/${nextPromptId()}`, {
       content: [{ type: 'file', path: join(home as string, 'nope.txt') }],
     });
     expect(body.code).toBe(40407);
@@ -1673,7 +1678,7 @@ describe('server-v2 /api/v1 prompts', () => {
     const linkPath = join(home as string, 'innocent.txt');
     await symlink(secretPath, linkPath);
 
-    const { body } = await call<null>('POST', `/api/v1/sessions/${id}/prompts`, {
+    const { body } = await call<null>('PUT', `/api/v1/sessions/${id}/prompts/${nextPromptId()}`, {
       content: [{ type: 'file', path: linkPath }],
     });
     expect(body.code).toBe(40001);
@@ -1691,13 +1696,13 @@ describe('server-v2 /api/v1 prompts', () => {
 
     const sourcePath = join(home as string, 'note.txt');
     await writeFile(sourcePath, 'x');
-    const existing = await call<null>('POST', `/api/v1/sessions/${id}/prompts`, {
+    const existing = await call<null>('PUT', `/api/v1/sessions/${id}/prompts/${nextPromptId()}`, {
       content: [{ type: 'file', path: sourcePath }],
     });
     expect(existing.body.code).toBe(40001);
     expect(existing.body.msg).toContain('local environment');
 
-    const missing = await call<null>('POST', `/api/v1/sessions/${id}/prompts`, {
+    const missing = await call<null>('PUT', `/api/v1/sessions/${id}/prompts/${nextPromptId()}`, {
       content: [{ type: 'file', path: join(home as string, 'nope.txt') }],
     });
     expect(missing.body.code).toBe(40001);
@@ -1716,7 +1721,7 @@ describe('server-v2 /api/v1 prompts', () => {
 
       const uploadBytes = Buffer.from('upload unaffected');
       const uploaded = await uploadFile(uploadBytes, 'text/plain', 'up.txt');
-      const upload = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+      const upload = await call<PromptItemWire>('PUT', `/api/v1/sessions/${id}/prompts/${nextPromptId()}`, {
         content: [
           {
             type: 'file',
@@ -1789,7 +1794,7 @@ describe('server-v2 /api/v1 prompts', () => {
       const pdfBytes = Buffer.from('%PDF-1.4 fake pdf bytes');
       const uploaded = await uploadFile(pdfBytes, 'application/pdf', 'report.pdf');
 
-      const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+      const submitted = await call<PromptItemWire>('PUT', `/api/v1/sessions/${id}/prompts/${nextPromptId()}`, {
         content: [
           { type: 'text', text: 'summarize this' },
           { type: 'file', file_id: uploaded.id, name: 'report.pdf', media_type: 'application/pdf', size: pdfBytes.length },
@@ -1837,7 +1842,7 @@ describe('server-v2 /api/v1 prompts', () => {
 
       const bytes = Buffer.from('%PDF-1.4 fake pdf bytes');
       const uploaded = await uploadFile(bytes, 'application/pdf', 'report.pdf');
-      const submitted = await call<null>('POST', `/api/v1/sessions/${id}/prompts`, {
+      const submitted = await call<null>('PUT', `/api/v1/sessions/${id}/prompts/${nextPromptId()}`, {
         content: [
           { type: 'file', file_id: uploaded.id, name: 'report.pdf', media_type: 'application/pdf', size: bytes.length },
         ],
@@ -1855,7 +1860,7 @@ describe('server-v2 /api/v1 prompts', () => {
     const id = await createSession(home as string);
     const uploaded = await uploadFile(Buffer.from('x'), 'text/plain', 'x.txt');
 
-    const { body } = await call<null>('POST', `/api/v1/sessions/${id}/prompts`, {
+    const { body } = await call<null>('PUT', `/api/v1/sessions/${id}/prompts/${nextPromptId()}`, {
       content: [{ type: 'file', file_id: uploaded.id }],
     });
     expect(body.code).toBe(40001);
@@ -1867,7 +1872,7 @@ describe('server-v2 /api/v1 prompts', () => {
     await writeFile(sourcePath, 'x');
     const uploaded = await uploadFile(Buffer.from('x'), 'text/plain', 'x.txt');
 
-    const { body } = await call<null>('POST', `/api/v1/sessions/${id}/prompts`, {
+    const { body } = await call<null>('PUT', `/api/v1/sessions/${id}/prompts/${nextPromptId()}`, {
       content: [
         {
           type: 'file',
@@ -1891,7 +1896,7 @@ describe('server-v2 /api/v1 prompts', () => {
       const sourcePath = join(outside, 'small.png');
       await writeFile(sourcePath, smallPng);
 
-      const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+      const submitted = await call<PromptItemWire>('PUT', `/api/v1/sessions/${id}/prompts/${nextPromptId()}`, {
         content: [{ type: 'image', source: { kind: 'path', path: sourcePath } }],
       });
       expect(submitted.body.code).toBe(0);
@@ -1918,7 +1923,7 @@ describe('server-v2 /api/v1 prompts', () => {
       const sourcePath = join(outside, 'big.png');
       await writeFile(sourcePath, bigPng);
 
-      const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+      const submitted = await call<PromptItemWire>('PUT', `/api/v1/sessions/${id}/prompts/${nextPromptId()}`, {
         content: [{ type: 'image', source: { kind: 'path', path: sourcePath } }],
       });
       expect(submitted.body.code).toBe(0);
@@ -1954,7 +1959,7 @@ describe('server-v2 /api/v1 prompts', () => {
       const sourcePath = join(outside, 'clip.mp4');
       await writeFile(sourcePath, videoBytes);
 
-      const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+      const submitted = await call<PromptItemWire>('PUT', `/api/v1/sessions/${id}/prompts/${nextPromptId()}`, {
         content: [{ type: 'video', source: { kind: 'path', path: sourcePath } }],
       });
       expect(submitted.body.code).toBe(0);
@@ -1976,7 +1981,7 @@ describe('server-v2 /api/v1 prompts', () => {
     const sourcePath = join(home as string, 'notes.txt');
     await writeFile(sourcePath, 'plain text');
 
-    const { body } = await call<null>('POST', `/api/v1/sessions/${id}/prompts`, {
+    const { body } = await call<null>('PUT', `/api/v1/sessions/${id}/prompts/${nextPromptId()}`, {
       content: [{ type: 'video', source: { kind: 'path', path: sourcePath } }],
     });
     expect(body.code).toBe(40001);
@@ -1990,7 +1995,7 @@ describe('server-v2 /api/v1 prompts', () => {
     await handle.truncate(MAX_IMAGE_DECODE_BYTES + 1);
     await handle.close();
 
-    const { body } = await call<null>('POST', `/api/v1/sessions/${id}/prompts`, {
+    const { body } = await call<null>('PUT', `/api/v1/sessions/${id}/prompts/${nextPromptId()}`, {
       content: [{ type: 'image', source: { kind: 'path', path: sourcePath } }],
     });
     expect(body.code).toBe(40001);
@@ -2002,7 +2007,7 @@ describe('server-v2 /api/v1 prompts', () => {
       const id = await createSession(home as string);
       await createMainAgent(id);
 
-      const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+      const submitted = await call<PromptItemWire>('PUT', `/api/v1/sessions/${id}/prompts/${nextPromptId()}`, {
         content: [{ type: 'text', text: 'hello' }],
       });
       const promptId = submitted.body.data.prompt_id;
@@ -2032,8 +2037,142 @@ describe('server-v2 /api/v1 prompts', () => {
     expect(body.code).toBe(40402);
   });
 
+  it('validates the prompt id in the submit path and no longer accepts POST submissions', async () => {
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+    const body = { content: [{ type: 'text', text: 'hello' }] };
+
+    for (const promptId of ['bad:id', 'bad.id', 'x'.repeat(129)]) {
+      const rejected = await call<null>('PUT', `/api/v1/sessions/${id}/prompts/${promptId}`, body);
+      expect(rejected.body.code).toBe(40001);
+    }
+    const longest = 'x'.repeat(128);
+    const accepted = await call<PromptItemWire>('PUT', `/api/v1/sessions/${id}/prompts/${longest}`, body);
+    expect(accepted.body.code).toBe(0);
+    const aborted = await call<{ aborted: boolean }>('POST', `/api/v1/sessions/${id}/prompts/${longest}:abort`);
+    expect(aborted.status).toBe(200);
+    const legacy = await call<null>('POST', `/api/v1/sessions/${id}/prompts`, body);
+    expect(legacy.body.code).toBe(40001);
+  });
+
+  it('moves a queued prompt before another queued prompt or to the end of the queue', async () => {
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+    const loop = getLiveSessionById(server!.core.accessor, id)!
+      .accessor.get(IAgentLifecycleService)
+      .handleOf('main')!
+      .accessor.get(IAgentLoopService);
+    let releaseGate!: () => void;
+    let markStarted!: () => void;
+    const started = new Promise<void>((resolve) => { markStarted = resolve; });
+    const gate = new Promise<void>((resolve) => { releaseGate = resolve; });
+    let armed = true;
+    const hook = loop.hooks.onWillBeginStep.register('prompts-test-move', async (_ctx, next) => {
+      if (armed) {
+        armed = false;
+        markStarted();
+        await gate;
+      }
+      await next();
+    });
+    try {
+      const first = await call<PromptItemWire>('PUT', `/api/v1/sessions/${id}/prompts/move-first`, {
+        content: [{ type: 'text', text: 'first' }],
+        model: 'stub',
+      });
+      expect(first.body.data.accepted_as).toBe('turn');
+      await started;
+      const second = await call<PromptItemWire>('PUT', `/api/v1/sessions/${id}/prompts/move-second`, {
+        content: [{ type: 'text', text: 'second' }],
+      });
+      expect(second.body.data.accepted_as).toBe('queue');
+      const third = await call<PromptItemWire>('PUT', `/api/v1/sessions/${id}/prompts/move-third`, {
+        content: [{ type: 'text', text: 'third' }],
+      });
+      expect(third.body.data.accepted_as).toBe('queue');
+
+      const moved = await call<Record<string, never>>('POST', `/api/v1/sessions/${id}/agents/main/queue/move-third:move`, {
+        before_prompt_id: 'move-second',
+      });
+      expect(moved.body.code).toBe(0);
+      const listed = await call<{ queued: PromptItemWire[] }>('GET', `/api/v1/sessions/${id}/prompts`);
+      expect(listed.body.data.queued.map((item) => item.prompt_id)).toEqual(['move-third', 'move-second']);
+
+      const toEnd = await call<Record<string, never>>('POST', `/api/v1/sessions/${id}/agents/main/queue/move-third:move`);
+      expect(toEnd.body.code).toBe(0);
+      const relisted = await call<{ queued: PromptItemWire[] }>('GET', `/api/v1/sessions/${id}/prompts`);
+      expect(relisted.body.data.queued.map((item) => item.prompt_id)).toEqual(['move-second', 'move-third']);
+    } finally {
+      releaseGate();
+      hook.dispose();
+    }
+  });
+
+  it('refuses to move prompts outside the queue', async () => {
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+
+    const submitted = await call<PromptItemWire>('PUT', `/api/v1/sessions/${id}/prompts/q-1`, {
+      content: [{ type: 'text', text: 'hello' }],
+    });
+    expect(submitted.body.data).toMatchObject({ prompt_id: 'q-1', accepted_as: 'turn' });
+
+    const notQueued = await call<null>('POST', `/api/v1/sessions/${id}/agents/main/queue/q-1:move`);
+    expect(notQueued.body.code).toBe(40402);
+    const unknownAction = await call<null>('POST', `/api/v1/sessions/${id}/agents/main/queue/q-1:jump`);
+    expect(unknownAction.body.code).toBe(40001);
+    const unknownAgent = await call<null>('POST', `/api/v1/sessions/${id}/agents/missing/queue/q-1:move`);
+    expect(unknownAgent.body.code).toBe(40401);
+  });
+
+  it('returns a steered submission at once while a turn is running', async () => {
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+    const loop = getLiveSessionById(server!.core.accessor, id)!
+      .accessor.get(IAgentLifecycleService)
+      .handleOf('main')!
+      .accessor.get(IAgentLoopService);
+    const sendNow = vi.spyOn(loop, 'sendNow');
+    let releaseGate!: () => void;
+    let markStarted!: () => void;
+    const started = new Promise<void>((resolve) => { markStarted = resolve; });
+    const gate = new Promise<void>((resolve) => { releaseGate = resolve; });
+    let armed = true;
+    const hook = loop.hooks.onWillBeginStep.register('prompts-test-delivery-steer', async (_ctx, next) => {
+      if (armed) {
+        armed = false;
+        markStarted();
+        await gate;
+      }
+      await next();
+    });
+    try {
+      const first = await call<PromptItemWire>('PUT', `/api/v1/sessions/${id}/prompts/steer-active`, {
+        content: [{ type: 'text', text: 'active' }],
+        model: 'stub',
+      });
+      expect(first.body.data.accepted_as).toBe('turn');
+      await started;
+
+      const steered = await call<PromptItemWire>('PUT', `/api/v1/sessions/${id}/prompts/steer-now`, {
+        content: [{ type: 'text', text: 'steer this' }],
+        delivery: 'steer',
+      });
+      expect(steered.body.code).toBe(0);
+      expect(steered.body.data.accepted_as).toBe('steer');
+      expect(steered.body.data.status).toBe('running');
+      expect(steered.body.data.turn_id).toBeUndefined();
+      expect(sendNow).toHaveBeenCalledWith(
+        expect.objectContaining({ content: [{ type: 'text', text: 'steer this' }] }),
+      );
+    } finally {
+      releaseGate();
+      hook.dispose();
+    }
+  });
+
   it('returns 40401 for an unknown session', async () => {
-    const { body } = await call<null>('POST', '/api/v1/sessions/nope/prompts', {
+    const { body } = await call<null>('PUT', '/api/v1/sessions/nope/prompts/p_unknown', {
       content: [{ type: 'text', text: 'hello' }],
     });
     expect(body.code).toBe(40401);
@@ -2065,7 +2204,7 @@ describe('server-v2 /api/v1 prompts', () => {
     const childContext = await lifecycle.fork(agentContextOf(mainHandle));
     const child = lifecycle.handleOf(childContext.agentId)!;
 
-    const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+    const submitted = await call<PromptItemWire>('PUT', `/api/v1/sessions/${id}/prompts/${nextPromptId()}`, {
       content: [{ type: 'text', text: 'side question' }],
       agent_id: childContext.agentId,
     });
@@ -2095,7 +2234,7 @@ describe('server-v2 /api/v1 prompts', () => {
     const id = await createSession(home as string);
     await createMainAgent(id);
 
-    const { body } = await call<null>('POST', `/api/v1/sessions/${id}/prompts`, {
+    const { body } = await call<null>('PUT', `/api/v1/sessions/${id}/prompts/${nextPromptId()}`, {
       content: [{ type: 'text', text: 'hello' }],
       agent_id: 'agent_does_not_exist',
     });
@@ -2114,7 +2253,7 @@ describe('server-v2 /api/v1 prompts', () => {
     await closeSessionById(server!.core.accessor, id);
     expect(getLiveSessionById(server!.core.accessor, id)).toBeUndefined();
 
-    const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+    const submitted = await call<PromptItemWire>('PUT', `/api/v1/sessions/${id}/prompts/${nextPromptId()}`, {
       content: [{ type: 'text', text: 'side question after reload' }],
       agent_id: childContext.agentId,
     });
@@ -2138,7 +2277,7 @@ describe('server-v2 /api/v1 prompts', () => {
   it('rejects a profile on a prompt and points to session creation', async () => {
     const id = await createSession(home as string);
 
-    const { body } = await call<null>('POST', `/api/v1/sessions/${id}/prompts`, {
+    const { body } = await call<null>('PUT', `/api/v1/sessions/${id}/prompts/${nextPromptId()}`, {
       content: [{ type: 'text', text: 'hello' }],
       profile: 'agent',
     });
@@ -2151,7 +2290,7 @@ describe('server-v2 /api/v1 prompts', () => {
     const id = await createSession(home as string);
     await createMainAgent(id);
 
-    const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+    const submitted = await call<PromptItemWire>('PUT', `/api/v1/sessions/${id}/prompts/${nextPromptId()}`, {
       content: [{ type: 'text', text: 'hello' }],
       model: 'stub',
       thinking: 'high',
@@ -2170,7 +2309,7 @@ describe('server-v2 /api/v1 prompts', () => {
     const id = await createSession(home as string);
     await createMainAgent(id);
 
-    const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+    const submitted = await call<PromptItemWire>('PUT', `/api/v1/sessions/${id}/prompts/${nextPromptId()}`, {
       content: [{ type: 'text', text: 'hello' }],
       model: 'stub',
       disabled_tools: ['Bash'],
@@ -2184,7 +2323,7 @@ describe('server-v2 /api/v1 prompts', () => {
     expect(toolPolicy?.isToolActive('Bash')).toBe(false);
     expect(toolPolicy?.isToolActive('Read')).toBe(true);
 
-    const replaced = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+    const replaced = await call<PromptItemWire>('PUT', `/api/v1/sessions/${id}/prompts/${nextPromptId()}`, {
       content: [{ type: 'text', text: 'again' }],
       disabled_tools: ['Write'],
     });
@@ -2192,7 +2331,7 @@ describe('server-v2 /api/v1 prompts', () => {
     expect(toolPolicy?.isToolActive('Bash')).toBe(true);
     expect(toolPolicy?.isToolActive('Write')).toBe(false);
 
-    const cleared = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+    const cleared = await call<PromptItemWire>('PUT', `/api/v1/sessions/${id}/prompts/${nextPromptId()}`, {
       content: [{ type: 'text', text: 'once more' }],
       disabled_tools: [],
     });
@@ -2204,7 +2343,7 @@ describe('server-v2 /api/v1 prompts', () => {
     const id = await createSession(home as string);
     await createMainAgent(id);
 
-    const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+    const submitted = await call<PromptItemWire>('PUT', `/api/v1/sessions/${id}/prompts/${nextPromptId()}`, {
       content: [{ type: 'text', text: 'hello' }],
       model: 'stub',
       disabled_tools: ['Bash'],
@@ -2234,7 +2373,7 @@ describe('server-v2 /api/v1 prompts', () => {
     const id = await createSession(home as string);
     await createMainAgent(id);
 
-    const { body } = await call<null>('POST', `/api/v1/sessions/${id}/prompts`, {
+    const { body } = await call<null>('PUT', `/api/v1/sessions/${id}/prompts/${nextPromptId()}`, {
       content: [{ type: 'text', text: 'hello' }],
       disabled_tools: ['Bash'],
     });
@@ -2245,7 +2384,7 @@ describe('server-v2 /api/v1 prompts', () => {
     const id = await createSession(home as string);
     await createMainAgent(id);
 
-    const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+    const submitted = await call<PromptItemWire>('PUT', `/api/v1/sessions/${id}/prompts/${nextPromptId()}`, {
       content: [{ type: 'text', text: 'hello' }],
       model: 'stub',
       disabled_tools: ['Bash'],
@@ -2255,7 +2394,7 @@ describe('server-v2 /api/v1 prompts', () => {
     await closeSessionById(server!.core.accessor, id);
     expect(getLiveSessionById(server!.core.accessor, id)).toBeUndefined();
 
-    const again = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+    const again = await call<PromptItemWire>('PUT', `/api/v1/sessions/${id}/prompts/${nextPromptId()}`, {
       content: [{ type: 'text', text: 'again' }],
     });
     expect(again.body.code).toBe(0);

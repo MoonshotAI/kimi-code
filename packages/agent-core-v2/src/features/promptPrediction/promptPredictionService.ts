@@ -47,6 +47,7 @@ const ACTIVITY_CANCEL_REASONS = {
   turn_ended: 'activity_turn_ended',
   background: 'activity_background',
   interaction: 'activity_interaction',
+  queue: 'activity_queue',
   agent_lifecycle: 'activity_agent_lifecycle',
 } as const satisfies Record<SessionActivityCause, PromptPredictionCancelReason>;
 

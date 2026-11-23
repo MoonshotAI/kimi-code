@@ -17608,6 +17608,296 @@
         ]
       }
     },
+    "/api/v1/sessions/{session_id}/agents/{agent_id}/queue/{tail}": {
+      "post": {
+        "description": "Move a queued prompt before another queued prompt or to the end of the queue",
+        "operationId": "queueAction",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "agent_id",
+            "required": true,
+            "schema": {
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "tail",
+            "required": true,
+            "schema": {
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "default": {},
+                "properties": {
+                  "before_prompt_id": {
+                    "minLength": 1,
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "code": {
+                          "enum": [
+                            0
+                          ],
+                          "type": "number"
+                        },
+                        "data": {
+                          "additionalProperties": false,
+                          "properties": {},
+                          "type": "object"
+                        },
+                        "details": {},
+                        "msg": {
+                          "type": "string"
+                        },
+                        "request_id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "msg",
+                        "data",
+                        "request_id"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "code": {
+                          "enum": [
+                            40001
+                          ],
+                          "type": "number"
+                        },
+                        "data": {
+                          "enum": [
+                            null
+                          ],
+                          "nullable": true,
+                          "type": "string"
+                        },
+                        "details": {},
+                        "msg": {
+                          "type": "string"
+                        },
+                        "request_id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "msg",
+                        "data",
+                        "request_id"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "code": {
+                          "enum": [
+                            40401
+                          ],
+                          "type": "number"
+                        },
+                        "data": {
+                          "enum": [
+                            null
+                          ],
+                          "nullable": true,
+                          "type": "string"
+                        },
+                        "details": {},
+                        "msg": {
+                          "type": "string"
+                        },
+                        "request_id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "msg",
+                        "data",
+                        "request_id"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "code": {
+                          "enum": [
+                            40402
+                          ],
+                          "type": "number"
+                        },
+                        "data": {
+                          "enum": [
+                            null
+                          ],
+                          "nullable": true,
+                          "type": "string"
+                        },
+                        "details": {},
+                        "msg": {
+                          "type": "string"
+                        },
+                        "request_id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "msg",
+                        "data",
+                        "request_id"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "code": {
+                          "enum": [
+                            40930
+                          ],
+                          "type": "number"
+                        },
+                        "data": {
+                          "enum": [
+                            null
+                          ],
+                          "nullable": true,
+                          "type": "string"
+                        },
+                        "details": {},
+                        "msg": {
+                          "type": "string"
+                        },
+                        "request_id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "msg",
+                        "data",
+                        "request_id"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "code": {
+                          "enum": [
+                            40931
+                          ],
+                          "type": "number"
+                        },
+                        "data": {
+                          "enum": [
+                            null
+                          ],
+                          "nullable": true,
+                          "type": "string"
+                        },
+                        "details": {},
+                        "msg": {
+                          "type": "string"
+                        },
+                        "request_id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "msg",
+                        "data",
+                        "request_id"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "code": {
+                          "enum": [
+                            40932
+                          ],
+                          "type": "number"
+                        },
+                        "data": {
+                          "enum": [
+                            null
+                          ],
+                          "nullable": true,
+                          "type": "string"
+                        },
+                        "details": {},
+                        "msg": {
+                          "type": "string"
+                        },
+                        "request_id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "msg",
+                        "data",
+                        "request_id"
+                      ],
+                      "type": "object"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": "Default Response"
+          }
+        },
+        "tags": [
+          "prompts"
+        ]
+      }
+    },
     "/api/v1/sessions/{session_id}/agents/{agent_id}/turns": {
       "get": {
         "description": "One page of an agent's turns, oldest first: the latest page, or the turns whose ordinal is below before_ordinal. A page stays within 1 MiB, so it can hold fewer than page_size turns",
@@ -24629,8 +24919,10 @@
         "tags": [
           "prompts"
         ]
-      },
-      "post": {
+      }
+    },
+    "/api/v1/sessions/{session_id}/prompts/{prompt_id}": {
+      "put": {
         "description": "Submit a prompt to a session",
         "operationId": "submitPrompt",
         "parameters": [
@@ -24640,6 +24932,15 @@
             "required": true,
             "schema": {
               "minLength": 1,
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "prompt_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[A-Za-z0-9_-]{1,128}$",
               "type": "string"
             }
           }
@@ -25038,6 +25339,13 @@
                     "minItems": 1,
                     "type": "array"
                   },
+                  "delivery": {
+                    "enum": [
+                      "queue",
+                      "steer"
+                    ],
+                    "type": "string"
+                  },
                   "disabled_tools": {
                     "items": {
                       "type": "string"
@@ -25079,10 +25387,6 @@
                   },
                   "profile": {
                     "not": {}
-                  },
-                  "prompt_id": {
-                    "minLength": 1,
-                    "type": "string"
                   },
                   "skills": {
                     "items": {
@@ -25141,6 +25445,14 @@
                         "data": {
                           "additionalProperties": false,
                           "properties": {
+                            "accepted_as": {
+                              "enum": [
+                                "turn",
+                                "steer",
+                                "queue"
+                              ],
+                              "type": "string"
+                            },
                             "content": {
                               "items": {
                                 "oneOf": [
@@ -25560,6 +25872,10 @@
                               ],
                               "type": "string"
                             },
+                            "turn_id": {
+                              "minLength": 1,
+                              "type": "string"
+                            },
                             "user_message_id": {
                               "minLength": 1,
                               "type": "string"
@@ -25570,7 +25886,8 @@
                             "user_message_id",
                             "status",
                             "content",
-                            "created_at"
+                            "created_at",
+                            "accepted_as"
                           ],
                           "type": "object"
                         },
@@ -28084,6 +28401,13 @@
                     },
                     "minItems": 1,
                     "type": "array"
+                  },
+                  "delivery": {
+                    "enum": [
+                      "queue",
+                      "steer"
+                    ],
+                    "type": "string"
                   },
                   "disabled_tools": {
                     "items": {

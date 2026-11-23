@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
+import { randomUUID } from 'node:crypto';
+
 import { DaemonClient } from '../harness/index.js';
 import { fetchWithReport } from '../harness/report.js';
 import { createCaseLogger } from './log.js';
@@ -49,7 +51,7 @@ describeLive('session resume + activity (live server required)', () => {
       await probe.subscribe(seeded.id);
       const promptResult = await probe.submitAndWait(
         seeded.id,
-        { content: [{ type: 'text', text: 'Reply with "OK".' }] },
+        { promptId: randomUUID(), content: [{ type: 'text', text: 'Reply with "OK".' }] },
         { timeoutMs: PROMPT_TIMEOUT_MS },
       );
       log('seed prompt completed', {
@@ -105,6 +107,7 @@ describeLive('session resume + activity (live server required)', () => {
         session.id,
         async () => {
           const submitted = await client.submitPrompt(session.id, {
+            promptId: randomUUID(),
             content: [{ type: 'text', text: 'Reply with "OK".' }],
           });
           const deadline = Date.now() + 5_000;

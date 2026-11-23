@@ -283,6 +283,9 @@ export class AgentPromptProjection {
     this.publishAborted(id);
     this.terminalStates.set(id, 'cancelled');
     this.steered.delete(id);
+    for (const [turnId, pending] of this.pendingTurns) {
+      if (pending.entry.attributes?.promptId === id) this.pendingTurns.delete(turnId);
+    }
   }
 
   endActive(prompt: ActivePrompt): void {

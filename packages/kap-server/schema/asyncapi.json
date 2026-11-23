@@ -37,6 +37,9 @@
         "pong": {
           "$ref": "#/components/messages/pong"
         },
+        "queue": {
+          "$ref": "#/components/messages/queue"
+        },
         "response": {
           "$ref": "#/components/messages/response"
         },
@@ -2274,6 +2277,438 @@
         },
         "summary": "Reply to a server ping.",
         "title": "Pong"
+      },
+      "queue": {
+        "contentType": "application/json",
+        "name": "queue",
+        "payload": {
+          "properties": {
+            "agent_id": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "event_created_at": {
+              "type": "string"
+            },
+            "inputs": {
+              "items": {
+                "properties": {
+                  "client_metadata": {
+                    "additionalProperties": {},
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "type": "object"
+                  },
+                  "content": {
+                    "items": {
+                      "oneOf": [
+                        {
+                          "properties": {
+                            "text": {
+                              "type": "string"
+                            },
+                            "type": {
+                              "const": "text",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "type",
+                            "text"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "properties": {
+                            "input": {},
+                            "tool_call_id": {
+                              "minLength": 1,
+                              "type": "string"
+                            },
+                            "tool_name": {
+                              "minLength": 1,
+                              "type": "string"
+                            },
+                            "type": {
+                              "const": "tool_use",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "type",
+                            "tool_call_id",
+                            "tool_name",
+                            "input"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "properties": {
+                            "is_error": {
+                              "type": "boolean"
+                            },
+                            "output": {},
+                            "tool_call_id": {
+                              "minLength": 1,
+                              "type": "string"
+                            },
+                            "type": {
+                              "const": "tool_result",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "type",
+                            "tool_call_id",
+                            "output"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "properties": {
+                            "name": {
+                              "minLength": 1,
+                              "type": "string"
+                            },
+                            "source": {
+                              "oneOf": [
+                                {
+                                  "properties": {
+                                    "id": {
+                                      "minLength": 1,
+                                      "type": "string"
+                                    },
+                                    "kind": {
+                                      "const": "url",
+                                      "type": "string"
+                                    },
+                                    "url": {
+                                      "minLength": 1,
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "kind",
+                                    "url"
+                                  ],
+                                  "type": "object"
+                                },
+                                {
+                                  "properties": {
+                                    "data": {
+                                      "minLength": 1,
+                                      "type": "string"
+                                    },
+                                    "kind": {
+                                      "const": "base64",
+                                      "type": "string"
+                                    },
+                                    "media_type": {
+                                      "minLength": 1,
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "kind",
+                                    "media_type",
+                                    "data"
+                                  ],
+                                  "type": "object"
+                                },
+                                {
+                                  "properties": {
+                                    "file_id": {
+                                      "minLength": 1,
+                                      "type": "string"
+                                    },
+                                    "kind": {
+                                      "const": "file",
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "kind",
+                                    "file_id"
+                                  ],
+                                  "type": "object"
+                                },
+                                {
+                                  "properties": {
+                                    "file_id": {
+                                      "minLength": 1,
+                                      "type": "string"
+                                    },
+                                    "kind": {
+                                      "const": "session_media",
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "kind",
+                                    "file_id"
+                                  ],
+                                  "type": "object"
+                                },
+                                {
+                                  "properties": {
+                                    "kind": {
+                                      "const": "path",
+                                      "type": "string"
+                                    },
+                                    "path": {
+                                      "minLength": 1,
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "kind",
+                                    "path"
+                                  ],
+                                  "type": "object"
+                                }
+                              ]
+                            },
+                            "type": {
+                              "const": "image",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "type",
+                            "source"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "properties": {
+                            "name": {
+                              "minLength": 1,
+                              "type": "string"
+                            },
+                            "source": {
+                              "oneOf": [
+                                {
+                                  "properties": {
+                                    "id": {
+                                      "minLength": 1,
+                                      "type": "string"
+                                    },
+                                    "kind": {
+                                      "const": "url",
+                                      "type": "string"
+                                    },
+                                    "url": {
+                                      "minLength": 1,
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "kind",
+                                    "url"
+                                  ],
+                                  "type": "object"
+                                },
+                                {
+                                  "properties": {
+                                    "data": {
+                                      "minLength": 1,
+                                      "type": "string"
+                                    },
+                                    "kind": {
+                                      "const": "base64",
+                                      "type": "string"
+                                    },
+                                    "media_type": {
+                                      "minLength": 1,
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "kind",
+                                    "media_type",
+                                    "data"
+                                  ],
+                                  "type": "object"
+                                },
+                                {
+                                  "properties": {
+                                    "file_id": {
+                                      "minLength": 1,
+                                      "type": "string"
+                                    },
+                                    "kind": {
+                                      "const": "file",
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "kind",
+                                    "file_id"
+                                  ],
+                                  "type": "object"
+                                },
+                                {
+                                  "properties": {
+                                    "file_id": {
+                                      "minLength": 1,
+                                      "type": "string"
+                                    },
+                                    "kind": {
+                                      "const": "session_media",
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "kind",
+                                    "file_id"
+                                  ],
+                                  "type": "object"
+                                },
+                                {
+                                  "properties": {
+                                    "kind": {
+                                      "const": "path",
+                                      "type": "string"
+                                    },
+                                    "path": {
+                                      "minLength": 1,
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "kind",
+                                    "path"
+                                  ],
+                                  "type": "object"
+                                }
+                              ]
+                            },
+                            "type": {
+                              "const": "video",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "type",
+                            "source"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "properties": {
+                            "file_id": {
+                              "minLength": 1,
+                              "type": "string"
+                            },
+                            "media_type": {
+                              "minLength": 1,
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            },
+                            "path": {
+                              "minLength": 1,
+                              "type": "string"
+                            },
+                            "size": {
+                              "maximum": 9007199254740991,
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "type": {
+                              "const": "file",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "type"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "properties": {
+                            "signature": {
+                              "type": "string"
+                            },
+                            "thinking": {
+                              "type": "string"
+                            },
+                            "type": {
+                              "const": "thinking",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "type",
+                            "thinking"
+                          ],
+                          "type": "object"
+                        }
+                      ]
+                    },
+                    "type": "array"
+                  },
+                  "created_at": {
+                    "type": "string"
+                  },
+                  "prompt_id": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "skills": {
+                    "items": {
+                      "properties": {
+                        "args": {
+                          "type": "string"
+                        },
+                        "name": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "name"
+                      ],
+                      "type": "object"
+                    },
+                    "type": "array"
+                  },
+                  "user_message_id": {
+                    "minLength": 1,
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "prompt_id",
+                  "user_message_id",
+                  "content",
+                  "created_at"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "session_id": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "type": {
+              "const": "queue",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "session_id",
+            "agent_id",
+            "event_created_at",
+            "inputs"
+          ],
+          "type": "object"
+        },
+        "summary": "Queued prompts of one subscribed agent in the order they will run, sent when a connection starts receiving that agent and on every change; it replaces the client list. A prompt leaves the list once its turn starts or it is steered into the running turn.",
+        "title": "Queue"
       },
       "response": {
         "contentType": "application/json",
@@ -5570,6 +6005,9 @@
         },
         {
           "$ref": "#/components/messages/todo"
+        },
+        {
+          "$ref": "#/components/messages/queue"
         },
         {
           "$ref": "#/components/messages/turns"

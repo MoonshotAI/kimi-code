@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { produce } from 'immer';
 
 import { DisposableStore, toDisposable, type IDisposable } from '#/_base/di/lifecycle';
+import { Event } from '#/_base/event';
 import { createServices, type ServiceRegistration, type TestInstantiationService } from '#/_base/di/test';
 import { OrderedHookSlot } from '#/hooks';
 import { IEventBus } from '#/app/event/eventBus';
@@ -280,6 +281,12 @@ class FakeLoopService extends StubEffectiveProfileReader implements IAgentLoopSe
   steer(): never {
     throw new Error('unused in this suite');
   }
+
+  moveQueued(): never {
+    throw new Error('unused in this suite');
+  }
+
+  readonly onDidChangeQueue: IAgentLoopService['onDidChangeQueue'] = Event.None as IAgentLoopService['onDidChangeQueue'];
 
   cancel(): never {
     throw new Error('unused in this suite');

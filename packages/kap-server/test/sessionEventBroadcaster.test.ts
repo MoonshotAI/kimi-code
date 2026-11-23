@@ -208,6 +208,8 @@ class FakeAgentHandle {
   readonly accessor;
   readonly context: AgentContext;
   activity: AgentActivitySnapshot = {};
+  queue: FakeQueueEntry[] = [];
+  private readonly queueListeners = new Set<() => void>();
   private readonly services = new Map<unknown, unknown>();
   constructor(readonly id: string) {
     this.tasks = new FakeAgentTasks();
@@ -229,7 +231,12 @@ class FakeAgentHandle {
       snapshot: () => ({
         state: this.activity.turn === undefined ? 'idle' : 'running',
         turn: this.activity.turn,
+        queue: this.queue,
       }),
+      onDidChangeQueue: (listener: () => void) => {
+        this.queueListeners.add(listener);
+        return { dispose: () => this.queueListeners.delete(listener) };
+      },
     });
     this.accessor = {
       get: (token: unknown) => this.services.get(token),
@@ -238,8 +245,14 @@ class FakeAgentHandle {
   set(token: unknown, service: unknown): void {
     this.services.set(token, service);
   }
+  setQueue(entries: FakeQueueEntry[]): void {
+    this.queue = entries;
+    for (const listener of this.queueListeners) listener();
+  }
   dispose(): void {}
 }
+
+type FakeQueueEntry = ReturnType<IAgentLoopService['snapshot']>['queue'][number];
 
 class FakeLifecycle {
   readonly handles: FakeAgentHandle[] = [];
@@ -1928,7 +1941,7 @@ describe('SessionEventBroadcaster', () => {
     });
 
     type StateFrame = { type: string; agent_id: string } & Record<string, unknown>;
-    const STATE_FRAME_TYPES = new Set(['agent', 'context', 'goal', 'todo']);
+    const STATE_FRAME_TYPES = new Set(['agent', 'context', 'goal', 'todo', 'queue']);
     const stateFramesOf = (view: ReturnType<typeof collectingTarget>): StateFrame[] =>
       view.envelopes.filter((frame) => STATE_FRAME_TYPES.has(frame.type)) as unknown as StateFrame[];
     const settle = (ms = 0): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
@@ -2017,6 +2030,7 @@ describe('SessionEventBroadcaster', () => {
           agent_id: 'main',
           items: [{ title: 'write tests', status: 'in_progress' }],
         }),
+        expect.objectContaining({ type: 'queue', agent_id: 'main', inputs: [] }),
       ]);
       expect(JSON.parse(JSON.stringify(frames[2]))).not.toHaveProperty('goal');
       expect(stateFramesOf(offView)).toEqual([]);
@@ -2059,6 +2073,100 @@ describe('SessionEventBroadcaster', () => {
           type: 'goal',
           goal: { objective: 'ship it', status: 'active', turns_used: 1, tokens_used: 10, wall_clock_ms: 5 },
         }),
+      ]);
+    });
+
+    it('sends the queued prompts of each subscribed agent on subscribe and on every change', async () => {
+      const lc = new FakeLifecycle();
+      const main = lc.addAgent('main');
+      withAgentState(main);
+      sessions.set('s1', lc);
+      bc = makeBroadcasterForAgents();
+      const entry = (id: string, clientMetadata?: Record<string, unknown>): FakeQueueEntry =>
+        ({
+          role: 'user',
+          content: [{ type: 'text', text: `prompt ${id}` }],
+          attributes: {
+            promptId: id,
+            userMessageId: id,
+            createdAt: '2026-11-06T00:00:00.000Z',
+            origin: {
+              kind: 'user',
+              clientMetadata: clientMetadata === undefined ? undefined : [clientMetadata],
+            },
+          },
+        }) as FakeQueueEntry;
+
+      const view = collectingTarget();
+      await bc.subscribe('s1', view.target, ['main']);
+      const queueFrames = () =>
+        view.envelopes.filter((frame) => frame.type === 'queue') as unknown as { inputs: unknown[] }[];
+      expect(queueFrames()).toEqual([
+        expect.objectContaining({ type: 'queue', session_id: 's1', agent_id: 'main', inputs: [] }),
+      ]);
+
+      main.setQueue([entry('a'), entry('b', { draft: 'b' })]);
+      await settle();
+      main.setQueue([entry('b', { draft: 'b' })]);
+      await settle();
+      main.setQueue([
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: '<skill instructions>' },
+            { type: 'text', text: 'review this' },
+          ],
+          attributes: {
+            promptId: 'c',
+            userMessageId: 'c',
+            createdAt: '2026-11-06T00:00:00.000Z',
+            origin: {
+              kind: 'user',
+              skillActivations: [{ activationId: 'act-1', skillName: 'update-config', skillArgs: 'fast' }],
+            },
+          },
+        } as FakeQueueEntry,
+      ]);
+      await settle();
+      main.setQueue([]);
+      await settle();
+
+      const wireInputs = queueFrames().map((frame) => JSON.parse(JSON.stringify(frame.inputs)) as unknown[]);
+      expect(wireInputs.slice(1)).toEqual([
+        [
+          {
+            prompt_id: 'a',
+            user_message_id: 'a',
+            content: [{ type: 'text', text: 'prompt a' }],
+            created_at: '2026-11-06T00:00:00.000Z',
+          },
+          {
+            prompt_id: 'b',
+            user_message_id: 'b',
+            content: [{ type: 'text', text: 'prompt b' }],
+            client_metadata: { draft: 'b' },
+            created_at: '2026-11-06T00:00:00.000Z',
+          },
+        ],
+        [
+          {
+            prompt_id: 'b',
+            user_message_id: 'b',
+            content: [{ type: 'text', text: 'prompt b' }],
+            client_metadata: { draft: 'b' },
+            created_at: '2026-11-06T00:00:00.000Z',
+          },
+        ],
+        [
+          {
+            prompt_id: 'c',
+            user_message_id: 'c',
+            content: [{ type: 'text', text: 'review this' }],
+            skills: [{ name: 'update-config', args: 'fast' }],
+            created_at: '2026-11-06T00:00:00.000Z',
+          },
+        ],
+        [],
       ]);
     });
 
@@ -2141,7 +2249,7 @@ describe('SessionEventBroadcaster', () => {
         stateFramesOf(view)
           .slice(subscribed)
           .map((frame) => `${frame.type}:${frame.agent_id}`),
-      ).toEqual(['agent:agent-1', 'todo:agent-1']);
+      ).toEqual(['agent:agent-1', 'todo:agent-1', 'queue:agent-1']);
     });
 
     it('narrows the frames per agent on unsubscribe and stops them when the last agent goes', async () => {

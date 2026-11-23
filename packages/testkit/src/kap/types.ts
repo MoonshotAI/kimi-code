@@ -16,6 +16,8 @@ export interface KapPromptItem {
   readonly prompt_id: string;
   readonly user_message_id: string;
   readonly status: 'running' | 'blocked' | 'failed' | 'queued';
+  readonly accepted_as?: 'turn' | 'steer' | 'queue';
+  readonly turn_id?: string;
   readonly [key: string]: unknown;
 }
 

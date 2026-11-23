@@ -60,6 +60,8 @@ export type LoopEmitted =
   | { type: 'prompt.steered'; promptIds: string[]; messages?: readonly UserMessage[] }
   /** A queued message was removed from the inboxes (`Loop.cancel`); `canceled` is false when nothing matched. */
   | { type: 'prompt.canceled'; promptId: string; canceled: boolean }
+  /** A queued message was reordered within the normal inbox (`Loop.moveQueued`); `moved` is false when the order did not change. */
+  | { type: 'prompt.moved'; promptId: string; beforePromptId?: string; moved: boolean }
   | { type: 'turn.started'; turnId: number; trigger: TurnTrigger; promptOnly?: true; message?: UserMessage }
   | { type: 'turn.resumed'; turnId: number; step: number }
   | {

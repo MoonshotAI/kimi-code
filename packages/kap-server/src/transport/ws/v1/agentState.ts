@@ -17,9 +17,11 @@ import type {
   AgentState,
   ContextState,
   GoalState,
+  QueuedInput,
   TodoItemState,
 } from '../../../protocol/ws-agent';
 import { missingConfiguredModelAlias, readLegacyStatus } from '../../../services/legacyStatus/legacyStatus';
+import { projectQueuedPrompt } from '../../../routes/prompts';
 
 export function readAgentState(handle: IAgentScopeHandle | undefined, running: boolean): AgentState {
   if (handle === undefined) {
@@ -72,6 +74,12 @@ export function readGoalState(handle: IAgentScopeHandle): GoalState | undefined 
 export function readTodoItems(handle: IAgentScopeHandle): TodoItemState[] {
   const todos = optionalService(handle, IAgentTodoService)?.get() ?? [];
   return todos.map((todo) => ({ title: todo.title, status: todo.status }));
+}
+
+export function readQueuedInputs(handle: IAgentScopeHandle): QueuedInput[] {
+  const snapshot = optionalService(handle, IAgentLoopService)?.snapshot();
+  if (snapshot === undefined) return [];
+  return snapshot.queue.map((entry) => projectQueuedPrompt(entry));
 }
 
 function planActive(handle: IAgentScopeHandle): boolean {

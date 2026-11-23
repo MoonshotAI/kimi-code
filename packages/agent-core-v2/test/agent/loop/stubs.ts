@@ -1,4 +1,5 @@
 import { toDisposable } from '#/_base/di/lifecycle';
+import { Event } from '#/_base/event';
 import type { IAgentLoopService, LoopErrorHandler, LoopErrorHandlerRegistrationOptions, LoopNotify, LoopNotifyMessage, PromptHandle, PromptPayload, Turn, TurnResult } from '#/agent/loop/loop';
 import type { LoopHooks } from '@moonshot-ai/core/loop/contract/hook';
 import { ToolExecutor } from '#/tool/executor';
@@ -201,9 +202,11 @@ export function stubLoopWithHooks(options: StubLoopOptions = {}): StubLoop {
         launched: Promise.resolve(turn),
         completion: new Promise(() => {}),
       });
-      return { id };
+      return { id, acceptedAs: 'turn' };
     }) as StubLoop['submit'],
     steer: async () => {},
+    moveQueued: () => {},
+    onDidChangeQueue: Event.None as IAgentLoopService['onDidChangeQueue'],
     remind(...entries: readonly Message[]): void {
       for (const entry of entries) {
         pending.push({ kind: 'message', message: contextFromHistoryEntry(entry) });

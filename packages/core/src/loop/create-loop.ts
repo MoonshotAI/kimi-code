@@ -174,6 +174,19 @@ export interface Loop {
    * `promptId` is not a string.
    */
   cancel(promptId: string): LoopAck<'prompt.canceled'> | undefined;
+  /**
+   * Moves the queued normal-inbox message carrying `promptId` to just before
+   * the message carrying `beforePromptId`, or to the tail of the normal inbox
+   * when `beforePromptId` is omitted, and emits `prompt.moved` (`moved`
+   * reports whether the normal-inbox order changed). Unknown ids, messages in
+   * the notify inbox, and moving a message before itself are no-ops. Does not
+   * release the intake hold and does not interrupt the active turn.
+   *
+   * Returns `undefined` once the loop is closed. Throws `TypeError` when
+   * `promptId` is not a string or `beforePromptId` is defined but not a
+   * string.
+   */
+  moveQueued(promptId: string, beforePromptId?: string): LoopAck<'prompt.moved'> | undefined;
   abort(reason?: unknown, options?: { readonly continue?: boolean }): void;
   abortTool(toolCallId: string, reason?: unknown): void;
   detachTool(toolCallId: string, text?: string, completion?: ToolCompletionFactory): void;

@@ -25,6 +25,7 @@ export const promptPredictionCancelReasonSchema = z.enum([
   'activity_turn_ended',
   'activity_background',
   'activity_interaction',
+  'activity_queue',
   'activity_agent_lifecycle',
   'agent_will_close',
   'agent_replaced',

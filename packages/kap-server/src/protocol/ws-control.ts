@@ -20,6 +20,7 @@ import {
   agentEventMessageSchema,
   contextEventMessageSchema,
   goalEventMessageSchema,
+  queueEventMessageSchema,
   todoEventMessageSchema,
 } from './ws-agent';
 import {
@@ -243,6 +244,15 @@ export const todoEventOperation = {
     'Todo list of one subscribed agent, sent when a connection starts receiving that agent and on every change, including undo; it replaces the client list.',
 } as const satisfies WsOperationDefinition;
 
+export const queueEventOperation = {
+  type: 'queue',
+  direction: 'server_to_client',
+  kind: 'event',
+  messageSchema: queueEventMessageSchema,
+  description:
+    'Queued prompts of one subscribed agent in the order they will run, sent when a connection starts receiving that agent and on every change; it replaces the client list. A prompt leaves the list once its turn starts or it is steered into the running turn.',
+} as const satisfies WsOperationDefinition;
+
 export const conversationEventOperations = [
   {
     type: 'turns',
@@ -337,5 +347,6 @@ export const wsOperations = [
   contextEventOperation,
   goalEventOperation,
   todoEventOperation,
+  queueEventOperation,
   ...conversationEventOperations,
 ] as const satisfies readonly WsOperationDefinition[];

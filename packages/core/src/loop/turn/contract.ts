@@ -67,6 +67,7 @@ type TurnOnlyEvent = {
     | 'prompt.reminded'
     | 'prompt.steered'
     | 'prompt.canceled'
+    | 'prompt.moved'
     | 'turn.started'
     | 'turn.resumed'
     | 'tool.async_ended';

@@ -88,10 +88,12 @@ export const DEFAULT_PROMPT_CONTROLS = {
 
 export type PromptSubmitInput =
   Pick<PromptSubmission, 'content'>
-  & Partial<Pick<PromptSubmission, 'metadata' | 'model' | 'thinking' | 'permission_mode' | 'plan_mode'>>;
+  & { promptId: string }
+  & Partial<Pick<PromptSubmission, 'metadata' | 'model' | 'thinking' | 'permission_mode' | 'plan_mode' | 'delivery'>>;
 
 function fillPromptDefaults(input: PromptSubmitInput): PromptSubmission {
-  return { ...DEFAULT_PROMPT_CONTROLS, ...input };
+  const { promptId: _promptId, ...body } = input;
+  return { ...DEFAULT_PROMPT_CONTROLS, ...body };
 }
 
 export class DaemonClient {
@@ -209,13 +211,14 @@ export class DaemonClient {
     return this.http.listTurns(sid);
   }
   submitPrompt(sid: string, input: PromptSubmitInput): Promise<PromptSubmitResult> {
-    return this.http.submitPrompt(sid, fillPromptDefaults(input));
+    return this.http.submitPrompt(sid, input.promptId, fillPromptDefaults(input));
   }
   submitPromptStateful(
     sid: string,
+    promptId: string,
     body: PromptSubmission,
   ): Promise<PromptSubmitResult> {
-    return this.http.submitPrompt(sid, body);
+    return this.http.submitPrompt(sid, promptId, body);
   }
   listPrompts(sid: string): Promise<PromptListResponse> {
     return this.http.listPrompts(sid);
@@ -367,17 +370,18 @@ export class DaemonClient {
     input: PromptSubmitInput,
     opts: SubmitAndWaitOptions = {},
   ): Promise<SubmitAndWaitResult> {
-    return this.submitAndWaitStateful(sid, fillPromptDefaults(input), opts);
+    return this.submitAndWaitStateful(sid, input.promptId, fillPromptDefaults(input), opts);
   }
 
   async submitAndWaitStateful(
     sid: string,
+    promptId: string,
     body: PromptSubmission,
     opts: SubmitAndWaitOptions = {},
   ): Promise<SubmitAndWaitResult> {
     const { result, finalFrame } = await this.runUntilIdle(
       sid,
-      () => this.http.submitPrompt(sid, body),
+      () => this.http.submitPrompt(sid, promptId, body),
       opts,
     );
     return { prompt_id: result.prompt_id, user_message_id: result.user_message_id, finalFrame };

@@ -1,6 +1,7 @@
 import { createDecorator } from '#/_base/di/instantiation';
 import type { IDisposable } from '#/_base/di/lifecycle';
 import { Error2, isError2, type Error2Options } from '#/_base/errors/errors';
+import type { Event } from '#/_base/event';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import type { AgentTaskInfo } from '#/agent/task/types';
 import type { FinishReason } from '@moonshot-ai/core/llm/response';
@@ -164,6 +165,7 @@ export interface Turn {
 
 export interface LoopSubmitResult {
   readonly id: string;
+  readonly acceptedAs: 'turn' | 'queue';
 }
 
 export interface LoopCancelTarget {
@@ -297,6 +299,10 @@ export interface IAgentLoopService extends EffectiveProfileReader {
   submit(input: UserMessage): LoopSubmitResult;
 
   steer(promptIds: readonly string[]): Promise<void>;
+
+  moveQueued(promptId: string, beforePromptId?: string): void;
+
+  readonly onDidChangeQueue: Event<void>;
 
   cancel(target?: LoopCancelTarget, reason?: unknown): boolean;
 

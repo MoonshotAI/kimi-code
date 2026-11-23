@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
+import { randomUUID } from 'node:crypto';
+
 import type { FileMeta } from '@moonshot-ai/agent-core-v2/app/file/fileService';
 import type {
   ModelCatalogItem,
@@ -199,6 +201,7 @@ describeLive('DaemonClient (live server required)', () => {
       const promptResult = await client.submitAndWait(
         populated.id,
         {
+          promptId: randomUUID(),
           content: [
             {
               type: 'text',
@@ -262,7 +265,7 @@ describeLive('DaemonClient (live server required)', () => {
 
       const keepPrompt = await client.submitAndWait(
         session.id,
-        { content: [{ type: 'text', text: 'Remember KEEP. Reply with "OK".' }] },
+        { promptId: randomUUID(), content: [{ type: 'text', text: 'Remember KEEP. Reply with "OK".' }] },
         { timeoutMs: PROMPT_TIMEOUT_MS },
       );
       log('keep prompt completed', {
@@ -273,7 +276,7 @@ describeLive('DaemonClient (live server required)', () => {
 
       const undoPrompt = await client.submitAndWait(
         session.id,
-        { content: [{ type: 'text', text: 'Remember UNDO-ME. Reply with "OK".' }] },
+        { promptId: randomUUID(), content: [{ type: 'text', text: 'Remember UNDO-ME. Reply with "OK".' }] },
         { timeoutMs: PROMPT_TIMEOUT_MS },
       );
       log('undo prompt completed', {

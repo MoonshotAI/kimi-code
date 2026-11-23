@@ -332,6 +332,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   const app = Fastify({
     loggerInstance: logger,
     disableRequestLogging: true,
+    maxParamLength: 256,
     genReqId: (req) => resolveRequestId(req.headers),
   }) as unknown as FastifyInstance;
   app.server.requestTimeout = 0;

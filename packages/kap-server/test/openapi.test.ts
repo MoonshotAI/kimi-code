@@ -72,6 +72,14 @@ describe('server-v2 OpenAPI', () => {
     expect(content['multipart/form-data']).toBeDefined();
   });
 
+  it('describes the queue move parameters and body', async () => {
+    const doc = await fetchOpenApi();
+    const moveOp = operation(doc, '/api/v1/sessions/{session_id}/agents/{agent_id}/queue/{tail}', 'post');
+    const params = moveOp['parameters'] as Array<Record<string, unknown>>;
+    expect(params.filter((p) => p['in'] === 'path').map((p) => p['name']).toSorted()).toEqual(['agent_id', 'session_id', 'tail']);
+    expect(JSON.stringify(moveOp['requestBody'])).toContain('before_prompt_id');
+  });
+
   it('describes session export as a ZIP or JSON error envelope', async () => {
     const doc = await fetchOpenApi();
     const exportOp = operation(doc, '/api/v1/sessions/{session_id}/export', 'post');

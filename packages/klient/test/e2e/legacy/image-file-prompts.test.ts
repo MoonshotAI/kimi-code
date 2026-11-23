@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
+import { randomUUID } from 'node:crypto';
+
 import { ErrorCode } from '@moonshot-ai/kap-server/protocol/error-codes';
 
 import { DaemonClient, EnvelopeError } from '../harness/index.js';
@@ -63,6 +65,7 @@ describeLive('legacy: image file prompts', () => {
       await expectEnvelopeCode(
         () =>
           client.submitPrompt(sid!, {
+            promptId: randomUUID(),
             content: [{ type: 'image', source: { kind: 'file', file_id: 'file_missing_e2e' } }],
           }),
         ErrorCode.FILE_NOT_FOUND,
@@ -78,6 +81,7 @@ describeLive('legacy: image file prompts', () => {
       await expectEnvelopeCode(
         () =>
           client.submitPrompt(sid!, {
+            promptId: randomUUID(),
             content: [{ type: 'image', source: { kind: 'file', file_id: textFile.id } }],
           }),
         ErrorCode.VALIDATION_FAILED,
@@ -94,6 +98,7 @@ describeLive('legacy: image file prompts', () => {
       expect(png.size).toBe(ONE_BY_ONE_PNG.length);
 
       const submit = await client.submitPrompt(sid, {
+        promptId: randomUUID(),
         content: [
           { type: 'text', text: 'Reply with the single word "OK" after reading this image.' },
           { type: 'image', source: { kind: 'file', file_id: png.id } },

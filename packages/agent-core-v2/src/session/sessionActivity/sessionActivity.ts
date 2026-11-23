@@ -17,6 +17,7 @@ export type SessionActivityCause =
   | 'turn_ended'
   | 'background'
   | 'interaction'
+  | 'queue'
   | 'agent_lifecycle';
 
 export interface SessionActivityChangedEvent {

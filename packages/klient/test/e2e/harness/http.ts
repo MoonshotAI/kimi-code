@@ -300,8 +300,8 @@ export class HttpClient {
   listPrompts(sid: string): Promise<PromptListResponse> {
     return this.request('GET', `/sessions/${encodeURIComponent(sid)}/prompts`, undefined);
   }
-  submitPrompt(sid: string, body: PromptSubmission): Promise<PromptSubmitResult> {
-    return this.request('POST', `/sessions/${encodeURIComponent(sid)}/prompts`, body);
+  submitPrompt(sid: string, promptId: string, body: PromptSubmission): Promise<PromptSubmitResult> {
+    return this.request('PUT', `/sessions/${encodeURIComponent(sid)}/prompts/${encodeURIComponent(promptId)}`, body);
   }
   steerPrompts(sid: string, promptIds: readonly string[]): Promise<PromptSteerResult> {
     return this.request(

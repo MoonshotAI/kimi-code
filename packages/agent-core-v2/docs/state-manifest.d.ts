@@ -856,6 +856,7 @@ export interface SessionStateSnapshot {
     turnActive: boolean;
     background: ReadonlySet<string>;
     compacting: boolean;
+    queued: boolean;
     lastTurnReason?: 'completed' | 'cancelled' | 'failed';
   }>;
   // src/session/sessionLog/sessionLogService.ts

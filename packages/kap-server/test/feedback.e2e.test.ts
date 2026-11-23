@@ -229,6 +229,9 @@ default_model = "alternate"
     return await response.json() as { code: number; data: T };
   }
 
+  let promptSeq = 0;
+  const nextPromptId = (): string => `fb_${String(++promptSeq)}`;
+
   it('creates global feedback without a session and requires Kimi login', async () => {
     const input = { kind: 'global', source: 'sidebar', category: 'bug', content: 'App issue' };
     signedIn = false;
@@ -472,7 +475,7 @@ default_model = "alternate"
   it('rates the selected historical turn, updates that rating, and uploads a session without diagnostics', async () => {
     const { data: session } = await request<{ id: string }>('POST', '/sessions', { metadata: { cwd: home } });
     async function replyTo(text: string, count: number, model: 'stub' | 'alternate'): Promise<{ turnId: string; replyId: string }> {
-      const prompt = await request('POST', `/sessions/${session.id}/prompts`, {
+      const prompt = await request('PUT', `/sessions/${session.id}/prompts/${nextPromptId()}`, {
         content: [{ type: 'text', text }], model, permission_mode: 'yolo',
       });
       expect(prompt.code).toBe(0);
@@ -568,7 +571,7 @@ default_model = "alternate"
       withRequestId(`${prefix}-final`, say('The review is complete.')),
     );
     managed.script(withRequestId(`${prefix}-helper`, say('The helper reviewed the example.')));
-    const prompt = await request('POST', `/sessions/${session.id}/prompts`, {
+    const prompt = await request('PUT', `/sessions/${session.id}/prompts/${nextPromptId()}`, {
       content: [{ type: 'text', text: 'Review with a helper.' }], model: 'stub', permission_mode: 'yolo',
     });
     expect(prompt.code).toBe(0);
@@ -635,7 +638,7 @@ default_model = "alternate"
     const result = model.hold('background-result');
     try {
       const base = `/sessions/${session.id}`;
-      await request('POST', `${base}/prompts`, { content: [{ type: 'text', text: 'Start a background helper.' }], permission_mode: 'yolo' });
+      await request('PUT', `${base}/prompts/${nextPromptId()}`, { content: [{ type: 'text', text: 'Start a background helper.' }], permission_mode: 'yolo' });
       const first = await completedTurn(session.id, 'The helper is running.');
       await result.reached();
       const rate = async (turnId: string) => {
@@ -648,7 +651,7 @@ default_model = "alternate"
         request_id: 'background-running',
         participating_models: [{ ...main, step: 1 }, { role: 'subagent', model_id: 'different-model', is_kfc: true }, { ...main, step: 2 }],
       } });
-      await request('POST', `${base}/prompts`, { content: [{ type: 'text', text: 'A separate question.' }], permission_mode: 'yolo' });
+      await request('PUT', `${base}/prompts/${nextPromptId()}`, { content: [{ type: 'text', text: 'A separate question.' }], permission_mode: 'yolo' });
       const next = await completedTurn(session.id, 'A separate reply.');
       expect(await rate(next.turn_id)).toMatchObject({ info: { request_id: 'separate-reply', participating_models: [{ ...main, step: 1 }] } });
     } finally {

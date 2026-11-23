@@ -67,6 +67,7 @@ export const PROMPT_PREDICTION_CANCEL_REASONS = [
   'activity_turn_ended',
   'activity_background',
   'activity_interaction',
+  'activity_queue',
   'activity_agent_lifecycle',
   'agent_will_close',
   'agent_replaced',

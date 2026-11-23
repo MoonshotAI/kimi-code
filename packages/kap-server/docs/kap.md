@@ -42,7 +42,7 @@ All `/api/v1/*`, `/openapi.json`, and `/asyncapi.json` endpoints require `Author
 
 ### A. Bidirectional session handoff (`HandOff`) & spawning parallel sessions
 
-- **Hand off TO Kimi Code (or fan out follow-up sessions)**: Attach to the live Desktop / `kimi web` server (§1.1) so sessions appear in real time, resolve `workspace_id` (§2) so they land in the active workspace, call `POST /api/v1/sessions` (`{ "workspace_id" | "cwd", "title", "agent_config"?: ... }`), then submit a concise structured brief (Goal, Modified files, Constraints, Next steps) via `POST /api/v1/sessions/{session_id}/prompts` and return each `session_id` (plus `kimi -S <session_id>`) to the user. If running against an on-demand `kimi web --port 0 --json` subprocess, wait via `:wait` until `activity !== "turn"` before stopping the subprocess so history persists cleanly.
+- **Hand off TO Kimi Code (or fan out follow-up sessions)**: Attach to the live Desktop / `kimi web` server (§1.1) so sessions appear in real time, resolve `workspace_id` (§2) so they land in the active workspace, call `POST /api/v1/sessions` (`{ "workspace_id" | "cwd", "title", "agent_config"?: ... }`), then submit a concise structured brief (Goal, Modified files, Constraints, Next steps) via `PUT /api/v1/sessions/{session_id}/prompts/{prompt_id}` and return each `session_id` (plus `kimi -S <session_id>`) to the user. If running against an on-demand `kimi web --port 0 --json` subprocess, wait via `:wait` until `activity !== "turn"` before stopping the subprocess so history persists cleanly.
 - **Pick up FROM Kimi Code**: Locate the session via `GET /api/v1/sessions?page_size=50&archived=false&sort=updated_at_desc` (add `query=<text>` to match title or last prompt, or an exact session id) or `POST /api/v1/search` (`{ "query": "..." }`), read `GET /api/v1/sessions/{session_id}/agents/main/turns?page_size=10` (plus `GET .../interactions` if `pending_interaction !== "none"`), summarize progress and blockers, and either wait for the user's next instruction or continue (optionally branching first via `POST /api/v1/sessions/{session_id}:fork` `{ "turn_index"?: number, "title"?: "..." }`).
 
 ### B. Cross-workspace session organization
@@ -58,7 +58,7 @@ Omitting `workspace_id` on `GET /api/v1/sessions` queries across all workspaces 
 1. **Resolve model (when the user names a specific model)** & **create a session**:
    - Query `GET /api/v1/models` (`data.items[]` has `{ provider, model, display_name, support_efforts }`) to map a human model name to `"${provider}/${model}"` instead of guessing model IDs.
    - Create a session in the target workspace (§2) via `POST /api/v1/sessions` with `{ "workspace_id": "...", "title"?: "...", "agent_config"?: { "permission_mode": "manual" | "auto" | "yolo", "model"?: "${provider}/${model}", "thinking"?: "high", "plan_mode"?: false } }` (or `"cwd"` when no workspace exists yet).
-2. **Submit a round prompt**: `POST /api/v1/sessions/{session_id}/prompts` with a unique `prompt_id` (`"round-1"`, `"round-2"`, ...) and `{ "content": [{ "type": "text", "text": "..." }] }`. Verify `code === 0` and `data.status` is `"running"` or `"queued"`.
+2. **Submit a round prompt**: `PUT /api/v1/sessions/{session_id}/prompts/{prompt_id}` with a unique path `prompt_id` (`"round-1"`, `"round-2"`, ...; 1-128 letters, digits, `_`, `-`) and `{ "content": [{ "type": "text", "text": "..." }] }`. Verify `code === 0` and `data.status` is `"running"` or `"queued"`; `data.accepted_as` is `"turn"` (starts a turn at once, with `data.turn_id`), `"steer"` (joined the running turn), or `"queue"` (waits in the agent's queue). Submissions are idempotent: resending the same body to the same `prompt_id` returns the first result, and a different body fails `40927`.
 3. **Wait for the next stopping point**: `POST /api/v1/sessions/{session_id}:wait` with `{ "timeout_ms": 15000 }` (`0..60000`, default `15000`; use `1000`-`3000` for periodic progress checks). Returns in `0 ms` if `session.activity !== "turn"` or a pending interaction already exists; otherwise blocks until `main` leaves `"turn"`, a pending `approval`/`question` appears, or `timeout_ms` elapses (`{ session, pending_interactions, timed_out }`). When it returns with `timed_out: false`, everything the session recorded so far is on disk: a server restarted after a crash at that point shows the same turns.
 4. **Branch on the `:wait` result**:
    - **`pending_interactions` non-empty** (also readable via `GET /api/v1/sessions/{session_id}/interactions`): reply via `POST /api/v1/sessions/{session_id}/interactions/{interaction_id}`:
@@ -67,7 +67,7 @@ Omitting `workspace_id` on `GET /api/v1/sessions` queries across all workspaces 
      - Loop back to `:wait`.
    - **`timed_out === true` (`session.activity === "turn"`)**: read live progress via `GET /api/v1/sessions/{session_id}/agents/main/turns?page_size=5` (flushes in-flight `reasoning`, `tool_call`, and `assistant_message` items on read).
      - On track -> loop back to `:wait`.
-     - Needs mid-turn course correction (when `pending_interactions` is empty) -> `POST /api/v1/sessions/{session_id}/steer` (`{ "prompt_id": "steer-1", "content": [{ "type": "text", "text": "..." }] }`). `/steer` waits for the next safe injection point and may open a continuation `Turn`, so keep looping on `:wait` until `session.activity !== "turn"`.
+     - Needs mid-turn course correction (when `pending_interactions` is empty) -> resubmit via `PUT .../prompts/{prompt_id}` with `"delivery": "steer"` (while a turn is running it returns at once with `accepted_as: "steer"`; otherwise it queues or opens a turn like a normal submit), or `POST /api/v1/sessions/{session_id}/steer` (`{ "prompt_id": "steer-1", "content": [{ "type": "text", "text": "..." }] }`). `/steer` waits for the next safe injection point and may open a continuation `Turn`, so keep looping on `:wait` until `session.activity !== "turn"`.
      - Abort -> `POST /api/v1/sessions/{session_id}:cancel` (`{ "include_background": true }`), optionally followed by `:undo`.
    - **`pending_interactions` empty and `session.activity !== "turn"`**: round finished (`last_turn_outcome`: `"completed" | "interrupted" | "failed"`). Read Kimi Code's reply from `GET /api/v1/sessions/{session_id}/agents/main/turns?page_size=5`; for multi-round Agent-to-Agent discussions, evaluate the points raised and send the next round via `POST .../prompts` on the same `session_id` until convergence or the round cap.
 
@@ -88,9 +88,9 @@ SID=$(curl -sf -X POST "${ORIGIN}/api/v1/sessions" \
   -H "Authorization: Bearer ${TOKEN}" -H "Content-Type: application/json" \
   -d "$TARGET_REQ" | jq -r '.data.id')
 
-curl -sf -X POST "${ORIGIN}/api/v1/sessions/${SID}/prompts" \
+curl -sf -X PUT "${ORIGIN}/api/v1/sessions/${SID}/prompts/round-1" \
   -H "Authorization: Bearer ${TOKEN}" -H "Content-Type: application/json" \
-  -d '{"prompt_id":"round-1","content":[{"type":"text","text":"Review our migration plan and challenge weak assumptions."}]}' >/dev/null
+  -d '{"content":[{"type":"text","text":"Review our migration plan and challenge weak assumptions."}]}' >/dev/null
 
 while true; do
   WAIT_JSON=$(curl -sf -X POST "${ORIGIN}/api/v1/sessions/${SID}:wait" \
@@ -140,11 +140,13 @@ curl -sf "${ORIGIN}/api/v1/sessions/${SID}/agents/main/turns?page_size=5" \
 | `POST /api/v1/sessions/{session_id}:continue` | `session_continue` | Continue after an interrupted, non-blocked failed, or crash-settled latest turn (`40940` if not continuable) |
 | `POST /api/v1/sessions/{session_id}:fork` / `:undo` / `:compact` / `:btw` | `baseline` | Branch session (`turn_index?`), undo from `turn_id`, compact context, or spawn read-only side-chat (`{ agent_id }`) |
 | `POST /api/v1/sessions/{session_id}/agents/{agent_id}:close` | `agent_close` | Close and remove a `btw` side-chat agent (`40939` if not closable) |
-| `POST /api/v1/sessions/{session_id}:archive` / `:restore` / `:delete` / `:reload` / `:takeover` | `baseline` | Single-session lifecycle actions (plus batch `POST /api/v1/sessions:archive` & `:restore` by `ids`) |
+| `POST /api/v1/sessions/{session_id}:archive` / `:restore` / `:delete` / `:reload` / `:takeover` | `baseline` | Single-session lifecycle actions (plus batch `POST /api/v1/sessions:archive` & `:restore` by `ids`); `:reload` fails `40901` while any agent has a running turn, a running compaction, or queued prompts |
 | `POST /api/v1/sessions/{session_id}/profile` & `/title/generate` | `baseline` | Update `title`, `metadata`, or `agent_config`, or generate a session title |
 | `GET /api/v1/sessions/{session_id}/agents/{agent_id}/turns` | `baseline` | Read turns (`before_ordinal?`, `page_size` <= 200; flushes live streaming items on read) |
-| `GET` / `POST /api/v1/sessions/{session_id}/prompts` | `baseline` | Read active/queued prompts or submit a prompt (`prompt_id`, `content`, setting overrides, `skills?`) |
+| `GET /api/v1/sessions/{session_id}/prompts` | `baseline` | Read active/queued prompts |
+| `PUT /api/v1/sessions/{session_id}/prompts/{prompt_id}` | `baseline` | Submit a prompt (`content`, setting overrides, `skills?`, `delivery?`; idempotent by path `prompt_id`, response adds `accepted_as` / `turn_id?`) |
 | `POST /api/v1/sessions/{session_id}/steer` & `/prompts:steer` & `/prompts/{prompt_id}:abort` | `baseline` | Steer mid-turn, promote queued prompts to steers, or abort a prompt |
+| `POST /api/v1/sessions/{session_id}/agents/{agent_id}/queue/{prompt_id}:move` | `baseline` | Move a queued prompt before another queued prompt (`before_prompt_id?`, default the end of the queue) |
 | `GET /api/v1/sessions/{session_id}/interactions` | `interactions_list` | List pending `approval` and `question` interactions (`{ items }`) |
 | `POST /api/v1/sessions/{session_id}/interactions/{interaction_id}` | `baseline` | Answer a pending `approval` or `question` interaction |
 | `GET /api/v1/sessions/{session_id}/skills` & `POST .../skills/{name}:activate` | `baseline` | List or invoke session skills |

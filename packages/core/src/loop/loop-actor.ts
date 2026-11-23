@@ -68,6 +68,7 @@ type LoopCommand =
   | { type: 'input.run_turn'; message: UserMessage }
   | { type: 'input.submit'; message: UserMessage }
   | { type: 'input.cancel'; promptId: string }
+  | { type: 'input.move_queued'; promptId: string; beforePromptId?: string }
   | { type: 'input.steer'; promptIds: readonly string[] }
   | { type: 'input.notify'; message: UserMessage }
   | { type: 'input.remind'; message: RemindMessage }
@@ -194,6 +195,27 @@ class LoopMailbox {
     this.normal = normal;
     this.notifyEntries = notify;
     const ack: LoopAck<'prompt.canceled'> = { type: 'prompt.canceled', promptId, canceled };
+    this.emit(ack);
+    return ack;
+  }
+
+  moveQueued(promptId: string, beforePromptId?: string): LoopAck<'prompt.moved'> {
+    let moved = false;
+    if (beforePromptId !== promptId) {
+      const from = this.normal.findIndex((message) => message.attributes?.promptId === promptId);
+      if (from >= 0) {
+        const [entry] = this.normal.splice(from, 1);
+        const to = beforePromptId === undefined
+          ? this.normal.length
+          : this.normal.findIndex((message) => message.attributes?.promptId === beforePromptId);
+        if (to < 0) this.normal.splice(from, 0, entry!);
+        else {
+          this.normal.splice(to, 0, entry!);
+          moved = to !== from;
+        }
+      }
+    }
+    const ack: LoopAck<'prompt.moved'> = { type: 'prompt.moved', promptId, beforePromptId, moved };
     this.emit(ack);
     return ack;
   }
@@ -682,6 +704,15 @@ class LoopActor implements Loop {
     return this.actor.act(() => {
       if (!this.open()) return undefined;
       return this.mailbox.cancel(promptId);
+    });
+  }
+
+  moveQueued(promptId: string, beforePromptId?: string): LoopAck<'prompt.moved'> | undefined {
+    this.check({ type: 'input.move_queued', promptId, beforePromptId });
+    if (!this.open()) return undefined;
+    return this.actor.act(() => {
+      if (!this.open()) return undefined;
+      return this.mailbox.moveQueued(promptId, beforePromptId);
     });
   }
 
@@ -1747,6 +1778,10 @@ function commandError(command: LoopCommand): string | undefined {
         : 'promptIds must be an array of strings';
     case 'input.cancel':
       return typeof command.promptId === 'string' ? undefined : 'promptId must be a string';
+    case 'input.move_queued':
+      return typeof command.promptId === 'string' && (command.beforePromptId === undefined || typeof command.beforePromptId === 'string')
+        ? undefined
+        : 'promptId must be a string and beforePromptId must be a string';
     case 'input.abort_tool':
     case 'input.detach_tool':
       return typeof command.toolCallId === 'string' ? undefined : 'toolCallId must be a string';
