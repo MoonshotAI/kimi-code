@@ -447,15 +447,18 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   }
 
   history(): readonly ContextMessage[] {
-    const source = this.loop?.state.messages ?? this.journal.snapshot().input.messages ?? [];
-    return this.turns.history(source);
+    return this.turns.history(this.rawHistory());
+  }
+
+  rawHistory(): readonly Message[] {
+    return this.loop?.state.messages ?? this.journal.snapshot().input.messages ?? [];
   }
 
   previewRequestContent(): LoopRequestContent {
     return {
       systemPrompt: this.loop?.state.profile.systemPrompt || this.getSystemPrompt(),
       tools: this.baselineTools(),
-      messages: this.loop?.state.messages ?? this.journal.snapshot().input.messages ?? [],
+      messages: this.rawHistory(),
     };
   }
 
@@ -804,7 +807,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       (rest.content?.messages === undefined
         ? this.tokenCounting.get(this.scopeContext.agentContext).size
         : undefined);
-    const messages = rest.content?.messages ?? this.history().map(historyEntryFromContext);
+    const messages = rest.content?.messages ?? this.rawHistory();
     const tools = rest.profile?.tools ?? options.tools;
     return {
       request: binding.requestMetadata

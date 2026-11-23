@@ -171,6 +171,7 @@ export function stubLoopWithHooks(options: StubLoopOptions = {}): StubLoop {
     addActiveTool: () => {},
     removeActiveTool: () => {},
     history: () => messages,
+    rawHistory: () => messages,
     previewRequestContent: () => ({ systemPrompt: '', tools: [], messages }),
     historyRevision: () => 0,
     replaceHistory(next, _reason, onAccepted) {
