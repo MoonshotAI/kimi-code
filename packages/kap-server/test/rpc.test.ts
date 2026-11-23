@@ -225,7 +225,7 @@ describe('server-v2 /api/v1/debug RPC', () => {
     const cwd = home as string;
     const created = await call<{ id: string; root: string }>(
       'POST',
-      rpc('core', IWorkspaceService, 'createOrTouch'),
+      rpc('core', IWorkspaceService, 'resolveImplicit'),
       cwd,
     );
     expect(created.body.code).toBe(0);
@@ -288,11 +288,11 @@ describe('server-v2 /api/v1/debug RPC', () => {
     expect(legacy.status).toBe(404);
   });
 
-  it('createOrTouch registers a missing root directory (validity deferred to first binding)', async () => {
+  it('resolveImplicit registers a missing root directory (validity deferred to first binding)', async () => {
     const missing = join(home as string, 'never-created');
     const created = await call<{ id: string; root: string }>(
       'POST',
-      rpc('core', IWorkspaceService, 'createOrTouch'),
+      rpc('core', IWorkspaceService, 'resolveImplicit'),
       missing,
     );
     expect(created.body.code).toBe(0);
@@ -311,7 +311,7 @@ describe('server-v2 /api/v1/debug RPC', () => {
     const cwd = home as string;
     const created = await call<{ id: string; name: string }>(
       'POST',
-      rpc('core', IWorkspaceService, 'createOrTouch'),
+      rpc('core', IWorkspaceService, 'resolveImplicit'),
       cwd,
     );
     const id = created.body.data.id;
@@ -334,7 +334,7 @@ describe('server-v2 /api/v1/debug RPC', () => {
 
   it('counts active sessions', async () => {
     const cwd = home as string;
-    const created = await call<{ id: string }>('POST', rpc('core', IWorkspaceService, 'createOrTouch'), cwd);
+    const created = await call<{ id: string }>('POST', rpc('core', IWorkspaceService, 'resolveImplicit'), cwd);
     await createSession(cwd);
     const { body } = await call<number>(
       'POST',

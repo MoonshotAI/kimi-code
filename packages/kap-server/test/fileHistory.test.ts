@@ -1,7 +1,10 @@
 import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import { IAtomicDocumentStore } from '@moonshot-ai/agent-core-v2';
+import { createGitWorktree } from '@moonshot-ai/testkit/fixtures';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { type RunningServer, startServer } from '../src/start';
@@ -79,6 +82,52 @@ async function createSession(r: RunningServer): Promise<string> {
   }
   return envelope.data.id;
 }
+
+describe('file history of forked and deleted sessions', () => {
+  it('counts a fork in the list of the working directory of its source and forgets it when it is deleted', async () => {
+    const r = await boot();
+    const docs = r.core.accessor.get(IAtomicDocumentStore);
+    const listsWith = async (sessionId: string): Promise<string[]> => {
+      const lists: string[] = [];
+      for (const list of await docs.list('file-history')) {
+        const doc = await docs.get<{ sessions: { id: string }[] }>('file-history', list);
+        if (doc?.sessions.some(({ id }) => id === sessionId) === true) lists.push(list);
+      }
+      return lists;
+    };
+    const post = async <T>(url: string, payload: unknown): Promise<T> => {
+      const res = await appOf(r).inject({ method: 'POST', url, payload, headers: { 'content-type': 'application/json' } });
+      const envelope = res.json() as Envelope<T>;
+      expect(envelope.code, res.body).toBe(0);
+      return envelope.data as T;
+    };
+    const lab = await realpath(await mkdtemp(join(tmpdir(), 'kimi-server-v2-file-history-repo-')));
+    try {
+      const { main, worktree } = await createGitWorktree({ main: join(lab, 'app'), worktree: join(lab, 'app-fix') });
+      const forkOf = async (cwd: string): Promise<{ id: string; workspace_id: string }> => {
+        const source = await post<{ id: string; workspace_id: string }>('/api/v1/sessions', { cwd });
+        const blobs = join(home, 'sessions', source.workspace_id, source.id, 'agents', 'main', 'file-history');
+        await mkdir(blobs, { recursive: true });
+        await writeFile(join(blobs, 'blob@v1'), 'before');
+        return post(`/api/v1/sessions/${source.id}:fork`, {});
+      };
+      const inMain = await forkOf(main);
+      const inWorktree = await forkOf(worktree);
+
+      expect(inWorktree.workspace_id).toBe(inMain.workspace_id);
+      expect(await listsWith(inMain.id)).toEqual([inMain.workspace_id]);
+      expect(await listsWith(inWorktree.id)).toHaveLength(1);
+      expect(await listsWith(inWorktree.id)).not.toContain(inMain.workspace_id);
+
+      for (const fork of [inMain, inWorktree]) {
+        await post(`/api/v1/sessions/${fork.id}:delete`, {});
+        expect(await listsWith(fork.id)).toEqual([]);
+      }
+    } finally {
+      await rm(lab, { recursive: true, force: true });
+    }
+  });
+});
 
 describe('file history routes', () => {
   it('serves empty changes and null content for a live session without history', async () => {
