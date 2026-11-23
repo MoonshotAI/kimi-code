@@ -23,10 +23,72 @@
     "packages/pi-tui/",
     "*.generated.ts"
   ],
+  "jsPlugins": [
+    "./apps/desktop/scripts/e2e-lint-plugin.mjs",
+    "./scripts/no-crypto-random-uuid-lint-plugin.mjs"
+  ],
   "options": {
     "typeAware": true
   },
   "overrides": [
+    {
+      "env": null,
+      "files": [
+        "apps/desktop/e2e/*.spec.ts",
+        "apps/desktop/test/e2e/**/*.spec.ts"
+      ],
+      "globals": null,
+      "plugins": null,
+      "rules": {
+        "kimi-e2e/user-visible-only": "deny",
+        "no-restricted-globals": [
+          "deny",
+          "localStorage",
+          "sessionStorage"
+        ],
+        "no-restricted-imports": [
+          "deny",
+          {
+            "patterns": [
+              "../src/*",
+              "../src/**",
+              "**/known-bug"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "env": null,
+      "files": [
+        "apps/desktop/e2e/fixtures/*.ts"
+      ],
+      "globals": null,
+      "plugins": null,
+      "rules": {
+        "kimi-e2e/user-visible-only": "deny",
+        "no-restricted-imports": [
+          "deny",
+          {
+            "patterns": [
+              "**/known-bug"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "env": null,
+      "files": [
+        "apps/desktop/e2e/turn-reconnect.spec.ts",
+        "apps/desktop/e2e/fixtures/lifecycle.ts"
+      ],
+      "globals": null,
+      "plugins": null,
+      "rules": {
+        "kimi-e2e/user-visible-only": "allow"
+      }
+    },
     {
       "env": null,
       "files": [
@@ -170,6 +232,49 @@
         "vitest/valid-expect-in-promise": "deny",
         "vitest/warn-todo": "allow"
       }
+    },
+    {
+      "env": null,
+      "files": [
+        "apps/desktop/**/*",
+        "packages/app-*/**/*",
+        "scripts/**/*.mjs"
+      ],
+      "globals": null,
+      "plugins": null,
+      "rules": {
+        "accessor-pairs": "allow",
+        "eqeqeq": "allow",
+        "import/default": "allow",
+        "import/extensions": "allow",
+        "import/namespace": "allow",
+        "import/no-cycle": "allow",
+        "import/no-duplicates": "allow",
+        "import/no-empty-named-blocks": "allow",
+        "no-setter-return": "allow",
+        "no-unneeded-ternary": "allow",
+        "no-unused-vars": "allow",
+        "no-var": "allow",
+        "prefer-spread": "allow",
+        "promise/no-return-in-finally": "allow",
+        "typescript/await-thenable": "allow",
+        "typescript/no-base-to-string": "allow",
+        "typescript/no-confusing-non-null-assertion": "allow",
+        "typescript/no-extraneous-class": "allow",
+        "typescript/no-floating-promises": "allow",
+        "typescript/no-implied-eval": "allow",
+        "typescript/no-misused-promises": "allow",
+        "typescript/no-misused-spread": "allow",
+        "typescript/no-this-alias": "allow",
+        "typescript/only-throw-error": "allow",
+        "typescript/restrict-plus-operands": "allow",
+        "typescript/restrict-template-expressions": "allow",
+        "typescript/return-await": "allow",
+        "unicorn/no-new-array": "allow",
+        "unicorn/no-this-assignment": "allow",
+        "unicorn/no-useless-spread": "allow",
+        "unicorn/require-module-specifiers": "allow"
+      }
     }
   ],
   "plugins": [
@@ -203,6 +308,7 @@
     "import/no-duplicates": "deny",
     "import/no-empty-named-blocks": "deny",
     "import/no-self-import": "deny",
+    "kimi/no-crypto-random-uuid": "deny",
     "no-array-constructor": "deny",
     "no-async-promise-executor": "deny",
     "no-caller": "deny",

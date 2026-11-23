@@ -14,7 +14,10 @@
     "nursery": "off"
   },
   "plugins": ["typescript", "import", "unicorn", "promise", "node", "oxc"],
+  "jsPlugins": ["./apps/desktop/scripts/e2e-lint-plugin.mjs", "./scripts/no-crypto-random-uuid-lint-plugin.mjs"],
   "rules": {
+    "kimi/no-crypto-random-uuid": "error",
+
     // ESLint core.
     "eslint/accessor-pairs": "error",
     "eslint/block-scoped-var": "error",
@@ -255,6 +258,27 @@
   },
   "overrides": [
     {
+      "files": ["apps/desktop/e2e/*.spec.ts", "apps/desktop/test/e2e/**/*.spec.ts"],
+      "rules": {
+        "no-restricted-globals": ["error", "localStorage", "sessionStorage"],
+        "no-restricted-imports": ["error", { "patterns": ["../src/*", "../src/**", "**/known-bug"] }],
+        "kimi-e2e/user-visible-only": "error"
+      }
+    },
+    {
+      "files": ["apps/desktop/e2e/fixtures/*.ts"],
+      "rules": {
+        "no-restricted-imports": ["error", { "patterns": ["**/known-bug"] }],
+        "kimi-e2e/user-visible-only": "error"
+      }
+    },
+    {
+      "files": ["apps/desktop/e2e/turn-reconnect.spec.ts", "apps/desktop/e2e/fixtures/lifecycle.ts"],
+      "rules": {
+        "kimi-e2e/user-visible-only": "off"
+      }
+    },
+    {
       "files": ["**/examples/**/*.ts", "**/examples/**/*.tsx"],
       "rules": {
         "eslint/no-console": "off"
@@ -382,6 +406,46 @@
         "vitest/require-mock-type-parameters": "off",
         "vitest/valid-expect": "off",
         "vitest/warn-todo": "off"
+      }
+    },
+    {
+      // Imported from code-app: legacy findings are grandfathered into the
+      // ratchet baseline (scripts/checks/baselines/oxlint-ratchet.json), which
+      // re-enables these rules for these paths and only lets the counts shrink.
+      "files": ["apps/desktop/**/*", "packages/app-*/**/*", "scripts/**/*.mjs"],
+      "rules": {
+        "eslint/accessor-pairs": "off",
+        "eslint/eqeqeq": "off",
+        "eslint/no-setter-return": "off",
+        "eslint/no-unneeded-ternary": "off",
+        "eslint/no-unused-vars": "off",
+        "eslint/no-var": "off",
+        "eslint/prefer-spread": "off",
+        "import/default": "off",
+        "import/extensions": "off",
+        "import/namespace": "off",
+        "import/no-cycle": "off",
+        "import/no-duplicates": "off",
+        "import/no-empty-named-blocks": "off",
+        "promise/no-return-in-finally": "off",
+        "typescript/await-thenable": "off",
+        "typescript/no-base-to-string": "off",
+        "typescript/no-confusing-non-null-assertion": "off",
+        "typescript/no-extraneous-class": "off",
+        "typescript/no-floating-promises": "off",
+        "typescript/no-implied-eval": "off",
+        "typescript/no-misused-promises": "off",
+        "typescript/no-misused-spread": "off",
+        "typescript/no-this-alias": "off",
+        "typescript/only-throw-error": "off",
+        "typescript/return-await": "off",
+        "typescript/restrict-plus-operands": "off",
+        "typescript/restrict-template-expressions": "off",
+        "unicorn/no-new-array": "off",
+        "unicorn/no-this-assignment": "off",
+        "unicorn/no-useless-spread": "off",
+        "unicorn/require-module-specifiers": "off",
+        "vitest/no-standalone-expect": "off"
       }
     }
   ],

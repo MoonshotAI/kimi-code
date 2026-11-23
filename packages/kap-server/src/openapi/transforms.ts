@@ -43,7 +43,10 @@ import {
   deleteSessionResponseSchema,
   getSessionResponseSchema,
   sessionCancelResponseSchema,
+  sessionContinueResponseSchema,
   takeoverSessionResponseSchema,
+  waitSessionBodySchema,
+  waitSessionResponseSchema,
 } from '../protocol/rest-session';
 
 const binarySchema = {
@@ -107,13 +110,28 @@ export function transformOpenApiDocument(
 
   patchFileUpload(paths);
   patchFileDownload(paths);
+  patchKapSpec(paths);
   patchSessionExport(paths);
   patchSessionAction(paths);
+  patchAgentAction(paths);
   patchFsAction(paths);
   patchFsDownload(paths);
   patchWorkspaceFsContent(paths);
 
   return document;
+}
+
+function patchKapSpec(paths: Record<string, unknown>): void {
+  const operation = getOperation(paths, '/api/v1/kap.md', 'get');
+  if (operation === undefined) return;
+  setResponse(operation, '200', {
+    description: 'Built-in Kimi Agent Protocol (KAP) Markdown specification',
+    content: {
+      'text/markdown': {
+        schema: { type: 'string' },
+      },
+    },
+  });
 }
 
 function patchSessionExport(paths: Record<string, unknown>): void {
@@ -190,6 +208,21 @@ function patchSessionAction(paths: Record<string, unknown>): void {
   projectSessionAction(
     paths,
     pathItem,
+    'wait',
+    'runSessionWaitAction',
+    waitSessionResponseSchema,
+    waitSessionBodySchema,
+  );
+  projectSessionAction(
+    paths,
+    pathItem,
+    'continue',
+    'runSessionContinueAction',
+    sessionContinueResponseSchema,
+  );
+  projectSessionAction(
+    paths,
+    pathItem,
     'archive',
     'runSessionArchiveAction',
     archiveSessionResponseSchema,
@@ -257,6 +290,22 @@ function projectSessionAction(
     });
   }
   paths[`/api/v1/sessions/{session_id}:${action}`] = cloned;
+}
+
+function patchAgentAction(paths: Record<string, unknown>): void {
+  const internalPath = '/api/v1/sessions/{session_id}/agents/{tail}';
+  const pathItem = asRecord(paths[internalPath]);
+  const operation = asRecord(pathItem?.['post']);
+  if (pathItem === undefined || operation === undefined) return;
+
+  const cloned = cloneRecord(pathItem);
+  replacePathParamName(cloned, 'tail', 'agent_id');
+  const clonedOperation = asRecord(cloned['post']);
+  if (clonedOperation !== undefined) {
+    clonedOperation['operationId'] = 'runAgentCloseAction';
+  }
+  paths['/api/v1/sessions/{session_id}/agents/{agent_id}:close'] = cloned;
+  delete paths[internalPath];
 }
 
 function patchFsAction(paths: Record<string, unknown>): void {

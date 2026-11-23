@@ -105,6 +105,9 @@ export interface ConversationState {
   implicitlyEnded: Record<string, true>;
   provisionalEnds: Record<string, TurnEnd>;
   recordsTurnEnds: boolean;
+  trailingRejectedPrompt: boolean;
+  awaitingContinuationTurnNumber?: number;
+  latestPromptId?: string;
   stepParts: Record<string, number>;
   compaction?: CompactionDetails;
 }
@@ -126,6 +129,7 @@ export function createConversationState(agentId: string, fork?: ConversationFork
     implicitlyEnded: {},
     provisionalEnds: {},
     recordsTurnEnds: false,
+    trailingRejectedPrompt: false,
     stepParts: {},
   };
 }
@@ -147,13 +151,21 @@ export function applyConversationRecord(state: ConversationState, record: WireRe
     state.inheriting = false;
   }
   switch (record.type) {
-    case 'turn.prompt':
+    case 'turn.prompt': {
+      if (typeof record['trigger'] === 'string') state.recordsTurnEnds = true;
+      state.trailingRejectedPrompt = false;
+      const promptId = stringField(record['promptId']);
+      const turnNumber = numberField(record['turnId']);
+      state.awaitingContinuationTurnNumber =
+        record['trigger'] === 'continue' && promptId === undefined ? (turnNumber ?? -1) : undefined;
+      if (promptId !== undefined) state.latestPromptId = promptId;
       state.pendingPrompt = {
-        turnNumber: numberField(record['turnId']),
-        promptId: stringField(record['promptId']),
+        turnNumber,
+        promptId,
         originKind: stringField((record['origin'] as { kind?: unknown } | undefined)?.kind),
       };
       return;
+    }
     case 'context.append_message':
       applyMessage(state, record['message'] as ContextMessage | undefined, time);
       return;
@@ -184,7 +196,19 @@ export function applyConversationRecord(state: ConversationState, record: WireRe
       applyTurnEnded(state, record, time);
       return;
     case 'prompt.completed':
-      if (record['reason'] === 'blocked') applyPromptBlocked(state, stringField(record['promptId']), time);
+      if (record['reason'] === 'blocked' || record['reason'] === 'failed') {
+        applyPromptRejected(
+          state,
+          stringField(record['promptId']),
+          record['reason'] === 'blocked',
+          time,
+        );
+      } else {
+        state.awaitingContinuationTurnNumber = undefined;
+      }
+      return;
+    case 'prompt.aborted':
+      state.awaitingContinuationTurnNumber = undefined;
       return;
     case 'interaction.request':
       applyInteractionRequest(state, record, time);
@@ -226,12 +250,18 @@ export interface RunningWork {
 export function settleOrphanTurns(state: ConversationState, running: RunningWork = {}): ConversationState {
   const orphaned = (turn: ConversationTurn): boolean =>
     turn.status === 'running' && (turn.turn_number === undefined || turn.turn_number !== running.turnNumber);
-  if (!state.turns.some(orphaned)) return state;
+  const staleContinuation =
+    state.awaitingContinuationTurnNumber !== undefined &&
+    (running.turnNumber === undefined || state.awaitingContinuationTurnNumber !== running.turnNumber);
+  if (!state.turns.some(orphaned)) {
+    return staleContinuation ? { ...state, awaitingContinuationTurnNumber: undefined } : state;
+  }
   const next: ConversationState = {
     ...state,
     turns: [...state.turns],
     tools: { ...state.tools },
     provisionalEnds: { ...state.provisionalEnds },
+    awaitingContinuationTurnNumber: staleContinuation ? undefined : state.awaitingContinuationTurnNumber,
   };
   next.turns.forEach((turn, index) => {
     if (!orphaned(turn)) return;
@@ -272,7 +302,10 @@ export function undoConversationTurns(state: ConversationState, count: number): 
   }
   if (state.openTurnId !== undefined && removed.has(state.openTurnId)) state.openTurnId = undefined;
   state.pendingPrompt = undefined;
+  state.latestPromptId = undefined;
   state.pendingSteers = 0;
+  state.trailingRejectedPrompt = false;
+  state.awaitingContinuationTurnNumber = undefined;
   return state;
 }
 
@@ -517,6 +550,9 @@ function applyStepRetrying(state: ConversationState, record: WireRecord): void {
 
 function applyTurnEnded(state: ConversationState, record: WireRecord, time: number): void {
   state.recordsTurnEnds = true;
+  if (record['reason'] !== 'failed' && record['reason'] !== 'blocked') {
+    state.awaitingContinuationTurnNumber = undefined;
+  }
   const turnNumber = numberField(record['turnId']);
   if (turnNumber !== undefined && state.pendingPrompt?.turnNumber === turnNumber) state.pendingPrompt = undefined;
   const turn = findTurnByNumber(state, turnNumber) ?? unnumberedOpenTurn(state);
@@ -548,15 +584,33 @@ function failureReasonOf(error: ErrorInfo | undefined): TurnEndReason {
   return 'error';
 }
 
-function applyPromptBlocked(state: ConversationState, promptId: string | undefined, time: number): void {
+function applyPromptRejected(
+  state: ConversationState,
+  promptId: string | undefined,
+  blocked: boolean,
+  time: number,
+): void {
   if (promptId === undefined) return;
   for (let index = state.turns.length - 1; index >= 0; index--) {
     const turn = state.turns[index]!;
-    const opener = turn.items[0];
-    if (opener?.type !== 'user_message' || opener.item_id !== promptId) continue;
-    endTurn(state, turn, { outcome: 'failed', reason: 'blocked' }, time);
+    const hasPrompt = turn.items.some(
+      (item) =>
+        (item.type === 'user_message' &&
+          (item.item_id === promptId || item.prompt_ids.includes(promptId))) ||
+        (item.type === 'notification' &&
+          (item.item_id === promptId || item.item_id.startsWith(`${promptId}:`))),
+    );
+    if (!hasPrompt) continue;
+    if (blocked && turn.items[0]?.type === 'user_message' && turn.items[0].item_id === promptId) {
+      endTurn(state, turn, { outcome: 'failed', reason: 'blocked' }, time);
+    }
     return;
   }
+  if (!blocked && state.awaitingContinuationTurnNumber !== undefined) {
+    state.awaitingContinuationTurnNumber = undefined;
+    return;
+  }
+  state.trailingRejectedPrompt = true;
 }
 
 function applyInteractionRequest(state: ConversationState, record: WireRecord, time: number): void {
@@ -685,11 +739,14 @@ function clearConversation(state: ConversationState): void {
   state.anchors = [];
   state.implicitlyEnded = {};
   state.provisionalEnds = {};
+  state.trailingRejectedPrompt = false;
+  state.awaitingContinuationTurnNumber = undefined;
   state.stepParts = {};
   state.compaction = undefined;
 }
 
 function startTurn(state: ConversationState, time: number): ConversationTurn {
+  state.trailingRejectedPrompt = false;
   const previous = openTurn(state);
   if (previous !== undefined) {
     endTurn(state, previous, state.provisionalEnds[previous.turn_id] ?? COMPLETED, time);

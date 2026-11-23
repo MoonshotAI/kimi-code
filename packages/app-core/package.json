@@ -1,0 +1,42 @@
+{
+  "name": "@moonshot-ai/app-core",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./api": "./src/api/index.ts",
+    "./client": "./src/client/index.ts",
+    "./client/types": "./src/client/types.ts",
+    "./contracts": "./src/contracts.ts",
+    "./conversation": "./src/conversation/index.ts",
+    "./lib": "./src/lib/index.ts",
+    "./preview": "./src/lib/purePreview.ts",
+    "./browser-panel-state": "./src/client/browserPanelState.ts",
+    "./native-menu": "./src/nativeMenu.ts",
+    "./browser-reference": "./src/browserReference.ts",
+    "./shortcut-keys": "./src/lib/shortcutKeys.ts"
+  },
+  "dependencies": {
+    "@fontsource-variable/jetbrains-mono": "^5.3.0",
+    "@fontsource-variable/noto-sans-sc": "^5.3.1",
+    "@fontsource-variable/schibsted-grotesk": "^5.3.0",
+    "diff": "9.0.0",
+    "fuse.js": "^7.5.0",
+    "partial-json": "0.1.7",
+    "pinyin-pro": "^3.28.2"
+  },
+  "peerDependencies": {
+    "shiki": "^4.3.0",
+    "vue": "^3.5.35"
+  },
+  "devDependencies": {
+    "@moonshot-ai/app-i18n": "workspace:^",
+    "@moonshot-ai/testkit": "workspace:^",
+    "shiki": "^4.3.0",
+    "typescript": "6.0.2",
+    "vitest": "4.1.4",
+    "vue": "^3.5.35",
+    "vue-tsc": "~3.2.0"
+  }
+}

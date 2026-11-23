@@ -231,7 +231,11 @@ describe('request gateway routes', () => {
       }),
     );
     expect(contentsOf(vertex).model?.spec?.provider).toBe('google_genai');
-    expect(contentsOf(vertex).protocol?.options).toMatchObject({ vertexai: true });
+    expect(contentsOf(vertex).protocol?.options).toMatchObject({
+      vertexai: true,
+      project: 'p',
+      location: 'l',
+    });
   });
 
   it('routes kimi+anthropic with media and explicit beta opt-in', async () => {

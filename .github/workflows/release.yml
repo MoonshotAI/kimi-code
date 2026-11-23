@@ -33,7 +33,7 @@ jobs:
       - uses: changesets/action@v1
         id: version
         with:
-          version: pnpm run version:release
+          version: node scripts/version-release.mjs
           commit: 'ci: release packages'
           title: 'ci: release packages'
         env:
@@ -68,6 +68,100 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: node scripts/release-trigger.mjs
+
+  desktop-release:
+    name: Desktop release plan
+    needs: candidate
+    if: needs.candidate.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    outputs:
+      build: ${{ steps.prepare.outputs.build }}
+      tag: ${{ steps.prepare.outputs.tag }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: ${{ github.sha }}
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+      - name: Verify release branch, plan and tested commit
+        run: node scripts/release.mjs check
+      - name: Prepare draft release
+        id: prepare
+        run: node scripts/release.mjs prepare
+
+  desktop-artifacts:
+    name: Desktop release artifacts
+    needs: desktop-release
+    if: needs.desktop-release.outputs.build == 'true'
+    # 静态校验：reusable workflow 各 job 声明的权限并集不能超过调用方持有的
+    # 权限。desktop-build.yml 的 publish-canary job 请求 contents: write，
+    # 调用 job 不显式授权则整个 workflow 在启动前被判 invalid（startup_failure）。
+    # release 路径下 canary 恒为 false，publish-canary 不会实际执行。
+    permissions:
+      contents: write
+      pull-requests: read
+      actions: read
+    uses: ./.github/workflows/desktop-build.yml
+    with:
+      retention-days: 7
+      upload-artifact-prefix: kimi-code-app
+    secrets:
+      APPLE_CERTIFICATE_P12: ${{ secrets.APPLE_CERTIFICATE_P12 }}
+      APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+      APPLE_NOTARIZATION_KEY_P8: ${{ secrets.APPLE_NOTARIZATION_KEY_P8 }}
+      APPLE_NOTARIZATION_KEY_ID: ${{ secrets.APPLE_NOTARIZATION_KEY_ID }}
+      APPLE_NOTARIZATION_ISSUER_ID: ${{ secrets.APPLE_NOTARIZATION_ISSUER_ID }}
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+
+  publish-desktop-assets:
+    name: Publish desktop release assets
+    needs:
+      - desktop-release
+      - desktop-artifacts
+    if: needs.desktop-release.outputs.build == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+      - name: Download installer artifacts
+        uses: actions/download-artifact@v8
+        with:
+          pattern: kimi-code-app-*
+          path: dist-desktop-release
+          merge-multiple: true
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+
+      - name: Merge mac updater metadata (arm64 + x64)
+        shell: bash
+        run: node scripts/merge-mac-update-yml.mjs dist-desktop-release
+
+      - name: Upload installers to draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.desktop-release.outputs.tag }}
+        run: gh release upload "$RELEASE_TAG" dist-desktop-release/* --clobber
+
+      - name: Publish completed release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/release.mjs finish
 
   vscode:
     needs: candidate
@@ -129,7 +223,7 @@ jobs:
         uses: changesets/action@v1
         with:
           publish: pnpm changeset publish
-          version: pnpm run version:release
+          version: node scripts/version-release.mjs
           commit: "ci: release packages"
           title: "ci: release packages"
         env:
@@ -142,6 +236,14 @@ jobs:
         run: node apps/kimi-code/scripts/native/resolve-release.mjs
         env:
           CHANGESETS_PUBLISHED_PACKAGES: ${{ steps.changesets.outputs.publishedPackages }}
+
+      - name: Set Kimi Code release title
+        if: steps.kimi-release.outputs.should_publish == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.kimi-release.outputs.tag }}
+          RELEASE_VERSION: ${{ steps.kimi-release.outputs.version }}
+        run: gh release edit "$RELEASE_TAG" --title "Kimi Code CLI ${RELEASE_VERSION}"
 
   native-artifacts:
     name: Native release artifact

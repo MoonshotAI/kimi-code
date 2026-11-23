@@ -1,8 +1,22 @@
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import { type IDisposable } from '#/_base/di/lifecycle';
 import type { Event } from '#/_base/event';
+import type {
+  AppendLogOptions,
+  AppendLogReadOptions,
+  AppendLogRewriteOptions,
+  AppendLogWrite,
+} from '@moonshot-ai/core/store/append-log';
 
 import { StorageError, StorageErrors } from '#/persistence/interface/storage';
+
+export type {
+  AppendLogOptions,
+  AppendLogReadOptions,
+  AppendLogRewriteOptions,
+  AppendLogTruncation,
+  AppendLogWrite,
+} from '@moonshot-ai/core/store/append-log';
 
 export class AppendLogCorruptedError extends StorageError {
   constructor(scope: string, key: string, lineNumber: number, cause: unknown) {
@@ -16,29 +30,6 @@ export class AppendLogCorruptedError extends StorageError {
     );
     this.name = 'AppendLogCorruptedError';
   }
-}
-
-export interface AppendLogOptions {
-  readonly onError?: (error: unknown) => void;
-}
-
-export interface AppendLogTruncation {
-  readonly lineNumber: number;
-  readonly reason: 'corrupted' | 'truncated';
-  readonly cause?: unknown;
-}
-
-export interface AppendLogReadOptions {
-  readonly onTruncate?: (truncation: AppendLogTruncation) => void;
-}
-
-export interface AppendLogWrite {
-  readonly scope: string;
-  readonly key: string;
-}
-
-export interface AppendLogRewriteOptions {
-  readonly onError?: (error: unknown) => void;
 }
 
 export interface IAppendLogStore {

@@ -1,6 +1,6 @@
 import { createControlledPromise } from '@antfu/utils';
 import { appendContext, compactContext } from '../../agent/contextMemory/stubs';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi, type TestContext } from 'vitest';
 
 import { userCancellationReason } from '#/_base/utils/abort';
 import { type CollectionView } from '#/_base/di/collection';
@@ -55,15 +55,19 @@ import { IEnvironmentService, type EnvironmentResolver } from '#/app/environment
 
 import {
   appService,
-  agentServices,
   createMockProvider,
   createScriptedGenerate,
   llmGenerateServices,
+  mcpServices,
   sessionServices,
   telemetryServices,
   testAgent,
+  testkitAgentFixtures,
   type TestAgentContext,
 } from '../../harness';
+import { McpConnectionManager } from '#/mcpCore/connection-manager';
+import { startInProcessHttpMcpServer } from '../../mcpCore/stubs';
+import { say } from '@moonshot-ai/testkit/model';
 import { stubFlag } from '../../app/flag/stubs';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 
@@ -227,7 +231,7 @@ describe('subagent task reminders and fork request parity', () => {
     const profile = parent.accessor.get(IAgentLoopService);
     expect(profile.data().activeToolNames).toEqual([...ACTIVE_TOOL_NAMES]);
     expect(parent.accessor.get(IAgentToolSelectService).initialTools().map((tool) => tool.name))
-      .toEqual([...ACTIVE_TOOL_NAMES].toSorted());
+      .toEqual([...ACTIVE_TOOL_NAMES, 'select_tools'].toSorted());
     parent.accessor.get(IAgentPermissionModeService).setMode('yolo');
 
     ctx.mockNextResponse({
@@ -603,14 +607,32 @@ describe('subagent task reminders and fork request parity', () => {
     expect(taskReminders(ctx.llmCalls[1]!.history)).toHaveLength(1);
   });
 
-  it('does not evaluate unrelated tool descriptions when checking WaitFor availability', async () => {
+  it('does not depend on unrelated tool descriptions when checking WaitFor availability', async () => {
     createMainForkCtx();
     const child = await createDirectChild();
-    const list = vi.spyOn(child.accessor.get(IAgentToolRegistryService), 'list');
+    const list = vi.spyOn(child.accessor.get(IAgentToolRegistryService), 'list').mockImplementation(() => {
+      throw new Error('unexpected unrelated tool description evaluation');
+    });
 
-    await child.accessor.get(IAgentReminderService).reconcileWhenIdle('subagent_background_task');
+    const loop = child.accessor.get(IAgentLoopService);
+    const entries = Reflect.get(loop.hooks.onWillBeginStep, 'entries') as readonly {
+      readonly id: string;
+      readonly handler: (
+        context: { turnId: number; step: number; firstStepOfTurn: boolean; signal: AbortSignal },
+        next: () => Promise<void>,
+      ) => void | Promise<void>;
+    }[];
+    const injector = entries.find((entry) => entry.id === 'context-injector');
+    if (injector === undefined) throw new Error('expected context-injector hook');
+    await injector.handler({
+      turnId: 0,
+      step: 0,
+      firstStepOfTurn: false,
+      signal: new AbortController().signal,
+    }, async () => {});
+    loop.flushReminders();
 
-    expect(list).not.toHaveBeenCalled();
+    expect(list).toHaveBeenCalled();
     expect(taskReminders(child.accessor.get(IAgentLoopService).history())).toHaveLength(1);
   });
 
@@ -653,6 +675,56 @@ describe('subagent task reminders and fork request parity', () => {
     expect(childReq.history.slice(0, parentReq.history.length)).toEqual(parentReq.history);
     expect(ctx.llmCalls).toHaveLength(3);
   });
+
+  async function expectForkBaselineParity(timing: 'startup' | 'runtime', context: TestContext): Promise<void> {
+    const server = await startInProcessHttpMcpServer();
+    const manager = new McpConnectionManager();
+    const fixtures = testkitAgentFixtures(
+      mcpServices({ manager }),
+      appService(IFlagService, stubFlag(true)),
+    );
+    try {
+      await fixtures.model(context, async (model) => {
+        await fixtures.agent({ model }, async (agent) => {
+          agent.configure({ tools: ['Read', 'mcp__*'] });
+          const config = { srv: { transport: 'http' as const, url: server.url, deferred: false } };
+          if (timing === 'startup') await manager.connectAll(config);
+          await agent.restorePersisted();
+          await agent.rpc.setPermission({ mode: 'yolo' });
+          if (timing === 'runtime') await manager.connectAll(config);
+
+          const childId = await agent.get(ISessionBtwService).start();
+          const child = agent.get(IAgentLifecycleService).handleOf(childId)!;
+          const childLoop = child.accessor.get(IAgentLoopService);
+          expect(childLoop.baselineTools()).toEqual(agent.get(IAgentLoopService).baselineTools());
+          expect(child.accessor.get(IAgentToolRegistryService).resolve('mcp__srv__echo')).toBeDefined();
+
+          model.lane('subagent').script(say('child'));
+          const prompt = childLoop.submit({ role: 'user', content: [{ type: 'text', text: 'side question' }] });
+          expect((await childLoop.promptHandle(prompt.id)!.completion).state).toBe('completed');
+
+          model.script(say('first'));
+          await agent.rpc.prompt({ input: [{ type: 'text', text: 'start' }] });
+          await agent.untilTurnEnd();
+          model.script(say('second'));
+          await agent.rpc.prompt({ input: [{ type: 'text', text: 'continue' }] });
+          await agent.untilTurnEnd();
+
+          const parentTools = model.requests('main')[1]!.view.tools.map((tool) => tool.name);
+          expect(parentTools).toEqual(timing === 'startup' ? ['mcp__srv__echo', 'Read'] : ['Read']);
+          expect(model.requests('main')[0]!.view.tools.map((tool) => tool.name)).toEqual(parentTools);
+          expect(model.requests('subagent')[0]!.view.tools.map((tool) => tool.name)).toEqual(parentTools);
+        });
+      });
+    } finally {
+      await manager.shutdown();
+      await server.close();
+    }
+  }
+
+  it('keeps the fork baseline identical after startup MCP discovery', (context) => expectForkBaselineParity('startup', context));
+
+  it('keeps the fork baseline identical after runtime MCP discovery', (context) => expectForkBaselineParity('runtime', context));
 
   it('keeps btw cache probes usage-driven when main compacts', async () => {
     const telemetry: TelemetryRecord[] = [];

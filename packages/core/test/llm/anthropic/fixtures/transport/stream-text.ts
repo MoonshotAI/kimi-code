@@ -30,7 +30,7 @@ const events = [
 ];
 
 export default {
-  name: 'stream-text',
+  name: 'as an Anthropic user, I want streamed text and custom headers to use the real HTTP transport',
   module: testModule(),
   endpoint: {
     baseUrl: 'https://example.test',
@@ -51,7 +51,7 @@ export default {
     body: {
       model: 'test-model',
       max_tokens: 64_000,
-      messages: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+      messages: [{ role: 'user', content: 'hi' }],
       stream: true,
     },
     outcome: {

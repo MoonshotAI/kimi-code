@@ -1,5 +1,4 @@
 import { providerHttpError } from '../../harness/index';
-import { TOOL_SELECT_FLAG_ENV } from '#/agent/toolSelect/flag';
 import type {
   Message,
   StreamedMessagePart,
@@ -91,7 +90,6 @@ describe('LLMRequester service migration coverage', () => {
     ];
 
     beforeEach(() => {
-      vi.stubEnv(TOOL_SELECT_FLAG_ENV, '1');
       shouldVerifyResume = true;
       ctx = createTestAgent();
       llmRequester = ctx.get(IAgentLoopService).requester;
@@ -458,6 +456,7 @@ describe('LLMRequester service migration coverage', () => {
       ctx.mockNextResponse({ type: 'text', text: 'The lookup result is moon-result.' });
       await ctx.untilTurnEnd();
     });
+
   });
 
   describe('request failure logging', () => {
@@ -932,7 +931,7 @@ async function requestCore(
     {
       signal,
       onEvent: (event) => {
-        if (event.type === 'llm.streaming.part') onPart(event.part);
+        if (event.type === 'llm.delta.part') onPart(event.part);
       },
     },
   );

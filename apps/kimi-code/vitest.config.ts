@@ -12,6 +12,7 @@ export default defineConfig({
   },
   test: {
     name: 'cli',
+    tags: [{ name: 'smoke' }],
     env: {
       KIMI_LOG_LEVEL: 'off',
     },

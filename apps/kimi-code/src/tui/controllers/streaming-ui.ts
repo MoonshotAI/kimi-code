@@ -53,6 +53,10 @@ export class StreamingUIController {
   readonly pendingToolCallFlushIds = new Set<string>();
 
   private _currentTurnId: string | undefined = undefined;
+  private lastCompletedTurnKey: string | undefined;
+  private drainedGeneration: number | null | undefined;
+  private dispatchedGeneration: number | null | undefined;
+  private idleGeneration: number | null | undefined;
   private _currentStep = 0;
   private _assistantDraft = '';
   private _thinkingDraft = '';
@@ -493,14 +497,26 @@ export class StreamingUIController {
   finalizeTurn(sendQueued: (item: QueuedMessage) => void): void {
     this.timeline.turnEnded();
     const { state } = this.host;
-    if (state.appState.streamingPhase === 'idle') return;
+    if (state.appState.streamingPhase === 'idle') {
+      this._currentTurnId = undefined;
+      return;
+    }
     this.host.deferUserMessages = false;
     const completedTurnKey =
       this._currentTurnId ?? `local:${String(state.appState.streamingStartTime)}`;
-    this.finalizeLiveTextBuffers('idle');
+    this.lastCompletedTurnKey = completedTurnKey;
+    this.finalizeLiveTextBuffers(state.appState.loopLifecycleEvents === true ? 'waiting' : 'idle');
     this.host.mergeCompletedTurnAssistants();
     this.resetToolCallState();
     this._currentTurnId = undefined;
+
+    if (state.appState.loopLifecycleEvents === true) {
+      this.drainedGeneration = undefined;
+      this.dispatchedGeneration = undefined;
+      this.idleGeneration = undefined;
+      this.host.setAppState({ streamingPhase: 'waiting' });
+      return;
+    }
 
     const next = this.host.shiftQueuedMessage();
     if (next !== undefined) {
@@ -516,6 +532,73 @@ export class StreamingUIController {
 
     this.host.setAppState({ streamingPhase: 'idle' });
     this.host.resetLivePane();
+    notifyTerminalOnce(state, `turn-complete:${completedTurnKey}`, {
+      title: 'Kimi Code task complete',
+      body: state.appState.sessionTitle ?? undefined,
+    });
+  }
+
+  finalizeDrained(
+    sendQueued: (item: QueuedMessage) => void,
+    generation: number | null = this.drainedGeneration ?? null,
+  ): void {
+    const { state } = this.host;
+    if (state.appState.loopLifecycleEvents !== true) return;
+    this.drainedGeneration = generation;
+    this.dispatchedGeneration = undefined;
+    this.idleGeneration = undefined;
+    if (state.appState.isCompacting) return;
+    const next = this.host.shiftQueuedMessage();
+    if (next !== undefined) {
+      this.dispatchedGeneration = generation;
+      state.queuedMessageDispatchPending = true;
+      this.host.setAppState({ streamingPhase: 'idle' });
+      this.host.resetLivePane();
+      setTimeout(() => {
+        state.queuedMessageDispatchPending = false;
+        if (state.appState.isCompacting) {
+          state.queuedMessages.unshift(next);
+          this.dispatchedGeneration = undefined;
+          this.host.setAppState({ streamingPhase: 'waiting' });
+          this.host.updateQueueDisplay();
+          return;
+        }
+        sendQueued(next);
+      }, 0);
+      return;
+    }
+    this.host.setAppState({ streamingPhase: 'idle' });
+    this.host.resetLivePane();
+  }
+
+  finalizeIdle(generation?: number | null, fromEvent = true): void {
+    const { state } = this.host;
+    if (state.appState.loopLifecycleEvents !== true) return;
+    if (fromEvent) {
+      const eventGeneration = generation ?? null;
+      if (eventGeneration !== this.drainedGeneration || eventGeneration === this.dispatchedGeneration) return;
+      this.idleGeneration = eventGeneration;
+    }
+    this.flushIdle();
+  }
+
+  private flushIdle(): void {
+    const { state } = this.host;
+    if (state.appState.loopLifecycleEvents !== true || this.idleGeneration === undefined) return;
+    if (this.idleGeneration !== this.drainedGeneration || this.idleGeneration === this.dispatchedGeneration) {
+      this.idleGeneration = undefined;
+      return;
+    }
+    if (
+      state.appState.isCompacting ||
+      state.queuedMessageDispatchPending ||
+      state.queuedMessages.length > 0
+    ) return;
+    this.idleGeneration = undefined;
+    this.host.setAppState({ streamingPhase: 'idle' });
+    this.host.resetLivePane();
+    const completedTurnKey =
+      this.lastCompletedTurnKey ?? `local:${String(state.appState.streamingStartTime)}`;
     notifyTerminalOnce(state, `turn-complete:${completedTurnKey}`, {
       title: 'Kimi Code task complete',
       body: state.appState.sessionTitle ?? undefined,

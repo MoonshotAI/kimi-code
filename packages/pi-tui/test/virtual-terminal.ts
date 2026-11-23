@@ -113,6 +113,12 @@ export class VirtualTerminal implements Terminal {
 		}
 	}
 
+	onReply(listener: (data: string) => void): () => void {
+		this.xterm.options.disableStdin = false;
+		const subscription = this.xterm.onData(listener);
+		return () => subscription.dispose();
+	}
+
 	/**
 	 * Resize the terminal
 	 */

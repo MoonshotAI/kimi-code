@@ -1,0 +1,59 @@
+name: E2E smoke
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+  pull_request:
+  merge_group:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-smoke-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    name: L0 smoke gate
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 2
+      - name: Include L0 IDs protected on the base revision
+        if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+        run: |
+          set -euo pipefail
+          git cat-file -e "$BASE_SHA^{commit}" || git fetch --no-tags --depth=1 origin "$BASE_SHA"
+          entry=$(git ls-tree "$BASE_SHA" -- tests/protected.yaml)
+          if [[ -n "$entry" ]]; then
+            git show "${BASE_SHA}:tests/protected.yaml" > "$RUNNER_TEMP/l0-base.yaml"
+            echo "KIMI_L0_BASE_MANIFEST=$RUNNER_TEMP/l0-base.yaml" >> "$GITHUB_ENV"
+          fi
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: node --test scripts/protected-smoke.test.mjs
+      - name: Run core, KAP, TUI and Electron smoke
+        shell: bash
+        run: |
+          set -o pipefail
+          pnpm test:smoke 2>&1 | tee "$RUNNER_TEMP/e2e-smoke.log"
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: e2e-smoke-failure
+          path: |
+            ${{ runner.temp }}/e2e-smoke.log
+            apps/desktop/test-results/e2e/
+            apps/desktop/playwright-report/
+          retention-days: 7

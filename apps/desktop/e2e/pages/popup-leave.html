@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<style>html{background:#fff;color:#111}</style>
+<title>Release notes editor</title>
+<h1>Release notes editor</h1>
+<label for="notes">Notes</label>
+<textarea id="notes"></textarea>
+<button type="button" id="preview">Open preview</button>
+<script>
+  window.addEventListener('beforeunload', (event) => {
+    if (document.getElementById('notes').value !== '') event.preventDefault();
+  });
+  document.getElementById('preview').addEventListener('click', () => {
+    window.open('/next.html', 'preview', 'popup,width=600,height=400');
+  });
+</script>
+</html>

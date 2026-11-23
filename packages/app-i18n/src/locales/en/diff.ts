@@ -1,0 +1,14 @@
+export default {
+  aheadTitle: 'ahead of remote',
+  behindTitle: 'behind remote',
+  fileCountOne: '{number} file',
+  fileCountOther: '{number} files',
+  empty: 'No git changes',
+  clean: 'Working tree clean, no changes',
+  back: 'Back',
+  loading: 'Loading diff…',
+  noDiff: 'No line changes for this file',
+  emptyFile: 'Empty file',
+  list: 'List',
+  tree: 'Tree',
+} as const;

@@ -102,6 +102,7 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
+    "@moonshot-ai/testkit": "workspace:^",
     "@types/cross-spawn": "^6.0.6",
     "@types/js-yaml": "^4.0.9",
     "@types/picomatch": "^4.0.3",

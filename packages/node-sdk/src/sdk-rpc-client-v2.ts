@@ -181,7 +181,6 @@ import {
   IAgentPermissionModeService,
   IAgentPermissionRulesService,
   IAgentPluginCommandService,
-  IAgentReminderService,
   IAgentSkillService,
   IAgentSwarmService,
   IAgentTaskService,
@@ -212,7 +211,6 @@ import {
   ISessionManager,
   ISessionMcpHandle,
   ISessionMetadata,
-  ISessionAgentProfileCatalog,
   ISessionSkillCatalog,
   IAgentTodoService,
   ISessionWorkspaceContext,
@@ -243,7 +241,6 @@ import {
   ErrorCodes as V2ErrorCodes,
   resolveAgentTaskConfig,
   resolveConfigPath,
-  resolveSubagentModelPool,
   resolveKimiHome,
   resolveLoggingConfig,
   resolvePrintBackgroundMode,
@@ -257,7 +254,6 @@ import {
   type ServicesAccessor,
   type SessionSummary as V2SessionSummary,
   type WorkspaceInstance,
-  type SubagentModelPoolSnapshot,
 } from '@moonshot-ai/agent-core-v2';
 import {
   RPCError,
@@ -1814,43 +1810,21 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       } else if (indexEntry === undefined) {
         throw SDKRpcClientV2.sessionNotFound(sessionId);
       }
-      const workspaceId =
-        live?.accessor.get(ISessionContext).workspaceId ?? indexEntry?.workspaceId;
-      let previousSubagentNames: readonly string[] | undefined;
-      let previousModelPool: SubagentModelPoolSnapshot | null | undefined;
-      let staleNotifier: IAgentChangeNotifierService | undefined;
-      if (live !== undefined) {
-        const main = live.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID);
-        if (main !== undefined) {
-          previousSubagentNames = main.accessor
-            .get(ISessionAgentProfileCatalog)
-            .list()
-            .map((profile) => profile.name);
-          const pool = resolveSubagentModelPool(main.accessor.get(IConfigService));
-          previousModelPool =
-            pool === undefined
-              ? null
-              : { defaultModel: pool.defaultModel, models: { ...pool.models } };
-          staleNotifier = main.accessor.get(IAgentChangeNotifierService);
-          staleNotifier.mute();
-        }
-      }
       await this.configReady;
+      const reloadGuard = live
+        ?.accessor.get(IAgentLifecycleService)
+        .handleOf(MAIN_AGENT_ID)
+        ?.accessor.get(IAgentChangeNotifierService)
+        .prepareForReload();
       try {
         await this.klient.global.config.reload();
         await this.klient.global.plugins.reload();
-        await this.reloadWorkspaceCatalogs(workspaceId);
+        await this.reloadWorkspaceCatalogs(
+          live?.accessor.get(ISessionContext).workspaceId ?? indexEntry?.workspaceId,
+        );
         await this.refreshPluginSessionStarts(sessionId);
       } catch (error) {
-        if (staleNotifier !== undefined) {
-          staleNotifier.unmute();
-          await Promise.all([
-            staleNotifier.notifyAgentsMdChanges(),
-            staleNotifier.notifySkillChanges(),
-            staleNotifier.notifySubagentChanges({}),
-            staleNotifier.notifyWorkspaceDirsChanges(),
-          ]).catch(() => undefined);
-        }
+        await reloadGuard?.restoreAfterFailure();
         throw error;
       }
       if (live !== undefined) {
@@ -1860,13 +1834,9 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       if (handle === undefined) throw SDKRpcClientV2.sessionNotFound(sessionId);
       const main = handle.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID);
       await main?.accessor.get(IAgentPluginService).refreshSessionStart();
-      if (main !== undefined) {
-        const notifier = main.accessor.get(IAgentChangeNotifierService);
-        await notifier.notifyAgentsMdChanges();
-        await notifier.notifySkillChanges();
-        await notifier.notifySubagentChanges({ previousSubagentNames, previousModelPool });
-        await notifier.notifyWorkspaceDirsChanges();
-      }
+      await main
+        ?.accessor.get(IAgentChangeNotifierService)
+        .notifyAllChanges({ previousSubagentNames: reloadGuard?.previousSubagentNames });
       this.wireSession(handle);
       return this.resumedSessionSummary(handle);
     });
@@ -2224,6 +2194,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       planMode: plan !== null,
       swarmMode: agent.accessor.get(IAgentSwarmService).isActive,
       towerMode: agent.accessor.get(IAgentTowerService).isActive,
+      loopLifecycleEvents: true,
       contextTokens,
       maxContextTokens,
       contextUsage,
@@ -2393,6 +2364,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
         input: input.input,
         skills: input.skills,
         steerIfActive: input.steerIfActive,
+        promptId: input.promptId,
       });
       return promptSubmissionResult(result);
     });
@@ -2407,7 +2379,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   override async steer(input: SessionPromptRpcInput): Promise<PromptSubmissionResult> {
     return this.withStaleReload(input.sessionId, async () => {
       const agent = await this.agentFacade(input.sessionId);
-      const result = await agent.steer({ input: input.input });
+      const result = await agent.steer({ input: input.input, promptId: input.promptId });
       return promptSubmissionResult(result);
     });
   }
@@ -2569,8 +2541,8 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   /**
    * Through the agent scope (`IAgentSwarmService.enter` / `.exit`) — no
    * klient facade exists. The v2 service is the port of v1's `SwarmMode`:
-   * enter is idempotent and injects the byte-identical enter reminder for
-   * non-`tool` triggers, exit pops that reminder when it is the last message
+   * enter is idempotent and schedules the byte-identical enter reminder for
+   * non-`tool` triggers on the next step, exit pops that reminder when it is the last message
    * (appending the exit reminder otherwise), and `task` / `tool` triggers
    * auto-exit on turn end. The base class's private enter/exit pair is
    * replaced wholesale; `swarm()` below recomposes it over this override.
@@ -2583,7 +2555,6 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     } else {
       swarm.exit();
     }
-    await agent.accessor.get(IAgentReminderService).reconcileWhenIdle('swarm_mode');
   }
 
   /** v1's `swarm()` composition: enter with the one-shot `task` trigger, then prompt. */
@@ -2607,7 +2578,6 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     } else {
       await tower.exit();
     }
-    await agent.accessor.get(IAgentReminderService).reconcileWhenIdle('tower_mode');
   }
 
   /** Reads the shared tower status summary; the main agent's tower service is authoritative. */

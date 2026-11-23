@@ -26,15 +26,15 @@ import {
 describe('Kimi OpenAI fixtures', () => {
   runEncodeFixtures(kimiOpenAIProtocol, kimiOpenAIEncodeFixtures);
   runDecodeFixtures(kimiOpenAIProtocol, kimiOpenAIDecodeFixtures);
-  runTransportFixtures(kimiOpenAIProtocol, kimiOpenAITransportFixtures);
+  runTransportFixtures(kimiOpenAIProtocol, kimiOpenAITransportFixtures, 'openai-chat');
 });
 
 describe('Kimi Responses fixtures', () => {
   runEncodeFixtures(kimiResponsesProtocol, kimiResponsesEncodeFixtures);
-  runTransportFixtures(kimiResponsesProtocol, kimiResponsesTransportFixtures);
+  runTransportFixtures(kimiResponsesProtocol, kimiResponsesTransportFixtures, 'openai-responses');
 });
 
 describe('Kimi Anthropic fixtures', () => {
   runEncodeFixtures(kimiAnthropicProtocol, kimiAnthropicEncodeFixtures);
-  runTransportFixtures(kimiAnthropicProtocol, kimiAnthropicTransportFixtures);
+  runTransportFixtures(kimiAnthropicProtocol, kimiAnthropicTransportFixtures, 'anthropic');
 });

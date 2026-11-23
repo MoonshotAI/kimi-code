@@ -30,7 +30,7 @@ function omittedReadMediaResult(tag: MediaPathTag): UserMessage {
   };
 }
 
-function hideReadMediaFile(messages: readonly Message[]): readonly Message[] {
+export function hideReadMediaFile(messages: readonly Message[]): readonly Message[] {
   const readMediaCallIds = new Set<string>();
   for (const message of messages) {
     if (message.role !== 'assistant') continue;

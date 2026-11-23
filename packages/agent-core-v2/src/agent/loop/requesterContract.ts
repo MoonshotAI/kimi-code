@@ -50,7 +50,6 @@ export interface ResolvedRequestContext {
   readonly promptCacheProbe: 'compaction' | undefined;
   readonly source: AgentLLMRequestSource;
   readonly logFields: AgentLLMRequestLogFields;
-  readonly dynamicTools: boolean;
   readonly runtime: LoopRequestRuntime;
 }
 
@@ -60,7 +59,6 @@ export interface CoreLoopRequesterOptions {
   readonly config?: RequestConfigSnapshot;
   readonly binding?: RequesterBinding;
   readonly onSnapshot?: (config: RequestConfigSnapshot) => void;
-  readonly dynamicTools?: boolean;
   readonly maxOutputSize?: number;
   readonly promptCacheProbe?: 'compaction';
   readonly tools?: readonly Tool[];

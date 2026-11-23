@@ -46,7 +46,6 @@ import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTok
 import { renderCompactionInstruction } from '#/agent/fullCompaction/compactionInstruction';
 import { IAgentToolSelectAnnouncementsService } from '#/agent/toolSelect/toolSelectAnnouncements';
 import { IAgentToolSelectService } from '#/agent/toolSelect/toolSelect';
-import { TOOL_SELECT_FLAG_ENV } from '#/agent/toolSelect/flag';
 import {
   IAgentFullCompactionService,
   IModelOAuthTokens,
@@ -2432,7 +2431,7 @@ describe('FullCompaction', () => {
     await ctx.expectResumeMatches();
   });
 
-  it('compacts and retries when provider context overflow follows an earlier LLM retry', async () => {
+  it('[L0:core.overflow-recovery-after-retry] compacts and retries when provider context overflow follows an earlier LLM retry', async () => {
     let callCount = 0;
     const inputs: string[][] = [];
     const generate: GenerateFn = createMockProvider(async (request, _signal) => {
@@ -4830,13 +4829,12 @@ describe('FullCompaction prompt-cache prefix', () => {
     loadSchema: boolean,
     media: (typeof MEDIA_SCENARIOS)[number],
   ): Promise<TestAgentContext> {
-    vi.stubEnv(TOOL_SELECT_FLAG_ENV, toolSelect ? '1' : '0');
     const ctx = testAgent({
       initialConfig: { providers: {}, loopControl: { reservedContextSize: 0 } },
     });
     ctx.configure({
       provider: CATALOGUED_PROVIDER,
-      modelCapabilities: { ...CATALOGUED_MODEL_CAPABILITIES, dynamically_loaded_tools: true },
+      modelCapabilities: { ...CATALOGUED_MODEL_CAPABILITIES, dynamically_loaded_tools: toolSelect },
     });
     await ctx.restorePersisted();
     await ctx.rpc.setPermission({ mode: 'yolo' });
@@ -4920,4 +4918,42 @@ describe('FullCompaction prompt-cache prefix', () => {
       expect(findGenerateCallPrefixBreak(lastLoopCall, compactionCall)).toBeUndefined();
     },
   );
+
+  it('skips automatic compaction for aborted steps and preserves it for normal steps', async () => {
+    const ctx = testAgent({ initialConfig: { loopControl: { compactionTriggerRatio: 0.5 } } });
+    const compaction = ctx.get(IAgentFullCompactionService) as IAgentFullCompactionService & {
+      strategy: { shouldCompact: () => boolean };
+    };
+    const shouldCompact = vi.spyOn(compaction.strategy, 'shouldCompact').mockReturnValue(true);
+    const begin = vi.spyOn(compaction, 'begin').mockReturnValue(true);
+    let nextCalls = 0;
+    const registration = ctx.get(IAgentLoopService).hooks.onDidFinishStep.register('test-next', async (_ctx, next) => {
+      nextCalls += 1;
+      await next();
+    });
+    const context = (signal: AbortSignal) => ({
+      turnId: 0,
+      step: 1,
+      firstStepOfTurn: true,
+      signal,
+      usage: { inputOther: 0, output: 0, inputCacheRead: 0, inputCacheCreation: 0 },
+      finishReason: 'completed' as const,
+      tools: [],
+      stopTurn: false,
+    });
+
+    const aborted = new AbortController();
+    aborted.abort('cancelled');
+    await ctx.get(IAgentLoopService).hooks.onDidFinishStep.run(context(aborted.signal));
+    expect(nextCalls).toBe(1);
+    expect(begin).not.toHaveBeenCalled();
+    expect(shouldCompact).not.toHaveBeenCalled();
+
+    await ctx.get(IAgentLoopService).hooks.onDidFinishStep.run(context(new AbortController().signal));
+    expect(nextCalls).toBe(2);
+    expect(shouldCompact).toHaveBeenCalledOnce();
+    expect(begin).toHaveBeenCalledOnce();
+    expect(begin).toHaveBeenCalledWith({ source: 'auto' });
+    registration.dispose();
+  });
 });

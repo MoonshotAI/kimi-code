@@ -129,6 +129,7 @@ export interface SessionEventHost {
   sendQueuedMessage(session: Session, item: QueuedMessage): void;
   shiftQueuedMessage(): QueuedMessage | undefined;
   steerQueuedMessagesIntoRunningTurn(): void;
+  acknowledgePromptQueued?(promptId: string): void;
   acknowledgeSteerDelivery?(input: unknown, promptIds?: readonly string[]): void;
   acknowledgeSteerTurnPrompt?(promptId: string | undefined, input: unknown, origin: unknown): void;
   acknowledgeSteerTurnStarted?(promptId?: string): void;
@@ -313,8 +314,11 @@ export class SessionEventHandler {
     }
 
     switch (event.type) {
+      case 'prompt.queued': this.host.acknowledgePromptQueued?.(event.promptId); break;
       case 'turn.started': this.handleTurnBegin(event); break;
       case 'turn.ended': this.handleTurnEnd(event, sendQueued); break;
+      case 'loop.drained': this.host.streamingUI.finalizeDrained(sendQueued, event.generation ?? null); break;
+      case 'loop.idle': this.host.streamingUI.finalizeIdle(event.generation ?? null); break;
       case 'prompt.completed': this.handlePromptCompleted(event, sendQueued); break;
       case 'turn.step.started': this.handleStepBegin(event); break;
       case 'turn.step.interrupted': this.handleStepInterrupted(event); break;
@@ -345,10 +349,17 @@ export class SessionEventHandler {
         this.subAgentEventHandler.handleLifecycleEvent(event); break;
       case 'subagent.started':
       case 'subagent.suspended':
+        this.subAgentEventHandler.handleLifecycleEvent(event); break;
       case 'subagent.completed':
       case 'subagent.failed':
-      case 'subagent.cancelled':
-        this.subAgentEventHandler.handleLifecycleEvent(event); break;
+      case 'subagent.cancelled': {
+        const record = this.subAgentEventHandler.activityStore.get(event.subagentId);
+        this.subAgentEventHandler.handleLifecycleEvent(event);
+        if (record !== undefined && this.host.state.tasksBrowser !== undefined) {
+          this.host.tasksBrowserController.onSubagentSettled(record);
+        }
+        break;
+      }
       case 'background.task.started':
       case 'background.task.terminated':
         this.handleBackgroundTaskEvent(event); break;
@@ -911,6 +922,7 @@ export class SessionEventHandler {
       (session === undefined || this.host.session === session) &&
       !this.host.aborted &&
       this.host.state.appState.streamingPhase === 'idle' &&
+      !this.host.state.appState.isCompacting &&
       this.host.state.queuedMessages.length === 0 &&
       !this.host.state.queuedMessageDispatchPending
     );
@@ -1160,12 +1172,8 @@ export class SessionEventHandler {
   private handleCompactionBegin(event: CompactionStartedEvent): void {
     this.compactionFailed = false;
     this.host.lastCompactionTrigger = event.trigger;
-    this.host.streamingUI.finalizeLiveTextBuffers('waiting');
-    this.host.setAppState({
-      isCompacting: true,
-      streamingPhase: 'waiting',
-      streamingStartTime: Date.now(),
-    });
+    this.host.streamingUI.finalizeLiveTextBuffers(this.host.state.livePane.mode);
+    this.host.setAppState({ isCompacting: true });
     this.host.streamingUI.beginCompaction(event.instruction);
   }
 
@@ -1197,6 +1205,12 @@ export class SessionEventHandler {
 
   private finishCompaction(sendQueued: (item: QueuedMessage) => void): void {
     const hasActiveTurn = this.host.streamingUI.hasActiveTurn();
+    if (!hasActiveTurn && this.host.state.appState.loopLifecycleEvents === true) {
+      this.host.setAppState({ isCompacting: false });
+      if (!this.host.state.queuedMessageDispatchPending) this.host.streamingUI.finalizeDrained(sendQueued);
+      this.host.streamingUI.finalizeIdle(undefined, false);
+      return;
+    }
     if (!hasActiveTurn && !this.host.state.queuedMessageDispatchPending) {
       const next = this.host.shiftQueuedMessage();
       if (next !== undefined) {
@@ -1221,15 +1235,9 @@ export class SessionEventHandler {
   private handleBackgroundTaskEvent(
     event: BackgroundTaskStartedEvent | BackgroundTaskTerminatedEvent,
   ): void {
-    const { state } = this.host;
     const { info } = event;
     const previous = this.backgroundTasks.get(info.taskId);
     this.backgroundTasks.set(info.taskId, info);
-
-    const viewer = state.tasksBrowser?.viewer;
-    if (viewer !== undefined && viewer.taskId === info.taskId) {
-      void this.host.tasksBrowserController.refreshOutputViewer({ silent: true });
-    }
 
     const isTerminal =
       info.status === 'completed' ||
@@ -1242,12 +1250,12 @@ export class SessionEventHandler {
       if (info.kind === 'agent') {
         this.host.streamingUI.markSubagentBackgrounded(info.agentId);
         this.syncBackgroundTaskBadge();
-        this.host.tasksBrowserController.repaint();
+        this.host.tasksBrowserController.repaint(info);
         return;
       }
       this.appendBackgroundTaskEntry(info);
       this.syncBackgroundTaskBadge();
-      this.host.tasksBrowserController.repaint();
+      this.host.tasksBrowserController.repaint(info);
       return;
     }
 
@@ -1260,7 +1268,10 @@ export class SessionEventHandler {
         });
         const agentId = info.agentId;
         if (agentId !== undefined) {
-          const record = this.subAgentEventHandler.activityStore.get(agentId);
+          const parentToolCallId = 'parentToolCallId' in info && typeof info.parentToolCallId === 'string'
+            ? info.parentToolCallId
+            : undefined;
+          const record = this.subAgentEventHandler.activityStore.get(agentId, parentToolCallId);
           if (record !== undefined && record.status === 'running') {
             if (info.status === 'completed') {
               this.subAgentEventHandler.activityStore.markCompleted(agentId);
@@ -1277,14 +1288,14 @@ export class SessionEventHandler {
         this.backgroundTaskTranscriptedTerminal.add(info.taskId);
       }
       this.syncBackgroundTaskBadge();
-      this.host.tasksBrowserController.repaint();
+      this.host.tasksBrowserController.repaint(info);
       return;
     }
 
     if (previous?.status !== info.status) {
       this.syncBackgroundTaskBadge();
     }
-    this.host.tasksBrowserController.repaint();
+    this.host.tasksBrowserController.repaint(info);
   }
 
   private appendBackgroundTaskEntry(info: BackgroundTaskInfo): TranscriptEntry {

@@ -153,6 +153,14 @@ export class ConversationFeed implements IDisposable {
     return this.state.turns;
   }
 
+  hasTrailingRejectedPrompt(): boolean {
+    return this.state.trailingRejectedPrompt;
+  }
+
+  latestPromptId(): string | undefined {
+    return this.state.latestPromptId;
+  }
+
   undo(turnId: string): Promise<readonly string[]> {
     const run = this.undoQueue.then(() => this.undoNow(turnId));
     this.undoQueue = run.catch(() => undefined);
@@ -179,6 +187,7 @@ export class ConversationFeed implements IDisposable {
   }
 
   async page(before: number | undefined, limit: number): Promise<ConversationTurnsPage> {
+    this.flushPending();
     const turns = (this.beforeReplay ?? this.state).turns;
     const end = before === undefined ? turns.length : turns.findIndex((turn) => turn.ordinal >= before);
     const stop = end === -1 ? turns.length : end;
