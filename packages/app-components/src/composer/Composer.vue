@@ -42,7 +42,6 @@ export type ComposerEmits = {
   steerQueued: [index: number];
   command: [payload: ComposerCommandPayload];
   interrupt: [];
-  continue: [];
   focusGoal: [];
   pickModel: [];
   login: [];
@@ -1744,30 +1743,6 @@ const canSend = computed(() => {
   }).kind !== 'noop';
 });
 
-const showContinueButton = computed(
-  () =>
-    !isSideChat.value &&
-    props.submitDisabled !== true &&
-    !canSend.value &&
-    !goalMode.value &&
-    text.value.trim() === '' &&
-    activeAttachmentEntries.value.length === 0 &&
-    !pillGate.value.uploading &&
-    !pillGate.value.errored &&
-    !pillGate.value.missing &&
-    Boolean(client.canContinue?.value) &&
-    client.activeTurnEnd?.value?.outcome !== 'failed',
-);
-
-function handleSendOrContinue(): void {
-  if (showContinueButton.value) {
-    if (!passSubmitGate()) return;
-    emit('continue');
-    return;
-  }
-  handleSubmit();
-}
-
 const clearDispatchPolicy = {
   attachments: 'clear',
   mentionMenu: 'close',
@@ -2193,7 +2168,7 @@ function insertNewlineAtCaret(): void {
   editor.insertNewlineAtCaret();
 }
 
-const sendLabel = computed(() => t(showContinueButton.value ? 'composer.continue' : 'composer.send'));
+const sendLabel = computed(() => t('composer.send'));
 const hasUpload = computed(() => !!uploadImage);
 
 const dropdownOpen = ref(false);
@@ -3695,13 +3670,10 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
             class="send"
             :class="{ 'is-starting': starting }"
             :aria-label="sendLabel"
-            :disabled="starting || (!canSend && !showContinueButton)"
-            @click="handleSendOrContinue()"
+            :disabled="starting || !canSend"
+            @click="handleSubmit()"
           >
             <Spinner v-if="starting" size="sm" />
-            <svg v-else-if="showContinueButton" class="send-continue" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-              <path d="M9 8.25A1 1 0 0 1 10.543 7.41L16.343 11.16A1 1 0 0 1 16.343 12.84L10.543 16.59A1 1 0 0 1 9 15.75V8.25Z" fill="currentColor" />
-            </svg>
             <Icon v-else name="send" size="sm" />
           </button>
           </Tooltip>
