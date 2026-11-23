@@ -120,7 +120,14 @@ export class AgentPlanService extends Service implements IAgentPlanService {
     if (toolName === 'ExitPlanMode') {
       if (plan === null) return undefined;
       const decision = await this.review.requestApproval(legacyExecutionContext(context));
-      return legacyStartingDecision(context, decision);
+      if (decision?.veto !== undefined || decision?.allow === true) {
+        return legacyStartingDecision(context, decision);
+      }
+      if (decision?.executionMetadata !== undefined) {
+        (context.context as { metadata?: unknown }).metadata = decision.executionMetadata;
+        return { skipPermitting: true };
+      }
+      return undefined;
     }
 
     if (plan === null) return undefined;

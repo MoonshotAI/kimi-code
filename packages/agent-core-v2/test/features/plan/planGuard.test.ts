@@ -120,8 +120,13 @@ function mapResolution(
   if (resolution.kind === 'deny') {
     return { veto: { output: resolution.message ?? '', isError: true } };
   }
+  if (resolution.kind === 'approve') {
+    return resolution.executionMetadata === undefined
+      ? undefined
+      : { executionMetadata: resolution.executionMetadata };
+  }
   if (resolution.kind !== 'result') {
-    throw new Error('the review stub only resolves synthetic results and denials');
+    throw new Error('the review stub only resolves synthetic results, approvals and denials');
   }
   return { veto: resolution.result };
 }
@@ -466,62 +471,46 @@ describe('AgentPlanService plan-guard listener', () => {
         event: 'plan_submitted',
         properties: { has_options: false, mode: 'plan' },
       });
-      expect(decision?.veto).toBeDefined();
+      expect(decision?.allow).toBe(true);
     });
 
-    it('approves with the chosen option prefix and tracks the chosen option', async () => {
+    it('approves with the chosen option and tracks the chosen option', async () => {
       const svc = await enterPlan();
       approvalResponse = { decision: 'approved', selectedLabel: 'Approach B' };
       const decision = await run(
         hookContext('ExitPlanMode', { display: planReviewDisplay({ options }) }),
       );
 
-      expect(decision?.veto?.isError).toBeFalsy();
-      expect(decision?.veto?.output).toContain(
-        'Selected approach: Approach B',
-      );
-      expect(decision?.veto?.output).toContain(
-        'Execute ONLY the selected approach',
-      );
-      expect(decision?.veto?.output).toContain('## Approved Plan:\n# Plan');
+      expect(decision).toEqual({
+        allow: true,
+        executionMetadata: { planReview: { selectedLabel: 'Approach B' } },
+      });
       expect(records).toContainEqual({
         event: 'plan_submitted',
         properties: { has_options: true, mode: 'plan' },
       });
       expect(records).toContainEqual({
         event: 'plan_resolved',
-        properties: { outcome: 'approved', chosen_option: 'Approach B', mode: 'agent' },
+        properties: { outcome: 'approved', chosen_option: 'Approach B', mode: 'plan' },
       });
-      expect(await svc.status()).toBeNull();
+      expect(await svc.status()).not.toBeNull();
     });
 
-    it('approves without a selected label and saves the plan path into the output', async () => {
+    it('approves without a selected label', async () => {
       const svc = await enterPlan();
       const decision = await run(
         hookContext('ExitPlanMode', { display: planReviewDisplay() }),
       );
 
-      expect(decision?.veto?.output).toContain(
-        `Plan saved to: ${PLAN_PATH}`,
-      );
-      expect(decision?.veto?.output).not.toContain('Selected approach:');
+      expect(decision).toEqual({
+        allow: true,
+        executionMetadata: { planReview: {} },
+      });
       expect(records).toContainEqual({
         event: 'plan_resolved',
-        properties: { outcome: 'approved', mode: 'agent' },
+        properties: { outcome: 'approved', mode: 'plan' },
       });
-      expect(await svc.status()).toBeNull();
-    });
-
-    it('omits the saved-to line when the display has no path', async () => {
-      await enterPlan();
-      const decision = await run(
-        hookContext('ExitPlanMode', {
-          display: planReviewDisplay({ plan: '# Draft Plan', path: undefined }),
-        }),
-      );
-
-      expect(decision?.veto?.output).toContain('## Approved Plan:\n# Draft Plan');
-      expect(decision?.veto?.output).not.toContain('Plan saved to:');
+      expect(await svc.status()).not.toBeNull();
     });
 
     it('exits plan mode with a stopping error result when the user chooses Reject and Exit', async () => {
@@ -604,17 +593,19 @@ describe('AgentPlanService plan-guard listener', () => {
       );
 
       expect(requests).toHaveLength(1);
-      expect(decision?.veto?.isError).toBeFalsy();
-      expect(decision?.veto?.output).toContain('## Approved Plan:\n# Plan');
+      expect(decision).toEqual({
+        allow: true,
+        executionMetadata: { planReview: {} },
+      });
       expect(records).toContainEqual({
         event: 'plan_submitted',
         properties: { has_options: false, mode: 'plan' },
       });
       expect(records).toContainEqual({
         event: 'plan_resolved',
-        properties: { outcome: 'approved', mode: 'agent' },
+        properties: { outcome: 'approved', mode: 'plan' },
       });
-      expect(await svc.status()).toBeNull();
+      expect(await svc.status()).not.toBeNull();
     });
 
     it('keeps plan mode active in auto mode until the user decides', async () => {
