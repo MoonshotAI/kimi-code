@@ -97,7 +97,6 @@
     "apps/desktop/src/main/app/lifecycle.ts": 1,
     "apps/desktop/src/shared/browser-data.ts": 1,
     "apps/desktop/tests/main/browser/browser-view.test.ts": 1,
-    "apps/desktop/tests/renderer/useQuitConfirm.test.ts": 1,
     "apps/kimi-code/test/cli/options.test.ts": 1,
     "apps/kimi-code/test/cli/update/native-swap.test.ts": 1,
     "apps/kimi-code/test/cli/update/preflight.test.ts": 1,
@@ -244,7 +243,6 @@
     "packages/core/src/loop/tool/tasks.ts": 1,
     "packages/core/src/store/append-log.ts": 1,
     "packages/core/src/utils/wait.ts": 1,
-    "packages/kap-server/test/conversationContract.e2e.test.ts": 1,
     "packages/kap-server/test/hosts.test.ts": 2,
     "packages/product/test/session-rating.test.ts": 1,
     "packages/remote-control/test/remote-control.test.ts": 12,
@@ -390,9 +388,6 @@
     "packages/agent-core-v2/src/features/skill/catalog/parser.ts": 3,
     "packages/agent-core-v2/src/features/skill/catalog/skillRoots.ts": 6,
     "packages/agent-core-v2/src/features/skill/workspace/environmentSkillDiscovery.ts": 9
-  },
-  "oxc/bad-comparison-sequence": {
-    "packages/kap-server/test/conversationContract.e2e.test.ts": 1
   },
   "oxc/no-accumulating-spread": {
     "apps/vscode/webview-ui/src/components/MCPServersModal.tsx": 2,
@@ -669,7 +664,6 @@
     "packages/app-client/src/lib/draftRestore.ts": 1,
     "packages/core/src/tool/tool-executor.ts": 1,
     "packages/kap-server/src/middleware/securityHeaders.ts": 1,
-    "packages/kap-server/test/conversationContract.e2e.test.ts": 1,
     "packages/klient/examples/kimi-select-tools.ts": 1,
     "packages/klient/src/contract/types.ts": 1,
     "packages/minidb/src/gen-codec.ts": 1

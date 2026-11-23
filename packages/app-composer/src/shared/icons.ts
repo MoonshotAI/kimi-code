@@ -1,6 +1,6 @@
 import RawFile from '~icons/kimi/file?raw';
 import RawFolderOpen from '~icons/kimi/folder-open?raw';
-import RawSparklingLine from '~icons/ri/sparkling-line?raw';
+import RawSkill from '~icons/kimi/skill?raw';
 import RawCopy from '~icons/kimi/copy?raw';
 import RawCheck from '~icons/kimi/check?raw';
 import RawExternalLinkLine from '~icons/ri/external-link-line?raw';
@@ -24,7 +24,7 @@ const SIZE_PX: Record<IconSize, number> = { sm: 14, md: 16, lg: 20 };
 const RAW: Record<IconName, string> = {
   file: RawFile,
   folder: RawFolderOpen,
-  skill: RawSparklingLine,
+  skill: RawSkill,
   session: RawComment,
   copy: RawCopy,
   check: RawCheck,

@@ -333,7 +333,8 @@ class WireReplayFoldState {
           id: event.toolCallId,
           rawId: event.rawId,
           name: event.name,
-          arguments: event.args === undefined ? null : JSON.stringify(event.args),
+          arguments:
+            event.argsRaw ?? (event.args === undefined ? null : JSON.stringify(event.args)),
           extras: event.extras,
         });
         if (event.display !== undefined) {

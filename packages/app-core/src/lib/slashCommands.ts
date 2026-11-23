@@ -8,7 +8,7 @@ export interface SlashCommand {
   desc: string;
   isSkill?: boolean;
   skillPath?: string;
-  sourceKind?: 'global' | 'builtin';
+  sourceKind?: 'global' | 'builtin' | 'plugin';
   workspaceLabel?: string;
   acceptsInput?: boolean;
   argHint?: string;
@@ -144,9 +144,10 @@ export function skillRefMatches(skill: SkillRef, ref: SkillRef): boolean {
     (ref.path === undefined || skill.path === ref.path);
 }
 
-export function skillSourceKind(source?: string): 'global' | 'builtin' | undefined {
+export function skillSourceKind(source?: string): 'global' | 'builtin' | 'plugin' | undefined {
   if (source === 'builtin') return 'builtin';
-  if (source === 'user' || source === 'extra' || source === 'plugin') return 'global';
+  if (source === 'plugin') return 'plugin';
+  if (source === 'user' || source === 'extra') return 'global';
   return undefined;
 }
 

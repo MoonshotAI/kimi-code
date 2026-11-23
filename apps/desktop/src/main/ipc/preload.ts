@@ -1,5 +1,6 @@
 import { isSleepPreventionMode, type PreventSleepState, type SleepPreventionMode } from '../../shared/prevent-sleep';
 import { isDesktopFailureKind, type DesktopFailureKind } from '../../shared/failure-feedback';
+import { asQuitConfirmDetails, type QuitBlockReason, type QuitConfirmDetails } from '../../shared/quit-confirm';
 import { asBrowserAnnotationPickOptions, asBrowserAnnotationPickRequest, browserValidators as annotationValidators, type BrowserAnnotationCaptureAction } from '../../shared/browser-annotation';
 import { browserValidators as receiptValidators, type BrowserReceiptImage } from '../../shared/browser-receipt';
 import { isBrowserTabCommand, type BrowserTabCommand } from '../../shared/browser';
@@ -431,9 +432,15 @@ export type KimiDesktopApi = {
   showSelectionContextMenu: (selectionText: string) => void;
   setJumpList: (workspaces: JumpListWorkspace[]) => void;
   onLaunchAction: (cb: (payload: LaunchActionPayload) => void) => () => void;
-  onQuitConfirm: (cb: (requestId: number, reasons: Array<'busy' | 'remote-control'>) => void) => () => void;
+  onQuitConfirm: (
+    cb: (requestId: number, reasons: QuitBlockReason[], details: QuitConfirmDetails) => void,
+  ) => () => void;
   onQuitConfirmCancel: (cb: (requestId: number) => void) => () => void;
-  respondQuitConfirm: (choice: 'quit' | 'cancel' | 'unavailable', requestId: number) => Promise<void>;
+  respondQuitConfirm: (
+    choice: 'quit' | 'cancel' | 'unavailable',
+    requestId: number,
+    continueSessions?: boolean,
+  ) => Promise<void>;
   onDeepLinkAuth: (cb: () => void) => () => void;
   setVibrancy: (enabled: boolean) => void;
   getVibrancy: () => Promise<boolean>;
@@ -758,12 +765,12 @@ export const api: KimiDesktopApi = {
     return () => ipcRenderer.removeListener('kimi:launch-action', listener);
   },
   onQuitConfirm: (cb) => {
-    const listener = (_event: unknown, requestId: unknown, reasons: unknown) => {
+    const listener = (_event: unknown, requestId: unknown, reasons: unknown, details: unknown) => {
       if (typeof requestId !== 'number' || !Number.isInteger(requestId)) return;
       const list = Array.isArray(reasons)
-        ? reasons.filter((r): r is 'busy' | 'remote-control' => r === 'busy' || r === 'remote-control')
+        ? reasons.filter((r): r is QuitBlockReason => r === 'busy' || r === 'remote-control')
         : [];
-      cb(requestId, list);
+      cb(requestId, list, asQuitConfirmDetails(details));
     };
     ipcRenderer.on('kimi:quit-confirm', listener);
     return () => ipcRenderer.removeListener('kimi:quit-confirm', listener);
@@ -777,10 +784,14 @@ export const api: KimiDesktopApi = {
     ipcRenderer.on('kimi:quit-confirm-cancel', listener);
     return () => ipcRenderer.removeListener('kimi:quit-confirm-cancel', listener);
   },
-  respondQuitConfirm: (choice, requestId) => {
+  respondQuitConfirm: (choice, requestId, continueSessions) => {
     if (choice !== 'quit' && choice !== 'cancel' && choice !== 'unavailable') return Promise.resolve();
     if (typeof requestId !== 'number' || !Number.isInteger(requestId)) return Promise.resolve();
-    return ipcRenderer.invoke('kimi:quit-confirm-response', { choice, requestId });
+    return ipcRenderer.invoke('kimi:quit-confirm-response', {
+      choice,
+      requestId,
+      continueSessions: continueSessions === true,
+    });
   },
   onDeepLinkAuth: (cb) => {
     const listener = () => cb();

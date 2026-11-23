@@ -1,9 +1,15 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { test } from 'node:test';
+import { fileURLToPath } from 'node:url';
 
 import { stringify } from 'yaml';
 
 import { checkFanIn, checkWiring, diffConfigs, expandOverridePlugins, normalizeConfig } from './guards.mjs';
+
+const ROOT = fileURLToPath(new URL('../..', import.meta.url));
 
 function config(patch = {}) {
   return {
@@ -335,4 +341,12 @@ await test('checkFanIn flags a new job in the workflow that the gate does not co
 await test('checkFanIn flags a registered gate whose job or workflow is gone', () => {
   assert.deepEqual(fanIn(stringify({ jobs: { plan: { steps: [{ run: 'true' }] } } })), ['fan-in-missing']);
   assert.deepEqual(fanIn(undefined), ['fan-in-missing']);
+});
+
+await test('the pre-commit lint command accepts a commit whose staged code is all outside the oxlint scope', () => {
+  const lintStaged = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'))['lint-staged'];
+  const command = Object.values(lintStaged).flat().find((line) => line.startsWith('oxlint '));
+  const args = command.split(/\s+/).slice(1);
+  const result = spawnSync(process.execPath, [join(ROOT, 'node_modules/oxlint/bin/oxlint'), ...args, 'apps/desktop/scripts/ci/select-e2e-specs.mjs'], { cwd: ROOT, encoding: 'utf8' });
+  assert.equal(result.status, 0, `${result.stdout}${result.stderr}`);
 });

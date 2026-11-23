@@ -260,7 +260,7 @@ function hide(payload: BrowserOverlayVisibilityRequest): void {
 
 function activate(itemId: string): void {
   const current = config.value;
-  if (current?.kind === 'dialog' && current.input && (itemId === 'confirm' || itemId === 'cancel' || itemId === 'auxiliary')) {
+  if (current?.kind === 'dialog' && (current.input || current.checkbox) && (itemId === 'confirm' || itemId === 'cancel' || itemId === 'auxiliary')) {
     bridge?.submitForm({ requestId: current.requestId, action: itemId, value: inputValue.value, checked: current.checkbox === undefined ? undefined : checkboxChecked.value });
     return;
   }

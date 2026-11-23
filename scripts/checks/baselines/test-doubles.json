@@ -102,7 +102,7 @@
     "packages/agent-core-v2/test/features/tower/towerService.test.ts": 3,
     "packages/agent-core-v2/test/integration/conversation/first-turn.test.ts": 2,
     "packages/agent-core-v2/test/integration/conversation/testkit-model.test.ts": 1,
-    "packages/agent-core-v2/test/session/subagent/forkParity.test.ts": 14,
+    "packages/agent-core-v2/test/session/subagent/forkParity.test.ts": 8,
     "packages/agent-core-v2/test/tool/tool.test.ts": 24,
     "packages/agent-core-v2/test/wire/resume.test.ts": 15,
     "packages/product/test/survey-turns.test.ts": 2
@@ -112,7 +112,6 @@
     "apps/vscode/test/kimi-harness.integration.test.ts": 1,
     "apps/vscode/test/replay-resume.integration.test.ts": 1,
     "packages/agent-core-v2/src/human/test/llm/tool-call-ids.test.ts": 1,
-    "packages/kap-server/test/conversationContract.e2e.test.ts": 4,
     "packages/kap-server/test/sessions.test.ts": 2,
     "packages/klient/test/e2e/invalid-input-matrix.test.ts": 4,
     "packages/klient/test/helpers/conformance.ts": 1,

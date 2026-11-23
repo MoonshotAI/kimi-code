@@ -17,6 +17,9 @@ vi.mock('../../../src/main/server/region', () => ({ setServerRegionSource: vi.fn
 vi.mock('../../../src/main/server/remote-control-restore', () => ({
   restoreRemoteControlOnStartup: vi.fn(() => Promise.resolve()),
 }));
+vi.mock('../../../src/main/server/session-continue', () => ({
+  continueSessionsAfterRestart: vi.fn(() => Promise.resolve()),
+}));
 vi.mock('../../../src/main/app/protocol', () => ({
   rendererDevBase: vi.fn(() => undefined),
   rendererUrl: vi.fn(() => 'app://renderer/index.html'),

@@ -37,7 +37,7 @@ describe('/api/v1/meta experimental_flags', () => {
 
   beforeEach(() => {
     vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', '0');
-    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_SUBAGENT_FORK', undefined);
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_NOTIFY_USER', undefined);
   });
 
   afterEach(async () => {
@@ -75,7 +75,7 @@ describe('/api/v1/meta experimental_flags', () => {
   it('reports registered flags as off by default', async () => {
     const base = await boot();
     const flags = await getMetaFlags(base);
-    expect(flags['subagent_fork']).toBe(false);
+    expect(flags['notify_user']).toBe(false);
   });
 
   it('reports the data directory the server runs on as home_dir', async () => {
@@ -86,44 +86,44 @@ describe('/api/v1/meta experimental_flags', () => {
   });
 
   it('reports a config-enabled flag from the very first response', async () => {
-    const base = await boot('[experimental]\nsubagent_fork = true\n');
+    const base = await boot('[experimental]\nnotify_user = true\n');
     const flags = await getMetaFlags(base);
-    expect(flags['subagent_fork']).toBe(true);
+    expect(flags['notify_user']).toBe(true);
   });
 
   it('reflects a flag enabled via its KIMI_CODE_EXPERIMENTAL_* env var', async () => {
-    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_SUBAGENT_FORK', '1');
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_NOTIFY_USER', '1');
     const base = await boot();
     const flags = await getMetaFlags(base);
-    expect(flags['subagent_fork']).toBe(true);
+    expect(flags['notify_user']).toBe(true);
   });
 
   it('flips live when the [experimental] config section is written via POST /config', async () => {
     const base = await boot();
-    expect((await getMetaFlags(base))['subagent_fork']).toBe(false);
+    expect((await getMetaFlags(base))['notify_user']).toBe(false);
 
     const res = await authedFetch(server as RunningServer, base, '/api/v1/config', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ experimental: { 'subagent_fork': true } }),
+      body: JSON.stringify({ experimental: { 'notify_user': true } }),
     });
     expect(res.status).toBe(200);
 
-    expect((await getMetaFlags(base))['subagent_fork']).toBe(true);
+    expect((await getMetaFlags(base))['notify_user']).toBe(true);
   });
 
   it('keeps an env-forced flag on when the config section disables it', async () => {
-    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_SUBAGENT_FORK', '1');
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_NOTIFY_USER', '1');
     const base = await boot();
 
     const res = await authedFetch(server as RunningServer, base, '/api/v1/config', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ experimental: { 'subagent_fork': false } }),
+      body: JSON.stringify({ experimental: { 'notify_user': false } }),
     });
     expect(res.status).toBe(200);
 
-    expect((await getMetaFlags(base))['subagent_fork']).toBe(true);
+    expect((await getMetaFlags(base))['notify_user']).toBe(true);
   });
 });
 

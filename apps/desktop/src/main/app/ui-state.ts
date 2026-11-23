@@ -17,6 +17,12 @@ import type { BrowserHistoryEntry } from '../../shared/browser-data';
 const BROWSER_HISTORY_BYTES_MAX = 384 * 1_024;
 const BROWSER_DOWNLOAD_BYTES_MAX = 128 * 1_024;
 
+export interface PendingSessionContinue {
+  sessionIds: string[];
+  armedAt: number;
+  fromVersion: string;
+}
+
 export interface UiState {
   onboarded?: boolean;
   vibrancy?: boolean;
@@ -32,6 +38,7 @@ export interface UiState {
   remoteControlRestoreEnabled?: boolean;
   remoteControlPreviousEnabled?: boolean;
   firstLaunchReported?: boolean;
+  pendingSessionContinue?: PendingSessionContinue;
   browserAgentControl?: boolean;
   browserSubagentControl?: boolean;
   browserAgentLocalFiles?: boolean;
@@ -213,14 +220,18 @@ export function setRemoteControlPreviousEnabled(enabled: boolean, file: string =
 
 function writeUiState(patch: Partial<UiState>, file: string): void {
   try {
-    try {
-      writeUiStateStrict(patch, file);
-    } catch (error) {
-      if (!(error instanceof InvalidUiStateError)) throw error;
-      copyFileSync(file, `${file}.corrupt-${randomUUID()}`);
-      writeUiStateValue({ ...patch, windowsLidBackupRecoveryRequired: true }, file);
-    }
+    writeUiStateRecovering(patch, file);
   } catch {}
+}
+
+function writeUiStateRecovering(patch: Partial<UiState>, file: string): void {
+  try {
+    writeUiStateStrict(patch, file);
+  } catch (error) {
+    if (!(error instanceof InvalidUiStateError)) throw error;
+    copyFileSync(file, `${file}.corrupt-${randomUUID()}`);
+    writeUiStateValue({ ...patch, windowsLidBackupRecoveryRequired: true }, file);
+  }
 }
 
 export function isVibrancyEnabled(file?: string): boolean {
@@ -357,4 +368,26 @@ export function shouldReportFirstLaunch(file: string = defaultStateFile()): bool
 
 export function markFirstLaunchReported(file: string = defaultStateFile()): void {
   writeUiState({ firstLaunchReported: true }, file);
+}
+
+export function savePendingSessionContinue(
+  pending: PendingSessionContinue | undefined,
+  file: string = defaultStateFile(),
+): void {
+  writeUiStateRecovering({ pendingSessionContinue: pending }, file);
+}
+
+export function takePendingSessionContinue(file: string = defaultStateFile()): PendingSessionContinue | undefined {
+  const value: unknown = loadUiState(file).pendingSessionContinue;
+  if (value === undefined) return undefined;
+  writeUiState({ pendingSessionContinue: undefined }, file);
+  if (value === null || typeof value !== 'object') return undefined;
+  const { sessionIds, armedAt, fromVersion } = value as Record<string, unknown>;
+  if (!Array.isArray(sessionIds) || typeof fromVersion !== 'string') return undefined;
+  if (typeof armedAt !== 'number' || !Number.isFinite(armedAt)) return undefined;
+  return {
+    sessionIds: sessionIds.filter((id): id is string => typeof id === 'string' && id !== ''),
+    armedAt,
+    fromVersion,
+  };
 }

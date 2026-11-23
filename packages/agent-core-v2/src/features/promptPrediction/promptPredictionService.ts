@@ -2,8 +2,6 @@ import { Disposable } from '#/_base/di/lifecycle';
 import type { IAgentScopeHandle } from '#/_base/di/scope';
 import { ILogService } from '#/_base/log/log';
 import { abortable, abortError, createDeadlineAbortSignal, type DeadlineAbortSignal } from '#/_base/utils/abort';
-import type { ContextMessage } from '#/agent/contextMemory/types';
-import { historyFromContext } from '#/agent/loop/history';
 import { IAgentLoopService, type LoopSnapshot } from '#/agent/loop/loop';
 import { turnKey } from '#/agent/loop/turnOps';
 import type { LLMRequestTrace } from '#/llm-adapter/contract/request-trace';
@@ -13,7 +11,7 @@ import { IFlagService } from '#/app/flag/flag';
 import type { PredictionGeneratedEvent } from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAgentPlanService } from '#/features/plan/plan';
-import { createUserMessage } from '@moonshot-ai/core/llm/message';
+import { createUserMessage, type Message } from '@moonshot-ai/core/llm/message';
 import type { LlmOutcome, LlmTiming } from '@moonshot-ai/core/llm/response';
 import type { TokenUsage } from '@moonshot-ai/core/llm/usage';
 import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
@@ -113,7 +111,7 @@ export class SessionPromptPredictionService extends Disposable implements ISessi
     if (this.attemptedTurnIds.has(input.expectedTurnId)) return null;
     if (!this.idle(scope.loop.snapshot(), this.activity.state())) return null;
 
-    const contextSnapshot = scope.loop.history();
+    const contextSnapshot = scope.loop.rawHistory();
     this.attemptedTurnIds.add(input.expectedTurnId);
     const controller = new AbortController();
     const active: ActivePrediction = {
@@ -154,7 +152,7 @@ export class SessionPromptPredictionService extends Disposable implements ISessi
       const outcome = await abortable(requester.generate(
         {
           content: {
-            messages: historyFromContext([...contextSnapshot, createUserMessage(PROMPT_PREDICTION_INSTRUCTION)]),
+            messages: [...contextSnapshot, createUserMessage(PROMPT_PREDICTION_INSTRUCTION)],
           },
           profile: {},
         },
@@ -295,7 +293,7 @@ export class SessionPromptPredictionService extends Disposable implements ISessi
   private stillCurrent(
     active: ActivePrediction,
     scope: PredictionScope,
-    contextSnapshot: readonly ContextMessage[],
+    contextSnapshot: readonly Message[],
   ): boolean {
     return (
       this.active === active &&
@@ -303,7 +301,7 @@ export class SessionPromptPredictionService extends Disposable implements ISessi
       !active.deadline.signal.aborted &&
       this.flags.enabled(PROMPT_PREDICTION_FLAG_ID) &&
       this.agents.handleOf(MAIN_AGENT_ID) === scope.handle &&
-      scope.loop.history() === contextSnapshot &&
+      scope.loop.rawHistory() === contextSnapshot &&
       this.sourceTurnMatches(scope, active.expectedTurnId) &&
       this.idle(scope.loop.snapshot(), this.activity.state())
     );
