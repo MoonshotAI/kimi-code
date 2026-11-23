@@ -29,7 +29,7 @@
   border-radius: var(--radius-xl);
   background: var(--color-surface);
 }
-.settings-group-divided > * + * {
+.settings-group.settings-group-divided > * + * {
   border-top: var(--p-hairline) solid var(--color-line);
 }
 .settings-group > .row {
