@@ -3029,9 +3029,13 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    */
   override async listWorkspaceMcpServers(workDir: string): Promise<readonly McpServerInfo[]> {
     return this.withWorkspaceInstance('listWorkspaceMcpServers', workDir, async (handler) => {
-      const mcp = handler.program.mcp;
-      await mcp.ready;
-      return mcp.connectionManager().list() as readonly McpServerInfo[];
+      const mcp = await handler.program.acquireMcp();
+      try {
+        await mcp.service.ready;
+        return mcp.service.connectionManager().list() as readonly McpServerInfo[];
+      } finally {
+        mcp.dispose();
+      }
     });
   }
 
