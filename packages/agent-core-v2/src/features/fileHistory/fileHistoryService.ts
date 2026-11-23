@@ -6,8 +6,7 @@ import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnviro
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
-import { runLegacyBeforeExecute } from '#/agent/toolExecutor/legacyHooks';
-import type { WillExecuteToolEvent } from '#/agent/toolExecutor/toolHooks';
+import type { LegacyDecisionContext } from '#/agent/toolExecutor/legacyHooks';
 import { TurnStarted } from '#/agent/loop/turnEvents';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
@@ -75,13 +74,13 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
     this.agentState.contributeState(fileHistoryKey);
     if (this.agentCtx.agentId !== MAIN_AGENT_ID) {
       this._register(toolExecutor.registerHook({
-        beforeExecute: (context) => runLegacyBeforeExecute(context, (event) => this.onSubagentWillExecuteTool(event)),
+        beforeExecute: (context) => this.captureSubagentEdit(context),
       }));
       return;
     }
 
     this._register(toolExecutor.registerHook({
-      beforeExecute: (context) => runLegacyBeforeExecute(context, (event) => this.onWillExecuteTool(event)),
+      beforeExecute: (context) => this.captureEdit(context),
     }));
     this._register(
       eventBus.subscribe(TurnStarted, (event) => {
@@ -257,18 +256,20 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
     return { version: entry.version, content };
   }
 
-  private onWillExecuteTool(event: WillExecuteToolEvent): void {
-    const path = editTargetPath(event.execution.display);
+  private async captureEdit(context: LegacyDecisionContext): Promise<void> {
+    if (context.prepared.kind !== 'execute') return;
+    const path = editTargetPath(context.prepared.execution.display);
     if (path === undefined) return;
-    event.waitUntil(this.enqueue(() => this.capture(path, event.turnId)));
+    await this.enqueue(() => this.capture(path, context.context.turnId)).catch(() => undefined);
   }
 
-  private onSubagentWillExecuteTool(event: WillExecuteToolEvent): void {
-    const path = editTargetPath(event.execution.display);
+  private async captureSubagentEdit(context: LegacyDecisionContext): Promise<void> {
+    if (context.prepared.kind !== 'execute') return;
+    const path = editTargetPath(context.prepared.execution.display);
     if (path === undefined) return;
     const main = this.agentLifecycle.handleOf(MAIN_AGENT_ID);
     if (main === undefined) return;
-    event.waitUntil(main.accessor.get(IAgentFileHistoryService).captureForActiveTurn(path));
+    await main.accessor.get(IAgentFileHistoryService).captureForActiveTurn(path).catch(() => undefined);
   }
 
   captureForActiveTurn(path: string): Promise<void> {
