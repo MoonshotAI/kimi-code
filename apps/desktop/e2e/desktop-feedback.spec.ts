@@ -14,11 +14,23 @@ async function expectVisibleCheckmark(app: DesktopApp, checkbox: Locator): Promi
   const png = await icon.screenshot({ scale: 'css', animations: 'disabled' });
   const pixels = await app.electron.evaluate(({ nativeImage }, data) => {
     const image = nativeImage.createFromBuffer(Buffer.from(data, 'base64'));
-    const pixel = (x: number, y: number) => image.crop({ x, y, width: 1, height: 1 }).toBitmap().toString('hex');
-    return { fill: pixel(7, 5), bend: pixel(7, 9), tip: pixel(10, 6) };
+    const { width, height } = image.getSize();
+    const icon = image.crop({ x: width - 16, y: height - 16, width: 16, height: 16 });
+    const fill = icon.crop({ x: 7, y: 4, width: 1, height: 1 }).toBitmap();
+    const peakContrast = (x: number, y: number, width = 1, height = 1) =>
+      icon.crop({ x, y, width, height }).toBitmap().reduce((peak, channel, i) =>
+        Math.max(peak, Math.abs(channel - fill[i % 4]!)), 0);
+    return {
+      surface: peakContrast(0, 0),
+      shortStroke: peakContrast(4, 7, 2, 2),
+      bend: peakContrast(6, 9, 3, 2),
+      longStroke: peakContrast(9, 5, 3, 3),
+    };
   }, png.toString('base64'));
-  expect(pixels.bend).not.toBe(pixels.fill);
-  expect(pixels.tip).not.toBe(pixels.fill);
+  const minimumContrast = Math.max(32, pixels.surface / 4);
+  expect(pixels.shortStroke, 'short stroke of the checkmark').toBeGreaterThan(minimumContrast);
+  expect(pixels.bend, 'bend of the checkmark').toBeGreaterThan(minimumContrast);
+  expect(pixels.longStroke, 'long stroke of the checkmark').toBeGreaterThan(minimumContrast);
 }
 
 testWithProvider('submits global and reply feedback with opt-in attachments', async ({ app, provider }) => {
