@@ -18,8 +18,7 @@ export const SubagentToolInputSchema = z.preprocess(
       typeof normalized['resume'] === 'string' && normalized['resume'].trim().length > 0;
     const hasSubagentType =
       typeof normalized['subagent_type'] === 'string' && normalized['subagent_type'].length > 0;
-    const hasFork = normalized['fork'] === true;
-    if (!hasSubagentType && !hasResumeId && !hasFork) {
+    if (!hasSubagentType && !hasResumeId) {
       normalized['subagent_type'] = DEFAULT_PROFILE_NAME;
     } else if (!hasSubagentType) {
       delete normalized['subagent_type'];
@@ -46,12 +45,6 @@ export const SubagentToolInputSchema = z.preprocess(
       .optional()
       .describe(
         'If true, return immediately without waiting for completion. Prefer false unless the task can run independently and there is a clear benefit to not waiting.',
-      ),
-    fork: z
-      .boolean()
-      .optional()
-      .describe(
-        'Start with a snapshot of your completed conversation history, inheriting your current agent type, model, and tool set.',
       ),
     model: z
       .string()

@@ -4010,7 +4010,7 @@ describe('SDKRpcClientV2 engine telemetry', () => {
     tempDirs.push(homeDir);
     const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-tel-flags-work-'));
     tempDirs.push(workDir);
-    await writeFile(join(homeDir, 'config.toml'), '[experimental]\nsubagent_fork = true\n', 'utf-8');
+    await writeFile(join(homeDir, 'config.toml'), '[experimental]\nnotify_user = true\n', 'utf-8');
     const records: TelemetryRecord[] = [];
     const harness = createKimiHarness({
       homeDir,
@@ -4033,7 +4033,7 @@ describe('SDKRpcClientV2 engine telemetry', () => {
       });
       for (const record of started) {
         const flags = String(record.properties?.['experimental_flags'] ?? '').split(',');
-        expect(flags).toContain('subagent_fork');
+        expect(flags).toContain('notify_user');
         expect(flags).toContain('wait_for');
       }
       await session.close();

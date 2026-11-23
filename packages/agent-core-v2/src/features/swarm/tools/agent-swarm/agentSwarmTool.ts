@@ -8,21 +8,12 @@ import {
 import { Error2, ErrorCodes } from '#/errors';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { IConfigService } from '#/app/config/config';
-import { IFlagService } from '#/app/flag/flag';
 import { ISessionSwarmService, type SessionSwarmTask } from '#/features/swarm/session/sessionSwarm';
-import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentSwarmService } from '#/features/swarm/agent/swarm';
 import { resolveSwarmTimeoutMs } from '#/features/swarm/configSection';
 import { ISessionSubagentService } from '#/session/subagent/subagent';
-import {
-  FORK_EXPERIMENTAL_UNAVAILABLE,
-  FORK_WITH_RESUME_UNAVAILABLE,
-  forkIncompatibility,
-  type SubagentSpawnPlan,
-} from '#/session/subagent/spawn';
-import { SUBAGENT_FORK_FLAG_ID } from '#/session/subagent/flag';
-import { stripSubagentForkParameter } from '#/session/subagent/configSection';
+import type { SubagentSpawnPlan } from '#/session/subagent/spawn';
 import {
   AgentSwarmToolInputSchema,
   IAgentSwarmTool,
@@ -32,7 +23,6 @@ import {
   type AgentSwarmToolInput,
 } from './agent-swarm';
 import AGENT_SWARM_DESCRIPTION from './agent-swarm.md?raw';
-import AGENT_SWARM_FORK_DESCRIPTION from './agent-swarm-fork.md?raw';
 
 const DEFAULT_SUBAGENT_TYPE = 'coder';
 
@@ -43,7 +33,6 @@ const SWARM_MODE_OFF_RESULT: ExecutableToolErrorResult = {
 };
 
 const AGENT_SWARM_PARAMETERS = toInputJsonSchema(AgentSwarmToolInputSchema);
-const AGENT_SWARM_PARAMETERS_NO_FORK = stripSubagentForkParameter(AGENT_SWARM_PARAMETERS);
 
 interface AgentSwarmSpawnSpec {
   readonly kind: 'spawn';
@@ -77,9 +66,7 @@ export class AgentSwarmTool implements IAgentSwarmTool {
   readonly name = 'AgentSwarm' as const;
 
   get parameters(): Record<string, unknown> {
-    return this.flags.enabled(SUBAGENT_FORK_FLAG_ID)
-      ? AGENT_SWARM_PARAMETERS
-      : AGENT_SWARM_PARAMETERS_NO_FORK;
+    return AGENT_SWARM_PARAMETERS;
   }
 
   private readonly callerAgentId: string;
@@ -89,17 +76,13 @@ export class AgentSwarmTool implements IAgentSwarmTool {
     @IAgentScopeContext scopeContext: IAgentScopeContext,
     @IAgentSwarmService private readonly swarmMode: IAgentSwarmService,
     @IConfigService private readonly config: IConfigService,
-    @IFlagService private readonly flags: IFlagService,
     @ISessionSubagentService private readonly subagents: ISessionSubagentService,
-    @IAgentLoopService private readonly profile: IAgentLoopService,
   ) {
     this.callerAgentId = scopeContext.agentId;
   }
 
   get description(): string {
-    return this.flags.enabled(SUBAGENT_FORK_FLAG_ID)
-      ? `${AGENT_SWARM_DESCRIPTION}\n\n${AGENT_SWARM_FORK_DESCRIPTION}`
-      : AGENT_SWARM_DESCRIPTION;
+    return AGENT_SWARM_DESCRIPTION;
   }
 
   resolveExecution(args: AgentSwarmToolInput): ToolExecution {
@@ -141,32 +124,15 @@ export class AgentSwarmTool implements IAgentSwarmTool {
     signal: AbortSignal,
     toolCallId: string,
   ): Promise<string> {
-    const fork = args.fork === true;
-    if (fork && !this.flags.enabled(SUBAGENT_FORK_FLAG_ID)) {
-      throw new Error2(ErrorCodes.VALIDATION_FAILED, FORK_EXPERIMENTAL_UNAVAILABLE);
-    }
-    if (fork && Object.keys(args.resume_agent_ids ?? {}).length > 0) {
-      throw new Error2(ErrorCodes.VALIDATION_FAILED, FORK_WITH_RESUME_UNAVAILABLE);
-    }
     if ((args.items?.length ?? 0) === 0 && args.model !== undefined) {
       throw new Error2(ErrorCodes.VALIDATION_FAILED, SWARM_RESUME_ONLY_WITH_MODEL_UNAVAILABLE);
     }
     let plan: SubagentSpawnPlan | undefined;
     if ((args.items?.length ?? 0) > 0) {
-      if (fork) {
-        const incompatible = forkIncompatibility(
-          { subagent_type: args.subagent_type, model: args.model },
-          this.profile.data(),
-        );
-        if (incompatible !== undefined) {
-          throw new Error2(ErrorCodes.VALIDATION_FAILED, incompatible);
-        }
-      }
       plan = await this.subagents.planSpawn({
         callerAgentId: this.callerAgentId,
         profileName: args.subagent_type,
         model: args.model,
-        fork,
       });
     }
     const profileName = plan?.profileName ?? DEFAULT_SUBAGENT_TYPE;

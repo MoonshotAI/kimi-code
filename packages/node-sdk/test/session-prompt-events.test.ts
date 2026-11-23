@@ -480,7 +480,6 @@ describe('Session.prompt events', () => {
 
     try {
       await configureFakeProvider(harness);
-      await harness.setConfig({ experimental: { subagent_fork: true } });
       fetchStub!.mockImplementation(async (input: Parameters<typeof fetch>[0], init: Parameters<typeof fetch>[1]) => {
         const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
         if (url !== MODEL_URL) throw new Error(`Unexpected fetch: ${url}`);
@@ -566,7 +565,7 @@ describe('Session.prompt events', () => {
           (message) => message.role === 'user' && JSON.stringify(message.content).includes('seed completed boundary'),
         );
         const isParentTurn = messages.some(
-          (message) => message.role === 'user' && JSON.stringify(message.content).includes('Stop the forked subagent'),
+          (message) => message.role === 'user' && JSON.stringify(message.content).includes('Stop the subagent'),
         );
         if (isSeed && !isParentTurn) {
           return new Response(sseBody('seed answer'), {
@@ -582,7 +581,6 @@ describe('Session.prompt events', () => {
               description: 'trace parser loop',
               prompt: childPrompt,
               run_in_background: true,
-              fork: true,
             }),
             { status: 200, headers: { 'Content-Type': 'text/event-stream' } },
           );
@@ -597,7 +595,7 @@ describe('Session.prompt events', () => {
             headers: { 'Content-Type': 'text/event-stream' },
           });
         }
-        return new Response(sseBody('Stopped the forked subagent.'), {
+        return new Response(sseBody('Stopped the subagent.'), {
           status: 200,
           headers: { 'Content-Type': 'text/event-stream' },
         });
@@ -608,7 +606,7 @@ describe('Session.prompt events', () => {
       const events: Event[] = [];
       const unsubscribe = session.onEvent((event) => events.push(event));
       await runPrompt(session, 'seed completed boundary', 'seed answer');
-      await session.prompt('Stop the forked subagent after it writes a draft.');
+      await session.prompt('Stop the subagent after it writes a draft.');
       await childStreaming;
 
       const runningFork = await harness.forkSession({ id: session.id });
@@ -616,7 +614,7 @@ describe('Session.prompt events', () => {
       expect(visibleReplayText(runningFork.getResumeState()?.agents['main']?.replay ?? [])).toEqual([
         'user:seed completed boundary',
         'assistant:seed answer',
-        'user:Stop the forked subagent after it writes a draft.',
+        'user:Stop the subagent after it writes a draft.',
       ]);
       expect(Object.keys(runningFork.getResumeState()?.sessionMetadata.agents ?? {})).toEqual([
         'main',

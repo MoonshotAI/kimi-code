@@ -21,7 +21,6 @@ import '@moonshot-ai/agent-core-v2/app/auth/configSection';
 import '@moonshot-ai/agent-core-v2/app/flag/flag';
 import '@moonshot-ai/agent-core-v2/features/skill/catalog/configSection';
 
-import '@moonshot-ai/agent-core-v2/session/subagent/flag';
 import '@moonshot-ai/agent-core-v2/features/tower/flag';
 import '@moonshot-ai/agent-core-v2/agent/tools/task/task-wait/flag';
 import '@moonshot-ai/agent-core-v2/persistence/configSection';
