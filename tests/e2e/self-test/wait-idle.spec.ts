@@ -24,6 +24,15 @@ selfTest('waitIdle', {
         await product.expectReply('Still running.');
       },
     },
+    'returns after a reply whose line starts with a moon emoji': {
+      run: async ({ product, model }) => {
+        model.script(say('Moon phases:\n\n🌕 Full moon tonight.'));
+        await product.send('Tell me the moon phase.');
+        await product.waitIdle();
+        expect(model.requests('main').map((request) => request.state)).toEqual(['finished']);
+        await product.expectReply('Full moon tonight.');
+      },
+    },
     'returns once a turn has failed, without judging it': {
       run: async ({ product, model }) => {
         model.script(httpError(400), say('Recovered.'));

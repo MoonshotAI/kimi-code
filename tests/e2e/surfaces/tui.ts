@@ -33,9 +33,11 @@ const DONE_MARK = '●';
 const FAILED_MARK = '✗';
 const TRANSCRIPT_MARKS = [USER_MARK, DONE_MARK, FAILED_MARK] as const;
 
-const APPROVAL_PANEL = '↵ confirm';
-const ACTIVITY = /^\s*[\u{1F311}-\u{1F318}\u2800-\u28FF]/u;
-const CHROME = /^[╭─]/;
+const APPROVAL_HINT = '↵ confirm';
+const APPROVAL_RULE = /^─+$/;
+const EDITOR_TOP = /^╭─+╮$/;
+const EDITOR_PROMPT = '│ >';
+const ACTIVITY = /^[\u{1F311}-\u{1F318}\u2800-\u28FF]/u;
 const TOOL_CARD = /^(?:Used |Using |Truncated |Ran a command|Running a command|Read(?:ing)? \d+ files?)/;
 const READ_GROUP = /^Read(?:ing)? \d+ files?/;
 const READ_GROUP_FILE = /^[├└]─ (.+?)(?: · (.+))?$/;
@@ -50,8 +52,11 @@ const REJECTION_NOTICE = 'was not run because the user rejected the approval req
 
 interface Screen {
   readonly text: string;
-  readonly lines: readonly string[];
+  readonly height: number;
   readonly viewport: readonly string[];
+  readonly input: 'editor' | 'approval' | 'none';
+  readonly transcript: readonly string[];
+  readonly status: readonly string[];
 }
 
 interface Block {
@@ -90,18 +95,29 @@ function squash(text: string): string {
   return text.replaceAll(/\s+/g, '');
 }
 
+function screenOf(rows: readonly string[], viewport: readonly string[]): Screen {
+  const lines = rows.map((row) => row.trim());
+  const frame = { text: rows.join('\n'), height: rows.length, viewport };
+  const editor = lines.findLastIndex((line, index) => EDITOR_TOP.test(line) && lines[index + 1]?.startsWith(EDITOR_PROMPT) === true);
+  const hint = lines.findLastIndex((line) => line.includes(APPROVAL_HINT));
+  if (hint > editor) {
+    const rule = lines.findLastIndex((line, index) => index < hint && APPROVAL_RULE.test(line));
+    return { ...frame, input: 'approval', transcript: lines.slice(0, rule < 0 ? hint : rule), status: [] };
+  }
+  if (editor < 0) return { ...frame, input: 'none', transcript: lines, status: [] };
+  const gap = lines.findLastIndex((line, index) => index < editor && line === '');
+  return { ...frame, input: 'editor', transcript: lines.slice(0, gap + 1), status: lines.slice(gap + 1, editor) };
+}
+
 function blocksOf(screen: Screen): Block[] {
   const blocks: { mark: Block['mark']; head: string; text: string }[] = [];
   let open: (typeof blocks)[number] | undefined;
-  for (const raw of screen.lines) {
-    const line = raw.trim();
+  for (const line of screen.transcript) {
     const mark = TRANSCRIPT_MARKS.find((candidate) => line.startsWith(`${candidate} `));
     if (mark !== undefined) {
       const head = line.slice(mark.length).trim();
       open = { mark, head, text: head };
       blocks.push(open);
-    } else if (CHROME.test(line) || ACTIVITY.test(line) || line.startsWith(TURN_COMPLETED)) {
-      open = undefined;
     } else if (line !== '' && open !== undefined) {
       open.text = `${open.text}\n${line}`;
     }
@@ -110,7 +126,7 @@ function blocksOf(screen: Screen): Block[] {
 }
 
 function statusLines(screen: Screen, prefix: string): number {
-  return screen.lines.filter((line) => line.trimStart().startsWith(prefix)).length;
+  return screen.transcript.filter((line) => line.startsWith(prefix)).length;
 }
 
 function latestTurn(screen: Screen): Block[] {
@@ -123,11 +139,11 @@ function userMessages(screen: Screen, text: string): number {
 }
 
 function showsApproval(screen: Screen): boolean {
-  return screen.viewport.some((line) => line.includes(APPROVAL_PANEL));
+  return screen.input === 'approval';
 }
 
 function showsActivity(screen: Screen): boolean {
-  return screen.viewport.some((line) => ACTIVITY.test(line));
+  return screen.status.some((line) => ACTIVITY.test(line));
 }
 
 function toolHead({ name, target }: ToolExpectation): string {
@@ -212,8 +228,8 @@ class TuiDriver implements SurfaceDriver {
   }
 
   async ready(): Promise<void> {
-    await this.wait('the TUI to show the configured model', (screen) =>
-      screen.viewport.some((line) => line.includes(FAKE_PROVIDER_DEFAULTS.modelName)) ? true : undefined,
+    await this.wait('the TUI to show its editor and the configured model', (screen) =>
+      screen.input === 'editor' && screen.viewport.some((line) => line.includes(FAKE_PROVIDER_DEFAULTS.modelName)) ? true : undefined,
     );
   }
 
@@ -362,10 +378,10 @@ class TuiDriver implements SurfaceDriver {
   }
 
   private turnOver(screen: Screen): boolean {
-    if (showsActivity(screen) || showsApproval(screen)) return false;
+    if (screen.input !== 'editor' || showsActivity(screen)) return false;
     if (this.turn === undefined) return true;
     return (
-      screen.viewport.some((line) => line.trimStart().startsWith(TURN_COMPLETED)) ||
+      screen.status.some((line) => line.startsWith(TURN_COMPLETED)) ||
       statusLines(screen, TURN_STOPPED) > this.turn.stopped ||
       statusLines(screen, TURN_FAILED) > this.turn.failed
     );
@@ -395,7 +411,7 @@ class TuiDriver implements SurfaceDriver {
           const screen = await this.read();
           const value = check(screen);
           if (value !== undefined) return { value };
-          if (screen.lines.length >= SCROLLBACK_LINES + ROWS) {
+          if (screen.height >= SCROLLBACK_LINES + ROWS) {
             return { halted: `The transcript outgrew the ${SCROLLBACK_LINES} lines the virtual terminal keeps, so evidence counted from the screen is no longer reliable.` };
           }
           return this.exitCode() === undefined ? undefined : { halted: 'The CLI exited.' };
@@ -412,8 +428,7 @@ class TuiDriver implements SurfaceDriver {
 
   private async read(): Promise<Screen> {
     await this.terminal.flush();
-    const lines = this.terminal.getScrollBuffer();
-    return { text: lines.join('\n'), lines, viewport: this.terminal.getViewport() };
+    return screenOf(this.terminal.getScrollBuffer(), this.terminal.getViewport());
   }
 
   private write(input: string): void {

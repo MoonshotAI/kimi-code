@@ -21,6 +21,15 @@ selfTest('expectReply', {
         await product.expectReply('The second paragraph.');
       },
     },
+    'finds text after a horizontal rule in the reply': {
+      run: async ({ product, model }) => {
+        model.script(say('First section.\n\n---\n\nSecond section.'));
+        await product.send('Answer in two sections.');
+        await product.waitIdle();
+        await product.expectReply('First section.');
+        await product.expectReply('Second section.');
+      },
+    },
   },
   negative: {
     'fails when the assistant replied with something else': {
