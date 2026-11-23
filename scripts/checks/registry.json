@@ -76,7 +76,7 @@
       "why": "The pre-commit hook rejects comments in staged files before CI does."
     },
     {
-      "run": "oxlint --type-aware --deny-warnings",
+      "run": "oxlint --type-aware --deny-warnings --no-error-on-unmatched-pattern",
       "in": "package.json#lint-staged",
       "why": "The pre-commit hook lints staged files with the same rules CI enforces."
     },

@@ -81,7 +81,7 @@
   "lint-staged": {
     "*.{js,jsx,ts,tsx,mjs,cjs,mts,cts}": [
       "node scripts/check-comments.mjs",
-      "oxlint --type-aware --deny-warnings"
+      "oxlint --type-aware --deny-warnings --no-error-on-unmatched-pattern"
     ],
     ".commentignore": "node scripts/check-comments.mjs"
   },
