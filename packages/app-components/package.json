@@ -7,7 +7,9 @@
     ".": "./src/index.ts",
     "./support": "./src/support.ts",
     "./settings-common.css": "./src/settings/settings-common.css",
-    "./plan-usage.css": "./src/settings/plan-usage.css"
+    "./plan-usage.css": "./src/settings/plan-usage.css",
+    "./sidebar-row-button.css": "./src/sidebar/sidebar-row-button.css",
+    "./drop-card.css": "./src/lib/drop-card.css"
   },
   "dependencies": {
     "@chenglou/pretext": "0.0.8",

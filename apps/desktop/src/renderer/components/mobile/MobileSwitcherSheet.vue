@@ -496,9 +496,9 @@ function onDeleteWorkspace(ws: WorkspaceView): void {
   flex: 1;
   min-width: 0;
   font-size: var(--text-sm);
+  color: var(--color-text);
   font-weight: var(--weight-caption);
   line-height: var(--leading-tight);
-  color: var(--color-text);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
