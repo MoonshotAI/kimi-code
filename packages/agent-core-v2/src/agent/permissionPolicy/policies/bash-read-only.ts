@@ -14,7 +14,7 @@ import { realpathExistingPrefix } from '#/environment/environment';
 import { EnvironmentWorkspaceView } from '#/environment/environmentWorkspaceView';
 import { isHostFsNotDirectory, isHostFsNotFound } from '#/os/interface/hostFsErrors';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
-import { canonicalizePath, isSensitiveFile } from '#/tool/path-access';
+import { canonicalizePath, isSensitiveFile, normalizeUserPath } from '#/tool/path-access';
 import { acquireEnvironmentLease } from './environment-lease';
 import { hasGitPathComponent, isGitControlPath } from './path-utils';
 
@@ -84,7 +84,8 @@ export class BashReadOnlyApprovePermissionPolicyService implements PermissionPol
     const command = (context.args as { readonly command?: unknown }).command;
     if (typeof command !== 'string') return undefined;
     const readOnly = analyzeBashReadOnly(this.bashParser.parse(command, PARSE_OPTIONS));
-    if (readOnly === undefined || readOnly.paths.length === 0) return readOnly === undefined ? undefined : { kind: 'approve' };
+    if (readOnly === undefined) return undefined;
+    if (readOnly.paths.length === 0 && !readOnly.readsCwd) return { kind: 'approve' };
     const lease = acquireEnvironmentLease(this.environment);
     if (lease === undefined) return undefined;
     try {
@@ -98,47 +99,78 @@ export class BashReadOnlyApprovePermissionPolicyService implements PermissionPol
       if (fs === undefined) return undefined;
       const requestedCwd = (context.args as { readonly cwd?: unknown }).cwd;
       if (requestedCwd !== undefined && typeof requestedCwd !== 'string') return undefined;
-      const cwd = view.resolve(requestedCwd ?? view.workDir);
+      let cwd: string;
+      try {
+        if (requestedCwd !== undefined) {
+          const bridgedCwd = view.shellPathBridge?.fromShellPath(requestedCwd) ?? requestedCwd;
+          const normalizedCwd = normalizeUserPath(bridgedCwd, pathClass);
+          if (pathClass === 'win32' && isUnresolvedPosixPath(normalizedCwd)) return undefined;
+          cwd = view.resolve(normalizedCwd);
+        } else {
+          cwd = view.resolve(view.workDir);
+        }
+      } catch {
+        return undefined;
+      }
       if (cwd.length === 0 || !view.path.isAbsolute(cwd)) return undefined;
       const paths = readOnly.paths.map((path) => {
         if (path.startsWith('~') && lease.environment.host?.homeDir === undefined) return undefined;
         try {
-          const expanded = path === '~'
+          const bridged = view.shellPathBridge?.fromShellPath(path) ?? path;
+          const expanded = bridged === '~'
             ? lease.environment.host!.homeDir
-            : path.startsWith('~/')
-              ? `${lease.environment.host!.homeDir}/${path.slice(2)}`
-              : path;
-          return canonicalizePath(expanded, cwd, pathClass);
+            : bridged.startsWith('~/') || (pathClass === 'win32' && bridged.startsWith('~\\'))
+              ? `${lease.environment.host!.homeDir}/${bridged.slice(2)}`
+              : bridged;
+          const canonical = canonicalizePath(expanded, cwd, pathClass);
+          if (pathClass === 'win32' && isUnresolvedPosixPath(canonical)) return undefined;
+          return canonical;
         } catch {
           return undefined;
         }
       });
       if (paths.some((path) => path === undefined)) return undefined;
-      const resolvedPaths = await Promise.all([
-        cwd,
-        ...paths as string[],
-      ].map(async (path) => {
-        try {
-          return [path, await realpathExistingPrefix(
-            fs,
-            view.path,
-            path,
-            (error) => isHostFsNotFound(error) || isHostFsNotDirectory(error),
-          )];
-        } catch {
-          return undefined;
-        }
-      }));
+      const nativeCwd = pathClass === 'win32' && isUnresolvedPosixPath(cwd)
+        ? view.shellPathBridge?.fromShellPath(cwd) ?? cwd
+        : cwd;
+      const resolvedCwd = await realpathExistingPrefix(
+        fs,
+        view.path,
+        nativeCwd,
+        (error) => isHostFsNotFound(error) || isHostFsNotDirectory(error),
+      ).catch(() => undefined);
+      if (resolvedCwd === undefined) return undefined;
+      const marker = await findGitWorkTree(fs, resolvedCwd);
+      const targets = [cwd, ...paths as string[]];
+      const resolvedPaths: ([string, string] | undefined)[] = [];
+      for (let index = 0; index < targets.length; index += 8) {
+        resolvedPaths.push(...await Promise.all(targets.slice(index, index + 8).map(async (path): Promise<[string, string] | undefined> => {
+          try {
+            return [path, await realpathExistingPrefix(
+              fs,
+              view.path,
+              path,
+              (error) => isHostFsNotFound(error) || isHostFsNotDirectory(error),
+            )] as [string, string];
+          } catch {
+            return undefined;
+          }
+        })));
+        if (context.signal.aborted) return undefined;
+      }
       if (resolvedPaths.some((paths) => paths === undefined)) return undefined;
       const checks = resolvedPaths as [string, string][];
       if (checks.some((paths) => paths.some(isSensitiveFile))) return undefined;
-      const marker = await findGitWorkTree(fs, cwd);
       if (checks.some((paths) => paths.some((path) => hasGitPathComponent(path, cwd, pathClass)))) {
         return undefined;
       }
       if (
         marker !== null &&
-        checks.some((paths) => paths.some((path) => isGitControlPath(path, marker, pathClass)))
+        checks.some((paths) => paths.some((path) => isGitControlPath(
+          canonicalizePath(path, resolvedCwd, pathClass),
+          marker,
+          pathClass,
+        )))
       ) {
         return undefined;
       }
@@ -149,7 +181,11 @@ export class BashReadOnlyApprovePermissionPolicyService implements PermissionPol
   }
 }
 
-export function analyzeBashReadOnly(result: BashParseResult): { paths: string[] } | undefined {
+function isUnresolvedPosixPath(path: string): boolean {
+  return path.startsWith('/') && !path.startsWith('//');
+}
+
+export function analyzeBashReadOnly(result: BashParseResult): { paths: string[]; readsCwd: boolean } | undefined {
   if (!result.ok || result.hasError) return undefined;
   const commands: {
     node: BashSyntaxNode;
@@ -158,13 +194,16 @@ export function analyzeBashReadOnly(result: BashParseResult): { paths: string[] 
   }[] = [];
   if (!collectCommands(result.root, commands) || commands.length === 0) return undefined;
   const paths: string[] = [];
+  let readsCwd = false;
   for (const command of commands) {
-    if (commands.length > 1 && command.node.children.some((child) => child.type === 'command_name' && child.text === 'cd')) return undefined;
+    const name = command.node.children.find((child) => child.type === 'command_name')?.text;
+    if (commands.length > 1 && name === 'cd') return undefined;
+    if (name === 'ls' || name === 'cd' || name === 'du' || name === 'df' || name === 'diff') readsCwd = true;
     const operands = analyzeCommand(command.node, command.arguments, command.inputs);
     if (operands === undefined) return undefined;
     paths.push(...operands);
   }
-  return { paths };
+  return { paths, readsCwd };
 }
 
 function collectCommands(
@@ -281,12 +320,14 @@ function analyzeCommand(
     )
     .toSorted((left, right) => left.startIndex - right.startIndex);
   if (name === 'cd') {
-    if (args.some((arg) => arg.type === 'word' && /[$`<>|&;(){}*?[\]]/.test(arg.text))) return undefined;
-    return args.length <= 1 ? paths : undefined;
-  }
-  if (name === 'ls') {
-    if (args.some((arg) => arg.type === 'word' && /[$`<>|&;(){}*?[\]]/.test(arg.text))) return undefined;
-    return [...paths, ...args.map(literalText).filter((arg): arg is string => arg !== undefined && arg.length > 0 && !arg.startsWith('-'))];
+    if (args.length > 1) return undefined;
+    const target = args.length === 0 ? '~' : args[0]!.text;
+    if (target.startsWith('~')) {
+      const literalTarget = args[0]!.type === 'word' ? target : literalText(args[0]!);
+      if (literalTarget !== undefined || args[0]!.children.every(isLiteral)) return [...paths, target];
+    }
+    if (!args.every(isLiteral)) return undefined;
+    return target === '~' || literalText(args[0]!) !== undefined ? [...paths, target] : undefined;
   }
   args.push(...redirectArguments);
   if (!args.every(isLiteral)) return undefined;
@@ -314,6 +355,9 @@ function analyzeCommand(
     return operands.length === 1 && /^[a-zA-Z]/.test(operands[0]!) ? paths : undefined;
   }
   if (!READ_ONLY_COMMANDS.has(name)) return undefined;
+  if (name === 'diff' && operands.some((text) => text === '-r' || text === '--recursive')) return undefined;
+  if (name === 'strings' && operands.some((text) => text.startsWith('@'))) return undefined;
+  if (name === 'hexdump' && operands.some((text) => text === '-f' || text === '--format-file' || text.startsWith('--format-file='))) return undefined;
   if (['echo', 'tr'].includes(name)) return paths;
   if (name === 'uniq') {
     const inputs: string[] = [];
@@ -337,9 +381,12 @@ function analyzeCommand(
     let patternSeen = false;
     for (let index = 0; index < operands.length; index++) {
       const text = operands[index]!;
-      if (/^--(?:recursive|dereference-recursive)$/.test(text) || /^-[^-]*[rR]/.test(text)) {
-        return undefined;
+      if (/^--(?:recursive|dereference-recursive)$/.test(text) || /^-[^-]*[rR]/.test(text)) return undefined;
+      if (text === '-d' || text === '--directories') {
+        if (operands[++index] === 'recurse') return undefined;
+        continue;
       }
+      if (text === '--directories=recurse') return undefined;
       if (text === '-f' || text === '--file' || text === '--exclude-from' || text === '-e' || text === '--regexp') {
         const path = operands[++index];
         if (path === undefined) return undefined;

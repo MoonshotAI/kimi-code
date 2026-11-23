@@ -1,12 +1,18 @@
 import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
+import * as win32Path from 'node:path/win32';
 
 import type { ToolCall } from '#human/message';
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { DisposableStore } from '#/_base/di/lifecycle';
+import {
+  createShellPathBridge,
+  REMOTE_SHELL_PATH_BRIDGE,
+  type ShellPathBridge,
+} from '#/_base/execEnv/shellPathBridge';
 import { createServices, type TestInstantiationService } from '#/_base/di/test';
 import {
   literalRulePattern,
@@ -442,6 +448,11 @@ describe('AgentPermissionPolicyService chain', () => {
   it.each([
     'cat foo > out.txt',
     'echo $(rm -f foo)',
+    'ls $(touch command-substitution-probe)',
+    'ls `touch command-substitution-backtick-probe`',
+    'cd $(touch command-substitution-cd-probe)',
+    'ls $HOME',
+    'cd <(cat foo)',
     'diff <(cat foo) <(cat bar)',
     'FOO=bar cat foo',
     'echo $HOME',
@@ -747,7 +758,7 @@ describe('AgentPermissionPolicyService git cwd write approval', () => {
       const parsed = parser.parse(command);
       expect(parsed.ok).toBe(true);
       if (!parsed.ok) throw new Error('unreachable');
-      expect(analyzeBashReadOnly(parsed)).toEqual({ paths });
+      expect(analyzeBashReadOnly(parsed)).toEqual({ paths, readsCwd: false });
       await expect(evaluate({
         toolName: 'Bash',
         args: { command },
@@ -761,6 +772,15 @@ describe('AgentPermissionPolicyService git cwd write approval', () => {
   it.each([
     'grep -R secret .',
     'grep --recursive secret .',
+    'grep -d recurse secret .',
+    'grep --directories=recurse secret .',
+    'diff -r left right',
+    'diff --recursive left right',
+    'strings @args',
+    'strings -- @args',
+    'cat notes.txt | strings @args',
+    'hexdump --format-file=.env',
+    'hexdump -f .env',
     'cd sub && cat notes.txt',
     'cd sub; cat notes.txt',
     'cd sub | cat notes.txt',
@@ -807,6 +827,14 @@ describe('AgentPermissionPolicyService git cwd write approval', () => {
     })).resolves.toMatchObject({ policyName: 'fallback-ask' });
     await expect(evaluate({
       toolName: 'Bash',
+      args: { command: 'ls -la', cwd: join(workspaceDir, '.git') },
+    })).resolves.toMatchObject({ policyName: 'fallback-ask' });
+    await expect(evaluate({
+      toolName: 'Bash',
+      args: { command: 'cd .git' },
+    })).resolves.toMatchObject({ policyName: 'fallback-ask' });
+    await expect(evaluate({
+      toolName: 'Bash',
       args: { command: 'cat config-view', cwd: workspaceDir },
     })).resolves.toMatchObject({ policyName: 'fallback-ask' });
     await expect(evaluate({
@@ -830,6 +858,20 @@ describe('AgentPermissionPolicyService git cwd write approval', () => {
       toolName: 'Bash',
       args: { command: 'pwd' },
     })).resolves.toMatchObject({ policyName: 'bash-read-only-approve' });
+  });
+
+  it('approves many literal read targets with bounded batches', async () => {
+    const paths = Array.from({ length: 40 }, (_, index) => `notes-${index}.txt`);
+    const command = `cat ${paths.join(' ')}`;
+
+    await expect(evaluate({
+      toolName: 'Bash',
+      args: { command },
+    })).resolves.toMatchObject({ policyName: 'bash-read-only-approve' });
+    expect(analyzeBashReadOnly(new BashParserService().parse(command))).toEqual({
+      paths,
+      readsCwd: false,
+    });
   });
 
   it('keeps nested git control paths out of static approval when guards are disabled', async () => {
@@ -975,6 +1017,251 @@ describe('AgentPermissionPolicyService git cwd write approval', () => {
       args: { path: 'src/a.ts', content: 'x' },
       accesses: ToolAccesses.writeFile(join(workspaceDir, 'src/a.ts')),
     })).rejects.toThrow(TypeError);
+  });
+});
+
+describe('AgentPermissionPolicyService with Windows Git Bash paths', () => {
+  let disposables: DisposableStore;
+  let ix: TestInstantiationService;
+  let shellPathBridge: ShellPathBridge | undefined;
+  let workspace: ReturnType<typeof workspaceStub>;
+
+  const winWorkDir = 'C:\\workspace';
+  const winHomeDir = 'C:\\Users\\test';
+
+  function normalizeWinKey(path: string): string {
+    return win32Path.normalize(path).replaceAll('\\', '/').toLowerCase();
+  }
+
+  function makeWindowsFs() {
+    const symlinks = new Map<string, string>([
+      [
+        normalizeWinKey('C:\\Users\\test\\AppData\\Local\\Temp\\config-link'),
+        'C:\\Users\\test\\AppData\\Local\\Temp\\.env',
+      ],
+    ]);
+    const existing = new Set<string>([
+      normalizeWinKey('C:\\workspace'),
+      normalizeWinKey('C:\\workspace\\notes.txt'),
+      normalizeWinKey('C:\\workspace\\.git'),
+      normalizeWinKey('C:\\workspace\\.git\\config'),
+      normalizeWinKey('C:\\Users\\test'),
+      normalizeWinKey('C:\\Users\\test\\notes.txt'),
+      normalizeWinKey('C:\\Users\\test\\.env'),
+      normalizeWinKey('C:\\Users\\test\\AppData\\Local\\Temp'),
+      normalizeWinKey('C:\\Users\\test\\AppData\\Local\\Temp\\notes.txt'),
+      normalizeWinKey('C:\\Users\\test\\AppData\\Local\\Temp\\.env'),
+      normalizeWinKey('C:\\Users\\test\\secrets\\.env'),
+    ]);
+    const enoent = (path: string): NodeJS.ErrnoException => {
+      const error = new Error(`ENOENT: ${path}`) as NodeJS.ErrnoException;
+      error.code = 'ENOENT';
+      return error;
+    };
+    return {
+      realpath: async (path: string) => {
+        const key = normalizeWinKey(path);
+        const target = symlinks.get(key);
+        if (target !== undefined) return target;
+        if (existing.has(key)) return win32Path.normalize(path);
+        throw enoent(path);
+      },
+      stat: async (path: string) => {
+        const key = normalizeWinKey(path);
+        if (key === normalizeWinKey('C:\\workspace\\.git')) {
+          return { isDirectory: () => true, isFile: () => false };
+        }
+        if (existing.has(key)) {
+          return { isDirectory: () => false, isFile: () => true };
+        }
+        throw enoent(path);
+      },
+    };
+  }
+
+  beforeEach(() => {
+    disposables = new DisposableStore();
+    shellPathBridge = createShellPathBridge(
+      {
+        osKind: 'Windows',
+        shellName: 'bash',
+        shellPath: 'C:\\Program Files\\Git\\usr\\bin\\bash.exe',
+      },
+      {
+        isFile: (candidate) => candidate === 'C:\\Program Files\\Git\\usr\\bin\\cygpath.exe',
+        execFileSync: (_file, args) => {
+          const target = args.at(-1);
+          if (target === '/tmp') return 'C:\\Users\\test\\AppData\\Local\\Temp\r\n';
+          if (target === '/secret') return 'C:\\Users\\test\\secrets\\.env\r\n';
+          if (target === '/gitmount') return 'C:\\workspace\\.git\r\n';
+          return '';
+        },
+      },
+    );
+    const fs = makeWindowsFs();
+    workspace = workspaceStub(winWorkDir);
+    ix = createServices(disposables, {
+      additionalServices: (reg) => {
+        reg.defineInstance(IAgentPermissionModeService, stubPermissionModeService(() => 'manual'));
+        reg.definePartialInstance(IBootstrapService, {
+          args: { requestHeaders: {}, nonInteractive: false },
+        });
+        reg.definePartialInstance(IConfigService, {
+          get: (() => undefined) as IConfigService['get'],
+          onDidSectionChange: (() => ({ dispose: () => {} })) as IConfigService['onDidSectionChange'],
+        });
+        reg.defineInstance(
+          IAgentScopeContext,
+          makeAgentScopeContext({ agentId: 'main', agentScope: '' }),
+        );
+        reg.definePartialInstance(IAgentPermissionRulesService, permissionRulesStub());
+        reg.defineInstance(ISessionWorkspaceContext, workspace.stub);
+        reg.defineInstance(IHostEnvironment, kaosStub('win32'));
+        reg.defineInstance(IAgentEnvironmentService, {
+          _serviceBrand: undefined,
+          onDidChange: () => ({ dispose: () => {} }),
+          isAvailable: () => true,
+          inspect() { return (this as IAgentEnvironmentService).acquire().environment; },
+          acquire: () => ({
+            track: (resource) => resource,
+            environment: {
+              identity: { environmentId: 'local', generation: 'test' },
+              capabilities: new Set(),
+              status: 'ready',
+              onDidChangeStatus: () => ({ dispose: () => {} }),
+              dispose: () => {},
+              host: { pathClass: 'win32', homeDir: winHomeDir } as never,
+              shellPathBridge,
+              path: {
+                separator: '\\',
+                delimiter: ';',
+                isAbsolute: (path: string) => win32Path.isAbsolute(path),
+                join: (...paths: readonly string[]) => win32Path.join(...paths),
+                relative: (from: string, to: string) => win32Path.relative(from, to),
+                resolve: (...paths: readonly string[]) => win32Path.resolve(...paths),
+                basename: (path: string) => win32Path.basename(path),
+                dirname: (path: string) => win32Path.dirname(path),
+              },
+              workspace: { mapRoots: (roots) => roots },
+              fs: fs as never,
+            },
+            dispose: () => {},
+          }),
+          acquireWhenReady() { return Promise.resolve((this as IAgentEnvironmentService).acquire()); },
+          workspaceRoots: () => ({ workDir: winWorkDir, additionalDirs: [] }),
+        });
+        reg.defineInstance(ITelemetryService, recordingTelemetry([]));
+        reg.definePartialInstance(IGitService, {
+          findWorkTree: () => Promise.resolve(null),
+        });
+        reg.define(IBashParserService, BashParserService);
+        reg.define(IAgentPermissionPolicyService, AgentPermissionPolicyService);
+      },
+      strict: true,
+    });
+  });
+
+  afterEach(() => {
+    disposables.dispose();
+  });
+
+  async function evaluate(
+    input: PolicyContextInput,
+  ): Promise<PermissionPolicyEvaluation | undefined> {
+    const svc = ix.get(IAgentPermissionPolicyService);
+    return svc.evaluate(policyContext(input));
+  }
+
+  it('bridges Git Bash paths before sensitive and git control checks', async () => {
+    await expect(evaluate({
+      toolName: 'Bash',
+      args: { command: 'cat /tmp/notes.txt' },
+    })).resolves.toMatchObject({ policyName: 'bash-read-only-approve' });
+
+    await expect(evaluate({
+      toolName: 'Bash',
+      args: { command: 'cat /c/workspace/notes.txt' },
+    })).resolves.toMatchObject({ policyName: 'bash-read-only-approve' });
+
+    await expect(evaluate({
+      toolName: 'Bash',
+      args: { command: 'cat /tmp/config-link' },
+    })).resolves.toMatchObject({ policyName: 'fallback-ask', result: { kind: 'ask' } });
+
+    await expect(evaluate({
+      toolName: 'Bash',
+      args: { command: 'cat /secret' },
+    })).resolves.toMatchObject({ policyName: 'fallback-ask', result: { kind: 'ask' } });
+
+    await expect(evaluate({
+      toolName: 'Bash',
+      args: { command: 'cat /gitmount/config' },
+    })).resolves.toMatchObject({ policyName: 'fallback-ask', result: { kind: 'ask' } });
+
+    await expect(evaluate({
+      toolName: 'Bash',
+      args: { command: 'cat /c/workspace/.env' },
+    })).resolves.toMatchObject({ policyName: 'fallback-ask', result: { kind: 'ask' } });
+  });
+
+  it('fails closed when a Windows POSIX path cannot be bridged', async () => {
+    shellPathBridge = createShellPathBridge(
+      {
+        osKind: 'Windows',
+        shellName: 'bash',
+        shellPath: 'C:\\Program Files\\Git\\usr\\bin\\bash.exe',
+      },
+      {
+        isFile: () => false,
+        execFileSync: () => '',
+      },
+    );
+
+    await expect(evaluate({
+      toolName: 'Bash',
+      args: { command: 'cat /tmp/notes.txt' },
+    })).resolves.toMatchObject({ policyName: 'fallback-ask', result: { kind: 'ask' } });
+
+    await expect(evaluate({
+      toolName: 'Bash',
+      args: { command: 'cat notes.txt', cwd: '/tmp' },
+    })).resolves.toMatchObject({ policyName: 'fallback-ask', result: { kind: 'ask' } });
+  });
+
+  it('fails closed when the remote Windows shell path bridge throws', async () => {
+    shellPathBridge = REMOTE_SHELL_PATH_BRIDGE;
+
+    await expect(evaluate({
+      toolName: 'Bash',
+      args: { command: 'cat /tmp/notes.txt' },
+    })).resolves.toMatchObject({ policyName: 'fallback-ask', result: { kind: 'ask' } });
+
+    await expect(evaluate({
+      toolName: 'Bash',
+      args: { command: 'cat notes.txt', cwd: '/tmp' },
+    })).resolves.toMatchObject({ policyName: 'fallback-ask', result: { kind: 'ask' } });
+  });
+
+  it('translates a mounted Git Bash path before checking git control paths', async () => {
+    shellPathBridge = createShellPathBridge(
+      {
+        osKind: 'Windows',
+        shellName: 'bash',
+        shellPath: 'C:\\Program Files\\Git\\usr\\bin\\bash.exe',
+      },
+      {
+        isFile: () => true,
+        execFileSync: (_file, args) => args.at(-1) === '/control'
+          ? 'C:/repo/.git\n'
+          : 'C:/work\n',
+      },
+    );
+    workspace.stub.setWorkDir('C:/work');
+
+    await expect(evaluate({
+      toolName: 'Bash',
+      args: { command: 'cat /control/config' },
+    })).resolves.toMatchObject({ policyName: 'fallback-ask', result: { kind: 'ask' } });
   });
 });
 
@@ -1130,17 +1417,22 @@ function workspaceStub(initialWorkDir: string): {
   readonly stub: ISessionWorkspaceContext;
   addAdditionalDir(dir: string): void;
 } {
+  let workDir = initialWorkDir;
   let additionalDirs: string[] = [];
   const stub: ISessionWorkspaceContext = {
     _serviceBrand: undefined,
-    workDir: initialWorkDir,
+    get workDir() {
+      return workDir;
+    },
     get additionalDirs() {
       return additionalDirs;
     },
     resolve: (path) => path,
     isWithin: () => true,
     assertAllowed: (path) => path,
-    setWorkDir: () => {},
+    setWorkDir: (path: string) => {
+      workDir = path;
+    },
   };
   return {
     stub,
