@@ -101,11 +101,11 @@ export class SessionPresenceService implements ISessionPresence {
     let closedSessionCount = 0;
     const { items } = await this.index.listRecent({ includeArchived: true });
     for (const summary of items) {
-      if (summary.id === options.excludeSessionId) continue;
       if (summary.environmentId !== undefined && summary.environmentId !== LOCAL_ENVIRONMENT_ID) continue;
       if (summary.cwd === undefined || !(await under(summary.cwd))) continue;
-      if (this.hasLiveMarker(summary)) openSessionIds.push(summary.id);
-      else closedSessionCount += 1;
+      const excluded = summary.id === options.excludeSessionId;
+      if (this.hasLiveMarker(summary, excluded)) openSessionIds.push(summary.id);
+      else if (!excluded) closedSessionCount += 1;
     }
     return { openSessionIds, closedSessionCount };
   }
@@ -123,13 +123,14 @@ export class SessionPresenceService implements ISessionPresence {
     };
   }
 
-  private hasLiveMarker(summary: SessionSummary): boolean {
+  private hasLiveMarker(summary: SessionSummary, excludeOwnMarker: boolean): boolean {
     const sessionDir = sessionDirOf(
       this.bootstrap.homeDir,
       projectPersistenceScope(this.bootstrap.scope('sessions'), summary.workspaceId),
       summary.id,
     );
-    if (this.openDirs.has(resolve(sessionDir))) return true;
+    const ownCount = this.openDirs.get(resolve(sessionDir)) ?? 0;
+    if (ownCount > (excludeOwnMarker ? 1 : 0)) return true;
     const dir = join(sessionDir, SESSION_PRESENCE_DIR);
     let names: string[];
     try {
@@ -141,6 +142,7 @@ export class SessionPresenceService implements ISessionPresence {
     for (const name of names) {
       if (!name.endsWith('.json')) continue;
       const markerPath = join(dir, name);
+      if (excludeOwnMarker && this.markers.has(markerPath)) continue;
       const marker = readMarker(markerPath);
       if (marker === undefined) continue;
       if (processStampAlive(marker, this.hostname)) alive = true;
