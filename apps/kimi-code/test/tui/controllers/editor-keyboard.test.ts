@@ -21,7 +21,7 @@ interface Harness {
   readonly btwCancelRunning: ReturnType<typeof vi.fn>;
   readonly btwCloseOrCancel: ReturnType<typeof vi.fn>;
   readonly footerHint: ReturnType<typeof vi.fn>;
-  readonly stop: ReturnType<typeof vi.fn>;
+  readonly requestExit: ReturnType<typeof vi.fn>;
   readonly survey: {
     readonly handlePreInput: ReturnType<typeof vi.fn<(data: string) => boolean>>;
     readonly handleSubmit: ReturnType<typeof vi.fn<(text: string) => boolean>>;
@@ -49,7 +49,7 @@ function createHarness(
   const btwCancelRunning = vi.fn(() => false);
   const btwCloseOrCancel = vi.fn(() => false);
   const footerHint = vi.fn();
-  const stop = vi.fn();
+  const requestExit = vi.fn(async () => {});
   const survey = {
     handlePreInput: vi.fn<(data: string) => boolean>(() => false),
     handleSubmit: vi.fn<(text: string) => boolean>(() => false),
@@ -87,7 +87,7 @@ function createHarness(
     track: vi.fn(),
     openExternalEditor: vi.fn(),
     showError: vi.fn(),
-    stop,
+    requestExit,
   } as unknown as EditorKeyboardHost;
 
   const controller = new EditorKeyboardController(
@@ -106,7 +106,7 @@ function createHarness(
     btwCancelRunning,
     btwCloseOrCancel,
     footerHint,
-    stop,
+    requestExit,
     survey,
     prediction,
   };
@@ -258,7 +258,7 @@ describe('EditorKeyboardController btw panel priority', () => {
 
 describe('EditorKeyboardController disposal', () => {
   it('consumes every key after dispose so shutdown feedback is not clobbered', () => {
-    const { editor, controller, footerHint, stop } = createHarness();
+    const { editor, controller, footerHint, requestExit } = createHarness();
 
     pressCtrlC(editor);
     expect(footerHint).toHaveBeenCalledWith(CTRL_C_HINT);
@@ -272,8 +272,30 @@ describe('EditorKeyboardController disposal', () => {
     expect((onPreInput as (data: string) => boolean)('\u001B')).toBe(true);
     expect((onPreInput as (data: string) => boolean)('a')).toBe(true);
 
-    expect(stop).not.toHaveBeenCalled();
+    expect(requestExit).not.toHaveBeenCalled();
     expect(footerHint).not.toHaveBeenCalled();
+  });
+});
+
+describe('EditorKeyboardController exit shortcuts', () => {
+  it('asks the host to exit on the second Ctrl+C while idle', () => {
+    const { editor, requestExit } = createHarness();
+
+    pressCtrlC(editor);
+    expect(requestExit).not.toHaveBeenCalled();
+    pressCtrlC(editor);
+
+    expect(requestExit).toHaveBeenCalledOnce();
+  });
+
+  it('asks the host to exit on the second Ctrl+D', () => {
+    const { editor, requestExit } = createHarness();
+
+    pressCtrlD(editor);
+    expect(requestExit).not.toHaveBeenCalled();
+    pressCtrlD(editor);
+
+    expect(requestExit).toHaveBeenCalledOnce();
   });
 });
 
@@ -762,7 +784,7 @@ describe('EditorKeyboardController survey wiring', () => {
     onPreInput('\u001B');
     pressCtrlD(editor);
 
-    expect(host.stop).not.toHaveBeenCalled();
+    expect(host.requestExit).not.toHaveBeenCalled();
   });
 
   it('routes raw keys to the survey pre-input hook first', () => {
@@ -922,7 +944,7 @@ describe('EditorKeyboardController fullscreen selection copy', () => {
     expect(harness.footerHint).toHaveBeenLastCalledWith(null);
     onCtrlC();
 
-    expect(harness.stop).not.toHaveBeenCalled();
+    expect(harness.requestExit).not.toHaveBeenCalled();
     ui.stop();
   });
 

@@ -14,9 +14,14 @@ import { currentTheme, type ColorToken } from '#/tui/theme';
 import { createMarkdownTheme } from '#/tui/theme/pi-tui-theme';
 import { createMarkdownOptions } from '#/tui/utils/markdown-options';
 import { Markdown } from '#/tui/components/markdown/markdown';
+import {
+  finishDialogLines,
+  focusOnUnfocusedMouse,
+  handleSelectableListMouse,
+  type MouseRowRegion,
+} from '#/tui/utils/dialog-mouse';
 import { printableChar } from '#/tui/utils/printable-key';
 import { SearchableList } from '#/tui/utils/searchable-list';
-import { isSettlingClick } from '#/tui/utils/terminal-focus';
 
 export interface ChoiceOption {
   readonly value: string;
@@ -26,12 +31,17 @@ export interface ChoiceOption {
   readonly descriptionTone?: ColorToken;
 }
 
+export interface ChoiceNoticeLine {
+  readonly text: string;
+  readonly tone: ColorToken;
+}
+
 export interface ChoicePickerOptions {
   readonly title: string;
   readonly hint?: string;
   readonly formatHint?: (text: string) => string;
-  readonly notice?: string | { readonly markdown: string };
-  readonly noticeTone?: 'success' | 'warning';
+  readonly notice?: string | { readonly markdown: string } | { readonly lines: readonly ChoiceNoticeLine[] };
+  readonly noticeTone?: 'success' | 'warning' | 'text';
   readonly options: readonly ChoiceOption[];
   readonly currentValue?: string;
   readonly initialValue?: string;
@@ -41,12 +51,7 @@ export interface ChoicePickerOptions {
   readonly onSelect: (value: string) => void;
   readonly onSessionOnlySelect?: (value: string) => void;
   readonly onCancel: () => void;
-}
-
-interface ChoiceRegion {
-  readonly start: number;
-  readonly end: number;
-  readonly index: number;
+  readonly onExitKey?: () => void;
 }
 
 function wrapDescription(text: string, width: number): string[] {
@@ -77,7 +82,7 @@ export class ChoicePickerComponent implements Component, Focusable {
   private readonly opts: ChoicePickerOptions;
   private readonly list: SearchableList<ChoiceOption>;
   private readonly shownAt = Date.now();
-  private choiceRegions: readonly ChoiceRegion[] = [];
+  private choiceRegions: readonly MouseRowRegion[] = [];
 
   constructor(opts: ChoicePickerOptions) {
     this.opts = opts;
@@ -99,6 +104,10 @@ export class ChoicePickerComponent implements Component, Focusable {
     if (matchesKey(data, Key.escape)) {
       if (this.list.clearQuery()) return;
       this.opts.onCancel();
+      return;
+    }
+    if (this.opts.onExitKey !== undefined && (matchesKey(data, Key.ctrl('c')) || matchesKey(data, Key.ctrl('d')))) {
+      this.opts.onExitKey();
       return;
     }
     if (matchesKey(data, Key.alt('s')) && this.opts.onSessionOnlySelect !== undefined) {
@@ -127,11 +136,7 @@ export class ChoicePickerComponent implements Component, Focusable {
   }
 
   handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
-    if (!this.focused) {
-      if (event.type === 'press') return { handled: true };
-      if (event.type === 'click') return { handled: true, focus: true };
-      return undefined;
-    }
+    if (!this.focused) return focusOnUnfocusedMouse(event);
     if (event.type === 'wheel') {
       const view = this.list.view();
       if (view.page.pageCount > 1 && event.wheelDelta !== undefined) {
@@ -142,27 +147,17 @@ export class ChoicePickerComponent implements Component, Focusable {
       }
       return { handled: true };
     }
-    if (event.type === 'move') {
-      const index = this.choiceIndexAt(event.y);
-      if (index === undefined) return undefined;
-      return { handled: true, render: this.selectIndex(index) };
-    }
-    if (event.button !== 'left') return undefined;
-    const index = this.choiceIndexAt(event.y);
-    if (index === undefined) return undefined;
-    if (event.type === 'press') {
-      return { handled: true, render: this.selectIndex(index) };
-    }
-    if (event.type === 'click' && !isSettlingClick(this.shownAt)) {
-      this.selectIndex(index);
-      const chosen = this.list.view().items[index];
-      if (chosen !== undefined) this.opts.onSelect(chosen.value);
-    }
-    return { handled: true };
-  }
-
-  private choiceIndexAt(y: number): number | undefined {
-    return this.choiceRegions.find((region) => y >= region.start && y < region.end)?.index;
+    return handleSelectableListMouse({
+      event,
+      focused: this.focused,
+      shownAt: this.shownAt,
+      regions: this.choiceRegions,
+      select: (index) => this.selectIndex(index),
+      activate: (index) => {
+        const chosen = this.list.view().items[index];
+        if (chosen !== undefined) this.opts.onSelect(chosen.value);
+      },
+    });
   }
 
   private selectIndex(index: number): boolean {
@@ -204,7 +199,15 @@ export class ChoicePickerComponent implements Component, Focusable {
       );
     }
     const notice = this.opts.notice;
-    if (typeof notice === 'object') {
+    if (typeof notice === 'object' && 'lines' in notice) {
+      const noticeWidth = Math.max(1, width - 1);
+      lines.push('');
+      for (const noticeLine of notice.lines) {
+        for (const wrapped of wrapDescription(noticeLine.text, noticeWidth)) {
+          lines.push(currentTheme.fg(noticeLine.tone, ` ${wrapped}`));
+        }
+      }
+    } else if (typeof notice === 'object') {
       const markdown = new Markdown(
         notice.markdown,
         0,
@@ -233,7 +236,7 @@ export class ChoicePickerComponent implements Component, Focusable {
     if (options.length === 0) {
       lines.push(currentTheme.fg('textMuted', '   No matches'));
     }
-    const choiceRegions: ChoiceRegion[] = [];
+    const choiceRegions: MouseRowRegion[] = [];
     for (let i = view.page.start; i < view.page.end; i++) {
       const start = lines.length;
       const opt = options[i]!;
@@ -274,8 +277,7 @@ export class ChoicePickerComponent implements Component, Focusable {
   }
 
   private finishLines(lines: readonly string[], width: number): string[] {
-    const rendered = lines.map((line) => truncateToWidth(line, width));
-    return this.focused ? rendered : rendered.map((line) => currentTheme.fade(line));
+    return finishDialogLines(lines, width, this.focused);
   }
 }
 

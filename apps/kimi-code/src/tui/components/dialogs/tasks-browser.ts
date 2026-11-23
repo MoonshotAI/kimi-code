@@ -16,6 +16,7 @@ import type {
 import { SELECT_POINTER } from '@/tui/constant/symbols';
 import { currentTheme } from '#/tui/theme';
 import { printableChar } from '@/tui/utils/printable-key';
+import { formatRelativeTime } from '#/tui/utils/relative-time';
 import { sanitizeShellOutput } from '#/tui/utils/shell-output';
 import { modelDisplayName } from './model-selector';
 
@@ -80,18 +81,6 @@ function isTerminal(status: BackgroundTaskStatus): boolean {
     status === 'killed' ||
     status === 'lost'
   );
-}
-
-function formatRelativeTime(ts: number | null | undefined): string {
-  if (ts === null || ts === undefined || !Number.isFinite(ts) || ts <= 0) return '';
-  const diffSec = Math.floor(Math.max(0, Date.now() - ts) / 1000);
-  if (diffSec < 60) return 'just now';
-  const minutes = Math.floor(diffSec / 60);
-  if (minutes < 60) return `${String(minutes)}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${String(hours)}h ago`;
-  const days = Math.floor(hours / 24);
-  return `${String(days)}d ago`;
 }
 
 function singleLine(text: string): string {
