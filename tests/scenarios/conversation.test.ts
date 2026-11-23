@@ -1,4 +1,6 @@
 import { once } from 'node:events';
+import { writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 
 import { deferred } from '@moonshot-ai/testkit/fixtures';
 import type { KapFrame, KapItem, KapSocket, KapTurn, KapTurnsPage } from '@moonshot-ai/testkit/kap';
@@ -293,8 +295,8 @@ describe('conversation over KAP', () => {
     expect(await kap.session(session.id)).toMatchObject({ activity: 'idle', last_turn_outcome: 'interrupted' });
   });
 
-  test('keeps a background command running on cancel until the client also asks to stop background work', async ({ kap, model }) => {
-    model.script(bash({ command: 'sleep 10', description: 'long sleep', run_in_background: true }), say('started it'));
+  test('keeps a background command running on cancel until the client also asks to stop background work, then tells the model it was stopped', async ({ kap, model }) => {
+    model.script(bash({ command: 'sleep 10', description: 'long sleep', run_in_background: true }), say('started it'), say('noted the stop'));
     const socket = await kap.connect();
     const session = await kap.createSession();
     await socket.subscribe(session.id);
@@ -307,9 +309,122 @@ describe('conversation over KAP', () => {
     await expect(kap.cancel(session.id)).resolves.toEqual({ cancelled: false });
     expect(lastTaskFrame()?.['status']).toBe('running');
     expect(await kap.session(session.id)).toMatchObject({ activity: 'background' });
+    const beforeStop = socket.mark();
     await expect(kap.cancel(session.id, { includeBackground: true })).resolves.toEqual({ cancelled: true });
     await socket.waitFor((frame) => frame.type === 'task' && frame['task_id'] === task['task_id'] && frame['status'] === 'ended');
     expect(lastTaskFrame()?.['outcome']).toBe('killed');
+    await socket.waitFor((frame) => isMainTurnEnd(frame, session.id), { after: beforeStop });
+    const [, notified] = await kap.turns(session.id);
+    expect(notified?.items.map((item) => item.type)).toEqual(['notification', 'assistant_message']);
+    expect(notified?.items[0]).toMatchObject({
+      type: 'notification',
+      notification_type: 'task.killed',
+      source: { kind: 'background_task', id: task['task_id'] },
+      task_id: task['task_id'],
+    });
+  });
+
+  test('streams background task output to task.watch by byte offset, resumes from since_offset and replays it once the task ended', async ({ kap, model }) => {
+    const ready = '  VITE ready\n';
+    const local = '  ➜  Local: http://localhost:5173/\n';
+    const hmr = '4:42:10 PM [vite] hmr update /src/App.vue\n';
+    const waitForFile = (name: string) => `until [ -e ${name} ]; do sleep 0.05; done`;
+    model.script(
+      bash({
+        command: [printLine(ready), waitForFile('local.go'), printLine(local), waitForFile('hmr.go'), printLine(hmr), 'sleep 30'].join('; '),
+        description: 'npm run dev',
+        run_in_background: true,
+      }),
+      say('dev server started'),
+      say('noted the stop'),
+    );
+    const socket = await kap.connect();
+    const session = await kap.createSession();
+    await socket.subscribe(session.id);
+    const watch = (watcher: KapSocket, agentId: string, taskId: string, sinceOffset?: number) =>
+      watcher.command({ type: 'task.watch', session_id: session.id, agent_id: agentId, task_id: taskId, ...(sinceOffset === undefined ? {} : { since_offset: sinceOffset }) });
+    const nextOutput = (watcher: KapSocket, taskId: string, after: number) =>
+      watcher.waitFor((frame) => isTaskOutput(frame, taskId) && frame['text'] !== '', { after });
+    const outputsBefore = (watcher: KapSocket, taskId: string, after: number, offset: number) =>
+      watcher.frames.slice(after).filter((frame) => isTaskOutput(frame, taskId) && Number(frame['offset']) < offset);
+
+    await kap.prompt(session.id, 'start the dev server');
+    const task = await socket.waitFor((frame) => frame.type === 'task' && frame['agent_id'] === 'main' && frame['status'] === 'running' && frame['detached'] === true);
+    await socket.waitFor((frame) => isMainTurnEnd(frame, session.id));
+    const taskId = String(task['task_id']);
+
+    const first = await kap.connect();
+    let after = first.mark();
+    await watch(first, 'main', taskId);
+    expect(await nextOutput(first, taskId, after)).toMatchObject({ session_id: session.id, agent_id: 'main', task_id: taskId, offset: 0, text: ready });
+    after = first.mark();
+    await writeFile(join(kap.home.workspace, 'local.go'), '');
+    expect(await nextOutput(first, taskId, after)).toMatchObject({ offset: Buffer.byteLength(ready), text: local });
+    await first.close();
+
+    await writeFile(join(kap.home.workspace, 'hmr.go'), '');
+    const since = Buffer.byteLength(ready) + Buffer.byteLength(local);
+    const second = await kap.connect();
+    after = second.mark();
+    await watch(second, 'main', taskId, since);
+    expect(await nextOutput(second, taskId, after)).toMatchObject({ offset: since, text: hmr });
+    expect(outputsBefore(second, taskId, after, since)).toEqual([]);
+    await expect(watch(second, 'main', 'bash-00000000')).rejects.toMatchObject({ response: { code: 40406 } });
+    await second.close();
+
+    const beforeStop = socket.mark();
+    await expect(kap.cancel(session.id, { includeBackground: true })).resolves.toEqual({ cancelled: true });
+    await socket.waitFor((frame) => frame.type === 'task' && frame['task_id'] === taskId && frame['status'] === 'ended');
+    const third = await kap.connect();
+    after = third.mark();
+    expect(await watch(third, 'main', taskId)).toMatchObject({
+      code: 0,
+      task: { task_id: taskId, kind: 'shell', status: 'ended', outcome: 'killed', description: 'npm run dev' },
+    });
+    expect(await nextOutput(third, taskId, after)).toMatchObject({ offset: 0, text: `${ready}${local}${hmr}` });
+    await third.close();
+    await socket.waitFor((frame) => isMainTurnEnd(frame, session.id), { after: beforeStop });
+  });
+
+  test('lets task.watch read a task only through the agent that owns it', async ({ kap, model }) => {
+    const testRun = ' RUN  v3.2.4\n';
+    model.script(agent({ prompt: 'run the tests in watch mode', description: 'tests' }), say('tests are running'));
+    model.lane('subagent').script(
+      bash({ command: `${printLine(testRun)}; sleep 30`, description: 'pnpm test --watch', run_in_background: true }),
+      held('child-reply', say('watching')),
+      say('the test run was stopped'),
+    );
+    const socket = await kap.connect();
+    const session = await kap.createSession();
+    await socket.subscribe(session.id);
+
+    await kap.prompt(session.id, 'run the tests in the background');
+    await model.hold('child-reply').reached();
+    const delegation = (await kap.turns(session.id)).flatMap((turn) => turn.items).find((item) => item.type === 'tool_call' && item['name'] === 'Agent');
+    const childId = childAgentIdOf(delegation);
+    await socket.subscribe(session.id, { agentIds: [childId] });
+    const childTasks = (await socket.waitFor((frame) => frame.type === 'task.list' && frame['agent_id'] === childId))['tasks'] as readonly { readonly task_id: string; readonly status: string }[];
+    expect(childTasks).toEqual([expect.objectContaining({ status: 'running' })]);
+    const childTaskId = childTasks[0]!.task_id;
+
+    const watcher = await kap.connect();
+    const watch = (agentId: string) => watcher.command({ type: 'task.watch', session_id: session.id, agent_id: agentId, task_id: childTaskId });
+    await expect(watch('main')).rejects.toMatchObject({ response: { code: 40406 } });
+    const after = watcher.mark();
+    await watch(childId);
+    expect(await watcher.waitFor((frame) => isTaskOutput(frame, childTaskId) && frame['text'] !== '', { after })).toMatchObject({
+      session_id: session.id,
+      agent_id: childId,
+      task_id: childTaskId,
+      offset: 0,
+      text: testRun,
+    });
+    await watcher.close();
+
+    model.hold('child-reply').release();
+    await socket.waitFor((frame) => frame.type === 'turn.ended' && frame['session_id'] === session.id && frame['agent_id'] === childId);
+    await expect(kap.cancel(session.id, { agentId: childId, includeBackground: true })).resolves.toEqual({ cancelled: true });
+    await socket.waitFor((frame) => isMainTurnEnd(frame, session.id));
   });
 
   test('cancels a request while its script is preparing a reply and starts the next turn', async ({ kap, model }) => {
@@ -566,6 +681,36 @@ describe('conversation over KAP', () => {
     expect(socket.turns(session.id)).toEqual(turns);
   });
 
+  test('resumes a foreground subagent with its prior context after a server restart', async ({ kap, model }) => {
+    model.script(agent({ prompt: 'remember the token quartz-7731 and reply with ok', description: 'child' }), say('noted'));
+    model.lane('subagent').script(say('ok, remembered'));
+    const session = await kap.createSession();
+    const agentCalls = async () => (await kap.turns(session.id)).flatMap((turn) => turn.items).filter((item) => item.type === 'tool_call' && item['name'] === 'Agent');
+
+    await kap.prompt(session.id, 'spawn the child');
+    await kap.waitIdle(session.id);
+    const [spawn] = await agentCalls();
+    expect(spawn?.['agent_refs']).toEqual([expect.objectContaining({ agent_id: expect.any(String), role: 'child' })]);
+    const childId = childAgentIdOf(spawn);
+
+    await kap.restart();
+    model.script(agent({ prompt: 'recall the token', description: 'child again', resume: childId }), say('the child remembered'));
+    model.lane('subagent').script(say('the token is quartz-7731'));
+    await kap.prompt(session.id, 'resume the child');
+    await kap.waitIdle(session.id);
+
+    const resumed = model.requests('subagent')[1];
+    expect(resumed?.texts('user').join('\n')).toContain('remember the token quartz-7731 and reply with ok');
+    expect(resumed?.texts('assistant')).toContain('ok, remembered');
+    expect(resumed?.userTextsSinceReply.join('\n')).toContain('recall the token');
+    const calls = await agentCalls();
+    expect(calls).toHaveLength(2);
+    expect(String(calls[1]?.['output'])).toContain(`agent_id: ${childId}`);
+    expect(String(calls[1]?.['output'])).toContain('the token is quartz-7731');
+    const childTurns = await kap.turns(session.id, childId);
+    expect(childTurns.map((turn) => turn.items[0]?.['text'])).toEqual(['remember the token quartz-7731 and reply with ok', 'recall the token']);
+  });
+
   test('sends a new subscriber the idle main agent and its empty todo list, then pushes TodoList writes', async ({ kap, model }) => {
     model.script(todoList([{ title: 'write tests', status: 'in_progress' }, { title: 'ship', status: 'pending' }]), say('planned'));
     const socket = await kap.connect();
@@ -626,4 +771,16 @@ function isMainAgentFrame(frame: KapFrame, sessionId: string): boolean {
 
 function isMainTurnEnd(frame: KapFrame, sessionId: string): boolean {
   return frame.type === 'turn.ended' && frame['session_id'] === sessionId && frame['agent_id'] === 'main';
+}
+
+function isTaskOutput(frame: KapFrame, taskId: string): boolean {
+  return frame.type === 'task.output' && frame['task_id'] === taskId;
+}
+
+function childAgentIdOf(item: KapItem | undefined): string {
+  return String((item?.['agent_refs'] as readonly { readonly agent_id: string }[] | undefined)?.[0]?.agent_id);
+}
+
+function printLine(line: string): string {
+  return `printf '%s\\n' '${line.trimEnd()}'`;
 }
