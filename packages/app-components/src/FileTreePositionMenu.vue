@@ -32,7 +32,7 @@ function pick(next: FileTreePosition): void {
     </IconButton>
     <Transition name="ui-menu-pop">
       <Menu v-if="open" ref="menuRef" class="ui-menu-floating ftpm-menu" :style="menuStyle" @click.stop>
-        <div class="ftpm-head">{{ t('fileTree.positionTitle') }}</div>
+        <div class="anchored-menu-head">{{ t('fileTree.positionTitle') }}</div>
         <MenuItem role="menuitemradio" :aria-checked="position === 'left'" @click="pick('left')">
           <Icon v-if="position === 'left'" name="check" size="sm" />
           <span v-else class="ftpm-check-slot" />
@@ -49,15 +49,10 @@ function pick(next: FileTreePosition): void {
 </template>
 
 <style scoped>
-.ftpm-head {
-  padding: var(--space-1) var(--space-2) var(--space-05);
-  color: var(--color-text-faint);
-  font-size: var(--text-xs);
-  user-select: none;
-}
-
 .ftpm-check-slot {
   width: 16px;
   flex: none;
 }
 </style>
+
+<style src="./lib/anchored-menu.css"></style>

@@ -5,6 +5,13 @@
   user-select: none;
 }
 
+.anchored-menu-head {
+  padding: var(--space-1) var(--space-2) var(--space-05);
+  color: var(--color-text-faint);
+  font-size: var(--text-xs);
+  user-select: none;
+}
+
 .anchored-menu-check {
   margin-left: auto;
   display: inline-flex;

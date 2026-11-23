@@ -37,8 +37,8 @@ defineExpose({ openAt, toggleAnchored, close });
 <template>
   <Transition name="ui-menu-pop">
     <Menu v-if="open" ref="menuRef" class="ui-menu-floating sa-menu" :style="menuStyle" @click.stop>
-      <template v-if="mode === 'single'">
-        <MenuItem @click="act('open')">
+      <template v-if="mode !== 'multi'">
+        <MenuItem v-if="mode === 'single'" @click="act('open')">
           <Icon name="external-link" size="sm" />
           {{ t('admin.open') }}
         </MenuItem>
@@ -54,34 +54,21 @@ defineExpose({ openAt, toggleAnchored, close });
           <Icon name="download" size="sm" />
           {{ t('admin.export') }}
         </MenuItem>
-        <MenuItem separator />
-        <MenuItem v-if="targetArchived" @click="act('restore')">
-          <Icon name="undo" size="sm" />
-          {{ t('admin.reopen') }}
-        </MenuItem>
-        <MenuItem v-else @click="act('archive')">
-          <Icon name="state-done" size="sm" />
-          {{ t('admin.markDone') }}
-        </MenuItem>
-      </template>
-
-      <template v-else-if="mode === 'rowActions'">
-        <MenuItem @click="act('rename')">
-          <Icon name="pencil" size="sm" />
-          {{ t('admin.rename') }}
-        </MenuItem>
-        <MenuItem @click="act('fork')">
-          <Icon name="git-fork" size="sm" />
-          {{ t('admin.fork') }}
-        </MenuItem>
-        <MenuItem @click="act('export')">
-          <Icon name="download" size="sm" />
-          {{ t('admin.export') }}
-        </MenuItem>
+        <template v-if="mode === 'single'">
+          <MenuItem separator />
+          <MenuItem v-if="targetArchived" @click="act('restore')">
+            <Icon name="undo" size="sm" />
+            {{ t('admin.reopen') }}
+          </MenuItem>
+          <MenuItem v-else @click="act('archive')">
+            <Icon name="state-done" size="sm" />
+            {{ t('admin.markDone') }}
+          </MenuItem>
+        </template>
       </template>
 
       <template v-else>
-        <div class="sa-menu-head">
+        <div class="anchored-menu-head">
           {{ t('admin.batchSelected', { n: counts?.total ?? 0 }) }}
         </div>
         <MenuItem :disabled="(counts?.open ?? 0) === 0" @click="act('archive')">
@@ -97,11 +84,4 @@ defineExpose({ openAt, toggleAnchored, close });
   </Transition>
 </template>
 
-<style scoped>
-.sa-menu-head {
-  padding: var(--space-1) var(--space-2) var(--space-05);
-  color: var(--color-text-faint);
-  font-size: var(--text-xs);
-  user-select: none;
-}
-</style>
+<style src="../lib/anchored-menu.css"></style>
