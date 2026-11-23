@@ -1674,11 +1674,20 @@ describe('quitConfirmResponse', () => {
     const mainWebContents = {};
     mocks.getMainWindow.mockReturnValue({ isDestroyed: () => false, webContents: mainWebContents });
     handler(IPC.quitConfirmResponse)({ sender: mainWebContents }, { choice: 'quit', requestId: 1 });
-    expect(mocks.resolveQuitConfirmResponse).toHaveBeenCalledWith('quit', 1);
+    expect(mocks.resolveQuitConfirmResponse).toHaveBeenCalledWith('quit', 1, false);
     handler(IPC.quitConfirmResponse)({ sender: mainWebContents }, { choice: 'cancel', requestId: 2 });
-    expect(mocks.resolveQuitConfirmResponse).toHaveBeenCalledWith('cancel', 2);
+    expect(mocks.resolveQuitConfirmResponse).toHaveBeenCalledWith('cancel', 2, false);
     handler(IPC.quitConfirmResponse)({ sender: mainWebContents }, { choice: 'unavailable', requestId: 3 });
-    expect(mocks.resolveQuitConfirmResponse).toHaveBeenCalledWith('unavailable', 3);
+    expect(mocks.resolveQuitConfirmResponse).toHaveBeenCalledWith('unavailable', 3, false);
+  });
+
+  it('forwards the continue choice only when it is exactly true', () => {
+    const mainWebContents = {};
+    mocks.getMainWindow.mockReturnValue({ isDestroyed: () => false, webContents: mainWebContents });
+    handler(IPC.quitConfirmResponse)({ sender: mainWebContents }, { choice: 'quit', requestId: 4, continueSessions: true });
+    expect(mocks.resolveQuitConfirmResponse).toHaveBeenLastCalledWith('quit', 4, true);
+    handler(IPC.quitConfirmResponse)({ sender: mainWebContents }, { choice: 'quit', requestId: 5, continueSessions: 'yes' });
+    expect(mocks.resolveQuitConfirmResponse).toHaveBeenLastCalledWith('quit', 5, false);
   });
 
   it('ignores invalid payloads and foreign senders', () => {

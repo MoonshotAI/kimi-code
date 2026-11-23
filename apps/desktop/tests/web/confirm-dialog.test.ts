@@ -16,7 +16,8 @@ function deferred<T = void>(): {
 }
 
 describe('useConfirmDialog', () => {
-  const { current, busy, isConfirmOpen, confirm, settle, runAction } = useConfirmDialog();
+  const { current, busy, isConfirmOpen, confirm, confirmWithCheckbox, setCheckboxChecked, settle, runAction } =
+    useConfirmDialog();
 
   beforeEach(() => {
     settle(false);
@@ -35,6 +36,39 @@ describe('useConfirmDialog', () => {
     settle(false);
     expect(current.value).toBeNull();
     await expect(p).resolves.toBe(false);
+  });
+
+  it('resolves the checkbox state the user leaves when confirming', async () => {
+    const p = confirmWithCheckbox({ title: 'Restart?', checkbox: { label: 'Continue', checked: true } });
+    expect(current.value?.checkbox).toEqual({ label: 'Continue', checked: true });
+    setCheckboxChecked(false);
+    expect(current.value?.checkbox?.checked).toBe(false);
+    await runAction();
+    await expect(p).resolves.toEqual({ confirmed: true, checked: false });
+  });
+
+  it('resolves unconfirmed with the checkbox state on cancel', async () => {
+    const p = confirmWithCheckbox({ title: 'Restart?', checkbox: { label: 'Continue', checked: true } });
+    settle(false);
+    await expect(p).resolves.toEqual({ confirmed: false, checked: true });
+  });
+
+  it('leaves the caller checkbox options untouched', async () => {
+    const options = { title: 'Restart?', checkbox: { label: 'Continue', checked: true } };
+    const p = confirmWithCheckbox(options);
+    setCheckboxChecked(false);
+    settle(true);
+    await expect(p).resolves.toEqual({ confirmed: true, checked: false });
+    expect(options.checkbox.checked).toBe(true);
+  });
+
+  it('keeps plain confirms free of a checkbox', async () => {
+    const p = confirm({ title: 'Archive?' });
+    expect(current.value?.checkbox).toBeUndefined();
+    setCheckboxChecked(true);
+    expect(current.value?.checkbox).toBeUndefined();
+    settle(true);
+    await expect(p).resolves.toBe(true);
   });
 
   it('exposes isConfirmOpen while a request is pending', async () => {

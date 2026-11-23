@@ -8,7 +8,10 @@ const mocks = vi.hoisted(() => ({
   check: vi.fn(async () => undefined),
   download: vi.fn(async () => undefined),
   install: vi.fn(),
-  shouldBlockQuit: vi.fn(async () => false),
+  restart: {
+    confirmRestart: vi.fn(async () => ({ proceed: true, continueSessionIds: [] })),
+    prepareSessionContinue: vi.fn(),
+  },
   fetch: vi.fn().mockResolvedValue({ ok: true, text: async () => 'Canary notes' }),
   region: { value: 'mainland-cn' },
 }));
@@ -56,7 +59,7 @@ for (const region of ['mainland-cn', 'global']) {
   it(`checks the ${region} CDN automatically and manually, downloads and installs without GitHub`, async () => {
     vi.useFakeTimers();
     mocks.region.value = region;
-    initAutoUpdater(mocks.shouldBlockQuit);
+    initAutoUpdater(mocks.restart);
     expect(updater.allowPrerelease).toBe(true);
     expect(updater.allowDowngrade).toBe(false);
     expect(updater.autoDownload).toBe(false);
@@ -86,7 +89,7 @@ describe('channel isolation', () => {
   it('rejects Canary and Preview candidates on stable', async () => {
     vi.useFakeTimers();
     mocks.app.getVersion.mockReturnValue('1.0.5');
-    initAutoUpdater(mocks.shouldBlockQuit);
+    initAutoUpdater(mocks.restart);
     const info = (version: string) => ({ version, files: [], path: '', sha512: '', releaseDate: '' });
     await expect(Promise.resolve(updater.isUpdateSupported(info('2.0.0-canary.1')))).resolves.toBe(false);
     await expect(Promise.resolve(updater.isUpdateSupported(info('2.0.0-preview.1')))).resolves.toBe(false);
@@ -97,12 +100,12 @@ describe('channel isolation', () => {
     vi.useFakeTimers();
     mocks.app.getVersion.mockReturnValue('1.0.5-alpha.1');
     updater.allowPrerelease = true;
-    initAutoUpdater(mocks.shouldBlockQuit);
+    initAutoUpdater(mocks.restart);
     expect(updater.allowPrerelease).toBe(true);
   });
   it('rejects stable and Preview updates on Canary, preserving platform requirements', async () => {
     vi.useFakeTimers();
-    initAutoUpdater(mocks.shouldBlockQuit);
+    initAutoUpdater(mocks.restart);
     const info = (version: string) => ({ version, files: [], path: '', sha512: '', releaseDate: '' });
     await expect(Promise.resolve(updater.isUpdateSupported(info('1.0.6')))).resolves.toBe(false);
     await expect(Promise.resolve(updater.isUpdateSupported(info('1.0.6-preview.1')))).resolves.toBe(false);
@@ -113,7 +116,7 @@ describe('channel isolation', () => {
   it('keeps stable on latest and disables Preview updates', async () => {
     vi.useFakeTimers();
     mocks.app.getVersion.mockReturnValue('1.0.5');
-    initAutoUpdater(mocks.shouldBlockQuit);
+    initAutoUpdater(mocks.restart);
     await vi.advanceTimersByTimeAsync(10_000);
     expect(updater.allowPrerelease).toBe(false);
     expect(mocks.feed).toHaveBeenCalledWith(expect.objectContaining({ channel: 'latest' }));
@@ -124,7 +127,7 @@ describe('channel isolation', () => {
     expect(mocks.check).toHaveBeenCalledTimes(2);
     vi.clearAllMocks();
     mocks.app.getVersion.mockReturnValue('1.0.5-preview.1');
-    initAutoUpdater(mocks.shouldBlockQuit);
+    initAutoUpdater(mocks.restart);
     expect(mocks.feed).not.toHaveBeenCalled();
   });
 });

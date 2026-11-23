@@ -27,6 +27,7 @@ const mocks = vi.hoisted(() => ({
   setEmbeddedServerOrigin: vi.fn(),
   setServerRegionSource: vi.fn(),
   restoreRemoteControlOnStartup: vi.fn((): Promise<void> => Promise.resolve()),
+  continueSessionsAfterRestart: vi.fn((): Promise<void> => Promise.resolve()),
 }));
 
 vi.mock('electron', () => ({
@@ -67,6 +68,9 @@ vi.mock('../../../src/main/server/region', () => ({
 }));
 vi.mock('../../../src/main/server/remote-control-restore', () => ({
   restoreRemoteControlOnStartup: mocks.restoreRemoteControlOnStartup,
+}));
+vi.mock('../../../src/main/server/session-continue', () => ({
+  continueSessionsAfterRestart: mocks.continueSessionsAfterRestart,
 }));
 vi.mock('../../../src/main/system/shell-env', () => ({
   startShellEnvProbe: mocks.startShellEnvProbe,
@@ -160,6 +164,7 @@ describe('connect', () => {
       fetch,
       expect.any(Function),
     );
+    expect(mocks.continueSessionsAfterRestart).toHaveBeenCalledWith('http://127.0.0.1:54321', 'launch-secret');
     expect(win.loadURL).toHaveBeenCalledWith('renderer-url');
     expect(mocks.errorHtml).not.toHaveBeenCalled();
   });
@@ -309,6 +314,7 @@ describe('connect', () => {
     expect(mocks.rendererUrl).toHaveBeenNthCalledWith(2, 'http://127.0.0.1:54321', undefined, undefined, false, true, true, false);
     expect(win2.loadURL).toHaveBeenCalledWith('renderer-url');
     expect(mocks.errorHtml).not.toHaveBeenCalled();
+    expect(mocks.continueSessionsAfterRestart).toHaveBeenCalledOnce();
   });
 
   it('serializes concurrent connects so only one embedded server ever starts', async () => {
@@ -400,11 +406,13 @@ describe('connect', () => {
     expect(mocks.dataUrl).toHaveBeenCalledWith('<error>');
     expect(win1.loadURL).toHaveBeenCalledWith('error-url');
     expect(mocks.rendererUrl).not.toHaveBeenCalled();
+    expect(mocks.continueSessionsAfterRestart).not.toHaveBeenCalled();
 
     await connect(win2 as unknown as MainWindow);
     expect(mocks.startDesktopServer).toHaveBeenCalledTimes(2);
     expect(mocks.rendererUrl).toHaveBeenCalledWith('http://127.0.0.1:5555', undefined, undefined, false, true, true, false);
     expect(win2.loadURL).toHaveBeenCalledWith('renderer-url');
+    expect(mocks.continueSessionsAfterRestart).toHaveBeenCalledExactlyOnceWith('http://127.0.0.1:5555', 'launch-secret');
   });
 
   it('connects to an external server (KIMI_SERVER_URL) without starting the embedded one', async () => {
@@ -417,6 +425,7 @@ describe('connect', () => {
     expect(mocks.startDesktopServer).not.toHaveBeenCalled();
     expect(mocks.rendererUrl).toHaveBeenCalledWith('http://127.0.0.1:58627', undefined, undefined, false, true, false, false);
     expect(mocks.setEmbeddedServerOrigin).not.toHaveBeenCalled();
+    expect(mocks.continueSessionsAfterRestart).not.toHaveBeenCalled();
     expect(win.loadURL).toHaveBeenCalledWith('renderer-url');
     expect(mocks.errorHtml).not.toHaveBeenCalled();
   });
