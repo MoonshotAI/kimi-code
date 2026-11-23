@@ -35,8 +35,10 @@ oauth = { storage = "file", key = "${ref.key}", oauth_host = "${oauthHost}" }
     accessToken: token, refreshToken: 'test-refresh', expiresAt: Math.floor(Date.now() / 1_000) + 3_600,
     expiresIn: 3_600, scope: '', tokenType: 'Bearer',
   });
+  vi.stubEnv('KIMI_CODE_BASE_URL', undefined);
+  vi.stubEnv('KIMI_CODE_FEEDBACK_BASE_URL', undefined);
   vi.stubEnv('KIMI_OAUTH_HOST', undefined);
-  onTestFinished(() => vi.unstubAllEnvs());
+  onTestFinished(() => { vi.unstubAllEnvs(); });
   const requests = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
     const request = new Request(input, init);
     if (request.url !== `${baseUrl}/feedback`) throw new Error('Unexpected outbound request');
