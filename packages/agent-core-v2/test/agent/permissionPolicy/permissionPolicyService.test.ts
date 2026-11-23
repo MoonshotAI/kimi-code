@@ -512,17 +512,18 @@ describe('AgentPermissionPolicyService chain', () => {
     });
   });
 
-  it('keeps sensitive file and git control path checks above read-only approval', async () => {
+  it.each([
+    'cat -n .env',
+    'cat ~/.ssh/id_rsa',
+    'cat .git/config',
+  ])('does not approve a read of a sensitive file or git control path: %s', async (command) => {
     await expect(evaluate({
       toolName: 'Bash',
-      args: { command: 'cat -n .env' },
-      accesses: ToolAccesses.readFile('.env'),
-    })).resolves.toMatchObject({ policyName: 'sensitive-file-access-ask' });
-    await expect(evaluate({
-      toolName: 'Bash',
-      args: { command: 'cat .git/config' },
-      accesses: ToolAccesses.readFile('.git/config'),
-    })).resolves.toMatchObject({ policyName: 'git-control-path-access-ask' });
+      args: { command },
+    })).resolves.toMatchObject({
+      policyName: 'fallback-ask',
+      result: { kind: 'ask' },
+    });
   });
 
   it('does not load the dangerous command policy for non-interactive hosts', async () => {
@@ -720,15 +721,6 @@ describe('AgentPermissionPolicyService git cwd write approval', () => {
       args: { command: 'cat notes.txt' },
     })).resolves.toMatchObject({ policyName: 'bash-read-only-approve' });
 
-    await expect(evaluate({
-      toolName: 'Bash',
-      args: { command: 'cat .git/config' },
-      accesses: ToolAccesses.readFile('.git/config'),
-    })).resolves.toMatchObject({
-      policyName: 'git-control-path-access-ask',
-      result: { kind: 'ask' },
-    });
-
     const parser = new BashParserService();
     for (const [command, ...paths] of [
       ['cat ".git/config"', '.git/config'],
@@ -759,10 +751,8 @@ describe('AgentPermissionPolicyService git cwd write approval', () => {
       await expect(evaluate({
         toolName: 'Bash',
         args: { command },
-        accesses: analyzeBashReadOnly(parsed)?.paths.map((accessPath) =>
-          ToolAccesses.readFile(accessPath)[0]!
-        ),
       })).resolves.toMatchObject({
+        policyName: 'fallback-ask',
         result: { kind: 'ask' },
       });
     }
