@@ -41,6 +41,7 @@
     "bcryptjs": "^2.4.3",
     "fastify": "^5.1.0",
     "pino": "^9.5.0",
+    "proper-lockfile": "^4.1.2",
     "semver": "^7.7.4",
     "smol-toml": "^1.6.1",
     "ulid": "^3.0.1",
@@ -50,6 +51,7 @@
   "devDependencies": {
     "@moonshot-ai/testkit": "workspace:^",
     "@types/bcryptjs": "^2.4.6",
+    "@types/proper-lockfile": "^4.1.4",
     "@types/semver": "^7.7.0",
     "@types/ws": "^8.18.0",
     "tsx": "^4.21.0"

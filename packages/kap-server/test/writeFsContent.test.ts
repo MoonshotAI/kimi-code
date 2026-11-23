@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { startServer, type RunningServer } from '../src/start';
-import { authedFetch } from './helpers/auth';
+import { authedFetch, authHeaders } from './helpers/auth';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 
 const digest = (content: string) => createHash('sha256').update(content).digest('hex');
@@ -82,6 +82,23 @@ describe('PUT /api/v1/fs:content', () => {
     expect(await readFile(file, 'utf8')).toBe('edited');
     const results = await Promise.all(['one', 'two'].map(text => put(file, text, digest('edited'))));
     expect(results.map(r => r.status).toSorted()).toEqual([200, 412]);
+  });
+
+  it('returns FS_TOO_LARGE for a body one byte over the 10 MiB limit without changing the file', async () => {
+    await writeFile(file, 'unchanged');
+    const query = new URLSearchParams({ path: file, revision: digest('unchanged') });
+    const url = `/api/v1/fs:content?${query.toString()}`;
+    const headers = authHeaders(server, { 'content-type': 'text/plain' });
+    const payload = Buffer.alloc(10 * 1024 * 1024 + 1, 'x');
+    const expected = { code: 41302, data: null, request_id: expect.any(String) };
+    const declared = await server.app.inject({ method: 'PUT', url, headers, payload });
+    expect(declared.statusCode).toBe(413);
+    expect(declared.json()).toMatchObject(expected);
+    const upload = { method: 'PUT', headers, body: new Blob([payload]).stream(), duplex: 'half' } as const;
+    const streamed = await fetch(`${base}${url}`, upload);
+    expect(streamed.status).toBe(413);
+    expect(await streamed.json()).toMatchObject(expected);
+    expect(await readFile(file, 'utf8')).toBe('unchanged');
   });
 
   it('requires a revision, authenticated request and text payload', async () => {

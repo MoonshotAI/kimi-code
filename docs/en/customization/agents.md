@@ -202,7 +202,7 @@ In the wide Desktop or Web layout, open **Settings → Agent & Sessions → Cust
 
 API clients can get the server's `home_dir` from `GET /api/v1/meta`, then read `AGENTS.md` with `GET /api/v1/fs:content?path=<absolute-path>`. The response contains the raw file bytes. A missing file returns `40409` (HTTP 404).
 
-To save, send the complete UTF-8 text as `text/plain` to `PUT /api/v1/fs:content` with the same `path` and a `revision` query parameter: the lowercase SHA-256 of the bytes you read, or `missing` to create a new file. Success returns `data.revision` for the next save. An empty body clears the file; a stale revision returns HTTP 412. Only the connected server's global `AGENTS.md` is writable. Other paths, symbolic links, and other environments are not allowed.
+To save, send the complete UTF-8 text as `text/plain` to `PUT /api/v1/fs:content` with the same `path` and a `revision` query parameter: the lowercase SHA-256 of the bytes you read, or `missing` to create a new file. Success returns `data.revision` for the next save. An empty body clears the file. If another KAP server sharing the same home saved a change first, the stale revision returns HTTP 412. A request body over 10 MiB returns HTTP 413 (`41302`) without changing the file. Only the connected server's global `AGENTS.md` is writable. Other paths, symbolic links, and other environments are not allowed.
 
 ## Storage Location in the Session Directory
 

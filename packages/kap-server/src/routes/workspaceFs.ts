@@ -31,7 +31,7 @@ import { errEnvelope, okEnvelope } from '../envelope';
 import { parseRangeHeader, pickHeader } from '../lib/httpRange';
 import { sendRawError } from '../lib/rawError';
 import { requestLog } from '../lib/requestLog';
-import { defineRoute } from '../middleware/defineRoute';
+import { defineRoute, httpErrorSchema } from '../middleware/defineRoute';
 import { ErrorCode } from '../protocol/error-codes';
 import { createEnvironmentReadStream, type EnvironmentReadStreamSource } from './fs';
 import { sendEnvironmentError } from './environment';
@@ -153,6 +153,12 @@ export function registerWorkspaceFsRoutes(app: WorkspaceFsRouteHost, core: Scope
 
   const writable = new WritableHostFiles(core.accessor.get(IBootstrapService).homeDir);
   app.register(async (scope) => {
+    scope.setErrorHandler((error, req, reply) => {
+      if (error instanceof Error && 'code' in error && error.code === 'FST_ERR_CTP_BODY_TOO_LARGE') {
+        return sendRawError(reply, errEnvelope(ErrorCode.FS_TOO_LARGE, 'File exceeds the edit size limit', req.id));
+      }
+      throw error;
+    });
     scope.addContentTypeParser('text/plain', { parseAs: 'buffer' }, (_req, bytes: Buffer, done) => {
       try {
         done(null, new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes));
@@ -164,7 +170,13 @@ export function registerWorkspaceFsRoutes(app: WorkspaceFsRouteHost, core: Scope
       method: 'PUT', path: '/fs::content', consumes: ['text/plain'], body: z.string(),
       querystring: fsContentQuerySchema.extend({ revision: z.union([z.literal('missing'), z.string().regex(/^[0-9a-f]{64}$/)]) }).strict(),
       success: { data: z.object({ revision: z.string() }) },
-      errors: { [ErrorCode.VALIDATION_FAILED]: {}, [ErrorCode.FS_CONTENT_CHANGED]: {}, [ErrorCode.FS_WRITE_NOT_ALLOWED]: {}, [ErrorCode.FS_TOO_LARGE]: {} },
+      errors: { [ErrorCode.VALIDATION_FAILED]: {}, [ErrorCode.INTERNAL_ERROR]: {} },
+      rawResponse: {
+        400: httpErrorSchema(ErrorCode.VALIDATION_FAILED),
+        403: httpErrorSchema(ErrorCode.FS_WRITE_NOT_ALLOWED),
+        412: httpErrorSchema(ErrorCode.FS_CONTENT_CHANGED),
+        413: httpErrorSchema(ErrorCode.FS_TOO_LARGE),
+      },
       description: 'Create or replace an allowlisted UTF-8 host file. Supply the SHA-256 of the bytes read, or missing to create only.',
       tags: ['workspaces'], operationId: 'writeFsContent',
     }, async (req, reply) => {

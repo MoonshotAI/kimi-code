@@ -3,6 +3,7 @@ import { constants } from 'node:fs';
 import { access, link, lstat, open, rename, unlink } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { sha256Hex } from '@moonshot-ai/core/utils/hash';
+import lockfile from 'proper-lockfile';
 import { ErrorCode } from '../protocol/error-codes';
 
 export const EDITABLE_FILE_MAX_BYTES = 10 * 1024 * 1024;
@@ -20,7 +21,6 @@ function hasFsCode(error: unknown, code: string): boolean {
 
 export class WritableHostFiles {
   private readonly allowed: ReadonlySet<string>;
-  private pending: Promise<unknown> = Promise.resolve();
 
   constructor(homeDir: string) {
     this.allowed = new Set([resolve(homeDir, 'AGENTS.md')]);
@@ -28,9 +28,15 @@ export class WritableHostFiles {
 
   async replace(path: string, content: string, revision: string): Promise<{ revision: string }> {
     if (!this.allowed.has(path)) throw forbidden();
-    const write = this.pending.then(() => this.replaceChecked(path, content, revision));
-    this.pending = write.catch(() => {});
-    return write;
+    const release = await lockfile.lock(path, {
+      realpath: false,
+      retries: { retries: 60, minTimeout: 25, maxTimeout: 250, randomize: true },
+    });
+    try {
+      return await this.replaceChecked(path, content, revision);
+    } finally {
+      await release();
+    }
   }
 
   private async replaceChecked(path: string, content: string, revision: string): Promise<{ revision: string }> {
