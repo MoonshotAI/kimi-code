@@ -168,10 +168,11 @@ export class SessionPickerComponent extends DockSection implements Focusable {
   appendSessions(rows: SessionRow[]): void {
     this.sessions = [...this.sessions, ...rows];
     this.list.setItems(this.sessions);
-    this.visibleCount = Math.max(
-      this.visibleCount,
-      Math.min(this.list.view().items.length, this.pageSize),
-    );
+    const filteredCount = this.list.view().items.length;
+    this.visibleCount =
+      this.layout === undefined
+        ? Math.max(this.visibleCount, Math.min(filteredCount, this.pageSize))
+        : filteredCount;
   }
 
   setPaging(hasMore: boolean, loadingMore: boolean): void {
@@ -362,7 +363,14 @@ export class SessionPickerComponent extends DockSection implements Focusable {
   }
 
   protected override onBodyScrolled(): void {
-    if (this.hasMore && !this.loadingMore && this.isBodyScrolledNearEnd()) {
+    if (!this.isBodyScrolledNearEnd()) return;
+    const filteredCount = this.list.view().items.length;
+    if (this.visibleCount < filteredCount) {
+      this.visibleCount = Math.min(filteredCount, this.visibleCount + this.pageSize);
+      this.invalidate();
+      this.requestRender?.();
+    }
+    if (this.hasMore && !this.loadingMore) {
       this.onLoadMore?.();
     }
   }

@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { runShell } from '#/cli/run-shell';
 import type { WorktreeExitOutcome } from '#/tui/controllers/worktree-exit';
 import { resetKimiRegionCache } from '#/utils/region';
+import { quoteShellArg } from '#/utils/shell-quote';
 
 import { captureProcessWrite, ExitCalled, mockProcessExit } from '../helpers/process';
 
@@ -494,7 +495,7 @@ describe('runShell', () => {
       expect(output).toEqual([
         'stderr: Kept worktree fix-login at ~/.kimi-code/worktrees/wd_repo_abc/fix-login (detached HEAD).\n' +
           ' 2 commits exist only in this worktree. To keep them on a branch:\n' +
-          '   git -C ~/.kimi-code/worktrees/wd_repo_abc/fix-login switch -c <branch-name>\n',
+          `   git -C ${quoteShellArg('/home/user/.kimi-code/worktrees/wd_repo_abc/fix-login')} switch -c <branch-name>\n`,
         'stdout: Bye!\n',
         'stderr:\n To resume this session: kimi -r ses-1\n',
       ]);

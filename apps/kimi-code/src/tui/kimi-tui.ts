@@ -3180,11 +3180,17 @@ export class KimiTUI {
       worktree: this.state.appState.worktree,
     };
     const replaced = this.session;
-    await this.applyWorkLocation(location);
+    try {
+      await this.applyWorkLocation(location);
+    } catch (error) {
+      await this.applyWorkLocation(previous, { resolveEnvironment: isDirectory(previous.cwd) }).catch(() => {});
+      this.showError(formatErrorMessage(error));
+      return false;
+    }
     if (replaced === undefined) return true;
     await this.createNewSession({ environmentId: 'local' });
     if (this.session !== replaced) return true;
-    await this.applyWorkLocation(previous);
+    await this.applyWorkLocation(previous, { resolveEnvironment: isDirectory(previous.cwd) }).catch(() => {});
     return false;
   }
 
@@ -3540,6 +3546,42 @@ export class KimiTUI {
     );
   }
 
+  private async loadSessionPickerPage(
+    scope: SessionsScope,
+    requestToken: number,
+    before?: string,
+  ): Promise<{ readonly rows: SessionRow[]; readonly nextCursor?: string } | undefined> {
+    const query =
+      scope === 'project'
+        ? {
+            workDir: this.state.appState.workDir,
+            scope: 'project' as const,
+            limit: SESSION_LIST_PAGE_SIZE,
+            ...(before === undefined ? {} : { before }),
+          }
+        : {
+            workDir: scope === 'all' ? undefined : this.state.appState.workDir,
+            limit: SESSION_LIST_PAGE_SIZE,
+            ...(before === undefined ? {} : { before }),
+          };
+    const page = await this.harness.listSessionsPage(query);
+    if (requestToken !== this.sessionPickerScopeRequestToken) return undefined;
+    const locations =
+      scope !== 'cwd' || isExperimentalFlagEnabled('worktree')
+        ? await sessionLocationTags(this.harness, page.items)
+        : undefined;
+    if (requestToken !== this.sessionPickerScopeRequestToken) return undefined;
+    return {
+      nextCursor: page.nextCursor,
+      rows: sessionRowsForPicker(
+        page.items,
+        this.state.appState.sessionId,
+        this.hasSessionContent(),
+        locations,
+      ),
+    };
+  }
+
   async fetchSessions(
     scope: SessionsScope = this.state.sessionsScope,
     requestToken: number = ++this.sessionPickerScopeRequestToken,
@@ -3549,27 +3591,10 @@ export class KimiTUI {
     this.state.sessionsNextCursor = undefined;
     this.state.sessionsLoadingMore = false;
     try {
-      const page = await this.harness.listSessionsPage(
-        scope === 'project'
-          ? { workDir: this.state.appState.workDir, scope: 'project', limit: SESSION_LIST_PAGE_SIZE }
-          : {
-              workDir: scope === 'all' ? undefined : this.state.appState.workDir,
-              limit: SESSION_LIST_PAGE_SIZE,
-            },
-      );
-      if (requestToken !== this.sessionPickerScopeRequestToken) return false;
-      const locations =
-        scope !== 'cwd' || isExperimentalFlagEnabled('worktree')
-          ? await sessionLocationTags(this.harness, page.items)
-          : undefined;
-      if (requestToken !== this.sessionPickerScopeRequestToken) return false;
-      this.state.sessionsNextCursor = page.nextCursor;
-      this.state.sessions = sessionRowsForPicker(
-        page.items,
-        this.state.appState.sessionId,
-        this.hasSessionContent(),
-        locations,
-      );
+      const result = await this.loadSessionPickerPage(scope, requestToken);
+      if (result === undefined) return false;
+      this.state.sessionsNextCursor = result.nextCursor;
+      this.state.sessions = result.rows;
       return true;
     } catch (error) {
       log.warn('failed to fetch sessions for picker', { error: String(error) });
@@ -3603,36 +3628,16 @@ export class KimiTUI {
 
   private async appendNextSessionPage(cursor: string, requestToken: number): Promise<boolean> {
     try {
-      const scope = this.state.sessionsScope;
-      const page = await this.harness.listSessionsPage(
-        scope === 'project'
-          ? {
-              workDir: this.state.appState.workDir,
-              scope: 'project',
-              limit: SESSION_LIST_PAGE_SIZE,
-              before: cursor,
-            }
-          : {
-              workDir: scope === 'all' ? undefined : this.state.appState.workDir,
-              limit: SESSION_LIST_PAGE_SIZE,
-              before: cursor,
-            },
+      const result = await this.loadSessionPickerPage(
+        this.state.sessionsScope,
+        requestToken,
+        cursor,
       );
-      if (requestToken !== this.sessionPickerScopeRequestToken) return false;
-      this.state.sessionsNextCursor = page.nextCursor;
-      const locations =
-        scope !== 'cwd' || isExperimentalFlagEnabled('worktree')
-          ? await sessionLocationTags(this.harness, page.items)
-          : undefined;
-      const rows = sessionRowsForPicker(
-        page.items,
-        this.state.appState.sessionId,
-        this.hasSessionContent(),
-        locations,
-      );
-      this.state.sessions = [...this.state.sessions, ...rows];
-      this.sessionPickerComponent?.appendSessions(rows);
-      this.sessionPickerComponent?.setPaging(page.nextCursor !== undefined, false);
+      if (result === undefined) return false;
+      this.state.sessionsNextCursor = result.nextCursor;
+      this.state.sessions = [...this.state.sessions, ...result.rows];
+      this.sessionPickerComponent?.appendSessions(result.rows);
+      this.sessionPickerComponent?.setPaging(result.nextCursor !== undefined, false);
       return true;
     } catch (error) {
       log.warn('failed to fetch more sessions for picker', { error: String(error) });
