@@ -186,7 +186,7 @@ describe('conversation over KAP', () => {
   });
 
   test('waits for approval in manual mode, shows it on the tool item and runs the tool once approved', async ({ kap, model }) => {
-    model.script(bash('echo approved-run'), say('done'));
+    model.script(bash('printf approved-run'), say('done'));
     const socket = await kap.connect();
     const session = await kap.createSession();
     await socket.subscribe(session.id);
@@ -200,7 +200,7 @@ describe('conversation over KAP', () => {
 
     await kap.answer(session.id, interaction.interaction_id, { kind: 'approval', decision: 'approved' });
     await kap.waitIdle(session.id);
-    expect(model.request(1).view.messages.at(-1)).toMatchObject({ role: 'tool', text: 'approved-run\n' });
+    expect(model.request(1).view.messages.at(-1)).toMatchObject({ role: 'tool', text: 'approved-run' });
 
     const turns = await kap.turns(session.id);
     const tool = turns.flatMap((turn) => turn.items).find((item) => item.type === 'tool_call' && item['name'] === 'Bash');
@@ -208,7 +208,7 @@ describe('conversation over KAP', () => {
       item_id: callId,
       status: 'ended',
       outcome: 'completed',
-      input: { command: 'echo approved-run' },
+      input: { command: 'printf approved-run' },
       interaction_id: interaction.interaction_id,
     });
     expect(tool).not.toHaveProperty('stage');
@@ -227,7 +227,7 @@ describe('conversation over KAP', () => {
   });
 
   test('tells the model when the user rejects a tool call', async ({ kap, model }) => {
-    model.script(bash('echo never'), say('understood'));
+    model.script(bash('printf never'), say('understood'));
     const session = await kap.createSession();
 
     await kap.prompt(session.id, 'run it', { permissionMode: 'manual' });
