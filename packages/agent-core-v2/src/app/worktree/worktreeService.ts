@@ -1,4 +1,4 @@
-import { basename, dirname, join, relative } from 'pathe';
+import { basename, dirname, isAbsolute, join, relative } from 'pathe';
 
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { sameDir } from '#/_base/utils/workdir-slug';
@@ -174,7 +174,7 @@ export class WorktreeService implements IWorktreeService {
     }
 
     const relativeCwd = relative(plan.sourceRoot, plan.cwd);
-    const mappedCwd = relativeCwd.startsWith('..') ? plan.path : join(plan.path, relativeCwd);
+    const mappedCwd = isOutsideRoot(relativeCwd) ? plan.path : join(plan.path, relativeCwd);
     const cwdFallback = !(await this.isDirectory(mappedCwd));
     const setupScript = join(plan.sourceRoot, SETUP_SCRIPT);
     return {
@@ -216,6 +216,7 @@ export class WorktreeService implements IWorktreeService {
   }
 
   async remove(input: RemoveWorktreeInput): Promise<void> {
+    this.requireEnabled();
     const repo = await this.readRepository(input.repoRoot, input.repoRoot);
     const target = await this.findKimiEntry(repo, input.path);
     const check = await this.measureRemoval(repo, target, input.deleteBranch, input.excludeSessionId);
@@ -251,7 +252,7 @@ export class WorktreeService implements IWorktreeService {
     }
   }
 
-  private async planCreation(input: CreateWorktreeInput, signal: AbortSignal | undefined): Promise<CreationPlan> {
+  private requireEnabled(): void {
     if (!this.flags.enabled(WORKTREE_FLAG_ID)) {
       throw new Error2(
         ErrorCodes.WORKTREE_DISABLED,
@@ -259,6 +260,10 @@ export class WorktreeService implements IWorktreeService {
         { details: { flag: WORKTREE_FLAG_ID, env: WORKTREE_FLAG_ENV } },
       );
     }
+  }
+
+  private async planCreation(input: CreateWorktreeInput, signal: AbortSignal | undefined): Promise<CreationPlan> {
+    this.requireEnabled();
     const checkout = await this.resolveCheckout(input.cwd);
     if (checkout === undefined) throw notGitRepo(input.cwd);
     const repo = await this.readRepository(checkout.checkoutRoot, checkout.repoRoot, signal);
@@ -445,16 +450,18 @@ export class WorktreeService implements IWorktreeService {
     const listed = await this.git(['ls-files', '-v', '-s', '-z'], root);
     if (listed.exitCode !== 0) throw gitFailed(`Could not read the index of ${root}.`, listed);
     const hidden = hiddenIndexEntries(listed.stdout);
-    const present = (
-      await Promise.all(hidden.map(async (entry) => ((await this.isFile(join(root, entry.path))) ? [entry] : [])))
-    ).flat();
-    if (present.length === 0) return 0;
+    const checked = await Promise.all(
+      hidden.map(async (entry) => ({ entry, isFile: await this.isFile(join(root, entry.path)) })),
+    );
+    const present = checked.filter(({ isFile }) => isFile).map(({ entry }) => entry);
+    const missingAssumeUnchanged = checked.filter(({ entry, isFile }) => !isFile && !entry.skipWorktree).length;
+    if (present.length === 0) return missingAssumeUnchanged;
     const hashed = await this.git(['hash-object', '--stdin-paths'], root, {
       stdin: present.map((entry) => `${entry.path}\n`).join(''),
     });
     if (hashed.exitCode !== 0) throw gitFailed(`Could not read the files of ${root}.`, hashed);
     const hashes = hashed.stdout.split('\n');
-    return present.filter((entry, i) => hashes[i] !== entry.object).length;
+    return missingAssumeUnchanged + present.filter((entry, i) => hashes[i] !== entry.object).length;
   }
 
   private async countUniqueCommits(repo: Repository, target: KimiEntry, deleteBranch: boolean): Promise<number> {
@@ -641,6 +648,10 @@ function localProgram(command: string, cwd: string): string | undefined {
 function nonEmpty(value: string | undefined): string | undefined {
   const trimmed = value?.trim();
   return trimmed === '' ? undefined : trimmed;
+}
+
+function isOutsideRoot(rel: string): boolean {
+  return rel === '..' || rel.startsWith('../') || rel.startsWith('..\\') || isAbsolute(rel);
 }
 
 function throwIfCancelled(signal: AbortSignal | undefined): void {

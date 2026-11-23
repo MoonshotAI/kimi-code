@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs';
-import { mkdir, mkdtemp, realpath, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -344,6 +344,58 @@ describe('KimiHarness.listSessions', () => {
       ).toEqual(expected);
     } finally {
       await harness.close();
+    }
+  });
+
+  it('resolves projectWorkDir for sessions stored under an older implicit workspace alias ID', async () => {
+    const homeDir = await makeTempDir();
+    const workDir = await realpath(await makeTempDir());
+    const legacyId = 'wd_proj_deadbeef0002';
+    const setupClient = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
+    const canonical = await setupClient.engineAccessor.get(IProjectService).resolveImplicit(workDir);
+    await setupClient.close();
+    const entry = {
+      root: workDir,
+      name: 'proj',
+      kind: 'implicit',
+      created_at: '2026-01-01T00:00:00.000Z',
+      last_opened_at: '2026-01-01T00:00:00.000Z',
+    };
+    await writeFile(
+      join(homeDir, 'projects.json'),
+      JSON.stringify({
+        schema_version: 2,
+        projects: { [legacyId]: entry, [canonical.id]: entry },
+        deleted_project_ids: [],
+      }),
+    );
+
+    const client = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
+    try {
+      const index = client.engineAccessor.get(ISessionIndex);
+      await index.prepare();
+      await mkdir(join(homeDir, 'sessions', legacyId, 'ses_legacy_alias'), { recursive: true });
+      client.engineAccessor.get(ISessionIndexMirror).record({
+        id: 'ses_legacy_alias',
+        workspaceId: legacyId,
+        cwd: workDir,
+        createdAt: 1,
+        updatedAt: Date.now(),
+        archived: false,
+      });
+      await drainSessionIndexMirror();
+
+      const byProject = await client.listSessions({ workDir, scope: 'project' });
+      expect(byProject).toEqual([
+        expect.objectContaining({ id: 'ses_legacy_alias', projectWorkDir: workDir }),
+      ]);
+
+      const globalList = await client.listSessions({});
+      expect(globalList).toEqual([
+        expect.objectContaining({ id: 'ses_legacy_alias', projectWorkDir: workDir }),
+      ]);
+    } finally {
+      await client.close();
     }
   });
 });

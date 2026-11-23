@@ -51,6 +51,7 @@ export function countStatusEntries(output: string): number {
 export interface HiddenIndexEntry {
   readonly path: string;
   readonly object: string;
+  readonly skipWorktree: boolean;
 }
 
 const REGULAR_FILE_MODES = new Set(['100644', '100755']);
@@ -60,8 +61,11 @@ export function hiddenIndexEntries(output: string): HiddenIndexEntry[] {
   for (const field of splitNul(output)) {
     const tab = field.indexOf('\t');
     const [tag = '', mode = '', object = ''] = field.slice(0, tab).split(' ');
-    const hidden = tag === 'S' || tag !== tag.toUpperCase();
-    if (tab !== -1 && hidden && REGULAR_FILE_MODES.has(mode)) entries.push({ path: field.slice(tab + 1), object });
+    const skipWorktree = tag === 'S';
+    const hidden = skipWorktree || tag !== tag.toUpperCase();
+    if (tab !== -1 && hidden && REGULAR_FILE_MODES.has(mode)) {
+      entries.push({ path: field.slice(tab + 1), object, skipWorktree });
+    }
   }
   return entries;
 }
