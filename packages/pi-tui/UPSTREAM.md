@@ -115,6 +115,12 @@ Each card: **decision** and **why not in the app**. Status is `keep` or `absorbe
 
 **Why not in the app:** History recall mutates editor state internally; the host is not on that path unless the editor calls out.
 
+### editor-clear-history — keep
+
+**Decision:** `Editor.clearHistory()` clears the editor's stored prompt history and resets any in-progress history recall index, so a host switching working directories can swap in the new directory's history cleanly.
+
+**Why not in the app:** Prompt history and its recall cursor are private fields on `Editor`; the host cannot clear or reset them without recreating the editor instance.
+
 ### unbracketed-paste-enter-is-newline — keep
 
 **Decision:** After a rapid burst of unbracketed printable characters, Enter inserts a newline instead of submitting.

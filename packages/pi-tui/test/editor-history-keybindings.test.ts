@@ -40,4 +40,22 @@ describe("Editor prompt history keybindings", () => {
 		assert.strictEqual(editor.getText(), "draft");
 		assert.deepStrictEqual(editor.getCursor(), { line: 0, col: 3 });
 	});
+
+	it("clears stored history and resets recall state via clearHistory()", () => {
+		const editor = new Editor(new TuiMainScreen(new VirtualTerminal()), defaultEditorTheme);
+		editor.addToHistory("first prompt");
+		editor.addToHistory("second prompt");
+
+		editor.handleInput("\x1b[A");
+		assert.strictEqual(editor.getText(), "second prompt");
+
+		editor.clearHistory();
+		editor.setText("");
+		editor.handleInput("\x1b[A");
+		assert.strictEqual(editor.getText(), "");
+
+		editor.addToHistory("new project prompt");
+		editor.handleInput("\x1b[A");
+		assert.strictEqual(editor.getText(), "new project prompt");
+	});
 });
