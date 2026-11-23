@@ -89,7 +89,17 @@ test('submits global and reply feedback with opt-in attachments', async ({ app, 
   await expect(dialog).toHaveCSS('height', '484px');
   await expect(dialog.getByRole('checkbox', { name: /Submit diagnostic logs/ })).not.toBeChecked();
   await expect(dialog.getByRole('checkbox', { name: /Submit this conversation/ })).toHaveCount(0);
-  await dialog.getByRole('textbox', { name: 'Description' }).fill('A reproducible issue');
+  const description = dialog.getByRole('textbox', { name: 'Description' });
+  const textClip = await description.evaluate(element => {
+    const { x, y, width, height } = element.getBoundingClientRect();
+    return { x: x + 8, y: y + 8, width: width - 16, height: height - 16 };
+  });
+  const captureText = () => page.screenshot({ clip: textClip, caret: 'hide', animations: 'disabled' });
+  const beforeFocus = await captureText();
+  await description.click();
+  await expect(description).toBeFocused();
+  expect((await captureText()).equals(beforeFocus)).toBe(true);
+  await description.fill('A reproducible issue');
   await dialog.getByRole('button', { name: 'Cancel' }).click();
 
   const input = page.getByRole('combobox', { name: 'Message input' });
@@ -289,7 +299,6 @@ test('submits global and reply feedback with opt-in attachments', async ({ app, 
   await expect(page.getByRole('button', { name: 'Good response' })).toBeVisible();
 
   await feedbackButton.click();
-  const description = dialog.getByRole('textbox', { name: 'Description' });
   await description.fill('Keep this draft if access is denied');
   await dialog.getByRole('button', { name: 'Submit', exact: true }).click();
   await expect(dialog.getByRole('alert')).toHaveText('The feedback service denied access');
