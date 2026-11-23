@@ -1,11 +1,13 @@
 <script lang="ts">
 import { reactive } from 'vue';
+import type { ScrollSnapshot } from '@moonshot-ai/app-core/lib';
 
 const sideChatInflight = reactive(new Set<string>());
+const sideChatScrollSnapshots = new Map<string, ScrollSnapshot>();
 </script>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, provide, ref, watch } from 'vue';
+import { computed, onMounted, provide, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import ChatPane from './ChatPane.vue';
 import Composer from '../composer/Composer.vue';
@@ -13,8 +15,8 @@ import JumpToBottomPill from './JumpToBottomPill.vue';
 import { EmptyState, Icon } from '@moonshot-ai/app-ui';
 import { sideChatDrafts } from '@moonshot-ai/app-client/client';
 import { persistComposerDraftSnapshot } from '@moonshot-ai/app-client/lib';
-import { useFollowScroll } from '@moonshot-ai/app-client/composables';
-import { draftAttachmentsStorageKey, draftStorageKey, safeGetJson, safeGetString } from '@moonshot-ai/app-core/lib';
+import { useEscInterrupt, usePanelScroll } from '@moonshot-ai/app-client/composables';
+import { draftAttachmentsStorageKey, draftStorageKey, safeGetJson, safeGetString, type TranscriptLayout } from '@moonshot-ai/app-core/lib';
 import { FetchTurnFileChangesKey, PinScrollKey } from '@moonshot-ai/app-client/contracts';
 import type { ChatTurn, OpenMediaRequest } from '@moonshot-ai/app-core/client/types';
 import type { PromptAttachment, SideChatTurnError } from '@moonshot-ai/app-client/client';
@@ -30,6 +32,7 @@ const props = defineProps<{
   turnError?: SideChatTurnError | null;
   cwd?: string;
   onSend: (text: string, attachments?: PromptAttachment[], snapshot?: ComposerDocumentSnapshot) => Promise<boolean>;
+  onInterrupt?: () => Promise<unknown> | void;
 }>();
 
 const emit = defineEmits<{
@@ -42,26 +45,55 @@ const SCROLL_FADE_PX = 48;
 
 const composerRef = ref<InstanceType<typeof Composer> | null>(null);
 
-const identity = computed(() => props.agentId);
-const { scroller: bodyRef, showJump, onScroll: onBodyScroll, pinScroll, jumpToBottom } = useFollowScroll(identity);
-
-const composerEl = ref<HTMLElement | null>(null);
 const composerH = ref(0);
-let composerRO: ResizeObserver | null = null;
-watch(composerEl, (el) => {
-  composerRO?.disconnect();
-  composerRO = null;
-  if (el !== null && typeof ResizeObserver !== 'undefined') {
-    composerRO = new ResizeObserver(() => {
-      composerH.value = el.offsetHeight;
-    });
-    composerRO.observe(el);
-  }
-  composerH.value = el?.offsetHeight ?? 0;
-});
-onUnmounted(() => composerRO?.disconnect());
+const panelScroll = usePanelScroll({ identity: () => props.agentId, snapshots: sideChatScrollSnapshots, applyLayout: applyDockLayout });
+const bodyRef = panelScroll.scroller;
+const showJump = panelScroll.showJump;
+const onBodyScroll = panelScroll.onScroll;
+
+function jumpToBottom(): void {
+  panelScroll.follow();
+}
+
+function applyDockLayout(layout: TranscriptLayout): void {
+  if (layout.dockHeight === composerH.value) return;
+  composerH.value = layout.dockHeight;
+  const el = bodyRef.value;
+  if (!el) return;
+  el.style.setProperty('--sc-composer-h', `${layout.dockHeight}px`);
+  el.style.setProperty('--sc-dock-space', `${layout.dockHeight > 0 ? layout.dockHeight + SCROLL_FADE_PX : 0}px`);
+}
+
+const composerEl = panelScroll.dock;
 
 const submitting = computed(() => sideChatInflight.has(props.agentId));
+const sideChatWorking = computed(() => props.running || props.sending);
+
+const { armed: escInterruptArmed, press: pressEscInterrupt, reset: resetEscInterrupt } = useEscInterrupt({
+  sessionId: () => props.agentId,
+  working: () => sideChatWorking.value,
+  interrupt: handleInterrupt,
+});
+
+function handleInterrupt(): void {
+  resetEscInterrupt();
+  void props.onInterrupt?.();
+}
+
+function onRootKeydown(event: KeyboardEvent): void {
+  if (
+    event.key !== 'Escape' ||
+    event.defaultPrevented ||
+    event.isComposing ||
+    !sideChatWorking.value ||
+    composerRef.value?.anyPopupOpen === true
+  ) {
+    return;
+  }
+  event.preventDefault();
+  event.stopPropagation();
+  pressEscInterrupt();
+}
 
 type ComposerSubmitPayload = {
   text: string;
@@ -130,17 +162,7 @@ watch(() => props.agentId, (agentId) => {
   seedDraftFromHandoff(agentId);
 });
 
-function pinScrollAnchor(el: HTMLElement): void {
-  const scroller = bodyRef.value;
-  if (!scroller) return;
-  pinScroll();
-  const top = el.getBoundingClientRect().top;
-  requestAnimationFrame(() => {
-    scroller.scrollTop += el.getBoundingClientRect().top - top;
-  });
-}
-
-provide(PinScrollKey, pinScrollAnchor);
+provide(PinScrollKey, (el: HTMLElement, ms?: number) => panelScroll.hold(el, ms));
 
 provide(FetchTurnFileChangesKey, undefined);
 
@@ -152,8 +174,8 @@ defineExpose({ focusInput });
 </script>
 
 <template>
-  <div class="sc">
-    <div ref="bodyRef" class="sc-body" :style="composerH > 0 ? { '--sc-composer-h': `${composerH}px`, paddingBottom: `${composerH + SCROLL_FADE_PX}px` } : undefined" @scroll.passive="onBodyScroll">
+  <div class="sc" @keydown="onRootKeydown">
+    <div ref="bodyRef" class="sc-body" @scroll.passive="onBodyScroll">
       <EmptyState v-if="turns.length === 0" class="sc-empty" :title="t('sideChat.title')" :hint="t('sideChat.empty')">
         <template #icon>
           <Icon name="side-chat" size="lg" />
@@ -174,16 +196,20 @@ defineExpose({ focusInput });
         @open-media="emit('openMedia', $event)"
         @resume-turn="onResumeTurn"
       />
+      <div v-if="turns.length > 0" class="sc-dock-space" aria-hidden="true" />
     </div>
 
     <div ref="composerEl" class="sc-composer">
       <Composer
         ref="composerRef"
         variant="side-chat"
+        :working-override="sideChatWorking"
+        :interrupt-armed="escInterruptArmed"
         :draft-scope-key="`sidechat:${agentId}`"
         :placeholder-text="t('sideChat.placeholder')"
         :submit-disabled="running || sending"
         @submit="onComposerSubmit"
+        @interrupt="handleInterrupt"
       />
     </div>
 
@@ -219,7 +245,10 @@ defineExpose({ focusInput });
   );
 }
 .sc-empty {
-  min-height: 100%;
+  min-height: calc(100% - var(--sc-dock-space, 0px));
+}
+.sc-dock-space {
+  height: var(--sc-dock-space, 0px);
 }
 .sc-empty :deep(.ui-empty__icon) {
   color: var(--color-accent);

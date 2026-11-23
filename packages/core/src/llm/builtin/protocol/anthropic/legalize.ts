@@ -137,6 +137,7 @@ function parseAnthropicModelVersion(
 const CEILING_BY_FAMILY_VERSION: Readonly<Record<string, number>> = {
   'fable-5': 128000,
   'mythos-5': 128000,
+  'opus-5': 128000,
   'opus-4-8': 128000,
   'opus-4-7': 128000,
   'opus-4-6': 128000,
@@ -149,6 +150,7 @@ const CEILING_BY_FAMILY_VERSION: Readonly<Record<string, number>> = {
   'sonnet-4-5': 64000,
   'sonnet-4-0': 64000,
   'sonnet-4': 64000,
+  'haiku-5': 128000,
   'haiku-4-5': 64000,
   'haiku-4': 64000,
   'opus-3-5': 8192,

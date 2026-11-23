@@ -1,8 +1,8 @@
 {
   "name": "@moonshot-ai/core",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
-  "description": "Loop, llm, and tool runtime without DI or adapters.",
+  "description": "Loop, llm, tool, and store runtime without DI.",
   "license": "MIT",
   "author": "Moonshot AI",
   "homepage": "https://github.com/MoonshotAI/kimi-code/tree/main/packages/core#readme",
@@ -27,6 +27,10 @@
       "types": "./package.json",
       "default": "./package.json"
     },
+    "./hook": {
+      "types": "./src/hook/index.ts",
+      "default": "./src/hook/index.ts"
+    },
     "./*": {
       "types": "./src/*.ts",
       "default": "./src/*.ts"
@@ -44,10 +48,13 @@
     "ajv": "^8.18.0",
     "ajv-formats": "^3.0.1",
     "openai": "^6.34.0",
+    "pathe": "^2.0.3",
     "radashi": "^12.9.1",
-    "undici": "^7.27.1"
+    "undici": "^7.27.1",
+    "uuid": "14.0.1"
   },
   "devDependencies": {
+    "@copilotkit/aimock": "1.47.0",
     "pino": "^9.5.0"
   }
 }

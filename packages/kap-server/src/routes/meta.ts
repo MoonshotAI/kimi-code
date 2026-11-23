@@ -20,6 +20,7 @@ export interface MetaRouteOptions {
   readonly product?: string;
   readonly serverId: string;
   readonly startedAt: string;
+  readonly homeDir: string;
   readonly dangerousBypassAuth: boolean;
   readonly webTitle?: string;
   readonly getExperimentalFlags: () => Record<string, boolean> | Promise<Record<string, boolean>>;
@@ -42,9 +43,12 @@ export function registerMetaRoute(app: RouteHost, opts: MetaRouteOptions): void 
       tasks: true as const,
       interactions_list: true as const,
       session_wait: true as const,
+      agent_close: true as const,
+      session_continue: true as const,
     }),
     server_id: opts.serverId,
     started_at: opts.startedAt,
+    home_dir: opts.homeDir,
     open_in_apps: [],
     dangerous_bypass_auth: opts.dangerousBypassAuth,
     web_title: opts.webTitle,

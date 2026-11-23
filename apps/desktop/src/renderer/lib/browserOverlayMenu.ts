@@ -1,3 +1,4 @@
+import { v4 as randomUUID } from 'uuid';
 import { createBrowserFocusRequest } from './browserFocusRequest';
 import { onScopeDispose, readonly, ref, watch, type Ref } from 'vue';
 import { openDialogCount, registerExternalMenuSurface } from '@moonshot-ai/app-ui';
@@ -90,7 +91,7 @@ export function registerBrowserOverlayMenu(
   const bridge = browserOverlayBridge();
   const open = ref(false);
   const closePending = ref(false);
-  let nativeMenuId: string = crypto.randomUUID();
+  let nativeMenuId: string = randomUUID();
   let actionConsumed = false;
   const focusReturn = createBrowserFocusRequest({ allowInactiveDocument: true });
   let triggerEl: HTMLElement | null = null;
@@ -196,7 +197,8 @@ export function registerBrowserOverlayMenu(
     refreshOpening = false,
   ): void {
     if (bridge === null || disposed) return;
-    if (!refreshOpening || !open.value || closePending.value) { nativeMenuId = crypto.randomUUID(); actionConsumed = false; }
+    const refreshing = refreshOpening && open.value && !closePending.value;
+    if (!refreshing) { nativeMenuId = randomUUID(); actionConsumed = false; }
     closePending.value = false;
     focusReturn.cancel();
     currentAnchor = { ...anchor };
@@ -211,6 +213,7 @@ export function registerBrowserOverlayMenu(
     }
     bridge.browserOverlayOpenMenu({
       menuId: nativeMenuId,
+      ...(refreshing ? { refresh: true } : {}),
       anchor,
       placement: options?.placement ?? registration.placement ?? 'bottom-end',
       offset: options?.offset ?? registration.offset ?? 4,

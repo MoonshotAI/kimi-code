@@ -28,6 +28,7 @@ jobs:
 
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
 
     steps:
       - uses: actions/checkout@v4
@@ -43,9 +44,14 @@ jobs:
       - run: pnpm run build
       - name: Smoke test CLI bundle
         run: pnpm -C apps/kimi-code run smoke
+      - name: Run the TUI and KAP subprocess journeys on the built CLI
+        run: pnpm exec vitest run apps/kimi-code/test/e2e/tui tests/scenarios/cold-recovery.test.ts
+        env:
+          TESTKIT_CLI_BUILD: dist
 
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -62,7 +68,60 @@ jobs:
           cache: pnpm
 
       - run: pnpm install --frozen-lockfile
-      - run: pnpm run test --shard=${{ matrix.shard }}/5
+      - run: pnpm run test --shard=${{ matrix.shard }}/5 --reporter=default --reporter=github-actions --reporter=./scripts/vitest-l0-gate.mjs
+        env:
+          KIMI_L0_RESULTS: .vitest-reports/l0-${{ matrix.shard }}.json
+      - uses: actions/upload-artifact@v7
+        if: ${{ !cancelled() }}
+        with:
+          name: l0-results-${{ matrix.shard }}
+          path: .vitest-reports/l0-${{ matrix.shard }}.json
+          if-no-files-found: error
+          retention-days: 3
+
+  # Every L0 test in tests/protected.yaml must pass on its first attempt in
+  # the sharded run above, whatever its kind (smoke, regression, contract).
+  l0-gate:
+    name: L0 protected tests
+    needs: test
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - name: Include L0 IDs protected on the base revision
+        if: github.event_name == 'pull_request'
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          git cat-file -e "$BASE_SHA^{commit}" || git fetch --no-tags --depth=1 origin "$BASE_SHA"
+          entry=$(git ls-tree "$BASE_SHA" -- tests/protected.yaml)
+          if [[ -n "$entry" ]]; then
+            git show "${BASE_SHA}:tests/protected.yaml" > "$RUNNER_TEMP/l0-base.yaml"
+            echo "KIMI_L0_BASE_MANIFEST=$RUNNER_TEMP/l0-base.yaml" >> "$GITHUB_ENV"
+          fi
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+      - run: node --test scripts/protected-smoke.test.mjs
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: l0-results-*
+          path: .vitest-reports
+          merge-multiple: true
+      - name: Check every L0 test in the shard results
+        run: node scripts/vitest-l0-gate.mjs .vitest-reports
 
   # pi-tui's suite runs on node:test (not vitest), so the root `pnpm run test`
   # does not execute it; it needs its own job.
@@ -129,6 +188,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
 
       - uses: pnpm/action-setup@v6
 
@@ -141,8 +202,22 @@ jobs:
       - run: pnpm run lint
       - run: node --test 'scripts/checks/*.test.mjs'
       - run: node --test scripts/check-comments.test.mjs
-      - run: node --test scripts/desktop-artifact-prefix.test.mjs scripts/canary-version.test.mjs scripts/canary-linux.test.mjs scripts/mac-update-minimum-system-version.test.mjs
+      - run: node --test scripts/desktop-artifact-prefix.test.mjs scripts/canary-version.test.mjs scripts/desktop-canary-publish.test.mjs scripts/canary-linux.test.mjs scripts/mac-update-minimum-system-version.test.mjs scripts/mutation-diff.test.mjs apps/desktop/scripts/ci/select-e2e-specs.test.mjs apps/desktop/scripts/ci/report-main-journeys.test.mjs
       - run: pnpm run sherif
+      - name: Check new code duplication
+        id: duplication
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          git fetch --no-tags --depth=1 origin "$BASE_SHA"
+          pnpm run check:duplication "$BASE_SHA"
+      - name: Show new duplicate locations
+        if: failure() && steps.duplication.outcome == 'failure' && hashFiles('.tmp/jscpd/jscpd-report.json') != ''
+        run: |
+          jq -r '.duplicates[] | select(.isNew) |
+            "\(.firstFile.name):\(.firstFile.start) and \(.secondFile.name):\(.secondFile.start) (\(.lines) lines, \(.tokens) tokens)"
+          ' .tmp/jscpd/jscpd-report.json
 
   typecheck:
     runs-on: ubuntu-latest

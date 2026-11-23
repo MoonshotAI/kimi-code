@@ -39,6 +39,7 @@ import browser from './zh/browser';
 import browserReference from './zh/browserReference';
 import serverAuth from './zh/serverAuth';
 import remoteControl from './zh/remoteControl';
+import inspector from './zh/inspector';
 
 export default {
   common,
@@ -82,4 +83,5 @@ export default {
   browserReference,
   serverAuth,
   remoteControl,
+  inspector,
 };

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { createApp, h, nextTick, type App } from 'vue';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AppModel } from '@moonshot-ai/app-core/api';
 import type { ConversationStatus } from '@moonshot-ai/app-core/client/types';
 
@@ -83,6 +83,15 @@ vi.mock('@moonshot-ai/app-client/client', async (importOriginal) => {
       setPermission: vi.fn(),
       selectModel: vi.fn(),
     }),
+    getKimiWebApi: () => ({
+      getSessionContextSummary: vi.fn(async () => ({
+        session_id: 'sess-1',
+        agent_id: 'main',
+        captured_at: 0,
+        tokens: { used: 76200, max: 262144 },
+        groups: [{ role: 'user', count: 1, tokens: 76200 }],
+      })),
+    }),
   };
 });
 
@@ -92,7 +101,7 @@ let app: App | undefined;
 let host: HTMLDivElement;
 let storage: Map<string, string>;
 let isMobileViewport = true;
-let menuDimensions = { modelWidth: 360, modelHeight: 305, permWidth: 390, permHeight: 180 };
+let menuDimensions = { modelWidth: 360, modelHeight: 305, permWidth: 390, permHeight: 180, ctxWidth: 268, ctxHeight: 210 };
 
 const origOffsetWidth = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'offsetWidth');
 const origOffsetHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'offsetHeight');
@@ -120,15 +129,20 @@ function mockRect(el: Element, rect: Partial<DOMRect>): void {
   });
 }
 
+beforeAll(async () => {
+  await import('../src/composer/Composer.vue');
+});
+
 beforeEach(() => {
   isMobileViewport = true;
-  menuDimensions = { modelWidth: 360, modelHeight: 305, permWidth: 390, permHeight: 180 };
+  menuDimensions = { modelWidth: 360, modelHeight: 305, permWidth: 390, permHeight: 180, ctxWidth: 268, ctxHeight: 210 };
   Object.defineProperty(HTMLElement.prototype, 'offsetWidth', {
     configurable: true,
     get(this: HTMLElement) {
       let natural: number | null = null;
       if (this.classList.contains('model-dropdown')) natural = menuDimensions.modelWidth;
       else if (this.classList.contains('perm-dropdown')) natural = menuDimensions.permWidth;
+      else if (this.classList.contains('ctx-card')) natural = menuDimensions.ctxWidth;
       if (natural !== null) {
         const cap = Number.parseFloat(this.style.maxWidth);
         return Number.isFinite(cap) ? Math.min(natural, cap) : natural;
@@ -141,6 +155,7 @@ beforeEach(() => {
     get(this: HTMLElement) {
       if (this.classList.contains('model-dropdown')) return menuDimensions.modelHeight;
       if (this.classList.contains('perm-dropdown')) return menuDimensions.permHeight;
+      if (this.classList.contains('ctx-card')) return menuDimensions.ctxHeight;
       return origOffsetHeight?.get ? origOffsetHeight.get.call(this) : 0;
     },
   });
@@ -195,10 +210,51 @@ async function mountComposer(viewportWidth: number, viewportHeight: number): Pro
   await nextTick();
 }
 
+async function setContextInspectorEnabled(enabled: boolean): Promise<void> {
+  const { useContextInspector } = await import('@moonshot-ai/app-core');
+  useContextInspector().setContextInspectorEnabled(enabled);
+}
+
+describe('Composer context ring', () => {
+  it('stays a static usage indicator while the context inspector is off', async () => {
+    isMobileViewport = false;
+    await setContextInspectorEnabled(false);
+    await mountComposer(1200, 820);
+
+    const ring = host.querySelector<HTMLElement>('.ctx-group')!;
+    expect(ring.tagName).toBe('SPAN');
+    expect(ring.getAttribute('role')).toBe('img');
+    expect(ring.getAttribute('aria-label')).toMatch(/^使用 .+ tokens \(30%\)$/);
+
+    ring.click();
+    await nextTick();
+    expect(host.querySelector('.ctx-card')).toBeNull();
+  });
+
+  it('closes the card with Escape while focus stays on the ring', async () => {
+    isMobileViewport = false;
+    await setContextInspectorEnabled(true);
+    await mountComposer(1200, 820);
+
+    const ring = host.querySelector<HTMLButtonElement>('.ctx-group')!;
+    ring.click();
+    await nextTick();
+    expect(ring.getAttribute('aria-expanded')).toBe('true');
+
+    ring.focus();
+    const escape = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
+    ring.dispatchEvent(escape);
+    await nextTick();
+    expect(escape.defaultPrevented).toBe(true);
+    expect(ring.getAttribute('aria-expanded')).toBe('false');
+    expect(document.activeElement).toBe(ring);
+  });
+});
+
 describe('Composer toolbar popup viewport clamping', () => {
   it('clamps the model dropdown inside a narrow mobile toolbar instead of overflowing off the left edge', async () => {
     isMobileViewport = true;
-    menuDimensions = { modelWidth: 360, modelHeight: 305, permWidth: 390, permHeight: 180 };
+    menuDimensions = { modelWidth: 360, modelHeight: 305, permWidth: 390, permHeight: 180, ctxWidth: 268, ctxHeight: 210 };
     await mountComposer(360, 740);
 
     const toolbar = host.querySelector<HTMLElement>('.toolbar')!;
@@ -220,7 +276,7 @@ describe('Composer toolbar popup viewport clamping', () => {
 
   it('keeps the model dropdown aligned to the model pill right edge on wide viewports', async () => {
     isMobileViewport = false;
-    menuDimensions = { modelWidth: 392, modelHeight: 274, permWidth: 390, permHeight: 180 };
+    menuDimensions = { modelWidth: 392, modelHeight: 274, permWidth: 390, permHeight: 180, ctxWidth: 268, ctxHeight: 210 };
     await mountComposer(1200, 820);
 
     const toolbar = host.querySelector<HTMLElement>('.toolbar')!;
@@ -241,7 +297,7 @@ describe('Composer toolbar popup viewport clamping', () => {
 
   it('clamps the permission dropdown inside a narrow mobile toolbar, flips downward when needed, and closes on resize', async () => {
     isMobileViewport = true;
-    menuDimensions = { modelWidth: 360, modelHeight: 305, permWidth: 390, permHeight: 180 };
+    menuDimensions = { modelWidth: 360, modelHeight: 305, permWidth: 390, permHeight: 180, ctxWidth: 268, ctxHeight: 210 };
     await mountComposer(360, 740);
 
     const toolbar = host.querySelector<HTMLElement>('.toolbar')!;
@@ -268,7 +324,7 @@ describe('Composer toolbar popup viewport clamping', () => {
 
   it('respects narrowed visualViewport bounds when clamping horizontally', async () => {
     isMobileViewport = true;
-    menuDimensions = { modelWidth: 320, modelHeight: 260, permWidth: 390, permHeight: 180 };
+    menuDimensions = { modelWidth: 320, modelHeight: 260, permWidth: 390, permHeight: 180, ctxWidth: 268, ctxHeight: 210 };
     Object.defineProperty(window, 'visualViewport', {
       configurable: true,
       value: {
@@ -295,5 +351,38 @@ describe('Composer toolbar popup viewport clamping', () => {
     const menu = host.querySelector<HTMLElement>('.model-dropdown')!;
     expect(menu.style.maxWidth).toBe('244px');
     expect(menu.style.right).toBe('55px');
+  });
+
+  it('centers the context ring card above the ring and clamps it within toolbar bounds', async () => {
+    isMobileViewport = false;
+    await setContextInspectorEnabled(true);
+    await mountComposer(1200, 820);
+
+    const toolbar = host.querySelector<HTMLElement>('.toolbar')!;
+    const ctxBtn = host.querySelector<HTMLElement>('.ctx-group')!;
+    mockRect(toolbar, { left: 368, right: 1094, width: 726, top: 761, bottom: 805, height: 44 });
+    mockRect(ctxBtn, { left: 820, right: 852, width: 32, top: 765, bottom: 797, height: 32 });
+
+    ctxBtn.click();
+    await nextTick();
+    await nextTick();
+    await nextTick();
+
+    let card = host.querySelector<HTMLElement>('.ctx-card')!;
+    expect(card.style.left).toBe('334px');
+    expect(card.style.right).toBe('auto');
+
+    ctxBtn.click();
+    await nextTick();
+
+    mockRect(ctxBtn, { left: 1054, right: 1086, width: 32, top: 765, bottom: 797, height: 32 });
+    ctxBtn.click();
+    await nextTick();
+    await nextTick();
+    await nextTick();
+
+    card = host.querySelector<HTMLElement>('.ctx-card')!;
+    expect(card.style.left).toBe('458px');
+    expect(card.style.right).toBe('auto');
   });
 });

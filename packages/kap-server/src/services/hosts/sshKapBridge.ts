@@ -274,6 +274,11 @@ export class SshKapBridge {
     return this.establishOnce();
   }
 
+  resumeIfIdle(): Promise<HostSession> | undefined {
+    if (this.disposed || this.statusValue !== 'ready' || this.sessionValue !== undefined) return undefined;
+    return this.establishOnce();
+  }
+
   start(): void {
     void this.connect().catch(() => {});
   }
@@ -318,7 +323,7 @@ export class SshKapBridge {
   }
 
   private async establish(): Promise<HostSession> {
-    if (this.statusValue !== 'ready') this.update('connecting');
+    if (this.statusValue !== 'ready') this.update('connecting', this.failureValue, this.errorValue);
     try {
       const active = await this.openSession();
       if (this.disposed) {
@@ -446,7 +451,7 @@ export class SshKapBridge {
           if (this.sessionValue !== activeSession) return;
           this.sessionValue = undefined;
           if (this.disposed || this.statusValue !== 'ready' || code === 0) return;
-          this.update('connecting');
+          this.update('connecting', this.failureValue, this.errorValue);
           void this.reconnect();
         }
       });

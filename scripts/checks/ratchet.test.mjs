@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { test } from 'node:test';
 
-import { compareCounts, countFindings, ratchetRules, ruleOf } from './ratchet.mjs';
+import { compareCounts, countFindings, ratchetBaseline, ratchetRules, ruleOf } from './ratchet.mjs';
 
 await test('ruleOf turns an oxlint diagnostic code into the config rule name', () => {
   assert.equal(ruleOf('typescript(no-explicit-any)'), 'typescript/no-explicit-any');
@@ -88,4 +91,27 @@ await test('compareCounts lists new findings before stale ones', () => {
     { 'eslint/no-empty': { 'a.ts': 1 } },
   );
   assert.deepEqual(changes.map((change) => change.kind), ['added', 'removed']);
+});
+
+await test('ratchetBaseline only compares by default, refuses to raise the baseline on --update, and writes it sorted otherwise', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'ratchet-baseline-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const path = join(dir, 'baselines', 'counts.json');
+  const raised = { 'eslint/no-empty': { 'b.ts': 1, 'a.ts': 2 } };
+  const added = [
+    { kind: 'added', rule: 'eslint/no-empty', file: 'a.ts', from: 0, to: 2 },
+    { kind: 'added', rule: 'eslint/no-empty', file: 'b.ts', from: 0, to: 1 },
+  ];
+
+  assert.deepEqual(ratchetBaseline(path, raised, []), { status: 'compared', changes: added });
+  assert.deepEqual(ratchetBaseline(path, raised, ['--update']), { status: 'refused', changes: added });
+  assert.equal(existsSync(path), false);
+
+  assert.equal(ratchetBaseline(path, raised, ['--update', '--allow-increase']).status, 'written');
+  assert.equal(readFileSync(path, 'utf8'), `${JSON.stringify({ 'eslint/no-empty': { 'a.ts': 2, 'b.ts': 1 } }, null, 2)}\n`);
+
+  writeFileSync(path, JSON.stringify(raised));
+  const lowered = ratchetBaseline(path, { 'eslint/no-empty': { 'b.ts': 1, 'a.ts': 1 } }, ['--update']);
+  assert.deepEqual(lowered, { status: 'written', changes: [{ kind: 'removed', rule: 'eslint/no-empty', file: 'a.ts', from: 2, to: 1 }] });
+  assert.equal(readFileSync(path, 'utf8'), `${JSON.stringify({ 'eslint/no-empty': { 'a.ts': 1, 'b.ts': 1 } }, null, 2)}\n`);
 });

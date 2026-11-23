@@ -72,6 +72,24 @@ function captureLogs(): LogEntry[] {
 }
 
 describe('ToolExecutor', () => {
+  it('generates normalized task ids with an eight-character suffix and unique values', async () => {
+    const executor = new ToolExecutor([defineTool(' Read / HTTP ')]);
+    const first = executor.execute(toolCall('task-id-1', ' Read / HTTP '), undefined);
+    const second = executor.execute(toolCall('task-id-2', ' Read / HTTP '), undefined);
+
+    expect(first.taskId).toMatch(/^read-http-[0-9a-z]{8}$/);
+    expect(second.taskId).toMatch(/^read-http-[0-9a-z]{8}$/);
+    expect(first.taskId).not.toBe(second.taskId);
+    await Promise.all([first.wait(), second.wait()]);
+  });
+
+  it('uses the task prefix when a tool name has no alphanumeric characters', async () => {
+    const handler = new ToolExecutor([defineTool('---')]).execute(toolCall('task-id-fallback', '---'), undefined);
+
+    expect(handler.taskId).toMatch(/^task-[0-9a-z]{8}$/);
+    await handler.wait();
+  });
+
   it('runs the full lifecycle with the established created boundary', async () => {
     const events: string[] = [];
     const tool = defineTool('lifecycle', {

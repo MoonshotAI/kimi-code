@@ -10,7 +10,7 @@ import { abortError, isUserCancellation, userCancellationReason } from '#/_base/
 import { toErrorMessage } from '#/_base/errors/errorMessage';
 import { parseBooleanEnv } from '#/_base/utils/env';
 import { AgentLoopRequestObserver } from './requestObservation';
-import { createAgentMediaPolicy, type AgentMediaPolicy, type AgentMediaPolicyFactory } from './mediaPolicy';
+import { createAgentMediaPolicy, hideReadMediaFile, type AgentMediaPolicy, type AgentMediaPolicyFactory } from './mediaPolicy';
 import {
   agentLLMRequestLogFields,
   type CoreLoopRequester,
@@ -21,6 +21,7 @@ import {
   type ResolvedRequestContext,
 } from './requesterContract';
 import { AgentLoopProjector } from './projector';
+import { project } from './projection';
 import { createStructureRecovery, createStructureResolver } from './projectionPolicy';
 import { createToolSelectResolver } from './toolSelectPolicy';
 import { RequestMetadataTracker, requestMetadataHeaders } from './requestMetadata';
@@ -120,6 +121,7 @@ import {
   type LoopNotify,
   type LoopNotifyMessage,
   type LoopNotifyHandle,
+  type LoopRequestContent,
   type LoopSnapshot,
   type LoopSubmitResult,
   type PromptHandle,
@@ -130,11 +132,11 @@ import {
   type TurnResult,
 } from './loop';
 import { TurnCancel, turnKey } from './turnOps';
+import { LoopDrained, LoopIdle } from './loopOps';
 import { EMPTY_LOOP_PROMPT, historyEntryFromContext } from './history';
 import {
   createLoop,
   createMaxStepsHook,
-  type HookRegistration,
   type Loop,
   type LoopEmitted,
   type LoopLlmRequester,
@@ -142,6 +144,7 @@ import {
   type MessageAppendingEvent,
   type TurnStartingEvent,
 } from '@moonshot-ai/core/loop/index';
+import { createLoopHookRegistry } from '@moonshot-ai/core/hook/loop/registry';
 import { LoopJournal, type LoopJournalSnapshot } from './journal';
 import { AgentPromptProjection } from './promptProjection';
 import { AgentTurnProjection, loopLastRequestIdKey } from './turnProjection';
@@ -190,9 +193,13 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   private taskReconciliation: Promise<void> | undefined;
   private loop: Loop | undefined;
   private initialized = false;
+  private settlementGeneration = 0;
+  private macroGeneration = 0;
+  private lifecycleDrained = true;
+  private lifecycleIdle = true;
   private startPromise: Promise<void> | undefined;
   private closePromise: Promise<void> | undefined;
-  private readonly batchStartingHooks = new Map<string, HookRegistration>();
+  private readonly loopHooks = createLoopHookRegistry();
   private readonly journal: LoopJournal;
   private readonly prompts: AgentPromptProjection;
   private readonly turns: AgentTurnProjection;
@@ -204,7 +211,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     @IAgentToolRegistryService _toolRegistry: IAgentToolRegistryService,
     @IConfigService private readonly config: IConfigService,
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
-    @IEventBus events: IEventBus,
+    @IEventBus private readonly events: IEventBus,
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @ISessionMetadata private readonly metadata: ISessionMetadata,
@@ -270,6 +277,26 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       maxSteps: () => this.config.get<LoopControl>(LOOP_CONTROL_SECTION)?.maxStepsPerTurn,
       cancel: (turnId, reason) => this.cancelActiveTurn(turnId, reason),
       recordStreamPart: (turnId, step, block) => this.journal.recordStreamPart(turnId, step, block),
+    });
+    this.loopHooks.addLoopHook(createMaxStepsHook(
+      () => this.config.get<LoopControl>(LOOP_CONTROL_SECTION)?.maxStepsPerTurn,
+      (event) => this.loop?.state.turn?.bypassMaxSteps === true && event.step === 1,
+    ));
+    this.loopHooks.addLoopHook({
+      point: 'turn.starting',
+      hook: (event, signal) => this.turnStarting(event, signal),
+    });
+    this.loopHooks.addLoopHook({
+      point: 'message.appending',
+      hook: (event, signal) => this.messageAppending(event, signal),
+    });
+    this.loopHooks.addLoopHook({
+      point: 'step.starting',
+      hook: (event) => this.turns.stepStarting(event),
+    });
+    this.loopHooks.addLoopHook({
+      point: 'step.stopping',
+      hook: (event) => this.turns.stepStopping(event),
     });
     this.profileAdapter = new AgentLoopProfileAdapter(
       profile,
@@ -430,6 +457,20 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     return this.turns.history(source);
   }
 
+  previewRequestContent(): LoopRequestContent {
+    const capabilities = this.data().modelCapabilities;
+    const disclosure = this.toolSelect.enabled(capabilities);
+    const source = this.loop?.state.messages ?? this.journal.snapshot().input.messages ?? [];
+    const tools = this.toolSelect.requestTools(this.baselineTools(), disclosure, true, source);
+    const messages = this.toolSelect.shapeHistory(source, disclosure, tools);
+    const mediaInput = capabilities.image_in || capabilities.video_in;
+    return {
+      systemPrompt: this.loop?.state.profile.systemPrompt || this.getSystemPrompt(),
+      tools: mediaInput ? tools : tools.filter((tool) => tool.name !== READ_MEDIA_FILE_TOOL_NAME),
+      messages: project(mediaInput ? messages : hideReadMediaFile(messages)),
+    };
+  }
+
   historyRevision(): number {
     return this.loop?.historyRevision ?? 0;
   }
@@ -520,27 +561,17 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         nextTurnId: Math.max(snapshot.input.nextTurnId ?? 0, minimumNextTurnId),
         historyRevision,
       },
-      hooks: [
-        ...this.batchStartingHooks.values(),
-        createMaxStepsHook(
-          () => this.config.get<LoopControl>(LOOP_CONTROL_SECTION)?.maxStepsPerTurn,
-          (event) => loop.state.turn?.bypassMaxSteps === true && event.step === 1,
-        ),
-        { point: 'turn.starting', hook: (event, signal) => this.turnStarting(event, signal) },
-        { point: 'message.appending', hook: (event, signal) => this.messageAppending(event, signal) },
-        { point: 'step.starting', hook: (event) => this.turns.stepStarting(event) },
-        { point: 'step.stopping', hook: (event) => this.turns.stepStopping(event) },
-      ],
+      hook: this.loopHooks.hook,
     });
     loop.setRequester(this.createLoopRequester(loop));
     this.loop = loop;
     loop.subscribe((event) => {
       const enriched = this.turns.enrich(event, this.toolExecutor);
       this.notifications.project(event);
-      if (event.type === 'llm.retrying') this.journal.append(enriched);
+      if (event.type === 'llm.retry') this.journal.append(enriched);
       this.turns.project(enriched, loop);
       this.projectTaskEvent(enriched);
-      if (event.type !== 'llm.retrying') this.journal.append(enriched);
+      if (event.type !== 'llm.retry') this.journal.append(enriched);
       if ((event.type === 'tool.async_ended' || (event.type === 'tool.ended' && !event.detached)) && event.taskId !== undefined) {
         this.toolExecutor.release(event.taskId);
       }
@@ -1268,12 +1299,10 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   }
 
   registerToolBatchStarting(hook: LoopHooks['tool.batch-starting']): IDisposable {
-    const registration = { point: 'tool.batch-starting' as const, id: randomUUID(), hook };
-    this.batchStartingHooks.set(registration.id, registration);
-    this.loop?.hooks.add(registration);
+    const id = randomUUID();
+    this.loopHooks.addLoopHook({ point: 'tool.batch-starting', hook, id });
     return toDisposable(() => {
-      this.batchStartingHooks.delete(registration.id);
-      this.loop?.hooks.remove(registration.id);
+      this.loopHooks.remove(id);
     });
   }
 
@@ -1366,8 +1395,10 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     return (
       this.pendingSubmissions.length > 0 ||
       this.pendingNotifications.length > 0 ||
+      this.pendingReminders.length > 0 ||
       (this.loop?.state.inbox.normal.length ?? 0) > 0 ||
       (this.loop?.state.inbox.notify.length ?? 0) > 0 ||
+      (this.loop?.state.inbox.remind.length ?? 0) > 0 ||
       (this.loop?.state.completionPending ?? false) ||
       (this.loop?.state.resetting ?? false) ||
       (this.loop !== undefined && this.loop.state.status !== 'idle')
@@ -1389,6 +1420,30 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     return this.turns.lastResult;
   }
 
+  continueTurn(reminders: readonly Message[] = []): void {
+    if (this.disposing) throw abortError('Agent loop disposed');
+    if (
+      this.quiescenceDepth > 0 ||
+      this.historySnapshotDepth > 0 ||
+      this.hasPendingRequests() ||
+      this.snapshot().paused
+    ) {
+      throw new Error2(ErrorCodes.SESSION_BUSY, 'Agent loop is currently busy');
+    }
+    this.runGate.begin();
+    const loop = this.loop;
+    if (loop === undefined) return;
+    const allReminders =
+      this.pendingReminders.length > 0
+        ? [...this.pendingReminders.splice(0), ...reminders]
+        : reminders;
+    if (allReminders.length > 0) {
+      loop.remind(...allReminders);
+    }
+    loop.continue({ force: true });
+    this.maybeSettle();
+  }
+
   async retry(): Promise<TurnResult | undefined> {
     const previous = this.turns.lastResult;
     this.loop?.continue({ force: true });
@@ -1397,7 +1452,38 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     return result === previous ? undefined : result;
   }
 
+  private hasActiveBackgroundTasks(): boolean {
+    return this.loop?.state.calls.some((call) => call.detached) ?? false;
+  }
+
   private maybeSettle(): void {
+    const generation = ++this.settlementGeneration;
+    const drained = !this.disposing && this.quiescenceDepth === 0 && !this.hasPendingRequests();
+    const idle = drained && !this.hasActiveBackgroundTasks();
+    if (!drained && this.lifecycleDrained) this.macroGeneration += 1;
+    if (!drained) this.lifecycleDrained = false;
+    if (!idle) this.lifecycleIdle = false;
+    if (drained && (!this.lifecycleDrained || !this.lifecycleIdle)) {
+      void this.turns.drain().then(() => {
+        if (generation !== this.settlementGeneration) return;
+        const currentDrained = !this.disposing && this.quiescenceDepth === 0 && !this.hasPendingRequests();
+        if (currentDrained && !this.lifecycleDrained) {
+          this.lifecycleDrained = true;
+          this.events.publish(new LoopDrained({ agentId: this.scopeContext.agentId, generation: this.macroGeneration }));
+        }
+        if (generation !== this.settlementGeneration) return;
+        const currentIdle =
+          !this.disposing &&
+          this.quiescenceDepth === 0 &&
+          !this.hasPendingRequests() &&
+          !this.hasActiveBackgroundTasks() &&
+          this.lifecycleDrained;
+        if (currentIdle && !this.lifecycleIdle) {
+          this.lifecycleIdle = true;
+          this.events.publish(new LoopIdle({ agentId: this.scopeContext.agentId, generation: this.macroGeneration }));
+        }
+      });
+    }
     if (this.hasPendingRequests() || this.settleWaiters.length === 0) return;
     const waiters = this.settleWaiters.splice(0);
     for (const resolve of waiters) resolve();

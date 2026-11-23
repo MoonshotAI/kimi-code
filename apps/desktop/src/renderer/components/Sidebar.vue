@@ -208,11 +208,12 @@ function selectSibling(delta: 1 | -1): void {
   const id = ids[nextIdx];
   if (id === undefined) return;
   if (statusTab.value === 'workspaces') {
+    panel.expandGroupIfCollapsed(null);
     emit('createInWorkspace', id);
     return;
   }
   const wsId = panel.groupOfSession(id);
-  if (wsId !== null) panel.expandGroupIfCollapsed(wsId);
+  panel.expandGroupIfCollapsed(wsId, id);
   emit('select', { sessionId: id, source: 'sidebar' });
 }
 

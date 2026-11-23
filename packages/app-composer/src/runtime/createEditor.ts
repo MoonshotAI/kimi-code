@@ -1,3 +1,4 @@
+import { v4 as randomUUID } from 'uuid';
 import { EditorState, TextSelection, type SelectionBookmark } from 'prosemirror-state';
 import { EditorView, type ViewMutationRecord } from 'prosemirror-view';
 import type { Node as PMNode } from 'prosemirror-model';
@@ -554,7 +555,7 @@ export function createComposerEditor(host: HTMLElement, options: ComposerEditorO
     },
 
     saveSelectionBookmark() {
-      const id = crypto.randomUUID();
+      const id = randomUUID();
       bookmarks.set(id, TextSelection.create(view.state.doc, view.state.selection.to).getBookmark());
       return id;
     },

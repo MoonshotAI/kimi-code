@@ -2,6 +2,7 @@ import type { AppSkillAttachment } from '@moonshot-ai/app-core/api';
 import { composerSnapshotDocument, parseBrowserReferenceLinks, stripAttachmentLinks, type ComposerDocumentSnapshot } from '@moonshot-ai/app-composer/model';
 import type { PromptEnvelope } from '../client/types';
 import { attachmentsToContent } from '../client/attachmentsToContent';
+import { withSessionReferences } from './sessionReferences';
 
 function xml(value: string): string {
   return value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
@@ -72,7 +73,7 @@ export function buildPromptContent(prompt: Pick<PromptEnvelope, 'text' | 'attach
     }
   }
   if (snapshot === undefined || ids.length === 0) {
-    const text = stripAttachmentLinks(prompt.text);
+    const text = withSessionReferences(stripAttachmentLinks(prompt.text));
     return [...(text ? [{ type: 'text' as const, text }] : []), ...attachmentsToContent(prompt.attachments)];
   }
   const referenceById = new Map(snapshot.browserReferences?.map((reference) => [reference.id, reference]));
@@ -112,7 +113,7 @@ export function buildPromptContent(prompt: Pick<PromptEnvelope, 'text' | 'attach
     context.push(xml(JSON.stringify({ page: capture.page, capturedAt: capture.capturedAt, target: capture.target, viewport: capture.viewport, crop: capture.screenshot?.crop })));
     context.push('</untrusted_page_evidence>', '</browser_capture>');
   }
-  const body = stripAttachmentLinks(browserReferenceText(prompt.text, snapshot));
+  const body = withSessionReferences(stripAttachmentLinks(browserReferenceText(prompt.text, snapshot)));
   const parts: AppSkillAttachment[] = [{ type: 'text', text: [body, context.join('\n')].filter(Boolean).join('\n\n') }];
   for (const attachment of prompt.attachments) {
     const aliases = attachment.clientId === undefined ? undefined : imageRefs.get(attachment.clientId);

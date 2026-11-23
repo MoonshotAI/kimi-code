@@ -2,7 +2,7 @@ import { testModule } from '../../../harness';
 import type { GoogleGenAITransportFixture } from '../types';
 
 export default {
-  name: 'vertex-non-stream',
+  name: 'as a Vertex AI user behind a proxy, I want non-streaming responses to preserve the custom base path',
   module: testModule({ options: { vertexai: true } }),
   endpoint: {
     baseUrl: 'https://example.test/proxy/v1beta1/',

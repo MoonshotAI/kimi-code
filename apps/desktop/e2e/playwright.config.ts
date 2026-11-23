@@ -6,7 +6,9 @@ const specFiles = readdirSync(fileURLToPath(new URL('.', import.meta.url))).filt
 const specsWithPrefix = (...prefixes: string[]) =>
   specFiles.filter(file => prefixes.some(prefix => file.startsWith(prefix)));
 
-const smokeSpecs = ['core-turn.spec.ts'];
+const journeySpecs = ['**/desktop/e2e/*.spec.ts', '**/desktop/test/e2e/**/*.spec.ts'];
+const quarantineTag = /@quarantine\b/;
+const excludedJourneyTags = [/@smoke\b/, quarantineTag];
 const sessionApiGateSpecs = ['approval-permission-modes.spec.ts'];
 const approvalsStateSpecs = [
   'approval-plan-review.spec.ts',
@@ -31,7 +33,6 @@ const turnsTranscriptSpecs = [
 ];
 
 const tieredSpecs = [
-  ...smokeSpecs,
   ...sessionApiGateSpecs,
   ...approvalsStateSpecs,
   ...turnEngineGateSpecs,
@@ -53,14 +54,16 @@ export default defineConfig({
   timeout: process.platform === 'win32' ? 240_000 : 120_000,
   expect: { timeout: 15_000 },
   reporter: process.env['CI']
-    ? [['list'], ['html', { outputFolder: '../playwright-report', open: 'never' }]]
-    : [['list']],
-  projects: [
-    { name: 'smoke', testMatch: smokeSpecs, retries: 1 },
-    { name: 'gate-session-api', testMatch: sessionApiGateSpecs, retries: 1, dependencies: ['smoke'] },
-    { name: 'approvals-state', testMatch: approvalsStateSpecs, dependencies: ['gate-session-api'] },
-    { name: 'gate-turn-engine', testMatch: turnEngineGateSpecs, retries: 1, dependencies: ['smoke'] },
-    { name: 'turns-transcript', testMatch: turnsTranscriptSpecs, dependencies: ['gate-turn-engine'] },
-    { name: 'app-shell', testMatch: '*.spec.ts', testIgnore: tieredSpecs, dependencies: ['smoke'] },
+    ? [['list'], ['./fixtures/smoke-reporter.ts'], ['html', { outputFolder: fileURLToPath(new URL('../playwright-report', import.meta.url)), open: 'never' }]]
+    : [['list'], ['./fixtures/smoke-reporter.ts']],
+  projects: process.env['KIMI_E2E_QUARANTINE'] === '1' ? [
+    { name: 'quarantine', testDir: '..', testMatch: journeySpecs, grep: quarantineTag },
+  ] : [
+    { name: 'smoke', testDir: '..', testMatch: journeySpecs, grep: /@smoke\b/, grepInvert: quarantineTag },
+    { name: 'gate-session-api', grepInvert: excludedJourneyTags, testMatch: sessionApiGateSpecs, retries: 1, dependencies: ['smoke'] },
+    { name: 'approvals-state', grepInvert: excludedJourneyTags, testMatch: approvalsStateSpecs, dependencies: ['gate-session-api'] },
+    { name: 'gate-turn-engine', grepInvert: excludedJourneyTags, testMatch: turnEngineGateSpecs, retries: 1, dependencies: ['smoke'] },
+    { name: 'turns-transcript', grepInvert: excludedJourneyTags, testMatch: turnsTranscriptSpecs, dependencies: ['gate-turn-engine'] },
+    { name: 'app-shell', testDir: '..', testMatch: journeySpecs, testIgnore: tieredSpecs.map(file => `**/desktop/e2e/${file}`), grepInvert: excludedJourneyTags, dependencies: ['smoke'] },
   ],
 });

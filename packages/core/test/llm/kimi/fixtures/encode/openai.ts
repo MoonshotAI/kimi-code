@@ -13,6 +13,7 @@ export const kimiOpenAIEncodeFixtures = [{
         maxContextSize: 1000,
       },
       thinking: { effort: 'high', keep: 'all' },
+      cacheKey: 'cache-1',
     },
     profile: {
       tools: [{ name: 'weather', description: 'Get weather', parameters: { type: 'object' } }],
@@ -67,10 +68,23 @@ export const kimiOpenAIEncodeFixtures = [{
         function: { name: 'weather', description: 'Get weather', parameters: { type: 'object' } },
       }],
       thinking: { type: 'enabled', effort: 'high', keep: 'all' },
+      prompt_cache_key: 'cache-1',
       max_completion_tokens: 700,
       nested: { enabled: true },
       custom: 'inside',
       user: 'outside',
+    },
+  },
+}, {
+  name: 'kimi-openai-cache-key',
+  module: testModule({
+    model: { ...TEST_MODEL, cacheKey: 'kimi-cache-1' },
+  }),
+  expected: {
+    params: {
+      model: 'test-model',
+      messages: [{ role: 'user', content: 'hi' }],
+      prompt_cache_key: 'kimi-cache-1',
     },
   },
 }] satisfies KimiOpenAIEncodeFixture[];

@@ -30,6 +30,8 @@ export const STORAGE_KEYS = {
   pinnedWorkspaces: 'kimi-web.pinned-workspaces',
   pinnedOrder: 'kimi-web.pinned-order',
   pinnedCollapsed: 'kimi-web.pinned-collapsed',
+  sessionsSectionCollapsed: 'kimi-web.sessions-section-collapsed',
+  pinnedSessionDisplayMode: 'kimi-web.pinned-session-display-mode',
   workspaceNameOverrides: 'kimi-web.workspace-name-overrides',
   workspaceNameOverridesById: 'kimi-web.workspace-name-overrides-by-id',
   notifyEnabled: 'kimi-web.notify-enabled',
@@ -61,7 +63,9 @@ export const STORAGE_KEYS = {
   notifyOnApproval: 'kimi-web.notify-on-approval',
   soundOnComplete: 'kimi-web.sound-on-complete',
   sessionInfoPanel: 'kimi-web.session-info-panel',
+  contextInspector: 'kimi-web.context-inspector',
   browserTabTitle: 'kimi-web.browser-tab-title',
+  sessionMentions: 'kimi-web.session-mentions',
 } as const;
 
 export const NEW_SESSION_SCOPE = '__new__';
@@ -164,6 +168,24 @@ export function loadPinnedCollapsed(): boolean {
 
 export function savePinnedCollapsed(collapsed: boolean): void {
   safeSetJson(STORAGE_KEYS.pinnedCollapsed, collapsed);
+}
+
+export function loadSessionsSectionCollapsed(): boolean {
+  return safeGetJson<boolean>(STORAGE_KEYS.sessionsSectionCollapsed) === true;
+}
+
+export function saveSessionsSectionCollapsed(collapsed: boolean): void {
+  safeSetJson(STORAGE_KEYS.sessionsSectionCollapsed, collapsed);
+}
+
+export type PinnedSessionDisplayMode = 'compact' | 'workspace';
+
+export function loadPinnedSessionDisplayMode(): PinnedSessionDisplayMode {
+  return safeGetString(STORAGE_KEYS.pinnedSessionDisplayMode) === 'workspace' ? 'workspace' : 'compact';
+}
+
+export function savePinnedSessionDisplayMode(mode: PinnedSessionDisplayMode): void {
+  safeSetString(STORAGE_KEYS.pinnedSessionDisplayMode, mode);
 }
 
 export type SidebarViewMode = 'flat' | 'grouped';

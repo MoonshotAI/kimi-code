@@ -52,6 +52,21 @@ export function turnFileEditCounts(
   return counts;
 }
 
+export function editedFileCount(turns: readonly ChatTurn[], cwd?: string): number {
+  const paths = new Set<string>();
+  let unnamed = 0;
+  for (const turn of turns) {
+    for (const block of turnBlocks(turn)) {
+      if (block.kind !== 'tool' || block.tool.status !== 'ok') continue;
+      if (!EDIT_KINDS.has(normalizeToolName(block.tool.name))) continue;
+      const path = toolFilePath(block.tool);
+      if (path) paths.add(toolPathKeys(path, cwd).at(-1)!);
+      else unnamed += 1;
+    }
+  }
+  return paths.size + unnamed;
+}
+
 export function editedFileMarkers(
   turns: readonly ChatTurn[],
   cwd?: string,

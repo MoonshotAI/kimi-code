@@ -669,10 +669,10 @@ describe('direct generate', () => {
       )) {
         events.push(event);
       }
-      expect(events.find((event) => event.type === 'llm.streaming.part')).toMatchObject({
+      expect(events.find((event) => event.type === 'llm.delta.part')).toMatchObject({
         part: { type: 'text', text: 'pong' },
       });
-      expect(events.find((event) => event.type === 'llm.streaming.usage')).toMatchObject({
+      expect(events.find((event) => event.type === 'llm.delta.usage')).toMatchObject({
         usage: emptyUsage(),
       });
       expect(events.find((event) => event.type === 'llm.ended')).toMatchObject({

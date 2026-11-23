@@ -5,11 +5,10 @@ import { useI18n } from 'vue-i18n';
 import type { ApprovalBlock, TaskItem, TodoView, TurnAttachment, UIQuestion } from '../../types';
 import type { GlobalShortcutFailureReason } from '../../../shared/global-shortcut';
 import type { QuestionResponse, SessionPlan } from '../../api/types';
-import type { PromptAttachment } from '@moonshot-ai/app-client/client';
 import { useKimiWebClient } from '@moonshot-ai/app-client/client';
 import { useAppearance } from '@moonshot-ai/app-core';
 import type { AttachmentEntry } from '@moonshot-ai/app-composer/features/attachment';
-import { Composer } from '@moonshot-ai/app-components';
+import { Composer, type ComposerEmits } from '@moonshot-ai/app-components';
 import { GoalPanel } from '@moonshot-ai/app-components';
 import { PlanPanel } from '@moonshot-ai/app-components';
 import { QuestionCard } from '@moonshot-ai/app-components';
@@ -45,6 +44,7 @@ const props = defineProps<{
   mobile?: boolean;
   statusNote?: string;
   beforeSubmit?: () => boolean;
+  deferSubmitReset?: boolean;
   onCaptureScreenshot?: () => void;
   screenshotShortcutKeys?: string[];
   screenshotShortcutUnavailable?: boolean;
@@ -52,16 +52,7 @@ const props = defineProps<{
   onConfigureScreenshotShortcut?: () => void;
 }>();
 
-const emit = defineEmits<{
-  submit: [payload: { text: string; attachments: PromptAttachment[]; restoreText?: string; editText?: string; restoreEntries?: AttachmentEntry[]; snapshot?: ComposerDocumentSnapshot; skills?: { name: string; path?: string }[]; forceQueue?: boolean }];
-  steer: [payload: { text: string; attachments: PromptAttachment[]; restoreText?: string; editText?: string; restoreEntries?: AttachmentEntry[]; snapshot?: ComposerDocumentSnapshot; skills?: { name: string; path?: string }[] }];
-  steerQueued: [index: number];
-  command: [payload: { cmd: string; attachments: PromptAttachment[]; restoreText?: string; skillName?: string; skillPath?: string; restoreEntries?: AttachmentEntry[]; snapshot?: ComposerDocumentSnapshot; editText?: string; delivery?: 'steer' | 'queue' }];
-  interrupt: [];
-  focusGoal: [];
-  pickModel: [];
-  login: [];
-  configureModel: [];
+const emit = defineEmits<ComposerEmits & {
   answer: [questionId: string, response: QuestionResponse];
   approval: [approvalId: string, response: { decision: 'approved' | 'rejected' | 'cancelled'; scope?: 'session'; feedback?: string; selectedLabel?: string }];
   'toggle-dock-panel': [panel: 'bash' | 'subagent' | 'todos' | 'goal' | 'plan'];
@@ -166,6 +157,7 @@ const composerRef = ref<{
   loadAttachmentsForEdit: (atts: TurnAttachment[]) => void;
   restoreDraftEntries: (entries: AttachmentEntry[]) => void;
   focus: () => void;
+  clearAfterDispatch: (expectedSnapshot?: ComposerDocumentSnapshot) => void;
   closeOverlays?: () => void;
   anyPopupOpen?: boolean;
   isEmpty?: () => boolean;
@@ -234,6 +226,10 @@ function restoreDraftEntries(entries: AttachmentEntry[]): void {
 
 function focus(): void {
   composerRef.value?.focus();
+}
+
+function clearAfterDispatch(expectedSnapshot?: ComposerDocumentSnapshot): void {
+  composerRef.value?.clearAfterDispatch(expectedSnapshot);
 }
 
 const isEmpty = () => composerRef.value?.isEmpty?.() ?? false;
@@ -417,7 +413,7 @@ onUnmounted(() => {
   workBodyResizeObserver = null;
 });
 
-defineExpose({ loadForEdit, insertQuote, insertScreenshotAnnotation, insertPathMention, addFiles, hasInsertableComposer, loadAttachmentsForEdit, restoreDraftEntries, focus, anyPopupOpen, isEmpty });
+defineExpose({ loadForEdit, insertQuote, insertScreenshotAnnotation, insertPathMention, addFiles, hasInsertableComposer, loadAttachmentsForEdit, restoreDraftEntries, focus, anyPopupOpen, isEmpty, clearAfterDispatch });
 </script>
 
 <template>
@@ -685,6 +681,7 @@ defineExpose({ loadForEdit, insertQuote, insertScreenshotAnnotation, insertPathM
         :style="hasPendingCard ? { display: 'none' } : undefined"
         :status-note="props.statusNote"
         :before-submit="props.beforeSubmit"
+        :defer-submit-reset="props.deferSubmitReset"
         ref="composerRef"
         :on-capture-screenshot="props.onCaptureScreenshot"
         :screenshot-shortcut-keys="props.screenshotShortcutKeys"
@@ -697,6 +694,7 @@ defineExpose({ loadForEdit, insertQuote, insertScreenshotAnnotation, insertPathM
         @steer-queued="emit('steerQueued', $event)"
         @command="emit('command', $event)"
         @interrupt="emit('interrupt')"
+        @continue="emit('continue')"
         @focus-goal="emit('focusGoal')"
         @pick-model="emit('pickModel')"
         @login="emit('login')"

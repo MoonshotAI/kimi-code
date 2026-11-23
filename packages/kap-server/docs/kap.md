@@ -28,7 +28,7 @@ All `/api/v1/*`, `/openapi.json`, and `/asyncapi.json` endpoints require `Author
 
 ## 2. Request conventions
 
-- **JSON envelope**: JSON endpoints return `{ "code": 0, "msg": "success", "data": ..., "request_id": "..." }`. Check `code === 0` first (`40001` validation error with `details`, `40401` session/agent not found, `40404` interaction not found, `40901` session busy, `40902` interaction already ended, `40927` `prompt_id` conflict, `40931` session locked by another process, `41001`/`41002` interaction expired; HTTP `401`/`403`/`429` indicate auth or rate-limit rejection).
+- **JSON envelope**: JSON endpoints return `{ "code": 0, "msg": "success", "data": ..., "request_id": "..." }`. Check `code === 0` first (`40001` validation error with `details`, `40401` session/agent not found, `40404` interaction not found, `40901` session busy, `40902` interaction already ended, `40927` `prompt_id` conflict, `40931` session locked by another process, `40939` agent not closable, `40940` turn not continuable, `41001`/`41002` interaction expired; HTTP `401`/`403`/`429` indicate auth or rate-limit rejection).
 - **Workspace placement when creating sessions (`workspace_id` vs `cwd`)**:
   - Keep new or follow-up sessions in the **current project/workspace** unless the user explicitly asks for a different directory -- do **not** switch `cwd` to `$HOME` just because a task inspects machine-wide paths.
   - On `POST /api/v1/sessions`, passing only `cwd` always routes to an `implicit` (`wd_*`) bucket and will **not** attach to a Desktop `managed` (`wm_*`) workspace. Resolve `workspace_id` first:
@@ -43,7 +43,7 @@ All `/api/v1/*`, `/openapi.json`, and `/asyncapi.json` endpoints require `Author
 ### A. Bidirectional session handoff (`HandOff`) & spawning parallel sessions
 
 - **Hand off TO Kimi Code (or fan out follow-up sessions)**: Attach to the live Desktop / `kimi web` server (§1.1) so sessions appear in real time, resolve `workspace_id` (§2) so they land in the active workspace, call `POST /api/v1/sessions` (`{ "workspace_id" | "cwd", "title", "agent_config"?: ... }`), then submit a concise structured brief (Goal, Modified files, Constraints, Next steps) via `POST /api/v1/sessions/{session_id}/prompts` and return each `session_id` (plus `kimi -S <session_id>`) to the user. If running against an on-demand `kimi web --port 0 --json` subprocess, wait via `:wait` until `activity !== "turn"` before stopping the subprocess so history persists cleanly.
-- **Pick up FROM Kimi Code**: Locate the session via `GET /api/v1/sessions?page_size=50&archived=false&sort=updated_at_desc` or `POST /api/v1/search` (`{ "query": "..." }`), read `GET /api/v1/sessions/{session_id}/agents/main/turns?page_size=10` (plus `GET .../interactions` if `pending_interaction !== "none"`), summarize progress and blockers, and either wait for the user's next instruction or continue (optionally branching first via `POST /api/v1/sessions/{session_id}:fork` `{ "turn_index"?: number, "title"?: "..." }`).
+- **Pick up FROM Kimi Code**: Locate the session via `GET /api/v1/sessions?page_size=50&archived=false&sort=updated_at_desc` (add `query=<text>` to match title or last prompt, or an exact session id) or `POST /api/v1/search` (`{ "query": "..." }`), read `GET /api/v1/sessions/{session_id}/agents/main/turns?page_size=10` (plus `GET .../interactions` if `pending_interaction !== "none"`), summarize progress and blockers, and either wait for the user's next instruction or continue (optionally branching first via `POST /api/v1/sessions/{session_id}:fork` `{ "turn_index"?: number, "title"?: "..." }`).
 
 ### B. Cross-workspace session organization
 
@@ -59,7 +59,7 @@ Omitting `workspace_id` on `GET /api/v1/sessions` queries across all workspaces 
    - Query `GET /api/v1/models` (`data.items[]` has `{ provider, model, display_name, support_efforts }`) to map a human model name to `"${provider}/${model}"` instead of guessing model IDs.
    - Create a session in the target workspace (§2) via `POST /api/v1/sessions` with `{ "workspace_id": "...", "title"?: "...", "agent_config"?: { "permission_mode": "manual" | "auto" | "yolo", "model"?: "${provider}/${model}", "thinking"?: "high", "plan_mode"?: false } }` (or `"cwd"` when no workspace exists yet).
 2. **Submit a round prompt**: `POST /api/v1/sessions/{session_id}/prompts` with a unique `prompt_id` (`"round-1"`, `"round-2"`, ...) and `{ "content": [{ "type": "text", "text": "..." }] }`. Verify `code === 0` and `data.status` is `"running"` or `"queued"`.
-3. **Wait for the next stopping point**: `POST /api/v1/sessions/{session_id}:wait` with `{ "timeout_ms": 15000 }` (`0..60000`, default `15000`; use `1000`-`3000` for periodic progress checks). Returns in `0 ms` if `session.activity !== "turn"` or a pending interaction already exists; otherwise blocks until `main` leaves `"turn"`, a pending `approval`/`question` appears, or `timeout_ms` elapses (`{ session, pending_interactions, timed_out }`).
+3. **Wait for the next stopping point**: `POST /api/v1/sessions/{session_id}:wait` with `{ "timeout_ms": 15000 }` (`0..60000`, default `15000`; use `1000`-`3000` for periodic progress checks). Returns in `0 ms` if `session.activity !== "turn"` or a pending interaction already exists; otherwise blocks until `main` leaves `"turn"`, a pending `approval`/`question` appears, or `timeout_ms` elapses (`{ session, pending_interactions, timed_out }`). When it returns with `timed_out: false`, everything the session recorded so far is on disk: a server restarted after a crash at that point shows the same turns.
 4. **Branch on the `:wait` result**:
    - **`pending_interactions` non-empty** (also readable via `GET /api/v1/sessions/{session_id}/interactions`): reply via `POST /api/v1/sessions/{session_id}/interactions/{interaction_id}`:
      - `kind === "approval"`: `{ "kind": "approval", "decision": "approved" | "rejected" | "cancelled", "scope"?: "session", "feedback"?: "..." }`.
@@ -123,15 +123,17 @@ curl -sf "${ORIGIN}/api/v1/sessions/${SID}/agents/main/turns?page_size=5" \
 
 | Method & Path | Gate | Summary |
 | --- | --- | --- |
-| `GET /api/v1/healthz` / `GET /api/v1/meta` | `baseline` | Liveness probe (`{ ok: true }`) and server metadata / `product` / `capabilities` |
+| `GET /api/v1/healthz` / `GET /api/v1/meta` | `baseline` | Liveness probe (`{ ok: true }`) and server metadata / `product` / `capabilities` / `home_dir` (the Kimi Code data directory) |
 | `GET /api/v1/kap.md` / `GET /openapi.json` / `GET /asyncapi.json` | `baseline` | Built-in runtime guide (`text/markdown`), REST OpenAPI 3.0 schema, and WS AsyncAPI 3.1 schema |
 | `GET /api/v1/workspaces` | `baseline` | List workspaces (`{ items: [{ id, root, name, kind: "managed" \| "implicit" }] }`) |
 | `GET /api/v1/models` | `baseline` | List available models (`{ items: [{ provider, model, display_name?, support_efforts? }] }`) |
 | `POST /api/v1/sessions` | `baseline` | Create a session (`workspace_id` or `cwd`, `title?`, `metadata?`, `agent_config?`, `environment_id?`) |
-| `GET /api/v1/sessions` / `GET /api/v1/sessions/{session_id}` | `baseline` | List sessions across workspaces (`flat` or `by_workspace`, filters, pagination) or get one session |
+| `GET /api/v1/sessions` / `GET /api/v1/sessions/{session_id}` | `baseline` | List sessions across workspaces (`flat` or `by_workspace`, filters incl. `query` over title / last prompt / exact id, pagination) or get one session |
 | `POST /api/v1/sessions/{session_id}:wait` | `session_wait` | Wait until `activity !== "turn"`, a pending interaction appears, or `timeout_ms` (`0..60000`, default `15000`) |
 | `POST /api/v1/sessions/{session_id}:cancel` | `baseline` | Cancel active turn (`agent_id?`, `include_background?`) |
+| `POST /api/v1/sessions/{session_id}:continue` | `session_continue` | Continue after an interrupted, non-blocked failed, or crash-settled latest turn (`40940` if not continuable) |
 | `POST /api/v1/sessions/{session_id}:fork` / `:undo` / `:compact` / `:btw` | `baseline` | Branch session (`turn_index?`), undo from `turn_id`, compact context, or spawn read-only side-chat (`{ agent_id }`) |
+| `POST /api/v1/sessions/{session_id}/agents/{agent_id}:close` | `agent_close` | Close and remove a `btw` side-chat agent (`40939` if not closable) |
 | `POST /api/v1/sessions/{session_id}:archive` / `:restore` / `:delete` / `:reload` / `:takeover` | `baseline` | Single-session lifecycle actions (plus batch `POST /api/v1/sessions:archive` & `:restore` by `ids`) |
 | `POST /api/v1/sessions/{session_id}/profile` & `/title/generate` | `baseline` | Update `title`, `metadata`, or `agent_config`, or generate a session title |
 | `GET /api/v1/sessions/{session_id}/agents/{agent_id}/turns` | `baseline` | Read turns (`before_ordinal?`, `page_size` <= 200; flushes live streaming items on read) |

@@ -2,7 +2,7 @@ import { TEST_MODEL, testModule } from '../../../harness';
 import type { KimiAnthropicTransportFixture } from '../types';
 
 export default {
-  name: 'kimi-anthropic-trace-id',
+  name: 'as a Kimi Anthropic user, I want trace ids preserved from non-streaming responses',
   module: testModule({ model: { ...TEST_MODEL, maxOutputTokens: 1024 } }),
   endpoint: { baseUrl: 'https://example.test', apiKey: 'test-key' },
   stream: false,

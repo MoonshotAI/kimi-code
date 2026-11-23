@@ -1,5 +1,5 @@
 // Core 参数解析与 Ajv 校验基线；历史条目只在与其直接相关的用例前标注。
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   compileToolArgsValidator,
@@ -7,6 +7,11 @@ import {
   parseToolCallArguments,
   validateToolArgs,
 } from '#/tool/args';
+import { setLog } from '#/utils/log';
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 function validate(schema: Record<string, unknown>, value: JsonType): string | null {
   return validateToolArgs(compileToolArgsValidator(schema), value);
@@ -36,16 +41,11 @@ describe('parseToolCallArguments', () => {
 });
 
 describe('tool args validation', () => {
-  it('validates string format email', () => {
-    const schema = { type: 'string', format: 'email' };
-    expect(validate(schema, 'user@example.com')).toBeNull();
-    expect(validate(schema, 'not-an-email')).toContain('format');
-  });
-
-  it('validates string format uri', () => {
-    const schema = { type: 'string', format: 'uri' };
-    expect(validate(schema, 'https://example.com/x')).toBeNull();
-    expect(validate(schema, 'not a uri')).toContain('format');
+  it('validates string formats', () => {
+    expect(validate({ type: 'string', format: 'email' }, 'user@example.com')).toBeNull();
+    expect(validate({ type: 'string', format: 'email' }, 'not-an-email')).toContain('format');
+    expect(validate({ type: 'string', format: 'uri' }, 'https://example.com/x')).toBeNull();
+    expect(validate({ type: 'string', format: 'uri' }, 'not a uri')).toContain('format');
   });
 
   it('ignores format on non-strings', () => {
@@ -94,5 +94,40 @@ describe('tool args validation', () => {
     };
     expect(validate(prefixed, ['first', 1])).toBeNull();
     expect(validate(prefixed, [1, 'second'])).not.toBeNull();
+  });
+
+  it('routes AJV warnings through utils log for every schema draft', () => {
+    const warnings: string[] = [];
+    setLog({
+      debug: () => {},
+      info: () => {},
+      warn: (...args) => {
+        const [message] = args;
+        if (typeof message === 'string') warnings.push(message);
+      },
+      error: () => {},
+    });
+    const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const schemas = [
+      { type: 'string', format: 'unknown-draft07' },
+      {
+        $schema: 'https://json-schema.org/draft/2019-09/schema',
+        type: 'string',
+        format: 'unknown-draft2019',
+      },
+      {
+        $schema: 'https://json-schema.org/draft/2020-12/schema',
+        type: 'string',
+        format: 'unknown-draft2020',
+      },
+    ];
+
+    for (const schema of schemas) {
+      expect(validate(schema, 'value')).toBeNull();
+      expect(warnings).toContainEqual(
+        expect.stringContaining(`unknown format "${schema.format}"`),
+      );
+    }
+    expect(consoleWarn).not.toHaveBeenCalled();
   });
 });

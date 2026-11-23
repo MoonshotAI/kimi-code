@@ -34,12 +34,9 @@ import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/
 import { subagentLabels } from '#/session/agentLifecycle/subagentMetadata';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import {
-  buildSubagentModelDescriptions,
-  exposesSubagentModelChoice,
   resolveSubagentBinding,
   resolveSubagentThinking,
   resolveSubagentTimeoutMs,
-  stripSubagentModelParameter,
   wrapSubagentModelError,
 } from '#/session/subagent/configSection';
 import { emitAgentRunSpawned, mirrorAgentRun } from '#/session/subagent/mirrorAgentRun';
@@ -54,7 +51,6 @@ import DESCRIPTION from './spawn.md?raw';
 type SubagentBinding = ReturnType<typeof resolveSubagentBinding>;
 
 const TOWER_SPAWN_PARAMETERS = toInputJsonSchema(TowerSpawnToolInputSchema);
-const TOWER_SPAWN_PARAMETERS_NO_MODEL = stripSubagentModelParameter(TOWER_SPAWN_PARAMETERS);
 const REVIEW_REQUEST_SCAN_LIMIT = 50;
 const REVIEW_HISTORY_ROUNDS = 5;
 const REVIEW_EXCERPT_MAX_CHARS = 8000;
@@ -67,6 +63,17 @@ function truncateSection(text: string, maxChars: number): string {
 async function reviewExcerpt(store: TowerStore, file: string): Promise<string> {
   const { body } = parseFrontmatter(await readFile(store.abs(file), 'utf8'));
   return truncateSection(body.trim(), REVIEW_EXCERPT_MAX_CHARS);
+}
+
+function resolveSpawnBinding(
+  config: IConfigService,
+  args: TowerSpawnToolInput,
+  own: { modelAlias: string; thinkingLevel: string },
+): SubagentBinding {
+  if (args.kind === 'reviewer' && args.model === undefined) {
+    return { model: own.modelAlias, thinking: own.thinkingLevel, modelSource: 'inherited' };
+  }
+  return resolveSubagentBinding(config, own, args.model);
 }
 
 async function findCompletionReport(
@@ -84,14 +91,11 @@ export class TowerSpawnTool implements ITowerSpawnTool {
   readonly name = 'TowerSpawn' as const;
 
   get description(): string {
-    const modelLines = buildSubagentModelDescriptions(this.config);
-    return modelLines === undefined ? DESCRIPTION : `${DESCRIPTION}\n\n${modelLines}`;
+    return DESCRIPTION;
   }
 
   get parameters(): Record<string, unknown> {
-    return exposesSubagentModelChoice(this.config)
-      ? TOWER_SPAWN_PARAMETERS
-      : TOWER_SPAWN_PARAMETERS_NO_MODEL;
+    return TOWER_SPAWN_PARAMETERS;
   }
 
   private readonly callerAgentId: string;
@@ -222,11 +226,10 @@ export class TowerSpawnTool implements ITowerSpawnTool {
         binding =
           own.modelAlias === undefined
             ? undefined
-            : resolveSubagentBinding(
-                this.config,
-                { modelAlias: own.modelAlias, thinkingLevel: own.thinkingLevel },
-                args.model,
-              );
+            : resolveSpawnBinding(this.config, args, {
+                modelAlias: own.modelAlias,
+                thinkingLevel: own.thinkingLevel,
+              });
       } catch (error) {
         return {
           output: error instanceof Error ? error.message : String(error),
@@ -635,7 +638,7 @@ export class TowerSpawnTool implements ITowerSpawnTool {
       checklist +
       `# When done — TowerReview is the only mandatory protocol step\n` +
       (targetMission?.kind === 'artifact'
-        ? `1. Submit your verdict with TowerReview: { target: "${target}", status: "clean" | "p1-Nitems" | "p2-Nitems", merge: "merge" | "fix-then-merge" | "hold", findings, checks, decision }. This independent review is advisory only: it cannot replace explicit human acceptance recorded by reviewer=tower on the exact branch tip. Standard review-result notifications are stored automatically — do not send a second manual TowerSend.\n`
+        ? `1. Submit your verdict with TowerReview: { target: "${target}", status: "clean" | "p1-Nitems" | "p2-Nitems", merge: "merge" | "fix-then-merge" | "hold", findings, checks, decision }. This independent review is advisory only: it cannot replace artifact acceptance recorded by reviewer=tower on the exact branch tip. Standard review-result notifications are stored automatically — do not send a second manual TowerSend.\n`
         : `1. Submit your verdict with TowerReview: { target: "${target}", status: "clean" | "p1-Nitems" | "p2-Nitems", merge: "merge" | "fix-then-merge" | "hold", findings, checks, decision }. Only a clean review with merge verdict "merge" on the exact branch tip lets the tower merge. Standard review-result notifications are stored automatically — do not send a second manual TowerSend.\n`) +
       'Then finish with a structured summary of the review.' +
       extra

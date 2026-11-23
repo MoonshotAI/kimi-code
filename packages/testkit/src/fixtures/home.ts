@@ -25,6 +25,18 @@ export async function createTestHome(prefix = 'testkit'): Promise<TestHome> {
   };
 }
 
+export function osHomeEnv(home: string): Record<string, string> {
+  return {
+    HOME: home,
+    USERPROFILE: home,
+    XDG_CONFIG_HOME: join(home, '.config'),
+    XDG_CACHE_HOME: join(home, '.cache'),
+    XDG_DATA_HOME: join(home, '.local', 'share'),
+    APPDATA: join(home, 'AppData', 'Roaming'),
+    LOCALAPPDATA: join(home, 'AppData', 'Local'),
+  };
+}
+
 export async function removeDirectory(path: string): Promise<void> {
   await rm(path, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
 }

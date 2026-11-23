@@ -102,6 +102,8 @@ describe('Event public types', () => {
         case 'warning':
         case 'turn.started':
         case 'turn.ended':
+        case 'loop.drained':
+        case 'loop.idle':
         case 'turn.step.started':
         case 'turn.step.completed':
         case 'turn.step.retrying':
@@ -139,6 +141,7 @@ describe('Event public types', () => {
         case 'prompt.completed':
         case 'prompt.aborted':
         case 'prompt.steered':
+        case 'prompt.queued':
           return;
         default:
           assertNever(event);

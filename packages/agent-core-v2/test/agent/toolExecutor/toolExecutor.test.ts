@@ -46,10 +46,10 @@ import {
   runLegacyStarting,
   runLegacyBeforeExecute,
 } from '#/agent/toolExecutor/legacyHooks';
+import { toolExecutorHook } from '../../harness/toolHooks';
 import {
   LegacyExecutableToolAdapter,
   ToolExecutor as HandlerToolExecutor,
-  composeToolExecutorHooks,
   fileOutputStore,
   isToolDetachAck,
   legacyToolDurationMs,
@@ -2443,7 +2443,7 @@ describe('ToolExecutor handler kernel', () => {
         events.push('execute');
         return { content: textToolContent('raw') };
       },
-    }], { hook: composeToolExecutorHooks([first, second]) });
+    }], { hook: toolExecutorHook([first, second]) });
 
     const handler = executor.execute(toolCall('hooked-1', 'hooked', {}), undefined);
     const response = Promise.resolve(handler);

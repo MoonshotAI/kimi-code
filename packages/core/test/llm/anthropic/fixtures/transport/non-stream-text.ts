@@ -2,7 +2,7 @@ import { TEST_MODEL, testModule } from '../../../harness';
 import type { AnthropicTransportFixture } from '../types';
 
 export default {
-  name: 'non-stream-text',
+  name: 'as an Anthropic user, I want non-streaming text and usage to use the real HTTP transport',
   module: testModule({ model: { ...TEST_MODEL, maxOutputTokens: 1024 } }),
   endpoint: { baseUrl: 'https://example.test', apiKey: 'test-key' },
   stream: false,

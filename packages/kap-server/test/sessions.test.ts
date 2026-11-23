@@ -2,13 +2,16 @@ import { randomBytes } from 'node:crypto';
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { setTimeout as slowDisk } from 'node:timers/promises';
 import { inflateRawSync } from 'node:zlib';
 import { ISessionMediaStore } from '@moonshot-ai/agent-core-v2/agent/media/sessionMediaStore';
 import { mcpResultToExecutableOutput } from '@moonshot-ai/agent-core-v2/agent/mcp/output';
 import { renderToolResultForModel } from '@moonshot-ai/agent-core-v2/agent/contextMemory/toolResultRender';
 import { IReadTool, ReadInputSchema, type ReadInput } from '@moonshot-ai/agent-core-v2/agent/tools/os/read/read';
 
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { say } from '@moonshot-ai/testkit/model';
+import { kapFixtures, type KapFixtures } from '@moonshot-ai/testkit/vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, test as base, vi } from 'vitest';
 
 import {
   Error2,
@@ -29,6 +32,7 @@ import {
   IEventDispatcher,
   IEventService,
   IEnvironmentService,
+  IFileSystemStorageService,
   IModelCatalog,
   IModelService,
   ISessionActivityView,
@@ -53,6 +57,7 @@ import { IHostProcessService, type IHostProcess } from '@moonshot-ai/agent-core-
 import { FakeEnvironment } from '@moonshot-ai/agent-core-v2/environment/fakeEnvironment';
 import { TurnEnded, TurnPrompt, TurnSteer } from '@moonshot-ai/agent-core-v2/agent/loop/turnOps';
 import { ContextAppendMessage } from '@moonshot-ai/agent-core-v2/agent/contextMemory/contextEvents';
+import type { PromptOrigin } from '@moonshot-ai/agent-core-v2/agent/contextMemory/types';
 import { historyEntryFromContext } from '@moonshot-ai/agent-core-v2/agent/loop/history';
 import type { ConversationItem, ConversationTurnsPage } from '../src/protocol/conversation';
 import { TurnStarted } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
@@ -1686,7 +1691,7 @@ describe('server-v2 /api/v1/sessions', () => {
     }
   });
 
-  it('delivers a single subagents reminder when profiles and the model pool change together', async () => {
+  it('delivers a subagents reminder when profiles change on reload', async () => {
     await server?.close();
     server = undefined;
     const configToml = [
@@ -1733,11 +1738,6 @@ describe('server-v2 /api/v1/sessions', () => {
         '---\nname: deploy\ndescription: Deploys things.\n---\nYou deploy things.\n',
         'utf-8',
       );
-      await writeFile(
-        join(home as string, 'config.toml'),
-        `${configToml}[secondary_model.models]\n"stub" = "fast stub"\n`,
-        'utf-8',
-      );
 
       const reloaded = await postJson<SessionWire>(`/api/v1/sessions/${id}:reload`);
       expect(reloaded.body.code).toBe(0);
@@ -1750,8 +1750,8 @@ describe('server-v2 /api/v1/sessions', () => {
       );
       expect(subagentReminders).toHaveLength(1);
       const text = JSON.stringify(subagentReminders[0]);
+      expect(text).toContain('The available subagent profiles changed:');
       expect(text).toContain('Profiles added: deploy');
-      expect(text).toContain('Models added: stub');
     } finally {
       await rm(cwd, { recursive: true, force: true });
       await rm(join(home as string, 'agents'), { recursive: true, force: true });
@@ -1905,7 +1905,81 @@ describe('server-v2 /api/v1/sessions', () => {
     }
   });
 
-  it('forks a session and rejects an incompatible source', async () => {
+  it('forks using restored live turn ids and rejects an incompatible source', async () => {
+    const steeredParent = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd: home } });
+    const steeredParentId = steeredParent.body.data.id;
+    const steeredSession = getLiveSessionById((server as RunningServer).core.accessor, steeredParentId)!;
+    await steeredSession.accessor.get(IAgentLifecycleService).create({ agentId: MAIN_AGENT_ID });
+    const steeredMain = steeredSession.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID)!;
+    const dispatcher = steeredMain.accessor.get(IEventDispatcher);
+    const userSteerOrigin = { kind: 'user', inTurn: true } as PromptOrigin;
+    const skillSteerOrigin = {
+      kind: 'skill_activation',
+      activationId: 'activation-fork-steer',
+      skillName: 'review',
+      trigger: 'model-tool',
+      inTurn: true,
+    } as PromptOrigin;
+    await dispatcher.dispatch(new TurnPrompt({
+      agentId: MAIN_AGENT_ID,
+      input: [{ type: 'text', text: 'first prompt' }],
+      origin: { kind: 'user' },
+      turnId: 0,
+    }));
+    await dispatcher.dispatch(new ContextAppendMessage({
+      agentId: MAIN_AGENT_ID,
+      message: { role: 'user', content: [{ type: 'text', text: 'first prompt' }], origin: { kind: 'user' } },
+    }));
+    await dispatcher.dispatch(new TurnSteer({
+      agentId: MAIN_AGENT_ID,
+      input: [{ type: 'text', text: 'user steer' }],
+      origin: userSteerOrigin,
+      turnId: 0,
+    }));
+    await dispatcher.dispatch(new ContextAppendMessage({
+      agentId: MAIN_AGENT_ID,
+      message: { role: 'user', content: [{ type: 'text', text: 'user steer' }], origin: userSteerOrigin },
+    }));
+    await dispatcher.dispatch(new TurnSteer({
+      agentId: MAIN_AGENT_ID,
+      input: [{ type: 'text', text: 'skill steer' }],
+      origin: skillSteerOrigin,
+      turnId: 0,
+    }));
+    await dispatcher.dispatch(new ContextAppendMessage({
+      agentId: MAIN_AGENT_ID,
+      message: { role: 'user', content: [{ type: 'text', text: 'skill steer' }], origin: skillSteerOrigin },
+    }));
+    await dispatcher.dispatch(new TurnEnded({ agentId: MAIN_AGENT_ID, turnId: 0, reason: 'completed' }));
+    await dispatcher.dispatch(new TurnPrompt({
+      agentId: MAIN_AGENT_ID,
+      input: [{ type: 'text', text: 'second prompt' }],
+      origin: { kind: 'user' },
+      turnId: 1,
+    }));
+    await dispatcher.dispatch(new ContextAppendMessage({
+      agentId: MAIN_AGENT_ID,
+      message: { role: 'user', content: [{ type: 'text', text: 'second prompt' }], origin: { kind: 'user' } },
+    }));
+    await dispatcher.dispatch(new TurnEnded({ agentId: MAIN_AGENT_ID, turnId: 1, reason: 'completed' }));
+    await steeredMain.accessor.get(IWireService).flush();
+    await closeSessionById((server as RunningServer).core.accessor, steeredParentId);
+    expect(await resumeSessionById((server as RunningServer).core.accessor, steeredParentId)).toBeDefined();
+
+    const sourceTurns = await getJson<ConversationTurnsPage>(`/api/v1/sessions/${steeredParentId}/agents/main/turns`);
+    expect(sourceTurns.body.code).toBe(0);
+    const liveTurnNumber = sourceTurns.body.data.turns.at(-1)?.turn_number;
+    expect(liveTurnNumber).toBe(3);
+    const steeredFork = await postJson<SessionWire>(`/api/v1/sessions/${steeredParentId}:fork`, {
+      turn_index: liveTurnNumber,
+    });
+    expect(steeredFork.body.code).toBe(0);
+    expect(await resumeSessionById((server as RunningServer).core.accessor, steeredFork.body.data.id)).toBeDefined();
+    const forkedTurns = await getJson<ConversationTurnsPage>(
+      `/api/v1/sessions/${steeredFork.body.data.id}/agents/main/turns`,
+    );
+    expect(forkedTurns.body.data.turns.at(-1)?.turn_number).toBe(3);
+
     const cwd = home as string;
     const parent = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
     const parentId = parent.body.data.id;
@@ -3658,4 +3732,23 @@ describe('POST /api/v1/sessions/{id}:wait and live turns buffer flush', () => {
     expect(finalWait.data.session.activity).toBe('idle');
     expect(finalWait.data.pending_interactions).toEqual([]);
   });
+});
+
+const kapTest = base.extend<KapFixtures<RunningServer>>(kapFixtures({ startServer }));
+const SLOW_WRITE_MS = 1_000;
+
+kapTest(':wait reports a finished turn only after the session wrote it to disk, even when the disk is slow', { timeout: 30_000 }, async ({ kap, model }) => {
+  const storage = kap.server.core.accessor.get(IFileSystemStorageService);
+  const append = storage.append.bind(storage);
+  storage.append = async (scope, key, data, options) => {
+    if (new TextDecoder().decode(data).includes('"type":"turn.ended"')) await slowDisk(SLOW_WRITE_MS);
+    return append(scope, key, data, options);
+  };
+  model.script(say('Saved answer.'));
+  const session = await kap.createSession();
+  await kap.prompt(session.id, 'Save this turn.');
+  expect((await kap.waitIdle(session.id)).activity).toBe('idle');
+  const sessionDir = sessionDirOf(kap.server.core.accessor.get(IBootstrapService).homeDir, `sessions/${session.workspace_id}`, session.id);
+  const wire = await readFile(join(sessionDir, 'agents', MAIN_AGENT_ID, 'wire.jsonl'), 'utf8');
+  expect(wire.split('\n').filter((line) => line !== '').map((line) => (JSON.parse(line) as { type: string }).type)).toContain('turn.ended');
 });

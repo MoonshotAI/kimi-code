@@ -5,11 +5,13 @@ import type { PinnedEntry, WorkspaceView } from '@moonshot-ai/app-core/client/ty
 import {
   copyTextToClipboard,
   loadCollapsedWorkspaces,
+  loadSessionsSectionCollapsed,
   loadSidebarViewMode,
   pinnedSessionKey,
   pinnedWorkspaceKey,
   saveCollapsedWorkspaces,
   savePinnedCollapsed,
+  saveSessionsSectionCollapsed,
   saveSidebarViewMode,
   visibleOpenGroups,
   type DropPosition,
@@ -30,6 +32,7 @@ import WorkspaceGroup from '../WorkspaceGroup.vue';
 import WorkspaceMenu from './WorkspaceMenu.vue';
 import WorkspaceDirectory from './WorkspaceDirectory.vue';
 import WorkspaceHoverCard from './WorkspaceHoverCard.vue';
+import SidebarSectionHeader from './SidebarSectionHeader.vue';
 import { useWorkspaceHoverCard } from './useWorkspaceHoverCard';
 import { useWorkspaceRename } from './useWorkspaceRename';
 import {
@@ -156,8 +159,16 @@ const {
   onThumbMouseLeave: onSessionsThumbMouseLeave,
 } = useOverlayScrollbar(sessionsEl);
 
+const sessionsCollapsed = ref(loadSessionsSectionCollapsed());
+
 function updateSessionsScrollState(el = sessionsEl.value): void {
   if (!el) return;
+  if (sessionsCollapsed.value) {
+    sessionsScrolled.value = false;
+    sessionsCanScrollDown.value = false;
+    updateSessionsThumb();
+    return;
+  }
   sessionsScrolled.value = el.scrollTop > 0;
   sessionsCanScrollDown.value = el.scrollTop + el.clientHeight < el.scrollHeight - 1;
   updateSessionsThumb();
@@ -174,7 +185,7 @@ onMounted(() => {
   nextTick(() => {
     updateSessionsScrollState();
     if (typeof ResizeObserver === 'function' && sessionsEl.value) {
-      sessionsResizeObserver = new ResizeObserver(() => updateSessionsScrollState());
+      sessionsResizeObserver = new ResizeObserver(scheduleSessionsScrollState);
       sessionsResizeObserver.observe(sessionsEl.value);
     }
   });
@@ -197,6 +208,23 @@ onBeforeUnmount(() => {
   if (flashSessionTimer) clearTimeout(flashSessionTimer);
 });
 
+function setSessionsCollapsed(next: boolean): void {
+  if (sessionsCollapsed.value === next) return;
+  sessionsCollapsed.value = next;
+  saveSessionsSectionCollapsed(next);
+  if (next) {
+    closeWorkspaceHover();
+    cancelRenameWorkspace();
+  }
+  updateSessionsScrollState();
+}
+
+function toggleSessionsCollapsed(): void {
+  setSessionsCollapsed(!sessionsCollapsed.value);
+}
+
+watch(() => props.statusTab, () => setSessionsCollapsed(false));
+
 const collapsedIds = ref<Set<string>>(new Set(loadCollapsedWorkspaces()));
 
 function isCollapsed(id: string): boolean {
@@ -212,12 +240,14 @@ function toggleCollapse(id: string): void {
 }
 
 function collapseAllWorkspaces(): void {
+  setSessionsCollapsed(false);
   const next = new Set(allGroups.value.map((g) => g.workspace.id));
   collapsedIds.value = next;
   saveCollapsedWorkspaces(next);
 }
 
 function expandAllWorkspaces(): void {
+  setSessionsCollapsed(false);
   const next = new Set<string>();
   collapsedIds.value = next;
   saveCollapsedWorkspaces(next);
@@ -275,7 +305,31 @@ function onDropPinnedSession(id: string): void {
 
 const listMode = ref<SidebarViewMode>(loadSidebarViewMode());
 
+const sectionHeaderTitle = computed(() =>
+  props.statusTab === 'workspaces'
+    ? t('sidebar.tabWorkspaces')
+    : props.statusTab === 'done'
+      ? t('sidebar.tabDone')
+      : listMode.value === 'grouped'
+        ? t('sidebar.workspaces')
+        : t('sidebar.sessionsHeader'),
+);
+
+const sectionFoldLabel = computed(() => {
+  const isProjects =
+    props.statusTab === 'workspaces' || (props.statusTab !== 'done' && listMode.value === 'grouped');
+  if (isProjects) {
+    return sessionsCollapsed.value
+      ? t('sidebar.expandProjectsSection')
+      : t('sidebar.collapseProjectsSection');
+  }
+  return sessionsCollapsed.value
+    ? t('sidebar.expandSessionsSection')
+    : t('sidebar.collapseSessionsSection');
+});
+
 function setListMode(mode: SidebarViewMode): void {
+  setSessionsCollapsed(false);
   if (listMode.value === mode) return;
   listMode.value = mode;
   saveSidebarViewMode(mode);
@@ -335,8 +389,20 @@ function getSiblingOrder(): string[] {
   return siblingOrder.value;
 }
 
-function expandGroupIfCollapsed(wsId: string): void {
-  if (isCollapsed(wsId)) toggleCollapse(wsId);
+function expandGroupIfCollapsed(wsId: string | null, sessionId?: string): void {
+  if (props.statusTab === 'open') {
+    if (sessionId !== undefined && pinnedSessions.value.some((s) => s.id === sessionId)) {
+      revealPinnedSection();
+      return;
+    }
+    if (wsId !== null && pinnedWorkspaceIdsSet.value.has(wsId)) {
+      revealPinnedSection();
+      if (isCollapsed(wsId)) toggleCollapse(wsId);
+      return;
+    }
+  }
+  setSessionsCollapsed(false);
+  if (wsId !== null && isCollapsed(wsId)) toggleCollapse(wsId);
 }
 
 const openGroups = computed(() =>
@@ -431,7 +497,7 @@ function openSessionAdmin(): void {
 const renamingFlatId = ref<string | null>(null);
 
 const flatLikeListActive = computed(
-  () => props.statusTab === 'open' && listMode.value === 'flat',
+  () => !sessionsCollapsed.value && props.statusTab === 'open' && listMode.value === 'flat',
 );
 
 const {
@@ -548,6 +614,7 @@ function locateSession(sessionId: string): void {
   }
   if (props.statusTab !== 'open') emit('update:statusTab', 'open');
   if (listMode.value !== 'grouped') setListMode('grouped');
+  setSessionsCollapsed(false);
   if (isCollapsed(group.workspace.id)) toggleCollapse(group.workspace.id);
   void nextTick(() => {
     const row = [...(sessionsEl.value?.querySelectorAll<HTMLElement>('[data-session-id]') ?? [])].find(
@@ -567,6 +634,7 @@ function locateWorkspace(workspaceId: string): void {
   else {
     if (props.statusTab !== 'open') emit('update:statusTab', 'open');
     if (listMode.value !== 'grouped') setListMode('grouped');
+    setSessionsCollapsed(false);
   }
   if (isCollapsed(workspaceId)) toggleCollapse(workspaceId);
   client.openWorkspace(workspaceId);
@@ -629,6 +697,30 @@ function deleteWs(ws: WorkspaceView): void {
   emit('deleteWorkspace', ws.id);
 }
 
+const openGroupListeners = {
+  onGroupClick: handleGhClick,
+  onWorkspaceHoverStart,
+  onWorkspaceHoverEnd: scheduleWorkspaceHoverClose,
+  onGroupContextmenu: openGhMenu,
+  onToggleWsMenu: toggleWsMenu,
+  onCreateInWorkspace: (id: string) => emit('createInWorkspace', id),
+  onSelectSession,
+  onRenameSession: (id: string, title: string) => void client.renameSession(id, title),
+  onGenerateSessionTitle: (id: string, done: (title: string | null) => void) => emit('generateTitle', id, done),
+  onArchiveSession: (id: string) => void client.archiveSessionWithToast(id),
+  onDeleteSession: (id: string) => void client.deleteSessionWithToast(id),
+  onForkSession: (id: string) => void client.forkSession(id),
+  onReloadSession,
+  onExportSession: (id: string) => void client.exportSessionWithToast(id),
+  onPinSession,
+  onDropPinnedSession,
+  onExpand,
+  onCollapse,
+  onConfirmRename: confirmRenameWorkspace,
+  onCancelRename: cancelRenameWorkspace,
+  onUpdateRenameValue: updateRenameValue,
+};
+
 defineExpose({
   revealPinnedSection,
   locateSession,
@@ -690,41 +782,23 @@ defineExpose({
             :flash-session-id="flashSessionId"
             :workspace-hover-enabled="workspaceHoverEnabled"
             state-tag="open"
-            @group-click="handleGhClick"
-            @workspace-hover-start="onWorkspaceHoverStart"
-            @workspace-hover-end="scheduleWorkspaceHoverClose"
-            @group-contextmenu="openGhMenu"
-            @toggle-ws-menu="toggleWsMenu"
-            @create-in-workspace="(id) => emit('createInWorkspace', id)"
-            @select-session="onSelectSession"
-            @rename-session="(id, title) => void client.renameSession(id, title)"
-            @generate-session-title="(id, done) => emit('generateTitle', id, done)"
-            @archive-session="(id) => void client.archiveSessionWithToast(id)"
-            @delete-session="(id) => void client.deleteSessionWithToast(id)"
-            @fork-session="(id) => void client.forkSession(id)"
-            @reload-session="onReloadSession"
-            @export-session="(id) => void client.exportSessionWithToast(id)"
-            @pin-session="onPinSession"
-            @drop-pinned-session="onDropPinnedSession"
-            @expand="onExpand"
-            @collapse="onCollapse"
-            @confirm-rename="confirmRenameWorkspace"
-            @cancel-rename="cancelRenameWorkspace"
-            @update-rename-value="updateRenameValue"
+            v-bind="openGroupListeners"
           />
         </template>
       </PinnedSessionList>
-      <div class="side-section-label">
-        <span class="side-section-title">{{
-          statusTab === 'workspaces'
-            ? t('sidebar.tabWorkspaces')
-            : statusTab === 'done'
-              ? t('sidebar.tabDone')
-              : listMode === 'grouped'
-                ? t('sidebar.workspaces')
-                : t('sidebar.sessionsHeader')
-        }}</span>
-        <div class="side-section-actions">
+      <SidebarSectionHeader
+        :title="sectionHeaderTitle"
+        :collapsed="sessionsCollapsed"
+        :toggle-label="sectionFoldLabel"
+        label-class="side-section-label"
+        heading-class="side-section-heading"
+        title-class="side-section-title"
+        toggle-class="side-section-fold"
+        collapsed-toggle-class="side-section-fold--on"
+        actions-class="side-section-actions"
+        @toggle="toggleSessionsCollapsed"
+      >
+        <template #actions>
           <Tooltip v-if="statusTab === 'workspaces'" :text="t('sidebar.newWorkspace')">
             <IconButton
               class="side-section-toggle"
@@ -766,8 +840,8 @@ defineExpose({
               <Icon name="view-switch" />
             </IconButton>
           </Tooltip>
-        </div>
-      </div>
+        </template>
+      </SidebarSectionHeader>
     </div>
 
     <div
@@ -775,9 +849,11 @@ defineExpose({
       class="sessions"
       :class="{
         scrolling: sessionsScrolling,
+        'sessions--collapsed': sessionsCollapsed,
         'pinned-drag-active': flatLikeListActive && pinnedDragSession !== null,
         'flat-pinned-drop-hover': flatPinnedDropHover,
       }"
+      :inert="sessionsCollapsed || undefined"
       @scroll="onSessionsScroll"
       @dragover="onSessionsPinnedDragOver"
       @drop="onSessionsPinnedDrop"
@@ -865,27 +941,7 @@ defineExpose({
                 :flash-session-id="flashSessionId"
                 :workspace-hover-enabled="workspaceHoverEnabled"
                 state-tag="open"
-                @group-click="handleGhClick"
-                @workspace-hover-start="onWorkspaceHoverStart"
-                @workspace-hover-end="scheduleWorkspaceHoverClose"
-                @group-contextmenu="openGhMenu"
-                @toggle-ws-menu="toggleWsMenu"
-                @create-in-workspace="(id) => emit('createInWorkspace', id)"
-                @select-session="onSelectSession"
-                @rename-session="(id, title) => void client.renameSession(id, title)"
-                @generate-session-title="(id, done) => emit('generateTitle', id, done)"
-                @archive-session="(id) => void client.archiveSessionWithToast(id)"
-                @delete-session="(id) => void client.deleteSessionWithToast(id)"
-                @fork-session="(id) => void client.forkSession(id)"
-                @reload-session="onReloadSession"
-                @export-session="(id) => void client.exportSessionWithToast(id)"
-                @pin-session="onPinSession"
-                @drop-pinned-session="onDropPinnedSession"
-                @expand="onExpand"
-                @collapse="onCollapse"
-                @confirm-rename="confirmRenameWorkspace"
-                @cancel-rename="cancelRenameWorkspace"
-                @update-rename-value="updateRenameValue"
+                v-bind="openGroupListeners"
               />
             </div>
           </template>
@@ -994,7 +1050,7 @@ defineExpose({
     </div>
 
     <div
-      v-if="sessionsThumb"
+      v-if="!sessionsCollapsed && sessionsThumb"
       class="sessions-thumb"
       :class="{ visible: sessionsThumbVisible }"
       :style="{ top: `${sessionsThumb.top}px`, height: `${sessionsThumb.height}px` }"
@@ -1028,38 +1084,38 @@ defineExpose({
       <Menu
         v-if="viewMenuOpen"
         ref="viewMenuRef"
-        class="view-menu"
+        class="view-menu anchored-menu"
         :style="viewMenuStyle"
         @click.stop
       >
-        <div class="view-menu-label">{{ t('sidebar.viewGroup') }}</div>
+        <div class="view-menu-label anchored-menu-label">{{ t('sidebar.viewGroup') }}</div>
         <MenuItem @click="chooseListMode('flat')">
           <Icon name="list" size="sm" />
           {{ t('sidebar.viewFlat') }}
-          <span class="view-menu-check">
+          <span class="view-menu-check anchored-menu-check">
             <Icon v-if="listMode === 'flat'" name="check" size="sm" />
           </span>
         </MenuItem>
         <MenuItem @click="chooseListMode('grouped')">
           <Icon name="folder-tree" size="sm" />
           {{ t('sidebar.viewGrouped') }}
-          <span class="view-menu-check">
+          <span class="view-menu-check anchored-menu-check">
             <Icon v-if="listMode === 'grouped'" name="check" size="sm" />
           </span>
         </MenuItem>
         <template v-if="listMode === 'grouped'">
-          <div class="view-menu-label">{{ t('sidebar.sortGroup') }}</div>
+          <div class="view-menu-label anchored-menu-label">{{ t('sidebar.sortGroup') }}</div>
           <MenuItem @click="chooseSortMode('manual')">
             <Icon name="grip" size="sm" />
             {{ t('sidebar.sortManual') }}
-            <span class="view-menu-check">
+            <span class="view-menu-check anchored-menu-check">
               <Icon v-if="workspaceSortMode === 'manual'" name="check" size="sm" />
             </span>
           </MenuItem>
           <MenuItem @click="chooseSortMode('recent')">
             <Icon name="clock" size="sm" />
             {{ t('sidebar.sortRecent') }}
-            <span class="view-menu-check">
+            <span class="view-menu-check anchored-menu-check">
               <Icon v-if="workspaceSortMode === 'recent'" name="check" size="sm" />
             </span>
           </MenuItem>
@@ -1110,25 +1166,6 @@ defineExpose({
 }
 .sessions-head--scrolled::after { opacity: 1; }
 
-.side-section-label {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 0 var(--sb-action-inset) var(--space-1) var(--space-2);
-  font-family: var(--font-ui);
-  font-size: var(--text-xs);
-  font-weight: var(--weight-section-label);
-  text-transform: uppercase;
-  color: var(--faint);
-  user-select: none;
-}
-.side-section-title {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 .sessions-head .pinned + .side-section-label {
   margin-top: var(--space-1);
 }
@@ -1142,11 +1179,6 @@ defineExpose({
   width: 13px;
   height: 13px;
 }
-.side-section-actions {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-}
 
 .sessions {
   flex: 1;
@@ -1155,6 +1187,29 @@ defineExpose({
   min-height: 0;
   --overlay-scrollbar-thumb-min: var(--space-6);
   scrollbar-width: none;
+  opacity: 1;
+  visibility: visible;
+  transition:
+    opacity var(--duration-base) var(--ease-out),
+    transform var(--duration-base) var(--ease-out),
+    visibility 0s;
+}
+.sessions.sessions--collapsed {
+  overflow-y: hidden;
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(-6px);
+  transition:
+    opacity var(--duration-base) var(--ease-out),
+    transform var(--duration-base) var(--ease-out),
+    visibility 0s linear var(--duration-base);
+}
+@media (prefers-reduced-motion: reduce) {
+  .sessions,
+  .sessions.sessions--collapsed {
+    transition: none;
+  }
 }
 .sessions::-webkit-scrollbar { display: none; }
 .sessions.pinned-drag-active { box-shadow: inset 0 0 0 1px var(--color-accent); }
@@ -1324,36 +1379,6 @@ defineExpose({
   line-height: 1.6;
 }
 
-.view-menu {
-  position: fixed;
-  top: 0;
-  left: 0;
-  z-index: var(--z-dropdown);
-}
-.view-menu-label {
-  padding: var(--space-1) var(--space-2) var(--space-05);
-  font-size: var(--text-xs);
-  color: var(--faint);
-  user-select: none;
-}
-.view-menu-check {
-  margin-left: auto;
-  display: inline-flex;
-}
-.menu-pop-enter-active {
-  transition:
-    opacity var(--duration-base) var(--ease-out),
-    transform var(--duration-base) var(--ease-out);
-}
-.menu-pop-leave-active {
-  transition:
-    opacity var(--duration-fast) var(--ease-out),
-    transform var(--duration-fast) var(--ease-out);
-  pointer-events: none;
-}
-.menu-pop-enter-from,
-.menu-pop-leave-to {
-  opacity: 0;
-  transform: scale(0.97) translateY(var(--menu-pop-shift, -2px));
-}
 </style>
+
+<style src="../lib/anchored-menu.css"></style>

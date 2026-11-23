@@ -1,10 +1,11 @@
+import { v4 as randomUUID } from 'uuid';
 import type { PromptEnvelopeContent } from '../client/types';
 
 import { computed, getCurrentScope, onScopeDispose, shallowRef, shallowReactive, ref, readonly, watch, watchEffect, type Ref } from 'vue';
 import type { BrowserPanelSession } from '@moonshot-ai/app-core/client';
 import { panelCloseTargets } from '../panel/panelCloseTargets';
 import { reorderedPanelTabs } from '../lib/panelTabDrag';
-import { defaultPanelStorage, onPanelContextDestroyed, onPanelWorkspaceDestroyed, panelContextsOfWorkspace, readPanelSnapshot, writePanelSnapshot, type PanelStorage, type StoredPanelSnapshot } from '../panel/panelPersistence';
+import { defaultPanelStorage, onPanelBtwDestroyed, onPanelContextDestroyed, onPanelWorkspaceDestroyed, panelContextsOfWorkspace, readPanelSnapshot, removeStoredBtwTab, writePanelSnapshot, type PanelStorage, type StoredPanelSnapshot } from '../panel/panelPersistence';
 
 import type { AppTask } from '@moonshot-ai/app-core/api';
 import type { AgentMember, ChatTurn, ConversationProjector, ToolStatus, TurnFileChange } from '@moonshot-ai/app-core/client';
@@ -73,7 +74,7 @@ export interface PanelTabsClient {
     prompt?: string | PromptEnvelopeContent,
   ): Promise<{ sessionId: string; target: SideChatTarget | null; sent: boolean } | null>;
   openSideChatOn(parent: string, prompt?: string | PromptEnvelopeContent): Promise<SideChatOpenResult>;
-  closeSideChat(agentId?: string): void;
+  closeSideChat(agentId?: string, sessionId?: string): void;
   sideChatTargetsOfSession(sessionId: string): SideChatTarget[];
   restoreSideChatTarget?(sessionId: string, target: SideChatTarget): void;
 }
@@ -477,7 +478,7 @@ export function usePanelTabs({ client, sideWidth, t, locale, onTabRemoved, onBro
       if (tab.type !== 'browser' || tab.payload === undefined) return tab;
       const payload = tab.payload as BrowserTabPayload;
       const controlled = tab.id === id
-        ? { leaseId: crypto.randomUUID(), turnId, status: 'running' as const, ...(controller === undefined ? {} : { controller }) }
+        ? { leaseId: randomUUID(), turnId, status: 'running' as const, ...(controller === undefined ? {} : { controller }) }
         : undefined;
       if (controlled !== undefined) suspendedBrowsers.delete(payload.browserId);
       return { ...tab, payload: { ...payload, controlled } };
@@ -561,12 +562,13 @@ export function usePanelTabs({ client, sideWidth, t, locale, onTabRemoved, onBro
     if (released) trimParkedBrowserTabs();
   }
 
-  function closeTab(id: string, options: { keepVisible?: boolean } = {}): void {
+  function closeTab(id: string, options: { keepVisible?: boolean; skipSideChatClose?: boolean } = {}): void {
     const index = panelTabs.value.findIndex((tab) => tab.id === id);
     if (index === -1) return;
     const tab = panelTabs.value[index]!;
-    if (tab.type === 'btw' && tab.payload !== undefined) {
-      client.closeSideChat((tab.payload as BtwTabPayload).agentId);
+    if (tab.type === 'btw' && tab.payload !== undefined && !options.skipSideChatClose) {
+      const payload = tab.payload as BtwTabPayload;
+      client.closeSideChat(payload.agentId, payload.parentId);
     } else if (tab.type === 'diff') {
       resetDiffState();
       client.clearFileDiff();
@@ -1327,6 +1329,45 @@ export function usePanelTabs({ client, sideWidth, t, locale, onTabRemoved, onBro
     }
   }
   const stopContextListener = onPanelContextDestroyed(destroyContext);
+  const stopBtwListener = onPanelBtwDestroyed((sessionId, agentId) => {
+    let removed = removeStoredBtwTab(storage, sessionId, agentId);
+    const snapshot = snapshotBySession[sessionId];
+    if (snapshot !== undefined) {
+      const selected = snapshot.activeIndex === null ? undefined : snapshot.tabs[snapshot.activeIndex];
+      const removedTabs = snapshot.tabs.filter(
+        tab => tab.type === 'btw' && (tab.payload as BtwTabPayload).agentId === agentId,
+      );
+      if (removedTabs.length > 0) {
+        removed = true;
+        for (const tab of removedTabs) onTabRemoved?.(tab);
+        const tabs = snapshot.tabs.filter(tab => !removedTabs.includes(tab));
+        const activeIndex =
+          selected === undefined
+            ? null
+            : removedTabs.includes(selected)
+              ? tabs.length > 0
+                ? Math.min(snapshot.activeIndex ?? 0, tabs.length - 1)
+                : null
+              : tabs.findIndex(tab => tab.id === selected.id);
+        const visible = tabs.length > 0 && snapshot.visible;
+        snapshotBySession[sessionId] = {
+          ...snapshot,
+          tabs,
+          activeIndex: activeIndex !== null && activeIndex >= 0 ? activeIndex : null,
+          visible,
+          expanded: visible && snapshot.expanded,
+        };
+      }
+    }
+    if (displayedContextKey === sessionId) {
+      const targetTabs = panelTabs.value.filter(
+        tab => tab.type === 'btw' && (tab.payload as BtwTabPayload).agentId === agentId,
+      );
+      if (targetTabs.length > 0) removed = true;
+      for (const tab of targetTabs) closeTab(tab.id, { skipSideChatClose: true });
+    }
+    return removed;
+  });
   const stopWorkspaceListener = onPanelWorkspaceDestroyed(workspaceId => {
     const keys = new Set(panelContextsOfWorkspace(storage, workspaceId));
     for (const [key, snapshot] of Object.entries(snapshotBySession)) if (snapshot.workspaceId === workspaceId) keys.add(key);
@@ -1340,6 +1381,7 @@ export function usePanelTabs({ client, sideWidth, t, locale, onTabRemoved, onBro
   if (getCurrentScope() !== undefined) onScopeDispose(() => {
     saveCurrent();
     stopContextListener();
+    stopBtwListener();
     stopWorkspaceListener();
     if (typeof window !== 'undefined') window.removeEventListener('pagehide', saveCurrent);
   });

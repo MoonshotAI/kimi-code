@@ -11,7 +11,7 @@ import ConversationPane from '../../../src/renderer/components/chat/Conversation
 import { turns, sessionId, active, status, setOlder } from './client.mjs';
 import '../../../src/renderer/style.css';
 import { verifySpacing } from './spacing.mjs';
-import { verifyHistoryState } from './state.mjs';
+import { turnFileChanges } from './stability.mjs';
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const frame = () => new Promise(resolve => requestAnimationFrame(resolve));
@@ -19,7 +19,7 @@ const shown = ref(false);
 const mobile = ref(false);
 let imageResolver = async src => src;
 const i18n = createKimiI18n({ locale: 'en' });
-setKimiClientDeps({ t: i18n.global.t, api: () => ({ listTurnFileChanges: async () => [], getFileUrl: value => value }) });
+setKimiClientDeps({ t: i18n.global.t, api: () => ({ listTurnFileChanges: async () => [], getTurnFileChanges: (session, turnId) => turnFileChanges(session, turnId), getFileUrl: value => value }) });
 useTurnFolding().setTurnFolding(true);
 useAppDialogs().completeOnboarding();
 document.documentElement.style.height = '100%';
@@ -28,12 +28,12 @@ document.querySelector('#app').style.cssText = 'height:100vh;display:flex';
 const app = createApp({ setup: () => () => shown.value ? h(ConversationPane, { sessionId: sessionId.value, status, mobile: mobile.value, working: active.value, style: 'height:100%;width:100%' }) : null });
 app.provide(IconResolverKey, name => getIcon(name)?.component);
 app.provide(ResolveImageKey, src => imageResolver(src));
+window.__setImageResolver = fn => { imageResolver = fn; globalThis.__resolveImageUrl = fn; };
 app.use(createPinia());
 app.use(i18n);
 app.mount('#app');
 
 window.verifySpacing = verifySpacing;
-window.verifyHistoryState = verifyHistoryState;
 
 function history(start = 0, count = 240) {
   return Array.from({ length: count }, (_, offset) => {

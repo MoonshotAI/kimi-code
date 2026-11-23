@@ -134,6 +134,36 @@ describe('operationFailureNotice', () => {
     expect(labels).toContain('warnings.details.requestId');
   });
 
+  it.each([
+    {
+      operation: 'loadConversation',
+      code: 40931,
+      message: 'warnings.sessionOccupied.message',
+    },
+    {
+      operation: 'compact',
+      code: 40932,
+      message: 'warnings.sessionStale.retryMessage',
+    },
+  ])('localizes $code for $operation', ({ operation, code, message }) => {
+    const err = new DaemonApiError({ code, msg: 'server error', requestId: 'r1' });
+    const notice = operationFailureNotice(operation, err);
+
+    expect(notice.message).toBe(message);
+    expect(notice.details).toContainEqual({ label: 'warnings.details.message', value: 'server error' });
+  });
+
+  it('keeps the client name when localizing an occupied session', () => {
+    const err = new DaemonApiError({
+      code: 40931,
+      msg: 'server error',
+      requestId: 'r1',
+      details: { holder: { clientDisplayName: 'Kimi Code Desktop' } },
+    });
+
+    expect(operationFailureNotice('load', err).message).toBe('warnings.sessionOccupied.messageWithClient');
+  });
+
   it('uses the timeout title for network timeouts', () => {
     const err = new DaemonNetworkError({
       message: 'timeout',

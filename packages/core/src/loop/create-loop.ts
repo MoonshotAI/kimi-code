@@ -5,10 +5,9 @@ import type { WaitOpts } from '#/utils/wait';
 import { createActorLoop } from './loop-actor';
 import type { LoopInput } from './contract/command';
 import type { LoopAck, LoopEmitted } from './contract/emitted';
-import type { HookRegistration } from './contract/hook';
+import type { LoopHooks } from './contract/hook';
 import type { RemindMessage } from './contract/inbox';
 import type { TurnOutcome } from './contract/outcome';
-import type { HookRegistry } from './hook/registry';
 import type { LoopLlmRequester, LoopRequestRuntime } from './request';
 import type { LoopState } from './state';
 import type { WaitForTasks } from './tool/tasks';
@@ -33,7 +32,7 @@ export interface CreateLoopOptions {
   readonly requester?: LoopLlmRequester;
   readonly executor: LoopToolExecutor;
   readonly toolContext?: (turnId: number) => Omit<LoopToolContext, 'origin' | 'turnId'>;
-  readonly hooks?: readonly HookRegistration[];
+  readonly hook?: Partial<LoopHooks>;
   readonly input?: LoopInput;
   readonly abortGraceMs?: number;
   readonly completionMessage?: ToolCompletionFactory;
@@ -46,7 +45,6 @@ export interface Loop {
   readonly historyRevision: number;
   readonly executor: LoopToolExecutor;
   readonly waitForTasks: WaitForTasks;
-  readonly hooks: HookRegistry;
   readonly policy: PolicyRegistry;
   submit(message: UserMessage): LoopAck<'prompt.submitted'> | undefined;
   notify(message: UserMessage): LoopAck<'prompt.notified'> | undefined;

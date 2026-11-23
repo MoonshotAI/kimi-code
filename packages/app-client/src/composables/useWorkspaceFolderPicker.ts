@@ -21,9 +21,8 @@ export function useWorkspaceFolderPicker() {
     });
   }
 
-  async function pickRemoteWorkspaceDir(hostId: string, defaultPath = ''): Promise<string | undefined> {
-    const paths = await pickWorkspaceFolders({ hostId, defaultPath, multiple: false });
-    return paths[0];
+  function pickRemoteWorkspaceDirs(hostId: string, defaultPath = ''): Promise<string[]> {
+    return pickWorkspaceFolders({ hostId, defaultPath, multiple: true });
   }
 
   function completeWorkspaceFolderPicker(paths: string[]): void {
@@ -41,7 +40,7 @@ export function useWorkspaceFolderPicker() {
     folderPickerResolve,
     folderPickerRequest,
     pickWorkspaceFolders,
-    pickRemoteWorkspaceDir,
+    pickRemoteWorkspaceDirs,
     completeWorkspaceFolderPicker,
     cancelWorkspaceFolderPicker,
   };

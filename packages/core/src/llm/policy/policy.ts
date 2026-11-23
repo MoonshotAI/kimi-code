@@ -2,7 +2,7 @@ import { estimateUsedContextTokens } from '#/llm/context-usage';
 import type { ToolDescription } from '#/llm/message';
 import { isAbortError, toLlmErrorMessage } from '#/llm/protocol/errors';
 import type { LlmRequest } from '#/llm/request';
-import type { LlmOutcome, LlmRunEvent, LlmRunStarted } from '#/llm/response';
+import type { LlmOutcome, LlmRunEvent, LlmRunRequested, LlmRunStarted } from '#/llm/response';
 import { sha256Hex } from '#/utils/hash';
 import { log } from '#/utils/log';
 
@@ -124,6 +124,19 @@ export function llmStartedEvent(request: LlmRequest): LlmRunStarted {
   };
 }
 
+export function llmRequestedEvent(request: LlmRequest, attempt: number): LlmRunRequested {
+  const { maxOutputTokens, ...summary } = llmStartedEvent(request);
+  const encoder = new TextEncoder();
+  return {
+    ...summary,
+    type: 'llm.requested',
+    maxTokens: typeof maxOutputTokens === 'number' ? maxOutputTokens : undefined,
+    systemPromptHash: summary.systemPromptHash ?? sha256Hex(encoder.encode('')),
+    toolsHash: summary.toolsHash ?? sha256Hex(encoder.encode('[]')),
+    attempt: String(attempt),
+  };
+}
+
 export async function runLlmRequest(
   request: LlmRequest,
   control: LlmRunControl,
@@ -131,6 +144,9 @@ export async function runLlmRequest(
 ): Promise<LlmOutcome> {
   let outcome: LlmOutcome;
   try {
+    const started: LlmRunEvent = llmStartedEvent(request);
+    log.info({ ...started }, 'llm event');
+    control.onEvent?.(started);
     const sizedRequest: LlmRequest =
       request.content.usedTokens === undefined
         ? {
@@ -179,51 +195,35 @@ async function runAttempts(
   const policy = request.policy ?? {};
   const ledger = createRecoveryLedger(recoveries.read(request));
   let attempt = 1;
-  let started = false;
-  const pendingNotices: LlmRunEvent[] = [];
   const maxAttempts = resolveMaxAttempts(policy.retry);
-  const start = (resolvedRequest: LlmRequest): void => {
-    if (started) return;
-    started = true;
-    const startedEvent = llmStartedEvent(resolvedRequest);
-    log.info({ ...startedEvent }, 'llm event');
-    onEvent?.(startedEvent);
-    for (const event of pendingNotices) onEvent?.(event);
-    pendingNotices.length = 0;
-  };
 
   while (!signal.aborted) {
     const recoveredRequest = ledger.apply(request);
     let resolvedRequest = recoveredRequest;
     let recoveryRequest = recoveredRequest;
-    try {
-      for (const resolver of listOf(policy.resolvers)) {
-        resolvedRequest = await resolver.resolve(resolvedRequest, {
-          signal,
-          appliedRecoveries: ledger.applied,
-          report: (notice) => {
-            const event: LlmRunEvent = {
-              type: 'llm.notice',
-              notice: { ...notice, source: resolver.id },
-            };
-            log.info({ ...event }, 'llm event');
-            if (started) onEvent?.(event);
-            else pendingNotices.push(event);
-          },
-        });
-        if (resolver.recoveryRequest === 'resolved') recoveryRequest = resolvedRequest;
-        if (signal.aborted) {
-          start(recoveredRequest);
-          return { type: 'aborted', message: null, usage: undefined };
-        }
+    for (const resolver of listOf(policy.resolvers)) {
+      resolvedRequest = await resolver.resolve(resolvedRequest, {
+        signal,
+        appliedRecoveries: ledger.applied,
+        report: (notice) => {
+          const event: LlmRunEvent = {
+            type: 'llm.notice',
+            notice: { ...notice, source: resolver.id },
+          };
+          log.info({ ...event }, 'llm event');
+          onEvent?.(event);
+        },
+      });
+      if (resolver.recoveryRequest === 'resolved') recoveryRequest = resolvedRequest;
+      if (signal.aborted) {
+        return { type: 'aborted', message: null, usage: undefined };
       }
-    } catch (error) {
-      start(recoveredRequest);
-      throw error;
     }
 
-    start(resolvedRequest);
     control.onAttempt?.(resolvedRequest, { appliedRecoveries: ledger.applied });
+    const requested: LlmRunEvent = llmRequestedEvent(resolvedRequest, attempt);
+    log.info({ ...requested }, 'llm event');
+    onEvent?.(requested);
     log.debug(
       {
         attempt,
@@ -250,8 +250,8 @@ async function runAttempts(
       ledger.record(proposal);
       recoveries.record(request, proposal);
       attempt = 1;
-      const retrying: LlmRunEvent = {
-        type: 'llm.retrying',
+      const retry: LlmRunEvent = {
+        type: 'llm.retry',
         reason: 'recovery',
         strategy: proposal.strategy,
         action: proposal.action,
@@ -264,15 +264,15 @@ async function runAttempts(
         requestId: result.requestId,
         timing: result.timing,
       };
-      log.info({ ...retrying }, 'llm event');
-      onEvent?.(retrying);
+      log.info({ ...retry }, 'llm event');
+      onEvent?.(retry);
       continue;
     }
 
     if (shouldRetry(policy.retry, attempt, result.error, listOf(policy.retryables))) {
       const delayMs = readRetryAfterMs(result.error) ?? retryBackoffDelay(attempt - 1);
-      const retrying: LlmRunEvent = {
-        type: 'llm.retrying',
+      const retry: LlmRunEvent = {
+        type: 'llm.retry',
         reason: 'backoff',
         failedAttempt: attempt,
         nextAttempt: attempt + 1,
@@ -287,8 +287,8 @@ async function runAttempts(
         requestId: result.requestId,
         timing: result.timing,
       };
-      log.info({ ...retrying }, 'llm event');
-      onEvent?.(retrying);
+      log.info({ ...retry }, 'llm event');
+      onEvent?.(retry);
       if (!(await delay(delayMs, signal))) {
         return abortedOf(result, signal.reason);
       }

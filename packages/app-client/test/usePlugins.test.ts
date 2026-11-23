@@ -1999,6 +1999,19 @@ describe('pluginRowShowsInstall', () => {
     expect(pluginRowShowsInstall(rowOf(ready, { plugin: installedWiring }))).toBe(false);
   });
 
+  it('offers an update for a partial WebBridge row with a newer catalog build', () => {
+    expect(
+      pluginRowShowsInstall(rowOf(capabilityWebbridge, { plugin: installedWiring, updateAvailable: true })),
+    ).toBe(true);
+  });
+
+  it('does not offer an update for other partial capabilities', () => {
+    const partial = { ...capabilityCu, state: 'partial' as const };
+    expect(
+      pluginRowShowsInstall(rowOf(partial, { plugin: installedWiring, updateAvailable: true })),
+    ).toBe(false);
+  });
+
   it('offers an idempotent install on a ready row whose wiring record is missing', () => {
     const ready = { ...capabilityWebbridge, state: 'ready' as const };
     expect(pluginRowShowsInstall(rowOf(ready))).toBe(true);

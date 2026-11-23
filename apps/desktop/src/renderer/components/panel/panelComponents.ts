@@ -10,6 +10,7 @@ import {
   ThinkingPanel,
   TurnDiffPanel,
 } from '@moonshot-ai/app-components';
+import ContextPanel from '../../inspector/ContextPanel.vue';
 
 export const panelComponents: Partial<Record<PanelTabType, Component>> = {
   file: FilePreviewPanel,
@@ -20,4 +21,5 @@ export const panelComponents: Partial<Record<PanelTabType, Component>> = {
   agent: AgentPanel,
   btw: SideChatPanel,
   inspector: InspectorPane,
+  context: ContextPanel,
 };

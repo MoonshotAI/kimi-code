@@ -2,7 +2,7 @@ import { testModule } from '../../../harness';
 import type { GoogleGenAITransportFixture } from '../types';
 
 export default {
-  name: 'gemini-stream',
+  name: 'as a Gemini user, I want streamed text and custom headers to use the real HTTP transport',
   module: testModule(),
   endpoint: {
     baseUrl: 'https://example.test/v1beta',
@@ -25,7 +25,9 @@ export default {
     url: 'https://example.test/v1beta/models/test-model:streamGenerateContent?alt=sse',
     headers: { 'x-goog-api-key': 'test-key', 'x-custom': 'custom' },
     body: {
-      contents: [{ role: 'user', parts: [{ text: 'hi' }] }],
+      model: 'test-model',
+      messages: [{ role: 'user', content: 'hi' }],
+      stream: true,
     },
     outcome: {
       type: 'done',
