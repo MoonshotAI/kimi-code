@@ -11,7 +11,6 @@ export interface IAgentMediaResolverService {
     model: Model,
     requester: InitializedLlmRequester,
     signal?: AbortSignal,
-    includeUserPaths?: boolean,
   ): Promise<readonly Message[]>;
 }
 

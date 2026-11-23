@@ -1,19 +1,11 @@
-import { createMediaDegradeRecovery, type MediaReplacement } from '@moonshot-ai/core/llm/builtin/policy/media-degrade';
+import { createMediaDegradeRecovery } from '@moonshot-ai/core/llm/builtin/policy/media-degrade';
 import type { Message, ToolMessage, UserMessage } from '@moonshot-ai/core/llm/message';
 import type { LlmRecovery } from '@moonshot-ai/core/llm/policy/recovery';
 import type { LlmResolver } from '@moonshot-ai/core/llm/policy/resolver';
 import type { Model } from '#/llm-adapter/model/catalog';
 import type { InitializedLlmRequester } from '@moonshot-ai/core/llm/requester';
 import { IAgentMediaResolverService } from '#/agent/media/mediaResolver';
-import {
-  buildMediaPathTag,
-  daemonFileRefFromPart,
-  matchMediaPathTags,
-  mediaNameOf,
-  omittedMedia,
-  type MediaPathTag,
-  type OmittedMediaPart,
-} from '#/agent/media/mediaRef';
+import { buildMediaPathTag, matchMediaPathTags, type MediaPathTag } from '#/agent/media/mediaRef';
 import { READ_MEDIA_FILE_TOOL_NAME } from '#/agent/tools/read-media-file/read-media-file';
 
 function mediaTagOf(message: ToolMessage): MediaPathTag | undefined {
@@ -84,23 +76,10 @@ export type AgentMediaPolicyFactory = (
   request: InitializedLlmRequester,
 ) => AgentMediaPolicy;
 
-const replaceOmittedMedia: MediaReplacement = (part, text, role) => {
-  if (part.type === 'audio_url') return undefined;
-  const ref = daemonFileRefFromPart(part)?.ref;
-  const name = role === 'user' ? mediaNameOf(part) : undefined;
-  if (ref === undefined && name === undefined) return undefined;
-  return {
-    type: 'text',
-    text,
-    [omittedMedia]: { kind: part.type === 'image_url' ? 'image' : 'video', fileId: ref?.fileId, name },
-  } satisfies OmittedMediaPart;
-};
-
 export function createAgentMediaPolicy(
   service: IAgentMediaResolverService,
   model: Model,
   request: InitializedLlmRequester,
-  includeUserPaths = true,
 ): AgentMediaPolicy {
   return {
     toolResolver: {
@@ -127,12 +106,12 @@ export function createAgentMediaPolicy(
     resolver: {
       id: 'agent-media',
       resolve: async (current, control) => {
-        const messages = await service.resolve(current.content.messages, model, request, control.signal, includeUserPaths);
+        const messages = await service.resolve(current.content.messages, model, request, control.signal);
         return messages === current.content.messages
           ? current
           : { ...current, content: { ...current.content, messages } };
       },
     },
-    recovery: createMediaDegradeRecovery(replaceOmittedMedia),
+    recovery: createMediaDegradeRecovery(),
   };
 }

@@ -152,15 +152,16 @@ describe('media path tags', () => {
     expect(matchMediaPathTags('path="/a.png"')).toEqual([]);
   });
 
-  it('builds open labels and named closing path tags', async () => {
-    const { buildMediaLabel } = await import('#/agent/media/mediaRef');
-    expect(buildMediaLabel('image', undefined, undefined)).toBeUndefined();
-    expect(buildMediaLabel('image', 'paste-1.png', undefined)).toBe('<image name="paste-1.png">');
-    expect(buildMediaLabel('image', undefined, '/s/media/f_1.png')).toBe('<image path="/s/media/f_1.png">');
-    expect(buildMediaLabel('image', 'a & "b".png', '/s/media/f_1.png')).toBe(
+  it('builds open labels and closed name and path tags', async () => {
+    const { buildMediaOpenTag, buildMediaTag } = await import('#/agent/media/mediaRef');
+    expect(buildMediaTag('image', {})).toBeUndefined();
+    expect(buildMediaOpenTag('image', { name: 'paste-1.png' })).toBe('<image name="paste-1.png">');
+    expect(buildMediaOpenTag('image', { path: '/s/media/f_1.png' })).toBe('<image path="/s/media/f_1.png">');
+    expect(buildMediaOpenTag('image', { name: 'a & "b".png', path: '/s/media/f_1.png' })).toBe(
       '<image name="a &amp; &quot;b&quot;.png" path="/s/media/f_1.png">',
     );
-    const namedTag = buildMediaPathTag('image', '/s/media/f_1.png', 'shot.png');
+    expect(buildMediaTag('video', { name: 'clip.mp4' })).toBe('<video name="clip.mp4"></video>');
+    const namedTag = buildMediaTag('image', { name: 'shot.png', path: '/s/media/f_1.png' })!;
     expect(namedTag).toBe('<image name="shot.png" path="/s/media/f_1.png"></image>');
     expect(matchMediaPathTags(namedTag)).toEqual([
       { kind: 'image', path: '/s/media/f_1.png', index: 0, text: namedTag },

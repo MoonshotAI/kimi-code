@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 
-import type { ContentPart, TextPart } from '@moonshot-ai/core/llm/message';
+import type { ContentPart } from '@moonshot-ai/core/llm/message';
 
 export type MediaKind = 'image' | 'video' | 'audio' | 'file';
 
@@ -141,20 +141,6 @@ export function mediaNameOf(part: ContentPart): string | undefined {
   return undefined;
 }
 
-export const omittedMedia = Symbol('omittedMedia');
-
-export interface OmittedMediaPart extends TextPart {
-  readonly [omittedMedia]: {
-    readonly kind: 'image' | 'video';
-    readonly fileId?: string;
-    readonly name?: string;
-  };
-}
-
-export function mediaOmissionOf(part: ContentPart): OmittedMediaPart[typeof omittedMedia] | undefined {
-  return part.type === 'text' && omittedMedia in part ? (part as OmittedMediaPart)[omittedMedia] : undefined;
-}
-
 export const SESSION_MEDIA_DIR = 'media';
 
 export function sessionMediaFilePath(sessionDir: string, fileId: string, ext: string): string {
@@ -186,22 +172,24 @@ export function unescapeMediaAttribute(value: string): string {
     .replaceAll('&amp;', '&');
 }
 
-function mediaOpenTag(kind: MediaKind, name: string | undefined, path: string | undefined): string {
-  const nameAttr = name === undefined ? '' : ` name="${escapeMediaAttribute(name)}"`;
-  const pathAttr = path === undefined ? '' : ` path="${escapeMediaAttribute(path)}"`;
+export interface MediaLabel {
+  readonly name?: string;
+  readonly path?: string;
+}
+
+export function buildMediaOpenTag(kind: MediaKind, label: MediaLabel): string {
+  const nameAttr = label.name === undefined ? '' : ` name="${escapeMediaAttribute(label.name)}"`;
+  const pathAttr = label.path === undefined ? '' : ` path="${escapeMediaAttribute(label.path)}"`;
   return `<${kind}${nameAttr}${pathAttr}>`;
 }
 
-export function buildMediaLabel(
-  kind: MediaKind,
-  name: string | undefined,
-  path: string | undefined,
-): string | undefined {
-  return name === undefined && path === undefined ? undefined : mediaOpenTag(kind, name, path);
+export function buildMediaTag(kind: MediaKind, label: MediaLabel): string | undefined {
+  if (label.name === undefined && label.path === undefined) return undefined;
+  return `${buildMediaOpenTag(kind, label)}</${kind}>`;
 }
 
-export function buildMediaPathTag(kind: MediaKind, path: string, name?: string): string {
-  return `${mediaOpenTag(kind, name, path)}</${kind}>`;
+export function buildMediaPathTag(kind: MediaKind, path: string): string {
+  return `${buildMediaOpenTag(kind, { path })}</${kind}>`;
 }
 
 export function matchMediaPathTags(text: string): MediaPathTag[] {

@@ -5,12 +5,20 @@ import { defineState } from '#/state/state';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { IAgentEnvironmentBindingService } from '#/agent/environmentBinding/environmentBinding';
+import { LOCAL_ENVIRONMENT_ID } from '#/environment/environment';
 import { WarningIssued } from '#/agent/profile/profileOps';
 import { IFileService } from '#/app/file/fileService';
 import { LifecycleScope } from '#/app/scopes';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { ImageUploadUnsupportedError } from '#/llm-adapter/contract/errors';
-import type { ContentPart, Message } from '@moonshot-ai/core/llm/message';
+import {
+  mediaOmissionOf,
+  mediaPlaceholderText,
+  type ContentPart,
+  type MediaPlaceholderReason,
+  type Message,
+} from '@moonshot-ai/core/llm/message';
 import { mediaFileIdOf, mediaUrlOf } from '@moonshot-ai/core/llm/protocol/kit/media';
 import type { Model } from '#/llm-adapter/model/catalog';
 import type { InitializedLlmRequester } from '@moonshot-ai/core/llm/requester';
@@ -33,14 +41,13 @@ import { detectFileType, MEDIA_SNIFF_BYTES } from './file-type';
 import { isDataUrl, isModelAcceptedImageMime, normalizeImageMime } from './image-format-policy';
 import {
   buildDaemonFileUrl,
-  buildMediaLabel,
-  buildMediaPathTag,
+  buildMediaOpenTag,
+  buildMediaTag,
   type DaemonFileRef,
   daemonFileRefFromPart,
-  matchMediaPathTags,
   matchSingleMediaPathTag,
+  type MediaLabel,
   mediaNameOf,
-  mediaOmissionOf,
 } from './mediaRef';
 import { ISessionMediaStore } from './sessionMediaStore';
 import { IAgentMediaResolverService } from './mediaResolver';
@@ -77,22 +84,15 @@ export const mediaBudgetDroppedKey = defineState<Set<string>>(
   () => new Set(),
 );
 
+type ResolvedMediaKind = 'image' | 'video';
+
 interface MediaBudgetEntry {
   readonly messageIndex: number;
-  readonly partIndex: number;
+  readonly slotIndex: number;
   readonly key: string;
-  readonly fileId?: string;
-  readonly path?: string;
-  readonly kind: 'image' | 'video';
+  readonly kind: ResolvedMediaKind;
+  readonly label: MediaLabel;
   readonly bytes: number;
-}
-
-interface MediaLabelEntry {
-  readonly messageIndex: number;
-  readonly partIndex: number;
-  readonly kind: 'image' | 'video';
-  readonly name?: string;
-  readonly path?: string;
 }
 
 export class AgentMediaResolverService implements IAgentMediaResolverService {
@@ -106,6 +106,7 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
     @ISessionMediaStore private readonly mediaStore: ISessionMediaStore,
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
+    @IAgentEnvironmentBindingService private readonly environmentBinding: IAgentEnvironmentBindingService,
   ) {
     this.states.contributeState(mediaResolvedKey);
     this.states.contributeState(mediaBudgetDroppedKey);
@@ -131,126 +132,100 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
     model: Model,
     request: InitializedLlmRequester,
     signal?: AbortSignal,
-    includeUserPaths = true,
   ): Promise<readonly Message[]> {
-    let changed = false;
-    const out: Message[] = [];
-    const budgetEntries: MediaBudgetEntry[] = [];
-    const labels: MediaLabelEntry[] = [];
-    const mediaByFileId = new Map<string, { name?: string; path?: string }>();
-    const describeMedia = async (fileId: string) => {
-      const cached = mediaByFileId.get(fileId);
+    const includeUserPaths = this.environmentBinding.current.environmentId === LOCAL_ENVIRONMENT_ID;
+    const described = new Map<string, MediaLabel>();
+    const describeMedia = async (fileId: string): Promise<MediaLabel> => {
+      const cached = described.get(fileId);
       if (cached !== undefined) return cached;
       const file = await this.mediaStore.open(fileId);
       const details = {
         name: file?.name,
         path: file === undefined ? await this.mediaStore.resolveDisplayPath(fileId) : file.path,
       };
-      mediaByFileId.set(fileId, details);
+      described.set(fileId, details);
       return details;
     };
-    for (const message of messages) {
-      const content: ContentPart[] = [];
-      let messageChanged = false;
-      let sawVideoRef = false;
+    const slots: ContentPart[][][] = [];
+    const changedMessages = new Set<number>();
+    const budgetEntries: MediaBudgetEntry[] = [];
+    for (const [messageIndex, message] of messages.entries()) {
+      const messageSlots: ContentPart[][] = [];
+      slots.push(messageSlots);
       const user = message.role === 'user';
-      const includePath = !user || includeUserPaths;
       const position: MediaPosition = message.role === 'tool' ? 'tool_result' : 'content';
-      for (const part of message.content) {
-        const omission = mediaOmissionOf(part);
-        if (part.type === 'text' && omission !== undefined) {
-          const file = omission.fileId === undefined ? undefined : await describeMedia(omission.fileId);
-          const path = includePath ? file?.path : undefined;
-          const name = user ? omission.name ?? file?.name : undefined;
-          const open = buildMediaLabel(omission.kind, name, path);
-          const text = open === undefined
-            ? part.text
-            : `${path === undefined ? `${part.text}\n` : ''}${open}</${omission.kind}>`;
-          content.push({ type: 'text', text });
-          messageChanged = true;
+      for (const [partIndex, part] of message.content.entries()) {
+        if (part.type !== 'image_url' && part.type !== 'video_url') {
+          messageSlots.push([part]);
           continue;
         }
-        const daemonPart = daemonFileRefFromPart(part);
-        if (daemonPart === undefined) {
-          const entry = inlineMediaBudgetEntry(part, out.length, content.length);
+        const kind: ResolvedMediaKind = part.type === 'image_url' ? 'image' : 'video';
+        const daemonRef = daemonFileRefFromPart(part)?.ref;
+        const file = daemonRef === undefined ? {} : await describeMedia(daemonRef.fileId);
+        const label: MediaLabel = {
+          name: user ? mediaNameOf(part) ?? file.name : undefined,
+          path: user && !includeUserPaths ? undefined : file.path,
+        };
+        const previous = message.content[partIndex - 1];
+        const omitted = mediaOmissionOf(part);
+        if (omitted !== undefined) {
+          messageSlots.push([omittedMediaText(kind, omitted, label)]);
+          changedMessages.add(messageIndex);
+          continue;
+        }
+        if (daemonRef === undefined) {
+          const entry = inlineMediaBudgetEntry(part, kind, label, messageIndex, messageSlots.length);
           if (entry !== undefined) budgetEntries.push(entry);
-          const name = mediaNameOf(part);
-          if (user && name !== undefined) {
-            labels.push({
-              messageIndex: out.length,
-              partIndex: content.length,
-              kind: part.type === 'video_url' ? 'video' : 'image',
-              name,
-            });
-          }
-          content.push(part);
+          const labelled = user ? labelledMedia(part, kind, label, previous) : [part];
+          if (labelled.length !== 1) changedMessages.add(messageIndex);
+          messageSlots.push(labelled);
           continue;
         }
-        messageChanged = true;
-        sawVideoRef ||= daemonPart.kind === 'video';
-        const file = await describeMedia(daemonPart.ref.fileId);
-        const path = includePath ? file.path : undefined;
         const resolved =
-          daemonPart.kind === 'video'
-            ? await this.resolveVideoPart(daemonPart.ref, model, request, position, path, signal)
-            : await this.resolveImagePart(daemonPart.ref, model, request, position, path, signal);
+          kind === 'video'
+            ? await this.resolveVideoPart(daemonRef, model, request, position, label, signal)
+            : await this.resolveImagePart(daemonRef, model, request, position, label, signal);
         budgetEntries.push({
-          messageIndex: out.length,
-          partIndex: content.length,
-          key: daemonPart.ref.fileId,
-          fileId: daemonPart.ref.fileId,
-          path,
-          kind: daemonPart.kind,
+          messageIndex,
+          slotIndex: messageSlots.length,
+          key: daemonRef.fileId,
+          kind,
+          label,
           bytes: inlinePartBytes(resolved),
         });
-        if (user) {
-          labels.push({
-            messageIndex: out.length,
-            partIndex: content.length,
-            kind: daemonPart.kind,
-            name: mediaNameOf(part) ?? file.name,
-            path,
-          });
-        }
-        content.push(resolved);
+        messageSlots.push(user && resolved.type !== 'text' ? labelledMedia(resolved, kind, label, previous) : [resolved]);
+        changedMessages.add(messageIndex);
       }
-      out.push(
-        messageChanged
-          ? {
-              ...message,
-              content:
-                content.length > 0
-                  ? content
-                  : [unavailableMediaText(sawVideoRef ? 'video' : 'image')],
-            }
-          : message,
-      );
-      changed ||= messageChanged;
     }
-    changed = this.applyMediaBudget(out, budgetEntries) || changed;
-    changed = applyMediaLabels(out, labels, messages) || changed;
-    return changed ? out : messages;
+    this.applyMediaBudget(slots, budgetEntries, changedMessages);
+    if (changedMessages.size === 0) return messages;
+    return messages.map((message, index) =>
+      changedMessages.has(index) ? { ...message, content: slots[index]!.flat() } : message,
+    );
   }
 
   private applyMediaBudget(
-    out: Message[],
+    slots: ContentPart[][][],
     entries: readonly MediaBudgetEntry[],
-  ): boolean {
-    if (entries.length === 0) return false;
-    let changed = false;
+    changedMessages: Set<number>,
+  ): void {
+    if (entries.length === 0) return;
+    const omit = (entry: MediaBudgetEntry): void => {
+      slots[entry.messageIndex]![entry.slotIndex] = [omittedMediaText(entry.kind, 'budget', entry.label)];
+      changedMessages.add(entry.messageIndex);
+    };
     const dropped = this.budgetDropped;
     const pending = new Map<string, number>();
     for (const entry of entries) {
       if (dropped.has(entry.key)) {
-        this.replaceWithMediaTag(out, entry);
-        changed = true;
+        omit(entry);
         continue;
       }
       pending.set(entry.key, (pending.get(entry.key) ?? 0) + entry.bytes);
     }
     let total = 0;
     for (const bytes of pending.values()) total += bytes;
-    if (total <= REQUEST_MEDIA_BUDGET_BYTES) return changed;
+    if (total <= REQUEST_MEDIA_BUDGET_BYTES) return;
 
     const droppedNow = new Set<string>();
     for (const [key, bytes] of pending) {
@@ -261,10 +236,10 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
       total -= bytes;
     }
     for (const entry of entries) {
-      if (droppedNow.has(entry.key)) this.replaceWithMediaTag(out, entry);
+      if (droppedNow.has(entry.key)) omit(entry);
     }
     const hasNoSavedPath = entries.some(
-      (entry) => droppedNow.has(entry.key) && entry.path === undefined,
+      (entry) => droppedNow.has(entry.key) && entry.label.path === undefined,
     );
     try {
       void this.dispatcher.dispatch(
@@ -279,18 +254,6 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
       );
     } catch {
     }
-    return true;
-  }
-
-  private replaceWithMediaTag(out: Message[], entry: MediaBudgetEntry): void {
-    const message = out[entry.messageIndex]!;
-    const content = [...message.content];
-    if (entry.fileId === undefined) {
-      content[entry.partIndex] = budgetOmittedMedia(entry.kind);
-    } else {
-      content[entry.partIndex] = entry.kind === 'video' ? videoTag(entry.path) : degradedImage(entry.path);
-    }
-    out[entry.messageIndex] = { ...message, content };
   }
 
   private async resolveImagePart(
@@ -298,7 +261,7 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
     model: Model,
     request: InitializedLlmRequester,
     position: MediaPosition,
-    path: string | undefined,
+    label: MediaLabel,
     signal: AbortSignal | undefined,
   ): Promise<ContentPart> {
     const support = mediaSupportForRequest(request, 'image', position);
@@ -308,7 +271,7 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
         reason: 'unsupported',
         model: model.spec.name,
       });
-      return model.spec.capability?.image_in === true ? degradedImage(path) : unsupportedMedia('image', path);
+      return model.spec.capability?.image_in === true ? degradedImage(label) : unsupportedMedia('image', label);
     }
     const providerKey = model.providerType ?? model.protocol;
     const uploadSupported = support.sources.includes('file') || support.sources.includes('url');
@@ -320,7 +283,7 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
     if (uploader === undefined) {
       const memoed = this.memoedImage(inlineKey, model.providerType, support);
       if (memoed !== undefined) return memoed;
-      return this.resolveImageUncached(ref, path, model, request, inlineKey, undefined, support, signal);
+      return this.resolveImageUncached(ref, label, model, request, inlineKey, undefined, support, signal);
     }
     const cacheKey = `image\0${ref.fileId}\0${providerKey}\0${model.protocol}\0${model.endpoint.baseUrl ?? ''}\0${await accountHashFor(model)}`;
     const memoed = this.resolved.get(cacheKey);
@@ -336,12 +299,12 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
         return part;
       }
     }
-    return this.resolveImageUncached(ref, path, model, request, inlineKey, { uploader, cacheKey }, support, signal);
+    return this.resolveImageUncached(ref, label, model, request, inlineKey, { uploader, cacheKey }, support, signal);
   }
 
   private async resolveImageUncached(
     ref: DaemonFileRef,
-    path: string | undefined,
+    label: MediaLabel,
     model: Model,
     request: InitializedLlmRequester,
     inlineKey: string,
@@ -359,7 +322,7 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
         reason: 'read_failed',
         model: model.spec.name,
       });
-      return degradedImage(path);
+      return degradedImage(label);
     }
 
     const fileType = detectFileType(
@@ -378,14 +341,14 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
         reason: 'invalid',
         model: model.spec.name,
       });
-      return degradedImage(path);
+      return degradedImage(label);
     }
 
     if (upload !== undefined) {
       const uploaded = await this.uploadImagePart(model, request, source, mimeType, upload, support, signal);
       if (uploaded !== undefined) return uploaded;
     }
-    if (!support.sources.includes('inline')) return degradedImage(path);
+    if (!support.sources.includes('inline')) return degradedImage(label);
 
     const part: ContentPart = {
       type: 'image_url',
@@ -484,12 +447,12 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
     model: Model,
     request: InitializedLlmRequester,
     position: MediaPosition,
-    path: string | undefined,
+    label: MediaLabel,
     signal: AbortSignal | undefined,
   ): Promise<ContentPart> {
     const support = mediaSupportForRequest(request, 'video', position);
     if (model.spec.capability?.video_in !== true || support === undefined) {
-      return model.spec.capability?.video_in === true ? videoTag(path) : unsupportedMedia('video', path);
+      return model.spec.capability?.video_in === true ? videoTag(label) : unsupportedMedia('video', label);
     }
     const providerKey = model.providerType ?? model.protocol;
     const uploadSupported = support.sources.includes('file') || support.sources.includes('url');
@@ -499,12 +462,12 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
 
     const memoed = this.resolved.get(cacheKey);
     if (memoed !== undefined && (memoed.type === 'text' || mediaAcceptsSource(support, memoed))) {
-      return memoed.type === 'text' ? videoTag(path) : memoed;
+      return memoed.type === 'text' ? videoTag(label) : memoed;
     }
 
     const { part, memoize } = await this.resolveVideoUncached(
       ref,
-      path,
+      label,
       model,
       request,
       cacheKey,
@@ -517,7 +480,7 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
 
   private async resolveVideoUncached(
     ref: DaemonFileRef,
-    tagPath: string | undefined,
+    label: MediaLabel,
     model: Model,
     request: InitializedLlmRequester,
     cacheKey: string,
@@ -537,13 +500,13 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
       source = await this.readMedia(ref, signal);
     } catch {
       signal?.throwIfAborted();
-      return { part: videoTag(tagPath), memoize: true };
+      return { part: videoTag(label), memoize: true };
     }
 
     const { bytes, filename } = source;
     const fileType = detectFileType(filename, bytes.subarray(0, MEDIA_SNIFF_BYTES), 'media');
     if (fileType.kind !== 'video' || !mediaAcceptsMime(support, fileType.mimeType)) {
-      return { part: videoTag(tagPath), memoize: true };
+      return { part: videoTag(label), memoize: true };
     }
     const mimeType = fileType.mimeType;
 
@@ -562,7 +525,7 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
       : undefined;
     if (uploader === undefined) {
       return {
-        part: inlineSupported ? inlineVideoPart(bytes, mimeType) : videoTag(tagPath),
+        part: inlineSupported ? inlineVideoPart(bytes, mimeType) : videoTag(label),
         memoize: true,
       };
     }
@@ -580,7 +543,7 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
           model: model.spec.name,
         });
         return {
-          part: inlineSupported ? inlineVideoPart(bytes, mimeType) : videoTag(tagPath),
+          part: inlineSupported ? inlineVideoPart(bytes, mimeType) : videoTag(label),
           memoize: true,
         };
       }
@@ -597,11 +560,11 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
       });
       if (isVideoUploadUnsupportedError(error)) {
         return {
-          part: inlineSupported ? inlineVideoPart(bytes, mimeType) : videoTag(tagPath),
+          part: inlineSupported ? inlineVideoPart(bytes, mimeType) : videoTag(label),
           memoize: true,
         };
       }
-      return { part: videoTag(tagPath), memoize: false };
+      return { part: videoTag(label), memoize: false };
     }
   }
 
@@ -680,73 +643,52 @@ function stableJwtSubject(token: string): string | undefined {
   }
 }
 
-function applyMediaLabels(
-  out: Message[],
-  labels: readonly MediaLabelEntry[],
-  input: readonly Message[],
-): boolean {
-  const byMessage = new Map<number, Map<number, MediaLabelEntry>>();
-  for (const label of labels) {
-    const entries = byMessage.get(label.messageIndex) ?? new Map<number, MediaLabelEntry>();
-    entries.set(label.partIndex, label);
-    byMessage.set(label.messageIndex, entries);
-  }
-  let changed = false;
-  for (const [messageIndex, entries] of byMessage) {
-    const message = out[messageIndex]!;
-    const content: ContentPart[] = [];
-    let messageChanged = false;
-    for (const [partIndex, part] of message.content.entries()) {
-      const label = entries.get(partIndex);
-      const previous = input[messageIndex]!.content[partIndex - 1];
-      const labelled = label === undefined ? [part] : labelMediaPart(part, label, previous);
-      messageChanged ||= labelled.length !== 1 || labelled[0] !== part;
-      content.push(...labelled);
-    }
-    if (!messageChanged) continue;
-    out[messageIndex] = { ...message, content };
-    changed = true;
-  }
-  return changed;
-}
-
-function labelMediaPart(
+function labelledMedia(
   part: ContentPart,
-  label: MediaLabelEntry,
+  kind: ResolvedMediaKind,
+  label: MediaLabel,
   previous: ContentPart | undefined,
 ): ContentPart[] {
-  const open = buildMediaLabel(label.kind, label.name, label.path);
-  if (open === undefined) return [part];
-  if (part.type === 'image_url' || part.type === 'video_url') {
-    const previousTag = previous?.type === 'text' ? matchSingleMediaPathTag(previous.text) : undefined;
-    if (previousTag?.kind === label.kind && previousTag.path === label.path) return [part];
-    return [{ type: 'text', text: open }, part];
-  }
-  if (part.type !== 'text' || label.name === undefined) return [part];
-  const tag = matchMediaPathTags(part.text).find((entry) => entry.kind === label.kind);
-  if (tag === undefined) {
-    return [{ type: 'text', text: `${part.text}\n${open}</${label.kind}>` }];
-  }
-  const named = buildMediaPathTag(tag.kind, tag.path, label.name);
+  if (label.name === undefined && label.path === undefined) return [part];
+  const legacyTag = previous?.type === 'text' ? matchSingleMediaPathTag(previous.text) : undefined;
+  if (legacyTag?.kind === kind && legacyTag.path === label.path) return [part];
   return [
-    {
-      type: 'text',
-      text: part.text.slice(0, tag.index) + named + part.text.slice(tag.index + tag.text.length),
-    },
+    { type: 'text', text: buildMediaOpenTag(kind, label) },
+    part,
+    { type: 'text', text: `</${kind}>` },
   ];
+}
+
+function withMediaTag(text: string, kind: ResolvedMediaKind, label: MediaLabel): ContentPart {
+  const tag = buildMediaTag(kind, label);
+  return { type: 'text', text: tag === undefined ? text : `${text}\n${tag}` };
+}
+
+function pathTagOr(fallback: string, kind: ResolvedMediaKind, label: MediaLabel): ContentPart {
+  if (label.path === undefined) return withMediaTag(fallback, kind, label);
+  return { type: 'text', text: `${buildMediaOpenTag(kind, label)}</${kind}>` };
+}
+
+function omittedMediaText(
+  kind: ResolvedMediaKind,
+  reason: MediaPlaceholderReason,
+  label: MediaLabel,
+): ContentPart {
+  return pathTagOr(mediaPlaceholderText(kind, reason), kind, label);
 }
 
 function inlineMediaBudgetEntry(
   part: ContentPart,
+  kind: ResolvedMediaKind,
+  label: MediaLabel,
   messageIndex: number,
-  partIndex: number,
+  slotIndex: number,
 ): MediaBudgetEntry | undefined {
   if (part.type !== 'image_url' && part.type !== 'video_url') return undefined;
   const url = mediaUrlOf(part);
   if (!isDataUrl(url)) return undefined;
-  const kind = part.type === 'image_url' ? 'image' : 'video';
   const hash = createHash('sha256').update(kind).update('\0').update(url).digest('hex');
-  return { messageIndex, partIndex, key: `inline\0${hash}`, kind, bytes: url.length };
+  return { messageIndex, slotIndex, key: `inline\0${hash}`, kind, label, bytes: url.length };
 }
 
 function inlinePartBytes(part: ContentPart): number {
@@ -755,35 +697,22 @@ function inlinePartBytes(part: ContentPart): number {
   return isDataUrl(url) ? url.length : 0;
 }
 
-function budgetOmittedMedia(kind: 'image' | 'video'): ContentPart {
-  return { type: 'text', text: `[${kind} omitted: dropped to fit the request media budget]` };
-}
-
-function unsupportedMedia(kind: 'image' | 'video', path: string | undefined): ContentPart {
+function unsupportedMedia(kind: ResolvedMediaKind, label: MediaLabel): ContentPart {
   const capability = `${kind} input`;
-  const hint =
+  return withMediaTag(
     `[${kind} omitted: the current model does not support ${capability}; ` +
-    `use a model with ${capability} capability or convert the file to text]`;
-  return {
-    type: 'text',
-    text: path === undefined ? hint : `${hint}\n${buildMediaPathTag(kind, path)}`,
-  };
+      `use a model with ${capability} capability or convert the file to text]`,
+    kind,
+    label,
+  );
 }
 
-function degradedImage(path: string | undefined): ContentPart {
-  if (path === undefined) return unavailableMediaText('image');
-  return { type: 'text', text: buildMediaPathTag('image', path) };
+function degradedImage(label: MediaLabel): ContentPart {
+  return pathTagOr(IMAGE_UNAVAILABLE_TEXT, 'image', label);
 }
 
-function unavailableMediaText(kind: 'image' | 'video'): ContentPart {
-  return { type: 'text', text: kind === 'video' ? VIDEO_UNAVAILABLE_TEXT : IMAGE_UNAVAILABLE_TEXT };
-}
-
-function videoTag(path: string | undefined): ContentPart {
-  if (path === undefined) {
-    return { type: 'text', text: VIDEO_UNAVAILABLE_TEXT };
-  }
-  return { type: 'text', text: buildMediaPathTag('video', path) };
+function videoTag(label: MediaLabel): ContentPart {
+  return pathTagOr(VIDEO_UNAVAILABLE_TEXT, 'video', label);
 }
 
 function msFileIdFromUrl(url: string): string | undefined {

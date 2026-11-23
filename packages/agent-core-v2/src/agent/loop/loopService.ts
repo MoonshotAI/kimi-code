@@ -10,8 +10,6 @@ import { abortError, isUserCancellation, userCancellationReason } from '#/_base/
 import { toErrorMessage } from '#/_base/errors/errorMessage';
 import { parseBooleanEnv } from '#/_base/utils/env';
 import { AgentLoopRequestObserver } from './requestObservation';
-import { IAgentEnvironmentBindingService } from '#/agent/environmentBinding/environmentBinding';
-import { LOCAL_ENVIRONMENT_ID } from '#/environment/environment';
 import { createAgentMediaPolicy, type AgentMediaPolicy, type AgentMediaPolicyFactory } from './mediaPolicy';
 import {
   agentLLMRequestLogFields,
@@ -232,7 +230,6 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     @ISessionRunGate private readonly runGate: ISessionRunGate,
     @ILogService private readonly logger: ILogService,
     @IAgentMediaResolverService mediaResolver: IAgentMediaResolverService,
-    @IAgentEnvironmentBindingService environmentBinding: IAgentEnvironmentBindingService,
     @IAgentTaskOutputService private readonly taskOutputs: IAgentTaskOutputService,
   ) {
     super();
@@ -241,8 +238,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     this.observer = instantiation.createInstance(AgentLoopRequestObserver);
     this.projector = new AgentLoopProjector((anomalies) => this.observer.reportProjectionRepairs(anomalies));
     this.requestMetadata = new RequestMetadataTracker(scopeContext, dispatcher, attribution);
-    this.mediaPolicyFactory = (model, request) =>
-      createAgentMediaPolicy(mediaResolver, model, request, environmentBinding.current.environmentId === LOCAL_ENVIRONMENT_ID);
+    this.mediaPolicyFactory = (model, request) => createAgentMediaPolicy(mediaResolver, model, request);
     this.requester = {
       coreRequester: (options) => this.coreRequester(options),
       prepareOperation: async (options, _signal) => {
