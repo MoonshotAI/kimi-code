@@ -219,8 +219,19 @@ export class SessionPickerComponent extends DockSection implements Focusable {
     }
   }
 
+  private pendingScope: SessionsScope | undefined;
+
+  clearPendingScope(): void {
+    this.pendingScope = undefined;
+  }
+
+  private activeScope(): SessionsScope {
+    return this.pendingScope ?? this.scope;
+  }
+
   private switchScope(scope: SessionsScope): void {
-    if (scope === this.scope) return;
+    if (scope === this.activeScope()) return;
+    this.pendingScope = scope;
     const selectedId = this.list.selected()?.id ?? this.currentSessionId;
     if (this.onSelectScope !== undefined) {
       this.onSelectScope(scope, selectedId);
@@ -230,7 +241,7 @@ export class SessionPickerComponent extends DockSection implements Focusable {
   }
 
   private cycleTab(delta: -1 | 1): void {
-    const currentIndex = SESSION_TABS.findIndex((tab) => tab.scope === this.scope);
+    const currentIndex = SESSION_TABS.findIndex((tab) => tab.scope === this.activeScope());
     const nextIndex = (Math.max(0, currentIndex) + delta + SESSION_TABS.length) % SESSION_TABS.length;
     const nextTab = SESSION_TABS[nextIndex];
     if (nextTab !== undefined) this.switchScope(nextTab.scope);
@@ -259,12 +270,7 @@ export class SessionPickerComponent extends DockSection implements Focusable {
       return;
     }
     if (matchesKey(data, Key.ctrl('a'))) {
-      const selectedId = this.list.selected()?.id ?? this.currentSessionId;
-      if (this.onSelectScope !== undefined) {
-        this.onSelectScope(this.scope === 'all' ? 'cwd' : 'all', selectedId);
-      } else {
-        this.onToggleScope?.(selectedId);
-      }
+      this.switchScope(this.activeScope() === 'all' ? 'cwd' : 'all');
       return;
     }
     if (matchesKey(data, Key.ctrl('x'))) {

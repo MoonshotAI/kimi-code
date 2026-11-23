@@ -1681,7 +1681,7 @@ describe('runV2Print', () => {
       }
     });
 
-    it('resolves a relative --agent-file from the launch directory when creating a -w worktree', async () => {
+    it('resolves relative --agent-file and --add-dir from the launch directory when creating a -w worktree', async () => {
       const launchDir = await mkdtemp(join(tmpdir(), 'kimi-print-agent-launch-'));
       const worktreeDir = await mkdtemp(join(tmpdir(), 'kimi-print-agent-wt-'));
       await writeFile(
@@ -1718,7 +1718,11 @@ describe('runV2Print', () => {
 
       try {
         await runV2Print(
-          opts({ worktree: 'fix-login', agentFiles: ['./local-reviewer.md'] }) as never,
+          opts({
+            worktree: 'fix-login',
+            agentFiles: ['./local-reviewer.md'],
+            addDirs: ['../shared', '~/team-dir'],
+          }) as never,
           '1.2.3-test',
           { stdout: writer(), stderr: writer() },
         );
@@ -1727,6 +1731,7 @@ describe('runV2Print', () => {
         expect(sessions.create).toHaveBeenCalledWith(
           expect.objectContaining({
             workDir: worktreeDir,
+            additionalDirs: [normalize(join(launchDir, '..', 'shared')), '~/team-dir'],
             mainAgentBinding: { profile: 'local-reviewer', model: 'k2' },
           }),
         );

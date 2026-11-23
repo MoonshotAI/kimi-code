@@ -1228,19 +1228,20 @@ describe('SessionPickerComponent', () => {
 
     it('cycles Cwd -> Project -> All with Tab/Shift+Tab and keeps Ctrl+A toggling All', () => {
       const onSelectScope = vi.fn();
-      const cwd = new SessionPickerComponent({
-        sessions,
-        loading: false,
-        currentSessionId: '',
-        scope: 'cwd',
-        showTabs: true,
-        onSelect: vi.fn(),
-        onCancel: vi.fn(),
-        onSelectScope,
-      });
-      cwd.handleInput('\t');
-      cwd.handleInput('\u001B[Z');
-      cwd.handleInput('\u0001');
+      const makePicker = (scope: 'cwd' | 'project' | 'all') =>
+        new SessionPickerComponent({
+          sessions,
+          loading: false,
+          currentSessionId: '',
+          scope,
+          showTabs: true,
+          onSelect: vi.fn(),
+          onCancel: vi.fn(),
+          onSelectScope,
+        });
+      makePicker('cwd').handleInput('\t');
+      makePicker('cwd').handleInput('\u001B[Z');
+      makePicker('cwd').handleInput('\u0001');
 
       expect(onSelectScope.mock.calls).toEqual([
         ['project', 'ses_1'],
@@ -1249,17 +1250,7 @@ describe('SessionPickerComponent', () => {
       ]);
 
       onSelectScope.mockClear();
-      const all = new SessionPickerComponent({
-        sessions,
-        loading: false,
-        currentSessionId: '',
-        scope: 'all',
-        showTabs: true,
-        onSelect: vi.fn(),
-        onCancel: vi.fn(),
-        onSelectScope,
-      });
-      all.handleInput('\u0001');
+      makePicker('all').handleInput('\u0001');
       expect(onSelectScope).toHaveBeenCalledExactlyOnceWith('cwd', 'ses_1');
     });
 
@@ -1382,6 +1373,39 @@ describe('SessionPickerComponent', () => {
       } finally {
         ui.stop();
       }
+    });
+
+    it('tracks pending scope transitions so rapid Tab presses advance and can cancel back to cwd', () => {
+      const onSelectScope = vi.fn();
+      const picker = new SessionPickerComponent({
+        sessions: [{ id: 'ses_1', title: 'One', work_dir: '/repo', updated_at: 100 }],
+        loading: false,
+        currentSessionId: 'ses_1',
+        scope: 'cwd',
+        showTabs: true,
+        onSelect: vi.fn(),
+        onCancel: vi.fn(),
+        onSelectScope,
+      });
+
+      picker.handleInput('\t');
+      picker.handleInput('\t');
+      picker.handleInput('\t');
+      expect(onSelectScope.mock.calls).toEqual([
+        ['project', 'ses_1'],
+        ['all', 'ses_1'],
+        ['cwd', 'ses_1'],
+      ]);
+
+      onSelectScope.mockClear();
+      picker.handleInput('\t');
+      expect(onSelectScope).toHaveBeenCalledWith('project', 'ses_1');
+      picker.clearPendingScope();
+      picker.handleInput('\t');
+      expect(onSelectScope.mock.calls).toEqual([
+        ['project', 'ses_1'],
+        ['project', 'ses_1'],
+      ]);
     });
   });
 });

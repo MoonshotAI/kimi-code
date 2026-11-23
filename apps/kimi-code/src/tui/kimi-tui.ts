@@ -5155,6 +5155,7 @@ export class KimiTUI {
         requestToken === this.sessionPickerScopeRequestToken &&
         this.state.activeDialog === 'session-picker'
       ) {
+        this.sessionPickerComponent?.clearPendingScope();
         this.showError(`Failed to load ${nextScope} sessions.`);
       }
       return;

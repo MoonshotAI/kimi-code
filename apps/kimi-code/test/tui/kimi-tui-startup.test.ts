@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import { stripVTControlCharacters } from 'node:util';
@@ -5520,6 +5520,31 @@ describe('KimiTUI work location', () => {
       expect(driver.state.appState.worktree).toBeUndefined();
       expect(driver.state.appState.sessionId).toBe('ses-current');
       expect(transcriptText(driver)).toContain(`Environment rejected ${targetDir}`);
+    });
+
+    it('falls back to the worktree root instead of following an escaping directory symlink', async () => {
+      const project = tempDir('kimi-symlink-project-');
+      const worktree = tempDir('kimi-symlink-worktree-');
+      const outside = tempDir('kimi-symlink-outside-');
+      const projectLink = join(project, 'link-out');
+      const worktreeLink = join(worktree, 'link-out');
+      symlinkSync(outside, projectLink, 'dir');
+      symlinkSync(outside, worktreeLink, 'dir');
+      const { harness } = worktreeHarness(project, worktree);
+      const driver = await startAt(projectLink, harness, {}, { projectRoot: project, isGitRepo: true });
+      await driver.ensureSession();
+
+      const panel = await openPanel(driver);
+      panel.handleInput(DOWN);
+      panel.handleInput(ENTER);
+      await vi.waitFor(() => {
+        expect(driver.state.appState.workDir).toBe(worktree);
+      });
+      expect(driver.state.appState.worktree).toEqual({
+        root: worktree,
+        name: 'fix-login',
+        repoRoot: project,
+      });
     });
   });
 

@@ -240,14 +240,16 @@ function isOutsideRoot(rel: string): boolean {
 }
 
 async function relativeInside(root: string, dir: string): Promise<string | undefined> {
-  const direct = relative(root, dir);
-  if (!isOutsideRoot(direct)) return direct;
   const [realRoot, realDir] = await Promise.all([
-    realpath(root).catch(() => root),
-    realpath(dir).catch(() => dir),
+    realpath(root).catch(() => undefined),
+    realpath(dir).catch(() => undefined),
   ]);
-  const resolved = relative(realRoot, realDir);
-  return isOutsideRoot(resolved) ? undefined : resolved;
+  if (realRoot !== undefined && realDir !== undefined) {
+    const resolved = relative(realRoot, realDir);
+    return isOutsideRoot(resolved) ? undefined : resolved;
+  }
+  const direct = relative(root, dir);
+  return isOutsideRoot(direct) ? undefined : direct;
 }
 
 function panelRows(listing: WorktreeListing): WorktreePanelRow[] {
@@ -290,7 +292,8 @@ async function destinationFor(
     };
   }
   const cwd = join(targetRoot, subdir);
-  return isDirectory(cwd)
+  const insideTarget = isDirectory(cwd) && (await relativeInside(targetRoot, cwd)) !== undefined;
+  return insideTarget
     ? { location: { cwd, projectRoot: listing.repoRoot, isGitRepo: true, worktree } }
     : {
         location: { cwd: targetRoot, projectRoot: listing.repoRoot, isGitRepo: true, worktree },

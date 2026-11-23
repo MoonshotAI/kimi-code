@@ -103,7 +103,7 @@ import {
 } from '../run-prompt';
 import { createKimiCodeHostIdentity } from '../host-identity';
 
-import { resolveLaunchPaths } from '../launch-paths';
+import { resolveAdditionalDirs, resolveLaunchPaths } from '../launch-paths';
 import { resolveOutputFormat, worktreeFlagOffError } from '../options';
 import type { CLIOptions, PromptOutputFormat } from '../options';
 import {
@@ -251,7 +251,12 @@ export async function runV2Print(
 
     let resolved = await resolveNativeSession(
       services,
-      { ...opts, agentFiles: launchPaths.agentFiles },
+      {
+        ...opts,
+        agentFiles: launchPaths.agentFiles,
+        addDirs:
+          worktree === undefined ? opts.addDirs : resolveAdditionalDirs(opts.addDirs, workDir),
+      },
       sessionWorkDir,
       defaultModel,
       stderr,

@@ -33,7 +33,7 @@ import { resolveCommandPath } from '#/utils/process/resolve-command';
 
 import { worktreeFlagOffError, type CLIOptions } from './options';
 import { resolveAgentProfileSelection } from './agent-selection';
-import { resolveLaunchPaths } from './launch-paths';
+import { resolveAdditionalDirs, resolveLaunchPaths } from './launch-paths';
 import { createCliTelemetryBootstrap, initializeCliTelemetry } from './telemetry';
 import { detectNativeInstall } from './update/source';
 import { createKimiCodeHostIdentity } from './host-identity';
@@ -140,7 +140,12 @@ export async function runShell(
   tui = new KimiTUI(harness, {
     cliOptions: opts,
     agentProfile,
-    additionalDirs: opts.addDirs?.length ? opts.addDirs : undefined,
+    additionalDirs:
+      opts.worktree !== undefined
+        ? resolveAdditionalDirs(opts.addDirs, workDir)
+        : opts.addDirs?.length
+          ? opts.addDirs
+          : undefined,
     tuiConfig,
     resolvedTuiMode: tuiModeResolution.mode,
     animationFrameRate: animationFrameRateResolution.fps,
