@@ -196,3 +196,63 @@ it('exposes confirmDiscard so external shortcut or menu toggles respect unsaved 
   useConfirmDialog().settle(true);
   await expect(confirmed).resolves.toBe(true);
 }, 60_000);
+
+it('groups and filters archived sessions by project under its name, and by session directory when the project is not listed', async () => {
+  const { IconResolverKey } = await import('@moonshot-ai/app-ui');
+  const { KimiI18nKey } = await import('@moonshot-ai/app-i18n');
+  const { setKimiClientDeps } = await import('@moonshot-ai/app-client/client');
+  const { clientPinia, workspacesStore } = await import('@moonshot-ai/app-client/stores');
+  const { default: i18n } = await import('../../src/renderer/i18n');
+  const { default: SettingsDialog } = await import('../../src/renderer/components/settings/SettingsDialog.vue');
+  const archived = (title: string, workspaceId: string, cwd: string) => ({
+    id: title, title, workspaceId, cwd, archived: true, createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
+  });
+  const items = [
+    archived('in a worktree', 'wd_app', '/code/app-fix'),
+    archived('in a removed project', 'wd_gone', '/code/gone'),
+    archived('in the main checkout', 'wd_app', '/code/app'),
+  ];
+  setKimiClientDeps({ api: () => ({ listSessions: async () => ({ items }) }), t: (key: string) => key } as never);
+  workspacesStore().workspaces = [
+    { id: 'wd_app', root: '/code/app', name: 'My app', kind: 'implicit', additionalDirs: [], sessionCount: 0 },
+  ];
+
+  const host = document.createElement('div');
+  document.body.append(host);
+  app = createApp({
+    render: () =>
+      h(SettingsDialog, {
+        colorScheme: 'light',
+        fontScale: 'medium',
+        notify: false,
+        notifySound: false,
+        initialTab: 'archived',
+        onFetchUsage: async () => ({ kind: 'error' }) as never,
+      }),
+  });
+  app.use(i18n);
+  app.use(clientPinia);
+  app.provide(KimiI18nKey, { t: (key: string) => key });
+  app.provide(IconResolverKey, () => defineComponent({ render: () => h('svg') }));
+  app.mount(host);
+  const text = (element: Element | null) => element?.textContent?.trim();
+  const groups = () => [...document.querySelectorAll('.archive-card')].map((card) => [
+    text(card.querySelector('.path')),
+    [...card.querySelectorAll('.archive-name')].map(text),
+  ]);
+
+  await vi.waitFor(() => expect(groups()).toEqual([
+    ['My app', ['in a worktree', 'in the main checkout']],
+    ['/code/gone', ['in a removed project']],
+  ]));
+
+  document.querySelector<HTMLButtonElement>('.archive-toolbar [role="combobox"]')!.click();
+  await flush();
+  const options = [...document.querySelectorAll<HTMLElement>('[role="option"]')];
+  expect(options.map(text).slice(1)).toEqual(['/code/gone', 'My app']);
+  options.find((option) => text(option) === 'My app')!.click();
+  await flush();
+
+  expect(groups()).toEqual([['My app', ['in a worktree', 'in the main checkout']]]);
+  workspacesStore().workspaces = [];
+}, 60_000);
