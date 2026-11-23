@@ -109,7 +109,11 @@ describe('uploadArchive', () => {
     }
   });
 
-  it('aborts a stalled part PUT and does not mark upload complete', async () => {
+  it.each([
+    { cause: 'the default timeout', timeoutMs: undefined, elapsed: 60_000, error: /timed out/ },
+    { cause: 'an explicit timeout', timeoutMs: 25, elapsed: 25, error: /timed out/ },
+    { cause: 'caller cancellation', timeoutMs: Infinity, elapsed: 60_001, error: /attachment cancelled/ },
+  ])('aborts a stalled part PUT on $cause and does not mark it complete', async ({ timeoutMs, elapsed, error }) => {
     const workRoot = await mkdtemp(join(tmpdir(), 'feedback-upload-stalled-'));
     const archivePath = join(workRoot, 'repo.zip');
     await writeFile(archivePath, 'hello');
@@ -141,6 +145,7 @@ describe('uploadArchive', () => {
 
     vi.useFakeTimers();
     try {
+      const caller = new AbortController();
       const upload = uploadArchive(
         api,
         {
@@ -149,11 +154,13 @@ describe('uploadArchive', () => {
           sha256: 'hash',
         },
         3,
-        { filename: 'repo.zip', timeoutMs: 25, maxRetries: 0 },
+        { filename: 'repo.zip', timeoutMs, maxRetries: 0, signal: caller.signal },
       );
-      const expectation = expect(upload).rejects.toThrow(/timed out/);
-      await vi.advanceTimersByTimeAsync(25);
+      const expectation = expect(upload).rejects.toThrow(error);
+      await vi.advanceTimersByTimeAsync(elapsed);
+      caller.abort(new Error('attachment cancelled'));
       await expectation;
+      expect(fetchMock).toHaveBeenCalledOnce();
       expect(api.completeUpload).not.toHaveBeenCalled();
     } finally {
       vi.useRealTimers();

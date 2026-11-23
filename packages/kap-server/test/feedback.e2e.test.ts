@@ -7,10 +7,12 @@ import { join } from 'node:path';
 
 import { closeSessionById, IOAuthService, ISessionExportService, MAIN_AGENT_ID, sessionDirOf } from '@moonshot-ai/agent-core-v2';
 import { OAuthUnauthorizedError } from '@moonshot-ai/kimi-code-oauth';
+import { deferred } from '@moonshot-ai/testkit/fixtures';
 import { agent, createFakeModel, held, say, type ReplyStep } from '@moonshot-ai/testkit/model';
 import { afterAll, afterEach, assert, beforeAll, describe, expect, it, type TestContext, vi } from 'vitest';
 
 import { ErrorCode } from '../src/protocol/error-codes';
+import { FeedbackGateway, readFeedbackFile } from '../src/services/feedback/feedbackService';
 import type { HostSession } from '../src/services/hosts/hostSession';
 import { type RunningServer, startServer } from '../src/start';
 import { authHeaders } from './helpers/auth';
@@ -276,6 +278,53 @@ default_model = "alternate"
     expect(result.code).toBe(0);
     expect(receivedParts.get(result.data.upload_id)).toEqual({ method: 'POST', bytes: Buffer.from('chosen image') });
     expect(completed.at(-1)).toEqual({ upload_id: result.data.upload_id, parts: [{ part_number: 1, etag: '"test-etag"' }] });
+  });
+
+  it('keeps a signed upload part active past one minute', async ({ onTestFinished }) => {
+    const path = join(home, 'slow-attachment.zip');
+    await writeFile(path, 'session');
+    const file = await readFeedbackFile('session.zip', path);
+    const feedback = new FeedbackGateway(new URL('https://example.test/coding/v1/feedback'), token);
+    const storageUrl = 'https://example.test/storage/1';
+    const caller = new AbortController();
+    const partStarted = deferred<AbortSignal>();
+    const stored = deferred();
+    const requests = vi.spyOn(globalThis, 'fetch')
+      .mockRejectedValue(new Error('Unexpected feedback request'))
+      .mockResolvedValueOnce(Response.json({ upload: { id: 5, parts: [
+        { part_number: 1, method: 'PUT', url: storageUrl, size: file.size },
+      ] } }))
+      .mockImplementationOnce(async (url, init) => {
+        expect(url).toBe(storageUrl);
+        expect(await new Response(init?.body).text()).toBe('session');
+        const signal = init?.signal;
+        assert.isOk(signal);
+        partStarted.resolve(signal);
+        await stored.promise;
+        signal.throwIfAborted();
+        return new Response(null, { headers: { etag: 'part-etag' } });
+      })
+      .mockResolvedValueOnce(Response.json({}));
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    onTestFinished(() => {
+      requests.mockRestore();
+      vi.useRealTimers();
+    });
+    const upload = feedback.upload(3, file, caller.signal);
+    try {
+      const signal = await partStarted.promise;
+      vi.advanceTimersByTime(60_001);
+      expect(signal.aborted).toBe(false);
+      stored.resolve();
+      await expect(upload).resolves.toBe(5);
+    } finally {
+      caller.abort();
+      stored.resolve();
+      await upload.catch(() => {});
+    }
+    expect(requests).toHaveBeenLastCalledWith('https://example.test/coding/v1/feedback/upload_complete', expect.objectContaining({
+      body: JSON.stringify({ upload_id: 5, parts: [{ part_number: 1, etag: 'part-etag' }] }),
+    }));
   });
 
   async function connectRemoteFeedbackHost({ onTestFinished }: TestContext) {

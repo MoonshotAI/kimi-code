@@ -177,7 +177,7 @@ async function uploadOnePart(
   const { part, start } = layout;
   const timeoutMs = options.timeoutMs ?? DEFAULT_PART_TIMEOUT_MS;
   const timeout = new AbortController();
-  const timer = setTimeout(() => { timeout.abort(); }, timeoutMs);
+  const timer = timeoutMs === Infinity ? undefined : setTimeout(() => { timeout.abort(); }, timeoutMs);
   const signal = options.signal === undefined ? timeout.signal : AbortSignal.any([timeout.signal, options.signal]);
   const stream = createReadStream(filePath, { start, end: start + part.size - 1 });
   try {

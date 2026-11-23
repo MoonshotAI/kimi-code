@@ -138,7 +138,7 @@ export class FeedbackGateway {
         }, options);
         if (result.kind === 'error') throw gatewayError(result.status);
       },
-    }, file, feedbackId, { filename: file.filename, signal, redirect: 'error' });
+    }, file, feedbackId, { filename: file.filename, signal, redirect: 'error', timeoutMs: Infinity });
   }
 
   private uploadUrl(raw: string, method: string): string {
