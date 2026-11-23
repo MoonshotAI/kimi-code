@@ -9,6 +9,7 @@ import type {
 } from '@agentclientprotocol/sdk';
 import { RequestError } from '@agentclientprotocol/sdk';
 import type { ContextMessage } from '@moonshot-ai/agent-core-v2';
+import { newMessageId } from '@moonshot-ai/agent-core-v2/agent/contextMemory/messageId';
 import { toCoreMessage } from '@moonshot-ai/agent-core-v2/human/message';
 import { toLlmMessage } from '@moonshot-ai/agent-core-v2/llm-adapter/contract/message';
 import type {
@@ -124,6 +125,8 @@ interface TurnDriver {
   resolve(response: PromptResponse): void;
   reject(error: unknown): void;
   turnId?: number;
+  promptId?: string;
+  queued?: boolean;
   settled: boolean;
   cancelRequested?: boolean;
   early: Array<{ readonly turnId: number; readonly dispatch: () => void }>;
@@ -202,6 +205,15 @@ export class AcpSession {
         this.dispatchTurnEvent(event.turnId, () => {
           this.onTurnEnded(event);
         });
+      }),
+      events.on('turn.started', (event) => {
+        this.onTurnStarted(event);
+      }),
+      events.on('prompt.completed', (event) => {
+        this.onPromptCompleted(event);
+      }),
+      events.on('prompt.aborted', (event) => {
+        this.onPromptAborted(event);
       }),
       events.on('compaction.started', (event) => {
         this.onCompactionStarted(event);
@@ -461,34 +473,31 @@ export class AcpSession {
 
   private driveTurn(input: readonly ContentPart[]): Promise<PromptResponse> {
     this.assertNoActiveTurn();
-    return this.driveLaunch(this.agent.prompt({ input }));
+    const promptId = newMessageId();
+    return this.driveLaunch(this.agent.prompt({ input, promptId }), promptId);
   }
 
-  private driveLaunch(launch: Promise<PromptLaunchResult>): Promise<PromptResponse> {
+  private driveLaunch(launch: Promise<PromptLaunchResult>, promptId?: string): Promise<PromptResponse> {
     return new Promise<PromptResponse>((resolve, reject) => {
-      const driver: TurnDriver = { resolve, reject, settled: false, early: [] };
+      const driver: TurnDriver = { resolve, reject, settled: false, early: [], promptId };
       this.driver = driver;
       launch.then(
         (launched) => {
           if (driver.settled) return;
           if (launched === undefined) {
-            this.settleDriver(driver, () => {
-              resolve({ stopReason: driver.cancelRequested === true ? 'cancelled' : 'end_turn' });
-            });
+            if (driver.promptId === undefined) {
+              this.settleDriver(driver, () => {
+                resolve({ stopReason: driver.cancelRequested === true ? 'cancelled' : 'end_turn' });
+              });
+              return;
+            }
+            driver.queued = true;
+            for (const early of driver.early.splice(0)) {
+              early.dispatch();
+            }
             return;
           }
-          driver.turnId = launched.turn_id;
-          if (driver.cancelRequested === true) {
-            void this.agent.cancel({ turnId: launched.turn_id }).catch((error) => {
-              log.warn('acp: deferred cancel failed', {
-                sessionId: this.sessionId,
-                error: error instanceof Error ? error.message : String(error),
-              });
-            });
-          }
-          for (const early of driver.early.splice(0)) {
-            if (early.turnId === driver.turnId) early.dispatch();
-          }
+          this.claimDriverTurn(driver, launched.turn_id);
         },
         (error) => {
           this.settleDriver(driver, () => {
@@ -499,9 +508,31 @@ export class AcpSession {
     });
   }
 
+  private claimDriverTurn(driver: TurnDriver, turnId: number): void {
+    if (driver.settled || driver.turnId !== undefined) return;
+    driver.turnId = turnId;
+    driver.queued = false;
+    if (driver.cancelRequested === true) {
+      void this.agent.cancel({ turnId }).catch((error) => {
+        log.warn('acp: deferred cancel failed', {
+          sessionId: this.sessionId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
+    }
+    for (const early of driver.early.splice(0)) {
+      if (early.turnId === driver.turnId) early.dispatch();
+    }
+  }
+
   private dispatchTurnEvent(turnId: number, dispatch: () => void): void {
     const driver = this.driver;
-    if (driver !== undefined && !driver.settled && driver.turnId === undefined) {
+    if (
+      driver !== undefined &&
+      !driver.settled &&
+      driver.turnId === undefined &&
+      driver.queued !== true
+    ) {
       driver.early.push({ turnId, dispatch });
       return;
     }
@@ -523,18 +554,24 @@ export class AcpSession {
     return driver;
   }
 
+  private shouldForwardTurnEvent(turnId: number): boolean {
+    const driver = this.driver;
+    if (driver === undefined || driver.settled || driver.turnId === undefined) return true;
+    return driver.turnId === turnId;
+  }
+
   private onAssistantDelta(event: AgentEventPayloads['assistant.delta']): void {
-    if (this.driverFor(event.turnId) === undefined) return;
+    if (!this.shouldForwardTurnEvent(event.turnId)) return;
     this.emit(assistantDeltaToSessionUpdate(this.sessionId, event));
   }
 
   private onThinkingDelta(event: AgentEventPayloads['thinking.delta']): void {
-    if (this.driverFor(event.turnId) === undefined) return;
+    if (!this.shouldForwardTurnEvent(event.turnId)) return;
     this.emit(thinkingDeltaToSessionUpdate(this.sessionId, event));
   }
 
   private onToolCallStarted(event: AgentEventPayloads['tool.call.started']): void {
-    if (this.driverFor(event.turnId) === undefined) return;
+    if (!this.shouldForwardTurnEvent(event.turnId)) return;
     const mapped = event as unknown as ToolCallStartedEvent;
     const key = acpToolCallId(event.turnId, event.toolCallId);
     const locations = toolCallLocations(mapped.name, mapped.args, mapped.display);
@@ -563,7 +600,7 @@ export class AcpSession {
   }
 
   private onToolCallDelta(event: AgentEventPayloads['tool.call.delta']): void {
-    if (this.driverFor(event.turnId) === undefined) return;
+    if (!this.shouldForwardTurnEvent(event.turnId)) return;
     const mapped = event as unknown as ToolCallDeltaEvent;
     const key = acpToolCallId(event.turnId, event.toolCallId);
     const acc = this.toolCallStreamArgs.get(key);
@@ -576,7 +613,7 @@ export class AcpSession {
   }
 
   private onToolUpdated(event: AgentEventPayloads['tool.updated']): void {
-    if (this.driverFor(event.turnId) === undefined) return;
+    if (!this.shouldForwardTurnEvent(event.turnId)) return;
     const key = acpToolCallId(event.turnId, event.toolCallId);
     const status = event.fields['status'];
     if (typeof status !== 'string' || status.length === 0 || this.toolStatuses.get(key) === status) return;
@@ -586,7 +623,7 @@ export class AcpSession {
   }
 
   private onToolResult(event: AgentEventPayloads['tool.result']): void {
-    if (this.driverFor(event.turnId) === undefined) return;
+    if (!this.shouldForwardTurnEvent(event.turnId)) return;
     const key = acpToolCallId(event.turnId, event.toolCallId);
     this.toolStatuses.delete(key);
     const locations = this.toolLocations.get(key);
@@ -654,9 +691,37 @@ export class AcpSession {
     });
   }
 
+  private onTurnStarted(event: AgentEventPayloads['turn.started']): void {
+    const driver = this.driver;
+    if (driver === undefined || driver.settled) return;
+    if (driver.promptId === undefined || event.promptId !== driver.promptId) return;
+    this.claimDriverTurn(driver, event.turnId);
+  }
+
+  private onPromptCompleted(event: AgentEventPayloads['prompt.completed']): void {
+    const driver = this.driver;
+    if (driver === undefined || driver.settled) return;
+    if (driver.promptId === undefined || event.promptId !== driver.promptId) return;
+    this.settleDriver(driver, () => {
+      driver.resolve({ stopReason: turnEndReasonToStopReason(event.reason ?? 'completed') });
+    });
+  }
+
+  private onPromptAborted(event: AgentEventPayloads['prompt.aborted']): void {
+    const driver = this.driver;
+    if (driver === undefined || driver.settled) return;
+    if (driver.promptId === undefined || event.promptId !== driver.promptId) return;
+    this.settleDriver(driver, () => {
+      driver.resolve({ stopReason: 'cancelled' });
+    });
+  }
+
   private onTurnEnded(event: AgentEventPayloads['turn.ended']): void {
     const driver = this.driverFor(event.turnId);
-    if (driver === undefined) return;
+    if (driver === undefined) {
+      void this.emitUsageUpdate();
+      return;
+    }
     const error = event.error as { readonly code: string; readonly message?: string } | undefined;
     this.settleDriver(driver, () => {
       if (event.reason === 'failed' && isAuthError(error)) {
