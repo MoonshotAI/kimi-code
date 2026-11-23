@@ -586,42 +586,26 @@ function flashSessionRow(sessionId: string, row: HTMLElement): void {
 
 function locateSession(sessionId: string): void {
   const pinnedGroup = pinnedWorkspaceGroups.value.find((g) => g.sessions.some((s) => s.id === sessionId));
-  const group = allGroups.value.find((g) => g.sessions.some((s) => s.id === sessionId));
-  if (pinnedGroup) {
+  const pinned = !!pinnedGroup || pinnedSessions.value.some((s) => s.id === sessionId);
+  if (pinned) {
     revealPinnedSection();
-    if (isCollapsed(pinnedGroup.workspace.id)) toggleCollapse(pinnedGroup.workspace.id);
-    void nextTick(() => {
-      const root = pinnedListRef.value?.$el as HTMLElement | null;
-      const row = [...(root?.querySelectorAll<HTMLElement>('[data-session-id]') ?? [])].find(
-        (el) => el.dataset.sessionId === sessionId,
-      );
-      row?.scrollIntoView({ block: 'nearest', behavior: scrollBehavior() });
-      if (row) flashSessionRow(sessionId, row);
-    });
-    return;
+    if (pinnedGroup && isCollapsed(pinnedGroup.workspace.id)) toggleCollapse(pinnedGroup.workspace.id);
+  } else {
+    if (props.statusTab !== 'open') emit('update:statusTab', 'open');
+    setSessionsCollapsed(false);
+    if (listMode.value === 'grouped') {
+      const group = groups.value.find((g) => g.sessions.some((s) => s.id === sessionId));
+      if (group && isCollapsed(group.workspace.id)) toggleCollapse(group.workspace.id);
+    }
   }
-  if (!group) {
-    revealPinnedSection();
-    void nextTick(() => {
-      const root = pinnedListRef.value?.$el as HTMLElement | null;
-      const row = [...(root?.querySelectorAll<HTMLElement>('[data-session-id]') ?? [])].find(
-        (el) => el.dataset.sessionId === sessionId,
-      );
-      row?.scrollIntoView({ block: 'nearest', behavior: scrollBehavior() });
-      if (row) flashSessionRow(sessionId, row);
-    });
-    return;
-  }
-  if (props.statusTab !== 'open') emit('update:statusTab', 'open');
-  if (listMode.value !== 'grouped') setListMode('grouped');
-  setSessionsCollapsed(false);
-  if (isCollapsed(group.workspace.id)) toggleCollapse(group.workspace.id);
   void nextTick(() => {
-    const row = [...(sessionsEl.value?.querySelectorAll<HTMLElement>('[data-session-id]') ?? [])].find(
+    const root = pinned ? (pinnedListRef.value?.$el as HTMLElement | null) : sessionsEl.value;
+    const row = [...(root?.querySelectorAll<HTMLElement>('[data-session-id]') ?? [])].find(
       (el) => el.dataset.sessionId === sessionId,
     );
-    row?.scrollIntoView({ block: 'start', behavior: scrollBehavior() });
-    if (row) flashSessionRow(sessionId, row);
+    if (!row) return;
+    row.scrollIntoView({ block: pinned ? 'nearest' : 'start', behavior: scrollBehavior() });
+    flashSessionRow(sessionId, row);
   });
 }
 
@@ -866,6 +850,8 @@ defineExpose({
           <SessionRow
             v-for="s in flatSessions"
             :key="s.id"
+            :data-session-id="s.id"
+            :class="{ 'se-locate-flash': flashSessionId === s.id }"
             :session="s"
             :active="s.id === activeId"
             :approval-count="pendingBySession[s.id]?.approvals ?? 0"
@@ -1248,10 +1234,12 @@ defineExpose({
 .ws-drop-target.drop-before { box-shadow: inset 0 2px 0 var(--color-accent); }
 .ws-drop-target.drop-after { box-shadow: inset 0 -2px 0 var(--color-accent); }
 
+.se-locate-flash,
 .ws-drop-target.ws-locate-flash :deep(.gh),
 .pin-workspace.ws-locate-flash :deep(.gh) {
   isolation: isolate;
 }
+.se-locate-flash::before,
 .ws-drop-target.ws-locate-flash :deep(.gh)::before,
 .pin-workspace.ws-locate-flash :deep(.gh)::before {
   content: '';
@@ -1268,6 +1256,7 @@ defineExpose({
   to { opacity: 0; }
 }
 @media (prefers-reduced-motion: reduce) {
+  .se-locate-flash::before,
   .ws-drop-target.ws-locate-flash :deep(.gh)::before,
   .pin-workspace.ws-locate-flash :deep(.gh)::before { animation: none; }
 }

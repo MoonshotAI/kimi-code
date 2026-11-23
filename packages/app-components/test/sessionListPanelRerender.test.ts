@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 import { createApp, defineComponent, h, nextTick, reactive, ref, type App } from 'vue';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import type { Session, WorkspaceGroup as WorkspaceGroupView } from '@moonshot-ai/app-core/client/types';
+import { loadCollapsedWorkspaces, loadSidebarViewMode, saveCollapsedWorkspaces, saveSidebarViewMode } from '@moonshot-ai/app-core/lib';
 import { createKimiI18n } from '@moonshot-ai/app-i18n';
 import { IconResolverKey } from '@moonshot-ai/app-ui';
 
@@ -279,6 +280,43 @@ describe('SessionListPanel re-render scope', () => {
     expect(pinItem).not.toBeUndefined();
     pinItem!.click();
     expect(fakes.client.togglePinWorkspace).toHaveBeenCalledWith('ws-1');
+  });
+
+  it.each([
+    { mode: 'flat', target: 's-1-0', rendered: true },
+    { mode: 'flat', target: 's-1-1', rendered: false },
+    { mode: 'grouped', target: 's-1-0', rendered: true },
+  ] as const)('locates search result $target in $mode mode (rendered: $rendered) without paging', async ({ mode, target, rendered }) => {
+    app?.unmount();
+    saveSidebarViewMode(mode);
+    saveCollapsedWorkspaces(['ws-1']);
+    fakes.client.sidebarFlatSessions = ref([session(1, 0)]);
+    fakes.client.sidebarFlatSessionsHasMore = ref(true);
+    fakes.client.loadMoreSidebarFlatSessions = vi.fn();
+    vi.stubGlobal('matchMedia', () => ({ matches: false }));
+    const scroll = vi.fn();
+    Element.prototype.scrollIntoView = scroll;
+    onTestFinished(() => {
+      Reflect.deleteProperty(Element.prototype, 'scrollIntoView');
+      vi.unstubAllGlobals();
+    });
+    app = installTestPlugins(createApp(SessionListPanel, { statusTab: 'open' }));
+    const panel = app.mount(host) as InstanceType<typeof SessionListPanel>;
+
+    panel.locateSession(target);
+    await nextTick();
+    await nextTick();
+
+    expect(loadSidebarViewMode()).toBe(mode);
+    expect(loadCollapsedWorkspaces()).toEqual(mode === 'flat' ? ['ws-1'] : []);
+    expect(fakes.client.loadMoreSidebarFlatSessions).not.toHaveBeenCalled();
+    if (rendered) {
+      expect(scroll.mock.contexts).toEqual([rowOf(target)]);
+      expect(rowOf(target)?.classList.contains('se-locate-flash')).toBe(true);
+    } else {
+      expect(rowOf(target)).toBeNull();
+      expect(scroll).not.toHaveBeenCalled();
+    }
   });
 
   it('returns to Open before locating a session in a pinned workspace', async () => {
