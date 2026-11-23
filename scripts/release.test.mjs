@@ -162,8 +162,9 @@ test('desktop only defers pnpm cache writes for a new CLI release, not a previou
     return result.stdout.trim();
   };
   git('init', '--quiet');
+  const outputFor = (tag) => `tag=${tag}\ntargets=["darwin-arm64","darwin-x64","linux-arm64","linux-x64","win32-arm64","win32-x64"]\n`;
   assert.equal(run(f, 'plan-cli').status, 0);
-  assert.equal(readFileSync(f.env.GITHUB_OUTPUT, 'utf8'), 'tag=\n');
+  assert.equal(readFileSync(f.env.GITHUB_OUTPUT, 'utf8'), outputFor(''));
 
   const cli = { name: '@moonshot-ai/kimi-code', path: 'apps/kimi-code', version: '2.0.0', private: false };
   mkdirSync(join(f.dir, cli.path), { recursive: true });
@@ -174,18 +175,18 @@ test('desktop only defers pnpm cache writes for a new CLI release, not a previou
   writeFileSync(planFile, JSON.stringify(plan));
   writeFileSync(f.env.GITHUB_OUTPUT, '');
   assert.equal(run(f, 'plan-cli').status, 0);
-  assert.equal(readFileSync(f.env.GITHUB_OUTPUT, 'utf8'), `tag=${cli.name}@${cli.version}\n`);
+  assert.equal(readFileSync(f.env.GITHUB_OUTPUT, 'utf8'), outputFor(`${cli.name}@${cli.version}`));
 
   git('-c', 'user.name=Test', '-c', 'user.email=test@example.com', '-c', 'commit.gpgSign=false', 'commit', '--allow-empty', '--quiet', '-m', 'prior release');
   git('-c', 'tag.gpgSign=false', 'tag', `${cli.name}@${cli.version}`);
   writeFileSync(f.env.GITHUB_OUTPUT, '');
   assert.equal(run(f, 'plan-cli').status, 0);
-  assert.equal(readFileSync(f.env.GITHUB_OUTPUT, 'utf8'), 'tag=\n');
+  assert.equal(readFileSync(f.env.GITHUB_OUTPUT, 'utf8'), outputFor(''));
 
   writeFileSync(planFile, JSON.stringify({ ...plan, packages: [cli] }));
   writeFileSync(f.env.GITHUB_OUTPUT, '');
   assert.equal(run(f, 'plan-cli', { GITHUB_SHA: git('rev-parse', 'HEAD') }).status, 0);
-  assert.equal(readFileSync(f.env.GITHUB_OUTPUT, 'utf8'), `tag=${cli.name}@${cli.version}\n`);
+  assert.equal(readFileSync(f.env.GITHUB_OUTPUT, 'utf8'), outputFor(`${cli.name}@${cli.version}`));
 });
 
 test('only CLI-only installs opt out of the Electron rebuild', () => {

@@ -1,5 +1,6 @@
 import { execFileSync, spawnSync } from 'node:child_process';
 import { appendFileSync, readFileSync, readdirSync } from 'node:fs';
+import { SUPPORTED_TARGETS } from '../apps/kimi-code/scripts/native/native-deps.mjs';
 
 const command = process.argv[2];
 const repo = process.env.GITHUB_REPOSITORY;
@@ -32,7 +33,7 @@ if (command === 'plan-cli') {
     if (ref.status === 1 || (ref.status === 0 && ref.stdout.trim() === sha)) tag = name;
     else if (ref.status !== 0) throw new Error(`Could not resolve ${name}`);
   }
-  appendFileSync(process.env.GITHUB_OUTPUT, `tag=${tag}\n`);
+  appendFileSync(process.env.GITHUB_OUTPUT, `tag=${tag}\ntargets=${JSON.stringify(SUPPORTED_TARGETS)}\n`);
   process.exit(0);
 }
 const packages = plan.packages.filter((pkg) => pkg.name === 'kimi-code-app');

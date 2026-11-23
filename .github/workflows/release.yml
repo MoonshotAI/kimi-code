@@ -57,6 +57,7 @@ jobs:
     outputs:
       publish: ${{ steps.trigger.outputs.publish }}
       cli-tag: ${{ steps.cli.outputs.tag }}
+      cli-targets: ${{ steps.cli.outputs.targets }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -279,11 +280,48 @@ jobs:
       AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
       AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
 
+  compress-native:
+    name: Compress native archive (${{ matrix.target }})
+    needs: [candidate, native-artifacts]
+    if: needs.candidate.outputs.cli-tag != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        target: ${{ fromJSON(needs.candidate.outputs.cli-targets) }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v8
+        with:
+          name: kimi-code-native-${{ matrix.target }}
+          path: dist-compressed
+      - name: Compress and checksum the signed binary
+        working-directory: dist-compressed
+        env:
+          TARGET: ${{ matrix.target }}
+          TAG: ${{ needs.candidate.outputs.cli-tag }}
+        run: |
+          sha256sum --check "kimi-code-${TARGET}.zip.sha256"
+          node ../apps/kimi-code/scripts/native/produce-manifest.mjs . "$TAG"
+          mv manifest.json "manifest-${TARGET}.json"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: kimi-code-native-compressed-${{ matrix.target }}
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 7
+          path: |
+            dist-compressed/*.zst*
+            dist-compressed/*.tar.gz*
+            dist-compressed/manifest-*.json
+
   publish-native-assets:
     name: Publish native release assets
     needs:
       - release
-      - native-artifacts
+      - compress-native
     if: needs.release.outputs.kimi_native_release == 'true'
     runs-on: ubuntu-latest
     permissions:
@@ -300,16 +338,16 @@ jobs:
           path: dist-native-release
           merge-multiple: true
 
-      - name: Produce manifest.json
+      - name: Merge the six platform manifests
         env:
           RELEASE_TAG: ${{ needs.release.outputs.kimi_release_tag }}
-        run: node apps/kimi-code/scripts/native/produce-manifest.mjs dist-native-release "$RELEASE_TAG"
+        run: node apps/kimi-code/scripts/native/merge-platform-manifests.mjs dist-native-release "$RELEASE_TAG"
 
       - name: Upload assets to GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ needs.release.outputs.kimi_release_tag }}
-        run: gh release upload "$RELEASE_TAG" dist-native-release/* --clobber
+        run: gh release upload "$RELEASE_TAG" dist-native-release/kimi-code-* dist-native-release/manifest.json --clobber
 
   deploy-docs:
     needs: publish-native-assets
