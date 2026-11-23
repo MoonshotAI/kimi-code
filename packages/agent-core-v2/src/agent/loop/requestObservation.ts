@@ -8,8 +8,6 @@ import { WarningIssued } from '#/agent/profile/profileOps';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { cacheProbeUsage } from '#/agent/usage/cacheProbe';
-import { desktopFeedbackFlag } from '#/app/auth/feedback/flag';
-import { IFlagService } from '#/app/flag/flag';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { ApiErrorEvent, CacheBreakDetectedEvent } from '#/app/telemetry/events';
 import { unwrapErrorCause } from '#/errors';
@@ -109,7 +107,6 @@ export class AgentLoopRequestObserver {
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @IAgentStateService private readonly states: IAgentStateService,
     @ISessionRequestAttributionService private readonly attribution: ISessionRequestAttributionService,
-    @IFlagService private readonly flags: Pick<IFlagService, 'enabled' | '_serviceBrand'>,
   ) {
     if (!this.states.has(llmRequestTraceKey)) this.states.contributeState(llmRequestTraceKey);
     this.states.contributeState(contextProjectorLastRepairSignatureKey);
@@ -134,7 +131,7 @@ export class AgentLoopRequestObserver {
 
   noteModel(request: ResolvedRequestContext): void {
     const { source, model } = request;
-    if (source.type !== 'turn' || source.step === undefined || !this.flags.enabled(desktopFeedbackFlag.id)) return;
+    if (source.type !== 'turn' || source.step === undefined) return;
     this.attribution.noteModel(this.scopeContext.agentId, source.turnId, source.step, {
       model: model.spec.name, provider: model.protocol, isKfc: isManagedKimiCodeBaseUrl(model.endpoint.baseUrl),
     });

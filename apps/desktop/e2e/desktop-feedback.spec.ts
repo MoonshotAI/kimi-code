@@ -81,9 +81,6 @@ testWithProvider('submits global and reply feedback with opt-in attachments', as
   const pendingDiagnostics = new Promise<void>(resolve => { releaseDiagnostics = resolve; });
 
   await page.route('**/api/v1/client-configs/feedback_form', route => route.fulfill({ status: 404 }));
-  await page.route('**/api/v1/meta', (route) => route.fulfill({ json: envelope({
-    server_version: '2.6.3', capabilities: {}, experimental_flags: { desktop_feedback: true },
-  }) }));
   await page.route('**/api/v1/auth', (route) => route.fulfill({ json: envelope({
     models_ready: true, providers_count: 1, managed_provider: signedIn ? { status: 'authenticated' } : null,
   }) }));
@@ -401,7 +398,7 @@ const hostProxy = `/api/v1/hosts/${hostId}/proxy`;
 type OwnedRecord = { host_id?: string };
 type SessionDirectory = OwnedRecord & { items?: OwnedRecord[]; groups?: (OwnedRecord & { sessions: OwnedRecord[] })[] };
 
-async function openSshConversation(app: DesktopApp, provider: FakeModel, flags: { local: boolean; remote: boolean }) {
+async function openSshConversation(app: DesktopApp, provider: FakeModel) {
   const page = app.window;
   const reply = 'The remote task finished.';
   provider.script(say(reply));
@@ -432,9 +429,6 @@ async function openSshConversation(app: DesktopApp, provider: FakeModel, flags: 
     if (local.pathname.endsWith(`/sessions/${sessionId}`)) data.host_id = hostId;
     await route.fulfill({ json: envelope(data) });
   });
-  await page.route('**/api/v1/meta', route => route.fulfill({ json: envelope({
-    server_version: '2.6.3', capabilities: {}, experimental_flags: { desktop_feedback: route.request().url().includes(hostProxy) ? flags.remote : flags.local },
-  }) }));
   await page.route('**/api/v1/auth', route => route.fulfill({ json: envelope({
     models_ready: true, providers_count: 1, managed_provider: { status: 'authenticated' },
   }) }));
@@ -454,9 +448,6 @@ async function openSshConversation(app: DesktopApp, provider: FakeModel, flags: 
 
 testWithProvider('keeps reply feedback visible while scrolling the conversation', async ({ app, provider }) => {
   const page = app.window;
-  await page.route('**/api/v1/meta', route => route.fulfill({ json: envelope({
-    server_version: '2.6.3', capabilities: {}, experimental_flags: { desktop_feedback: true },
-  }) }));
   await page.route('**/api/v1/auth', route => route.fulfill({ json: envelope({
     models_ready: true, providers_count: 1, managed_provider: { status: 'authenticated' },
   }) }));
@@ -501,11 +492,11 @@ testWithProvider('keeps reply feedback visible while scrolling the conversation'
   await expect(dialog).toBeHidden();
 });
 
-testWithProvider('local feedback remains available when the SSH conversation host disables it', async ({ app, provider }) => {
-  const { requests } = await openSshConversation(app, provider, { local: true, remote: false });
+testWithProvider('submits global feedback locally from an SSH conversation by default', async ({ app, provider }) => {
+  const { requests } = await openSshConversation(app, provider);
   const page = app.window;
-  await expect(page.getByRole('button', { name: 'Good response' })).toHaveCount(0);
-  await expect(page.getByRole('button', { name: 'Poor response' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Good response' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Poor response' })).toBeVisible();
   const account = await openAccountMenu(page);
   await expect(account.getByRole('menuitem', { name: 'Feedback', exact: true })).toBeVisible();
   await page.keyboard.press('Escape');
@@ -514,7 +505,9 @@ testWithProvider('local feedback remains available when the SSH conversation hos
   await input.press('Enter');
   const dialog = page.getByRole('dialog', { name: 'Send feedback' });
   await expect(dialog).toBeVisible();
-  await expect(dialog.getByRole('checkbox', { name: /Submit this conversation/ })).toHaveCount(0);
+  const conversation = dialog.getByRole('checkbox', { name: /Submit this conversation/ });
+  await expect(conversation).toBeAttached();
+  await expect(conversation).not.toBeChecked();
   await dialog.getByRole('textbox', { name: 'Description' }).fill('A desktop issue');
   await app.snapshot('ssh-conversation-with-local-feedback');
   await dialog.getByRole('button', { name: 'Submit', exact: true }).click();
@@ -522,26 +515,26 @@ testWithProvider('local feedback remains available when the SSH conversation hos
   expect(requests).toEqual([{ path: '/api/v1/feedback', body: expect.objectContaining({ kind: 'global', source: 'command', upload_session: false }) }]);
 });
 
-testWithProvider('the SSH conversation accepts reply feedback when local feedback is disabled', async ({ app, provider }) => {
-  const { sessionId, requests } = await openSshConversation(app, provider, { local: false, remote: true });
+testWithProvider('sends reply feedback to its SSH host by default', async ({ app, provider }) => {
+  const { sessionId, requests } = await openSshConversation(app, provider);
   const page = app.window;
   const account = await openAccountMenu(page);
-  await expect(account.getByRole('menuitem', { name: 'Feedback', exact: true })).toHaveCount(0);
+  await expect(account.getByRole('menuitem', { name: 'Feedback', exact: true })).toBeVisible();
   await page.keyboard.press('Escape');
   const input = page.getByRole('combobox', { name: 'Message input' });
   await input.fill('/');
   await expect(page.getByRole('listbox')).toBeVisible();
-  await expect(page.getByRole('option', { name: /\/feedback/i })).toHaveCount(0);
+  await expect(page.getByRole('option', { name: 'feedback Send feedback', exact: true })).toBeVisible();
   await input.press('Escape');
   await input.fill('');
   await page.getByRole('button', { name: 'Good response' }).click();
   await expect(page.getByRole('button', { name: 'Remove like' })).toBeVisible();
-  await app.snapshot('ssh-reply-feedback-without-local-feedback');
+  await app.snapshot('ssh-reply-feedback');
   expect(requests).toEqual([{ path: `${hostProxy}/api/v1/feedback`, body: expect.objectContaining({ kind: 'turn', session_id: sessionId, rating: 'up' }) }]);
 });
 
 testWithProvider('attaches an SSH conversation to the locally submitted feedback', async ({ app, provider }) => {
-  const { sessionId, requests } = await openSshConversation(app, provider, { local: true, remote: true });
+  const { sessionId, requests } = await openSshConversation(app, provider);
   const page = app.window;
   await openAccountFeedback(page);
   const dialog = page.getByRole('dialog', { name: 'Send feedback' });
@@ -555,7 +548,7 @@ testWithProvider('attaches an SSH conversation to the locally submitted feedback
 });
 
 testWithProvider('requires a reason from the SSH host before submitting reply feedback', async ({ app, provider }) => {
-  const { requests } = await openSshConversation(app, provider, { local: true, remote: true });
+  const { requests } = await openSshConversation(app, provider);
   const page = app.window;
   const configPath = '/api/v1/client-configs/feedback_form';
   let pendingReasons = deferred();

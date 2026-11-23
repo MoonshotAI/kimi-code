@@ -20,7 +20,6 @@ import { track } from '@moonshot-ai/app-client/contracts';
 import { openUpgrade } from '@moonshot-ai/app-core/lib';
 import { Badge, Button, Icon, Kbd, Menu, MenuItem, Spinner } from '@moonshot-ai/app-ui';
 
-defineProps<{ feedbackEnabled?: boolean }>();
 const emit = defineEmits<{
   login: [];
   openSettings: [];
@@ -390,7 +389,7 @@ async function onLogout(): Promise<void> {
           <span class="user-menu-row-value">{{ currentLanguageLabel }}</span>
           <Icon name="chevron-right" size="sm" />
         </MenuItem>
-        <MenuItem v-if="feedbackEnabled" @click="onOpenFeedback" @mouseenter="scheduleSubmenuClose">
+        <MenuItem @click="onOpenFeedback" @mouseenter="scheduleSubmenuClose">
           <FeedbackIcon aria-hidden="true" />
           <span class="user-menu-item-label">{{ t('feedback.menuLabel') }}</span>
         </MenuItem>

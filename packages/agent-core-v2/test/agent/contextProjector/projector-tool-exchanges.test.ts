@@ -121,7 +121,6 @@ describe('projector tool-exchange normalization', () => {
       {} as IAgentScopeContext,
       new AgentStateService(),
       new SessionRequestAttributionService(),
-      { _serviceBrand: undefined, enabled: () => false },
     );
     projector = new AgentLoopProjector((anomalies) => observer.reportProjectionRepairs(anomalies));
   });

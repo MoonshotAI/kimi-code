@@ -67,7 +67,6 @@ withDefaults(
     colWidth?: number;
     collapsed?: boolean;
     dragging?: boolean;
-    feedbackEnabled?: boolean;
   }>(),
   {
     colWidth: 220,
@@ -452,7 +451,6 @@ function onLogoClick(): void {
       <div class="side-footer" :class="{ 'side-footer--shadowed': panelRef?.sessionsCanScrollDown }">
         <div class="side-footer-account">
           <UserMenu
-            :feedback-enabled="feedbackEnabled"
             @login="emit('login')"
             @open-settings="emit('openSettings')"
             @open-feedback="emit('openFeedback')"

@@ -6,8 +6,6 @@ import { Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 
 import { ErrorCodes, IFileService, ISessionExportService, isError2, type Scope } from '@moonshot-ai/agent-core-v2';
-import { desktopFeedbackFlag } from '@moonshot-ai/agent-core-v2/app/auth/feedback/flag';
-import { IFlagService } from '@moonshot-ai/agent-core-v2/app/flag/flag';
 import type { KimiHostIdentity } from '@moonshot-ai/kimi-code-oauth';
 import type { FastifyReply, FastifyRequest, RouteHandlerMethod } from 'fastify';
 
@@ -64,7 +62,7 @@ export function registerFeedbackRoutes(
     description: 'Create global feedback or rate a completed assistant reply',
     tags: ['feedback'],
   }, async (req, reply) => {
-    await withFeedback(req, reply, core, async () => {
+    await withFeedback(req, reply, async () => {
       const gateway = await openFeedbackGateway(core);
       const kind = req.body.client ?? (req.headers['x-kimi-client-ui-mode'] === 'web' ? 'web' : 'desktop');
       const client = {
@@ -88,7 +86,7 @@ export function registerFeedbackRoutes(
     description: 'Add details to a reply rating or cancel it',
     tags: ['feedback'],
   }, async (req, reply) => {
-    await withFeedback(req, reply, core, async () => {
+    await withFeedback(req, reply, async () => {
       const gateway = await openFeedbackGateway(core);
       await gateway.update(req.params.feedback_id, req.body);
       return { feedback_id: req.params.feedback_id };
@@ -107,7 +105,7 @@ export function registerFeedbackRoutes(
     description: 'Upload one user-selected media file or an authorized desktop diagnostics archive',
     tags: ['feedback'],
   }, async (req, reply) => {
-    await withFeedback(req, reply, core, async () => {
+    await withFeedback(req, reply, async () => {
       const gateway = await openFeedbackGateway(core);
       return withAttachment(reply as FastifyReply, async (scratch, signal) => {
         const path = join(scratch, 'attachment');
@@ -136,7 +134,7 @@ export function registerFeedbackRoutes(
     description: 'Prepare an expiring session-only archive for a feedback attachment on another host',
     tags: ['feedback'],
   }, async (req, reply) => {
-    await withFeedback(req, reply, core, async () => {
+    await withFeedback(req, reply, async () => {
       await requireFeedbackToken(core);
       return withAttachment(reply as FastifyReply, async (scratch, signal) => {
         const path = join(scratch, 'session.zip');
@@ -165,7 +163,7 @@ export function registerFeedbackRoutes(
     description: 'Export and upload an authorized session without global diagnostics',
     tags: ['feedback'],
   }, async (req, reply) => {
-    await withFeedback(req, reply, core, async () => {
+    await withFeedback(req, reply, async () => {
       const gateway = await openFeedbackGateway(core);
       return withAttachment(reply as FastifyReply, async (scratch, signal) => {
         const filename = 'session.zip';
@@ -187,13 +185,8 @@ export function registerFeedbackRoutes(
 async function withFeedback(
   req: { id: string },
   reply: { send(payload: unknown): unknown },
-  core: Scope,
   operation: () => Promise<unknown>,
 ): Promise<void> {
-  if (!core.accessor.get(IFlagService).enabled(desktopFeedbackFlag.id)) {
-    reply.send(errEnvelope(ErrorCode.FEEDBACK_REJECTED, 'Desktop feedback is disabled.', req.id));
-    return;
-  }
   try {
     reply.send(okEnvelope(await operation(), req.id));
   } catch (error) {

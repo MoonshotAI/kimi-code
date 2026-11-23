@@ -73,12 +73,9 @@ const props = defineProps<{
   mainView?: 'chat' | 'sessionAdmin';
   panelTabs?: PanelTab[];
   availableTabs?: PanelLauncherItem[];
-  globalFeedbackEnabled?: boolean;
-  replyFeedbackEnabled?: boolean;
 }>();
 
 const feedbackCommands: readonly SlashCommand[] = [{ name: '/feedback', desc: 'feedback.send', noArgs: true }];
-const extraBuiltinCommands = computed(() => props.globalFeedbackEnabled ? feedbackCommands : undefined);
 
 const emit = defineEmits<{
   submit: [payload: ComposerSubmitPayload];
@@ -951,7 +948,7 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
               hide-context
               :before-submit="gateSubmit"
               :defer-submit-reset="true"
-              :extra-builtin-commands="extraBuiltinCommands"
+              :extra-builtin-commands="feedbackCommands"
               v-bind="screenshotProps"
               @submit="handleComposerSubmit"
               @steer="handleComposerSteer"
@@ -1013,10 +1010,10 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
               @reorder-queue="handleReorderQueue"
               @steer-queued="emit('steerQueued', $event)"
             >
-              <template v-if="replyFeedbackEnabled" #assistant-reply-actions="{ turn }">
+              <template #assistant-reply-actions="{ turn }">
                 <TurnFeedbackActions :target="feedbackTurnTarget(sessionId, turn)" />
               </template>
-              <template v-if="replyFeedbackEnabled" #assistant-reply-status="{ turn }">
+              <template #assistant-reply-status="{ turn }">
                 <TurnFeedbackStatus :target="feedbackTurnTarget(sessionId, turn)" />
               </template>
             </ChatPane>
@@ -1045,7 +1042,7 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
         :mobile="mobile"
         :before-submit="gateSubmit"
         :defer-submit-reset="true"
-        :extra-builtin-commands="extraBuiltinCommands"
+        :extra-builtin-commands="feedbackCommands"
         v-bind="screenshotProps"
         @toggle-dock-panel="toggleDockPanel($event)"
         @close-dock-panel="closeDockPanel()"

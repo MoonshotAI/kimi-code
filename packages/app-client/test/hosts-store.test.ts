@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AppHost } from '@moonshot-ai/app-core/api';
 
 import { setKimiClientDeps } from '../src/client/deps';
@@ -16,7 +16,6 @@ const api = {
 };
 
 const remote = {
-  getMeta: vi.fn(),
   getAuth: vi.fn(),
   logout: vi.fn(),
   startOAuthLogin: vi.fn(),
@@ -40,7 +39,6 @@ beforeEach(() => {
   for (const fn of Object.values(remote)) fn.mockReset();
   api.deviceApi.mockReturnValue(remote);
   remote.getAuth.mockResolvedValue(auth(null));
-  remote.getMeta.mockResolvedValue({ experimentalFlags: {} });
   remote.listModels.mockResolvedValue([]);
   remote.getConfig.mockResolvedValue({});
   setKimiClientDeps({ api: () => api as never, t: (key) => key });
@@ -51,83 +49,11 @@ beforeEach(() => {
   store.connecting = {};
   store.providerCopies = {};
   store.accounts = {};
-  store.experimentalFlags.clear();
   store.loginHostId = null;
   api.listHosts.mockResolvedValue([]);
 });
 
 describe('hosts store', () => {
-  describe('remote flag discovery', () => {
-    beforeEach(() => { vi.useFakeTimers(); });
-    afterEach(() => { vi.useRealTimers(); });
-
-    it('recovers from a temporary failure on the same connection and caches the result', async () => {
-      const store = hostsStore();
-      const ready = host('example', { status: 'ready' });
-      api.listHosts.mockResolvedValue([ready]);
-      remote.getMeta.mockRejectedValueOnce(new Error('Temporarily unavailable'))
-        .mockResolvedValue({ experimentalFlags: { desktop_feedback: true } });
-
-      await store.load();
-      await vi.runAllTimersAsync();
-      expect(store.experimentalFlags.get(ready.id)?.['desktop_feedback']).toBe(true);
-      await store.load();
-      expect(remote.getMeta).toHaveBeenCalledTimes(2);
-    });
-
-    it('bounds failed retries and invalidates them when a host is disabled', async () => {
-      const store = hostsStore();
-      const ready = host('example', { status: 'ready' });
-      api.listHosts.mockResolvedValue([ready]);
-      remote.getMeta.mockRejectedValue(new Error('Temporarily unavailable'));
-
-      await store.load();
-      await vi.runAllTimersAsync();
-      expect(remote.getMeta).toHaveBeenCalledTimes(2);
-      expect(store.experimentalFlags.get(ready.id)?.['desktop_feedback']).not.toBe(true);
-
-      await store.load();
-      store.applySnapshot([{ ...ready, enabled: false }]);
-      remote.getMeta.mockResolvedValue({ experimentalFlags: { desktop_feedback: true } });
-      await vi.runAllTimersAsync();
-      expect(remote.getMeta).toHaveBeenCalledTimes(3);
-      expect(store.experimentalFlags.has(ready.id)).toBe(false);
-
-      await store.load();
-      expect(store.experimentalFlags.get(ready.id)?.['desktop_feedback']).toBe(true);
-      store.applySnapshot([{ ...ready, enabled: false }]);
-      expect(store.experimentalFlags.has(ready.id)).toBe(false);
-    });
-  });
-
-  it('reads flags from each ready host and drops replies from a previous connection', async () => {
-    const first = Promise.withResolvers<{ experimentalFlags: Record<string, boolean> }>();
-    const second = Promise.withResolvers<{ experimentalFlags: Record<string, boolean> }>();
-    remote.getMeta.mockReturnValueOnce(first.promise)
-      .mockResolvedValueOnce({ experimentalFlags: { desktop_feedback: true } })
-      .mockReturnValueOnce(second.promise);
-    const store = hostsStore();
-    const available = (id: string) => store.experimentalFlags.get(id)?.['desktop_feedback'] === true;
-    const a = host('example-a', { status: 'ready' });
-    const b = host('example-b', { status: 'ready' });
-    store.applySnapshot([a, b]);
-    await vi.waitFor(() => expect(available(b.id)).toBe(true));
-    expect(available(a.id)).toBe(false);
-    store.applySnapshot([a, b]);
-    expect(remote.getMeta).toHaveBeenCalledTimes(2);
-
-    store.applySnapshot([{ ...a, status: 'disconnected' }, b]);
-    store.applySnapshot([a, b]);
-    second.resolve({ experimentalFlags: {} });
-    await second.promise;
-    first.resolve({ experimentalFlags: { desktop_feedback: true } });
-    await first.promise;
-    expect(available(a.id)).toBe(false);
-    expect(available(b.id)).toBe(true);
-    store.applySnapshot([]);
-    expect(available(b.id)).toBe(false);
-  });
-
   it('copies shareable local providers to a ready host without repeating in-flight copies and refreshes the host', async () => {
     api.copyProvidersToHost.mockResolvedValue({ providers: ['gateway', 'backup'] });
     const store = hostsStore();

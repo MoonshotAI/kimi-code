@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { once } from 'node:events';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -109,7 +109,6 @@ describe('desktop feedback', () => {
     await model.listen();
     const managedBaseUrl = `${model.origin}/managed/v1`;
     vi.stubEnv('KIMI_CODE_BASE_URL', managedBaseUrl);
-    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_DESKTOP_FEEDBACK', '1');
     vi.stubEnv('KIMI_CODE_FEEDBACK_BASE_URL', `${gatewayOrigin}/coding/v1/`);
     vi.stubEnv('KIMI_CODE_MODEL_CATALOG_REFRESH_ON_START', '0');
     vi.stubEnv('KIMI_CODE_MODEL_CATALOG_REFRESH_INTERVAL_MS', '0');
@@ -213,21 +212,6 @@ default_model = "alternate"
       version: TEST_HOST_IDENTITY.version,
       info: { kind: 'global', source: 'sidebar', category: 'bug', client: 'desktop' },
     });
-  });
-
-  it('advertises and enforces the experimental flag', async () => {
-    const meta = await request<{ experimental_flags: Record<string, boolean> }>('GET', '/meta');
-    expect(meta.data.experimental_flags['desktop_feedback']).toBe(true);
-    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_DESKTOP_FEEDBACK', '0');
-    try {
-      const disabled = await request('POST', '/feedback', {
-        kind: 'global', source: 'command', category: 'other', content: 'Should not be sent',
-      });
-      expect(disabled.code).toBe(ErrorCode.FEEDBACK_REJECTED);
-      expect(created.every((entry) => entry['content'] !== 'Should not be sent')).toBe(true);
-    } finally {
-      vi.stubEnv('KIMI_CODE_EXPERIMENTAL_DESKTOP_FEEDBACK', '1');
-    }
   });
 
   it('records the client and each upload choice without starting an upload', async () => {
@@ -542,26 +526,32 @@ default_model = "alternate"
     );
   }
 
-  async function rateDelegatedReplies(recordSteps: boolean) {
-    const { data: session } = await request<{ id: string }>('POST', '/sessions', { metadata: { cwd: home } });
-    const prefix = recordSteps ? 'recorded' : 'legacy';
+  async function rateDelegatedReplies(prefix: 'recorded' | 'legacy') {
+    const { data: session } = await request<{ id: string; workspace_id: string }>('POST', '/sessions', { metadata: { cwd: home } });
     model.script(
       withRequestId(`${prefix}-delegate`, delegate()),
       withRequestId(`${prefix}-final`, say('The review is complete.')),
     );
     managed.script(withRequestId(`${prefix}-helper`, say('The helper reviewed the example.')));
-    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_DESKTOP_FEEDBACK', recordSteps ? '1' : '0');
-    let turn: Awaited<ReturnType<typeof completedTurn>>;
-    try {
-      const prompt = await request('POST', `/sessions/${session.id}/prompts`, {
-        content: [{ type: 'text', text: 'Review with a helper.' }], model: 'stub', permission_mode: 'yolo',
-      });
-      expect(prompt.code).toBe(0);
-      turn = await completedTurn(session.id, 'The review is complete.');
-    } finally {
-      vi.stubEnv('KIMI_CODE_EXPERIMENTAL_DESKTOP_FEEDBACK', '1');
-    }
+    const prompt = await request('POST', `/sessions/${session.id}/prompts`, {
+      content: [{ type: 'text', text: 'Review with a helper.' }], model: 'stub', permission_mode: 'yolo',
+    });
+    expect(prompt.code).toBe(0);
+    const turn = await completedTurn(session.id, 'The review is complete.');
     await closeSessionById(server.core.accessor, session.id);
+    if (prefix === 'legacy') {
+      const dir = sessionDirOf(home, `sessions/${session.workspace_id}`, session.id);
+      const wire = join(dir, 'agents', MAIN_AGENT_ID, 'wire.jsonl');
+      const lines = (await readFile(wire, 'utf8')).split('\n').map(line => {
+        if (line === '') return line;
+        const record = JSON.parse(line) as Record<string, unknown>;
+        if (record['type'] !== 'turn.ended') return line;
+        delete record['modelSteps'];
+        delete record['replyModel'];
+        return JSON.stringify(record);
+      });
+      await writeFile(wire, lines.join('\n'));
+    }
     const rate = async (text: string) => {
       const replyId = turn.items.find(item => item.text === text)?.item_id;
       expect(replyId).toBeDefined();
@@ -575,7 +565,7 @@ default_model = "alternate"
   }
 
   it('recovers only recorded identifiers when reopening a session without model steps', async () => {
-    const { final, earlier } = await rateDelegatedReplies(false);
+    const { final, earlier } = await rateDelegatedReplies('legacy');
     expect(final).toMatchObject({ model: null, info: { request_id: 'legacy-final' } });
     expect(final).not.toHaveProperty('info.is_kfc');
     expect(final).not.toHaveProperty('info.participating_models');
@@ -584,7 +574,7 @@ default_model = "alternate"
   });
 
   it('attributes the selected reply to the recorded step and its dispatched models after reopening', async () => {
-    const { final, earlier } = await rateDelegatedReplies(true);
+    const { final, earlier } = await rateDelegatedReplies('recorded');
     const main = { role: 'step', provider: 'openai', model_id: 'stub', is_kfc: false };
     const child = { role: 'subagent', provider: 'openai', model_id: 'different-model', is_kfc: true };
     expect(final).toMatchObject({
