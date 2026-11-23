@@ -318,8 +318,8 @@ async function onLogout(): Promise<void> {
 
   <!-- Teleport: the sidebar column's container-type would capture position:fixed and mis-anchor the menu. -->
   <Teleport to="body">
-    <Transition name="menu-pop">
-      <Menu v-if="menuOpen" ref="menuRef" class="user-menu" :style="menuStyle" @click.stop>
+    <Transition name="ui-menu-pop">
+      <Menu v-if="menuOpen" ref="menuRef" class="ui-menu-floating user-menu" :style="menuStyle" @click.stop>
         <template v-if="signedIn">
           <MenuItem
             v-if="showUsageRow"
@@ -402,11 +402,11 @@ async function onLogout(): Promise<void> {
 
   <!-- Sibling teleport: stacks above the parent menu by DOM order at the same --z-dropdown tier. -->
   <Teleport to="body">
-    <Transition name="menu-pop">
+    <Transition name="ui-menu-pop">
       <Menu
         v-if="openSubmenu !== null"
         ref="submenuRef"
-        class="user-submenu"
+        class="ui-menu-floating user-submenu"
         :style="submenuStyle"
         :role="openSubmenu === 'usage' ? 'dialog' : 'menu'"
         @click.stop
@@ -518,43 +518,20 @@ html.macos-desktop.vibrancy .user-menu-avatar {
 }
 
 .user-menu {
-  position: fixed;
-  top: 0;
-  left: 0;
-  z-index: var(--z-dropdown);
+  --menu-pop-shift: 2px;
   max-height: calc(100vh - 16px);
   overflow-y: auto;
   overflow-x: hidden;
   user-select: none;
 }
 .user-submenu {
-  position: fixed;
-  top: 0;
-  left: 0;
-  z-index: var(--z-dropdown);
+  --menu-pop-shift: 2px;
   width: max-content;
   max-height: calc(100vh - 16px);
   overflow-y: auto;
   overflow-x: hidden;
   user-select: none;
 }
-.menu-pop-enter-active {
-  transition:
-    opacity var(--duration-base) var(--ease-out),
-    transform var(--duration-base) var(--ease-out);
-}
-.menu-pop-leave-active {
-  transition:
-    opacity var(--duration-fast) var(--ease-out),
-    transform var(--duration-fast) var(--ease-out);
-  pointer-events: none;
-}
-.menu-pop-enter-from,
-.menu-pop-leave-to {
-  opacity: 0;
-  transform: scale(0.97) translateY(var(--menu-pop-shift, 2px));
-}
-
 .user-menu-usage {
   display: flex;
   flex-direction: column;

@@ -621,8 +621,8 @@ function openPullRequest(): void {
     <!-- Right-click dropdown — teleported to <body> and position:fixed so it
          escapes the `overflow: hidden` on the collapsing `.group-sessions` list. -->
     <Teleport to="body">
-      <Transition name="menu-pop">
-        <Menu ref="menuRef" v-if="menuOpen" class="menu anchored-menu" :style="menuStyle" @click.stop>
+      <Transition name="ui-menu-pop">
+        <Menu ref="menuRef" v-if="menuOpen" class="menu ui-menu-floating" :style="menuStyle" @click.stop>
         <MenuItem @click="openPickerFromMenu">
           <Icon name="emoji" size="sm" />
           {{ t('sidebar.setEmoji') }}
@@ -682,11 +682,11 @@ function openPullRequest(): void {
     <!-- Emoji picker — teleported like the right-click menu so the collapsing
          `.group-sessions` list's `overflow: hidden` can't clip it. -->
     <Teleport to="body">
-      <Transition name="menu-pop">
+      <Transition name="ui-menu-pop">
         <SessionEmojiPicker
           v-if="pickerOpen"
           ref="pickerRef"
-          class="picker anchored-menu"
+          class="picker ui-menu-floating"
           :style="pickerStyle"
           :current="emojiSplit.emoji"
           :removable="emojiSplit.rest.length > 0"

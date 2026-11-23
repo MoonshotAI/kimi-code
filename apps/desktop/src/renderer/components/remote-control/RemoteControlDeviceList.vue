@@ -234,7 +234,7 @@ function deviceMeta(device: RcDevice): string {
   </section>
 
   <Teleport to="body">
-    <Transition name="rc-device-menu-pop">
+    <Transition name="ui-menu-pop">
       <Menu
         v-if="menuDevice"
         ref="menuRef"
@@ -435,23 +435,6 @@ function deviceMeta(device: RcDevice): string {
   overflow-y: auto;
   user-select: none;
 }
-.rc-device-menu-pop-enter-active {
-  transition:
-    opacity var(--duration-base) var(--ease-out),
-    transform var(--duration-base) var(--ease-out);
-}
-.rc-device-menu-pop-leave-active {
-  transition:
-    opacity var(--duration-fast) var(--ease-out),
-    transform var(--duration-fast) var(--ease-out);
-  pointer-events: none;
-}
-.rc-device-menu-pop-enter-from,
-.rc-device-menu-pop-leave-to {
-  opacity: 0;
-  transform: scale(0.97) translateY(var(--menu-pop-shift, -2px));
-}
-
 @media (max-width: 720px) {
   .rc-device__status span:last-child {
     display: none;
@@ -464,10 +447,6 @@ function deviceMeta(device: RcDevice): string {
 @media (prefers-reduced-motion: reduce) {
   .rc-devices__refreshing {
     animation: none;
-  }
-  .rc-device-menu-pop-enter-active,
-  .rc-device-menu-pop-leave-active {
-    transition: none;
   }
 }
 </style>

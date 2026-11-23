@@ -35,8 +35,8 @@ defineExpose({ openAt, toggleAnchored, close });
 </script>
 
 <template>
-  <Transition name="menu-pop">
-    <Menu v-if="open" ref="menuRef" class="sa-menu" :style="menuStyle" @click.stop>
+  <Transition name="ui-menu-pop">
+    <Menu v-if="open" ref="menuRef" class="ui-menu-floating sa-menu" :style="menuStyle" @click.stop>
       <template v-if="mode === 'single'">
         <MenuItem @click="act('open')">
           <Icon name="external-link" size="sm" />
@@ -98,33 +98,10 @@ defineExpose({ openAt, toggleAnchored, close });
 </template>
 
 <style scoped>
-.sa-menu {
-  position: fixed;
-  top: 0;
-  left: 0;
-  z-index: var(--z-dropdown);
-}
 .sa-menu-head {
   padding: var(--space-1) var(--space-2) var(--space-05);
   color: var(--color-text-faint);
   font-size: var(--text-xs);
   user-select: none;
-}
-
-.menu-pop-enter-active {
-  transition:
-    opacity var(--duration-base) var(--ease-out),
-    transform var(--duration-base) var(--ease-out);
-}
-.menu-pop-leave-active {
-  transition:
-    opacity var(--duration-fast) var(--ease-out),
-    transform var(--duration-fast) var(--ease-out);
-  pointer-events: none;
-}
-.menu-pop-enter-from,
-.menu-pop-leave-to {
-  opacity: 0;
-  transform: scale(0.97) translateY(var(--menu-pop-shift, -2px));
 }
 </style>

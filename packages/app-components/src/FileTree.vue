@@ -218,7 +218,7 @@ onBeforeUnmount(() => {
       <Menu
         v-if="menuOpen"
         ref="menuRef"
-        class="tree-menu"
+        class="ui-menu-floating tree-menu"
         :style="menuStyle"
         @click.stop
         @contextmenu.prevent
@@ -382,10 +382,4 @@ onBeforeUnmount(() => {
   white-space: nowrap;
 }
 
-.tree-menu {
-  position: fixed;
-  top: 0;
-  left: 0;
-  z-index: var(--z-dropdown);
-}
 </style>

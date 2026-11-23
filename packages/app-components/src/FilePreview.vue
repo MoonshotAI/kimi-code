@@ -486,7 +486,7 @@ function menuDownload(): void {
             <Menu
               v-if="menuOpen"
               ref="menuRef"
-              class="fp-menu"
+              class="ui-menu-floating fp-menu"
               :style="menuStyle"
               @click.stop
             >
@@ -729,13 +729,6 @@ function menuDownload(): void {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-.fp-menu {
-  position: fixed;
-  top: 0;
-  left: 0;
-  z-index: var(--z-dropdown);
 }
 
 .fp-check {

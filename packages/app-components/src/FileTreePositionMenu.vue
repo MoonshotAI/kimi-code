@@ -30,8 +30,8 @@ function pick(next: FileTreePosition): void {
     >
       <Icon name="settings" size="md" />
     </IconButton>
-    <Transition name="menu-pop">
-      <Menu v-if="open" ref="menuRef" class="ftpm-menu" :style="menuStyle" @click.stop>
+    <Transition name="ui-menu-pop">
+      <Menu v-if="open" ref="menuRef" class="ui-menu-floating ftpm-menu" :style="menuStyle" @click.stop>
         <div class="ftpm-head">{{ t('fileTree.positionTitle') }}</div>
         <MenuItem role="menuitemradio" :aria-checked="position === 'left'" @click="pick('left')">
           <Icon v-if="position === 'left'" name="check" size="sm" />
@@ -49,13 +49,6 @@ function pick(next: FileTreePosition): void {
 </template>
 
 <style scoped>
-.ftpm-menu {
-  position: fixed;
-  top: 0;
-  left: 0;
-  z-index: var(--z-dropdown);
-}
-
 .ftpm-head {
   padding: var(--space-1) var(--space-2) var(--space-05);
   color: var(--color-text-faint);
@@ -66,22 +59,5 @@ function pick(next: FileTreePosition): void {
 .ftpm-check-slot {
   width: 16px;
   flex: none;
-}
-
-.menu-pop-enter-active {
-  transition:
-    opacity var(--duration-base) var(--ease-out),
-    transform var(--duration-base) var(--ease-out);
-}
-.menu-pop-leave-active {
-  transition:
-    opacity var(--duration-fast) var(--ease-out),
-    transform var(--duration-fast) var(--ease-out);
-  pointer-events: none;
-}
-.menu-pop-enter-from,
-.menu-pop-leave-to {
-  opacity: 0;
-  transform: scale(0.97) translateY(var(--menu-pop-shift, -2px));
 }
 </style>

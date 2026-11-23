@@ -3413,7 +3413,7 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
           @back="leaveMentionSessionMenu"
         />
 
-        <Transition name="composer-menu-pop">
+        <Transition name="ui-menu-pop">
           <div v-if="addMenuOpen && !isMobile" ref="addMenuRef" class="add-menu" @click.stop @keydown="onAddMenuKeydown">
             <div ref="addScrollRef" class="am-scroll" role="menu" @scroll="onAddMenuScroll">
               <div v-for="item in addItems" :key="item.id" class="am-entry">
@@ -3523,7 +3523,7 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
             </span>
           </Tooltip>
 
-          <Transition name="composer-menu-pop">
+          <Transition name="ui-menu-pop">
             <Menu
               v-if="permDropdownOpen && status && (!nativePermissionMenu?.available || isMobile)"
               ref="permDropdownRef"
@@ -3729,7 +3729,7 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
         </div>
 
         <!-- Model dropdown — current provider models + controls + more -->
-        <Transition name="composer-menu-pop">
+        <Transition name="ui-menu-pop">
         <Menu
           v-if="dropdownOpen && status && (!nativeModelMenu?.available || isMobile)"
           ref="modelDropdownRef"
@@ -3794,7 +3794,7 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
         </Menu>
         </Transition>
 
-        <Transition name="composer-menu-pop">
+        <Transition name="ui-menu-pop">
           <Menu
             v-if="ctxCardOpen && status && !isSideChat"
             ref="ctxCardRef"
@@ -4929,29 +4929,16 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
   transform-origin: top right;
 }
 
-.composer-menu-pop-enter-active {
-  transition:
-    opacity var(--duration-base) var(--ease-out),
-    transform var(--duration-base) var(--ease-out);
+.add-menu,
+.model-dropdown,
+.perm-dropdown,
+.ctx-card {
+  --menu-pop-shift: 2px;
 }
-.composer-menu-pop-leave-active {
-  transition:
-    opacity var(--duration-fast) var(--ease-out),
-    transform var(--duration-fast) var(--ease-out);
-  pointer-events: none;
-}
-.composer-menu-pop-enter-from,
-.composer-menu-pop-leave-to {
-  opacity: 0;
-  transform: scale(0.97) translateY(2px);
-}
-.model-dropdown.flip-down.composer-menu-pop-enter-from,
-.model-dropdown.flip-down.composer-menu-pop-leave-to,
-.perm-dropdown.flip-down.composer-menu-pop-enter-from,
-.perm-dropdown.flip-down.composer-menu-pop-leave-to,
-.ctx-card.flip-down.composer-menu-pop-enter-from,
-.ctx-card.flip-down.composer-menu-pop-leave-to {
-  transform: scale(0.97) translateY(-2px);
+.model-dropdown.flip-down,
+.perm-dropdown.flip-down,
+.ctx-card.flip-down {
+  --menu-pop-shift: -2px;
 }
 
 .md-list {
@@ -5303,5 +5290,4 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
     height: var(--touch-target-min);
   }
 }
-
 </style>
