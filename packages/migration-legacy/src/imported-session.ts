@@ -2,6 +2,7 @@ import { existsSync, readdirSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
+import { sessionIndexLine } from '@moonshot-ai/agent-core-v2/app/workspace/workspaceAlias';
 import { SESSION_META_VERSION } from '@moonshot-ai/agent-core-v2/session/sessionMetadata/sessionMetadata';
 
 import { targetSessionsDir } from './paths.js';
@@ -16,6 +17,7 @@ export interface ImportedSessionMessage {
 export interface ImportedSessionInput {
   readonly targetHome: string;
   readonly projectId: string;
+  readonly projectRoot: string;
   readonly sessionId: string;
   readonly workDir: string;
   readonly environmentCwd?: string;
@@ -61,6 +63,6 @@ export async function writeImportedSession(input: ImportedSessionInput): Promise
     custom: input.custom,
   };
   await writeFile(join(sessionDir, 'state.json'), JSON.stringify(state, null, 2), 'utf-8');
-  await ensureSessionIndexEntry(input.targetHome, { sessionId: input.sessionId, sessionDir, workDir: input.workDir });
+  await ensureSessionIndexEntry(input.targetHome, sessionIndexLine({ sessionId: input.sessionId, sessionDir, workDir: input.workDir }, input.projectRoot));
   return sessionDir;
 }

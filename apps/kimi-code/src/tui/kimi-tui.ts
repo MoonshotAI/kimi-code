@@ -4,7 +4,7 @@ import { unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import type { DeviceAuthorization } from '@moonshot-ai/kimi-code-oauth';
-import { ErrorCodes, isKimiError, log } from '@moonshot-ai/kimi-code-sdk';
+import { ErrorCodes, isKimiError, log, sameDir } from '@moonshot-ai/kimi-code-sdk';
 import type {
   ApprovalRequest,
   ApprovalResponse,
@@ -38,7 +38,6 @@ import {
   TuiAltScreen,
   TuiMainScreen,
 } from '@moonshot-ai/pi-tui';
-import { resolve } from 'pathe';
 
 import type { CLIOptions } from '#/cli/options';
 import { MigrationScreenComponent, type MigrationScreenResult } from '#/migration/index';
@@ -51,6 +50,7 @@ import { applyRecommendedEffort } from '#/utils/recommended-effort';
 import { getRecommendedEffortConfig } from '#/utils/recommended-effort-config';
 import { migrateLegacySurveySetting } from '#/utils/survey-setting';
 import { detectFdPath, ensureFdPath } from '#/utils/process/fd-detect';
+import { isDirectory, resumeElsewhereHint } from '#/utils/session-directory';
 import { quoteShellArg } from '#/utils/shell-quote';
 import { restoreTerminalModes } from '#/utils/terminal-restore';
 
@@ -193,6 +193,7 @@ import { workingLabel } from './utils/activity-label';
 import { hasDispose } from './utils/component-capabilities';
 import { isDeadTerminalError } from './utils/dead-terminal';
 import { formatErrorMessage } from './utils/event-payload';
+import { isGitBashMissingError } from './utils/git-bash-error';
 import { pickForegroundTasks } from './utils/foreground-task';
 import { findInlineSkillTokens, rebaseInlineSkillActivations } from './utils/inline-skill-tokens';
 import { ImageAttachmentStore, type ImageAttachment, type MediaAttachment } from './utils/image-attachment-store';
@@ -925,14 +926,7 @@ export class KimiTUI {
       const workspaceAdditionalDirs = await this.harness
         .getWorkspaceAdditionalDirs(workDir)
         .catch((error: unknown) => {
-          if (
-            typeof error !== 'object' ||
-            error === null ||
-            !('code' in error) ||
-            error.code !== ErrorCodes.SHELL_GIT_BASH_NOT_FOUND
-          ) {
-            throw error;
-          }
+          if (!isGitBashMissingError(error)) throw error;
           this.appendStartupNotice(
             `Additional workspace directories could not be loaded: ${formatErrorMessage(error)}`,
           );
@@ -1177,26 +1171,16 @@ export class KimiTUI {
         }
 
         if (startup.sessionFlag !== undefined) {
-          const sessions = await this.harness.listSessions({
-            sessionId: startup.sessionFlag,
-            workDir,
-          });
+          const sessions = await this.harness.listSessions({ sessionId: startup.sessionFlag });
           const target = sessions[0];
           if (target === undefined) {
             throw new Error(`Session "${startup.sessionFlag}" not found.`);
           }
-          if (resolve(target.workDir) !== resolve(workDir)) {
+          if (!sameDir(target.workDir, workDir)) {
             this.state.ui.stop();
-            process.stderr.write(
-              `${currentTheme.fg(
-                'warning',
-                `Session "${startup.sessionFlag}" was created under a different directory.\n` +
-                  `  cd "${target.workDir}" && kimi -r ${startup.sessionFlag}`,
-              )}\n\n`,
-            );
-            throw new Error(
-              `Session "${startup.sessionFlag}" was created under a different directory.`,
-            );
+            const hint = resumeElsewhereHint(startup.sessionFlag, target.workDir);
+            process.stderr.write(`${currentTheme.fg('warning', `${hint.summary}\n${hint.detail}`)}\n\n`);
+            throw new Error(hint.summary);
           }
           session = await this.harness.resumeSession({
             id: startup.sessionFlag,
@@ -3130,13 +3114,17 @@ export class KimiTUI {
 
   private creationEnvironment?: { readonly environmentId: string; readonly cwd?: string };
 
-  private async environmentForNewSession(): Promise<
+  async environmentForNewSession(): Promise<
     { readonly environmentId: string; readonly environmentCwd?: string } | undefined
   > {
     const session = this.session;
     if (session !== undefined) {
       const binding = await session.getEnvironment();
-      if (binding.environmentId !== 'local' && binding.cwd === undefined) {
+      if (binding.environmentId === 'local') {
+        const explicitCwd = binding.cwd !== undefined && !sameDir(binding.cwd, this.state.appState.workDir);
+        return { environmentId: 'local', environmentCwd: explicitCwd ? binding.cwd : undefined };
+      }
+      if (binding.cwd === undefined) {
         throw new Error(
           `Cannot start a new session on ${binding.environmentId}: the current binding has no working directory`,
         );
@@ -3532,6 +3520,10 @@ export class KimiTUI {
 
   private async showResumeOtherWorkDirHint(session: SessionRow): Promise<void> {
     this.hideSessionPicker();
+    if (!isDirectory(session.work_dir)) {
+      this.showStatus(`Selected session's working directory no longer exists:\n  ${session.work_dir}`, 'warning');
+      return;
+    }
     const command = `cd ${quoteShellArg(session.work_dir)} && kimi --resume ${quoteShellArg(session.id)}`;
     const message = `Current session is in a different working directory.\n  To resume, run: ${command}`;
     try {
@@ -4762,24 +4754,33 @@ export class KimiTUI {
     return result;
   }
 
+  private async sessionToResumeHere(): Promise<string | undefined> {
+    const { sessionFlag } = this.options.startup;
+    if (sessionFlag === undefined || sessionFlag === '') return undefined;
+    const [session] = await this.harness.listSessions({ sessionId: sessionFlag });
+    return session !== undefined && sameDir(session.workDir, this.state.appState.workDir) ? session.id : undefined;
+  }
+
   private async maybeRunWorkspaceTrustPrompt(): Promise<boolean> {
     const workDir = this.state.appState.workDir;
+    let sessionId: string | undefined;
     let info: WorkspaceTrustInfo;
     try {
+      sessionId = await this.sessionToResumeHere();
       info = await this.harness.getWorkspaceTrustInfo(workDir, {
+        sessionId,
         additionalDirs: this.state.appState.additionalDirs,
         environmentId: this.options.startup.environment,
         environmentCwd: this.options.startup.environmentCwd,
       });
-    } catch {
-      info = {
-        trusted: false,
-        gatedMcpServers: [],
-        gatedAdditionalDirs: [],
-        additionalDirSources: [],
-        warnings: ['Could not inspect project settings.'],
-        instructionSources: { agentsMdPaths: [], skills: [], agentProfiles: [], paths: [] },
-      };
+    } catch (error) {
+      if (isKimiError(error) && error.code === ErrorCodes.SESSION_NOT_FOUND) return false;
+      if (isGitBashMissingError(error)) return false;
+      throw new Error(
+        `Could not check whether this project is trusted: ${formatErrorMessage(error)}\n` +
+          `The project was not opened. Fix the problem and run kimi again; trust settings are kept in ${this.harness.homeDir}.`,
+        { cause: error },
+      );
     }
     if (info.trusted) {
       return false;
@@ -4795,7 +4796,6 @@ export class KimiTUI {
         this.state.activeDialog = 'trust-prompt';
         this.mountEditorReplacement(
           new TrustPromptComponent({
-            workDir,
             info,
             getAvailableRows: () =>
               this.state.terminal.rows - (this.state.ui instanceof TuiAltScreen ? 1 : 0),
@@ -4815,7 +4815,8 @@ export class KimiTUI {
     }
     this.restoreEditor();
     try {
-      await this.harness.trustWorkspace(workDir);
+      if (sessionId === undefined) await this.harness.trustWorkspace(workDir);
+      else await this.harness.trustWorkspace(workDir, { sessionId });
     } catch {
     }
     return true;
@@ -5032,7 +5033,7 @@ export class KimiTUI {
     applyStartupModes: boolean,
   ): Promise<void> {
     this.sessionPickerScopeRequestToken += 1;
-    if (resolve(session.work_dir) !== resolve(this.state.appState.workDir)) {
+    if (!sameDir(session.work_dir, this.state.appState.workDir)) {
       await this.showResumeOtherWorkDirHint(session);
       if (applyStartupModes) await this.stop(0);
       return;
