@@ -27,7 +27,6 @@ import { RequestMetadataTracker, requestMetadataHeaders } from './requestMetadat
 import { IAgentMediaResolverService } from '#/agent/media/mediaResolver';
 import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
 import { IAgentToolSelectService } from '#/agent/toolSelect/toolSelect';
-import { READ_MEDIA_FILE_TOOL_NAME } from '#/agent/tools/read-media-file/read-media-file';
 import { IModelCatalog } from '#/llm-adapter/model/catalog';
 import type { ModelOverrides } from '#/llm-adapter/model/model.types';
 import { resolveCompletionBudget } from '#/llm-adapter/model/completion-budget';
@@ -78,7 +77,6 @@ import {
 import type {
   LlmRequest as CoreLlmRequest,
   LlmRequestModel,
-  ModelCapability as LlmModelCapability,
   ThinkingEffort,
 } from '@moonshot-ai/core/llm/request';
 import type { ModelCapability } from '#/llm-adapter/contract/capability';
@@ -246,8 +244,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       prepareOperation: async (options, _signal) => {
         if (this.loop === undefined) throw new BugIndicatingError('Agent loop is not started');
         const config = this.requestConfigSnapshot();
-        const baseline = options.tools ?? this.baselineTools();
-        const tools = this.toolsForCapabilities(config.resolved.model.capability, baseline);
+        const tools = options.tools ?? this.baselineTools();
         return this.loop.operation((runtime) => {
           const requester = this.coreRequester({ ...options, runtime, tools, config });
           return requester.snapshot?.() ?? requester;
@@ -450,15 +447,18 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   }
 
   history(): readonly ContextMessage[] {
-    const source = this.loop?.state.messages ?? this.journal.snapshot().input.messages ?? [];
-    return this.turns.history(source);
+    return this.turns.history(this.rawHistory());
+  }
+
+  rawHistory(): readonly Message[] {
+    return this.loop?.state.messages ?? this.journal.snapshot().input.messages ?? [];
   }
 
   previewRequestContent(): LoopRequestContent {
     return {
       systemPrompt: this.loop?.state.profile.systemPrompt || this.getSystemPrompt(),
       tools: this.baselineTools(),
-      messages: this.loop?.state.messages ?? this.journal.snapshot().input.messages ?? [],
+      messages: this.rawHistory(),
     };
   }
 
@@ -651,14 +651,6 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     };
   }
 
-  private toolsForCapabilities(
-    capabilities: LlmModelCapability | undefined,
-    base: readonly Tool[],
-  ): readonly Tool[] {
-    if (capabilities?.image_in === true || capabilities?.video_in === true) return base;
-    return base.filter((tool) => tool.name !== READ_MEDIA_FILE_TOOL_NAME);
-  }
-
   private coreRequester(options: CoreLoopRequesterOptions): CoreLoopRequester {
     return {
       generate: (rest, control) => this.generateCoreRequest(options, rest, control),
@@ -815,7 +807,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       (rest.content?.messages === undefined
         ? this.tokenCounting.get(this.scopeContext.agentContext).size
         : undefined);
-    const messages = rest.content?.messages ?? this.history().map(historyEntryFromContext);
+    const messages = rest.content?.messages ?? this.rawHistory();
     const tools = rest.profile?.tools ?? options.tools;
     return {
       request: binding.requestMetadata

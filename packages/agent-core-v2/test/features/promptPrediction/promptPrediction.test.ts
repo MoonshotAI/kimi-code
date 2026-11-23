@@ -81,6 +81,7 @@ describe('SessionPromptPredictionService', () => {
     const loop = {
       requester,
       history: () => contextSnapshot,
+      rawHistory: () => contextSnapshot,
       snapshot: () => ({
         state: 'idle',
         queue: [],
