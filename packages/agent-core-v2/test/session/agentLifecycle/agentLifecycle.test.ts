@@ -923,6 +923,32 @@ describe('AgentLifecycleService', () => {
     }
   });
 
+  it('remove never schedules a negative quiesce deadline while quiescence stays unavailable', async () => {
+    const svc = ix.get(IAgentLifecycleService);
+    const main = await svc.create({ agentId: 'main' });
+    const disposed: string[] = [];
+    disposables.add(svc.onDidClose((agent) => disposed.push(agent.agentId)));
+    const loop = svc.handleOf('main')!.accessor.get(IAgentLoopService);
+    vi.mocked(loop.tryAcquireQuiescence).mockReturnValue(undefined);
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+    try {
+      loopSettled.mockImplementation(
+        () => new Promise<undefined>((resolve) => {
+          setTimeout(() => resolve(undefined), 3);
+        }),
+      );
+      const scheduleTimer = vi.spyOn(globalThis, 'setTimeout');
+      const removal = svc.remove(main);
+      await vi.advanceTimersByTimeAsync(3_100);
+      await removal;
+
+      expect(disposed).toEqual(['main']);
+      expect(scheduleTimer.mock.calls.map(([, delay]) => delay ?? 0).filter((delay) => delay < 0)).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('remove cancels queued turns before waiting for the active turn to settle', async () => {
     loopActiveTurnId = 1;
     loopPendingPromptIds = ['q2', 'q3'];

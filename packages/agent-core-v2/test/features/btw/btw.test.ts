@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { Emitter } from '#/_base/event';
+import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { TestInstantiationService } from '#/_base/di/test';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
@@ -24,9 +25,12 @@ import {
   type AgentScopeCreatedEvent,
 } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
+import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
+import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 
 import { stubToolExecutorEvents, type ToolExecutorEventStubs } from '../../agent/toolExecutor/stubs';
 import { stubAgentContext } from '../../agent/agentContext/stubs';
+import { appService, createTestAgent, type TestAgentContext } from '../../harness';
 
 describe('SessionBtwService', () => {
   let disposables: DisposableStore;
@@ -286,5 +290,36 @@ describe('SessionBtwService', () => {
     expect(removeById).toHaveBeenCalledTimes(1);
 
     await expect(svc.close('agent-btw-1')).rejects.toMatchObject({ code: ErrorCodes.AGENT_NOT_FOUND });
+  });
+});
+
+describe('SessionBtwService on a live engine', () => {
+  let ctx: TestAgentContext;
+
+  beforeEach(async () => {
+    ctx = createTestAgent(appService(IAppendLogStore, new SyncDescriptor(AppendLogStore)));
+    await ctx.restorePersisted();
+  });
+
+  afterEach(async () => {
+    await ctx.dispose();
+  });
+
+  it('closes a side agent that never received a question while holding its loop quiescent', async () => {
+    const btw = ctx.get(ISessionBtwService);
+    const lifecycle = ctx.get(IAgentLifecycleService);
+    const agentId = await btw.start();
+    const sideLoop = lifecycle.handleOf(agentId)!.accessor.get(IAgentLoopService);
+    const closeLoop = sideLoop.close.bind(sideLoop);
+    let pausedWhenClosed: boolean | undefined;
+    vi.spyOn(sideLoop, 'close').mockImplementation(() => {
+      pausedWhenClosed ??= sideLoop.snapshot().paused;
+      return closeLoop();
+    });
+
+    await btw.close(agentId);
+
+    expect(pausedWhenClosed).toBe(true);
+    expect(lifecycle.get(agentId)).toBeUndefined();
   });
 });

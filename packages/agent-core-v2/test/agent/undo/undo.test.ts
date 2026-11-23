@@ -778,6 +778,20 @@ describe('AgentConversationUndoService', () => {
     expect(ctx.context.history()).toEqual([]);
   });
 
+  it('accepts another undo when a reminder arrives after the previous one', async () => {
+    await setup();
+    ctx.appendTurnExchange('u1', 'a1');
+    ctx.appendTurnExchange('u2', 'a2');
+    const undo = ctx.get(IAgentConversationUndoService);
+    await undo.undo(1);
+    const reminderText = '<system-reminder>arrived after the undo</system-reminder>';
+    ctx.get(IAgentLoopService).remind({ role: 'user', content: [{ type: 'text', text: reminderText }] });
+
+    await expect(undo.undo(1)).resolves.toBe(1);
+
+    expect(ctx.context.history().map((message) => message.content)).toEqual([[{ type: 'text', text: reminderText }]]);
+  });
+
   it('publishes context.undone and tracks conversation_undo', async () => {
     await setup();
     ctx.get(IAgentConversationUndoService);

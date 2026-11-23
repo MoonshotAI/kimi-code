@@ -2,6 +2,7 @@ import { getMaxListeners } from 'node:events';
 
 import { type ToolCall } from '@moonshot-ai/core/llm/message';
 import { emptyUsage } from '@moonshot-ai/core/llm/usage';
+import { remindersIn, say } from '@moonshot-ai/testkit/model';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { IDisposable } from '#/_base/di/lifecycle';
@@ -49,9 +50,11 @@ import {
   createMockProviderRequester,
   providerHttpError,
   sessionService,
+  testkitAgentFixtures,
   wireRecordPersistenceServices,
   type TestAgentContext,
   type TestAgentOptions,
+  type TestkitAgentFixtures,
 } from '../../harness';
 import { stubPluginService } from '../../app/plugin/stubs';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
@@ -1699,6 +1702,63 @@ describe('Agent loop', () => {
   });
 });
 
+describe('reminders parked on a held loop', () => {
+  const test = it.extend<TestkitAgentFixtures>(testkitAgentFixtures());
+
+  test('lets a never-started loop quiesce while a reminder waits for the first prompt', async ({ agent, model }) => {
+    await agent.restorePersisted();
+
+    await expectReminderParkedUntilNextPrompt({ agent, model }, 'side channel note');
+  });
+
+  test('lets a loop held after user cancellation quiesce while a later reminder waits for the next prompt', async ({ agent, model }) => {
+    await agent.restorePersisted();
+    const loop = agent.get(IAgentLoopService);
+    let blockFirstStep = true;
+    let stepStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      stepStarted = resolve;
+    });
+    loop.hooks.onWillBeginStep.register('test-user-cancel-before-reminder', async (hookCtx, next) => {
+      if (blockFirstStep) {
+        blockFirstStep = false;
+        stepStarted();
+        await new Promise<void>((resolve) => {
+          hookCtx.signal.addEventListener('abort', () => resolve(), { once: true });
+        });
+        hookCtx.signal.throwIfAborted();
+      }
+      await next();
+    });
+    const interrupted = submitTurn(loop, 'interrupted question').turn;
+    await started;
+    expect(loop.cancel(undefined, userCancellationReason())).toBe(true);
+    await expect(interrupted.result).resolves.toMatchObject({ type: 'cancelled' });
+    await loop.settled();
+
+    await expectReminderParkedUntilNextPrompt({ agent, model }, 'arrived after the cancellation');
+  });
+
+  test('lets a loop held after a blocked prompt quiesce while a later reminder waits for the next prompt', async ({ agent, model }) => {
+    await agent.restorePersisted();
+    const loop = agent.get(IAgentLoopService);
+    let blockNextPrompt = true;
+    loop.hooks.onBeforeSubmitPrompt.register('test-block-first-prompt', async (hookCtx, next) => {
+      if (blockNextPrompt) {
+        blockNextPrompt = false;
+        hookCtx.block = true;
+      }
+      await next();
+    });
+    void loop.start();
+    const { id } = loop.submit({ role: 'user', content: [{ type: 'text', text: 'blocked question' }], attributes: { origin: { kind: 'user' } } });
+    await expect(loop.promptHandle(id)!.completion).resolves.toMatchObject({ state: 'blocked' });
+    await loop.settled();
+
+    await expectReminderParkedUntilNextPrompt({ agent, model }, 'arrived after the blocked prompt');
+  });
+});
+
 describe('turn telemetry', () => {
   it('emits turn_started and turn_ended with mode and protocol on completion', async () => {
     const records: TelemetryRecord[] = [];
@@ -2792,6 +2852,25 @@ function submitTurn(loop: IAgentLoopService, text: string): { readonly turn: Tur
     content: [{ type: 'text', text }],
     attributes: { origin: { kind: 'user' } },
   });
+}
+
+async function expectReminderParkedUntilNextPrompt({ agent, model }: TestkitAgentFixtures, reminder: string): Promise<void> {
+  const loop = agent.get(IAgentLoopService);
+  const reminderText = `<system-reminder>${reminder}</system-reminder>`;
+  loop.remind({ role: 'user', content: [{ type: 'text', text: reminderText }] });
+
+  expect(loop.snapshot()).toMatchObject({ state: 'idle', hasPendingRequests: false });
+  const quiescence = loop.tryAcquireQuiescence();
+  expect(quiescence).toBeDefined();
+  quiescence?.dispose();
+  expect(loop.history()).not.toContainEqual(expect.objectContaining({ content: [{ type: 'text', text: reminderText }] }));
+
+  model.script(say('answered with the parked reminder'));
+  await expect(submitTurn(loop, 'question after the reminder').turn.result).resolves.toMatchObject({ type: 'completed' });
+  const requests = model.requests('main');
+  expect(requests).toHaveLength(1);
+  expect(requests[0]!.texts('user').flatMap(remindersIn)).toContain(reminder);
+  await agent.expectResumeMatches();
 }
 
 async function replaceLoopRequester(ctx: TestAgentContext, requester: LoopRequester): Promise<void> {

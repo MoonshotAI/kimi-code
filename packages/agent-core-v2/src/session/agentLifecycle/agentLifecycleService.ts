@@ -589,7 +589,7 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
           new Promise<false>((resolve) => {
             deadlineTimer = setTimeout(() => {
               resolve(false);
-            }, promptIdleDeadline - Date.now());
+            }, Math.max(0, promptIdleDeadline - Date.now()));
           }),
         ]);
       } finally {
