@@ -1,21 +1,48 @@
 {
-  "branch": "release/2026-11-20-2",
+  "branch": "release/2026-11-23",
   "changesets": [
-    "fix-config-draft-thinking-cli.md",
-    "fix-config-draft-thinking.md"
+    "calm-sessions-fallback.md",
+    "chat-mcp-authorization-runtime.md",
+    "chat-mcp-authorization.md",
+    "desktop-feedback.md",
+    "desktop-removed-model-fallback.md",
+    "feedback-reply-model.md",
+    "kap-feedback.md",
+    "oauth-feedback-attachments.md",
+    "targeted-plugin-mcp-oauth.md",
+    "web-feedback.md",
+    "web-removed-model-fallback.md"
   ],
   "packages": [
     {
       "name": "kimi-code-app",
       "path": "apps/desktop",
-      "version": "1.4.2",
+      "version": "1.4.3",
       "private": true
     },
     {
       "name": "@moonshot-ai/kimi-code",
       "path": "apps/kimi-code",
-      "version": "2.7.2",
+      "version": "2.7.3",
       "private": false
+    },
+    {
+      "name": "@moonshot-ai/agent-core-v2",
+      "path": "packages/agent-core-v2",
+      "version": "0.6.1",
+      "private": true
+    },
+    {
+      "name": "@moonshot-ai/kap-server",
+      "path": "packages/kap-server",
+      "version": "0.3.3",
+      "private": true
+    },
+    {
+      "name": "@moonshot-ai/kimi-code-oauth",
+      "path": "packages/oauth",
+      "version": "0.5.1",
+      "private": true
     }
   ]
 }
