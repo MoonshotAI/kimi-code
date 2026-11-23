@@ -198,6 +198,17 @@ ${plugin_sections}
 
 Global Kimi-specific instructions can live at `$KIMI_CODE_HOME/AGENTS.md` (default: `~/.kimi-code/AGENTS.md`). When you relocate the data root with `KIMI_CODE_HOME`, this global instruction file moves with it. Generic cross-tool instructions can still live under `~/.agents/AGENTS.md` in the real OS home, and project-level instructions remain under the project tree, for example `.kimi-code/AGENTS.md` or `AGENTS.md`.
 
+In the wide Desktop or Web layout, open **Settings → Agent & Sessions → Custom instructions → Global AGENTS.md** to edit the file on the connected server.
+
+API clients can use the same `/api/v1/global-agents-md` endpoint:
+
+| Method | Request | Result |
+| --- | --- | --- |
+| `GET` | No body | `data` contains `path`, `content`, and `exists`. A missing file returns `content: ""` and `exists: false`. |
+| `PUT` | JSON with a required `content` string | Replaces the entire file, preserves UTF-8 text and whitespace, and creates the directory and file if needed. Returns the same fields with `exists: true`. An empty string empties the file without deleting it. |
+
+Check the response envelope's `code`: `0` means success, `40001` means invalid input, `40411` means permission denied, and `40906` means the target is a directory.
+
 ## Storage Location in the Session Directory
 
 Sub-agent runtime state is persisted to the `agents/` subdirectory of the current session directory. Each sub-agent instance has its own directory, which contains a `wire.jsonl` file that records prompts, message history, and final state in chronological order. Background sub-agents also expose their lifecycle status through a `tasks/` subdirectory.

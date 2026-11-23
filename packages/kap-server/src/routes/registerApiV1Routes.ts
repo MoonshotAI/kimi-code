@@ -17,6 +17,7 @@ import { registerContextRoutes } from './context';
 import { registerFileHistoryRoutes } from './fileHistory';
 import { registerFilesRoutes } from './files';
 import { registerFsRoutes } from './fs';
+import { registerGlobalAgentsMdRoutes } from './globalAgentsMd';
 import { registerInteractionsRoutes } from './interactions';
 import { registerDebugRoutes } from '../transport/registerDebugRoutes';
 import { registerMetaRoute } from './meta';
@@ -121,6 +122,7 @@ export async function registerApiV1Routes(
         opts.remoteControl.homeDir,
       );
       registerConfigRoutes(apiV1 as unknown as Parameters<typeof registerConfigRoutes>[0], core);
+      registerGlobalAgentsMdRoutes(apiV1 as unknown as Parameters<typeof registerGlobalAgentsMdRoutes>[0], core);
       registerClientConfigsRoutes(
         apiV1 as unknown as Parameters<typeof registerClientConfigsRoutes>[0],
         core,

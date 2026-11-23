@@ -204,6 +204,17 @@ ${plugin_sections}
 
 全局 Kimi 专属指令可放在 `$KIMI_CODE_HOME/AGENTS.md`（默认：`~/.kimi-code/AGENTS.md`）。当你用 `KIMI_CODE_HOME` 移动数据根时，这份全局指令文件也会一起移动。跨工具通用指令仍可放在真实 OS home 下的 `~/.agents/AGENTS.md`，项目级指令仍放在项目目录中，例如 `.kimi-code/AGENTS.md` 或 `AGENTS.md`。
 
+在桌面端或 Web 的宽屏布局中，打开「设置 → 智能体与会话 → 自定义指令 → 全局 AGENTS.md」，即可编辑当前连接服务端上的文件。
+
+API 客户端可以使用同一个 `/api/v1/global-agents-md` 接口：
+
+| 方法 | 请求 | 结果 |
+| --- | --- | --- |
+| `GET` | 无请求体 | `data` 包含 `path`、`content` 和 `exists`。文件不存在时返回 `content: ""` 和 `exists: false`。 |
+| `PUT` | JSON 对象，必填字符串字段 `content` | 整体替换文件，保留 UTF-8 文本及空白，必要时创建目录和文件。返回相同字段，其中 `exists: true`。传入空字符串会清空文件，不会删除它。 |
+
+检查响应中的 `code`：`0` 表示成功，`40001` 表示输入无效，`40411` 表示权限不足，`40906` 表示目标路径是目录。
+
 ## 会话目录中的存储位置
 
 subagent 的运行状态持久化到当前会话目录的 `agents/` 子目录下，每个 subagent 实例对应一个独立目录，其中包含按时间顺序记录提示词、消息历史与最终状态的 `wire.jsonl` 文件。后台 subagent 还会通过 `tasks/` 子目录暴露生命周期状态。
