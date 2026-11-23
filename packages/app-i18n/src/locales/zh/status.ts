@@ -49,6 +49,7 @@ export default {
   thinkingLabel: '思考',
   thinkingTooltip: '切换思考模式',
   cacheNote: '提示：切换模型或思考程度会使已有的提示词缓存失效。建议新建会话，避免额外的 token 消耗。',
+  recentModels: '最近使用',
   starredModels: '收藏',
   moreModels: '更多模型…',
   statusPanelTitle: '会话状态',

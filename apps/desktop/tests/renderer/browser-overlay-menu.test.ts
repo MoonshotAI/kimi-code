@@ -64,6 +64,7 @@ describe('browser overlay menu renderer adapter', () => {
       registerBrowserOverlayMenu({
         id: 'panel-tabs.browser-context',
         width: 220,
+        maxHeight: 400,
         items: () => [{ kind: 'item', id: 'reload', label: 'Reload' }],
         onSelect, onClose,
       }),
@@ -79,6 +80,7 @@ describe('browser overlay menu renderer adapter', () => {
       placement: 'bottom-start',
       offset: 0,
       width: 220,
+      maxHeight: 400,
       initialFocus: 'none',
       items: [{ kind: 'item', id: 'reload', label: 'Reload' }],
     });

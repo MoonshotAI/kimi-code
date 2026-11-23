@@ -184,7 +184,10 @@ function flushConfig(entry: BrowserOverlayEntry): void {
     const maxWidth = Math.max(1, contentWidth - BROWSER_OVERLAY_GUTTER * 2);
     current.minWidth = Math.min(current.minWidth ?? current.width ?? 220, maxWidth);
     current.width = current.autoWidth === true ? maxWidth : current.minWidth;
-    current.maxHeight = Math.max(1, Math.min(PROVISIONAL_HEIGHT, contentHeight - BROWSER_OVERLAY_GUTTER * 2));
+    current.maxHeight = Math.max(
+      1,
+      Math.min(current.maxHeight ?? PROVISIONAL_HEIGHT, PROVISIONAL_HEIGHT, contentHeight - BROWSER_OVERLAY_GUTTER * 2),
+    );
     const width = current.width + BROWSER_OVERLAY_GUTTER * 2;
     if (!entry.visible) entry.view.setBounds({ x: 0, y: 0, width: Math.ceil(width * entry.zoom), height: Math.ceil((current.maxHeight + BROWSER_OVERLAY_GUTTER * 2) * entry.zoom) });
   }

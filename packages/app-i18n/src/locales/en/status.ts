@@ -50,6 +50,7 @@ export default {
   thinkingTooltip: 'Toggle thinking mode',
   cacheNote:
     'Note: Switching models or thinking effort invalidates the existing prompt cache. Start a new chat to avoid extra token costs.',
+  recentModels: 'Recently used',
   starredModels: 'Starred',
   moreModels: 'More models…',
   statusPanelTitle: 'Session status',

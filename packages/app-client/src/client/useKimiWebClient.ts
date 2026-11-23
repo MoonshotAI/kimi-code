@@ -3380,6 +3380,7 @@ export function useKimiWebClient() {
 
     models: modelProvider.models,
     starredModelIds: modelProvider.starredModelIds,
+    recentModelIds: modelProvider.recentModelIds,
     providers: modelProvider.providers,
 
     fontScale: appearance.fontScale,

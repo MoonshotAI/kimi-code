@@ -74,6 +74,18 @@ describe('Composer model menu drafts', () => {
     expect(composer).toContain('fallbackModelEntries');
   });
 
+  it('renders recent models additively with occurrence-specific keys for shared and native menus', () => {
+    expect(composer).toContain('recentModelsForMenu');
+    expect(composer).toContain("t('status.recentModels')");
+    expect(composer).toContain('key: `recent:${model.id}`');
+    expect(composer).toContain('nativeModelItem(model, `recent:${model.id}`)');
+    expect(composer).toContain('nativeModelActionIds');
+    expect(composer).toContain('nativeModelByAction');
+    expect(composer).toContain('if (opening) prepareModelMenu();');
+    expect(composer).toContain('providerModels.value = selected');
+    expect(composer).toContain('maxHeight: 400');
+  });
+
   it('uses cloud effort descriptions instead of the static cache note', () => {
     expect(composer).not.toContain("t('status.cacheNote')");
     expect(composer).toContain('v-if="effortDescription"');

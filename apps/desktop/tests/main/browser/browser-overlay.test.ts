@@ -1014,9 +1014,11 @@ it('preserves permission descriptions and model controls while rejecting invalid
     { kind: 'choices', id: 'thinking', label: 'Thinking', value: 'effort-high', options: [{ id: 'effort-low', label: 'Low' }, { id: 'effort-high', label: 'High' }] },
     { kind: 'note', id: 'cache', label: 'Switching models can change cached context.', size: 'xs' },
   ];
-  const parsed = asBrowserOverlayMenuRequest({ ...request, width: 520, items, footerStart: 2, submitOnCtrlEnter: true });
-  expect(parsed).toMatchObject({ width: 520, items, footerStart: 2, submitOnCtrlEnter: true });
+  const parsed = asBrowserOverlayMenuRequest({ ...request, width: 520, maxHeight: 480, items, footerStart: 2, submitOnCtrlEnter: true });
+  expect(parsed).toMatchObject({ width: 520, maxHeight: 480, items, footerStart: 2, submitOnCtrlEnter: true });
   expect(asBrowserOverlayMenuRequest({ ...request, width: 641, items })).toBeNull();
+  expect(asBrowserOverlayMenuRequest({ ...request, maxHeight: 0, items })).toBeNull();
+  expect(asBrowserOverlayMenuRequest({ ...request, maxHeight: 4097, items })).toBeNull();
   expect(asBrowserOverlayMenuRequest({ ...request, items, footerStart: 5 })).toBeNull();
   expect(asBrowserOverlayMenuRequest({ ...request, items: [...items, { kind: 'item', id: 'effort-low', label: 'Duplicate' }] })).toBeNull();
   expect(asBrowserOverlayMenuRequest({ ...request, items: [{ ...items[0], description: 'x'.repeat(1025) }] })).toBeNull();
@@ -1082,6 +1084,23 @@ it('keeps thinking controls open and constrains wide menus to the host viewport'
   host.webContents.send.mockClear();
   activateBrowserOverlayItem(view.webContents as never, { requestId: 1, itemId: 'not-an-option' });
   expect(host.webContents.send).not.toHaveBeenCalled();
+  destroyBrowserOverlay();
+});
+
+it('honors a menu max height below the host viewport allowance', () => {
+  destroyBrowserOverlay();
+  mocks.FakeWebContentsView.instances = [];
+  const host = createHost(800, 900);
+  attachBrowserOverlayWindow(host as never);
+
+  openBrowserOverlayMenu({ ...request, maxHeight: 400 });
+  const view = mocks.FakeWebContentsView.instances[0]!;
+  markBrowserOverlayReady(view.webContents as never);
+
+  expect(view.webContents.send).toHaveBeenCalledWith(
+    IPC.browserOverlayConfig,
+    expect.objectContaining({ maxHeight: 400 }),
+  );
   destroyBrowserOverlay();
 });
 

@@ -16,6 +16,7 @@ export const STORAGE_KEYS = {
   fontScale: 'kimi-web.font-scale',
   fontPrefs: 'kimi-web.fonts',
   starredModels: 'kimi-web.starred-models',
+  recentModels: 'kimi-web.recent-models',
   unread: 'kimi-web.unread',
   manualUnread: 'kimi-web.manual-unread',
   onboarded: 'kimi-web.onboarded',

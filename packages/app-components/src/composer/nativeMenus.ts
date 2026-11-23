@@ -15,6 +15,7 @@ export interface ComposerNativeMenuHost {
     items(): NativeMenuItem[];
     footerStart?(): number;
     width: number;
+    maxHeight?: number;
     autoWidth?: boolean;
     placement: 'top-start' | 'top-end';
     submitOnCtrlEnter?: boolean;

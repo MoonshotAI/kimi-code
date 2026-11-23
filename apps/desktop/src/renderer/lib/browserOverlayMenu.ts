@@ -29,6 +29,7 @@ export interface BrowserOverlayMenuRegistration {
   onClose?: (payload: BrowserOverlayClosed) => void;
   onDismiss?: () => void;
   width?: number;
+  maxHeight?: number;
   autoWidth?: boolean;
   preserveFocus?: boolean;
   submitOnCtrlEnter?: boolean;
@@ -221,6 +222,7 @@ export function registerBrowserOverlayMenu(
       placement: options?.placement ?? registration.placement ?? 'bottom-end',
       offset: options?.offset ?? registration.offset ?? 4,
       width: registration.width ?? 220,
+      ...(registration.maxHeight === undefined ? {} : { maxHeight: registration.maxHeight }),
       ...(registration.autoWidth === true ? { autoWidth: true } : {}),
       initialFocus: options?.initialFocus ?? 'none',
       preserveFocus: options?.preserveFocus ?? registration.preserveFocus,

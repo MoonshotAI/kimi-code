@@ -34,6 +34,7 @@ const MenuItem = Type.Union([
 const MenuFields = {
   menuId: Id, anchor: BrowserBoundsSchema, placement: Type.Optional(Placement), initialFocus: Type.Optional(InitialFocus),
   offset: Type.Optional(Type.Number({ minimum: -16, maximum: 32 })), width: Type.Optional(Type.Number({ minimum: 180 })),
+  maxHeight: Type.Optional(Type.Integer({ minimum: 1, maximum: 4096 })),
   autoWidth: OptionalFlag, preserveFocus: OptionalFlag, submitOnCtrlEnter: OptionalFlag, items: Type.Array(MenuItem, { minItems: 1, maxItems: 2048 }),
   footerStart: Type.Optional(Type.Integer({ minimum: 0 })), query: Type.Optional(Type.String({ maxLength: 1024 })),
 };
@@ -78,7 +79,7 @@ export type BrowserOverlayDismissRequest = Static<typeof Dismiss>;
 const MenuConfig = Type.Object({
   ...MenuFields, kind: Type.Literal('menu'), requestId: BrowserRequestIdSchema,
   width: Type.Optional(Type.Number({ minimum: 1 })),
-  minWidth: Type.Optional(Type.Number({ minimum: 1 })), maxHeight: Type.Optional(Type.Number({ minimum: 1 })),
+  minWidth: Type.Optional(Type.Number({ minimum: 1 })),
 });
 const Shown = Type.Object({ requestId: BrowserRequestIdSchema, placement: Type.Optional(Placement) });
 const Action = Type.Object({ menuId: Id, itemId: Id, keepOpen: OptionalFlag });
@@ -196,6 +197,7 @@ export function asBrowserOverlayMenuRequest(value: unknown): BrowserOverlayMenuR
   return {
     menuId: request.menuId, anchor, items, placement: request.placement ?? 'bottom-end',
     offset: Math.round(request.offset ?? 4), width: Math.round(request.width ?? 220),
+    ...(request.maxHeight === undefined ? {} : { maxHeight: request.maxHeight }),
     ...(request.refresh === true ? { refresh: true } : {}),
     ...(request.initialFocus === undefined ? {} : { initialFocus: request.initialFocus }),
     ...(request.autoWidth === true ? { autoWidth: true } : {}),

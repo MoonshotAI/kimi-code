@@ -112,6 +112,7 @@ import {
   composerAttachmentStore,
   createVideoThumbnail,
   groupUnstarredModelsByProvider,
+  recentModelsForMenu,
   insertsAttachmentReference,
   mediaReorderTargetIndex,
   mergePatchedDraftEntries,
@@ -197,6 +198,7 @@ const goal = client.goal;
 const activationBadges = client.activationBadges;
 const models = client.models;
 const starredIds = client.starredModelIds;
+const recentIds = client.recentModelIds;
 const skills = client.skills;
 const skillsLoaded = client.skillsLoaded;
 const gateVerdict = client.chatGateVerdict;
@@ -2326,15 +2328,18 @@ function hasAnyToolbarMenuOpen(): boolean {
 }
 
 function toggleDropdown(): void {
+  const opening = !dropdownOpen.value;
   if (nativeModelMenu?.available && !isMobile.value && modelPillRef.value !== null) {
     closePermDropdown();
     closeCtxCard();
     closeAddMenu();
+    if (opening) prepareModelMenu();
     nativeModelMenu.toggle(modelPillRef.value, { initialFocus: 'first-item' });
     return;
   }
-  dropdownOpen.value = !dropdownOpen.value;
-  if (dropdownOpen.value) {
+  if (opening) prepareModelMenu();
+  dropdownOpen.value = opening;
+  if (opening) {
     updateModelMenuPosition();
     permDropdownOpen.value = false;
     ctxCardOpen.value = false;
@@ -2980,15 +2985,28 @@ const currentProvider = computed(() => {
   return currentModel.value?.provider ?? '';
 });
 
-const providerModels = computed(() => {
-  if (!currentProvider.value || !models.value?.length) return [];
-  return models.value.filter((m) => m.provider === currentProvider.value);
-});
+const providerModels = ref<NonNullable<typeof models.value>>([]);
+function prepareModelMenu(): void {
+  draftModelId.value = status.value?.modelId;
+  draftEffortSegment.value = undefined;
+  if (!currentProvider.value || !models.value?.length) {
+    providerModels.value = [];
+    return;
+  }
+  const catalogModels = models.value.filter((model) => model.provider === currentProvider.value);
+  const selected = catalogModels.find((model) => model.id === draftModelId.value);
+  providerModels.value = selected === undefined
+    ? catalogModels
+    : [selected, ...catalogModels.filter((model) => model.id !== selected.id)];
+}
 
 const showSignIn = computed(() => gateVerdict.value === 'login');
 const showPickModel = computed(() => gateVerdict.value === 'pick-model');
 const showConfigureModel = computed(() => gateVerdict.value === 'configure-model');
 
+const recentModels = computed(() =>
+  recentModelsForMenu(models.value ?? [], recentIds.value ?? [], currentModel.value?.id),
+);
 const starredSet = computed(() => new Set(starredIds.value ?? []));
 function isStarred(modelId: string): boolean {
   return starredSet.value.has(modelId);
@@ -3016,10 +3034,17 @@ const fallbackModelEntries = computed(() => {
         starred: boolean;
       }
   )[] = [];
+  if (recentModels.value.length > 0) {
+    entries.push({ kind: 'section', key: 'recent', label: t('status.recentModels') });
+    for (const model of recentModels.value) {
+      entries.push({ kind: 'model', key: `recent:${model.id}`, model, showProvider: false, starred: isStarred(model.id) });
+    }
+    entries.push({ kind: 'divider', key: 'recent-divider' });
+  }
   if (starredOtherModels.value.length > 0) {
     entries.push({ kind: 'section', key: 'starred', label: t('status.starredModels') });
     for (const model of starredOtherModels.value) {
-      entries.push({ kind: 'model', key: `model:${model.id}`, model, showProvider: true, starred: true });
+      entries.push({ kind: 'model', key: `starred:${model.id}`, model, showProvider: true, starred: true });
     }
     entries.push({ kind: 'divider', key: 'starred-divider' });
   }
@@ -3027,7 +3052,7 @@ const fallbackModelEntries = computed(() => {
     unstarredGroups.value.forEach((group, index) => {
       entries.push({ kind: 'section', key: `provider:${index}`, label: providerDisplayName(group.provider, t) });
       for (const model of group.models) {
-        entries.push({ kind: 'model', key: `model:${model.id}`, model, showProvider: false, starred: false });
+        entries.push({ kind: 'model', key: `provider:${group.provider}:${model.id}`, model, showProvider: false, starred: false });
       }
     });
   } else if (providerModels.value.length > 0) {
@@ -3035,7 +3060,7 @@ const fallbackModelEntries = computed(() => {
     for (const model of providerModels.value) {
       entries.push({
         kind: 'model',
-        key: `model:${model.id}`,
+        key: `provider:${currentProvider.value}:${model.id}`,
         model,
         showProvider: false,
         starred: isStarred(model.id),
@@ -3188,8 +3213,6 @@ watch(ctxCardOpen, async (open) => {
 
 watch(dropdownOpen, async (open) => {
   if (!open) return;
-  draftModelId.value = status.value?.modelId;
-  draftEffortSegment.value = undefined;
   modelMenuDropDown.value = false;
   modelMenuMaxWidth.value = '';
   modelMenuMaxHeight.value = '';
@@ -3218,6 +3241,7 @@ watch(
     () => status.value?.model,
     () => models.value?.length,
     () => starredIds.value?.length,
+    () => recentModels.value.length,
     locale,
     fontScale,
   ],
@@ -3271,26 +3295,35 @@ const nativePermissionMenu = nativeMenuHost?.register({
   items: () => nativePermissionItems.value,
   onSelect: id => { if (PERM_MODES.some(option => option.mode === id)) choosePermission(id as PermissionMode); },
 });
-const nativeModelIds = new Map<string, string>();
-function nativeModelItem(model: NonNullable<typeof models.value>[number], detail = false): NativeMenuItem {
-  let id = nativeModelIds.get(model.id);
-  if (id === undefined) { id = `model-${nativeModelIds.size}`; nativeModelIds.set(model.id, id); }
+const nativeModelActionIds = new Map<string, string>();
+const nativeModelByAction = new Map<string, string>();
+function nativeModelItem(model: NonNullable<typeof models.value>[number], occurrence: string, detail = false): NativeMenuItem {
+  let id = nativeModelActionIds.get(occurrence);
+  if (id === undefined) {
+    id = `model-${nativeModelActionIds.size}`;
+    nativeModelActionIds.set(occurrence, id);
+    nativeModelByAction.set(id, model.id);
+  }
   return { kind: 'item', id, label: model.displayName ?? model.model, selected: model.id === draftModelId.value, starred: isStarred(model.id), keepOpen: true, ...(detail ? { detail: model.provider } : {}) };
 }
 const nativeModelList = computed<NativeMenuItem[]>(() => {
   const items: NativeMenuItem[] = [];
+  if (recentModels.value.length > 0) {
+    items.push({ kind: 'section', id: 'recent', label: t('status.recentModels') });
+    items.push(...recentModels.value.map(model => nativeModelItem(model, `recent:${model.id}`)), { kind: 'separator' });
+  }
   if (starredOtherModels.value.length > 0) {
     items.push({ kind: 'section', id: 'starred', label: t('status.starredModels') });
-    items.push(...starredOtherModels.value.map(model => nativeModelItem(model, true)), { kind: 'separator' });
+    items.push(...starredOtherModels.value.map(model => nativeModelItem(model, `starred:${model.id}`, true)), { kind: 'separator' });
   }
   if (showAllModels.value) {
     unstarredGroups.value.forEach((group, index) => {
       items.push({ kind: 'section', id: `provider-${index}`, label: group.provider });
-      items.push(...group.models.map(model => nativeModelItem(model)));
+      items.push(...group.models.map(model => nativeModelItem(model, `provider:${group.provider}:${model.id}`)));
     });
   } else {
     if (providerModels.value.length > 0) items.push({ kind: 'section', id: 'provider', label: currentProvider.value });
-    items.push(...providerModels.value.map(model => nativeModelItem(model)));
+    items.push(...providerModels.value.map(model => nativeModelItem(model, `provider:${currentProvider.value}:${model.id}`)));
   }
   return items;
 });
@@ -3308,14 +3341,14 @@ const nativeModelItems = computed<NativeMenuItem[]>(() => [
   { kind: 'item', id: 'more-models', label: t('status.moreModels'), icon: 'list' },
 ]);
 const nativeModelMenu = nativeMenuHost?.register({
-  id: `${nativeMenuId}-models`, width: 200, autoWidth: true, placement: 'top-end', submitOnCtrlEnter: true,
+  id: `${nativeMenuId}-models`, width: 200, maxHeight: 400, autoWidth: true, placement: 'top-end', submitOnCtrlEnter: true,
   items: () => nativeModelItems.value,
   footerStart: () => nativeModelList.value.length,
   onSelect: id => {
     if (id === 'more-models') { closeDropdown(); emit('pickModel'); }
     else if (id.startsWith('thinking-')) setThinkingSegment(id.slice('thinking-'.length));
     else {
-      const model = [...nativeModelIds].find(([, action]) => action === id)?.[0];
+      const model = nativeModelByAction.get(id);
       if (model !== undefined) selectModel(model);
     }
   },

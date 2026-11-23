@@ -10,6 +10,7 @@ const clientState = vi.hoisted(() => ({
   status: null as null | { value: ConversationStatus | null },
   thinking: null as null | { value: string },
   models: null as null | { value: AppModel[] },
+  recentModelIds: null as null | { value: string[] },
 }));
 
 vi.mock('@moonshot-ai/app-client/client', async (importOriginal) => {
@@ -26,6 +27,7 @@ vi.mock('@moonshot-ai/app-client/client', async (importOriginal) => {
     ctxMax: 262144,
   });
   clientState.thinking = vue.ref('max');
+  clientState.recentModelIds = vue.ref<string[]>([]);
   clientState.models = vue.ref<AppModel[]>([
     {
       id: 'gpt-6-astra',
@@ -70,6 +72,7 @@ vi.mock('@moonshot-ai/app-client/client', async (importOriginal) => {
       activationBadges: vue.ref([]),
       models: clientState.models!,
       starredModelIds: vue.ref([]),
+      recentModelIds: clientState.recentModelIds!,
       skills: vue.ref([]),
       skillsLoaded: vue.ref(true),
       chatGateVerdict: vue.ref('ok'),
@@ -135,6 +138,7 @@ beforeAll(async () => {
 
 beforeEach(() => {
   isMobileViewport = true;
+  clientState.recentModelIds!.value = [];
   menuDimensions = { modelWidth: 360, modelHeight: 305, permWidth: 390, permHeight: 180, ctxWidth: 268, ctxHeight: 210 };
   Object.defineProperty(HTMLElement.prototype, 'offsetWidth', {
     configurable: true,
@@ -248,6 +252,42 @@ describe('Composer context ring', () => {
     expect(escape.defaultPrevented).toBe(true);
     expect(ring.getAttribute('aria-expanded')).toBe('false');
     expect(document.activeElement).toBe(ring);
+  });
+});
+
+describe('Composer recent model menu', () => {
+  it('puts the selected provider model first on open and freezes the order during draft changes', async () => {
+    isMobileViewport = false;
+    await mountComposer(1200, 820);
+
+    const modelPill = host.querySelector<HTMLButtonElement>('.model-pill')!;
+    modelPill.click();
+    await nextTick();
+    await nextTick();
+
+    const sections = [...host.querySelectorAll<HTMLElement>('.md-list .md-section')].map(
+      (section) => section.textContent?.trim(),
+    );
+    const rows = [...host.querySelectorAll<HTMLElement>('.md-list .md-row')];
+    const names = rows.map((row) => row.querySelector('.md-name')?.textContent?.trim());
+
+    expect(sections).toEqual(['最近使用', 'openai']);
+    expect(names).toEqual(['GPT-6.1 Sol', 'GPT-6.1 Sol', 'GPT-6 Astra']);
+    expect(rows[0]?.querySelector('.md-provider')).toBeNull();
+    expect(rows.filter((row) => row.classList.contains('is-current'))).toHaveLength(2);
+
+    rows[2]?.click();
+    await nextTick();
+
+    const reorderedRows = [...host.querySelectorAll<HTMLElement>('.md-list .md-row')];
+    expect(
+      reorderedRows.map((row) => row.querySelector('.md-name')?.textContent?.trim()),
+    ).toEqual(['GPT-6.1 Sol', 'GPT-6.1 Sol', 'GPT-6 Astra']);
+    expect(
+      reorderedRows
+        .filter((row) => row.classList.contains('is-current'))
+        .map((row) => row.querySelector('.md-name')?.textContent?.trim()),
+    ).toEqual(['GPT-6 Astra']);
   });
 });
 
