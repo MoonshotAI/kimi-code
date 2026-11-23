@@ -42,6 +42,7 @@ provide(
     openTurnDiff: ({ change }) =>
       panelApi.openTurnDiff({ turnId: `agent:${props.member.id}`, change }),
     openCompaction: undefined,
+    isCompactionOpen: undefined,
   },
 );
 

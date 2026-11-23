@@ -41,6 +41,10 @@ function client(workspaces: AppWorkspace[], overrides: Record<string, unknown> =
       listModels: vi.fn(async () => [{ id: 'model' }]),
       readHostFileContent: vi.fn(async () => ({ content: 'file' })),
       uploadFile: vi.fn(async () => ({ id: 'file' })),
+      createFeedback: vi.fn(async () => ({ feedback_id: 1 })),
+      updateFeedback: vi.fn(async () => ({ feedback_id: 1 })),
+      uploadFeedbackAttachment: vi.fn(async () => ({ upload_id: 2 })),
+      uploadFeedbackSession: vi.fn(async () => ({ upload_id: 3 })),
       getFileUrl: vi.fn(() => 'url'),
       putHost: vi.fn(async () => undefined),
       testHost: vi.fn(async () => ({ connected: true })),
@@ -85,6 +89,29 @@ async function setup(records: AppHost[] = [host('dev')], remoteWorkspaces = [wor
 }
 
 describe('HostRouter', () => {
+  it('sends reply feedback and session archives to the owning host while keeping desktop media local', async () => {
+    const { api, local, remote } = await setup();
+    local.api.findSession.mockResolvedValue({ id: 'remote-session', hostId: 'dev' });
+    const global = { kind: 'global', source: 'sidebar', category: 'bug', content: 'Issue', session_id: 'remote-session' } as const;
+    const turn = { kind: 'turn', session_id: 'remote-session', turn_id: 'turn', reply_id: 'reply', rating: 'down' } as const;
+    const media = { kind: 'media', file: new Blob(['image']), fileName: 'image.png' } as const;
+    const signal = new AbortController().signal;
+
+    await api.createFeedback(global);
+    await api.createFeedback(turn);
+    await api.updateFeedback(1, { kind: 'cancel' }, 'remote-session');
+    await api.uploadFeedbackAttachment(1, media);
+    await api.uploadFeedbackSession(1, 'remote-session', signal);
+    await api.uploadFeedbackSession(1, 'remote-session', signal, { hostId: 'dev' });
+
+    expect(local.api.createFeedback).toHaveBeenCalledExactlyOnceWith(global);
+    expect(local.api.uploadFeedbackAttachment).toHaveBeenCalledExactlyOnceWith(1, media);
+    expect(local.api.uploadFeedbackSession).toHaveBeenCalledExactlyOnceWith(1, 'remote-session', signal, { hostId: 'dev' });
+    expect(remote.api.createFeedback).toHaveBeenCalledExactlyOnceWith(turn);
+    expect(remote.api.updateFeedback).toHaveBeenCalledExactlyOnceWith(1, { kind: 'cancel' });
+    expect(remote.api.uploadFeedbackSession).toHaveBeenCalledExactlyOnceWith(1, 'remote-session', signal);
+  });
+
   it('sends plain calls to this machine without waiting for host discovery', async () => {
     const { api, local } = await setup();
     local.api.listHosts.mockReturnValue(new Promise(() => undefined) as never);

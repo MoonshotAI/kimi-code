@@ -14,6 +14,7 @@ import { registerCapabilitiesRoutes } from './capabilities';
 import { registerClientConfigsRoutes } from './clientConfigs';
 import { registerConfigRoutes } from './config';
 import { registerContextRoutes } from './context';
+import { registerFeedbackRoutes } from './feedback';
 import { registerFileHistoryRoutes } from './fileHistory';
 import { registerFilesRoutes } from './files';
 import { registerFsRoutes } from './fs';
@@ -188,6 +189,11 @@ export async function registerApiV1Routes(
         core,
       );
       registerFilesRoutes(apiV1 as unknown as Parameters<typeof registerFilesRoutes>[0], core);
+      registerFeedbackRoutes(apiV1 as unknown as Parameters<typeof registerFeedbackRoutes>[0], core, {
+        hostIdentity: opts.hostIdentity,
+        conversations: opts.conversations,
+        hostBridges: opts.hostBridges,
+      });
       registerSessionMediaRoutes(
         apiV1 as unknown as Parameters<typeof registerSessionMediaRoutes>[0],
         core,

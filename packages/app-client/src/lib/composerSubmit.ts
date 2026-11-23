@@ -16,6 +16,7 @@ export interface SubmitKindInput {
   queueLength: number;
   goalMode: boolean;
   towerEnabled: boolean;
+  extraBuiltins?: readonly SlashCommand[];
 }
 
 export interface SubmitDecisionInput extends SubmitKindInput {
@@ -66,8 +67,10 @@ export function decideSubmitKind(input: SubmitKindInput): SubmitKind {
   const bareMode = modeCommandFor(bareModeCommand);
   if (bareMode !== undefined) return { kind: 'mode', mode: bareMode, bareModeCommand };
   if (trimmed) {
-    const cmdToken = parseSlash(bareText)?.cmd;
-    const matched = cmdToken ? matchSlashItem(buildSlashItems(skills, { towerEnabled: input.towerEnabled }), cmdToken) : undefined;
+    const extraToken = bareModeCommand.match(/^\/\S+/)?.[0];
+    const extra = input.extraBuiltins?.find((item) => item.name === extraToken);
+    const cmdToken = extra?.name ?? parseSlash(bareText)?.cmd;
+    const matched = extra ?? (cmdToken ? matchSlashItem(buildSlashItems(skills, { towerEnabled: input.towerEnabled }), cmdToken) : undefined);
     const staleSkillPill =
       skillMentions.length === 1 && skillsLoaded && !skills.some((skill) => {
         const mention = skillMentions[0]!;
@@ -107,8 +110,7 @@ export function decideSubmitKind(input: SubmitKindInput): SubmitKind {
         return { kind: 'skill-command', cmdToken, matched };
       }
       if (matched.noArgs === true) {
-        const bareParsed = parseSlash(bareModeCommand) ?? { cmd: cmdToken, arg: '' };
-        if (bareParsed.arg.trim() !== '') return { kind: 'invalid-command', cmdToken };
+        if (bareModeCommand.slice(cmdToken.length).trim() !== '') return { kind: 'invalid-command', cmdToken };
         return { kind: 'builtin-command', cmdToken, noArgs: true };
       }
       const argument = trimmed.slice(cmdToken.length).trim();

@@ -34,6 +34,7 @@ export interface ComposerCommandPayload {
   snapshot?: ComposerDocumentSnapshot;
   editText?: string;
   delivery?: 'steer' | 'queue';
+  preserveDraft?: boolean;
 }
 
 export type ComposerEmits = {
@@ -55,7 +56,7 @@ let composerMenuSequence = 0;
 import { useComposerNativeMenuHost } from './nativeMenus';
 import { applyModelMenuDraft } from './modelMenuDraft';
 import BrowserReferenceDetails from './BrowserReferenceDetails.vue';
-import ContextSummaryBody from './ContextSummaryBody.vue';
+import ContextSummaryBody, { resolveCompactPhase } from './ContextSummaryBody.vue';
 import { useBrowserReferenceDetails } from './browserReferenceDetails';
 import { BrowserScreenshotRecovery } from '@moonshot-ai/app-client/lib';
 import { useComposerBrowserReferenceHost, restoreBrowserCaptureBookmark, browserReferenceAnchor, type BrowserCaptureResource } from './browserReferences';
@@ -68,7 +69,7 @@ import { v4 as randomUUID } from 'uuid';
 import { computed, inject, nextTick, onMounted, onUnmounted, ref, shallowRef, useId, watch, watchEffect } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { MANAGED_KIMI_CODE_PROVIDER_ID, type ReadRequestOptions, type SessionContextSummary } from '@moonshot-ai/app-core/api';
-import { analyzeLeadingSlashCommand, basename, buildSlashItems, formatShortcutText, formatTokens, providerDisplayName } from '@moonshot-ai/app-core/lib';
+import { analyzeLeadingSlashCommand, basename, buildSlashItems, formatShortcutText, formatTokens, providerDisplayName, type SlashCommand } from '@moonshot-ai/app-core/lib';
 import { placeholderText } from '@moonshot-ai/app-core/lib';
 import { useAppearance, useContextInspector } from '@moonshot-ai/app-core';
 import type { IconName } from '@moonshot-ai/app-client/icons';
@@ -164,6 +165,7 @@ const props = defineProps<{
   deferSubmitReset?: boolean;
   draftScopeKey?: string;
   placeholderText?: string;
+  extraBuiltinCommands?: readonly SlashCommand[];
   onCaptureScreenshot?: () => void;
   screenshotShortcutKeys?: string[];
   screenshotShortcutUnavailable?: boolean;
@@ -184,6 +186,8 @@ const working = client.working;
 const stopButtonVisible = computed(() => (isSideChat.value ? Boolean(props.workingOverride) : working.value));
 const starting = client.isStartingFirstPrompt;
 const queued = client.queued;
+const compacting = computed(() => client.compaction?.value?.status === 'running');
+const compactPhase = computed(() => resolveCompactPhase(client.compaction?.value, queued?.value));
 const searchFiles = client.searchFiles;
 const uploadImage = client.uploadImage;
 const status = client.status;
@@ -251,7 +255,7 @@ const { text, editorRef, loadForEdit: loadTextForEdit, clearDraft, loadDraftAtta
   },
 });
 
-const highlightCommands = computed(() => buildSlashItems([], { towerEnabled: towerEnabled.value }));
+const highlightCommands = computed(() => buildSlashItems([], { towerEnabled: towerEnabled.value, extraBuiltins: props.extraBuiltinCommands }));
 
 const pendingCommandArgument = computed(() => {
   if (isSideChat.value || !mayStartWithSlashCommand(text.value)) return null;
@@ -908,6 +912,7 @@ const {
   historyPush: (entry) => history.push(entry),
   clearDraft,
   towerEnabled: () => towerEnabled.value,
+  extraBuiltins: () => props.extraBuiltinCommands,
   resolveDesc: (item) => (item.isSkill ? item.desc : t(item.desc)),
 });
 
@@ -1717,6 +1722,20 @@ function persistPillsForDeparture(
   text.value = links.join(' ');
 }
 
+function submitCommandContext() {
+  return {
+    skillMentions: editor?.getSkillMentions() ?? [],
+    skills: skills.value,
+    skillsLoaded: skillsLoaded.value,
+    working: working.value,
+    running: running.value,
+    queueLength: queued.value.length,
+    goalMode: goalMode.value,
+    towerEnabled: towerEnabled.value,
+    extraBuiltins: props.extraBuiltinCommands,
+  };
+}
+
 function currentSubmitDecision(): SubmitDecision {
   if (props.submitDisabled === true) return { kind: 'noop' };
   const trimmed = text.value.trim();
@@ -1733,14 +1752,7 @@ function currentSubmitDecision(): SubmitDecision {
     rewritten: rewriteForSubmit(trimmed, assembly),
     blocked: pillGate.value.uploading || pillGate.value.errored || pillGate.value.missing,
     assembly,
-    skillMentions: editor?.getSkillMentions() ?? [],
-    skills: skills.value,
-    skillsLoaded: skillsLoaded.value,
-    working: working.value,
-    running: running.value,
-    queueLength: queued.value.length,
-    goalMode: goalMode.value,
-    towerEnabled: towerEnabled.value,
+    ...submitCommandContext(),
   });
 }
 
@@ -1754,14 +1766,7 @@ const canSend = computed(() => {
     text: trimmed,
     blocked,
     assembly,
-    skillMentions: editor?.getSkillMentions() ?? [],
-    skills: skills.value,
-    skillsLoaded: skillsLoaded.value,
-    working: working.value,
-    running: running.value,
-    queueLength: queued.value.length,
-    goalMode: goalMode.value,
-    towerEnabled: towerEnabled.value,
+    ...submitCommandContext(),
   }).kind !== 'noop';
 });
 
@@ -2602,14 +2607,30 @@ watch(sessionId, () => {
   closeCtxCard();
 });
 
+const canCompactContext = computed(() => {
+  if (!ctxCardOpen.value || !sessionId.value) return false;
+  if (running.value || client.turns?.value === undefined) return true;
+  return client.turns.value.length > 0;
+});
+
 watch(
-  [ctxCardOpen, sessionId, () => status.value?.ctxUsed, () => running.value],
-  ([open], [wasOpen]) => {
+  [ctxCardOpen, sessionId, () => status.value?.ctxUsed, () => running.value, compacting],
+  ([open, sid, used, isRunning, isCompacting], [wasOpen, prevSid, prevUsed, wasRunning, wasCompacting]) => {
     if (!open) {
       ctxLoading.value = false;
       return;
     }
-    void refreshCtxSnapshot(wasOpen ? sessionObservationOptions(sessionId.value ?? undefined) : undefined).then(() => {
+    if (
+      wasOpen &&
+      sid === prevSid &&
+      used === prevUsed &&
+      isRunning === wasRunning &&
+      isCompacting &&
+      !wasCompacting
+    ) {
+      return;
+    }
+    void refreshCtxSnapshot(wasOpen ? sessionObservationOptions(sid ?? undefined) : undefined).then(() => {
       if (ctxCardOpen.value) void nextTick(clampCtxCardToViewport);
     });
   },
@@ -2617,7 +2638,7 @@ watch(
 
 function handleCompactFromCard(): void {
   closeCtxCard();
-  client.compact();
+  emit('command', { cmd: '/compact', attachments: [], preserveDraft: true });
 }
 
 function handleOpenContextDetail(): void {
@@ -3582,7 +3603,7 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
                 @click.stop="toggleCtxCard"
                 @keydown="onCtxCardKeydown"
               >
-                <ContextRing :pct="pct" />
+                <ContextRing :pct="pct" :indeterminate="compacting" />
               </button>
               <span
                 v-else
@@ -3591,7 +3612,7 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
                 tabindex="0"
                 :aria-label="ctxTooltip"
               >
-                <ContextRing :pct="pct" />
+                <ContextRing :pct="pct" :indeterminate="compacting" />
               </span>
             </template>
           </Tooltip>
@@ -3797,7 +3818,8 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
               :ctx-max="status.ctxMax"
               :loading="ctxLoading"
               :error="ctxError"
-              :can-compact="Boolean(sessionId) && !running"
+              :can-compact="canCompactContext"
+              :compact-phase="compactPhase"
               :can-open-detail="canOpenContextDetail"
               show-divider
               @compact="handleCompactFromCard"

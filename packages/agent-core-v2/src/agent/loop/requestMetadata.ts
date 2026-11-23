@@ -159,6 +159,7 @@ export class RequestMetadataTracker {
               ? this.attribution?.noteSubagentDispatch(
                   this.scopeContext.agentId,
                   this.parentAgentId(),
+                  event.turnId,
                 )
               : undefined;
           return {

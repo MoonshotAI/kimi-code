@@ -170,7 +170,7 @@ export function skillCommandArgs(cmd: string, skillName: string, restoreText?: s
 
 export function buildSlashItems(
   skills: ReadonlyArray<{ name: string; description: string; source?: string; path?: string; workspaceDir?: string }> = [],
-  opts?: { towerEnabled?: boolean },
+  opts?: { towerEnabled?: boolean; extraBuiltins?: readonly SlashCommand[] },
 ): SlashCommand[] {
   const builtins =
     opts?.towerEnabled === true
@@ -185,7 +185,7 @@ export function buildSlashItems(
     workspaceLabel: skillDirectoryName(s.workspaceDir),
     acceptsInput: true,
   }));
-  return [...builtins, ...skillItems];
+  return [...builtins, ...(opts?.extraBuiltins ?? []), ...skillItems];
 }
 
 interface DescPinyin {

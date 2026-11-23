@@ -6,7 +6,7 @@ import type { ChatTurn, ConversationStatus, OpenMediaRequest, QueuedPromptView, 
 import type { QuestionResponse } from '../../api/types';
 import { useSidebarTabs } from '@moonshot-ai/app-core';
 import { ChatPane } from '@moonshot-ai/app-components';
-import { HostNotice, WorkspaceIcon } from '@moonshot-ai/app-components/support';
+import { HostNotice, resolveCompactPhase, WorkspaceIcon } from '@moonshot-ai/app-components/support';
 import { hostsStore } from '@moonshot-ai/app-client/stores';
 import { isWideTableLayoutActive, useWideTableToc } from '@moonshot-ai/app-components';
 import { ErrorBoundary } from '@moonshot-ai/app-components';
@@ -52,11 +52,16 @@ import type {
   ComposerSubmitPayload,
   TurnFileChange,
 } from '@moonshot-ai/app-components';
+import type { SlashCommand } from '@moonshot-ai/app-core/lib';
+import { feedbackTurnTarget } from '../../composables/useDesktopFeedback';
+import TurnFeedbackActions from '../feedback/TurnFeedbackActions.vue';
+import TurnFeedbackStatus from '../feedback/TurnFeedbackStatus.vue';
 
 const { t } = useI18n();
 
 const props = defineProps<{
   sessionId?: string;
+  supportsReplyFeedback: boolean;
   status: ConversationStatus;
   planMode?: boolean;
   pendingQuestionActions?: Record<string, 'answer' | 'dismiss'>;
@@ -70,6 +75,8 @@ const props = defineProps<{
   panelTabs?: PanelTab[];
   availableTabs?: PanelLauncherItem[];
 }>();
+
+const feedbackCommands: readonly SlashCommand[] = [{ name: '/feedback', desc: 'feedback.send', noArgs: true }];
 
 const emit = defineEmits<{
   submit: [payload: ComposerSubmitPayload];
@@ -103,9 +110,13 @@ const openShortcutSettings = inject(OpenShortcutSettingsKey, undefined);
 const configureScreenshotShortcut = screenshotSupported && openShortcutSettings
   ? () => openShortcutSettings('captureScreenshot')
   : undefined;
-const screenshotShortcutKeys = computed(() =>
-  screenshotSupported ? resolvedBindingKeys('captureScreenshot') : [],
-);
+const screenshotProps = computed(() => ({
+  onCaptureScreenshot: captureScreenshotAction,
+  screenshotShortcutKeys: screenshotSupported ? resolvedBindingKeys('captureScreenshot') : [],
+  screenshotShortcutUnavailable: !!osGlobalFailures.captureScreenshot,
+  screenshotShortcutFailureReason: osGlobalFailures.captureScreenshot,
+  onConfigureScreenshotShortcut: configureScreenshotShortcut,
+}));
 
 const client = useKimiWebClient();
 const { anyOverlayOpen } = useAppDialogs();
@@ -121,6 +132,7 @@ const turnActive = client.turnActive;
 const starting = client.isStartingFirstPrompt;
 const sessionLoading = client.sessionLoading;
 const compaction = client.compaction;
+const compactPhase = computed(() => resolveCompactPhase(compaction.value, props.queued));
 const hasMoreMessages = client.hasMoreMessages;
 const loadingMore = client.loadingMoreMessages;
 const workspaces = client.workspacesView;
@@ -604,7 +616,9 @@ function handleComposerSteer(payload: ComposerSteerPayload): void {
 }
 
 function handleComposerCommand(payload: ComposerCommandPayload): void {
-  if (payload.delivery !== undefined) followAfterUserAction();
+  if (payload.delivery !== undefined || payload.cmd === '/compact' || payload.cmd.startsWith('/compact ')) {
+    followAfterUserAction();
+  }
   emit('command', payload);
 }
 
@@ -935,11 +949,8 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
               hide-context
               :before-submit="gateSubmit"
               :defer-submit-reset="true"
-              :on-capture-screenshot="captureScreenshotAction"
-              :screenshot-shortcut-keys="screenshotShortcutKeys"
-              :screenshot-shortcut-unavailable="!!osGlobalFailures.captureScreenshot"
-              :screenshot-shortcut-failure-reason="osGlobalFailures.captureScreenshot"
-              :on-configure-screenshot-shortcut="configureScreenshotShortcut"
+              :extra-builtin-commands="feedbackCommands"
+              v-bind="screenshotProps"
               @submit="handleComposerSubmit"
               @steer="handleComposerSteer"
               @steer-queued="emit('steerQueued', $event)"
@@ -999,7 +1010,14 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
               @edit-queued="handleEditQueued"
               @reorder-queue="handleReorderQueue"
               @steer-queued="emit('steerQueued', $event)"
-            />
+            >
+              <template v-if="supportsReplyFeedback" #assistant-reply-actions="{ turn }">
+                <TurnFeedbackActions :target="feedbackTurnTarget(sessionId, turn)" />
+              </template>
+              <template v-if="supportsReplyFeedback" #assistant-reply-status="{ turn }">
+                <TurnFeedbackStatus :target="feedbackTurnTarget(sessionId, turn)" />
+              </template>
+            </ChatPane>
             </ErrorBoundary>
           </template>
         </div>
@@ -1025,11 +1043,8 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
         :mobile="mobile"
         :before-submit="gateSubmit"
         :defer-submit-reset="true"
-        :on-capture-screenshot="captureScreenshotAction"
-        :screenshot-shortcut-keys="screenshotShortcutKeys"
-        :screenshot-shortcut-unavailable="!!osGlobalFailures.captureScreenshot"
-        :screenshot-shortcut-failure-reason="osGlobalFailures.captureScreenshot"
-        :on-configure-screenshot-shortcut="configureScreenshotShortcut"
+        :extra-builtin-commands="feedbackCommands"
+        v-bind="screenshotProps"
         @toggle-dock-panel="toggleDockPanel($event)"
         @close-dock-panel="closeDockPanel()"
         @answer="handleQuestionAnswer"
@@ -1069,6 +1084,8 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
         :ctx-max="status.ctxMax"
         :model-id="status.modelId"
         :running="client.activity.value !== 'idle'"
+        :has-messages="turns.length > 0 || Boolean(working)"
+        :compact-phase="compactPhase"
         :tabs="panelTabs ?? []"
         :available="availableTabs ?? []"
         @open-pr="(url) => emit('openPr', url)"
@@ -1076,7 +1093,7 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
         @activate="(id) => emit('activateTab', id)"
         @open="(type) => emit('openTab', type)"
         @show-tabs="emit('showTabs')"
-        @compact="client.compact()"
+        @compact="handleComposerCommand({ cmd: '/compact', attachments: [], preserveDraft: true })"
       />
     </div>
 

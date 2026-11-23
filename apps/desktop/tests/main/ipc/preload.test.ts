@@ -95,6 +95,7 @@ const WHITELIST = [
   'captureScreenshot',
   'checkForUpdates',
   'closeNativeTerminal',
+  'collectFeedbackDiagnostics',
   'createNativeTerminal',
   'downloadUpdate',
   'fetchProviderModels',

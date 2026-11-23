@@ -12,7 +12,7 @@ import {
   traceClientEvent,
   traceKeyEvent,
 } from './deps';
-import { dismissToastByKey, onToast, toast, toastReplaceRevision } from './toast';
+import { dismissToastByKey, nextToastKey, onToast, toast, toastReplaceRevision } from './toast';
 import { planAdminBatchToast, undoBatchDirectionOf, type AdminBatchToastPlan } from './adminBatchToast';
 import type { ToastOptions } from '@moonshot-ai/app-ui';
 import { consumeDraftPromotionOnSessionChange, getDraftPromotion } from './draftPromotion';
@@ -1925,9 +1925,12 @@ const todos = computed<TodoView[]>(() => {
     .map((item) => ({ title: item.title, status: item.status }));
 });
 
+const isMainCompactingOrStarting = (sessionId: string): boolean =>
+  mainCompacting(sessionId) || promptStore().isCompactStarting(sessionId);
+
 const compaction = computed<CompactionStatus | null>(() => {
   const sid = rawState.activeSessionId;
-  return sid && mainCompacting(sid) ? { status: 'running' } : null;
+  return sid && isMainCompactingOrStarting(sid) ? { status: 'running' } : null;
 });
 
 const connection = computed<ConnectionState>(() => connectionStore().connection);
@@ -2850,7 +2853,7 @@ const promptPipeline = usePromptPipeline(rawState, {
   mapSendAuthFailure,
   isMainTurnRunning: mainTurnRunning,
   hasUnechoedPrompt: (sessionId) => unechoedOptimisticMessages(sessionId).length > 0,
-  isCompacting: mainCompacting,
+  isCompacting: isMainCompactingOrStarting,
   isMainWaitForWaiting: mainWaitForWaiting,
   promptIdToAbort: mainPromptIdToAbort,
   lastAgentTurnId: (sessionId) => mainTurnsOf(sessionId).findLast((turn) => turn.kind === 'agent')?.turn_id,
@@ -2865,7 +2868,7 @@ const sessionActions = createSessionActions({
   upsertSessionSorted,
   promptBacklog: promptPipeline.promptBacklog,
   isCompactionRunning: (sessionId) =>
-    promptStore().isCompactFlushHeld(sessionId) || mainCompacting(sessionId),
+    promptStore().isCompactFlushHeld(sessionId) || isMainCompactingOrStarting(sessionId),
   flushQueue: promptPipeline.flushQueueHead,
 });
 
@@ -3005,7 +3008,6 @@ type AppActionToastInput =
   | { kind: 'adminBatch'; plan: AdminBatchToastPlan }
   | { kind: 'attachmentOpen'; name: string };
 
-let actionToastKey = 0;
 let latestActionToastKey = 0;
 
 onToast((event) => {
@@ -3098,7 +3100,7 @@ function showActionToastWithKey(input: AppActionToastInput, key: number): void {
 }
 
 function showActionToast(input: AppActionToastInput): void {
-  showActionToastWithKey(input, ++actionToastKey);
+  showActionToastWithKey(input, nextToastKey());
 }
 
 async function archiveSessionWithToast(id: string): Promise<void> {
@@ -3140,7 +3142,7 @@ let exportToastInFlight = false;
 async function exportSessionWithToast(id?: string): Promise<void> {
   if (exportToastInFlight) return;
   exportToastInFlight = true;
-  const key = ++actionToastKey;
+  const key = nextToastKey();
   let runningRevision = toastReplaceRevision();
   let runningShown = false;
   const slowTimer = setTimeout(() => {

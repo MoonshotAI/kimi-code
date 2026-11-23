@@ -266,13 +266,14 @@ class CallControl<TContext> {
       this.seal();
       const outputError = await this.closeOutput();
       if (outputError !== undefined && result.outcome.type !== 'aborted') {
-        result = this.fail({
+        const failure = this.fail({
           outcome: 'failed',
           type: 'output',
           phase: this.phase,
           reason: `Tool "${this.call.name}" output failed: ${outputError}`,
           data: outputError,
         });
+        result = result.durationMs === undefined ? failure : { ...failure, durationMs: result.durationMs };
       }
       this.enter('after-execute');
       try {
@@ -290,9 +291,8 @@ class CallControl<TContext> {
       } catch (thrown) {
         const thrownError = toToolError(this, thrown);
         const failed = this.fail(thrownError);
-        result = result.outcome.type === 'aborted'
-          ? { ...failed, outcome: result.outcome }
-          : failed;
+        const settled = result.outcome.type === 'aborted' ? { ...failed, outcome: result.outcome } : failed;
+        result = result.durationMs === undefined ? settled : { ...settled, durationMs: result.durationMs };
       }
     } catch (thrown) {
       const error = toToolError(this, thrown);
@@ -642,7 +642,7 @@ class CallControl<TContext> {
       this.stopping = (reason) => stopping({
         ...this.view,
         reason,
-        abandon: (result) => this.abandon(result),
+        abandon: (result, durationMs) => this.abandon(result, durationMs),
       });
     }
     if (!hadStopping && this.stopped !== undefined && this.stopping !== undefined) {
@@ -679,9 +679,11 @@ class CallControl<TContext> {
         type: 'aborted',
         error: abortedError(this.call, this.currentPhase, 'stopped', this.stopped.reason),
       };
-      return { toolCallId: this.call.id, content: value.content, outcome };
+      return { toolCallId: this.call.id, content: value.content, outcome, ...durationPart(value.durationMs) };
     }
-    if (cause !== undefined) return this.errorResult(cause, value.content);
+    if (cause !== undefined) {
+      return { ...this.errorResult(cause, value.content), ...durationPart(value.durationMs) };
+    }
     if (value.outcome === 'failed') {
       const error: ToolError = {
         outcome: 'failed',
@@ -690,9 +692,14 @@ class CallControl<TContext> {
         reason: value.reason,
         data: value.data,
       };
-      return { toolCallId: this.call.id, content: value.content, outcome: { type: 'failed', error } };
+      return {
+        toolCallId: this.call.id,
+        content: value.content,
+        outcome: { type: 'failed', error },
+        ...durationPart(value.durationMs),
+      };
     }
-    return { toolCallId: this.call.id, content: value.content, outcome: { type: 'success' } };
+    return { toolCallId: this.call.id, content: value.content, outcome: { type: 'success' }, ...durationPart(value.durationMs) };
   }
 
   errorResult(error: ToolError, content: ContentPart[]): ToolResult {
@@ -742,7 +749,7 @@ class CallControl<TContext> {
     return this.abandoned || this.responseSettled || this.outcome !== undefined;
   }
 
-  private abandon(value?: ToolReturn): void {
+  private abandon(value?: ToolReturn, durationMs?: number): void {
     if (
       this.stopped === undefined ||
       this.stopping === undefined ||
@@ -755,9 +762,15 @@ class CallControl<TContext> {
       reason: stopReasonText(this.stopped.reason),
     }, 'tool event');
     const error = abortedError(this.call, this.currentPhase, 'abandoned', this.stopped.reason);
+    const measured = durationMs ?? value?.durationMs;
     const result = value === undefined
-      ? this.errorResult(error, [{ type: 'text', text: error.reason }])
-      : { toolCallId: this.call.id, content: value.content, outcome: { type: 'aborted', error } as ToolOutcome };
+      ? { ...this.errorResult(error, [{ type: 'text', text: error.reason }]), ...durationPart(measured) }
+      : {
+          toolCallId: this.call.id,
+          content: value.content,
+          outcome: { type: 'aborted', error } as ToolOutcome,
+          ...durationPart(measured),
+        };
     this.release(result);
   }
 
@@ -943,6 +956,10 @@ function reconcile(previous: ToolResult, replacement: ToolResult, toolCallId: st
     toolCallId,
     outcome: previous.outcome.type === 'aborted' ? previous.outcome : replacement.outcome,
   };
+}
+
+function durationPart(durationMs: number | undefined): { readonly durationMs?: number } {
+  return durationMs === undefined ? {} : { durationMs };
 }
 
 function describeAbort(call: ToolCall, reason: unknown): string {

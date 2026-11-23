@@ -30,6 +30,8 @@ import { FileContextMenuHost } from '@moonshot-ai/app-components';
 import { ModelPicker } from '@moonshot-ai/app-components';
 import { ModelSwitchConfirmDialog } from '@moonshot-ai/app-components';
 import LoginDialog from './components/dialogs/LoginDialog.vue';
+import GlobalFeedbackDialog from './components/feedback/GlobalFeedbackDialog.vue';
+import { DesktopFeedbackKey, useDesktopFeedback, type GlobalFeedbackTarget } from './composables/useDesktopFeedback';
 import ScreenshotGuidanceDialog from './components/dialogs/ScreenshotGuidanceDialog.vue';
 import ForcedUpgradeDialog from './components/ForcedUpgradeDialog.vue';
 import { ErrorBoundary } from '@moonshot-ai/app-components';
@@ -43,7 +45,7 @@ import MobileSwitcherSheet from './components/mobile/MobileSwitcherSheet.vue';
 import MobileSettingsSheet from './components/mobile/MobileSettingsSheet.vue';
 import OnboardingWizard from './components/onboarding/OnboardingWizard.vue';
 import { GlobalLoading } from '@moonshot-ai/app-components';
-import { useKimiWebClient, promptAttachmentToTurnAttachment, turnFileContentFetcher } from '@moonshot-ai/app-client/client';
+import { getDeviceApi, useKimiWebClient, promptAttachmentToTurnAttachment, turnFileContentFetcher } from '@moonshot-ai/app-client/client';
 import { sessionViewsStore, workspacesStore, modelsStore, notificationsStore, authStore, sessionsStore, warningsStore, filesStore, permissionsStore, enableSessionRating, modelSwitchConfirmStore, effortSwitchStore, hostsStore } from '@moonshot-ai/app-client/stores';
 import { FetchTurnFileContentKey, InsertPathMentionKey, ModelDisplayKey, OpenWithDefaultAppKey, ResolveSwarmMembersKey, RevealInFolderKey, SelectionContextMenuKey, SessionRatingKey, SubagentEffortKey } from '@moonshot-ai/app-client/contracts';
 import { OpenFileLinkKey, OpenHtmlFileInPanelKey, OpenLocalHtmlFileKey, OpenMarkdownImageKey, OpenSidebarBrowserUrlKey, ResolveImageKey } from '@moonshot-ai/app-core/contracts';
@@ -1169,6 +1171,7 @@ provide(panelApiKey, {
     closeDockWorkPanel();
     panel.openCompactionPanel(target);
   },
+  isCompactionOpen: (turnId) => panel.isCompactionPanelOpen(turnId),
   openDiff: () => {
     closeDockWorkPanel();
     panel.openDiffDetail();
@@ -1440,9 +1443,50 @@ type SubmitPayload = {
   forceQueue?: boolean;
 };
 const forcedUpgradeVisible = ref(false);
+const globalFeedbackTarget = ref<GlobalFeedbackTarget | null>(null);
+function feedbackSessionHost(sessionId: string): string | undefined {
+  const session = sessionsStore().sessions.find(entry => entry.id === sessionId);
+  if (session !== undefined) return session.hostId;
+  return sessionId === activeSessionId.value ? client.visibleWorkspace.value?.hostId : undefined;
+}
+
+function supportsSessionFeedback(sessionId: string | null | undefined): boolean {
+  if (!sessionId) return false;
+  return hostsStore().supportsFeedback(feedbackSessionHost(sessionId));
+}
+
+const supportsReplyFeedback = computed(() => supportsSessionFeedback(activeSessionId.value));
+const supportsSessionUpload = computed(() => supportsSessionFeedback(globalFeedbackTarget.value?.sessionId));
+
+const desktopFeedback = useDesktopFeedback({
+  signedIn: () => signedIn.value,
+  accountId: () => managedUserInfo.value?.userId,
+  openLogin,
+  sessionHost: feedbackSessionHost,
+  hostAccounts: () => hostsStore().accounts,
+  hostUserId: async (hostId) => {
+    const account = await getDeviceApi(hostId).getUserInfo();
+    return account.kind === 'ok' ? account.userInfo.userId : undefined;
+  },
+  openHostLogin: (hostId) => hostsStore().openLogin(hostId),
+});
+provide(DesktopFeedbackKey, desktopFeedback);
+watch(desktopFeedback.accountEpoch, () => { globalFeedbackTarget.value = null; }, { flush: 'sync' });
+
+function openGlobalFeedback(source: GlobalFeedbackTarget['source']): void {
+  if (globalFeedbackTarget.value !== null || !desktopFeedback.requireLogin()) return;
+  desktopFeedback.closePopover();
+  const hasConversation = mainView.value === 'chat' && client.turns.value.some((turn) => turn.role === 'user');
+  globalFeedbackTarget.value = {
+    source,
+    sessionId: hasConversation ? activeSessionId.value ?? undefined : undefined,
+  };
+}
+
 const anyOverlayOpen = computed<boolean>(
-  () => interruptiveOverlayOpen.value || isConfirmOpen.value || forcedUpgradeVisible.value,
+  () => interruptiveOverlayOpen.value || isConfirmOpen.value || forcedUpgradeVisible.value || globalFeedbackTarget.value !== null,
 );
+watch([activeSessionId, mainView, signedIn, anyOverlayOpen], () => desktopFeedback.closePopover());
 const selectionContextMenuBridge = (window as { kimiDesktop?: { showSelectionContextMenu?: (selectionText: string) => void } }).kimiDesktop;
 if (selectionContextMenuBridge?.showSelectionContextMenu !== undefined) {
   provide(SelectionContextMenuKey, (selectionText) => selectionContextMenuBridge.showSelectionContextMenu?.(selectionText));
@@ -1463,7 +1507,7 @@ const browserConfirmUsesNativeSurface = computed(
     panel.panelVisible.value &&
     panel.activeTab.value?.type === 'browser',
 );
-const browserOccluded = computed(() => interruptiveOverlayOpen.value);
+const browserOccluded = computed(() => interruptiveOverlayOpen.value || globalFeedbackTarget.value !== null);
 
 
 async function confirmLogout(): Promise<void> {
@@ -1607,6 +1651,10 @@ async function handleGetOAuthRegion() {
 }
 
 const hostLoginId = computed(() => hostsStore().loginHostId);
+function finishHostLogin(hostId: string): void {
+  desktopFeedback.clearHostAccount(hostId);
+  hostsStore().finishLogin();
+}
 const hostLoginTitle = computed(() => {
   const hostId = hostLoginId.value;
   return hostId === null ? undefined : t('login.hostTitle', { name: hostsStore().hostLabel(hostId, t) });
@@ -1826,21 +1874,22 @@ watch([client.sendFailureVerdict, isConfirmOpen], ([payload, confirmOpen]) => {
   void actOnGateVerdict(payload.verdict, undefined, payload.sessionId);
 });
 
-async function passAuthGate(text: string, attachments: PromptAttachment[], restoreText?: string, restoreEntries?: AttachmentEntry[], snapshot?: ComposerDocumentSnapshot): Promise<boolean> {
+async function passAuthGate(text: string, attachments: PromptAttachment[], restoreText?: string, restoreEntries?: AttachmentEntry[], snapshot?: ComposerDocumentSnapshot, preserveDraft = false): Promise<boolean> {
   const originSid = client.activeSessionId.value ?? undefined;
   const verdict = await client.ensureChatReady();
   if (verdict === 'ok') return true;
   if (verdict === 'server-auth-required') {
-    restoreDraftAtOrigin(originSid, text, attachments, restoreText, restoreEntries, snapshot);
+    if (!preserveDraft) restoreDraftAtOrigin(originSid, text, attachments, restoreText, restoreEntries, snapshot);
     return false;
   }
-  await actOnGateVerdict(verdict, () =>
-    restoreDraftAtOrigin(originSid, text, attachments, restoreText, restoreEntries, snapshot),
+  await actOnGateVerdict(
+    verdict,
+    preserveDraft ? undefined : () => restoreDraftAtOrigin(originSid, text, attachments, restoreText, restoreEntries, snapshot),
   );
   return false;
 }
 
-async function passWorkspaceGateForCommand(text: string, attachments: PromptAttachment[] = [], restoreText?: string, restoreEntries?: AttachmentEntry[], snapshot?: ComposerDocumentSnapshot): Promise<boolean> {
+async function passWorkspaceGateForCommand(text: string, attachments: PromptAttachment[] = [], restoreText?: string, restoreEntries?: AttachmentEntry[], snapshot?: ComposerDocumentSnapshot, preserveDraft = false): Promise<boolean> {
   if (client.activeSessionId.value || client.activeWorkspaceId.value) return true;
   const pick = await confirm({
     title: t('workspace.requiredTitle'),
@@ -1848,22 +1897,24 @@ async function passWorkspaceGateForCommand(text: string, attachments: PromptAtta
     confirmLabel: t('conversation.addWorkspace'),
     variant: 'primary',
   });
-  conversationPaneRef.value?.loadComposerForEdit(restoreText ?? text, toEditableAttachments(attachments), restoreEntries, snapshot);
+  if (!preserveDraft) {
+    conversationPaneRef.value?.loadComposerForEdit(restoreText ?? text, toEditableAttachments(attachments), restoreEntries, snapshot);
+  }
   if (pick) requestWorkspaceDialog();
   return false;
 }
 
-async function passCommandGates(text: string, attachments: PromptAttachment[] = [], restoreText?: string, restoreEntries?: AttachmentEntry[], snapshot?: ComposerDocumentSnapshot): Promise<boolean> {
+async function passCommandGates(text: string, attachments: PromptAttachment[] = [], restoreText?: string, restoreEntries?: AttachmentEntry[], snapshot?: ComposerDocumentSnapshot, preserveDraft = false): Promise<boolean> {
   const originSid = client.activeSessionId.value;
   const originWsId = client.activeWorkspaceId.value;
-  if (!(await passAuthGate(text, attachments, restoreText, restoreEntries, snapshot))) return false;
-  if (!(await passWorkspaceGateForCommand(text, attachments, restoreText, restoreEntries, snapshot))) return false;
+  if (!(await passAuthGate(text, attachments, restoreText, restoreEntries, snapshot, preserveDraft))) return false;
+  if (!(await passWorkspaceGateForCommand(text, attachments, restoreText, restoreEntries, snapshot, preserveDraft))) return false;
   if (client.activeSessionId.value !== originSid || client.activeWorkspaceId.value !== originWsId) {
-    restoreDraftAtOrigin(originSid ?? undefined, text, attachments, restoreText, restoreEntries, snapshot);
+    if (!preserveDraft) restoreDraftAtOrigin(originSid ?? undefined, text, attachments, restoreText, restoreEntries, snapshot);
     return false;
   }
   if (!useWorkspaceTrust().gateSubmitForTrust()) {
-    restoreDraftAtOrigin(originSid ?? undefined, text, attachments, restoreText, restoreEntries, snapshot);
+    if (!preserveDraft) restoreDraftAtOrigin(originSid ?? undefined, text, attachments, restoreText, restoreEntries, snapshot);
     return false;
   }
   return true;
@@ -1888,20 +1939,26 @@ function enableSwarmMode(): void {
   if (!client.swarmMode.value) client.toggleSwarmMode();
 }
 
-async function handleCommand(payload: { cmd: string; attachments: PromptAttachment[]; restoreText?: string; skillName?: string; skillPath?: string; restoreEntries?: AttachmentEntry[]; snapshot?: ComposerDocumentSnapshot; editText?: string; delivery?: 'steer' | 'queue' }): Promise<void> {
-  const { cmd, attachments, restoreText, restoreEntries, snapshot } = payload;
+async function handleCommand(payload: { cmd: string; attachments: PromptAttachment[]; restoreText?: string; skillName?: string; skillPath?: string; restoreEntries?: AttachmentEntry[]; snapshot?: ComposerDocumentSnapshot; editText?: string; delivery?: 'steer' | 'queue'; preserveDraft?: boolean }): Promise<void> {
+  const { cmd, attachments, restoreText, restoreEntries, snapshot, preserveDraft } = payload;
+  if (cmd === '/feedback' && payload.skillName === undefined) {
+    openGlobalFeedback('command');
+    return;
+  }
   if (cmd === '/compact' || cmd.startsWith('/compact ')) {
-    if (!(await passCommandGates(cmd, [], restoreText, restoreEntries, snapshot))) return;
+    if (!(await passCommandGates(cmd, [], restoreText, restoreEntries, snapshot, preserveDraft))) return;
     const result = client.compact(commandArgumentText(cmd, snapshot) || undefined);
     if (result === undefined) {
-      conversationPaneRef.value?.loadComposerForEdit(restoreText ?? cmd, toEditableAttachments(attachments), restoreEntries, snapshot);
+      if (!preserveDraft) {
+        conversationPaneRef.value?.loadComposerForEdit(restoreText ?? cmd, toEditableAttachments(attachments), restoreEntries, snapshot);
+      }
       client.notify({ severity: 'warning', title: t('commands.compact.requiresSession') });
       return;
     }
-    if (result === 'queued') {
-      client.notify({ severity: 'info', title: t('commands.compactQueue.queued') });
-    } else if (result === 'duplicate' || result === 'compacting') {
-      conversationPaneRef.value?.loadComposerForEdit(restoreText ?? cmd, toEditableAttachments(attachments), restoreEntries, snapshot);
+    if (result === 'duplicate' || result === 'compacting') {
+      if (!preserveDraft) {
+        conversationPaneRef.value?.loadComposerForEdit(restoreText ?? cmd, toEditableAttachments(attachments), restoreEntries, snapshot);
+      }
       client.notify({
         severity: 'warning',
         title: t(result === 'duplicate' ? 'commands.compactQueue.alreadyQueued' : 'commands.compactQueue.compacting'),
@@ -2423,6 +2480,7 @@ function openPr(url: string): void {
         @generate-title="(id, done) => void regenerateSessionTitle(id).then(done)"
         @delete-workspace="confirmDeleteWorkspace($event)"
         @open-settings="openSettingsFromButton"
+        @open-feedback="openGlobalFeedback('sidebar')"
         @login="openLogin"
         @collapse="runShortcutAction('toggleSidebar', 'button')"
       />
@@ -2455,6 +2513,7 @@ function openPr(url: string): void {
       :right-panel-open="panel.panelVisible.value"
       :main-view="mainView"
       :session-id="activeSessionId"
+      :supports-reply-feedback="supportsReplyFeedback"
       :status="status"
       :plan-mode="planMode"
       :pending-question-actions="pendingQuestionActions"
@@ -2820,6 +2879,12 @@ function openPr(url: string): void {
     />
     <!-- Login Dialog overlay. It is outside `.app` so `/login` can open it too. -->
     <ScreenshotGuidanceDialog />
+    <GlobalFeedbackDialog
+      :key="desktopFeedback.accountEpoch.value"
+      :target="globalFeedbackTarget"
+      :supports-session-upload="supportsSessionUpload"
+      @close="globalFeedbackTarget = null"
+    />
     <LoginDialog
       v-if="showLogin || hostLoginId !== null"
       :key="hostLoginId ?? 'local'"
@@ -2829,7 +2894,7 @@ function openPr(url: string): void {
       :on-poll-o-auth-login="hostLoginId !== null ? () => hostsStore().pollLogin() : handlePollOAuthLogin"
       :on-cancel-o-auth-login="hostLoginId !== null ? () => hostsStore().cancelLogin() : handleCancelOAuthLogin"
       :on-get-o-auth-region="hostLoginId !== null ? () => hostsStore().loginRegion() : handleGetOAuthRegion"
-      @success="hostLoginId !== null ? hostsStore().finishLogin() : handleLoginSuccess()"
+      @success="hostLoginId !== null ? finishHostLogin(hostLoginId) : handleLoginSuccess()"
       @close="hostLoginId !== null ? hostsStore().closeLogin() : (showLogin = false)"
     />
     <!-- Floating preview for tool-card media (image/video). The component

@@ -1,19 +1,22 @@
 import { constants, createWriteStream } from 'node:fs';
-import { copyFile, mkdir, mkdtemp, readdir, rm, stat } from 'node:fs/promises';
-import { join, relative, sep } from 'node:path';
+import { copyFile, lstat, mkdir, mkdtemp, open, readFile, readdir, rm, stat } from 'node:fs/promises';
+import { dirname, join, relative, sep } from 'node:path';
+import { pipeline } from 'node:stream/promises';
 
 import { app, dialog, shell } from 'electron';
 import type { MessageBoxOptions, MessageBoxReturnValue } from 'electron';
 import { ZipFile } from 'yazl';
 
 import { collectDiagnosticsSnapshot } from './collector';
-import { CRASH_DUMPS_DIR, INCIDENTS_DIR, MAIN_LOG_FILE, diagnosticRoots, log, logsDir, tildify } from './log';
+import { CRASH_DUMPS_DIR, INCIDENTS_DIR, MAIN_LOG_FILE, diagnosticRoots, log, logsDir, systemVersion, tildify } from './log';
 import { DIAGNOSTICS_RETENTION_MS, listCrashDumps, rotatedLogIndex } from './log-retention';
 import type { TrayLocale } from '../shell/tray';
 import { getMainWindow, showMainWindow } from '../window/main-window';
+import type { FeedbackDiagnosticsArchive } from '../../shared/feedback-diagnostics';
 
 const CORE_LOG_PATTERN = /^kimi-code\.log(\.\d+)?$/;
 const LAUNCH_STATE_PATTERN = /^desktop-launch-[a-z]+\.json$/;
+const FEEDBACK_ARCHIVE_LIMIT_BYTES = 100 * 1024 * 1024;
 
 interface ExportStrings {
   exportedTitle: string;
@@ -56,12 +59,11 @@ export interface DiagnosticsEntry {
   name: string;
 }
 
-function isExportedLogName(name: string): boolean {
+function isRuntimeLogName(name: string): boolean {
   return (
     name === MAIN_LOG_FILE ||
     rotatedLogIndex(name) !== null ||
-    CORE_LOG_PATTERN.test(name) ||
-    LAUNCH_STATE_PATTERN.test(name)
+    CORE_LOG_PATTERN.test(name)
   );
 }
 
@@ -82,7 +84,9 @@ export async function collectDiagnosticsEntries(
   for (const [index, dir] of dirs.entries()) {
     const prefix = index === 0 ? '' : `extra-${index}/`;
     for (const name of await sortedNames(dir)) {
-      if (isExportedLogName(name)) entries.push({ source: join(dir, name), name: `${prefix}logs/${name}` });
+      if (isRuntimeLogName(name) || LAUNCH_STATE_PATTERN.test(name)) {
+        entries.push({ source: join(dir, name), name: `${prefix}logs/${name}` });
+      }
     }
     for (const name of await sortedNames(join(dir, INCIDENTS_DIR))) {
       if (name.endsWith('.json')) {
@@ -103,13 +107,14 @@ export async function writeDiagnosticsZip(
   entries: readonly DiagnosticsEntry[],
   snapshot: unknown,
   scratchDir: string,
+  copyEntry = (source: string, dest: string) => copyFile(source, dest, constants.COPYFILE_FICLONE),
 ): Promise<{ files: number; bytes: number }> {
   const zip = new ZipFile();
   let files = 0;
   for (const [index, entry] of entries.entries()) {
     const copy = join(scratchDir, String(index));
     try {
-      await copyFile(entry.source, copy, constants.COPYFILE_FICLONE);
+      await copyEntry(entry.source, copy);
     } catch {
       continue;
     }
@@ -132,6 +137,43 @@ export function diagnosticsFileName(now: Date = new Date()): string {
   const pad = (value: number): string => String(value).padStart(2, '0');
   const stamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
   return `kimi-code-diagnostics-${stamp}.zip`;
+}
+
+async function copyFeedbackLog(source: string, dest: string): Promise<void> {
+  const parent = dirname(source);
+  const directory = await lstat(parent, { bigint: true });
+  const expected = await lstat(source, { bigint: true });
+  if (!directory.isDirectory() || !expected.isFile()) throw new Error('Not a regular feedback log');
+  const flags = process.platform === 'win32' ? constants.O_RDONLY : constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK;
+  const handle = await open(source, flags);
+  try {
+    const actual = await handle.stat({ bigint: true });
+    const currentParent = await lstat(parent, { bigint: true });
+    if (!actual.isFile() || actual.dev !== expected.dev || actual.ino !== expected.ino
+      || currentParent.dev !== directory.dev || currentParent.ino !== directory.ino) {
+      throw new Error('Feedback log changed before it could be read');
+    }
+    await pipeline(handle.createReadStream(), createWriteStream(dest, { flags: 'wx', mode: 0o600 }));
+  } finally {
+    await handle.close();
+  }
+}
+
+export async function collectFeedbackDiagnosticsArchive(): Promise<FeedbackDiagnosticsArchive> {
+  const scratch = await mkdtemp(join(app.getPath('temp'), 'kimi-feedback-diagnostics-'));
+  const fileName = diagnosticsFileName();
+  const target = join(scratch, fileName);
+  try {
+    const dir = logsDir();
+    const entries = (await sortedNames(dir)).filter(isRuntimeLogName).map((name) => ({ source: join(dir, name), name: `logs/${name}` }));
+    const snapshot = { version: app.getVersion(), os: systemVersion(), platform: process.platform, arch: process.arch };
+    const archive = await writeDiagnosticsZip(target, entries, snapshot, scratch, copyFeedbackLog);
+    if (archive.bytes > FEEDBACK_ARCHIVE_LIMIT_BYTES) throw new Error('Feedback diagnostics archive is too large');
+    const bytes = Uint8Array.from(await readFile(target)).buffer;
+    return { fileName, bytes };
+  } finally {
+    await rm(scratch, { recursive: true, force: true });
+  }
 }
 
 function showMessage(options: MessageBoxOptions): Promise<MessageBoxReturnValue> {

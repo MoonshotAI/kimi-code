@@ -65,7 +65,10 @@ export function stubToolExecutorEvents(): ToolExecutorEventStubs {
       if (beforeDecision !== undefined) return beforeDecision;
       const decisionContext = decisionContextOf(context);
       const starting = await toolExecutorHook(hooks).starting?.(decisionContext);
-      if (starting !== undefined && 'skipPermitting' in starting) return { allow: true };
+      if (starting !== undefined && 'skipPermitting' in starting) {
+        const metadata = decisionContext.context.metadata;
+        return metadata === undefined ? { allow: true } : { allow: true, executionMetadata: metadata };
+      }
       if (starting !== undefined && 'reject' in starting && starting.result !== undefined) {
         return { veto: oldResult(starting.result) };
       }

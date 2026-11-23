@@ -14,6 +14,14 @@ describe('createKimiI18n', () => {
     expect(i18n.global.t('filePreview.copyCode')).toBe('Copy code');
   });
 
+  it('names the conversation being submitted and reports rating and attachment failures in Chinese', () => {
+    const { t } = createKimiI18n({ locale: 'zh' }).global;
+    expect(t('feedback.uploadConversation')).toBe('同时提交本次会话记录');
+    expect(t('feedback.undoFailed')).toBe('取消评价失败');
+    expect(t('feedback.uploadFailed', { names: '诊断日志' })).toBe('诊断日志提交失败');
+    expect(t('feedback.retryUpload')).toBe('重试提交');
+  });
+
   it('provides paste-image auto-mention settings copy in en and zh', () => {
     const i18n = createKimiI18n({ locale: 'en' });
     expect(i18n.global.t('settings.composerSection')).toBe('Composer');

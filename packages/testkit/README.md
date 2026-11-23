@@ -73,6 +73,7 @@ Failed KAP tests also print summaries of the most recent 32 WebSocket frames and
 | Step | Reply |
 |---|---|
 | `say(text \| chunks)` | text, one chunk per array entry |
+| `{ ...say('ok'), headers: { 'x-request-id': 'example-request' } }` | response headers on a streamed or JSON reply |
 | `think(text, then?)`, `thinkSigned(text, signature, then?)` | reasoning before the next step. For OpenAI chat completions, signed reasoning includes the signature in `reasoning_details` in both streaming and non-streaming replies |
 | `call(name, args, { text, id, rawArguments, argumentChunks, invalid })` | one tool call. OpenAI and streaming Anthropic can preserve raw argument text. Google and non-streaming Anthropic require a JSON object |
 | `reply(...)`, `batch(...)` | several parts in one reply; `batch` reads as parallel calls |
