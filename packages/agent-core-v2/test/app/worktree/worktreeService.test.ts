@@ -1075,6 +1075,21 @@ describe('WorktreeService', () => {
       );
       expect(error.code).toBe('worktree.disabled');
     });
+
+    it.skipIf(isWindows)('keeps draining output when onOutput throws', async () => {
+      writeScript('head -c 200000 /dev/zero | tr "\\0" "a"\n');
+      const created = await create({ name: 'noisy-callback' });
+
+      const result = await service.runSetupScript(
+        { worktreePath: created.worktree.path, sourceRoot: created.sourceRoot },
+        {
+          onOutput: () => {
+            throw new Error('listener failed');
+          },
+        },
+      );
+      expect(result.exitCode).toBe(0);
+    });
   });
 
   it('keeps every created worktree under the per-repository directory', async () => {
