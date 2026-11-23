@@ -7,7 +7,7 @@ import { hostDisplayName, hostDisplayState, providerDisplayName } from '@moonsho
 import { isImeKeyEvent } from '@moonshot-ai/app-client/lib';
 import { useConfirmDialog } from '@moonshot-ai/app-client/composables';
 import { hostDefinition, hostsStore, type HostAccount, type HostProviderCopy } from '@moonshot-ai/app-client/stores';
-import { Banner, Button, Field, Icon, IconButton, Input, Menu, MenuItem, SegmentedControl, StatusDot, Switch } from '@moonshot-ai/app-ui';
+import { Banner, Button, Field, Icon, IconButton, Input, Menu, MenuItem, SegmentedControl, StatusDot, Switch, Tooltip } from '@moonshot-ai/app-ui';
 import { useAnchoredMenu } from '../composables/useAnchoredMenu';
 import { useHostFailureText } from '../composables/useHostFailureText';
 import HostTestResult from './HostTestResult.vue';
@@ -653,17 +653,17 @@ void loadHosts();
                 <span class="re-row-status" :class="`re-row-status--${connectionState(row)}`">
                   <StatusDot v-if="enabled(row)" :status="dotFor(row)" />
                   <span class="re-row-state">{{ statusLabel(row) }}</span>
-                  <button
-                    v-if="showsFailure(row)"
-                    type="button"
-                    class="re-row-detail re-row-error re-row-details"
-                    :title="row.connectError ?? ''"
-                    :aria-expanded="failureOpen(row)"
-                    @click.stop="toggleDetail(row.id)"
-                  >
-                    <span class="re-row-details-text">{{ rowFailureSummary(row) }}</span>
-                    <Icon :name="failureOpen(row) ? 'chevron-down' : 'chevron-right'" size="sm" />
-                  </button>
+                  <Tooltip v-if="showsFailure(row)" :text="row.connectError">
+                    <button
+                      type="button"
+                      class="re-row-detail re-row-error re-row-details"
+                      :aria-expanded="failureOpen(row)"
+                      @click.stop="toggleDetail(row.id)"
+                    >
+                      <span class="re-row-details-text">{{ rowFailureSummary(row) }}</span>
+                      <Icon :name="failureOpen(row) ? 'chevron-down' : 'chevron-right'" size="sm" />
+                    </button>
+                  </Tooltip>
                   <button
                     v-else-if="rowNotice(row) === 'needsModels' || rowNotice(row) === 'copyFailed'"
                     type="button"

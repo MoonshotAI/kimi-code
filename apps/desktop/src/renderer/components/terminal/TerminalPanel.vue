@@ -198,22 +198,23 @@ function onTabKeydown(event: KeyboardEvent, index: number): void {
           :style="drag.styleFor(tab.id)"
           @contextmenu.prevent.stop="openContextMenu(tab.id, $event.clientX, $event.clientY)"
         >
-          <button
-            :ref="setTabRef(tab.id)"
-            type="button"
-            class="tp-tab-main"
-            role="tab"
-            :aria-selected="tab.id === store.activeTabId.value"
-            :tabindex="tab.id === store.activeTabId.value ? 0 : -1"
-            :title="tab.cwd"
-            @click="activateFromClick(tab.id)"
-            @pointerdown="drag.onPointerDown($event, tab.id)"
-            @dragstart.prevent
-            @keydown="onTabKeydown($event, index)"
-          >
-            <Icon name="terminal" size="sm" class="tp-tab-icon" />
-            <span class="tp-tab-label">{{ tab.binary ?? tab.shell }}</span>
-          </button>
+          <Tooltip :text="tab.cwd">
+            <button
+              :ref="setTabRef(tab.id)"
+              type="button"
+              class="tp-tab-main"
+              role="tab"
+              :aria-selected="tab.id === store.activeTabId.value"
+              :tabindex="tab.id === store.activeTabId.value ? 0 : -1"
+              @click="activateFromClick(tab.id)"
+              @pointerdown="drag.onPointerDown($event, tab.id)"
+              @dragstart.prevent
+              @keydown="onTabKeydown($event, index)"
+            >
+              <Icon name="terminal" size="sm" class="tp-tab-icon" />
+              <span class="tp-tab-label">{{ tab.binary ?? tab.shell }}</span>
+            </button>
+          </Tooltip>
           <Tooltip :text="t('terminal.closeTab')">
             <button
               type="button"
@@ -225,37 +226,39 @@ function onTabKeydown(event: KeyboardEvent, index: number): void {
             </button>
           </Tooltip>
         </div>
-        <button
-          type="button"
-          class="tp-action"
-          :title="t('terminal.newTab')"
-          :aria-label="t('terminal.newTab')"
-          @click="newTab"
-        >
-          <Icon name="plus" size="sm" />
-        </button>
+        <Tooltip :text="t('terminal.newTab')">
+          <button
+            type="button"
+            class="tp-action"
+            :aria-label="t('terminal.newTab')"
+            @click="newTab"
+          >
+            <Icon name="plus" size="sm" />
+          </button>
+        </Tooltip>
       </div>
       <span v-if="store.error.value" class="tp-error">{{ store.error.value }}</span>
       <div class="tp-tail">
-        <button
-          v-if="activeTab?.status === 'exited'"
-          type="button"
-          class="tp-action"
-          :title="t('terminal.restartTab')"
-          :aria-label="t('terminal.restartTab')"
-          @click="restartActive"
-        >
-          <Icon name="undo" size="sm" />
-        </button>
-        <button
-          type="button"
-          class="tp-action"
-          :title="t('terminal.collapse')"
-          :aria-label="t('terminal.collapse')"
-          @click="store.closePanel()"
-        >
-          <Icon name="chevron-down" size="sm" />
-        </button>
+        <Tooltip v-if="activeTab?.status === 'exited'" :text="t('terminal.restartTab')">
+          <button
+            type="button"
+            class="tp-action"
+            :aria-label="t('terminal.restartTab')"
+            @click="restartActive"
+          >
+            <Icon name="undo" size="sm" />
+          </button>
+        </Tooltip>
+        <Tooltip :text="t('terminal.collapse')">
+          <button
+            type="button"
+            class="tp-action"
+            :aria-label="t('terminal.collapse')"
+            @click="store.closePanel()"
+          >
+            <Icon name="chevron-down" size="sm" />
+          </button>
+        </Tooltip>
       </div>
     </div>
     <div class="tp-body">
