@@ -15,6 +15,7 @@ import {
 import { fakeModelConfig, startFakeModel, type FakeModel } from '@moonshot-ai/testkit/model';
 import { expect, test as base, type TestInfo } from '@playwright/test';
 
+import { startAcp } from '../surfaces/acp';
 import { startTui } from '../surfaces/tui';
 import { SURFACES, VERBS, type Product, type Surface, type SurfaceDriver, type SurfaceLaunch, type Verb } from './verbs';
 
@@ -64,6 +65,7 @@ function startSurface(surface: Surface, launch: SurfaceLaunch): Promise<SurfaceD
     case 'tui':
       return startTui(launch);
     case 'acp':
+      return startAcp(launch);
     case 'desktop':
     case 'web':
       throw new Error(`The ${surface} surface has no driver yet.`);

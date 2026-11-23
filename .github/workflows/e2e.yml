@@ -63,3 +63,33 @@ jobs:
             tests/e2e/test-results/
             tests/e2e/playwright-report/
           retention-days: 7
+
+  acp:
+    name: ACP (optional)
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - uses: actions/download-artifact@v8
+        with:
+          name: e2e-cli
+          path: apps/kimi-code
+      - name: Run the scenarios and driver self-tests over ACP
+        run: pnpm --filter @moonshot-ai/e2e exec playwright test --project=acp
+        env:
+          TESTKIT_CLI_BUILD: dist
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: e2e-acp-failure
+          path: |
+            tests/e2e/test-results/
+            tests/e2e/playwright-report/
+          retention-days: 7

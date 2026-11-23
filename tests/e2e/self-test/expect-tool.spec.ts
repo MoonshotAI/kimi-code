@@ -1,4 +1,4 @@
-import { batch, edit, read, say } from '@moonshot-ai/testkit/model';
+import { bash, batch, edit, read, say, write } from '@moonshot-ai/testkit/model';
 
 import { expect, selfTest } from '../support/scenario';
 
@@ -26,8 +26,51 @@ selfTest('expectTool', {
         await product.expectReply('I read both files.');
       },
     },
+    'finds a shell command that ran after approval': {
+      run: async ({ product, model, workspace }) => {
+        model.script(bash('echo hi | tee out.txt'), say('Created out.txt.'));
+        await product.send('Write hi into out.txt with a shell command.');
+        await product.approve();
+        await product.waitIdle();
+        expect(model.requests('main')[1]?.texts('tool').join('\n')).toMatch(/(^|\n)hi\n/);
+        await product.expectTool({ name: 'Bash', target: 'echo hi | tee out.txt', status: 'done' });
+        await workspace.expectFile('out.txt', 'hi\n');
+      },
+    },
+    'finds a write whose file a later step of the same turn changed again': {
+      run: async ({ product, model, workspace }) => {
+        model.script(write({ path: 'b.txt', content: 'one\n' }), bash('echo two >> b.txt'), say('Wrote b.txt twice.'));
+        await product.send('Write one into b.txt, then append two with a shell command.');
+        await product.approve();
+        await product.approve();
+        await product.waitIdle();
+        await product.expectTool({ name: 'Write', target: 'b.txt', status: 'done' });
+        await product.expectTool({ name: 'Bash', target: 'echo two >> b.txt', status: 'done' });
+        await workspace.expectFile('b.txt', 'one\ntwo\n');
+      },
+    },
+    'finds a shell command that failed before it could start': {
+      run: async ({ product, model }) => {
+        model.script(bash({ command: 'echo never', run_in_background: true }), say('It did not start.'));
+        await product.send('Start a background command without describing it.');
+        await product.waitIdle();
+        await product.expectTool({ name: 'Bash', target: 'echo never', status: 'failed' });
+        await product.expectReply('It did not start.');
+      },
+    },
   },
   negative: {
+    'fails when the shell command is a different one, or failed but the scenario expects it done': {
+      run: async ({ product, model }) => {
+        model.script(bash('exit 3'), say('The command failed.'));
+        await product.send('Run a command that fails.');
+        await product.approve();
+        await product.waitIdle();
+        await expect(product.expectTool({ name: 'Bash', target: 'exit 4', status: 'failed' })).rejects.toThrow('did not find Bash');
+        await expect(product.expectTool({ name: 'Bash', target: 'exit 3', status: 'done' })).rejects.toThrow('did not find Bash');
+        await product.expectTool({ name: 'Bash', target: 'exit 3', status: 'failed' });
+      },
+    },
     'fails for a file that was not among several reads made in one step': {
       workspace: { 'a.txt': 'hello\n', 'b.txt': 'world\n' },
       run: async ({ product, model }) => {
