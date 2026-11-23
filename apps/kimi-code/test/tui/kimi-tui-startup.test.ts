@@ -1,8 +1,16 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { basename, join, resolve } from 'node:path';
+import { stripVTControlCharacters } from 'node:util';
 
-import { ErrorCodes, KimiError, log, type GoalSnapshot } from '@moonshot-ai/kimi-code-sdk';
+import {
+  ErrorCodes,
+  KimiError,
+  log,
+  type GoalSnapshot,
+  type WorktreeListing,
+  type WorktreeRemovalCheck,
+} from '@moonshot-ai/kimi-code-sdk';
 import { fetchOpenPlatformModels } from '@moonshot-ai/kimi-code-oauth';
 import type { MigrationPlan } from '@moonshot-ai/migration-legacy';
 import type { Component, Focusable, ProgramStatus } from '@moonshot-ai/pi-tui';
@@ -12,8 +20,14 @@ import { BannerProvider } from '#/tui/banner/banner-provider';
 import { readBannerDisplayState } from '#/tui/banner/state';
 import { handleLoginCommand, handleLogoutCommand } from '#/tui/commands/auth';
 import { promptPlatformSelection, promptLogoutProviderSelection } from '#/tui/commands/prompts';
+import { setExperimentalFeatures } from '#/tui/commands/experimental-flags';
 import { ApiKeyInputDialogComponent } from '#/tui/components/dialogs/api-key-input-dialog';
 import { ChoicePickerComponent } from '#/tui/components/dialogs/choice-picker';
+import {
+  SessionPickerComponent,
+  type SessionRow,
+} from '#/tui/components/dialogs/session-picker';
+import { WorktreePanelComponent } from '#/tui/components/dialogs/worktree-panel';
 import { ModelSelectorComponent } from '#/tui/components/dialogs/model-selector';
 import { BannerComponent } from '#/tui/components/chrome/banner';
 import { WelcomeComponent } from '#/tui/components/chrome/welcome';
@@ -22,8 +36,12 @@ import type { FooterGitBinding } from '#/tui/components/chrome/footer';
 import { KimiTUI, type KimiTUIStartupInput, type TUIState } from '#/tui/kimi-tui';
 import { maybeShowModelMigrationPrompt } from '#/tui/controllers/model-migration';
 import type { ApprovalPanelData, QuestionPanelData } from '#/tui/reverse-rpc/types';
+import { SESSION_LIST_PAGE_SIZE } from '#/tui/constant/kimi-tui';
+import type { WorkLocation } from '#/tui/types';
 import { REPLAY_FETCH_TURN_LIMIT } from '#/tui/utils/message-replay';
 import { copyTextToClipboard } from '#/utils/clipboard/clipboard-text';
+import { appendInputHistory, loadInputHistory } from '#/utils/history/input-history';
+import { getInputHistoryFile } from '#/utils/paths';
 import { mountFooter } from '#/tui/tui-state';
 import { quoteShellArg } from '#/utils/shell-quote';
 import {
@@ -231,6 +249,7 @@ function makeHarness(session = makeSession(), overrides: Record<string, unknown>
       },
     })),
     resolveSessionEnvironment: vi.fn(async (options: { environmentId?: string; environmentCwd?: string }) => ({ environmentId: options.environmentId ?? 'local', cwd: options.environmentCwd })),
+    resolveWorkLocation: vi.fn(async (cwd: string) => ({ cwd, projectRoot: cwd, isGitRepo: false })),
     onConfigSectionChanged: vi.fn(() => vi.fn()),
     createSession: vi.fn(
       async (_options?: {
@@ -4420,5 +4439,839 @@ describe('survey telemetry gate wiring', () => {
     } finally {
       vi.unstubAllEnvs();
     }
+  });
+});
+
+describe('KimiTUI resume location and sessions tabs', () => {
+  interface ResumeDriver extends StartupDriver {
+    start(): Promise<void>;
+    onExit?: (code?: number) => Promise<void>;
+    runMigrationScreen(plan: unknown): Promise<unknown>;
+    locateStartupSession(): Promise<void>;
+    finishStartup(shouldReplayHistory: boolean): Promise<void>;
+    showSessionPicker(): Promise<void>;
+    handleSessionPickerSelect(session: SessionRow, applyStartupModes: boolean): Promise<void>;
+  }
+
+  function tempDir(prefix: string): string {
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), prefix)));
+    onTestFinished(() => {
+      rmSync(dir, { recursive: true, force: true });
+    });
+    return dir;
+  }
+
+  function places() {
+    const project = tempDir('kimi-resume-project-');
+    const worktree = tempDir('kimi-resume-worktree-');
+    const elsewhere = tempDir('kimi-resume-elsewhere-');
+    const resolveWorkLocation = vi.fn(async (cwd: string): Promise<WorkLocation> =>
+      cwd === worktree
+        ? {
+            cwd,
+            projectRoot: project,
+            isGitRepo: true,
+            worktree: { root: worktree, name: 'x', repoRoot: project },
+          }
+        : { cwd, projectRoot: cwd, isGitRepo: cwd === project },
+    );
+    return { project, worktree, elsewhere, resolveWorkLocation };
+  }
+
+  function transcriptText(driver: StartupDriver): string {
+    return stripVTControlCharacters(driver.state.transcriptContainer.render(240).join('\n'));
+  }
+
+  it('rejects a --session target from another project with the cd hint', async () => {
+    const { project, elsewhere } = places();
+    const harness = makeHarness(makeSession(), {
+      listSessions: vi.fn(async () => [{ id: 'ses-other', workDir: project, projectWorkDir: project }]),
+    });
+    const driver = makeDriver(harness, {
+      ...makeStartupInput({ session: 'ses-other', model: 'k2' }),
+      workDir: elsewhere,
+      projectRoot: elsewhere,
+    }) as ResumeDriver;
+    vi.spyOn(driver.state.ui, 'stop').mockImplementation(() => {});
+    const stderrWrite = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    onTestFinished(() => {
+      stderrWrite.mockRestore();
+    });
+
+    await driver.locateStartupSession();
+    await expect(driver.init()).rejects.toThrow(
+      'Session "ses-other" was created under a different directory.',
+    );
+
+    expect(String(stderrWrite.mock.calls[0]?.[0])).toContain(`cd "${project}" && kimi -r ses-other`);
+    expect(harness.resumeSession).not.toHaveBeenCalled();
+    expect(driver.state.appState.workDir).toBe(elsewhere);
+  });
+
+  it('switches automatically to a same-project worktree session on --session', async () => {
+    const { project, worktree, resolveWorkLocation } = places();
+    const harness = makeHarness(makeSession({ id: 'ses-wt' }), {
+      getExperimentalFeatures: vi.fn(async () => [{ id: 'worktree', enabled: true }]),
+      listSessions: vi.fn(async () => [{ id: 'ses-wt', workDir: worktree, projectWorkDir: project }]),
+      resolveWorkLocation,
+    });
+    const driver = makeDriver(harness, {
+      ...makeStartupInput({ session: 'ses-wt', model: 'k2' }),
+      workDir: project,
+      projectRoot: project,
+      isGitRepo: true,
+    }) as ResumeDriver;
+
+    await driver.locateStartupSession();
+    await expect(driver.init()).resolves.toBe(true);
+    await driver.finishStartup(true);
+
+    expect(harness.resumeSession).toHaveBeenCalledWith({
+      id: 'ses-wt',
+      replayTurnLimit: REPLAY_FETCH_TURN_LIMIT,
+    });
+    expect(driver.state.appState).toMatchObject({
+      workDir: worktree,
+      projectRoot: project,
+      worktree: { name: 'x' },
+    });
+    expect(transcriptText(driver)).toContain(`Switched to ${worktree} to resume this session.`);
+  });
+
+  it('resumes a same-project session whose worktree directory was deleted and warns in the transcript', async () => {
+    const { project, resolveWorkLocation } = places();
+    const missing = join(project, 'gone-worktree');
+    const resumeSession = vi.fn(async () => makeSession({ id: 'ses-gone' }));
+    const harness = makeHarness(makeSession({ id: 'ses-current' }), {
+      listSessions: vi.fn(async () => [
+        { id: 'ses-gone', title: 'Gone work', workDir: missing, projectWorkDir: project },
+      ]),
+      resumeSession,
+      resolveWorkLocation,
+    });
+    const driver = makeDriver(harness, {
+      ...makeStartupInput({ session: 'ses-gone', model: 'k2' }),
+      workDir: project,
+      projectRoot: project,
+      isGitRepo: true,
+    }) as ResumeDriver;
+
+    await driver.locateStartupSession();
+    await expect(driver.init()).resolves.toBe(true);
+    await driver.finishStartup(true);
+
+    expect(resumeSession).toHaveBeenCalledWith({
+      id: 'ses-gone',
+      replayTurnLimit: REPLAY_FETCH_TURN_LIMIT,
+    });
+    expect(driver.state.appState).toMatchObject({
+      sessionId: 'ses-gone',
+      workDir: missing,
+      projectRoot: project,
+    });
+    expect(transcriptText(driver)).toContain(`Switched to ${missing} to resume this session.`);
+    expect(transcriptText(driver)).toContain(
+      `Working directory ${missing} no longer exists. You can still send messages`,
+    );
+  });
+
+  it('resumes a picker session from another worktree in the same project and rejects another project', async () => {
+    const { project, worktree, elsewhere, resolveWorkLocation } = places();
+    const resumeSession = vi.fn(async () => makeSession({ id: 'ses-wt' }));
+    const harness = makeHarness(makeSession({ id: 'ses-current' }), {
+      resumeSession,
+      resolveWorkLocation,
+    });
+    const driver = makeDriver(harness, {
+      ...makeStartupInput({ model: 'k2' }),
+      workDir: project,
+      projectRoot: project,
+      isGitRepo: true,
+    }) as ResumeDriver;
+    await driver.init();
+    copyTextToClipboardMock.mockClear();
+
+    await driver.handleSessionPickerSelect(
+      { id: 'ses-elsewhere', title: null, work_dir: elsewhere, project_work_dir: elsewhere, updated_at: 0 },
+      false,
+    );
+    expect(resumeSession).not.toHaveBeenCalled();
+    expect(copyTextToClipboardMock).toHaveBeenCalledOnce();
+
+    copyTextToClipboardMock.mockClear();
+    await driver.handleSessionPickerSelect(
+      { id: 'ses-wt', title: null, work_dir: worktree, project_work_dir: project, updated_at: 0 },
+      true,
+    );
+
+    expect(resumeSession).toHaveBeenCalledWith({
+      id: 'ses-wt',
+      replayTurnLimit: REPLAY_FETCH_TURN_LIMIT,
+    });
+    expect(copyTextToClipboardMock).not.toHaveBeenCalled();
+    expect(driver.state.appState).toMatchObject({
+      workDir: worktree,
+      projectRoot: project,
+      worktree: { name: 'x' },
+    });
+    expect(transcriptText(driver)).toContain(`Switched to ${worktree} to resume this session.`);
+  });
+
+  it('shows three scope tabs in git repos and queries scope: project on the Project tab', async () => {
+    const { project, worktree, resolveWorkLocation } = places();
+    const listSessionsPage = vi.fn(async (opts?: { workDir?: string; scope?: string }) => ({
+      items:
+        opts?.scope === 'project'
+          ? [
+              { id: 'ses-main', title: 'Main', workDir: project, projectWorkDir: project, updatedAt: 1 },
+              { id: 'ses-wt', title: 'WT', workDir: worktree, projectWorkDir: project, updatedAt: 2 },
+            ]
+          : [{ id: 'ses-main', title: 'Main', workDir: project, projectWorkDir: project, updatedAt: 1 }],
+      nextCursor: undefined,
+    }));
+    const harness = makeHarness(makeSession(), { listSessionsPage, resolveWorkLocation });
+    const gitDriver = makeDriver(harness, {
+      ...makeStartupInput({ model: 'k2' }),
+      workDir: project,
+      projectRoot: project,
+      isGitRepo: true,
+    }) as ResumeDriver;
+    await gitDriver.showSessionPicker();
+
+    const picker = gitDriver.state.editorContainer.children[0];
+    expect(picker).toBeInstanceOf(SessionPickerComponent);
+    expect(stripVTControlCharacters(picker!.render(120).join('\n'))).toContain('Project');
+
+    (picker as SessionPickerComponent).handleInput('\t');
+    await vi.waitFor(() => {
+      expect(listSessionsPage).toHaveBeenCalledWith({
+        workDir: project,
+        scope: 'project',
+        limit: SESSION_LIST_PAGE_SIZE,
+      });
+    });
+
+    const plainDriver = makeDriver(harness, {
+      ...makeStartupInput({ model: 'k2' }),
+      workDir: project,
+      projectRoot: project,
+      isGitRepo: false,
+    }) as ResumeDriver;
+    await plainDriver.showSessionPicker();
+    const plainPicker = plainDriver.state.editorContainer.children[0] as SessionPickerComponent;
+    expect(stripVTControlCharacters(plainPicker.render(120).join('\n'))).not.toContain('Tab switch');
+  });
+});
+
+describe('KimiTUI work location', () => {
+  interface LocationDriver extends StartupDriver {
+    initMainTui(): Promise<boolean>;
+    applyWorkLocation(location: WorkLocation): Promise<void>;
+    refreshWorkLocation(): Promise<void>;
+    ensureSession(): Promise<unknown>;
+    createNewSession(): Promise<void>;
+    persistInputHistory(text: string): Promise<void>;
+  }
+
+  function tempDir(prefix: string): string {
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), prefix)));
+    onTestFinished(() => {
+      rmSync(dir, { recursive: true, force: true });
+    });
+    return dir;
+  }
+
+  async function startAt(
+    workDir: string,
+    harness: ReturnType<typeof makeHarness>,
+    cliOptions: Partial<KimiTUIStartupInput['cliOptions']> = {},
+    extra: Partial<KimiTUIStartupInput> = {},
+  ): Promise<LocationDriver> {
+    const driver = makeDriver(harness, {
+      ...makeStartupInput({ model: 'k2', ...cliOptions }),
+      workDir,
+      ...extra,
+    }) as LocationDriver;
+    await driver.initMainTui();
+    return driver;
+  }
+
+  it('shows the applied working directory in the footer, the welcome panel, and the git badge', async () => {
+    const project = tempDir('kimi-location-project-');
+    const worktree = tempDir('kimi-location-worktree-');
+    const harness = makeHarness(makeSession(), {
+      getGitStatus: vi.fn(async (dir: string) => ({
+        branch: dir === worktree ? 'worktree-branch' : 'project-branch',
+        dirty: false,
+        ahead: 0,
+        behind: 0,
+        additions: 0,
+        deletions: 0,
+      })),
+    });
+    const driver = await startAt(project, harness);
+    const footerLine = () => stripVTControlCharacters(driver.state.footer.render(200)[0] ?? '');
+    const welcomeText = () => {
+      const welcome = driver.state.transcriptContainer.children.find(
+        (child) => child instanceof WelcomeComponent,
+      );
+      return stripVTControlCharacters(welcome?.render(200).join('\n') ?? '');
+    };
+    await vi.waitFor(() => {
+      expect(footerLine()).toContain('project-branch');
+    });
+    expect(footerLine()).toContain(basename(project));
+    expect(welcomeText()).toContain(`Directory: ${project}`);
+
+    await driver.applyWorkLocation({
+      cwd: worktree,
+      projectRoot: project,
+      isGitRepo: true,
+      worktree: { root: worktree, name: 'wt', repoRoot: project },
+    });
+
+    await vi.waitFor(() => {
+      expect(footerLine()).toContain('worktree-branch');
+    });
+    expect(footerLine()).toContain('worktree wt');
+    expect(footerLine()).not.toContain(basename(project));
+    expect(welcomeText()).toContain(`Directory: ${worktree}`);
+    expect(welcomeText()).toContain(`Worktree:  wt of ${project}`);
+  });
+
+  it('re-resolves a Kimi worktree when the worktree flag turns on or off mid-session', async () => {
+    const project = tempDir('kimi-location-project-');
+    const worktree = tempDir('kimi-location-worktree-');
+    let flagOn = false;
+    const harness = makeHarness(makeSession(), {
+      resolveWorkLocation: vi.fn(async (cwd: string): Promise<WorkLocation> =>
+        flagOn && cwd === worktree
+          ? {
+              cwd,
+              projectRoot: project,
+              isGitRepo: true,
+              worktree: { root: worktree, name: 'wt', repoRoot: project },
+            }
+          : { cwd, projectRoot: project, isGitRepo: true },
+      ),
+    });
+    const driver = await startAt(worktree, harness);
+    expect(driver.state.appState.worktree).toBeUndefined();
+
+    flagOn = true;
+    await driver.refreshWorkLocation();
+    expect(driver.state.appState).toMatchObject({
+      workDir: worktree,
+      projectRoot: project,
+      worktree: { root: worktree, name: 'wt', repoRoot: project },
+    });
+
+    flagOn = false;
+    await driver.refreshWorkLocation();
+    expect(driver.state.appState.workDir).toBe(worktree);
+    expect(driver.state.appState.worktree).toBeUndefined();
+  });
+
+  it('blocks sending while a worktree is being created and cancels it on Esc', async () => {
+    const project = tempDir('kimi-location-project-');
+    let signal: AbortSignal | undefined;
+    const harness = makeHarness(makeSession(), {
+      createWorktree: vi.fn(
+        (_input: unknown, options: { signal: AbortSignal }) =>
+          new Promise((_resolve, reject) => {
+            signal = options.signal;
+            options.signal.addEventListener('abort', () => {
+              reject(new KimiError(ErrorCodes.WORKTREE_CANCELLED, 'Worktree operation cancelled.'));
+            });
+          }),
+      ),
+    });
+    const driver = await startAt(project, harness);
+    const tui = driver as unknown as {
+      worktreeCreation: { run(request: { name?: string }): Promise<void> };
+      handleUserInput(text: string): void;
+    };
+    const transcriptText = () =>
+      stripVTControlCharacters(
+        driver.state.transcriptContainer.children
+          .map((child) => child.render(200).join('\n'))
+          .join('\n'),
+      );
+    const running = tui.worktreeCreation.run({ name: 'fix-login' });
+    await vi.waitFor(() => {
+      expect(signal).toBeDefined();
+    });
+
+    tui.handleUserInput('hello');
+    expect(driver.state.editor.getText()).toBe('hello');
+    expect(transcriptText()).toContain('Wait for the worktree to finish setting up.');
+    expect(harness.createSession).not.toHaveBeenCalled();
+
+    driver.state.editor.setText('');
+    driver.state.editor.handleInput('\u001B');
+    await running;
+    expect(signal?.aborted).toBe(true);
+    expect(transcriptText()).toContain(`Cancelled. Staying in ${project}.`);
+  });
+
+  it('completes @ mentions from the applied working directory', async () => {
+    const project = tempDir('kimi-location-project-');
+    const worktree = tempDir('kimi-location-worktree-');
+    writeFileSync(join(project, 'project-notes.txt'), '');
+    writeFileSync(join(worktree, 'worktree-notes.txt'), '');
+    const driver = makeDriver(makeHarness(), {
+      ...makeStartupInput({ model: 'k2' }),
+      workDir: project,
+    }) as LocationDriver;
+    const setAutocompleteProvider = vi.spyOn(driver.state.editor, 'setAutocompleteProvider');
+    await driver.initMainTui();
+    const mentionValues = async () => {
+      const provider = setAutocompleteProvider.mock.calls.at(-1)![0];
+      const result = await provider.getSuggestions(['@notes'], 0, 6, {
+        signal: new AbortController().signal,
+        force: true,
+      });
+      return result?.items.map((item) => item.value) ?? [];
+    };
+    expect(await mentionValues()).toContain('@project-notes.txt');
+
+    await driver.applyWorkLocation({ cwd: worktree, projectRoot: project, isGitRepo: true });
+
+    const values = await mentionValues();
+    expect(values).toContain('@worktree-notes.txt');
+    expect(values).not.toContain('@project-notes.txt');
+  });
+
+  it('reloads input history when switching working directories', async () => {
+    vi.stubEnv('KIMI_CODE_HOME', tempDir('kimi-location-home-'));
+    onTestFinished(() => {
+      vi.unstubAllEnvs();
+    });
+    const projectA = tempDir('kimi-location-a-');
+    const projectB = tempDir('kimi-location-b-');
+    await appendInputHistory(getInputHistoryFile(projectA), { content: 'typed in A' });
+    await appendInputHistory(getInputHistoryFile(projectB), { content: 'typed in B' });
+    const driver = await startAt(projectA, makeHarness());
+    const recall = () => {
+      driver.state.editor.setText('');
+      driver.state.editor.handleInput('\u001B[A');
+      return driver.state.editor.getText();
+    };
+    const persisted = async (dir: string) =>
+      (await loadInputHistory(getInputHistoryFile(dir))).map((entry) => entry.content);
+    await vi.waitFor(() => {
+      expect(recall()).toBe('typed in A');
+    });
+
+    await driver.applyWorkLocation({ cwd: projectB, projectRoot: projectB, isGitRepo: false });
+    expect(recall()).toBe('typed in B');
+    await driver.persistInputHistory('typed in B again');
+    expect(await persisted(projectB)).toEqual(['typed in B', 'typed in B again']);
+    expect(await persisted(projectA)).toEqual(['typed in A']);
+  });
+
+  describe('/worktree', () => {
+    const DOWN = '\u001B[B';
+    const UP = '\u001B[A';
+    const ENTER = '\r';
+
+    function removalCheck(
+      worktree: string,
+      overrides: Partial<WorktreeRemovalCheck> = {},
+    ): WorktreeRemovalCheck {
+      return {
+        path: worktree,
+        missing: false,
+        branch: undefined,
+        uncommittedFiles: 0,
+        uniqueCommits: 0,
+        openSessionIds: [],
+        closedSessionCount: 0,
+        ...overrides,
+      };
+    }
+
+    function worktreeHarness(
+      project: string,
+      worktree: string,
+      session = makeSession(),
+      bare = false,
+    ) {
+      const mocks = {
+        listWorktrees: vi.fn(
+          async (_cwd: string): Promise<WorktreeListing> => ({
+            repoRoot: project,
+            bare,
+            worktrees: [
+              { path: worktree, name: 'fix-login', head: 'abc1234', branch: undefined, missing: false },
+            ],
+          }),
+        ),
+        inspectWorktreeRemoval: vi.fn(
+          async (_input: unknown): Promise<WorktreeRemovalCheck> => removalCheck(worktree),
+        ),
+        removeWorktree: vi.fn(async (_input: unknown): Promise<void> => {}),
+      };
+      const harness = makeHarness(session, {
+        getExperimentalFeatures: vi.fn(async () => [{ id: 'worktree', enabled: true }]),
+        ...mocks,
+      });
+      let created = 0;
+      harness.createSession.mockImplementation(async () => {
+        created += 1;
+        return created === 1 ? session : makeSession({ id: `ses-${String(created)}` });
+      });
+      return { harness, ...mocks };
+    }
+
+    function transcriptText(driver: LocationDriver): string {
+      return stripVTControlCharacters(
+        driver.state.transcriptContainer.children
+          .map((child) => child.render(200).join('\n'))
+          .join('\n'),
+      );
+    }
+
+    function slot<T>(driver: LocationDriver, type: abstract new (...args: never[]) => T): T | undefined {
+      const mounted = driver.state.editorContainer.children[0];
+      return mounted instanceof type ? mounted : undefined;
+    }
+
+    function runCommand(driver: LocationDriver, text: string): void {
+      (driver as unknown as { handleUserInput(text: string): void }).handleUserInput(text);
+    }
+
+    async function openPanel(driver: LocationDriver): Promise<WorktreePanelComponent> {
+      runCommand(driver, '/worktree');
+      await vi.waitFor(() => {
+        expect(slot(driver, WorktreePanelComponent)).toBeDefined();
+      });
+      return slot(driver, WorktreePanelComponent)!;
+    }
+
+    async function choose(driver: LocationDriver, keys: readonly string[]): Promise<string> {
+      await vi.waitFor(() => {
+        expect(slot(driver, ChoicePickerComponent)).toBeDefined();
+      });
+      const picker = slot(driver, ChoicePickerComponent)!;
+      const text = stripVTControlCharacters(picker.render(200).join('\n'));
+      for (const key of keys) picker.handleInput(key);
+      return text;
+    }
+
+    function panelText(driver: LocationDriver): string {
+      return stripVTControlCharacters(slot(driver, WorktreePanelComponent)?.render(200).join('\n') ?? '');
+    }
+
+    it('is listed only while the worktree experiment is on', async () => {
+      const project = tempDir('kimi-location-project-');
+      const commands = (driver: LocationDriver): string[] =>
+        (driver as unknown as { getSlashCommands(): readonly { name: string }[] })
+          .getSlashCommands()
+          .map((command) => command.name);
+
+      expect(commands(await startAt(project, makeHarness()))).not.toContain('worktree');
+      expect(commands(await startAt(project, worktreeHarness(project, project).harness))).toContain(
+        'worktree',
+      );
+    });
+
+    it('starts a fresh session in the chosen checkout and omits source for bare repos', async () => {
+      const project = tempDir('kimi-location-project-');
+      const worktree = tempDir('kimi-location-worktree-');
+      const { harness } = worktreeHarness(project, worktree);
+      const driver = await startAt(project, harness);
+      await driver.ensureSession();
+      driver.state.transcriptEntries.push({
+        id: 'u1',
+        kind: 'user',
+        renderMode: 'plain',
+        content: 'hello',
+      });
+
+      const panel = await openPanel(driver);
+      panel.handleInput(DOWN);
+      panel.handleInput(ENTER);
+
+      await vi.waitFor(() => {
+        expect(transcriptText(driver)).toContain('Now working in worktree fix-login');
+      });
+      expect(slot(driver, WorktreePanelComponent)).toBeUndefined();
+      expect(harness.createSession).toHaveBeenLastCalledWith(
+        expect.objectContaining({ workDir: worktree, environmentId: 'local' }),
+      );
+      expect(driver.state.appState).toMatchObject({
+        sessionId: 'ses-2',
+        workDir: worktree,
+        projectRoot: project,
+        worktree: { root: worktree, name: 'fix-login', repoRoot: project },
+      });
+
+      const back = await openPanel(driver);
+      back.handleInput(UP);
+      back.handleInput(ENTER);
+
+      await vi.waitFor(() => {
+        expect(transcriptText(driver)).toContain(`Back in ${project}`);
+      });
+      expect(driver.state.appState).toMatchObject({
+        sessionId: 'ses-3',
+        workDir: project,
+        worktree: undefined,
+      });
+
+      const bare = worktreeHarness(project, worktree, makeSession(), true);
+      const bareDriver = await startAt(worktree, bare.harness, {}, {
+        projectRoot: project,
+        isGitRepo: true,
+        worktree: { root: worktree, name: 'fix-login', repoRoot: project },
+      });
+      await openPanel(bareDriver);
+      expect(panelText(bareDriver)).not.toContain('source');
+    });
+
+    it('lands in the matching subdirectory of the worktree, or its root when the commit lacks it', async () => {
+      const project = tempDir('kimi-location-project-');
+      const worktree = tempDir('kimi-location-worktree-');
+      mkdirSync(join(project, 'pkg'));
+      const driver = await startAt(join(project, 'pkg'), worktreeHarness(project, worktree).harness);
+      const enter = async (key: string): Promise<void> => {
+        const panel = await openPanel(driver);
+        panel.handleInput(key);
+        panel.handleInput(ENTER);
+        await vi.waitFor(() => {
+          expect(slot(driver, WorktreePanelComponent)).toBeUndefined();
+        });
+      };
+
+      await enter(DOWN);
+      await vi.waitFor(() => {
+        expect(transcriptText(driver)).toContain(
+          "pkg doesn't exist at this commit, so the session starts at the worktree root.",
+        );
+      });
+      expect(driver.state.appState.workDir).toBe(worktree);
+
+      mkdirSync(join(worktree, 'pkg'));
+      await driver.applyWorkLocation({
+        cwd: join(project, 'pkg'),
+        projectRoot: project,
+        isGitRepo: true,
+      });
+      await enter(DOWN);
+      await vi.waitFor(() => {
+        expect(driver.state.appState.workDir).toBe(join(worktree, 'pkg'));
+      });
+      await enter(UP);
+      await vi.waitFor(() => {
+        expect(driver.state.appState.workDir).toBe(join(project, 'pkg'));
+      });
+    });
+
+    it('reports why the panel cannot open', async () => {
+      const project = tempDir('kimi-location-project-');
+      const outside = worktreeHarness(project, project);
+      outside.listWorktrees.mockRejectedValue(
+        new KimiError(ErrorCodes.WORKTREE_NOT_GIT_REPO, `${project} is not inside a git repository.`),
+      );
+      const plain = await startAt(project, outside.harness);
+      runCommand(plain, '/worktree');
+      await vi.waitFor(() => {
+        expect(transcriptText(plain)).toContain(`${project} is not inside a git repository.`);
+      });
+      expect(slot(plain, WorktreePanelComponent)).toBeUndefined();
+
+      const remoteSession = makeSession({
+        getEnvironment: vi.fn(async () => ({ environmentId: 'dev-box', cwd: '/remote/work' })),
+      });
+      const remote = worktreeHarness(project, project, remoteSession);
+      const driver = await startAt(project, remote.harness, {
+        environment: 'dev-box',
+        environmentCwd: '/remote/work',
+      });
+      runCommand(driver, '/worktree');
+      await vi.waitFor(() => {
+        expect(transcriptText(driver)).toContain("Worktrees aren't available for remote environments.");
+      });
+      expect(remote.listWorktrees).not.toHaveBeenCalled();
+    });
+
+    it('deletes a worktree after the user picks what to discard', async () => {
+      const project = tempDir('kimi-location-project-');
+      const worktree = tempDir('kimi-location-worktree-');
+      const { harness, listWorktrees, inspectWorktreeRemoval, removeWorktree } = worktreeHarness(
+        project,
+        worktree,
+      );
+      inspectWorktreeRemoval.mockResolvedValue(
+        removalCheck(worktree, { uncommittedFiles: 2, uniqueCommits: 1, closedSessionCount: 1 }),
+      );
+      const driver = await startAt(project, harness);
+      await driver.ensureSession();
+      const panel = await openPanel(driver);
+      listWorktrees.mockResolvedValueOnce({ repoRoot: project, bare: false, worktrees: [] });
+
+      panel.handleInput(DOWN);
+      panel.handleInput('d');
+      const prompt = await choose(driver, [DOWN, ENTER]);
+
+      expect(prompt).toContain('Delete worktree fix-login?');
+      expect(prompt).toContain('2 uncommitted files will be lost.');
+      expect(prompt).toContain('1 commit exists only in this worktree.');
+      expect(prompt).toContain(
+        '1 earlier session worked here. Their conversation history stays available.',
+      );
+      expect(inspectWorktreeRemoval).toHaveBeenCalledWith({
+        repoRoot: project,
+        path: worktree,
+        deleteBranch: false,
+        excludeSessionId: 'ses-1',
+      });
+      await vi.waitFor(() => {
+        expect(panelText(driver)).toContain('Deleted fix-login.');
+      });
+      expect(removeWorktree).toHaveBeenCalledWith({
+        repoRoot: project,
+        path: worktree,
+        deleteBranch: false,
+        discard: { uncommittedFiles: 2, uniqueCommits: 1 },
+        excludeSessionId: 'ses-1',
+      });
+      expect(panelText(driver)).not.toContain(basename(worktree));
+    });
+
+    it('refuses to delete a worktree that another window has open', async () => {
+      const project = tempDir('kimi-location-project-');
+      const worktree = tempDir('kimi-location-worktree-');
+      const { harness, inspectWorktreeRemoval, removeWorktree } = worktreeHarness(project, worktree);
+      inspectWorktreeRemoval.mockResolvedValueOnce(
+        removalCheck(worktree, { openSessionIds: ['ses-9'] }),
+      );
+      removeWorktree.mockRejectedValue(
+        new KimiError(ErrorCodes.WORKTREE_IN_USE, 'The worktree is in use.', {
+          details: { path: worktree, openSessionIds: ['ses-9'] },
+        }),
+      );
+      const driver = await startAt(project, harness);
+      const panel = await openPanel(driver);
+
+      panel.handleInput(DOWN);
+      panel.handleInput('d');
+      await vi.waitFor(() => {
+        expect(panelText(driver)).toContain('fix-login is open in another Kimi Code window.');
+      });
+      expect(slot(driver, ChoicePickerComponent)).toBeUndefined();
+
+      panel.handleInput('d');
+      await choose(driver, [DOWN, ENTER]);
+      await vi.waitFor(() => {
+        expect(removeWorktree).toHaveBeenCalledOnce();
+      });
+      await vi.waitFor(() => {
+        expect(panelText(driver)).toContain('fix-login is open in another Kimi Code window.');
+      });
+      expect(panelText(driver)).toContain(basename(worktree));
+    });
+  });
+
+  describe('leaving a Kimi worktree', () => {
+    interface ExitDriver extends LocationDriver {
+      handleUserInput(text: string): void;
+      readonly worktreeExit: { readonly outcome?: { readonly kind: string } };
+      readonly worktreeCreation: {
+        readonly createdThisRun: Map<
+          string,
+          { name: string; repoRoot: string; setupScriptRan: boolean }
+        >;
+      };
+      mountEditorReplacement(panel: Component & Focusable): void;
+    }
+
+    async function startInWorktree(removal: { uncommittedFiles: number }) {
+      onTestFinished(() => {
+        setExperimentalFeatures([]);
+      });
+      const project = tempDir('kimi-exit-project-');
+      const worktree = tempDir('kimi-exit-worktree-');
+      const inspectWorktreeRemoval = vi.fn(async () => ({
+        path: worktree,
+        missing: false,
+        branch: undefined,
+        uniqueCommits: 0,
+        openSessionIds: [],
+        closedSessionCount: 0,
+        ...removal,
+      }));
+      const removeWorktree = vi.fn(async (_input: unknown) => {});
+      const harness = makeHarness(makeSession({ id: 'ses-new' }), {
+        inspectWorktreeRemoval,
+        removeWorktree,
+        getExperimentalFeatures: vi.fn(async () => [{ id: 'worktree', enabled: true }]),
+      });
+      const driver = makeDriver(harness, {
+        ...makeStartupInput({ model: 'k2' }),
+        workDir: worktree,
+        projectRoot: project,
+        isGitRepo: true,
+        worktree: { root: worktree, name: 'wt', repoRoot: project },
+      }) as ExitDriver;
+      await driver.initMainTui();
+      const stop = vi.spyOn(driver, 'stop').mockResolvedValue(undefined);
+      const mount = vi.spyOn(driver, 'mountEditorReplacement');
+      return { inspectWorktreeRemoval, removeWorktree, driver, worktree, stop, mount };
+    }
+
+    it('asks on /exit, and Ctrl+C in the dialog keeps the worktree and exits', async () => {
+      const { removeWorktree, driver, stop, mount } = await startInWorktree({ uncommittedFiles: 1 });
+
+      driver.handleUserInput('/exit');
+      await vi.waitFor(() => {
+        expect(mount).toHaveBeenCalled();
+      });
+      const dialog = mount.mock.calls[0]![0];
+      expect(stripVTControlCharacters(dialog.render(100).join('\n'))).toContain('Leaving worktree wt');
+      expect(stop).not.toHaveBeenCalled();
+
+      dialog.handleInput?.('\u0003');
+      await vi.waitFor(() => {
+        expect(stop).toHaveBeenCalledOnce();
+      });
+      expect(removeWorktree).not.toHaveBeenCalled();
+      expect(driver.worktreeExit.outcome?.kind).toBe('kept');
+    });
+
+    it('deletes a worktree created this run on /exit when the session /new started there is untouched', async () => {
+      const { removeWorktree, driver, worktree, stop, mount } = await startInWorktree({
+        uncommittedFiles: 0,
+      });
+      driver.worktreeCreation.createdThisRun.set(worktree, {
+        name: 'wt',
+        repoRoot: 'unused',
+        setupScriptRan: false,
+      });
+      await driver.createNewSession();
+
+      driver.handleUserInput('/exit');
+      await vi.waitFor(() => {
+        expect(stop).toHaveBeenCalledOnce();
+      });
+      expect(mount).not.toHaveBeenCalled();
+      expect(removeWorktree).toHaveBeenCalledWith(
+        expect.objectContaining({ path: worktree, excludeSessionId: 'ses-new' }),
+      );
+      expect(driver.worktreeExit.outcome?.kind).toBe('deleted');
+    });
+
+    it('exits on /exit without asking while the worktree flag is off', async () => {
+      const { inspectWorktreeRemoval, driver, stop } = await startInWorktree({ uncommittedFiles: 1 });
+      setExperimentalFeatures([]);
+
+      driver.handleUserInput('/exit');
+      await vi.waitFor(() => {
+        expect(stop).toHaveBeenCalledOnce();
+      });
+      expect(inspectWorktreeRemoval).not.toHaveBeenCalled();
+      expect(driver.worktreeExit.outcome).toBeUndefined();
+    });
   });
 });

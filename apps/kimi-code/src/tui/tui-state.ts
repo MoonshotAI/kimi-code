@@ -20,7 +20,7 @@ import { GutterContainer } from './components/chrome/gutter-container';
 import type { MoonLoader, SpinnerStyle } from './components/chrome/moon-loader';
 import { NotifyPanelComponent } from './components/chrome/notify-panel';
 import { QueuePaneComponent } from './components/panes/queue-pane';
-import type { SessionRow } from './components/dialogs/session-picker';
+import type { SessionRow, SessionsScope } from './components/dialogs/session-picker';
 import { CustomEditor } from './components/editor/custom-editor';
 import { DEFAULT_MARKDOWN_CONFIG, DEFAULT_TUI_CONFIG } from './config';
 import { CHROME_GUTTER, DOCK_QUEUE_ROWS, DOCK_UPDATES_ROWS } from './constant/rendering';
@@ -73,7 +73,7 @@ export interface TUIState {
   loadingSessions: boolean;
   sessionsNextCursor: string | undefined;
   sessionsLoadingMore: boolean;
-  sessionsScope: 'cwd' | 'all';
+  sessionsScope: SessionsScope;
   activeDialog:
     | 'session-picker'
     | 'help'

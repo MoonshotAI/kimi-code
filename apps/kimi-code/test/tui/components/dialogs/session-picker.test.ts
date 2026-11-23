@@ -1,7 +1,9 @@
-import { visibleWidth } from '@moonshot-ai/pi-tui';
+import { TuiAltScreen, visibleWidth } from '@moonshot-ai/pi-tui';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { SessionPickerComponent } from '#/tui/components/dialogs/session-picker';
+
+import { VirtualTerminal } from '../../../../../../packages/pi-tui/test/virtual-terminal';
 
 function stripAnsi(text: string): string {
   return text.replaceAll(/\[[0-?]*[ -/]*[@-~]/g, '');
@@ -1160,6 +1162,169 @@ describe('SessionPickerComponent', () => {
 
       for (const width of [40, 24, 20, 12, 8]) {
         expect(renderPlain(component, width)).toContain('? [y/N]');
+      }
+    });
+  });
+
+  it('tags worktree and missing working directories after the directory', () => {
+    const component = new SessionPickerComponent({
+      sessions: [
+        { id: 'ses_wt', title: 'In a worktree', work_dir: '/tmp/wt/x', worktree: 'x', updated_at: 0 },
+        { id: 'ses_gone', title: 'Gone', work_dir: '/tmp/gone', missing: true, updated_at: 0 },
+        { id: 'ses_plain', title: 'Plain', work_dir: '/tmp/project', updated_at: 0 },
+      ],
+      loading: false,
+      currentSessionId: '',
+      onSelect: vi.fn(),
+      onCancel: vi.fn(),
+    });
+
+    const lines = renderPlain(component).split('\n');
+    expect(lines.find((line) => line.includes('ses_wt'))).toMatch(/\/tmp\/wt\/x {3}worktree x$/);
+    expect(lines.find((line) => line.includes('ses_gone'))).toMatch(/\/tmp\/gone {3}missing$/);
+    expect(lines.find((line) => line.includes('ses_plain'))).toMatch(/\/tmp\/project$/);
+  });
+
+  describe('three-tab scope navigation and fullscreen mouse', () => {
+    const sessions = [
+      { id: 'ses_1', title: 'First session', work_dir: '/tmp/project', updated_at: 10 },
+      { id: 'ses_2', title: 'Second session', work_dir: '/tmp/wt/feat', worktree: 'feat', updated_at: 20 },
+      { id: 'ses_3', title: 'Third session', work_dir: '/tmp/other', updated_at: 30 },
+    ];
+
+    it('hides the tab strip for non-git directories and shows Cwd / Project / All tabs for git repos', () => {
+      const nonGit = new SessionPickerComponent({
+        sessions,
+        loading: false,
+        currentSessionId: '',
+        scope: 'cwd',
+        showTabs: false,
+        onSelect: vi.fn(),
+        onCancel: vi.fn(),
+        onSelectScope: vi.fn(),
+      });
+      const nonGitOut = renderPlain(nonGit);
+      expect(nonGitOut).not.toContain('Project');
+      expect(nonGitOut).not.toContain('Tab switch');
+
+      const git = new SessionPickerComponent({
+        sessions,
+        loading: false,
+        currentSessionId: '',
+        scope: 'project',
+        showTabs: true,
+        onSelect: vi.fn(),
+        onCancel: vi.fn(),
+        onSelectScope: vi.fn(),
+      });
+      const gitOut = renderPlain(git);
+      expect(gitOut).toContain('Project sessions');
+      expect(gitOut).toContain('Cwd');
+      expect(gitOut).toContain('Project');
+      expect(gitOut).toContain('All');
+      expect(gitOut).toContain('Tab switch');
+      expect(gitOut).toContain('Ctrl+A all');
+    });
+
+    it('cycles Cwd -> Project -> All with Tab/Shift+Tab and keeps Ctrl+A toggling All', () => {
+      const onSelectScope = vi.fn();
+      const cwd = new SessionPickerComponent({
+        sessions,
+        loading: false,
+        currentSessionId: '',
+        scope: 'cwd',
+        showTabs: true,
+        onSelect: vi.fn(),
+        onCancel: vi.fn(),
+        onSelectScope,
+      });
+      cwd.handleInput('\t');
+      cwd.handleInput('\u001B[Z');
+      cwd.handleInput('\u0001');
+
+      expect(onSelectScope.mock.calls).toEqual([
+        ['project', 'ses_1'],
+        ['all', 'ses_1'],
+        ['all', 'ses_1'],
+      ]);
+
+      onSelectScope.mockClear();
+      const all = new SessionPickerComponent({
+        sessions,
+        loading: false,
+        currentSessionId: '',
+        scope: 'all',
+        showTabs: true,
+        onSelect: vi.fn(),
+        onCancel: vi.fn(),
+        onSelectScope,
+      });
+      all.handleInput('\u0001');
+      expect(onSelectScope).toHaveBeenCalledExactlyOnceWith('cwd', 'ses_1');
+    });
+
+    it('switches tabs on mouse click and supports fullscreen ScrollView move/click/wheel', async () => {
+      let now = 10_000;
+      vi.spyOn(Date, 'now').mockImplementation(() => now);
+      const onSelectScope = vi.fn();
+      const onSelect = vi.fn();
+      const picker = new SessionPickerComponent({
+        sessions,
+        loading: false,
+        currentSessionId: '',
+        scope: 'cwd',
+        showTabs: true,
+        layout: { maxBodyRows: 6 },
+        onSelect,
+        onCancel: vi.fn(),
+        onSelectScope,
+      });
+      const vt = new VirtualTerminal(100, 16);
+      const ui = new TuiAltScreen(vt);
+      ui.setLayoutRoot(picker);
+      ui.start();
+      ui.setFocus(picker);
+      await vt.waitForRender();
+      try {
+        let lines = vt.getViewport().map((line) => stripAnsi(line));
+        const tabRow = lines.findIndex(
+          (line) => line.includes('Cwd') && line.includes('Project') && line.includes('All'),
+        );
+        expect(tabRow).toBeGreaterThan(0);
+        const projectCol = lines[tabRow]!.indexOf('Project') + 1;
+        const secondCardRow = lines.findIndex((line) => line.includes('Second session'));
+        expect(secondCardRow).toBeGreaterThan(tabRow);
+
+        now += 500;
+        vt.sendInput(`\u001B[<0;${String(projectCol + 1)};${String(tabRow + 1)}M`);
+        vt.sendInput(`\u001B[<0;${String(projectCol + 1)};${String(tabRow + 1)}m`);
+        await vt.waitForRender();
+        expect(onSelectScope).toHaveBeenCalledWith('project', 'ses_1');
+
+        vt.sendInput(`\u001B[<35;6;${String(secondCardRow + 1)}M`);
+        await vt.waitForRender();
+        lines = vt.getViewport().map((line) => stripAnsi(line));
+        expect(lines[secondCardRow]).toContain('❯ Second session');
+
+        vt.sendInput(`\u001B[<0;6;${String(secondCardRow + 1)}M`);
+        vt.sendInput(`\u001B[<0;6;${String(secondCardRow + 1)}m`);
+        await vt.waitForRender();
+        expect(onSelect).toHaveBeenCalledWith(sessions[1]);
+
+        vt.sendInput(`\u001B[<65;6;${String(secondCardRow + 1)}M`);
+        vt.sendInput(`\u001B[<65;6;${String(secondCardRow + 1)}M`);
+        vt.sendInput(`\u001B[<65;6;${String(secondCardRow + 1)}M`);
+        await vt.waitForRender();
+        lines = vt.getViewport().map((line) => stripAnsi(line));
+        const thirdCardRow = lines.findIndex((line) => line.includes('Third session'));
+        expect(thirdCardRow).toBeGreaterThan(tabRow);
+
+        vt.sendInput(`\u001B[<0;6;${String(thirdCardRow + 1)}M`);
+        vt.sendInput(`\u001B[<0;6;${String(thirdCardRow + 1)}m`);
+        await vt.waitForRender();
+        expect(onSelect).toHaveBeenLastCalledWith(sessions[2]);
+      } finally {
+        ui.stop();
       }
     });
   });
