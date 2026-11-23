@@ -6,6 +6,7 @@ import { WebSocketServer, type RawData } from 'ws';
 
 import { errEnvelope } from '../../envelope';
 import { ErrorCode } from '../../protocol/error-codes';
+import { INTERNAL_SKIP_RC_LOGOUT_GATE_HEADER } from '../../routes/oauth';
 import { HOST_RPC_MAX_BODY_BYTES } from '../../transport/jsonlRpcStream';
 import { selectWsBearerProtocol } from '../../transport/ws/bearerProtocol';
 import type { HostBridgeManager } from './hostBridgeManager';
@@ -22,7 +23,14 @@ const HOP_BY_HOP = new Set([
   'transfer-encoding',
   'upgrade',
 ]);
-const STRIPPED_REQUEST_HEADERS = new Set(['host', 'origin', 'referer', 'authorization', 'cookie']);
+const STRIPPED_REQUEST_HEADERS = new Set([
+  'host',
+  'origin',
+  'referer',
+  'authorization',
+  'cookie',
+  INTERNAL_SKIP_RC_LOGOUT_GATE_HEADER,
+]);
 
 function bodyTooLarge(): HostRequestError {
   return new HostRequestError(
@@ -58,11 +66,87 @@ export function upstreamHeaders(headers: IncomingHttpHeaders): IncomingHttpHeade
   return forwarded;
 }
 
-async function resolveSession(
+export async function resolveHostBridgeSession(
   manager: HostBridgeManager,
   hostId: string,
 ): Promise<HostSession> {
   return manager.session(hostId) ?? manager.connect(hostId);
+}
+
+export async function sendHostSessionError(
+  reply: FastifyReply,
+  requestId: string,
+  error: unknown,
+): Promise<void> {
+  if (reply.raw.destroyed) return;
+  const message = error instanceof Error ? error.message : String(error);
+  if (error instanceof HostRequestError && error.failure === 'body_too_large') {
+    await reply.code(413).send(errEnvelope(ErrorCode.FILE_TOO_LARGE, message, requestId));
+    return;
+  }
+  const status = error instanceof HostRequestError && error.failure === 'timeout' ? 504 : 502;
+  const cancelled = error instanceof HostRequestError && error.failure === 'cancelled';
+  await reply
+    .code(cancelled ? 499 : status)
+    .send(errEnvelope(ErrorCode.ENVIRONMENT_UNAVAILABLE, message, requestId));
+}
+
+export interface ForwardHttpOptions {
+  readonly timeoutMs?: number;
+}
+
+export async function forwardHttpToSession(
+  session: HostSession,
+  path: string,
+  req: FastifyRequest,
+  reply: FastifyReply,
+  opts?: ForwardHttpOptions,
+): Promise<void> {
+  const cancellation = new AbortController();
+  const cancel = (): void => {
+    cancellation.abort();
+  };
+  req.raw.once('aborted', cancel);
+  req.raw.once('close', () => {
+    if (!req.raw.readableEnded) cancel();
+  });
+  reply.raw.once('close', () => {
+    if (!reply.raw.writableFinished) cancel();
+  });
+  try {
+    const declaredLength = Number(req.headers['content-length'] ?? 0);
+    if (declaredLength > HOST_RPC_MAX_BODY_BYTES) throw bodyTooLarge();
+    const chunks: Buffer[] = [];
+    let size = 0;
+    for await (const chunk of req.raw) {
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      size += buffer.length;
+      if (size > HOST_RPC_MAX_BODY_BYTES) throw bodyTooLarge();
+      chunks.push(buffer);
+    }
+    const body = chunks.length > 0 ? Buffer.concat(chunks) : undefined;
+    const headers = upstreamHeaders(req.headers);
+    headers['x-request-id'] ??= req.id;
+    const defaultTimeoutMs = /^\/api\/v1\/sessions\/[^/]+\/export(?:\?|$)/.test(path)
+      ? 5 * 60_000
+      : undefined;
+    const response = await session.request({
+      method: req.method,
+      path,
+      headers,
+      body,
+      signal: cancellation.signal,
+      timeoutMs: opts?.timeoutMs ?? defaultTimeoutMs,
+    });
+    for (const [name, value] of Object.entries(response.headers)) {
+      if (value !== undefined && !HOP_BY_HOP.has(name.toLowerCase())) {
+        reply.header(name, value);
+      }
+    }
+    if (!reply.raw.destroyed) await reply.code(response.status).send(response.body);
+  } catch (error) {
+    await sendHostSessionError(reply, req.id, error);
+  }
 }
 
 async function proxyHttp(
@@ -75,20 +159,9 @@ async function proxyHttp(
     await reply.code(404).send(errEnvelope(ErrorCode.ENVIRONMENT_NOT_FOUND, 'unknown host route', req.id));
     return;
   }
-  const cancellation = new AbortController();
-  const cancel = (): void => {
-    cancellation.abort();
-  };
-  req.raw.once('aborted', cancel);
-  req.raw.once('close', () => {
-    if (!req.raw.readableEnded) cancel();
-  });
-  reply.raw.once('close', () => {
-    if (!reply.raw.writableFinished) cancel();
-  });
   let session: HostSession;
   try {
-    session = await resolveSession(manager, target.hostId);
+    session = await resolveHostBridgeSession(manager, target.hostId);
   } catch (error) {
     if (!reply.raw.destroyed) {
       await reply.code(502).send(
@@ -97,48 +170,7 @@ async function proxyHttp(
     }
     return;
   }
-  const request = async (): Promise<void> => {
-    const declaredLength = Number(req.headers['content-length'] ?? 0);
-    if (declaredLength > HOST_RPC_MAX_BODY_BYTES) throw bodyTooLarge();
-    const chunks: Buffer[] = [];
-    let size = 0;
-    for await (const chunk of req.raw) {
-      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-      size += buffer.length;
-      if (size > HOST_RPC_MAX_BODY_BYTES) throw bodyTooLarge();
-      chunks.push(buffer);
-    }
-    const body = chunks.length > 0 ? Buffer.concat(chunks) : undefined;
-    const response = await session.request({
-      method: req.method,
-      path: target.path,
-      headers: upstreamHeaders(req.headers),
-      body,
-      signal: cancellation.signal,
-      timeoutMs: /^\/api\/v1\/sessions\/[^/]+\/export(?:\?|$)/.test(target.path) ? 5 * 60_000 : undefined,
-    });
-    for (const [name, value] of Object.entries(response.headers)) {
-      if (value !== undefined && !HOP_BY_HOP.has(name.toLowerCase())) {
-        reply.header(name, value);
-      }
-    }
-    if (!reply.raw.destroyed) await reply.code(response.status).send(response.body);
-  };
-  try {
-    await request();
-  } catch (error) {
-    if (reply.raw.destroyed) return;
-    const message = error instanceof Error ? error.message : String(error);
-    if (error instanceof HostRequestError && error.failure === 'body_too_large') {
-      await reply.code(413).send(errEnvelope(ErrorCode.FILE_TOO_LARGE, message, req.id));
-      return;
-    }
-    const status = error instanceof HostRequestError && error.failure === 'timeout' ? 504 : 502;
-    const cancelled = error instanceof HostRequestError && error.failure === 'cancelled';
-    await reply.code(cancelled ? 499 : status).send(
-      errEnvelope(ErrorCode.ENVIRONMENT_UNAVAILABLE, message, req.id),
-    );
-  }
+  await forwardHttpToSession(session, target.path, req, reply);
 }
 
 export function registerHostProxyRoutes(
@@ -175,30 +207,42 @@ const proxyWss = new WebSocketServer({
   maxPayload: HOST_RPC_MAX_BODY_BYTES,
 });
 
-export async function proxyHostWebSocket(
-  manager: HostBridgeManager,
-  target: HostProxyTarget,
+export interface ForwardWebSocketHooks {
+  onOpen?: (closeSocket: () => void) => void;
+  onClose?: () => void;
+}
+
+export function forwardWebSocketToSession(
+  session: HostSession,
+  path: string,
   req: IncomingMessage,
   socket: Duplex,
   head: Buffer,
-): Promise<void> {
-  let session: HostSession;
-  try {
-    session = await resolveSession(manager, target.hostId);
-  } catch {
-    socket.write('HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\n');
-    socket.destroy();
-    return;
-  }
+  hooks?: ForwardWebSocketHooks,
+): void {
   proxyWss.handleUpgrade(req, socket, head, (ws) => {
     let closed = false;
-    const upstream = session.openWebSocket(target.path, {
+    let closeNotified = false;
+    const notifyClose = (): void => {
+      if (closeNotified) return;
+      closeNotified = true;
+      hooks?.onClose?.();
+    };
+    hooks?.onOpen?.(() => {
+      try {
+        ws.close(1001, 'server shutting down');
+      } catch {
+        ws.terminate();
+      }
+    });
+    const upstream = session.openWebSocket(path, {
       onMessage: (data) => {
         if (!closed && ws.readyState === ws.OPEN) ws.send(data);
       },
       onClose: (code, reason) => {
         if (closed) return;
         closed = true;
+        notifyClose();
         try {
           ws.close(code ?? 1000, reason);
         } catch {
@@ -218,12 +262,32 @@ export async function proxyHostWebSocket(
     ws.on('close', (code, reason) => {
       if (closed) return;
       closed = true;
+      notifyClose();
       upstream.close(code, reason.toString('utf8'));
     });
     ws.on('error', () => {
       if (closed) return;
       closed = true;
+      notifyClose();
       upstream.close(1011, 'client error');
     });
   });
+}
+
+export async function proxyHostWebSocket(
+  manager: HostBridgeManager,
+  target: HostProxyTarget,
+  req: IncomingMessage,
+  socket: Duplex,
+  head: Buffer,
+): Promise<void> {
+  let session: HostSession;
+  try {
+    session = await resolveHostBridgeSession(manager, target.hostId);
+  } catch {
+    socket.write('HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\n');
+    socket.destroy();
+    return;
+  }
+  forwardWebSocketToSession(session, target.path, req, socket, head);
 }

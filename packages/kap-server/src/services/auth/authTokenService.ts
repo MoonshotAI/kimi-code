@@ -1,6 +1,9 @@
+import { timingSafeEqual } from 'node:crypto';
+
 import { createDecorator } from '@moonshot-ai/agent-core-v2';
 
 import { verifyPassword } from './password';
+import { generateServerToken } from './persistentToken';
 import type { TokenStore } from './tokenStore';
 
 export interface IAuthTokenService {
@@ -24,5 +27,19 @@ export function createAuthTokenService(deps: {
     isValid: async (candidate) =>
       deps.tokenStore.isValid(candidate) ||
       (await verifyPassword(candidate, deps.passwordHash)),
+  };
+}
+
+export function createEphemeralAuthTokenService(
+  secret: string = generateServerToken(),
+): IAuthTokenService {
+  const expected = Buffer.from(secret, 'utf8');
+  return {
+    _serviceBrand: undefined,
+    getToken: () => secret,
+    isValid: async (candidate: string) => {
+      const actual = Buffer.from(candidate, 'utf8');
+      return actual.length === expected.length && timingSafeEqual(actual, expected);
+    },
   };
 }

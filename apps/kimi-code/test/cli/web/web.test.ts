@@ -115,6 +115,7 @@ describe('kimi web', () => {
     expect(longs).toContain('--log-level');
     expect(longs).toContain('--debug-endpoints');
     expect(longs).toContain('--web-title');
+    expect(longs).toContain('--no-daemon');
     const remoteControl = web!.options.find((option) => option.long === '--remote-control');
     expect(remoteControl?.short).toBe('--rc');
     expect(longs).toContain('--no-open');
@@ -558,10 +559,12 @@ describe('kimi rc', () => {
     const rc = program.commands.find((c) => c.name() === 'rc');
     expect(rc).toBeDefined();
     expect(rc!.alias()).toBe('remote');
+    expect(rc!.commands).toEqual([]);
     const longs = rc!.options.map((o) => o.long).filter(Boolean);
     expect(longs).toContain('--port');
     expect(longs).toContain('--host');
     expect(longs).toContain('--no-open');
+    expect(longs).toContain('--no-daemon');
     expect(longs).not.toContain('--remote-control');
   });
 
@@ -1261,6 +1264,191 @@ describe('`kimi server ensure-daemon`', () => {
     writeFileSync(lockPath, '');
     await expect(ensureDaemon(makeDeps())).resolves.toMatchObject({ version: '1.0.0' });
     expect(existsSync(lockPath)).toBe(false);
+  });
+
+  it('places overlong socket paths inside a private subdirectory under tmpdir', () => {
+    const longHome = join(tmpdir(), 'k'.repeat(120));
+    const sock = daemonSocketPath(longHome);
+    expect(Buffer.byteLength(sock)).toBeLessThanOrEqual(100);
+    expect(sock).toMatch(/[/\\]kimi-[0-9a-f]{16}[/\\]daemon\.sock$/);
+  });
+
+  it('refreshes an idle daemon when envDigest changed, and reuses a busy same-version daemon', async () => {
+    const { computeDaemonEnvDigest } = await import('#/cli/sub/web/ensure-daemon');
+    const digestA = computeDaemonEnvDigest({ PATH: '/usr/bin', CUSTOM_KEY: 'one', TERM: 'xterm' });
+    const digestASame = computeDaemonEnvDigest({
+      PATH: '/usr/bin',
+      CUSTOM_KEY: 'one',
+      TERM: 'screen-256color',
+      PWD: '/other/dir',
+      SSH_AUTH_SOCK: '/tmp/agent.1',
+    });
+    const digestB = computeDaemonEnvDigest({ PATH: '/usr/bin', CUSTOM_KEY: 'two' });
+    expect(digestA).toBe(digestASame);
+    expect(digestA).not.toBe(digestB);
+
+    mkdirSync(join(homeDir, 'server'), { recursive: true });
+    writeFileSync(join(homeDir, 'server', 'ensure-daemon.env'), `${digestA}\n`, 'utf8');
+
+    const unchangedStop = vi.fn(async () => true);
+    await ensureDaemon(
+      makeDeps({
+        envDigest: digestA,
+        connectSocket: async () => connection({ stopIfIdle: unchangedStop }),
+      }),
+    );
+    expect(unchangedStop).not.toHaveBeenCalled();
+
+    const busyConn = connection({ stopIfIdle: async () => false });
+    const busyDeps = makeDeps({
+      envDigest: digestB,
+      connectSocket: async () => busyConn,
+    });
+    await expect(ensureDaemon(busyDeps)).resolves.toEqual({
+      version: '1.0.0',
+      stream: busyConn.stream,
+    });
+    expect(busyDeps.spawnServer).not.toHaveBeenCalled();
+
+    let state: 'old' | 'closed' | 'new' = 'old';
+    const refreshed = connection();
+    const idleDeps = makeDeps({
+      envDigest: digestB,
+      connectSocket: async () => {
+        if (state === 'old') {
+          return connection({
+            stopIfIdle: async () => {
+              state = 'closed';
+              return true;
+            },
+          });
+        }
+        if (state === 'closed') return undefined;
+        return refreshed;
+      },
+      spawnServer: vi.fn(() => {
+        state = 'new';
+      }),
+    });
+    await expect(ensureDaemon(idleDeps)).resolves.toEqual({
+      version: '1.0.0',
+      stream: refreshed.stream,
+    });
+    expect(idleDeps.spawnServer).toHaveBeenCalledTimes(1);
+    expect(readFileSync(join(homeDir, 'server', 'ensure-daemon.env'), 'utf8').trim()).toBe(digestB);
+
+    let disconnectState: 'dying' | 'gone' | 'spawned' = 'dying';
+    const afterDisconnect = connection();
+    const disconnectDeps = makeDeps({
+      version: '2.0.0',
+      connectSocket: async () => {
+        if (disconnectState === 'dying') {
+          disconnectState = 'gone';
+          return connection({
+            version: '1.0.0',
+            stopIfIdle: async () => 'disconnected',
+          });
+        }
+        if (disconnectState === 'gone') return undefined;
+        return afterDisconnect;
+      },
+      spawnServer: vi.fn(() => {
+        disconnectState = 'spawned';
+      }),
+    });
+    await expect(ensureDaemon(disconnectDeps)).resolves.toEqual({
+      version: '2.0.0',
+      stream: afterDisconnect.stream,
+    });
+    expect(disconnectDeps.spawnServer).toHaveBeenCalledTimes(1);
+  });
+
+  it('routes all standard foreground flags through the shared daemon and isolates --no-daemon / --debug-endpoints / --socket / win32', async () => {
+    const { shouldUseSharedDaemon } = await import('#/cli/sub/web/run');
+    const { parseServerOptions } = await import('#/cli/sub/web/shared');
+
+    expect(shouldUseSharedDaemon(parseServerOptions({}), 'darwin')).toBe(true);
+    expect(
+      shouldUseSharedDaemon(
+        parseServerOptions({
+          host: '0.0.0.0',
+          port: '59000',
+          allowedHost: ['.example.com'],
+          allowRemoteShutdown: true,
+          dangerousBypassAuth: true,
+          webTitle: 'Custom',
+          logLevel: 'debug',
+        }),
+        'linux',
+      ),
+    ).toBe(true);
+    expect(shouldUseSharedDaemon(parseServerOptions({ daemon: false }), 'darwin')).toBe(false);
+    expect(shouldUseSharedDaemon(parseServerOptions({ debugEndpoints: true }), 'darwin')).toBe(false);
+    expect(shouldUseSharedDaemon(parseServerOptions({ socket: '/tmp/x.sock' }), 'darwin')).toBe(false);
+    expect(shouldUseSharedDaemon(parseServerOptions({}), 'win32')).toBe(false);
+  });
+
+  it.skipIf(process.platform === 'win32')('stops an idle shared daemon after the foreground gateway closes unless another UDS client is attached', async () => {
+    const { connectUnixSocket, stopSharedDaemonIfIdle } = await import(
+      '#/cli/sub/web/ensure-daemon'
+    );
+    const { startServer, startWebGateway } = await import('@moonshot-ai/kap-server');
+    const socketPath = daemonSocketPath(homeDir);
+    const daemon = await startServer({
+      hostIdentity: { productName: 'kimi-code', version: '1.0.0', platform: 'test' },
+      homeDir,
+      socketPath,
+      managedBy: 'ensure-daemon',
+      logLevel: 'silent',
+      env: {
+        KIMI_CODE_MODEL_CATALOG_REFRESH_ON_START: '0',
+        KIMI_CODE_MODEL_CATALOG_REFRESH_INTERVAL_MS: '0',
+      },
+    });
+    try {
+      const sshClient = await connectUnixSocket(socketPath);
+      expect(sshClient).toBeDefined();
+
+      const webClient = await connectUnixSocket(socketPath);
+      expect(webClient).toBeDefined();
+      const gateway = await startWebGateway({
+        daemonStream: webClient!.stream,
+        hostIdentity: { productName: 'kimi-code', version: '1.0.0', platform: 'test' },
+        host: '127.0.0.1',
+        port: 0,
+        homeDir,
+        logLevel: 'silent',
+      });
+
+      await gateway.close();
+      await expect(stopSharedDaemonIfIdle(homeDir)).resolves.toBe(false);
+      expect(existsSync(socketPath)).toBe(true);
+
+      sshClient!.close();
+      await expect(stopSharedDaemonIfIdle(homeDir)).resolves.toBe(true);
+      expect(existsSync(socketPath)).toBe(false);
+    } finally {
+      await daemon.close().catch(() => {});
+    }
+  });
+
+  it('threads --no-daemon as daemon: false to preserve isolated in-process server behavior', async () => {
+    const { handleWebCommand, shouldUseSharedDaemon } = await import('#/cli/sub/web/run');
+    const { runner, calls } = makeRunner();
+    const { stdout, stderr } = makeIo();
+
+    const program = makeProgram();
+    const web = program.commands.find((c) => c.name() === 'web')!;
+    web.parseOptions(['--no-daemon', '--no-open']);
+    expect(web.opts()).toMatchObject({ daemon: false, open: false });
+
+    await handleWebCommand(
+      { daemon: false, open: false },
+      { startServerForeground: runner, openUrl: vi.fn(), stdout, stderr },
+    );
+    expect(calls.options?.daemon).toBe(false);
+    expect(shouldUseSharedDaemon(calls.options!, 'darwin')).toBe(false);
+    expect(shouldUseSharedDaemon(calls.options!, 'linux')).toBe(false);
   });
 });
 

@@ -25,8 +25,6 @@ import {
   NOTIFY_USER_UI_CAPABILITY,
   PluginChanged,
   logSeed,
-  resolveConfigPath,
-  resolveKimiHome,
   resolveLoggingConfig,
   type ConfigDiagnostic,
   type Scope,
@@ -38,104 +36,68 @@ import {
   type KimiHostIdentity,
 } from '@moonshot-ai/kimi-code-oauth';
 import { RemoteEnvironmentProviderFactory } from '@moonshot-ai/agent-core-v2/remote';
-import { createAsyncApiDocument } from './protocol/asyncapi';
-import Fastify, { type FastifyInstance } from 'fastify';
+import type { FastifyInstance } from 'fastify';
 
-import { installErrorHandler } from './error-handler';
-import { createInstanceRegistry, type InstanceRegistration } from './instanceRegistry';
+import {
+  listenWithPortRetry,
+  PORT_RETRY_LIMIT,
+  prepareHttpShell,
+  type HttpEndpointOptions,
+  type ListenWithPortRetryOptions,
+} from './httpShell';
 import { transformOpenApiDocument } from './openapi/transforms';
-import { registerRequestLogging } from './requestLogging';
-import { resolveRequestId } from './request-id';
+import { createAsyncApiDocument } from './protocol/asyncapi';
 import { registerApiV1Routes } from './routes/registerApiV1Routes';
 import { registerWebAssetRoutes } from './routes/webAssets';
+import { drainGlobalSearchDisposals, IGlobalSearchService } from './search/searchService';
+import type { IAuthTokenService } from './services/auth/authTokenService';
+import { startConfigChangedPublisher } from './services/config/configChangedPublisher';
+import { ConversationService } from './services/conversation/conversationService';
+import { HostBridgeManager, hostSnapshots } from './services/hosts/hostBridgeManager';
 import {
-  createServerLogger,
-  type ServerLogger,
-  type ServerLogLevel,
-} from './services/pinoLoggerService';
-import { join } from 'node:path';
-import type { Socket } from 'node:net';
-import type { IncomingMessage } from 'node:http';
-import type { Duplex } from 'node:stream';
-
+  matchHostProxyPath,
+  proxyHostWebSocket,
+  registerHostProxyRoutes,
+  resolveHostBridgeSession,
+} from './services/hosts/hostProxy';
+import { DEFAULT_MANAGED_IDLE_EXIT_MS, ManagedIdleExit } from './services/managedIdleExit';
+import { ModelCatalogRefreshScheduler } from './services/modelCatalog/modelCatalogRefreshScheduler';
+import {
+  closeIdleSessions,
+  resolveSessionIdleReclaimMs,
+  SessionIdleReaper,
+} from './services/sessionIdleReaper';
+import { createServerSessionRating } from './services/sessionRating';
+import {
+  initializeServerTelemetry,
+  shutdownServerTelemetry,
+  type ServerTelemetry,
+} from './services/telemetry';
+import { isRpcHttpRequest, startUnixRpcServer, type UnixRpcServer } from './transport/stdioRpc';
 import {
   ConnectionRegistry,
   type IConnectionRegistry,
 } from './transport/ws/connectionRegistry';
-import { extractWsBearerToken } from './transport/ws/bearerProtocol';
-import { SessionEventBroadcaster } from './transport/ws/v1/sessionEventBroadcaster';
+import { registerWsDebug, WS_DEBUG_PATH } from './transport/ws/debug/registerWsDebug';
 import type { ConfigWarningItem } from './transport/ws/v1/events';
 import { registerWsV1, WS_PATH as WS_PATH_V1 } from './transport/ws/v1/registerWsV1';
-import { registerWsDebug, WS_DEBUG_PATH } from './transport/ws/debug/registerWsDebug';
-import { startUnixRpcServer } from './transport/stdioRpc';
-import { getServerVersion } from './version';
-import { classify } from './security/bindClassify';
-import {
-  createHostCheck,
-  isHostCheckDisabled,
-  parseAllowedHosts,
-} from './middleware/hostnames';
-import { createOriginHook, isOriginAllowed, parseCorsOrigins } from './middleware/origin';
-import { createSecurityHeadersHook } from './middleware/securityHeaders';
-import { createAuthHook } from './middleware/auth';
-import {
-  initializeServerTelemetry,
-  type ServerTelemetry,
-  shutdownServerTelemetry,
-} from './services/telemetry';
-import { createServerSessionRating } from './services/sessionRating';
-import { ConversationService } from './services/conversation/conversationService';
-import { ModelCatalogRefreshScheduler } from './services/modelCatalog/modelCatalogRefreshScheduler';
-import { HostBridgeManager, hostSnapshots } from './services/hosts/hostBridgeManager';
-import { matchHostProxyPath, proxyHostWebSocket, registerHostProxyRoutes } from './services/hosts/hostProxy';
-import { DEFAULT_MANAGED_IDLE_EXIT_MS, ManagedIdleExit } from './services/managedIdleExit';
-import { SessionIdleReaper, closeIdleSessions, resolveSessionIdleReclaimMs } from './services/sessionIdleReaper';
-import { startConfigChangedPublisher } from './services/config/configChangedPublisher';
-import { createAuthFailureLimiter } from './middleware/rateLimit';
-import {
-  createRemoteControlManager,
-  RemoteControlDeviceClient,
-} from '@moonshot-ai/remote-control';
+import { SessionEventBroadcaster } from './transport/ws/v1/sessionEventBroadcaster';
 
-import { createAuthTokenService, type IAuthTokenService } from './services/auth/authTokenService';
-import { createCredentialValidator } from './services/auth/credentials';
-import { resolvePasswordHash } from './services/auth/password';
-import { createTokenStore } from './services/auth/tokenStore';
-
-import { drainGlobalSearchDisposals, IGlobalSearchService } from './search/searchService';
+export { listenWithPortRetry, PORT_RETRY_LIMIT };
+export type { ListenWithPortRetryOptions };
 
 export interface ServerHostIdentity extends KimiHostIdentity {
   readonly displayName?: string;
   readonly replyStyleGuide?: string;
 }
 
-export interface ServerStartOptions {
-  readonly host?: string;
-  readonly port?: number;
-  readonly homeDir?: string;
+export interface ServerStartOptions extends HttpEndpointOptions {
   readonly env?: NodeJS.ProcessEnv;
   readonly pluginMarketplaceUrl?: string;
-  readonly configPath?: string;
-  readonly instancesDir?: string;
-  readonly skipInstanceRegistry?: boolean;
-  readonly logLevel?: ServerLogLevel;
-  readonly logger?: ServerLogger;
   readonly debugEndpoints?: boolean;
-  readonly bindClass?: 'lan' | 'public';
-  readonly allowedHosts?: readonly string[];
-  readonly corsOrigins?: readonly string[];
-  readonly disableHostCheck?: boolean;
-  readonly insecureNoTls?: boolean;
-  readonly allowRemoteShutdown?: boolean;
-  readonly authTokenService?: IAuthTokenService;
-  readonly disableAuth?: boolean;
-  readonly webTitle?: string;
-  readonly rpcToken?: string;
   readonly seeds?: ScopeSeed;
   readonly hostIdentity: ServerHostIdentity;
   readonly skillDirs?: readonly string[];
-  readonly webAssetsDir?: string;
-  readonly serverVersion?: string;
   readonly telemetry?: boolean;
   readonly socketPath?: string;
   readonly managedBy?: string;
@@ -153,69 +115,25 @@ export interface RunningServer {
   close(): Promise<void>;
 }
 
-const DEFAULT_HOST = '127.0.0.1';
-const DEFAULT_PORT = 58627;
-
 export async function startServer(opts: ServerStartOptions): Promise<RunningServer> {
-  const host = opts.host ?? DEFAULT_HOST;
-  const port = opts.port ?? DEFAULT_PORT;
-  const homeDir = resolveKimiHome(opts.homeDir);
-  const serverVersion = opts.serverVersion ?? getServerVersion();
   const idleReclaimMs = resolveSessionIdleReclaimMs(opts.env ?? process.env);
-  const disableAuth = opts.disableAuth === true || opts.socketPath !== undefined;
-  const registration: InstanceRegistration =
-    opts.socketPath !== undefined || opts.skipInstanceRegistry === true
-      ? { serverId: 'socket', update: async () => {}, release: async () => {} }
-      : await createInstanceRegistry({
-          instancesDir: opts.instancesDir ?? join(homeDir, 'server', 'instances'),
-        }).register({
-          pid: process.pid,
-          host,
-          port,
-          startedAt: Date.now(),
-          serverVersion,
-          product: opts.hostIdentity.productName,
-        });
-  const exposureClass = classify(host, { bindClass: opts.bindClass });
-  if (exposureClass !== 'loopback' && opts.insecureNoTls !== true) {
-    await registration.release();
-    throw new Error(
-      `Refusing to bind ${host} (${exposureClass}) without TLS; terminate TLS at a reverse proxy or pass --insecure-no-tls.`,
-    );
-  }
-  const enableShutdown = exposureClass === 'loopback' || opts.allowRemoteShutdown === true;
+  const shell = await prepareHttpShell(opts);
+  const {
+    host,
+    homeDir,
+    configPath,
+    serverVersion,
+    exposureClass,
+    enableShutdown,
+    logger,
+    registration,
+    authTokenService,
+    authFailureLimiter,
+    app,
+  } = shell;
   const debugEndpoints = exposureClass === 'loopback' && opts.debugEndpoints === true;
-  const logger = opts.logger ?? createServerLogger({ level: opts.logLevel ?? 'info' });
-  const onUnhandledRejection = (reason: unknown): void => {
-    logger.error(
-      { err: reason instanceof Error ? reason : new Error(String(reason)) },
-      'unhandledRejection',
-    );
-  };
-  const onUncaughtException = (err: unknown): void => {
-    logger.error(
-      { err: err instanceof Error ? err : new Error(String(err)) },
-      'uncaughtException',
-    );
-  };
-  const authFailureLimiter =
-    exposureClass === 'loopback' ? undefined : createAuthFailureLimiter({ logger });
-
-  const configPath = resolveConfigPath({ homeDir, configPath: opts.configPath });
-  let authTokenService: IAuthTokenService;
-  let passwordConfigured = false;
-  if (opts.authTokenService !== undefined) {
-    authTokenService = opts.authTokenService;
-  } else {
-    const tokenStore = await createTokenStore(homeDir);
-    const passwordHash = await resolvePasswordHash();
-    passwordConfigured = passwordHash !== undefined;
-    authTokenService = createAuthTokenService({ tokenStore, passwordHash });
-  }
-  const validateCredential = createCredentialValidator(authTokenService, opts.rpcToken);
   const logging = resolveLoggingConfig({ homeDir, env: process.env });
-  let boundPort = port;
-  const localOriginHost = host.includes(':') ? `[${host}]` : host;
+
   const { app: core } = bootstrap(
     {
       homeDir,
@@ -244,40 +162,29 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
       clientVersion: serverVersion,
     }),
   );
-  const legacyAcpBindingSubscription = core.accessor.get(ISessionManager).onDidCreateSession?.((event) => {
-    const main = event.handle.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID);
-    if (main === undefined) return;
-    const binding = main.accessor.get(IAgentEnvironmentBindingService);
-    const current = binding.current;
-    if (current.environmentId !== `acp:${event.sessionId}` || environments.current(current.environmentId) !== undefined) return;
-    binding.bind('local', current.cwd ?? event.handle.accessor.get(ISessionContext).cwd);
-  });
+  const legacyAcpBindingSubscription = core.accessor
+    .get(ISessionManager)
+    .onDidCreateSession?.((event) => {
+      const main = event.handle.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID);
+      if (main === undefined) return;
+      const binding = main.accessor.get(IAgentEnvironmentBindingService);
+      const current = binding.current;
+      if (
+        current.environmentId !== `acp:${event.sessionId}` ||
+        environments.current(current.environmentId) !== undefined
+      ) {
+        return;
+      }
+      binding.bind('local', current.cwd ?? event.handle.accessor.get(ISessionContext).cwd);
+    });
 
-  const readManagedOAuth = (): { key?: string; oauthHost?: string } | undefined =>
-    core.accessor
-      .get(IConfigService)
-      .inspect<Record<string, { oauth?: { key: string; oauthHost?: string } }>>('providers')
-      .userValue?.[KIMI_CODE_PROVIDER_NAME]?.oauth;
-  const remoteControlManager = createRemoteControlManager({
-    homeDir,
-    localOrigin: () => `http://${localOriginHost}:${boundPort}`,
-    localServerToken: () => authTokenService.getToken(),
-    clientVersion: `${opts.hostIdentity.productName}/${opts.hostIdentity.version}`,
-    urlSource: opts.hostIdentity.platform,
-    configuredOAuthKey: () => readManagedOAuth()?.key,
-    configuredOAuthHost: () => readManagedOAuth()?.oauthHost,
-    stderr: {
-      write: (text) => {
-        logger.warn(String(text).trimEnd());
-        return true;
-      },
-    },
-  });
-  const remoteControlDevices = new RemoteControlDeviceClient({
-    homeDir,
-    configuredOAuthKey: () => readManagedOAuth()?.key,
-    configuredOAuthHost: () => readManagedOAuth()?.oauthHost,
-  });
+  const remoteControl = shell.createRemoteControl(
+    () =>
+      core.accessor
+        .get(IConfigService)
+        .inspect<Record<string, { oauth?: { key: string; oauthHost?: string } }>>('providers')
+        .userValue?.[KIMI_CODE_PROVIDER_NAME]?.oauth,
+  );
 
   let telemetry: ServerTelemetry = {};
   if (opts.telemetry === true) {
@@ -291,18 +198,6 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     }
   }
 
-  if (exposureClass !== 'loopback') {
-    logger.warn(
-      { host, exposureClass },
-      'binding non-loopback host without TLS — use a reverse proxy or tunnel in production',
-    );
-    if (!passwordConfigured) {
-      logger.warn(
-        { host, exposureClass },
-        'binding non-loopback host with token-only auth (no KIMI_CODE_PASSWORD) — the bearer token printed in the startup banner is the only credential protecting this server',
-      );
-    }
-  }
   const modelCatalogRefreshScheduler = new ModelCatalogRefreshScheduler(
     core.accessor.get(IProviderDiscoveryService),
     core.accessor.get(IConfigService),
@@ -332,48 +227,16 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     );
   }
 
-  const app = Fastify({
-    loggerInstance: logger,
-    disableRequestLogging: true,
-    genReqId: (req) => resolveRequestId(req.headers),
-  }) as unknown as FastifyInstance;
-  app.server.requestTimeout = 0;
-  registerRequestLogging(app);
-  app.setValidatorCompiler(() => () => true);
-  app.setSerializerCompiler(() => (data) => JSON.stringify(data));
-  installErrorHandler(app);
-  const hostCheck = createHostCheck({
-    boundHost: host,
-    extra: [...parseAllowedHosts(process.env), ...(opts.allowedHosts ?? [])],
-    disable: opts.disableHostCheck ?? isHostCheckDisabled(),
-  });
-  const allowedOrigins = opts.corsOrigins ?? parseCorsOrigins();
-  app.addHook('onRequest', hostCheck.onRequest);
-  app.addHook('onRequest', createOriginHook({ allowedOrigins }));
-  if (!disableAuth) {
-    app.addHook(
-      'onRequest',
-      createAuthHook(authTokenService, { limiter: authFailureLimiter, validateCredential }),
-    );
-  } else if (opts.disableAuth === true) {
-    logger.warn(
-      { host, exposureClass },
-      'DANGEROUS: bearer-token auth is DISABLED (--dangerous-bypass-auth) — every REST and WebSocket route accepts unauthenticated requests',
-    );
-  }
-  if (exposureClass !== 'loopback') {
-    app.addHook('onSend', createSecurityHeadersHook({ tls: false }));
-  }
+  let rpcServer: UnixRpcServer | undefined;
+  let closePromise: Promise<void> | undefined;
 
-  let rpcServer: { close(): Promise<void> } | undefined;
-
-  const close = async (): Promise<void> => {
+  const performClose = async (): Promise<void> => {
     await rpcServer?.close();
     if (wssDebug !== undefined) {
       for (const client of wssDebug.clients) client.terminate();
     }
     configChangedPublisher.close();
-    await remoteControlManager.close();
+    await remoteControl.service.close();
     await app.close();
     conversations.dispose();
     sessionRating.dispose();
@@ -415,10 +278,14 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
       try {
         await registration.release();
       } finally {
-        process.off('unhandledRejection', onUnhandledRejection);
-        process.off('uncaughtException', onUncaughtException);
+        shell.removeProcessHandlers();
       }
     }
+  };
+
+  const close = (): Promise<void> => {
+    closePromise ??= performClose();
+    return closePromise;
   };
 
   const connectionRegistry = new ConnectionRegistry();
@@ -429,17 +296,23 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     void close().catch((error: unknown) => logger.error({ err: error }, 'server close failed'));
   };
   const sessionManager = core.accessor.get(ISessionManager);
+  const otherRpcClientCount = (): number =>
+    Math.max(0, (rpcServer?.clientCount() ?? 0) - (isRpcHttpRequest() ? 1 : 0));
   const drainIdleSessions = async (): Promise<boolean> => {
-    if (connectionRegistry.size() > 0) return false;
+    if (connectionRegistry.size() > 0 || otherRpcClientCount() > 0) return false;
     await closeIdleSessions(sessionManager, 0);
-    return connectionRegistry.size() === 0 && sessionManager.list().length === 0;
+    return (
+      connectionRegistry.size() === 0 &&
+      otherRpcClientCount() === 0 &&
+      sessionManager.list().length === 0
+    );
   };
   const managedIdleExit =
     opts.managedBy === undefined
       ? undefined
       : new ManagedIdleExit(
           sessionManager,
-          connectionRegistry,
+          { size: () => connectionRegistry.size() + (rpcServer?.clientCount() ?? 0) },
           opts.managedIdleExitMs ?? DEFAULT_MANAGED_IDLE_EXIT_MS,
           requestClose,
         );
@@ -490,8 +363,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
         publishConfigWarnings(configService.diagnostics());
       }
     })
-    .catch(() => {
-    });
+    .catch(() => {});
 
   async function registerOpenApi(): Promise<void> {
     const { default: swagger } = await import('@fastify/swagger');
@@ -539,19 +411,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     hostIdentity: opts.hostIdentity,
     debugEndpoints,
     enableShutdown,
-    remoteControl: {
-      service: remoteControlManager,
-      devices: remoteControlDevices,
-      homeDir,
-      staticEnableError:
-        opts.socketPath !== undefined
-          ? 'Remote Control requires a TCP listener.'
-          : exposureClass !== 'loopback'
-            ? 'Remote Control requires a loopback host.'
-            : opts.disableAuth === true
-              ? 'Remote Control cannot be combined with --dangerous-bypass-auth.'
-              : undefined,
-    },
+    remoteControl,
     onShutdown: requestClose,
     drainIdleSessions,
     hostBridges,
@@ -568,90 +428,29 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   });
   const wssDebug = debugEndpoints ? registerWsDebug() : undefined;
 
-  const handleUpgrade = async (
-    req: IncomingMessage,
-    socket: Duplex,
-    head: Buffer,
-  ): Promise<void> => {
-    const url = req.url ?? '';
-    const isV1 = url === WS_PATH_V1 || url.startsWith(`${WS_PATH_V1}?`);
-    const isDebug = url === WS_DEBUG_PATH || url.startsWith(`${WS_DEBUG_PATH}?`);
-    const wss = isV1 ? wssV1 : isDebug ? wssDebug : undefined;
-    const hostProxyTarget = matchHostProxyPath(url);
-    if (wss === undefined && hostProxyTarget === undefined) {
-      socket.destroy();
-      return;
-    }
-
-    if (!hostCheck.isAllowed(req.headers.host)) {
-      logger.warn(
-        { remoteAddress: req.socket.remoteAddress, path: url, reason: 'host_not_allowed' },
-        'ws upgrade rejected',
-      );
-      (socket as Socket).write('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n');
-      (socket as Socket).destroy();
-      return;
-    }
-    if (!isOriginAllowed(req.headers.origin, req.headers.host, allowedOrigins)) {
-      logger.warn(
-        { remoteAddress: req.socket.remoteAddress, path: url, reason: 'origin_not_allowed' },
-        'ws upgrade rejected',
-      );
-      (socket as Socket).write('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n');
-      (socket as Socket).destroy();
-      return;
-    }
-
-    if (opts.disableAuth !== true) {
-      const authHeader = req.headers.authorization;
-      const bearerToken = authHeader?.startsWith('Bearer ') ? authHeader.slice('Bearer '.length) : null;
-      const protocolToken = extractWsBearerToken(req.headers['sec-websocket-protocol']);
-      const candidate = bearerToken !== null && bearerToken.length > 0 ? bearerToken : protocolToken;
-      let ok = false;
-      if (candidate !== null) {
-        try {
-          ok = await validateCredential(candidate);
-        } catch (error) {
-          logger.warn(
-            {
-              err: error,
-              remoteAddress: req.socket.remoteAddress,
-              path: url,
-              reason: 'credential_validation_error',
-            },
-            'ws upgrade rejected',
-          );
-          ok = false;
+  shell.installUpgradeGate(
+    (url) => {
+      const isV1 = url === WS_PATH_V1 || url.startsWith(`${WS_PATH_V1}?`);
+      const isDebug = debugEndpoints && (url === WS_DEBUG_PATH || url.startsWith(`${WS_DEBUG_PATH}?`));
+      return isV1 || isDebug || matchHostProxyPath(url) !== undefined;
+    },
+    async (url, req, socket, head) => {
+      const isV1 = url === WS_PATH_V1 || url.startsWith(`${WS_PATH_V1}?`);
+      const isDebug = url === WS_DEBUG_PATH || url.startsWith(`${WS_DEBUG_PATH}?`);
+      const wss = isV1 ? wssV1 : isDebug ? wssDebug : undefined;
+      if (wss === undefined) {
+        const target = matchHostProxyPath(url);
+        if (target !== undefined) {
+          await proxyHostWebSocket(hostBridges, target, req, socket, head);
+        } else {
+          socket.destroy();
         }
-      }
-      if (!ok) {
-        logger.warn(
-          {
-            remoteAddress: req.socket.remoteAddress,
-            path: url,
-            reason: candidate === null ? 'missing_credential' : 'invalid_credential',
-          },
-          'ws upgrade rejected',
-        );
-        (socket as Socket).write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n');
-        (socket as Socket).destroy();
         return;
       }
-    }
-
-    (socket as Socket).setNoDelay(true);
-    if (wss === undefined) {
-      await proxyHostWebSocket(hostBridges, hostProxyTarget!, req, socket, head);
-      return;
-    }
-    if (isV1) hostBridges.activate();
-    wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req));
-  };
-  app.server.on('upgrade', (req, socket, head) => {
-    void handleUpgrade(req, socket, head).catch((error: unknown) =>
-      logger.error({ err: error }, 'ws upgrade handler failed'),
-    );
-  });
+      if (isV1) hostBridges.activate();
+      wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req));
+    },
+  );
 
   app.addHook('onClose', async () => {
     connectionRegistry.closeAll('server shutting down');
@@ -677,27 +476,29 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     await registerWebAssetRoutes(app, opts.webAssetsDir);
   }
 
+  let boundPort = 0;
   try {
     if (opts.socketPath !== undefined) {
       await app.ready();
-      rpcServer = await startUnixRpcServer(opts.socketPath, { app, wssV1, wssDebug });
-      boundPort = 0;
-    } else {
-      await listenWithPortRetry({
-        listen: (h, p) => app.listen({ host: h, port: p }),
-        host,
-        port,
-        logger,
+      rpcServer = await startUnixRpcServer(opts.socketPath, {
+        app,
+        wssV1,
+        wssDebug,
+        onV1WsOpen: () => hostBridges.activate(),
+        openHostWebSocket: async (path, handlers) => {
+          const target = matchHostProxyPath(path);
+          if (target === undefined) return undefined;
+          const session = await resolveHostBridgeSession(hostBridges, target.hostId);
+          return session.openWebSocket(target.path, handlers);
+        },
       });
-      const address = app.server.address();
-      boundPort = typeof address === 'object' && address !== null ? address.port : port;
-      await registration.update({ port: boundPort });
+    } else {
+      boundPort = await shell.listenTcp();
     }
   } catch (error) {
     try {
       await close();
-    } catch {
-    }
+    } catch {}
     throw error;
   }
 
@@ -709,54 +510,16 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   });
   sessionIdleReaper.start();
   managedIdleExit?.start();
+  shell.installProcessHandlers();
 
-  process.on('unhandledRejection', onUnhandledRejection);
-  process.on('uncaughtException', onUncaughtException);
-
-  return { app, core, connectionRegistry, authTokenService, hostBridges, host, port: boundPort, close };
-}
-
-export const PORT_RETRY_LIMIT = 100;
-
-export interface ListenWithPortRetryOptions {
-  readonly listen: (host: string, port: number) => Promise<string>;
-  readonly host: string;
-  readonly port: number;
-  readonly logger: ServerLogger;
-  readonly maxRetries?: number;
-}
-
-export async function listenWithPortRetry(
-  opts: ListenWithPortRetryOptions,
-): Promise<{ address: string; port: number }> {
-  if (opts.port === 0) {
-    const address = await opts.listen(opts.host, 0);
-    return { address, port: 0 };
-  }
-
-  const maxRetries = opts.maxRetries ?? PORT_RETRY_LIMIT;
-  let port = opts.port;
-  for (let attempt = 0; ; attempt++) {
-    try {
-      const address = await opts.listen(opts.host, port);
-      if (port !== opts.port) {
-        opts.logger.warn(
-          { requestedPort: opts.port, port, host: opts.host },
-          'requested port was busy; server bound to a higher port',
-        );
-      }
-      return { address, port };
-    } catch (error) {
-      const code = (error as NodeJS.ErrnoException).code;
-      if (code !== 'EADDRINUSE' || attempt >= maxRetries || port >= 65535) {
-        throw error;
-      }
-      const next = port + 1;
-      opts.logger.warn(
-        { host: opts.host, port, next },
-        'port in use by another process, trying next port',
-      );
-      port = next;
-    }
-  }
+  return {
+    app,
+    core,
+    connectionRegistry,
+    authTokenService,
+    hostBridges,
+    host,
+    port: boundPort,
+    close,
+  };
 }

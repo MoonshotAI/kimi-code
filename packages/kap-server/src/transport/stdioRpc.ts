@@ -1,18 +1,27 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { EventEmitter } from 'node:events';
-import { chmod, mkdir, rm, stat } from 'node:fs/promises';
+import { chmod, lstat, mkdir, rm, stat } from 'node:fs/promises';
 import type { IncomingHttpHeaders, IncomingMessage, OutgoingHttpHeaders } from 'node:http';
 import { createServer, type Socket } from 'node:net';
-import { dirname } from 'node:path';
+import { tmpdir } from 'node:os';
+import { dirname, resolve, sep } from 'node:path';
 import type { Duplex } from 'node:stream';
 
 import type { FastifyInstance } from 'fastify';
 import type { WebSocket, WebSocketServer } from 'ws';
 
+import type { HostWsHandlers, HostWsSession } from '../services/hosts/hostSession';
 import { HOST_RPC_MAX_BODY_BYTES, JsonlRpcStream } from './jsonlRpcStream';
 import { WS_DEBUG_PATH } from './ws/debug/registerWsDebug';
 import { WS_PATH as WS_PATH_V1 } from './ws/v1/registerWsV1';
 
 export { HOST_RPC_MAX_BODY_BYTES } from './jsonlRpcStream';
+
+const rpcHttpContext = new AsyncLocalStorage<boolean>();
+
+export function isRpcHttpRequest(): boolean {
+  return rpcHttpContext.getStore() === true;
+}
 
 export interface RpcHttpRequestFrame {
   readonly type: 'http.req';
@@ -67,6 +76,21 @@ export interface RpcStreamOptions {
   readonly app: FastifyInstance;
   readonly wssV1: WebSocketServer;
   readonly wssDebug?: WebSocketServer;
+  readonly onV1WsOpen?: () => void;
+  readonly openHostWebSocket?: (
+    path: string,
+    handlers: HostWsHandlers,
+  ) => Promise<HostWsSession | undefined>;
+}
+
+export interface UnixRpcServer {
+  clientCount(): number;
+  close(): Promise<void>;
+}
+
+interface RpcSocketEndpoint {
+  receiveMessage(data: string): void;
+  receiveClose(code?: number, reason?: string): void;
 }
 
 class RpcBodyTooLargeError extends Error {
@@ -76,7 +100,7 @@ class RpcBodyTooLargeError extends Error {
   }
 }
 
-class FakeWebSocket extends EventEmitter {
+class FakeWebSocket extends EventEmitter implements RpcSocketEndpoint {
   readonly OPEN = 1;
   readonly CLOSED = 3;
   readyState = 1;
@@ -122,8 +146,69 @@ class FakeWebSocket extends EventEmitter {
   }
 }
 
+class ProxiedRpcWebSocket implements RpcSocketEndpoint {
+  private closed = false;
+  private upstream: HostWsSession | undefined;
+  private readonly queued: string[] = [];
+
+  constructor(
+    open: (handlers: HostWsHandlers) => Promise<HostWsSession | undefined>,
+    onSend: (data: string) => void,
+    onClosed: (code?: number, reason?: string) => void,
+  ) {
+    void open({
+      onMessage: (data) => {
+        if (!this.closed) onSend(data);
+      },
+      onClose: (code, reason) => {
+        if (this.closed) return;
+        this.closed = true;
+        onClosed(code ?? 1000, reason);
+      },
+      onBackpressure: () => {},
+    }).then(
+      (session) => {
+        if (session === undefined) {
+          if (!this.closed) {
+            this.closed = true;
+            onClosed(1008, 'unknown ws route');
+          }
+          return;
+        }
+        if (this.closed) {
+          session.close(1000, 'closed before connect');
+          return;
+        }
+        this.upstream = session;
+        for (const msg of this.queued.splice(0)) session.send(msg);
+      },
+      (error: unknown) => {
+        if (this.closed) return;
+        this.closed = true;
+        onClosed(1011, error instanceof Error ? error.message : 'host unavailable');
+      },
+    );
+  }
+
+  receiveMessage(data: string): void {
+    if (this.closed) return;
+    if (this.upstream !== undefined) {
+      this.upstream.send(data);
+      return;
+    }
+    this.queued.push(data);
+  }
+
+  receiveClose(code?: number, reason?: string): void {
+    if (this.closed) return;
+    this.closed = true;
+    this.queued.length = 0;
+    this.upstream?.close(code, reason);
+  }
+}
+
 export function attachRpcStream(stream: Duplex, opts: RpcStreamOptions): void {
-  const sockets = new Map<string, FakeWebSocket>();
+  const sockets = new Map<string, RpcSocketEndpoint>();
   const requests = new Map<string, () => void>();
   const aborted = new Set<string>();
   const respondError = (id: string, status: number, code: number, message: string): void => {
@@ -159,13 +244,15 @@ export function attachRpcStream(stream: Duplex, opts: RpcStreamOptions): void {
           if (contentLength > HOST_RPC_MAX_BODY_BYTES) throw new RpcBodyTooLargeError();
           const body = frame.body === undefined ? Buffer.alloc(0) : Buffer.from(frame.body, 'base64');
           if (body.length > HOST_RPC_MAX_BODY_BYTES) throw new RpcBodyTooLargeError();
-          const res = await opts.app.inject({
-            method: frame.method as 'GET' | 'HEAD' | 'POST' | 'PUT' | 'PATCH' | 'DELETE',
-            url: frame.path,
-            headers: { ...frame.headers, host: '127.0.0.1' },
-            payload: body,
-            payloadAsStream: true,
-          });
+          const res = await rpcHttpContext.run(true, () =>
+            opts.app.inject({
+              method: frame.method as 'GET' | 'HEAD' | 'POST' | 'PUT' | 'PATCH' | 'DELETE',
+              url: frame.path,
+              headers: { ...frame.headers, host: '127.0.0.1' },
+              payload: body,
+              payloadAsStream: true,
+            }),
+          );
           const responseStream = res.stream();
           requests.set(frame.id, () => responseStream.destroy());
           responseStream.once('close', finish);
@@ -219,27 +306,35 @@ export function attachRpcStream(stream: Duplex, opts: RpcStreamOptions): void {
         const isV1 = frame.path === WS_PATH_V1 || frame.path.startsWith(`${WS_PATH_V1}?`);
         const isDebug = frame.path === WS_DEBUG_PATH || frame.path.startsWith(`${WS_DEBUG_PATH}?`);
         const wss = isV1 ? opts.wssV1 : isDebug ? opts.wssDebug : undefined;
-        if (wss === undefined) {
-          rpc.write({ type: 'ws.close', id: frame.id, code: 1008, reason: 'unknown ws route' });
+        const sendWsMessage = (data: string): void => {
+          rpc.write({ type: 'ws.msg', id: frame.id, data });
+        };
+        const sendWsClose = (code?: number, reason?: string): void => {
+          sockets.delete(frame.id);
+          rpc.write({ type: 'ws.close', id: frame.id, code, reason });
+        };
+        if (wss !== undefined) {
+          if (isV1) opts.onV1WsOpen?.();
+          const fake = new FakeWebSocket(sendWsMessage, sendWsClose, () => rpc.bufferedBytes);
+          sockets.set(frame.id, fake);
+          const fakeReq = {
+            url: frame.path,
+            headers: {},
+            socket: { remoteAddress: 'unix' },
+          } as unknown as IncomingMessage;
+          wss.emit('connection', fake as unknown as WebSocket, fakeReq);
           return;
         }
-        const fake = new FakeWebSocket(
-          (data) => {
-            rpc.write({ type: 'ws.msg', id: frame.id, data });
-          },
-          (code, reason) => {
-            sockets.delete(frame.id);
-            rpc.write({ type: 'ws.close', id: frame.id, code, reason });
-          },
-          () => rpc.bufferedBytes,
-        );
-        sockets.set(frame.id, fake);
-        const fakeReq = {
-          url: frame.path,
-          headers: {},
-          socket: { remoteAddress: 'unix' },
-        } as unknown as IncomingMessage;
-        wss.emit('connection', fake as unknown as WebSocket, fakeReq);
+        if (opts.openHostWebSocket !== undefined) {
+          const proxied = new ProxiedRpcWebSocket(
+            (handlers) => opts.openHostWebSocket!(frame.path, handlers),
+            sendWsMessage,
+            sendWsClose,
+          );
+          sockets.set(frame.id, proxied);
+          return;
+        }
+        rpc.write({ type: 'ws.close', id: frame.id, code: 1008, reason: 'unknown ws route' });
         return;
       }
       if (frame.type === 'ws.msg') {
@@ -260,8 +355,27 @@ export function attachRpcStream(stream: Duplex, opts: RpcStreamOptions): void {
 export async function startUnixRpcServer(
   socketPath: string,
   opts: RpcStreamOptions,
-): Promise<{ close(): Promise<void> }> {
-  await mkdir(dirname(socketPath), { recursive: true, mode: 0o700 });
+): Promise<UnixRpcServer> {
+  const dir = dirname(socketPath);
+  const resolvedDir = resolve(dir);
+  const resolvedTmp = resolve(tmpdir());
+  await mkdir(dir, { recursive: true, mode: 0o700 });
+  if (resolvedDir !== resolvedTmp) {
+    const dirInfo = await lstat(dir);
+    if (!dirInfo.isDirectory()) {
+      throw new Error(`Refusing to bind unix socket in non-directory ${dir}`);
+    }
+    if (typeof process.getuid === 'function' && dirInfo.uid !== process.getuid()) {
+      throw new Error(`Refusing to bind unix socket in directory owned by another user: ${dir}`);
+    }
+    if (resolvedDir.startsWith(`${resolvedTmp}${sep}`)) {
+      await chmod(dir, 0o700);
+      const verified = await lstat(dir);
+      if (process.platform !== 'win32' && (verified.mode & 0o077) !== 0) {
+        throw new Error(`Refusing to bind unix socket in group/world-accessible directory: ${dir}`);
+      }
+    }
+  }
   await rm(socketPath, { force: true });
   const clients = new Set<Socket>();
   const server = createServer((socket) => {
@@ -269,11 +383,11 @@ export async function startUnixRpcServer(
     socket.on('close', () => clients.delete(socket));
     attachRpcStream(socket, opts);
   });
-  await new Promise<void>((resolve, reject) => {
+  await new Promise<void>((resolveListen, reject) => {
     server.once('error', reject);
     server.listen(socketPath, () => {
       server.off('error', reject);
-      resolve();
+      resolveListen();
     });
   });
   await chmod(socketPath, 0o600).catch(() => {});
@@ -282,12 +396,13 @@ export async function startUnixRpcServer(
     () => undefined,
   );
   return {
+    clientCount: () => clients.size,
     async close() {
       for (const client of clients) client.destroy();
       clients.clear();
-      await new Promise<void>((resolve) => {
+      await new Promise<void>((resolveClose) => {
         server.close(() => {
-          resolve();
+          resolveClose();
         });
       });
       const currentIno = await stat(socketPath).then(

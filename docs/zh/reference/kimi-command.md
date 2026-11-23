@@ -206,7 +206,7 @@ kimi web --no-open       # 不打开浏览器
 kimi web --port 58628    # 指定绑定端口
 ```
 
-同一 home 目录下可以同时运行多个实例：每个实例注册到 `~/.kimi-code/server/instances/`，端口被占用时自动 +1 重试（58628、58629……）。
+同一 home 目录下可以同时运行多个实例：每个实例注册到 `~/.kimi-code/server/instances/`，端口被占用时自动 +1 重试（58628、58629……）。在 macOS 和 Linux 上，`kimi web` 与 `kimi rc` 默认接入本机共享后台服务（与桌面端 SSH 连接复用同一实例以实时同步运行中会话）；按 `Ctrl-C` 会立即关闭当前前台端口或远程控制隧道，并在没有其他连接和运行中任务时自动停止后台服务。
 
 | 选项 | 说明 |
 | --- | --- |
@@ -217,6 +217,7 @@ kimi web --port 58628    # 指定绑定端口
 | `--debug-endpoints` | 挂载 `/api/v1/debug/*` 调试路由（默认关闭） |
 | `--dangerous-bypass-auth` | 关闭所有 REST 与 WebSocket 路由的 bearer token 鉴权，使 web UI 无需 token 即可连接；仅用于可信网络或自有鉴权代理之后 |
 | `--web-title <title>` | 自定义 web UI 的浏览器标签页标题；默认为工作区目录名 |
+| `--no-daemon` | 在当前进程内运行独立的服务实例，不复用本机共享后台服务 |
 | `--no-open` | 就绪后不自动打开浏览器 |
 | `--json` | 以机器可读模式启动：不自动打开浏览器，为当前进程生成一次性内存 token，就绪后向 `stdout` 输出单行 JSON（含 `origin`、`ws_url`、`token`、`kimi_agent_protocol_version`），日志输出到 `stderr` |
 

@@ -68,7 +68,7 @@ The Remote Control link grants access to your machine upon signing into the same
 
 ## Relationship with the CLI
 
-The web UI and the CLI share the same login state, configuration (`config.toml`), and session data.
+The web UI and the CLI share the same login state, configuration (`config.toml`), and session data. On macOS and Linux, `kimi web`, `kimi rc`, and Kimi Code desktop SSH connections to the same machine share one local background daemon by default so live sessions, streaming turns, and approvals stay in sync in real time (pass `--no-daemon` to run an isolated instance).
 
 ### Common slash commands
 

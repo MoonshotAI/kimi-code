@@ -68,7 +68,7 @@ Stop:    Ctrl+C
 
 ## 与 CLI 的关系
 
-Web 界面和 CLI 共享同一份登录态、配置（`config.toml`）和会话数据。
+Web 界面和 CLI 共享同一份登录态、配置（`config.toml`）和会话数据。在 macOS 与 Linux 上，`kimi web`、`kimi rc` 与连接到同一台机器的桌面端 SSH 环境默认复用同一个本机后台服务，因此正在运行的会话、流式输出和审批状态也会实时同步（需要完全隔离时可加 `--no-daemon`）。
 
 ### 常用斜杠命令
 

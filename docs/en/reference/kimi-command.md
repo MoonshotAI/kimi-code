@@ -206,7 +206,7 @@ kimi web --no-open       # don't open the browser
 kimi web --port 58628    # pick a specific bind port
 ```
 
-Multiple instances can share one home directory: each registers itself under `~/.kimi-code/server/instances/`, and a busy port is retried with `port + 1` (58628, 58629, …).
+Multiple instances can share one home directory: each registers itself under `~/.kimi-code/server/instances/`, and a busy port is retried with `port + 1` (58628, 58629, …). On macOS and Linux, `kimi web` and `kimi rc` connect through a shared local background daemon by default (the same daemon used by desktop SSH connections, keeping live sessions in sync); pressing `Ctrl-C` immediately closes the foreground port or Remote Control tunnel and stops the daemon when no other clients or tasks remain active.
 
 | Option | Description |
 | --- | --- |
@@ -217,6 +217,7 @@ Multiple instances can share one home directory: each registers itself under `~/
 | `--debug-endpoints` | Mount `/api/v1/debug/*` routes (off by default) |
 | `--dangerous-bypass-auth` | Disable bearer-token auth on all REST and WebSocket routes so the web UI connects without a token; only for trusted networks or behind an authenticating proxy |
 | `--web-title <title>` | Custom browser tab title for the web UI; defaults to the workspace directory name |
+| `--no-daemon` | Run an isolated server in this process instead of sharing the local background daemon |
 | `--no-open` | Do not open the browser once the server is ready |
 | `--json` | Machine-readable startup mode: skips opening the browser, mints an in-memory bearer token for this process, prints a single JSON line (`{ origin, ws_url, token, kimi_agent_protocol_version }`) on `stdout` once ready, and routes logs to `stderr` |
 

@@ -1,12 +1,13 @@
-import { randomBytes, timingSafeEqual } from 'node:crypto';
+import { randomBytes } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 
 import {
+  createEphemeralAuthTokenService,
   createServerLogger,
   KIMI_AGENT_PROTOCOL_VERSION,
   startServer,
-  type IAuthTokenService,
+  startWebGateway,
   type ServerLogger,
 } from '@moonshot-ai/kap-server';
 import { shutdownTelemetry, track } from '@moonshot-ai/kimi-telemetry';
@@ -31,6 +32,7 @@ import {
   isLoopbackHost,
   splitTokenFragment,
 } from './access-urls';
+import { connectSharedDaemon, stopSharedDaemonIfIdle } from './ensure-daemon';
 import { type NetworkAddress } from './networks';
 import {
   formatRemoteControlOutput,
@@ -139,6 +141,10 @@ export function buildWebCommand(
     .option(
       '--web-title <title>',
       'Set a custom browser tab title for this web UI instance (default: "<workspace dir> | Kimi Code").',
+    )
+    .option(
+      '--no-daemon',
+      'Run an isolated server in this process instead of sharing the local background daemon.',
     );
   withServerOptions.addOption(new Option('--socket <path>').hideHelp());
   withServerOptions.addOption(new Option('--managed-by <owner>').hideHelp());
@@ -164,27 +170,15 @@ export function buildWebCommand(
     );
   }
   return withServerOptions.action(async (opts: WebCliOptions) => {
-      try {
-        await handleWebCommand(
-          forceRemoteControl ? { ...opts, remoteControl: true } : opts,
-        );
-      } catch (error) {
-        process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
-        process.exit(1);
-      }
-    });
-}
-
-function createEphemeralAuthTokenService(secret: string): IAuthTokenService {
-  const expected = Buffer.from(secret, 'utf8');
-  return {
-    _serviceBrand: undefined,
-    getToken: () => secret,
-    isValid: async (candidate: string) => {
-      const actual = Buffer.from(candidate, 'utf8');
-      return actual.length === expected.length && timingSafeEqual(actual, expected);
-    },
-  };
+    try {
+      await handleWebCommand(
+        forceRemoteControl ? { ...opts, remoteControl: true } : opts,
+      );
+    } catch (error) {
+      process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+      process.exit(1);
+    }
+  });
 }
 
 export function formatJsonBootLine(origin: string, token: string): string {
@@ -360,6 +354,18 @@ export async function startServerForeground(
   return runServerInProcess(options, hooks);
 }
 
+export function shouldUseSharedDaemon(
+  options: ParsedServerOptions,
+  platform: NodeJS.Platform = process.platform,
+): boolean {
+  return (
+    platform !== 'win32' &&
+    options.daemon !== false &&
+    !options.debugEndpoints &&
+    options.socketPath === undefined
+  );
+}
+
 async function runServerInProcess(
   options: ParsedServerOptions,
   hooks: StartForegroundHooks,
@@ -398,23 +404,24 @@ async function runServerInProcess(
     level: options.logLevel,
     stream: options.logToStderr === true ? process.stderr : undefined,
   });
-  const webAssetsDir = serverWebAssetsDir();
-  if (webAssetsDir === undefined) {
+  const webAssetsDir = options.socketPath === undefined ? serverWebAssetsDir() : undefined;
+  if (options.socketPath === undefined && webAssetsDir === undefined) {
     logger.info(
       'dev mode: web assets not built; starting the API server without the web UI',
     );
   }
-  const v2 = await startServer({
+  const hostIdentity = {
+    ...createKimiCodeHostIdentity(version),
+    userAgentSuffix: WEB_USER_AGENT_SUFFIX,
+  };
+
+  const commonServerOptions = {
     host: options.host,
     port: options.port,
     serverVersion: version,
-    hostIdentity: {
-      ...createKimiCodeHostIdentity(version),
-      userAgentSuffix: WEB_USER_AGENT_SUFFIX,
-    },
+    hostIdentity,
     logLevel: options.logLevel,
     logger,
-    debugEndpoints: options.debugEndpoints,
     insecureNoTls: options.insecureNoTls,
     allowRemoteShutdown: options.allowRemoteShutdown,
     allowedHosts: options.allowedHosts,
@@ -422,20 +429,56 @@ async function runServerInProcess(
     skipInstanceRegistry: options.skipInstanceRegistry,
     disableAuth: options.dangerousBypassAuth,
     webTitle: options.webTitle,
-    socketPath: options.socketPath,
-    managedBy: options.managedBy,
-    telemetry: true,
     webAssetsDir,
-  });
-  logger.info('serving the REST/WS API and the bundled web UI');
-  running = {
-    address:
-      options.socketPath === undefined ? `http://${v2.host}:${v2.port}` : `unix:${options.socketPath}`,
-    logger,
-    close: () => v2.close(),
   };
 
-  track('server_started', { daemon: false });
+  const useSharedDaemon = shouldUseSharedDaemon(options);
+  if (useSharedDaemon) {
+    const daemon = await connectSharedDaemon();
+    let gateway: Awaited<ReturnType<typeof startWebGateway>>;
+    try {
+      gateway = await startWebGateway({
+        ...commonServerOptions,
+        daemonStream: daemon.stream,
+        reconnectDaemon: async () => (await connectSharedDaemon()).stream,
+        onShutdownRequest: () => {
+          void shutdown('api_shutdown');
+        },
+      });
+    } catch (error) {
+      daemon.stream.destroy();
+      await stopSharedDaemonIfIdle().catch(() => {});
+      throw error;
+    }
+    logger.info('serving the REST/WS API and the bundled web UI via shared daemon');
+    running = {
+      address: `http://${gateway.host}:${gateway.port}`,
+      logger,
+      close: async () => {
+        await gateway.close();
+        await stopSharedDaemonIfIdle().catch(() => {});
+      },
+    };
+  } else {
+    const v2 = await startServer({
+      ...commonServerOptions,
+      debugEndpoints: options.debugEndpoints,
+      socketPath: options.socketPath,
+      managedBy: options.managedBy,
+      telemetry: true,
+    });
+    logger.info('serving the REST/WS API and the bundled web UI');
+    running = {
+      address:
+        options.socketPath === undefined
+          ? `http://${v2.host}:${v2.port}`
+          : `unix:${options.socketPath}`,
+      logger,
+      close: () => v2.close(),
+    };
+  }
+
+  track('server_started', { daemon: useSharedDaemon });
 
   process.once('SIGINT', () => {
     void shutdown('SIGINT');

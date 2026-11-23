@@ -25,6 +25,7 @@ import {
   oauthLoginStartRequestSchema,
   oauthLogoutRequestSchema,
 } from '../protocol/rest-oauth';
+import { isRpcHttpRequest } from '../transport/stdioRpc';
 import {
   acquireRemoteControlStartGate,
   REMOTE_CONTROL_LOGOUT_GATE_ORIGIN,
@@ -44,7 +45,7 @@ interface RouteHost {
     path: string,
     options: { preHandler?: unknown[]; schema?: Record<string, unknown> },
     handler: (
-      req: { id: string; body: unknown },
+      req: { id: string; body: unknown; headers?: Record<string, unknown> },
       reply: { send(payload: unknown): void },
     ) => Promise<void> | void,
   ): unknown;
@@ -64,6 +65,159 @@ const oauthFlowSnapshotOrNullSchema = z.union([
 ]);
 
 const LOGOUT_TUNNEL_TEARDOWN_DELAY_MS = 250;
+
+export const INTERNAL_SKIP_RC_LOGOUT_GATE_HEADER = 'x-kimi-skip-rc-logout-gate';
+
+export interface OAuthLogoutRouteOptions {
+  readonly remoteControl: RemoteControlManager;
+  readonly remoteControlDevices: Pick<RemoteControlDeviceClient, 'clear' | 'deactivateDevice'>;
+  readonly homeDir: string;
+  readonly logout: (provider?: string) => Promise<unknown>;
+}
+
+export function registerOAuthLogoutRoute(
+  app: Pick<RouteHost, 'post'>,
+  opts: OAuthLogoutRouteOptions,
+): void {
+  let kimiLogoutQueue: Promise<void> = Promise.resolve();
+
+  const logoutRoute = defineRoute(
+    {
+      method: 'POST',
+      path: '/oauth/logout',
+      body: oauthLogoutRequestSchema,
+      success: { data: oauthLogoutResponseSchema },
+      errors: { [ErrorCode.INTERNAL_ERROR]: {} },
+      description: 'Logout the managed OAuth provider',
+      tags: ['auth'],
+    },
+    async (req, reply) => {
+      const provider = req.body.provider ?? KIMI_CODE_PROVIDER_NAME;
+      const skipRcGate =
+        isRpcHttpRequest() && req.headers?.[INTERNAL_SKIP_RC_LOGOUT_GATE_HEADER] === '1';
+      if (provider !== KIMI_CODE_PROVIDER_NAME || skipRcGate) {
+        try {
+          const result = await opts.logout(req.body.provider);
+          requestLog(req)?.info({ provider: req.body.provider, action: 'logout' }, 'oauth logout');
+          reply.send(okEnvelope(result, req.id));
+        } catch (error) {
+          requestLog(req)?.error({ err: error }, 'oauth logout failed');
+          reply.send(
+            errEnvelope(
+              ErrorCode.INTERNAL_ERROR,
+              error instanceof Error ? error.message : String(error),
+              req.id,
+            ),
+          );
+        }
+        return;
+      }
+      const serialized = kimiLogoutQueue.then(async () => {
+        try {
+          const status = opts.remoteControl.status();
+          if (status.state === 'on') {
+            opts.remoteControlDevices.clear();
+            const result = await opts.logout(req.body.provider);
+            opts.remoteControlDevices.clear();
+            requestLog(req)?.info({ provider, action: 'logout' }, 'oauth logout');
+            reply.send(okEnvelope(result, req.id));
+            void (async () => {
+              await new Promise((resolve) => {
+                setTimeout(resolve, LOGOUT_TUNNEL_TEARDOWN_DELAY_MS);
+              });
+              for (let attempt = 0; ; attempt += 1) {
+                try {
+                  await opts.remoteControl.disable();
+                  return;
+                } catch (error) {
+                  if (attempt >= 2) {
+                    requestLog(req)?.error(
+                      { err: error },
+                      'remote-control teardown after logout failed',
+                    );
+                    return;
+                  }
+                  requestLog(req)?.warn(
+                    { err: error },
+                    'remote-control teardown after logout failed; retrying',
+                  );
+                  await new Promise((resolve) => {
+                    setTimeout(resolve, 1000 * (attempt + 1));
+                  });
+                }
+              }
+            })();
+            return;
+          }
+          if (status.state !== 'off') {
+            await opts.remoteControl.disable();
+          } else {
+            const holder = await inspectRemoteControlLock(opts.homeDir);
+            if (holder !== undefined) {
+              if (holder.localOrigin !== REMOTE_CONTROL_LOGOUT_GATE_ORIGIN) {
+                await opts.remoteControlDevices.deactivateDevice(holder.deviceId);
+              }
+              await waitForLockRelease(opts.homeDir);
+            }
+          }
+          const gate = await acquireRemoteControlStartGate(
+            opts.homeDir,
+            opts.remoteControlDevices,
+          );
+          const releaseGate = async (): Promise<void> => {
+            for (let attempt = 0; ; attempt += 1) {
+              try {
+                await gate.release();
+                return;
+              } catch (error) {
+                if (attempt >= 2) {
+                  requestLog(req)?.error(
+                    { err: error },
+                    'remote-control start gate release failed',
+                  );
+                  return;
+                }
+                await new Promise((resolve) => {
+                  setTimeout(resolve, 200);
+                });
+              }
+            }
+          };
+          try {
+            opts.remoteControlDevices.clear();
+            const result = await opts.logout(req.body.provider);
+            opts.remoteControlDevices.clear();
+            await releaseGate();
+            requestLog(req)?.info({ provider, action: 'logout' }, 'oauth logout');
+            reply.send(okEnvelope(result, req.id));
+          } catch (error) {
+            await releaseGate();
+            throw error;
+          }
+        } catch (error) {
+          requestLog(req)?.error({ err: error }, 'remote-control cleanup around logout failed');
+          reply.send(
+            errEnvelope(
+              ErrorCode.INTERNAL_ERROR,
+              error instanceof Error ? error.message : String(error),
+              req.id,
+            ),
+          );
+        }
+      });
+      kimiLogoutQueue = serialized.then(
+        () => undefined,
+        () => undefined,
+      );
+      await serialized;
+    },
+  );
+  app.post(
+    logoutRoute.path,
+    logoutRoute.options,
+    logoutRoute.handler as Parameters<RouteHost['post']>[2],
+  );
+}
 
 export function registerOAuthRoutes(
   app: RouteHost,
@@ -139,127 +293,12 @@ export function registerOAuthRoutes(
     loginCancelRoute.handler as Parameters<RouteHost['delete']>[2],
   );
 
-  let kimiLogoutQueue: Promise<void> = Promise.resolve();
-
-  const logoutRoute = defineRoute(
-    {
-      method: 'POST',
-      path: '/oauth/logout',
-      body: oauthLogoutRequestSchema,
-      success: { data: oauthLogoutResponseSchema },
-      errors: { [ErrorCode.INTERNAL_ERROR]: {} },
-      description: 'Logout the managed OAuth provider',
-      tags: ['auth'],
-    },    async (req, reply) => {
-      const provider = req.body.provider ?? KIMI_CODE_PROVIDER_NAME;
-      if (provider !== KIMI_CODE_PROVIDER_NAME) {
-        const result = await core.accessor.get(IOAuthService).logout(req.body.provider);
-        requestLog(req)?.info({ provider: req.body.provider, action: 'logout' }, 'oauth logout');
-        reply.send(okEnvelope(result, req.id));
-        return;
-      }
-      const serialized = kimiLogoutQueue.then(async () => {
-        try {
-          const status = remoteControl.status();
-          if (status.state === 'on') {
-            remoteControlDevices.clear();
-            const result = await core.accessor.get(IOAuthService).logout(req.body.provider);
-            remoteControlDevices.clear();
-            requestLog(req)?.info({ provider, action: 'logout' }, 'oauth logout');
-            reply.send(okEnvelope(result, req.id));
-            void (async () => {
-              await new Promise((resolve) => {
-                setTimeout(resolve, LOGOUT_TUNNEL_TEARDOWN_DELAY_MS);
-              });
-              for (let attempt = 0; ; attempt += 1) {
-                try {
-                  await remoteControl.disable();
-                  return;
-                } catch (error) {
-                  if (attempt >= 2) {
-                    requestLog(req)?.error(
-                      { err: error },
-                      'remote-control teardown after logout failed',
-                    );
-                    return;
-                  }
-                  requestLog(req)?.warn(
-                    { err: error },
-                    'remote-control teardown after logout failed; retrying',
-                  );
-                  await new Promise((resolve) => {
-                    setTimeout(resolve, 1000 * (attempt + 1));
-                  });
-                }
-              }
-            })();
-            return;
-          }
-          if (status.state !== 'off') {
-            await remoteControl.disable();
-          } else {
-            const holder = await inspectRemoteControlLock(homeDir);
-            if (holder !== undefined) {
-              if (holder.localOrigin !== REMOTE_CONTROL_LOGOUT_GATE_ORIGIN) {
-                await remoteControlDevices.deactivateDevice(holder.deviceId);
-              }
-              await waitForLockRelease(homeDir);
-            }
-          }
-          const gate = await acquireRemoteControlStartGate(homeDir, remoteControlDevices);
-          const releaseGate = async (): Promise<void> => {
-            for (let attempt = 0; ; attempt += 1) {
-              try {
-                await gate.release();
-                return;
-              } catch (error) {
-                if (attempt >= 2) {
-                  requestLog(req)?.error(
-                    { err: error },
-                    'remote-control start gate release failed',
-                  );
-                  return;
-                }
-                await new Promise((resolve) => {
-                  setTimeout(resolve, 200);
-                });
-              }
-            }
-          };
-          try {
-            remoteControlDevices.clear();
-            const result = await core.accessor.get(IOAuthService).logout(req.body.provider);
-            remoteControlDevices.clear();
-            await releaseGate();
-            requestLog(req)?.info({ provider, action: 'logout' }, 'oauth logout');
-            reply.send(okEnvelope(result, req.id));
-          } catch (error) {
-            await releaseGate();
-            throw error;
-          }
-        } catch (error) {
-          requestLog(req)?.error({ err: error }, 'remote-control cleanup around logout failed');
-          reply.send(
-            errEnvelope(
-              ErrorCode.INTERNAL_ERROR,
-              error instanceof Error ? error.message : String(error),
-              req.id,
-            ),
-          );
-        }
-      });
-      kimiLogoutQueue = serialized.then(
-        () => undefined,
-        () => undefined,
-      );
-      await serialized;
-    },
-  );
-  app.post(
-    logoutRoute.path,
-    logoutRoute.options,
-    logoutRoute.handler as Parameters<RouteHost['post']>[2],
-  );
+  registerOAuthLogoutRoute(app, {
+    remoteControl,
+    remoteControlDevices,
+    homeDir,
+    logout: (provider) => core.accessor.get(IOAuthService).logout(provider),
+  });
 
   const usageRoute = defineRoute(
     {

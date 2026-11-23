@@ -19,7 +19,7 @@ import {
 interface PendingHttp {
   resolve(res: HostHttpResponse): void;
   reject(err: Error): void;
-  timeout: ReturnType<typeof setTimeout>;
+  timeout?: ReturnType<typeof setTimeout>;
   signal?: AbortSignal;
   onCancel?: () => void;
 }
@@ -30,6 +30,10 @@ export class StdioHostSession implements HostSession {
   private readonly pendingHttp = new Map<string, PendingHttp>();
   private readonly wsChannels = new Map<string, HostWsHandlers>();
   private readonly rpc: JsonlRpcStream<RpcFrame>;
+
+  get isClosed(): boolean {
+    return this.closed;
+  }
 
   constructor(stream: Duplex) {
     this.rpc = new JsonlRpcStream(
@@ -61,12 +65,13 @@ export class StdioHostSession implements HostSession {
     }
     const id = String(++this.nextId);
     const body = req.body !== undefined && req.body.length > 0 ? req.body.toString('base64') : undefined;
+    const effectiveTimeoutMs = req.timeoutMs ?? HOST_HTTP_TIMEOUT_MS;
     return new Promise<HostHttpResponse>((resolve, reject) => {
       const settle = (failure: 'cancelled' | 'timeout', message: string): void => {
         const pending = this.pendingHttp.get(id);
         if (pending === undefined) return;
         this.pendingHttp.delete(id);
-        clearTimeout(pending.timeout);
+        if (pending.timeout !== undefined) clearTimeout(pending.timeout);
         if (pending.signal !== undefined && pending.onCancel !== undefined) {
           pending.signal.removeEventListener('abort', pending.onCancel);
         }
@@ -78,13 +83,15 @@ export class StdioHostSession implements HostSession {
         : () => {
             settle('cancelled', 'host request cancelled');
           };
-      const timeout = setTimeout(
-        () => {
-          settle('timeout', 'host request timed out');
-        },
-        req.timeoutMs ?? HOST_HTTP_TIMEOUT_MS,
-      );
-      timeout.unref?.();
+      const timeout = effectiveTimeoutMs <= 0
+        ? undefined
+        : setTimeout(
+            () => {
+              settle('timeout', 'host request timed out');
+            },
+            effectiveTimeoutMs,
+          );
+      timeout?.unref?.();
       this.pendingHttp.set(id, { resolve, reject, timeout, signal: req.signal, onCancel });
       req.signal?.addEventListener('abort', onCancel!, { once: true });
       this.rpc.write({
@@ -127,7 +134,7 @@ export class StdioHostSession implements HostSession {
       const pending = this.pendingHttp.get(frame.id);
       if (pending === undefined) return;
       this.pendingHttp.delete(frame.id);
-      clearTimeout(pending.timeout);
+      if (pending.timeout !== undefined) clearTimeout(pending.timeout);
       if (pending.signal !== undefined && pending.onCancel !== undefined) {
         pending.signal.removeEventListener('abort', pending.onCancel);
       }
@@ -154,7 +161,7 @@ export class StdioHostSession implements HostSession {
     this.closed = true;
     const failure = new HostRequestError('unavailable', error?.message ?? 'host connection closed');
     for (const pending of this.pendingHttp.values()) {
-      clearTimeout(pending.timeout);
+      if (pending.timeout !== undefined) clearTimeout(pending.timeout);
       if (pending.signal !== undefined && pending.onCancel !== undefined) {
         pending.signal.removeEventListener('abort', pending.onCancel);
       }

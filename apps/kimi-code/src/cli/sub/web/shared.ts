@@ -36,6 +36,7 @@ export interface ParsedServerOptions {
   allowRemoteShutdown: boolean;
   dangerousBypassAuth: boolean;
   allowedHosts: readonly string[];
+  daemon?: boolean;
   webTitle?: string;
   socketPath?: string;
   managedBy?: string;
@@ -53,6 +54,7 @@ export interface ServerCliOptions {
   allowRemoteShutdown?: boolean;
   dangerousBypassAuth?: boolean;
   allowedHost?: string[];
+  daemon?: boolean;
   webTitle?: string;
   socket?: string;
   managedBy?: string;
@@ -68,6 +70,7 @@ export function parseServerOptions(opts: ServerCliOptions): ParsedServerOptions 
     allowRemoteShutdown: opts.allowRemoteShutdown === true,
     dangerousBypassAuth: opts.dangerousBypassAuth === true,
     allowedHosts: parseAllowedHostArgs(opts.allowedHost),
+    ...(opts.daemon === undefined ? {} : { daemon: opts.daemon }),
     webTitle: opts.webTitle,
     socketPath: opts.socket,
     managedBy: opts.managedBy,
