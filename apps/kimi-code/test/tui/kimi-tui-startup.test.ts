@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
@@ -5440,6 +5441,86 @@ describe('KimiTUI work location', () => {
       expect(driver.state.appState.worktree).toBeUndefined();
       expect(transcriptText(driver)).toContain(`Working directory does not exist: ${vanished}`);
     });
+
+    it('keeps the previous /sessions tab and rows when a scope query fails', async () => {
+      const project = tempDir('kimi-scope-fail-project-');
+      const harness = makeHarness(makeSession({ id: 'ses-current' }), {
+        listSessionsPage: vi.fn(async (input: { workDir?: string; scope?: string }) => {
+          if (input.scope === 'project') {
+            throw new Error('Project index unavailable');
+          }
+          return {
+            items: [{ id: 'ses-cwd-only', title: 'Cwd session', workDir: project, updatedAt: Date.now() }],
+            nextCursor: 'cursor-cwd',
+          };
+        }),
+      });
+      const driver = await startAt(project, harness, {}, { projectRoot: project, isGitRepo: true });
+      await (driver as unknown as { showSessionPicker(): Promise<void> }).showSessionPicker();
+
+      expect(driver.state.sessionsScope).toBe('cwd');
+      expect(driver.state.sessions.map((row) => row.id)).toEqual(['ses-cwd-only']);
+      expect(driver.state.sessionsNextCursor).toBe('cursor-cwd');
+
+      await (
+        driver as unknown as {
+          selectSessionPickerScope(scope: 'cwd' | 'project' | 'all', id: string): Promise<void>;
+        }
+      ).selectSessionPickerScope('project', 'ses-cwd-only');
+
+      expect(driver.state.sessionsScope).toBe('cwd');
+      expect(driver.state.sessions.map((row) => row.id)).toEqual(['ses-cwd-only']);
+      expect(driver.state.sessionsNextCursor).toBe('cursor-cwd');
+      expect(transcriptText(driver)).toContain('Failed to load project sessions.');
+    });
+
+    it('rolls back appState and closes the resumed session when cross-worktree applyWorkLocation fails', async () => {
+      const project = tempDir('kimi-resume-rollback-project-');
+      const targetDir = join(project, 'wt-target');
+      mkdirSync(targetDir);
+      const current = makeSession({ id: 'ses-current' });
+      const resumed = makeSession({ id: 'ses-resumed' });
+      const harness = makeHarness(current, {
+        resumeSession: vi.fn(async () => resumed),
+        resolveSessionEnvironment: vi.fn(async (options: { workDir?: string; environmentCwd?: string }) => {
+          if (options.workDir === targetDir) {
+            throw new Error(`Environment rejected ${targetDir}`);
+          }
+          return { environmentId: 'local', cwd: options.environmentCwd };
+        }),
+      });
+      const driver = await startAt(project, harness, {}, { projectRoot: project, isGitRepo: true });
+      await driver.ensureSession();
+
+      const ok = await (
+        driver as unknown as {
+          resumeSession(
+            id: string,
+            plan: {
+              kind: 'switch';
+              location: { cwd: string; projectRoot: string; isGitRepo: boolean; worktree: { root: string; name: string; repoRoot: string } };
+              missing: boolean;
+            },
+          ): Promise<boolean>;
+        }
+      ).resumeSession('ses-resumed', {
+        kind: 'switch',
+        location: {
+          cwd: targetDir,
+          projectRoot: project,
+          isGitRepo: true,
+          worktree: { root: targetDir, name: 'wt-target', repoRoot: project },
+        },
+        missing: false,
+      });
+
+      expect(ok).toBe(false);
+      expect(resumed.close).toHaveBeenCalledOnce();
+      expect(driver.state.appState.workDir).toBe(project);
+      expect(driver.state.appState.worktree).toBeUndefined();
+      expect(driver.state.appState.sessionId).toBe('ses-current');
+      expect(transcriptText(driver)).toContain(`Environment rejected ${targetDir}`);
+    });
   });
 
   describe('leaving a Kimi worktree', () => {
@@ -5512,6 +5593,7 @@ describe('KimiTUI work location', () => {
       const { removeWorktree, driver, worktree, stop, mount } = await startInWorktree({
         uncommittedFiles: 0,
       });
+      execFileSync('git', ['init', '-q'], { cwd: worktree });
       driver.worktreeCreation.createdThisRun.set(worktree, {
         name: 'wt',
         repoRoot: 'unused',

@@ -141,11 +141,12 @@ export async function runV2Print(
       firstLaunch = true;
     },
   });
+  const launchPaths = resolveLaunchPaths(opts, workDir);
   const client = new SDKRpcClientV2({
     homeDir,
     identity: createKimiCodeHostIdentity(version),
     nonInteractive: true,
-    ...resolveLaunchPaths(opts, workDir),
+    ...launchPaths,
   });
   const services = client.engineAccessor;
   const auth = services.get(IOAuthToolkit);
@@ -248,7 +249,13 @@ export async function runV2Print(
       if (gated.length > 0) stderr.write(formatTrustGatedMcpWarning(gated));
     } catch {}
 
-    let resolved = await resolveNativeSession(services, opts, sessionWorkDir, defaultModel, stderr);
+    let resolved = await resolveNativeSession(
+      services,
+      { ...opts, agentFiles: launchPaths.agentFiles },
+      sessionWorkDir,
+      defaultModel,
+      stderr,
+    );
     const { previousPermissionMode } = resolved;
     if (previousPermissionMode !== undefined) {
       restorePermission = async () => {

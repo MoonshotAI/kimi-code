@@ -1680,5 +1680,63 @@ describe('runV2Print', () => {
         await rm(existingOtherDir, { recursive: true, force: true });
       }
     });
+
+    it('resolves a relative --agent-file from the launch directory when creating a -w worktree', async () => {
+      const launchDir = await mkdtemp(join(tmpdir(), 'kimi-print-agent-launch-'));
+      const worktreeDir = await mkdtemp(join(tmpdir(), 'kimi-print-agent-wt-'));
+      await writeFile(
+        join(launchDir, 'local-reviewer.md'),
+        '---\nname: local-reviewer\ndescription: Reviews code.\n---\n\nYou review code.\n',
+      );
+      const cwd = vi.spyOn(process, 'cwd').mockReturnValue(launchDir);
+      const { app, appServices } = makeFakeHarness();
+      (appServices.get(IFlagService) as { enabled: ReturnType<typeof vi.fn> }).enabled.mockReturnValue(true);
+      const created = sampleCreated({
+        repoRoot: launchDir,
+        sourceRoot: launchDir,
+        cwd: worktreeDir,
+        worktree: {
+          path: worktreeDir,
+          name: 'fix-login',
+          head: '1234567890abcdef',
+          branch: undefined,
+          missing: false,
+          managed: true,
+        },
+        copiedFiles: [],
+        sourceDirty: false,
+      });
+      const createWt = vi.spyOn(SDKRpcClientV2.prototype, 'createWorktree').mockResolvedValueOnce(created);
+      const listWt = vi.spyOn(SDKRpcClientV2.prototype, 'listWorktrees').mockResolvedValueOnce({
+        repoRoot: launchDir,
+        currentCheckoutRoot: launchDir,
+        bare: false,
+        worktrees: [created.worktree],
+      });
+      mocks.bootstrap.mockReturnValue({ app });
+      mocks.ensureMainAgent.mockResolvedValue({ agentId: 'main', generation: 1 });
+
+      try {
+        await runV2Print(
+          opts({ worktree: 'fix-login', agentFiles: ['./local-reviewer.md'] }) as never,
+          '1.2.3-test',
+          { stdout: writer(), stderr: writer() },
+        );
+
+        const sessions = appServices.get(ISessionManager) as { create: ReturnType<typeof vi.fn> };
+        expect(sessions.create).toHaveBeenCalledWith(
+          expect.objectContaining({
+            workDir: worktreeDir,
+            mainAgentBinding: { profile: 'local-reviewer', model: 'k2' },
+          }),
+        );
+      } finally {
+        createWt.mockRestore();
+        listWt.mockRestore();
+        cwd.mockRestore();
+        await rm(launchDir, { recursive: true, force: true });
+        await rm(worktreeDir, { recursive: true, force: true });
+      }
+    });
   });
 });

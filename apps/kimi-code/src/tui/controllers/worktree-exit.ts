@@ -1,3 +1,5 @@
+import { execFile } from 'node:child_process';
+
 import type { KimiHarness } from '@moonshot-ai/kimi-code-sdk';
 import type { Component, Focusable } from '@moonshot-ai/pi-tui';
 
@@ -13,10 +15,36 @@ import type { AppState } from '#/tui/types';
 import { formatErrorMessage } from '#/tui/utils/event-payload';
 import { sessionWorktree } from '#/tui/utils/session-work-dir';
 import { abbreviateHome } from '#/utils/paths';
+import { resolveCommandPath } from '#/utils/process/resolve-command';
 import { quoteShellArg } from '#/utils/shell-quote';
 
 import type { WorktreeCreationController } from './worktree-creation';
 import { inspectWorktreeRemoval, removeWorktree } from './worktree-removal';
+
+const IGNORED_CHECK_TIMEOUT_MS = 5_000;
+
+export function worktreeHasIgnoredFiles(worktreePath: string): Promise<boolean> {
+  const git = resolveCommandPath('git', worktreePath);
+  if (git === undefined) return Promise.resolve(true);
+  return new Promise((resolve) => {
+    try {
+      execFile(
+        git,
+        ['-C', worktreePath, 'status', '--porcelain=v1', '-z', '--ignored=matching'],
+        { encoding: 'utf8', timeout: IGNORED_CHECK_TIMEOUT_MS, windowsHide: true },
+        (error, stdout) => {
+          if (error !== null) {
+            resolve(true);
+            return;
+          }
+          resolve(stdout.length > 0);
+        },
+      );
+    } catch {
+      resolve(true);
+    }
+  });
+}
 
 export type WorktreeExitOutcome =
   | {
@@ -34,6 +62,7 @@ export interface WorktreeExitHost {
   readonly harness: Pick<KimiHarness, 'inspectWorktreeRemoval' | 'removeWorktree'>;
   readonly state: Pick<TUIState, 'appState'>;
   readonly worktreeCreation: Pick<WorktreeCreationController, 'createdThisRun'>;
+  readonly hasIgnoredFiles?: (worktreePath: string) => Promise<boolean>;
   hasSessionContent(): boolean;
   mountEditorReplacement(panel: Component & Focusable, onDisplaced?: () => void): void;
   restoreEditor(): void;
@@ -85,7 +114,7 @@ export class WorktreeExitController {
       };
     }
     if (removal.openSessionIds.length > 0) return { kind: 'in-use', name: worktree.name };
-    if (this.untouched(worktree, removal)) {
+    if (this.untouched(worktree, removal) && !(await this.hasIgnoredFiles(worktree.root))) {
       const deleted = await this.remove(removal, 'delete');
       if (deleted !== undefined) return deleted;
     }
@@ -113,6 +142,10 @@ export class WorktreeExitController {
       worktree: { path: worktree.root, name: worktree.name },
       excludeSessionId: this.currentSessionId(),
     });
+  }
+
+  private hasIgnoredFiles(worktreePath: string): Promise<boolean> {
+    return (this.host.hasIgnoredFiles ?? worktreeHasIgnoredFiles)(worktreePath);
   }
 
   private untouched(worktree: Worktree, removal: WorktreeRemoval): boolean {

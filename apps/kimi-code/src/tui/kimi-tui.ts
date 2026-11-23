@@ -3211,21 +3211,36 @@ export class KimiTUI {
     }
   }
 
-  async startSessionAt(location: WorkLocation): Promise<boolean> {
-    const previous: WorkLocation = {
+  private currentWorkLocation(): WorkLocation {
+    return {
       cwd: this.state.appState.workDir,
       projectRoot: this.state.appState.projectRoot ?? this.state.appState.workDir,
       isGitRepo: this.state.appState.isGitRepo ?? false,
       worktree: this.state.appState.worktree,
     };
-    const replaced = this.session;
+  }
+
+  private async applyWorkLocationOrRollback(
+    location: WorkLocation,
+    options?: { readonly resolveEnvironment?: boolean },
+  ): Promise<boolean> {
+    const previous = this.currentWorkLocation();
     try {
-      await this.applyWorkLocation(location);
+      await this.applyWorkLocation(location, options);
+      return true;
     } catch (error) {
-      await this.applyWorkLocation(previous, { resolveEnvironment: isDirectory(previous.cwd) }).catch(() => {});
+      await this.applyWorkLocation(previous, {
+        resolveEnvironment: isDirectory(previous.cwd),
+      }).catch(() => {});
       this.showError(formatErrorMessage(error));
       return false;
     }
+  }
+
+  async startSessionAt(location: WorkLocation): Promise<boolean> {
+    const previous = this.currentWorkLocation();
+    const replaced = this.session;
+    if (!(await this.applyWorkLocationOrRollback(location))) return false;
     if (replaced === undefined) return true;
     await this.createNewSession({ environmentId: 'local' });
     if (this.session !== replaced) return true;
@@ -3626,18 +3641,17 @@ export class KimiTUI {
     requestToken: number = ++this.sessionPickerScopeRequestToken,
   ): Promise<boolean> {
     this.state.loadingSessions = true;
-    this.state.sessionsScope = scope;
-    this.state.sessionsNextCursor = undefined;
-    this.state.sessionsLoadingMore = false;
     try {
       const result = await this.loadSessionPickerPage(scope, requestToken);
       if (result === undefined) return false;
+      this.state.sessionsScope = scope;
       this.state.sessionsNextCursor = result.nextCursor;
+      this.state.sessionsLoadingMore = false;
       this.state.sessions = result.rows;
       return true;
     } catch (error) {
       log.warn('failed to fetch sessions for picker', { error: String(error) });
-      return requestToken === this.sessionPickerScopeRequestToken;
+      return false;
     } finally {
       if (requestToken === this.sessionPickerScopeRequestToken) {
         this.state.loadingSessions = false;
@@ -3770,7 +3784,14 @@ export class KimiTUI {
         replayTurnLimit: REPLAY_FETCH_TURN_LIMIT,
       });
       if (plan?.kind === 'switch') {
-        await this.applyWorkLocation(plan.location, { resolveEnvironment: !plan.missing });
+        if (
+          !(await this.applyWorkLocationOrRollback(plan.location, {
+            resolveEnvironment: !plan.missing,
+          }))
+        ) {
+          await Promise.resolve(session.close?.()).catch(() => {});
+          return false;
+        }
         await this.switchToSession(session, switchedNotice(plan.location.cwd));
         if (plan.missing) {
           this.showStatus(missingWorkdirNotice(plan.location.cwd), 'warning');
@@ -5114,7 +5135,13 @@ export class KimiTUI {
   }): Promise<void> {
     this.sessionPickerOptions = options;
     const requestToken = ++this.sessionPickerScopeRequestToken;
-    if (!(await this.fetchSessions('cwd', requestToken))) return;
+    const loaded = await this.fetchSessions('cwd', requestToken);
+    if (!loaded && requestToken !== this.sessionPickerScopeRequestToken) return;
+    if (!loaded && this.state.sessionsScope !== 'cwd') {
+      this.state.sessionsScope = 'cwd';
+      this.state.sessionsNextCursor = undefined;
+      this.state.sessions = [];
+    }
     this.remountSessionPicker();
   }
 
@@ -5123,7 +5150,15 @@ export class KimiTUI {
     selectedSessionId: string,
   ): Promise<void> {
     const requestToken = ++this.sessionPickerScopeRequestToken;
-    if (!(await this.fetchSessions(nextScope, requestToken))) return;
+    if (!(await this.fetchSessions(nextScope, requestToken))) {
+      if (
+        requestToken === this.sessionPickerScopeRequestToken &&
+        this.state.activeDialog === 'session-picker'
+      ) {
+        this.showError(`Failed to load ${nextScope} sessions.`);
+      }
+      return;
+    }
     if (this.state.activeDialog !== 'session-picker') return;
     this.remountSessionPicker(selectedSessionId);
   }
@@ -5168,7 +5203,8 @@ export class KimiTUI {
       await this.harness.deleteSession(session.id);
       this.state.sessions = this.state.sessions.filter((row) => row.id !== session.id);
       const requestToken = ++this.sessionPickerScopeRequestToken;
-      if (!(await this.fetchSessions(this.state.sessionsScope, requestToken))) return;
+      await this.fetchSessions(this.state.sessionsScope, requestToken);
+      if (requestToken !== this.sessionPickerScopeRequestToken) return;
       if (this.state.activeDialog !== 'session-picker') return;
       this.remountSessionPicker();
       this.showStatus('Session deleted.');

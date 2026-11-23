@@ -1,3 +1,7 @@
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { stripVTControlCharacters } from 'node:util';
 
 import { ErrorCodes, KimiError, type WorktreeRemovalCheck } from '@moonshot-ai/kimi-code-sdk';
@@ -9,6 +13,7 @@ import type { WorktreeRunRecord } from '#/tui/controllers/worktree-creation';
 import {
   formatWorktreeExit,
   WorktreeExitController,
+  worktreeHasIgnoredFiles,
   type WorktreeExitHost,
 } from '#/tui/controllers/worktree-exit';
 import { quoteShellArg } from '#/utils/shell-quote';
@@ -53,6 +58,7 @@ function makeHost() {
       },
     },
     worktreeCreation: { createdThisRun },
+    hasIgnoredFiles: vi.fn(async () => false),
     hasSessionContent: vi.fn(() => true),
     mountEditorReplacement: vi.fn((panel: Component & Focusable, displaced?: () => void) => {
       mounted = panel;
@@ -224,6 +230,12 @@ describe('WorktreeExitController', () => {
       'an earlier session worked here',
       (h: ReturnType<typeof makeHost>) => {
         h.host.harness.inspectWorktreeRemoval.mockResolvedValue(check({ closedSessionCount: 1 }));
+      },
+    ],
+    [
+      'an ignored file exists in the worktree',
+      (h: ReturnType<typeof makeHost>) => {
+        h.host.hasIgnoredFiles.mockResolvedValue(true);
       },
     ],
   ])('asks instead of deleting when %s', async (_case, vary) => {
@@ -398,5 +410,31 @@ describe('WorktreeExitController', () => {
     expect(formatWorktreeExit(controller.outcome!)).toEqual([
       `Couldn't check worktree fix-login, so it was left as it is: No Kimi worktree at ${WORKTREE}.`,
     ]);
+  });
+
+  describe('worktreeHasIgnoredFiles', () => {
+    it('detects ignored files and fails safe outside a git repository', async () => {
+      const repo = mkdtempSync(join(tmpdir(), 'kimi-exit-ignored-repo-'));
+      const nonGit = mkdtempSync(join(tmpdir(), 'kimi-exit-nongit-'));
+      try {
+        execFileSync('git', ['init', '-q'], { cwd: repo });
+        writeFileSync(join(repo, '.gitignore'), '.env\n');
+        execFileSync('git', ['add', '.gitignore'], { cwd: repo });
+        execFileSync(
+          'git',
+          ['-c', 'user.name=test', '-c', 'user.email=test@example.test', 'commit', '-qm', 'init'],
+          { cwd: repo },
+        );
+
+        await expect(worktreeHasIgnoredFiles(repo)).resolves.toBe(false);
+
+        writeFileSync(join(repo, '.env'), 'SECRET=1\n');
+        await expect(worktreeHasIgnoredFiles(repo)).resolves.toBe(true);
+        await expect(worktreeHasIgnoredFiles(nonGit)).resolves.toBe(true);
+      } finally {
+        rmSync(repo, { recursive: true, force: true });
+        rmSync(nonGit, { recursive: true, force: true });
+      }
+    });
   });
 });
