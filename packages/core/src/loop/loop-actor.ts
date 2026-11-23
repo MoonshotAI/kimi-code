@@ -1469,13 +1469,6 @@ class LoopActor implements Loop {
     if (event.type === 'llm.delta.part' && (event.part.type === 'function' || event.part.type === 'tool_call_part')) {
       step.toolCallStreaming = true;
     }
-    if (event.type === 'llm.retry') {
-      const message = event.message;
-      if (message !== undefined && message !== null) {
-        this.record({ type: 'message.appended', turnId: turn.id, step: turn.step, source: 'partial', message });
-        step.partialMessage = message;
-      }
-    }
     this.record(event);
   }
 
@@ -1489,7 +1482,7 @@ class LoopActor implements Loop {
     );
     this.record({ type: 'llm.ended', outcome });
     const message = outcome.message;
-    if (message !== undefined && message !== null && step.partialMessage !== message) {
+    if (message !== undefined && message !== null) {
       this.record({
         type: 'message.appended',
         turnId: turn.id,
@@ -1498,7 +1491,6 @@ class LoopActor implements Loop {
         message,
       });
     }
-    step.partialMessage = undefined;
     if (outcome.type !== 'done' && this.finishSteeredStep(turn, step)) return;
     if (toolCalls.length > 0) {
       turn.phase = 'batching';
