@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 
@@ -115,6 +115,7 @@ describe('AgentPermissionPolicyService chain', () => {
                 dirname: (path: string) => dirname(path),
               },
               workspace: { mapRoots: (roots) => roots },
+              fs: hostFs,
             },
             dispose: () => {},
           }),
@@ -409,7 +410,6 @@ describe('AgentPermissionPolicyService chain', () => {
     'python3 --version',
     'ip addr',
     'ls -la',
-    'cd ~/project',
     'history 20',
     'arch',
     'ifconfig',
@@ -425,7 +425,7 @@ describe('AgentPermissionPolicyService chain', () => {
   });
 
   it.each([
-    'cat notes.txt && grep -R foo src/ | head -n 5 && cat --help',
+    'cat notes.txt && grep foo src/main.ts | head -n 5 && cat --help',
     'ls -la && cat -n notes.txt && cat --color=auto notes.txt',
     'uniq -i && grep -i --ignore-case token notes.txt',
     'cat < notes.txt && cat 2>&1 notes.txt && cat > /dev/null notes.txt',
@@ -672,7 +672,7 @@ describe('AgentPermissionPolicyService git cwd write approval', () => {
                 status: 'ready',
                 onDidChangeStatus: () => ({ dispose: () => {} }),
                 dispose: () => {},
-                host: { pathClass: 'posix', homeDir: '/home/test' } as never,
+                host: { pathClass: 'posix', homeDir: join(workspaceDir, 'home') } as never,
                 path: {
                   separator: '/',
                   delimiter: ':',
@@ -736,7 +736,7 @@ describe('AgentPermissionPolicyService git cwd write approval', () => {
       ['cat <<\'EOF\' < .env\nhello\nEOF', '.env'],
       ['grep -f .env foo', '.env', 'foo'],
       ['grep foo .env', '.env'],
-      ['grep -r foo .env', '.env'],
+      ['grep -i foo .env', '.env'],
       ['grep -f notes.txt .env', 'notes.txt', '.env'],
       ['tr x y < .env', '.env'],
       ['echo hello < .env', '.env'],
@@ -756,6 +756,80 @@ describe('AgentPermissionPolicyService git cwd write approval', () => {
         result: { kind: 'ask' },
       });
     }
+  });
+
+  it.each([
+    'grep -R secret .',
+    'grep --recursive secret .',
+    'cd sub && cat notes.txt',
+    'cd sub; cat notes.txt',
+    'cd sub | cat notes.txt',
+    'cat .env*',
+    'cat notes?.txt',
+    'grep secret ./src/*.ts',
+    'cat ~/.ssh/id_?sa',
+    'diff --from-file=.env /dev/null',
+    'diff --to-file=.env /dev/null',
+    'cat --files0-from=.env',
+    'cat .e"nv"',
+  ])('does not approve expanded or option-embedded sensitive reads: %s', async (command) => {
+    await expect(evaluate({
+      toolName: 'Bash',
+      args: { command },
+    })).resolves.toMatchObject({
+      policyName: 'fallback-ask',
+      result: { kind: 'ask' },
+    });
+  });
+
+  it('uses the Bash cwd and resolves symlinks before approving reads', async () => {
+    await writeFile(join(workspaceDir, 'notes.txt'), 'notes');
+    await writeFile(join(workspaceDir, '.env'), 'placeholder');
+    await symlink(join(workspaceDir, '.env'), join(workspaceDir, 'config-view'));
+    await symlink(join(workspaceDir, '.git'), join(workspaceDir, 'git-view'));
+    await mkdir(join(workspaceDir, '.git', 'refs'), { recursive: true });
+    await writeFile(join(workspaceDir, '.git', 'config'), 'placeholder');
+    await mkdir(join(workspaceDir, 'home', 'project'), { recursive: true });
+    await mkdir(join(workspaceDir, 'work'), { recursive: true });
+    workspace.stub.setWorkDir(join(workspaceDir, 'work'));
+
+    await expect(evaluate({
+      toolName: 'Bash',
+      args: { command: 'cd ~/project' },
+    })).resolves.toMatchObject({ policyName: 'bash-read-only-approve' });
+    await expect(evaluate({
+      toolName: 'Bash',
+      args: { command: 'cat notes.txt', cwd: workspaceDir },
+    })).resolves.toMatchObject({ policyName: 'bash-read-only-approve' });
+    await expect(evaluate({
+      toolName: 'Bash',
+      args: { command: 'cat config', cwd: join(workspaceDir, '.git') },
+    })).resolves.toMatchObject({ policyName: 'fallback-ask' });
+    await expect(evaluate({
+      toolName: 'Bash',
+      args: { command: 'cat config-view', cwd: workspaceDir },
+    })).resolves.toMatchObject({ policyName: 'fallback-ask' });
+    await expect(evaluate({
+      toolName: 'Bash',
+      args: { command: 'cat notes.txt', cwd: join(workspaceDir, '.git', 'refs') },
+    })).resolves.toMatchObject({ policyName: 'fallback-ask' });
+    await expect(evaluate({
+      toolName: 'Bash',
+      args: { command: 'cat git-view/config', cwd: workspaceDir },
+    })).resolves.toMatchObject({ policyName: 'fallback-ask' });
+  });
+
+  it('asks when the filesystem cannot prove read targets safe', async () => {
+    environmentFsAvailable = false;
+
+    await expect(evaluate({
+      toolName: 'Bash',
+      args: { command: 'cat notes.txt' },
+    })).resolves.toMatchObject({ policyName: 'fallback-ask' });
+    await expect(evaluate({
+      toolName: 'Bash',
+      args: { command: 'pwd' },
+    })).resolves.toMatchObject({ policyName: 'bash-read-only-approve' });
   });
 
   it('keeps nested git control paths out of static approval when guards are disabled', async () => {

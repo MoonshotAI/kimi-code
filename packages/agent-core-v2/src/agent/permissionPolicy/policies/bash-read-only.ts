@@ -10,6 +10,9 @@ import type {
   PermissionPolicy,
   PermissionPolicyResult,
 } from '#/agent/permissionPolicy/types';
+import { realpathExistingPrefix } from '#/environment/environment';
+import { EnvironmentWorkspaceView } from '#/environment/environmentWorkspaceView';
+import { isHostFsNotDirectory, isHostFsNotFound } from '#/os/interface/hostFsErrors';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import { canonicalizePath, isSensitiveFile } from '#/tool/path-access';
 import { acquireEnvironmentLease } from './environment-lease';
@@ -81,14 +84,22 @@ export class BashReadOnlyApprovePermissionPolicyService implements PermissionPol
     const command = (context.args as { readonly command?: unknown }).command;
     if (typeof command !== 'string') return undefined;
     const readOnly = analyzeBashReadOnly(this.bashParser.parse(command, PARSE_OPTIONS));
-    if (readOnly === undefined) return undefined;
+    if (readOnly === undefined || readOnly.paths.length === 0) return readOnly === undefined ? undefined : { kind: 'approve' };
     const lease = acquireEnvironmentLease(this.environment);
     if (lease === undefined) return undefined;
     try {
       const pathClass = lease.environment.host?.pathClass;
       if (pathClass === undefined) return undefined;
-      const cwd = this.workspace.workDir;
-      if (cwd.length === 0) return undefined;
+      const view = new EnvironmentWorkspaceView(lease.environment, {
+        workDir: this.workspace.workDir,
+        additionalDirs: this.workspace.additionalDirs,
+      });
+      const fs = lease.environment.fs;
+      if (fs === undefined) return undefined;
+      const requestedCwd = (context.args as { readonly cwd?: unknown }).cwd;
+      if (requestedCwd !== undefined && typeof requestedCwd !== 'string') return undefined;
+      const cwd = view.resolve(requestedCwd ?? view.workDir);
+      if (cwd.length === 0 || !view.path.isAbsolute(cwd)) return undefined;
       const paths = readOnly.paths.map((path) => {
         if (path.startsWith('~') && lease.environment.host?.homeDir === undefined) return undefined;
         try {
@@ -102,12 +113,33 @@ export class BashReadOnlyApprovePermissionPolicyService implements PermissionPol
           return undefined;
         }
       });
-      if (paths.some((path) => path === undefined || isSensitiveFile(path))) return undefined;
-      const marker = lease.environment.fs === undefined
-        ? null
-        : await findGitWorkTree(lease.environment.fs, cwd);
-      if (paths.some((path) => hasGitPathComponent(path!, cwd, pathClass))) return undefined;
-      if (marker !== null && paths.some((path) => isGitControlPath(path!, marker, pathClass))) {
+      if (paths.some((path) => path === undefined)) return undefined;
+      const resolvedPaths = await Promise.all([
+        cwd,
+        ...paths as string[],
+      ].map(async (path) => {
+        try {
+          return [path, await realpathExistingPrefix(
+            fs,
+            view.path,
+            path,
+            (error) => isHostFsNotFound(error) || isHostFsNotDirectory(error),
+          )];
+        } catch {
+          return undefined;
+        }
+      }));
+      if (resolvedPaths.some((paths) => paths === undefined)) return undefined;
+      const checks = resolvedPaths as [string, string][];
+      if (checks.some((paths) => paths.some(isSensitiveFile))) return undefined;
+      const marker = await findGitWorkTree(fs, cwd);
+      if (checks.some((paths) => paths.some((path) => hasGitPathComponent(path, cwd, pathClass)))) {
+        return undefined;
+      }
+      if (
+        marker !== null &&
+        checks.some((paths) => paths.some((path) => isGitControlPath(path, marker, pathClass)))
+      ) {
         return undefined;
       }
       return { kind: 'approve' };
@@ -127,6 +159,7 @@ export function analyzeBashReadOnly(result: BashParseResult): { paths: string[] 
   if (!collectCommands(result.root, commands) || commands.length === 0) return undefined;
   const paths: string[] = [];
   for (const command of commands) {
+    if (commands.length > 1 && command.node.children.some((child) => child.type === 'command_name' && child.text === 'cd')) return undefined;
     const operands = analyzeCommand(command.node, command.arguments, command.inputs);
     if (operands === undefined) return undefined;
     paths.push(...operands);
@@ -247,6 +280,14 @@ function analyzeCommand(
       child.type !== 'heredoc_redirect'
     )
     .toSorted((left, right) => left.startIndex - right.startIndex);
+  if (name === 'cd') {
+    if (args.some((arg) => arg.type === 'word' && /[$`<>|&;(){}*?[\]]/.test(arg.text))) return undefined;
+    return args.length <= 1 ? paths : undefined;
+  }
+  if (name === 'ls') {
+    if (args.some((arg) => arg.type === 'word' && /[$`<>|&;(){}*?[\]]/.test(arg.text))) return undefined;
+    return [...paths, ...args.map(literalText).filter((arg): arg is string => arg !== undefined && arg.length > 0 && !arg.startsWith('-'))];
+  }
   args.push(...redirectArguments);
   if (!args.every(isLiteral)) return undefined;
   const texts = args.map(literalText);
@@ -292,15 +333,13 @@ function analyzeCommand(
     }
     return inputs.length <= 1 ? [...paths, ...inputs] : undefined;
   }
-  if (name === 'ls' || name === 'cd') {
-    if (operands.some((arg) => /[$`<>|&;(){}*?[\]]/.test(arg))) return undefined;
-    if (name === 'ls') return [...paths, ...operands.flatMap((arg) => arg.startsWith('-') ? [] : [arg])];
-    return operands.length <= 1 ? [...paths, ...operands] : undefined;
-  }
   if (['grep', 'egrep', 'fgrep'].includes(name)) {
     let patternSeen = false;
     for (let index = 0; index < operands.length; index++) {
       const text = operands[index]!;
+      if (/^--(?:recursive|dereference-recursive)$/.test(text) || /^-[^-]*[rR]/.test(text)) {
+        return undefined;
+      }
       if (text === '-f' || text === '--file' || text === '--exclude-from' || text === '-e' || text === '--regexp') {
         const path = operands[++index];
         if (path === undefined) return undefined;
@@ -337,7 +376,7 @@ function analyzeCommand(
     }
     return paths;
   }
-  if (operands.some((text) => /^--(?:output|exclude|exclude-from|files0-from)(?:=|$)/.test(text))) {
+  if (operands.some((text) => /^--(?:output|exclude|exclude-from|files0-from|from-file|to-file)(?:=|$)/.test(text))) {
     return undefined;
   }
   for (let index = 0; index < operands.length; index++) {
@@ -364,16 +403,24 @@ function isLiteral(node: BashSyntaxNode): boolean {
 
 function literalText(node: BashSyntaxNode): string | undefined {
   switch (node.type) {
-    case 'word':
-      return node.text.replaceAll(/\\(.)/gs, '$1');
+    case 'word': {
+      const raw = node.text;
+      const text = raw.replaceAll(/\\(.)/gs, '$1');
+      return /[$`<>|&;(){}*?[\]~]/.test(raw) || /[$`<>|&;(){}*?[\]~]/.test(text) ? undefined : text;
+    }
     case 'number':
       return node.text;
-    case 'raw_string':
-      return node.text.length >= 2 ? node.text.slice(1, -1) : undefined;
-    case 'string':
-      return node.children.every((child) => !child.isNamed || child.type === 'string_content')
+    case 'raw_string': {
+      if (node.text.length < 2) return undefined;
+      const text = node.text.slice(1, -1);
+      return /[$`<>|&;(){}*?[\]~]/.test(text) ? undefined : text;
+    }
+    case 'string': {
+      const text = node.children.every((child) => !child.isNamed || child.type === 'string_content')
         ? node.children.filter((child) => child.type === 'string_content').map((child) => child.text).join('')
         : undefined;
+      return text !== undefined && /[$`<>|&;(){}*?[\]~]/.test(text) ? undefined : text;
+    }
     case 'concatenation': {
       const parts = node.children.map(literalText);
       return parts.every((part) => part !== undefined) ? parts.join('') : undefined;
