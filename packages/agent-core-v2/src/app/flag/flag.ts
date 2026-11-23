@@ -12,13 +12,7 @@ export type ExperimentalFlagConfig = Partial<Record<FlagId, boolean>>;
 
 export const EXPERIMENTAL_SECTION = 'experimental';
 
-export const ExperimentalConfigSchema = z
-  .record(z.string(), z.boolean())
-  .refine((flags) => !('subagent_fork' in flags), {
-    path: ['subagent_fork'],
-    message:
-      'The experimental flag "subagent_fork" was removed. Remove it from [experimental] in config.toml.',
-  });
+export const ExperimentalConfigSchema = z.record(z.string(), z.boolean());
 
 export type ExperimentalConfig = z.infer<typeof ExperimentalConfigSchema>;
 
