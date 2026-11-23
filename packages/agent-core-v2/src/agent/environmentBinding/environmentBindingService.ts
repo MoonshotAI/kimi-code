@@ -8,7 +8,9 @@ import { loadAgentsMdDetailed } from '#/agent/profile/context';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
+import type { ContextInjectionContext, ContextInjectionResult, ReminderRegistration } from '#/features/reminder/types';
 import type { HostEnvironmentInfo } from '#/os/interface/hostEnvironment';
+import { isHostFsNotDirectory, isHostFsNotFound } from '#/os/interface/hostFsErrors';
 import { LOCAL_ENVIRONMENT_ID, type EnvironmentBinding, type EnvironmentLease } from '#/environment/environment';
 import { EnvironmentError } from '#/environment/environmentRegistry';
 import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
@@ -25,6 +27,12 @@ import { EnvironmentSetBinding, environmentBindingKey } from './environmentBindi
 export const ENVIRONMENT_BINDING_REMINDER_VARIANT = 'environment_binding';
 
 export const PROJECT_CONTEXT_REMINDER_VARIANT = 'project_context';
+
+export const MISSING_WORKDIR_REMINDER_VARIANT = 'missing_workdir';
+
+interface MissingWorkdirDisclosure {
+  readonly missingCwd?: string;
+}
 
 function projectContextReminderText(binding: EnvironmentBinding, cwd: string, paths: readonly string[]): string {
   return (
@@ -51,6 +59,7 @@ export class AgentEnvironmentBindingService implements IAgentEnvironmentBindingS
   private readonly changeEmitter = new Emitter<EnvironmentBinding>();
   readonly onDidChange = this.changeEmitter.event;
   private readonly restoreHook: IDisposable;
+  private readonly missingWorkdirRegistration: ReminderRegistration | undefined;
 
   constructor(
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
@@ -79,6 +88,12 @@ export class AgentEnvironmentBindingService implements IAgentEnvironmentBindingS
       }
       await next();
     });
+    this.missingWorkdirRegistration =
+      this.scopeContext.agentId === MAIN_AGENT_ID
+        ? this.reminder.register<MissingWorkdirDisclosure>(MISSING_WORKDIR_REMINDER_VARIANT, (context) =>
+            this.missingWorkdirReminder(context),
+          )
+        : undefined;
   }
 
   private isSeedRoundTrip(binding: EnvironmentBinding): boolean {
@@ -189,7 +204,40 @@ export class AgentEnvironmentBindingService implements IAgentEnvironmentBindingS
     }
   }
 
+  private async missingWorkdirReminder(
+    context: ContextInjectionContext<MissingWorkdirDisclosure>,
+  ): Promise<ContextInjectionResult<MissingWorkdirDisclosure> | undefined> {
+    if (!context.isNewTurn) return undefined;
+    const binding = this.current;
+    if (binding.environmentId !== LOCAL_ENVIRONMENT_ID) return undefined;
+    const cwd = this.effectiveRoots(binding).workDir;
+    if (context.lastDisclosure?.missingCwd === cwd) return undefined;
+    let lease: EnvironmentLease;
+    try {
+      lease = this.resolver.acquire(binding, ['fs']);
+    } catch (error) {
+      if (error instanceof EnvironmentError) return undefined;
+      throw error;
+    }
+    try {
+      const fs = lease.environment.fs;
+      if (fs === undefined) return undefined;
+      const missing = await fs.stat(cwd).then(
+        (stat) => !stat.isDirectory,
+        (error: unknown) => isHostFsNotFound(error) || isHostFsNotDirectory(error),
+      );
+      if (!missing) return undefined;
+      return {
+        content: `The working directory \`${cwd}\` no longer exists.`,
+        disclosure: { missingCwd: cwd },
+      };
+    } finally {
+      lease.dispose();
+    }
+  }
+
   dispose(): void {
+    this.missingWorkdirRegistration?.dispose();
     this.restoreHook.dispose();
     this.changeEmitter.dispose();
   }

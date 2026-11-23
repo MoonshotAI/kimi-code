@@ -5,7 +5,13 @@ import type { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import '#/agent/loop/turnOps';
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { AgentEnvironmentService, type IAgentEnvironmentOverlay } from '#/agent/environmentBinding/agentEnvironment';
-import { AgentEnvironmentBindingService, PROJECT_CONTEXT_REMINDER_VARIANT } from '#/agent/environmentBinding/environmentBindingService';
+import {
+  AgentEnvironmentBindingService,
+  MISSING_WORKDIR_REMINDER_VARIANT,
+  PROJECT_CONTEXT_REMINDER_VARIANT,
+} from '#/agent/environmentBinding/environmentBindingService';
+import type { ContextInjectionProvider } from '#/features/reminder/types';
+import { HostFsError } from '#/os/interface/hostFsErrors';
 import { environmentBindingKey, EnvironmentSetBinding } from '#/agent/environmentBinding/environmentBindingOps';
 import { AgentStateService } from '#/agent/state/agentStateService';
 import { IAgentStateService } from '#/agent/state/agentState';
@@ -80,9 +86,20 @@ function stubScopeContext(agentId: string) {
   };
 }
 
-function stubReminder(reminders: { content: string; variant: string }[]): IAgentReminderService {
+function stubReminder(
+  reminders: { content: string; variant: string }[],
+  providers?: Map<string, ContextInjectionProvider>,
+): IAgentReminderService {
   return {
     _serviceBrand: undefined,
+    register: (variant: string, provider: ContextInjectionProvider) => {
+      providers?.set(variant, provider);
+      return {
+        dispose: () => {
+          providers?.delete(variant);
+        },
+      };
+    },
     notify: (content: string, notification: { variant: string }) => {
       reminders.push({ content, variant: notification.variant });
     },
@@ -179,7 +196,8 @@ function setup(options: {
     for (const handler of busHandlers.get(type) ?? []) handler(event);
   };
   const reminders: { content: string; variant: string }[] = [];
-  const reminder = stubReminder(reminders);
+  const reminderProviders = new Map<string, ContextInjectionProvider>();
+  const reminder = stubReminder(reminders, reminderProviders);
   const sessionState = new SessionStateService();
   sessionState.contributeState(workspaceContextWorkDirKey);
   sessionState.contributeState(workspaceContextAdditionalDirsKey);
@@ -233,6 +251,7 @@ function setup(options: {
     published,
     sessionState,
     reminders,
+    reminderProviders,
     makeAgent,
     agentEnvironment: main.agentEnvironment,
   };
@@ -412,6 +431,64 @@ describe('AgentEnvironmentBindingService project context reminder', () => {
         '- /remote/work/sub/AGENTS.md\n' +
         'Read them before making changes in this working directory.',
     );
+  });
+});
+
+describe('AgentEnvironmentBindingService missing workdir reminder', () => {
+  async function setupLocalFs(directories: readonly string[]) {
+    const ctx = setup({ sessionCwd: '/workspace/gone' });
+    const fs = {
+      stat: vi.fn(async (path: string): Promise<HostFileStat> => {
+        if (directories.includes(path)) return { isFile: false, isDirectory: true, size: 0 };
+        throw new HostFsError('os.fs.not_found', `missing: ${path}`);
+      }),
+    } as unknown as IHostFileSystem;
+    await ctx.localRegistration.remove();
+    ctx.registry.register(probingEnvironment('local', LOCAL_HOST, fs));
+    return { ...ctx, fs };
+  }
+
+  function injectionContext(overrides: { isNewTurn?: boolean; lastDisclosure?: { readonly missingCwd?: string } } = {}) {
+    return {
+      injectedPositions: [] as readonly number[],
+      lastInjectedAt: null,
+      isNewTurn: overrides.isNewTurn ?? true,
+      lastDisclosure: overrides.lastDisclosure,
+    };
+  }
+
+  it('notifies once on a new turn when the local working directory is missing', async () => {
+    const { reminderProviders } = await setupLocalFs([]);
+    const provider = reminderProviders.get(MISSING_WORKDIR_REMINDER_VARIANT);
+    expect(provider).toBeDefined();
+
+    const first = await provider!(injectionContext());
+    expect(first).toEqual({
+      content: 'The working directory `/workspace/gone` no longer exists.',
+      disclosure: { missingCwd: '/workspace/gone' },
+    });
+
+    const repeat = await provider!(injectionContext({ lastDisclosure: { missingCwd: '/workspace/gone' } }));
+    expect(repeat).toBeUndefined();
+
+    const midTurn = await provider!(injectionContext({ isNewTurn: false }));
+    expect(midTurn).toBeUndefined();
+  });
+
+  it('stays silent when the directory exists or the agent is bound to a remote environment', async () => {
+    const existing = await setupLocalFs(['/workspace/gone']);
+    const existingProvider = existing.reminderProviders.get(MISSING_WORKDIR_REMINDER_VARIANT);
+    expect(await existingProvider!(injectionContext())).toBeUndefined();
+
+    const remote = await setupLocalFs([]);
+    remote.binding.bind('remote', '/remote/gone');
+    const remoteProvider = remote.reminderProviders.get(MISSING_WORKDIR_REMINDER_VARIANT);
+    expect(await remoteProvider!(injectionContext())).toBeUndefined();
+  });
+
+  it('does not register for non-main agents', () => {
+    const { reminderProviders } = setup({ agentId: 'subagent-1' });
+    expect(reminderProviders.has(MISSING_WORKDIR_REMINDER_VARIANT)).toBe(false);
   });
 });
 
