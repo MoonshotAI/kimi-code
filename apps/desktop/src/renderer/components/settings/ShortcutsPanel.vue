@@ -247,7 +247,7 @@ onUnmounted(() => {
 
 <template>
   <div class="sc-panel">
-    <h3 class="sc-title">{{ t('settings.tabs.shortcuts') }}</h3>
+    <h3 class="sec-title">{{ t('settings.tabs.shortcuts') }}</h3>
 
     <label class="sc-search">
       <Icon name="search" size="md" />
@@ -315,20 +315,13 @@ onUnmounted(() => {
   </div>
 </template>
 
-<style scoped src="./settings-common.css"></style>
+<style scoped src="@moonshot-ai/app-components/settings-common.css"></style>
 
 <style scoped>
 .sc-panel {
   display: flex;
   flex-direction: column;
   padding: 0 0 var(--space-4);
-}
-.sc-title {
-  margin: 0 0 var(--space-3);
-  font-family: var(--font-ui);
-  font-size: var(--text-base);
-  font-weight: var(--weight-medium);
-  color: var(--color-text);
 }
 .sc-search {
   display: flex;

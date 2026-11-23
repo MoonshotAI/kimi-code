@@ -5,7 +5,8 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./support": "./src/support.ts"
+    "./support": "./src/support.ts",
+    "./settings-common.css": "./src/settings/settings-common.css"
   },
   "dependencies": {
     "@chenglou/pretext": "0.0.8",

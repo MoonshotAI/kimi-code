@@ -69,7 +69,7 @@ function formatContext(size: string): string {
     </div>
 
     <div v-if="signedIn" class="mpv-body">
-      <div class="mpv-group">
+      <div class="settings-group settings-group-divided">
         <div class="mpv-row">
           <span class="mpv-label">{{ t('providers.managedAccount') }}</span>
           <span class="mpv-value">{{ accountName }}</span>
@@ -101,7 +101,7 @@ function formatContext(size: string): string {
     </div>
 
     <div v-else class="mpv-body">
-      <div class="mpv-group">
+      <div class="settings-group settings-group-divided">
         <div class="mpv-row mpv-row-login">
           <span class="mpv-label">
             {{ t('providers.managedLoginTitle') }}
@@ -119,6 +119,8 @@ function formatContext(size: string): string {
     </div>
   </div>
 </template>
+
+<style scoped src="./settings-common.css"></style>
 
 <style scoped>
 .mpv { display: flex; flex-direction: column; }
@@ -150,12 +152,6 @@ function formatContext(size: string): string {
 }
 .mpv-body { display: flex; flex-direction: column; }
 
-.mpv-group {
-  overflow: hidden;
-  border-radius: var(--radius-xl);
-  background: var(--color-surface);
-}
-.mpv-group > * + * { border-top: var(--p-hairline) solid var(--color-line); }
 .mpv-row {
   display: flex;
   align-items: center;

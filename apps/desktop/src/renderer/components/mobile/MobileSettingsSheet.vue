@@ -621,7 +621,7 @@ function toggleAutoSessionTitle(): void {
 .providers-page {
   margin: 0 max(var(--space-4), var(--safe-right)) 0 max(var(--space-4), var(--safe-left));
 }
-.providers-page :deep(.pp-title) {
+.providers-page :deep(.pp-head .sec-title) {
   display: none;
 }
 .srow-val {

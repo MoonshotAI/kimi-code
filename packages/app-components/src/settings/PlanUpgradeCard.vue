@@ -9,7 +9,7 @@ const { t } = useI18n();
 <template>
   <section class="sec">
     <h3 class="sec-title">{{ t('settings.planUsage.title') }}</h3>
-    <div class="pu-group">
+    <div class="settings-group settings-group-divided">
       <div class="pu-row">
         <span class="pu-main">
           <span class="pu-label">{{ t('settings.planUsage.freeTitle') }}</span>
@@ -21,20 +21,11 @@ const { t } = useI18n();
   </section>
 </template>
 
+<style scoped src="./settings-common.css"></style>
+
 <style scoped>
 .sec {
   margin-bottom: var(--space-5);
-}
-.sec-title {
-  font-size: var(--text-base);
-  font-weight: var(--weight-medium);
-  color: var(--color-text);
-  margin: 0 0 var(--space-3);
-}
-.pu-group {
-  overflow: hidden;
-  border-radius: var(--radius-xl);
-  background: var(--color-surface);
 }
 .pu-row {
   display: flex;

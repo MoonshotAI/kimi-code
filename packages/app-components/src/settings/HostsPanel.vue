@@ -549,7 +549,7 @@ void loadHosts();
     </div>
     <div v-else class="re-head">
       <div class="re-head-copy">
-        <h3 class="re-title">{{ t('settings.hosts.title') }}</h3>
+        <h3 class="sec-title">{{ t('settings.hosts.title') }}</h3>
       </div>
       <Button variant="secondary" size="sm" :disabled="busy" @click="startAdd">
         <Icon name="plus" size="sm" />{{ t('settings.hosts.add') }}
@@ -624,7 +624,7 @@ void loadHosts();
 
     <section v-else-if="showHostPicker" class="re-hosts" :aria-label="t('settings.hosts.sshHostsTitle')">
       <p v-if="sshHostsFailed" class="re-hosts-note">{{ t('settings.hosts.sshHostsFailed') }}</p>
-      <div v-else-if="detectedHosts.length > 0" class="re-group re-hosts-list" role="list">
+      <div v-else-if="detectedHosts.length > 0" class="settings-group re-hosts-list" role="list">
         <div v-for="entry in detectedHosts" :key="entry.alias" class="re-row re-host" role="listitem">
           <span class="re-row-copy">
             <span class="re-row-name">{{ entry.alias }}</span>
@@ -640,7 +640,7 @@ void loadHosts();
     </section>
 
     <template v-else>
-      <div class="re-group" role="list" :aria-label="t('settings.hosts.title')">
+      <div class="settings-group" role="list" :aria-label="t('settings.hosts.title')">
         <div v-if="store.hosts.length === 0" class="re-empty">
           <div class="re-empty-title">{{ t('settings.hosts.emptyTitle') }}</div>
           <div class="re-empty-hint">{{ t('settings.hosts.emptyHint') }}</div>
@@ -773,14 +773,15 @@ void loadHosts();
   </section>
 </template>
 
+<style scoped src="./settings-common.css"></style>
+
 <style scoped>
 .re, .re-page { display: flex; flex-direction: column; }
 .re { gap: var(--space-3); }
 .re-page { gap: var(--space-4); }
 .re-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }
 .re-head-copy { min-width: 0; }
-.re-title { margin: 0; color: var(--color-text); font-family: var(--font-ui); font-size: var(--text-base); font-weight: var(--weight-medium); }
-.re-group { overflow: hidden; border-radius: var(--radius-xl); background: var(--color-surface); }
+.re-head .sec-title { margin: 0; }
 .re-row { display: flex; align-items: center; gap: var(--space-3); min-height: 60px; padding: 0 var(--space-3) 0 var(--space-4); transition: background var(--duration-fast) var(--ease-out); }
 .re-row + .re-row, .re-item + .re-item { border-top: var(--p-hairline) solid var(--color-line); }
 .re-row:hover { background: var(--color-hover); }

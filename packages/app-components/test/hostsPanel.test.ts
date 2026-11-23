@@ -464,7 +464,7 @@ describe('HostsPanel SSH config hosts', () => {
     expect(test).not.toHaveBeenCalled();
     expect(connect).toHaveBeenCalledExactlyOnceWith(NEW_ID);
     expect(host.querySelector('.re-hosts')).toBeNull();
-    expect([...host.querySelectorAll('.re-group .re-row-name')].map((node) => node.textContent)).toEqual(['devbox', 'gpu']);
+    expect([...host.querySelectorAll('.settings-group .re-row-name')].map((node) => node.textContent)).toEqual(['devbox', 'gpu']);
     expect(host.querySelector('.re-page')).toBeNull();
     addButton().click();
     await nextTick();
