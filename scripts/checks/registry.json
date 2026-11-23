@@ -1,6 +1,11 @@
 {
   "invocations": [
     {
+      "run": "node scripts/checks/cli-dependencies.mjs",
+      "in": "package.json#scripts.lint",
+      "why": "The npm CLI bundles its required packages; declaring dependencies would make users install them separately."
+    },
+    {
       "run": "node scripts/check-comments.mjs",
       "in": "package.json#scripts.lint",
       "why": "AGENTS.md forbids comments in JS/TS code, and this check is what enforces it."
