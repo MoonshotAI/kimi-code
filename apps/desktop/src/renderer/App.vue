@@ -1450,6 +1450,14 @@ function feedbackSessionHost(sessionId: string): string | undefined {
   return sessionId === activeSessionId.value ? client.visibleWorkspace.value?.hostId : undefined;
 }
 
+function supportsSessionFeedback(sessionId: string | null | undefined): boolean {
+  if (!sessionId) return false;
+  return hostsStore().supportsFeedback(feedbackSessionHost(sessionId));
+}
+
+const supportsReplyFeedback = computed(() => supportsSessionFeedback(activeSessionId.value));
+const supportsSessionUpload = computed(() => supportsSessionFeedback(globalFeedbackTarget.value?.sessionId));
+
 const desktopFeedback = useDesktopFeedback({
   signedIn: () => signedIn.value,
   accountId: () => managedUserInfo.value?.userId,
@@ -2505,6 +2513,7 @@ function openPr(url: string): void {
       :right-panel-open="panel.panelVisible.value"
       :main-view="mainView"
       :session-id="activeSessionId"
+      :supports-reply-feedback="supportsReplyFeedback"
       :status="status"
       :plan-mode="planMode"
       :pending-question-actions="pendingQuestionActions"
@@ -2873,6 +2882,7 @@ function openPr(url: string): void {
     <GlobalFeedbackDialog
       :key="desktopFeedback.accountEpoch.value"
       :target="globalFeedbackTarget"
+      :supports-session-upload="supportsSessionUpload"
       @close="globalFeedbackTarget = null"
     />
     <LoginDialog

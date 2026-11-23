@@ -313,6 +313,7 @@ GET /api/v1/mcp/servers/{name}: operation
 GET /api/v1/mcp/servers: operation
 GET /api/v1/meta response 200.code: enum 0
 GET /api/v1/meta response 200.data.capabilities.agent_close: enum true
+GET /api/v1/meta response 200.data.capabilities.feedback: enum true optional
 GET /api/v1/meta response 200.data.capabilities.file_upload: enum true
 GET /api/v1/meta response 200.data.capabilities.fs_query: enum true
 GET /api/v1/meta response 200.data.capabilities.interactions_list: enum true

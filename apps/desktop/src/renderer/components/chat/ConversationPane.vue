@@ -61,6 +61,7 @@ const { t } = useI18n();
 
 const props = defineProps<{
   sessionId?: string;
+  supportsReplyFeedback: boolean;
   status: ConversationStatus;
   planMode?: boolean;
   pendingQuestionActions?: Record<string, 'answer' | 'dismiss'>;
@@ -1010,10 +1011,10 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
               @reorder-queue="handleReorderQueue"
               @steer-queued="emit('steerQueued', $event)"
             >
-              <template #assistant-reply-actions="{ turn }">
+              <template v-if="supportsReplyFeedback" #assistant-reply-actions="{ turn }">
                 <TurnFeedbackActions :target="feedbackTurnTarget(sessionId, turn)" />
               </template>
-              <template #assistant-reply-status="{ turn }">
+              <template v-if="supportsReplyFeedback" #assistant-reply-status="{ turn }">
                 <TurnFeedbackStatus :target="feedbackTurnTarget(sessionId, turn)" />
               </template>
             </ChatPane>

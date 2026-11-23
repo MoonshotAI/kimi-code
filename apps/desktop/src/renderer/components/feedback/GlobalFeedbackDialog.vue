@@ -16,7 +16,7 @@ import FeedbackGuideLink from './FeedbackGuideLink.vue';
 import GlobalFeedbackMedia from './GlobalFeedbackMedia.vue';
 import { addFeedbackMedia, FEEDBACK_MEDIA_LIMIT, type FeedbackMedia } from './feedbackMedia';
 
-const props = defineProps<{ target: GlobalFeedbackTarget | null }>();
+const props = defineProps<{ target: GlobalFeedbackTarget | null; supportsSessionUpload: boolean }>();
 const emit = defineEmits<{ close: [] }>();
 const { t, locale } = useI18n();
 const { fontPrefs } = useFontPrefs();
@@ -42,7 +42,7 @@ function blankDraft(sessionId?: string): FeedbackDraft {
 
 const draft = ref(blankDraft());
 const guideUrls = shallowRef<FeedbackForm['learn_more_url']>();
-const availableSessionId = computed(() => props.target?.sessionId);
+const availableSessionId = computed(() => props.supportsSessionUpload ? props.target?.sessionId : undefined);
 const hasDraft = computed(() => draft.value.category !== 'bug' || draft.value.description.length > 0
   || draft.value.media.length > 0 || draft.value.includeDiagnostics || draft.value.uploadSessionId !== undefined);
 const overLimit = computed(() => draft.value.description.length > FEEDBACK_DESCRIPTION_LIMIT);
@@ -67,10 +67,11 @@ onBeforeUnmount(() => {
   clearDraft();
 });
 
-watch(() => props.target, target => {
+watch([() => props.target, availableSessionId], ([target, sessionId], [previousTarget]) => {
+  if (target !== null && draft.value.uploadSessionId !== sessionId) draft.value.uploadSessionId = undefined;
+  if (target === previousTarget) return;
   guideUrls.value = undefined;
   if (target !== null) {
-    if (draft.value.uploadSessionId !== target.sessionId) draft.value.uploadSessionId = undefined;
     if (!hasDraft.value) draft.value = blankDraft(target.sessionId);
     void feedback?.loadForm().then(config => {
       if (target === props.target) guideUrls.value = config?.learn_more_url;

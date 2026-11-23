@@ -9948,6 +9948,12 @@
                               ],
                               "type": "boolean"
                             },
+                            "feedback": {
+                              "enum": [
+                                true
+                              ],
+                              "type": "boolean"
+                            },
                             "file_upload": {
                               "enum": [
                                 true

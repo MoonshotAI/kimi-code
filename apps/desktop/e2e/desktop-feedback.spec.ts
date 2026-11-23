@@ -398,7 +398,7 @@ const hostProxy = `/api/v1/hosts/${hostId}/proxy`;
 type OwnedRecord = { host_id?: string };
 type SessionDirectory = OwnedRecord & { items?: OwnedRecord[]; groups?: (OwnedRecord & { sessions: OwnedRecord[] })[] };
 
-async function openSshConversation(app: DesktopApp, provider: FakeModel) {
+async function openSshConversation(app: DesktopApp, provider: FakeModel, hostCapabilities: Record<string, boolean> = { feedback: true }) {
   const page = app.window;
   const reply = 'The remote task finished.';
   provider.script(say(reply));
@@ -414,6 +414,9 @@ async function openSshConversation(app: DesktopApp, provider: FakeModel) {
     };
   }, hostProxy);
   await page.route(`**${hostProxy}/**`, route => route.continue({ url: route.request().url().replace(hostProxy, '') }));
+  await page.route(`**${hostProxy}/api/v1/meta`, route => route.fulfill({ json: envelope({
+    server_version: '2.7.2', capabilities: { websocket: true, ...hostCapabilities },
+  }) }));
   await page.route('**/api/v1/hosts', route => route.fulfill({ json: envelope({ hosts: [{
     id: hostId, host: 'example.test', enabled: true, status: 'ready',
   }] }) }));
@@ -513,6 +516,33 @@ testWithProvider('submits global feedback locally from an SSH conversation by de
   await dialog.getByRole('button', { name: 'Submit', exact: true }).click();
   await expect(page.getByRole('status').filter({ hasText: 'Feedback submitted · ID 31' })).toBeVisible();
   expect(requests).toEqual([{ path: '/api/v1/feedback', body: expect.objectContaining({ kind: 'global', source: 'command', upload_session: false }) }]);
+});
+
+testWithProvider('keeps local feedback available when the SSH host lacks feedback support', async ({ app, provider }) => {
+  const { sessionId, requests } = await openSshConversation(app, provider, {});
+  const page = app.window;
+  await expect(page.getByRole('button', { name: 'Good response' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Poor response' })).toHaveCount(0);
+
+  const dialog = page.getByRole('dialog', { name: 'Send feedback' });
+  for (const source of ['sidebar', 'command'] as const) {
+    if (source === 'sidebar') {
+      await openAccountFeedback(page);
+    } else {
+      const input = page.getByRole('combobox', { name: 'Message input' });
+      await input.fill('/feedback');
+      await input.press('Enter');
+    }
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByRole('checkbox', { name: 'Submit this conversation' })).toHaveCount(0);
+    await dialog.getByRole('textbox', { name: 'Description' }).fill('A desktop issue');
+    await dialog.getByRole('button', { name: 'Submit', exact: true }).click();
+    await expect(dialog).toBeHidden();
+  }
+  expect(requests).toEqual(['sidebar', 'command'].map(source => ({
+    path: '/api/v1/feedback',
+    body: expect.objectContaining({ kind: 'global', source, session_id: sessionId, upload_session: false }),
+  })));
 });
 
 testWithProvider('sends reply feedback to its SSH host by default', async ({ app, provider }) => {
