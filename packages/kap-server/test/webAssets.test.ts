@@ -21,7 +21,7 @@ describe('web asset cache policy', () => {
       writeFile(join(assetsDir, 'favicon.svg'), '<svg></svg>'),
     ]);
     app = Fastify();
-    await registerWebAssetRoutes(app, assetsDir);
+    registerWebAssetRoutes(app, assetsDir);
   });
 
   afterEach(async () => {

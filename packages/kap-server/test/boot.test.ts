@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
 import { createServer, type Server } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -15,7 +15,9 @@ import {
   IOAuthToolkit,
   ITelemetryService,
   noopTelemetryService,
+  Scope,
 } from '@moonshot-ai/agent-core-v2';
+import { RemoteEnvironmentProviderFactory } from '@moonshot-ai/agent-core-v2/remote';
 
 import { listLiveServerInstances } from '../src/instanceRegistry';
 import {
@@ -39,6 +41,7 @@ describe('server-v2 boot', () => {
       await rm(home, { recursive: true, force: true });
       home = undefined;
     }
+    vi.restoreAllMocks();
   });
 
   it('boots agent-core-v2 and serves the basic /api/v1 routes', async () => {
@@ -305,11 +308,9 @@ describe('server-v2 boot', () => {
     expect(process.listenerCount('uncaughtException')).toBe(exceptionBefore.length);
   });
 
-  it('does not leave process handlers installed when startup fails', async () => {
+  it('rejects missing web assets before writing to the home directory', async () => {
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-'));
     const emptyAssets = await mkdtemp(join(tmpdir(), 'kimi-server-v2-assets-'));
-    const rejectionBefore = process.listenerCount('unhandledRejection');
-    const exceptionBefore = process.listenerCount('uncaughtException');
     try {
       await expect(
         startServer({
@@ -321,11 +322,37 @@ describe('server-v2 boot', () => {
           webAssetsDir: emptyAssets,
         }),
       ).rejects.toThrow('web assets');
-      expect(process.listenerCount('unhandledRejection')).toBe(rejectionBefore);
-      expect(process.listenerCount('uncaughtException')).toBe(exceptionBefore);
+      expect(await readdir(home)).toEqual([]);
     } finally {
       await rm(emptyAssets, { recursive: true, force: true });
     }
+  });
+
+  it('releases the instance registration, the core and process handlers when startup fails after boot', async () => {
+    home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-'));
+    const createApp = vi.spyOn(Scope, 'createApp');
+    vi.spyOn(RemoteEnvironmentProviderFactory.prototype, 'attach').mockRejectedValue(
+      new Error('remote environments unavailable'),
+    );
+    const rejectionBefore = process.listenerCount('unhandledRejection');
+    const exceptionBefore = process.listenerCount('uncaughtException');
+
+    await expect(
+      startServer({
+        hostIdentity: TEST_HOST_IDENTITY,
+        host: '127.0.0.1',
+        port: 0,
+        homeDir: home,
+        logLevel: 'silent',
+      }),
+    ).rejects.toThrow('remote environments unavailable');
+
+    expect(process.listenerCount('unhandledRejection')).toBe(rejectionBefore);
+    expect(process.listenerCount('uncaughtException')).toBe(exceptionBefore);
+    expect(await listLiveServerInstances(home)).toEqual([]);
+    expect(createApp).toHaveBeenCalledTimes(1);
+    const core = createApp.mock.results[0]?.value as Scope;
+    expect(() => core.accessor.get(IBootstrapService)).toThrow();
   });
 });
 
