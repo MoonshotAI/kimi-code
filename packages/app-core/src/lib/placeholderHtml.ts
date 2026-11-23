@@ -8,7 +8,7 @@ export function placeholderHtml(text: string): string {
   let last = 0;
   for (const match of text.matchAll(KBD_PAIR)) {
     out += escapeHtml(text.slice(last, match.index));
-    out += `<kbd>${escapeHtml(match[1] ?? '')}</kbd>`;
+    out += `<kbd class="ui-kbd__key">${escapeHtml(match[1] ?? '')}</kbd>`;
     last = match.index + match[0].length;
   }
   return out + escapeHtml(text.slice(last));

@@ -9,25 +9,27 @@ describe('placeholderHtml', () => {
 
   it('keeps <kbd> pairs as keycap markup', () => {
     expect(placeholderHtml('Press <kbd>Enter</kbd> to queue')).toBe(
-      'Press <kbd>Enter</kbd> to queue',
+      'Press <kbd class="ui-kbd__key">Enter</kbd> to queue',
     );
   });
 
   it('keeps adjacent <kbd> pairs for multi-key shortcuts', () => {
     expect(
       placeholderHtml('Press <kbd>Enter</kbd> to queue · <kbd>Ctrl</kbd>+<kbd>S</kbd> to inject'),
-    ).toBe('Press <kbd>Enter</kbd> to queue · <kbd>Ctrl</kbd>+<kbd>S</kbd> to inject');
+    ).toBe(
+      'Press <kbd class="ui-kbd__key">Enter</kbd> to queue · <kbd class="ui-kbd__key">Ctrl</kbd>+<kbd class="ui-kbd__key">S</kbd> to inject',
+    );
   });
 
   it('escapes the kbd content itself', () => {
     expect(placeholderHtml('<kbd><img src=x onerror=alert(1)></kbd>')).toBe(
-      '<kbd>&lt;img src=x onerror=alert(1)&gt;</kbd>',
+      '<kbd class="ui-kbd__key">&lt;img src=x onerror=alert(1)&gt;</kbd>',
     );
   });
 
   it('escapes every other tag — no whitelist beyond exact <kbd> pairs', () => {
     expect(placeholderHtml('<script>alert(1)</script><kbd>Esc</kbd>')).toBe(
-      '&lt;script&gt;alert(1)&lt;/script&gt;<kbd>Esc</kbd>',
+      '&lt;script&gt;alert(1)&lt;/script&gt;<kbd class="ui-kbd__key">Esc</kbd>',
     );
     expect(placeholderHtml('<kbd class="x">K</kbd>')).toBe(
       '&lt;kbd class=&quot;x&quot;&gt;K&lt;/kbd&gt;',

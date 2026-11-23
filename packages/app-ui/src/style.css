@@ -1065,6 +1065,45 @@ html[data-color-scheme="dark"] {
   color: HighlightText;
 }
 
+[data-menu-frame] > .scroll-thumb {
+  position: absolute;
+  right: var(--menu-scrollbar-edge);
+  width: var(--menu-scrollbar-width);
+  border-radius: var(--radius-full);
+  background: var(--color-menu-scrollbar);
+  transition: background var(--duration-base) var(--ease-out);
+  cursor: default;
+  touch-action: none;
+  z-index: var(--z-raised);
+}
+[data-menu-frame]:hover > .scroll-thumb {
+  background: var(--color-menu-scrollbar-hover);
+}
+[data-menu-frame] > .scroll-thumb::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: calc(-1 * var(--space-2));
+  right: 0;
+}
+
+.ui-kbd__key {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: var(--kbd-min-width);
+  height: var(--kbd-height);
+  padding: 0 var(--kbd-padding-x);
+  border: var(--p-hairline) solid var(--color-line);
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: inherit;
+  font-family: var(--font-kbd);
+  font-size: var(--kbd-font-size);
+  line-height: var(--leading-solid);
+}
+
 .mention-pill,
 .attachment-pill,
 .quote-pill {
