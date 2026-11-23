@@ -32,14 +32,15 @@ const USER_MARK = '❯';
 const DONE_MARK = '●';
 const FAILED_MARK = '✗';
 const TRANSCRIPT_MARKS = [USER_MARK, DONE_MARK, FAILED_MARK] as const;
+const ENTRY_INDENT = ' ';
 
 const APPROVAL_HINT = '↵ confirm';
 const APPROVAL_RULE = /^─+$/;
 const EDITOR_TOP = /^╭─+╮$/;
 const EDITOR_PROMPT = '│ >';
 const ACTIVITY = /^[\u{1F311}-\u{1F318}\u2800-\u28FF]/u;
-const TOOL_CARD = /^(?:Used |Using |Truncated |Ran a command|Running a command|Read(?:ing)? \d+ files?)/;
-const READ_GROUP = /^Read(?:ing)? \d+ files?/;
+const READ_GROUP = /^Read(?:ing)? \d+ files?…?(?: · .*)?$/;
+const TOOL_CARD = /^(?:(?:Used|Using|Truncated) [A-Za-z][\w.-]*(?: \(.*\))?|Ran a command|Running a command|Read(?:ing)? \d+ files?…?)(?: · .*)?$/;
 const READ_GROUP_FILE = /^[├└]─ (.+?)(?: · (.+))?$/;
 const READ_GROUP_PENDING = 'reading…';
 const READ_GROUP_FAILED = 'failed';
@@ -102,18 +103,19 @@ function screenOf(rows: readonly string[], viewport: readonly string[]): Screen 
   const hint = lines.findLastIndex((line) => line.includes(APPROVAL_HINT));
   if (hint > editor) {
     const rule = lines.findLastIndex((line, index) => index < hint && APPROVAL_RULE.test(line));
-    return { ...frame, input: 'approval', transcript: lines.slice(0, rule < 0 ? hint : rule), status: [] };
+    return { ...frame, input: 'approval', transcript: rows.slice(0, rule < 0 ? hint : rule), status: [] };
   }
-  if (editor < 0) return { ...frame, input: 'none', transcript: lines, status: [] };
+  if (editor < 0) return { ...frame, input: 'none', transcript: rows, status: [] };
   const gap = lines.findLastIndex((line, index) => index < editor && line === '');
-  return { ...frame, input: 'editor', transcript: lines.slice(0, gap + 1), status: lines.slice(gap + 1, editor) };
+  return { ...frame, input: 'editor', transcript: rows.slice(0, gap + 1), status: lines.slice(gap + 1, editor) };
 }
 
 function blocksOf(screen: Screen): Block[] {
   const blocks: { mark: Block['mark']; head: string; text: string }[] = [];
   let open: (typeof blocks)[number] | undefined;
-  for (const line of screen.transcript) {
-    const mark = TRANSCRIPT_MARKS.find((candidate) => line.startsWith(`${candidate} `));
+  for (const row of screen.transcript) {
+    const mark = TRANSCRIPT_MARKS.find((candidate) => row.startsWith(`${ENTRY_INDENT}${candidate} `));
+    const line = row.trim();
     if (mark !== undefined) {
       const head = line.slice(mark.length).trim();
       open = { mark, head, text: head };
@@ -126,7 +128,7 @@ function blocksOf(screen: Screen): Block[] {
 }
 
 function statusLines(screen: Screen, prefix: string): number {
-  return screen.transcript.filter((line) => line.startsWith(prefix)).length;
+  return screen.transcript.filter((row) => row.trimStart().startsWith(prefix)).length;
 }
 
 function latestTurn(screen: Screen): Block[] {

@@ -21,6 +21,26 @@ selfTest('expectReply', {
         await product.expectReply('The second paragraph.');
       },
     },
+    'finds a reply whose first words read like the start of a tool card': {
+      run: async ({ product, model }) => {
+        model.script(say('Used the cached answer because nothing changed.'), say('Read 2 files and found nothing new.'));
+        await product.send('Answer from the cache.');
+        await product.waitIdle();
+        await product.expectReply('Used the cached answer because nothing changed.');
+        await product.send('Summarise what you read.');
+        await product.waitIdle();
+        await product.expectReply('Read 2 files and found nothing new.');
+      },
+    },
+    'finds text after a line of the reply that quotes a prompt marker': {
+      run: async ({ product, model }) => {
+        model.script(say('Terminal transcript:\n\n❯ echo one\n\nThe command printed one line.'));
+        await product.send('Show me a terminal transcript.');
+        await product.waitIdle();
+        await product.expectReply('Terminal transcript:');
+        await product.expectReply('The command printed one line.');
+      },
+    },
     'finds text after a horizontal rule in the reply': {
       run: async ({ product, model }) => {
         model.script(say('First section.\n\n---\n\nSecond section.'));

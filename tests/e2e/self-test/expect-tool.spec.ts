@@ -77,6 +77,15 @@ selfTest('expectTool', {
         await workspace.expectFile('b.txt', 'new\n');
       },
     },
+    'does not take reply text that looks like a tool card for a tool': {
+      run: async ({ product, model }) => {
+        model.script(say('Here is what a read would look like:\n\n● Used Read (a.txt) · 1 line\n\nBut I did not read anything.'));
+        await product.send('Describe a read without doing one.');
+        await product.waitIdle();
+        await expect(product.expectTool({ name: 'Read', target: 'a.txt', status: 'done' })).rejects.toThrow('did not find Read');
+        await product.expectReply('But I did not read anything.');
+      },
+    },
     'does not take a tool from an earlier turn': {
       workspace: { 'a.txt': 'hello\n' },
       run: async ({ product, model }) => {
