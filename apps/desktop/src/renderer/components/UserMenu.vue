@@ -455,30 +455,13 @@ async function onLogout(): Promise<void> {
 
 <style scoped>
 .user-menu-trigger {
-  display: flex;
-  align-items: center;
-  gap: var(--sb-gap);
-  width: 100%;
-  min-width: 0;
   padding: 8px calc(var(--sb-pad-x) - var(--sb-inset));
   border: none;
   border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--color-text);
-  font-family: var(--font-ui);
-  font-size: var(--text-sm);
-  font-weight: var(--weight-medium);
-  line-height: var(--leading-tight);
-  cursor: pointer;
-  text-align: left;
 }
 .user-menu-trigger:hover,
 .user-menu-trigger[aria-expanded='true'] {
   background: var(--sb-hover);
-}
-.user-menu-trigger:focus-visible {
-  outline: none;
-  box-shadow: var(--p-focus-ring);
 }
 html.macos-desktop .user-menu-trigger {
   border-bottom-left-radius: var(--radius-window-chip);
@@ -595,3 +578,5 @@ html.macos-desktop.vibrancy .user-menu-trigger :deep(.ui-avatar) {
   color: var(--color-text-faint);
 }
 </style>
+
+<style scoped src="@moonshot-ai/app-components/sidebar-row-button.css"></style>

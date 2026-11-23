@@ -2006,30 +2006,8 @@ function streamingTailIndex(turn: ChatTurn): number | null {
   -webkit-mask-image: linear-gradient(to bottom, black calc(100% - 1.2lh), transparent calc(100% - 0.2lh));
 }
 .u-text-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1);
-  align-self: center;
   margin-top: var(--space-2);
   padding: var(--space-2) var(--space-4);
-  border: none;
-  border-radius: var(--radius-full);
-  background: var(--color-surface-raised);
-  box-shadow: var(--shadow-sm);
-  color: var(--color-text);
-  font-family: var(--font-ui);
-  font-size: var(--text-sm);
-  line-height: 1;
-  cursor: pointer;
-  user-select: none;
-  transition: box-shadow var(--duration-base) var(--ease-out);
-}
-.u-text-toggle:hover {
-  box-shadow: var(--shadow-md);
-}
-.u-text-toggle:focus-visible {
-  outline: 2px solid var(--color-accent);
-  outline-offset: 1px;
 }
 .u-text-wrap.is-clamped .u-text-toggle {
   position: absolute;
@@ -2045,7 +2023,9 @@ function streamingTailIndex(turn: ChatTurn): number | null {
   transform: rotate(180deg);
 }
 
-.u-edit {
+.u-edit,
+.u-copy,
+.a-cpbtn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -2064,26 +2044,15 @@ function streamingTailIndex(turn: ChatTurn): number | null {
   display: block;
   flex: none;
 }
-.u-edit:hover { opacity: 1; color: var(--color-accent); background: var(--color-hover); }
-.u-copy {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 3px;
-  background: none;
-  border: none;
-  border-radius: var(--radius-xs);
-  color: var(--color-text-muted);
-  font: inherit;
-  font-size: var(--text-base);
-  line-height: 1;
-  cursor: pointer;
-  transition: opacity 0.12s, color 0.12s, background-color 0.12s;
+.u-edit:hover,
+.u-copy:hover,
+.a-cpbtn:hover { opacity: 1; color: var(--color-accent); background: var(--color-hover); }
+.u-copy,
+.a-cpbtn {
   min-height: 20px;
   box-sizing: border-box;
 }
 .u-copy svg { display: block; flex: none; }
-.u-copy:hover { opacity: 1; color: var(--color-accent); background: var(--color-hover); }
 .u-edit-wrap { display: flex; justify-content: flex-end; }
 
 .compact-divider {
@@ -2281,28 +2250,6 @@ function streamingTailIndex(turn: ChatTurn): number | null {
   line-height: 20px;
 }
 
-.a-cpbtn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 3px;
-  background: none;
-  border: none;
-  border-radius: var(--radius-xs);
-  color: var(--color-text-muted);
-  font: inherit;
-  font-size: var(--text-base);
-  line-height: 1;
-  cursor: pointer;
-  transition: opacity 0.12s, color 0.12s, background-color 0.12s;
-  min-height: 20px;
-  box-sizing: border-box;
-}
-.a-cpbtn:hover {
-  opacity: 1;
-  color: var(--color-accent);
-  background: var(--color-hover);
-}
 .a-cpbtn svg {
   display: block;
   flex: none;
@@ -2853,3 +2800,5 @@ function streamingTailIndex(turn: ChatTurn): number | null {
 }
 
 </style>
+
+<style scoped src="./clamp-toggle.css"></style>

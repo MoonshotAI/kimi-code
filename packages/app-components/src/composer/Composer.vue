@@ -3988,17 +3988,7 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
   visibility: visible;
 }
 .drop-card {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
   padding: var(--space-4) var(--space-6);
-  border-radius: var(--radius-lg);
-  border: var(--p-hairline) dashed var(--color-accent);
-  background: var(--color-bg);
-  color: var(--color-accent);
-  font-size: var(--ui-b1);
-  font-weight: var(--weight-medium);
-  box-shadow: var(--shadow-md);
 }
 
 .composer-tip {
@@ -5293,3 +5283,5 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
   }
 }
 </style>
+
+<style scoped src="../lib/drop-card.css"></style>

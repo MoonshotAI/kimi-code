@@ -666,25 +666,11 @@ function onLogoClick(): void {
 
 .btn-new-chat {
   grid-column: 1 / -1;
-  display: flex;
-  align-items: center;
-  gap: var(--sb-gap);
-  width: 100%;
-  min-width: 0;
   padding: 8px calc(var(--sb-pad-x) - var(--sb-inset));
   border: none;
   border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--color-text);
-  font-family: var(--font-ui);
-  font-size: var(--text-sm);
-  font-weight: var(--weight-medium);
-  line-height: var(--leading-tight);
-  cursor: pointer;
-  text-align: left;
 }
 .btn-new-chat:hover { background: var(--sb-hover); }
-.btn-new-chat:focus-visible { outline: none; box-shadow: var(--p-focus-ring); }
 .btn-new-chat svg { flex: none; }
 .btn-new-chat span {
   overflow: hidden;
@@ -824,19 +810,9 @@ function onLogoClick(): void {
   visibility: visible;
 }
 .folder-drop-card {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
   max-width: 100%;
   box-sizing: border-box;
   padding: var(--space-4);
-  border-radius: var(--radius-lg);
-  border: var(--p-hairline) dashed var(--color-accent);
-  background: var(--color-bg);
-  color: var(--color-accent);
-  font-size: var(--ui-b1);
-  font-weight: var(--weight-medium);
-  box-shadow: var(--shadow-md);
 }
 .folder-drop-card svg {
   flex: none;
@@ -862,3 +838,7 @@ function onLogoClick(): void {
   color: var(--color-text-muted);
 }
 </style>
+
+<style scoped src="@moonshot-ai/app-components/sidebar-row-button.css"></style>
+
+<style scoped src="@moonshot-ai/app-components/drop-card.css"></style>

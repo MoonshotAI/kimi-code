@@ -199,12 +199,6 @@ function onWorkspaceMouseLeave(): void {
 .ws-dir:focus-within .ws-dir-sub {
   margin-right: calc(var(--icon-button-sm) + var(--space-2));
 }
-
-.empty {
-  padding: var(--space-6) var(--space-3);
-  text-align: center;
-  color: var(--color-text-quaternary);
-  font-size: calc(var(--text-base) - 3px);
-  line-height: 1.6;
-}
 </style>
+
+<style scoped src="./sidebar-empty.css"></style>

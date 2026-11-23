@@ -1333,16 +1333,10 @@ defineExpose({
   white-space: nowrap;
 }
 
-.empty {
-  padding: var(--space-6) var(--space-3);
-  text-align: center;
-  color: var(--color-text-quaternary);
-  font-size: calc(var(--text-base) - 3px);
-  line-height: 1.6;
-}
-
 </style>
 
 <style src="../lib/anchored-menu.css"></style>
 
 <style scoped src="../lib/locate-flash.css"></style>
+
+<style scoped src="./sidebar-empty.css"></style>
