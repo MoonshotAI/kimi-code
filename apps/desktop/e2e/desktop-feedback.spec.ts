@@ -19,12 +19,21 @@ async function openAccountFeedback(page: Page): Promise<void> {
   await menu.getByRole('menuitem', { name: 'Feedback', exact: true }).click();
 }
 
+function themeColor(page: Page, name: string): Promise<string> {
+  return page.evaluate(property => {
+    const swatch = document.createElement('span');
+    swatch.style.color = getComputedStyle(document.documentElement).getPropertyValue(property);
+    return swatch.style.color;
+  }, name);
+}
+
 async function expectSelectedFeedbackPillOnHover(pill: Locator): Promise<void> {
   const page = pill.page();
   await expect(pill).toHaveAttribute('aria-pressed', 'true');
   for (const colorScheme of ['dark', 'light'] as const) {
     await page.emulateMedia({ colorScheme });
     await page.mouse.move(0, 0);
+    await expect(pill).toHaveCSS('color', await themeColor(page, '--color-accent'));
     const selected = await pill.screenshot({ animations: 'disabled', scale: 'css' });
     await pill.hover();
     expect((await pill.screenshot({ animations: 'disabled', scale: 'css' })).equals(selected)).toBe(true);
@@ -174,11 +183,7 @@ testWithProvider('submits global and reply feedback with opt-in attachments', as
   const surfaces: string[] = [];
   for (const colorScheme of ['dark', 'light'] as const) {
     await page.emulateMedia({ colorScheme });
-    const surface = await page.evaluate(() => {
-      const swatch = document.createElement('span');
-      swatch.style.color = getComputedStyle(document.documentElement).getPropertyValue('--color-surface-raised');
-      return swatch.style.color;
-    });
+    const surface = await themeColor(page, '--color-surface-raised');
     await expect(receipt(21)).toHaveCSS('background-color', surface);
     surfaces.push(surface);
   }
