@@ -1765,20 +1765,6 @@ const working = computed<boolean>(
   () => inFlight.value || turnActive.value || promptPending.value || continuePending.value,
 );
 
-const canContinue = computed<boolean>(() => {
-  const sid = rawState.activeSessionId;
-  if (!sid) return false;
-  const session = rawState.sessions.find((s) => s.id === sid);
-  if (session?.archived === true) return false;
-  if (working.value || activity.value !== 'idle' || queued.value.length > 0) return false;
-  const lastAgentTurn = activeMainConversation()?.view.turns.findLast((turn) => turn.kind === 'agent');
-  if (lastAgentTurn?.status !== 'ended') return false;
-  return (
-    lastAgentTurn.outcome === 'interrupted' ||
-    (lastAgentTurn.outcome === 'failed' && lastAgentTurn.end_reason !== 'blocked')
-  );
-});
-
 watch(
   [() => rawState.activeSessionId, working],
   ([sid, isWorking]) => {
@@ -3388,7 +3374,6 @@ export function useKimiWebClient() {
     activeTurnError,
     activeTurnRetry,
     activeTurnEnd,
-    canContinue,
     inFlight,
     working,
     isStartingFirstPrompt,

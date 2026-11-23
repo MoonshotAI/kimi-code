@@ -4,7 +4,6 @@ export default {
   placeholderHints: "Type <kbd>{'@'}</kbd> to reference files, or start with <kbd>/</kbd> for commands and skills",
   commandArgumentHint: 'Type {argument} after {command}',
   send: 'Send ↵',
-  continue: 'Continue',
   queueLabel: 'Queue',
   placeholderRunning: 'Press <kbd>Enter</kbd> to queue · <kbd>Ctrl</kbd>+<kbd>S</kbd> to inject into the running turn',
   placeholderRunningMobile: 'Press <kbd>Enter</kbd> to queue',
