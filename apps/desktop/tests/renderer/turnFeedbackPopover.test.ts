@@ -101,8 +101,15 @@ describe('TurnFeedbackActions and TurnFeedbackPopover', () => {
     expect(feedback.prefetchForm).toHaveBeenNthCalledWith(4, target.sessionId);
   });
 
-  it('renders cached reasons immediately without loading state and preserves them if background refresh fails', async () => {
+  it('renders cached reasons immediately without loading state and keeps an open popover stable while revalidating', async () => {
     let resolveRefresh!: (value: FeedbackForm | null) => void;
+    const replacementForm: FeedbackForm = {
+      version: 1,
+      reply_reasons: {
+        negative: [{ id: 'other', label: { en: 'Other', zh: '其他' } }],
+        positive: [{ id: 'helpful', label: { en: 'Helpful', zh: '有帮助' } }],
+      },
+    };
     const feedback = createFeedbackStub({
       peekForm: vi.fn(() => multiRowForm),
       loadForm: vi.fn(() => new Promise<FeedbackForm | null>(resolve => { resolveRefresh = resolve; })),
@@ -123,13 +130,30 @@ describe('TurnFeedbackActions and TurnFeedbackPopover', () => {
     const group = container.querySelector<HTMLElement>('.feedback-reasons');
     expect(group).not.toBeNull();
     expect(group?.getAttribute('aria-busy')).toBeNull();
-    expect(group?.querySelectorAll('button')).toHaveLength(multiRowForm.reply_reasons.negative.length);
+    const pills = () => Array.from(group?.querySelectorAll<HTMLButtonElement>('button') ?? []);
+    expect(pills()).toHaveLength(multiRowForm.reply_reasons.negative.length);
 
-    resolveRefresh(null);
+    const hallucination = pills().find(button => button.textContent === '幻觉');
+    expect(hallucination).toBeDefined();
+    hallucination!.click();
+    await nextTick();
+    expect(hallucination!.getAttribute('aria-pressed')).toBe('true');
+
+    resolveRefresh(replacementForm);
     await Promise.resolve();
     await nextTick();
 
-    expect(group?.querySelectorAll('button')).toHaveLength(multiRowForm.reply_reasons.negative.length);
+    expect(pills()).toHaveLength(multiRowForm.reply_reasons.negative.length);
+    expect(pills().find(button => button.textContent === '幻觉')?.getAttribute('aria-pressed')).toBe('true');
+    const submit = container.querySelector<HTMLButtonElement>('.feedback-popover-footer button');
+    expect(submit?.disabled).toBe(false);
+    submit!.click();
+    await nextTick();
+    expect(feedback.submitDetails).toHaveBeenCalledWith(target, {
+      reasons: ['hallucination'],
+      content: '',
+      includeSession: false,
+    });
   });
 
   it('lets reasons wrap naturally without a locked scrolling class after a slow load', async () => {

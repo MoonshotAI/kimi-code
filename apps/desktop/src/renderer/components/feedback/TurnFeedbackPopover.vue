@@ -94,9 +94,11 @@ onMounted(() => {
   window.addEventListener('keydown', escape, true);
   window.addEventListener('resize', measure);
   const request = feedback?.loadForm(props.target.sessionId);
-  void request?.then(config => {
-    if (active && (config !== null || form.value === undefined)) form.value = config;
-  });
+  if (form.value === undefined) {
+    void request?.then(config => {
+      if (active) form.value = config;
+    });
+  }
 });
 
 onBeforeUnmount(() => {

@@ -43,7 +43,7 @@ interface FeedbackAccount {
 }
 
 export const FEEDBACK_DESCRIPTION_LIMIT = 2000;
-export const FEEDBACK_FORM_STALE_MS = 5 * 60 * 1000;
+export const FEEDBACK_FORM_STALE_MS = 6 * 60 * 60 * 1000;
 
 interface FeedbackFormCacheEntry {
   value?: FeedbackForm;
@@ -151,12 +151,7 @@ export function useDesktopFeedback(deps: {
     return formCache.get(formHost(sessionId))?.value;
   }
 
-  function loadForm(sessionId?: string): Promise<FeedbackForm | null> {
-    const host = formHost(sessionId);
-    const existing = formCache.get(host);
-    if (existing?.value !== undefined && existing.fetchedAt !== undefined && Date.now() - existing.fetchedAt < FEEDBACK_FORM_STALE_MS) {
-      return Promise.resolve(existing.value);
-    }
+  function revalidateForm(host: string | undefined, existing?: FeedbackFormCacheEntry): Promise<FeedbackForm | null> {
     if (existing?.inflight !== undefined) return existing.inflight;
     let rawConfig: Promise<unknown>;
     try {
@@ -182,6 +177,18 @@ export function useDesktopFeedback(deps: {
       });
     entry.inflight = request;
     return request;
+  }
+
+  function loadForm(sessionId?: string): Promise<FeedbackForm | null> {
+    const host = formHost(sessionId);
+    const existing = formCache.get(host);
+    if (existing?.value !== undefined) {
+      if (existing.fetchedAt === undefined || Date.now() - existing.fetchedAt >= FEEDBACK_FORM_STALE_MS) {
+        void revalidateForm(host, existing);
+      }
+      return Promise.resolve(existing.value);
+    }
+    return revalidateForm(host, existing);
   }
 
   function prefetchForm(sessionId?: string): void {

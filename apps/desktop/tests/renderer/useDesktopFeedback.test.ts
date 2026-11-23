@@ -275,25 +275,44 @@ describe('feedback form caching by host', () => {
     expect(getClientConfig).toHaveBeenCalledTimes(3);
   });
 
-  it('keeps the cached value while revalidating after the stale window and preserves it on refresh failure', async () => {
+  it('serves stale cached forms immediately while revalidating in the background after 6 hours', async () => {
     vi.useFakeTimers();
     const { feedback } = setup();
     const initial = formConfig('v1');
     const updated = formConfig('v2');
+    let rejectRefresh!: (error: Error) => void;
+    let resolveRefresh!: (value: unknown) => void;
     getClientConfig
       .mockResolvedValueOnce(initial)
-      .mockRejectedValueOnce(new Error('Offline'))
-      .mockResolvedValueOnce(updated);
+      .mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectRefresh = reject; }))
+      .mockImplementationOnce(() => new Promise(resolve => { resolveRefresh = resolve; }));
+
+    expect(FEEDBACK_FORM_STALE_MS).toBe(6 * 60 * 60 * 1000);
+    await expect(feedback.loadForm('first')).resolves.toEqual(initial);
+    vi.advanceTimersByTime(FEEDBACK_FORM_STALE_MS - 1);
+    await expect(feedback.loadForm('first')).resolves.toEqual(initial);
+    expect(getClientConfig).toHaveBeenCalledTimes(1);
+
+    vi.advanceTimersByTime(1);
+    expect(feedback.peekForm('first')).toEqual(initial);
+    await expect(feedback.loadForm('first')).resolves.toEqual(initial);
+    feedback.prefetchForm('first');
+    await expect(feedback.loadForm('first')).resolves.toEqual(initial);
+    expect(getClientConfig).toHaveBeenCalledTimes(2);
+
+    rejectRefresh(new Error('Offline'));
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(feedback.peekForm('first')).toEqual(initial);
 
     await expect(feedback.loadForm('first')).resolves.toEqual(initial);
-    vi.advanceTimersByTime(FEEDBACK_FORM_STALE_MS);
+    expect(getClientConfig).toHaveBeenCalledTimes(3);
 
-    expect(feedback.peekForm('first')).toEqual(initial);
-    await expect(feedback.loadForm('first')).resolves.toBeNull();
-    expect(feedback.peekForm('first')).toEqual(initial);
-
-    await expect(feedback.loadForm('first')).resolves.toEqual(updated);
+    resolveRefresh(updated);
+    await Promise.resolve();
+    await Promise.resolve();
     expect(feedback.peekForm('first')).toEqual(updated);
+    await expect(feedback.loadForm('first')).resolves.toEqual(updated);
     expect(getClientConfig).toHaveBeenCalledTimes(3);
   });
 
