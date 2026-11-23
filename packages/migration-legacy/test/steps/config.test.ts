@@ -538,6 +538,21 @@ base_url = "https://target.example/v1"
     expect(cfg).not.toContain('micro_compaction');
   });
 
+  it('records malformed non-table experimental values in droppedKeys', async () => {
+    await writeFile(
+      join(src, 'config.toml'),
+      'merge_all_available_skills = true\n' +
+        'experimental = true\n',
+    );
+
+    const r = await migrateConfigStep({ sourceHome: src, targetHome: tgt });
+
+    expect(r.migrated).toBe(true);
+    expect(r.droppedKeys).toEqual(['experimental']);
+    const cfg = await readFile(join(tgt, 'config.toml'), 'utf-8');
+    expect(cfg).not.toContain('experimental');
+  });
+
   it('maps default_yolo to default_permission_mode = "yolo"', async () => {
     await writeFile(
       join(src, 'config.toml'),

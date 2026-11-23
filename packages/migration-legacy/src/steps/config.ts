@@ -31,7 +31,7 @@ import {
 } from '../paths.js';
 
 const TUI_TOP_LEVEL_KEYS = new Set(['theme', 'default_editor']);
-const TOP_LEVEL_KEYS_TO_DROP = new Set(['plan_mode', 'yolo', 'experimental']);
+const TOP_LEVEL_KEYS_TO_DROP = new Set(['plan_mode', 'yolo']);
 const LOOP_CONTROL_FIELDS_TO_KEEP = new Set([
   'reserved_context_size',
 ]);
@@ -337,6 +337,10 @@ export async function migrateConfigStep(input: ConfigStepInput): Promise<ConfigS
     if (k === 'providers' || k === 'models' || k === 'hooks') continue;
     if (TUI_TOP_LEVEL_KEYS.has(k)) continue;
     if (TOP_LEVEL_KEYS_TO_DROP.has(k)) continue;
+    if (k === 'experimental') {
+      if (!isRecord(v)) droppedKeys.push(k);
+      continue;
+    }
     if (k === 'default_yolo') {
       if (v === true) migratedTop['default_permission_mode'] = 'yolo';
       continue;
