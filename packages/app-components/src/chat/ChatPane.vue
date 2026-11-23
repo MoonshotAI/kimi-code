@@ -1999,7 +1999,7 @@ function streamingTailIndex(turn: ChatTurn): number | null {
   mask-image: linear-gradient(to bottom, black calc(100% - 5lh), transparent calc(100% - 1lh));
   -webkit-mask-image: linear-gradient(to bottom, black calc(100% - 5lh), transparent calc(100% - 1lh));
 }
-.u-text-wrap.is-clamped > .q-body {
+.u-text-wrap.is-clamped > .ui-tip > .q-body {
   max-height: calc(3 * 1lh);
   overflow: hidden;
   mask-image: linear-gradient(to bottom, black calc(100% - 1.2lh), transparent calc(100% - 0.2lh));
