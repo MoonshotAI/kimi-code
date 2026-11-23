@@ -885,6 +885,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   }
 
   override async removeWorktree(input: RemoveWorktreeInput): Promise<void> {
+    await this.configReady;
     return withKimiErrors(this.engineAccessor.get(IWorktreeService).remove(input));
   }
 
