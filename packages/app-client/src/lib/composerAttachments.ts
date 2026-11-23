@@ -255,10 +255,10 @@ export function seedEntriesForTurnAttachments(atts: readonly TurnAttachment[]): 
   let fileOrdinal = 0;
   let mediaOrdinal = 0;
   for (const att of atts) {
+    if (att.kind !== 'image' && att.kind !== 'video' && att.kind !== 'file') continue;
     const isMedia = att.kind === 'image' || att.kind === 'video';
-    if (!isMedia && att.kind !== 'file') continue;
     const attId = isMedia ? `m${++mediaOrdinal}` : String(++fileOrdinal);
-    const kind = isMedia ? att.kind : 'file';
+    const kind = att.kind;
     if (att.fileId === undefined) {
       if (!isMedia) continue;
       entries.push({

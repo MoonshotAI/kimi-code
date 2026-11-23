@@ -28,7 +28,7 @@ describe('toProtocolMessage', () => {
       { type: 'text', text: 'hello' },
       { type: 'thinking', thinking: 'hmm', signature: 'sig-1' },
       { type: 'image', source: { kind: 'url', url: 'https://example.com/a.png' } },
-      { type: 'text', text: '[audio:https://example.com/a.mp3]' },
+      { type: 'audio', source: { kind: 'url', url: 'https://example.com/a.mp3' } },
       { type: 'video', source: { kind: 'url', url: 'https://example.com/a.mp4' } },
     ]);
   });
@@ -45,6 +45,27 @@ describe('toProtocolMessage', () => {
     expect(toProtocolMessage(SESSION_ID, 0, msg, CREATED_AT).content).toEqual([
       { type: 'text', text: 'what is this?' },
       { type: 'image', source: { kind: 'session_media', file_id: 'file_9' } },
+    ]);
+  });
+
+  it('projects a daemon-ref audio part to a session_media source in live and prompt projections', () => {
+    const refPart = {
+      type: 'audio_url' as const,
+      audioUrl: { url: 'kimi-file://file_11?path=%2Fcache%2Fclip.wav' },
+    };
+    const inlinePart = {
+      type: 'audio_url' as const,
+      audioUrl: { url: 'data:audio/wav;base64,QUJD' },
+    };
+    const msg: ContextMessage = { role: 'user', content: [refPart, inlinePart] };
+
+    expect(toProtocolMessage(SESSION_ID, 0, msg, CREATED_AT).content).toEqual([
+      { type: 'audio', source: { kind: 'session_media', file_id: 'file_11' } },
+      { type: 'audio', source: { kind: 'url', url: 'data:audio/wav;base64,QUJD' } },
+    ]);
+    expect(projectPromptContentParts([refPart, inlinePart])).toEqual([
+      { type: 'audio', source: { kind: 'session_media', file_id: 'file_11' } },
+      { type: 'audio', source: { kind: 'base64', media_type: 'audio/wav', data: 'QUJD' } },
     ]);
   });
 
@@ -167,6 +188,7 @@ describe('toProtocolMessage', () => {
         { type: 'image_url', imageUrl: { url: 'data:image/png;base64,AAAA' } },
         { type: 'image_url', imageUrl: { url: 'kimi-file://file_9?path=%2Fcache%2Fpic.png', name: 'pic.png' } },
         { type: 'audio_url', audioUrl: { url: 'https://example.com/audio.mp3' } },
+        { type: 'audio_url', audioUrl: { url: 'kimi-file://file_12?path=%2Fcache%2Fvoice.wav' } },
         { type: 'video_url', videoUrl: { url: 'ms://video-1', id: 'video-1' } },
         { type: 'video_url', source: { kind: 'url', url: 'kimi-file://file_10' }, name: 'clip.mp4' } as unknown as ContextMessage['content'][number],
       ],
@@ -191,6 +213,10 @@ describe('toProtocolMessage', () => {
           {
             type: 'audio_url',
             audioUrl: expect.objectContaining({ url: 'https://example.com/audio.mp3' }),
+          },
+          {
+            type: 'audio',
+            source: { kind: 'session_media', file_id: 'file_12' },
           },
           {
             type: 'video_url',

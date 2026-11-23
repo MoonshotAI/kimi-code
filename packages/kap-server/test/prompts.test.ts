@@ -1025,6 +1025,29 @@ describe('server-v2 /api/v1 prompts', () => {
     await expectSessionMedia(server!, id, `${uploaded.data.id}.mp4`, videoBytes);
   });
 
+  it('carries an uploaded audio into the prompt as an internal kimi-file reference', async () => {
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+    const audioBytes = Buffer.from('tiny fake wav bytes');
+    const uploaded = await uploadFile(audioBytes, 'audio/wav', 'clip.wav');
+
+    const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [
+        { type: 'text', text: 'what is said in this audio?' },
+        { type: 'audio', source: { kind: 'file', file_id: uploaded.id } },
+      ],
+    });
+    expect(submitted.body.code).toBe(0);
+
+    const content = submitted.body.data.content as Array<Record<string, unknown>>;
+    expect(content).toEqual([
+      { type: 'text', text: 'what is said in this audio?' },
+      { type: 'audio', source: { kind: 'session_media', file_id: uploaded.id } },
+    ]);
+
+    await expectSessionMedia(server!, id, `${uploaded.id}.wav`, audioBytes);
+  });
+
   it('carries a compressed uploaded image into the prompt as an internal kimi-file reference', async () => {
     const id = await createSession(home as string);
     await createMainAgent(id);

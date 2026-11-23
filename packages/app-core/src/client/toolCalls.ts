@@ -46,7 +46,7 @@ function mediaUrlPart(
   getSessionMediaUrl?: (sessionId: string, fileId: string) => string,
 ): Pick<ToolMedia, 'kind' | 'url' | 'fileId' | 'sessionId'> | null {
   const type = part['type'];
-  if (type === 'image' || type === 'video') {
+  if (type === 'image' || type === 'video' || type === 'audio') {
     if (sessionId === undefined) return null;
     const source = part['source'];
     if (typeof source !== 'object' || source === null) return null;

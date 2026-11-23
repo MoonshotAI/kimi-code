@@ -475,7 +475,6 @@ function turnAttachmentOf(attachment: ConversationAttachment, options: Conversat
     const url = fileId === undefined ? '' : options.getFileUrl?.(fileId) ?? '';
     return [{ kind: 'file', url, fileId, name: attachment.name, mediaType: attachment.media_type, size: attachment.size }];
   }
-  if (attachment.kind === 'audio') return [];
   const url = attachment.url ?? (fileId === undefined ? undefined : options.getSessionMediaUrl?.(options.sessionId, fileId) ?? '');
   if (url === undefined) return [];
   return [{

@@ -32,8 +32,12 @@ function mapContentPart(part: ContextMessage['content'][number]): MessageContent
         ? { type: 'image', source: { kind: 'session_media', file_id: ref.fileId }, name: legacy.imageUrl.name }
         : { type: 'image', source: { kind: 'url', url: legacy.imageUrl.url, id: legacy.imageUrl.id }, name: legacy.imageUrl.name };
     }
-    case 'audio_url':
-      return { type: 'text', text: `[audio:${legacy.audioUrl.url}]` };
+    case 'audio_url': {
+      const ref = parseDaemonFileUrl(legacy.audioUrl.url);
+      return ref !== undefined
+        ? { type: 'audio', source: { kind: 'session_media', file_id: ref.fileId } }
+        : { type: 'audio', source: { kind: 'url', url: legacy.audioUrl.url, id: legacy.audioUrl.id } };
+    }
     case 'video_url': {
       const ref = parseDaemonFileUrl(legacy.videoUrl.url);
       return ref !== undefined
@@ -69,11 +73,11 @@ function isCoreMediaPart(part: unknown): part is CoreMediaPart {
 
 function projectToolResultMediaPart(part: unknown): unknown {
   if (isCoreMediaPart(part)) {
-    if (part.source.kind !== 'url' || part.type === 'audio_url') return part;
+    if (part.source.kind !== 'url') return part;
     const ref = parseDaemonFileUrl(part.source.url);
     if (ref === undefined) return part;
     return {
-      type: part.type === 'image_url' ? 'image' : 'video',
+      type: part.type === 'image_url' ? 'image' : part.type === 'video_url' ? 'video' : 'audio',
       source: { kind: 'session_media', file_id: ref.fileId },
       name: (part as { name?: unknown }).name,
     };
@@ -94,6 +98,12 @@ function projectToolResultMediaPart(part: unknown): unknown {
       type: 'video',
       source: { kind: 'session_media', file_id: ref.ref.fileId },
       name: legacy.videoUrl.name,
+    };
+  }
+  if (legacy.type === 'audio_url') {
+    return {
+      type: 'audio',
+      source: { kind: 'session_media', file_id: ref.ref.fileId },
     };
   }
   return legacy;
@@ -162,7 +172,7 @@ export function projectPromptContentParts(content: readonly ContentPart[]): Mess
   for (const part of content) {
     const daemonRef = daemonFileRefFromPart(part);
     const legacy = fromCorePart(part);
-    if (daemonRef !== undefined && daemonRef.kind !== 'audio') {
+    if (daemonRef !== undefined) {
       parts.push({
         type: daemonRef.kind,
         source: { kind: 'session_media', file_id: daemonRef.ref.fileId },
@@ -186,6 +196,11 @@ export function projectPromptContentParts(content: readonly ContentPart[]): Mess
       parts.push(match === null
         ? { type: 'video', source: { kind: 'url', url: legacy.videoUrl.url, id: legacy.videoUrl.id }, name: legacy.videoUrl.name }
         : { type: 'video', source: { kind: 'base64', media_type: match[1]!, data: match[2]! }, name: legacy.videoUrl.name });
+    } else if (legacy.type === 'audio_url') {
+      const match = /^data:([^;]+);base64,(.*)$/.exec(legacy.audioUrl.url);
+      parts.push(match === null
+        ? { type: 'audio', source: { kind: 'url', url: legacy.audioUrl.url, id: legacy.audioUrl.id } }
+        : { type: 'audio', source: { kind: 'base64', media_type: match[1]!, data: match[2]! } });
     }
   }
   return parts;

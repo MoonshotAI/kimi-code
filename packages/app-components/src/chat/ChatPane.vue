@@ -1228,7 +1228,11 @@ function fileAttachments(turn: ChatTurn): TurnAttachment[] {
   const atts = turn.attachments ?? [];
   const snapshot = turnSnapshot(turn);
   return (snapshot === undefined ? stripInlineAttachments(turn.text, atts) : stripSnapshotAttachments(snapshot, atts))
-    .filter((att) => !isMediaAttachment(att));
+    .filter((att) => !isMediaAttachment(att) && att.kind !== 'audio');
+}
+
+function audioAttachments(turn: ChatTurn): TurnAttachment[] {
+  return (turn.attachments ?? []).filter((att) => att.kind === 'audio');
 }
 
 const mediaLightbox = ref<ToolMedia | null>(null);
@@ -1381,6 +1385,17 @@ function streamingTailIndex(turn: ChatTurn): number | null {
               :label="t('composer.mediaAttachments')"
               @activate="(att, img) => openRailMedia(att, img, turn.id)"
             />
+            <div v-if="audioAttachments(turn).length > 0" class="u-audios">
+              <audio
+                v-for="(att, ai) in audioAttachments(turn)"
+                :key="ai"
+                class="u-audio"
+                :src="att.url"
+                :aria-label="att.name"
+                controls
+                preload="none"
+              />
+            </div>
             <div v-if="fileAttachments(turn).length > 0" class="u-atts">
               <template v-for="(att, ai) in fileAttachments(turn)" :key="ai">
                 <button
@@ -2437,6 +2452,16 @@ function streamingTailIndex(turn: ChatTurn): number | null {
   flex-wrap: wrap;
   gap: var(--space-1-5);
   margin-bottom: var(--space-2);
+}
+.u-audios {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1-5);
+  margin-bottom: var(--space-2);
+}
+.u-audio {
+  width: 100%;
+  max-width: 360px;
 }
 .u-media-rail {
   margin-bottom: var(--space-2);

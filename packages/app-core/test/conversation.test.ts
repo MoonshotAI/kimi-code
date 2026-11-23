@@ -358,6 +358,7 @@ describe('conversationToTurns', () => {
             { kind: 'image', file_id: 'f_img', name: 'shot.png', media_type: 'image/png', ordinal: 2 },
             { kind: 'image', url: 'data:image/png;base64,AAAA', ordinal: 3 },
             { kind: 'video', file_id: 'f_vid', name: 'clip.mp4', ordinal: 4 },
+            { kind: 'audio', file_id: 'f_audio', name: 'voice.wav', media_type: 'audio/wav', ordinal: 5 },
           ],
           skills: [{ name: 'review', path: '/work/B/review/SKILL.md', args: 'src' }],
           metadata: composer,
@@ -375,6 +376,7 @@ describe('conversationToTurns', () => {
       ['image', '/sessions/session-1/media/f_img'],
       ['image', 'data:image/png;base64,AAAA'],
       ['video', '/sessions/session-1/media/f_vid'],
+      ['audio', '/sessions/session-1/media/f_audio'],
     ]);
     expect(user?.inlineAttachments?.find((value) => value.kind === 'file')).toMatchObject({
       fileId: 'f_doc',

@@ -22389,6 +22389,139 @@
                                       {
                                         "additionalProperties": false,
                                         "properties": {
+                                          "name": {
+                                            "minLength": 1,
+                                            "type": "string"
+                                          },
+                                          "source": {
+                                            "oneOf": [
+                                              {
+                                                "additionalProperties": false,
+                                                "properties": {
+                                                  "id": {
+                                                    "minLength": 1,
+                                                    "type": "string"
+                                                  },
+                                                  "kind": {
+                                                    "enum": [
+                                                      "url"
+                                                    ],
+                                                    "type": "string"
+                                                  },
+                                                  "url": {
+                                                    "minLength": 1,
+                                                    "type": "string"
+                                                  }
+                                                },
+                                                "required": [
+                                                  "kind",
+                                                  "url"
+                                                ],
+                                                "type": "object"
+                                              },
+                                              {
+                                                "additionalProperties": false,
+                                                "properties": {
+                                                  "data": {
+                                                    "minLength": 1,
+                                                    "type": "string"
+                                                  },
+                                                  "kind": {
+                                                    "enum": [
+                                                      "base64"
+                                                    ],
+                                                    "type": "string"
+                                                  },
+                                                  "media_type": {
+                                                    "minLength": 1,
+                                                    "type": "string"
+                                                  }
+                                                },
+                                                "required": [
+                                                  "kind",
+                                                  "media_type",
+                                                  "data"
+                                                ],
+                                                "type": "object"
+                                              },
+                                              {
+                                                "additionalProperties": false,
+                                                "properties": {
+                                                  "file_id": {
+                                                    "minLength": 1,
+                                                    "type": "string"
+                                                  },
+                                                  "kind": {
+                                                    "enum": [
+                                                      "file"
+                                                    ],
+                                                    "type": "string"
+                                                  }
+                                                },
+                                                "required": [
+                                                  "kind",
+                                                  "file_id"
+                                                ],
+                                                "type": "object"
+                                              },
+                                              {
+                                                "additionalProperties": false,
+                                                "properties": {
+                                                  "file_id": {
+                                                    "minLength": 1,
+                                                    "type": "string"
+                                                  },
+                                                  "kind": {
+                                                    "enum": [
+                                                      "session_media"
+                                                    ],
+                                                    "type": "string"
+                                                  }
+                                                },
+                                                "required": [
+                                                  "kind",
+                                                  "file_id"
+                                                ],
+                                                "type": "object"
+                                              },
+                                              {
+                                                "additionalProperties": false,
+                                                "properties": {
+                                                  "kind": {
+                                                    "enum": [
+                                                      "path"
+                                                    ],
+                                                    "type": "string"
+                                                  },
+                                                  "path": {
+                                                    "minLength": 1,
+                                                    "type": "string"
+                                                  }
+                                                },
+                                                "required": [
+                                                  "kind",
+                                                  "path"
+                                                ],
+                                                "type": "object"
+                                              }
+                                            ]
+                                          },
+                                          "type": {
+                                            "enum": [
+                                              "audio"
+                                            ],
+                                            "type": "string"
+                                          }
+                                        },
+                                        "required": [
+                                          "type",
+                                          "source"
+                                        ],
+                                        "type": "object"
+                                      },
+                                      {
+                                        "additionalProperties": false,
+                                        "properties": {
                                           "file_id": {
                                             "minLength": 1,
                                             "type": "string"
@@ -22813,6 +22946,139 @@
                                             "type": {
                                               "enum": [
                                                 "video"
+                                              ],
+                                              "type": "string"
+                                            }
+                                          },
+                                          "required": [
+                                            "type",
+                                            "source"
+                                          ],
+                                          "type": "object"
+                                        },
+                                        {
+                                          "additionalProperties": false,
+                                          "properties": {
+                                            "name": {
+                                              "minLength": 1,
+                                              "type": "string"
+                                            },
+                                            "source": {
+                                              "oneOf": [
+                                                {
+                                                  "additionalProperties": false,
+                                                  "properties": {
+                                                    "id": {
+                                                      "minLength": 1,
+                                                      "type": "string"
+                                                    },
+                                                    "kind": {
+                                                      "enum": [
+                                                        "url"
+                                                      ],
+                                                      "type": "string"
+                                                    },
+                                                    "url": {
+                                                      "minLength": 1,
+                                                      "type": "string"
+                                                    }
+                                                  },
+                                                  "required": [
+                                                    "kind",
+                                                    "url"
+                                                  ],
+                                                  "type": "object"
+                                                },
+                                                {
+                                                  "additionalProperties": false,
+                                                  "properties": {
+                                                    "data": {
+                                                      "minLength": 1,
+                                                      "type": "string"
+                                                    },
+                                                    "kind": {
+                                                      "enum": [
+                                                        "base64"
+                                                      ],
+                                                      "type": "string"
+                                                    },
+                                                    "media_type": {
+                                                      "minLength": 1,
+                                                      "type": "string"
+                                                    }
+                                                  },
+                                                  "required": [
+                                                    "kind",
+                                                    "media_type",
+                                                    "data"
+                                                  ],
+                                                  "type": "object"
+                                                },
+                                                {
+                                                  "additionalProperties": false,
+                                                  "properties": {
+                                                    "file_id": {
+                                                      "minLength": 1,
+                                                      "type": "string"
+                                                    },
+                                                    "kind": {
+                                                      "enum": [
+                                                        "file"
+                                                      ],
+                                                      "type": "string"
+                                                    }
+                                                  },
+                                                  "required": [
+                                                    "kind",
+                                                    "file_id"
+                                                  ],
+                                                  "type": "object"
+                                                },
+                                                {
+                                                  "additionalProperties": false,
+                                                  "properties": {
+                                                    "file_id": {
+                                                      "minLength": 1,
+                                                      "type": "string"
+                                                    },
+                                                    "kind": {
+                                                      "enum": [
+                                                        "session_media"
+                                                      ],
+                                                      "type": "string"
+                                                    }
+                                                  },
+                                                  "required": [
+                                                    "kind",
+                                                    "file_id"
+                                                  ],
+                                                  "type": "object"
+                                                },
+                                                {
+                                                  "additionalProperties": false,
+                                                  "properties": {
+                                                    "kind": {
+                                                      "enum": [
+                                                        "path"
+                                                      ],
+                                                      "type": "string"
+                                                    },
+                                                    "path": {
+                                                      "minLength": 1,
+                                                      "type": "string"
+                                                    }
+                                                  },
+                                                  "required": [
+                                                    "kind",
+                                                    "path"
+                                                  ],
+                                                  "type": "object"
+                                                }
+                                              ]
+                                            },
+                                            "type": {
+                                              "enum": [
+                                                "audio"
                                               ],
                                               "type": "string"
                                             }
@@ -23366,6 +23632,133 @@
                         },
                         {
                           "properties": {
+                            "name": {
+                              "minLength": 1,
+                              "type": "string"
+                            },
+                            "source": {
+                              "oneOf": [
+                                {
+                                  "properties": {
+                                    "id": {
+                                      "minLength": 1,
+                                      "type": "string"
+                                    },
+                                    "kind": {
+                                      "enum": [
+                                        "url"
+                                      ],
+                                      "type": "string"
+                                    },
+                                    "url": {
+                                      "minLength": 1,
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "kind",
+                                    "url"
+                                  ],
+                                  "type": "object"
+                                },
+                                {
+                                  "properties": {
+                                    "data": {
+                                      "minLength": 1,
+                                      "type": "string"
+                                    },
+                                    "kind": {
+                                      "enum": [
+                                        "base64"
+                                      ],
+                                      "type": "string"
+                                    },
+                                    "media_type": {
+                                      "minLength": 1,
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "kind",
+                                    "media_type",
+                                    "data"
+                                  ],
+                                  "type": "object"
+                                },
+                                {
+                                  "properties": {
+                                    "file_id": {
+                                      "minLength": 1,
+                                      "type": "string"
+                                    },
+                                    "kind": {
+                                      "enum": [
+                                        "file"
+                                      ],
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "kind",
+                                    "file_id"
+                                  ],
+                                  "type": "object"
+                                },
+                                {
+                                  "properties": {
+                                    "file_id": {
+                                      "minLength": 1,
+                                      "type": "string"
+                                    },
+                                    "kind": {
+                                      "enum": [
+                                        "session_media"
+                                      ],
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "kind",
+                                    "file_id"
+                                  ],
+                                  "type": "object"
+                                },
+                                {
+                                  "properties": {
+                                    "kind": {
+                                      "enum": [
+                                        "path"
+                                      ],
+                                      "type": "string"
+                                    },
+                                    "path": {
+                                      "minLength": 1,
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "kind",
+                                    "path"
+                                  ],
+                                  "type": "object"
+                                }
+                              ]
+                            },
+                            "type": {
+                              "enum": [
+                                "audio"
+                              ],
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "type",
+                            "source"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "properties": {
                             "file_id": {
                               "minLength": 1,
                               "type": "string"
@@ -23857,6 +24250,139 @@
                                       "type": {
                                         "enum": [
                                           "video"
+                                        ],
+                                        "type": "string"
+                                      }
+                                    },
+                                    "required": [
+                                      "type",
+                                      "source"
+                                    ],
+                                    "type": "object"
+                                  },
+                                  {
+                                    "additionalProperties": false,
+                                    "properties": {
+                                      "name": {
+                                        "minLength": 1,
+                                        "type": "string"
+                                      },
+                                      "source": {
+                                        "oneOf": [
+                                          {
+                                            "additionalProperties": false,
+                                            "properties": {
+                                              "id": {
+                                                "minLength": 1,
+                                                "type": "string"
+                                              },
+                                              "kind": {
+                                                "enum": [
+                                                  "url"
+                                                ],
+                                                "type": "string"
+                                              },
+                                              "url": {
+                                                "minLength": 1,
+                                                "type": "string"
+                                              }
+                                            },
+                                            "required": [
+                                              "kind",
+                                              "url"
+                                            ],
+                                            "type": "object"
+                                          },
+                                          {
+                                            "additionalProperties": false,
+                                            "properties": {
+                                              "data": {
+                                                "minLength": 1,
+                                                "type": "string"
+                                              },
+                                              "kind": {
+                                                "enum": [
+                                                  "base64"
+                                                ],
+                                                "type": "string"
+                                              },
+                                              "media_type": {
+                                                "minLength": 1,
+                                                "type": "string"
+                                              }
+                                            },
+                                            "required": [
+                                              "kind",
+                                              "media_type",
+                                              "data"
+                                            ],
+                                            "type": "object"
+                                          },
+                                          {
+                                            "additionalProperties": false,
+                                            "properties": {
+                                              "file_id": {
+                                                "minLength": 1,
+                                                "type": "string"
+                                              },
+                                              "kind": {
+                                                "enum": [
+                                                  "file"
+                                                ],
+                                                "type": "string"
+                                              }
+                                            },
+                                            "required": [
+                                              "kind",
+                                              "file_id"
+                                            ],
+                                            "type": "object"
+                                          },
+                                          {
+                                            "additionalProperties": false,
+                                            "properties": {
+                                              "file_id": {
+                                                "minLength": 1,
+                                                "type": "string"
+                                              },
+                                              "kind": {
+                                                "enum": [
+                                                  "session_media"
+                                                ],
+                                                "type": "string"
+                                              }
+                                            },
+                                            "required": [
+                                              "kind",
+                                              "file_id"
+                                            ],
+                                            "type": "object"
+                                          },
+                                          {
+                                            "additionalProperties": false,
+                                            "properties": {
+                                              "kind": {
+                                                "enum": [
+                                                  "path"
+                                                ],
+                                                "type": "string"
+                                              },
+                                              "path": {
+                                                "minLength": 1,
+                                                "type": "string"
+                                              }
+                                            },
+                                            "required": [
+                                              "kind",
+                                              "path"
+                                            ],
+                                            "type": "object"
+                                          }
+                                        ]
+                                      },
+                                      "type": {
+                                        "enum": [
+                                          "audio"
                                         ],
                                         "type": "string"
                                       }
@@ -26413,6 +26939,133 @@
                         },
                         {
                           "properties": {
+                            "name": {
+                              "minLength": 1,
+                              "type": "string"
+                            },
+                            "source": {
+                              "oneOf": [
+                                {
+                                  "properties": {
+                                    "id": {
+                                      "minLength": 1,
+                                      "type": "string"
+                                    },
+                                    "kind": {
+                                      "enum": [
+                                        "url"
+                                      ],
+                                      "type": "string"
+                                    },
+                                    "url": {
+                                      "minLength": 1,
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "kind",
+                                    "url"
+                                  ],
+                                  "type": "object"
+                                },
+                                {
+                                  "properties": {
+                                    "data": {
+                                      "minLength": 1,
+                                      "type": "string"
+                                    },
+                                    "kind": {
+                                      "enum": [
+                                        "base64"
+                                      ],
+                                      "type": "string"
+                                    },
+                                    "media_type": {
+                                      "minLength": 1,
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "kind",
+                                    "media_type",
+                                    "data"
+                                  ],
+                                  "type": "object"
+                                },
+                                {
+                                  "properties": {
+                                    "file_id": {
+                                      "minLength": 1,
+                                      "type": "string"
+                                    },
+                                    "kind": {
+                                      "enum": [
+                                        "file"
+                                      ],
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "kind",
+                                    "file_id"
+                                  ],
+                                  "type": "object"
+                                },
+                                {
+                                  "properties": {
+                                    "file_id": {
+                                      "minLength": 1,
+                                      "type": "string"
+                                    },
+                                    "kind": {
+                                      "enum": [
+                                        "session_media"
+                                      ],
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "kind",
+                                    "file_id"
+                                  ],
+                                  "type": "object"
+                                },
+                                {
+                                  "properties": {
+                                    "kind": {
+                                      "enum": [
+                                        "path"
+                                      ],
+                                      "type": "string"
+                                    },
+                                    "path": {
+                                      "minLength": 1,
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "kind",
+                                    "path"
+                                  ],
+                                  "type": "object"
+                                }
+                              ]
+                            },
+                            "type": {
+                              "enum": [
+                                "audio"
+                              ],
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "type",
+                            "source"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "properties": {
                             "file_id": {
                               "minLength": 1,
                               "type": "string"
@@ -26904,6 +27557,139 @@
                                       "type": {
                                         "enum": [
                                           "video"
+                                        ],
+                                        "type": "string"
+                                      }
+                                    },
+                                    "required": [
+                                      "type",
+                                      "source"
+                                    ],
+                                    "type": "object"
+                                  },
+                                  {
+                                    "additionalProperties": false,
+                                    "properties": {
+                                      "name": {
+                                        "minLength": 1,
+                                        "type": "string"
+                                      },
+                                      "source": {
+                                        "oneOf": [
+                                          {
+                                            "additionalProperties": false,
+                                            "properties": {
+                                              "id": {
+                                                "minLength": 1,
+                                                "type": "string"
+                                              },
+                                              "kind": {
+                                                "enum": [
+                                                  "url"
+                                                ],
+                                                "type": "string"
+                                              },
+                                              "url": {
+                                                "minLength": 1,
+                                                "type": "string"
+                                              }
+                                            },
+                                            "required": [
+                                              "kind",
+                                              "url"
+                                            ],
+                                            "type": "object"
+                                          },
+                                          {
+                                            "additionalProperties": false,
+                                            "properties": {
+                                              "data": {
+                                                "minLength": 1,
+                                                "type": "string"
+                                              },
+                                              "kind": {
+                                                "enum": [
+                                                  "base64"
+                                                ],
+                                                "type": "string"
+                                              },
+                                              "media_type": {
+                                                "minLength": 1,
+                                                "type": "string"
+                                              }
+                                            },
+                                            "required": [
+                                              "kind",
+                                              "media_type",
+                                              "data"
+                                            ],
+                                            "type": "object"
+                                          },
+                                          {
+                                            "additionalProperties": false,
+                                            "properties": {
+                                              "file_id": {
+                                                "minLength": 1,
+                                                "type": "string"
+                                              },
+                                              "kind": {
+                                                "enum": [
+                                                  "file"
+                                                ],
+                                                "type": "string"
+                                              }
+                                            },
+                                            "required": [
+                                              "kind",
+                                              "file_id"
+                                            ],
+                                            "type": "object"
+                                          },
+                                          {
+                                            "additionalProperties": false,
+                                            "properties": {
+                                              "file_id": {
+                                                "minLength": 1,
+                                                "type": "string"
+                                              },
+                                              "kind": {
+                                                "enum": [
+                                                  "session_media"
+                                                ],
+                                                "type": "string"
+                                              }
+                                            },
+                                            "required": [
+                                              "kind",
+                                              "file_id"
+                                            ],
+                                            "type": "object"
+                                          },
+                                          {
+                                            "additionalProperties": false,
+                                            "properties": {
+                                              "kind": {
+                                                "enum": [
+                                                  "path"
+                                                ],
+                                                "type": "string"
+                                              },
+                                              "path": {
+                                                "minLength": 1,
+                                                "type": "string"
+                                              }
+                                            },
+                                            "required": [
+                                              "kind",
+                                              "path"
+                                            ],
+                                            "type": "object"
+                                          }
+                                        ]
+                                      },
+                                      "type": {
+                                        "enum": [
+                                          "audio"
                                         ],
                                         "type": "string"
                                       }
