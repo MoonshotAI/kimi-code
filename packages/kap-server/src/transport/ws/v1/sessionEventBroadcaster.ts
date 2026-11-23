@@ -61,6 +61,7 @@ import type { AgentFeedMessage } from '../../../protocol/ws-agent';
 import type { TaskEventMessage, TaskListMessage } from '../../../protocol/ws-task';
 import { toConfigResponse } from '../../../routes/config';
 import { resolveSessionFacts, toWireSession, type SessionFacts, type SessionWireFields } from '../../../routes/sessions';
+import { missingConfiguredModelAlias } from '../../../services/legacyStatus/legacyStatus';
 import { toWireWorkspace } from '../../../routes/workspaces';
 import type { ConversationEvent, ConversationFeed } from '../../../services/conversation/conversationFeed';
 import type {
@@ -313,7 +314,20 @@ export class SessionEventBroadcaster {
       }),
     };
     subscription.conversation = attachment;
-    void this.sendPage(state, target, agentId, attachment);
+    await this.sendPage(state, target, agentId, attachment);
+    if (!current() || agentId !== MAIN_AGENT_ID) return;
+    const session = getLiveSessionById(this.opts.core.accessor, state.sessionId);
+    const main = session?.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID);
+    if (main === undefined) return;
+    const previous = missingConfiguredModelAlias(main);
+    if (previous !== undefined) {
+      this.sendConversation(target, state.sessionId, agentId, {
+        type: 'notice',
+        level: 'warning',
+        title: previous,
+        code: 'model.not_configured',
+      });
+    }
   }
 
   private onFeedCreated({ sessionId, agentId }: ConversationFeedCreated): void {
