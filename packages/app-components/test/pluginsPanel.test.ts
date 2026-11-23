@@ -1179,7 +1179,7 @@ describe('PluginsPanel', () => {
     clickButton('Vercel');
     await settle();
 
-    expect(authorization.refresh).toHaveBeenCalled();
+    expect(authorization.refresh).toHaveBeenCalledWith('vercel');
     expect(authorization.authorize).not.toHaveBeenCalled();
     const button = host.querySelector<HTMLButtonElement>('.plugin-capabilities__actions button');
     expect(button?.textContent?.trim()).toBe('Connect');

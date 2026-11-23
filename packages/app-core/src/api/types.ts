@@ -1096,6 +1096,7 @@ export interface KimiWebApi {
   setPluginEnabled(pluginId: string, enabled: boolean): Promise<{ ok: true }>;
   removePlugin(pluginId: string): Promise<{ ok: true }>;
   getMcpAuthStatuses(options?: { cwd?: string }): Promise<AppMcpAuthStatus[]>;
+  inspectMcpAuthStatuses(locators: AppMcpServerLocator[], options?: { cwd?: string }): Promise<AppMcpAuthStatus[]>;
   beginMcpAuth(locator: AppMcpServerLocator, options?: { cwd?: string }): Promise<AppMcpAuthBeginResult>;
   completeMcpAuth(input: { flowId: string; timeoutMs?: number; signal?: AbortSignal }): Promise<null>;
   cancelMcpAuth(flowId: string): Promise<null>;
