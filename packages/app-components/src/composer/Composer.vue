@@ -185,6 +185,7 @@ const running = computed(() => client.activity.value !== 'idle');
 const working = client.working;
 const stopButtonVisible = computed(() => (isSideChat.value ? Boolean(props.workingOverride) : working.value));
 const starting = client.isStartingFirstPrompt;
+const sending = computed(() => !isSideChat.value && client.inFlight.value);
 const queued = client.queued;
 const compacting = computed(() => client.compaction?.value?.status === 'running');
 const compactPhase = computed(() => resolveCompactPhase(client.compaction?.value, queued?.value));
@@ -1820,6 +1821,7 @@ function passSubmitGate(): boolean {
 }
 
 function handleRunningSend(delivery: 'steer' | 'queue'): void {
+  if (sending.value) return;
   const decision = currentSubmitDecision();
   if (
     decision.kind !== 'submit' &&
@@ -1854,6 +1856,7 @@ function handleQueue(): void {
 }
 
 function handleSubmit(): void {
+  if (sending.value) return;
   const decision = currentSubmitDecision();
   if (decision.kind === 'noop') return;
   if (decision.kind === 'invalid-command') {
@@ -2127,7 +2130,8 @@ function handleKeydown(e: KeyboardEvent): boolean {
   if (e.key === 's' && (e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey) {
     e.preventDefault();
     if (!isSideChat.value && !e.repeat && running.value) {
-      if (queued.value.length > 0) emit('steerQueued', 0);
+      const next = queued.value.findIndex((item) => item.kind !== 'compact');
+      if (next >= 0) emit('steerQueued', next);
       else handleSteer();
     }
     return true;
@@ -2324,7 +2328,11 @@ function closeOverlays(): void {
 
 const isEmpty = () => text.value.trim().length === 0 && activeAttachmentEntries.value.length === 0;
 
-defineExpose({ loadForEdit, insertQuote, insertScreenshotAnnotation, insertPathMention, addFiles, loadAttachmentsForEdit, restoreDraftEntries, focus, closeOverlays, anyPopupOpen, isEmpty, clearAfterDispatch });
+function rememberInHistory(text: string, snapshot?: ComposerDocumentSnapshot): void {
+  history.push(text, snapshot);
+}
+
+defineExpose({ loadForEdit, rememberInHistory, insertQuote, insertScreenshotAnnotation, insertPathMention, addFiles, loadAttachmentsForEdit, restoreDraftEntries, focus, closeOverlays, anyPopupOpen, isEmpty, clearAfterDispatch });
 
 function hasAnyToolbarMenuOpen(): boolean {
   return dropdownOpen.value || permDropdownOpen.value || ctxCardOpen.value || addMenuOpen.value;
@@ -3719,12 +3727,12 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
           <Tooltip :text="sendLabel">
           <button
             class="send"
-            :class="{ 'is-starting': starting }"
+            :class="{ 'is-starting': starting || sending }"
             :aria-label="sendLabel"
-            :disabled="starting || !canSend"
+            :disabled="starting || sending || !canSend"
             @click="handleSubmit()"
           >
-            <Spinner v-if="starting" size="sm" />
+            <Spinner v-if="starting || sending" size="sm" />
             <Icon v-else name="send" size="sm" />
           </button>
           </Tooltip>

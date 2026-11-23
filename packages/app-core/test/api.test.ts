@@ -217,7 +217,7 @@ describe('DaemonEventSocket injection', () => {
     );
   });
 
-  it('routes agent, usage, goal and todo frames to the agent feed handler', () => {
+  it('routes agent, usage, goal, todo and queue frames to the agent feed handler', () => {
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const onAgentFeedFrame = vi.fn();
     const onEvent = vi.fn();
@@ -228,6 +228,7 @@ describe('DaemonEventSocket injection', () => {
     socket.connect();
     const ws = FakeWebSocket.last!;
     ws.readyState = FakeWebSocket.OPEN;
+    socket.subscribeConversation('s1', 'main');
     const base = { session_id: 's1', agent_id: 'main', event_created_at: '2026-01-01T00:00:00.000Z' };
     const frames = [
       {
@@ -242,8 +243,10 @@ describe('DaemonEventSocket injection', () => {
       { type: 'context', ...base, context_tokens: 10, max_context_tokens: 100 },
       { type: 'goal', ...base },
       { type: 'todo', ...base, items: [{ title: 'ship', status: 'pending' }] },
+      { type: 'queue', ...base, inputs: [] },
     ];
     for (const frame of frames) ws.onmessage?.({ data: JSON.stringify(frame) });
+    ws.onmessage?.({ data: JSON.stringify({ type: 'queue', ...base, agent_id: 'unsubscribed', inputs: [] }) });
 
     expect(onAgentFeedFrame.mock.calls.map(([frame]) => frame)).toEqual(frames);
     expect(onEvent).not.toHaveBeenCalled();

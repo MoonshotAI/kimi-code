@@ -7,6 +7,7 @@ import type {
   WireAgentFeedFrame,
   WireEvent,
   WireInteraction,
+  WireQueueFrame,
   WireServerFrame,
   WireTaskEvent,
   WireTaskList,
@@ -311,6 +312,12 @@ export class DaemonEventSocket {
     if (rawType === 'task') {
       const task = frame as WireTaskEvent;
       this.opts.handlers.onTask?.(task.session_id, task.agent_id, task);
+      return;
+    }
+    if (rawType === 'queue') {
+      const queueFrame = rawFrame as unknown as WireQueueFrame;
+      if (this.conversationSubscriptions.get(queueFrame.session_id)?.has(queueFrame.agent_id) !== true) return;
+      this.opts.handlers.onAgentFeedFrame?.(queueFrame);
       return;
     }
     if (rawType === 'agent' || rawType === 'context' || rawType === 'goal' || rawType === 'todo') {

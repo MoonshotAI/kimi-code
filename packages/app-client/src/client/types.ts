@@ -49,15 +49,6 @@ export interface PromptEnvelopeContent {
   skills?: PromptSkillActivation[];
 }
 
-export interface QueuedPrompt extends PromptEnvelope {
-  id?: string;
-  editText?: string;
-  kind?: 'prompt' | 'compact';
-  instruction?: string;
-  enqueuedAt?: number;
-  compactRetries?: number;
-}
-
 export type ManagedMembership = 'member' | 'free' | null;
 
 export interface ExtendedState extends KimiClientState {

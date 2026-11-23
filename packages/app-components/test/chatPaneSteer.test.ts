@@ -53,7 +53,7 @@ vi.mock('@moonshot-ai/app-client/client', async () => {
 });
 
 import { createKimiI18n } from '@moonshot-ai/app-i18n';
-import type { ChatTurn } from '@moonshot-ai/app-core/client/types';
+import type { ChatTurn, QueuedPromptView } from '@moonshot-ai/app-core/client/types';
 import { createComposerSnapshot, textToDoc, type ComposerDocumentSnapshot } from '@moonshot-ai/app-composer/model';
 import { useConfirmDialog, useTranscriptScroll, useTurnFolding, type TranscriptScroll } from '@moonshot-ai/app-client/composables';
 import ChatPane from '../src/chat/ChatPane.vue';
@@ -583,5 +583,49 @@ describe('ChatPane assistant footers', () => {
     } finally {
       setTurnFolding(false);
     }
+  });
+});
+
+describe('ChatPane queue', () => {
+  function queuedPrompt(id: string, over: Partial<QueuedPromptView> = {}): QueuedPromptView {
+    return { id, text: id, attachmentCount: 0, ...over };
+  }
+
+  function mountQueue(queued: Ref<QueuedPromptView[]>, onReorderQueue = vi.fn()): void {
+    app = createApp({
+      setup() {
+        return () => h(ChatPane, { turns: [], working: true, turnActive: true, queued: queued.value, onReorderQueue });
+      },
+    });
+    app.use(createKimiI18n({ locale: 'en' }));
+    app.mount(host);
+  }
+
+  it('moves the dragged prompt even when a queue frame shifts it mid-drag', async () => {
+    const queued = ref([queuedPrompt('a'), queuedPrompt('b'), queuedPrompt('c')]);
+    const reorder = vi.fn();
+    mountQueue(queued, reorder);
+    await nextTick();
+
+    host.querySelectorAll('.q-grip')[1]!.dispatchEvent(new Event('dragstart', { bubbles: true }));
+    queued.value = [queuedPrompt('x'), ...queued.value];
+    await nextTick();
+    const rows = host.querySelectorAll('.q-turn');
+    rows[3]!.dispatchEvent(new Event('dragover', { bubbles: true, cancelable: true }));
+    rows[3]!.dispatchEvent(new Event('drop', { bubbles: true, cancelable: true }));
+
+    expect(reorder).toHaveBeenCalledWith({ from: 2, to: 3 });
+  });
+
+  it('offers no edit entry on a queued compaction or a prompt it cannot restore', async () => {
+    mountQueue(ref([queuedPrompt('compact', { kind: 'compact' }), queuedPrompt('lossy', { editable: false }), queuedPrompt('next')]));
+    await nextTick();
+
+    const rows = host.querySelectorAll('.q-turn');
+    for (const row of [rows[0]!, rows[1]!]) {
+      expect(row.querySelector('.q-edit')).toBeNull();
+      expect(row.querySelector<HTMLButtonElement>('.q-body')!.disabled).toBe(true);
+    }
+    expect(rows[2]!.querySelector('.q-edit')).not.toBeNull();
   });
 });

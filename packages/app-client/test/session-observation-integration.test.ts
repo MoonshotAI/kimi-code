@@ -29,6 +29,7 @@ function echoPromptSubmit(status: PromptSubmitResult['status']) {
     promptId: input.promptId!,
     userMessageId: input.promptId!,
     status,
+    acceptedAs: input.delivery === 'steer' ? 'steer' : status === 'queued' ? 'queue' : 'turn',
   });
 }
 
@@ -445,25 +446,25 @@ it('keeps sends queued while the main agent’s WaitFor waits and steers only on
   const h = await setup();
   const api = h.api as typeof h.api & { submitPrompt: ReturnType<typeof vi.fn>; steerPrompts: ReturnType<typeof vi.fn> };
   api.submitPrompt = vi.fn(echoPromptSubmit('queued'));
-  api.steerPrompts = vi.fn().mockResolvedValue({});
+  api.steerPrompts = vi.fn(async (_sid: string, promptIds: string[]) => ({ steered: true, promptIds }));
   await h.client.selectSession('a');
   await vi.waitFor(() => expect(h.client.sessionLoading.value).toBe(false));
   const { promptStore } = await import('../src/stores/prompt');
-  promptStore().queuedBySession = { a: [{ text: 'queued note', attachments: undefined }] };
+  promptStore().setQueue('a', [{ promptId: 'p_note', content: [{ type: 'text', text: 'queued note' }], createdAt: AT }]);
 
   h.waitFor('a', 'call-wait', true);
   await new Promise(resolve => setTimeout(resolve, 20));
-  expect(api.submitPrompt).not.toHaveBeenCalled();
+  expect(api.steerPrompts).not.toHaveBeenCalled();
 
   expect(await h.client.sendPrompt(h.client.createPromptEnvelope({ text: 'later note' }))).toBe('queued');
-  expect(api.submitPrompt).not.toHaveBeenCalled();
-  expect(promptStore().queuedBySession['a']?.map((entry) => entry.text)).toEqual(['queued note', 'later note']);
+  expect(api.submitPrompt).toHaveBeenCalledWith('a', expect.objectContaining({
+    content: [{ type: 'text', text: 'later note' }],
+    delivery: 'queue',
+  }));
+  expect(api.steerPrompts).not.toHaveBeenCalled();
 
-  expect(await h.client.steerQueued(0)).toBe('ok');
-  expect(api.submitPrompt).toHaveBeenCalledTimes(1);
-  expect(api.submitPrompt).toHaveBeenCalledWith('a', expect.objectContaining({ content: [{ type: 'text', text: 'queued note' }] }));
-  expect(api.steerPrompts).toHaveBeenCalledWith('a', [api.submitPrompt.mock.calls[0]![1].promptId]);
-  expect(promptStore().queuedBySession['a']?.map((entry) => entry.text)).toEqual(['later note']);
+  expect(await h.client.steerQueued('p_note')).toBe('ok');
+  expect(api.steerPrompts).toHaveBeenCalledWith('a', ['p_note']);
 });
 
 it('tracks session busy windows across active session changes', async () => {
@@ -541,403 +542,26 @@ it('tracks session busy windows across active session changes', async () => {
   ]);
 });
 
-it('queues /compact while busy, rejects duplicates, fires it FIFO, and holds the flush until compaction ends', async () => {
+it('sends /compact while a compaction is running and explains the server refusal', async () => {
   const h = await setup();
-  const api = h.api as typeof h.api & {
-    compactSession: ReturnType<typeof vi.fn>;
-    submitPrompt: ReturnType<typeof vi.fn>;
-  };
-  api.compactSession = vi.fn().mockResolvedValue({});
-  api.submitPrompt = vi.fn(echoPromptSubmit('running'));
-  await h.client.selectSession('a');
-  await vi.waitFor(() => expect(h.client.sessionLoading.value).toBe(false));
-  const { promptStore } = await import('../src/stores/prompt');
-
-  promptStore().inFlightBySession = { a: true };
-  expect(h.client.compact('shorter')).toBe('queued');
-  expect(api.compactSession).not.toHaveBeenCalled();
-  expect(h.client.compact()).toBe('duplicate');
-  const queued = promptStore().queuedBySession['a'] ?? [];
-  expect(queued).toHaveLength(1);
-  expect(queued[0]).toMatchObject({ kind: 'compact', instruction: 'shorter' });
-
-  promptStore().inFlightBySession = {};
-  const outcome = await h.client.sendPrompt(h.client.createPromptEnvelope({ text: 'follow up' }));
-  expect(outcome).toBe('queued');
-  await vi.waitFor(() => expect(api.compactSession).toHaveBeenCalledWith('a', 'shorter'));
-  expect(api.submitPrompt).not.toHaveBeenCalled();
-  expect(h.client.compact()).toBe('compacting');
-  expect(promptStore().queuedBySession['a'] ?? []).toHaveLength(1);
-
-  const third = await h.client.sendPrompt(h.client.createPromptEnvelope({ text: 'third' }));
-  expect(third).toBe('queued');
-  await new Promise((resolve) => setTimeout(resolve, 20));
-  expect(api.submitPrompt).not.toHaveBeenCalled();
-
-  h.compaction('a', 'started');
-  h.compaction('a', 'completed');
-  await vi.waitFor(() =>
-    expect(api.submitPrompt).toHaveBeenCalledWith(
-      'a',
-      expect.objectContaining({ content: [{ type: 'text', text: 'follow up' }] }),
-    ),
-  );
-  expect(api.compactSession.mock.invocationCallOrder[0]!).toBeLessThan(
-    api.submitPrompt.mock.invocationCallOrder[0]!,
-  );
-});
-
-it('queues prompts behind a held or active compaction instead of submitting them directly', async () => {
-  const h = await setup();
-  const api = h.api as typeof h.api & { submitPrompt: ReturnType<typeof vi.fn> };
-  api.submitPrompt = vi.fn(echoPromptSubmit('running'));
-  await h.client.selectSession('a');
-  await vi.waitFor(() => expect(h.client.sessionLoading.value).toBe(false));
-  const { promptStore } = await import('../src/stores/prompt');
-
-  promptStore().holdCompactFlush('a');
-  const held = await h.client.sendPrompt(h.client.createPromptEnvelope({ text: 'during compact' }));
-  expect(held).toBe('queued');
-  expect(api.submitPrompt).not.toHaveBeenCalled();
-
-  promptStore().releaseCompactFlush('a');
-  h.compaction('a', 'started');
-  const active = await h.client.sendPrompt(h.client.createPromptEnvelope({ text: 'still busy' }));
-  expect(active).toBe('queued');
-  expect(api.submitPrompt).not.toHaveBeenCalledWith(
-    'a',
-    expect.objectContaining({ content: [{ type: 'text', text: 'still busy' }] }),
-  );
-});
-
-it('settles a registered compaction wait as request-failed when a queued compact exhausts its retries', async () => {
-  const h = await setup();
-  const api = h.api as typeof h.api & {
-    compactSession: ReturnType<typeof vi.fn>;
-    submitPrompt: ReturnType<typeof vi.fn>;
-  };
-  api.compactSession = vi.fn().mockRejectedValue(new Error('500'));
-  api.submitPrompt = vi.fn(echoPromptSubmit('running'));
-  await h.client.selectSession('a');
-  await vi.waitFor(() => expect(h.client.sessionLoading.value).toBe(false));
-  const { promptStore } = await import('../src/stores/prompt');
-  const { modelSwitchConfirmStore } = await import('../src/stores/modelSwitchConfirm');
-  modelSwitchConfirmStore().resetForTest();
-  const wait = modelSwitchConfirmStore().waitCompactionSettled('a', 30_000);
-
-  promptStore().inFlightBySession = { a: true };
-  expect(h.client.compact()).toBe('queued');
-  promptStore().inFlightBySession = {};
-  const follow = await h.client.sendPrompt(h.client.createPromptEnvelope({ text: 'follow up' }));
-  expect(follow).toBe('queued');
-  await vi.waitFor(() => expect(api.compactSession).toHaveBeenCalledTimes(1));
-
-  await vi.waitFor(() => expect(api.compactSession).toHaveBeenCalledTimes(3), { timeout: 10_000 });
-  await expect(wait).resolves.toBe('request-failed');
-  await vi.waitFor(() =>
-    expect(api.submitPrompt).toHaveBeenCalledWith(
-      'a',
-      expect.objectContaining({ content: [{ type: 'text', text: 'follow up' }] }),
-    ),
-  );
-});
-
-it('settles a registered compaction wait from the compaction item and leaves the queue resume to the waiter', async () => {
-  const h = await setup();
-  const api = h.api as typeof h.api & { submitPrompt: ReturnType<typeof vi.fn> };
-  api.submitPrompt = vi.fn(echoPromptSubmit('running'));
-  await h.client.selectSession('a');
-  await vi.waitFor(() => expect(h.client.sessionLoading.value).toBe(false));
-  const { promptStore } = await import('../src/stores/prompt');
-  const { modelSwitchConfirmStore } = await import('../src/stores/modelSwitchConfirm');
-  modelSwitchConfirmStore().resetForTest();
-
-  promptStore().queuedBySession = { a: [{ text: 'follow up', attachments: undefined }] };
-  promptStore().holdCompactFlush('a');
-  const wait = modelSwitchConfirmStore().waitCompactionSettled('a', 1_000);
-
-  h.compaction('a', 'started');
-  h.compaction('a', 'completed');
-
-  await expect(wait).resolves.toBe('completed');
-  expect(api.submitPrompt).not.toHaveBeenCalled();
-  expect(promptStore().isCompactFlushHeld('a')).toBe(true);
-});
-
-it('rejects /compact while a compaction is running and sends directly once it ends', async () => {
-  const h = await setup();
+  const { DaemonApiError } = await import('@moonshot-ai/app-core/api');
   const api = h.api as typeof h.api & { compactSession: ReturnType<typeof vi.fn> };
-  api.compactSession = vi.fn().mockResolvedValue({});
+  api.compactSession = vi.fn()
+    .mockRejectedValueOnce(new DaemonApiError({ code: 40910, msg: 'compaction unavailable', requestId: 'req-1' }))
+    .mockResolvedValue(undefined);
   await h.client.selectSession('a');
   await vi.waitFor(() => expect(h.client.sessionLoading.value).toBe(false));
-  const { promptStore } = await import('../src/stores/prompt');
+  const titles = () => h.warningsStore().warnings.map((w) => (typeof w === 'string' ? w : w.title));
 
   h.compaction('a', 'started');
-  expect(h.client.compact()).toBe('compacting');
-  expect(api.compactSession).not.toHaveBeenCalled();
-  expect(promptStore().queuedBySession['a'] ?? []).toHaveLength(0);
+  expect(h.client.compact()).toBe(true);
+  await vi.waitFor(() => expect(titles()).toContain('commands.compactQueue.compacting'));
 
   h.compaction('a', 'completed');
-  expect(h.client.compact('shorter')).toBe('sent');
-  await vi.waitFor(() => expect(api.compactSession).toHaveBeenCalledWith('a', 'shorter'));
+  expect(h.client.compact('shorter')).toBe(true);
+  await vi.waitFor(() => expect(api.compactSession).toHaveBeenLastCalledWith('a', 'shorter'));
 });
 
-it('reports compaction as running immediately while compactSession is in flight and clears on failure', async () => {
-  const h = await setup();
-  let rejectCompact!: (error: Error) => void;
-  const api = h.api as typeof h.api & { compactSession: ReturnType<typeof vi.fn> };
-  api.compactSession = vi.fn(
-    () =>
-      new Promise((_resolve, reject) => {
-        rejectCompact = reject;
-      }),
-  );
-  await h.client.selectSession('a');
-  await vi.waitFor(() => expect(h.client.sessionLoading.value).toBe(false));
-
-  expect(h.client.compaction.value).toBeNull();
-  expect(h.client.wouldEnqueuePrompt()).toBe(false);
-  expect(h.client.compact()).toBe('sent');
-  expect(h.client.compaction.value).toEqual({ status: 'running' });
-  expect(h.client.wouldEnqueuePrompt()).toBe(true);
-  expect(h.client.compact()).toBe('compacting');
-  expect(api.compactSession).toHaveBeenCalledTimes(1);
-
-  rejectCompact(new Error('network down'));
-  await vi.waitFor(() => expect(h.client.compaction.value).toBeNull());
-  expect(h.client.wouldEnqueuePrompt()).toBe(false);
-});
-
-it('skips a queued /compact when an auto compaction completed while it waited', async () => {
-  const h = await setup();
-  const api = h.api as typeof h.api & {
-    compactSession: ReturnType<typeof vi.fn>;
-    submitPrompt: ReturnType<typeof vi.fn>;
-  };
-  api.compactSession = vi.fn().mockResolvedValue({});
-  api.submitPrompt = vi.fn(echoPromptSubmit('running'));
-  await h.client.selectSession('a');
-  await vi.waitFor(() => expect(h.client.sessionLoading.value).toBe(false));
-  const { promptStore } = await import('../src/stores/prompt');
-
-  promptStore().enqueueCompactForSession('a', 'focus on tools');
-  const head = (promptStore().queuedBySession['a'] ?? [])[0]!;
-  promptStore().setQueuedEntries('a', [{ ...head, enqueuedAt: Date.now() - 60_000 }]);
-  h.compaction('a', 'started', 'auto');
-  h.compaction('a', 'completed', 'auto');
-
-  await vi.waitFor(() => expect(promptStore().queuedBySession['a'] ?? []).toHaveLength(0));
-  expect(api.compactSession).not.toHaveBeenCalled();
-  const titles = h.warningsStore().warnings.map((w) => (typeof w === 'string' ? w : w.title));
-  expect(titles).toContain('commands.compactQueue.skippedAuto');
-
-  const outcome = await h.client.sendPrompt(h.client.createPromptEnvelope({ text: 'follow up' }));
-  expect(outcome).toBe('ok');
-  await vi.waitFor(() =>
-    expect(api.submitPrompt).toHaveBeenCalledWith(
-      'a',
-      expect.objectContaining({ content: [{ type: 'text', text: 'follow up' }] }),
-    ),
-  );
-});
-
-it('requeues a failed queued /compact at the head and drops it after the retry budget', async () => {
-  const h = await setup();
-  const api = h.api as typeof h.api & {
-    compactSession: ReturnType<typeof vi.fn>;
-    submitPrompt: ReturnType<typeof vi.fn>;
-  };
-  api.compactSession = vi.fn().mockRejectedValue(new Error('COMPACTION_UNABLE'));
-  api.submitPrompt = vi.fn(echoPromptSubmit('running'));
-  await h.client.selectSession('a');
-  await vi.waitFor(() => expect(h.client.sessionLoading.value).toBe(false));
-  const { promptStore } = await import('../src/stores/prompt');
-
-  promptStore().enqueueCompactForSession('a');
-  await h.client.sendPrompt(h.client.createPromptEnvelope({ text: 'follow up' }));
-  await vi.waitFor(() =>
-    expect((promptStore().queuedBySession['a'] ?? [])[0]?.compactRetries).toBe(1),
-  );
-  expect(api.compactSession).toHaveBeenCalledTimes(1);
-  expect(api.submitPrompt).not.toHaveBeenCalled();
-
-  promptStore().setQueuedEntries('a', []);
-  promptStore().enqueueCompactForSession('a');
-  const head = (promptStore().queuedBySession['a'] ?? [])[0]!;
-  promptStore().setQueuedEntries('a', [{ ...head, compactRetries: 2 }]);
-  await h.client.sendPrompt(h.client.createPromptEnvelope({ text: 'after drop' }));
-  await vi.waitFor(() =>
-    expect(api.submitPrompt).toHaveBeenCalledWith(
-      'a',
-      expect.objectContaining({ content: [{ type: 'text', text: 'after drop' }] }),
-    ),
-  );
-  expect(api.compactSession).toHaveBeenCalledTimes(2);
-  expect(promptStore().queuedBySession['a'] ?? []).toHaveLength(0);
-  expect(h.warningsStore().pushOperationFailure).toHaveBeenCalledWith(
-    'compact',
-    expect.any(Error),
-    { sessionId: 'a' },
-  );
-});
-
-it('settles a running compaction from the page a reconnect delivers', async () => {
-  const h = await setup();
-  const api = h.api as typeof h.api & {
-    compactSession: ReturnType<typeof vi.fn>;
-    submitPrompt: ReturnType<typeof vi.fn>;
-  };
-  api.compactSession = vi.fn().mockResolvedValue({});
-  api.submitPrompt = vi.fn(echoPromptSubmit('running'));
-  await h.client.selectSession('a');
-  await vi.waitFor(() => expect(h.client.sessionLoading.value).toBe(false));
-  const { promptStore } = await import('../src/stores/prompt');
-
-  promptStore().inFlightBySession = { a: true };
-  expect(h.client.compact('shorter')).toBe('queued');
-  promptStore().inFlightBySession = {};
-  expect(await h.client.sendPrompt(h.client.createPromptEnvelope({ text: 'follow up' }))).toBe('queued');
-  await vi.waitFor(() => expect(api.compactSession).toHaveBeenCalledWith('a', 'shorter'));
-  h.compaction('a', 'started');
-  await new Promise((resolve) => setTimeout(resolve, 20));
-  expect(api.submitPrompt).not.toHaveBeenCalled();
-
-  h.conversation('a', {
-    type: 'turns',
-    turns: [{
-      turn_id: 'compaction-turn', ordinal: 50, kind: 'system', status: 'ended', outcome: 'completed', started_at: AT, steps: [],
-      items: [compactionItem('manual')],
-    }],
-    has_more: false,
-  });
-  await vi.waitFor(() =>
-    expect(api.submitPrompt).toHaveBeenCalledWith(
-      'a',
-      expect.objectContaining({ content: [{ type: 'text', text: 'follow up' }] }),
-    ),
-  );
-});
-
-it('retries a failed queued /compact once the turn that kept the session busy ends', async () => {
-  const h = await setup();
-  const api = h.api as typeof h.api & { compactSession: ReturnType<typeof vi.fn> };
-  api.compactSession = vi.fn().mockRejectedValue(new Error('COMPACTION_UNABLE'));
-  await h.client.selectSession('a');
-  await vi.waitFor(() => expect(h.client.sessionLoading.value).toBe(false));
-  const { promptStore } = await import('../src/stores/prompt');
-
-  vi.useFakeTimers();
-  try {
-    promptStore().enqueueCompactForSession('a');
-    expect(await h.client.sendPrompt(h.client.createPromptEnvelope({ text: 'follow up' }))).toBe('queued');
-    await vi.advanceTimersByTimeAsync(0);
-    expect(api.compactSession).toHaveBeenCalledTimes(1);
-    expect((promptStore().queuedBySession['a'] ?? [])[0]?.compactRetries).toBe(1);
-
-    const running = h.turn('running');
-    await vi.advanceTimersByTimeAsync(5_000);
-    await running;
-    expect(api.compactSession).toHaveBeenCalledTimes(1);
-    expect((promptStore().queuedBySession['a'] ?? [])[0]?.compactRetries).toBe(1);
-
-    const ended = h.turn('completed');
-    await vi.advanceTimersByTimeAsync(100);
-    await ended;
-    expect(api.compactSession).toHaveBeenCalledTimes(2);
-    expect((promptStore().queuedBySession['a'] ?? [])[0]?.compactRetries).toBe(2);
-  } finally {
-    vi.useRealTimers();
-  }
-});
-
-it('waits for an active compaction before firing a queued /compact', async () => {
-  const h = await setup();
-  const api = h.api as typeof h.api & {
-    compactSession: ReturnType<typeof vi.fn>;
-    submitPrompt: ReturnType<typeof vi.fn>;
-  };
-  api.compactSession = vi.fn().mockResolvedValue({});
-  api.submitPrompt = vi.fn(echoPromptSubmit('running'));
-  await h.client.selectSession('a');
-  await vi.waitFor(() => expect(h.client.sessionLoading.value).toBe(false));
-  const { promptStore } = await import('../src/stores/prompt');
-
-  h.compaction('a', 'started');
-  promptStore().enqueueCompactForSession('a', 'focus');
-  expect(await h.client.sendPrompt(h.client.createPromptEnvelope({ text: 'follow up' }))).toBe('queued');
-  await new Promise((resolve) => setTimeout(resolve, 30));
-  expect(api.compactSession).not.toHaveBeenCalled();
-  expect(api.submitPrompt).not.toHaveBeenCalled();
-  expect(promptStore().queuedBySession['a'] ?? []).toHaveLength(2);
-
-  h.compaction('a', 'completed');
-  await vi.waitFor(
-    () => expect(api.compactSession).toHaveBeenCalledWith('a', 'focus'),
-    { timeout: 3000, interval: 50 },
-  );
-  expect(api.submitPrompt).not.toHaveBeenCalled();
-});
-
-it('does not requeue a /compact whose POST rejects after the compaction ended and released the hold', async () => {
-  const h = await setup();
-  const api = h.api as typeof h.api & {
-    compactSession: ReturnType<typeof vi.fn>;
-    submitPrompt: ReturnType<typeof vi.fn>;
-  };
-  let rejectCompact!: (err: Error) => void;
-  api.compactSession = vi.fn(() => new Promise((_, reject) => { rejectCompact = reject; }));
-  api.submitPrompt = vi.fn(echoPromptSubmit('running'));
-  await h.client.selectSession('a');
-  await vi.waitFor(() => expect(h.client.sessionLoading.value).toBe(false));
-  const { promptStore } = await import('../src/stores/prompt');
-
-  promptStore().enqueueCompactForSession('a', 'focus');
-  expect(await h.client.sendPrompt(h.client.createPromptEnvelope({ text: 'follow up' }))).toBe('queued');
-  await vi.waitFor(() => expect(api.compactSession).toHaveBeenCalledWith('a', 'focus'));
-
-  h.compaction('a', 'started');
-  h.compaction('a', 'completed');
-  await vi.waitFor(() =>
-    expect(api.submitPrompt).toHaveBeenCalledWith(
-      'a',
-      expect.objectContaining({ content: [{ type: 'text', text: 'follow up' }] }),
-    ),
-  );
-
-  rejectCompact(new Error('connection lost'));
-  await new Promise((resolve) => setTimeout(resolve, 0));
-  expect(api.compactSession).toHaveBeenCalledTimes(1);
-  expect((promptStore().queuedBySession['a'] ?? []).some((entry) => entry.kind === 'compact')).toBe(false);
-  expect(h.warningsStore().pushOperationFailure).not.toHaveBeenCalledWith(
-    'compact',
-    expect.anything(),
-    expect.anything(),
-  );
-});
-
-it('keeps the live draft editText when the compact barrier reroutes it to the queue tail', async () => {
-  const h = await setup();
-  const api = h.api as typeof h.api & { submitPrompt: ReturnType<typeof vi.fn>; steerPrompts: ReturnType<typeof vi.fn> };
-  api.submitPrompt = vi.fn(echoPromptSubmit('queued'));
-  api.steerPrompts = vi.fn().mockResolvedValue({});
-  await h.client.selectSession('a');
-  await vi.waitFor(() => expect(h.client.sessionLoading.value).toBe(false));
-  const { promptStore } = await import('../src/stores/prompt');
-  promptStore().enqueueCompactForSession('a', 'focus');
-  h.waitFor('a', 'call-wait', true);
-  await new Promise((resolve) => setTimeout(resolve, 20));
-
-  const outcome = await h.client.sendPrompt(
-    h.client.createPromptEnvelope({ text: 'live draft' }),
-    'live draft edit text',
-  );
-  expect(outcome).toBe('queued');
-  expect(api.submitPrompt).not.toHaveBeenCalled();
-  const queued = promptStore().queuedBySession['a'] ?? [];
-  expect(queued).toHaveLength(2);
-  expect(queued[0]?.kind).toBe('compact');
-  expect(queued[1]).toMatchObject({ text: 'live draft', editText: 'live draft edit text' });
-});
 
 it('refreshes workspace and active session skills with scoped reads when source dirs change', async () => {
   const h = await setup();

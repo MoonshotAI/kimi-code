@@ -1,7 +1,7 @@
 
 import { computed, nextTick, ref, watch } from 'vue';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { AppApprovalRequest, AppQuestionRequest, AppSession, InteractionRespondResult, KimiWebApi, PromptSubmission, PromptSubmitResult, ThinkingLevel } from '@moonshot-ai/app-core/api';
+import type { AppApprovalRequest, AppQueuedInput, AppQuestionRequest, AppSession, InteractionRespondResult, KimiWebApi, PromptSubmission, PromptSubmitResult, ThinkingLevel } from '@moonshot-ai/app-core/api';
 import { DaemonApiError } from '@moonshot-ai/app-core/api';
 import { createInitialState } from '@moonshot-ai/app-core/api';
 import { mergeWorkspaces } from '@moonshot-ai/app-core/lib';
@@ -10,7 +10,6 @@ import { loadWorkspaceNameOverridesById, saveWorkspaceNameOverridesById } from '
 import { insertSessionByRecency } from '@moonshot-ai/app-core/lib';
 import { safeRemove, STORAGE_KEYS } from '@moonshot-ai/app-core/lib';
 import { createKimiI18n } from '@moonshot-ai/app-i18n';
-import { createComposerSnapshot, textToDoc } from '@moonshot-ai/app-composer/model';
 import type { Translator } from '@moonshot-ai/app-core/contracts';
 import { resetKimiClientDeps, setKimiClientDeps } from '../src/client/deps';
 import { approvalsStore } from '../src/stores/approvals';
@@ -32,7 +31,7 @@ import { warningsStore } from '../src/stores/warnings';
 import { workspacesStore } from '../src/stores/workspaces';
 import type { ExtendedState } from '../src/client/types';
 import type { PersistSessionProfilePatch } from '../src/client/useModelProviderState';
-import { createWorkspaceRig, type WorkspaceRig, type WorkspaceRigDeps } from '../src/testing/workspaceRig';
+import { createWorkspaceRig, type WorkspaceRigDeps } from '../src/testing/workspaceRig';
 import { useConfirmDialog } from '../src/composables/useConfirmDialog';
 const apiMock = {
   abortPrompt: vi.fn(),
@@ -48,8 +47,8 @@ const apiMock = {
   restoreSession: vi.fn(),
   updateSession: vi.fn(),
   submitPrompt: vi.fn(),
-  steerPrompt: vi.fn(),
   steerPrompts: vi.fn(),
+  moveQueuedPrompt: vi.fn(),
   respondQuestion: vi.fn(),
   respondApproval: vi.fn(),
   dismissQuestion: vi.fn(),
@@ -72,8 +71,13 @@ function echoPromptSubmit(status?: PromptSubmitResult['status']) {
   return async (_sid: string, input: PromptSubmission): Promise<PromptSubmitResult> => ({
     promptId: input.promptId!,
     userMessageId: input.promptId!,
-    status,
+    status: input.delivery === 'steer' ? 'running' : status,
+    acceptedAs: input.delivery === 'steer' ? 'steer' : status === 'queued' ? 'queue' : 'turn',
   });
+}
+
+function queuedInput(promptId: string, text: string): AppQueuedInput {
+  return { promptId, content: [{ type: 'text', text }], createdAt: '2026-11-06T00:00:00.000Z' };
 }
 
 function sentPromptId(index = 0): string {
@@ -151,9 +155,9 @@ function resetWorkspacesStore(): void {
 
 function resetPromptStore(): void {
   const store = promptStore();
-  for (const sid of Object.keys(store.queuedBySession)) store.forgetPromptState(sid);
+  for (const sid of Object.keys(store.queueBySession)) store.forgetPromptState(sid);
   for (const sid of Object.keys(store.inFlightBySession)) store.forgetPromptState(sid);
-  store.queuedBySession = {};
+  store.queueBySession = {};
   store.inFlightBySession = {};
   store.optimisticMessagesBySession = {};
   store.setDraftEntry('newChat');
@@ -190,6 +194,7 @@ beforeEach(() => {
     sessionExportTraceToJsonl: exportTraceRecordsToJsonl,
   });
   pushFailureSpy.mockClear();
+  apiMock.moveQueuedPrompt.mockReset();
   warningsStore().resetWarnings();
   resetWorkspacesStore();
   resetPromptStore();
@@ -399,12 +404,6 @@ function createDeps(): WorkspaceRigDeps {
     hasUnechoedPrompt: (sid: string) => (promptStore().optimisticMessagesBySession[sid]?.length ?? 0) > 0,
     basename: (path: string) => path.split('/').at(-1) ?? path,
   } as unknown as WorkspaceRigDeps;
-}
-
-function endMainTurn(ws: WorkspaceRig): void {
-  promptStore().setInFlight('sess_1', false);
-  promptStore().clearOptimisticMessages('sess_1');
-  ws.resumeQueueIfIdle('sess_1');
 }
 
 function createMemoryStorage(): Storage {
@@ -1421,10 +1420,11 @@ describe('useWorkspaceState — createGoal from an empty composer', () => {
     expect(apiMock.submitPrompt).toHaveBeenCalledOnce();
   });
 
-  it('queues the objective when the active session is running (no queue bypass)', async () => {
+  it('submits the objective to a running session and lets the server queue it', async () => {
     const state = createState();
     state.activeSessionId = 'sess_1';
     permissionsStore().pickInSession('sess_1', 'auto');
+    apiMock.submitPrompt.mockImplementation(echoPromptSubmit('queued'));
     const ws = createWorkspaceRig(state, createDeps());
 
     await ws.createGoal('improve test coverage');
@@ -1434,10 +1434,10 @@ describe('useWorkspaceState — createGoal from an empty composer', () => {
       goalObjective: 'improve test coverage',
       planMode: false,
     });
-    expect(apiMock.submitPrompt).not.toHaveBeenCalled();
-    expect(promptStore().queuedBySession['sess_1']).toEqual([
-      expect.objectContaining({ text: 'improve test coverage', attachments: [], skills: [] }),
-    ]);
+    expect(apiMock.submitPrompt).toHaveBeenCalledWith(
+      'sess_1',
+      expect.objectContaining({ content: [{ type: 'text', text: 'improve test coverage' }], delivery: 'queue' }),
+    );
   });
 
   it('surfaces a structured refusal of the goal write without submitting the objective', async () => {
@@ -1461,7 +1461,7 @@ describe('useWorkspaceState — createGoal from an empty composer', () => {
       expect.anything(),
       expect.objectContaining({ sessionId: 'sess_1' }),
     );
-    expect(promptStore().queuedBySession.sess_1 ?? []).toEqual([]);
+    expect(promptStore().queueBySession.sess_1 ?? []).toEqual([]);
     expect(apiMock.submitPrompt).not.toHaveBeenCalled();
     expect(apiMock.updateSession).toHaveBeenCalledTimes(1);
   });
@@ -1485,7 +1485,7 @@ describe('useWorkspaceState — createGoal from an empty composer', () => {
       expect.anything(),
       expect.objectContaining({ sessionId: 'sess_1' }),
     );
-    expect(promptStore().queuedBySession.sess_1 ?? []).toEqual([]);
+    expect(promptStore().queueBySession.sess_1 ?? []).toEqual([]);
     expect(apiMock.submitPrompt).not.toHaveBeenCalled();
   });
 
@@ -2289,10 +2289,8 @@ describe('useWorkspaceState — snapshot prompt recovery', () => {
   beforeEach(() => {
     apiMock.submitPrompt.mockReset();
     apiMock.submitPrompt.mockImplementation(echoPromptSubmit());
-    apiMock.steerPrompt.mockReset();
-    apiMock.steerPrompt.mockImplementation(echoPromptSubmit());
     apiMock.steerPrompts.mockReset();
-    apiMock.steerPrompts.mockResolvedValue({});
+    apiMock.steerPrompts.mockImplementation(async (_sid: string, promptIds: string[]) => ({ steered: true, promptIds }));
     promptStore().forgetLocalTurnState('sess_1');
   });
 
@@ -2373,21 +2371,20 @@ describe('useWorkspaceState — snapshot prompt recovery', () => {
     }
   });
 
-  it('wouldEnqueuePrompt tracks the busy, in-flight, and lined-up states', () => {
+  it('wouldEnqueuePrompt tracks the busy, in-flight, and server-queue states', () => {
     const idle = createWorkspaceRig(createState(), promptDeps({ activity: computed(() => 'idle') }));
     expect(idle.wouldEnqueuePrompt()).toBe(false);
 
     const running = createWorkspaceRig(createState(), promptDeps());
     expect(running.wouldEnqueuePrompt()).toBe(true);
 
-    const inFlightState = createState();
     promptStore().inFlightBySession = { sess_1: true };
-    const inFlight = createWorkspaceRig(inFlightState, promptDeps({ activity: computed(() => 'idle') }));
+    const inFlight = createWorkspaceRig(createState(), promptDeps({ activity: computed(() => 'idle') }));
     expect(inFlight.wouldEnqueuePrompt()).toBe(true);
 
-    const queuedState = createState();
-    const queued = createWorkspaceRig(queuedState, promptDeps({ activity: computed(() => 'idle') }));
-    queued.enqueue('later');
+    promptStore().inFlightBySession = {};
+    promptStore().setQueue('sess_1', [queuedInput('p_later', 'later')]);
+    const queued = createWorkspaceRig(createState(), promptDeps({ activity: computed(() => 'idle') }));
     expect(queued.wouldEnqueuePrompt()).toBe(true);
   });
 
@@ -2501,90 +2498,6 @@ describe('useWorkspaceState — snapshot prompt recovery', () => {
     expect(promptStore().optimisticMessagesBySession.sess_1 ?? []).toHaveLength(1);
   });
 
-  it('drains one queued prompt once the session is idle', async () => {
-    const state = createState();
-    promptStore().queuedBySession = {
-      sess_1: [
-        { text: 'first queued', attachments: undefined },
-        { text: 'second queued', attachments: undefined },
-      ],
-    };
-    const ws = createWorkspaceRig(state, promptDeps());
-
-    ws.resumeQueueIfIdle('sess_1');
-
-    await vi.waitFor(() => expect(apiMock.submitPrompt).toHaveBeenCalledOnce());
-    expect(promptStore().queuedBySession.sess_1).toEqual([
-      { text: 'second queued', attachments: undefined },
-    ]);
-  });
-
-  it('keeps the queue while the session runs or a sent prompt waits for its echo', () => {
-    promptStore().queuedBySession = { sess_1: [{ text: 'queued', attachments: undefined }] };
-    let running = true;
-    let unechoed = false;
-    const ws = createWorkspaceRig(createState(), promptDeps({
-      isMainTurnRunning: () => running,
-      hasUnechoedPrompt: () => unechoed,
-    }));
-
-    ws.resumeQueueIfIdle('sess_1');
-    running = false;
-    unechoed = true;
-    ws.resumeQueueIfIdle('sess_1');
-
-    expect(apiMock.submitPrompt).not.toHaveBeenCalled();
-    expect(promptStore().queuedBySession.sess_1).toHaveLength(1);
-  });
-
-  it('drains queued session-media attachments without changing their namespace', async () => {
-    const state = createState();
-    promptStore().queuedBySession = {
-      sess_1: [
-        {
-          text: 'queued media',
-          attachments: [
-            { fileId: 'f_img', kind: 'image', sessionId: 'sess_1' },
-            { fileId: 'f_vid', kind: 'video', sessionId: 'sess_1' },
-          ],
-        },
-      ],
-    };
-    const ws = createWorkspaceRig(state, promptDeps());
-
-    ws.resumeQueueIfIdle('sess_1');
-
-    await vi.waitFor(() => expect(apiMock.submitPrompt).toHaveBeenCalledOnce());
-    expect(apiMock.submitPrompt).toHaveBeenCalledWith(
-      'sess_1',
-      expect.objectContaining({
-        content: [
-          { type: 'text', text: 'queued media' },
-          { type: 'image', source: { kind: 'sessionMedia', fileId: 'f_img' } },
-          { type: 'video', source: { kind: 'sessionMedia', fileId: 'f_vid' } },
-        ],
-      }),
-    );
-  });
-
-  it('flushes the stuck queue head before the new prompt when sending while idle', async () => {
-    const state = createState();
-    promptStore().queuedBySession = { sess_1: [{ text: 'stuck queued', attachments: undefined }] };
-    const ws = createWorkspaceRig(state, promptDeps({ activity: computed(() => 'idle') }));
-
-    await ws.sendPrompt(ws.createPromptEnvelope({ text: 'next' }));
-    await new Promise((r) => setTimeout(r, 0));
-
-    expect(apiMock.submitPrompt).toHaveBeenCalledOnce();
-    expect(apiMock.submitPrompt).toHaveBeenCalledWith(
-      'sess_1',
-      expect.objectContaining({ content: [{ type: 'text', text: 'stuck queued' }] }),
-    );
-    expect(promptStore().queuedBySession.sess_1).toEqual([
-      expect.objectContaining({ text: 'next', attachments: [], skills: [] }),
-    ]);
-  });
-
   it('arms plan locally without a profile write, and cashes it on send', async () => {
     apiMock.updateSession.mockReset();
     apiMock.updateSession.mockResolvedValue({});
@@ -2682,36 +2595,6 @@ describe('useWorkspaceState — snapshot prompt recovery', () => {
     expect(apiMock.submitPrompt).toHaveBeenCalledOnce();
   });
 
-  it('keeps the re-armed intent when a second send queues mid-cash (off→on→send)', async () => {
-    apiMock.updateSession.mockReset();
-    let resolveCash!: (value: unknown) => void;
-    apiMock.updateSession.mockImplementation((_sid: string, patch: { planMode?: boolean }) =>
-      patch.planMode === true
-        ? new Promise((resolve) => { resolveCash = resolve; })
-        : Promise.resolve({}),
-    );
-    const state = createState();
-    const deps = promptDeps({ activity: computed(() => 'idle') });
-    const ws = createWorkspaceRig(state, deps);
-
-    ws.setPlanMode(true);
-    const send = ws.sendPrompt(ws.createPromptEnvelope({ text: 'first' }));
-    await vi.waitFor(() =>
-      expect(apiMock.updateSession).toHaveBeenCalledWith('sess_1', { planMode: true, towerMode: false }),
-    );
-
-    ws.setPlanMode(false);
-    ws.setPlanMode(true);
-    await ws.sendPrompt(ws.createPromptEnvelope({ text: 'second' }));
-
-    resolveCash({});
-    await send;
-
-    expect(deps.persistSessionProfile).not.toHaveBeenCalledWith({ planMode: false }, 'sess_1');
-    expect(state.planModeBySession.sess_1).toBe(true);
-    expect(apiMock.submitPrompt).toHaveBeenCalledOnce();
-  });
-
   it('skips the cashing write when the daemon fact is already active', async () => {
     apiMock.updateSession.mockReset();
     const state = createState();
@@ -2724,362 +2607,6 @@ describe('useWorkspaceState — snapshot prompt recovery', () => {
     expect(apiMock.updateSession).not.toHaveBeenCalled();
     expect(apiMock.submitPrompt).toHaveBeenCalledOnce();
     expect(state.planArmedBySession.sess_1).toBe(false);
-  });
-
-  it('re-queues a failed flush at the head and keeps it after repeated failures', async () => {
-    const state = createState();
-    const queued = {
-      text: 'first queued',
-      attachments: [{ fileId: 'f_img', kind: 'image' as const, sessionId: 'sess_1' }],
-    };
-    promptStore().queuedBySession = { sess_1: [queued] };
-    apiMock.submitPrompt.mockRejectedValue(
-      new DaemonApiError({ code: 50000, msg: 'turn.agent_busy', requestId: 'r' }),
-    );
-    const ws = createWorkspaceRig(state, promptDeps());
-    const settle = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
-
-    for (let i = 0; i < 3; i += 1) {
-      ws.resumeQueueIfIdle('sess_1');
-      await settle();
-      expect(promptStore().queuedBySession.sess_1).toEqual([queued]);
-    }
-
-    ws.resumeQueueIfIdle('sess_1');
-    await settle();
-    expect(apiMock.submitPrompt).toHaveBeenCalledTimes(3);
-    expect(promptStore().queuedBySession.sess_1).toEqual([queued]);
-  });
-
-  it('keeps an exhausted multi-skill entry editable until the user removes it', async () => {
-    const state = createState();
-    promptStore().queuedBySession = {
-      sess_1: [
-        {
-          text: 'review this',
-          editText: '[deploy](kimi-code://skill/deploy) [review](kimi-code://skill/review) review this',
-          attachments: [],
-          skills: [{ name: 'deploy' }, { name: 'review' }],
-          permissionMode: 'manual',
-          id: 'id-skills',
-        },
-        { text: 'next prompt', attachments: undefined, id: 'id-next' },
-      ],
-    };
-    apiMock.submitPrompt
-      .mockRejectedValueOnce(new DaemonApiError({ code: 40408, msg: 'skill.not_found', requestId: 'r1' }))
-      .mockRejectedValueOnce(new DaemonApiError({ code: 40408, msg: 'skill.not_found', requestId: 'r2' }))
-      .mockRejectedValueOnce(new DaemonApiError({ code: 40408, msg: 'skill.not_found', requestId: 'r3' }))
-      .mockImplementationOnce(echoPromptSubmit());
-    const ws = createWorkspaceRig(state, promptDeps());
-    const flushOnce = async () => {
-      ws.resumeQueueIfIdle('sess_1');
-      await new Promise<void>((resolve) => setTimeout(resolve, 0));
-    };
-
-    await flushOnce();
-    await flushOnce();
-    await flushOnce();
-    expect(promptStore().queuedBySession.sess_1?.[0]).toEqual(expect.objectContaining({
-      id: 'id-skills',
-      editText: '[deploy](kimi-code://skill/deploy) [review](kimi-code://skill/review) review this',
-      skills: [{ name: 'deploy' }, { name: 'review' }],
-    }));
-    expect(apiMock.submitPrompt).toHaveBeenCalledTimes(3);
-
-    await flushOnce();
-    expect(apiMock.submitPrompt).toHaveBeenCalledTimes(3);
-    ws.unqueue(0);
-    await new Promise<void>((resolve) => setTimeout(resolve, 0));
-    expect(apiMock.submitPrompt).toHaveBeenCalledTimes(4);
-    expect(apiMock.submitPrompt).toHaveBeenLastCalledWith(
-      'sess_1',
-      expect.objectContaining({ content: [{ type: 'text', text: 'next prompt' }] }),
-    );
-  });
-
-  it('resumes the queue when an exhausted multi-skill head is reordered away', async () => {
-    const state = createState();
-    promptStore().queuedBySession = {
-      sess_1: [
-        {
-          text: 'review this',
-          attachments: [],
-          skills: [{ name: 'deploy' }, { name: 'review' }],
-          permissionMode: 'manual',
-          id: 'id-skills',
-        },
-        { text: 'next prompt', attachments: undefined, id: 'id-next' },
-      ],
-    };
-    apiMock.submitPrompt
-      .mockRejectedValueOnce(new DaemonApiError({ code: 40408, msg: 'skill.not_found', requestId: 'r1' }))
-      .mockRejectedValueOnce(new DaemonApiError({ code: 40408, msg: 'skill.not_found', requestId: 'r2' }))
-      .mockRejectedValueOnce(new DaemonApiError({ code: 40408, msg: 'skill.not_found', requestId: 'r3' }))
-      .mockImplementationOnce(echoPromptSubmit());
-    const ws = createWorkspaceRig(state, promptDeps());
-    for (let i = 0; i < 3; i += 1) {
-      ws.resumeQueueIfIdle('sess_1');
-      await new Promise<void>((resolve) => setTimeout(resolve, 0));
-    }
-
-    ws.reorderQueue(1, 0);
-    await new Promise<void>((resolve) => setTimeout(resolve, 0));
-
-    expect(apiMock.submitPrompt).toHaveBeenCalledTimes(4);
-    expect(apiMock.submitPrompt).toHaveBeenLastCalledWith(
-      'sess_1',
-      expect.objectContaining({ content: [{ type: 'text', text: 'next prompt' }] }),
-    );
-    expect(promptStore().queuedBySession.sess_1?.map((entry) => entry.id)).toEqual(['id-skills']);
-  });
-
-  it('keeps session-media attachments in their namespace when steering a running turn', async () => {
-    const state = createState();
-    promptStore().inFlightBySession = { sess_1: true };
-    promptStore().queuedBySession = {
-      sess_1: [
-        {
-          text: 'queued media',
-          attachments: [{ fileId: 'f_img', kind: 'image', sessionId: 'sess_1' }],
-        },
-      ],
-    };
-    const ws = createWorkspaceRig(state, promptDeps());
-
-    await ws.steerPrompt(ws.createPromptEnvelope({
-      text: 'live media',
-      attachments: [{ fileId: 'f_vid', kind: 'video', sessionId: 'sess_1' }],
-    }));
-
-    expect(apiMock.submitPrompt).toHaveBeenCalledWith(
-      'sess_1',
-      expect.objectContaining({
-        content: [
-          { type: 'text', text: 'queued media\n\nlive media' },
-          { type: 'image', source: { kind: 'sessionMedia', fileId: 'f_img' } },
-          { type: 'video', source: { kind: 'sessionMedia', fileId: 'f_vid' } },
-        ],
-      }),
-    );
-  });
-
-  it('renumbers every segment’s attachment links when a steer merges queued pill-flow prompts', async () => {
-    const state = createState();
-    promptStore().inFlightBySession = { sess_1: true };
-    promptStore().queuedBySession = {
-      sess_1: [
-        {
-          text: 'use [a.pdf](kimi-code-composer://attachments/1)',
-          attachments: [{ fileId: 'f_a', kind: 'file', name: 'a.pdf', mediaType: 'application/pdf', size: 1 }],
-        },
-        {
-          text: 'and [b.pdf](kimi-code-composer://attachments/1) plus [c.pdf](kimi-code-composer://attachments/2)',
-          attachments: [
-            { fileId: 'f_b', kind: 'file', name: 'b.pdf', mediaType: 'application/pdf', size: 2 },
-            { fileId: 'f_img', kind: 'image' },
-            { fileId: 'f_c', kind: 'file', name: 'c.pdf', mediaType: 'application/pdf', size: 3 },
-          ],
-        },
-      ],
-    };
-    const ws = createWorkspaceRig(state, promptDeps());
-
-    await ws.steerPrompt(ws.createPromptEnvelope({
-      text: 'live [d.pdf](kimi-code-composer://attachments/1)',
-      attachments: [
-        { fileId: 'f_d', kind: 'file', name: 'd.pdf', mediaType: 'application/pdf', size: 4 },
-      ],
-    }));
-
-    expect(apiMock.submitPrompt).toHaveBeenCalledWith(
-      'sess_1',
-      expect.objectContaining({
-        content: [
-          {
-            type: 'text',
-            text: 'use a.pdf\n\nand b.pdf plus c.pdf\n\nlive d.pdf',
-          },
-          { type: 'file', fileId: 'f_a', name: 'a.pdf', mediaType: 'application/pdf', size: 1 },
-          { type: 'file', fileId: 'f_b', name: 'b.pdf', mediaType: 'application/pdf', size: 2 },
-          { type: 'image', source: { kind: 'file', fileId: 'f_img' } },
-          { type: 'file', fileId: 'f_c', name: 'c.pdf', mediaType: 'application/pdf', size: 3 },
-          { type: 'file', fileId: 'f_d', name: 'd.pdf', mediaType: 'application/pdf', size: 4 },
-        ],
-      }),
-    );
-    expect(promptStore().queuedBySession.sess_1).toEqual([]);
-  });
-
-  it('renumbers generated media labels before stripping links when a steer merges queued prompts', async () => {
-    const state = createState();
-    promptStore().inFlightBySession = { sess_1: true };
-    promptStore().queuedBySession = {
-      sess_1: [
-        {
-          text: 'first [Image 1](kimi-code-composer://attachments/m1)',
-          attachments: [{ fileId: 'f_img', kind: 'image', name: 'photo.png', mediaOrdinal: 1 }],
-        },
-        {
-          text: 'second [视频 1](kimi-code-composer://attachments/m1)',
-          attachments: [{ fileId: 'f_vid', kind: 'video', name: 'clip.mp4', mediaOrdinal: 1 }],
-        },
-      ],
-    };
-    const ws = createWorkspaceRig(state, promptDeps());
-    const livePrompt = ws.createPromptEnvelope({
-      text: 'live [Image 1](kimi-code-composer://attachments/m1)',
-      attachments: [{ fileId: 'f_live', kind: 'image', name: 'live.png', mediaOrdinal: 1 }],
-    });
-
-    await ws.steerPrompt(livePrompt);
-
-    expect(apiMock.submitPrompt).toHaveBeenCalledWith(
-      'sess_1',
-      expect.objectContaining({
-        content: [
-          {
-            type: 'text',
-            text: 'first Image 1\n\nsecond 视频 2\n\nlive Image 3',
-          },
-          { type: 'image', source: { kind: 'file', fileId: 'f_img' }, name: 'photo.png' },
-          { type: 'video', source: { kind: 'file', fileId: 'f_vid' }, name: 'clip.mp4' },
-          { type: 'image', source: { kind: 'file', fileId: 'f_live' }, name: 'live.png' },
-        ],
-      }),
-    );
-    expect(livePrompt.text).toBe('live [Image 1](kimi-code-composer://attachments/m1)');
-  });
-
-  it('keeps a queued bundled prompt’s skills when steering the queue head', async () => {
-    const state = createState();
-    promptStore().inFlightBySession = { sess_1: true };
-    promptStore().queuedBySession = {
-      sess_1: [
-        {
-          text: 'deploy [deploy](kimi-code://skill/deploy) then [review](kimi-code://skill/review)',
-          skills: [{ name: 'deploy' }, { name: 'review' }],
-          id: 'q_skill',
-        },
-      ],
-    };
-    const ws = createWorkspaceRig(state, promptDeps());
-
-    await ws.steerQueued(0);
-
-    expect(apiMock.submitPrompt).toHaveBeenCalledWith(
-      'sess_1',
-      expect.objectContaining({
-        content: [
-          {
-            type: 'text',
-            text: 'deploy [deploy](kimi-code://skill/deploy) then [review](kimi-code://skill/review)',
-          },
-        ],
-        skills: [{ name: 'deploy' }, { name: 'review' }],
-      }),
-    );
-  });
-
-  it('merges queued bundled prompts’ skills (deduped, first occurrence) into a Ctrl+S steer', async () => {
-    const state = createState();
-    promptStore().inFlightBySession = { sess_1: true };
-    promptStore().queuedBySession = {
-      sess_1: [
-        { text: 'first [deploy](kimi-code://skill/deploy)', skills: [{ name: 'deploy' }], id: 'q1' },
-        {
-          text: 'then [review](kimi-code://skill/review) + [deploy](kimi-code://skill/deploy)',
-          skills: [{ name: 'review' }],
-          id: 'q2',
-        },
-      ],
-    };
-    const ws = createWorkspaceRig(state, promptDeps());
-
-    await ws.steerPrompt(ws.createPromptEnvelope({ text: 'live text' }));
-
-    expect(apiMock.submitPrompt).toHaveBeenCalledWith(
-      'sess_1',
-      expect.objectContaining({
-        content: [
-          {
-            type: 'text',
-            text:
-              'first [deploy](kimi-code://skill/deploy)\n\n' +
-              'then [review](kimi-code://skill/review) + [deploy](kimi-code://skill/deploy)\n\n' +
-              'live text',
-          },
-        ],
-        skills: [{ name: 'deploy' }, { name: 'review' }],
-      }),
-    );
-  });
-
-  it('dedupes pathless skills against only the current default variant on Ctrl+S', async () => {
-    const primary = { name: 'deploy', description: 'Primary', path: '/work/A/deploy/SKILL.md', source: 'project' as const };
-    const secondary = { name: 'deploy', description: 'Secondary', path: '/work/B/deploy/SKILL.md', source: 'project' as const };
-    const previousSkills = modelsStore().skillsBySession;
-    modelsStore().setSkillsForSession('sess_1', [primary, secondary]);
-    try {
-      const state = createState();
-      promptStore().inFlightBySession = { sess_1: true };
-      promptStore().queuedBySession = {
-        sess_1: [
-          { text: 'legacy pill', skills: [{ name: 'deploy' }], id: 'q1' },
-          {
-            text: 'selected variants',
-            skills: [{ name: 'deploy', path: primary.path }, { name: 'deploy', path: secondary.path }],
-            id: 'q2',
-          },
-        ],
-      };
-      const ws = createWorkspaceRig(state, promptDeps());
-
-      await ws.steerPrompt(ws.createPromptEnvelope({ text: 'live text' }));
-
-      expect(apiMock.submitPrompt).toHaveBeenCalledWith(
-        'sess_1',
-        expect.objectContaining({
-          skills: [
-            { name: 'deploy', path: primary.path },
-            { name: 'deploy', path: secondary.path },
-          ],
-        }),
-      );
-    } finally {
-      modelsStore().skillsBySession = previousSkills;
-    }
-  });
-
-  it('merges the live draft’s skills with the queued entries’ skills (deduped) on Ctrl+S', async () => {
-    const state = createState();
-    promptStore().inFlightBySession = { sess_1: true };
-    promptStore().queuedBySession = {
-      sess_1: [
-        { text: 'queued [deploy](kimi-code://skill/deploy)', skills: [{ name: 'deploy' }], id: 'q1' },
-      ],
-    };
-    const ws = createWorkspaceRig(state, promptDeps());
-
-    await ws.steerPrompt(ws.createPromptEnvelope({
-      text: 'live [review](kimi-code://skill/review) + [deploy](kimi-code://skill/deploy)',
-      skills: [{ name: 'review' }, { name: 'deploy' }],
-    }));
-
-    expect(apiMock.submitPrompt).toHaveBeenCalledWith(
-      'sess_1',
-      expect.objectContaining({
-        content: [
-          {
-            type: 'text',
-            text:
-              'queued [deploy](kimi-code://skill/deploy)\n\n' +
-              'live [review](kimi-code://skill/review) + [deploy](kimi-code://skill/deploy)',
-          },
-        ],
-        skills: [{ name: 'deploy' }, { name: 'review' }],
-      }),
-    );
   });
 
   it('surfaces the steer outcome for the App’s draft restore (rejected on definitive daemon refusal)', async () => {
@@ -3101,12 +2628,11 @@ describe('useWorkspaceState — snapshot prompt recovery', () => {
   it('marks an accepted steer with the accepted phase on the optimistic bubble', async () => {
     const state = createState();
     promptStore().inFlightBySession = { sess_1: true };
-    apiMock.submitPrompt.mockImplementation(echoPromptSubmit('queued'));
-    apiMock.steerPrompts.mockImplementation(async (_sid: string, promptIds: string[]) => ({ steered: true, promptIds }));
     const ws = createWorkspaceRig(state, promptDeps());
 
     expect(await ws.steerPrompt(ws.createPromptEnvelope({ text: 'adjust the curve' }))).toBe('ok');
 
+    expect(apiMock.submitPrompt).toHaveBeenCalledWith('sess_1', expect.objectContaining({ delivery: 'steer' }));
     const bubbles = promptStore().optimisticMessagesBySession.sess_1 ?? [];
     expect(bubbles).toHaveLength(1);
     expect(bubbles[0]?.metadata).toMatchObject({
@@ -3115,18 +2641,15 @@ describe('useWorkspaceState — snapshot prompt recovery', () => {
     });
   });
 
-  it('steers when the conversation shows the main turn running despite empty local flags', async () => {
+  it('shows a steer bubble when the conversation shows the main turn running despite empty local flags', async () => {
     const state = createState();
     sessionRuntimeStore().turnActiveBySession = {};
     promptStore().inFlightBySession = {};
-    apiMock.steerPrompt.mockImplementation(echoPromptSubmit('queued'));
-    const ws = createWorkspaceRig(state, promptDeps({ isMainTurnRunning: () => true, isMainWaitForWaiting: () => false }));
+    const ws = createWorkspaceRig(state, promptDeps({ isMainTurnRunning: () => true }));
 
-    expect(await ws.steerPromptDirect(ws.createPromptEnvelope({ text: 'steer into the running turn' }))).toBe('ok');
+    expect(await ws.steerPrompt(ws.createPromptEnvelope({ text: 'steer into the running turn' }))).toBe('ok');
 
-    expect(apiMock.steerPrompt).toHaveBeenCalledOnce();
-    expect(apiMock.submitPrompt).not.toHaveBeenCalled();
-    expect(apiMock.steerPrompts).not.toHaveBeenCalled();
+    expect(apiMock.submitPrompt).toHaveBeenCalledWith('sess_1', expect.objectContaining({ delivery: 'steer' }));
     expect(promptStore().optimisticMessagesBySession.sess_1?.[0]?.metadata).toMatchObject({
       'kimiWeb.steered': true,
       'kimiWeb.steerPhase': 'accepted',
@@ -3136,79 +2659,150 @@ describe('useWorkspaceState — snapshot prompt recovery', () => {
   it('queues a normal send instead of steering while the main agent waits in WaitFor', async () => {
     const state = createState();
     promptStore().inFlightBySession = { sess_1: true };
-    const ws = createWorkspaceRig(state, promptDeps({ isMainWaitForWaiting: () => true }));
+    modeStore().towerModeBySession = { sess_1: true };
+    apiMock.submitPrompt.mockImplementation(echoPromptSubmit('queued'));
+    try {
+      const ws = createWorkspaceRig(state, promptDeps({ isMainWaitForWaiting: () => true }));
 
-    expect(ws.wouldSteerPrompt()).toBe(false);
-    const outcome = await ws.sendPrompt(ws.createPromptEnvelope({ text: 'later note' }));
+      expect(ws.wouldSteerPrompt()).toBe(false);
+      const outcome = await ws.sendPrompt(ws.createPromptEnvelope({ text: 'later note' }));
 
-    expect(outcome).toBe('queued');
-    expect(apiMock.submitPrompt).not.toHaveBeenCalled();
-    expect(apiMock.steerPrompts).not.toHaveBeenCalled();
-    expect(promptStore().queuedBySession.sess_1?.map((entry) => entry.text)).toEqual(['later note']);
+      expect(outcome).toBe('queued');
+      expect(apiMock.submitPrompt).toHaveBeenCalledWith(
+        'sess_1',
+        expect.objectContaining({ content: [{ type: 'text', text: 'later note' }], delivery: 'queue' }),
+      );
+      expect(apiMock.steerPrompts).not.toHaveBeenCalled();
+    } finally {
+      modeStore().towerModeBySession = {};
+    }
   });
 
   it('steers an explicit Ctrl+S into a wait before local busy state catches up', async () => {
-    apiMock.steerPrompt.mockImplementation(echoPromptSubmit('queued'));
     const ws = createWorkspaceRig(createState(), promptDeps({
       activity: computed(() => 'idle'),
-      isMainWaitForWaiting: () => true,
     }));
 
-    expect(await ws.steerPromptDirect(ws.createPromptEnvelope({ text: 'stop waiting' }))).toBe('ok');
-    expect(apiMock.steerPrompt).toHaveBeenCalledOnce();
-    expect(apiMock.submitPrompt).not.toHaveBeenCalled();
-    expect(apiMock.steerPrompts).not.toHaveBeenCalled();
+    expect(await ws.steerPrompt(ws.createPromptEnvelope({ text: 'stop waiting' }))).toBe('ok');
+    expect(apiMock.submitPrompt).toHaveBeenCalledWith('sess_1', expect.objectContaining({ delivery: 'steer' }));
   });
 
   it('steers a clicked queued entry into a wait', async () => {
     const state = createState();
-    promptStore().inFlightBySession = { sess_1: true };
-    promptStore().queuedBySession = {
-      sess_1: [
-        { text: 'first queued', attachments: undefined, id: 'q1' },
-        { text: 'second queued', attachments: undefined, id: 'q2' },
-      ],
-    };
-    apiMock.submitPrompt.mockImplementation(echoPromptSubmit('queued'));
-    const ws = createWorkspaceRig(state, promptDeps({ isMainWaitForWaiting: () => true }));
+    promptStore().setQueue('sess_1', [queuedInput('p_first', 'first queued'), queuedInput('p_second', 'second queued')]);
+    const ws = createWorkspaceRig(state, promptDeps());
 
-    expect(await ws.steerQueued(0)).toBe('ok');
-    expect(apiMock.submitPrompt).toHaveBeenCalledWith(
-      'sess_1',
-      expect.objectContaining({ content: [{ type: 'text', text: 'first queued' }] }),
-    );
-    expect(apiMock.steerPrompts).toHaveBeenCalledWith('sess_1', [sentPromptId()]);
-    expect(promptStore().queuedBySession.sess_1?.map((entry) => entry.text)).toEqual(['second queued']);
+    expect(await ws.steerQueued('p_first')).toBe('ok');
+    expect(apiMock.steerPrompts).toHaveBeenCalledWith('sess_1', ['p_first']);
+    expect(apiMock.submitPrompt).not.toHaveBeenCalled();
   });
 
-  it('holds a tower-mode send queued behind another steer for a mode write that starts meanwhile', async () => {
+  it('counts a steer as done when the answer is lost but the transcript already shows it', async () => {
     const state = createState();
-    promptStore().inFlightBySession = { sess_1: true };
-    modeStore().towerModeBySession = { sess_1: true };
-    let respondFirst: ((value: { promptId: string; userMessageId: string; status: 'queued' }) => void) | undefined;
-    apiMock.submitPrompt.mockImplementationOnce(() => new Promise((done) => { respondFirst = done; }));
-    let settle: ((ok: boolean) => void) | undefined;
-    const ws = createWorkspaceRig(state, promptDeps({
-      whenSessionProfileSettled: (sid) =>
-        sessionRuntimeStore().profileWriteChainBySid.has(sid)
-          ? new Promise((done) => { settle = done; })
-          : Promise.resolve(true),
-    }));
+    promptStore().setQueue('sess_1', [queuedInput('p_first', 'first queued')]);
+    let fail!: (error: Error) => void;
+    apiMock.steerPrompts.mockImplementationOnce(() => new Promise((_done, reject) => { fail = reject; }));
+    const ws = createWorkspaceRig(state, promptDeps({ transcriptHasPrompt: () => true }));
 
-    const first = ws.sendPrompt(ws.createPromptEnvelope({ text: 'first' }));
-    await vi.waitFor(() => expect(respondFirst).toBeDefined());
-    const second = ws.sendPrompt(ws.createPromptEnvelope({ text: 'second' }));
-    sessionRuntimeStore().profileWriteChainBySid.set('sess_1', Promise.resolve(true));
-    respondFirst?.({ promptId: sentPromptId(), userMessageId: sentPromptId(), status: 'queued' });
-    expect(await first).toBe('ok');
-    await vi.waitFor(() => expect(settle).toBeDefined());
-    expect(apiMock.submitPrompt).toHaveBeenCalledTimes(1);
-    settle?.(false);
+    const steer = ws.steerQueued('p_first');
+    await vi.waitFor(() => expect(apiMock.steerPrompts).toHaveBeenCalled());
+    fail(new Error('network down'));
 
-    expect(await second).toBe('rejected');
-    expect(apiMock.submitPrompt).toHaveBeenCalledTimes(1);
-    sessionRuntimeStore().profileWriteChainBySid.delete('sess_1');
-    modeStore().towerModeBySession = {};
+    expect(await steer).toBe('ok');
+    expect(pushFailureSpy).not.toHaveBeenCalledWith('steerQueued', expect.anything(), expect.anything());
+  });
+
+  it('drops the steer bubble of a prompt withdrawn while its steer was in flight', async () => {
+    const state = createState();
+    promptStore().setQueue('sess_1', [queuedInput('p_first', 'first queued')]);
+    let steered!: (value: { steered: boolean; promptIds: string[] }) => void;
+    apiMock.steerPrompts.mockImplementationOnce(() => new Promise((done) => { steered = done; }));
+    apiMock.abortPrompt.mockResolvedValueOnce({ aborted: true });
+    const ws = createWorkspaceRig(state, promptDeps());
+
+    const steer = ws.steerQueued('p_first');
+    expect(promptStore().optimisticMessagesBySession.sess_1).toHaveLength(1);
+    expect(await ws.unqueue('p_first')).toBe(true);
+    steered({ steered: true, promptIds: ['p_first'] });
+    await steer;
+    promptStore().setQueue('sess_1', []);
+
+    expect(promptStore().optimisticMessagesBySession.sess_1).toBeUndefined();
+  });
+
+  it('shows only the moves the server accepted once overlapping moves settle', async () => {
+    const state = createState();
+    promptStore().setQueue('sess_1', [queuedInput('p_a', 'a'), queuedInput('p_b', 'b'), queuedInput('p_c', 'c')]);
+    let failFirst!: (error: Error) => void;
+    apiMock.moveQueuedPrompt
+      .mockImplementationOnce(() => new Promise((_done, reject) => { failFirst = reject; }))
+      .mockResolvedValueOnce(undefined);
+    const ws = createWorkspaceRig(state, promptDeps());
+
+    const firstMove = ws.reorderQueue('p_c', 'p_a');
+    const secondMove = ws.reorderQueue('p_b', 'p_a');
+    await vi.waitFor(() => expect(apiMock.moveQueuedPrompt).toHaveBeenCalledTimes(1));
+    failFirst(new Error('offline'));
+    await Promise.all([firstMove, secondMove]);
+
+    expect(promptStore().queueBySession.sess_1?.map((entry) => entry.promptId)).toEqual(['p_b', 'p_a', 'p_c']);
+  });
+
+  it('sends overlapping moves one after another', async () => {
+    const state = createState();
+    promptStore().setQueue('sess_1', [queuedInput('p_a', 'a'), queuedInput('p_b', 'b'), queuedInput('p_c', 'c')]);
+    const answers: (() => void)[] = [];
+    apiMock.moveQueuedPrompt.mockImplementation(() => new Promise<void>((done) => { answers.push(done); }));
+    const ws = createWorkspaceRig(state, promptDeps());
+
+    const firstMove = ws.reorderQueue('p_c', 'p_a');
+    const secondMove = ws.reorderQueue('p_a', 'p_b');
+    await vi.waitFor(() => expect(apiMock.moveQueuedPrompt).toHaveBeenCalledTimes(1));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(apiMock.moveQueuedPrompt).toHaveBeenCalledTimes(1);
+    answers[0]!();
+    await vi.waitFor(() => expect(apiMock.moveQueuedPrompt).toHaveBeenCalledTimes(2));
+    answers[1]!();
+    await Promise.all([firstMove, secondMove]);
+
+    expect(promptStore().queueBySession.sess_1?.map((entry) => entry.promptId)).toEqual(['p_c', 'p_a', 'p_b']);
+  });
+
+  it('rolls a failed move back onto an earlier accepted move', async () => {
+    const state = createState();
+    promptStore().setQueue('sess_1', [queuedInput('p_a', 'a'), queuedInput('p_b', 'b'), queuedInput('p_c', 'c')]);
+    apiMock.moveQueuedPrompt.mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error('offline'));
+    const ws = createWorkspaceRig(state, promptDeps());
+
+    await ws.reorderQueue('p_c', 'p_a');
+    await ws.reorderQueue('p_a', 'p_c');
+
+    expect(promptStore().queueBySession.sess_1?.map((entry) => entry.promptId)).toEqual(['p_c', 'p_a', 'p_b']);
+  });
+
+  it('does not bring a withdrawn prompt back when a later move fails', async () => {
+    const state = createState();
+    promptStore().setQueue('sess_1', [queuedInput('p_first', 'first'), queuedInput('p_second', 'second'), queuedInput('p_third', 'third')]);
+    apiMock.abortPrompt.mockResolvedValueOnce({ aborted: true });
+    apiMock.moveQueuedPrompt.mockRejectedValueOnce(new Error('offline'));
+    const ws = createWorkspaceRig(state, promptDeps());
+
+    expect(await ws.unqueue('p_first')).toBe(true);
+    await ws.reorderQueue('p_third', 'p_second');
+    expect(promptStore().queueBySession.sess_1?.map((entry) => entry.promptId)).toEqual(['p_second', 'p_third']);
+  });
+
+  it('retires an accepted steer the first queue snapshot after a reconnect no longer lists', async () => {
+    const state = createState();
+    promptStore().setQueue('sess_1', [queuedInput('p_first', 'first queued')]);
+    apiMock.steerPrompts.mockResolvedValueOnce({ steered: true, promptIds: ['p_first'] });
+    const ws = createWorkspaceRig(state, promptDeps());
+
+    expect(await ws.steerQueued('p_first')).toBe('ok');
+    expect(promptStore().optimisticMessagesBySession.sess_1).toHaveLength(1);
+    promptStore().awaitQueueSnapshots();
+    promptStore().setQueue('sess_1', []);
+    expect(promptStore().optimisticMessagesBySession.sess_1).toBeUndefined();
   });
 
   it('rejects every tower-mode send that joined a mode write when that write fails', async () => {
@@ -3235,53 +2829,34 @@ describe('useWorkspaceState — snapshot prompt recovery', () => {
     modeStore().towerModeBySession = {};
   });
 
-  it('keeps later input queued behind a normal submit that is still in flight when a wait starts', async () => {
-    const state = createState();
-    let respond: ((value: { promptId: string; userMessageId: string; status: 'queued' }) => void) | undefined;
-    apiMock.submitPrompt.mockImplementationOnce(() => new Promise((done) => { respond = done; }));
-    let waiting = false;
-    const ws = createWorkspaceRig(state, promptDeps({
-      activity: computed(() => 'idle'),
-      isMainWaitForWaiting: () => waiting,
-    }));
-
-    const first = ws.sendPrompt(ws.createPromptEnvelope({ text: 'first' }));
-    await vi.waitFor(() => expect(respond).toBeDefined());
-    waiting = true;
-    promptStore().queuedBySession = { sess_1: [{ text: 'queued before', attachments: undefined }] };
-
-    expect(ws.wouldSteerPrompt()).toBe(false);
-    expect(await ws.sendPrompt(ws.createPromptEnvelope({ text: 'second' }))).toBe('queued');
-    expect(apiMock.submitPrompt).toHaveBeenCalledTimes(1);
-    expect(apiMock.steerPrompts).not.toHaveBeenCalled();
-    respond?.({ promptId: sentPromptId(), userMessageId: sentPromptId(), status: 'queued' });
-    expect(await first).toBe('ok');
-  });
-
   it('queues a normal send while busy when no WaitFor is waiting', async () => {
     const state = createState();
     promptStore().inFlightBySession = { sess_1: true };
-    const ws = createWorkspaceRig(state, promptDeps({ isMainWaitForWaiting: () => false }));
+    apiMock.submitPrompt.mockImplementation(echoPromptSubmit('queued'));
+    const ws = createWorkspaceRig(state, promptDeps());
 
     expect(ws.wouldSteerPrompt()).toBe(false);
     const outcome = await ws.sendPrompt(ws.createPromptEnvelope({ text: 'later' }));
 
     expect(outcome).toBe('queued');
-    expect(apiMock.steerPrompts).not.toHaveBeenCalled();
+    expect(apiMock.submitPrompt).toHaveBeenCalledWith('sess_1', expect.objectContaining({ delivery: 'queue' }));
+    expect(promptStore().optimisticMessagesBySession.sess_1 ?? []).toHaveLength(1);
+    promptStore().setQueue('sess_1', [queuedInput(sentPromptId(), 'later')]);
+    expect(promptStore().optimisticMessagesBySession.sess_1).toBeUndefined();
   });
 
   it('queues an explicit forceQueue send even when tower mode would otherwise steer', async () => {
     const state = createState();
     promptStore().inFlightBySession = { sess_1: true };
     modeStore().towerModeBySession = { sess_1: true };
+    apiMock.submitPrompt.mockImplementation(echoPromptSubmit('queued'));
     try {
-      const ws = createWorkspaceRig(state, promptDeps({ isMainWaitForWaiting: () => false }));
+      const ws = createWorkspaceRig(state, promptDeps());
 
       const outcome = await ws.sendPrompt(ws.createPromptEnvelope({ text: 'queued via shortcut' }), undefined, { forceQueue: true });
 
       expect(outcome).toBe('queued');
-      expect(apiMock.submitPrompt).not.toHaveBeenCalled();
-      expect(promptStore().queuedBySession.sess_1?.map((entry) => entry.text)).toEqual(['queued via shortcut']);
+      expect(apiMock.submitPrompt).toHaveBeenCalledWith('sess_1', expect.objectContaining({ delivery: 'queue' }));
     } finally {
       modeStore().towerModeBySession = {};
     }
@@ -3293,83 +2868,23 @@ describe('useWorkspaceState — snapshot prompt recovery', () => {
     promptStore().inFlightBySession = { sess_1: true };
     modeStore().towerModeBySession = { sess_1: true };
     apiMock.updateSession.mockResolvedValue({});
-    apiMock.steerPrompt.mockImplementation(echoPromptSubmit('queued'));
+    apiMock.submitPrompt.mockImplementation(echoPromptSubmit('queued'));
     try {
-      const ws = createWorkspaceRig(state, promptDeps({ isMainWaitForWaiting: () => false }));
+      const ws = createWorkspaceRig(state, promptDeps());
 
       const steered = await ws.createGoal({ text: 'steered goal' }, { delivery: 'steer' });
       expect(steered).toEqual({ sessionId: 'sess_1', promptRejected: false });
-      expect(apiMock.steerPrompt).toHaveBeenCalledOnce();
-      expect(promptStore().queuedBySession.sess_1 ?? []).toHaveLength(0);
+      expect(apiMock.submitPrompt).toHaveBeenCalledWith(
+        'sess_1',
+        expect.objectContaining({ content: [{ type: 'text', text: 'steered goal' }], delivery: 'steer' }),
+      );
 
       const queued = await ws.createGoal({ text: 'queued goal' }, { delivery: 'queue', editText: 'queued goal edit' });
       expect(queued).toEqual({ sessionId: 'sess_1', promptRejected: false });
-      expect(apiMock.submitPrompt).not.toHaveBeenCalled();
-      expect(promptStore().queuedBySession.sess_1).toEqual([
-        expect.objectContaining({ text: 'queued goal', editText: 'queued goal edit' }),
-      ]);
+      expect(apiMock.submitPrompt).toHaveBeenLastCalledWith('sess_1', expect.objectContaining({ delivery: 'queue' }));
     } finally {
       modeStore().towerModeBySession = {};
     }
-  });
-
-  it('steers queued entries with composer snapshots together with the live draft on Ctrl+S', async () => {
-    const state = createState();
-    promptStore().inFlightBySession = { sess_1: true };
-    promptStore().queuedBySession = {
-      sess_1: [{ text: 'queued', attachments: undefined, snapshot: createComposerSnapshot(textToDoc('queued'), [], []), id: 'q1' }],
-    };
-    apiMock.submitPrompt.mockImplementation(echoPromptSubmit('queued'));
-    const ws = createWorkspaceRig(state, promptDeps());
-
-    const outcome = await ws.steerPrompt(ws.createPromptEnvelope({ text: 'live text', snapshot: createComposerSnapshot(textToDoc('live text'), [], []) }));
-
-    expect(outcome).toBe('ok');
-    expect(apiMock.submitPrompt).toHaveBeenCalledWith(
-      'sess_1',
-      expect.objectContaining({ content: [{ type: 'text', text: 'queued\n\nlive text' }] }),
-    );
-    expect(promptStore().queuedBySession.sess_1 ?? []).toHaveLength(0);
-  });
-
-  it('restores the merged queue entries when a steer submit is definitively rejected', async () => {
-    const state = createState();
-    promptStore().inFlightBySession = { sess_1: true };
-    promptStore().queuedBySession = {
-      sess_1: [{ text: 'queued', attachments: [{ fileId: 'f_q', kind: 'image' }] }],
-    };
-    apiMock.submitPrompt.mockRejectedValue(
-      new DaemonApiError({ code: 50000, msg: 'boom', requestId: 'r' }),
-    );
-    const ws = createWorkspaceRig(state, promptDeps());
-
-    await ws.steerPrompt(ws.createPromptEnvelope({
-      text: 'live text',
-      attachments: [{ fileId: 'f_live', kind: 'image' }],
-    }));
-
-    expect(promptStore().queuedBySession.sess_1).toEqual([
-      { text: 'queued', attachments: [{ fileId: 'f_q', kind: 'image' }] },
-    ]);
-  });
-
-  it('restores the merged queue entries when a steer submit fails on the network', async () => {
-    const state = createState();
-    promptStore().inFlightBySession = { sess_1: true };
-    promptStore().queuedBySession = {
-      sess_1: [{ text: 'queued', attachments: [{ fileId: 'f_q', kind: 'image' }] }],
-    };
-    apiMock.submitPrompt.mockRejectedValue(new TypeError('fetch failed'));
-    const ws = createWorkspaceRig(state, promptDeps());
-
-    await ws.steerPrompt(ws.createPromptEnvelope({
-      text: 'live text',
-      attachments: [{ fileId: 'f_live', kind: 'image' }],
-    }));
-
-    expect(promptStore().queuedBySession.sess_1).toEqual([
-      { text: 'queued', attachments: [{ fileId: 'f_q', kind: 'image' }] },
-    ]);
   });
 
   it('resolves rejected with the bubble rolled back on a structured auth refusal, so the caller restores the composer draft', async () => {
@@ -3415,408 +2930,15 @@ describe('useWorkspaceState — snapshot prompt recovery', () => {
     expect(state.planArmedBySession.sess_1).toBe(false);
   });
 
-  it('restores the merged queue entries when an idle steer falls back to a normal send that fails', async () => {
+  it('steers one queued message into the running turn by its prompt id', async () => {
     const state = createState();
-    promptStore().queuedBySession = { sess_1: [{ text: 'queued', attachments: undefined }] };
-    apiMock.submitPrompt.mockRejectedValue(
-      new DaemonApiError({ code: 50000, msg: 'boom', requestId: 'r' }),
-    );
-    const ws = createWorkspaceRig(state, promptDeps({ activity: computed(() => 'idle') }));
-
-    await ws.steerPrompt(ws.createPromptEnvelope({ text: 'live text' }));
-
-    await vi.waitFor(() => expect(promptStore().queuedBySession.sess_1).toEqual([
-      { text: 'queued', attachments: undefined },
-    ]));
-  });
-
-  it('steers one queued message into the running turn and keeps the rest of the queue', async () => {
-    const state = createState();
-    promptStore().inFlightBySession = { sess_1: true };
-    promptStore().queuedBySession = {
-      sess_1: [
-        { text: 'first queued', attachments: undefined },
-        { text: 'second queued', attachments: undefined },
-      ],
-    };
-    apiMock.submitPrompt.mockImplementation(echoPromptSubmit('queued'));
+    promptStore().setQueue('sess_1', [queuedInput('p_first', 'first queued'), queuedInput('p_second', 'second queued')]);
     const ws = createWorkspaceRig(state, promptDeps());
 
-    await ws.steerQueued(0);
+    expect(await ws.steerQueued('p_second')).toBe('ok');
 
-    expect(apiMock.submitPrompt).toHaveBeenCalledWith(
-      'sess_1',
-      expect.objectContaining({
-        content: [{ type: 'text', text: 'first queued' }],
-      }),
-    );
-    expect(apiMock.steerPrompts).toHaveBeenCalledWith('sess_1', [sentPromptId()]);
-    expect(promptStore().queuedBySession.sess_1).toEqual([
-      { text: 'second queued', attachments: undefined },
-    ]);
-  });
-
-  it('restores the entry at its original index when a queued steer is definitively rejected', async () => {
-    const state = createState();
-    promptStore().inFlightBySession = { sess_1: true };
-    promptStore().queuedBySession = {
-      sess_1: [
-        { text: 'first queued', attachments: undefined },
-        { text: 'second queued', attachments: undefined },
-      ],
-    };
-    apiMock.submitPrompt.mockRejectedValue(
-      new DaemonApiError({ code: 50000, msg: 'boom', requestId: 'r' }),
-    );
-    const ws = createWorkspaceRig(state, promptDeps());
-
-    await ws.steerQueued(1);
-
-    expect(promptStore().queuedBySession.sess_1).toEqual([
-      { text: 'first queued', attachments: undefined },
-      { text: 'second queued', attachments: undefined },
-    ]);
-  });
-
-  it('restores the entry at its original index when a queued steer fails on the network', async () => {
-    const state = createState();
-    promptStore().inFlightBySession = { sess_1: true };
-    promptStore().queuedBySession = {
-      sess_1: [
-        { text: 'first queued', attachments: undefined },
-        { text: 'second queued', attachments: undefined },
-      ],
-    };
-    apiMock.submitPrompt.mockRejectedValue(new TypeError('fetch failed'));
-    const ws = createWorkspaceRig(state, promptDeps());
-
-    await ws.steerQueued(0);
-
-    expect(promptStore().queuedBySession.sess_1).toEqual([
-      { text: 'first queued', attachments: undefined },
-      { text: 'second queued', attachments: undefined },
-    ]);
-  });
-
-  it('falls back to a normal send when steering a queued message with no turn running', async () => {
-    const state = createState();
-    promptStore().queuedBySession = { sess_1: [{ text: 'queued', attachments: undefined }] };
-    const ws = createWorkspaceRig(state, promptDeps({ activity: computed(() => 'idle') }));
-
-    await ws.steerQueued(0);
-
-    expect(apiMock.submitPrompt).toHaveBeenCalledOnce();
-    expect(apiMock.steerPrompts).not.toHaveBeenCalled();
-    expect(promptStore().queuedBySession.sess_1).toEqual([]);
-  });
-
-  it('sends the queued text verbatim (no trimming)', async () => {
-    const state = createState();
-    promptStore().inFlightBySession = { sess_1: true };
-    promptStore().queuedBySession = {
-      sess_1: [{ text: '    indented code block', attachments: undefined }],
-    };
-    apiMock.submitPrompt.mockImplementation(echoPromptSubmit('queued'));
-    const ws = createWorkspaceRig(state, promptDeps());
-
-    await ws.steerQueued(0);
-
-    expect(apiMock.submitPrompt).toHaveBeenCalledWith(
-      'sess_1',
-      expect.objectContaining({
-        content: [{ type: 'text', text: '    indented code block' }],
-      }),
-    );
-  });
-
-  it('does not drain the queue while a queued steer is still in flight', async () => {
-    const state = createState();
-    promptStore().inFlightBySession = { sess_1: true };
-    promptStore().queuedBySession = {
-      sess_1: [
-        { text: 'first queued', attachments: undefined },
-        { text: 'second queued', attachments: undefined },
-      ],
-    };
-    let resolveSteer!: (value: unknown) => void;
-    apiMock.submitPrompt.mockImplementationOnce(
-      () => new Promise((resolve) => { resolveSteer = resolve; }),
-    );
-    const ws = createWorkspaceRig(state, promptDeps());
-
-    const steer = ws.steerQueued(0);
-    await vi.waitFor(() => expect(apiMock.submitPrompt).toHaveBeenCalledOnce());
-    expect(promptStore().queuedBySession.sess_1).toEqual([
-      { text: 'second queued', attachments: undefined },
-    ]);
-
-    promptStore().setInFlight('sess_1', false);
-    ws.resumeQueueIfIdle('sess_1');
-    await new Promise<void>((resolve) => setTimeout(resolve, 0));
-    expect(apiMock.submitPrompt).toHaveBeenCalledOnce();
-    expect(promptStore().queuedBySession.sess_1).toEqual([
-      { text: 'second queued', attachments: undefined },
-    ]);
-
-    resolveSteer({ promptId: sentPromptId(), userMessageId: sentPromptId(), status: 'queued' });
-    await steer;
-    expect(apiMock.steerPrompts).toHaveBeenCalledWith('sess_1', [sentPromptId()]);
-
-    endMainTurn(ws);
-    await vi.waitFor(() => expect(apiMock.submitPrompt).toHaveBeenCalledTimes(2));
-    expect(apiMock.submitPrompt).toHaveBeenLastCalledWith(
-      'sess_1',
-      expect.objectContaining({ content: [{ type: 'text', text: 'second queued' }] }),
-    );
-  });
-
-  it('serializes consecutive queued steers so the daemon sees them in click order', async () => {
-    const state = createState();
-    promptStore().inFlightBySession = { sess_1: true };
-    promptStore().queuedBySession = {
-      sess_1: [
-        { text: 'first queued', attachments: undefined },
-        { text: 'second queued', attachments: undefined },
-      ],
-    };
-    let resolveFirst!: (value: unknown) => void;
-    apiMock.submitPrompt
-      .mockImplementationOnce(() => new Promise((resolve) => { resolveFirst = resolve; }))
-      .mockImplementationOnce(echoPromptSubmit('queued'));
-    const ws = createWorkspaceRig(state, promptDeps());
-
-    const s1 = ws.steerQueued(0);
-    await vi.waitFor(() => expect(apiMock.submitPrompt).toHaveBeenCalledOnce());
-    const s2 = ws.steerQueued(0);
-    await new Promise<void>((resolve) => setTimeout(resolve, 10));
-    expect(apiMock.submitPrompt).toHaveBeenCalledOnce();
-    expect(promptStore().queuedBySession.sess_1).toEqual([
-      { text: 'second queued', attachments: undefined },
-    ]);
-
-    resolveFirst({ promptId: sentPromptId(0), userMessageId: sentPromptId(0), status: 'queued' });
-    await Promise.all([s1, s2]);
-    expect(apiMock.submitPrompt).toHaveBeenCalledTimes(2);
-    expect(apiMock.submitPrompt).toHaveBeenNthCalledWith(
-      2,
-      'sess_1',
-      expect.objectContaining({ content: [{ type: 'text', text: 'second queued' }] }),
-    );
-    expect(apiMock.steerPrompts).toHaveBeenNthCalledWith(1, 'sess_1', [sentPromptId(0)]);
-    expect(apiMock.steerPrompts).toHaveBeenNthCalledWith(2, 'sess_1', [sentPromptId(1)]);
-    expect(promptStore().queuedBySession.sess_1 ?? []).toEqual([]);
-  });
-
-  it('sendPrompt enqueues behind an in-flight steer without flushing early', async () => {
-    const state = createState();
-    promptStore().inFlightBySession = { sess_1: true };
-    promptStore().queuedBySession = {
-      sess_1: [
-        { text: 'first queued', attachments: undefined },
-        { text: 'second queued', attachments: undefined },
-      ],
-    };
-    let resolveSteer!: (value: unknown) => void;
-    apiMock.submitPrompt.mockImplementationOnce(
-      () => new Promise((resolve) => { resolveSteer = resolve; }),
-    );
-    const ws = createWorkspaceRig(state, promptDeps());
-
-    const steer = ws.steerQueued(0);
-    await vi.waitFor(() => expect(apiMock.submitPrompt).toHaveBeenCalledOnce());
-
-    await ws.sendPrompt(ws.createPromptEnvelope({ text: 'third' }));
-    expect(apiMock.submitPrompt).toHaveBeenCalledOnce();
-    expect(promptStore().queuedBySession.sess_1).toEqual([
-      { text: 'second queued', attachments: undefined },
-      expect.objectContaining({ text: 'third' }),
-    ]);
-
-    resolveSteer({ promptId: sentPromptId(), userMessageId: sentPromptId(), status: 'queued' });
-    await steer;
-    endMainTurn(ws);
-    await vi.waitFor(() => expect(apiMock.submitPrompt).toHaveBeenCalledTimes(2));
-    expect(apiMock.submitPrompt).toHaveBeenLastCalledWith(
-      'sess_1',
-      expect.objectContaining({ content: [{ type: 'text', text: 'second queued' }] }),
-    );
-  });
-
-  it('ignores an empty queued entry without dropping it', async () => {
-    const state = createState();
-    promptStore().inFlightBySession = { sess_1: true };
-    promptStore().queuedBySession = { sess_1: [{ text: '   ', attachments: undefined }] };
-    const ws = createWorkspaceRig(state, promptDeps());
-
-    await ws.steerQueued(0);
-
+    expect(apiMock.steerPrompts).toHaveBeenCalledWith('sess_1', ['p_second']);
     expect(apiMock.submitPrompt).not.toHaveBeenCalled();
-    expect(promptStore().queuedBySession.sess_1).toEqual([{ text: '   ', attachments: undefined }]);
-  });
-
-  it('restores the queued entry when the steer fails before the submit is sent', async () => {
-    const state = createState();
-    promptStore().inFlightBySession = { sess_1: true };
-    promptStore().queuedBySession = { sess_1: [{ text: 'queued', attachments: undefined }] };
-    const ws = createWorkspaceRig(state, promptDeps({
-      whenSessionProfileSettled: vi.fn(async () => false),
-    }));
-
-    await ws.steerQueued(0);
-
-    expect(apiMock.submitPrompt).not.toHaveBeenCalled();
-    expect(promptStore().queuedBySession.sess_1).toEqual([{ text: 'queued', attachments: undefined }]);
-  });
-
-  it('resumes the queue after a rejected steer once the hold is released', async () => {
-    const state = createState();
-    promptStore().inFlightBySession = { sess_1: true };
-    promptStore().queuedBySession = { sess_1: [{ text: 'queued', attachments: undefined }] };
-    let rejectSteer!: (err: unknown) => void;
-    apiMock.submitPrompt.mockImplementationOnce(
-      () => new Promise((_, reject) => { rejectSteer = reject; }),
-    );
-    const activity = ref('working');
-    const ws = createWorkspaceRig(state, promptDeps({ activity: computed(() => activity.value) }));
-
-    const steer = ws.steerQueued(0);
-    await vi.waitFor(() => expect(apiMock.submitPrompt).toHaveBeenCalledOnce());
-    activity.value = 'idle';
-    promptStore().inFlightBySession = { sess_1: false };
-    ws.resumeQueueIfIdle('sess_1');
-
-    rejectSteer(new DaemonApiError({ code: 50000, msg: 'boom', requestId: 'r' }));
-    await steer;
-    await vi.waitFor(() => expect(apiMock.submitPrompt).toHaveBeenCalledTimes(2));
-    expect(apiMock.submitPrompt).toHaveBeenLastCalledWith(
-      'sess_1',
-      expect.objectContaining({ content: [{ type: 'text', text: 'queued' }] }),
-    );
-    expect(promptStore().queuedBySession.sess_1).toEqual([]);
-  });
-
-  it('steers the entry locked at click time, not whatever sits at the index later', async () => {
-    const state = createState();
-    promptStore().inFlightBySession = { sess_1: true };
-    promptStore().queuedBySession = {
-      sess_1: [
-        { text: 'A', attachments: undefined },
-        { text: 'B', attachments: undefined },
-      ],
-    };
-    let rejectFirst!: (err: unknown) => void;
-    apiMock.submitPrompt
-      .mockImplementationOnce(() => new Promise((_, reject) => { rejectFirst = reject; }))
-      .mockImplementationOnce(echoPromptSubmit('queued'));
-    const ws = createWorkspaceRig(state, promptDeps());
-
-    const s1 = ws.steerQueued(0);
-    await vi.waitFor(() => expect(apiMock.submitPrompt).toHaveBeenCalledOnce());
-    const s2 = ws.steerQueued(0);
-    rejectFirst(new DaemonApiError({ code: 50000, msg: 'boom', requestId: 'r' }));
-    await s1;
-    expect(promptStore().queuedBySession.sess_1).toEqual([
-      { text: 'A', attachments: undefined },
-      { text: 'B', attachments: undefined },
-    ]);
-    await s2;
-    expect(apiMock.submitPrompt).toHaveBeenNthCalledWith(
-      2,
-      'sess_1',
-      expect.objectContaining({ content: [{ type: 'text', text: 'B' }] }),
-    );
-    expect(apiMock.steerPrompts).toHaveBeenCalledWith('sess_1', [sentPromptId(1)]);
-    expect(promptStore().queuedBySession.sess_1).toEqual([{ text: 'A', attachments: undefined }]);
-  });
-
-  it('runs a Ctrl+S merge steer behind an in-flight queued steer', async () => {
-    const state = createState();
-    promptStore().inFlightBySession = { sess_1: true };
-    promptStore().queuedBySession = {
-      sess_1: [
-        { text: 'A', attachments: undefined },
-        { text: 'B', attachments: undefined },
-      ],
-    };
-    let resolveFirst!: (value: unknown) => void;
-    apiMock.submitPrompt
-      .mockImplementationOnce(() => new Promise((resolve) => { resolveFirst = resolve; }))
-      .mockImplementationOnce(echoPromptSubmit('queued'));
-    const ws = createWorkspaceRig(state, promptDeps());
-
-    const s1 = ws.steerQueued(0);
-    await vi.waitFor(() => expect(apiMock.submitPrompt).toHaveBeenCalledOnce());
-    const s2 = ws.steerPrompt(ws.createPromptEnvelope({ text: 'live' }));
-    await new Promise<void>((resolve) => setTimeout(resolve, 10));
-    expect(apiMock.submitPrompt).toHaveBeenCalledOnce();
-    expect(promptStore().queuedBySession.sess_1).toEqual([{ text: 'B', attachments: undefined }]);
-
-    resolveFirst({ promptId: sentPromptId(0), userMessageId: sentPromptId(0), status: 'queued' });
-    await Promise.all([s1, s2]);
-    expect(apiMock.submitPrompt).toHaveBeenNthCalledWith(
-      2,
-      'sess_1',
-      expect.objectContaining({ content: [{ type: 'text', text: 'B\n\nlive' }] }),
-    );
-    expect(apiMock.steerPrompts).toHaveBeenNthCalledWith(1, 'sess_1', [sentPromptId(0)]);
-    expect(apiMock.steerPrompts).toHaveBeenNthCalledWith(2, 'sess_1', [sentPromptId(1)]);
-    expect(promptStore().queuedBySession.sess_1 ?? []).toEqual([]);
-  });
-
-  it('sendPrompt falls in line behind an in-flight steer even after the turn ended', async () => {
-    const state = createState();
-    promptStore().inFlightBySession = { sess_1: true };
-    promptStore().queuedBySession = { sess_1: [{ text: 'steered', attachments: undefined }] };
-    let resolveSteer!: (value: unknown) => void;
-    apiMock.submitPrompt.mockImplementationOnce(
-      () => new Promise((resolve) => { resolveSteer = resolve; }),
-    );
-    const activity = ref('working');
-    const ws = createWorkspaceRig(state, promptDeps({ activity: computed(() => activity.value) }));
-
-    const steer = ws.steerQueued(0);
-    await vi.waitFor(() => expect(apiMock.submitPrompt).toHaveBeenCalledOnce());
-    activity.value = 'idle';
-    promptStore().inFlightBySession = { sess_1: false };
-
-    await ws.sendPrompt(ws.createPromptEnvelope({ text: 'new message' }));
-    expect(apiMock.submitPrompt).toHaveBeenCalledOnce();
-    expect(promptStore().queuedBySession.sess_1).toEqual([
-      expect.objectContaining({ text: 'new message' }),
-    ]);
-
-    resolveSteer({ promptId: sentPromptId(), userMessageId: sentPromptId(), status: 'queued' });
-    await steer;
-    endMainTurn(ws);
-    await vi.waitFor(() => expect(apiMock.submitPrompt).toHaveBeenCalledTimes(2));
-    expect(apiMock.submitPrompt).toHaveBeenLastCalledWith(
-      'sess_1',
-      expect.objectContaining({ content: [{ type: 'text', text: 'new message' }] }),
-    );
-  });
-
-  it('forgetLocalTurnState releases the steer-in-flight hold', async () => {
-    const state = createState();
-    promptStore().inFlightBySession = { sess_1: true };
-    promptStore().queuedBySession = {
-      sess_1: [
-        { text: 'steered', attachments: undefined },
-        { text: 'second queued', attachments: undefined },
-      ],
-    };
-    apiMock.submitPrompt.mockImplementationOnce(() => new Promise(() => {}));
-    const ws = createWorkspaceRig(state, promptDeps());
-
-    void ws.steerQueued(0);
-    await vi.waitFor(() => expect(apiMock.submitPrompt).toHaveBeenCalledOnce());
-
-    promptStore().forgetLocalTurnState('sess_1');
-    endMainTurn(ws);
-    await vi.waitFor(() => expect(apiMock.submitPrompt).toHaveBeenCalledTimes(2));
-    expect(apiMock.submitPrompt).toHaveBeenLastCalledWith(
-      'sess_1',
-      expect.objectContaining({ content: [{ type: 'text', text: 'second queued' }] }),
-    );
   });
 
   it('maps attachments to the matching content parts on submit (file parts included)', async () => {
@@ -3873,116 +2995,6 @@ describe('useWorkspaceState — snapshot prompt recovery', () => {
     );
   });
 
-  it('holds the queue behind an exhausted head until the user removes it', async () => {
-    const state = createState();
-    promptStore().queuedBySession = {
-      sess_1: [
-        { text: 'poisoned head', attachments: undefined, id: 'id-bad' },
-        { text: 'good next', attachments: undefined, id: 'id-good' },
-      ],
-    };
-    apiMock.submitPrompt
-      .mockRejectedValueOnce(new DaemonApiError({ code: 50000, msg: 'gone', requestId: 'r' }))
-      .mockRejectedValueOnce(new DaemonApiError({ code: 50000, msg: 'gone', requestId: 'r' }))
-      .mockRejectedValueOnce(new DaemonApiError({ code: 50000, msg: 'gone', requestId: 'r' }))
-      .mockImplementationOnce(echoPromptSubmit());
-    const ws = createWorkspaceRig(state, promptDeps());
-    const settle = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
-    const flushOnce = async () => {
-      ws.resumeQueueIfIdle('sess_1');
-      await settle();
-    };
-
-    for (let i = 0; i < 3; i += 1) {
-      await flushOnce();
-    }
-
-    expect(apiMock.submitPrompt).toHaveBeenCalledTimes(3);
-    expect(promptStore().queuedBySession.sess_1?.map((e) => e.id)).toEqual(['id-bad', 'id-good']);
-
-    await flushOnce();
-    expect(apiMock.submitPrompt).toHaveBeenCalledTimes(3);
-
-    ws.unqueue(0);
-    await settle();
-    expect(apiMock.submitPrompt).toHaveBeenCalledTimes(4);
-    expect(apiMock.submitPrompt).toHaveBeenLastCalledWith(
-      'sess_1',
-      expect.objectContaining({ content: [{ type: 'text', text: 'good next' }] }),
-    );
-    expect(promptStore().queuedBySession.sess_1 ?? []).toEqual([]);
-  });
-
-  it('puts a flushed head back at the front of the queue when its submit fails on the network', async () => {
-    const state = createState();
-    promptStore().queuedBySession = { sess_1: [{ text: 'maybe sent', attachments: undefined, id: 'id-x' }] };
-    apiMock.submitPrompt.mockRejectedValue(new TypeError('fetch failed'));
-    const ws = createWorkspaceRig(state, promptDeps());
-
-    ws.resumeQueueIfIdle('sess_1');
-    await new Promise<void>((resolve) => setTimeout(resolve, 0));
-
-    expect(promptStore().queuedBySession.sess_1).toEqual([{ text: 'maybe sent', attachments: undefined, id: 'id-x' }]);
-    expect(promptStore().optimisticMessagesBySession.sess_1).toBeUndefined();
-  });
-
-  it('resets the flush failure budget when the queue head changes', async () => {
-    apiMock.submitPrompt.mockRejectedValue(
-      new DaemonApiError({ code: 50000, msg: 'turn.agent_busy', requestId: 'r' }),
-    );
-    const state = createState();
-    promptStore().queuedBySession = {
-      sess_1: [
-        { text: 'first', attachments: undefined, id: 'id-first' },
-        { text: 'second', attachments: undefined, id: 'id-second' },
-      ],
-    };
-    const ws = createWorkspaceRig(state, promptDeps());
-    const settle = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
-    const flushOnce = async () => {
-      ws.resumeQueueIfIdle('sess_1');
-      await settle();
-    };
-
-    await flushOnce();
-    ws.unqueue(0);
-    expect(promptStore().queuedBySession.sess_1?.map((e) => e.text)).toEqual(['second']);
-
-    await flushOnce();
-    await flushOnce();
-    expect(promptStore().queuedBySession.sess_1?.map((e) => e.text)).toEqual(['second']);
-    await flushOnce();
-    expect(promptStore().queuedBySession.sess_1?.map((e) => e.text)).toEqual(['second']);
-    await flushOnce();
-    expect(apiMock.submitPrompt).toHaveBeenCalledTimes(4);
-    expect(promptStore().queuedBySession.sess_1?.map((e) => e.text)).toEqual(['second']);
-  });
-
-  it('does not resurrect the queue when a submit fails after the session was forgotten', async () => {
-    let rejectSubmit!: (err: Error) => void;
-    apiMock.submitPrompt.mockImplementation(
-      () =>
-        new Promise<{ promptId: string }>((_resolve, reject) => {
-          rejectSubmit = reject;
-        }),
-    );
-    const state = createState();
-    promptStore().queuedBySession = {
-      sess_1: [{ text: 'doomed', attachments: undefined, id: 'id-doomed' }],
-    };
-    const ws = createWorkspaceRig(state, promptDeps());
-
-    ws.resumeQueueIfIdle('sess_1');
-    expect(promptStore().queuedBySession.sess_1 ?? []).toEqual([]);
-
-    await vi.waitFor(() => expect(apiMock.submitPrompt).toHaveBeenCalled());
-    state.sessions = [];
-    delete promptStore().queuedBySession.sess_1;
-    rejectSubmit(new DaemonApiError({ code: 50000, msg: 'network down', requestId: 'r' }));
-    await new Promise<void>((resolve) => setTimeout(resolve, 0));
-
-    expect(promptStore().queuedBySession.sess_1).toBeUndefined();
-  });
 });
 
 describe('useWorkspaceState — loadAllSessions usage preservation', () => {
@@ -5680,7 +4692,7 @@ describe('useWorkspaceState — tower/plan mutual exclusion', () => {
 });
 
 describe('useWorkspaceState — queued prompt keeps the editable draft (editText)', () => {
-  it('stores the daemon-bound wire text AND the pre-rewrite draft separately', async () => {
+  it('sends the pre-rewrite draft as edit_text and reads it back from the server queue', async () => {
     const state = createState();
     const ws = createWorkspaceRig(state, createDeps());
     const wire = '> 引用';
@@ -5688,10 +4700,11 @@ describe('useWorkspaceState — queued prompt keeps the editable draft (editText
 
     await ws.sendPrompt(ws.createPromptEnvelope({ text: wire }), draft);
 
-    const entry = promptStore().queuedBySession['sess_1']?.[0];
-    expect(entry?.text).toBe(wire);
-    expect(entry?.editText).toBe(draft);
+    const request = apiMock.submitPrompt.mock.calls[0]![1] as PromptSubmission;
+    expect(request.content).toEqual([{ type: 'text', text: wire }]);
+    expect(request.metadata).toMatchObject({ edit_text: draft });
   });
+
 });
 
 describe('useWorkspaceState — setPermission owns the pick per session', () => {
@@ -5728,7 +4741,7 @@ describe('useWorkspaceState — tower mode steers sends into the live turn', () 
     apiMock.submitPrompt.mockReset();
     apiMock.submitPrompt.mockImplementation(echoPromptSubmit('queued'));
     apiMock.steerPrompts.mockReset();
-    apiMock.steerPrompts.mockResolvedValue({});
+    apiMock.steerPrompts.mockImplementation(async (_sid: string, promptIds: string[]) => ({ steered: true, promptIds }));
     promptStore().forgetLocalTurnState('sess_1');
   });
 
@@ -5742,6 +4755,154 @@ describe('useWorkspaceState — tower mode steers sends into the live turn', () 
     };
   }
 
+  it('clears the steer marker when a tower-mode send starts a new turn', async () => {
+    const state = createState();
+    state.towerModeBySession = { sess_1: true };
+    let respond!: (value: PromptSubmitResult) => void;
+    apiMock.submitPrompt.mockImplementationOnce(() => new Promise((done) => { respond = done; }));
+    const ws = createWorkspaceRig(state, { ...towerPromptDeps(), activity: computed(() => 'idle') });
+
+    const send = ws.sendPrompt(ws.createPromptEnvelope({ text: 'hello tower' }));
+    await vi.waitFor(() => expect(apiMock.submitPrompt).toHaveBeenCalledWith('sess_1', expect.objectContaining({ delivery: 'steer' })));
+    expect(promptStore().optimisticMessagesBySession.sess_1?.map((message) => message.metadata?.['kimiWeb.steered'])).toEqual([true]);
+
+    respond({ promptId: sentPromptId(), userMessageId: sentPromptId(), acceptedAs: 'turn' });
+    expect(await send).toBe('ok');
+    expect(promptStore().optimisticMessagesBySession.sess_1?.map((message) => message.metadata?.['kimiWeb.steered'])).toEqual([undefined]);
+  });
+
+  it('keeps a queued send pending across unrelated queue frames', async () => {
+    const state = createState();
+    promptStore().inFlightBySession = { sess_1: true };
+    let respond!: (value: PromptSubmitResult) => void;
+    apiMock.submitPrompt.mockImplementationOnce(() => new Promise((done) => { respond = done; }));
+    const ws = createWorkspaceRig(state, towerPromptDeps());
+
+    const send = ws.sendPrompt(ws.createPromptEnvelope({ text: 'mine' }));
+    await vi.waitFor(() => expect(apiMock.submitPrompt).toHaveBeenCalled());
+    promptStore().setQueue('sess_1', [queuedInput('other_device', 'theirs')]);
+    respond({ promptId: sentPromptId(), userMessageId: sentPromptId(), status: 'queued', acceptedAs: 'queue' });
+
+    expect(await send).toBe('queued');
+    expect(promptStore().optimisticMessagesBySession.sess_1).toHaveLength(1);
+    promptStore().setQueue('sess_1', [queuedInput('other_device', 'theirs'), queuedInput(sentPromptId(), 'mine')]);
+    expect(promptStore().optimisticMessagesBySession.sess_1).toBeUndefined();
+  });
+
+  it('keeps a queued send through a queue frame that predates it', async () => {
+    const state = createState();
+    promptStore().inFlightBySession = { sess_1: true };
+    apiMock.submitPrompt.mockImplementation(echoPromptSubmit('queued'));
+    const ws = createWorkspaceRig(state, towerPromptDeps());
+
+    expect(await ws.sendPrompt(ws.createPromptEnvelope({ text: 'stale frame' }))).toBe('queued');
+    promptStore().setQueue('sess_1', []);
+    expect(promptStore().optimisticMessagesBySession.sess_1).toHaveLength(1);
+    promptStore().setQueue('sess_1', [queuedInput(sentPromptId(), 'stale frame')]);
+    expect(promptStore().optimisticMessagesBySession.sess_1).toBeUndefined();
+  });
+
+  it('retires a queued send the first queue snapshot after a reconnect no longer lists', async () => {
+    const state = createState();
+    promptStore().inFlightBySession = { sess_1: true };
+    apiMock.submitPrompt.mockImplementation(echoPromptSubmit('queued'));
+    const ws = createWorkspaceRig(state, towerPromptDeps());
+
+    expect(await ws.sendPrompt(ws.createPromptEnvelope({ text: 'withdrawn offline' }))).toBe('queued');
+    promptStore().setQueue('sess_1', []);
+    expect(promptStore().optimisticMessagesBySession.sess_1).toHaveLength(1);
+    promptStore().awaitQueueSnapshots();
+    promptStore().setQueue('sess_1', []);
+    expect(promptStore().optimisticMessagesBySession.sess_1).toBeUndefined();
+  });
+
+  it('stays in flight until the last of two overlapping sends settles', async () => {
+    const state = createState();
+    const answers: ((value: PromptSubmitResult) => void)[] = [];
+    apiMock.submitPrompt.mockImplementation(() => new Promise((done) => { answers.push(done); }));
+    const ws = createWorkspaceRig(state, towerPromptDeps());
+
+    const first = ws.sendPrompt(ws.createPromptEnvelope({ text: 'first' }));
+    const second = ws.sendPrompt(ws.createPromptEnvelope({ text: 'second' }));
+    await vi.waitFor(() => expect(answers).toHaveLength(2));
+    answers[0]!({ promptId: sentPromptId(0), userMessageId: sentPromptId(0), status: 'running' });
+    await first;
+    expect(promptStore().inFlightBySession.sess_1).toBe(true);
+    answers[1]!({ promptId: sentPromptId(1), userMessageId: sentPromptId(1), status: 'queued' });
+    await second;
+    expect(promptStore().inFlightBySession.sess_1).toBe(false);
+  });
+
+  it('treats a send as queued when the answer is lost but the queue already lists it', async () => {
+    const state = createState();
+    promptStore().inFlightBySession = { sess_1: true };
+    let fail!: (error: Error) => void;
+    apiMock.submitPrompt.mockImplementationOnce(() => new Promise((_done, reject) => { fail = reject; }));
+    const ws = createWorkspaceRig(state, towerPromptDeps());
+
+    const send = ws.sendPrompt(ws.createPromptEnvelope({ text: 'answer lost' }));
+    await vi.waitFor(() => expect(apiMock.submitPrompt).toHaveBeenCalled());
+    promptStore().setQueue('sess_1', [queuedInput(sentPromptId(), 'answer lost')]);
+    fail(new DaemonApiError({ code: 50000, msg: 'upstream reset', requestId: 'r' }));
+
+    expect(await send).toBe('queued');
+    expect(warningsStore().warnings).toHaveLength(0);
+  });
+
+  it('retires a downgraded steer when its answer is lost but the queue already lists it', async () => {
+    const state = createState();
+    state.towerModeBySession = { sess_1: true };
+    promptStore().inFlightBySession = { sess_1: true };
+    let fail!: (error: Error) => void;
+    apiMock.submitPrompt.mockImplementationOnce(() => new Promise((_done, reject) => { fail = reject; }));
+    const ws = createWorkspaceRig(state, towerPromptDeps());
+
+    const send = ws.sendPrompt(ws.createPromptEnvelope({ text: 'steer lost' }));
+    await vi.waitFor(() => expect(apiMock.submitPrompt).toHaveBeenCalled());
+    promptStore().setQueue('sess_1', [queuedInput(sentPromptId(), 'steer lost')]);
+    expect(promptStore().optimisticMessagesBySession.sess_1).toHaveLength(1);
+    fail(new Error('network down'));
+
+    expect(await send).toBe('queued');
+    expect(promptStore().optimisticMessagesBySession.sess_1).toBeUndefined();
+  });
+
+  it('turns a steer the server queued as an ordinary prompt into an ordinary pending send', async () => {
+    const state = createState();
+    state.towerModeBySession = { sess_1: true };
+    promptStore().inFlightBySession = { sess_1: true };
+    apiMock.submitPrompt.mockImplementationOnce(async (_sid: string, input: PromptSubmission) => ({
+      promptId: input.promptId!,
+      userMessageId: input.promptId!,
+      status: 'queued',
+      acceptedAs: 'queue',
+    }));
+    const ws = createWorkspaceRig(state, towerPromptDeps());
+
+    expect(await ws.sendPrompt(ws.createPromptEnvelope({ text: 'downgraded' }))).toBe('queued');
+    expect(promptStore().optimisticMessagesBySession.sess_1?.[0]?.metadata?.['kimiWeb.steered']).toBeUndefined();
+    promptStore().setQueue('sess_1', [queuedInput(sentPromptId(), 'downgraded')]);
+    expect(promptStore().optimisticMessagesBySession.sess_1).toBeUndefined();
+  });
+
+  it('retires a downgraded steer whose queue frame arrived before the answer', async () => {
+    const state = createState();
+    state.towerModeBySession = { sess_1: true };
+    promptStore().inFlightBySession = { sess_1: true };
+    let respond!: (value: PromptSubmitResult) => void;
+    apiMock.submitPrompt.mockImplementationOnce(() => new Promise((done) => { respond = done; }));
+    const ws = createWorkspaceRig(state, towerPromptDeps());
+
+    const send = ws.sendPrompt(ws.createPromptEnvelope({ text: 'frame first' }));
+    await vi.waitFor(() => expect(apiMock.submitPrompt).toHaveBeenCalled());
+    promptStore().setQueue('sess_1', [queuedInput(sentPromptId(), 'frame first')]);
+    expect(promptStore().optimisticMessagesBySession.sess_1).toHaveLength(1);
+    respond({ promptId: sentPromptId(), userMessageId: sentPromptId(), status: 'queued', acceptedAs: 'queue' });
+
+    expect(await send).toBe('queued');
+    expect(promptStore().optimisticMessagesBySession.sess_1).toBeUndefined();
+  });
+
   it('steers a normal send instead of queueing when tower mode is on and the session is busy', async () => {
     const state = createState();
     state.towerModeBySession = { sess_1: true };
@@ -5753,22 +4914,21 @@ describe('useWorkspaceState — tower mode steers sends into the live turn', () 
     expect(outcome).toBe('ok');
     expect(apiMock.submitPrompt).toHaveBeenCalledWith(
       'sess_1',
-      expect.objectContaining({ content: [{ type: 'text', text: 'hello tower' }] }),
+      expect.objectContaining({ content: [{ type: 'text', text: 'hello tower' }], delivery: 'steer' }),
     );
-    expect(apiMock.steerPrompts).toHaveBeenCalledWith('sess_1', [sentPromptId()]);
-    expect(promptStore().queuedBySession.sess_1 ?? []).toHaveLength(0);
+    expect(apiMock.steerPrompts).not.toHaveBeenCalled();
   });
 
   it('keeps queueing a busy-session send when tower mode is off', async () => {
     const state = createState();
     promptStore().inFlightBySession = { sess_1: true };
+    apiMock.submitPrompt.mockImplementation(echoPromptSubmit('queued'));
     const ws = createWorkspaceRig(state, towerPromptDeps());
 
     const outcome = await ws.sendPrompt(ws.createPromptEnvelope({ text: 'plain' }));
 
     expect(outcome).toBe('queued');
-    expect(apiMock.steerPrompts).not.toHaveBeenCalled();
-    expect(promptStore().queuedBySession.sess_1).toHaveLength(1);
+    expect(apiMock.submitPrompt).toHaveBeenCalledWith('sess_1', expect.objectContaining({ delivery: 'queue' }));
   });
 
   it('a busy-session send right after enabling tower waits for the write before steering', async () => {
@@ -5793,7 +4953,84 @@ describe('useWorkspaceState — tower mode steers sends into the live turn', () 
     resolveSettle(true);
     const outcome = await send;
     expect(outcome).toBe('ok');
-    expect(apiMock.steerPrompts).toHaveBeenCalledWith('sess_1', [sentPromptId()]);
+    expect(apiMock.submitPrompt).toHaveBeenCalledWith('sess_1', expect.objectContaining({ delivery: 'steer' }));
+  });
+
+  it('picks the delivery after the settings writes settle', async () => {
+    let resolveSettle!: (value: boolean) => void;
+    const settleGate = new Promise<boolean>((resolve) => { resolveSettle = resolve; });
+    const deps = {
+      ...towerPromptDeps(),
+      whenSessionProfileSettled: vi.fn(async () => settleGate),
+    };
+    const state = createState();
+    state.towerModeBySession = { sess_1: true };
+    promptStore().inFlightBySession = { sess_1: true };
+    const ws = createWorkspaceRig(state, deps);
+
+    const send = ws.sendPrompt(ws.createPromptEnvelope({ text: 'after the toggle' }));
+    await new Promise((r) => setTimeout(r, 0));
+    void ws.setTowerMode(false);
+    resolveSettle(true);
+    await send;
+    expect(apiMock.submitPrompt).toHaveBeenCalledWith('sess_1', expect.objectContaining({ delivery: 'queue' }));
+  });
+
+  it('keeps the plain bubble when a send queued behind a busy turn is accepted as a new turn', async () => {
+    const state = createState();
+    promptStore().inFlightBySession = { sess_1: true };
+    let respond!: (value: PromptSubmitResult) => void;
+    apiMock.submitPrompt.mockImplementationOnce(() => new Promise((done) => { respond = done; }));
+    const ws = createWorkspaceRig(state, towerPromptDeps());
+
+    const send = ws.sendPrompt(ws.createPromptEnvelope({ text: 'turn ended meanwhile' }));
+    await vi.waitFor(() => expect(apiMock.submitPrompt).toHaveBeenCalled());
+    expect(promptStore().optimisticMessagesBySession.sess_1).toHaveLength(1);
+    respond({ promptId: sentPromptId(), userMessageId: sentPromptId(), status: 'running', acceptedAs: 'turn' });
+    expect(await send).toBe('ok');
+    const bubbles = promptStore().optimisticMessagesBySession.sess_1 ?? [];
+    expect(bubbles).toHaveLength(1);
+    expect(bubbles[0]?.metadata?.['kimiWeb.promptId']).toBe(sentPromptId());
+    expect(bubbles[0]?.metadata?.['kimiWeb.steered']).toBeUndefined();
+  });
+
+  it('marks the steer accepted when the server takes it into the running turn', async () => {
+    const state = createState();
+    state.towerModeBySession = { sess_1: true };
+    let respond!: (value: PromptSubmitResult) => void;
+    apiMock.submitPrompt.mockImplementationOnce(() => new Promise((done) => { respond = done; }));
+    const ws = createWorkspaceRig(state, { ...towerPromptDeps(), activity: computed(() => 'idle') });
+
+    const send = ws.sendPrompt(ws.createPromptEnvelope({ text: 'raced a turn' }));
+    await vi.waitFor(() => expect(apiMock.submitPrompt).toHaveBeenCalled());
+    expect(promptStore().optimisticMessagesBySession.sess_1?.[0]?.metadata?.['kimiWeb.steerPhase']).toBe('sending');
+    respond({ promptId: sentPromptId(), userMessageId: sentPromptId(), status: 'running', acceptedAs: 'steer' });
+    expect(await send).toBe('ok');
+    expect(promptStore().optimisticMessagesBySession.sess_1?.[0]?.metadata).toMatchObject({
+      'kimiWeb.steered': true,
+      'kimiWeb.steerPhase': 'accepted',
+    });
+  });
+
+  it('shows a steer bubble when tower mode turns on while the settings writes settle', async () => {
+    let resolveSettle!: (value: boolean) => void;
+    const settleGate = new Promise<boolean>((resolve) => { resolveSettle = resolve; });
+    const deps = {
+      ...towerPromptDeps(),
+      whenSessionProfileSettled: vi.fn(async () => settleGate),
+    };
+    const state = createState();
+    promptStore().inFlightBySession = { sess_1: true };
+    const ws = createWorkspaceRig(state, deps);
+
+    const send = ws.sendPrompt(ws.createPromptEnvelope({ text: 'join the turn' }));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(promptStore().optimisticMessagesBySession.sess_1?.map((message) => message.metadata?.['kimiWeb.steered'])).toEqual([undefined]);
+    void ws.setTowerMode(true);
+    resolveSettle(true);
+    await send;
+    expect(apiMock.submitPrompt).toHaveBeenCalledWith('sess_1', expect.objectContaining({ delivery: 'steer' }));
+    expect(promptStore().optimisticMessagesBySession.sess_1?.map((message) => message.metadata?.['kimiWeb.steered'])).toEqual([true]);
   });
 
   it('rejects the send when the tower enable write fails before a steer', async () => {
@@ -5814,30 +5051,8 @@ describe('useWorkspaceState — tower mode steers sends into the live turn', () 
     expect(apiMock.steerPrompts).not.toHaveBeenCalled();
   });
 
-  it('rejects instead of steering into another session when the user switches mid-settle', async () => {
-    let resolveSettle!: (value: boolean) => void;
-    const settleGate = new Promise<boolean>((resolve) => { resolveSettle = resolve; });
-    const deps = {
-      ...towerPromptDeps(),
-      whenSessionProfileSettled: vi.fn(async () => settleGate),
-    };
-    const state = createState();
-    state.sessions = [createSession(), { ...createSession(), id: 'sess_2' }];
-    promptStore().inFlightBySession = { sess_1: true };
-    const ws = createWorkspaceRig(state, deps);
-
-    void ws.setTowerMode(true);
-    sessionRuntimeStore().profileWriteChainBySid.set('sess_1', settleGate);
-    const send = ws.sendPrompt(ws.createPromptEnvelope({ text: 'into the fleet' }));
-    state.activeSessionId = 'sess_2';
-
-    resolveSettle(true);
-    const outcome = await send;
-    expect(outcome).toBe('rejected');
-    expect(apiMock.submitPrompt).not.toHaveBeenCalled();
-    expect(apiMock.steerPrompts).not.toHaveBeenCalled();
-  });
 });
+
 
 describe('useWorkspaceState — draft tower mode persists on session creation', () => {
   const newSession = { ...createSession(), id: 'sess_new', workspaceId: 'wd_1', cwd: '/abs/path' };

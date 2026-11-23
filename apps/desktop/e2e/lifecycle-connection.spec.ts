@@ -42,7 +42,7 @@ test('losing the server shows connection errors with diagnostics and the app rec
     await toast().getByRole('button', { name: 'Show details' }).click();
     await expect(toast().getByText('sendPrompt', { exact: true })).toBeVisible();
     await expect(toast().getByText('disconnected', { exact: true })).toBeVisible();
-    await expect(toast().getByText(`POST /sessions/${sessionId}/prompts`, { exact: true })).toBeVisible();
+    await expect(toast().getByText(`PUT /sessions/${sessionId}/prompts/`, { exact: false })).toBeVisible();
     await app.snapshot('send-failed-details');
     const copiedTexts = await captureClipboardWrites(app);
     await toast().getByRole('button', { name: 'Copy diagnostics' }).click();

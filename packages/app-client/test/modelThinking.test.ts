@@ -352,7 +352,7 @@ describe('useModelProviderState thinking on model selection', () => {
     permissionsStore().$reset();
     permissionsStore().pickInSession('session-1', 'auto');
     const prompt = promptStore();
-    prompt.queuedBySession = {};
+    prompt.queueBySession = {};
     prompt.inFlightBySession = {};
     prompt.optimisticMessagesBySession = {};
     prompt.forgetPromptState('session-1');

@@ -18,6 +18,7 @@ import type {
   AppPluginSkillInfo,
   AppPluginSummary,
   AppProvider,
+  AppQueuedInput,
   FsEntry,
   AppMessageContent,
   AppSession,
@@ -26,6 +27,7 @@ import type {
   AppSessionUsage,
   AppWorkspace,
   ApprovalResponse,
+  ImageSource,
   PromptSubmission,
   QuestionAnswer,
   QuestionItem,
@@ -55,6 +57,7 @@ import type {
   WireModel,
   WirePromptSubmission,
   WireProvider,
+  WireQueuedInput,
   WireQuestionAnswer,
   WireQuestionItem,
   WireQuestionOption,
@@ -182,7 +185,6 @@ export function toWireMessageContent(app: AppMessageContent): WireMessageContent
 
 export function toWirePromptSubmission(input: PromptSubmission): WirePromptSubmission {
   return {
-    prompt_id: input.promptId,
     content: input.content.map(toWireMessageContent),
     metadata: input.metadata,
     agent_id: input.agentId,
@@ -194,7 +196,45 @@ export function toWirePromptSubmission(input: PromptSubmission): WirePromptSubmi
     goal_objective: input.goalObjective,
     goal_control: input.goalControl,
     skills: input.skills,
+    delivery: input.delivery,
   };
+}
+
+export function toAppQueuedInput(wire: WireQueuedInput): AppQueuedInput {
+  return {
+    promptId: wire.prompt_id,
+    content: wire.content.map(toAppMessageContent),
+    skills: wire.skills,
+    clientMetadata: wire.client_metadata,
+    createdAt: wire.created_at,
+  };
+}
+
+function toAppMessageContent(wire: WireMessageContent): AppMessageContent {
+  switch (wire.type) {
+    case 'text':
+      return { type: 'text', text: wire.text };
+    case 'image':
+    case 'video':
+      return {
+        type: wire.type,
+        source: toAppImageSource(wire.source),
+        ...(wire.name === undefined ? {} : { name: wire.name }),
+      };
+    case 'file':
+      return { type: 'file', fileId: wire.file_id, name: wire.name, mediaType: wire.media_type, size: wire.size };
+    case 'tool_use':
+    case 'tool_result':
+    case 'thinking':
+      return { type: 'unknown', raw: wire };
+  }
+}
+
+function toAppImageSource(src: WireImageSource): ImageSource {
+  if (src.kind === 'base64') return { kind: 'base64', mediaType: src.media_type, data: src.data };
+  if (src.kind === 'file') return { kind: 'file', fileId: src.file_id };
+  if (src.kind === 'session_media') return { kind: 'sessionMedia', fileId: src.file_id };
+  return { kind: 'url', url: src.url };
 }
 
 export function toWireApprovalResponse(input: ApprovalResponse): WireApprovalResponse {

@@ -1206,43 +1206,61 @@ describe('DaemonKimiWebApi session media', () => {
         prompt_id: 'prompt-1',
         user_message_id: 'message-1',
         status: 'running',
+        accepted_as: 'turn',
         content: [],
         created_at: '2026-01-01T00:00:00.000Z',
       }),
     );
 
     await createApi().submitPrompt('sess/1', {
+      promptId: 'prompt-1',
       content: [{ type: 'image', source: { kind: 'sessionMedia', fileId: 'f_abc' } }],
     });
 
     const [url, init] = vi.mocked(fetch).mock.calls[0] as [string, RequestInit];
-    expect(url).toBe('http://daemon.test/api/v1/sessions/sess%2F1/prompts');
+    expect(url).toBe('http://daemon.test/api/v1/sessions/sess%2F1/prompts/prompt-1');
+    expect(init.method).toBe('PUT');
     if (typeof init.body !== 'string') throw new Error('expected JSON request body');
-    expect(JSON.parse(init.body)).toMatchObject({
+    const body = JSON.parse(init.body);
+    expect(body).toMatchObject({
       content: [{ type: 'image', source: { kind: 'session_media', file_id: 'f_abc' } }],
     });
+    expect(body).not.toHaveProperty('prompt_id');
   });
 
-  it('submits a direct steer to the single-request steer endpoint', async () => {
-    vi.mocked(fetch).mockResolvedValue(envelope({
-      prompt_id: 'prompt-1',
-      user_message_id: 'message-1',
-      status: 'running',
-      content: [],
-      created_at: '2026-01-01T00:00:00.000Z',
-    }));
+  it('sends the delivery and reads where the server put the prompt', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(
+      envelope({ prompt_id: 'p1', user_message_id: 'p1', status: 'queued', accepted_as: 'queue' }),
+    );
 
-    await createApi().steerPrompt('sess/1', {
-      content: [{ type: 'text', text: 'steer now' }],
+    const result = await createApi().submitPrompt('sess/1', {
+      promptId: 'p1',
+      content: [{ type: 'text', text: 'later' }],
+      delivery: 'steer',
     });
+
+    const [, init] = vi.mocked(fetch).mock.calls[0] as [string, RequestInit];
+    if (typeof init.body !== 'string') throw new Error('expected JSON request body');
+    expect(JSON.parse(init.body)).toMatchObject({ delivery: 'steer' });
+    expect(result.acceptedAs).toBe('queue');
+    expect(result.turnId).toBeUndefined();
+
+    vi.mocked(fetch).mockResolvedValueOnce(
+      envelope({ prompt_id: 'p2', user_message_id: 'p2', status: 'running', accepted_as: 'turn', turn_id: 't_abc' }),
+    );
+    const started = await createApi().submitPrompt('sess/1', { promptId: 'p2', content: [{ type: 'text', text: 'now' }] });
+    expect(started).toMatchObject({ acceptedAs: 'turn', turnId: 't_abc' });
+  });
+
+  it('moves a queued prompt of an agent before another one', async () => {
+    vi.mocked(fetch).mockResolvedValue(envelope({}));
+
+    await createApi().moveQueuedPrompt('sess/1', 'main', 'p/2', 'p1');
 
     const [url, init] = vi.mocked(fetch).mock.calls[0] as [string, RequestInit];
-    expect(url).toBe('http://daemon.test/api/v1/sessions/sess%2F1/steer');
-    expect(init.method).toBe('POST');
+    expect(url).toBe('http://daemon.test/api/v1/sessions/sess%2F1/agents/main/queue/p%2F2:move');
     if (typeof init.body !== 'string') throw new Error('expected JSON request body');
-    expect(JSON.parse(init.body)).toMatchObject({
-      content: [{ type: 'text', text: 'steer now' }],
-    });
+    expect(JSON.parse(init.body)).toEqual({ before_prompt_id: 'p1' });
   });
 });
 
@@ -1440,13 +1458,13 @@ describe('DaemonKimiWebApi background admission', () => {
     vi.mocked(fetch).mockImplementation(async (url) => {
       const path = new URL(url instanceof Request ? url.url : url).pathname;
       if (path.endsWith('/turns')) return envelope({ agent_id: 'main', turns: [], has_more: false });
-      if (path.endsWith('/prompts')) return envelope({ prompt_id: 'p1', user_message_id: 'm1', status: 'running' });
+      if (path.endsWith('/prompts/p1')) return envelope({ prompt_id: 'p1', user_message_id: 'm1', status: 'running', accepted_as: 'turn' });
       if (path.includes('/interactions/')) return envelope({ outcome: 'approved', ended_at: 'now' });
       return envelope({ cancelled: true });
     });
 
     const turns = api.getAgentTurns('sess/1', 'main', { pageSize: 10 });
-    const prompt = api.submitPrompt('sess/1', { content: [{ type: 'text', text: 'test' }] });
+    const prompt = api.submitPrompt('sess/1', { promptId: 'p1', content: [{ type: 'text', text: 'test' }] });
     const cancel = api.cancelSession('sess/1');
     const approval = api.respondApproval('sess/1', 'a1', { decision: 'approved' });
     expect(fetch).toHaveBeenCalledTimes(6);

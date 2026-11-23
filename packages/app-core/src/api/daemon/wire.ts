@@ -174,7 +174,6 @@ export type WireImageSource =
   | { kind: 'session_media'; file_id: string };
 
 export interface WirePromptSubmission {
-  prompt_id?: string;
   content: WireMessageContent[];
   metadata?: Record<string, unknown>;
   agent_id?: string;
@@ -187,6 +186,7 @@ export interface WirePromptSubmission {
   goal_objective?: string;
   goal_control?: 'pause' | 'resume' | 'cancel' | 'edit';
   skills?: { name: string; args?: string }[];
+  delivery?: 'queue' | 'steer';
 }
 
 export interface WirePromptSubmitResult {
@@ -194,6 +194,8 @@ export interface WirePromptSubmitResult {
   user_message_id: string;
   origin?: unknown;
   status?: 'running' | 'queued' | 'failed';
+  accepted_as: 'turn' | 'steer' | 'queue';
+  turn_id?: string;
 }
 
 export interface WirePromptSteerResult {
@@ -344,7 +346,21 @@ export interface WireTodoFrame extends WireAgentFrameBase {
   items: { title: string; status: 'pending' | 'in_progress' | 'done' }[];
 }
 
-export type WireAgentFeedFrame = WireAgentStateFrame | WireContextFrame | WireGoalFrame | WireTodoFrame;
+export interface WireQueuedInput {
+  prompt_id: string;
+  user_message_id: string;
+  content: WireMessageContent[];
+  skills?: { name: string; args?: string }[];
+  client_metadata?: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface WireQueueFrame extends WireAgentFrameBase {
+  type: 'queue';
+  inputs: WireQueuedInput[];
+}
+
+export type WireAgentFeedFrame = WireAgentStateFrame | WireContextFrame | WireGoalFrame | WireTodoFrame | WireQueueFrame;
 
 export type WireFsKind = 'file' | 'directory' | 'symlink';
 

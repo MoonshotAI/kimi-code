@@ -12,16 +12,14 @@ import { sessionRatingStore } from '../stores/sessionRating';
 import { sessionsStore } from '../stores/sessions';
 import { warningsStore } from '../stores/warnings';
 
-export type CompactRequestResult = 'sent' | 'queued' | 'duplicate' | 'compacting';
+const COMPACTION_UNABLE_CODE = 40910;
 
 export interface SessionActionsDeps {
   mainUndoTarget: (sessionId: string, turnId?: string) => { turnId: string; text: string } | null;
   updateSession: (id: string, update: (session: AppSession) => AppSession) => void;
   selectSession: (sessionId: string, opts?: { skipTrack?: boolean }) => Promise<void>;
   upsertSessionSorted: (session: AppSession) => void;
-  promptBacklog: (sessionId: string) => 'busy' | 'lined-up' | 'clear';
   isCompactionRunning: (sessionId: string) => boolean;
-  flushQueue: (sessionId: string) => void;
 }
 
 export function createSessionActions(deps: SessionActionsDeps) {
@@ -106,18 +104,9 @@ export function createSessionActions(deps: SessionActionsDeps) {
   function compact(
     instruction?: string,
     hooks?: { onRequestRejected?: (err: unknown) => void },
-  ): CompactRequestResult | undefined {
+  ): boolean {
     const sid = sessionsStore().activeSessionId;
-    if (!sid) return undefined;
-    if (deps.isCompactionRunning(sid)) return 'compacting';
-    const backlog = deps.promptBacklog(sid);
-    if (backlog !== 'clear') {
-      const store = promptStore();
-      if (store.hasQueuedCompact(sid)) return 'duplicate';
-      store.enqueueCompactForSession(sid, instruction);
-      if (backlog === 'lined-up') deps.flushQueue(sid);
-      return 'queued';
-    }
+    if (!sid) return false;
     const store = promptStore();
     store.beginCompactStart(sid);
     void retryWhileOccupied(sid, () => getKimiWebApi().compactSession(sid, instruction)).then(
@@ -126,10 +115,17 @@ export function createSessionActions(deps: SessionActionsDeps) {
         store.settleCompactStart(sid);
         hooks?.onRequestRejected?.(err);
         if (isSessionOccupiedError(err)) return;
+        if (isDaemonApiError(err) && err.code === COMPACTION_UNABLE_CODE) {
+          warningsStore().pushWarning({
+            severity: 'warning',
+            title: t(deps.isCompactionRunning(sid) ? 'commands.compactQueue.compacting' : 'commands.compactQueue.busy'),
+          });
+          return;
+        }
         warningsStore().pushOperationFailure('compact', err, { sessionId: sid });
       },
     );
-    return 'sent';
+    return true;
   }
 
   async function forkSession(sessionId?: string, turnIndex?: number): Promise<void> {

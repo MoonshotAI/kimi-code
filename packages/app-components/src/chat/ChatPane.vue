@@ -642,7 +642,7 @@ function onTableSelectionQuote(markdown: string): void {
   onSelectionAction({ action: 'quote', quote: markdown });
 }
 
-const dragFrom = ref<number | null>(null);
+const draggedId = ref<string | null>(null);
 const dragOver = ref<{ index: number; position: 'before' | 'after' } | null>(null);
 
 const browserDetails = useBrowserReferenceDetails(() => JSON.stringify([client.activeSessionId.value, props.cwd, props.turns[0]?.sessionId]));
@@ -763,8 +763,12 @@ function onQueueBodyTap(index: number): void {
   onQueueEdit(index);
 }
 
+function queueEditable(item: QueuedPromptView): boolean {
+  return item.kind !== 'compact' && item.editable !== false;
+}
+
 function onQueueDragStart(index: number, event: DragEvent): void {
-  dragFrom.value = index;
+  draggedId.value = props.queued[index]?.id ?? null;
   if (!event.dataTransfer) return;
   event.dataTransfer.effectAllowed = 'move';
   event.dataTransfer.setData('text/plain', String(index));
@@ -773,7 +777,7 @@ function onQueueDragStart(index: number, event: DragEvent): void {
 }
 
 function onQueueDragOver(index: number, event: DragEvent): void {
-  if (dragFrom.value === null) return;
+  if (draggedId.value === null) return;
   event.preventDefault();
   if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
   const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
@@ -783,11 +787,11 @@ function onQueueDragOver(index: number, event: DragEvent): void {
 
 function onQueueDrop(index: number, event: DragEvent): void {
   event.preventDefault();
-  const from = dragFrom.value;
+  const from = props.queued.findIndex((item) => item.id === draggedId.value);
   const position = dragOver.value?.position ?? 'before';
-  dragFrom.value = null;
+  draggedId.value = null;
   dragOver.value = null;
-  if (from === null) return;
+  if (from < 0) return;
   let to = position === 'before' ? index : index + 1;
   if (from < to) to -= 1;
   if (from === to) return;
@@ -795,7 +799,7 @@ function onQueueDrop(index: number, event: DragEvent): void {
 }
 
 function onQueueDragEnd(): void {
-  dragFrom.value = null;
+  draggedId.value = null;
   dragOver.value = null;
 }
 
@@ -1708,7 +1712,7 @@ function streamingTailIndex(turn: ChatTurn): number | null {
         :key="item.id"
         class="u-turn q-turn"
         :class="{
-          'q-dragging': dragFrom === qi,
+          'q-dragging': draggedId === item.id,
           'drop-before': dragOver?.index === qi && dragOver.position === 'before',
           'drop-after': dragOver?.index === qi && dragOver.position === 'after',
         }"
@@ -1747,7 +1751,8 @@ function streamingTailIndex(turn: ChatTurn): number | null {
               <button
                 type="button"
                 class="q-body"
-                :title="t('composer.editQueued')"
+                :disabled="!queueEditable(item)"
+                :title="queueEditable(item) ? t('composer.editQueued') : undefined"
                 :ref="(el) => registerUserTextEl(queueClampId(item), el)"
                 @click="onQueueBodyTap(qi)"
               >
@@ -1784,6 +1789,7 @@ function streamingTailIndex(turn: ChatTurn): number | null {
           <!-- Touch-only explicit edit: on hover devices the body itself is
                tap-to-edit; on touch a stray tap must not dequeue the draft. -->
           <button
+            v-if="queueEditable(item)"
             type="button"
             class="q-edit"
             :aria-label="t('composer.editQueued')"
@@ -1796,7 +1802,7 @@ function streamingTailIndex(turn: ChatTurn): number | null {
             type="button"
             class="q-rm"
             :aria-label="t('composer.remove')"
-            @click.stop="void client.unqueue(qi)"
+            @click.stop="void client.unqueue(item.id)"
           >
             <Icon name="close" size="sm" />
           </button>

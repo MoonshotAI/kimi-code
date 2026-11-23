@@ -28,9 +28,7 @@ const deps = {
   updateSession: vi.fn(),
   selectSession: vi.fn(async () => {}),
   upsertSessionSorted: vi.fn(),
-  promptBacklog: vi.fn((): 'busy' | 'lined-up' | 'clear' => 'clear'),
   isCompactionRunning: vi.fn(() => false),
-  flushQueue: vi.fn(),
 };
 
 function occupiedError(): DaemonApiError {
@@ -52,12 +50,11 @@ beforeEach(() => {
   trackMock.mockClear();
   setProductTracker({ track: trackMock });
   useConfirmDialog().settle(false);
-  deps.promptBacklog.mockReturnValue('clear');
   deps.isCompactionRunning.mockReturnValue(false);
   sessionsStore().setSessions([{ id: 's1', cwd: '/workspace' } as AppSession]);
   sessionsStore().setActiveSessionId('s1');
   warningsStore().resetWarnings();
-  promptStore().queuedBySession = {};
+  promptStore().queueBySession = {};
   setKimiClientDeps({ api: () => apiMock as unknown as KimiWebApi, t: (key) => key, traceKeyEvent: vi.fn() });
 });
 
@@ -106,10 +103,11 @@ describe('sessionActions undo', () => {
 describe('sessionActions compact', () => {
   it('sends the compact instruction for the active session when idle', async () => {
     const result = createSessionActions(deps).compact('shorter');
-    expect(result).toBe('sent');
+    expect(result).toBe(true);
     await vi.waitFor(() =>
       expect(apiMock.compactSession).toHaveBeenCalledWith('s1', 'shorter'),
     );
+    expect(warningsStore().warnings).toHaveLength(0);
   });
 
   it('retries compact in place with the original instruction after the occupied dialog is confirmed', async () => {
@@ -136,43 +134,55 @@ describe('sessionActions compact', () => {
     expect(warningsStore().warnings).toHaveLength(0);
   });
 
-  it('enqueues behind the backlog while busy and kicks the flush only when lined up', () => {
-    deps.promptBacklog.mockReturnValue('busy');
-    const actions = createSessionActions(deps);
-    expect(actions.compact('shorter')).toBe('queued');
-    expect(deps.flushQueue).not.toHaveBeenCalled();
-    expect(apiMock.compactSession).not.toHaveBeenCalled();
-    const queued = promptStore().queuedBySession['s1'] ?? [];
-    expect(queued).toHaveLength(1);
-    expect(queued[0]!.kind).toBe('compact');
-    expect(queued[0]!.instruction).toBe('shorter');
-
-    promptStore().queuedBySession = {};
-    deps.promptBacklog.mockReturnValue('lined-up');
-    expect(actions.compact()).toBe('queued');
-    expect(deps.flushQueue).toHaveBeenCalledWith('s1');
+  it('explains a 40910 refusal with the busy hint once the session is no longer compacting', async () => {
+    const unable = () => new DaemonApiError({ code: 40910, msg: 'compaction unavailable', requestId: 'req-3' });
+    apiMock.compactSession.mockRejectedValueOnce(unable());
+    createSessionActions(deps).compact();
+    await vi.waitFor(() =>
+      expect(warningsStore().warnings).toMatchObject([{ severity: 'warning', title: 'commands.compactQueue.busy' }]),
+    );
   });
 
-  it('rejects a second compact while one is already queued', () => {
-    deps.promptBacklog.mockReturnValue('busy');
-    const actions = createSessionActions(deps);
-    expect(actions.compact()).toBe('queued');
-    expect(actions.compact()).toBe('duplicate');
-    expect(promptStore().queuedBySession['s1']).toHaveLength(1);
-  });
-
-  it('rejects outright while a compaction is running', () => {
+  it('explains a 40910 refusal with the compacting hint while a compaction is running', async () => {
+    const unable = () => new DaemonApiError({ code: 40910, msg: 'compaction unavailable', requestId: 'req-3' });
+    apiMock.compactSession.mockRejectedValueOnce(unable());
     deps.isCompactionRunning.mockReturnValue(true);
-    deps.promptBacklog.mockReturnValue('busy');
-    const result = createSessionActions(deps).compact();
-    expect(result).toBe('compacting');
-    expect(promptStore().queuedBySession['s1'] ?? []).toHaveLength(0);
-    expect(apiMock.compactSession).not.toHaveBeenCalled();
+    createSessionActions(deps).compact();
+    await vi.waitFor(() =>
+      expect(warningsStore().warnings).toMatchObject([{ severity: 'warning', title: 'commands.compactQueue.compacting' }]),
+    );
   });
 
-  it('returns undefined without an active session', () => {
+  it('reports other compact failures as a generic operation failure', async () => {
+    apiMock.compactSession.mockRejectedValueOnce(new Error('boom'));
+    const onRequestRejected = vi.fn();
+    createSessionActions(deps).compact(undefined, { onRequestRejected });
+    await vi.waitFor(() => expect(onRequestRejected).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(warningsStore().warnings).toHaveLength(1));
+  });
+
+  it('tracks the compact start from the request until it settles', async () => {
+    const store = promptStore();
+    let resolveCompact!: () => void;
+    apiMock.compactSession.mockImplementationOnce(() => new Promise<void>((resolve) => { resolveCompact = resolve; }));
+    createSessionActions(deps).compact();
+    expect(store.isCompactStarting('s1')).toBe(true);
+    resolveCompact();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(store.isCompactStarting('s1')).toBe(true);
+  });
+
+  it('clears the compact start when the compact request fails', async () => {
+    const store = promptStore();
+    apiMock.compactSession.mockRejectedValueOnce(new Error('boom'));
+    createSessionActions(deps).compact();
+    expect(store.isCompactStarting('s1')).toBe(true);
+    await vi.waitFor(() => expect(store.isCompactStarting('s1')).toBe(false));
+  });
+
+  it('returns false without an active session', () => {
     sessionsStore().setActiveSessionId(undefined);
-    expect(createSessionActions(deps).compact()).toBeUndefined();
+    expect(createSessionActions(deps).compact()).toBe(false);
     expect(apiMock.compactSession).not.toHaveBeenCalled();
   });
 });

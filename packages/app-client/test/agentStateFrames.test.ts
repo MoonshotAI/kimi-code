@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
+  AppQueuedInput,
   AppSession,
   KimiEventConnection,
   KimiEventHandlers,
@@ -415,6 +416,121 @@ describe('agent state frames', () => {
 
     handlersRef.handlers?.onAgentTodos?.('s_1', 'main', []);
     await vi.waitFor(() => expect(client.todos.value).toEqual([]));
+  });
+
+  it('shows the main agent queue frame and acts on queued prompts by prompt id', async () => {
+    vi.stubGlobal('WebSocket', class { close(): void {} });
+    vi.resetModules();
+
+    const connection = makeConnection();
+    const handlersRef: { handlers?: KimiEventHandlers } = {};
+    for (const key of Object.keys(clientApiMock)) delete clientApiMock[key];
+    const abortPrompt = vi.fn(async () => ({ aborted: true }));
+    const steerPrompts = vi.fn(async (_sid: string, promptIds: string[]) => ({ steered: true, promptIds }));
+    const moveQueuedPrompt = vi.fn(async () => undefined);
+    Object.assign(clientApiMock, baseApi([session('s_1')], connection, handlersRef), {
+      abortPrompt,
+      steerPrompts,
+      moveQueuedPrompt,
+    });
+
+    const { useKimiWebClient } = await import('../src/client/useKimiWebClient');
+    const client = useKimiWebClient();
+    await client.load();
+    await client.selectSession('s_1');
+    await flush();
+
+    const createdAt = '2026-11-06T00:00:00.000Z';
+    handlersRef.handlers?.onAgentQueue?.('s_1', 'agent-1', [
+      { promptId: 'p_side', content: [{ type: 'text', text: 'side' }], createdAt },
+    ]);
+    handlersRef.handlers?.onAgentQueue?.('s_1', 'main', [
+      { promptId: 'p_skill', content: [{ type: 'text', text: 'go' }], skills: [{ name: 'review' }], createdAt },
+      { promptId: 'p_url', content: [{ type: 'image', source: { kind: 'url', url: 'https://example.test/a.png' } }], createdAt },
+      { promptId: 'p_snap', content: [{ type: 'text', text: 'go' }], skills: [{ name: 'review' }], clientMetadata: { kimi_code_composer: {} }, createdAt },
+    ]);
+    await vi.waitFor(() => expect(client.queued.value.map((item) => item.editable)).toEqual([false, false, true]));
+    const mainInputs: AppQueuedInput[] = [
+      {
+        promptId: 'p_a',
+        content: [
+          { type: 'text', text: 'wire text' },
+          { type: 'file', fileId: 'f_1', name: 'notes.md', mediaType: 'text/markdown', size: 3 },
+        ],
+        clientMetadata: { display_text: 'shown text', edit_text: '/swarm shown text' },
+        createdAt,
+      },
+      { promptId: 'p_b', content: [{ type: 'text', text: 'second' }], createdAt },
+    ];
+    handlersRef.handlers?.onAgentQueue?.('s_1', 'main', mainInputs);
+    await vi.waitFor(() => expect(client.queued.value.map((item) => item.id)).toEqual(['p_a', 'p_b']));
+    expect(client.queued.value[0]).toMatchObject({
+      text: 'shown text',
+      editText: '/swarm shown text',
+      attachmentCount: 1,
+      attachments: [{ kind: 'file', fileId: 'f_1', name: 'notes.md' }],
+    });
+    expect(client.queued.value[1]).toMatchObject({ text: 'second', attachmentCount: 0, kind: 'prompt' });
+    expect(client.queued.value[1]?.editable).toBe(true);
+
+    expect(await client.steerQueued('p_b')).toBe('ok');
+    expect(steerPrompts).toHaveBeenCalledWith('s_1', ['p_b']);
+    const { promptStore } = await import('../src/stores/prompt');
+    expect(promptStore().optimisticMessagesBySession.s_1?.map((message) => message.metadata)).toEqual([
+      expect.objectContaining({ 'kimiWeb.promptId': 'p_b', 'kimiWeb.steered': true, 'kimiWeb.steerPhase': 'accepted' }),
+    ]);
+    expect(client.queued.value.map((item) => item.id)).toEqual(['p_a']);
+    handlersRef.handlers?.onAgentQueue?.('s_1', 'main', mainInputs);
+
+    steerPrompts.mockResolvedValueOnce({ steered: false, promptIds: [] });
+    expect(await client.steerQueued('p_a')).toBe('rejected');
+    expect(steerPrompts).toHaveBeenCalledTimes(2);
+    expect(promptStore().optimisticMessagesBySession.s_1?.map((message) => message.metadata?.['kimiWeb.promptId'])).toEqual(['p_b']);
+
+    await client.reorderQueue('p_b', 'p_a');
+    expect(moveQueuedPrompt).toHaveBeenLastCalledWith('s_1', 'main', 'p_b', 'p_a');
+    expect(client.queued.value.map((item) => item.id)).toEqual(['p_b', 'p_a']);
+    handlersRef.handlers?.onAgentQueue?.('s_1', 'main', [mainInputs[1]!, mainInputs[0]!]);
+
+    moveQueuedPrompt.mockRejectedValueOnce(new Error('offline'));
+    await client.reorderQueue('p_a', 'p_b');
+    expect(moveQueuedPrompt).toHaveBeenLastCalledWith('s_1', 'main', 'p_a', 'p_b');
+    expect(client.queued.value.map((item) => item.id)).toEqual(['p_b', 'p_a']);
+
+    const rejects: ((error: Error) => void)[] = [];
+    moveQueuedPrompt.mockImplementation(() => new Promise((_resolve, reject) => { rejects.push(reject); }));
+    const first = client.reorderQueue('p_a', 'p_b');
+    const second = client.reorderQueue('p_b', 'p_a');
+    await vi.waitFor(() => expect(rejects).toHaveLength(1));
+    rejects[0]!(new Error('offline'));
+    await first;
+    await vi.waitFor(() => expect(rejects).toHaveLength(2));
+    rejects[1]!(new Error('offline'));
+    await second;
+    expect(client.queued.value.map((item) => item.id)).toEqual(['p_b', 'p_a']);
+
+    expect(await client.unqueue('p_a')).toBe(true);
+    expect(abortPrompt).toHaveBeenCalledWith('s_1', 'p_a');
+    expect(client.queued.value.map((item) => item.id)).not.toContain('p_a');
+
+    let answerSteer!: (value: { steered: boolean; promptIds: string[] }) => void;
+    steerPrompts.mockImplementationOnce(() => new Promise((done) => { answerSteer = done; }));
+    const lateSteer = client.steerQueued('p_b');
+    handlersRef.handlers?.onAgentQueue?.('s_1', 'main', [
+      { promptId: 'p_b', content: [{ type: 'text', text: 'second' }], createdAt },
+    ]);
+    answerSteer({ steered: true, promptIds: ['p_b'] });
+    expect(await lateSteer).toBe('ok');
+    expect(client.queued.value).toEqual([]);
+    expect(promptStore().optimisticMessagesBySession.s_1?.map((message) => message.metadata?.['kimiWeb.promptId'])).toEqual(['p_b', 'p_b']);
+
+    handlersRef.handlers?.onAgentQueue?.('s_1', 'main', [
+      { promptId: 'p_c', content: [{ type: 'text', text: 'first line' }, { type: 'text', text: 'second line' }], createdAt },
+    ]);
+    await vi.waitFor(() =>
+      expect(client.queued.value[0]).toMatchObject({ id: 'p_c', text: 'first line\nsecond line' }),
+    );
+    expect(promptStore().optimisticMessagesBySession.s_1?.map((message) => message.metadata?.['kimiWeb.promptId'])).toEqual(['p_b', 'p_b']);
   });
 
   it('folds context usage into the status bar, including post-compaction drops', async () => {

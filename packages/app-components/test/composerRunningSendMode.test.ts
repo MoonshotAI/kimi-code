@@ -26,6 +26,7 @@ vi.mock('@moonshot-ai/app-client/client', async (importOriginal) => {
       activity: clientState.activity!,
       working: clientState.working!,
       isStartingFirstPrompt: vue.ref(false),
+      inFlight: vue.ref(false),
       queued: vue.ref([]),
       searchFiles: async (query: string) => clientState.searchFiles?.(query) ?? [],
       sessionMentionCandidates: vue.ref([]),

@@ -56,6 +56,7 @@ vi.mock('@moonshot-ai/app-client/client', async (importOriginal) => {
       activity: vue.ref('running'),
       working: clientState.working!,
       isStartingFirstPrompt: vue.ref(false),
+      inFlight: vue.ref(false),
       queued: vue.ref([]),
       searchFiles: vi.fn(async () => []),
       uploadImage: vi.fn(),

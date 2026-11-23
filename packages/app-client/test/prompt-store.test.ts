@@ -1,9 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { AppMessage } from '@moonshot-ai/app-core/api';
-import type { PromptEnvelope } from '../src/client/types';
+import type { AppMessage, AppQueuedInput } from '@moonshot-ai/app-core/api';
 import { sessionsStore } from '../src/stores/sessions';
-import { chainSteer, promptStore } from '../src/stores/prompt';
+import { movedQueue, promptStore } from '../src/stores/prompt';
 
 const memStorage = new Map<string, string>();
 vi.stubGlobal('localStorage', {
@@ -12,10 +11,6 @@ vi.stubGlobal('localStorage', {
   removeItem: (key: string) => void memStorage.delete(key),
   clear: () => memStorage.clear(),
 });
-
-function envelope(text: string): PromptEnvelope {
-  return { text, attachments: [], skills: [], permissionMode: undefined };
-}
 
 function bubble(id: string, metadata?: Record<string, unknown>): AppMessage {
   return {
@@ -28,6 +23,10 @@ function bubble(id: string, metadata?: Record<string, unknown>): AppMessage {
   } as AppMessage;
 }
 
+function queuedInput(promptId: string): AppQueuedInput {
+  return { promptId, content: [{ type: 'text', text: promptId }], createdAt: '2026-11-06T00:00:00.000Z' };
+}
+
 let sidSeq = 0;
 function sid(): string {
   sidSeq += 1;
@@ -38,119 +37,81 @@ beforeEach(() => {
   memStorage.clear();
   sessionsStore().setActiveSessionId(undefined);
   const store = promptStore();
-  store.queuedBySession = {};
+  store.queueBySession = {};
   store.inFlightBySession = {};
   store.optimisticMessagesBySession = {};
   store.setDraftEntry('newChat');
 });
 
-describe('queue actions', () => {
-  it('enqueueForSession appends under the given session and assigns unique ids', () => {
-    promptStore().enqueueForSession('s-active', envelope('first'), 'draft one');
-    promptStore().enqueueForSession('s-active', envelope('second'));
-    const queued = promptStore().queuedBySession['s-active'] ?? [];
-    expect(queued.map((q) => q.text)).toEqual(['first', 'second']);
-    expect(queued[0]!.editText).toBe('draft one');
-    expect(queued[0]!.id).toBeTruthy();
-    expect(queued[0]!.id).not.toBe(queued[1]!.id);
+describe('queue mirror', () => {
+  it('setQueue replaces the session queue and clearQueue drops it', () => {
+    const s = sid();
+    const other = sid();
+    promptStore().setQueue(s, [queuedInput('a'), queuedInput('b')]);
+    promptStore().setQueue(other, [queuedInput('x')]);
+    promptStore().setQueue(s, [queuedInput('b')]);
+
+    expect(promptStore().queueBySession[s]?.map((entry) => entry.promptId)).toEqual(['b']);
+    promptStore().clearQueue(s);
+    expect(promptStore().queueBySession[s]).toBeUndefined();
+    expect(promptStore().queueBySession[other]).toHaveLength(1);
   });
 
-  it('removeQueuedAt splices and reports the head change', () => {
-    const s = sid();
-    promptStore().restoreQueueEntry(s, { ...envelope('a'), id: 'a' });
-    promptStore().restoreQueueEntry(s, { ...envelope('b'), id: 'b' });
-    promptStore().restoreQueueEntry(s, { ...envelope('c'), id: 'c' });
-    const removed = promptStore().removeQueuedAt(s, 1);
-    expect((promptStore().queuedBySession[s] ?? []).map((q) => q.text)).toEqual(['c', 'a']);
-    expect(removed?.previousHead?.text).toBe('c');
-    expect(removed?.nextHead?.text).toBe('c');
-    expect(promptStore().removeQueuedAt(s, 5)).toBeNull();
+  it('drops the session key when the queue frame is empty', () => {
+    const store = promptStore();
+    store.setQueue('s1', [queuedInput('p1')]);
+    expect(store.queueBySession['s1']).toHaveLength(1);
+    store.setQueue('s1', []);
+    expect(store.queueBySession['s1']).toBeUndefined();
   });
 
-  it('removeQueuedAt of the head reports the NEW head', () => {
+  it('retires queued bubbles the frame lists and keeps steer-marked ones', () => {
     const s = sid();
-    promptStore().restoreQueueEntry(s, { ...envelope('a'), id: 'a' });
-    promptStore().restoreQueueEntry(s, { ...envelope('b'), id: 'b' });
-    const removed = promptStore().removeQueuedAt(s, 0);
-    expect(removed?.previousHead?.text).toBe('b');
-    expect(removed?.nextHead?.text).toBe('a');
+    promptStore().addOptimisticMessage(s, bubble('m1', { 'kimiWeb.promptId': 'p1', 'kimiWeb.queued': true }));
+    promptStore().addOptimisticMessage(s, bubble('m2', { 'kimiWeb.promptId': 'p2', 'kimiWeb.steered': true, 'kimiWeb.steerPhase': 'accepted' }));
+    promptStore().setQueue(s, [queuedInput('p1'), queuedInput('p2')]);
+    expect(promptStore().optimisticMessagesBySession[s]?.map((m) => m.id)).toEqual(['m2']);
   });
 
-  it('moveQueued reorders and reports the head change; invalid indices no-op', () => {
+  it('retires bubbles the first queue snapshot after a reconnect no longer lists', () => {
     const s = sid();
-    promptStore().restoreQueueEntry(s, { ...envelope('a'), id: 'a' });
-    promptStore().restoreQueueEntry(s, { ...envelope('b'), id: 'b' });
-    promptStore().restoreQueueEntry(s, { ...envelope('c'), id: 'c' });
-    const moved = promptStore().moveQueued(s, 0, 2);
-    expect((promptStore().queuedBySession[s] ?? []).map((q) => q.text)).toEqual(['b', 'a', 'c']);
-    expect(moved?.previousHead?.text).toBe('c');
-    expect(moved?.nextHead?.text).toBe('b');
-    expect(promptStore().moveQueued(s, 1, 1)).toBeNull();
-    expect(promptStore().moveQueued(s, -1, 0)).toBeNull();
+    promptStore().addOptimisticMessage(s, bubble('m1', { 'kimiWeb.promptId': 'p1', 'kimiWeb.queued': true }));
+    promptStore().setQueue(s, []);
+    expect(promptStore().optimisticMessagesBySession[s]).toHaveLength(1);
+    promptStore().awaitQueueSnapshots();
+    promptStore().setQueue(s, []);
+    expect(promptStore().optimisticMessagesBySession[s]).toBeUndefined();
   });
 
-  it('dropQueueHead returns and removes the head; restoreQueueEntry re-inserts at position', () => {
+  it('dropQueueEntry removes the entry from the shown and the confirmed queue', () => {
     const s = sid();
-    promptStore().restoreQueueEntry(s, { ...envelope('a'), id: 'a' });
-    promptStore().restoreQueueEntry(s, { ...envelope('b'), id: 'b' });
-    const head = promptStore().dropQueueHead(s);
-    expect(head?.text).toBe('b');
-    expect((promptStore().queuedBySession[s] ?? []).map((q) => q.text)).toEqual(['a']);
-    promptStore().restoreQueueEntry(s, head!);
-    expect((promptStore().queuedBySession[s] ?? []).map((q) => q.text)).toEqual(['b', 'a']);
-    expect(promptStore().dropQueueHead(sid())).toBeUndefined();
+    promptStore().setQueue(s, [queuedInput('a'), queuedInput('b')]);
+    promptStore().dropQueueEntry(s, 'a');
+    expect(promptStore().queueBySession[s]?.map((entry) => entry.promptId)).toEqual(['b']);
+    promptStore().restoreConfirmedQueue(s);
+    expect(promptStore().queueBySession[s]?.map((entry) => entry.promptId)).toEqual(['b']);
   });
 
-  it('restoreQueueEntry clamps the index to the queue length', () => {
+  it('confirmQueueMove applies an accepted move onto the confirmed queue', () => {
     const s = sid();
-    promptStore().restoreQueueEntry(s, { ...envelope('a'), id: 'a' });
-    promptStore().restoreQueueEntry(s, { ...envelope('b'), id: 'b' }, 99);
-    expect((promptStore().queuedBySession[s] ?? []).map((q) => q.text)).toEqual(['a', 'b']);
-  });
-
-  it('enqueueCompactForSession appends a compact entry and hasQueuedCompact detects it', () => {
-    const s = sid();
-    expect(promptStore().hasQueuedCompact(s)).toBe(false);
-    promptStore().enqueueForSession(s, envelope('note'));
-    expect(promptStore().hasQueuedCompact(s)).toBe(false);
-    promptStore().enqueueCompactForSession(s, 'focus on tools');
-    expect(promptStore().hasQueuedCompact(s)).toBe(true);
-    const queued = promptStore().queuedBySession[s] ?? [];
-    expect(queued.map((q) => q.kind ?? 'prompt')).toEqual(['prompt', 'compact']);
-    const compact = queued[1]!;
-    expect(compact.text).toBe('/compact focus on tools');
-    expect(compact.instruction).toBe('focus on tools');
-    expect(compact.enqueuedAt).toBeTypeOf('number');
-    expect(compact.id).toBeTruthy();
-    promptStore().removeQueuedAt(s, 1);
-    expect(promptStore().hasQueuedCompact(s)).toBe(false);
-  });
-
-  it('enqueueCompactForSession without instruction stores the bare command', () => {
-    const s = sid();
-    promptStore().enqueueCompactForSession(s);
-    const compact = (promptStore().queuedBySession[s] ?? [])[0]!;
-    expect(compact.text).toBe('/compact');
-    expect(compact.instruction).toBeUndefined();
+    promptStore().setQueue(s, [queuedInput('a'), queuedInput('b'), queuedInput('c')]);
+    promptStore().confirmQueueMove(s, 'c', 'a');
+    promptStore().restoreConfirmedQueue(s);
+    expect(promptStore().queueBySession[s]?.map((entry) => entry.promptId)).toEqual(['c', 'a', 'b']);
   });
 });
 
-describe('compact flush hold', () => {
-  it('holds, releases once, and reports whether it was held', () => {
-    const s = sid();
-    expect(promptStore().isCompactFlushHeld(s)).toBe(false);
-    promptStore().holdCompactFlush(s);
-    expect(promptStore().isCompactFlushHeld(s)).toBe(true);
-    expect(promptStore().releaseCompactFlush(s)).toBe(true);
-    expect(promptStore().isCompactFlushHeld(s)).toBe(false);
-    expect(promptStore().releaseCompactFlush(s)).toBe(false);
+describe('movedQueue', () => {
+  it('moves an entry before another or to the tail', () => {
+    const queue = [queuedInput('a'), queuedInput('b'), queuedInput('c')];
+    expect(movedQueue(queue, 'c', 'a')?.map((entry) => entry.promptId)).toEqual(['c', 'a', 'b']);
+    expect(movedQueue(queue, 'a', undefined)?.map((entry) => entry.promptId)).toEqual(['b', 'c', 'a']);
   });
 
-  it('forgetPromptState drops the hold', () => {
-    const s = sid();
-    promptStore().holdCompactFlush(s);
-    promptStore().forgetPromptState(s);
-    expect(promptStore().isCompactFlushHeld(s)).toBe(false);
+  it('returns undefined for unknown ids', () => {
+    const queue = [queuedInput('a')];
+    expect(movedQueue(queue, 'x', 'a')).toBeUndefined();
+    expect(movedQueue(queue, 'a', 'x')).toBeUndefined();
   });
 });
 
@@ -165,64 +126,6 @@ describe('unsettled compaction tracking', () => {
     promptStore().noteCompactionStarted(s);
     promptStore().forgetPromptState(s);
     expect(promptStore().hasUnsettledCompaction(s)).toBe(false);
-  });
-});
-
-describe('flush failure budget', () => {
-  it('notes, reads and clears the per-entry failure count', () => {
-    const s = sid();
-    expect(promptStore().queueFlushFailureFor(s)).toBeUndefined();
-    promptStore().noteQueueFlushFailure(s, 'k1', 2);
-    expect(promptStore().queueFlushFailureFor(s)).toEqual({ key: 'k1', count: 2 });
-    promptStore().clearQueueFlushFailure(s);
-    expect(promptStore().queueFlushFailureFor(s)).toBeUndefined();
-  });
-});
-
-describe('steer holds and serialization', () => {
-  it('holds stack and release one at a time', () => {
-    const s = sid();
-    expect(promptStore().isSteerInFlight(s)).toBe(false);
-    promptStore().noteSteerStart(s);
-    promptStore().noteSteerStart(s);
-    expect(promptStore().isSteerInFlight(s)).toBe(true);
-    promptStore().noteSteerSettled(s);
-    expect(promptStore().isSteerInFlight(s)).toBe(true);
-    promptStore().noteSteerSettled(s);
-    expect(promptStore().isSteerInFlight(s)).toBe(false);
-  });
-
-  it('chainSteer runs overlapping calls in click order', async () => {
-    const s = sid();
-    const order: string[] = [];
-    const first = chainSteer(s, async () => {
-      await new Promise((resolve) => setTimeout(resolve, 10));
-      order.push('first');
-      return 'first';
-    });
-    const second = chainSteer(s, async () => {
-      order.push('second');
-      return 'second';
-    });
-    await expect(first).resolves.toBe('first');
-    await expect(second).resolves.toBe('second');
-    expect(order).toEqual(['first', 'second']);
-  });
-
-  it('chainSteer rides over a rejected predecessor', async () => {
-    const s = sid();
-    const order: string[] = [];
-    const first = chainSteer(s, async () => {
-      order.push('first');
-      throw new Error('boom');
-    });
-    const second = chainSteer(s, async () => {
-      order.push('second');
-      return 'second';
-    });
-    await expect(first).rejects.toThrow('boom');
-    await expect(second).resolves.toBe('second');
-    expect(order).toEqual(['first', 'second']);
   });
 });
 
@@ -290,36 +193,16 @@ describe('first-prompt lock / draft entry', () => {
 });
 
 describe('forgetPromptState', () => {
-  it('drops the per-session lifecycle bookkeeping but keeps the state fields', () => {
+  it('drops the compaction bookkeeping but keeps the state fields', () => {
     const s = sid();
-    const other = sid();
-    promptStore().restoreQueueEntry(s, { ...envelope('a'), id: 'a' });
-    promptStore().restoreQueueEntry(other, { ...envelope('x'), id: 'x' });
     promptStore().setInFlight(s, true);
     promptStore().addOptimisticMessage(s, bubble('m1'));
-    promptStore().noteAutoCompacted(s);
-    promptStore().noteSteerStart(s);
-    promptStore().noteQueueFlushFailure(s, 'k', 1);
-    void chainSteer(s, async () => 'done');
+    promptStore().noteCompactionStarted(s);
 
     promptStore().forgetPromptState(s);
 
-    expect(promptStore().autoCompactedAt(s)).toBeUndefined();
-    expect(promptStore().isSteerInFlight(s)).toBe(false);
-    expect(promptStore().queueFlushFailureFor(s)).toBeUndefined();
-    expect(promptStore().queuedBySession[s]).toHaveLength(1);
+    expect(promptStore().hasUnsettledCompaction(s)).toBe(false);
     expect(promptStore().inFlightBySession[s]).toBe(true);
     expect(promptStore().optimisticMessagesBySession[s]).toHaveLength(1);
-    expect(promptStore().queuedBySession[other]).toHaveLength(1);
-  });
-
-  it('clearQueued / clearInFlight drop the state fields', () => {
-    const s = sid();
-    promptStore().restoreQueueEntry(s, { ...envelope('a'), id: 'a' });
-    promptStore().setInFlight(s, true);
-    promptStore().clearQueued(s);
-    promptStore().clearInFlight(s);
-    expect(promptStore().queuedBySession[s]).toBeUndefined();
-    expect(promptStore().inFlightBySession[s]).toBeUndefined();
   });
 });

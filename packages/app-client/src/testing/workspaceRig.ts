@@ -8,6 +8,7 @@ import { createSessionRoute } from '../client/sessionRoute';
 import { createSessionSelection } from '../client/sessionSelection';
 import { createSessionActions } from '../client/sessionActions';
 import { usePromptPipeline } from '../client/usePromptPipeline';
+import type { PromptPipelineDeps } from '../client/usePromptPipeline';
 import type { ExtendedState } from '../client/types';
 import type { ChatGateVerdict } from '../lib/chatGate';
 import { configureWorkspaceHooks } from '../lib/workspaceHooks';
@@ -27,7 +28,16 @@ import { sessionsStore } from '../stores/sessions';
 import { warningsStore } from '../stores/warnings';
 import { workspacesStore } from '../stores/workspaces';
 
-export interface WorkspaceRigDeps {
+export interface WorkspaceRigDeps
+  extends Pick<
+    PromptPipelineDeps,
+    | 'isMainTurnRunning'
+    | 'hasUnechoedPrompt'
+    | 'transcriptHasPrompt'
+    | 'isCompacting'
+    | 'isMainWaitForWaiting'
+    | 'promptIdToAbort'
+  > {
   sideChat: UseSideChat;
   modelProvider: UseModelProviderState;
   activity: ComputedRef<ActivityState>;
@@ -38,11 +48,6 @@ export interface WorkspaceRigDeps {
   setActiveSessionId: (id: string | undefined) => void;
   nextOptimisticMsgId: () => string;
   mainUndoTarget: (sessionId: string, turnId?: string) => { turnId: string; text: string } | null;
-  isMainTurnRunning?: (sessionId: string) => boolean;
-  hasUnechoedPrompt?: (sessionId: string) => boolean;
-  isCompacting?: (sessionId: string) => boolean;
-  isMainWaitForWaiting?: (sessionId: string) => boolean;
-  promptIdToAbort?: (sessionId: string) => string | undefined;
   connectEventsIfNeeded?: () => void;
   hasLoadedMessages: (sessionId: string) => boolean;
   whenMainConversationLoaded?: (sessionId: string) => Promise<void>;
@@ -87,6 +92,7 @@ export function createWorkspaceRig(rawState: ExtendedState, deps: WorkspaceRigDe
     mapSendAuthFailure: deps.mapSendAuthFailure,
     isMainTurnRunning: deps.isMainTurnRunning,
     hasUnechoedPrompt: deps.hasUnechoedPrompt,
+    transcriptHasPrompt: deps.transcriptHasPrompt,
     isCompacting: deps.isCompacting,
     isMainWaitForWaiting: deps.isMainWaitForWaiting,
     promptIdToAbort: deps.promptIdToAbort,
@@ -98,10 +104,7 @@ export function createWorkspaceRig(rawState: ExtendedState, deps: WorkspaceRigDe
     updateSession: deps.updateSession,
     selectSession: sessionSelection.selectSession,
     upsertSessionSorted: deps.upsertSessionSorted,
-    promptBacklog: promptPipeline.promptBacklog,
-    isCompactionRunning: (sessionId) =>
-      promptStore().isCompactFlushHeld(sessionId) || deps.isCompacting?.(sessionId) === true,
-    flushQueue: promptPipeline.flushQueueHead,
+    isCompactionRunning: (sessionId) => deps.isCompacting?.(sessionId) === true,
   });
   const workspaceBoot = createWorkspaceBoot(rawState, {
     connectEventsIfNeeded: deps.connectEventsIfNeeded,
@@ -170,11 +173,8 @@ export function createWorkspaceRig(rawState: ExtendedState, deps: WorkspaceRigDe
     wouldEnqueuePrompt: promptPipeline.wouldEnqueuePrompt,
     wouldSteerPrompt: promptPipeline.wouldSteerPrompt,
     steerPrompt: promptPipeline.steerPrompt,
-    steerPromptDirect: promptPipeline.steerPromptDirect,
     steerQueued: promptPipeline.steerQueued,
-    resumeQueueIfIdle: promptPipeline.resumeQueueIfIdle,
     uploadImage: promptPipeline.uploadImage,
-    enqueue: promptPipeline.enqueue,
     unqueue: promptPipeline.unqueue,
     reorderQueue: promptPipeline.reorderQueue,
     abortCurrentPrompt: promptPipeline.abortCurrentPrompt,

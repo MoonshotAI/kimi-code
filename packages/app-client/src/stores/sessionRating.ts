@@ -51,7 +51,7 @@ export const useSessionRatingStore = defineStore('kimi.sessionRating', () => {
     () => enabled.value ? [...new Set([
       ...sessionsStore().sessions.flatMap((session) => (session.mainTurnActive === true ? [session.id] : [])),
       ...Object.keys(promptStore().inFlightBySession),
-      ...Object.keys(promptStore().queuedBySession),
+      ...Object.keys(promptStore().queueBySession),
     ])].filter(sessionBusy) : [],
     (sessionIds) => {
       for (const sessionId of sessionIds) displace(sessionId);
@@ -212,7 +212,7 @@ export const useSessionRatingStore = defineStore('kimi.sessionRating', () => {
     const prompts = promptStore();
     return sessionsStore().sessions.find((session) => session.id === sessionId)?.mainTurnActive === true ||
       prompts.inFlightBySession[sessionId] === true ||
-      (prompts.queuedBySession[sessionId]?.length ?? 0) > 0;
+      (prompts.queueBySession[sessionId]?.length ?? 0) > 0;
   }
 
   function awaitingUser(sessionId: string): boolean {

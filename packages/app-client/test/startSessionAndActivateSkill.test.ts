@@ -34,7 +34,7 @@ function resetStores(): void {
   sessionsStore().unpinSessions([...sessionsStore().pinnedSessionIds]);
   modeStore().resetMode();
   const prompt = promptStore();
-  prompt.queuedBySession = {};
+  prompt.queueBySession = {};
   prompt.inFlightBySession = {};
   prompt.optimisticMessagesBySession = {};
   prompt.setDraftEntry('newChat');
@@ -411,7 +411,7 @@ describe('startSessionAndActivateSkill', () => {
       true,
     );
     const request = (api.submitPrompt.mock.calls[0] as unknown[])[1] as Record<string, unknown>;
-    expect(Object.keys(request).sort()).toEqual(['content', 'metadata', 'promptId', 'skills']);
+    expect(Object.keys(request).sort()).toEqual(['content', 'delivery', 'metadata', 'promptId', 'skills']);
     expect(request['promptId']).toMatch(/^msg_[0-9a-f]{32}$/);
     expect(persistSessionProfile.mock.invocationCallOrder[0]!).toBeLessThan(
       api.submitPrompt.mock.invocationCallOrder[0]!,

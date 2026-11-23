@@ -107,6 +107,7 @@ import {
   toAppPluginMarketplaceEntry,
   toAppPluginSummary,
   toAppProvider,
+  toAppQueuedInput,
   toAppSession,
   toSessionTask,
   toWireApprovalResponse,
@@ -765,21 +766,6 @@ export class DaemonKimiWebApi implements KimiWebApi {
     sessionId: string,
     input: PromptSubmission,
   ): Promise<PromptSubmitResult> {
-    return this.submitPromptToPath(sessionId, 'prompts', input);
-  }
-
-  async steerPrompt(
-    sessionId: string,
-    input: PromptSubmission,
-  ): Promise<PromptSubmitResult> {
-    return this.submitPromptToPath(sessionId, 'steer', input);
-  }
-
-  private async submitPromptToPath(
-    sessionId: string,
-    path: 'prompts' | 'steer',
-    input: PromptSubmission,
-  ): Promise<PromptSubmitResult> {
     const startedAt = Date.now();
     this.tracer.traceKeyEvent?.('prompt:start', {
       sessionId,
@@ -789,8 +775,8 @@ export class DaemonKimiWebApi implements KimiWebApi {
       ).length,
     });
     try {
-      const data = await this.http.post<WirePromptSubmitResult>(
-        `/sessions/${encodeURIComponent(sessionId)}/${path}`,
+      const data = await this.http.put<WirePromptSubmitResult>(
+        `/sessions/${encodeURIComponent(sessionId)}/prompts/${encodeURIComponent(input.promptId)}`,
         toWirePromptSubmission(input),
       );
       this.tracer.traceKeyEvent?.('prompt:accepted', {
@@ -804,6 +790,8 @@ export class DaemonKimiWebApi implements KimiWebApi {
         userMessageId: data.user_message_id,
         origin: data.origin,
         status: data.status,
+        acceptedAs: data.accepted_as,
+        turnId: data.turn_id,
       };
     } catch (error) {
       this.tracer.traceKeyEvent?.('prompt:failed', {
@@ -837,6 +825,18 @@ export class DaemonKimiWebApi implements KimiWebApi {
       { allowCodes: [40903] },
     );
     return { aborted: data.aborted };
+  }
+
+  async moveQueuedPrompt(
+    sessionId: string,
+    agentId: string,
+    promptId: string,
+    beforePromptId?: string,
+  ): Promise<void> {
+    await this.http.post(
+      `/sessions/${encodeURIComponent(sessionId)}/agents/${encodeURIComponent(agentId)}/queue/${encodeURIComponent(promptId)}:move`,
+      { before_prompt_id: beforePromptId },
+    );
   }
 
   async cancelSession(
@@ -2125,6 +2125,9 @@ export class DaemonKimiWebApi implements KimiWebApi {
             return;
           case 'todo':
             handlers.onAgentTodos?.(sessionId, agentId, frame.items);
+            return;
+          case 'queue':
+            handlers.onAgentQueue?.(sessionId, agentId, frame.inputs.map(toAppQueuedInput));
             return;
         }
       },

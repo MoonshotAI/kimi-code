@@ -9,7 +9,6 @@ import { composerDisplayText } from '../lib/browserReferenceSubmission';
 import { clientPinia } from './pinia';
 import { modeStore } from './mode';
 import { permissionsStore } from './permissions';
-import { promptStore } from './prompt';
 import { sessionsStore } from './sessions';
 import { workspacesStore } from './workspaces';
 
@@ -46,15 +45,11 @@ export interface GoalHooks {
     editText?: string,
     opts?: { recoverConflicts?: boolean; forceQueue?: boolean },
   ) => Promise<'ok' | 'rejected' | 'queued'>;
-  steerPromptDirect?: (
-    prompt: PromptEnvelope,
-    targetSid?: string,
-  ) => Promise<'ok' | 'rejected' | 'noop'>;
   submitPromptInternal: (
     sessionId: string,
     prompt: PromptEnvelope,
-  ) => Promise<'ok' | 'rejected'>;
-  flushQueueHead: (sessionId: string) => void;
+    opts?: { delivery?: 'steer' | 'queue' },
+  ) => Promise<'ok' | 'rejected' | 'queued'>;
 }
 
 let goalHooks: GoalHooks | null = null;
@@ -177,8 +172,8 @@ export const useGoalStore = defineStore('kimi.goal', () => {
       attachments: input.attachments ?? [],
       skills: input.skills ?? [],
     };
-    if (opts?.delivery === 'steer' && goalHooks?.steerPromptDirect) {
-      const outcome = await goalHooks.steerPromptDirect(prompt, sid);
+    if (opts?.delivery === 'steer') {
+      const outcome = await goalHooks!.submitPromptInternal(sid, prompt, { delivery: 'steer' });
       return { sessionId: createdId ?? sid, promptRejected: outcome === 'rejected' };
     }
     if (sessionsStore().activeSessionId === sid) {
@@ -189,19 +184,7 @@ export const useGoalStore = defineStore('kimi.goal', () => {
       );
       return { sessionId: createdId ?? sid, promptRejected: outcome === 'rejected' };
     }
-    const turnActive = sessionsStore().sessions.find((s) => s.id === sid)?.mainTurnActive === true;
-    if (
-      promptStore().inFlightBySession[sid] === true ||
-      turnActive ||
-      (promptStore().queuedBySession[sid]?.length ?? 0) > 0
-    ) {
-      promptStore().enqueueForSession(sid, prompt, opts?.editText);
-      if (promptStore().inFlightBySession[sid] !== true && !turnActive) {
-        goalHooks!.flushQueueHead(sid);
-      }
-      return { sessionId: createdId ?? sid, promptRejected: false };
-    }
-    const outcome = await goalHooks!.submitPromptInternal(sid, prompt);
+    const outcome = await goalHooks!.submitPromptInternal(sid, prompt, { delivery: 'queue' });
     return { sessionId: createdId ?? sid, promptRejected: outcome === 'rejected' };
   }
 

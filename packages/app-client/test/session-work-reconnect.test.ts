@@ -192,6 +192,7 @@ describe('useKimiWebClient session work reconnect baseline', () => {
       promptId: input.promptId!,
       userMessageId: input.promptId!,
       status: 'running' as const,
+      acceptedAs: 'turn' as const,
     }));
     const api: Partial<KimiWebApi> = {
       getAuth: vi.fn(async () => ({
@@ -295,7 +296,7 @@ describe('useKimiWebClient session work reconnect baseline', () => {
 
       await client.sendPrompt(client.createPromptEnvelope({ text: 'first' }));
       await client.sendPrompt(client.createPromptEnvelope({ text: 'follow-up' }));
-      expect(submitPrompt).toHaveBeenCalledTimes(1);
+      expect(submitPrompt).toHaveBeenCalledTimes(2);
 
       handlers!.onConnectionChange(false);
       handlers!.onConnectionChange(true);
@@ -393,7 +394,7 @@ describe('useKimiWebClient session work reconnect baseline', () => {
             .map((part) => part.text)
             .join(''),
         ),
-      ).toEqual(['first', 'new local turn', 'follow-up']);
+      ).toEqual(['first', 'follow-up', 'new local turn']);
 
       await client.selectSession(stale.id);
       const { filesStore } = await import('../src/stores/files');

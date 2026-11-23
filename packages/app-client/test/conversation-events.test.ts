@@ -241,11 +241,10 @@ describe('conversation events in the client', () => {
     const noteTurnEnded = vi.spyOn(sessionRatingStore(), 'noteMainTurnEnded');
     let answer!: () => void;
     h.submitPrompt.mockImplementationOnce((_sid, input) => new Promise((resolve) => {
-      answer = () => resolve({ promptId: input.promptId!, userMessageId: input.promptId!, status: 'running' });
+      answer = () => resolve({ promptId: input.promptId!, userMessageId: input.promptId!, status: 'running', acceptedAs: 'turn' });
     }));
-    void h.client.sendPrompt(h.client.createPromptEnvelope({ text: 'quick work' }));
+    const sent = h.client.sendPrompt(h.client.createPromptEnvelope({ text: 'quick work' }));
     await vi.waitFor(() => expect(h.submitPrompt).toHaveBeenCalledTimes(1));
-    void h.client.sendPrompt(h.client.createPromptEnvelope({ text: 'behind it' }));
 
     const promptId = h.sentPromptId(0);
     expect(promptId).toMatch(/^msg_/);
@@ -263,8 +262,7 @@ describe('conversation events in the client', () => {
     expect(h.turnEndReads.listSkills).toHaveBeenCalled();
 
     answer();
-    await vi.waitFor(() => expect(h.submitPrompt).toHaveBeenCalledTimes(2));
-    expect(h.submitPrompt.mock.calls[1]![1].content).toEqual([{ type: 'text', text: 'behind it' }]);
+    await expect(sent).resolves.toBe('ok');
   });
 
   it('runs the turn-end effects of a local prompt whose turn already ended on the first page', async () => {
@@ -285,34 +283,7 @@ describe('conversation events in the client', () => {
     expect(h.turnEndReads.listSkills).toHaveBeenCalled();
   });
 
-  it('drops a sent prompt the server lost while disconnected and sends the next queued one', async () => {
-    const h = await boot();
-    await h.client.sendPrompt(h.client.createPromptEnvelope({ text: 'lost' }));
-    await h.client.sendPrompt(h.client.createPromptEnvelope({ text: 'next' }));
-    expect(h.submitPrompt).toHaveBeenCalledTimes(1);
-    expect(h.client.activity.value).toBe('running');
-
-    h.agentStatus('s1', 'idle');
-    expect(h.submitPrompt).toHaveBeenCalledTimes(1);
-    h.frame('s1', { type: 'turns', turns: [], has_more: false });
-
-    await vi.waitFor(() => expect(h.submitPrompt).toHaveBeenCalledTimes(2));
-    expect(h.submitPrompt.mock.calls[1]![1].content).toEqual([{ type: 'text', text: 'next' }]);
-  });
-
-  it('sends a message queued while the session row showed a running turn once the agent frame says idle', async () => {
-    const h = await boot({ deferPages: true });
-    h.event('s1', { type: 'sessionWorkChanged', sessionId: 's1', busy: true, mainTurnActive: true });
-    await h.client.sendPrompt(h.client.createPromptEnvelope({ text: 'after the reload' }));
-    expect(h.submitPrompt).not.toHaveBeenCalled();
-
-    h.frame('s1', { type: 'turns', turns: [endedTurn(0)], has_more: false });
-    h.agentStatus('s1', 'idle');
-    await vi.waitFor(() => expect(h.submitPrompt).toHaveBeenCalledTimes(1));
-    expect(h.submitPrompt.mock.calls[0]![1].content).toEqual([{ type: 'text', text: 'after the reload' }]);
-  });
-
-  it('rolls back a prompt only after every resend failed on the network, and the queue still drains', async () => {
+  it('rolls back a prompt only after every resend failed on the network', async () => {
     const h = await boot();
     vi.useFakeTimers();
     h.submitPrompt
@@ -327,12 +298,6 @@ describe('conversation events in the client', () => {
     expect([h.sentPromptId(1), h.sentPromptId(2)]).toEqual([h.sentPromptId(0), h.sentPromptId(0)]);
     expect(h.client.turns.value).toEqual([]);
     expect(h.client.inFlight.value).toBe(false);
-
-    h.startTurn('s1', 0, 'msg_from_another_client', 'theirs');
-    await expect(h.client.sendPrompt(h.client.createPromptEnvelope({ text: 'after theirs' }))).resolves.toBe('queued');
-    h.endTurn('s1', 0);
-    await vi.waitFor(() => expect(h.submitPrompt).toHaveBeenCalledTimes(4));
-    expect(h.submitPrompt.mock.calls[3]![1].content).toEqual([{ type: 'text', text: 'after theirs' }]);
   });
 
   it('rolls back a prompt the server failed before it started a turn', async () => {
@@ -609,10 +574,12 @@ describe('echoed steer prompt pruning', () => {
   it('prunes optimistic steer bubbles immediately when user_message items arrive mid-turn', async () => {
     const h = await boot();
     const { promptStore } = await import('../src/stores/prompt');
-    const steerPrompt = vi.fn<(sid: string, input: PromptSubmission) => Promise<PromptSubmitResult>>(
-      async (_sid, input) => ({ promptId: input.promptId!, userMessageId: input.promptId!, status: 'running' }),
-    );
-    clientApiMock['steerPrompt'] = steerPrompt;
+    h.submitPrompt.mockImplementation(async (_sid, input) => ({
+      promptId: input.promptId!,
+      userMessageId: input.promptId!,
+      status: 'running' as const,
+      acceptedAs: 'steer' as const,
+    }));
 
     h.agentStatus('s1', 'running');
     h.frame('s1', {
@@ -621,8 +588,8 @@ describe('echoed steer prompt pruning', () => {
     });
     h.frame('s1', { type: 'item.ended', turn_id: 't0', item: opener('u0', 'initial prompt') });
 
-    await expect(h.client.steerPromptDirect(h.client.createPromptEnvelope({ text: 'first steer' }))).resolves.toBe('ok');
-    const firstPromptId = steerPrompt.mock.calls[0]![1].promptId!;
+    await expect(h.client.steerPrompt(h.client.createPromptEnvelope({ text: 'first steer' }))).resolves.toBe('ok');
+    const firstPromptId = h.sentPromptId(0);
     expect(promptStore().optimisticMessagesBySession['s1']).toHaveLength(1);
 
     h.frame('s1', {
@@ -632,8 +599,8 @@ describe('echoed steer prompt pruning', () => {
     });
     expect(promptStore().optimisticMessagesBySession['s1']).toBeUndefined();
 
-    await expect(h.client.steerPromptDirect(h.client.createPromptEnvelope({ text: 'second steer' }))).resolves.toBe('ok');
-    const secondPromptId = steerPrompt.mock.calls[1]![1].promptId!;
+    await expect(h.client.steerPrompt(h.client.createPromptEnvelope({ text: 'second steer' }))).resolves.toBe('ok');
+    const secondPromptId = h.sentPromptId(1);
     expect(promptStore().optimisticMessagesBySession['s1']).toHaveLength(1);
 
     h.frame('s1', {

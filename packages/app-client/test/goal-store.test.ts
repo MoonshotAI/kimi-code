@@ -279,7 +279,6 @@ describe('goal confirmation after default workspace rollback', () => {
       createDraftSession,
       sendPrompt: vi.fn(async () => 'ok' as const),
       submitPromptInternal,
-      flushQueueHead: vi.fn(),
     });
     expect(workspacesStore().activeWorkspaceId).toBe('a');
     const pending = goalStore().createGoal('improve coverage');

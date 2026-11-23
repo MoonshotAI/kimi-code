@@ -311,7 +311,7 @@ export interface AppMessage {
 export type ThinkingLevel = 'off' | 'on' | (string & {});
 
 export interface PromptSubmission {
-  promptId?: string;
+  promptId: string;
   content: AppMessageContent[];
   metadata?: Record<string, unknown>;
   agentId?: string;
@@ -323,13 +323,28 @@ export interface PromptSubmission {
   goalObjective?: string;
   goalControl?: 'pause' | 'resume' | 'cancel' | 'edit';
   skills?: { name: string; path?: string; args?: string }[];
+  delivery?: PromptDelivery;
 }
+
+export type PromptDelivery = 'queue' | 'steer';
+
+export type PromptAcceptance = 'turn' | 'steer' | 'queue';
 
 export interface PromptSubmitResult {
   promptId: string;
   userMessageId: string;
   origin?: unknown;
   status?: 'running' | 'queued' | 'failed';
+  acceptedAs: PromptAcceptance;
+  turnId?: string;
+}
+
+export interface AppQueuedInput {
+  promptId: string;
+  content: AppMessageContent[];
+  skills?: { name: string; args?: string }[];
+  clientMetadata?: Record<string, unknown>;
+  createdAt: string;
 }
 
 export type ApprovalDecision = 'approved' | 'rejected' | 'cancelled';
@@ -606,6 +621,7 @@ export interface KimiEventHandlers {
   onAgentUsage?(sessionId: string, agentId: string, usage: AppAgentUsage): void;
   onAgentGoal?(sessionId: string, agentId: string, goal: AppGoal | null): void;
   onAgentTodos?(sessionId: string, agentId: string, todos: readonly AppTodoItem[]): void;
+  onAgentQueue?(sessionId: string, agentId: string, inputs: readonly AppQueuedInput[]): void;
   onTaskOutput?(sessionId: string, agentId: string, taskId: string, offset: number, text: string): void;
   onTaskOutputFailed?(sessionId: string, agentId: string, taskId: string): void;
 }
@@ -1096,9 +1112,9 @@ export interface KimiWebApi {
     options?: { desktop?: boolean },
   ): Promise<{ blob: Blob; fileName: string }>;
   submitPrompt(sessionId: string, input: PromptSubmission): Promise<PromptSubmitResult>;
-  steerPrompt(sessionId: string, input: PromptSubmission): Promise<PromptSubmitResult>;
   steerPrompts(sessionId: string, promptIds: string[]): Promise<{ steered: boolean; promptIds: string[] }>;
   abortPrompt(sessionId: string, promptId: string): Promise<{ aborted: boolean }>;
+  moveQueuedPrompt(sessionId: string, agentId: string, promptId: string, beforePromptId?: string): Promise<void>;
   cancelSession(sessionId: string, options?: { agentId?: string; includeBackground?: boolean }): Promise<{ cancelled: boolean }>;
   continueSession(sessionId: string): Promise<{ continued: true }>;
   compactSession(sessionId: string, instruction?: string): Promise<void>;

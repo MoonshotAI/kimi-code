@@ -10,8 +10,9 @@ export default {
   compact: { desc: 'Compact the conversation history', argHint: '[instructions]', requiresSession: 'Open a session to compact its history' },
   compactQueue: {
     alreadyQueued: 'A /compact is already queued',
+    withdrawFailed: 'The model was not switched, and the queued /compact could not be withdrawn — remove it from the queue',
+    busy: 'The agent is running — run /compact again after this turn',
     compacting: 'Compaction is already running — wait for it to finish',
-    skippedAuto: 'Skipped the queued /compact — context was already auto-compacted',
   },
   fork: { desc: 'Fork this session into a new one' },
   reload: {

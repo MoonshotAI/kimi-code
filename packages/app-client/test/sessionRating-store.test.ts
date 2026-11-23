@@ -46,7 +46,7 @@ beforeEach(() => {
   vi.spyOn(api, 'reportSessionRating').mockImplementation(report);
   setKimiClientDeps({ api: () => api, t: (key) => key });
   promptStore().inFlightBySession = {};
-  promptStore().queuedBySession = {};
+  promptStore().queueBySession = {};
   approvalsStore().approvalsBySession = {};
   approvalsStore().questionsBySession = {};
   sessionsStore().setActiveSessionId(SESSION);
@@ -78,7 +78,7 @@ const vetoes: [string, () => void][] = [
   ['popup', () => { blocked = true; }],
   ['sending', () => { promptStore().inFlightBySession[SESSION] = true; }],
   ['queued prompt', () => {
-    promptStore().queuedBySession[SESSION] = [{ text: 'next', attachments: [], skills: [], permissionMode: undefined }];
+    promptStore().queueBySession[SESSION] = [{ promptId: 'p_next', content: [{ type: 'text', text: 'next' }], createdAt: '2026-11-06T00:00:00.000Z' }];
   }],
   ['disconnected', () => { connectionStore().markDisconnected(); }],
   ['another session', () => { sessionsStore().setActiveSessionId('session_b'); }],

@@ -10,8 +10,9 @@ export default {
   compact: { desc: '压缩会话历史', argHint: '[说明]', requiresSession: '请先打开一个会话，再压缩会话历史' },
   compactQueue: {
     alreadyQueued: '已有排队中的 /compact',
+    withdrawFailed: '模型未切换，排队中的 /compact 未能撤回，请在队列中手动移除',
+    busy: 'Agent 正在运行，请等这一轮结束后再 /compact',
     compacting: '正在压缩上下文，请等待完成后再试',
-    skippedAuto: '已跳过排队的 /compact：上下文刚被自动压缩',
   },
   fork: { desc: '把当前会话 fork 出一个新会话' },
   reload: {

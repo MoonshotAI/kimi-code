@@ -74,7 +74,7 @@ import {
 import { useAppearance, useSessionMentions, useSidebarTabs } from '@moonshot-ai/app-core';
 import { shouldNotifyCompletion } from '../composables/useNotification';
 import { notificationsStore } from '../stores/notifications';
-import { promptAttachmentToTurnAttachment } from './attachmentsToContent';
+import { queuedContentAttachment } from './attachmentsToContent';
 import { useModelProviderState, type PersistSessionProfilePatch } from './useModelProviderState';
 import { useSideChat } from './useSideChat';
 import { useTaskClock } from './useTaskClock';
@@ -519,7 +519,7 @@ function forgetSession(sessionId: string): void {
   delete rawState.sessionStatusSettledBySession[sessionId];
   notifiedInteractionIdsBySession.delete(sessionId);
   promptStore().forgetLocalTurnState(sessionId);
-  promptStore().clearQueued(sessionId);
+  promptStore().clearQueue(sessionId);
   promptStore().clearInFlight(sessionId);
   delete rawState.planModeBySession[sessionId];
   delete rawState.planArmedBySession[sessionId];
@@ -710,7 +710,7 @@ function setOnboarded(done: boolean): void {
 function hasPendingLocalWork(sessionId: string): boolean {
   return (
     promptStore().inFlightBySession[sessionId] === true ||
-    (promptStore().queuedBySession[sessionId] ?? []).length > 0 ||
+    (promptStore().queueBySession[sessionId] ?? []).length > 0 ||
     (promptStore().optimisticMessagesBySession[sessionId] ?? []).length > 0
   );
 }
@@ -766,6 +766,7 @@ const mainConversations = createConversationPool({
   },
   onEvicted: (entry) => {
     agentStatesStore().forgetAgent(entry.sessionId, entry.agentId);
+    promptStore().clearQueue(entry.sessionId);
   },
 });
 
@@ -798,20 +799,18 @@ function settleMainCompaction(entry: ConversationEntry, initial: boolean): void 
   const seen = latestCompactionKeyByEntry.get(entry);
   latestCompactionKeyByEntry.set(entry, latest?.key);
   if (!initial && latest !== undefined && latest.key !== seen) {
-    settleCompaction(entry.sessionId, 'completed', latest.item.trigger);
+    settleCompaction(entry.sessionId, 'completed');
   }
 }
 
 function settleCompaction(
   sessionId: string,
   outcome: 'completed' | 'cancelled',
-  trigger: 'manual' | 'auto' | undefined,
 ): void {
   promptStore().noteCompactionSettled(sessionId);
-  const gateOwnsResume = modelSwitchConfirmStore().hasCompactionWait(sessionId);
-  if (gateOwnsResume) modelSwitchConfirmStore().noteCompactionSettled(sessionId, outcome);
-  if (outcome === 'completed' && trigger !== 'manual') promptStore().noteAutoCompacted(sessionId);
-  if (!gateOwnsResume) promptPipeline.resumeAfterCompaction(sessionId);
+  if (modelSwitchConfirmStore().hasCompactionWait(sessionId)) {
+    modelSwitchConfirmStore().noteCompactionSettled(sessionId, outcome);
+  }
 }
 
 function latestCompactionOf(turns: readonly ConversationTurn[]): { key: string; item: CompactionItem } | undefined {
@@ -1346,6 +1345,7 @@ function createOnConnectionChangeHandler(): KimiEventHandlers['onConnectionChang
           duration_ms: Math.min(Date.now() - disconnectedAt, 86_400_000),
         });
       }
+      promptStore().awaitQueueSnapshots();
       warningsStore().dismissWsError();
       void configStore().refreshServerMeta();
       sideChat.flushPendingCloses();
@@ -1414,7 +1414,6 @@ export function connectEventsIfNeeded(): void {
         promptStore().settleContinueTurnStart(sessionId);
         applyMainAgentState(sessionId, state);
         observeMainCompaction(sessionId);
-        if (state.status === 'idle') promptPipeline.resumeQueueIfIdle(sessionId);
       },
       onAgentUsage: (sessionId, agentId, usage) => {
         agentStatesStore().setUsage(sessionId, agentId, usage);
@@ -1425,6 +1424,9 @@ export function connectEventsIfNeeded(): void {
       },
       onAgentTodos: (sessionId, agentId, todos) => {
         agentStatesStore().setTodos(sessionId, agentId, todos);
+      },
+      onAgentQueue: (sessionId, agentId, inputs) => {
+        if (agentId === MAIN_AGENT_ID) promptStore().setQueue(sessionId, inputs);
       },
       onTaskOutput: taskOutputStream.receive,
       onTaskOutputFailed: taskOutputStream.fail,
@@ -1838,7 +1840,7 @@ function onMainPage(entry: ConversationEntry, previous: readonly ConversationTur
   settleMainCompaction(entry, initial);
   if (!initial) {
     if (promptStore().hasUnsettledCompaction(sessionId) && !mainCompacting(sessionId)) {
-      settleCompaction(sessionId, 'cancelled', undefined);
+      settleCompaction(sessionId, 'cancelled');
     }
     clearTurnFileHistorySession(sessionId);
   }
@@ -1854,12 +1856,11 @@ function onMainPage(entry: ConversationEntry, previous: readonly ConversationTur
     else if (fresh) settleMainTurnEnd(entry, turn);
     else phases.set(turn.turn_id, 'settled');
   }
-  if (initial || mainTurnRunning(sessionId) || promptStore().inFlightBySession[sessionId] === true || promptStore().isSteerInFlight(sessionId)) {
+  if (initial || mainTurnRunning(sessionId) || promptStore().inFlightBySession[sessionId] === true) {
     pruneEchoedPrompts(sessionId);
     return;
   }
   promptStore().clearOptimisticMessages(sessionId);
-  promptPipeline.resumeQueueIfIdle(sessionId);
 }
 
 function onMainTurnsRemoved(entry: ConversationEntry, turnIds: readonly string[]): void {
@@ -1884,7 +1885,6 @@ function settleMainTurnEnd(entry: ConversationEntry, turn: ConversationTurn): vo
   promptStore().settleContinueTurnStart(sessionId);
   turnPhasesOf(entry).set(turn.turn_id, 'settled');
   pruneEchoedPrompts(sessionId);
-  promptPipeline.resumeQueueIfIdle(sessionId);
   if (turn.kind !== 'agent') return;
   scheduleSessionRowRefresh(sessionId);
   onMainTurnEnd(sessionId, turnResult(turn) === 'completed' ? 'idle' : 'aborted', {
@@ -1906,7 +1906,7 @@ function onMainNotice(sessionId: string, notice: ConversationNotice): void {
     });
     return;
   }
-  if (notice.code === 'compaction.cancelled') settleCompaction(sessionId, 'cancelled', undefined);
+  if (notice.code === 'compaction.cancelled') settleCompaction(sessionId, 'cancelled');
   warningsStore().markSessionWarningShown(sessionId, `${notice.code ?? ''} ${notice.title}`);
   if (notice.level === 'error') {
     if (isModelTurnErrorNotice(notice)) return;
@@ -2014,16 +2014,24 @@ const queued = computed<QueuedPromptView[]>(() => {
   const sid = rawState.activeSessionId;
   if (!sid) return [];
   const api = getKimiWebApi();
-  return (promptStore().queuedBySession[sid] ?? []).map((q) => ({
-    id: q.id ?? q.text,
-    text: q.text,
-    attachmentCount: q.attachments?.length ?? 0,
-    attachments: q.attachments?.map((a) => promptAttachmentToTurnAttachment(api, a)),
-    editText: q.editText,
-    snapshot: q.snapshot,
-    kind: q.kind,
-    instruction: q.instruction,
-  }));
+  return (promptStore().queueBySession[sid] ?? []).map((input): QueuedPromptView => {
+    const attachments = input.content.flatMap((part) => queuedContentAttachment(api, sid, part));
+    const displayText = input.clientMetadata?.['display_text'];
+    const editText = input.clientMetadata?.['edit_text'];
+    return {
+      id: input.promptId,
+      text: typeof displayText === 'string'
+        ? displayText
+        : input.content.flatMap((part) => (part.type === 'text' ? [part.text] : [])).join('\n'),
+      attachmentCount: attachments.length,
+      attachments,
+      editText: typeof editText === 'string' ? editText : undefined,
+      snapshot: input.clientMetadata?.['kimi_code_composer'],
+      kind: 'prompt',
+      editable: input.clientMetadata?.['kimi_code_composer'] !== undefined
+        || ((input.skills?.length ?? 0) === 0 && attachments.every((attachment) => attachment.fileId !== undefined)),
+    };
+  });
 });
 
 const warnings = computed<AppWarning[]>(() => rawState.warnings);
@@ -2271,7 +2279,9 @@ async function runModelSwitchAction(
       }
       const sid = triggerSid;
       if (isSuperseded()) return;
-      const request = sessionActions.compact(
+      const compacting = isMainCompactingOrStarting(sid);
+      const busy = !compacting && promptPipeline.promptBacklog(sid) !== 'clear';
+      const sent = compacting || (!busy && sessionActions.compact(
         undefined,
         modelSwitchConfirmStore().hasCompactionWait(sid)
           ? undefined
@@ -2279,37 +2289,34 @@ async function runModelSwitchAction(
               onRequestRejected: () =>
                 modelSwitchConfirmStore().noteCompactionSettled(sid, 'request-failed'),
             },
-      );
-      if (request === undefined) {
+      ));
+      if (!sent) {
         warningsStore().pushOperationFailure('compact', new Error('compact request was not sent'), {
           sessionId: sid,
+          message: busy ? t('commands.compactQueue.busy') : undefined,
         });
         return;
       }
       const outcome = await modelSwitchConfirmStore().waitCompactionSettled(sid, MODEL_SWITCH_COMPACT_TIMEOUT_MS);
-      try {
-        if (outcome === 'request-failed') return;
-        if (generation !== modelSelectGeneration) return;
-        if (outcome === 'completed') {
-          if (rawState.activeSessionId !== sid) {
-            warningsStore().pushOperationFailure(
-              'modelSwitch',
-              new Error('session changed while compacting'),
-              { sessionId: sid, message: t('model.switchCompactAborted') },
-            );
-            return;
-          }
-          await applySelectModel(modelId);
+      if (outcome === 'request-failed') return;
+      if (generation !== modelSelectGeneration) return;
+      if (outcome === 'completed') {
+        if (rawState.activeSessionId !== sid) {
+          warningsStore().pushOperationFailure(
+            'modelSwitch',
+            new Error('session changed while compacting'),
+            { sessionId: sid, message: t('model.switchCompactAborted') },
+          );
           return;
         }
-        warningsStore().pushOperationFailure(
-          'modelSwitch',
-          new Error(`compaction ${outcome}`),
-          { sessionId: sid, message: t('model.switchCompactAborted') },
-        );
-      } finally {
-        promptPipeline.resumeAfterCompaction(sid);
+        await applySelectModel(modelId);
+        return;
       }
+      warningsStore().pushOperationFailure(
+        'modelSwitch',
+        new Error(`compaction ${outcome}`),
+        { sessionId: sid, message: t('model.switchCompactAborted') },
+      );
     }
   }
 }
@@ -2889,6 +2896,7 @@ const promptPipeline = usePromptPipeline(rawState, {
   mapSendAuthFailure,
   isMainTurnRunning: mainTurnRunning,
   hasUnechoedPrompt: (sessionId) => unechoedOptimisticMessages(sessionId).length > 0,
+  transcriptHasPrompt: (sessionId, promptId) => findPromptMessage(mainTurnsOf(sessionId), promptId) !== undefined,
   isCompacting: isMainCompactingOrStarting,
   isMainWaitForWaiting: mainWaitForWaiting,
   promptIdToAbort: mainPromptIdToAbort,
@@ -2902,10 +2910,7 @@ const sessionActions = createSessionActions({
   updateSession,
   selectSession: sessionSelection.selectSession,
   upsertSessionSorted,
-  promptBacklog: promptPipeline.promptBacklog,
-  isCompactionRunning: (sessionId) =>
-    promptStore().isCompactFlushHeld(sessionId) || isMainCompactingOrStarting(sessionId),
-  flushQueue: promptPipeline.flushQueueHead,
+  isCompactionRunning: isMainCompactingOrStarting,
 });
 
 const workspaceBoot = createWorkspaceBoot(rawState, {
@@ -3522,7 +3527,6 @@ export function useKimiWebClient() {
     wouldEnqueuePrompt: promptPipeline.wouldEnqueuePrompt,
     wouldSteerPrompt: promptPipeline.wouldSteerPrompt,
     steerPrompt: promptPipeline.steerPrompt,
-    steerPromptDirect: promptPipeline.steerPromptDirect,
     steerQueued: promptPipeline.steerQueued,
     sideChatVisible: sideChat.sideChatVisible,
     sideChatSessionId: sideChat.sideChatSessionId,
@@ -3564,7 +3568,6 @@ export function useKimiWebClient() {
     setPermission: permissionsStore().setPermission,
     setThinking,
     ...workspaceModeActions(sendTowerPrompt),
-    enqueue: promptPipeline.enqueue,
     renameSession: sessionListStore().renameSession,
     regenerateSessionTitle: sessionListStore().regenerateSessionTitle,
     renameWorkspace: workspacesStore().renameWorkspace,

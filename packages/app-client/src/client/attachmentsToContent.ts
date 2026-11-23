@@ -1,5 +1,5 @@
 
-import type { AppSkillAttachment, KimiWebApi } from '@moonshot-ai/app-core/api';
+import type { AppMessageContent, AppSkillAttachment, KimiWebApi } from '@moonshot-ai/app-core/api';
 import type { TurnAttachment } from '@moonshot-ai/app-core/client';
 import type { PromptAttachment } from './types';
 
@@ -20,6 +20,26 @@ export function promptAttachmentToTurnAttachment(
     size: att.size,
     ...(att.mediaOrdinal === undefined ? {} : { mediaOrdinal: att.mediaOrdinal }),
   };
+}
+
+export function queuedContentAttachment(
+  api: Pick<KimiWebApi, 'getFileUrl' | 'getSessionMediaUrl'>,
+  sessionId: string,
+  part: AppMessageContent,
+): TurnAttachment[] {
+  if (part.type === 'file') {
+    return [{ kind: 'file', url: api.getFileUrl(part.fileId), fileId: part.fileId, name: part.name, mediaType: part.mediaType, size: part.size }];
+  }
+  if (part.type !== 'image' && part.type !== 'video') return [];
+  const source = part.source;
+  if (source.kind === 'file') {
+    return [{ kind: part.type, url: api.getFileUrl(source.fileId), fileId: source.fileId, name: part.name }];
+  }
+  if (source.kind === 'sessionMedia') {
+    return [{ kind: part.type, url: api.getSessionMediaUrl(sessionId, source.fileId), fileId: source.fileId, sessionId, name: part.name }];
+  }
+  if (source.kind === 'url') return [{ kind: part.type, url: source.url, name: part.name }];
+  return [{ kind: part.type, url: `data:${source.mediaType};base64,${source.data}`, name: part.name }];
 }
 
 export function attachmentsToContent(

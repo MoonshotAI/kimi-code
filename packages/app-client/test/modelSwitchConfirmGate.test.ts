@@ -385,37 +385,24 @@ describe('model switch confirm gate', () => {
     );
   });
 
-  it('flushes queued prompts only after the post-compaction model switch is applied', async () => {
+  it('refuses the pre-switch compaction while the session queue is non-empty', async () => {
     const gate = await freshGate();
     activateSession(gate);
     clientApiMock.compactSession = vi.fn(async () => ({}));
-    clientApiMock.submitPrompt = vi.fn(async () => ({ promptId: 'p1', userMessageId: 'm1', status: 'running' }));
     const { promptStore } = await import('../src/stores/prompt');
-    const { connectEventsIfNeeded } = await import('../src/client/useKimiWebClient');
-    connectEventsIfNeeded();
-
-    promptStore().queuedBySession = { 'sess-1': [{ text: 'follow up', attachments: undefined }] } as never;
-    promptStore().holdCompactFlush('sess-1');
-    promptStore().noteCompactionStarted('sess-1');
+    const { warningsStore } = await import('../src/stores/warnings');
+    promptStore().queueBySession = {
+      'sess-1': [{ promptId: 'p_queued', content: [{ type: 'text', text: 'follow up' }], createdAt: '2026-11-06T00:00:00.000Z' }],
+    };
 
     const p = gate.client.selectModel('kimi-code/k3-256k');
     gate.msc.settle('compact');
-    await vi.waitFor(() => expect(gate.msc.hasCompactionWait('sess-1')).toBe(true));
-    expect(clientApiMock.compactSession).not.toHaveBeenCalled();
-
-    promptStore().noteCompactionSettled('sess-1');
-    gate.msc.noteCompactionSettled('sess-1', 'completed');
     await p;
 
-    expect(gate.updateSession).toHaveBeenCalledWith(
-      'sess-1',
-      expect.objectContaining({ model: 'kimi-code/k3-256k' }),
-    );
-    const submitPrompt = clientApiMock.submitPrompt as ReturnType<typeof vi.fn>;
-    await vi.waitFor(() => expect(submitPrompt).toHaveBeenCalled());
-    expect(gate.updateSession.mock.invocationCallOrder[0]!).toBeLessThan(
-      submitPrompt.mock.invocationCallOrder[0]!,
-    );
+    expect(clientApiMock.compactSession).not.toHaveBeenCalled();
+    expect(gate.updateSession).not.toHaveBeenCalled();
+    expect(warningsStore().warnings).toContainEqual(expect.objectContaining({ message: 'commands.compactQueue.busy' }));
+    promptStore().queueBySession = {};
   });
 
   it('keeps the model unchanged when the compaction is cancelled', async () => {

@@ -1,152 +1,76 @@
 import { computed, reactive, ref } from 'vue';
 import { defineStore } from 'pinia';
-import type { AppMessage } from '@moonshot-ai/app-core/api';
+import type { AppMessage, AppQueuedInput } from '@moonshot-ai/app-core/api';
 import { warningsStore } from './warnings';
-import type { PromptEnvelope, QueuedPrompt } from '../client/types';
 import { clientPinia } from './pinia';
 
-const steerChainBySession = new Map<string, Promise<unknown>>();
-
-export function chainSteer<T>(sid: string, fn: () => Promise<T>): Promise<T> {
-  const prev = steerChainBySession.get(sid) ?? Promise.resolve();
-  const run = prev.catch(() => undefined).then(fn);
-  steerChainBySession.set(sid, run);
-  return run;
-}
-
-export function isCurrentSteerChain(sid: string, promise: Promise<unknown>): boolean {
-  return steerChainBySession.get(sid) === promise;
-}
-
 export const usePromptStore = defineStore('kimi.prompt', () => {
-  const queuedBySession = ref<Record<string, QueuedPrompt[]>>({});
+  const queueBySession = ref<Record<string, readonly AppQueuedInput[]>>({});
+  const confirmedQueueBySession = new Map<string, readonly AppQueuedInput[]>();
+  const queueSnapshotWaiters = new Map<string, Set<string>>();
+
   const inFlightBySession = ref<Record<string, boolean>>({});
   const optimisticMessagesBySession = ref<Record<string, AppMessage[]>>({});
   const draftEntry = ref<'newChat' | 'workspace'>('newChat');
   const draftEntryNonce = ref(0);
 
-  const queueFlushFailures = new Map<string, { key: string; count: number }>();
-  const compactFlushHeldSessions = new Set<string>();
   const unsettledCompactionSessions = new Set<string>();
-  const autoCompactedAtBySession = new Map<string, number>();
-  const steerInFlightCounts = new Map<string, number>();
   const startingFirstPromptWorkspaces = reactive(new Set<string>());
   const continueStartingSessions = reactive(new Set<string>());
   const continueStartingTimers = new Map<string, ReturnType<typeof setTimeout>>();
   const compactStartingSessions = reactive(new Set<string>());
   const compactStartingTimers = new Map<string, ReturnType<typeof setTimeout>>();
-  let queueEntryCounter = 0;
 
   const isStartingFirstPrompt = computed(() => startingFirstPromptWorkspaces.size > 0);
 
-  function nextQueueEntryId(): string {
-    queueEntryCounter += 1;
-    return `${Date.now().toString(36)}-${queueEntryCounter}`;
+  function showQueue(sid: string, inputs: readonly AppQueuedInput[]): void {
+    queueBySession.value = { ...queueBySession.value, [sid]: inputs };
   }
 
-  function enqueueForSession(sid: string, prompt: PromptEnvelope, editText?: string): void {
-    const current = queuedBySession.value[sid] ?? [];
-    const entry = {
-      ...prompt,
-      editText,
-      enqueuedAt: Date.now(),
-      id: nextQueueEntryId(),
-    };
-    queuedBySession.value = {
-      ...queuedBySession.value,
-      [sid]: [...current, entry],
-    };
+  function restoreConfirmedQueue(sid: string): void {
+    const confirmed = confirmedQueueBySession.get(sid);
+    if (confirmed !== undefined) showQueue(sid, confirmed);
   }
 
-  function enqueueCompactForSession(sid: string, instruction?: string): void {
-    const current = queuedBySession.value[sid] ?? [];
-    const entry: QueuedPrompt = {
-      text: instruction === undefined || instruction === '' ? '/compact' : `/compact ${instruction}`,
-      attachments: [],
-      skills: [],
-      kind: 'compact',
-      instruction,
-      enqueuedAt: Date.now(),
-      id: nextQueueEntryId(),
-    };
-    queuedBySession.value = {
-      ...queuedBySession.value,
-      [sid]: [...current, entry],
-    };
+  function confirmQueueMove(sid: string, promptId: string, beforePromptId: string | undefined): void {
+    const moved = movedQueue(confirmedQueueBySession.get(sid) ?? [], promptId, beforePromptId);
+    if (moved !== undefined) confirmedQueueBySession.set(sid, moved);
   }
 
-  function hasQueuedCompact(sid: string): boolean {
-    return (queuedBySession.value[sid] ?? []).some((entry) => entry.kind === 'compact');
+  function awaitQueueSnapshots(): void {
+    queueSnapshotWaiters.clear();
+    for (const [sid, messages] of Object.entries(optimisticMessagesBySession.value)) {
+      const accepted = messages.flatMap((message) =>
+        message.metadata?.['kimiWeb.queued'] === true ? [message.metadata['kimiWeb.promptId'] as string] : [],
+      );
+      if (accepted.length > 0) queueSnapshotWaiters.set(sid, new Set(accepted));
+    }
   }
 
-  function removeQueuedAt(
-    sid: string,
-    index: number,
-  ): { previousHead: QueuedPrompt | undefined; nextHead: QueuedPrompt | undefined } | null {
-    const current = queuedBySession.value[sid] ?? [];
-    if (index < 0 || index >= current.length) return null;
-    const next = [...current];
-    next.splice(index, 1);
-    queuedBySession.value = { ...queuedBySession.value, [sid]: next };
-    return { previousHead: current[0], nextHead: next[0] };
+  function setQueue(sid: string, inputs: readonly AppQueuedInput[]): void {
+    const withdrawn = queueSnapshotWaiters.get(sid);
+    queueSnapshotWaiters.delete(sid);
+    if (inputs.length === 0) clearQueue(sid);
+    else {
+      confirmedQueueBySession.set(sid, inputs);
+      showQueue(sid, inputs);
+    }
+    const current = optimisticMessagesBySession.value[sid];
+    if (current === undefined) return;
+    const listed = new Set(inputs.map((input) => input.promptId));
+    const remaining = current.filter((message) => {
+      const promptId = message.metadata?.['kimiWeb.promptId'] as string;
+      if (listed.has(promptId)) return message.metadata?.['kimiWeb.steered'] === true;
+      return withdrawn?.has(promptId) !== true;
+    });
+    if (remaining.length !== current.length) setOptimisticMessages(sid, remaining);
   }
 
-  function moveQueued(
-    sid: string,
-    from: number,
-    to: number,
-  ): { previousHead: QueuedPrompt | undefined; nextHead: QueuedPrompt | undefined } | null {
-    const current = queuedBySession.value[sid] ?? [];
-    if (from === to) return null;
-    if (from < 0 || from >= current.length || to < 0 || to >= current.length) return null;
-    const next = [...current];
-    const [moved] = next.splice(from, 1);
-    if (moved === undefined) return null;
-    next.splice(to, 0, moved);
-    queuedBySession.value = { ...queuedBySession.value, [sid]: next };
-    return { previousHead: current[0], nextHead: next[0] };
-  }
-
-  function setQueuedEntries(sid: string, entries: QueuedPrompt[]): void {
-    queuedBySession.value = { ...queuedBySession.value, [sid]: entries };
-  }
-
-  function dropQueueHead(sid: string): QueuedPrompt | undefined {
-    const [next, ...rest] = queuedBySession.value[sid] ?? [];
-    if (next === undefined) return undefined;
-    queuedBySession.value = { ...queuedBySession.value, [sid]: rest };
-    return next;
-  }
-
-  function restoreQueueEntry(sid: string, entry: QueuedPrompt, index = 0): void {
-    const current = queuedBySession.value[sid] ?? [];
-    const restored = [...current];
-    restored.splice(Math.min(index, restored.length), 0, entry);
-    queuedBySession.value = { ...queuedBySession.value, [sid]: restored };
-  }
-
-  function queueFlushFailureFor(sid: string): { key: string; count: number } | undefined {
-    return queueFlushFailures.get(sid);
-  }
-
-  function noteQueueFlushFailure(sid: string, key: string, count: number): void {
-    queueFlushFailures.set(sid, { key, count });
-  }
-
-  function clearQueueFlushFailure(sid: string): void {
-    queueFlushFailures.delete(sid);
-  }
-
-  function holdCompactFlush(sid: string): void {
-    compactFlushHeldSessions.add(sid);
-  }
-
-  function releaseCompactFlush(sid: string): boolean {
-    return compactFlushHeldSessions.delete(sid);
-  }
-
-  function isCompactFlushHeld(sid: string): boolean {
-    return compactFlushHeldSessions.has(sid);
+  function dropQueueEntry(sid: string, promptId: string): void {
+    const confirmed = confirmedQueueBySession.get(sid);
+    if (confirmed !== undefined) confirmedQueueBySession.set(sid, confirmed.filter((entry) => entry.promptId !== promptId));
+    const shown = queueBySession.value[sid];
+    if (shown !== undefined) showQueue(sid, shown.filter((entry) => entry.promptId !== promptId));
   }
 
   function noteCompactionStarted(sid: string): void {
@@ -161,28 +85,6 @@ export const usePromptStore = defineStore('kimi.prompt', () => {
 
   function hasUnsettledCompaction(sid: string): boolean {
     return unsettledCompactionSessions.has(sid);
-  }
-
-  function noteAutoCompacted(sid: string): void {
-    autoCompactedAtBySession.set(sid, Date.now());
-  }
-
-  function autoCompactedAt(sid: string): number | undefined {
-    return autoCompactedAtBySession.get(sid);
-  }
-
-  function noteSteerStart(sid: string): void {
-    steerInFlightCounts.set(sid, (steerInFlightCounts.get(sid) ?? 0) + 1);
-  }
-
-  function noteSteerSettled(sid: string): void {
-    const count = steerInFlightCounts.get(sid) ?? 0;
-    if (count <= 1) steerInFlightCounts.delete(sid);
-    else steerInFlightCounts.set(sid, count - 1);
-  }
-
-  function isSteerInFlight(sid: string): boolean {
-    return (steerInFlightCounts.get(sid) ?? 0) > 0;
   }
 
   function setInFlight(sid: string, value: boolean): void {
@@ -304,12 +206,7 @@ export const usePromptStore = defineStore('kimi.prompt', () => {
   }
 
   function forgetPromptState(sid: string): void {
-    queueFlushFailures.delete(sid);
-    compactFlushHeldSessions.delete(sid);
     unsettledCompactionSessions.delete(sid);
-    autoCompactedAtBySession.delete(sid);
-    steerInFlightCounts.delete(sid);
-    steerChainBySession.delete(sid);
     settleContinueTurnStart(sid);
     settleCompactStart(sid);
   }
@@ -319,11 +216,12 @@ export const usePromptStore = defineStore('kimi.prompt', () => {
     warningsStore().forgetSessionWarnings(sid);
   }
 
-  function clearQueued(sid: string): void {
-    if (queuedBySession.value[sid] === undefined) return;
-    const next = { ...queuedBySession.value };
+  function clearQueue(sid: string): void {
+    confirmedQueueBySession.delete(sid);
+    if (queueBySession.value[sid] === undefined) return;
+    const next = { ...queueBySession.value };
     delete next[sid];
-    queuedBySession.value = next;
+    queueBySession.value = next;
   }
 
   function clearInFlight(sid: string): void {
@@ -334,34 +232,21 @@ export const usePromptStore = defineStore('kimi.prompt', () => {
   }
 
   return {
-    queuedBySession,
+    queueBySession,
     inFlightBySession,
     optimisticMessagesBySession,
     draftEntry,
     draftEntryNonce,
     isStartingFirstPrompt,
-    enqueueForSession,
-    enqueueCompactForSession,
-    hasQueuedCompact,
-    removeQueuedAt,
-    moveQueued,
-    setQueuedEntries,
-    dropQueueHead,
-    restoreQueueEntry,
-    queueFlushFailureFor,
-    noteQueueFlushFailure,
-    clearQueueFlushFailure,
-    holdCompactFlush,
-    releaseCompactFlush,
-    isCompactFlushHeld,
+    setQueue,
+    showQueue,
+    dropQueueEntry,
+    confirmQueueMove,
+    awaitQueueSnapshots,
+    restoreConfirmedQueue,
     noteCompactionStarted,
     noteCompactionSettled,
     hasUnsettledCompaction,
-    noteAutoCompacted,
-    autoCompactedAt,
-    noteSteerStart,
-    noteSteerSettled,
-    isSteerInFlight,
     setInFlight,
     addOptimisticMessage,
     setOptimisticMessages,
@@ -380,10 +265,23 @@ export const usePromptStore = defineStore('kimi.prompt', () => {
     setDraftEntry,
     forgetPromptState,
     forgetLocalTurnState,
-    clearQueued,
+    clearQueue,
     clearInFlight,
   };
 });
+
+export function movedQueue(
+  queue: readonly AppQueuedInput[],
+  promptId: string,
+  beforePromptId: string | undefined,
+): AppQueuedInput[] | undefined {
+  const moved = queue.find((entry) => entry.promptId === promptId);
+  if (moved === undefined) return undefined;
+  const rest = queue.filter((entry) => entry !== moved);
+  const index = beforePromptId === undefined ? rest.length : rest.findIndex((entry) => entry.promptId === beforePromptId);
+  if (index < 0) return undefined;
+  return [...rest.slice(0, index), moved, ...rest.slice(index)];
+}
 
 export function promptStore() {
   return usePromptStore(clientPinia);

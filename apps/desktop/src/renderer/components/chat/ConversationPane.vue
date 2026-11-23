@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { parseComposerSnapshot, type ComposerDocumentSnapshot } from '@moonshot-ai/app-composer/model';
+import { createComposerSnapshot, parseComposerSnapshot, textToDoc, type ComposerDocumentSnapshot } from '@moonshot-ai/app-composer/model';
 import { computed, inject, nextTick, onMounted, onUnmounted, provide, ref, watch, type ComponentPublicInstance } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { ChatTurn, ConversationStatus, OpenMediaRequest, QueuedPromptView, TaskItem, TurnAttachment, UIQuestion } from '../../types';
@@ -41,7 +41,7 @@ import { useComposerAutoFocus, useEscInterrupt, useWorkspaceTrust } from '@moons
 import { useKimiWebClient } from '@moonshot-ai/app-client/client';
 import { workspacesStore, sessionRuntimeStore } from '@moonshot-ai/app-client/stores';
 import { useAppDialogs } from '@moonshot-ai/app-client/composables';
-import type { SelectionActionPayload } from '@moonshot-ai/app-client/lib';
+import { restoreSendDraftAtOrigin, seedEntriesForTurnAttachments, type SelectionActionPayload } from '@moonshot-ai/app-client/lib';
 import type { PanelTab } from '@moonshot-ai/app-client/composables';
 import type { PanelLauncherType } from '@moonshot-ai/app-client/panel';
 import type { PanelLauncherItem } from '../../lib/panelLauncher';
@@ -536,6 +536,7 @@ const {
 useTranscriptStabilityProbe(panesRef);
 type ComposerHandle = {
   loadForEdit: (value: string, snapshot?: ComposerDocumentSnapshot) => boolean | void;
+  rememberInHistory?: (text: string, snapshot?: ComposerDocumentSnapshot) => void;
   insertQuote?: (quote: string, comment?: string, source?: string) => boolean | void;
   insertPathMention?: (path: string, kind: 'file' | 'folder') => boolean | void;
   insertScreenshotAnnotation?: (file: File, comment: string) => boolean | void;
@@ -560,6 +561,10 @@ function bindChatDock(el: RefArg): void {
   ) {
     dockedComposerRef.value = {
       loadForEdit: el.loadForEdit.bind(el),
+      rememberInHistory:
+        'rememberInHistory' in el && typeof el.rememberInHistory === 'function'
+          ? el.rememberInHistory.bind(el)
+          : undefined,
       insertQuote:
         'insertQuote' in el && typeof el.insertQuote === 'function'
           ? el.insertQuote.bind(el)
@@ -632,15 +637,39 @@ function handleEditMessage(payload: {
   emit('editMessage', { ...payload, text: reviveQuoteBlockLinks(payload.text) });
 }
 
-function handleEditQueued(index: number): void {
+async function handleEditQueued(index: number): Promise<void> {
   const item = props.queued?.[index];
-  const text = item?.editText ?? item?.text ?? '';
-  const loaded = loadComposerForEdit(text, item?.attachments, undefined, parseComposerSnapshot(item?.snapshot) ?? undefined);
-  if (loaded) client.unqueue(index);
+  const originSid = client.activeSessionId.value ?? undefined;
+  const wasEmpty = isComposerEmpty();
+  if (item === undefined || item.kind === 'compact' || item.editable === false || !(await client.unqueue(item.id))) return;
+  const text = item.editText ?? item.text;
+  const snapshot = parseComposerSnapshot(item.snapshot) ?? undefined;
+  if ((client.activeSessionId.value ?? undefined) === originSid) {
+    if (wasEmpty && !isComposerEmpty()) {
+      const entries = seedEntriesForTurnAttachments(item.attachments ?? []);
+      const remembered = snapshot ?? createComposerSnapshot(textToDoc(text, { reviveMentions: true }), entries, entries.map((entry) => entry.attId));
+      (dockedComposerRef.value ?? emptyComposerRef.value)?.rememberInHistory?.(text, remembered);
+      return;
+    }
+    loadComposerForEdit(text, item.attachments, undefined, snapshot);
+    return;
+  }
+  restoreSendDraftAtOrigin(originSid, {
+    text,
+    snapshot,
+    restoreEntries: snapshot === undefined ? seedEntriesForTurnAttachments(item.attachments ?? []) : undefined,
+  }, {
+    activeSessionId: () => client.activeSessionId.value ?? undefined,
+    composer: () => null,
+  });
 }
 
 function handleReorderQueue(payload: { from: number; to: number }): void {
-  void client.reorderQueue(payload.from, payload.to);
+  const ids = (props.queued ?? []).map((item) => item.id);
+  const moved = ids[payload.from];
+  if (moved === undefined || payload.from === payload.to) return;
+  const rest = ids.filter((id) => id !== moved);
+  void client.reorderQueue(moved, rest[payload.to]);
 }
 
 function handleQuestionAnswer(qid: string, resp: QuestionResponse): void {

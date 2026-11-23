@@ -311,6 +311,7 @@ export interface QueuedPromptView {
   editText?: string;
   kind?: 'prompt' | 'compact';
   instruction?: string;
+  editable?: boolean;
 }
 
 export interface UIQuestion {

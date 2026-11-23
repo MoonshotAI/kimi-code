@@ -9,7 +9,7 @@ interface WorkspaceHookOptions {
   confirmGoalStart: GoalHooks['confirmGoalStart'];
   promptPipeline: Pick<
     GoalHooks,
-    'createDraftSession' | 'sendPrompt' | 'steerPromptDirect' | 'submitPromptInternal' | 'flushQueueHead'
+    'createDraftSession' | 'sendPrompt' | 'submitPromptInternal'
   >;
 }
 

@@ -1947,22 +1947,20 @@ async function handleCommand(payload: { cmd: string; attachments: PromptAttachme
   }
   if (cmd === '/compact' || cmd.startsWith('/compact ')) {
     if (!(await passCommandGates(cmd, [], restoreText, restoreEntries, snapshot, preserveDraft))) return;
-    const result = client.compact(commandArgumentText(cmd, snapshot) || undefined);
-    if (result === undefined) {
+    const originSid = client.activeSessionId.value;
+    const restoreDraft = (): void => {
       if (!preserveDraft) {
         conversationPaneRef.value?.loadComposerForEdit(restoreText ?? cmd, toEditableAttachments(attachments), restoreEntries, snapshot);
       }
+    };
+    const sent = client.compact(commandArgumentText(cmd, snapshot) || undefined, {
+      onRequestRejected: preserveDraft
+        ? undefined
+        : () => restoreDraftAtOrigin(originSid ?? undefined, cmd, attachments, restoreText, restoreEntries, snapshot),
+    });
+    if (!sent) {
+      restoreDraft();
       client.notify({ severity: 'warning', title: t('commands.compact.requiresSession') });
-      return;
-    }
-    if (result === 'duplicate' || result === 'compacting') {
-      if (!preserveDraft) {
-        conversationPaneRef.value?.loadComposerForEdit(restoreText ?? cmd, toEditableAttachments(attachments), restoreEntries, snapshot);
-      }
-      client.notify({
-        severity: 'warning',
-        title: t(result === 'duplicate' ? 'commands.compactQueue.alreadyQueued' : 'commands.compactQueue.compacting'),
-      });
     }
     return;
   }
@@ -1977,7 +1975,7 @@ async function handleCommand(payload: { cmd: string; attachments: PromptAttachme
       const prompt = client.createPromptEnvelope(commandPromptContent(cmd, attachments, snapshot));
       if (payload.delivery === 'steer') {
         const generation = ++sendGeneration;
-        const outcome = await client.steerPromptDirect(prompt, originSid ?? undefined);
+        const outcome = await client.steerPrompt(prompt, payload.editText, originSid ?? undefined);
         if (outcome === 'rejected') restoreDraftAfterFailedSend(generation, originSid ?? undefined, cmd, attachments, restoreText, restoreEntries, snapshot);
         return;
       }
@@ -2137,7 +2135,7 @@ function releasePromptDispatch(owner: number): void {
   if (promptDispatchInFlight === owner) promptDispatchInFlight = 0;
 }
 
-async function handleSteer(payload: { text: string; attachments: PromptAttachment[]; restoreText?: string; restoreEntries?: AttachmentEntry[]; snapshot?: ComposerDocumentSnapshot; skills?: { name: string; path?: string }[] }): Promise<void> {
+async function handleSteer(payload: { text: string; attachments: PromptAttachment[]; restoreText?: string; editText?: string; restoreEntries?: AttachmentEntry[]; snapshot?: ComposerDocumentSnapshot; skills?: { name: string; path?: string }[] }): Promise<void> {
   if (promptDispatchInFlight !== 0) return;
   const owner = beginPromptDispatch();
   try {
@@ -2147,7 +2145,7 @@ async function handleSteer(payload: { text: string; attachments: PromptAttachmen
   }
 }
 
-async function handleSteerDispatch(payload: { text: string; attachments: PromptAttachment[]; restoreText?: string; restoreEntries?: AttachmentEntry[]; snapshot?: ComposerDocumentSnapshot; skills?: { name: string; path?: string }[] }, owner: number): Promise<void> {
+async function handleSteerDispatch(payload: { text: string; attachments: PromptAttachment[]; restoreText?: string; editText?: string; restoreEntries?: AttachmentEntry[]; snapshot?: ComposerDocumentSnapshot; skills?: { name: string; path?: string }[] }, owner: number): Promise<void> {
   const generation = ++sendGeneration;
   const gateSid = client.activeSessionId.value;
   const restore = () => {
@@ -2163,11 +2161,13 @@ async function handleSteerDispatch(payload: { text: string; attachments: PromptA
   const prompt = client.createPromptEnvelope({ text: payload.text, attachments: payload.attachments, skills: payload.skills, snapshot: payload.snapshot });
   releasePromptDispatch(owner);
   conversationPaneRef.value?.clearComposerAfterDispatch(payload.snapshot);
-  const outcome = await client.steerPromptDirect(prompt);
+  const outcome = await client.steerPrompt(prompt, payload.editText ?? payload.restoreText);
   if (outcome === 'rejected') restoreDraftAfterFailedSend(generation, gateSid ?? undefined, payload.text, payload.attachments, payload.restoreText, payload.restoreEntries, payload.snapshot);
 }
 
 async function handleSteerQueued(index: number): Promise<void> {
+  const promptId = client.queued.value[index]?.id;
+  if (promptId === undefined) return;
   const gateSid = client.activeSessionId.value ?? undefined;
   const verdict = await client.ensureChatReady();
   if (verdict !== 'ok') {
@@ -2175,8 +2175,7 @@ async function handleSteerQueued(index: number): Promise<void> {
     return;
   }
   if ((client.activeSessionId.value ?? undefined) !== gateSid) return;
-  sendGeneration++;
-  void client.steerQueued(index);
+  void client.steerQueued(promptId);
 }
 
 function restoreDraftAtOrigin(originSid: string | undefined, text: string, attachments: PromptAttachment[], restoreText?: string, restoreEntries?: AttachmentEntry[], snapshot?: ComposerDocumentSnapshot): void {

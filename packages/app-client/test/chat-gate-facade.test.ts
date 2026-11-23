@@ -774,16 +774,14 @@ describe('send-failure → verdict channel (§2.2)', () => {
     const f = await freshFacade();
     await seedIdleSession(f);
     mockPassingGateRecheck();
-    const bodies: { promptId?: string; content: { type: string; text?: string }[]; metadata?: Record<string, unknown> }[] = [];
+    const bodies: { promptId?: string; content: { type: string; text?: string }[]; metadata?: Record<string, unknown>; delivery?: string }[] = [];
     let resolveFirst!: () => void;
     clientApiMock.submitPrompt = vi.fn(async (_sid: string, body: (typeof bodies)[number]) => {
       bodies.push(body);
       const echo = { promptId: body.promptId!, userMessageId: body.promptId! };
-      if (bodies.length === 1) return new Promise((resolve) => { resolveFirst = () => resolve(echo); });
-      return { ...echo, status: 'queued' };
+      if (bodies.length === 1) return new Promise((resolve) => { resolveFirst = () => resolve({ ...echo, acceptedAs: 'turn' }); });
+      return { ...echo, acceptedAs: 'steer' };
     });
-    clientApiMock.steerPrompt = clientApiMock.submitPrompt;
-    clientApiMock.steerPrompts = vi.fn(async (_sid: string, promptIds: string[]) => ({ steered: true, promptIds }));
 
     const first = f.client.sendPrompt(f.client.createPromptEnvelope({ text: 'first' }));
     await vi.waitFor(() => expect(bodies).toHaveLength(1));
@@ -791,15 +789,15 @@ describe('send-failure → verdict channel (§2.2)', () => {
     await first;
     await vi.waitFor(() => expect(f.client.activity.value).toBe('running'));
 
-    await f.client.steerPromptDirect(f.client.createPromptEnvelope({ text, attachments, snapshot }));
+    await f.client.steerPrompt(f.client.createPromptEnvelope({ text, attachments, snapshot }));
     await vi.waitFor(() => expect(bodies).toHaveLength(2));
-    expect(clientApiMock.steerPrompts).not.toHaveBeenCalled();
     const carried = bodies[1]!;
+    expect(carried).toMatchObject({ delivery: 'steer' });
     expect(carried.content.map((part) => part.text ?? '').join('\n')).toContain('<browser_references version="1">');
     expect(carried.content.some((part) => part.type === 'image')).toBe(true);
     expect(carried.metadata).toMatchObject({ kimi_code_composer: { browserReferences: [{ id: 'ref-a' }] } });
 
-    await f.client.steerPromptDirect(f.client.createPromptEnvelope({ text, attachments }));
+    await f.client.steerPrompt(f.client.createPromptEnvelope({ text, attachments }));
     await vi.waitFor(() => expect(bodies).toHaveLength(3));
     const dropped = bodies[2]!;
     expect(dropped.content.map((part) => part.text ?? '').join('\n')).not.toContain('<browser_references');
