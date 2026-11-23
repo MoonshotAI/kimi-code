@@ -22,6 +22,8 @@ import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { IEventService } from '#/app/event/event';
+import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemetry';
+import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IProjectLocalConfigService } from '#/app/projectLocalConfig/projectLocalConfig';
 import { IWorkspaceService, type Workspace } from '#/app/workspace/workspace';
@@ -35,6 +37,9 @@ import {
 import { IWorkspaceAliases } from '#/app/workspaceAliases/workspaceAliases';
 import { WorkspaceAliasesService } from '#/app/workspaceAliases/workspaceAliasesService';
 import { stubBootstrap } from '../bootstrap/stubs';
+import { stubHostEnvironment } from '../../stubs';
+import { stubConfigService } from '../config/stubs';
+import { IWorkspaceTrustStore, WorkspaceTrustStore } from '#/workspace/workspaceTrust/workspaceTrustStore';
 
 interface SessionIndexLine {
   readonly sessionId: string;
@@ -113,6 +118,12 @@ describe('WorkspaceAliasesService (file-backed)', () => {
         publish: () => {},
         subscribe: () => ({ dispose: () => {} }),
       } as unknown as IEventService),
+      stubPair(IHostEnvironment, stubHostEnvironment(homeDir)),
+      stubPair(ITelemetryService, noopTelemetryService),
+      stubPair(
+        IWorkspaceTrustStore,
+        new WorkspaceTrustStore(new JsonAtomicDocumentStore(fileStorage), noopTelemetryService, stubBootstrap(homeDir), stubConfigService()),
+      ),
     ]);
     currentHost = host;
     return host.app.accessor.get(IWorkspaceAliases);
@@ -183,9 +194,9 @@ describe('WorkspaceAliasesService (file-backed)', () => {
       },
     });
     await seedSessionIndex([
-      { sessionId: 's1', sessionDir: 'sessions/a/s1', workDir: typedRoot },
-      { sessionId: 's2', sessionDir: 'sessions/b/s2', workDir: 'c:\\Users\\Foo\\Proj' },
-      { sessionId: 's3', sessionDir: 'sessions/c/s3', workDir: join(homeDir, 'unrelated') },
+      { sessionId: 's1', sessionDir: `sessions/${encodeWorkDirKey(typedRoot)}/s1`, workDir: typedRoot },
+      { sessionId: 's2', sessionDir: `sessions/${encodeWorkDirKey('c:\\Users\\Foo\\Proj')}/s2`, workDir: 'c:\\Users\\Foo\\Proj' },
+      { sessionId: 's3', sessionDir: `sessions/${encodeWorkDirKey(join(homeDir, 'unrelated'))}/s3`, workDir: join(homeDir, 'unrelated') },
     ]);
     await fsp.appendFile(join(homeDir, 'session_index.jsonl'), 'not-json\n{}\n', 'utf8');
 
@@ -193,6 +204,31 @@ describe('WorkspaceAliasesService (file-backed)', () => {
     expect((await aliases.resolveAliasIds(typedId)).toSorted()).toEqual(
       [typedId, indexOnlyId].toSorted(),
     );
+  });
+
+  it('resolveAliasIds ignores index lines of sessions grouped into another bucket', async () => {
+    const mainRoot = 'C:\\Users\\Foo\\Proj';
+    const mainId = encodeWorkDirKey(mainRoot);
+    const worktreeRoot = 'c:\\users\\foo\\proj';
+    await writeWorkspacesJson({
+      [mainId]: {
+        root: mainRoot,
+        name: 'proj',
+        kind: 'implicit',
+        created_at: '2026-01-01T00:00:00.000Z',
+        last_opened_at: '2026-01-01T00:00:00.000Z',
+      },
+    });
+    await seedSessionIndex([
+      { sessionId: 's1', sessionDir: `sessions/${mainId}/s1`, workDir: worktreeRoot },
+      { sessionId: 's2', sessionDir: `sessions/${mainId}/s2`, workDir: 'C:\\Users\\Foo\\Proj-fix' },
+    ]);
+
+    const aliases = build();
+    expect(await aliases.resolveAliasIds(mainId)).toEqual([mainId]);
+    expect(await aliases.resolveAliasIds(encodeWorkDirKey('C:\\Users\\Foo\\Proj-fix'))).toEqual([
+      encodeWorkDirKey('C:\\Users\\Foo\\Proj-fix'),
+    ]);
   });
 
   it('resolveAliasIds keeps unknown ids and POSIX roots singleton', async () => {
@@ -252,7 +288,7 @@ describe('WorkspaceAliasesService (file-backed)', () => {
         last_opened_at: '2026-01-01T00:00:00.000Z',
       },
     });
-    await seedSessionIndex([{ sessionId: 's1', sessionDir: 'sessions/a/s1', workDir: root }]);
+    await seedSessionIndex([{ sessionId: 's1', sessionDir: `sessions/${encodeWorkDirKey(root)}/s1`, workDir: root }]);
     const storage = new CountingStorage(homeDir);
     const aliases = build(undefined, storage);
 
@@ -275,7 +311,7 @@ describe('WorkspaceAliasesService (file-backed)', () => {
         last_opened_at: '2026-01-01T00:00:00.000Z',
       },
     });
-    await seedSessionIndex([{ sessionId: 's1', sessionDir: 'sessions/a/s1', workDir: root }]);
+    await seedSessionIndex([{ sessionId: 's1', sessionDir: `sessions/${encodeWorkDirKey(root)}/s1`, workDir: root }]);
     const storage = new CountingStorage(homeDir);
     const aliases = build(undefined, storage);
 
@@ -424,7 +460,7 @@ describe('WorkspaceAliasesService (file-backed)', () => {
     await aliases.resolveAliasIds(typedId);
     appendLogs.append('', 'session_index.jsonl', {
       sessionId: 's9',
-      sessionDir: 'sessions/s/s9',
+      sessionDir: `sessions/${encodeWorkDirKey(join(homeDir, 'unrelated'))}/s9`,
       workDir: join(homeDir, 'unrelated'),
     });
     await appendLogs.flush();
@@ -463,7 +499,7 @@ describe('WorkspaceAliasesService (file-backed)', () => {
     const appendLogs = currentHost!.app.accessor.get(IAppendLogStore);
     appendLogs.append('', 'session_index.jsonl', {
       sessionId: 's9',
-      sessionDir: 'sessions/s/s9',
+      sessionDir: `sessions/${encodeWorkDirKey('c:\\Users\\Foo\\Proj')}/s9`,
       workDir: 'c:\\Users\\Foo\\Proj',
     });
     await appendLogs.flush();
@@ -502,7 +538,7 @@ describe('WorkspaceAliasesService (file-backed)', () => {
 
     const indexOnlyId = encodeWorkDirKey('c:\\Users\\Foo\\Proj');
     await seedSessionIndex([
-      { sessionId: 's1', sessionDir: 'sessions/a/s1', workDir: 'c:\\Users\\Foo\\Proj' },
+      { sessionId: 's1', sessionDir: `sessions/${encodeWorkDirKey('c:\\Users\\Foo\\Proj')}/s1`, workDir: 'c:\\Users\\Foo\\Proj' },
     ]);
     await vi.waitFor(
       async () => {
