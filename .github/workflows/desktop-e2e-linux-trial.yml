@@ -1,0 +1,53 @@
+name: Desktop E2E Linux trial
+
+on:
+  push:
+    branches: [ci/desktop-e2e-linux-trial]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-e2e-linux-trial-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  journeys:
+    name: Linux shard ${{ matrix.shard }}/4
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@v6
+      - name: Describe the runner
+        run: |
+          nproc
+          free -m
+          command -v xvfb-run || echo "xvfb-run is not installed"
+      - name: Allow the Chromium sandbox to create user namespaces
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - name: Install xvfb when the image lacks it
+        run: command -v xvfb-run || (sudo apt-get update && sudo apt-get install -y xvfb)
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Run this shard of the journeys
+        shell: bash
+        run: |
+          set -o pipefail
+          pnpm --filter kimi-code-app run e2e:headless --shard=${{ matrix.shard }}/4 2>&1 | tee "$RUNNER_TEMP/desktop-e2e.log"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: desktop-e2e-linux-${{ matrix.shard }}
+          path: |
+            ${{ runner.temp }}/desktop-e2e.log
+            apps/desktop/test-results/e2e/
+            apps/desktop/playwright-report/
+          retention-days: 7
