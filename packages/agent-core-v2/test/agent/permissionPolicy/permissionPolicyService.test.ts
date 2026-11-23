@@ -32,6 +32,10 @@ import {
   type PermissionRule,
 } from '#/agent/permissionRules/permissionRules';
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { IAgentPermissionGate } from '#/agent/permissionGate/permissionGate';
+import { AgentPermissionGate } from '#/agent/permissionGate/permissionGateService';
+import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
+import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import { EnvironmentError } from '#/environment/environmentRegistry';
 import { IConfigService } from '#/app/config/config';
@@ -47,7 +51,8 @@ import { ToolAccesses, type ToolAccesses as ToolAccessList } from '#/tool/toolCo
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 
 import { stubPermissionModeService } from '../permissionMode/stubs';
-import { recordingTelemetry } from '../../app/telemetry/stubs';
+import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
+import { stubToolExecutorEvents } from '../toolExecutor/stubs';
 
 const signal = new AbortController().signal;
 
@@ -62,9 +67,11 @@ describe('AgentPermissionPolicyService chain', () => {
   let workspace: ReturnType<typeof workspaceStub>;
   let hostArgs: HostArgs;
   let dangerousCommandGuardEnabled: boolean;
+  let records: TelemetryRecord[];
 
   beforeEach(() => {
     disposables = new DisposableStore();
+    records = [];
     mode = 'manual';
     rules = [];
     sessionApprovalRulePatterns = [];
@@ -128,7 +135,12 @@ describe('AgentPermissionPolicyService chain', () => {
           acquireWhenReady() { return Promise.resolve((this as IAgentEnvironmentService).acquire()); },
           workspaceRoots: () => ({ workDir: '/workspace', additionalDirs: [] }),
         });
-        reg.defineInstance(ITelemetryService, recordingTelemetry([]));
+        reg.defineInstance(ITelemetryService, recordingTelemetry(records));
+        reg.definePartialInstance(IAgentToolApprovalService, {
+          resolvePermissionResolution: async () => undefined,
+        });
+        reg.defineInstance(IAgentToolExecutorService, stubToolExecutorEvents().executor);
+        reg.define(IAgentPermissionGate, AgentPermissionGate);
         reg.definePartialInstance(IGitService, { findWorkTree: async () => null });
         reg.define(IBashParserService, BashParserService);
         reg.define(IAgentPermissionPolicyService, AgentPermissionPolicyService);
@@ -712,6 +724,38 @@ describe('AgentPermissionPolicyService chain', () => {
       });
     },
   );
+
+  it('tracks command families and executable names without command arguments', async () => {
+    const gate = ix.get(IAgentPermissionGate);
+    const cases = [
+      ['cat notes.txt', 'bash-read-only-approve', 'approve', { command_family: 'cat' }],
+      ['git stash list', 'bash-read-only-approve', 'approve', { command_family: 'git.stash.list' }],
+      ['cat notes.txt | head -n 5', 'bash-read-only-approve', 'approve', { command_family: 'multiple', command_count: 2 }],
+      ['/usr/bin/wget --directory-prefix=/tmp/private https://example.com/file', 'fallback-ask', 'ask', { executable_name: 'wget', read_only_rejection: 'unsupported_command' }],
+      ['tail -f private.log', 'fallback-ask', 'ask', { executable_name: 'tail', read_only_rejection: 'unsafe_arguments' }],
+      ['cat .env', 'fallback-ask', 'ask', { executable_name: 'cat', read_only_rejection: 'path_check_failed' }],
+      ['cat $HOME/private.txt', 'fallback-ask', 'ask', { executable_name: 'cat', read_only_rejection: 'unsafe_arguments' }],
+      ['cat notes.txt > private.txt', 'fallback-ask', 'ask', { executable_name: 'cat', read_only_rejection: 'unsupported_structure' }],
+      ['cat private.txt\u202e', 'fallback-ask', 'ask', { read_only_rejection: 'parse_failed' }],
+    ] as const;
+    for (const [command, policyName, decision, extra] of cases) {
+      records.length = 0;
+      await gate.authorize(policyContext({ toolName: 'Bash', args: { command } }));
+      expect(records).toEqual([{
+        event: 'permission_policy_decision',
+        properties: {
+          turn_id: 0,
+          tool_call_id: 'call_Bash',
+          policy_name: policyName,
+          tool_name: 'Bash',
+          permission_mode: 'manual',
+          decision,
+          ...extra,
+        },
+      }]);
+      expect(JSON.stringify(records)).not.toContain('private');
+    }
+  });
 });
 
 describe('AgentPermissionPolicyService git cwd write approval', () => {
@@ -845,7 +889,12 @@ describe('AgentPermissionPolicyService git cwd write approval', () => {
       const parsed = parser.parse(command);
       expect(parsed.ok).toBe(true);
       if (!parsed.ok) throw new Error('unreachable');
-      expect(analyzeBashReadOnly(parsed)).toEqual({ paths, readsCwd: false });
+      expect(analyzeBashReadOnly(parsed)).toEqual({
+        paths,
+        readsCwd: false,
+        commands: [command.split(' ')[0]],
+        executableName: command.split(' ')[0],
+      });
       await expect(evaluate({
         toolName: 'Bash',
         args: { command },
@@ -996,6 +1045,8 @@ describe('AgentPermissionPolicyService git cwd write approval', () => {
     expect(analyzeBashReadOnly(new BashParserService().parse(command))).toEqual({
       paths,
       readsCwd: false,
+      commands: ['cat'],
+      executableName: 'cat',
     });
   });
 

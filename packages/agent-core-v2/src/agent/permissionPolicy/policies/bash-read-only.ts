@@ -2,6 +2,7 @@ import {
   IBashParserService,
   type BashParseResult,
   type BashSyntaxNode,
+  normalizeBashCommandName,
 } from '#/app/bashParser/bashParser';
 import { findGitWorkTree } from '#/app/git/workTree';
 import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
@@ -9,6 +10,7 @@ import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/tool
 import type {
   PermissionPolicy,
   PermissionPolicyResult,
+  PermissionDecisionReason,
 } from '#/agent/permissionPolicy/types';
 import { realpathExistingPrefix } from '#/environment/environment';
 import { EnvironmentWorkspaceView } from '#/environment/environmentWorkspaceView';
@@ -65,12 +67,44 @@ const JQ_UNSAFE_FILTER_RE = /\b(?:env|include|import)\b|\$ENV\b/;
 const SIMPLE_SED_PRINT_RE = /^\d+(?:,(?:\d+|\$))?p$/;
 const WORD_UNSAFE_CHARS_RE = /[$`<>|&;(){}*?[\]]/;
 const WORD_TILDE_EXPANSION_RE = /(?:^|[=:])~/;
+const TELEMETRY_EXECUTABLE_RE = /^[a-z0-9][a-z0-9_+.-]{0,63}$/;
+const SUPPORTED_READ_ONLY_EXECUTABLES = new Set([
+  ...BASIC_FILE_READ_COMMANDS,
+  ...Object.keys(FILE_COMMAND_SPECS),
+  ...Object.keys(ZERO_FILE_COMMAND_SPECS),
+  'cd', 'history', 'arch', 'ifconfig', 'echo', 'docker', 'git', 'sed', 'find', 'rg',
+  'fd', 'fdfind', 'grep', 'egrep', 'fgrep', 'uniq', 'command', 'timeout',
+  ...EXACT_READ_ONLY_INVOCATIONS.map(([name]) => name),
+]);
+
+export type BashReadOnlyRejection =
+  | 'parse_failed'
+  | 'unsupported_structure'
+  | 'unsupported_command'
+  | 'unsafe_arguments'
+  | 'path_check_failed';
 
 export interface BashReadOnlyAnalysis {
   readonly paths: string[];
   readonly readsCwd: boolean;
   readonly usesGit?: boolean;
   readonly hasRiskyWindowsArg?: boolean;
+  readonly commands: string[];
+  readonly rejection?: BashReadOnlyRejection;
+  readonly executableName?: string;
+}
+
+const fallbackReasons = new WeakMap<ResolvedToolExecutionHookContext, PermissionDecisionReason>();
+
+export function bashReadOnlyFallbackReason(
+  context: ResolvedToolExecutionHookContext,
+): PermissionDecisionReason | undefined {
+  return fallbackReasons.get(context);
+}
+
+function telemetryExecutableName(command: string): string | undefined {
+  const name = normalizeBashCommandName(command);
+  return TELEMETRY_EXECUTABLE_RE.test(name) ? name : undefined;
 }
 
 export class BashReadOnlyApprovePermissionPolicyService implements PermissionPolicy {
@@ -89,45 +123,52 @@ export class BashReadOnlyApprovePermissionPolicyService implements PermissionPol
     if (typeof context.args !== 'object' || context.args === null) return undefined;
     const command = (context.args as { readonly command?: unknown }).command;
     if (typeof command !== 'string') return undefined;
-    if (hasUnsafeControlOrBidi(command)) return undefined;
+    if (hasUnsafeControlOrBidi(command)) return this.reject(context, 'parse_failed');
     const readOnly = analyzeBashReadOnly(this.bashParser.parse(command, PARSE_OPTIONS));
-    if (readOnly === undefined) return undefined;
+    if (readOnly.rejection !== undefined) {
+      return this.reject(context, readOnly.rejection, readOnly.executableName);
+    }
+    const reason = {
+      command_family: readOnly.commands.length === 1 ? readOnly.commands[0]! : 'multiple',
+      ...(readOnly.commands.length > 1 ? { command_count: readOnly.commands.length } : {}),
+    };
+    const reject = () => this.reject(context, 'path_check_failed', readOnly.executableName);
     if (readOnly.paths.length === 0 && !readOnly.readsCwd && !readOnly.hasRiskyWindowsArg) {
-      return { kind: 'approve' };
+      return { kind: 'approve', reason };
     }
     const lease = acquireEnvironmentLease(this.environment);
-    if (lease === undefined) return undefined;
+    if (lease === undefined) return reject();
     try {
       const pathClass = lease.environment.host?.pathClass;
-      if (pathClass === undefined) return undefined;
-      if (pathClass === 'win32' && readOnly.hasRiskyWindowsArg) return undefined;
-      if (readOnly.paths.length === 0 && !readOnly.readsCwd) return { kind: 'approve' };
+      if (pathClass === undefined) return reject();
+      if (pathClass === 'win32' && readOnly.hasRiskyWindowsArg) return reject();
+      if (readOnly.paths.length === 0 && !readOnly.readsCwd) return { kind: 'approve', reason };
       const view = new EnvironmentWorkspaceView(lease.environment, {
         workDir: this.workspace.workDir,
         additionalDirs: this.workspace.additionalDirs,
       });
       const fs = lease.environment.fs;
-      if (fs === undefined) return undefined;
+      if (fs === undefined) return reject();
       const requestedCwd = (context.args as { readonly cwd?: unknown }).cwd;
-      if (requestedCwd !== undefined && typeof requestedCwd !== 'string') return undefined;
+      if (requestedCwd !== undefined && typeof requestedCwd !== 'string') return reject();
       let cwd: string;
       try {
         if (requestedCwd !== undefined) {
-          if (pathClass === 'win32' && isRiskyWindowsPath(requestedCwd)) return undefined;
+          if (pathClass === 'win32' && isRiskyWindowsPath(requestedCwd)) return reject();
           const bridgedCwd = view.shellPathBridge?.fromShellPath(requestedCwd) ?? requestedCwd;
           const normalizedCwd = normalizeUserPath(bridgedCwd, pathClass);
           if (pathClass === 'win32' && (isRiskyWindowsPath(normalizedCwd) || isUnresolvedPosixPath(normalizedCwd))) {
-            return undefined;
+            return reject();
           }
           cwd = view.resolve(normalizedCwd);
         } else {
           cwd = view.resolve(view.workDir);
         }
       } catch {
-        return undefined;
+        return reject();
       }
-      if (cwd.length === 0 || !view.path.isAbsolute(cwd)) return undefined;
-      if (pathClass === 'win32' && isRiskyWindowsPath(cwd)) return undefined;
+      if (cwd.length === 0 || !view.path.isAbsolute(cwd)) return reject();
+      if (pathClass === 'win32' && isRiskyWindowsPath(cwd)) return reject();
       const paths = readOnly.paths.map((path) => {
         if (pathClass === 'win32' && isRiskyWindowsPath(path)) return undefined;
         if (path.startsWith('~') && lease.environment.host?.homeDir === undefined) return undefined;
@@ -148,12 +189,12 @@ export class BashReadOnlyApprovePermissionPolicyService implements PermissionPol
           return undefined;
         }
       });
-      if (paths.some((path) => path === undefined)) return undefined;
+      if (paths.some((path) => path === undefined)) return reject();
       const nativeCwd = pathClass === 'win32' && isUnresolvedPosixPath(cwd)
         ? view.shellPathBridge?.fromShellPath(cwd) ?? cwd
         : cwd;
       if (pathClass === 'win32' && (isRiskyWindowsPath(nativeCwd) || isUnresolvedPosixPath(nativeCwd))) {
-        return undefined;
+        return reject();
       }
       const resolvedCwd = await realpathExistingPrefix(
         fs,
@@ -161,9 +202,9 @@ export class BashReadOnlyApprovePermissionPolicyService implements PermissionPol
         nativeCwd,
         (error) => isHostFsNotFound(error) || isHostFsNotDirectory(error),
       ).catch(() => undefined);
-      if (resolvedCwd === undefined) return undefined;
+      if (resolvedCwd === undefined) return reject();
       if (readOnly.usesGit && await hasBareGitIndicators(fs, resolvedCwd, view.path)) {
-        return undefined;
+        return reject();
       }
       const marker = await findGitWorkTree(fs, resolvedCwd);
       const targets = [cwd, ...paths as string[]];
@@ -183,11 +224,11 @@ export class BashReadOnlyApprovePermissionPolicyService implements PermissionPol
         })));
         if (context.signal.aborted) return undefined;
       }
-      if (resolvedPaths.some((entry) => entry === undefined)) return undefined;
+      if (resolvedPaths.some((entry) => entry === undefined)) return reject();
       const checks = resolvedPaths as [string, string][];
-      if (checks.some((entry) => entry.some(isSensitiveFile))) return undefined;
+      if (checks.some((entry) => entry.some(isSensitiveFile))) return reject();
       if (checks.some((entry) => entry.some((path) => hasGitPathComponent(path, cwd, pathClass)))) {
-        return undefined;
+        return reject();
       }
       if (
         marker !== null &&
@@ -197,12 +238,24 @@ export class BashReadOnlyApprovePermissionPolicyService implements PermissionPol
           pathClass,
         )))
       ) {
-        return undefined;
+        return reject();
       }
-      return { kind: 'approve' };
+      return { kind: 'approve', reason };
     } finally {
       lease.dispose();
     }
+  }
+
+  private reject(
+    context: ResolvedToolExecutionHookContext,
+    rejection: BashReadOnlyRejection,
+    executableName?: string,
+  ): undefined {
+    fallbackReasons.set(context, {
+      read_only_rejection: rejection,
+      ...(executableName === undefined ? {} : { executable_name: executableName }),
+    });
+    return undefined;
   }
 }
 
@@ -234,33 +287,91 @@ interface AnalyzedCommandResult {
   readonly readsCwd: boolean;
   readonly usesGit: boolean;
   readonly isCd: boolean;
+  readonly command: string;
   readonly hasRiskyWindowsArg?: boolean;
 }
 
-export function analyzeBashReadOnly(result: BashParseResult): BashReadOnlyAnalysis | undefined {
-  if (!result.ok || result.hasError) return undefined;
-  if (hasUnsafeControlOrBidi(result.root.text)) return undefined;
+function analyzedCommand(
+  paths: readonly string[],
+  readsCwd: boolean,
+  usesGit: boolean,
+  isCd: boolean,
+  command: string,
+): AnalyzedCommandResult {
+  return { paths: [...paths], readsCwd, usesGit, isCd, command };
+}
+
+export function analyzeBashReadOnly(result: BashParseResult): BashReadOnlyAnalysis {
+  if (!result.ok || result.hasError || hasUnsafeControlOrBidi(result.root.text)) {
+    return { paths: [], readsCwd: false, commands: [], rejection: 'parse_failed' };
+  }
   const commands: CollectedCommand[] = [];
-  if (!collectCommands(result.root, commands) || commands.length === 0) return undefined;
+  if (!collectCommands(result.root, commands) || commands.length === 0) {
+    return {
+      paths: [],
+      readsCwd: false,
+      commands: [],
+      rejection: 'unsupported_structure',
+      executableName: collectExecutableName(result.root),
+    };
+  }
   const paths: string[] = [];
+  const names: string[] = [];
   let readsCwd = false;
   let usesGit = false;
   let hasRiskyWindowsArg = false;
   for (const command of commands) {
     const analyzed = analyzeCommand(command.node, command.arguments, command.inputs);
-    if (analyzed === undefined) return undefined;
-    if (commands.length > 1 && analyzed.isCd) return undefined;
+    if (analyzed === undefined) {
+      const executableName = collectExecutableName(command.node);
+      return {
+        paths: [],
+        readsCwd: false,
+        commands: [],
+        rejection: executableName !== undefined && !SUPPORTED_READ_ONLY_EXECUTABLES.has(executableName)
+          ? 'unsupported_command'
+          : 'unsafe_arguments',
+        ...(executableName === undefined ? {} : { executableName }),
+      };
+    }
+    if (commands.length > 1 && analyzed.isCd) {
+      return {
+        paths: [],
+        readsCwd: false,
+        commands: [],
+        rejection: 'unsupported_structure',
+        executableName: telemetryExecutableName(analyzed.command),
+      };
+    }
     if (analyzed.readsCwd) readsCwd = true;
     if (analyzed.usesGit) usesGit = true;
     if (analyzed.hasRiskyWindowsArg) hasRiskyWindowsArg = true;
     paths.push(...analyzed.paths);
+    names.push(analyzed.command);
   }
   return {
     paths,
     readsCwd,
+    commands: names,
+    executableName: telemetryExecutableName(names[0]!),
     ...(usesGit ? { usesGit: true } : {}),
     ...(hasRiskyWindowsArg ? { hasRiskyWindowsArg: true } : {}),
   };
+}
+
+function collectExecutableName(root: BashSyntaxNode): string | undefined {
+  const stack = [root];
+  while (stack.length > 0) {
+    const node = stack.pop()!;
+    if (node.type === 'command_name') {
+      const part = node.children.length === 1 ? node.children[0] : undefined;
+      const text = part === undefined ? undefined : literalText(part);
+      if (text === undefined) return undefined;
+      return telemetryExecutableName(text);
+    }
+    for (let index = node.children.length - 1; index >= 0; index--) stack.push(node.children[index]!);
+  }
+  return undefined;
 }
 
 function collectCommands(node: BashSyntaxNode, out: CollectedCommand[]): boolean {
@@ -377,7 +488,7 @@ function analyzeCommand(
   if (rawName === 'cd' && redirectArguments.length === 0) {
     const cdTarget = analyzeCd(rawArgs);
     if (cdTarget === undefined) return undefined;
-    return { paths: [...basePaths, cdTarget], readsCwd: true, usesGit: false, isCd: true };
+    return analyzedCommand([...basePaths, cdTarget], true, false, true, 'cd');
   }
   rawArgs.push(...redirectArguments);
   const texts = rawArgs.map(literalText);
@@ -424,7 +535,7 @@ function analyzeUnwrappedInvocation(
 ): AnalyzedCommandResult | undefined {
   if (depth < 2 && name === 'command') {
     if (args.length === 2 && (args[0] === '-v' || args[0] === '-V') && isPlainCommandToken(args[1]!)) {
-      return { paths: [...basePaths], readsCwd: false, usesGit: false, isCd: false };
+      return analyzedCommand([...basePaths], false, false, false, name);
     }
     let idx = 0;
     while (idx < args.length && /^-p+$/.test(args[idx]!)) idx++;
@@ -457,37 +568,37 @@ function analyzeUnwrappedInvocation(
     ) {
       return undefined;
     }
-    return { paths: [...basePaths, target], readsCwd: true, usesGit: false, isCd: true };
+    return analyzedCommand([...basePaths, target], true, false, true, 'cd');
   }
   if (EXACT_READ_ONLY_INVOCATIONS.some(
     (invocation) => invocation[0] === name
       && invocation.length === args.length + 1
       && invocation.slice(1).every((expected, index) => expected === args[index]),
   )) {
-    return { paths: [...basePaths], readsCwd: false, usesGit: false, isCd: false };
+    return analyzedCommand([...basePaths], false, false, false, name);
   }
   if (NO_ARG_READ_ONLY_COMMANDS.has(name)) {
     return args.length === 0
-      ? { paths: [...basePaths], readsCwd: false, usesGit: false, isCd: false }
+      ? analyzedCommand([...basePaths], false, false, false, name)
       : undefined;
   }
   if (name === 'history') {
     return args.length === 0 || (args.length === 1 && /^\d+$/.test(args[0]!))
-      ? { paths: [...basePaths], readsCwd: false, usesGit: false, isCd: false }
+      ? analyzedCommand([...basePaths], false, false, false, name)
       : undefined;
   }
   if (name === 'arch') {
     return args.length === 0 || (args.length === 1 && (args[0] === '-h' || args[0] === '--help'))
-      ? { paths: [...basePaths], readsCwd: false, usesGit: false, isCd: false }
+      ? analyzedCommand([...basePaths], false, false, false, name)
       : undefined;
   }
   if (name === 'ifconfig') {
     return args.length === 0 || (args.length === 1 && /^[a-zA-Z][a-zA-Z0-9_.:-]*$/.test(args[0]!))
-      ? { paths: [...basePaths], readsCwd: false, usesGit: false, isCd: false }
+      ? analyzedCommand([...basePaths], false, false, false, name)
       : undefined;
   }
   if (name === 'echo') {
-    return { paths: [...basePaths], readsCwd: false, usesGit: false, isCd: false };
+    return analyzedCommand([...basePaths], false, false, false, name);
   }
   if (name === 'docker') {
     return analyzeDocker(args, basePaths);
@@ -505,7 +616,7 @@ function analyzeUnwrappedInvocation(
     return analyzeRg(args, basePaths);
   }
   if (name === 'fd' || name === 'fdfind') {
-    return analyzeFd(args, basePaths);
+    return analyzeFd(name, args, basePaths);
   }
   if (name === 'grep' || name === 'egrep' || name === 'fgrep') {
     return analyzeGrep(args, basePaths);
@@ -524,12 +635,7 @@ function analyzeUnwrappedInvocation(
   if (!BASIC_FILE_READ_COMMANDS.has(name)) return undefined;
   const basicPaths = analyzeBasicFileCommand(name, args, basePaths);
   if (basicPaths === undefined) return undefined;
-  return {
-    paths: basicPaths,
-    readsCwd: CWD_READING_COMMANDS.has(name),
-    usesGit: false,
-    isCd: false,
-  };
+  return analyzedCommand(basicPaths, CWD_READING_COMMANDS.has(name), false, false, name);
 }
 
 function isPlainCommandToken(value: string): boolean {
@@ -558,7 +664,7 @@ function analyzeZeroFileCommand(
   } else if (name !== 'tr') {
     if (parsed.positionals.length > 0) return undefined;
   }
-  return { paths: [...basePaths], readsCwd: false, usesGit: false, isCd: false };
+  return analyzedCommand([...basePaths], false, false, false, name);
 }
 
 function analyzeSpecFileCommand(
@@ -573,19 +679,9 @@ function analyzeSpecFileCommand(
     if (parsed.positionals.length === 0) return undefined;
     const filter = parsed.positionals[0]!;
     if (JQ_UNSAFE_FILTER_RE.test(filter)) return undefined;
-    return {
-      paths: [...basePaths, ...parsed.positionals.slice(1)],
-      readsCwd: false,
-      usesGit: false,
-      isCd: false,
-    };
+  return analyzedCommand([...basePaths, ...parsed.positionals.slice(1)], false, false, false, name);
   }
-  return {
-    paths: [...basePaths, ...parsed.positionals],
-    readsCwd: CWD_READING_COMMANDS.has(name),
-    usesGit: false,
-    isCd: false,
-  };
+  return analyzedCommand([...basePaths, ...parsed.positionals], CWD_READING_COMMANDS.has(name), false, false, name);
 }
 
 function analyzeDocker(
@@ -600,7 +696,7 @@ function analyzeDocker(
   if (parsed === undefined) return undefined;
   if (subcommand === 'ps' && parsed.positionals.length > 0) return undefined;
   if (subcommand === 'images' && parsed.positionals.length > 1) return undefined;
-  return { paths: [...basePaths], readsCwd: false, usesGit: false, isCd: false };
+  return analyzedCommand([...basePaths], false, false, false, `docker.${subcommand}`);
 }
 
 function analyzeGit(
@@ -650,7 +746,7 @@ function analyzeGit(
       }
     }
   }
-  return { paths, readsCwd: true, usesGit: true, isCd: false };
+  return analyzedCommand(paths, true, true, false, `git.${subcommandKey.replaceAll(' ', '.')}`);
 }
 
 function analyzeSed(
@@ -689,7 +785,7 @@ function analyzeSed(
     }
   }
   if (!quiet || expression === undefined || !SIMPLE_SED_PRINT_RE.test(expression)) return undefined;
-  return { paths, readsCwd: false, usesGit: false, isCd: false };
+  return analyzedCommand(paths, false, false, false, 'sed');
 }
 
 function analyzeFind(
@@ -710,7 +806,7 @@ function analyzeFind(
       }
     }
   }
-  return { paths, readsCwd: true, usesGit: false, isCd: false };
+  return analyzedCommand(paths, true, false, false, 'find');
 }
 
 function analyzeRg(
@@ -729,10 +825,11 @@ function analyzeRg(
   }
   const targetPaths = patternSeen ? parsed.positionals : parsed.positionals.slice(1);
   paths.push(...targetPaths);
-  return { paths, readsCwd: targetPaths.length === 0, usesGit: false, isCd: false };
+  return analyzedCommand(paths, targetPaths.length === 0, false, false, 'rg');
 }
 
 function analyzeFd(
+  name: string,
   args: readonly string[],
   basePaths: readonly string[],
 ): AnalyzedCommandResult | undefined {
@@ -745,7 +842,7 @@ function analyzeFd(
   if (parsed.positionals.length > 1) {
     paths.push(...parsed.positionals.slice(1));
   }
-  return { paths, readsCwd: true, usesGit: false, isCd: false };
+  return analyzedCommand(paths, true, false, false, name);
 }
 
 function analyzeGrep(
@@ -773,12 +870,7 @@ function analyzeGrep(
   }
   const targetPaths = patternSeen ? parsed.positionals : parsed.positionals.slice(1);
   paths.push(...targetPaths);
-  return {
-    paths,
-    readsCwd: recursive && targetPaths.length === 0,
-    usesGit: false,
-    isCd: false,
-  };
+  return analyzedCommand(paths, recursive && targetPaths.length === 0, false, false, 'grep');
 }
 
 function analyzeUniq(
@@ -801,7 +893,7 @@ function analyzeUniq(
     }
   }
   return inputs.length <= 1
-    ? { paths: [...basePaths, ...inputs], readsCwd: false, usesGit: false, isCd: false }
+    ? analyzedCommand([...basePaths, ...inputs], false, false, false, 'uniq')
     : undefined;
 }
 
