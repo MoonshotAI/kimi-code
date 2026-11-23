@@ -7,7 +7,6 @@ import { join } from 'node:path';
 import { KIMI_REGION_PROFILES } from '@moonshot-ai/kimi-code-oauth';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { FEEDBACK_REASONS_CONFIG } from '../src/protocol/feedback-reasons';
 import {
   clientConfigsBaseUrl,
   EFFORT_SWITCH_CONFIG_NAME,
@@ -197,10 +196,12 @@ describe('server-v2 GET /api/v1/client-configs/{name}', () => {
   let home: string | undefined;
   let base: string;
   let cloudBehavior: { status: number; body: unknown };
+  let cloudRequestBody: string;
 
   beforeEach(async () => {
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-client-configs-'));
     cloudBehavior = { status: 200, body: {} };
+    cloudRequestBody = '';
   });
 
   afterEach(async () => {
@@ -229,9 +230,9 @@ describe('server-v2 GET /api/v1/client-configs/{name}', () => {
         raw += chunk.toString('utf-8');
       });
       req.on('end', () => {
+        cloudRequestBody = raw;
         res.writeHead(cloudBehavior.status, { 'content-type': 'application/json' });
         res.end(JSON.stringify(cloudBehavior.body));
-        void raw;
       });
     });
     await new Promise<void>((resolve) => {
@@ -370,19 +371,22 @@ describe('server-v2 GET /api/v1/client-configs/{name}', () => {
     expect(body.data).toEqual({ name: 'no_such_config', config: null });
   });
 
-  it('serves ordered bilingual feedback reasons and falls back for invalid updates', async () => {
-    const name = FEEDBACK_REASONS_CONFIG;
-    const first = { id: 'custom', en: 'Custom reason', zh: '自定义原因' };
-    const second = { id: 'other', en: 'Other', zh: '其他' };
-    cloudBehavior = { status: 200, body: { name, config: { reasons: [first, second] } } };
+  it('serves the versioned feedback_form with ordered bilingual reply reasons and falls back for invalid updates', async () => {
+    const name = 'feedback_form';
+    const first = { id: 'incorrect_or_incomplete', label: { en: 'Incorrect or incomplete result', zh: '结果不正确或不完整' } };
+    const second = { id: 'other', label: { en: 'Other', zh: '其他' } };
+    const positive = [{ id: 'solved_problem', label: { en: 'Solved my problem', zh: '解决了我的问题' } }];
+    const form = (negative: unknown[]) => ({ name, config: { version: 1, reply_reasons: { negative, positive } } });
+    cloudBehavior = { status: 200, body: form([first, second]) };
     await boot();
     expect((await postClientConfigs(name)).data).toEqual(cloudBehavior.body);
+    expect(JSON.parse(cloudRequestBody)).toEqual({ name });
 
-    for (const reasons of [[first, first], [{ id: 'broken', zh: '缺译文' }]]) {
-      cloudBehavior = { status: 200, body: { name, config: { reasons } } };
+    for (const reasons of [[first, first], [{ id: 'broken', label: { zh: '缺译文' } }]]) {
+      cloudBehavior = { status: 200, body: form(reasons) };
       expect((await postClientConfigs(name)).data).toEqual({ name, config: null });
     }
-    cloudBehavior = { status: 200, body: { name, config: { reasons: [] } } };
+    cloudBehavior = { status: 200, body: form([]) };
     expect((await postClientConfigs(name)).data).toEqual(cloudBehavior.body);
   });
 

@@ -58,7 +58,7 @@ testWithProvider('submits global and reply feedback with opt-in attachments', as
   let releaseDiagnostics!: () => void;
   const pendingDiagnostics = new Promise<void>(resolve => { releaseDiagnostics = resolve; });
 
-  await page.route('**/api/v1/client-configs/desktop_feedback_reasons', route => route.fulfill({ status: 404 }));
+  await page.route('**/api/v1/client-configs/feedback_form', route => route.fulfill({ status: 404 }));
   await page.route('**/api/v1/meta', (route) => route.fulfill({ json: envelope({
     server_version: '2.6.3', capabilities: {}, experimental_flags: { desktop_feedback: true },
   }) }));
@@ -449,15 +449,16 @@ testWithProvider('attaches an SSH conversation to the locally submitted feedback
 testWithProvider('uses the SSH host’s reason choices and accepts text while the configuration loads', async ({ app, provider }) => {
   const { requests } = await openSshConversation(app, provider, { local: true, remote: true });
   const page = app.window;
-  const configPath = '/api/v1/client-configs/desktop_feedback_reasons';
+  const configPath = '/api/v1/client-configs/feedback_form';
   const pendingReasons = deferred();
-  const remoteReason = { id: 'remote_choice', en: 'Remote reason', zh: '远程原因' };
+  const remoteReason = { id: 'remote_choice', label: { en: 'Remote reason', zh: '远程原因' } };
   let remoteReasons = [remoteReason];
   await page.route(url => url.pathname.endsWith(configPath), async route => {
     await pendingReasons.promise;
     const remote = new URL(route.request().url()).pathname === hostProxy + configPath;
-    const reasons = remote ? remoteReasons : [{ id: 'local_choice', en: 'Local reason', zh: '本机原因' }];
-    await route.fulfill({ json: envelope({ config: { reasons } }) });
+    const negative = remote ? remoteReasons : [{ id: 'local_choice', label: { en: 'Local reason', zh: '本机原因' } }];
+    const positive = [{ id: 'solved_problem', label: { en: 'Solved my problem', zh: '解决了我的问题' } }];
+    await route.fulfill({ json: envelope({ config: { version: 1, reply_reasons: { negative, positive } } }) });
   });
   const read = page.waitForRequest(request => new URL(request.url()).pathname.endsWith(configPath));
   const down = page.getByRole('button', { name: 'Poor response' });
@@ -473,7 +474,9 @@ testWithProvider('uses the SSH host’s reason choices and accepts text while th
   } finally {
     pendingReasons.resolve();
   }
-  await details.getByRole('button', { name: remoteReason.en }).click();
+  const choices = details.getByRole('group').getByRole('button');
+  await expect(choices).toHaveText([remoteReason.label.en]);
+  await details.getByRole('button', { name: remoteReason.label.en, exact: true }).click();
   await submit.click();
   await expect(details).toBeHidden();
   expect(requests.at(-1)).toEqual({

@@ -25,7 +25,7 @@ const configuredReasons = shallowRef<readonly FeedbackReason[] | null>();
 const builtinReasons = ['incorrect', 'missed_instructions', 'off_topic', 'lost_context', 'slow', 'other'] as const;
 const reasonOptions = computed(() => configuredReasons.value?.map(reason => ({
   id: reason.id,
-  label: locale.value.startsWith('zh') ? reason.zh : reason.en,
+  label: locale.value.startsWith('zh') ? reason.label.zh : reason.label.en,
 })) ?? builtinReasons.map(id => ({ id, label: t(`feedback.reasons.${id}`) })));
 const selected = ref<string[]>([]);
 const detail = ref('');
