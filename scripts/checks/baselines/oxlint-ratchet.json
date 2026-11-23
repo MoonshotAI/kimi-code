@@ -403,8 +403,7 @@
   "promise/no-callback-in-promise": {
     "apps/desktop/src/renderer/components/browser/PanelBrowserTab.vue": 1,
     "apps/desktop/tests/main/browser/browser-view.test.ts": 1,
-    "packages/agent-core-v2/src/os/backends/remote/remoteProcess.ts": 2,
-    "packages/core/src/loop/loop-actor.ts": 1
+    "packages/agent-core-v2/src/os/backends/remote/remoteProcess.ts": 2
   },
   "promise/no-promise-in-callback": {
     "apps/desktop/e2e/fixtures/model.ts": 1,
