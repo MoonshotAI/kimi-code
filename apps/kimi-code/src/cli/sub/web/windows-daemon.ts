@@ -1,41 +1,8 @@
 import { execFile } from 'node:child_process';
-import { createHash } from 'node:crypto';
-import { win32 } from 'node:path';
-
-const WINDOWS_IPC_KEY_SCRIPT = `
-$ErrorActionPreference = 'Stop'
-$root = [Environment]::GetFolderPath('LocalApplicationData')
-if (-not $root) { throw 'The Windows user profile is unavailable' }
-$directory = [IO.Path]::Combine($root, 'KimiCode.SshIpc')
-$sid = [Security.Principal.WindowsIdentity]::GetCurrent().User
-$security = [Security.AccessControl.DirectorySecurity]::new()
-$security.SetSecurityDescriptorSddlForm("O:$($sid.Value)D:P(A;OICI;FA;;;$($sid.Value))")
-[void][IO.Directory]::CreateDirectory($directory, $security)
-if ([IO.File]::GetAttributes($directory) -band [IO.FileAttributes]::ReparsePoint) {
-  throw 'The Windows IPC key directory is a reparse point'
-}
-$acl = [IO.Directory]::GetAccessControl($directory)
-$rules = $acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier])
-if (-not $acl.AreAccessRulesProtected -or $acl.GetOwner([Security.Principal.SecurityIdentifier]) -ne $sid -or
-    $rules.Count -ne 1 -or $rules[0].IdentityReference -ne $sid -or
-    $rules[0].AccessControlType -ne 'Allow') {
-  throw 'The Windows IPC key directory must be private to the current user'
-}
-$path = [IO.Path]::Combine($directory, [Console]::In.ReadToEnd() + '.key')
-if (-not [IO.File]::Exists($path)) {
-  $key = [byte[]]::new(32)
-  $random = [Security.Cryptography.RandomNumberGenerator]::Create()
-  try { $random.GetBytes($key) } finally { $random.Dispose() }
-  $temp = [IO.Path]::Combine($directory, [IO.Path]::GetRandomFileName())
-  try {
-    [IO.File]::WriteAllBytes($temp, $key)
-    try { [IO.File]::Move($temp, $path) } catch [IO.IOException] {
-      if (-not [IO.File]::Exists($path)) { throw }
-    }
-  } finally { [IO.File]::Delete($temp) }
-}
-[Console]::Write([Convert]::ToBase64String([IO.File]::ReadAllBytes($path)))
-`;
+import { randomBytes } from 'node:crypto';
+import { constants } from 'node:fs';
+import { copyFile, lstat, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { join, win32 } from 'node:path';
 
 const WINDOWS_DAEMON_LAUNCH_SCRIPT = `
 $ErrorActionPreference = 'Stop'
@@ -48,46 +15,61 @@ $result = Invoke-CimMethod -ClassName Win32_Process -Name Create -Arguments @{Co
 if ($result.ReturnValue -ne 0) { throw "kimi server failed to start with CIM error $($result.ReturnValue)" }
 `;
 
-function windowsPowerShell(): string {
-  const root = process.env['SystemRoot'] ?? process.env['windir'] ?? 'C:\\Windows';
-  return win32.join(root, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
-}
-
-function runPowerShell(script: string, input: string): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const child = execFile(windowsPowerShell(), [
-      '-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand',
-      Buffer.from(script, 'utf16le').toString('base64'),
-    ], { timeout: 10_000, windowsHide: true, maxBuffer: 64 * 1024 }, (error, stdout, stderr) => {
-      if (error !== null) {
-        reject(new Error(stderr.trim() || error.code?.toString() || 'PowerShell failed'));
-        return;
-      }
-      resolve(stdout);
-    });
-    child.stdin?.on('error', () => {});
-    child.stdin?.end(input);
+async function readValidKey(keyPath: string): Promise<Buffer | undefined> {
+  const info = await lstat(keyPath).catch((error: unknown) => {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+    throw error;
   });
-}
-
-export async function loadWindowsIpcKey(socketPath: string): Promise<Buffer> {
-  const keyId = createHash('sha256').update(socketPath).digest('hex');
-  const output = await runPowerShell(WINDOWS_IPC_KEY_SCRIPT, keyId);
-  const key = Buffer.from(output, 'base64');
-  if (key.length !== 32 || key.toString('base64') !== output) {
-    throw new Error('Invalid Windows IPC key');
-  }
+  if (info === undefined) return undefined;
+  if (!info.isFile()) throw new Error(`Invalid Windows IPC key file: ${keyPath}`);
+  const key = await readFile(keyPath);
+  if (key.length !== 32) throw new Error(`Invalid Windows IPC key length in ${keyPath}`);
   return key;
 }
 
-export function windowsDaemonCommandLine(argv: readonly string[], logPath: string): string {
-  const literal = (value: string) => `'${value.replaceAll(/['‘’]/g, '$&$&')}'`;
-  const daemonScript = `$ErrorActionPreference = 'Stop'; & ${argv.map(literal).join(' ')} *> ${literal(logPath)}`;
-  const escapedScript = daemonScript.replace(/(\\*)"/g, '$1$1\\"');
-  return `"${windowsPowerShell()}" -NoLogo -NoProfile -NonInteractive -Command "${escapedScript}"`;
+export async function loadWindowsIpcKey(homeDir: string): Promise<Buffer> {
+  const serverDir = join(homeDir, 'server');
+  const keyPath = join(serverDir, 'ipc.key');
+  const existing = await readValidKey(keyPath);
+  if (existing !== undefined) return existing;
+
+  await mkdir(serverDir, { recursive: true, mode: 0o700 });
+  if (!(await lstat(serverDir)).isDirectory()) {
+    throw new Error(`Invalid Windows IPC key directory: ${serverDir}`);
+  }
+  const temp = join(serverDir, `ipc.key.${process.pid}.${randomBytes(6).toString('hex')}.tmp`);
+  try {
+    await writeFile(temp, randomBytes(32), { flag: 'wx', mode: 0o600 });
+    await copyFile(temp, keyPath, constants.COPYFILE_EXCL).catch((error: unknown) => {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+    });
+  } finally {
+    await rm(temp, { force: true });
+  }
+  const loaded = await readValidKey(keyPath);
+  if (loaded === undefined) throw new Error(`Unable to load Windows IPC key from ${keyPath}`);
+  return loaded;
 }
 
-export async function spawnWindowsDaemon(argv: readonly string[], logPath: string): Promise<void> {
-  const command = windowsDaemonCommandLine(argv, logPath);
-  await runPowerShell(WINDOWS_DAEMON_LAUNCH_SCRIPT, Buffer.from(command, 'utf16le').toString('base64'));
+export function windowsCommandLine(argv: readonly string[]): string {
+  return argv
+    .map((arg) => (arg.length > 0 && !/[\s"]/.test(arg) ? arg : `"${arg.replaceAll(/(\\*)"/g, '$1$1\\"').replace(/(\\+)$/, '$1$1')}"`))
+    .join(' ');
+}
+
+export function spawnWindowsDaemon(argv: readonly string[]): Promise<void> {
+  const ps = win32.join(process.env['SystemRoot'] ?? process.env['windir'] ?? 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+  return new Promise((resolve, reject) => {
+    const child = execFile(
+      ps,
+      ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(WINDOWS_DAEMON_LAUNCH_SCRIPT, 'utf16le').toString('base64')],
+      { timeout: 10_000, windowsHide: true, maxBuffer: 64 * 1024 },
+      (error, _stdout, stderr) => {
+        if (error !== null) reject(new Error(stderr.trim() || error.code?.toString() || 'PowerShell failed'));
+        else resolve();
+      },
+    );
+    child.stdin?.on('error', () => {});
+    child.stdin?.end(Buffer.from(windowsCommandLine(argv), 'utf16le').toString('base64'));
+  });
 }

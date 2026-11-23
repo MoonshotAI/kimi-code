@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import { lstatSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -21,7 +20,7 @@ import {
   type DaemonConnection,
   type EnsureDaemonDeps,
 } from '#/cli/sub/web/ensure-daemon';
-import { loadWindowsIpcKey, windowsDaemonCommandLine } from '#/cli/sub/web/windows-daemon';
+import { loadWindowsIpcKey, windowsCommandLine } from '#/cli/sub/web/windows-daemon';
 import type { LegacyKillDeps } from '#/cli/sub/web/legacy-kill';
 import type {
   RemoteControlCloseReason,
@@ -1160,43 +1159,47 @@ describe('`kimi server ensure-daemon`', () => {
     };
   }
 
-  it('uses the same Windows named pipe for aliases of one data directory', async () => {
+  it('uses the same Windows named pipe for aliases of one data directory and handles missing paths', () => {
     const data = mkdtempSync(join(homeDir, 'data-'));
     const other = mkdtempSync(join(homeDir, 'other-'));
     const alias = join(homeDir, 'alias');
     symlinkSync(data, alias, process.platform === 'win32' ? 'junction' : 'dir');
 
-    const pipe = await daemonSocketPath(data, 'win32');
+    const pipe = daemonSocketPath(data, 'win32');
     expect(pipe).toMatch(/^\\\\\.\\pipe\\kimi-daemon-[a-f0-9]{16}$/);
-    expect(await daemonSocketPath(data + '/.', 'win32')).toBe(pipe);
-    expect(await daemonSocketPath(alias, 'win32')).toBe(pipe);
-    expect(await daemonSocketPath(other, 'win32')).not.toBe(pipe);
-  });
-
-  it.runIf(process.platform === 'win32')('persists one complete Windows IPC key across concurrent loads', async () => {
-    const pipe = await daemonSocketPath(homeDir, 'win32');
-    const file = `${createHash('sha256').update(pipe).digest('hex')}.key`;
-    const localAppData = process.env['LOCALAPPDATA'];
-    try {
-      const [first, second] = await Promise.all([loadWindowsIpcKey(pipe), loadWindowsIpcKey(pipe)]);
-      expect(first).toHaveLength(32);
-      expect(second).toEqual(first);
-      expect(await loadWindowsIpcKey(pipe)).toEqual(first);
-    } finally {
-      if (localAppData !== undefined) {
-        rmSync(join(localAppData, 'KimiCode.SshIpc', file), { force: true });
-      }
-    }
-  });
-
-  it('builds a PowerShell command line for a Windows daemon with spaces in its path', () => {
-    const commandLine = windowsDaemonCommandLine(
-      ['C:\\Program Files\\Kimi\\kimi.exe', 'server', '--socket', '\\\\.\\pipe\\kimi-test'],
-      'C:\\Users\\test\\.kimi-code\\server\\ensure-daemon.log',
+    expect(daemonSocketPath(data + '/.', 'win32')).toBe(pipe);
+    expect(daemonSocketPath(alias, 'win32')).toBe(pipe);
+    expect(daemonSocketPath(other, 'win32')).not.toBe(pipe);
+    expect(daemonSocketPath('C:\\Users\\Test\\.kimi-code', 'win32')).toBe(
+      daemonSocketPath('c:/users/test/.kimi-code/.', 'win32'),
     );
-    expect(commandLine).toMatch(/^"[^"]+\\powershell\.exe" -NoLogo -NoProfile -NonInteractive -Command "/i);
-    expect(commandLine).toContain(`& 'C:\\Program Files\\Kimi\\kimi.exe' 'server' '--socket' '\\\\.\\pipe\\kimi-test'`);
-    expect(commandLine).toContain(`*> 'C:\\Users\\test\\.kimi-code\\server\\ensure-daemon.log'`);
+  });
+
+  it('persists one complete Windows IPC key across concurrent loads and rejects symlinks', async () => {
+    const [first, second] = await Promise.all([loadWindowsIpcKey(homeDir), loadWindowsIpcKey(homeDir)]);
+    expect(first).toHaveLength(32);
+    expect(second).toEqual(first);
+    expect(await loadWindowsIpcKey(homeDir)).toEqual(first);
+
+    const linkedHome = mkdtempSync(join(homeDir, 'linked-'));
+    mkdirSync(join(linkedHome, 'server'), { recursive: true });
+    const target = join(homeDir, 'outside.key');
+    writeFileSync(target, Buffer.alloc(32, 7));
+    symlinkSync(target, join(linkedHome, 'server', 'ipc.key'));
+    await expect(loadWindowsIpcKey(linkedHome)).rejects.toThrow('Invalid Windows IPC key file');
+  });
+
+  it('builds a direct Windows command line without a nested PowerShell wrapper', () => {
+    const commandLine = windowsCommandLine([
+      'C:\\Program Files\\Kimi\\kimi.exe',
+      'server',
+      '--socket',
+      '\\\\.\\pipe\\kimi-test',
+      'dir with space\\',
+    ]);
+    expect(commandLine).toBe(
+      '"C:\\Program Files\\Kimi\\kimi.exe" server --socket \\\\.\\pipe\\kimi-test "dir with space\\\\"',
+    );
   });
 
   it('refuses to use an unauthenticated daemon socket', async () => {
@@ -1264,7 +1267,7 @@ describe('`kimi server ensure-daemon`', () => {
       stream: spawned.stream,
     });
     expect(deps.spawnServer).toHaveBeenCalledWith(
-      await daemonSocketPath(homeDir),
+      daemonSocketPath(homeDir),
       join(homeDir, 'server', 'ensure-daemon.log'),
       join(homeDir, 'server', 'forwarded-ssh-agent.sock'),
     );

@@ -1,5 +1,5 @@
 import { randomBytes, timingSafeEqual } from 'node:crypto';
-import { existsSync } from 'node:fs';
+import { createWriteStream, existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 
 import {
@@ -395,9 +395,14 @@ async function runServerInProcess(
     process.exit(0);
   }
 
+  const dataDir = getDataDir();
   const logger = createServerLogger({
     level: options.logLevel,
-    stream: options.logToStderr === true ? process.stderr : undefined,
+    stream: options.logToStderr === true
+      ? process.stderr
+      : process.platform === 'win32' && options.managedBy === 'ensure-daemon'
+        ? (mkdirSync(join(dataDir, 'server'), { recursive: true }), createWriteStream(join(dataDir, 'server', 'ensure-daemon.log'), { mode: 0o600 }))
+        : undefined,
   });
   const webAssetsDir = serverWebAssetsDir();
   if (webAssetsDir === undefined) {
@@ -425,7 +430,7 @@ async function runServerInProcess(
     webTitle: options.webTitle,
     socketPath: options.socketPath,
     managedBy: options.managedBy,
-    ipcPsk: options.socketPath !== undefined && process.platform === 'win32' ? await loadWindowsIpcKey(options.socketPath) : undefined,
+    ipcPsk: options.socketPath !== undefined && process.platform === 'win32' ? await loadWindowsIpcKey(dataDir) : undefined,
     telemetry: true,
     webAssetsDir,
   });

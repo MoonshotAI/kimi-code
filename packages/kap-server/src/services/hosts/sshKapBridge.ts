@@ -37,7 +37,7 @@ type SshPlatform = 'posix' | 'windows';
 
 interface PlatformDetection {
   readonly platform?: SshPlatform;
-  readonly inconclusiveFailure?: HostConnectError;
+  readonly probeError?: HostConnectError;
 }
 
 export class HostConnectError extends Error {
@@ -78,6 +78,13 @@ const RETRYABLE: ReadonlySet<HostConnectFailure> = new Set([
   'remote_start_failed',
   'unknown',
 ]);
+const TRANSPORT_FAILURES: ReadonlySet<HostConnectFailure> = new Set([
+  'host_not_found',
+  'connection_refused',
+  'host_unreachable',
+  'connect_timeout',
+  'host_key_changed',
+]);
 const ENSURE_DAEMON_FAILURES: Readonly<Record<string, HostConnectFailure>> = {
   version_mismatch_busy: 'remote_busy',
   lock_timeout: 'remote_start_failed',
@@ -86,6 +93,10 @@ const ENSURE_DAEMON_FAILURES: Readonly<Record<string, HostConnectFailure>> = {
 
 function shQuote(value: string): string {
   return `'${value.replaceAll("'", "'\\''")}'`;
+}
+
+function psQuote(value: string): string {
+  return `'${value.replaceAll(/['\u2018-\u201b]/g, '$&$&')}'`;
 }
 
 function powerShellCommand(script: string): string {
@@ -101,13 +112,12 @@ export function remoteBinCommand(remoteBin: string | undefined): string {
 export function remoteKimiCommand(remoteBin: string | undefined, subcommand: string, platform: SshPlatform = 'posix'): string {
   if (platform === 'windows') {
     const configured = remoteBin ?? '~/.kimi-code/bin/kimi.exe';
-    const literal = (value: string) => `'${value.replaceAll(/['‘’]/g, '$&$&')}'`;
-    const bin = BARE_BIN.test(configured)
-      ? literal(configured)
-      : configured.startsWith('~/') || configured.startsWith('~\\')
-        ? `($env:USERPROFILE + ${literal(configured.slice(1))})`
-        : literal(configured);
-    return powerShellCommand(`$ErrorActionPreference = 'Stop'; & ${bin} --version; & ${bin} ${subcommand}; exit $LASTEXITCODE`);
+    const bin = configured.startsWith('~/') || configured.startsWith('~\\')
+      ? `($env:USERPROFILE + ${psQuote(configured.slice(1))})`
+      : psQuote(configured);
+    return powerShellCommand(
+      `$ErrorActionPreference = 'Stop'; try { & ${bin} --version } catch [Management.Automation.CommandNotFoundException] { [Console]::Error.WriteLine($_); exit 127 }; & ${bin} ${subcommand}; exit $LASTEXITCODE`,
+    );
   }
   const bin = remoteBinCommand(remoteBin);
   return `${bin} --version; ${bin} ${subcommand}`;
@@ -177,9 +187,8 @@ interface SshResult {
 function sshFailure(result: SshResult, detection?: PlatformDetection): HostConnectError {
   const failure = classifySshFailure(result.stderr, result.code);
   const version = readVersionLine(result.stdout);
-  const inconclusiveProbe = detection?.inconclusiveFailure;
-  if (inconclusiveProbe !== undefined && version === undefined && (failure === 'executor_not_found' || failure === 'executor_outdated')) {
-    return inconclusiveProbe;
+  if (detection?.probeError !== undefined && version === undefined && (failure === 'executor_not_found' || failure === 'executor_outdated')) {
+    return detection.probeError;
   }
   return new HostConnectError(
     failure === 'executor_not_found' && detection?.platform === 'windows' ? 'executor_not_found_windows' : failure,
@@ -333,12 +342,11 @@ export class SshKapBridge {
 
   async probe(): Promise<void> {
     const detection = await this.platform();
-    const { platform } = detection;
     const result = await this.collect(
-      this.commandArgs(remoteKimiCommand(this.entry.remoteBin, 'server ensure-daemon --probe', platform)),
+      this.commandArgs(remoteKimiCommand(this.entry.remoteBin, 'server ensure-daemon --probe', detection.platform)),
       VERSION_TIMEOUT_MS,
     );
-    if (checkBootstrapOutput(result.stdout, platform)) return;
+    if (checkBootstrapOutput(result.stdout, detection.platform)) return;
     throw sshFailure(result, detection);
   }
 
@@ -361,15 +369,17 @@ export class SshKapBridge {
   }
 
   private async detectPlatform(): Promise<PlatformDetection> {
-    const probes = ['uname -s', powerShellCommand("if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) { [Console]::WriteLine('KIMI_WINDOWS') }")];
+    const probes = [
+      'uname -s',
+      powerShellCommand("if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) { [Console]::WriteLine('KIMI_WINDOWS') }"),
+    ];
     for (const [index, command] of probes.entries()) {
       const result = await this.collect(this.commandArgs(command), VERSION_TIMEOUT_MS);
       if (result.code === null) throw sshFailure(result);
       if (result.code === 255) {
         const error = sshFailure(result);
-        if (error.failure === 'unknown') return { inconclusiveFailure: error };
-        if (error.failure === 'authentication_failed' || error.failure === 'executor_not_found' || error.failure === 'executor_outdated') return {};
-        throw error;
+        if (TRANSPORT_FAILURES.has(error.failure)) throw error;
+        return error.failure === 'unknown' ? { probeError: error } : {};
       }
       if (result.code !== 0) continue;
       const output = result.stdout.trim().split(/\r?\n/).at(-1) ?? '';
