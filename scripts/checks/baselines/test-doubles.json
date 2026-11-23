@@ -112,7 +112,6 @@
     "apps/vscode/test/kimi-harness.integration.test.ts": 1,
     "apps/vscode/test/replay-resume.integration.test.ts": 1,
     "packages/agent-core-v2/src/human/test/llm/tool-call-ids.test.ts": 1,
-    "packages/kap-server/test/conversationContract.e2e.test.ts": 4,
     "packages/kap-server/test/sessions.test.ts": 2,
     "packages/klient/test/e2e/invalid-input-matrix.test.ts": 4,
     "packages/klient/test/helpers/conformance.ts": 1,
