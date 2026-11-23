@@ -235,6 +235,16 @@ test('submits global and reply feedback with opt-in attachments', async ({ app, 
   await replyDescription.fill('Some feedback');
   await replyDescription.press('Tab');
   await expectStableEditorOnFocus(replyDescription, replyEditor);
+  const replyEditorBox = await replyEditor.boundingBox();
+  if (!replyEditorBox) throw new Error('Feedback editor is not visible');
+  await replyDescription.press('Tab');
+  await expect(replyDescription).not.toBeFocused();
+  await replyEditor.click({ position: { x: replyEditorBox.width / 2, y: replyEditorBox.height / 2 } });
+  await expect(replyDescription).toBeFocused();
+  await replyDescription.press('Tab');
+  await expect(replyDescription).not.toBeFocused();
+  await replyEditor.locator('.feedback-count').click();
+  await expect(replyDescription).toBeFocused();
   const replySubmit = details.getByRole('button', { name: 'Submit', exact: true });
   await expect(replySubmit).toBeDisabled();
   const incorrect = details.getByRole('button', { name: 'Incorrect or incomplete' });
@@ -477,7 +487,8 @@ test('keeps reply feedback visible while scrolling the conversation', async ({ a
   const top = (item: Locator) => item.evaluate(el => el.getBoundingClientRect().top);
   const anchorBefore = await top(active);
   const dialogBefore = await top(dialog);
-  await panes.evaluate(el => el.scrollBy(0, -32));
+  await panes.hover({ position: { x: 16, y: 16 } });
+  await page.mouse.wheel(0, -32);
   await expect.poll(() => top(active)).toBeGreaterThan(anchorBefore);
   await expect.poll(() => top(dialog)).toBeGreaterThan(dialogBefore);
   await panes.evaluate(el => el.scrollTo(0, 0));
