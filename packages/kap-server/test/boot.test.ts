@@ -8,6 +8,7 @@ import { pino } from 'pino';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  createDecorator,
   IBootstrapService,
   IFileSystemStorageService,
   IHostRequestHeaders,
@@ -16,6 +17,7 @@ import {
   ITelemetryService,
   noopTelemetryService,
   Scope,
+  SyncDescriptor,
 } from '@moonshot-ai/agent-core-v2';
 import { RemoteEnvironmentProviderFactory } from '@moonshot-ai/agent-core-v2/remote';
 
@@ -217,6 +219,47 @@ describe('server-v2 boot', () => {
     server = undefined;
 
     expect(shutdown).not.toHaveBeenCalled();
+  });
+
+  it('resolves close only after the engine has finished disposing its services', async () => {
+    home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-engine-dispose-'));
+    const events: string[] = [];
+    let releaseDispose!: () => void;
+    const disposeGate = new Promise<void>((resolve) => {
+      releaseDispose = resolve;
+    });
+    class SlowToDispose {
+      declare readonly _serviceBrand: undefined;
+      async dispose(): Promise<void> {
+        events.push('dispose started');
+        await disposeGate;
+        events.push('dispose finished');
+      }
+    }
+    const ISlowToDispose = createDecorator<SlowToDispose>('slowToDisposeBootTestService');
+    server = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
+      host: '127.0.0.1',
+      port: 0,
+      homeDir: home,
+      logLevel: 'silent',
+      seeds: [[ISlowToDispose, new SyncDescriptor(SlowToDispose)]],
+    });
+    server.core.accessor.get(ISlowToDispose);
+
+    const closing = server.close().then(() => {
+      events.push('close resolved');
+    });
+    server = undefined;
+    try {
+      await vi.waitFor(() => expect(events).toContain('dispose started'));
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(events).toEqual(['dispose started']);
+    } finally {
+      releaseDispose();
+    }
+    await closing;
+    expect(events).toEqual(['dispose started', 'dispose finished', 'close resolved']);
   });
 
   it('completes server cleanup when owned telemetry shutdown fails', async () => {

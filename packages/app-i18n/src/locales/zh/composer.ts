@@ -40,7 +40,7 @@ export default {
   screenshotSessionGone: '原对话已不存在，截图未添加',
   addGoalDesc: '设定目标并持续推进',
   addPlanDesc: '启用计划模式',
-  addSwarmDesc: '启用 swarm 模式',
+  addSwarmDesc: '高消耗：并行运行大量子 agent',
   addTowerDesc: '启用 tower 模式',
   noCommands: '无匹配命令',
   slashSheetTitle: '命令',

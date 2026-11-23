@@ -9,6 +9,7 @@ export * from './cronHumanize';
 export * from './cronSchedule';
 export * from './desktopFlag';
 export * from './emojiData';
+export * from './effortSwitch';
 export * from './faviconInk';
 export * from './fileTypeIcon';
 export * from './fileUrlPath';

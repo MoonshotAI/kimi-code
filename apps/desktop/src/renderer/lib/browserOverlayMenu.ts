@@ -27,9 +27,11 @@ export interface BrowserOverlayMenuRegistration {
   highlightQuery?: () => string;
   onSelect: (itemId: string) => void;
   onClose?: (payload: BrowserOverlayClosed) => void;
+  onDismiss?: () => void;
   width?: number;
   autoWidth?: boolean;
   preserveFocus?: boolean;
+  submitOnCtrlEnter?: boolean;
   placement?: BrowserOverlayPlacement;
   offset?: number;
 }
@@ -177,6 +179,7 @@ export function registerBrowserOverlayMenu(
     pendingRefocus = false;
     finish({ refocus });
     registration.onClose?.(payload);
+    if (payload.reason === 'dismiss') registration.onDismiss?.();
   });
 
   function show(
@@ -221,6 +224,7 @@ export function registerBrowserOverlayMenu(
       ...(registration.autoWidth === true ? { autoWidth: true } : {}),
       initialFocus: options?.initialFocus ?? 'none',
       preserveFocus: options?.preserveFocus ?? registration.preserveFocus,
+      submitOnCtrlEnter: registration.submitOnCtrlEnter === true ? true : undefined,
       items: registration.items(),
       ...(registration.footerStart === undefined ? {} : { footerStart: registration.footerStart() }),
       ...(registration.highlightQuery === undefined ? {} : { query: registration.highlightQuery().slice(0, 1024) }),

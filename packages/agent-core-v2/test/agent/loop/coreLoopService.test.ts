@@ -1,5 +1,6 @@
 import { createControlledPromise } from '@antfu/utils';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { say } from '@moonshot-ai/testkit/model';
+import { afterEach, beforeEach, describe, expect, it, test as base, vi } from 'vitest';
 
 import type { ContentPart, Message, ToolCall } from '@moonshot-ai/core/llm/message';
 import { emptyUsage } from '@moonshot-ai/core/llm/usage';
@@ -28,8 +29,10 @@ import {
   findGenerateCallPrefixBreak,
   InMemoryWireRecordPersistence,
   normalizeGenerateInput,
+  testkitAgentFixtures,
   wireRecordPersistenceServices,
   type TestAgentContext,
+  type TestkitAgentFixtures,
 } from '../../harness';
 import { submitPromptTurn } from './stubs';
 
@@ -937,3 +940,48 @@ describe('core LoopService integration', () => {
     (subject as unknown as { root: { dispose(): void } }).root.dispose();
   });
 });
+
+const testkitTest = base.extend<TestkitAgentFixtures>(testkitAgentFixtures());
+
+testkitTest(
+  'skips onDidFinishStep hooks for aborted steps and keeps them for normal steps',
+  async ({ agent, model }) => {
+    await agent.restorePersisted();
+    const loop = agent.get(IAgentLoopService);
+    const finished: number[] = [];
+    loop.hooks.onDidFinishStep.register('observe-finish', async (hookCtx, next) => {
+      finished.push(hookCtx.step);
+      await next();
+    });
+    const started = new Promise<void>((resolve) => {
+      loop.hooks.onWillBeginStep.register('hold-active', async (hookCtx, next) => {
+        if (hookCtx.turnId === 0) {
+          resolve();
+          await new Promise<void>((done) => {
+            hookCtx.signal.addEventListener('abort', () => done(), { once: true });
+          });
+        }
+        await next();
+      });
+    });
+    const first = submitPromptTurn(loop, {
+      role: 'user',
+      content: [{ type: 'text', text: 'first' }],
+      attributes: { promptId: 'first' },
+    }).turn;
+    await started;
+
+    expect(loop.cancel({ turnId: 0 }, 'stop')).toBe(true);
+    await expect(first.result).resolves.toMatchObject({ type: 'cancelled' });
+    expect(finished).toEqual([]);
+
+    model.script(say('second answer'));
+    const second = submitPromptTurn(loop, {
+      role: 'user',
+      content: [{ type: 'text', text: 'second' }],
+      attributes: { promptId: 'second' },
+    }).turn;
+    await expect(second.result).resolves.toMatchObject({ type: 'completed' });
+    expect(finished).toEqual([1]);
+  },
+);

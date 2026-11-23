@@ -17,7 +17,9 @@ export interface ComposerNativeMenuHost {
     width: number;
     autoWidth?: boolean;
     placement: 'top-start' | 'top-end';
+    submitOnCtrlEnter?: boolean;
     onSelect(id: string): void;
+    onDismiss?(): void;
   }): ComposerNativeMenu;
 }
 

@@ -403,6 +403,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
       legacyAcpBindingSubscription?.dispose();
       await remoteEnvironmentProvider?.dispose();
       core.dispose();
+      await core.instantiation.disposeAsync();
       await appendLogStore.drainRetirements();
       await drainSessionIndexMirror();
       await drainGlobalSearchDisposals();
