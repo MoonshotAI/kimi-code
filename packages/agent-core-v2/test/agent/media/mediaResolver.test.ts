@@ -348,7 +348,10 @@ describe('AgentMediaResolverService video strategy', () => {
     const message = videoMessage(buildKimiFileUrl(FILE_ID));
 
     const capable = await resolveMedia(res, [message], requester({ uploadVideo: upload }));
-    expect(firstPart(capable)).toEqual(msPart('prov-1'));
+    expect(capable[0]!.content).toEqual([
+      { type: 'text', text: `<video path="${canonical}">` },
+      msPart('prov-1'),
+    ]);
 
     const incapable = await resolveMedia(res, 
       [message],
@@ -510,7 +513,10 @@ describe('AgentMediaResolverService video strategy', () => {
     });
 
     const retried = await resolveMedia(res, [message], req);
-    expect(firstPart(retried)).toEqual(msPart('prov-1'));
+    expect(retried[0]!.content).toEqual([
+      { type: 'text', text: `<video path="${canonical}">` },
+      msPart('prov-1'),
+    ]);
     expect(upload).toHaveBeenCalledTimes(2);
   });
 
@@ -746,10 +752,13 @@ describe('AgentMediaResolverService image strategy', () => {
       requester({ providerType: 'anthropic', protocol: 'anthropic' }),
     );
 
-    expect(firstPart(kimi)).toEqual({
-      type: 'image_url',
-      imageUrl: { url: `data:image/bmp;base64,${BMP_BYTES.toString('base64')}` },
-    });
+    expect(kimi[0]!.content).toEqual([
+      { type: 'text', text: `<image path="${canonical}">` },
+      {
+        type: 'image_url',
+        imageUrl: { url: `data:image/bmp;base64,${BMP_BYTES.toString('base64')}` },
+      },
+    ]);
     expect(firstPart(other)).toEqual({ type: 'text', text: `<image path="${canonical}"></image>` });
   });
 
@@ -763,13 +772,19 @@ describe('AgentMediaResolverService image strategy', () => {
       imageUrl: { url: `data:image/bmp;base64,${BMP_BYTES.toString('base64')}` },
     };
 
-    expect(firstPart(await resolveMedia(res, [message], requester({})))).toEqual(inline);
+    expect((await resolveMedia(res, [message], requester({})))[0]!.content).toEqual([
+      { type: 'text', text: `<image path="${canonical}">` },
+      inline,
+    ]);
     const other = requester({ providerType: 'anthropic', protocol: 'anthropic' });
     expect(firstPart(await resolveMedia(res, [message], other))).toEqual({
       type: 'text',
       text: `<image path="${canonical}"></image>`,
     });
-    expect(firstPart(await resolveMedia(res, [message], requester({})))).toEqual(inline);
+    expect((await resolveMedia(res, [message], requester({})))[0]!.content).toEqual([
+      { type: 'text', text: `<image path="${canonical}">` },
+      inline,
+    ]);
   });
 
   it.each([
@@ -913,7 +928,10 @@ describe('AgentMediaResolverService image strategy', () => {
           ? `<image path="${canonical}"></image>`
           : `${IMAGE_CAPABILITY_HINT}\n<image path="${canonical}"></image>`,
       });
-      expect(firstPart(out)).toEqual({ type: 'image_url', imageUrl: { url: PNG_DATA_URL } });
+      expect(out[0]!.content).toEqual([
+        { type: 'text', text: `<image path="${canonical}">` },
+        { type: 'image_url', imageUrl: { url: PNG_DATA_URL } },
+      ]);
       expect(counting.gets).toBe(reads);
     },
   );
@@ -1525,5 +1543,126 @@ describe('AgentMediaResolverService displayPaths', () => {
     ]);
 
     expect(paths.size).toBe(0);
+  });
+});
+
+describe('AgentMediaResolverService media labels', () => {
+  function namedImage(fileId: string, name: string): ContentPart {
+    return { type: 'image_url', imageUrl: { url: buildKimiFileUrl(fileId), name } };
+  }
+
+  it('precedes each user image and video with a name and path label while leaving tool results untouched', async () => {
+    const p1 = await plantCanonical('f1', '.png', PNG_BYTES);
+    const p2 = await plantCanonical('f2', '.png', PNG_BYTES);
+    const pTool = await plantCanonical('f_tool', '.png', PNG_BYTES);
+    const files = new Map([
+      ['f1', { name: 'a.png', bytes: PNG_BYTES }],
+      ['f2', { name: 'b.png', bytes: PNG_BYTES }],
+      ['f_tool', { name: 'tool.png', bytes: PNG_BYTES }],
+    ]);
+    const userMsg: Message = {
+      role: 'user',
+      content: [
+        { type: 'text', text: 'compare these' },
+        namedImage('f1', 'a.png'),
+        namedImage('f2', 'b.png'),
+      ],
+    };
+    const toolMsg: Message = {
+      role: 'tool',
+      toolCallId: 'call_1',
+      content: [
+        { type: 'text', text: `<image path="${pTool}"></image>` },
+        { type: 'image_url', imageUrl: { url: buildKimiFileUrl('f_tool'), name: 'tool.png' } },
+      ],
+    };
+
+    const out = await resolveMedia(resolver(files, sessionDir), [userMsg, toolMsg], requester({}));
+
+    expect(out[0]!.content).toEqual([
+      { type: 'text', text: 'compare these' },
+      { type: 'text', text: `<image name="a.png" path="${p1}">` },
+      { type: 'image_url', imageUrl: { url: PNG_DATA_URL } },
+      { type: 'text', text: `<image name="b.png" path="${p2}">` },
+      { type: 'image_url', imageUrl: { url: PNG_DATA_URL } },
+    ]);
+    expect(out[1]!.content).toEqual([
+      { type: 'text', text: `<image path="${pTool}"></image>` },
+      { type: 'image_url', imageUrl: { url: PNG_DATA_URL } },
+    ]);
+  });
+
+  it('does not duplicate a legacy standalone path tag immediately preceding the media part', async () => {
+    const canonical = await plantCanonical('f1', '.png', PNG_BYTES);
+    const files = new Map([['f1', { name: 'a.png', bytes: PNG_BYTES }]]);
+    const legacyTag: ContentPart = { type: 'text', text: `<image path="${canonical}"></image>` };
+    const message: Message = {
+      role: 'user',
+      content: [legacyTag, namedImage('f1', 'a.png')],
+    };
+
+    const out = await resolveMedia(resolver(files, sessionDir), [message], requester({}));
+
+    expect(out[0]!.content).toEqual([
+      legacyTag,
+      { type: 'image_url', imageUrl: { url: PNG_DATA_URL } },
+    ]);
+  });
+
+  it('names the path tag when the model cannot accept the media or when canonical file is missing', async () => {
+    const imagePath = await plantCanonical('f_img', '.png', PNG_BYTES);
+    const videoPath = await plantCanonical('f_vid', '.mp4', VIDEO_BYTES);
+    const message: Message = {
+      role: 'user',
+      content: [
+        namedImage('f_img', 'shot.png'),
+        { type: 'video_url', videoUrl: { url: buildKimiFileUrl('f_vid'), name: 'clip.mp4' } },
+        namedImage('f_missing', 'gone.png'),
+      ],
+    };
+
+    const out = await resolveMedia(
+      resolver(new Map(), sessionDir),
+      [message],
+      requester({ imageIn: false, videoIn: false }),
+    );
+
+    expect(out[0]!.content).toEqual([
+      {
+        type: 'text',
+        text: `${IMAGE_CAPABILITY_HINT}\n<image name="shot.png" path="${imagePath}"></image>`,
+      },
+      {
+        type: 'text',
+        text: `${VIDEO_CAPABILITY_HINT}\n<video name="clip.mp4" path="${videoPath}"></video>`,
+      },
+      {
+        type: 'text',
+        text: `${IMAGE_CAPABILITY_HINT}\n<image name="gone.png"></image>`,
+      },
+    ]);
+  });
+
+  it('keeps labels and names accurate across request media budget drops', async () => {
+    const older = Buffer.concat([PNG_BYTES, Buffer.alloc(14 * 1024 * 1024)]);
+    const newer = Buffer.concat([PNG_BYTES, Buffer.alloc(2 * 1024 * 1024)]);
+    const oldPath = await plantCanonical('f_old', '.png', older);
+    const newPath = await plantCanonical('f_new', '.png', newer);
+    const files = new Map([
+      ['f_old', { name: 'old.png', bytes: older }],
+      ['f_new', { name: 'new.png', bytes: newer }],
+    ]);
+
+    const out = await resolveMedia(
+      resolver(files, sessionDir),
+      [{ role: 'user', content: [namedImage('f_old', 'old.png'), namedImage('f_new', 'new.png')] }],
+      requester({}),
+    );
+
+    expect(out[0]!.content.slice(0, 2)).toEqual([
+      { type: 'text', text: `<image name="old.png" path="${oldPath}"></image>` },
+      { type: 'text', text: `<image name="new.png" path="${newPath}">` },
+    ]);
+    expect(out[0]!.content[2]!.type).toBe('image_url');
   });
 });

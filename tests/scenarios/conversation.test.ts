@@ -1,6 +1,7 @@
 import { once } from 'node:events';
-import { writeFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { deflateSync } from 'node:zlib';
 
 import { deferred } from '@moonshot-ai/testkit/fixtures';
 import type { KapFrame, KapItem, KapSocket, KapTurn, KapTurnsPage } from '@moonshot-ai/testkit/kap';
@@ -10,6 +11,21 @@ import { test as base, describe, expect } from 'vitest';
 import { scenarioFixtures, type ScenarioFixtures } from './support/scenario';
 
 const test = base.extend<ScenarioFixtures>(scenarioFixtures());
+const visionTest = base.extend<ScenarioFixtures>(
+  scenarioFixtures({
+    provider: 'openai',
+    config: {
+      models: {
+        testkit: {
+          provider: 'testkit',
+          model: 'testkit-model',
+          maxContextSize: 262_144,
+          capabilities: ['thinking', 'image_in'],
+        },
+      },
+    },
+  }),
+);
 
 describe('conversation over KAP', () => {
   test('[L0:kap.first-turn] streams a reply live and persists the same turns', { tags: ['smoke'] }, async ({ kap, model }) => {
@@ -751,7 +767,117 @@ describe('conversation over KAP', () => {
     await expect(kap.rest.post(`${sideAgent}:close`, {})).rejects.toMatchObject({ code: 40401 });
     await expect(kap.rest.get(`${sideAgent}/turns`)).rejects.toMatchObject({ code: 40401 });
   });
+
+  visionTest('exposes local session media paths to the model for pasted and steered images without leaking paths on KAP', async ({ kap, model }) => {
+    const png1 = solidRgbaPng(0x22, 0x66, 0xcc);
+    const png2 = solidRgbaPng(0xcc, 0x55, 0x22);
+    const entered = deferred<AbortSignal>();
+    let firstPath = '';
+    let secondPath = '';
+
+    model.script(
+      (request, { signal }) => {
+        const text = request.texts('user').join('\n');
+        firstPath = /<image name="paste-1\.png" path="([^"]+)">/.exec(text)?.[1] ?? '';
+        entered.resolve(signal);
+        return held('before-steer-image', say(['inspecting', 'discarded']), 1);
+      },
+      (request) => {
+        const text = request.texts('user').join('\n');
+        firstPath = /<image name="paste-1\.png" path="([^"]+)">/.exec(text)?.[1] ?? '';
+        secondPath = /<image name="steer-2\.png" path="([^"]+)">/.exec(text)?.[1] ?? '';
+        const copyScript = [
+          'const fs = require("node:fs");',
+          `fs.copyFileSync(${JSON.stringify(firstPath)}, "out-1.png");`,
+          `fs.copyFileSync(${JSON.stringify(secondPath)}, "out-2.png");`,
+        ].join(' ');
+        return bash(`node -e ${JSON.stringify(copyScript)}`);
+      },
+      say('copied both images'),
+    );
+
+    const socket = await kap.connect();
+    const session = await kap.createSession();
+    await socket.subscribe(session.id);
+
+    const uploaded1 = await uploadImageFile(kap.origin, kap.token, png1, 'paste-1.png');
+    await kap.prompt(session.id, [
+      { type: 'text', text: 'copy pasted image' },
+      { type: 'image', source: { kind: 'file', file_id: uploaded1.id }, name: 'paste-1.png' },
+    ]);
+    await model.hold('before-steer-image').reached();
+    await socket.waitFor((frame) => frame.type === 'item.started' && itemOf(frame)?.type === 'assistant_message');
+    expect(firstPath).not.toBe('');
+    expect(model.request(0).rawBody).toContain('image_url');
+
+    const aborted = once(await entered.promise, 'abort');
+    const uploaded2 = await uploadImageFile(kap.origin, kap.token, png2, 'steer-2.png');
+    await kap.steer(session.id, [
+      { type: 'text', text: 'also copy steered image' },
+      { type: 'image', source: { kind: 'file', file_id: uploaded2.id }, name: 'steer-2.png' },
+    ]);
+    await aborted;
+    await kap.waitIdle(session.id);
+    await socket.waitFor((frame) => isMainTurnEnd(frame, session.id));
+
+    expect(secondPath).not.toBe('');
+    expect(await readFile(join(session.cwd, 'out-1.png'))).toEqual(png1);
+    expect(await readFile(join(session.cwd, 'out-2.png'))).toEqual(png2);
+
+    const turns = await kap.turns(session.id);
+    const userItems = turns.flatMap((turn) => turn.items.filter((item) => item.type === 'user_message'));
+    expect(JSON.stringify(userItems)).not.toContain(firstPath);
+    expect(JSON.stringify(userItems)).not.toContain(secondPath);
+    const wsUserItems = socket.frames.filter((frame) => itemOf(frame)?.type === 'user_message');
+    expect(JSON.stringify(wsUserItems)).not.toContain(firstPath);
+    expect(JSON.stringify(wsUserItems)).not.toContain(secondPath);
+  });
 });
+
+async function uploadImageFile(
+  origin: string,
+  token: string,
+  bytes: Buffer,
+  name: string,
+): Promise<{ readonly id: string }> {
+  const form = new FormData();
+  form.append('file', new Blob([new Uint8Array(bytes)], { type: 'image/png' }), name);
+  const res = await fetch(`${origin}/api/v1/files`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${token}` },
+    body: form,
+  });
+  const body = (await res.json()) as { readonly code: number; readonly data: { readonly id: string } };
+  expect(body.code).toBe(0);
+  return body.data;
+}
+
+function solidRgbaPng(r: number, g: number, b: number): Buffer {
+  const ihdr = Buffer.from([0, 0, 0, 1, 0, 0, 0, 1, 8, 6, 0, 0, 0]);
+  const raw = Buffer.from([0, r, g, b, 0xff]);
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    pngChunk('IHDR', ihdr),
+    pngChunk('IDAT', deflateSync(raw)),
+    pngChunk('IEND', Buffer.alloc(0)),
+  ]);
+}
+
+function pngChunk(type: string, data: Buffer): Buffer {
+  const typeBytes = Buffer.from(type, 'ascii');
+  const len = Buffer.alloc(4);
+  len.writeUInt32BE(data.length, 0);
+  let crc = 0xffffffff;
+  for (const byte of Buffer.concat([typeBytes, data])) {
+    crc ^= byte;
+    for (let bit = 0; bit < 8; bit++) {
+      crc = crc & 1 ? 0xedb88320 ^ (crc >>> 1) : crc >>> 1;
+    }
+  }
+  const crcBuf = Buffer.alloc(4);
+  crcBuf.writeUInt32BE((crc ^ 0xffffffff) >>> 0, 0);
+  return Buffer.concat([len, typeBytes, data, crcBuf]);
+}
 
 function snapshotOf(socket: KapSocket, sessionId: string): KapFrame | undefined {
   return socket.conversation(sessionId).find((frame) => frame.type === 'turns');
