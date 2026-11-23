@@ -458,6 +458,7 @@ describe('LLMRequester service migration coverage', () => {
       ctx.mockNextResponse({ type: 'text', text: 'The lookup result is moon-result.' });
       await ctx.untilTurnEnd();
     });
+
   });
 
   describe('request failure logging', () => {
