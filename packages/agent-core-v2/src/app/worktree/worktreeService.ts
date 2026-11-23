@@ -1,6 +1,6 @@
 import { readlink } from 'node:fs/promises';
 
-import { basename, dirname, isAbsolute, join, relative } from 'pathe';
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'pathe';
 
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { sameDir } from '#/_base/utils/workdir-slug';
@@ -253,12 +253,11 @@ export class WorktreeService implements IWorktreeService {
     const forceArgs = check.missing || check.uncommittedFiles > 0 ? ['--force'] : [];
     const removed = await this.git(['worktree', 'remove', ...forceArgs, check.path], repo.root);
     if (removed.exitCode !== 0) throw gitFailed(`Could not remove the worktree at ${check.path}.`, removed);
-    if (input.deleteBranch && check.branch !== undefined) {
-      const deleteArgs =
-        target.worktree.head !== undefined
-          ? ['update-ref', '-d', `refs/heads/${check.branch}`, target.worktree.head]
-          : ['branch', '-D', check.branch];
-      const deleted = await this.git(deleteArgs, repo.root);
+    if (input.deleteBranch && check.branch !== undefined && target.worktree.head !== undefined) {
+      const deleted = await this.git(
+        ['update-ref', '-d', `refs/heads/${check.branch}`, target.worktree.head],
+        repo.root,
+      );
       if (deleted.exitCode !== 0) throw gitFailed(`Could not delete branch ${check.branch}.`, deleted);
     }
   }
@@ -422,9 +421,11 @@ export class WorktreeService implements IWorktreeService {
     const parent = await canonicalPath(this.fs, this.worktreesDir(repo.root));
     const found: KimiEntry[] = [];
     for (const entry of repo.entries.slice(1)) {
+      const lstat = await this.fs.lstat(entry.path).catch(() => undefined);
+      if (lstat?.isSymbolicLink === true) continue;
       const path = await canonicalPath(this.fs, entry.path);
       if (!sameDir(dirname(path), parent)) continue;
-      const missing = entry.prunable || !(await this.isDirectory(path));
+      const missing = entry.prunable || lstat?.isDirectory !== true;
       found.push({
         entry,
         worktree: { path, name: basename(path), head: entry.head, branch: entry.branch, missing },
@@ -434,8 +435,13 @@ export class WorktreeService implements IWorktreeService {
   }
 
   private async findKimiEntry(repo: Repository, path: string): Promise<KimiEntry> {
-    const wanted = await canonicalPath(this.fs, path);
-    const match = (await this.kimiEntries(repo)).find(({ worktree }) => sameDir(worktree.path, wanted));
+    const normalized = resolve(path);
+    const lstat = await this.fs.lstat(normalized).catch(() => undefined);
+    const wanted = lstat?.isSymbolicLink === true ? undefined : await canonicalPath(this.fs, normalized);
+    const match =
+      wanted === undefined
+        ? undefined
+        : (await this.kimiEntries(repo)).find(({ worktree }) => sameDir(worktree.path, wanted));
     if (match === undefined) {
       throw new Error2(ErrorCodes.WORKTREE_NOT_FOUND, `${path} is not a Kimi worktree of ${repo.root}.`, {
         details: { path, repoRoot: repo.root },
@@ -515,6 +521,7 @@ export class WorktreeService implements IWorktreeService {
 
   private async countUniqueCommits(repo: Repository, target: KimiEntry, deleteBranch: boolean): Promise<number> {
     const { branch, head } = target.worktree;
+    if (head === undefined) return 0;
     const otherHeads = repo.entries
       .filter((entry) => entry !== target.entry)
       .flatMap((entry) => (entry.head === undefined ? [] : [entry.head]));
@@ -525,7 +532,6 @@ export class WorktreeService implements IWorktreeService {
       tip = `refs/heads/${branch}`;
       excluded = [`--exclude=${branch}`, '--branches'];
     } else {
-      if (head === undefined) return 0;
       tip = head;
       excluded = ['--branches'];
     }
