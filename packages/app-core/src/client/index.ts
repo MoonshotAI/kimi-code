@@ -5,6 +5,7 @@ export * from './conversationToTurns';
 export * from './diffFullTexts';
 export * from './diffLines';
 export * from './toolCalls';
+export * from './mcpAuthCard';
 export * from './taskNotification';
 export * from './noticeFormat';
 export * from './parseDiff';

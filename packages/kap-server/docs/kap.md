@@ -120,6 +120,12 @@ curl -sf "${ORIGIN}/api/v1/sessions/${SID}/agents/main/turns?page_size=5" \
 - **`Item` union** (`type`): `user_message` (`{ prompt_ids, placement, text, ... }`), `assistant_message` (`{ text }`), `reasoning` (`{ text }`), `tool_call` (`{ name, stage?, input?, output?, error?, fields?, display?, interaction_id?, agent_refs? }`), `notification`, `system`.
 - **Attachments & skills**: Upload via `POST /api/v1/files` (`multipart/form-data` field `file`) and reference `id` in `/prompts` `content`; list/invoke skills via `GET /api/v1/sessions/{session_id}/skills` and `POST .../skills/{name}:activate`.
 
+### WebSocket notices
+
+`notice` frames are live warning or error events from an agent. They are not part of the turns and are not replayed on reconnect. On subscribe, the initial `turns` or `turns.failed` frame precedes turn, item, and notice frames.
+
+`model.not_configured` reports that the main session's saved model alias is no longer configured; `title` contains the removed alias. History and read endpoints remain read-only, and the server does not rebind or clear the model. First-party UI may use this event to let the user choose another model through the existing model picker.
+
 | Method & Path | Gate | Summary |
 | --- | --- | --- |
 | `GET /api/v1/healthz` / `GET /api/v1/meta` | `baseline` | Liveness probe (`{ ok: true }`) and server metadata / `product` / `capabilities` / `home_dir` (the Kimi Code data directory) |

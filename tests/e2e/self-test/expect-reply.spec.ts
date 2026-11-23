@@ -61,6 +61,17 @@ selfTest('expectReply', {
         await product.expectReply('The grass is green.');
       },
     },
+    'does not join the words before a tool call with the words after it': {
+      workspace: { 'a.txt': 'hello\n' },
+      run: async ({ product, model }) => {
+        model.script(read('a.txt', { text: 'Before the tool.' }), say('After the tool.'));
+        await product.send('Say something, read a.txt, then say something else.');
+        await product.waitIdle();
+        await expect(product.expectReply('Before the tool.After the tool.')).rejects.toThrow('did not find "Before the tool.After the tool."');
+        await product.expectReply('Before the tool.');
+        await product.expectReply('After the tool.');
+      },
+    },
     'does not take a tool card for a reply': {
       workspace: { 'a.txt': 'hello\n' },
       run: async ({ product, model }) => {

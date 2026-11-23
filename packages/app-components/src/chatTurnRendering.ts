@@ -191,6 +191,7 @@ export function assistantRenderBlocks(turn: ChatTurn, options?: { notifyUserEnab
     if (
       block.kind === 'tool' &&
       rendersToolCard(block) &&
+      !block.tool.mcpAuth &&
       !rendersProgressRow(block, options?.notifyUserEnabled) &&
       normalizeToolName(block.tool.name) !== 'task'
     ) {
