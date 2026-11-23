@@ -435,8 +435,7 @@ export class OAuthService extends Disposable implements IOAuthService {
   }
 
   private readUserConfigShape(): ManagedKimiConfigShape {
-    const providers =
-      this.config.inspect<Record<string, ProviderConfig>>(PROVIDERS_SECTION).userValue ?? {};
+    const providers = this.providerService.list();
     const models = this.config.inspect<Record<string, ModelRecord>>(MODELS_SECTION).userValue ?? {};
     const services =
       this.config.inspect<ManagedKimiConfigShape['services']>(SERVICES_SECTION).userValue;

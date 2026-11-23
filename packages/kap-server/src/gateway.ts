@@ -54,11 +54,12 @@ export interface RunningWebGateway {
 function readConfiguredOAuthFromConfigFile(configPath: string): ManagedOAuthRef | undefined {
   try {
     const parsed = parseToml(readFileSync(configPath, 'utf8'));
-    const converted = providersFromToml(parsed[PROVIDERS_SECTION]);
-    if (converted === null || typeof converted !== 'object') return undefined;
-    const entry = ProviderConfigSchema.safeParse(
-      (converted as Record<string, unknown>)[KIMI_CODE_PROVIDER_NAME],
-    );
+    const providers = parsed[PROVIDERS_SECTION];
+    if (providers === null || typeof providers !== 'object') return undefined;
+    const converted = providersFromToml({
+      [KIMI_CODE_PROVIDER_NAME]: (providers as Record<string, unknown>)[KIMI_CODE_PROVIDER_NAME],
+    }) as Record<string, unknown>;
+    const entry = ProviderConfigSchema.safeParse(converted[KIMI_CODE_PROVIDER_NAME]);
     return entry.success ? entry.data.oauth : undefined;
   } catch {
     return undefined;

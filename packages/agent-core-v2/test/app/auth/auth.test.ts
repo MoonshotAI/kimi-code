@@ -103,11 +103,13 @@ describe('OAuthService', () => {
   let providerSet: ReturnType<typeof vi.fn<(name: string, config: ProviderConfig) => Promise<void>>>;
   let configSet: ReturnType<typeof vi.fn>;
   let configReplace: ReturnType<typeof vi.fn<(domain: string, value: unknown) => Promise<void>>>;
+  let rawProviders: Record<string, unknown> | undefined;
   let events: Event2[];
   let providerChangedEmitter: Emitter<ProvidersChangedEvent>;
 
   beforeEach(() => {
     disposables = new DisposableStore();
+    rawProviders = undefined;
     providerChangedEmitter = new Emitter<ProvidersChangedEvent>();
     providers = {
       [OAUTH_PROVIDER]: {
@@ -219,7 +221,7 @@ describe('OAuthService', () => {
   }
 
   function configBacking(): Record<string, unknown> {
-    return { providers, models, services, defaultModel, thinking };
+    return { providers: rawProviders ?? providers, models, services, defaultModel, thinking };
   }
 
   function stubManagedModelsFetch(): ReturnType<typeof vi.fn> {
@@ -809,6 +811,24 @@ describe('OAuthService', () => {
     expect(configReplace).toHaveBeenCalledWith('providers', {
       [NON_OAUTH_PROVIDER]: { type: 'openai', apiKey: 'sk-test' },
     });
+  });
+
+  it('logout preserves unrelated providers with invalid raw config entries', async () => {
+    providers = {
+      [OAUTH_PROVIDER]: providers[OAUTH_PROVIDER]!,
+    };
+    rawProviders = {
+      ...providers,
+      broken: { oauth: 'invalid' },
+    };
+
+    await expect(createService().logout(OAUTH_PROVIDER)).resolves.toEqual({
+      logged_out: true,
+      provider: OAUTH_PROVIDER,
+    });
+
+    expect(configReplace).toHaveBeenCalledWith('providers', {});
+    expect(rawProviders['broken']).toEqual({ oauth: 'invalid' });
   });
 
   it('logout removes managed provider models and dangling defaults', async () => {
