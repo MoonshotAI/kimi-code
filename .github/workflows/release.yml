@@ -266,8 +266,12 @@ jobs:
     name: Native release artifact
     needs: candidate
     if: needs.candidate.outputs.publish == 'true' && needs.candidate.outputs.cli-tag != ''
+    permissions:
+      actions: read
+      contents: read
     uses: ./.github/workflows/_native-build.yml
     with:
+      web-ci-run-id: ${{ needs.candidate.outputs.ci-run-id }}
       upload-artifact-prefix: kimi-code-native
       retention-days: 7
       sign-macos: true
