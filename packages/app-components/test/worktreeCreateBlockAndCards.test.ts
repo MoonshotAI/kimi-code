@@ -64,7 +64,7 @@ describe('CreateProgressBlock', () => {
       steps: [
         step('fetch', 'done', { ref: 'origin/main', command: 'git fetch --no-tags origin main' }),
         step('create', 'running', { ref: 'origin/main', command: 'git worktree add --no-track -b kimi/1 /w origin/main' }),
-        step('script', 'pending'),
+        step('changes', 'pending'),
       ],
     });
     mount(CreateProgressBlock, { worktree, sessionId: 's1' });
@@ -171,7 +171,7 @@ describe('CreateDecisionCard', () => {
     expect(onAction.mock.calls.map((call) => call[0])).toEqual(['useLocal', 'manage']);
   });
 
-  it('lists conflict files and shows the script to confirm', async () => {
+  it('lists conflict files', async () => {
     const conflict = createDecisionCardView(
       sessionWorktree('failed', {}, { failure: { kind: 'conflict', remoteRef: 'origin/main', conflictFiles: ['src/a.ts', 'src/b.ts'] } }),
       t,
@@ -179,15 +179,6 @@ describe('CreateDecisionCard', () => {
     mount(CreateDecisionCard, { view: conflict });
     await nextTick();
     expect([...host.querySelectorAll('.wcc-file')].map((item) => item.textContent)).toEqual(['src/a.ts', 'src/b.ts']);
-    app?.unmount();
-
-    const confirm = createDecisionCardView(
-      sessionWorktree('awaiting_script_confirmation', { path: '/w' }, { script: 'pending', scriptContent: 'pnpm install' }),
-      t,
-    )!;
-    mount(CreateDecisionCard, { view: confirm });
-    await nextTick();
-    expect(text('.wcc-code')).toBe('pnpm install');
   });
 
   it('runs the primary action on Enter outside editable fields and blocks actions while busy', async () => {

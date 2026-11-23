@@ -16,7 +16,6 @@ export function worktreeSetup(overrides: Partial<AppWorktreeSetup> = {}): AppWor
     steps: [],
     commandsRan: 0,
     startedAt: '2026-11-18T00:00:00.000Z',
-    script: 'none',
     ...overrides,
   };
 }

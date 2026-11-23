@@ -1,7 +1,7 @@
 import { createPinia } from 'pinia';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { AppWorkspace, WorkspaceGitBranches, WorktreeSetupScript } from '@moonshot-ai/app-core/api';
+import type { AppWorkspace, WorkspaceGitBranches } from '@moonshot-ai/app-core/api';
 import { STORAGE_KEYS } from '@moonshot-ai/app-core/lib';
 import { resetKimiClientDeps, setKimiClientDeps } from '../src/client/deps';
 import { useNewSessionEnvironmentStore } from '../src/stores/newSessionEnvironment';
@@ -9,16 +9,6 @@ import { workspacesStore } from '../src/stores/workspaces';
 import { memoryStorage } from '../src/testing/worktreeFixtures';
 
 const getWorkspaceGitBranches = vi.fn<(workspaceId: string) => Promise<WorkspaceGitBranches>>();
-const getWorktreeSetupScript = vi.fn<(workspaceId: string) => Promise<WorktreeSetupScript>>();
-const saveWorktreeSetupScript = vi.fn<(workspaceId: string, content: string) => Promise<WorktreeSetupScript>>();
-
-const NO_SCRIPT: WorktreeSetupScript = { path: '/git/.kimi/setup.sh', exists: false };
-const SCRIPT: WorktreeSetupScript = {
-  path: '/git/.kimi/setup.sh',
-  exists: true,
-  content: 'pnpm install',
-  needsConfirmation: false,
-};
 
 function workspace(id: string, overrides: Partial<AppWorkspace> = {}): AppWorkspace {
   return { id, root: `/${id}`, name: id, kind: 'managed', additionalDirs: [], sessionCount: 0, ...overrides };
@@ -49,11 +39,8 @@ beforeEach(() => {
   vi.stubGlobal('localStorage', memoryStorage(storage));
   getWorkspaceGitBranches.mockReset();
   getWorkspaceGitBranches.mockResolvedValue(repo());
-  getWorktreeSetupScript.mockReset();
-  getWorktreeSetupScript.mockResolvedValue(NO_SCRIPT);
-  saveWorktreeSetupScript.mockReset();
   setKimiClientDeps({
-    api: () => ({ getWorkspaceGitBranches, getWorktreeSetupScript, saveWorktreeSetupScript }) as never,
+    api: () => ({ getWorkspaceGitBranches }) as never,
     t: (key) => key,
   });
   const store = workspacesStore();
@@ -217,89 +204,6 @@ describe('new session environment', () => {
 
     const restarted = freshStore();
     expect(restarted.useRemote('git')).toBe(true);
-  });
-
-  it('loads the project setup script once and exposes it', async () => {
-    getWorktreeSetupScript.mockResolvedValue(SCRIPT);
-    const store = freshStore();
-    expect(store.setupScript('git')).toBeNull();
-
-    await Promise.all([store.ensureSetupScript('git'), store.ensureSetupScript('git')]);
-    await store.ensureSetupScript('git');
-
-    expect(getWorktreeSetupScript).toHaveBeenCalledExactlyOnceWith('git');
-    expect(store.setupScript('git')).toEqual(SCRIPT);
-    expect(store.view('git')).toMatchObject({ setupScript: SCRIPT, runSetupScript: true });
-
-    await store.ensureSetupScript('git', { force: true });
-    expect(getWorktreeSetupScript).toHaveBeenCalledTimes(2);
-  });
-
-  it('does not ask a remote host for a setup script', async () => {
-    const store = freshStore();
-    await store.ensureSetupScript('remote');
-    expect(getWorktreeSetupScript).not.toHaveBeenCalled();
-    expect(store.setupScript('remote')).toBeNull();
-  });
-
-  it('keeps the raw error when the script cannot be read and clears it once it can', async () => {
-    getWorktreeSetupScript.mockRejectedValueOnce(new Error('offline'));
-    const store = freshStore();
-    await store.ensureSetupScript('git');
-    expect(store.setupScript('git')).toBeNull();
-    expect(store.setupScriptError('git')).toBe('offline');
-
-    await store.ensureSetupScript('git');
-    expect(store.setupScript('git')).toEqual(NO_SCRIPT);
-    expect(store.setupScriptError('git')).toBeNull();
-  });
-
-  it('saves the script and adopts what the server returns, including a deletion', async () => {
-    const store = freshStore();
-    await store.ensureSetupScript('git');
-    saveWorktreeSetupScript.mockResolvedValueOnce(SCRIPT);
-
-    expect(await store.saveSetupScript('git', 'pnpm install')).toBe(true);
-    expect(saveWorktreeSetupScript).toHaveBeenCalledExactlyOnceWith('git', 'pnpm install');
-    expect(store.setupScript('git')).toEqual(SCRIPT);
-
-    saveWorktreeSetupScript.mockResolvedValueOnce(NO_SCRIPT);
-    expect(await store.saveSetupScript('git', '')).toBe(true);
-    expect(store.setupScript('git')).toEqual(NO_SCRIPT);
-  });
-
-  it('keeps the previous script and reports the error when saving fails', async () => {
-    getWorktreeSetupScript.mockResolvedValue(SCRIPT);
-    const store = freshStore();
-    await store.ensureSetupScript('git');
-    saveWorktreeSetupScript.mockRejectedValueOnce(new Error('content too large'));
-
-    expect(await store.saveSetupScript('git', 'x')).toBe(false);
-    expect(store.setupScript('git')).toEqual(SCRIPT);
-    expect(store.setupScriptError('git')).toBe('content too large');
-  });
-
-  it('sends the script opt-out only when a script exists and the toggle is off', async () => {
-    const store = freshStore();
-    store.selectEnvironment('worktree');
-    await store.ensureBranches('git');
-    await store.ensureSetupScript('git');
-    expect(store.runSetupScript).toBe(true);
-    expect(store.worktreeRequest('git')).toEqual({ sourceBranch: 'main' });
-
-    store.setRunSetupScript(false);
-    expect(store.runSetupScript).toBe(false);
-    expect(store.worktreeRequest('git')).toEqual({ sourceBranch: 'main' });
-
-    saveWorktreeSetupScript.mockResolvedValueOnce(SCRIPT);
-    await store.saveSetupScript('git', 'pnpm install');
-    expect(store.worktreeRequest('git')).toEqual({ sourceBranch: 'main', runSetupScript: false });
-
-    store.setRunSetupScript(true);
-    expect(store.worktreeRequest('git')).toEqual({ sourceBranch: 'main' });
-    store.setRunSetupScript(false);
-    store.setRunSetupScript(undefined);
-    expect(store.runSetupScript).toBe(true);
   });
 
   it('ignores a stale branch response', async () => {

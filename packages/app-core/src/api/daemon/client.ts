@@ -87,7 +87,6 @@ import type {
   WorktreeInspection,
   WorktreeList,
   WorktreeLookup,
-  WorktreeSetupScript,
 } from '../types';
 import type { RcDeviceList } from '../../lib/rcDevicesApi';
 import { DaemonHttpClient, FORK_TIMEOUT_MS, type RestQuery } from './http';
@@ -142,7 +141,6 @@ import {
   toWorktreeInspection,
   toWorktreeList,
   toWorktreeLookup,
-  toWorktreeSetupScript,
 } from './mappers';
 import type {
   WireAuthResult,
@@ -202,7 +200,6 @@ import type {
   WireLookupWorktreeResponse,
   WirePullRequest,
   WirePullRequestBatchResult,
-  WireWorktreeSetupScript,
   WireRemoveWorktreeResponse,
   WireWorkspaceGitBranches,
 } from './wire';
@@ -1679,23 +1676,6 @@ export class DaemonKimiWebApi implements KimiWebApi {
   async lookupWorktree(path: string): Promise<WorktreeLookup | null> {
     const data = await this.http.post<WireLookupWorktreeResponse>('/worktrees:lookup', { path });
     return toWorktreeLookup(data);
-  }
-
-  async getWorktreeSetupScript(workspaceId: string, options?: ReadRequestOptions): Promise<WorktreeSetupScript> {
-    const data = await this.http.get<WireWorktreeSetupScript>(
-      `/workspaces/${encodeURIComponent(workspaceId)}/worktree-setup-script`,
-      undefined,
-      options,
-    );
-    return toWorktreeSetupScript(data);
-  }
-
-  async saveWorktreeSetupScript(workspaceId: string, content: string): Promise<WorktreeSetupScript> {
-    const data = await this.http.put<WireWorktreeSetupScript>(
-      `/workspaces/${encodeURIComponent(workspaceId)}/worktree-setup-script`,
-      { content },
-    );
-    return toWorktreeSetupScript(data);
   }
 
   async browseFs(path: string | undefined, signal?: AbortSignal): Promise<FsBrowseResult> {

@@ -34,7 +34,6 @@ function worktree(
       steps: [],
       commandsRan: 0,
       startedAt: '2026-11-18T00:00:00.000Z',
-      script: 'none',
       ...setup,
     },
   };
@@ -88,7 +87,6 @@ describe('prompt gating predicates', () => {
     ['running', true],
     ['failed', true],
     ['stopped', true],
-    ['awaiting_script_confirmation', true],
     ['ready', false],
     ['local', false],
   ] as const)('holds prompts while status is %s: %s', (status, held) => {
@@ -122,20 +120,13 @@ describe('sessionWorktreeCard', () => {
     ['conflict', 'conflict'],
     ['disk_full', 'diskFull'],
     ['create_failed', 'createFailed'],
-    ['script_failed', 'scriptFailed'],
-    ['script_timeout', 'scriptTimeout'],
   ] as const)('maps the %s failure to the %s card', (kind, card) => {
     expect(sessionWorktreeCard(worktree('failed', {}, { failure: { kind } }))).toBe(card);
   });
 
-  it('distinguishes a stopped script from a stopped creation', () => {
-    expect(sessionWorktreeCard(worktree('stopped', {}, { stoppedStep: 'script' }))).toBe('scriptStopped');
+  it('shows the stopped card whichever step was stopped', () => {
     expect(sessionWorktreeCard(worktree('stopped', {}, { stoppedStep: 'fetch' }))).toBe('stopped');
     expect(sessionWorktreeCard(worktree('stopped'))).toBe('stopped');
-  });
-
-  it('asks for confirmation before running a repository script', () => {
-    expect(sessionWorktreeCard(worktree('awaiting_script_confirmation'))).toBe('scriptConfirm');
   });
 
   it('reports a missing directory, and separately a missing branch', () => {
@@ -150,10 +141,6 @@ describe('sessionWorktreeCard', () => {
     expect(
       sessionWorktreeCard(worktree('failed', {}, { stoppedStep: 'create', failure: { kind: 'disk_full' } })),
     ).toBe('diskFull');
-    expect(
-      sessionWorktreeCard(worktree('failed', {}, { stoppedStep: 'script', failure: { kind: 'script_failed', exitCode: 1 } })),
-    ).toBe('scriptFailed');
-    expect(sessionWorktreeCard(worktree('failed', {}, { stoppedStep: 'script' }))).toBe('scriptFailed');
     expect(sessionWorktreeCard(worktree('failed', {}, { stoppedStep: 'prune' }))).toBe('createFailed');
   });
 
@@ -177,21 +164,11 @@ describe('sessionMainDirectory', () => {
     expect(sessionMainDirectory({ cwd: '/wt/a', worktree: worktree('ready', { missing: true }) }, '/repo')).toBe('/wt/a');
   });
 
-  it('uses the worktree as soon as it exists, before the setup script has finished', () => {
-    const states = [
-      worktree('running'),
-      worktree('awaiting_script_confirmation'),
-      worktree('failed', {}, { stoppedStep: 'script', failure: { kind: 'script_failed' } }),
-      worktree('stopped', {}, { stoppedStep: 'script' }),
-    ];
-    for (const state of states) {
-      expect(sessionMainDirectory({ cwd: '/wt/a', worktree: state }, '/repo')).toBe('/wt/a');
-      expect(isWorktreeSession({ worktree: state })).toBe(true);
-    }
+  it('uses the worktree as soon as it exists, before setup has finished', () => {
+    expect(sessionMainDirectory({ cwd: '/wt/a', worktree: worktree('running') }, '/repo')).toBe('/wt/a');
+    expect(isWorktreeSession({ worktree: worktree('running') })).toBe(true);
     expect(sessionMainDirectory({ cwd: '/repo', worktree: worktree('running') }, '/repo')).toBe('/wt/a');
     expect(classifySessionEnvironment({ worktree: worktree('running') })).toBe('settingUp');
-    expect(classifySessionEnvironment({ worktree: worktree('awaiting_script_confirmation') })).toBe('worktree');
-    expect(sessionWorktreeHoldsPrompts({ worktree: worktree('awaiting_script_confirmation') })).toBe(true);
   });
 
   it('returns to the project root once a missing worktree was abandoned', () => {
@@ -273,10 +250,7 @@ describe('worktree source resolution', () => {
       useRemote: true,
     });
     const topic = resolveWorktreeSource(info, { branch: 'topic' })!;
-    expect(buildWorktreeSetupRequest(topic, { useRemote: true, runSetupScript: false })).toEqual({
-      sourceBranch: 'topic',
-      runSetupScript: false,
-    });
+    expect(buildWorktreeSetupRequest(topic, { useRemote: true })).toEqual({ sourceBranch: 'topic' });
     expect(buildWorktreeSetupRequest(main)).toEqual({ sourceBranch: 'main', includeLocalChanges: true });
   });
 });

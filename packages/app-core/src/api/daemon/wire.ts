@@ -96,10 +96,9 @@ export interface WireWorktreeSetupRequest {
   source_branch: string;
   include_local_changes?: boolean;
   use_remote?: boolean;
-  run_setup_script?: boolean;
 }
 
-export type WireWorktreeSetupStepKind = 'fetch' | 'prune' | 'create' | 'changes' | 'script';
+export type WireWorktreeSetupStepKind = 'fetch' | 'prune' | 'create' | 'changes';
 
 export interface WireWorktreeSetupStep {
   kind: WireWorktreeSetupStepKind;
@@ -116,17 +115,14 @@ export interface WireWorktreeSetupFailure {
     | 'fetch_timeout'
     | 'conflict'
     | 'disk_full'
-    | 'create_failed'
-    | 'script_failed'
-    | 'script_timeout';
+    | 'create_failed';
   remote_ref?: string;
   conflict_files?: string[];
-  exit_code?: number;
   timeout_seconds?: number;
 }
 
 export interface WireWorktreeSetup {
-  status: 'running' | 'ready' | 'failed' | 'stopped' | 'awaiting_script_confirmation' | 'local';
+  status: 'running' | 'ready' | 'failed' | 'stopped' | 'local';
   purpose: 'create' | 'recreate';
   request: WireWorktreeSetupRequest;
   steps: WireWorktreeSetupStep[];
@@ -135,8 +131,6 @@ export interface WireWorktreeSetup {
   ended_at?: string;
   stopped_step?: WireWorktreeSetupStepKind;
   failure?: WireWorktreeSetupFailure;
-  script: 'none' | 'ran' | 'skipped' | 'pending';
-  script_content?: string;
 }
 
 export interface WireSessionWorktree {
@@ -265,13 +259,6 @@ export interface WirePullRequestBatchResult {
   results: Record<string, WirePullRequest | null>;
   errors: Record<string, { code: number; msg: string }>;
   statuses?: Record<string, WirePullRequestLookupStatus>;
-}
-
-export interface WireWorktreeSetupScript {
-  path: string;
-  exists: boolean;
-  content?: string;
-  needs_confirmation?: boolean;
 }
 
 export interface WireSessionRatingResult {

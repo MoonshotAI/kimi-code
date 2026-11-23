@@ -1,6 +1,5 @@
 export { default as CreateEnvironmentPicker } from './CreateEnvironmentPicker.vue';
 export { default as CreateSourceBranchPicker } from './CreateSourceBranchPicker.vue';
-export { default as CreateSetupScriptDialog } from './CreateSetupScriptDialog.vue';
 export { default as CreateProgressBlock } from './CreateProgressBlock.vue';
 export { default as CreateDecisionCard } from './CreateDecisionCard.vue';
 export { default as CreateInvalidCard } from './CreateInvalidCard.vue';

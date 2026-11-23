@@ -43,7 +43,6 @@ import type {
   WorktreeInspection,
   WorktreeList,
   WorktreeLookup,
-  WorktreeSetupScript,
   QuestionAnswer,
   QuestionItem,
   QuestionOption,
@@ -95,7 +94,6 @@ import type {
   WirePullRequest,
   WirePullRequestBatchResult,
   WirePullRequestLookupStatus,
-  WireWorktreeSetupScript,
   WireEvent,
   WireHost,
   WireConfig,
@@ -154,7 +152,6 @@ export function toAppWorktreeSetupRequest(wire: WireWorktreeSetupRequest): AppWo
     sourceBranch: wire.source_branch,
     includeLocalChanges: wire.include_local_changes,
     useRemote: wire.use_remote,
-    runSetupScript: wire.run_setup_script,
   };
 }
 
@@ -162,7 +159,6 @@ export function toWireWorktreeSetupRequest(app: AppWorktreeSetupRequest): WireWo
   const wire: WireWorktreeSetupRequest = { source_branch: app.sourceBranch };
   if (app.includeLocalChanges !== undefined) wire.include_local_changes = app.includeLocalChanges;
   if (app.useRemote !== undefined) wire.use_remote = app.useRemote;
-  if (app.runSetupScript !== undefined) wire.run_setup_script = app.runSetupScript;
   return wire;
 }
 
@@ -198,11 +194,8 @@ export function toAppSessionWorktree(wire: WireSessionWorktree): AppSessionWorkt
               kind: setup.failure.kind,
               remoteRef: setup.failure.remote_ref,
               conflictFiles: setup.failure.conflict_files,
-              exitCode: setup.failure.exit_code,
               timeoutSeconds: setup.failure.timeout_seconds,
             },
-      script: setup.script,
-      scriptContent: setup.script_content,
     },
   };
 }
@@ -211,8 +204,6 @@ const SESSION_WORKTREE_ACTION_SEGMENTS: Record<SessionWorktreeAction, string> = 
   retry: 'retry',
   cancel: 'cancel',
   useLocal: 'use_local',
-  skipScript: 'skip_script',
-  runScript: 'run_script',
   recreate: 'recreate',
 };
 
@@ -351,13 +342,6 @@ export function toPullRequestBatchResult(wire: WirePullRequestBatchResult): Pull
     statuses[root] = { status: lookup.pull_request_status, error: lookup.pull_request_error };
   }
   return { results: wire.results ?? {}, statuses, errors: wire.errors ?? {} };
-}
-
-export function toWorktreeSetupScript(wire: WireWorktreeSetupScript): WorktreeSetupScript {
-  const script: WorktreeSetupScript = { path: wire.path, exists: wire.exists };
-  if (wire.content !== undefined) script.content = wire.content;
-  if (wire.needs_confirmation !== undefined) script.needsConfirmation = wire.needs_confirmation;
-  return script;
 }
 
 export function toAppWorkspace(wire: WireWorkspace): AppWorkspace {

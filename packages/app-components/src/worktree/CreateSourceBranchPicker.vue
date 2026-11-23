@@ -3,12 +3,10 @@ import { computed, nextTick, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { newSessionEnvironmentStore } from '@moonshot-ai/app-client/stores';
 import { Icon, MenuItem, Switch, menuNavigationIndex, useImeComposition } from '@moonshot-ai/app-ui';
-import CreateSetupScriptDialog from './CreateSetupScriptDialog.vue';
 import CreatePicker from './CreatePicker.vue';
 
 const props = defineProps<{
   workspaceId?: string | null;
-  workspaceName?: string;
 }>();
 
 interface BranchRow {
@@ -35,7 +33,6 @@ const hoverRef = computed(() =>
   view.value.usesRemote ? (selection.value?.branch.remoteRef ?? branchName.value) : branchName.value,
 );
 
-const picker = ref<InstanceType<typeof CreatePicker> | null>(null);
 const open = ref(false);
 const searchRef = ref<HTMLInputElement | null>(null);
 const listRef = ref<HTMLElement | null>(null);
@@ -108,7 +105,6 @@ watch(open, async (isOpen) => {
   }
   hideHover();
   void store.refreshBranches(props.workspaceId);
-  void store.ensureSetupScript(props.workspaceId);
   activeIndex.value = rows.value.findIndex((row) => row.selected);
   await nextTick();
   searchRef.value?.focus({ preventScroll: true });
@@ -153,14 +149,6 @@ function setUseRemote(value: boolean): void {
   store.setUseRemote(props.workspaceId, value);
 }
 
-const scriptExists = computed(() => view.value.setupScript?.exists === true);
-const scriptDialogOpen = ref(false);
-
-function openScriptDialog(): void {
-  picker.value?.close();
-  scriptDialogOpen.value = true;
-}
-
 const hoverOpen = ref(false);
 let hoverTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -186,7 +174,6 @@ onUnmounted(hideHover);
 <template>
   <CreatePicker
     v-if="visible"
-    ref="picker"
     v-model:open="open"
     class="wsb"
     data-worktree-source-branch
@@ -218,11 +205,6 @@ onUnmounted(hideHover);
           <span>{{ t('worktreeCreate.branch.includeLocalChanges') }}</span>
         </div>
       </div>
-      <CreateSetupScriptDialog
-        v-model:open="scriptDialogOpen"
-        :workspace-id="workspaceId"
-        :workspace-name="workspaceName"
-      />
     </template>
     <div class="wsb-search">
       <Icon name="search" size="sm" />
@@ -288,21 +270,6 @@ onUnmounted(hideHover);
       <div v-else class="wsb-foot-row is-note" data-foot="no-remote">
         <Icon class="wsb-foot-icon" name="worktree-branch" size="md" />
         <span class="wsb-foot-label">{{ t('worktreeCreate.branch.noRemote') }}</span>
-      </div>
-      <div class="wsb-foot-row" data-foot="script">
-        <Icon class="wsb-foot-icon" name="terminal" size="md" />
-        <span class="wsb-foot-label wsb-foot-script">
-          <span>{{ t('worktreeCreate.script.label') }}</span>
-          <button type="button" class="wsb-link" data-action="script" @click.stop="openScriptDialog">
-            {{ t(scriptExists ? 'worktreeCreate.script.edit' : 'worktreeCreate.script.configure') }}
-          </button>
-        </span>
-        <Switch
-          v-if="scriptExists"
-          :model-value="view.runSetupScript"
-          :label="t('worktreeCreate.script.runForSession')"
-          @update:model-value="store.setRunSetupScript($event)"
-        />
       </div>
     </div>
   </CreatePicker>
@@ -521,26 +488,5 @@ onUnmounted(hideHover);
   flex: 1;
   min-width: 0;
   line-height: var(--leading-normal);
-}
-.wsb-foot-script {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-}
-.wsb-link {
-  padding: 0;
-  border: none;
-  border-radius: var(--radius-xs);
-  background: none;
-  color: var(--color-accent);
-  font: inherit;
-  cursor: pointer;
-}
-.wsb-link:hover {
-  text-decoration: underline;
-}
-.wsb-link:focus-visible {
-  outline: none;
-  box-shadow: var(--p-focus-ring);
 }
 </style>

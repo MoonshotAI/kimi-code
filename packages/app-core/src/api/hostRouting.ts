@@ -110,8 +110,6 @@ const ROUTES = {
   inspectWorktrees: 'local',
   removeWorktree: 'local',
   lookupWorktree: 'local',
-  getWorktreeSetupScript: 'workspace',
-  saveWorktreeSetupScript: 'workspace',
   browseFs: 'local',
   mkdirFs: 'local',
   listHosts: 'custom',

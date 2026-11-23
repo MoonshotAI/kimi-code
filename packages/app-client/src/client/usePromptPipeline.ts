@@ -233,7 +233,6 @@ export function usePromptPipeline(rawState: ExtendedState, deps: PromptPipelineD
       }
       throw err;
     }
-    if (worktree !== undefined) newSessionEnvironmentStore().setRunSetupScript(true);
     return { session, workspaceId: session.workspaceId };
   }
 

@@ -54,10 +54,6 @@ export type SessionWorktreeCard =
   | 'diskFull'
   | 'createFailed'
   | 'stopped'
-  | 'scriptFailed'
-  | 'scriptTimeout'
-  | 'scriptStopped'
-  | 'scriptConfirm'
   | 'missing'
   | 'missingBranchGone';
 
@@ -67,8 +63,6 @@ const FAILURE_CARDS: Record<NonNullable<AppSessionWorktree['setup']['failure']>[
   conflict: 'conflict',
   disk_full: 'diskFull',
   create_failed: 'createFailed',
-  script_failed: 'scriptFailed',
-  script_timeout: 'scriptTimeout',
 };
 
 export function sessionWorktreeCard(worktree: AppSessionWorktree | null | undefined): SessionWorktreeCard | null {
@@ -78,13 +72,10 @@ export function sessionWorktreeCard(worktree: AppSessionWorktree | null | undefi
     case 'running':
     case 'local':
       return null;
-    case 'awaiting_script_confirmation':
-      return 'scriptConfirm';
     case 'failed':
-      if (setup.failure !== undefined) return FAILURE_CARDS[setup.failure.kind] ?? 'createFailed';
-      return setup.stoppedStep === 'script' ? 'scriptFailed' : 'createFailed';
+      return setup.failure === undefined ? 'createFailed' : FAILURE_CARDS[setup.failure.kind];
     case 'stopped':
-      return setup.stoppedStep === 'script' ? 'scriptStopped' : 'stopped';
+      return 'stopped';
     case 'ready':
       if (worktree.missing !== true) return null;
       return worktree.branchMissing === true ? 'missingBranchGone' : 'missing';
@@ -157,12 +148,11 @@ export function resolveWorktreeSource(
 
 export function buildWorktreeSetupRequest(
   selection: WorktreeSourceSelection,
-  options?: { useRemote?: boolean; runSetupScript?: boolean },
+  options?: { useRemote?: boolean },
 ): AppWorktreeSetupRequest {
   const request: AppWorktreeSetupRequest = { sourceBranch: selection.branch.name };
   if (selection.includeLocalChanges) request.includeLocalChanges = true;
   if (options?.useRemote === true && selection.branch.remoteRef !== undefined) request.useRemote = true;
-  if (options?.runSetupScript !== undefined) request.runSetupScript = options.runSetupScript;
   return request;
 }
 

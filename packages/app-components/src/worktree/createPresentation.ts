@@ -36,8 +36,6 @@ export type CreateCardActionId =
   | 'createFromRemote'
   | 'useLocal'
   | 'manage'
-  | 'skipScript'
-  | 'runScript'
   | 'recreate'
   | 'viewOutput'
   | 'stop';
@@ -53,7 +51,6 @@ export interface CreateDecisionCardView {
   title: string;
   body: string;
   files: string[];
-  code: string | null;
   actions: CreateCardAction[];
 }
 
@@ -68,7 +65,6 @@ export interface CreateInvalidCardView {
   actions: CreateCardAction[];
 }
 
-const SCRIPT_TIMEOUT_SECONDS = 180;
 const FETCH_TIMEOUT_SECONDS = 30;
 
 function isRecreateRun(setup: AppWorktreeSetup): boolean {
@@ -79,8 +75,6 @@ const FAILURE_TITLE_KEYS: Partial<Record<NonNullable<AppWorktreeSetup['failure']
   fetch_failed: 'fetchFailed',
   fetch_timeout: 'fetchTimeout',
   conflict: 'conflict',
-  script_failed: 'scriptFailed',
-  script_timeout: 'scriptTimeout',
 };
 
 function blockTitleKey(setup: AppWorktreeSetup): string {
@@ -88,11 +82,9 @@ function blockTitleKey(setup: AppWorktreeSetup): string {
     case 'running':
       return 'creating';
     case 'ready':
-      return setup.script === 'skipped' ? 'createdScriptSkipped' : 'created';
-    case 'awaiting_script_confirmation':
-      return 'createdScriptPending';
+      return 'created';
     case 'stopped':
-      return setup.stoppedStep === 'script' ? 'scriptStopped' : 'stopped';
+      return 'stopped';
     case 'local':
       return 'local';
     case 'failed':
@@ -202,9 +194,7 @@ export function createDecisionCardView(
   const retry = action('retry', t('worktreeCreate.action.retry'));
   const useLocal = action('useLocal', t('worktreeCreate.action.useLocal'));
   const createFromLocal = action('createFromLocal', t('worktreeCreate.action.createFromLocal', { branch }));
-  const skipScript = action('skipScript', t('worktreeCreate.action.skipScript'));
-  const runAgain = action('runScript', t('worktreeCreate.action.runAgain'));
-  const base = { kind, files: [] as string[], code: null as string | null };
+  const base = { kind, files: [] as string[] };
   switch (kind) {
     case 'fetchFailed':
       return {
@@ -259,40 +249,6 @@ export function createDecisionCardView(
         body: t('worktreeCreate.card.stoppedBody'),
         actions: withPrimary(setup.stoppedStep === 'fetch' ? [createFromLocal, retry] : [useLocal, retry]),
       };
-    case 'scriptFailed':
-      return {
-        ...base,
-        title: t('worktreeCreate.card.scriptFailedTitle'),
-        body:
-          setup.failure?.exitCode === undefined
-            ? t('worktreeCreate.card.scriptFailedBodyPlain')
-            : t('worktreeCreate.card.scriptFailedBody', { code: setup.failure.exitCode }),
-        actions: withPrimary([skipScript, runAgain]),
-      };
-    case 'scriptTimeout':
-      return {
-        ...base,
-        title: t('worktreeCreate.card.scriptTimeoutTitle'),
-        body: t('worktreeCreate.card.scriptTimeoutBody', {
-          minutes: Math.max(1, Math.round((setup.failure?.timeoutSeconds ?? SCRIPT_TIMEOUT_SECONDS) / 60)),
-        }),
-        actions: withPrimary([skipScript, runAgain]),
-      };
-    case 'scriptStopped':
-      return {
-        ...base,
-        title: t('worktreeCreate.card.scriptStoppedTitle'),
-        body: t('worktreeCreate.card.scriptStoppedBody'),
-        actions: withPrimary([skipScript, runAgain]),
-      };
-    case 'scriptConfirm':
-      return {
-        ...base,
-        title: t('worktreeCreate.card.scriptConfirmTitle'),
-        body: t('worktreeCreate.card.scriptConfirmBody'),
-        code: setup.scriptContent === undefined || setup.scriptContent.length === 0 ? null : setup.scriptContent,
-        actions: withPrimary([skipScript, action('runScript', t('worktreeCreate.action.run'))]),
-      };
   }
 }
 
@@ -308,9 +264,7 @@ export function createInvalidCardView(
   if (isRecreateRun(setup)) {
     if (setup.status === 'running') {
       const current = setup.steps.find((step) => step.state === 'running');
-      const creating = setup.steps.some(
-        (step) => (step.kind === 'create' || step.kind === 'script') && step.state !== 'pending',
-      );
+      const creating = setup.steps.some((step) => step.kind === 'create' && step.state !== 'pending');
       return {
         ...empty,
         phase: 'recreating',

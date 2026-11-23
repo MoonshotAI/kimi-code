@@ -71,7 +71,6 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown, true));
         <ul v-if="view.files.length > 0" class="wcc-files">
           <li v-for="file in view.files" :key="file" class="wcc-file">{{ file }}</li>
         </ul>
-        <pre v-if="view.code" class="wcc-code">{{ view.code }}</pre>
       </div>
       <div class="wcc-actions">
         <Button
@@ -168,8 +167,7 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown, true));
   font: var(--text-base) / var(--leading-normal) var(--font-ui);
   overflow-wrap: anywhere;
 }
-.wcc-files,
-.wcc-code {
+.wcc-files {
   max-height: 160px;
   margin: 0;
   padding: var(--space-2) var(--space-3);
@@ -184,10 +182,6 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown, true));
   list-style: none;
 }
 .wcc-file {
-  overflow-wrap: anywhere;
-}
-.wcc-code {
-  white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 .wcc-actions {

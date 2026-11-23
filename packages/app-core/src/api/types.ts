@@ -108,10 +108,9 @@ export interface AppWorktreeSetupRequest {
   sourceBranch: string;
   includeLocalChanges?: boolean;
   useRemote?: boolean;
-  runSetupScript?: boolean;
 }
 
-export type AppWorktreeSetupStepKind = 'fetch' | 'prune' | 'create' | 'changes' | 'script';
+export type AppWorktreeSetupStepKind = 'fetch' | 'prune' | 'create' | 'changes';
 
 export type AppWorktreeSetupStepState = 'pending' | 'running' | 'done' | 'failed' | 'stopped' | 'skipped';
 
@@ -129,15 +128,12 @@ export type AppWorktreeSetupFailureKind =
   | 'fetch_timeout'
   | 'conflict'
   | 'disk_full'
-  | 'create_failed'
-  | 'script_failed'
-  | 'script_timeout';
+  | 'create_failed';
 
 export interface AppWorktreeSetupFailure {
   kind: AppWorktreeSetupFailureKind;
   remoteRef?: string;
   conflictFiles?: string[];
-  exitCode?: number;
   timeoutSeconds?: number;
 }
 
@@ -146,10 +142,7 @@ export type AppWorktreeSetupStatus =
   | 'ready'
   | 'failed'
   | 'stopped'
-  | 'awaiting_script_confirmation'
   | 'local';
-
-export type AppWorktreeSetupScriptOutcome = 'none' | 'ran' | 'skipped' | 'pending';
 
 export interface AppWorktreeSetup {
   status: AppWorktreeSetupStatus;
@@ -161,8 +154,6 @@ export interface AppWorktreeSetup {
   endedAt?: string;
   stoppedStep?: AppWorktreeSetupStepKind;
   failure?: AppWorktreeSetupFailure;
-  script: AppWorktreeSetupScriptOutcome;
-  scriptContent?: string;
 }
 
 export interface AppSessionWorktree {
@@ -248,13 +239,6 @@ export interface WorktreeRemoveFailure {
   output: string;
 }
 
-export interface WorktreeSetupScript {
-  path: string;
-  exists: boolean;
-  content?: string;
-  needsConfirmation?: boolean;
-}
-
 export interface WorktreeLookup {
   repoRoot: string;
   branch?: string;
@@ -266,8 +250,6 @@ export type SessionWorktreeAction =
   | 'retry'
   | 'cancel'
   | 'useLocal'
-  | 'skipScript'
-  | 'runScript'
   | 'recreate';
 
 export interface SessionWorktreeRetryInput {
@@ -1350,8 +1332,6 @@ export interface KimiWebApi {
   inspectWorktrees(paths: string[]): Promise<WorktreeInspection>;
   removeWorktree(input: RemoveWorktreeInput): Promise<RemoveWorktreeResult>;
   lookupWorktree(path: string): Promise<WorktreeLookup | null>;
-  getWorktreeSetupScript(workspaceId: string, options?: ReadRequestOptions): Promise<WorktreeSetupScript>;
-  saveWorktreeSetupScript(workspaceId: string, content: string): Promise<WorktreeSetupScript>;
   browseFs(path: string | undefined, signal?: AbortSignal): Promise<FsBrowseResult>;
   listHosts(): Promise<AppHost[]>;
   putHost(id: string, definition: AppHostDefinition): Promise<void>;

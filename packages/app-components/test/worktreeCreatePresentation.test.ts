@@ -41,9 +41,6 @@ describe('worktree creation step copy', () => {
     [step('create', 'failed', { ref }), 'Worktree creation failed'],
     [step('changes', 'pending'), 'Include local uncommitted changes'],
     [step('changes', 'failed'), 'Failed to include local changes'],
-    [step('script', 'running'), 'Running initialization script'],
-    [step('script', 'skipped'), 'Initialization script skipped'],
-    [step('script', 'failed', { timedOut: true }), 'Initialization script timed out'],
     [step('prune', 'running'), 'Cleaning up invalid Worktree record'],
   ])('labels %j as "%s"', (item, label) => {
     expect(createStepLabel(item, t)).toBe(label);
@@ -58,7 +55,7 @@ describe('worktree creation block', () => {
         steps: [
           step('fetch', 'done', { ref: 'origin/main', command: 'git fetch --no-tags origin main' }),
           step('create', 'running', { ref: 'origin/main', command: 'git worktree add --no-track -b kimi/1 /w origin/main', output: 'Preparing worktree' }),
-          step('script', 'pending'),
+          step('changes', 'pending'),
         ],
         commandsRan: 1,
       }),
@@ -71,7 +68,7 @@ describe('worktree creation block', () => {
     expect(view.steps.map((item) => [item.tone, item.label])).toEqual([
       ['done', 'Fetched origin/main'],
       ['running', 'Creating Worktree from origin/main'],
-      ['pending', 'Run initialization script'],
+      ['pending', 'Include local uncommitted changes'],
     ]);
     expect(view.steps[1]?.output).toBe('Preparing worktree');
     expect(view.steps[2]?.command).toBeUndefined();
@@ -96,17 +93,12 @@ describe('worktree creation block', () => {
   });
 
   it.each<[Partial<AppWorktreeSetup>, string]>([
-    [{ status: 'ready', script: 'skipped' }, 'Worktree created; initialization script skipped'],
-    [{ status: 'awaiting_script_confirmation', script: 'pending' }, 'Worktree created; initialization script awaiting confirmation'],
     [{ status: 'failed', failure: { kind: 'fetch_failed' } }, 'Remote fetch failed'],
     [{ status: 'failed', failure: { kind: 'fetch_timeout' } }, 'Remote fetch timed out'],
     [{ status: 'failed', failure: { kind: 'conflict' } }, 'Local changes conflict with the remote'],
     [{ status: 'failed', failure: { kind: 'disk_full' } }, 'Worktree creation failed'],
     [{ status: 'failed', failure: { kind: 'create_failed' } }, 'Worktree creation failed'],
-    [{ status: 'failed', failure: { kind: 'script_failed' } }, 'Initialization script failed'],
-    [{ status: 'failed', failure: { kind: 'script_timeout' } }, 'Initialization script timed out'],
     [{ status: 'stopped', stoppedStep: 'create' }, 'Worktree creation stopped'],
-    [{ status: 'stopped', stoppedStep: 'script' }, 'Initialization script stopped'],
     [{ status: 'local' }, 'Switched to Local Mode'],
   ])('titles %j as "%s"', (overrides, title) => {
     expect(createBlockView(worktree(overrides), t).title).toBe(title);
@@ -212,45 +204,6 @@ describe('worktree decision cards', () => {
     expect(actionLabels(fetchStopped)).toEqual(['Create from local main', 'Retry']);
   });
 
-  it('only offers skip and run at a script pause', () => {
-    const base = { path: '/w' };
-    const failed = createDecisionCardView(
-      worktree({ status: 'failed', stoppedStep: 'script', failure: { kind: 'script_failed', exitCode: 1 } }, base),
-      t,
-    );
-    expect(failed).toMatchObject({ title: 'Initialization script failed', body: 'The script failed with exit code 1.' });
-    expect(actionLabels(failed)).toEqual(['Skip Script', 'Run Again']);
-
-    const timeout = createDecisionCardView(
-      worktree({ status: 'failed', stoppedStep: 'script', failure: { kind: 'script_timeout', timeoutSeconds: 180 } }, base),
-      t,
-    );
-    expect(timeout).toMatchObject({
-      title: 'Initialization script timed out',
-      body: 'The script ran for more than 3 minutes and has been stopped.',
-    });
-    expect(actionIds(timeout)).toEqual(['skipScript', 'runScript']);
-
-    const stopped = createDecisionCardView(worktree({ status: 'stopped', stoppedStep: 'script' }, base), t);
-    expect(stopped).toMatchObject({
-      title: 'Initialization script stopped',
-      body: 'The Worktree has been created, but this message has not been processed.',
-    });
-    expect(actionLabels(stopped)).toEqual(['Skip Script', 'Run Again']);
-
-    const confirm = createDecisionCardView(
-      worktree({ status: 'awaiting_script_confirmation', script: 'pending', scriptContent: 'pnpm install' }, base),
-      t,
-    );
-    expect(confirm).toMatchObject({
-      title: "Run this project's initialization script?",
-      body: 'The script comes from the repository. You will be asked again when its content changes.',
-      code: 'pnpm install',
-    });
-    expect(actionLabels(confirm)).toEqual(['Skip Script', 'Run']);
-    expect(confirm?.actions.at(-1)).toMatchObject({ id: 'runScript', primary: true });
-  });
-
   it('shows no decision card while running, ready, local or invalid', () => {
     expect(createDecisionCardView(null, t)).toBeNull();
     expect(createDecisionCardView(worktree({ status: 'running' }), t)).toBeNull();
@@ -350,13 +303,7 @@ describe('invalid worktree card', () => {
     expect(actionIds(view)).toEqual(['useLocal', 'retry']);
   });
 
-  it('hands a recreated worktree paused at its script back to the script cards', () => {
-    const paused = worktree(
-      { purpose: 'recreate', status: 'failed', stoppedStep: 'script', failure: { kind: 'script_failed', exitCode: 2 } },
-      { path: '/w', branch: 'b' },
-    );
-    expect(createInvalidCardView(paused, t)).toBeNull();
-    expect(createDecisionCardView(paused, t)?.kind).toBe('scriptFailed');
+  it('shows no invalid card once the worktree is ready', () => {
     expect(createInvalidCardView(worktree({ purpose: 'recreate', status: 'ready' }, { path: '/w', branch: 'b' }), t)).toBeNull();
     expect(createInvalidCardView(worktree({ status: 'ready' }, { path: '/w' }), t)).toBeNull();
   });

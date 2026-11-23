@@ -3594,8 +3594,6 @@ export function useKimiWebClient() {
       promptPipeline.runSessionWorktreeAction(sessionId, 'retry', input),
     cancelSessionWorktree: (sessionId: string) => promptPipeline.runSessionWorktreeAction(sessionId, 'cancel'),
     useLocalForSessionWorktree: (sessionId: string) => promptPipeline.runSessionWorktreeAction(sessionId, 'useLocal'),
-    skipSessionWorktreeScript: (sessionId: string) => promptPipeline.runSessionWorktreeAction(sessionId, 'skipScript'),
-    runSessionWorktreeScript: (sessionId: string) => promptPipeline.runSessionWorktreeAction(sessionId, 'runScript'),
     recreateSessionWorktree: (sessionId: string) => promptPipeline.runSessionWorktreeAction(sessionId, 'recreate'),
     deleteSession: sessionListStore().deleteSessionWithOptions,
     continueSession: promptPipeline.continueSession,

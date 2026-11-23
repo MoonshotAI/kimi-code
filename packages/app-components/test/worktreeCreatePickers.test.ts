@@ -3,7 +3,7 @@ import { createApp, h, nextTick, type App, type Component } from 'vue';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createKimiI18n } from '@moonshot-ai/app-i18n';
 import { IconResolverKey, type ToastOptions } from '@moonshot-ai/app-ui';
-import type { AppWorkspace, WorkspaceGitBranches, WorktreeSetupScript } from '@moonshot-ai/app-core/api';
+import type { AppWorkspace, WorkspaceGitBranches } from '@moonshot-ai/app-core/api';
 import { onToast, resetKimiClientDeps, setKimiClientDeps } from '@moonshot-ai/app-client/client';
 import { registerWorktreeSettingsOpener } from '@moonshot-ai/app-client/composables';
 import { newSessionEnvironmentStore, workspacesStore, worktreesStore } from '@moonshot-ai/app-client/stores';
@@ -18,8 +18,6 @@ const GB = 1024 * 1024 * 1024;
 const api = {
   getWorkspaceGitBranches: vi.fn<(workspaceId: string) => Promise<WorkspaceGitBranches>>(),
   listWorktrees: vi.fn(),
-  getWorktreeSetupScript: vi.fn<(workspaceId: string) => Promise<WorktreeSetupScript>>(),
-  saveWorktreeSetupScript: vi.fn<(workspaceId: string, content: string) => Promise<WorktreeSetupScript>>(),
 };
 
 const repo: WorkspaceGitBranches = {
@@ -87,12 +85,6 @@ beforeEach(() => {
   for (const mock of Object.values(api)) mock.mockReset();
   api.getWorkspaceGitBranches.mockResolvedValue(repo);
   api.listWorktrees.mockResolvedValue({ items: [], totalSizeBytes: 0 });
-  api.getWorktreeSetupScript.mockResolvedValue({ path: '.kimi/setup.sh', exists: false });
-  api.saveWorktreeSetupScript.mockImplementation(async (_id, content) => ({
-    path: '.kimi/setup.sh',
-    exists: content.trim().length > 0,
-    content,
-  }));
   setKimiClientDeps({ api: () => api as never, t: (key, params) => i18n.global.t(key, params ?? {}) });
   workspacesStore().workspaces = [workspace('ws1'), workspace('ws2'), workspace('remote', { hostId: 'h1' })];
   newSessionEnvironmentStore().reset();
@@ -214,7 +206,7 @@ describe('CreateSourceBranchPicker', () => {
     setBranches('ws1', info);
     api.getWorkspaceGitBranches.mockResolvedValue(info);
     newSessionEnvironmentStore().selectEnvironment('worktree');
-    mount(CreateSourceBranchPicker, { workspaceId: 'ws1', workspaceName: 'demo' });
+    mount(CreateSourceBranchPicker, { workspaceId: 'ws1' });
     await settle();
     q('.wsb-chip')!.click();
     await settle();
@@ -397,43 +389,5 @@ describe('CreateSourceBranchPicker', () => {
     } finally {
       vi.useRealTimers();
     }
-  });
-
-  it('configures the initialization script from the panel', async () => {
-    await mountOpen();
-    const scriptRow = () => q('[data-foot="script"]')!;
-    expect(scriptRow().querySelector('.wsb-link')?.textContent?.trim()).toBe('Configure');
-    expect(scriptRow().querySelector('.ui-switch')).toBeNull();
-
-    scriptRow().querySelector<HTMLButtonElement>('.wsb-link')!.click();
-    await settle();
-    expect(q('.wsb-panel')).toBeNull();
-    const dialog = document.querySelector<HTMLElement>('.ui-dialog')!;
-    expect(dialog.querySelector('.ui-dialog__title')?.textContent).toBe('Configure Initialization Script');
-    expect(dialog.querySelector('.wss-project')?.textContent).toBe('demo');
-    expect(dialog.querySelector('.wss-note')?.textContent).toBe(
-      'Saved to .kimi/setup.sh. Once committed, team members will also use it.',
-    );
-
-    const editor = dialog.querySelector<HTMLTextAreaElement>('textarea')!;
-    editor.value = 'pnpm install';
-    editor.dispatchEvent(new Event('input'));
-    await nextTick();
-    dialog.querySelector<HTMLButtonElement>('[data-action="save"]')!.click();
-    await settle();
-    expect(api.saveWorktreeSetupScript).toHaveBeenCalledWith('ws1', 'pnpm install');
-    expect(document.querySelector('.ui-dialog')).toBeNull();
-
-    q('.wsb-chip')!.click();
-    await settle();
-    expect(scriptRow().querySelector('.wsb-link')?.textContent?.trim()).toBe('Edit');
-    const runToggle = scriptRow().querySelector<HTMLButtonElement>('.ui-switch')!;
-    expect(runToggle.getAttribute('aria-label')).toBe('Run initialization script for this session');
-    expect(runToggle.getAttribute('aria-checked')).toBe('true');
-    runToggle.click();
-    await settle();
-    expect(newSessionEnvironmentStore().runSetupScript).toBe(false);
-    expect(newSessionEnvironmentStore().worktreeRequest('ws1')?.runSetupScript).toBe(false);
-    expect(q('.wsb-panel')).not.toBeNull();
   });
 });

@@ -932,7 +932,7 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
               </button>
               <template v-if="hasWorkspaces">
                 <CreateEnvironmentPicker :workspace-id="activeWorkspaceId" />
-                <CreateSourceBranchPicker :workspace-id="activeWorkspaceId" :workspace-name="activeWorkspaceLabel" />
+                <CreateSourceBranchPicker :workspace-id="activeWorkspaceId" />
               </template>
               <HostNotice class="empty-host-notice" :host-id="activeHostId" />
               <KimiMascotPeek ref="mascotRef" class="ws-mascot" />

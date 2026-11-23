@@ -35,10 +35,6 @@ export function useCreateCardActions(): CreateCardActions {
         return client.retrySessionWorktree(sessionId, { useRemote: true, includeLocalChanges: false });
       case 'useLocal':
         return client.useLocalForSessionWorktree(sessionId);
-      case 'skipScript':
-        return client.skipSessionWorktreeScript(sessionId);
-      case 'runScript':
-        return client.runSessionWorktreeScript(sessionId);
       case 'recreate':
         return client.recreateSessionWorktree(sessionId);
       case 'stop':

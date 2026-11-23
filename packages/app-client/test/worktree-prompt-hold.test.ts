@@ -82,7 +82,6 @@ async function createRig(options: { worktree?: boolean } = {}) {
     getGitStatus: vi.fn().mockRejectedValue(new Error('not needed')),
     getSessionWarnings: vi.fn(async () => []),
     getWorkspaceGitBranches: vi.fn(async (): Promise<WorkspaceGitBranches> => BRANCHES),
-    getWorktreeSetupScript: vi.fn(async () => ({ path: '/workspace/.kimi/setup.sh', exists: true, content: 'make' })),
     updateSession: vi.fn(async () => ({})),
     submitPrompt: vi.fn(async (_sid: string, input: { promptId?: string }) => ({
       promptId: input.promptId!,
@@ -305,7 +304,7 @@ describe('worktree first-prompt hold', () => {
     expect(promptStore().queuedBySession[SID]?.map((entry) => entry.text)).toEqual(['first', 'second']);
   });
 
-  it('keeps holding through the setup script, after the session already points at the worktree', async () => {
+  it('keeps holding while setup is still running, after the session already points at the worktree', async () => {
     const { api, ws } = await createRig();
     await start(ws);
 
@@ -315,17 +314,7 @@ describe('worktree first-prompt hold', () => {
     expect(await ws.abortCurrentPrompt()).toBe(true);
     expect(api.sessionWorktreeAction).toHaveBeenCalledExactlyOnceWith(SID, 'cancel', undefined);
 
-    for (const paused of [
-      worktree('stopped', { path: '/wt/a' }, { stoppedStep: 'script' }),
-      worktree('failed', { path: '/wt/a' }, { stoppedStep: 'script', failure: { kind: 'script_failed', exitCode: 1 } }),
-      worktree('awaiting_script_confirmation', { path: '/wt/a' }, { script: 'pending', scriptContent: 'make' }),
-    ]) {
-      await moveTo(ws, paused, '/wt/a');
-      expect(api.submitPrompt).not.toHaveBeenCalled();
-      expect(await ws.sendPrompt(ws.createPromptEnvelope({ text: 'later' }))).toBe('queued');
-    }
-
-    await moveTo(ws, worktree('ready', { path: '/wt/a' }, { script: 'skipped' }), '/wt/a');
+    await moveTo(ws, worktree('ready', { path: '/wt/a' }), '/wt/a');
     expect(sentTexts(api.submitPrompt)[0]).toBe('hello');
   });
 
@@ -405,19 +394,6 @@ describe('worktree first-prompt hold', () => {
 
     expect(started).toEqual({ sessionId: null, promptRejected: false });
     expect(api.getWorkspaceGitBranches).not.toHaveBeenCalled();
-  });
-
-  it('sends the script opt-out for this session only and resets the toggle afterwards', async () => {
-    const { api, ws } = await createRig();
-    const environment = newSessionEnvironmentStore();
-    await environment.ensureSetupScript('workspace');
-    environment.setRunSetupScript(false);
-
-    await start(ws);
-
-    expect(api.createSession.mock.calls[0]![0]).toMatchObject({ worktree: { sourceBranch: 'main', runSetupScript: false } });
-    expect(environment.runSetupScript).toBe(true);
-    expect(environment.worktreeRequest('workspace')).toEqual({ sourceBranch: 'main' });
   });
 
   it('holds a first skill activation until the worktree is ready', async () => {

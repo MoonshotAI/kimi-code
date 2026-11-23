@@ -5,7 +5,6 @@ import type {
   AppGitBranch,
   AppWorktreeSetupRequest,
   WorkspaceGitBranches,
-  WorktreeSetupScript,
 } from '@moonshot-ai/app-core/api';
 import {
   STORAGE_KEYS,
@@ -41,8 +40,6 @@ export interface NewSessionEnvironmentView {
   remoteAvailable: boolean;
   useRemote: boolean;
   usesRemote: boolean;
-  setupScript: WorktreeSetupScript | null;
-  runSetupScript: boolean;
 }
 
 function loadRecord<T>(key: string, accept: (value: unknown) => T | undefined): Record<string, T> {
@@ -74,13 +71,8 @@ export const useNewSessionEnvironmentStore = defineStore('kimi.newSessionEnviron
   const useRemoteByWorkspace = ref<Record<string, boolean>>(
     loadRecord(STORAGE_KEYS.worktreeUseRemoteByWorkspace, (value) => (typeof value === 'boolean' ? value : undefined)),
   );
-  const runSetupScript = ref(true);
-  const setupScriptByWorkspace = ref<Record<string, WorktreeSetupScript>>({});
-  const setupScriptErrorByWorkspace = ref<Record<string, string>>({});
   const requestSeqByWorkspace = new Map<string, number>();
   const inFlightByWorkspace = new Map<string, Promise<void>>();
-  const scriptSeqByWorkspace = new Map<string, number>();
-  const scriptInFlightByWorkspace = new Map<string, Promise<void>>();
 
   function workspaceOf(workspaceId: string) {
     return workspacesStore().mergedWorkspaces.find((workspace) => workspace.id === workspaceId);
@@ -180,86 +172,11 @@ export const useNewSessionEnvironmentStore = defineStore('kimi.newSessionEnviron
     safeSetJson(STORAGE_KEYS.worktreeUseRemoteByWorkspace, useRemoteByWorkspace.value);
   }
 
-  function setRunSetupScript(value: boolean | undefined): void {
-    runSetupScript.value = value ?? true;
-  }
-
-  function setupScript(workspaceId: string | null | undefined): WorktreeSetupScript | null {
-    if (workspaceId === null || workspaceId === undefined) return null;
-    return setupScriptByWorkspace.value[workspaceId] ?? null;
-  }
-
-  function setupScriptError(workspaceId: string | null | undefined): string | null {
-    if (workspaceId === null || workspaceId === undefined) return null;
-    return setupScriptErrorByWorkspace.value[workspaceId] ?? null;
-  }
-
-  function nextScriptSeq(workspaceId: string): number {
-    const seq = (scriptSeqByWorkspace.get(workspaceId) ?? 0) + 1;
-    scriptSeqByWorkspace.set(workspaceId, seq);
-    return seq;
-  }
-
-  function setSetupScriptError(workspaceId: string, message: string | null): void {
-    const next = { ...setupScriptErrorByWorkspace.value };
-    if (message === null) delete next[workspaceId];
-    else next[workspaceId] = message;
-    setupScriptErrorByWorkspace.value = next;
-  }
-
-  function errorMessage(error: unknown): string {
-    return error instanceof Error ? error.message : String(error);
-  }
-
-  function loadSetupScript(workspaceId: string): Promise<void> {
-    const seq = nextScriptSeq(workspaceId);
-    const promise = (async () => {
-      try {
-        const script = await getKimiWebApi().getWorktreeSetupScript(workspaceId);
-        if (scriptSeqByWorkspace.get(workspaceId) !== seq) return;
-        setupScriptByWorkspace.value = { ...setupScriptByWorkspace.value, [workspaceId]: script };
-        setSetupScriptError(workspaceId, null);
-      } catch (error) {
-        if (scriptSeqByWorkspace.get(workspaceId) === seq) setSetupScriptError(workspaceId, errorMessage(error));
-      }
-    })().finally(() => {
-      if (scriptInFlightByWorkspace.get(workspaceId) === promise) scriptInFlightByWorkspace.delete(workspaceId);
-    });
-    scriptInFlightByWorkspace.set(workspaceId, promise);
-    return promise;
-  }
-
-  function ensureSetupScript(workspaceId: string | null | undefined, options?: { force?: boolean }): Promise<void> {
-    if (workspaceId === null || workspaceId === undefined || !supportsWorktree(workspaceId)) return Promise.resolve();
-    const inFlight = scriptInFlightByWorkspace.get(workspaceId);
-    if (inFlight !== undefined) return inFlight;
-    if (options?.force !== true && setupScriptByWorkspace.value[workspaceId] !== undefined) return Promise.resolve();
-    return loadSetupScript(workspaceId);
-  }
-
-  async function saveSetupScript(workspaceId: string, content: string): Promise<boolean> {
-    const seq = nextScriptSeq(workspaceId);
-    try {
-      const script = await getKimiWebApi().saveWorktreeSetupScript(workspaceId, content);
-      if (scriptSeqByWorkspace.get(workspaceId) === seq) {
-        setupScriptByWorkspace.value = { ...setupScriptByWorkspace.value, [workspaceId]: script };
-        setSetupScriptError(workspaceId, null);
-      }
-      return true;
-    } catch (error) {
-      if (scriptSeqByWorkspace.get(workspaceId) === seq) setSetupScriptError(workspaceId, errorMessage(error));
-      return false;
-    }
-  }
-
   function worktreeRequest(workspaceId: string | null | undefined): AppWorktreeSetupRequest | undefined {
     if (effectiveEnvironment(workspaceId) !== 'worktree') return undefined;
     const selected = selection(workspaceId);
     if (selected === null) return undefined;
-    return buildWorktreeSetupRequest(selected, {
-      useRemote: useRemote(workspaceId),
-      runSetupScript: setupScript(workspaceId)?.exists === true && !runSetupScript.value ? false : undefined,
-    });
+    return buildWorktreeSetupRequest(selected, { useRemote: useRemote(workspaceId) });
   }
 
   function view(workspaceId: string | null | undefined): NewSessionEnvironmentView {
@@ -281,17 +198,12 @@ export const useNewSessionEnvironmentStore = defineStore('kimi.newSessionEnviron
       remoteAvailable,
       useRemote: remoteOn,
       usesRemote: remoteOn && remoteAvailable,
-      setupScript: setupScript(workspaceId),
-      runSetupScript: runSetupScript.value,
     };
   }
 
   watch(
     () => (preferred.value === 'worktree' ? workspacesStore().activeWorkspaceId : null),
-    (workspaceId) => {
-      void ensureBranches(workspaceId);
-      void ensureSetupScript(workspaceId);
-    },
+    (workspaceId) => void ensureBranches(workspaceId),
   );
 
   function reset(): void {
@@ -299,13 +211,8 @@ export const useNewSessionEnvironmentStore = defineStore('kimi.newSessionEnviron
     branchesByWorkspace.value = {};
     sourceByWorkspace.value = {};
     useRemoteByWorkspace.value = {};
-    runSetupScript.value = true;
-    setupScriptByWorkspace.value = {};
-    setupScriptErrorByWorkspace.value = {};
     for (const [workspaceId, seq] of requestSeqByWorkspace) requestSeqByWorkspace.set(workspaceId, seq + 1);
-    for (const [workspaceId, seq] of scriptSeqByWorkspace) scriptSeqByWorkspace.set(workspaceId, seq + 1);
     inFlightByWorkspace.clear();
-    scriptInFlightByWorkspace.clear();
   }
 
   return {
@@ -313,7 +220,6 @@ export const useNewSessionEnvironmentStore = defineStore('kimi.newSessionEnviron
     branchesByWorkspace,
     sourceByWorkspace,
     useRemoteByWorkspace,
-    runSetupScript,
     selectEnvironment,
     ensureBranches,
     refreshBranches,
@@ -323,12 +229,6 @@ export const useNewSessionEnvironmentStore = defineStore('kimi.newSessionEnviron
     selectSource,
     useRemote,
     setUseRemote,
-    setRunSetupScript,
-    setupScriptByWorkspace,
-    setupScript,
-    setupScriptError,
-    ensureSetupScript,
-    saveSetupScript,
     worktreeRequest,
     view,
     reset,

@@ -10,8 +10,6 @@ const actions = {
   retrySessionWorktree: vi.fn(async () => true),
   cancelSessionWorktree: vi.fn(async () => true),
   useLocalForSessionWorktree: vi.fn(async () => true),
-  skipSessionWorktreeScript: vi.fn(async () => true),
-  runSessionWorktreeScript: vi.fn(async () => true),
   recreateSessionWorktree: vi.fn(async () => true),
 };
 
@@ -143,26 +141,6 @@ describe('desktop ChatDock worktree cards', () => {
     expect(openSettings).toHaveBeenCalledTimes(1);
     await press('useLocal');
     expect(actions.useLocalForSessionWorktree).toHaveBeenCalledWith('s1');
-  });
-
-  it('maps the script cards to skip and run', async () => {
-    worktree.value = {
-      path: '/w',
-      setup: worktreeSetup({ status: 'awaiting_script_confirmation', script: 'pending', scriptContent: 'pnpm install' }),
-    };
-    await mountDock();
-    expect(host.querySelector('[data-worktree-card="scriptConfirm"] .wcc-code')?.textContent).toBe('pnpm install');
-    await press('runScript');
-    expect(actions.runSessionWorktreeScript).toHaveBeenCalledWith('s1');
-
-    worktree.value = {
-      path: '/w',
-      setup: worktreeSetup({ status: 'failed', stoppedStep: 'script', failure: { kind: 'script_failed', exitCode: 1 } }),
-    };
-    await nextTick();
-    await press('skipScript');
-    expect(actions.skipSessionWorktreeScript).toHaveBeenCalledWith('s1');
-    expect(actions.retrySessionWorktree).not.toHaveBeenCalled();
   });
 
   it('replaces the composer with the invalid card and recreates inside it', async () => {

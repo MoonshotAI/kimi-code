@@ -64,7 +64,7 @@ const WIRE_SESSION: WireSession = {
     setup: {
       status: 'failed',
       purpose: 'create',
-      request: { source_branch: 'main', include_local_changes: true, use_remote: true, run_setup_script: false },
+      request: { source_branch: 'main', include_local_changes: true, use_remote: true },
       steps: [
         { kind: 'fetch', state: 'failed', ref: 'origin/main', command: 'git fetch origin main', output: 'boom', timed_out: true },
         { kind: 'prune', state: 'done' },
@@ -78,11 +78,8 @@ const WIRE_SESSION: WireSession = {
         kind: 'conflict',
         remote_ref: 'origin/main',
         conflict_files: ['a.ts'],
-        exit_code: 1,
         timeout_seconds: 30,
       },
-      script: 'pending',
-      script_content: 'pnpm install',
     },
   },
 };
@@ -99,7 +96,7 @@ describe('session worktree mapping', () => {
       setup: {
         status: 'failed',
         purpose: 'create',
-        request: { sourceBranch: 'main', includeLocalChanges: true, useRemote: true, runSetupScript: false },
+        request: { sourceBranch: 'main', includeLocalChanges: true, useRemote: true },
         steps: [
           { kind: 'fetch', state: 'failed', ref: 'origin/main', command: 'git fetch origin main', output: 'boom', timedOut: true },
           { kind: 'prune', state: 'done', ref: undefined, command: undefined, output: undefined, timedOut: undefined },
@@ -113,11 +110,8 @@ describe('session worktree mapping', () => {
           kind: 'conflict',
           remoteRef: 'origin/main',
           conflictFiles: ['a.ts'],
-          exitCode: 1,
           timeoutSeconds: 30,
         },
-        script: 'pending',
-        scriptContent: 'pnpm install',
       },
     });
   });
@@ -142,8 +136,6 @@ describe('worktree routes', () => {
     ['retry', 'retry'],
     ['cancel', 'cancel'],
     ['useLocal', 'use_local'],
-    ['skipScript', 'skip_script'],
-    ['runScript', 'run_script'],
     ['recreate', 'recreate'],
   ] as const)('posts the %s action to worktree:%s', async (action, segment) => {
     respond(WIRE_SESSION);
@@ -401,37 +393,6 @@ describe('git status mapping', () => {
     expect(status).toEqual({ branch: 'main', ahead: 0, behind: 0, entries: {}, additions: 0, deletions: 0, pullRequest: null, detached: false });
     expect(Object.hasOwn(status, 'pullRequestStatus')).toBe(false);
     expect(Object.hasOwn(status, 'head')).toBe(false);
-  });
-});
-
-describe('worktree setup script routes', () => {
-  it('reads the project setup script', async () => {
-    respond({ path: '/repo/.kimi/setup.sh', exists: true, content: 'pnpm install', needs_confirmation: true });
-    expect(await createApi().getWorktreeSetupScript('ws/1')).toEqual({
-      path: '/repo/.kimi/setup.sh',
-      exists: true,
-      content: 'pnpm install',
-      needsConfirmation: true,
-    });
-    expect(lastRequest()).toMatchObject({
-      url: 'http://daemon.test/api/v1/workspaces/ws%2F1/worktree-setup-script',
-      method: 'GET',
-    });
-  });
-
-  it('saves the script with a PUT and maps the result', async () => {
-    respond({ path: '/repo/.kimi/setup.sh', exists: true, content: 'make', needs_confirmation: false });
-    expect(await createApi().saveWorktreeSetupScript('ws-1', 'make')).toEqual({
-      path: '/repo/.kimi/setup.sh',
-      exists: true,
-      content: 'make',
-      needsConfirmation: false,
-    });
-    expect(lastRequest()).toMatchObject({
-      url: 'http://daemon.test/api/v1/workspaces/ws-1/worktree-setup-script',
-      method: 'PUT',
-      body: { content: 'make' },
-    });
   });
 });
 
