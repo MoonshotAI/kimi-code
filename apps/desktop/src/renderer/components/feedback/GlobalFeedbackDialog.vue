@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, inject, onBeforeUnmount, ref, useId, watch } from 'vue';
+import { computed, inject, onBeforeUnmount, ref, shallowRef, useId, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useFontPrefs } from '@moonshot-ai/app-core';
 import { Button, Checkbox, Dialog, IconButton, Pill, Textarea } from '@moonshot-ai/app-ui';
@@ -9,6 +9,7 @@ import {
   FEEDBACK_DESCRIPTION_LIMIT,
   feedbackAccessFailureKey,
   type FeedbackAttachment,
+  type FeedbackForm,
   type GlobalFeedbackTarget,
 } from '../../composables/useDesktopFeedback';
 import FeedbackGuideLink from './FeedbackGuideLink.vue';
@@ -40,6 +41,7 @@ function blankDraft(sessionId?: string): FeedbackDraft {
 }
 
 const draft = ref(blankDraft());
+const guideUrls = shallowRef<FeedbackForm['learn_more_url']>();
 const availableSessionId = computed(() => props.sessionUploadEnabled ? props.target?.sessionId : undefined);
 const hasDraft = computed(() => draft.value.category !== 'bug' || draft.value.description.length > 0
   || draft.value.media.length > 0 || draft.value.includeDiagnostics || draft.value.uploadSessionId !== undefined);
@@ -68,7 +70,13 @@ onBeforeUnmount(() => {
 watch([() => props.target, availableSessionId], ([target, sessionId], [previousTarget]) => {
   if (target !== null && draft.value.uploadSessionId !== sessionId) draft.value.uploadSessionId = undefined;
   if (target === previousTarget) return;
-  if (target !== null && !hasDraft.value) draft.value = blankDraft(target.sessionId);
+  guideUrls.value = undefined;
+  if (target !== null) {
+    if (!hasDraft.value) draft.value = blankDraft(target.sessionId);
+    void feedback?.loadForm().then(config => {
+      if (target === props.target) guideUrls.value = config?.learn_more_url;
+    });
+  }
   dragDepth.value = 0;
   resetMediaErrors();
   submission.value = { kind: 'editing' };
@@ -224,7 +232,7 @@ async function submit(): Promise<void> {
             >{{ t('feedback.includeSession') }}</Checkbox>
             <Checkbox v-if="canIncludeDiagnostics" v-model="draft.includeDiagnostics" :disabled="busy">{{ t('feedback.includeDiagnostics') }}</Checkbox>
           </div>
-          <p class="global-feedback-note">{{ t('feedback.dataUse') }} <FeedbackGuideLink /></p>
+          <p class="global-feedback-note">{{ t('feedback.dataUse') }} <FeedbackGuideLink :urls="guideUrls" /></p>
         </div>
       </div>
       <footer class="global-feedback-footer">

@@ -3,12 +3,12 @@ import { getDeviceApi } from '@moonshot-ai/app-client/client';
 import type { ChatTurn } from '@moonshot-ai/app-core/client';
 import { isDaemonApiError, KIMI_AUTH_REJECTED_CODE, KIMI_AUTH_REQUIRED_CODE, type CreateFeedbackInput } from '@moonshot-ai/app-core/api';
 import { isDesktop } from '@moonshot-ai/app-core/lib';
-import { FEEDBACK_FORM_CONFIG_NAME, feedbackFormSchema, type FeedbackReason } from '@moonshot-ai/kap-server/protocol/feedback-reasons';
+import { FEEDBACK_FORM_CONFIG_NAME, feedbackFormSchema, type FeedbackForm } from '@moonshot-ai/kap-server/protocol/feedback-reasons';
 import { getKimiWebApi } from '../api';
 import { showFeedbackError, showFeedbackReceipt, type FeedbackAttachment } from '../lib/feedbackReceipt';
 
 export type { FeedbackAttachment } from '../lib/feedbackReceipt';
-export type { FeedbackReason };
+export type { FeedbackForm };
 
 export interface GlobalFeedbackTarget {
   source: 'sidebar' | 'command';
@@ -130,10 +130,11 @@ export function useDesktopFeedback(deps: {
     return target !== undefined && activePopover.value === turnFeedbackKey(target);
   }
 
-  async function loadReasons(sessionId: string): Promise<readonly FeedbackReason[] | null> {
+  async function loadForm(sessionId?: string): Promise<FeedbackForm | null> {
     try {
-      const config = await getDeviceApi(deps.sessionHost(sessionId)).getClientConfig(FEEDBACK_FORM_CONFIG_NAME);
-      return feedbackFormSchema.safeParse(config).data?.reply_reasons.negative ?? null;
+      const host = sessionId === undefined ? undefined : deps.sessionHost(sessionId);
+      const config = await getDeviceApi(host).getClientConfig(FEEDBACK_FORM_CONFIG_NAME);
+      return feedbackFormSchema.safeParse(config).data ?? null;
     } catch {
       return null;
     }
@@ -297,7 +298,7 @@ export function useDesktopFeedback(deps: {
     }, 2000));
   }
 
-  return { accountEpoch, clearHostAccount: (hostId: string) => clearAccountState(hostId), state, isPopoverOpen, closePopover, loadReasons, requireLogin, submitGlobal, chooseRating, submitDetails };
+  return { accountEpoch, clearHostAccount: (hostId: string) => clearAccountState(hostId), state, isPopoverOpen, closePopover, loadForm, requireLogin, submitGlobal, chooseRating, submitDetails };
 }
 
 export const DesktopFeedbackKey: InjectionKey<ReturnType<typeof useDesktopFeedback>> = Symbol('desktop-feedback');

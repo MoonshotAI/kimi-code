@@ -452,13 +452,17 @@ testWithProvider('uses the SSH host’s reason choices and accepts text while th
   const configPath = '/api/v1/client-configs/feedback_form';
   const pendingReasons = deferred();
   const remoteReason = { id: 'remote_choice', label: { en: 'Remote reason', zh: '远程原因' } };
+  const localGuide = 'https://example.com/local/feedback';
+  const remoteGuide = 'https://example.com/remote/feedback';
   let remoteReasons = [remoteReason];
   await page.route(url => url.pathname.endsWith(configPath), async route => {
     await pendingReasons.promise;
     const remote = new URL(route.request().url()).pathname === hostProxy + configPath;
     const negative = remote ? remoteReasons : [{ id: 'local_choice', label: { en: 'Local reason', zh: '本机原因' } }];
     const positive = [{ id: 'solved_problem', label: { en: 'Solved my problem', zh: '解决了我的问题' } }];
-    await route.fulfill({ json: envelope({ config: { version: 1, reply_reasons: { negative, positive } } }) });
+    await route.fulfill({ json: envelope({ config: {
+      version: 1, reply_reasons: { negative, positive }, learn_more_url: { en: remote ? remoteGuide : localGuide },
+    } }) });
   });
   const read = page.waitForRequest(request => new URL(request.url()).pathname.endsWith(configPath));
   const down = page.getByRole('button', { name: 'Poor response' });
@@ -476,6 +480,7 @@ testWithProvider('uses the SSH host’s reason choices and accepts text while th
   }
   const choices = details.getByRole('group').getByRole('button');
   await expect(choices).toHaveText([remoteReason.label.en]);
+  await expect(details.getByRole('link', { name: 'Learn more about what you submit' })).toHaveAttribute('href', remoteGuide);
   await details.getByRole('button', { name: remoteReason.label.en, exact: true }).click();
   await submit.click();
   await expect(details).toBeHidden();
@@ -493,4 +498,8 @@ testWithProvider('uses the SSH host’s reason choices and accepts text while th
   await submit.click();
   await expect(details).toBeHidden();
   expect(requests.at(-1)?.body).toEqual({ kind: 'details', reasons: [], content: 'Text only', upload_session: false });
+
+  await page.getByRole('button', { name: 'Send feedback', exact: true }).click();
+  const global = page.getByRole('dialog', { name: 'Send feedback' });
+  await expect(global.getByRole('link', { name: 'Learn more', exact: true })).toHaveAttribute('href', localGuide);
 });

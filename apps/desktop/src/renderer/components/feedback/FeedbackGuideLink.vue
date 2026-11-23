@@ -2,10 +2,14 @@
 import { computed } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Link, Tooltip } from '@moonshot-ai/app-ui';
+import type { FeedbackForm } from '../../composables/useDesktopFeedback';
 
-defineProps<{ iconOnly?: boolean }>();
+const props = defineProps<{ iconOnly?: boolean; urls?: FeedbackForm['learn_more_url'] }>();
 const { locale, t } = useI18n();
-const href = computed(() => `https://www.kimi.com/code/docs/${locale.value.startsWith('zh') ? '' : 'en/'}kimi-code/feedback.html`);
+const href = computed(() => {
+  const language = locale.value.startsWith('zh') ? 'zh' : 'en';
+  return props.urls?.[language] ?? `https://www.kimi.com/code/docs/${language === 'zh' ? '' : 'en/'}kimi-code/feedback.html`;
+});
 </script>
 
 <template>

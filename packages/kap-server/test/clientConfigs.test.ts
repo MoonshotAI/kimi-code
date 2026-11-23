@@ -390,6 +390,26 @@ describe('server-v2 GET /api/v1/client-configs/{name}', () => {
     expect((await postClientConfigs(name)).data).toEqual(cloudBehavior.body);
   });
 
+  it('preserves the HTTPS feedback guide for each configured language independently', async () => {
+    const name = 'feedback_form';
+    const reason = { id: 'other', label: { en: 'Other', zh: '其他' } };
+    const form = { version: 1, reply_reasons: { negative: [reason], positive: [] } };
+    const en = 'https://example.com/en/feedback';
+    const zh = 'https://example.com/zh/feedback';
+    await boot();
+    for (const [configured, expected] of [
+      [{ en, zh }, { en, zh }],
+      [{ en, zh: '/relative' }, { en }],
+      [{ en: 'http://example.com/feedback', zh }, { zh }],
+      [{ zh }, { zh }],
+    ]) {
+      cloudBehavior = { status: 200, body: { name, config: { ...form, learn_more_url: configured } } };
+      expect((await postClientConfigs(name)).data).toEqual({ name, config: { ...form, learn_more_url: expected } });
+    }
+    cloudBehavior = { status: 200, body: { name, config: { ...form, learn_more_url: 'invalid' } } };
+    expect((await postClientConfigs(name)).data).toEqual({ name, config: form });
+  });
+
   it('returns null config when the cloud fetch keeps failing', async () => {
     cloudBehavior = { status: 500, body: {} };
     await boot();

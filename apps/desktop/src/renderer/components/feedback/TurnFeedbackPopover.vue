@@ -3,7 +3,7 @@ import { computed, inject, nextTick, onBeforeUnmount, onMounted, ref, shallowRef
 import { useI18n } from 'vue-i18n';
 import { useFontPrefs } from '@moonshot-ai/app-core';
 import { Button, Checkbox, IconButton, Menu, Pill, Textarea } from '@moonshot-ai/app-ui';
-import { DesktopFeedbackKey, FEEDBACK_DESCRIPTION_LIMIT, type FeedbackReason, type TurnFeedbackTarget } from '../../composables/useDesktopFeedback';
+import { DesktopFeedbackKey, FEEDBACK_DESCRIPTION_LIMIT, type FeedbackForm, type TurnFeedbackTarget } from '../../composables/useDesktopFeedback';
 import FeedbackGuideLink from './FeedbackGuideLink.vue';
 
 const props = defineProps<{
@@ -21,9 +21,9 @@ const editor = ref<InstanceType<typeof Textarea>>();
 const scrolls = ref(false);
 const deferPreview = ref(false);
 const position = shallowRef<{ top: number; left: number; maxHeight: number }>();
-const configuredReasons = shallowRef<readonly FeedbackReason[] | null>();
+const form = shallowRef<FeedbackForm | null>();
 const builtinReasons = ['incorrect', 'missed_instructions', 'off_topic', 'lost_context', 'slow', 'other'] as const;
-const reasonOptions = computed(() => configuredReasons.value?.map(reason => ({
+const reasonOptions = computed(() => form.value?.reply_reasons.negative.map(reason => ({
   id: reason.id,
   label: locale.value.startsWith('zh') ? reason.label.zh : reason.label.en,
 })) ?? builtinReasons.map(id => ({ id, label: t(`feedback.reasons.${id}`) })));
@@ -83,8 +83,8 @@ onMounted(() => {
   document.addEventListener('scroll', outside, true);
   window.addEventListener('keydown', escape, true);
   window.addEventListener('resize', measure);
-  void feedback?.loadReasons(props.target.sessionId).then(reasons => {
-    configuredReasons.value = reasons;
+  void feedback?.loadForm(props.target.sessionId).then(config => {
+    form.value = config;
   });
 });
 
@@ -138,7 +138,7 @@ async function submit(): Promise<void> {
         :key="reason.id"
         :active="selected.includes(reason.id)"
         :aria-pressed="selected.includes(reason.id)"
-        :disabled="updating || configuredReasons === undefined"
+        :disabled="updating || form === undefined"
         @click="toggle(reason.id)"
       ><span>{{ reason.label }}</span></Pill>
     </div>
@@ -160,7 +160,7 @@ async function submit(): Promise<void> {
     <div class="feedback-popover-footer">
       <div class="feedback-consent">
         <Checkbox v-model="includeSession" :disabled="updating">{{ t('feedback.uploadConversation') }}</Checkbox>
-        <FeedbackGuideLink icon-only />
+        <FeedbackGuideLink :urls="form?.learn_more_url" icon-only />
       </div>
       <Button
         size="sm"
