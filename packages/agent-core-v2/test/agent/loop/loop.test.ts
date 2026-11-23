@@ -2,6 +2,7 @@ import { getMaxListeners } from 'node:events';
 
 import { type ToolCall } from '@moonshot-ai/core/llm/message';
 import { emptyUsage } from '@moonshot-ai/core/llm/usage';
+import { call, say } from '@moonshot-ai/testkit/model';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { IDisposable } from '#/_base/di/lifecycle';
@@ -49,9 +50,11 @@ import {
   createMockProviderRequester,
   providerHttpError,
   sessionService,
+  testkitAgentFixtures,
   wireRecordPersistenceServices,
   type TestAgentContext,
   type TestAgentOptions,
+  type TestkitAgentFixtures,
 } from '../../harness';
 import { stubPluginService } from '../../app/plugin/stubs';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
@@ -633,7 +636,7 @@ describe('Agent loop', () => {
       [wire] permission.record_approval_result   { "turnId": 0, "toolCallId": "call_lookup", "toolName": "Lookup", "action": "Approve Lookup", "result": { "decision": "approved", "selectedLabel": "approve" }, "agentId": "main", "time": "<time>" }
       [emit] tool.call.started                   { "time": "<time>", "agentId": "main", "origin": "loop", "turnId": 0, "toolCallId": "call_lookup", "name": "Lookup", "args": { "query": "moon" } }
       [emit] tool.updated                        { "time": "<time>", "agentId": "main", "origin": "loop", "turnId": 0, "toolCallId": "call_lookup", "taskId": "<taskId>", "status": "running", "detached": false, "fields": {} }
-      [wire] context.append_loop_event           { "agentId": "main", "event": { "type": "tool.call", "uuid": "<uuid-4>", "turnId": "0", "step": 1, "stepUuid": "<uuid-2>", "toolCallId": "call_lookup", "name": "Lookup", "args": { "query": "moon" } }, "time": "<time>" }
+      [wire] context.append_loop_event           { "agentId": "main", "event": { "type": "tool.call", "uuid": "<uuid-4>", "turnId": "0", "step": 1, "stepUuid": "<uuid-2>", "toolCallId": "call_lookup", "name": "Lookup", "args": { "query": "moon" }, "argsRaw": "{\\"query\\":\\"moon\\"}" }, "time": "<time>" }
       [emit] tool.updated                        { "time": "<time>", "agentId": "main", "origin": "loop", "turnId": 0, "toolCallId": "call_lookup", "taskId": "<taskId>", "status": "running", "detached": false, "fields": {} }
       [emit] tool.updated                        { "time": "<time>", "agentId": "main", "origin": "loop", "turnId": 0, "toolCallId": "call_lookup", "taskId": "<taskId>", "status": "success", "detached": false, "fields": {} }
       [emit] tool.result                         { "time": "<time>", "agentId": "main", "origin": "loop", "turnId": 0, "toolCallId": "call_lookup", "output": "lookup-result" }
@@ -735,6 +738,50 @@ describe('Agent loop', () => {
       slowGate.resolve();
       await local.dispose();
     }
+  });
+
+  const itWithTestkit = it.extend<TestkitAgentFixtures>(testkitAgentFixtures(permissionModeServices('yolo')));
+
+  itWithTestkit('preserves raw tool call argument bytes across resume', async ({ agent, model }) => {
+    const rawArgs = '{ "query":  "moon", "limit": 1e3 }';
+    const lookupTool: ExecutableTool = {
+      name: 'Lookup',
+      description: 'Look up a short test value.',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: { type: 'string' },
+          limit: { type: 'number' },
+        },
+        additionalProperties: true,
+      },
+      resolveExecution: () => ({
+        approvalRule: 'Lookup',
+        execute: async () => ({ output: 'lookup-result' }),
+      }),
+    };
+    await agent.restorePersisted();
+    agent.get(IAgentLoopService).update({ activeToolNames: ['Lookup'] });
+    agent.get(IAgentToolRegistryService).register(lookupTool);
+    model.script(
+      call('Lookup', { query: 'moon', limit: 1000 }, { id: 'call_raw', rawArguments: rawArgs, invalid: true }),
+      say('done'),
+    );
+
+    const { turn } = submitTurn(agent.get(IAgentLoopService), 'look things up');
+    await expect(turn.result).resolves.toMatchObject({ type: 'completed' });
+
+    const toolCalls = agent.allEvents
+      .filter((entry) => entry.type === '[wire]' && entry.event === 'context.append_loop_event')
+      .map((entry) => (entry.args as { event: LoopRecordedEvent }).event)
+      .filter(
+        (event): event is Extract<LoopRecordedEvent, { type: 'tool.call' }> =>
+          event.type === 'tool.call',
+      );
+    expect(toolCalls.map((event) => [event.toolCallId, event.argsRaw])).toEqual([
+      ['call_raw', rawArgs],
+    ]);
+    await agent.expectResumeMatches();
   });
 
   it('forwards the cancellation reason to the signals of running tools', async () => {
