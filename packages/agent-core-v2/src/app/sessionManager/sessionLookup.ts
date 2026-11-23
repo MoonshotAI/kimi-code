@@ -67,6 +67,36 @@ export interface StaleReloadOptions {
   readonly onReloaded?: (session: ISessionScopeHandle) => Promise<void>;
 }
 
+const pendingStaleReloads = new WeakMap<
+  SessionManager,
+  Map<string, Promise<ISessionScopeHandle | undefined>>
+>();
+
+function reloadSessionSingleFlight(
+  accessor: ServicesAccessor,
+  sessionId: string,
+): Promise<ISessionScopeHandle | undefined> {
+  const manager = accessor.get(ISessionManager);
+  let active = pendingStaleReloads.get(manager);
+  if (active === undefined) {
+    active = new Map();
+    pendingStaleReloads.set(manager, active);
+  }
+  const existing = active.get(sessionId);
+  if (existing !== undefined) return existing;
+  const runReload = async (): Promise<ISessionScopeHandle | undefined> => {
+    try {
+      await closeSessionById(accessor, sessionId);
+      return await resumeSessionById(accessor, sessionId);
+    } finally {
+      if (active.get(sessionId) === pending) active.delete(sessionId);
+    }
+  };
+  const pending = runReload();
+  active.set(sessionId, pending);
+  return pending;
+}
+
 export async function reloadOnStale<T>(
   accessor: ServicesAccessor,
   sessionId: string,
@@ -77,8 +107,7 @@ export async function reloadOnStale<T>(
     return await run();
   } catch (error) {
     if (!isError2(error) || error.code !== ErrorCodes.SESSION_STALE) throw error;
-    await closeSessionById(accessor, sessionId);
-    const session = await resumeSessionById(accessor, sessionId);
+    const session = await reloadSessionSingleFlight(accessor, sessionId);
     if (session === undefined) throw error;
     await options?.onReloaded?.(session);
     if (options?.retry === false) throw error;
