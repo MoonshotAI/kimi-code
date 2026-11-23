@@ -1,4 +1,4 @@
-import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
   AppAgentState,
   AppEvent,
@@ -59,7 +59,7 @@ async function compileClientModules(): Promise<void> {
   await Promise.all([import('../src/client/useKimiWebClient'), import('../src/stores/warnings')]);
 }
 
-beforeAll(compileClientModules);
+await compileClientModules();
 
 beforeEach(() => {
   setKimiClientDeps({ api: () => clientApiMock as unknown as KimiWebApi, t: (key) => key });
