@@ -3907,6 +3907,27 @@ export class KimiTUI {
     return this.newSessionPromise;
   }
 
+  private async fallbackToExistingProjectRootIfMissing(): Promise<boolean> {
+    if (this.environmentIdOf(this.state.appState.environment) !== 'local') return false;
+    const { workDir, projectRoot } = this.state.appState;
+    if (
+      projectRoot === undefined ||
+      sameDir(workDir, projectRoot) ||
+      isDirectory(workDir) ||
+      !isDirectory(projectRoot)
+    ) {
+      return false;
+    }
+    const location =
+      (await this.harness.resolveWorkLocation(projectRoot).catch(() => undefined)) ?? {
+        cwd: projectRoot,
+        projectRoot,
+        isGitRepo: this.state.appState.isGitRepo ?? false,
+      };
+    await this.applyWorkLocation(location);
+    return true;
+  }
+
   private async assembleNewSession(inherited?: {
     readonly environmentId: string;
     readonly environmentCwd?: string;
@@ -3916,6 +3937,7 @@ export class KimiTUI {
     try {
       let session: Session;
       try {
+        await this.fallbackToExistingProjectRootIfMissing();
         const environment = inherited ?? (await this.environmentForNewSession());
         session = await this.createSessionFromCurrentState(false, environment);
       } catch (error) {
@@ -5225,6 +5247,14 @@ export class KimiTUI {
     const startReplacement = async (): Promise<void> => {
       this.setAppState({ sessionId: '' });
       this.clearTranscriptAndRedraw();
+      try {
+        if (await this.fallbackToExistingProjectRootIfMissing()) {
+          inherited = await this.environmentForNewSession();
+          inheritError = undefined;
+        }
+      } catch (error) {
+        inheritError = error;
+      }
       if (inheritError !== undefined) {
         this.showError(`Failed to start a new session: ${formatErrorMessage(inheritError)}`);
         return;

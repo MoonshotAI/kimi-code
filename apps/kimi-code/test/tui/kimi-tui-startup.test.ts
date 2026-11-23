@@ -5546,6 +5546,68 @@ describe('KimiTUI work location', () => {
         repoRoot: project,
       });
     });
+
+    it('falls back to the existing project root when replacing a deleted missing-directory session or running /new', async () => {
+      const project = tempDir('kimi-missing-fallback-project-');
+      const missingDir = join(project, 'deleted-wt');
+      const initial = makeSession({ id: 'ses-initial' });
+      const resumed = makeSession({ id: 'ses-missing' });
+      const replacement = makeSession({ id: 'ses-replacement' });
+      const deleteSession = vi.fn(async () => {});
+      const harness = makeHarness(initial, {
+        resumeSession: vi.fn(async () => resumed),
+        deleteSession,
+        createSession: vi.fn(async () => replacement),
+        resolveWorkLocation: vi.fn(async (cwd: string) => ({
+          cwd,
+          projectRoot: project,
+          isGitRepo: true,
+        })),
+        resolveSessionEnvironment: vi.fn(async (options: { workDir?: string; environmentCwd?: string }) => {
+          if (options.workDir === missingDir) {
+            throw new Error(`Working directory does not exist: ${missingDir}`);
+          }
+          return { environmentId: 'local', cwd: options.environmentCwd };
+        }),
+      });
+      const driver = await startAt(project, harness, {}, { projectRoot: project, isGitRepo: true });
+      await driver.ensureSession();
+
+      const internal = driver as unknown as {
+        resumeSession(
+          id: string,
+          plan: {
+            kind: 'switch';
+            location: { cwd: string; projectRoot: string; isGitRepo: boolean };
+            missing: boolean;
+          },
+        ): Promise<boolean>;
+        deleteSessionFromPicker(row: SessionRow): Promise<void>;
+      };
+      await expect(
+        internal.resumeSession('ses-missing', {
+          kind: 'switch',
+          location: { cwd: missingDir, projectRoot: project, isGitRepo: true },
+          missing: true,
+        }),
+      ).resolves.toBe(true);
+      expect(driver.state.appState.workDir).toBe(missingDir);
+
+      await internal.deleteSessionFromPicker({
+        id: 'ses-missing',
+        title: 'Missing dir session',
+        work_dir: missingDir,
+        updated_at: Date.now(),
+        missing: true,
+      });
+
+      expect(deleteSession).toHaveBeenCalledWith('ses-missing');
+      expect(driver.state.appState.workDir).toBe(project);
+      expect(driver.state.appState.sessionId).toBe('ses-replacement');
+      expect(harness.createSession).toHaveBeenLastCalledWith(
+        expect.objectContaining({ workDir: project }),
+      );
+    });
   });
 
   describe('leaving a Kimi worktree', () => {
