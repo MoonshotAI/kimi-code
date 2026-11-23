@@ -190,7 +190,12 @@ export function panelTabProps(tab: PanelTab, ctx: PanelAdapterCtx): Record<strin
     case 'compaction': {
       const payload = tab.payload as CompactionTabPayload;
       const text = panel.compactionPanelTextOf(payload.turnId);
-      return { text };
+      return {
+        turnId: payload.turnId,
+        text,
+        cwd: client.status.value.cwd,
+        openFile: ctx.openFile,
+      };
     }
     case 'agent': {
       const payload = tab.payload as AgentTabPayload;

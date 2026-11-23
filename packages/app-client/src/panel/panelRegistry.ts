@@ -138,7 +138,7 @@ export const panelRegistry: Record<PanelTabType, PanelTabDef> = {
     policy: 'keyed',
     keyOf: (payload) => (payload as CompactionTabPayload).turnId,
     title: (_payload, t) => t('panel.tabs.compaction'),
-    icon: 'list',
+    icon: 'collapse',
     i18nKey: 'panel.tabs.compaction',
     restorable: true,
   },

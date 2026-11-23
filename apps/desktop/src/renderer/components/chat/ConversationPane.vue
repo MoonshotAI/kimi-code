@@ -6,7 +6,7 @@ import type { ChatTurn, ConversationStatus, OpenMediaRequest, QueuedPromptView, 
 import type { QuestionResponse } from '../../api/types';
 import { useSidebarTabs } from '@moonshot-ai/app-core';
 import { ChatPane } from '@moonshot-ai/app-components';
-import { HostNotice, WorkspaceIcon } from '@moonshot-ai/app-components/support';
+import { HostNotice, resolveCompactPhase, WorkspaceIcon } from '@moonshot-ai/app-components/support';
 import { hostsStore } from '@moonshot-ai/app-client/stores';
 import { isWideTableLayoutActive, useWideTableToc } from '@moonshot-ai/app-components';
 import { ErrorBoundary } from '@moonshot-ai/app-components';
@@ -121,6 +121,7 @@ const turnActive = client.turnActive;
 const starting = client.isStartingFirstPrompt;
 const sessionLoading = client.sessionLoading;
 const compaction = client.compaction;
+const compactPhase = computed(() => resolveCompactPhase(compaction.value, props.queued));
 const hasMoreMessages = client.hasMoreMessages;
 const loadingMore = client.loadingMoreMessages;
 const workspaces = client.workspacesView;
@@ -604,7 +605,9 @@ function handleComposerSteer(payload: ComposerSteerPayload): void {
 }
 
 function handleComposerCommand(payload: ComposerCommandPayload): void {
-  if (payload.delivery !== undefined) followAfterUserAction();
+  if (payload.delivery !== undefined || payload.cmd === '/compact' || payload.cmd.startsWith('/compact ')) {
+    followAfterUserAction();
+  }
   emit('command', payload);
 }
 
@@ -1069,6 +1072,8 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
         :ctx-max="status.ctxMax"
         :model-id="status.modelId"
         :running="client.activity.value !== 'idle'"
+        :has-messages="turns.length > 0 || Boolean(working)"
+        :compact-phase="compactPhase"
         :tabs="panelTabs ?? []"
         :available="availableTabs ?? []"
         @open-pr="(url) => emit('openPr', url)"
@@ -1076,7 +1081,7 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
         @activate="(id) => emit('activateTab', id)"
         @open="(type) => emit('openTab', type)"
         @show-tabs="emit('showTabs')"
-        @compact="client.compact()"
+        @compact="handleComposerCommand({ cmd: '/compact', attachments: [], preserveDraft: true })"
       />
     </div>
 

@@ -455,7 +455,7 @@
     "packages/agent-core-v2/test/llm-adapter/model/modelAuth.test.ts": 5,
     "packages/agent-core-v2/test/mcpCore/client-stdio.test.ts": 1,
     "packages/agent-core-v2/test/mcpCore/stubs.ts": 2,
-    "packages/agent-core-v2/test/persistence/backends/node-fs/sessionLockService.test.ts": 5,
+    "packages/agent-core-v2/test/persistence/backends/node-fs/sessionLockService.test.ts": 4,
     "packages/agent-core-v2/test/remote/providerFactory.test.ts": 2,
     "packages/agent-core-v2/test/session/agentLifecycle/agentLifecycle.test.ts": 1,
     "packages/agent-core-v2/test/session/workspaceContext/agentWorkspaceContext.test.ts": 1,

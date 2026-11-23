@@ -709,6 +709,98 @@ describe('ToolExecutor', () => {
     expect(finalChanges).toBe(1);
   });
 
+  it('threads returned durations through results and keeps them across afterExecute replacements', async () => {
+    const executor = new ToolExecutor([
+      defineTool('timed', {
+        execute: () => ({ content: textToolContent('done'), durationMs: 1_234 }),
+      }),
+      defineTool('timed-failure', {
+        execute: () => ({
+          content: textToolContent('bad'),
+          outcome: 'failed',
+          reason: 'bad',
+          durationMs: 7,
+        }),
+      }),
+    ]);
+
+    expect(await executor.execute(toolCall('timed-1', 'timed'), undefined).wait()).toMatchObject({
+      outcome: { type: 'success' },
+      durationMs: 1_234,
+    });
+    expect(
+      await executor.execute(toolCall('timed-failure-1', 'timed-failure'), undefined).wait(),
+    ).toMatchObject({ outcome: { type: 'failed' }, durationMs: 7 });
+    const untimed = await new ToolExecutor([defineTool('untimed')])
+      .execute(toolCall('untimed-1', 'untimed'), undefined)
+      .wait();
+    expect('durationMs' in untimed).toBe(false);
+
+    const replacing = new ToolExecutor([
+      defineTool('replaced', {
+        execute: () => ({ content: textToolContent('raw'), durationMs: 55 }),
+      }),
+    ], {
+      hook: {
+        afterExecute: (context) => ({ ...context.result, content: textToolContent('replaced') }),
+      },
+    });
+    expect(await replacing.execute(toolCall('replaced-1', 'replaced'), undefined).wait()).toMatchObject({
+      content: textToolContent('replaced'),
+      durationMs: 55,
+    });
+  });
+
+  it('threads stopping-announced durations into abandoned results', async () => {
+    const startedWithValue = deferred();
+    const withValue = new ToolExecutor([
+      defineTool('abandon-value', {
+        execute: async () => {
+          startedWithValue.resolve();
+          return new Promise<never>(() => {});
+        },
+        stopping: (context) => context.abandon({ content: textToolContent('partial'), durationMs: 2_000 }),
+      }),
+    ]).execute(toolCall('abandon-value-1', 'abandon-value'), undefined);
+    await startedWithValue.promise;
+    expect(await withValue.stop('halt')).toMatchObject({
+      content: textToolContent('partial'),
+      outcome: { type: 'aborted', error: { type: 'abandoned', reason: 'halt' } },
+      durationMs: 2_000,
+    });
+
+    const startedBare = deferred();
+    const bare = new ToolExecutor([
+      defineTool('abandon-bare', {
+        execute: async () => {
+          startedBare.resolve();
+          return new Promise<never>(() => {});
+        },
+        stopping: (context) => context.abandon(undefined, 3_000),
+      }),
+    ]).execute(toolCall('abandon-bare-1', 'abandon-bare'), undefined);
+    await startedBare.promise;
+    expect(await bare.stop('halt')).toMatchObject({
+      outcome: { type: 'aborted', error: { type: 'abandoned', reason: 'halt' } },
+      durationMs: 3_000,
+    });
+
+    const startedNone = deferred();
+    const none = new ToolExecutor([
+      defineTool('abandon-none', {
+        execute: async () => {
+          startedNone.resolve();
+          return new Promise<never>(() => {});
+        },
+        stopping: (context) => context.abandon(),
+      }),
+    ]).execute(toolCall('abandon-none-1', 'abandon-none'), undefined);
+    await startedNone.promise;
+    const noneResult = await none.stop('halt');
+    expect(noneResult.outcome).toMatchObject({ type: 'aborted', error: { type: 'abandoned' } });
+    expect('durationMs' in noneResult).toBe(false);
+  });
+
   it('seals responses after execute settles so late stop and detach are ignored', async () => {
     const afterEntered = deferred();
     const afterRelease = deferred();

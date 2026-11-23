@@ -2,6 +2,7 @@
 import { computed, onScopeDispose, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useContextInspector } from '@moonshot-ai/app-core';
+import type { CompactPhase } from '@moonshot-ai/app-components/support';
 import { sessionInfoStore } from '@moonshot-ai/app-client/stores';
 import type { PanelTab } from '@moonshot-ai/app-client/composables';
 import type { PanelLauncherType } from '@moonshot-ai/app-client/panel';
@@ -18,10 +19,14 @@ const props = withDefaults(defineProps<{
   ctxMax?: number;
   modelId?: string;
   running?: boolean;
+  hasMessages?: boolean;
+  compactPhase?: CompactPhase;
   tabs?: PanelTab[];
   available?: PanelLauncherItem[];
 }>(), {
   running: false,
+  hasMessages: true,
+  compactPhase: 'idle',
   tabs: () => [],
   available: () => [],
 });
@@ -79,11 +84,12 @@ watch(
 );
 
 watch(
-  () => [props.ctxUsed, props.ctxMax, props.modelId, props.running] as const,
-  ([used, max, model, running], [prevUsed, prevMax, prevModel, prevRunning]) => {
+  () => [props.ctxUsed, props.ctxMax, props.modelId, props.running, props.compactPhase] as const,
+  ([used, max, model, running, phase], [prevUsed, prevMax, prevModel, prevRunning, prevPhase]) => {
     if (!props.sessionId || !contextInspectorEnabled.value) return;
     const contextChanged = used !== prevUsed || max !== prevMax || model !== prevModel;
-    if (contextChanged || (prevRunning === true && !running)) {
+    const settled = (prevRunning === true && !running) || (prevPhase === 'compacting' && phase !== 'compacting');
+    if (contextChanged || settled) {
       void store.refreshContext?.(props.sessionId);
     }
   },
@@ -107,7 +113,8 @@ watch(
       :state="contextState"
       :ctx-used="ctxUsed"
       :ctx-max="ctxMax"
-      :can-compact="Boolean(sessionId) && !running"
+      :can-compact="Boolean(sessionId) && hasMessages"
+      :compact-phase="compactPhase"
       @compact="emit('compact')"
     />
     <SessionInfoTabs
