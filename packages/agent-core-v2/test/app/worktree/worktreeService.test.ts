@@ -1007,6 +1007,45 @@ describe('WorktreeService', () => {
         expect(error.code).toBe('worktree.not_found');
       }
     });
+
+    it('inspects and removes a worktree checked out on an unborn orphan branch', async () => {
+      const created = await create({ name: 'orphan-wt' });
+      const wt = created.worktree.path;
+      git(wt, 'switch', '-q', '--orphan', 'orphan');
+
+      expect(await service.inspectRemoval({ repoRoot: realRepo, path: wt, deleteBranch: true })).toMatchObject({
+        path: wt,
+        missing: false,
+        branch: 'orphan',
+        uncommittedFiles: 0,
+        uniqueCommits: 0,
+      });
+
+      await service.remove(removal(wt, { deleteBranch: true }));
+      expect(existsSync(wt)).toBe(false);
+      expect(registeredPaths(repo)).toEqual([realRepo]);
+    });
+
+    it.skipIf(isWindows)('ignores a managed worktree path replaced by a symlink to a sibling worktree', async () => {
+      const first = await create({ name: 'first-wt', branch: 'branch-a' });
+      const second = await create({ name: 'second-wt', branch: 'branch-b' });
+      rmSync(first.worktree.path, { recursive: true, force: true });
+      symlinkSync(second.worktree.path, first.worktree.path);
+
+      const listed = await service.list(repo);
+      expect(listed.worktrees.map((worktree) => worktree.name)).toEqual(['second-wt']);
+
+      const refused = await failure(service.remove(removal(`${first.worktree.path}/`, { deleteBranch: true })));
+      expect(refused.code).toBe('worktree.not_found');
+      expect(existsSync(second.worktree.path)).toBe(true);
+      expect(branches(repo)).toContain('branch-a');
+      expect(branches(repo)).toContain('branch-b');
+
+      await service.remove(removal(second.worktree.path, { deleteBranch: true }));
+      expect(existsSync(second.worktree.path)).toBe(false);
+      expect(branches(repo)).toContain('branch-a');
+      expect(branches(repo)).not.toContain('branch-b');
+    });
   });
 
   describe('runSetupScript', () => {
