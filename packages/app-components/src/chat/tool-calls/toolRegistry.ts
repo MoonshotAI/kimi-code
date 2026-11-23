@@ -28,7 +28,7 @@ import SelectToolsTool from './SelectToolsTool.vue';
 type ToolRenderer = Component;
 
 export function resolveToolRenderer(tool: ToolCall, options?: { notifyUserEnabled?: boolean }): ToolRenderer {
-  if (tool.mcpAuth) return McpAuthorizationTool;
+  if (tool.mcpAuth) return McpAuthorizationTool as ToolRenderer;
   if (isBrowserTool(tool)) return BrowserTool;
   if (tool.media && tool.status === 'ok') return MediaTool;
   switch (normalizeToolName(tool.name)) {

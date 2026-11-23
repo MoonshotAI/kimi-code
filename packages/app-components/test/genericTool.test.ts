@@ -62,7 +62,7 @@ describe('MCP authorization card', () => {
     vi.useFakeTimers();
     const request = { serverName: 'example', waitId: 'wait-1', expiresAt: Date.now() + 1000, authorizationUrl: 'https://auth.example.test/authorize?state=test' };
     const open = vi.spyOn(window, 'open').mockReturnValue(null);
-    const copy = vi.fn(async (_: string) => true);
+    const copy = vi.fn<(text: string) => Promise<boolean>>().mockResolvedValue(true);
     vi.stubGlobal('kimiDesktop', { writeClipboardText: copy });
     try {
       const tool: ToolCall = { id: 'call', name: 'mcp__example__authenticate', arg: '{}', status: 'running', mcpAuth: { serverName: 'example', phase: 'waiting', request } };
