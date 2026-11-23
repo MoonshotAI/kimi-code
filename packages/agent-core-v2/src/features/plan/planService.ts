@@ -16,11 +16,12 @@ import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import { denyToolExecution } from '#/agent/toolExecutor/beforeToolExecuteEvent';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
-import { registerLegacyStarting } from '#/agent/toolExecutor/legacyHooks';
-import type {
-  BeforeToolExecuteEvent,
-  ResolvedToolExecutionHookContext,
-} from '#/agent/toolExecutor/toolHooks';
+import {
+  legacyExecutionContext,
+  legacyStartingDecision,
+  type LegacyDecisionContext,
+} from '#/agent/toolExecutor/legacyHooks';
+import type { ToolStartingDecision } from '#/tool/executor';
 import { IEventBus } from '#/app/event/eventBus';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
@@ -105,57 +106,58 @@ export class AgentPlanService extends Service implements IAgentPlanService {
   }
 
   private registerPlanGuard(toolExecutor: IAgentToolExecutorService): IDisposable {
-    return registerLegacyStarting(toolExecutor, (event) => this.guardToolExecution(event));
+    return toolExecutor.registerHook({
+      starting: (context) => this.guardToolExecution(context),
+    });
   }
 
-  private async guardToolExecution(event: BeforeToolExecuteEvent): Promise<void> {
-    const toolName = event.toolCall.name;
+  private async guardToolExecution(
+    context: LegacyDecisionContext,
+  ): Promise<ToolStartingDecision | void> {
+    const toolName = context.call.name;
     const plan = await this.status();
 
     if (toolName === 'ExitPlanMode') {
-      if (plan !== null) {
-        event.waitUntil(() => this.review.requestApproval(event));
-      }
-      return;
+      if (plan === null) return undefined;
+      const decision = await this.review.requestApproval(legacyExecutionContext(context));
+      return legacyStartingDecision(context, decision);
     }
 
-    if (plan === null) {
-      return;
-    }
+    if (plan === null) return undefined;
 
     if (toolName === 'Write' || toolName === 'Edit') {
       const target = this.planFileTarget(plan.id);
-      if (target !== undefined && (await this.writesOnlyPlanFile(event, target))) {
-        event.allow();
-        return;
+      if (target !== undefined && (await this.writesOnlyPlanFile(context, target))) {
+        return { skipPermitting: true };
       }
-      event.veto(
-        denyToolExecution(this.toolApproval.formatDenyMessage(planModeWriteDeniedMessage(plan.path))),
-      );
-      return;
+      return legacyStartingDecision(context, {
+        veto: denyToolExecution(
+          this.toolApproval.formatDenyMessage(planModeWriteDeniedMessage(plan.path)),
+        ),
+      });
     }
 
     if (toolName === 'TaskStop') {
-      event.veto(
-        denyToolExecution(
+      return legacyStartingDecision(context, {
+        veto: denyToolExecution(
           this.toolApproval.formatDenyMessage(
             'TaskStop is not available in plan mode. Call ExitPlanMode to exit plan mode before stopping a background task.',
           ),
         ),
-      );
-      return;
+      });
     }
 
     if (toolName === 'CronCreate' || toolName === 'CronDelete') {
-      event.veto(
-        denyToolExecution(
+      return legacyStartingDecision(context, {
+        veto: denyToolExecution(
           this.toolApproval.formatDenyMessage(
             `${toolName} is not available in plan mode because it would mutate scheduled work that runs after plan exit. Call ExitPlanMode first.`,
           ),
         ),
-      );
-      return;
+      });
     }
+
+    return undefined;
   }
 
   private get isActive(): boolean {
@@ -290,10 +292,11 @@ export class AgentPlanService extends Service implements IAgentPlanService {
   }
 
   private async writesOnlyPlanFile(
-    context: ResolvedToolExecutionHookContext,
+    context: LegacyDecisionContext,
     target: PlanFileTarget,
   ): Promise<boolean> {
-    const writeAccesses = (context.execution.accesses ?? []).filter(
+    if (context.prepared.kind !== 'execute') return false;
+    const writeAccesses = (context.prepared.execution.accesses ?? []).filter(
       (access): access is ToolFileAccess =>
         access.kind === 'file' &&
         (access.operation === 'write' || access.operation === 'readwrite'),

@@ -240,8 +240,10 @@ describe('AgentPlanService plan-guard listener', () => {
     if (!permissionStandInRegistered) {
       permissionStandInRegistered = true;
       disposables.add(
-        executorEvents.executor.registerLegacyStarting(() => {
-          permissionRan = true;
+        executorEvents.executor.registerHook({
+          permitting: () => {
+            permissionRan = true;
+          },
         }),
       );
     }
@@ -474,7 +476,7 @@ describe('AgentPlanService plan-guard listener', () => {
         hookContext('ExitPlanMode', { display: planReviewDisplay({ options }) }),
       );
 
-      expect(decision?.veto?.isError).toBe(false);
+      expect(decision?.veto?.isError).toBeFalsy();
       expect(decision?.veto?.output).toContain(
         'Selected approach: Approach B',
       );
@@ -551,7 +553,7 @@ describe('AgentPlanService plan-guard listener', () => {
         hookContext('ExitPlanMode', { display: planReviewDisplay() }),
       );
 
-      expect(decision?.veto?.isError).toBe(false);
+      expect(decision?.veto?.isError).toBeFalsy();
       expect(decision?.veto?.output).toContain('Add verification.');
       expect(records).toContainEqual({
         event: 'plan_resolved',
@@ -585,10 +587,8 @@ describe('AgentPlanService plan-guard listener', () => {
         hookContext('ExitPlanMode', { display: planReviewDisplay() }),
       );
 
-      expect(decision?.veto).toMatchObject({
-        isError: false,
-        output: 'Plan approval dismissed. Plan mode remains active.',
-      });
+      expect(decision?.veto?.isError).toBeFalsy();
+      expect(decision?.veto?.output).toBe('Plan approval dismissed. Plan mode remains active.');
       expect(records).toContainEqual({
         event: 'plan_resolved',
         properties: { outcome: 'dismissed', mode: 'plan' },
@@ -604,7 +604,7 @@ describe('AgentPlanService plan-guard listener', () => {
       );
 
       expect(requests).toHaveLength(1);
-      expect(decision?.veto?.isError).toBe(false);
+      expect(decision?.veto?.isError).toBeFalsy();
       expect(decision?.veto?.output).toContain('## Approved Plan:\n# Plan');
       expect(records).toContainEqual({
         event: 'plan_submitted',
