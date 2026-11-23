@@ -868,6 +868,41 @@ describe('WorktreeService', () => {
       expect(existsSync(created.worktree.path)).toBe(true);
     });
 
+    it('rejects non-finite or negative discard thresholds instead of bypassing removal guards', async () => {
+      const created = await create({ name: 'nan-discard' });
+      const wt = created.worktree.path;
+      writeFileSync(join(wt, 'dirty.txt'), 'dirty\n');
+
+      for (const bad of [
+        { uncommittedFiles: Number.NaN, uniqueCommits: 0 },
+        { uncommittedFiles: 0, uniqueCommits: Number.NaN },
+        { uncommittedFiles: Number.POSITIVE_INFINITY, uniqueCommits: 0 },
+        { uncommittedFiles: -1, uniqueCommits: 0 },
+      ]) {
+        await expect(service.remove(removal(wt, { discard: bad }))).rejects.toThrow(/discard/i);
+        expect(existsSync(wt)).toBe(true);
+      }
+    });
+
+    it('keeps a branch created concurrently by another process when worktree add fails', async () => {
+      const racingTip = git(repo, 'rev-parse', 'HEAD');
+      const error = await failure(
+        service.create(
+          { cwd: repo, name: 'branch-race', branch: 'raced-branch' },
+          {
+            onEvent: (event) => {
+              if (event.type === 'step' && event.step === 'check' && event.status === 'finished') {
+                git(repo, 'branch', 'raced-branch', racingTip);
+              }
+            },
+          },
+        ),
+      );
+      expect(error.code).toBe('worktree.git_failed');
+      expect(branches(repo)).toContain('raced-branch');
+      expect(git(repo, 'rev-parse', 'refs/heads/raced-branch')).toBe(racingTip);
+    });
+
     it('counts commits that only a detached worktree holds', async () => {
       const created = await create({ name: 'detached-work' });
       const wt = created.worktree.path;

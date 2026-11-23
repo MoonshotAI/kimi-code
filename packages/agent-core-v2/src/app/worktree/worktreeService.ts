@@ -227,7 +227,7 @@ export class WorktreeService implements IWorktreeService {
         { details: { path: check.path, openSessionIds: check.openSessionIds } },
       );
     }
-    const allowed = input.discard === 'all' ? check : input.discard;
+    const allowed = input.discard === 'all' ? check : validateDiscardLimits(input.discard);
     if (check.uncommittedFiles > allowed.uncommittedFiles) {
       throw new Error2(
         ErrorCodes.WORKTREE_HAS_UNCOMMITTED,
@@ -380,11 +380,24 @@ export class WorktreeService implements IWorktreeService {
   }
 
   private async discardWorktree(plan: CreationPlan): Promise<void> {
+    const ownsBranch =
+      plan.branch !== undefined && !plan.branchExisted && (await this.worktreeOwnsBranch(plan));
     await this.git(['worktree', 'remove', '--force', '--force', plan.path], plan.sourceRoot);
     await this.fs.remove(plan.path).catch(() => {});
-    if (plan.branch !== undefined && !plan.branchExisted) {
+    if (ownsBranch && plan.branch !== undefined) {
       await this.git(['branch', '-D', plan.branch], plan.sourceRoot);
     }
+  }
+
+  private async worktreeOwnsBranch(plan: CreationPlan): Promise<boolean> {
+    const listed = await this.git(['worktree', 'list', '--porcelain'], plan.sourceRoot);
+    if (listed.exitCode !== 0) return false;
+    const wanted = await canonicalPath(this.fs, plan.path);
+    for (const entry of parseWorktreeList(listed.stdout)) {
+      if (entry.branch !== plan.branch) continue;
+      if (sameDir(await canonicalPath(this.fs, entry.path), wanted)) return true;
+    }
+    return false;
   }
 
   private async readRepository(cwd: string, repoRoot: string, signal?: AbortSignal): Promise<Repository> {
@@ -648,6 +661,25 @@ function localProgram(command: string, cwd: string): string | undefined {
 function nonEmpty(value: string | undefined): string | undefined {
   const trimmed = value?.trim();
   return trimmed === '' ? undefined : trimmed;
+}
+
+function validateDiscardLimits(discard: {
+  readonly uncommittedFiles: number;
+  readonly uniqueCommits: number;
+}): { readonly uncommittedFiles: number; readonly uniqueCommits: number } {
+  if (
+    !Number.isSafeInteger(discard.uncommittedFiles) ||
+    discard.uncommittedFiles < 0 ||
+    !Number.isSafeInteger(discard.uniqueCommits) ||
+    discard.uniqueCommits < 0
+  ) {
+    throw new Error2(
+      ErrorCodes.VALIDATION_FAILED,
+      'Worktree discard limits must be finite nonnegative integers.',
+      { details: { uncommittedFiles: discard.uncommittedFiles, uniqueCommits: discard.uniqueCommits } },
+    );
+  }
+  return discard;
 }
 
 function isOutsideRoot(rel: string): boolean {

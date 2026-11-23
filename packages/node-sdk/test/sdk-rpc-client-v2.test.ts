@@ -5352,4 +5352,37 @@ describe('KimiHarness worktrees', () => {
       await harness.close();
     }
   });
+
+  it('awaits config before checking the worktree flag in removeWorktree', async () => {
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', '0');
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_WORKTREE', '');
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-wt-cfg-home-'));
+    const repo = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-wt-cfg-repo-'));
+    tempDirs.push(homeDir, repo);
+    await writeFile(join(homeDir, 'config.toml'), '[experimental]\nworktree = true\n');
+    await git(repo, 'init', '-q', '-b', 'main');
+    await git(repo, 'config', 'user.email', 'test@example.com');
+    await git(repo, 'config', 'user.name', 'Test');
+    await writeFile(join(repo, 'README.md'), 'hello\n');
+    await git(repo, 'add', 'README.md');
+    await git(repo, 'commit', '-q', '-m', 'init');
+
+    const creator = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
+    const created = await creator.createWorktree({ cwd: repo, name: 'cfg-remove' });
+    await creator.close();
+
+    const remover = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
+    try {
+      await remover.removeWorktree({
+        repoRoot: created.repoRoot,
+        path: created.worktree.path,
+        deleteBranch: false,
+        discard: { uncommittedFiles: 0, uniqueCommits: 0 },
+      });
+      await expect(readdir(created.worktree.path)).rejects.toMatchObject({ code: 'ENOENT' });
+    } finally {
+      await remover.close();
+      vi.unstubAllEnvs();
+    }
+  });
 });

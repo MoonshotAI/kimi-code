@@ -372,18 +372,11 @@ describe('KimiHarness.listSessions', () => {
 
     const client = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
     try {
-      const index = client.engineAccessor.get(ISessionIndex);
-      await index.prepare();
-      await mkdir(join(homeDir, 'sessions', legacyId, 'ses_legacy_alias'), { recursive: true });
-      client.engineAccessor.get(ISessionIndexMirror).record({
-        id: 'ses_legacy_alias',
+      await client.engineAccessor.get(ISessionManager).create({
         workspaceId: legacyId,
-        cwd: workDir,
-        createdAt: 1,
-        updatedAt: Date.now(),
-        archived: false,
+        workDir,
+        sessionId: 'ses_legacy_alias',
       });
-      await drainSessionIndexMirror();
 
       const byProject = await client.listSessions({ workDir, scope: 'project' });
       expect(byProject).toEqual([
