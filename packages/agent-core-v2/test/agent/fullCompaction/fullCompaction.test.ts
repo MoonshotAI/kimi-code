@@ -43,7 +43,7 @@ import {
   type TestkitAgentFixtures,
   type MockProviderResponse,
 } from '../../harness';
-import { call, say } from '@moonshot-ai/testkit/model';
+import { batch, call, say } from '@moonshot-ai/testkit/model';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
@@ -1656,6 +1656,88 @@ describe('FullCompaction', () => {
         expect(placeholder).toMatchObject({ role: 'tool', callId: 'call_dangling' });
         expect(placeholder?.text).toContain('Tool result is not available in the current context');
       }
+      expect(compactionRequest.view.messages.slice(0, turnRequest.view.messages.length)).toEqual(
+        turnRequest.view.messages,
+      );
+      await ctx.expectResumeMatches();
+    },
+  );
+
+  testkitTest(
+    'renders one identical wall time header for tool results across turn, compaction and resume',
+    async ({ agent: ctx, model }) => {
+      ctx.get(IAgentToolRegistryService).register({
+        name: 'mcp__test__run',
+        description: 'Run a short test task.',
+        parameters: { type: 'object', properties: {}, additionalProperties: false },
+        resolveExecution: () => ({
+          approvalRule: 'mcp__test__run',
+          execute: async () => ({ output: 'run-result' }),
+        }),
+      } satisfies ExecutableTool);
+      ctx.get(IAgentToolRegistryService).register({
+        name: 'mcp__test__fetch',
+        description: 'Fetch a short test page.',
+        parameters: {
+          type: 'object',
+          properties: { url: { type: 'string' } },
+          required: ['url'],
+          additionalProperties: false,
+        },
+        resolveExecution: () => ({ output: 'fetch-result', isError: true }),
+      } satisfies ExecutableTool);
+      model.script(
+        batch(
+          call('mcp__test__run', {}, { id: 'call_run', text: 'I will run both tools.' }),
+          call('mcp__test__fetch', { url: 'https://example.com' }, { id: 'call_fetch' }),
+        ),
+      );
+      model.script(say('turn one done'));
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'run the tools' }] });
+      await ctx.untilTurnEnd();
+
+      const loop = ctx.get(IAgentLoopService);
+      const liveMessages = loop.previewRequestContent().messages;
+      const runMessage = liveMessages.find(
+        (message) => message.role === 'tool' && message.toolCallId === 'call_run',
+      );
+      const runDurationMs = runMessage?.role === 'tool' ? runMessage.attributes?.durationMs : undefined;
+      expect(runDurationMs).toBeTypeOf('number');
+      const runHeader = `Wall time: ${((runDurationMs ?? 0) / 1000).toFixed(3)} seconds`;
+      const fetchMessage = liveMessages.find(
+        (message) => message.role === 'tool' && message.toolCallId === 'call_fetch',
+      );
+      expect(fetchMessage?.role === 'tool' ? fetchMessage.attributes?.durationMs : undefined).toBe(0);
+
+      model.script(say('turn two ok'));
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'continue' }] });
+      await ctx.untilTurnEnd();
+
+      model.lane('compaction').script(say('Summary with durations.'));
+      const compacted = ctx.once('full_compaction.complete');
+      const completed = ctx.once('compaction.completed');
+      await ctx.rpc.beginCompaction({});
+      await compacted;
+      await completed;
+
+      const liveStepRequest = model.requests('main')[1]!;
+      const turnRequest = model.requests('main')[2]!;
+      const compactionRequest = model.requests('compaction')[0]!;
+      for (const request of [liveStepRequest, turnRequest, compactionRequest]) {
+        const runText = request.view.messages.find(
+          (message) => message.role === 'tool' && message.callId === 'call_run',
+        )?.text ?? '';
+        expect(runText).toContain(`${runHeader}\n`);
+        expect(runText.match(/Wall time: /g)).toHaveLength(1);
+        const fetchText = request.view.messages.find(
+          (message) => message.role === 'tool' && message.callId === 'call_fetch',
+        )?.text ?? '';
+        expect(fetchText).toContain('Wall time: 0.000 seconds\n');
+        expect(fetchText.match(/Wall time: /g)).toHaveLength(1);
+      }
+      expect(turnRequest.view.messages.slice(0, liveStepRequest.view.messages.length)).toEqual(
+        liveStepRequest.view.messages,
+      );
       expect(compactionRequest.view.messages.slice(0, turnRequest.view.messages.length)).toEqual(
         turnRequest.view.messages,
       );

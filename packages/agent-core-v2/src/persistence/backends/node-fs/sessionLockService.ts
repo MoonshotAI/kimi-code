@@ -129,7 +129,13 @@ export class SessionLockService extends SessionLockHolds {
     for (let attempt = 0; attempt < 2; attempt++) {
       if (this.tryPublish(lockPath, this.payload(token))) return { claimed: true };
       const current = this.readHolder(lockPath);
-      if (current !== undefined && this.alive(current)) return { claimed: false, holder: current };
+      if (
+        current !== undefined &&
+        this.alive(current) &&
+        (current.hostname === '' || current.hostname === this.hostname)
+      ) {
+        return { claimed: false, holder: current };
+      }
       this.reclaim(lockPath, token);
     }
     return { claimed: false, holder: this.readHolder(lockPath) };
@@ -156,7 +162,13 @@ export class SessionLockService extends SessionLockHolds {
     }
     try {
       const current = this.readHolder(lockPath);
-      if (current === undefined || !this.alive(current)) this.unlinkSilent(lockPath);
+      if (
+        current === undefined ||
+        !this.alive(current) ||
+        (current.hostname !== '' && current.hostname !== this.hostname)
+      ) {
+        this.unlinkSilent(lockPath);
+      }
     } finally {
       this.unlinkSilent(reclaimPath);
     }

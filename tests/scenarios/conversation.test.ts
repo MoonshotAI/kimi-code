@@ -143,7 +143,7 @@ describe('conversation over KAP', () => {
     expect(followUp.metadata).toMatchObject({ stepReason: 'tool_results' });
     expect(followUp.view.messages.find((message) => message.role === 'tool')).toMatchObject({
       callId: model.callId(0, 0),
-      text: 'testkit-ok\n',
+      text: expect.stringMatching(/^Wall time: \d+\.\d{3} seconds\ntestkit-ok\n$/),
     });
     const [turn] = await kap.turns(session.id);
     expect(turn?.items.find((item) => item.type === 'tool_call')).toMatchObject({
@@ -200,7 +200,10 @@ describe('conversation over KAP', () => {
 
     await kap.answer(session.id, interaction.interaction_id, { kind: 'approval', decision: 'approved' });
     await kap.waitIdle(session.id);
-    expect(model.request(1).view.messages.at(-1)).toMatchObject({ role: 'tool', text: 'approved-run' });
+    expect(model.request(1).view.messages.at(-1)).toMatchObject({
+      role: 'tool',
+      text: expect.stringMatching(/^Wall time: \d+\.\d{3} seconds\napproved-run$/),
+    });
 
     const turns = await kap.turns(session.id);
     const tool = turns.flatMap((turn) => turn.items).find((item) => item.type === 'tool_call' && item['name'] === 'Bash');
