@@ -189,7 +189,7 @@ function protectInteraction(): void {
   const selection = document.getSelection();
   const active = document.activeElement;
   for (const [key, el] of rows) {
-    if (el.contains(active)) next.add(key);
+    if (el.contains(active) || el.querySelector('[aria-haspopup="dialog"][aria-expanded="true"][aria-controls]')) next.add(key);
     if (selection && !selection.isCollapsed) {
       for (const endpoint of [selection.anchorNode, selection.focusNode]) {
         let node = endpoint;

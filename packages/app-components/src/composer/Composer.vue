@@ -16,7 +16,7 @@ import { measureNaturalWidth, prepareWithSegments } from '@chenglou/pretext';
 import { v4 as randomUUID } from 'uuid';
 import { computed, nextTick, onMounted, onUnmounted, ref, shallowRef, useId, watch, watchEffect } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { analyzeLeadingSlashCommand, basename, buildSlashItems, formatShortcutText, formatTokens, providerDisplayName } from '@moonshot-ai/app-core/lib';
+import { analyzeLeadingSlashCommand, basename, buildSlashItems, formatShortcutText, formatTokens, providerDisplayName, type SlashCommand } from '@moonshot-ai/app-core/lib';
 import { placeholderText } from '@moonshot-ai/app-core/lib';
 import { useAppearance } from '@moonshot-ai/app-core';
 import type { IconName } from '@moonshot-ai/app-client/icons';
@@ -110,6 +110,7 @@ const props = defineProps<{
   deferSubmitReset?: boolean;
   draftScopeKey?: string;
   placeholderText?: string;
+  extraBuiltinCommands?: readonly SlashCommand[];
   onCaptureScreenshot?: () => void;
   screenshotShortcutKeys?: string[];
   screenshotShortcutUnavailable?: boolean;
@@ -205,7 +206,7 @@ const { text, editorRef, loadForEdit: loadTextForEdit, clearDraft, loadDraftAtta
   },
 });
 
-const highlightCommands = computed(() => buildSlashItems([], { towerEnabled: towerEnabled.value }));
+const highlightCommands = computed(() => buildSlashItems([], { towerEnabled: towerEnabled.value, extraBuiltins: props.extraBuiltinCommands }));
 
 const pendingCommandArgument = computed(() => {
   if (isSideChat.value || !mayStartWithSlashCommand(text.value)) return null;
@@ -859,6 +860,7 @@ const {
   historyPush: (entry) => history.push(entry),
   clearDraft,
   towerEnabled: () => towerEnabled.value,
+  extraBuiltins: () => props.extraBuiltinCommands,
   resolveDesc: (item) => (item.isSkill ? item.desc : t(item.desc)),
 });
 
@@ -1643,6 +1645,20 @@ function persistPillsForDeparture(
   text.value = links.join(' ');
 }
 
+function submitCommandContext() {
+  return {
+    skillMentions: editor?.getSkillMentions() ?? [],
+    skills: skills.value,
+    skillsLoaded: skillsLoaded.value,
+    working: working.value,
+    running: running.value,
+    queueLength: queued.value.length,
+    goalMode: goalMode.value,
+    towerEnabled: towerEnabled.value,
+    extraBuiltins: props.extraBuiltinCommands,
+  };
+}
+
 function currentSubmitDecision(): SubmitDecision {
   if (props.submitDisabled === true) return { kind: 'noop' };
   const trimmed = text.value.trim();
@@ -1659,14 +1675,7 @@ function currentSubmitDecision(): SubmitDecision {
     rewritten: rewriteForSubmit(trimmed, assembly),
     blocked: pillGate.value.uploading || pillGate.value.errored || pillGate.value.missing,
     assembly,
-    skillMentions: editor?.getSkillMentions() ?? [],
-    skills: skills.value,
-    skillsLoaded: skillsLoaded.value,
-    working: working.value,
-    running: running.value,
-    queueLength: queued.value.length,
-    goalMode: goalMode.value,
-    towerEnabled: towerEnabled.value,
+    ...submitCommandContext(),
   });
 }
 
@@ -1680,14 +1689,7 @@ const canSend = computed(() => {
     text: trimmed,
     blocked,
     assembly,
-    skillMentions: editor?.getSkillMentions() ?? [],
-    skills: skills.value,
-    skillsLoaded: skillsLoaded.value,
-    working: working.value,
-    running: running.value,
-    queueLength: queued.value.length,
-    goalMode: goalMode.value,
-    towerEnabled: towerEnabled.value,
+    ...submitCommandContext(),
   }).kind !== 'noop';
 });
 

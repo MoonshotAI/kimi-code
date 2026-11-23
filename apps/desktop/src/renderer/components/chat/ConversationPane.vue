@@ -48,11 +48,16 @@ import type { PanelLauncherType } from '@moonshot-ai/app-client/panel';
 import type { PanelLauncherItem } from '../../lib/panelLauncher';
 import { historyRenderAllAffordable, turnHasOutput, turnTocTitle } from '@moonshot-ai/app-components';
 import type { TurnFileChange } from '@moonshot-ai/app-components';
+import type { SlashCommand } from '@moonshot-ai/app-core/lib';
+import { feedbackTurnTarget } from '../../composables/useDesktopFeedback';
+import TurnFeedbackActions from '../feedback/TurnFeedbackActions.vue';
+import TurnFeedbackStatus from '../feedback/TurnFeedbackStatus.vue';
 
 const { t } = useI18n();
 
 const props = defineProps<{
   sessionId?: string;
+  supportsReplyFeedback: boolean;
   status: ConversationStatus;
   planMode?: boolean;
   pendingQuestionActions?: Record<string, 'answer' | 'dismiss'>;
@@ -66,6 +71,8 @@ const props = defineProps<{
   panelTabs?: PanelTab[];
   availableTabs?: PanelLauncherItem[];
 }>();
+
+const feedbackCommands: readonly SlashCommand[] = [{ name: '/feedback', desc: 'feedback.send', noArgs: true }];
 
 const emit = defineEmits<{
   submit: [payload: { text: string; attachments: PromptAttachment[]; restoreText?: string; editText?: string; restoreEntries?: AttachmentEntry[]; snapshot?: ComposerDocumentSnapshot; skills?: { name: string; path?: string }[]; forceQueue?: boolean }];
@@ -98,9 +105,13 @@ const openShortcutSettings = inject(OpenShortcutSettingsKey, undefined);
 const configureScreenshotShortcut = screenshotSupported && openShortcutSettings
   ? () => openShortcutSettings('captureScreenshot')
   : undefined;
-const screenshotShortcutKeys = computed(() =>
-  screenshotSupported ? resolvedBindingKeys('captureScreenshot') : [],
-);
+const screenshotProps = computed(() => ({
+  onCaptureScreenshot: captureScreenshotAction,
+  screenshotShortcutKeys: screenshotSupported ? resolvedBindingKeys('captureScreenshot') : [],
+  screenshotShortcutUnavailable: !!osGlobalFailures.captureScreenshot,
+  screenshotShortcutFailureReason: osGlobalFailures.captureScreenshot,
+  onConfigureScreenshotShortcut: configureScreenshotShortcut,
+}));
 
 const client = useKimiWebClient();
 const { anyOverlayOpen } = useAppDialogs();
@@ -1999,11 +2010,8 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
               hide-context
               :before-submit="gateSubmit"
               :defer-submit-reset="true"
-              :on-capture-screenshot="captureScreenshotAction"
-              :screenshot-shortcut-keys="screenshotShortcutKeys"
-              :screenshot-shortcut-unavailable="!!osGlobalFailures.captureScreenshot"
-              :screenshot-shortcut-failure-reason="osGlobalFailures.captureScreenshot"
-              :on-configure-screenshot-shortcut="configureScreenshotShortcut"
+              :extra-builtin-commands="feedbackCommands"
+              v-bind="screenshotProps"
               @submit="handleComposerSubmit"
               @steer="handleComposerSteer"
               @steer-queued="emit('steerQueued', $event)"
@@ -2063,7 +2071,14 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
               @edit-queued="handleEditQueued"
               @reorder-queue="handleReorderQueue"
               @steer-queued="emit('steerQueued', $event)"
-            />
+            >
+              <template v-if="supportsReplyFeedback" #assistant-reply-actions="{ turn }">
+                <TurnFeedbackActions :target="feedbackTurnTarget(sessionId, turn)" />
+              </template>
+              <template v-if="supportsReplyFeedback" #assistant-reply-status="{ turn }">
+                <TurnFeedbackStatus :target="feedbackTurnTarget(sessionId, turn)" />
+              </template>
+            </ChatPane>
             </ErrorBoundary>
           </template>
         </div>
@@ -2089,11 +2104,8 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
         :mobile="mobile"
         :before-submit="gateSubmit"
         :defer-submit-reset="true"
-        :on-capture-screenshot="captureScreenshotAction"
-        :screenshot-shortcut-keys="screenshotShortcutKeys"
-        :screenshot-shortcut-unavailable="!!osGlobalFailures.captureScreenshot"
-        :screenshot-shortcut-failure-reason="osGlobalFailures.captureScreenshot"
-        :on-configure-screenshot-shortcut="configureScreenshotShortcut"
+        :extra-builtin-commands="feedbackCommands"
+        v-bind="screenshotProps"
         @toggle-dock-panel="toggleDockPanel($event)"
         @close-dock-panel="closeDockPanel()"
         @answer="handleQuestionAnswer"

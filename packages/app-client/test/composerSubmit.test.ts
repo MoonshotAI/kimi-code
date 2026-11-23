@@ -41,6 +41,16 @@ describe('decideComposerSubmit — the gate', () => {
 });
 
 describe('decideComposerSubmit — plain submit', () => {
+  it('recognizes a host-provided no-argument command only for that host', () => {
+    const extraBuiltins = [{ name: '/feedback', desc: 'feedback.send', noArgs: true }];
+    expect(decideComposerSubmit(input({ text: '/feedback', rewritten: '/feedback' }))).toMatchObject({ kind: 'submit', text: '/feedback' });
+    expect(decideComposerSubmit(input({ text: '/feedback', rewritten: '/feedback', extraBuiltins }))).toMatchObject({ kind: 'builtin-command', cmd: '/feedback' });
+    for (const separator of [' ', '\t', '\n']) {
+      const text = `/feedback${separator}details`;
+      expect(decideComposerSubmit(input({ text, rewritten: text, extraBuiltins }))).toEqual({ kind: 'invalid-command', cmd: '/feedback' });
+    }
+  });
+
   it('submits a screenshot annotation with its readable comment instead of treating it as a command', () => {
     const text = serializeAttachment({ attId: 'shot1', name: '截图.png', kind: 'image', comment: '/plan' });
     const indexes = { fileAttIds: [], mediaAttIds: ['shot1'] };

@@ -1,4 +1,5 @@
 import common from './en/common';
+import feedback from './en/feedback';
 import app from './en/app';
 import sidebar from './en/sidebar';
 import admin from './en/admin';
@@ -42,6 +43,7 @@ import remoteControl from './en/remoteControl';
 
 export default {
   common,
+  feedback,
   app,
   sidebar,
   admin,

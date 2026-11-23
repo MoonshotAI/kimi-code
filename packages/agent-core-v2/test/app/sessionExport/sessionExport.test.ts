@@ -1024,6 +1024,8 @@ function liveSessionHandle(options: {
           noteUserInput: () => {},
           noteActiveRequest: () => {},
           noteSubagentDispatch: () => ({}),
+          noteModel: () => {},
+          finishModelSteps: () => undefined,
         } satisfies ISessionRequestAttributionService,
       ],
     ]),

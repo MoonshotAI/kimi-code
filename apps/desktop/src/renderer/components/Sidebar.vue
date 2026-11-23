@@ -85,6 +85,7 @@ const emit = defineEmits<{
   generateTitle: [id: string, done: (title: string | null) => void];
   deleteWorkspace: [id: string];
   openSettings: [];
+  openFeedback: [];
   login: [];
   collapse: [];
 }>();
@@ -448,7 +449,11 @@ function onLogoClick(): void {
            the settings entry pinned at its right edge. -->
       <div class="side-footer" :class="{ 'side-footer--shadowed': panelRef?.sessionsCanScrollDown }">
         <div class="side-footer-account">
-          <UserMenu @login="emit('login')" @open-settings="emit('openSettings')" />
+          <UserMenu
+            @login="emit('login')"
+            @open-settings="emit('openSettings')"
+            @open-feedback="emit('openFeedback')"
+          />
         </div>
         <IconButton
           class="side-footer-settings"
