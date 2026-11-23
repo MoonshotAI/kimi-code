@@ -5,6 +5,7 @@ import { Button, Card, Link } from '@moonshot-ai/app-ui';
 import { copyTextToClipboard } from '@moonshot-ai/app-core/lib';
 import type { ToolCall } from '@moonshot-ai/app-core/client/types';
 import { chatMcpOpenBlocked, hasChatMcpDesktopOpener, openChatMcpAuthorization } from '@moonshot-ai/app-client/composables';
+import OutputPanel from './OutputPanel.vue';
 
 const props = defineProps<{ tool: ToolCall }>();
 const { t } = useI18n();
@@ -56,6 +57,10 @@ async function copyLink() {
       </div>
       <p v-if="chatMcpOpenBlocked(active.waitId)" class="mcp-auth-notice" role="alert">{{ t('tools.mcpAuth.blocked') }}</p>
     </template>
+    <details v-if="(phase === 'failed' || phase === 'reconnectFailed') && tool.output?.length" class="mcp-auth-notice">
+      <summary>{{ t('login.rcViewErrorDetails') }}</summary>
+      <OutputPanel :lines="tool.output" />
+    </details>
     <template v-if="active" #foot>
       <Button variant="primary" size="xs" @click="openPage">{{ t('tools.mcpAuth.open') }}</Button>
       <Button variant="text" size="xs" @click="copyLink">

@@ -58,6 +58,27 @@ afterEach(() => {
 });
 
 describe('MCP authorization card', () => {
+  it.each(['failed', 'reconnectFailed'] as const)('keeps %s diagnostics behind a closed disclosure', (phase) => {
+    const output = ['Provider request failed', 'Reason: invalid_client'];
+    const tool: ToolCall = { id: 'call', name: 'mcp__example__authenticate', arg: '{}', status: 'error', output, mcpAuth: { phase, serverName: 'example' } };
+    mount(tool, 'zh', resolveToolRenderer(tool));
+    const details = host.querySelector('details')!;
+    expect(details).not.toBeNull();
+    expect(details.open).toBe(false);
+    const summary = details.querySelector('summary')!;
+    expect(summary.textContent).toContain('错误详情');
+    summary.click();
+    expect(details.open).toBe(true);
+    expect([...details.querySelectorAll('.op > div')].map(line => line.textContent)).toEqual(output);
+    expect(host.querySelector('a, button')).toBeNull();
+  });
+
+  it('omits the error disclosure when no diagnostic was returned', () => {
+    const tool: ToolCall = { id: 'call', name: 'mcp__example__authenticate', arg: '{}', status: 'error', output: [], mcpAuth: { phase: 'failed', serverName: 'example' } };
+    mount(tool, 'zh', resolveToolRenderer(tool));
+    expect(host.querySelector('details')).toBeNull();
+  });
+
   it('links directly to the existing authorization URL without opening a blank popup and removes it at expiry', async () => {
     vi.useFakeTimers();
     const request = { serverName: 'example', waitId: 'wait-1', expiresAt: Date.now() + 1000, authorizationUrl: 'https://auth.example.test/authorize?state=test' };
