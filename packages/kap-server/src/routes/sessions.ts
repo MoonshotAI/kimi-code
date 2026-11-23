@@ -278,9 +278,10 @@ export function registerSessionsRoutes(
         if (typeof body.title === 'string') await metadata.setTitle(body.title);
         const meta = await metadata.read();
         const sessionId = meta.id;
+        const context = handle.accessor.get(ISessionContext);
         const session = toWireSession(
-          { ...meta, workspaceId: resolved.id },
-          resolved.root,
+          { ...meta, workspaceId: context.workspaceId },
+          context.cwd,
           resolveSessionFacts(core, sessionId),
         );
         core.accessor.get(IEventService).publish(

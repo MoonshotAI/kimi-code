@@ -56,6 +56,8 @@ import {
 import { ISessionLockService } from '@moonshot-ai/agent-core-v2/persistence/interface/sessionLock';
 import { IHostProcessService, type IHostProcess } from '@moonshot-ai/agent-core-v2/os/interface/hostProcess';
 import { FakeEnvironment } from '@moonshot-ai/agent-core-v2/environment/fakeEnvironment';
+import { HostFileSystem } from '@moonshot-ai/agent-core-v2/os/backends/node-local/hostFsService';
+import { HostProcessService } from '@moonshot-ai/agent-core-v2/os/backends/node-local/hostProcessService';
 import { TurnEnded, TurnPrompt, TurnSteer } from '@moonshot-ai/agent-core-v2/agent/loop/turnOps';
 import { ContextAppendMessage } from '@moonshot-ai/agent-core-v2/agent/contextMemory/contextEvents';
 import type { PromptOrigin } from '@moonshot-ai/agent-core-v2/agent/contextMemory/types';
@@ -475,6 +477,51 @@ describe('server-v2 /api/v1/sessions', () => {
     expect(body.data).not.toHaveProperty('usage');
     expect(body.data).not.toHaveProperty('last_seq');
     expect(Number.isNaN(Date.parse(body.data.created_at))).toBe(false);
+  });
+
+  it('reports the environment_cwd of a local session in the create response', async () => {
+    const cwd = home as string;
+    const nested = join(cwd, 'nested');
+    await mkdir(nested, { recursive: true });
+    const created = await postJson<SessionWire>('/api/v1/sessions', {
+      metadata: { cwd },
+      environment_id: 'local',
+      environment_cwd: nested,
+    });
+    expect(created.body.code).toBe(0);
+
+    const got = await getJson<SessionWire>(`/api/v1/sessions/${created.body.data.id}`);
+    expect(got.body.data.cwd).toBe(nested);
+    expect(created.body.data.cwd).toBe(nested);
+  });
+
+  it('reports the requested cwd of a remote session in the create response', async () => {
+    const cwd = home as string;
+    const remote = await realpath(await mkdtemp(join(tmpdir(), 'kimi-server-v2-sessions-remote-')));
+    const environment = Object.assign(
+      new FakeEnvironment(
+        { environmentId: 'remote-create', generation: 'remote-create-generation' },
+        { capabilities: ['fs', 'process'] },
+      ),
+      { fs: new HostFileSystem(), process: new HostProcessService() },
+    );
+    const registration = (server as RunningServer).core.accessor.get(IEnvironmentService).register(environment);
+    try {
+      const local = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
+      const created = await postJson<SessionWire>('/api/v1/sessions', {
+        metadata: { cwd: `${cwd}/` },
+        environment_id: 'remote-create',
+        environment_cwd: remote,
+      });
+      expect(created.body.code).toBe(0);
+      expect(created.body.data.workspace_id).toBe(local.body.data.workspace_id);
+
+      const got = await getJson<SessionWire>(`/api/v1/sessions/${created.body.data.id}`);
+      expect(created.body.data.cwd).toBe(got.body.data.cwd);
+    } finally {
+      await registration.remove();
+      await rm(remote, { recursive: true, force: true });
+    }
   });
 
   it('rejects create without cwd or workspace_id (40001)', async () => {
