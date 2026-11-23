@@ -67,7 +67,29 @@ async function setWidth(app: DesktopApp, width: number): Promise<void> {
 
 async function capture(app: DesktopApp, testInfo: TestInfo, name: string): Promise<void> {
   await app.window.screenshot({ path: testInfo.outputPath(`${name}-full.png`) });
-  await app.window.locator('.side .ch').screenshot({ path: testInfo.outputPath(`${name}-topbar.png`) });
+  const probe = await app.window.evaluate(() => new Promise(resolve => {
+    const started = performance.now();
+    const rects: string[] = [];
+    const header = document.querySelector('.side .ch');
+    const report = (timedOut: boolean) => resolve({ timedOut, frames: rects.length, rects, ms: Math.round(performance.now() - started), visibility: document.visibilityState, focus: document.hasFocus(), animations: document.getAnimations().map(animation => `${animation.constructor.name}:${(animation as CSSAnimation).animationName ?? ''}:${animation.playState}:${(animation.effect as KeyframeEffect | null)?.target instanceof Element ? ((animation.effect as KeyframeEffect).target as Element).className : ''}`) });
+    const tick = () => {
+      const box = header?.getBoundingClientRect();
+      rects.push(box === undefined ? 'none' : `${box.x},${box.y},${box.width},${box.height}`);
+      if (rects.length < 5) requestAnimationFrame(tick);
+      else report(false);
+    };
+    requestAnimationFrame(tick);
+    setTimeout(() => report(true), 3000);
+  }));
+  const windows = await app.electron.evaluate(({ BaseWindow, webContents }) => ({
+    windows: BaseWindow.getAllWindows().map(win => ({ id: win.id, visible: win.isVisible(), minimized: win.isMinimized(), focused: win.isFocused(), bounds: win.getBounds() })),
+    contents: webContents.getAllWebContents().map(contents => ({ type: contents.getType(), throttling: contents.getBackgroundThrottling(), painting: contents.isPainting(), url: contents.getURL().slice(0, 50) })),
+  }));
+  process.stderr.write(`[diag] ${name} ${JSON.stringify(probe)} ${JSON.stringify(windows)}\n`);
+  await app.window.locator('.side .ch').screenshot({ path: testInfo.outputPath(`${name}-topbar.png`), timeout: 10_000 }).catch((error: unknown) => {
+    process.stderr.write(`[diag] ${name} topbar screenshot failed: ${String(error).split('\n').slice(0, 6).join(' | ')}\n`);
+    throw error;
+  });
 }
 
 async function assertLayout(app: DesktopApp, canary: boolean, state: UpdateState, branch: Branch = LONG_BRANCH) {
