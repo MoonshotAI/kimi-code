@@ -154,6 +154,35 @@ test('prepares a draft and retries an interrupted release from the same SHA', ()
   assert.match(readFileSync(join(f.dir, 'output'), 'utf8'), /build=false/);
 });
 
+test('desktop only defers pnpm cache writes for a new CLI release, not a previously tagged version', () => {
+  const f = fixture();
+  const git = (...args) => {
+    const result = spawnSync('git', args, { cwd: f.dir, encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+    return result.stdout.trim();
+  };
+  git('init', '--quiet');
+  assert.equal(run(f, 'prepare').status, 0);
+  assert.match(readFileSync(f.env.GITHUB_OUTPUT, 'utf8'), /^cli-planned=false$/m);
+
+  const cli = { name: '@moonshot-ai/kimi-code', path: 'apps/kimi-code', version: '2.0.0', private: false };
+  mkdirSync(join(f.dir, cli.path), { recursive: true });
+  writeFileSync(join(f.dir, cli.path, 'package.json'), JSON.stringify(cli));
+  const planFile = join(f.dir, '.changeset/release-plan.json');
+  const plan = JSON.parse(readFileSync(planFile, 'utf8'));
+  plan.packages.push(cli);
+  writeFileSync(planFile, JSON.stringify(plan));
+  writeFileSync(f.env.GITHUB_OUTPUT, '');
+  assert.equal(run(f, 'prepare').status, 0);
+  assert.match(readFileSync(f.env.GITHUB_OUTPUT, 'utf8'), /^cli-planned=true$/m);
+
+  git('-c', 'user.name=Test', '-c', 'user.email=test@example.com', '-c', 'commit.gpgSign=false', 'commit', '--allow-empty', '--quiet', '-m', 'prior release');
+  git('-c', 'tag.gpgSign=false', 'tag', `${cli.name}@${cli.version}`);
+  writeFileSync(f.env.GITHUB_OUTPUT, '');
+  assert.equal(run(f, 'prepare').status, 0);
+  assert.match(readFileSync(f.env.GITHUB_OUTPUT, 'utf8'), /^cli-planned=false$/m);
+});
+
 void test('workflow release titles use product names and full versions', () => {
   const workflow = (name) => readFileSync(fileURLToPath(new URL(`../.github/workflows/${name}`, import.meta.url)), 'utf8');
   const stable = workflow('release.yml');

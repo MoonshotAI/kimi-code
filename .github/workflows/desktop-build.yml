@@ -49,6 +49,10 @@ on:
   # release.yml 通过 workflow_call 调用本 workflow 打发版产物。
   workflow_call:
     inputs:
+      pnpm-cache-restore-only:
+        description: 'The CLI native jobs save the pnpm stores for this release'
+        type: boolean
+        default: false
       retention-days:
         required: false
         type: number
@@ -233,7 +237,24 @@ jobs:
         uses: actions/setup-node@v6
         with:
           node-version: 24
-          cache: pnpm
+          cache: ${{ !inputs.pnpm-cache-restore-only && 'pnpm' || '' }}
+          package-manager-cache: false
+
+      - name: Locate shared pnpm store
+        if: inputs.pnpm-cache-restore-only
+        id: pnpm-store
+        shell: bash
+        run: |
+          store=$(pnpm store path --silent)
+          arch=$(node -p 'process.arch')
+          printf 'path=%s\narch=%s\n' "$store" "$arch" >> "$GITHUB_OUTPUT"
+
+      - name: Restore pnpm store saved by setup-node in CLI native builds
+        if: inputs.pnpm-cache-restore-only
+        uses: actions/cache/restore@v5
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: node-cache-${{ runner.os }}-${{ steps.pnpm-store.outputs.arch }}-pnpm-${{ hashFiles('pnpm-lock.yaml') }}
 
       - name: Install dependencies
         # postinstall 会自动跑 electron-rebuild。

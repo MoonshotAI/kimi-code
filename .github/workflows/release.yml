@@ -77,6 +77,7 @@ jobs:
     outputs:
       build: ${{ steps.prepare.outputs.build }}
       tag: ${{ steps.prepare.outputs.tag }}
+      cli-planned: ${{ steps.prepare.outputs.cli-planned }}
     env:
       GH_TOKEN: ${{ github.token }}
     permissions:
@@ -112,6 +113,7 @@ jobs:
     with:
       retention-days: 7
       upload-artifact-prefix: kimi-code-app
+      pnpm-cache-restore-only: ${{ needs.desktop-release.outputs.cli-planned == 'true' }}
     secrets:
       APPLE_CERTIFICATE_P12: ${{ secrets.APPLE_CERTIFICATE_P12 }}
       APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}

@@ -88,7 +88,10 @@ if (command === 'check') {
       if (!release) throw new Error(`Release ${tag} was not created`);
     }
     if (pkg.name === 'kimi-code-app') {
-      appendFileSync(process.env.GITHUB_OUTPUT, `build=${release.isDraft}\ntag=${tag}\n`);
+      const cli = plan.packages.find((entry) => entry.name === '@moonshot-ai/kimi-code');
+      const cliTag = cli && spawnSync('git', ['rev-parse', '--verify', '--quiet', `refs/tags/${cli.name}@${cli.version}^{commit}`], { encoding: 'utf8' });
+      const cliPlanned = cliTag?.status === 1 || (cliTag?.status === 0 && cliTag.stdout.trim() === sha);
+      appendFileSync(process.env.GITHUB_OUTPUT, `build=${release.isDraft}\ntag=${tag}\ncli-planned=${cliPlanned}\n`);
     }
   }
 } else if (command === 'finish') {
