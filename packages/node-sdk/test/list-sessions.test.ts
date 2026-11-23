@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs';
-import { mkdir, mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -306,6 +306,44 @@ describe('KimiHarness.listSessions', () => {
       ]);
     } finally {
       await client.close();
+    }
+  });
+
+  it('lists all sessions across a project with scope "project" and reports projectWorkDir', async () => {
+    const homeDir = await makeTempDir();
+    const base = await realpath(await makeTempDir());
+    const { main, worktree } = await createGitWorktree({
+      main: join(base, 'app'),
+      worktree: join(base, 'app-fix'),
+    });
+    const harness = createKimiHarness({
+      identity: TEST_IDENTITY,
+      homeDir,
+    });
+
+    try {
+      const mainSession = await harness.createSession({ id: 'ses_project_main', workDir: main });
+      const wtSession = await harness.createSession({ id: 'ses_project_wt', workDir: worktree });
+      expect(mainSession.summary?.projectWorkDir).toBe(main);
+      expect(wtSession.summary?.projectWorkDir).toBe(main);
+
+      expect((await harness.listSessions({ workDir: worktree })).map((item) => item.id)).toEqual(['ses_project_wt']);
+      expect((await harness.listSessions({ workDir: main })).map((item) => item.id)).toEqual(['ses_project_main']);
+
+      const fromWorktree = await harness.listSessions({ workDir: worktree, scope: 'project' });
+      const fromMain = await harness.listSessions({ workDir: main, scope: 'project' });
+      const expected = [
+        { id: 'ses_project_main', projectWorkDir: main },
+        { id: 'ses_project_wt', projectWorkDir: main },
+      ];
+      expect(
+        fromWorktree.map(({ id, projectWorkDir }) => ({ id, projectWorkDir })).toSorted((a, b) => a.id.localeCompare(b.id)),
+      ).toEqual(expected);
+      expect(
+        fromMain.map(({ id, projectWorkDir }) => ({ id, projectWorkDir })).toSorted((a, b) => a.id.localeCompare(b.id)),
+      ).toEqual(expected);
+    } finally {
+      await harness.close();
     }
   });
 });

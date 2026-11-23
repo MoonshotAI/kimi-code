@@ -93,6 +93,18 @@ import type {
   WorkspaceTrustInfo,
   WorkspaceTrustInfoOptions,
 } from '#/types';
+import type {
+  CreatedWorktree,
+  CreateWorktreeInput,
+  CreateWorktreeOptions,
+  InspectWorktreeRemovalInput,
+  RemoveWorktreeInput,
+  RunSetupScriptInput,
+  RunSetupScriptOptions,
+  WorkLocation,
+  WorktreeListing,
+  WorktreeRemovalCheck,
+} from '#/worktree';
 
 const MAIN_AGENT_ID = 'main';
 
@@ -469,6 +481,21 @@ export abstract class SDKRpcClientBase {
   abstract getGitStatus(workDir: string, input: GitQueryInput): Promise<GitStatusSummary | null>;
 
   abstract getGitPullRequest(workDir: string, input: GitQueryInput): Promise<GitPullRequest | null>;
+
+  abstract resolveWorkLocation(cwd: string): Promise<WorkLocation>;
+
+  abstract listWorktrees(cwd: string): Promise<WorktreeListing>;
+
+  abstract createWorktree(input: CreateWorktreeInput, options?: CreateWorktreeOptions): Promise<CreatedWorktree>;
+
+  abstract runWorktreeSetupScript(
+    input: RunSetupScriptInput,
+    options?: RunSetupScriptOptions,
+  ): Promise<{ readonly exitCode: number }>;
+
+  abstract inspectWorktreeRemoval(input: InspectWorktreeRemovalInput): Promise<WorktreeRemovalCheck>;
+
+  abstract removeWorktree(input: RemoveWorktreeInput): Promise<void>;
 
   abstract listBackgroundTasks(
     input: SessionIdRpcInput & { activeOnly?: boolean; limit?: number },
