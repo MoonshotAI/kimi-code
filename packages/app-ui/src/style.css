@@ -1243,29 +1243,31 @@ a.mention-folder {
   white-space: normal;
 }
 
-.mention-tip {
+.ui-tip-surface {
   position: fixed;
   z-index: var(--z-tooltip);
-  /* Width cap with the narrow-viewport clamp folded in — position() only
-     reads the resulting box. */
-  max-width: min(var(--p-mention-tip-w), calc(100vw - 2 * var(--p-mention-tip-vmargin)));
-  /* Same inset as TooltipBubble (4px × 8px). */
   padding: var(--space-1) var(--space-2);
   border-radius: var(--radius-sm);
   background: var(--color-text);
   color: var(--color-bg);
+  font-family: var(--font-ui);
+  font-size: var(--text-xs);
+  overflow-wrap: anywhere;
+}
+
+.mention-tip {
+  /* Width cap with the narrow-viewport clamp folded in — position() only
+     reads the resulting box. */
+  max-width: min(var(--p-mention-tip-w), calc(100vw - 2 * var(--p-mention-tip-vmargin)));
   /* Ink levels ON THE INVERTED SKIN (currentColor = --color-bg here): the
      quote tooltip's muted comment block and the
      fainter provenance header — one semantic home so a theme tune reaches
      every quote row at once. */
   --p-tip-ink: color-mix(in srgb, currentColor 80%, transparent);
   --p-tip-ink-weak: color-mix(in srgb, currentColor 55%, transparent);
-  font-family: var(--font-ui);
-  font-size: var(--text-xs);
   /* Mirror the .text-ui-c1 utility's integer-px line height (token, never a
      unitless ratio). */
   line-height: round(calc(var(--text-xs) * 1.5), 1px);
-  overflow-wrap: anywhere;
   opacity: 0;
   transition: opacity var(--duration-fast) var(--ease-out);
 }

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { Icon } from '@moonshot-ai/app-ui';
+import { Icon, Tooltip } from '@moonshot-ai/app-ui';
 import FilterSelect from './FilterSelect.vue';
 import { pageItems } from '@moonshot-ai/app-components';
 
@@ -38,16 +38,17 @@ const sizeValue = computed({
     <div class="sa-pager-right">
       <FilterSelect v-model="sizeValue" :options="sizeOptions" :aria-label="t('admin.pageSize', { n: pageSize })" />
       <div v-if="total > 0" class="sa-pages">
-        <button
-          class="sa-pg"
-          type="button"
-          :disabled="page === 1"
-          :title="t('admin.prevPage')"
-          :aria-label="t('admin.prevPage')"
-          @click="emit('update:page', page - 1)"
-        >
-          <Icon name="chevron-left" size="sm" />
-        </button>
+        <Tooltip :text="t('admin.prevPage')">
+          <button
+            class="sa-pg"
+            type="button"
+            :disabled="page === 1"
+            :aria-label="t('admin.prevPage')"
+            @click="emit('update:page', page - 1)"
+          >
+            <Icon name="chevron-left" size="sm" />
+          </button>
+        </Tooltip>
         <template v-for="(it, i) in items" :key="i">
           <span v-if="it === '…'" class="sa-ellipsis">…</span>
           <button
@@ -60,16 +61,17 @@ const sizeValue = computed({
             {{ it }}
           </button>
         </template>
-        <button
-          class="sa-pg"
-          type="button"
-          :disabled="page === totalPages"
-          :title="t('admin.nextPage')"
-          :aria-label="t('admin.nextPage')"
-          @click="emit('update:page', page + 1)"
-        >
-          <Icon name="chevron-right" size="sm" />
-        </button>
+        <Tooltip :text="t('admin.nextPage')">
+          <button
+            class="sa-pg"
+            type="button"
+            :disabled="page === totalPages"
+            :aria-label="t('admin.nextPage')"
+            @click="emit('update:page', page + 1)"
+          >
+            <Icon name="chevron-right" size="sm" />
+          </button>
+        </Tooltip>
       </div>
     </div>
   </div>

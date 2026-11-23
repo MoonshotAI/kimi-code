@@ -1744,19 +1744,20 @@ function streamingTailIndex(turn: ChatTurn): number | null {
               @activate="(att, img) => openRailMedia(att, img, queueClampId(item))"
             />
             <div class="q-clamp u-text-wrap" :class="{ 'is-clamped': isUserTextClamped(queueClampId(item)) }">
-              <button
-                type="button"
-                class="q-body"
-                :title="t('composer.editQueued')"
-                :ref="(el) => registerUserTextEl(queueClampId(item), el)"
-                @click="onQueueBodyTap(qi)"
-              >
-                <span v-if="item.text" class="u-text q-text"><ComposerText :text="item.text" :snapshot="queueSnapshot(item)" :interactive="false" :attachments="item.attachments" :media-labels="mediaLabels" :pasted-text-meta="pastedTextMeta" /></span>
-                <span v-else class="q-text q-text-placeholder">
-                  <Icon name="file" size="sm" />
-                  {{ t('composer.queuedAttachments', { n: item.attachments?.length ?? 0 }) }}
-                </span>
-              </button>
+              <Tooltip :text="t('composer.editQueued')">
+                <button
+                  type="button"
+                  class="q-body"
+                  :ref="(el) => registerUserTextEl(queueClampId(item), el)"
+                  @click="onQueueBodyTap(qi)"
+                >
+                  <span v-if="item.text" class="u-text q-text"><ComposerText :text="item.text" :snapshot="queueSnapshot(item)" :interactive="false" :attachments="item.attachments" :media-labels="mediaLabels" :pasted-text-meta="pastedTextMeta" /></span>
+                  <span v-else class="q-text q-text-placeholder">
+                    <Icon name="file" size="sm" />
+                    {{ t('composer.queuedAttachments', { n: item.attachments?.length ?? 0 }) }}
+                  </span>
+                </button>
+              </Tooltip>
               <button
                 v-if="clampableUserTurns.has(queueClampId(item))"
                 type="button"

@@ -7,7 +7,7 @@ import {
   isMacosDesktop,
   isWindowsDesktop,
 } from '@moonshot-ai/app-core/lib';
-import { Badge, Icon, IconButton } from '@moonshot-ai/app-ui';
+import { Avatar, Badge, Icon, IconButton } from '@moonshot-ai/app-ui';
 import KimiCodeWordmark from '../KimiCodeWordmark.vue';
 import KimiMascotPeek from '../KimiMascotPeek.vue';
 import { FontPreviewBrandKey, fontPreviewChrome, type FontPreviewChrome } from './fontPreviewChrome';
@@ -140,7 +140,7 @@ onBeforeUnmount(() => observer?.disconnect());
           </div>
           <div class="fup-footer">
             <span class="fup-account">
-              <span class="fup-avatar"><Icon name="user" size="sm" /></span>
+              <Avatar size="sm" shape="circle" />
               <span class="fup-account-name">Neil</span>
               <Badge variant="neutral" size="sm">Allegretto</Badge>
             </span>
@@ -369,7 +369,8 @@ onBeforeUnmount(() => observer?.disconnect());
   flex-direction: column;
   padding: 0 var(--sb-inset) var(--space-1);
 }
-.fup-action {
+.fup-action,
+.fup-account {
   display: flex;
   align-items: center;
   gap: var(--sb-gap);
@@ -480,27 +481,8 @@ onBeforeUnmount(() => observer?.disconnect());
   border-top: var(--p-hairline) solid var(--line);
 }
 .fup-account {
-  display: flex;
   flex: 1;
-  align-items: center;
-  gap: var(--sb-gap);
   min-width: 0;
-  padding: 8px calc(var(--sb-pad-x) - var(--sb-inset));
-  color: var(--color-text);
-  font-size: var(--ui-font-size-sm);
-  font-weight: var(--weight-medium);
-  line-height: var(--leading-tight);
-}
-.fup-avatar {
-  display: flex;
-  flex: none;
-  align-items: center;
-  justify-content: center;
-  width: 24px;
-  height: 24px;
-  border-radius: var(--radius-full);
-  background: var(--color-surface-sunken);
-  color: var(--color-text-muted);
 }
 .fup-account-name {
   min-width: 0;
