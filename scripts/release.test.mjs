@@ -154,7 +154,7 @@ test('prepares a draft and retries an interrupted release from the same SHA', ()
   assert.match(readFileSync(join(f.dir, 'output'), 'utf8'), /build=false/);
 });
 
-test('desktop only defers pnpm cache writes for a new CLI release, not a previously tagged version', () => {
+void test('desktop only defers pnpm cache writes for a new CLI release, not a previously tagged version', () => {
   const f = fixture();
   const git = (...args) => {
     const result = spawnSync('git', args, { cwd: f.dir, encoding: 'utf8' });
@@ -189,7 +189,7 @@ test('desktop only defers pnpm cache writes for a new CLI release, not a previou
   assert.equal(readFileSync(f.env.GITHUB_OUTPUT, 'utf8'), outputFor(`${cli.name}@${cli.version}`));
 });
 
-test('only CLI-only installs opt out of the Electron rebuild', () => {
+void test('only CLI-only installs opt out of the Electron rebuild', () => {
   const f = fixture();
   const marker = join(f.dir, 'electron-rebuilt');
   const bin = join(f.dir, 'bin', process.platform === 'win32' ? 'electron-rebuild.cmd' : 'electron-rebuild');
