@@ -8,6 +8,7 @@ import {
   notifySessionDestroyed,
   notifyWorkspaceDestroyed,
   openArchivedSettings,
+  openModelPicker,
   t,
   traceClientEvent,
   traceKeyEvent,
@@ -86,6 +87,7 @@ import { createSessionSelection } from './sessionSelection';
 import { sessionReadScope, workspaceReadScope } from './observationScope';
 import { createSessionActions } from './sessionActions';
 import { usePromptPipeline } from './usePromptPipeline';
+import { createChatMcpAutoOpen } from '../composables/chatMcpAuthorization';
 import { useConfirmDialog } from '../composables/useConfirmDialog';
 import { persistComposerDraftSnapshot } from '../lib/composerDraftLifecycle';
 import { configureWorkspaceHooks } from '../lib/workspaceHooks';
@@ -245,6 +247,7 @@ const rawState: ExtendedState = reactive({
     warningsStore().setWarnings(next);
   },
   sessionStatusSettledBySession: {},
+  unavailableModelBySession: {},
   get serverVersion() {
     return configStore().serverVersion;
   },
@@ -560,6 +563,11 @@ function whenSessionStatusSettled(sessionId: string): Promise<void> {
 }
 
 function applyMainAgentState(sessionId: string, state: AppAgentState): void {
+  if (state.model !== undefined && state.model !== '' && rawState.unavailableModelBySession?.[sessionId] !== undefined) {
+    const nextUnavailable = { ...rawState.unavailableModelBySession };
+    delete nextUnavailable[sessionId];
+    rawState.unavailableModelBySession = nextUnavailable;
+  }
   foldDaemonPlanMode(rawState, sessionId, state.planMode);
   foldDaemonSwarmMode(rawState, sessionId, state.swarmMode);
   foldDaemonTowerMode(rawState, sessionId, state.towerMode);
@@ -1354,9 +1362,22 @@ function createOnConnectionChangeHandler(): KimiEventHandlers['onConnectionChang
 }
 
 function createOnConversationHandler(): NonNullable<KimiEventHandlers['onConversation']> {
+  const autoOpen = createChatMcpAutoOpen();
   return (sessionId, agentId, frame) => {
-    if (agentId === MAIN_AGENT_ID) mainConversations.handleFrame(sessionId, agentId, frame);
-    else auxiliaryConversations.handleFrame(sessionId, agentId, frame);
+    if (agentId !== MAIN_AGENT_ID) {
+      auxiliaryConversations.handleFrame(sessionId, agentId, frame);
+      return;
+    }
+    mainConversations.handleFrame(sessionId, agentId, frame);
+    if (frame.type === 'turns') {
+      autoOpen(frame, undefined, false);
+      return;
+    }
+    if (frame.type !== 'item.updated' || frame.set.fields === undefined) return;
+    const entry = mainConversationOf(sessionId);
+    if (!entry?.loaded) return;
+    const turn = entry.view.turns.findLast(candidate => candidate.turn_id === frame.turn_id);
+    autoOpen(frame, turn, isUserWatching(sessionId) && rawState.sessions.some(row => row.id === sessionId) && chatHostId(sessionId) === undefined);
   };
 }
 
@@ -1874,6 +1895,17 @@ function settleMainTurnEnd(entry: ConversationEntry, turn: ConversationTurn): vo
 }
 
 function onMainNotice(sessionId: string, notice: ConversationNotice): void {
+  if (notice.code === 'model.not_configured') {
+    rawState.unavailableModelBySession = { ...rawState.unavailableModelBySession, [sessionId]: notice.title };
+    void confirm({
+      title: t('warnings.modelUnavailable.title'),
+      message: t('warnings.modelUnavailable.message', { model: notice.title }),
+      confirmLabel: t('warnings.modelUnavailable.change'),
+      variant: 'primary',
+      action: () => openModelPicker(sessionId),
+    });
+    return;
+  }
   if (notice.code === 'compaction.cancelled') settleCompaction(sessionId, 'cancelled', undefined);
   warningsStore().markSessionWarningShown(sessionId, `${notice.code ?? ''} ${notice.title}`);
   if (notice.level === 'error') {
@@ -2082,7 +2114,8 @@ const status = computed<ConversationStatus>(() => {
   const branch =
     gitInfo.value?.branch ??
     (activeSession ? activeSession.cwd.split('/').pop() ?? activeSession.cwd : 'main');
-  const rawModel = modelsStore().resolveSendModel(activeSession?.model, { includeDraft: activeSession === undefined }) ?? '—';
+  const unavailable = activeSession !== undefined && rawState.unavailableModelBySession?.[activeSession.id] !== undefined;
+  const rawModel = unavailable ? '—' : modelsStore().resolveSendModel(activeSession?.model, { includeDraft: activeSession === undefined }) ?? '—';
 
   const matched =
     modelProvider.models.value.find((m) => m.id === rawModel) ??
@@ -2145,7 +2178,10 @@ function gateVerdictInput(): ChatGateInput {
     ? rawState.sessions.find((s) => s.id === rawState.activeSessionId)
     : undefined;
   return {
-    ...resolveGateChatModel(activeSession?.model, { includeDraft: activeSession === undefined }),
+    ...resolveGateChatModel(
+      activeSession !== undefined && rawState.unavailableModelBySession?.[activeSession.id] !== undefined ? null : activeSession?.model,
+      { includeDraft: activeSession === undefined },
+    ),
     modelsReady: modelsStore().modelsReady,
     hasModels: modelsStore().hasModels,
     signedIn: authStore().signedIn,
@@ -3306,6 +3342,7 @@ export function useKimiWebClient() {
     activationBadges,
     compaction,
     status,
+    unavailableModelBySession: computed(() => rawState.unavailableModelBySession),
     sessionCost,
     fileDiff,
     selectedDiffPath: computed(() => filesStore().selectedDiffPath),

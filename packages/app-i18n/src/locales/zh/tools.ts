@@ -1,4 +1,13 @@
 export default {
+  mcpAuth: {
+    approval: '等待你允许 {server} 启动授权。',
+    preparing: '正在准备 {server} 授权…', waiting: '请在浏览器中完成 {server} 授权。',
+    reconnecting: '已授权，正在连接 {server}…', connected: '{server} 已连接。',
+    unavailable: '未取得有效的 {server} 授权链接，请停止本次请求后重试。',
+    cancelled: '已取消 {server} 授权。', failed: '{server} 授权未完成。',
+    expired: '{server} 授权已过期，请重新发起授权。', reconnectFailed: '已授权，但连接 {server} 失败，请重试连接。',
+    open: '打开授权页', blocked: '未能打开浏览器，请点击按钮重试。',
+  },
   browser: {
     "noClickTarget": "未点击：未命中可交互元素",
     "nearbyCount": "附近 {count} 个元素",
