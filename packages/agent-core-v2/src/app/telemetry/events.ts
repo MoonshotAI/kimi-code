@@ -200,6 +200,15 @@ export interface PermissionPolicyDecisionEvent {
   tool_name: string;
   permission_mode: TelemetryPermissionMode;
   decision: 'approve' | 'deny' | 'ask';
+  command_family?: string;
+  command_count?: number;
+  executable_name?: string;
+  read_only_rejection?:
+    | 'parse_failed'
+    | 'unsupported_structure'
+    | 'unsupported_command'
+    | 'unsafe_arguments'
+    | 'path_check_failed';
   [key: string]: TelemetryPrimitive;
 }
 
@@ -947,6 +956,10 @@ export const telemetryEventDefinitions = {
       tool_name: 'Tool being gated',
       permission_mode: 'Active permission mode',
       decision: 'Policy decision',
+      command_family: 'Approved read-only command family, with a supported subcommand when available; multiple for compound commands',
+      command_count: 'Number of commands in an approved compound read-only invocation',
+      executable_name: 'Normalized executable basename considered by read-only analysis',
+      read_only_rejection: 'Coarse reason static read-only analysis did not approve the command',
     },
   }),
   auto_review_decision: defineAgentTelemetryEvent<AutoReviewDecisionEvent>({

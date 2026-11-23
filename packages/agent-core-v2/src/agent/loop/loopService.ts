@@ -257,6 +257,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       (includeCurrent) => this.snapshot().queue.length + (includeCurrent ? 1 : 0),
     );
     this.turns = new AgentTurnProjection({
+      attribution,
       dispatcher,
       events,
       scopeContext,

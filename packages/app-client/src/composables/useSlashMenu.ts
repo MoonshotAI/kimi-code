@@ -16,6 +16,7 @@ export interface SlashMenuDeps {
   ) => void;
   resolveDesc?: (item: SlashCommand) => string;
   towerEnabled?: () => boolean;
+  extraBuiltins?: () => readonly SlashCommand[] | undefined;
 }
 
 const SLASH_MENU_TOKEN = /^[/、](\S*)$/;
@@ -25,7 +26,7 @@ export function slashMenuQuery(text: string): string | null {
 }
 
 export function useSlashMenu(deps: SlashMenuDeps) {
-  const { text, editorRef, skills, emitCommand, historyPush, clearDraft, insertSkillMention, resolveDesc, towerEnabled } = deps;
+  const { text, editorRef, skills, emitCommand, historyPush, clearDraft, insertSkillMention, resolveDesc, towerEnabled, extraBuiltins } = deps;
 
   const open = ref(false);
   const items = ref<SlashCommand[]>([]);
@@ -51,7 +52,7 @@ export function useSlashMenu(deps: SlashMenuDeps) {
       open.value = false;
       return;
     }
-    const matches = filterCommandMatches(`/${query}`, buildSlashItems(skills(), { towerEnabled: towerEnabled?.() === true }), resolveDesc);
+    const matches = filterCommandMatches(`/${query}`, buildSlashItems(skills(), { towerEnabled: towerEnabled?.() === true, extraBuiltins: extraBuiltins?.() }), resolveDesc);
     items.value = matches.map((match) => match.item);
     ranges.value = matches.map((match) => match.ranges);
     const kept = completed;

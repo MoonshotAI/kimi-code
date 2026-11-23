@@ -223,6 +223,8 @@ export interface ChatTurn {
   no: number;
   text: string;
   undoTurnId?: string;
+  sourceTurnId?: string;
+  sourceReplyId?: string;
   steered?: boolean;
   steerPhase?: 'sending' | 'accepted' | 'injected';
   promptIds?: readonly string[];

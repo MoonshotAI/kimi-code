@@ -327,7 +327,11 @@ function projectTurns(turns: readonly ConversationTurn[], startNo: number, optio
           const block: Extract<TurnBlock, { kind: 'text' }> = { kind: 'text', text: item.text, ...streaming(item.status), ...debugOf(item) };
           g.textParts.push(item.text);
           g.blocks.push(block);
-          if (item.text.trim().length > 0) g.candidate = block;
+          if (item.text.trim().length > 0) {
+            g.candidate = block;
+            g.chat.sourceTurnId = turn.turn_id;
+            g.chat.sourceReplyId = item.item_id;
+          }
           if (g.chat.id !== item.item_id) g.chat.endedAt = item.created_at;
           lastAssistant = g;
           break;

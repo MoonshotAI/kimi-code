@@ -3,6 +3,7 @@ import { homedir } from 'node:os';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 
 import type { BashParseResult, BashSyntaxNode } from '#/app/bashParser/bashParser';
+import { normalizeBashCommandName as normalizeCommandName } from '#/app/bashParser/bashParser';
 
 import { COMMS_DIR, TOWER_ROOT, WORKTREES_DIR } from './protocol/paths';
 
@@ -402,15 +403,6 @@ function literalText(node: BashSyntaxNode): string | undefined {
     default:
       return undefined;
   }
-}
-
-function normalizeCommandName(raw: string): string {
-  let name = raw;
-  const separator = Math.max(name.lastIndexOf('/'), name.lastIndexOf('\\'));
-  if (separator >= 0) name = name.slice(separator + 1);
-  name = name.toLowerCase();
-  if (name.endsWith('.exe')) name = name.slice(0, -'.exe'.length);
-  return name;
 }
 
 const PRIVILEGE_WRAPPERS: ReadonlySet<string> = new Set(['sudo', 'doas']);
