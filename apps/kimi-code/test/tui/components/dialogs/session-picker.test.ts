@@ -1327,5 +1327,61 @@ describe('SessionPickerComponent', () => {
         ui.stop();
       }
     });
+
+    it('reveals newly appended pages when wheel scrolling loads more in fullscreen mode', async () => {
+      const page1 = [
+        { id: 'ses_1', title: 'Page 1 first', work_dir: '/repo', updated_at: 100 },
+        { id: 'ses_2', title: 'Page 1 second', work_dir: '/repo', updated_at: 90 },
+        { id: 'ses_3', title: 'Page 1 third', work_dir: '/repo', updated_at: 85 },
+      ];
+      const page2 = [
+        { id: 'ses_4', title: 'Page 2 fourth', work_dir: '/repo', updated_at: 80 },
+      ];
+      const vt = new VirtualTerminal(100, 14);
+      const ui = new TuiAltScreen(vt);
+      const onLoadMore = vi.fn(() => {
+        picker.appendSessions(page2);
+        picker.setPaging(false, false);
+        ui.requestRender();
+      });
+      const picker = new SessionPickerComponent({
+        sessions: page1,
+        loading: false,
+        currentSessionId: '',
+        scope: 'cwd',
+        showTabs: true,
+        pageSize: 3,
+        hasMore: true,
+        layout: { maxBodyRows: 5 },
+        onSelect: vi.fn(),
+        onCancel: vi.fn(),
+        onLoadMore,
+        requestRender: () => ui.requestRender(),
+      });
+      ui.setLayoutRoot(picker);
+      ui.start();
+      ui.setFocus(picker);
+      await vt.waitForRender();
+      try {
+        const linesBefore = vt.getViewport().map((line) => stripAnsi(line));
+        const bodyRow = linesBefore.findIndex((line) => line.includes('Page 1 first'));
+        expect(bodyRow).toBeGreaterThan(0);
+
+        vt.sendInput(`\u001B[<65;6;${String(bodyRow + 1)}M`);
+        vt.sendInput(`\u001B[<65;6;${String(bodyRow + 1)}M`);
+        vt.sendInput(`\u001B[<65;6;${String(bodyRow + 1)}M`);
+        await vt.waitForRender();
+        expect(onLoadMore).toHaveBeenCalledOnce();
+
+        vt.sendInput(`\u001B[<65;6;${String(bodyRow + 1)}M`);
+        vt.sendInput(`\u001B[<65;6;${String(bodyRow + 1)}M`);
+        vt.sendInput(`\u001B[<65;6;${String(bodyRow + 1)}M`);
+        await vt.waitForRender();
+        const linesAfter = vt.getViewport().map((line) => stripAnsi(line)).join('\n');
+        expect(linesAfter).toContain('Page 2 fourth');
+      } finally {
+        ui.stop();
+      }
+    });
   });
 });

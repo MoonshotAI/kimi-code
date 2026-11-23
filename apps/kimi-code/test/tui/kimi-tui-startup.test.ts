@@ -248,7 +248,7 @@ function makeHarness(session = makeSession(), overrides: Record<string, unknown>
         k2: { model: 'moonshot-v1', maxContextSize: 100 },
       },
     })),
-    resolveSessionEnvironment: vi.fn(async (options: { environmentId?: string; environmentCwd?: string }) => ({ environmentId: options.environmentId ?? 'local', cwd: options.environmentCwd })),
+    resolveSessionEnvironment: vi.fn(async (options: { workDir?: string; environmentId?: string; environmentCwd?: string }) => ({ environmentId: options.environmentId ?? 'local', cwd: options.environmentCwd })),
     resolveWorkLocation: vi.fn(async (cwd: string) => ({ cwd, projectRoot: cwd, isGitRepo: false })),
     onConfigSectionChanged: vi.fn(() => vi.fn()),
     createSession: vi.fn(
@@ -5349,6 +5349,96 @@ describe('KimiTUI work location', () => {
       expect(driver.state.sessions.map((row) => row.id)).toEqual(['ses-all']);
       expect(driver.state.sessionsNextCursor).toBe('cursor-all');
       expect(driver.state.loadingSessions).toBe(false);
+    });
+
+    it('drops stale pagination pages when the tab switches while sessionLocationTags is resolving', async () => {
+      const project = tempDir('kimi-page-race-project-');
+      const wtDir = join(project, 'wt-a');
+      mkdirSync(wtDir);
+      let resolveTag!: (loc: { cwd: string; projectRoot: string; isGitRepo: boolean }) => void;
+      const tagPromise = new Promise<{ cwd: string; projectRoot: string; isGitRepo: boolean }>((resolvePromise) => {
+        resolveTag = resolvePromise;
+      });
+      const harness = makeHarness(makeSession({ id: 'ses-current' }), {
+        listSessionsPage: vi.fn(async (input: { workDir?: string; scope?: string; before?: string }) => {
+          if (input.scope === 'project' && input.before === 'cursor-p1') {
+            return {
+              items: [{ id: 'ses-project-p2', title: 'Project page 2', workDir: wtDir, updatedAt: Date.now() }],
+              nextCursor: 'cursor-p2',
+            };
+          }
+          if (input.scope === 'project') {
+            return {
+              items: [{ id: 'ses-project-p1', title: 'Project page 1', workDir: project, updatedAt: Date.now() }],
+              nextCursor: 'cursor-p1',
+            };
+          }
+          if (input.workDir === undefined) {
+            return {
+              items: [{ id: 'ses-all-1', title: 'All page 1', workDir: '/tmp/other', updatedAt: Date.now() }],
+              nextCursor: 'cursor-all-1',
+            };
+          }
+          return {
+            items: [{ id: 'ses-cwd-1', title: 'Cwd page 1', workDir: project, updatedAt: Date.now() }],
+            nextCursor: undefined,
+          };
+        }),
+        resolveWorkLocation: vi.fn(async (cwd: string) => {
+          if (cwd === wtDir) return tagPromise;
+          return { cwd, projectRoot: project, isGitRepo: true };
+        }),
+      });
+      const driver = await startAt(project, harness, {}, { projectRoot: project, isGitRepo: true });
+      await (driver as unknown as { showSessionPicker(): Promise<void> }).showSessionPicker();
+
+      const internal = driver as unknown as {
+        selectSessionPickerScope(scope: 'cwd' | 'project' | 'all', id: string): Promise<void>;
+        fetchMoreSessions(): Promise<boolean>;
+      };
+      await internal.selectSessionPickerScope('project', 'ses-cwd-1');
+      const paging = internal.fetchMoreSessions();
+      await vi.waitFor(() => {
+        expect(harness.resolveWorkLocation).toHaveBeenCalledWith(wtDir);
+      });
+
+      await internal.selectSessionPickerScope('all', 'ses-project-p1');
+      resolveTag({ cwd: wtDir, projectRoot: project, isGitRepo: true });
+      await expect(paging).resolves.toBe(false);
+
+      expect(driver.state.sessionsScope).toBe('all');
+      expect(driver.state.sessions.map((row) => row.id)).toEqual(['ses-all-1']);
+      expect(driver.state.sessionsNextCursor).toBe('cursor-all-1');
+    });
+
+    it('rolls back appState and reports an error when switching to a vanished worktree fails', async () => {
+      const project = tempDir('kimi-switch-rollback-project-');
+      const vanished = join(project, 'vanished-wt');
+      const { harness } = worktreeHarness(project, vanished);
+      harness.resolveSessionEnvironment.mockImplementation(async (options) => {
+        if (options.workDir === vanished) {
+          throw new Error(`Working directory does not exist: ${vanished}`);
+        }
+        return { environmentId: 'local', cwd: options.environmentCwd };
+      });
+      const driver = await startAt(project, harness, {}, { projectRoot: project, isGitRepo: true });
+      await driver.ensureSession();
+
+      const switched = await (
+        driver as unknown as {
+          startSessionAt(location: { cwd: string; projectRoot: string; isGitRepo: boolean; worktree: { root: string; name: string; repoRoot: string } }): Promise<boolean>;
+        }
+      ).startSessionAt({
+        cwd: vanished,
+        projectRoot: project,
+        isGitRepo: true,
+        worktree: { root: vanished, name: 'vanished-wt', repoRoot: project },
+      });
+
+      expect(switched).toBe(false);
+      expect(driver.state.appState.workDir).toBe(project);
+      expect(driver.state.appState.worktree).toBeUndefined();
+      expect(transcriptText(driver)).toContain(`Working directory does not exist: ${vanished}`);
     });
   });
 
