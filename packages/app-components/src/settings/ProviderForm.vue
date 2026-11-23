@@ -372,17 +372,17 @@ const persistedModelCount = computed(() => {
     </div>
 
     <div v-if="preset !== undefined" class="pf-brand" :class="{ 'pf-head-sticky': props.mode === 'edit' }">
-      <button v-if="props.mode === 'edit'" type="button" class="pf-back" @click="emit('cancel')">
+      <IconButton v-if="props.mode === 'edit'" class="pf-nav" size="sm" :label="t('settings.plugins.back')" @click="emit('cancel')">
         <Icon name="arrow-left" size="sm" />
-      </button>
+      </IconButton>
       <ProviderBrandIcon :id="preset.catalogId" size="sm" />
       <span class="pf-brand-name">{{ presetName }}</span>
       <span class="pf-brand-tag">{{ t(preset.tagKey) }}</span>
     </div>
     <div v-else-if="props.mode === 'edit' && props.provider !== undefined" class="pf-brand pf-head-sticky">
-      <button type="button" class="pf-back" @click="emit('cancel')">
+      <IconButton class="pf-nav" size="sm" :label="t('settings.plugins.back')" @click="emit('cancel')">
         <Icon name="arrow-left" size="sm" />
-      </button>
+      </IconButton>
       <ProviderBrandIcon :id="props.provider.id" :base-url="props.provider.baseUrl" size="sm" />
       <span class="pf-brand-name">{{ providerDisplayName(props.provider.id, t) }}</span>
       <Badge variant="neutral" size="sm">{{ props.provider.type }}</Badge>
@@ -519,20 +519,7 @@ const persistedModelCount = computed(() => {
   align-items: center;
   gap: var(--space-2);
 }
-.pf-back {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 26px;
-  height: 26px;
-  margin-left: calc(-1 * var(--space-2));
-  border: none;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--color-text-muted);
-  cursor: pointer;
-}
-.pf-back:hover { background: var(--color-hover); color: var(--color-text-strong); }
+.pf-nav { margin-left: calc(-1 * var(--space-2)); }
 .pf-head-sticky {
   position: sticky;
   top: calc(-1 * var(--space-2));

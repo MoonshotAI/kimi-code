@@ -5,7 +5,7 @@ import { useI18n } from 'vue-i18n';
 import type { ChatTurn, ConversationStatus, OpenMediaRequest, QueuedPromptView, TaskItem, TurnAttachment, UIQuestion } from '../../types';
 import type { QuestionResponse } from '../../api/types';
 import { useSidebarTabs } from '@moonshot-ai/app-core';
-import { ChatPane } from '@moonshot-ai/app-components';
+import { ChatPane, JumpToBottomPill } from '@moonshot-ai/app-components';
 import { HostNotice, resolveCompactPhase, WorkspaceIcon } from '@moonshot-ai/app-components/support';
 import { hostsStore } from '@moonshot-ai/app-client/stores';
 import { isWideTableLayoutActive, useWideTableToc } from '@moonshot-ai/app-components';
@@ -1063,18 +1063,13 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
           <HostNotice class="dock-host-notice" :host-id="activeHostId" />
         </template>
       </ChatDock>
-      <Transition name="pill">
-        <button
-          v-if="showPill && turns.length > 0"
-          class="newmsg-pill"
-          :style="{ bottom: `${dockHeight + 12}px` }"
-          :aria-label="t('conversation.jumpToLatestAria')"
-          @click="scrollToBottom(true)"
-        >
-          <Icon class="pill-chevron" name="arrow-down" size="sm" />
-          {{ t('conversation.newMessages') }}
-        </button>
-      </Transition>
+      <JumpToBottomPill
+        :show="showPill && turns.length > 0"
+        :style="{ bottom: `${dockHeight + 12}px` }"
+        :label="t('conversation.newMessages')"
+        :aria-label="t('conversation.jumpToLatestAria')"
+        @click="scrollToBottom(true)"
+      />
       </div>
       <SessionInfoPanel
         v-if="sessionInfoPanelVisible"
@@ -1504,39 +1499,5 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
 .ws-action:hover > .kw-icon { color: var(--color-text-muted); }
 .ws-action:focus-visible { outline: none; box-shadow: var(--p-focus-ring); }
 
-.newmsg-pill {
-  position: absolute;
-  left: 50%;
-  bottom: 12px;
-  transform: translateX(-50%);
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 12px;
-  border-radius: 999px;
-  border: var(--p-hairline) solid var(--color-line);
-  background: var(--color-surface);
-  color: var(--color-text);
-  font-size: var(--text-xs);
-  font-weight: var(--weight-ui-strong);
-  cursor: pointer;
-  box-shadow: var(--shadow-sm);
-  z-index: var(--z-sticky);
-}
-.pill-chevron {
-  width: 12px;
-  height: 12px;
-}
-.pill-enter-active,
-.pill-leave-active {
-  transition: opacity 0.2s ease, transform 0.2s ease;
-}
-.pill-enter-from,
-.pill-leave-to {
-  opacity: 0;
-  transform: translateX(-50%) translateY(8px);
-}
-
 .con { background: var(--color-bg); }
-.newmsg-pill { font-family: var(--font-ui); }
 </style>

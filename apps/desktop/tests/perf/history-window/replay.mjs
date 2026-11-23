@@ -233,7 +233,7 @@ window.verify = async () => {
   await sleep(800);
   const prependDrift = offset(160) - prependBefore;
   assert(Math.abs(prependDrift) < 3, `Prepend drift ${prependDrift}`);
-  const pill = document.querySelector('.newmsg-pill');
+  const pill = document.querySelector('.con .jump-pill');
   if (pill) pill.click();
   else {
     pane().scrollTop = pane().scrollHeight;
@@ -326,7 +326,7 @@ window.verifyMobileHistory = async () => {
   await until(() => document.getSelection()?.toString().includes('MATCH_1.') && document.getSelection()?.toString().includes('END_239'), 'mobile select all');
   document.getSelection().removeAllRanges();
   await until(() => mounted() < 20, 'mobile release selection');
-  document.querySelector('.newmsg-pill')?.click();
+  document.querySelector('.con .jump-pill')?.click();
   await until(() => distance() < 3, 'mobile return bottom');
   active.value = true;
   for (let i = 0; i < 5; i++) {
@@ -649,7 +649,7 @@ window.finishScrollKey = async direction => {
 let restoreFollowFolding;
 const followOutput = () => document.querySelector('[data-scroll-anchor-id="follow-output"] .op');
 const followState = () => ({
-  pill: !!document.querySelector('.newmsg-pill'),
+  pill: !!document.querySelector('.con .jump-pill'),
   following: pane().classList.contains('is-following'),
   distance: Math.round(distance()),
   outputTop: followOutput()?.scrollTop ?? null,
@@ -687,11 +687,11 @@ window.prepareFollow = async () => {
 window.followState = followState;
 window.resetFollow = async () => {
   if (!pane().classList.contains('is-following')) {
-    const pill = document.querySelector('.newmsg-pill');
+    const pill = document.querySelector('.con .jump-pill');
     if (pill) pill.click();
     else pane().scrollTop = pane().scrollHeight;
   }
-  await until(() => pane().classList.contains('is-following') && distance() < 2 && !document.querySelector('.newmsg-pill'), 'follow reset', 5000);
+  await until(() => pane().classList.contains('is-following') && distance() < 2 && !document.querySelector('.con .jump-pill'), 'follow reset', 5000);
   document.activeElement?.blur();
   await sleep(300);
 };

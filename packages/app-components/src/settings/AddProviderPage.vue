@@ -278,9 +278,9 @@ async function submitRegistry(): Promise<void> {
   <div class="ap">
     <div class="ap-top">
       <div class="ap-head">
-        <button type="button" class="ap-back" @click="emit('cancel')">
+        <IconButton class="ap-nav" size="sm" :label="t('settings.plugins.back')" @click="emit('cancel')">
           <Icon name="arrow-left" size="sm" />
-        </button>
+        </IconButton>
         <span class="ap-title">{{ t('providers.addProvider') }}</span>
       </div>
 
@@ -514,20 +514,7 @@ async function submitRegistry(): Promise<void> {
   background: var(--color-bg);
   border-bottom: var(--p-hairline) solid var(--color-line);
 }
-.ap-back {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 26px;
-  height: 26px;
-  margin-left: calc(-1 * var(--space-2));
-  border: none;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--color-text-muted);
-  cursor: pointer;
-}
-.ap-back:hover { background: var(--color-hover); color: var(--color-text-strong); }
+.ap-nav { margin-left: calc(-1 * var(--space-2)); }
 .ap-title {
   font-family: var(--font-ui);
   font-size: var(--text-lg);
