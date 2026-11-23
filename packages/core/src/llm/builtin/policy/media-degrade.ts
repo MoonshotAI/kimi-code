@@ -28,7 +28,11 @@ type DegradableMediaPart = Extract<
   { readonly type: keyof typeof MEDIA_DEGRADED_PLACEHOLDERS }
 >;
 
-export type MediaReplacement = (part: MediaPart) => ContentPart | undefined;
+export type MediaReplacement = (
+  part: MediaPart,
+  placeholder: string,
+  role: Message['role'],
+) => ContentPart | undefined;
 
 function isDegradableMediaPart(part: ContentPart): part is DegradableMediaPart {
   return part.type in MEDIA_DEGRADED_PLACEHOLDERS;
@@ -47,7 +51,8 @@ function replaceMediaParts(
       if (!isDegradableMediaPart(part) || !shouldReplace(part)) return part;
       changed = true;
       messageChanged = true;
-      return replacement?.(part) ?? { type: 'text' as const, text: placeholders[part.type] };
+      const placeholder = placeholders[part.type];
+      return replacement?.(part, placeholder, message.role) ?? { type: 'text', text: placeholder };
     });
     return messageChanged ? { ...message, content } : message;
   });
@@ -147,17 +152,17 @@ function recoveryEntry(
 ): LlmRecoveryEntry | undefined {
   if (parts.length === 0) return undefined;
   const occurrences = new Map<string, number>();
-  const replacements = new Map<string, ContentPart>();
+  const selected = new Set<string>();
   for (const part of parts) {
     const mediaKey = recoveryMediaKey(part);
     const occurrence = occurrences.get(mediaKey) ?? 0;
     occurrences.set(mediaKey, occurrence + 1);
     const key = action === 'degraded' ? `${mediaKey}:${String(occurrence)}` : mediaKey;
-    replacements.set(key, replacement?.(part) ?? { type: 'text', text: placeholders[part.type] });
+    selected.add(key);
   }
   const reuseKey = sha256Hex(new TextEncoder().encode(JSON.stringify([
     action,
-    [...replacements.keys()].toSorted(),
+    [...selected].toSorted(),
   ])));
   return {
     strategy: MEDIA_RECOVERY_ID,
@@ -172,14 +177,9 @@ function recoveryEntry(
           const occurrence = currentOccurrences.get(mediaKey) ?? 0;
           currentOccurrences.set(mediaKey, occurrence + 1);
           const key = action === 'degraded' ? `${mediaKey}:${String(occurrence)}` : mediaKey;
-          return replacements.has(key);
+          return selected.has(key);
         },
-        (part) => {
-          const mediaKey = recoveryMediaKey(part);
-          const occurrence = (currentOccurrences.get(mediaKey) ?? 1) - 1;
-          const key = action === 'degraded' ? `${mediaKey}:${String(occurrence)}` : mediaKey;
-          return replacements.get(key);
-        },
+        replacement,
       );
     }),
     reuse: { key: reuseKey },

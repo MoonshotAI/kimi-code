@@ -1,9 +1,8 @@
 import { once } from 'node:events';
 import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { deflateSync } from 'node:zlib';
 
-import { deferred } from '@moonshot-ai/testkit/fixtures';
+import { deferred, solidPng } from '@moonshot-ai/testkit/fixtures';
 import type { KapFrame, KapItem, KapSocket, KapTurn, KapTurnsPage } from '@moonshot-ai/testkit/kap';
 import { agent, bash, call, held, httpError, say, think, todoList, withUsage } from '@moonshot-ai/testkit/model';
 import { test as base, describe, expect } from 'vitest';
@@ -768,9 +767,9 @@ describe('conversation over KAP', () => {
     await expect(kap.rest.get(`${sideAgent}/turns`)).rejects.toMatchObject({ code: 40401 });
   });
 
-  visionTest('exposes local session media paths to the model for pasted and steered images without leaking paths on KAP', async ({ kap, model }) => {
-    const png1 = solidRgbaPng(0x22, 0x66, 0xcc);
-    const png2 = solidRgbaPng(0xcc, 0x55, 0x22);
+  visionTest('exposes local session media paths to the model for pasted and steered images without persisting the labels in KAP user messages', async ({ kap, model }) => {
+    const png1 = solidPng(1, 1, [0x22, 0x66, 0xcc, 0xff]);
+    const png2 = solidPng(1, 1, [0xcc, 0x55, 0x22, 0xff]);
     const entered = deferred<AbortSignal>();
     let firstPath = '';
     let secondPath = '';
@@ -821,6 +820,7 @@ describe('conversation over KAP', () => {
     await socket.waitFor((frame) => isMainTurnEnd(frame, session.id));
 
     expect(secondPath).not.toBe('');
+    expect(model.request(1).rawBody.match(/"type"\s*:\s*"image_url"/g)).toHaveLength(2);
     expect(await readFile(join(session.cwd, 'out-1.png'))).toEqual(png1);
     expect(await readFile(join(session.cwd, 'out-2.png'))).toEqual(png2);
 
@@ -850,33 +850,6 @@ async function uploadImageFile(
   const body = (await res.json()) as { readonly code: number; readonly data: { readonly id: string } };
   expect(body.code).toBe(0);
   return body.data;
-}
-
-function solidRgbaPng(r: number, g: number, b: number): Buffer {
-  const ihdr = Buffer.from([0, 0, 0, 1, 0, 0, 0, 1, 8, 6, 0, 0, 0]);
-  const raw = Buffer.from([0, r, g, b, 0xff]);
-  return Buffer.concat([
-    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
-    pngChunk('IHDR', ihdr),
-    pngChunk('IDAT', deflateSync(raw)),
-    pngChunk('IEND', Buffer.alloc(0)),
-  ]);
-}
-
-function pngChunk(type: string, data: Buffer): Buffer {
-  const typeBytes = Buffer.from(type, 'ascii');
-  const len = Buffer.alloc(4);
-  len.writeUInt32BE(data.length, 0);
-  let crc = 0xffffffff;
-  for (const byte of Buffer.concat([typeBytes, data])) {
-    crc ^= byte;
-    for (let bit = 0; bit < 8; bit++) {
-      crc = crc & 1 ? 0xedb88320 ^ (crc >>> 1) : crc >>> 1;
-    }
-  }
-  const crcBuf = Buffer.alloc(4);
-  crcBuf.writeUInt32BE((crc ^ 0xffffffff) >>> 0, 0);
-  return Buffer.concat([len, typeBytes, data, crcBuf]);
 }
 
 function snapshotOf(socket: KapSocket, sessionId: string): KapFrame | undefined {

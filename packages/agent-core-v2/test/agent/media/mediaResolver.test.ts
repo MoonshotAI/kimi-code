@@ -38,6 +38,7 @@ import { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { ContentPart, ImageURLPart, Message, VideoURLPart } from '@moonshot-ai/core/llm/message';
 import type { Protocol } from '#/llm-adapter/protocol/protocol';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
+import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
 import { JsonAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDocumentStore';
 import { IBlobStore } from '#/persistence/interface/blobStore';
 import { makeSessionContext } from '#/session/sessionContext/sessionContext';
@@ -1518,38 +1519,89 @@ describe('AgentMediaResolverService scoped registration', () => {
   });
 });
 
-describe('AgentMediaResolverService displayPaths', () => {
-  it('maps daemon file ref urls to their display paths', async () => {
-    await plantCanonical('f_img', '.png', PNG_BYTES);
-    const service = resolver(new Map(), sessionDir);
-
-    const paths = await service.displayPaths([
-      imageMessage(buildKimiFileUrl('f_img')),
-      imageMessage('data:image/png;base64,AAAA'),
-      { role: 'user', content: [{ type: 'text', text: 'hi' }] },
-    ]);
-
-    expect(paths.get(buildKimiFileUrl('f_img'))).toBe(join(sessionDir, 'media', 'f_img.png'));
-    expect(paths.size).toBe(1);
-  });
-
-  it('omits refs without a display path and dedupes repeated urls', async () => {
-    const service = resolver(new Map(), sessionDir);
-
-    const paths = await service.displayPaths([
-      imageMessage(buildKimiFileUrl('f_missing')),
-      imageMessage(buildKimiFileUrl('f_missing')),
-      videoMessage(buildKimiFileUrl('f_missing')),
-    ]);
-
-    expect(paths.size).toBe(0);
-  });
-});
-
 describe('AgentMediaResolverService media labels', () => {
   function namedImage(fileId: string, name: string): ContentPart {
     return { type: 'image_url', imageUrl: { url: buildKimiFileUrl(fileId), name } };
   }
+
+  it.each([true, false])('uses persisted file names with includeUserPaths=%s', async (includeUserPaths) => {
+    const storage = new FileStorageService(sessionDir);
+    const store = new SessionMediaStoreService(
+      makeSessionContext({ sessionId: 's', workspaceId: 'w', sessionDir, sessionScope: 'session', cwd: sessionDir }),
+      storage,
+      new JsonAtomicDocumentStore(storage),
+    );
+    const url = await store.put({ bytes: PNG_BYTES, filename: 'pasted.png', mimeType: 'image/png' });
+    const open = vi.spyOn(store, 'open');
+    const fileId = url.slice('kimi-file://'.length);
+    const service = resolver(new Map([[fileId, { name: 'pasted.png', bytes: PNG_BYTES }]]), sessionDir, store);
+    const { model, requester: request } = requester({});
+    const [message] = await service.resolve(
+      [imageMessage(url, { type: 'image_url', imageUrl: { url, name: 'alias.png' } })],
+      model, request, undefined, includeUserPaths,
+    );
+    const path = includeUserPaths ? ` path="${join(sessionDir, 'session', 'media', `${fileId}.png`)}"` : '';
+    expect(message!.content).toEqual([
+      { type: 'text', text: `<image name="alias.png"${path}>` },
+      { type: 'image_url', imageUrl: { url: PNG_DATA_URL } },
+      { type: 'text', text: `<image name="pasted.png"${path}>` },
+      { type: 'image_url', imageUrl: { url: PNG_DATA_URL } },
+    ]);
+    expect(open).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    { status: 413, includeUserPaths: true },
+    { status: 400, includeUserPaths: true },
+    { status: 400, includeUserPaths: false },
+  ])('keeps per-attachment labels on a $status retry with includeUserPaths=$includeUserPaths', async ({ status, includeUserPaths }) => {
+    const localPath = await plantCanonical('f_img', '.png', PNG_BYTES);
+    const service = resolver(new Map([['f_img', { name: 'saved.png', bytes: PNG_BYTES }]]), sessionDir);
+    const { model, requester: base } = requester({ providerType: 'openai', baseUrl: 'https://example.test/v1' });
+    const reject = Response.json({
+      error: { message: status === 400 ? 'Unsupported image format' : 'Request Entity Too Large' },
+    }, { status });
+    const mockFetch = vi.fn<typeof fetch>().mockResolvedValueOnce(reject).mockImplementation(async () =>
+      Response.json({
+        id: 'completion', model: 'stub', object: 'chat.completion',
+        choices: [{ index: 0, finish_reason: 'stop', message: { role: 'assistant', content: 'Done.' } }],
+      }),
+    );
+    const request = base.with({ protocol: { stream: false }, endpoint: { fetch: mockFetch } });
+    const { resolver: resolve, toolResolver, recovery } = createAgentMediaPolicy(service, model, request, includeUserPaths);
+    const contents: (readonly ContentPart[])[] = [];
+    const generate = (first: string) => request.generate({
+      content: { messages: [{ role: 'user', content: [
+        namedImage('f_img', first),
+        namedImage('f_img', 'second.png'),
+        { type: 'image_url', imageUrl: { url: PNG_DATA_URL, name: 'inline.png' } },
+      ] }] },
+      policy: { recoveries: [recovery], resolvers: [toolResolver, resolve] },
+    }, {
+      signal: new AbortController().signal,
+      onAttempt: (attempt) => { contents.push(attempt.content.messages[0]!.content); },
+    });
+    expect((await generate('first.png')).type).toBe('done');
+    expect(contents).toHaveLength(2);
+    expect((await generate('renamed.png')).type).toBe('done');
+    expect(contents).toHaveLength(3);
+    const path = includeUserPaths ? ` path="${localPath}"` : '';
+    const close = status === 413 ? '' : '</image>';
+    const types = status === 413
+      ? ['text', 'text', 'image_url', 'text', 'image_url']
+      : ['text', 'text', 'text'];
+    for (const [index, name] of [[1, 'first.png'], [2, 'renamed.png']] as const) {
+      const retry = contents[index]!;
+      const texts = retry.flatMap((part) => part.type === 'text' ? [part.text] : []);
+      expect(retry.map((part) => part.type)).toEqual(types);
+      expect(texts).toEqual([
+        expect.stringContaining(`<image name="${name}"${path}></image>`),
+        expect.stringContaining(`<image name="second.png"${path}>${close}`),
+        expect.stringContaining(`<image name="inline.png">${close}`),
+      ]);
+      expect(texts.filter((text) => text.includes(' path='))).toHaveLength(includeUserPaths ? 2 : 0);
+    }
+  });
 
   it('precedes each user image and video with a name and path label while leaving tool results untouched', async () => {
     const p1 = await plantCanonical('f1', '.png', PNG_BYTES);

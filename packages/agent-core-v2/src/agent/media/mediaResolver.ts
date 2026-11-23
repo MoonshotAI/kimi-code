@@ -11,8 +11,8 @@ export interface IAgentMediaResolverService {
     model: Model,
     requester: InitializedLlmRequester,
     signal?: AbortSignal,
+    includeUserPaths?: boolean,
   ): Promise<readonly Message[]>;
-  displayPaths(messages: readonly Message[]): Promise<ReadonlyMap<string, string>>;
 }
 
 export const IAgentMediaResolverService = createDecorator<IAgentMediaResolverService>(

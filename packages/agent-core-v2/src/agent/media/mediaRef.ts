@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 
-import type { ContentPart } from '@moonshot-ai/core/llm/message';
+import type { ContentPart, TextPart } from '@moonshot-ai/core/llm/message';
 
 export type MediaKind = 'image' | 'video' | 'audio' | 'file';
 
@@ -133,6 +133,26 @@ export function daemonFileRefFromPart(
     return ref === undefined ? undefined : { kind: 'video', ref };
   }
   return undefined;
+}
+
+export function mediaNameOf(part: ContentPart): string | undefined {
+  if (part.type === 'image_url') return part.imageUrl.name;
+  if (part.type === 'video_url') return part.videoUrl.name;
+  return undefined;
+}
+
+export const omittedMedia = Symbol('omittedMedia');
+
+export interface OmittedMediaPart extends TextPart {
+  readonly [omittedMedia]: {
+    readonly kind: 'image' | 'video';
+    readonly fileId?: string;
+    readonly name?: string;
+  };
+}
+
+export function mediaOmissionOf(part: ContentPart): OmittedMediaPart[typeof omittedMedia] | undefined {
+  return part.type === 'text' && omittedMedia in part ? (part as OmittedMediaPart)[omittedMedia] : undefined;
 }
 
 export const SESSION_MEDIA_DIR = 'media';

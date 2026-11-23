@@ -795,7 +795,7 @@ describe('ReadMediaFileTool', () => {
       makeAgentScopeContext({ agentId: 'main', agentScope: '' }),
     );
     const resolved = await resolver.resolve(
-      [{ role: 'user', content: outputParts(result) }],
+      [{ role: 'tool', toolCallId: 'call_media', content: outputParts(result) }],
       model,
       new ProtocolAdapterRegistry().request(model).with({ endpoint: { files } }),
     );
