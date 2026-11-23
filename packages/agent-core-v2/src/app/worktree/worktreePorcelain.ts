@@ -52,9 +52,10 @@ export interface HiddenIndexEntry {
   readonly path: string;
   readonly object: string;
   readonly skipWorktree: boolean;
+  readonly isSymlink: boolean;
 }
 
-const REGULAR_FILE_MODES = new Set(['100644', '100755']);
+const HIDDEN_ENTRY_MODES = new Set(['100644', '100755', '120000']);
 
 export function hiddenIndexEntries(output: string): HiddenIndexEntry[] {
   const entries: HiddenIndexEntry[] = [];
@@ -63,8 +64,8 @@ export function hiddenIndexEntries(output: string): HiddenIndexEntry[] {
     const [tag = '', mode = '', object = ''] = field.slice(0, tab).split(' ');
     const skipWorktree = tag === 'S';
     const hidden = skipWorktree || tag !== tag.toUpperCase();
-    if (tab !== -1 && hidden && REGULAR_FILE_MODES.has(mode)) {
-      entries.push({ path: field.slice(tab + 1), object, skipWorktree });
+    if (tab !== -1 && hidden && HIDDEN_ENTRY_MODES.has(mode)) {
+      entries.push({ path: field.slice(tab + 1), object, skipWorktree, isSymlink: mode === '120000' });
     }
   }
   return entries;

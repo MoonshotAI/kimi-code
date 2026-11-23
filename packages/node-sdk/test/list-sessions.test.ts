@@ -391,6 +391,18 @@ describe('KimiHarness.listSessions', () => {
       await client.close();
     }
   });
+
+  it('rejects scope without workDir instead of returning global sessions', async () => {
+    const homeDir = await makeTempDir();
+    const client = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
+    try {
+      await expect(
+        client.listSessionsPage({ scope: 'project' } as never),
+      ).rejects.toMatchObject({ code: 'request.work_dir_required' });
+    } finally {
+      await client.close();
+    }
+  });
 });
 
 describe('SDKRpcClientV2.listSessionsPage', () => {

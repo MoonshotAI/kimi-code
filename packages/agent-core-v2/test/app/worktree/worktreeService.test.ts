@@ -839,23 +839,42 @@ describe('WorktreeService', () => {
       for (const file of ['skipped.txt', 'assumed.txt', 'assumed-deleted.txt', 'assumed-dir.txt', 'untouched.txt', 'sparse.txt']) {
         commitFile(wt, file, 'committed\n');
       }
+      if (!isWindows) {
+        symlinkSync('target-a', join(wt, 'assumed-link'));
+        git(wt, 'add', 'assumed-link');
+        git(wt, 'commit', '-q', '-m', 'add assumed-link');
+      }
       git(repo, 'branch', 'keep', git(wt, 'rev-parse', 'HEAD'));
       git(wt, 'update-index', '--skip-worktree', 'skipped.txt', 'sparse.txt');
-      git(wt, 'update-index', '--assume-unchanged', 'assumed.txt', 'assumed-deleted.txt', 'assumed-dir.txt', 'untouched.txt');
+      git(
+        wt,
+        'update-index',
+        '--assume-unchanged',
+        'assumed.txt',
+        'assumed-deleted.txt',
+        'assumed-dir.txt',
+        'untouched.txt',
+        ...(isWindows ? [] : ['assumed-link']),
+      );
       writeFileSync(join(wt, 'skipped.txt'), 'local edit\n');
       writeFileSync(join(wt, 'assumed.txt'), 'local edit\n');
       rmSync(join(wt, 'assumed-deleted.txt'));
       rmSync(join(wt, 'assumed-dir.txt'));
       mkdirSync(join(wt, 'assumed-dir.txt'));
       rmSync(join(wt, 'sparse.txt'));
+      if (!isWindows) {
+        rmSync(join(wt, 'assumed-link'));
+        symlinkSync('target-b', join(wt, 'assumed-link'));
+      }
       expect(git(wt, 'status', '--porcelain')).toBe('');
 
+      const expectedCount = isWindows ? 4 : 5;
       const seen = await service.inspectRemoval({ repoRoot: realRepo, path: wt, deleteBranch: false });
-      expect(seen.uncommittedFiles).toBe(4);
+      expect(seen.uncommittedFiles).toBe(expectedCount);
       expect((await failure(service.remove(removal(wt)))).code).toBe('worktree.has_uncommitted');
       expect(readFileSync(join(wt, 'skipped.txt'), 'utf8')).toBe('local edit\n');
 
-      await service.remove(removal(wt, { discard: { uncommittedFiles: 4, uniqueCommits: 0 } }));
+      await service.remove(removal(wt, { discard: { uncommittedFiles: expectedCount, uniqueCommits: 0 } }));
       expect(existsSync(wt)).toBe(false);
     });
 
@@ -1045,6 +1064,17 @@ describe('WorktreeService', () => {
       expect(error.code).toBe('worktree.cancelled');
       expect(Date.now() - started).toBeLessThan(10_000);
     });
+
+    it('refuses runSetupScript while the worktree flag is off', async () => {
+      writeScript('echo ran\n');
+      const created = await create({ name: 'flag-off-setup' });
+      flagEnabled = false;
+
+      const error = await failure(
+        service.runSetupScript({ worktreePath: created.worktree.path, sourceRoot: created.sourceRoot }),
+      );
+      expect(error.code).toBe('worktree.disabled');
+    });
   });
 
   it('keeps every created worktree under the per-repository directory', async () => {
@@ -1140,6 +1170,24 @@ describe('WorktreeService', () => {
       second.dispose();
       second.dispose();
       expect(readdirSync(markers)).toEqual([]);
+    });
+
+    it('keeps a worktree busy when another client holds a live marker for the excluded session', async () => {
+      const created = await create({ name: 'shared-session' });
+      const wt = created.worktree.path;
+      const sessionDir = indexSession('shared', wt);
+      const own = presence.markOpen(sessionDir);
+      const markers = join(sessionDir, SESSION_PRESENCE_DIR);
+      writeFileSync(
+        join(markers, `${process.pid}-other-client.json`),
+        JSON.stringify({ version: 1, pid: process.pid, hostname: hostname(), startedAt: Math.round(performance.timeOrigin) }),
+      );
+      const inspect = { repoRoot: realRepo, path: wt, deleteBranch: false, excludeSessionId: 'shared' };
+
+      expect(await service.inspectRemoval(inspect)).toMatchObject({ openSessionIds: ['shared'] });
+      expect((await failure(service.remove({ ...removal(wt), excludeSessionId: 'shared' }))).code).toBe('worktree.in_use');
+      expect(existsSync(wt)).toBe(true);
+      own.dispose();
     });
 
     it('writes no marker while the worktree flag is off', () => {

@@ -877,6 +877,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     input: RunSetupScriptInput,
     options?: RunSetupScriptOptions,
   ): Promise<{ readonly exitCode: number }> {
+    await this.configReady;
     return withKimiErrors(this.engineAccessor.get(IWorktreeService).runSetupScript(input, options));
   }
 
@@ -1551,10 +1552,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     let before: string | undefined;
     for (;;) {
       const page = await this.listSessionsPage({
-        workDir: input.workDir,
-        scope: input.scope,
-        sessionId: input.sessionId,
-        includeArchived: input.includeArchived,
+        ...input,
         before,
       });
       all.push(...page.items);
@@ -1564,6 +1562,9 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   }
 
   override async listSessionsPage(input: ListSessionsOptions = {}): Promise<SessionSummaryPage> {
+    if (input.scope !== undefined && input.workDir === undefined) {
+      throw new KimiError(ErrorCodes.REQUEST_WORK_DIR_REQUIRED, 'listSessions with scope requires workDir');
+    }
     const workDir =
       input.workDir === undefined ? undefined : normalizeRequiredWorkDir('listSessions', input.workDir);
     const workspaces = await this.klient.global.workspaces.list();

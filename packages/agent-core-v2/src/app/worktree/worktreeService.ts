@@ -1,3 +1,5 @@
+import { readlink } from 'node:fs/promises';
+
 import { basename, dirname, isAbsolute, join, relative } from 'pathe';
 
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
@@ -193,6 +195,7 @@ export class WorktreeService implements IWorktreeService {
     input: RunSetupScriptInput,
     options: RunSetupScriptOptions = {},
   ): Promise<{ readonly exitCode: number }> {
+    this.requireEnabled();
     const shell = localProgram('bash', input.worktreePath) ?? localProgram('sh', input.worktreePath);
     if (shell === undefined) {
       throw new Error2(ErrorCodes.SHELL_GIT_BASH_NOT_FOUND, 'Running the worktree setup script needs bash or sh on PATH.');
@@ -247,7 +250,11 @@ export class WorktreeService implements IWorktreeService {
     const removed = await this.git(['worktree', 'remove', ...forceArgs, check.path], repo.root);
     if (removed.exitCode !== 0) throw gitFailed(`Could not remove the worktree at ${check.path}.`, removed);
     if (input.deleteBranch && check.branch !== undefined) {
-      const deleted = await this.git(['branch', '-D', check.branch], repo.root);
+      const deleteArgs =
+        target.worktree.head !== undefined
+          ? ['update-ref', '-d', `refs/heads/${check.branch}`, target.worktree.head]
+          : ['branch', '-D', check.branch];
+      const deleted = await this.git(deleteArgs, repo.root);
       if (deleted.exitCode !== 0) throw gitFailed(`Could not delete branch ${check.branch}.`, deleted);
     }
   }
@@ -464,17 +471,43 @@ export class WorktreeService implements IWorktreeService {
     if (listed.exitCode !== 0) throw gitFailed(`Could not read the index of ${root}.`, listed);
     const hidden = hiddenIndexEntries(listed.stdout);
     const checked = await Promise.all(
-      hidden.map(async (entry) => ({ entry, isFile: await this.isFile(join(root, entry.path)) })),
+      hidden.map(async (entry) => ({
+        entry,
+        stat: await this.fs.lstat(join(root, entry.path)).catch(() => undefined),
+      })),
     );
-    const present = checked.filter(({ isFile }) => isFile).map(({ entry }) => entry);
-    const missingAssumeUnchanged = checked.filter(({ entry, isFile }) => !isFile && !entry.skipWorktree).length;
-    if (present.length === 0) return missingAssumeUnchanged;
-    const hashed = await this.git(['hash-object', '--stdin-paths'], root, {
-      stdin: present.map((entry) => `${entry.path}\n`).join(''),
-    });
-    if (hashed.exitCode !== 0) throw gitFailed(`Could not read the files of ${root}.`, hashed);
-    const hashes = hashed.stdout.split('\n');
-    return missingAssumeUnchanged + present.filter((entry, i) => hashes[i] !== entry.object).length;
+    const presentFiles: typeof hidden = [];
+    const presentSymlinks: typeof hidden = [];
+    let modified = 0;
+    for (const { entry, stat } of checked) {
+      if (entry.isSymlink) {
+        if (stat?.isSymbolicLink === true) presentSymlinks.push(entry);
+        else if (stat !== undefined || !entry.skipWorktree) modified += 1;
+      } else if (stat?.isFile === true && stat.isSymbolicLink !== true) {
+        presentFiles.push(entry);
+      } else if (stat !== undefined || !entry.skipWorktree) {
+        modified += 1;
+      }
+    }
+    if (presentFiles.length > 0) {
+      const hashed = await this.git(['hash-object', '--stdin-paths'], root, {
+        stdin: presentFiles.map((entry) => `${entry.path}\n`).join(''),
+      });
+      if (hashed.exitCode !== 0) throw gitFailed(`Could not read the files of ${root}.`, hashed);
+      const hashes = hashed.stdout.split('\n');
+      modified += presentFiles.filter((entry, i) => hashes[i] !== entry.object).length;
+    }
+    for (const entry of presentSymlinks) {
+      const target = await readlink(join(root, entry.path)).catch(() => undefined);
+      if (target === undefined) {
+        if (!entry.skipWorktree) modified += 1;
+        continue;
+      }
+      const hashed = await this.git(['hash-object', '--stdin'], root, { stdin: target });
+      if (hashed.exitCode !== 0) throw gitFailed(`Could not hash symlink ${entry.path} of ${root}.`, hashed);
+      if (hashed.stdout.trim() !== entry.object) modified += 1;
+    }
+    return modified;
   }
 
   private async countUniqueCommits(repo: Repository, target: KimiEntry, deleteBranch: boolean): Promise<number> {
