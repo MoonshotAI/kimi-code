@@ -1,9 +1,9 @@
 
-import { ref } from 'vue';
+import { ref, watch } from 'vue';
 import { defineStore } from 'pinia';
 import { isDaemonApiError } from '@moonshot-ai/app-core/api';
-import type { AppSession, FsEntry, ReadRequestOptions } from '@moonshot-ai/app-core/api';
-import { isAbsoluteLocalPath, logWarn, pathRelativeTo, resolveLocalPath } from '@moonshot-ai/app-core/lib';
+import type { AppSession, FsEntry, KimiWebApi, ReadRequestOptions } from '@moonshot-ai/app-core/api';
+import { isAbsoluteLocalPath, logWarn, pathRelativeTo, resolveLocalPath, workspaceRootKey } from '@moonshot-ai/app-core/lib';
 import { parseDiff, type DiffViewLine } from '@moonshot-ai/app-core/client';
 import { buildFullDiffTexts, type DiffFullTexts } from '@moonshot-ai/app-core/client';
 import type { FilePreviewRequest } from '@moonshot-ai/app-core/client';
@@ -33,6 +33,9 @@ let filesHooks: FilesHooks | null = null;
 export function setFilesHooks(next: FilesHooks | null): void {
   filesHooks = next;
 }
+
+type SuggestRequest = [input: { query: string; limit: number }, options: { signal?: AbortSignal }];
+type SuggestResult = Awaited<ReturnType<KimiWebApi['suggestFiles']>>;
 
 export interface FileTreeWorkspaceScope {
   workspaceId?: string;
@@ -367,6 +370,25 @@ export const useFilesStore = defineStore('kimi.files', () => {
 
   const filePreviewTargetBySession = ref<Record<string, FilePreviewRequest | null>>({});
 
+  function onSessionMoved(sid: string): void {
+    if (sessionsStore().activeSessionId !== sid) {
+      clearSessionFileTree(sid);
+      clearSessionGitStatus(sid);
+      return;
+    }
+    void loadGitStatus(sid);
+    if (fileTreeBySession.value[sid] !== undefined) void refreshFileTree(sid);
+  }
+
+  watch(
+    () => new Map(sessionsStore().sessions.map((s) => [s.id, s.cwd] as const)),
+    (next, previous) => {
+      for (const [sid, cwd] of next) {
+        if ((previous.get(sid) ?? cwd) !== cwd) onSessionMoved(sid);
+      }
+    },
+  );
+
   function filePreviewTargetOf(sid: string): FilePreviewRequest | null {
     return filePreviewTargetBySession.value[sid] ?? null;
   }
@@ -484,6 +506,45 @@ export const useFilesStore = defineStore('kimi.files', () => {
   }
 
   let suggestUnavailable = false;
+
+  async function suggestInWorkspace(workspaceId: string, ...request: SuggestRequest): Promise<SuggestResult> {
+    const api = getKimiWebApi();
+    if (!suggestUnavailable) {
+      try {
+        return await api.suggestFiles(workspaceId, ...request);
+      } catch (err) {
+        if (!isDaemonApiError(err) || err.code !== 404) throw err;
+        suggestUnavailable = true;
+      }
+    }
+    return api.searchFiles(workspaceId, ...request);
+  }
+
+  async function suggestAtRoots(
+    api: KimiWebApi,
+    roots: readonly string[],
+    ...request: SuggestRequest
+  ): Promise<SuggestResult> {
+    try {
+      return await api.suggestFilesAtRoots(roots, ...request);
+    } catch (err) {
+      if (roots.length === 1 || !isDaemonApiError(err)) throw err;
+      const [workDir, ...additional] = roots as [string, ...string[]];
+      const [input, options] = request;
+      const reachable = await Promise.all(
+        additional.map((root) => api.suggestFilesAtRoots([root], { ...input, limit: 1 }, options).then(() => [root], () => [])),
+      );
+      return api.suggestFilesAtRoots([workDir, ...reachable.flat()], ...request);
+    }
+  }
+
+  function rootsUnlessInPrimary(session: AppSession): readonly string[] {
+    const { root, roots } = workspacesStore().sessionPanelRoots(session);
+    const workspaceId = workspacesStore().workspaceIdForSession(session);
+    const project = workspacesStore().workspaces.find((w) => w.id === workspaceId);
+    return project !== undefined && workspaceRootKey(project.root) === workspaceRootKey(root) ? [] : roots;
+  }
+
   const searchFiles: FileSearch = async (query, options) => {
     const session = sessionsStore().sessions.find((s) => s.id === sessionsStore().activeSessionId);
     const root = options?.root;
@@ -491,25 +552,15 @@ export const useFilesStore = defineStore('kimi.files', () => {
       session === undefined
         ? workspacesStore().activeWorkspaceId
         : workspacesStore().workspaceIdForSession(session);
-    const ref = root ?? workspaceId;
-    if (!ref) return [];
+    if (!(root ?? workspaceId)) return [];
+    const roots = root === undefined ? (session === undefined ? [] : rootsUnlessInPrimary(session)) : [root];
+    const request: SuggestRequest = [{ query, limit: 20 }, { signal: options?.signal }];
     try {
-      const api = getKimiWebApi();
-      if (root !== undefined) {
-        const result = await workspaceMachineApi(workspaceId).suggestFilesAtRoots([root], { query, limit: 20 }, { signal: options?.signal });
-        return result.items.map((item) => ({ path: item.path, name: item.name, kind: item.kind, matchPositions: item.matchPositions }));
-      }
-      if (!suggestUnavailable) {
-        try {
-          const result = await api.suggestFiles(ref, { query, limit: 20 }, { signal: options?.signal });
-          return result.items.map((item) => ({ path: item.path, name: item.name, kind: item.kind, matchPositions: item.matchPositions }));
-        } catch (err) {
-          if (!isDaemonApiError(err) || err.code !== 404) throw err;
-          suggestUnavailable = true;
-        }
-      }
-      const result = await api.searchFiles(ref, { query, limit: 20 }, { signal: options?.signal });
-      return result.items.map((item) => ({ path: item.path, name: item.name, kind: item.kind, matchPositions: item.matchPositions }));
+      const { items } =
+        roots.length > 0
+          ? await suggestAtRoots(workspaceMachineApi(workspaceId), roots, ...request)
+          : await suggestInWorkspace(workspaceId!, ...request);
+      return items.map((item) => ({ path: item.path, name: item.name, kind: item.kind, matchPositions: item.matchPositions }));
     } catch {
       return [];
     }

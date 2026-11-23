@@ -141,13 +141,7 @@ const draftEntry = client.draftEntry;
 const workspaceName = computed(() => client.visibleWorkspace.value?.name);
 const activeHostId = computed(() => client.visibleWorkspace.value?.hostId);
 const hostBlocked = computed(() => hostsStore().blocked(activeHostId.value));
-const workspaceRoot = computed(() => client.visibleWorkspace.value?.root ?? client.status.value.cwd);
-const workspaceDirs = computed(() => {
-  const root = workspaceRoot.value;
-  if (!root) return [];
-  const registered = workspacesStore().workspaces.find((ws) => ws.id === activeWorkspaceId.value);
-  return [root, ...(registered?.additionalDirs ?? [])];
-});
+const panelRoots = computed(() => workspacesStore().activePanelRoots);
 const turnError = computed(() => client.activeTurnError.value ?? null);
 const turnRetry = computed(() => client.activeTurnRetry.value ?? null);
 const turnEnd = client.activeTurnEnd;
@@ -853,8 +847,8 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
             <WorkspaceHome
               v-if="showWorkspaceHome"
               :workspace-name="activeWorkspaceLabel"
-              :workspace-root="workspaceRoot"
-              :workspace-dirs="workspaceDirs"
+              :workspace-root="panelRoots.root"
+              :workspace-dirs="panelRoots.roots"
               :workspace-host-id="activeHostId"
             />
             <div v-else class="empty-hint">

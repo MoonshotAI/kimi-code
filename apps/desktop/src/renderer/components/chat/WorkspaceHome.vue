@@ -10,7 +10,7 @@ import { useNativeTerminal } from '../../composables/useNativeTerminal';
 const props = defineProps<{
   workspaceName?: string;
   workspaceRoot?: string;
-  workspaceDirs?: string[];
+  workspaceDirs?: readonly string[];
   workspaceHostId?: string;
 }>();
 

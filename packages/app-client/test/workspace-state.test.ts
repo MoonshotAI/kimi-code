@@ -1076,7 +1076,7 @@ describe('useWorkspaceState — startSessionAndActivateSkill', () => {
     expect(pushFailureSpy).not.toHaveBeenCalled();
   });
 
-  it('keeps the derived workspace id when the registry is unavailable', async () => {
+  it('creates in an unlisted workspace by id, without its sessions cwd, when the registry is unavailable', async () => {
     const state = createState();
     workspacesStore().workspaces = [];
     sessionsStore().setSessions([
@@ -1092,7 +1092,7 @@ describe('useWorkspaceState — startSessionAndActivateSkill', () => {
     expect(apiMock.createSession).toHaveBeenCalledOnce();
     expect(apiMock.createSession).toHaveBeenCalledWith({
       workspaceId: 'wd_derived_123456789abc',
-      cwd: '/abs/path',
+      cwd: undefined,
       model: undefined,
     });
     expect(activateSkill).toHaveBeenCalledOnce();
@@ -1137,7 +1137,7 @@ describe('useWorkspaceState — startSessionAndActivateSkill', () => {
     expect(apiMock.createSession).toHaveBeenCalledTimes(2);
     expect(apiMock.createSession).toHaveBeenNthCalledWith(1, {
       workspaceId: 'wd_derived_123456789abc',
-      cwd: '/abs/path',
+      cwd: undefined,
       model: undefined,
     });
     expect(apiMock.createSession).toHaveBeenNthCalledWith(2, {
@@ -4572,12 +4572,12 @@ describe('useWorkspaceState — grouped initial session load (view=by_workspace)
     expect(workspacesStore().sessionsInitialCountByWorkspace).toEqual({ ws1: 5, ws2: 5, ws3: 5 });
   });
 
-  it('matches a server-canonicalized alias group to the registered workspace by root', async () => {
+  it('matches a server-canonicalized alias group to the registered workspace by id', async () => {
     apiMock.listSessionGroups.mockResolvedValue({
       groups: [
         {
-          workspaceId: 'wd_canonical',
-          sessions: [groupedSession('s1', 1, 'wd_legacy', '/repo/ws1')],
+          workspaceId: 'ws1',
+          sessions: [groupedSession('s1', 1, 'wd_legacy', '/Repo/ws1')],
           total: 3,
         },
       ],
@@ -4591,7 +4591,7 @@ describe('useWorkspaceState — grouped initial session load (view=by_workspace)
     await ws.load();
 
     expect(state.sessions.map((s) => s.id)).toEqual(['s1']);
-    expect(state.sessions[0]?.workspaceId).toBe('ws1');
+    expect(state.sessions[0]?.workspaceId).toBe('wd_legacy');
     expect(workspacesStore().sessionsHasMoreByWorkspace['ws1']).toBe(true);
     expect(workspacesStore().sessionsCursorByWorkspace['ws1']).toBe('s1');
     expect(workspacesStore().sessionsHasMoreByWorkspace['ws2']).toBe(false);

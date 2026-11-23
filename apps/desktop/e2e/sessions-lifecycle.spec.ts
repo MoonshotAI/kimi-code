@@ -1,3 +1,4 @@
+import { basename } from 'node:path';
 import { expect, test } from './fixtures/app';
 import { held, say } from './fixtures/model';
 import { expectOrder, relaunchAndSettle, rowMenu, sendAndFinish, sessionRow, sessionRowById, sidebarOf, transcriptOf } from './fixtures/sessions';
@@ -109,7 +110,7 @@ test('sessions are created, renamed, decorated, pinned, forked, archived, restor
     const settings = app.window.getByRole('dialog', { name: 'Settings' });
     await settings.getByRole('tab', { name: 'Archived Sessions' }).click();
     await expect(settings.getByText(RENAMED, { exact: true })).toBeVisible();
-    await expect(settings.getByText(app.workspace, { exact: true })).toBeVisible();
+    await expect(settings.getByText(basename(app.workspace), { exact: true })).toBeVisible();
     await expect(settings.getByText(/^Archived \d{4}-/)).toBeVisible();
     await expect(settings.getByRole('button', { name: 'Restore' })).toHaveCount(1);
     await app.snapshot('archived-settings');
