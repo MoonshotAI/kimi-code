@@ -23,6 +23,7 @@ export default {
   planEmptyIdle: '还没有计划——开启计划模式后，智能体写出的计划会显示在这里',
   swarmLabel: 'Swarm',
   swarmDismiss: '关闭 Swarm',
+  swarmTooltip: '高消耗：并行运行大量子 agent',
   towerLabel: 'Tower',
   towerDismiss: '关闭 Tower',
   modeOff: '未启用',

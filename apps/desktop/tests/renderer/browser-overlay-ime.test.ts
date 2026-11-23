@@ -69,3 +69,35 @@ it('cycles keyboard focus inside a focused dialog', () => {
   expect(preventDefault).toHaveBeenCalledTimes(2);
   app.unmount();
 });
+
+
+it('dismisses an opted-in menu with Ctrl/Cmd+Enter', () => {
+  const dismiss = vi.fn();
+  vi.stubGlobal('document', { activeElement: null });
+  vi.stubGlobal('navigator', { platform: 'MacIntel' });
+  vi.stubGlobal('window', {
+    cancelAnimationFrame() {},
+    clearTimeout() {},
+    addEventListener() {},
+    removeEventListener() {},
+    kimiBrowserOverlay: { ready() {}, onConfig: () => () => {}, onShown: () => () => {}, onHide: () => () => {}, dismiss },
+  });
+  let state!: { config: { value: unknown }; onKeydown: (event: unknown) => void };
+  const app = renderer.createApp(defineComponent(() => {
+    state = (BrowserOverlayMenu as unknown as { setup: (props: unknown, context: unknown) => typeof state }).setup({}, { expose() {} });
+    return () => h('div');
+  }));
+  app.provide(ssrContextKey, {});
+  app.mount({ children: [], props: {} });
+
+  state.config.value = { kind: 'menu', requestId: 2, submitOnCtrlEnter: false };
+  state.onKeydown({ key: 'Enter', ctrlKey: true, isComposing: false, keyCode: 13, preventDefault() {} });
+  expect(dismiss).not.toHaveBeenCalled();
+
+  state.config.value = { kind: 'menu', requestId: 2, submitOnCtrlEnter: true };
+  state.onKeydown({ key: 'Enter', ctrlKey: true, isComposing: false, keyCode: 13, preventDefault() {} });
+  state.onKeydown({ key: 'Enter', metaKey: true, isComposing: false, keyCode: 13, preventDefault() {} });
+  expect(dismiss).toHaveBeenNthCalledWith(1, { requestId: 2, reason: 'dismiss' });
+  expect(dismiss).toHaveBeenNthCalledWith(2, { requestId: 2, reason: 'dismiss' });
+  app.unmount();
+});

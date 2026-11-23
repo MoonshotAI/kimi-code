@@ -114,11 +114,11 @@ export function createWorkspaceRig(rawState: ExtendedState, deps: WorkspaceRigDe
   const { confirm } = useConfirmDialog();
   setModeHooks({
     persistSessionProfile: deps.persistSessionProfile,
-    confirmSwarmEnable: () =>
-      confirm({
-        title: t('workspace.swarmEnableTitle'),
-        message: t('workspace.swarmEnableConfirm'),
-        variant: 'primary',
+    notifySwarmEnabled: () =>
+      warningsStore().pushWarning({
+        severity: 'warning',
+        title: t('workspace.swarmEnabledTitle'),
+        message: t('workspace.swarmEnabledMessage'),
       }),
   });
   setGoalHooks({

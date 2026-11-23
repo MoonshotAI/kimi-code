@@ -135,6 +135,68 @@ describe('mode store setSwarmMode', () => {
   });
 });
 
+describe('mode store enableSwarmMode', () => {
+  function hooks() {
+    const persistSessionProfile = vi.fn().mockResolvedValue(true);
+    const notifySwarmEnabled = vi.fn();
+    setModeHooks({ persistSessionProfile, notifySwarmEnabled });
+    return { persistSessionProfile, notifySwarmEnabled };
+  }
+
+  beforeEach(() => {
+    sessionsStore().setActiveSessionId('sess_1');
+  });
+
+  it('turns swarm on without asking and shows the usage notice', () => {
+    const { persistSessionProfile, notifySwarmEnabled } = hooks();
+
+    modeStore().enableSwarmMode();
+
+    expect(modeStore().swarmModeBySession.sess_1).toBe(true);
+    expect(persistSessionProfile).toHaveBeenCalledWith({ swarmMode: true, towerMode: false });
+    expect(notifySwarmEnabled).toHaveBeenCalledOnce();
+  });
+
+  it('shows the usage notice when a draft turns swarm on', () => {
+    sessionsStore().setActiveSessionId(undefined);
+    const { notifySwarmEnabled } = hooks();
+
+    modeStore().enableSwarmMode();
+
+    expect(modeStore().draftModes.swarmMode).toBe(true);
+    expect(notifySwarmEnabled).toHaveBeenCalledOnce();
+  });
+
+  it('does nothing when swarm is already on', () => {
+    const { persistSessionProfile, notifySwarmEnabled } = hooks();
+    modeStore().swarmModeBySession = { sess_1: true };
+
+    modeStore().enableSwarmMode();
+
+    expect(persistSessionProfile).not.toHaveBeenCalled();
+    expect(notifySwarmEnabled).not.toHaveBeenCalled();
+  });
+
+  it('turns swarm off without a notice', () => {
+    const { notifySwarmEnabled } = hooks();
+    modeStore().swarmModeBySession = { sess_1: true };
+
+    modeStore().toggleSwarmMode();
+
+    expect(modeStore().swarmModeBySession.sess_1).toBe(false);
+    expect(notifySwarmEnabled).not.toHaveBeenCalled();
+  });
+
+  it('turns swarm on from the toggle with the same notice', () => {
+    const { notifySwarmEnabled } = hooks();
+
+    modeStore().toggleSwarmMode();
+
+    expect(modeStore().swarmModeBySession.sess_1).toBe(true);
+    expect(notifySwarmEnabled).toHaveBeenCalledOnce();
+  });
+});
+
 describe('mode store setGoalMode', () => {
   it('writes the mode and persists without a profile write', () => {
     sessionsStore().setActiveSessionId('sess_1');

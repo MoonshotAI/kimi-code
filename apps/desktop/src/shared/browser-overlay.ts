@@ -18,7 +18,7 @@ const ItemProgress = Type.Object({ label: Label, value: Type.Optional(Type.Numbe
 const TextRange = Type.Object({ start: Type.Integer({ minimum: 0 }), end: Type.Integer({ minimum: 0 }) }, { additionalProperties: false });
 const MenuItem = Type.Union([
   Type.Object({ kind: Type.Literal('separator') }),
-  Type.Object({ kind: Type.Enum(['section', 'note']), id: Id, label: Type.String({ maxLength: 1024 }) }),
+  Type.Object({ kind: Type.Enum(['section', 'note']), id: Id, label: Type.String({ maxLength: 1024 }), size: Type.Optional(Type.Literal('xs')) }),
   Type.Object({ kind: Type.Literal('choices'), id: Id, label: Type.String({ maxLength: 1024 }), icon: Icon, value: Type.String(), options: Type.Array(Type.Object({ id: Id, label: Type.String({ maxLength: 256 }) }), { minItems: 1, maxItems: 8 }),
     disabled: OptionalFlag, notice: Type.Optional(Type.Object({ message: Type.String({ maxLength: 256 }), linkLabel: Type.String({ maxLength: 64 }), action: Id })) }),
   Type.Object({ kind: Type.Literal('zoom'), id: Id, label: Label, icon: Icon, value: Label,
@@ -34,7 +34,7 @@ const MenuItem = Type.Union([
 const MenuFields = {
   menuId: Id, anchor: BrowserBoundsSchema, placement: Type.Optional(Placement), initialFocus: Type.Optional(InitialFocus),
   offset: Type.Optional(Type.Number({ minimum: -16, maximum: 32 })), width: Type.Optional(Type.Number({ minimum: 180 })),
-  autoWidth: OptionalFlag, preserveFocus: OptionalFlag, items: Type.Array(MenuItem, { minItems: 1, maxItems: 2048 }),
+  autoWidth: OptionalFlag, preserveFocus: OptionalFlag, submitOnCtrlEnter: OptionalFlag, items: Type.Array(MenuItem, { minItems: 1, maxItems: 2048 }),
   footerStart: Type.Optional(Type.Integer({ minimum: 0 })), query: Type.Optional(Type.String({ maxLength: 1024 })),
 };
 export const BrowserOverlayMenuRequestSchema = Type.Object({ ...MenuFields, refresh: OptionalFlag });
@@ -200,6 +200,7 @@ export function asBrowserOverlayMenuRequest(value: unknown): BrowserOverlayMenuR
     ...(request.initialFocus === undefined ? {} : { initialFocus: request.initialFocus }),
     ...(request.autoWidth === true ? { autoWidth: true } : {}),
     ...(request.preserveFocus === true ? { preserveFocus: true } : {}),
+    ...(request.submitOnCtrlEnter === true ? { submitOnCtrlEnter: true } : {}),
     ...(request.footerStart === undefined ? {} : { footerStart: request.footerStart }),
     ...(request.query ? { query: request.query } : {}),
   };

@@ -5,10 +5,14 @@ export interface ModelSwitchLocalizedString {
   zh?: string;
 }
 
+export type ModelSwitchSessionType = 'old' | 'new' | 'all';
+
 export interface ModelSwitchRule {
   from: string | string[];
   to: string | string[];
+  session_type: ModelSwitchSessionType;
   hint?: ModelSwitchLocalizedString;
+  warning?: ModelSwitchLocalizedString;
 }
 
 export interface ModelSwitchConfirmConfig {
@@ -16,7 +20,7 @@ export interface ModelSwitchConfirmConfig {
   rules: ModelSwitchRule[];
 }
 
-export type ModelSwitchAction = 'new' | 'compact' | 'continue' | 'cancel';
+export type ModelSwitchAction = 'compact' | 'continue' | 'cancel';
 
 function parseIdList(raw: unknown): string | string[] | undefined {
   if (typeof raw === 'string') return raw;
@@ -25,25 +29,35 @@ function parseIdList(raw: unknown): string | string[] | undefined {
   return raw as string[];
 }
 
+function parseLocalizedString(raw: unknown): ModelSwitchLocalizedString | null | undefined {
+  if (raw === undefined) return undefined;
+  if (typeof raw !== 'object' || raw === null) return null;
+  const record = raw as Record<string, unknown>;
+  if (record['en'] !== undefined && typeof record['en'] !== 'string') return null;
+  if (record['zh'] !== undefined && typeof record['zh'] !== 'string') return null;
+  return {
+    en: typeof record['en'] === 'string' ? record['en'] : undefined,
+    zh: typeof record['zh'] === 'string' ? record['zh'] : undefined,
+  };
+}
+
 function parseRule(raw: unknown): ModelSwitchRule | undefined {
   if (typeof raw !== 'object' || raw === null) return undefined;
   const record = raw as Record<string, unknown>;
   const from = parseIdList(record['from']);
   const to = parseIdList(record['to']);
+  const sessionType = record['session_type'];
   if (from === undefined || to === undefined) return undefined;
-  const hint = record['hint'];
-  if (hint === undefined) return { from, to };
-  if (typeof hint !== 'object' || hint === null) return undefined;
-  const localized = hint as Record<string, unknown>;
-  if (localized['en'] !== undefined && typeof localized['en'] !== 'string') return undefined;
-  if (localized['zh'] !== undefined && typeof localized['zh'] !== 'string') return undefined;
+  if (sessionType !== 'old' && sessionType !== 'new' && sessionType !== 'all') return undefined;
+  const hint = parseLocalizedString(record['hint']);
+  const warning = parseLocalizedString(record['warning']);
+  if (hint === null || warning === null) return undefined;
   return {
     from,
     to,
-    hint: {
-      en: typeof localized['en'] === 'string' ? localized['en'] : undefined,
-      zh: typeof localized['zh'] === 'string' ? localized['zh'] : undefined,
-    },
+    session_type: sessionType,
+    hint: hint ?? undefined,
+    warning: warning ?? undefined,
   };
 }
 
@@ -65,11 +79,17 @@ export function matchModelSwitchRule(
   config: ModelSwitchConfirmConfig | undefined,
   fromModelId: string,
   toModelId: string,
+  sessionType: Exclude<ModelSwitchSessionType, 'all'>,
 ): ModelSwitchRule | undefined {
   if (config === undefined || !config.enable) return undefined;
   const hit = (ids: string | string[], id: string): boolean =>
-    typeof ids === 'string' ? ids === id : ids.includes(id);
-  return config.rules.find((rule) => hit(rule.from, fromModelId) && hit(rule.to, toModelId));
+    ids === '*' || (typeof ids === 'string' ? ids === id : ids.includes(id));
+  return config.rules.find(
+    (rule) =>
+      (rule.session_type === 'all' || rule.session_type === sessionType) &&
+      hit(rule.from, fromModelId) &&
+      hit(rule.to, toModelId),
+  );
 }
 
 export function upstreamModelIdFromConfigModels(
@@ -88,4 +108,12 @@ export function resolveModelSwitchHint(
 ): string | undefined {
   if (rule?.hint === undefined) return undefined;
   return (locale === 'zh' ? rule.hint.zh : undefined) ?? rule.hint.en;
+}
+
+export function resolveModelSwitchWarning(
+  rule: ModelSwitchRule | undefined,
+  locale: 'en' | 'zh',
+): string | undefined {
+  if (rule?.warning === undefined) return undefined;
+  return (locale === 'zh' ? rule.warning.zh : undefined) ?? rule.warning.en;
 }

@@ -40,7 +40,7 @@ export default {
   screenshotSessionGone: 'The original conversation no longer exists, so the screenshot was not added',
   addGoalDesc: 'Set a goal to keep pursuing',
   addPlanDesc: 'Turn plan mode on',
-  addSwarmDesc: 'Turn swarm mode on',
+  addSwarmDesc: 'High usage: runs many sub-agents in parallel',
   addTowerDesc: 'Turn tower mode on',
   noCommands: 'No commands',
   slashSheetTitle: 'Commands',

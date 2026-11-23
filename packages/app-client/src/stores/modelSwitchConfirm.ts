@@ -13,7 +13,9 @@ import { clientPinia } from './pinia';
 export interface ModelSwitchConfirmRequest {
   fromModel: string;
   toModel: string;
+  sessionType: 'old' | 'new';
   hint?: string;
+  warning?: string;
   resolve: (action: ModelSwitchAction) => void;
 }
 
@@ -28,14 +30,50 @@ export const useModelSwitchConfirmStore = defineStore('kimi.modelSwitchConfirm',
     promise: Promise<ModelSwitchCompactionOutcome>;
     resolve: (outcome: ModelSwitchCompactionOutcome) => void;
   } | null = null;
+  let loadState: 'idle' | 'loading' | 'settled' = 'idle';
+  let refreshFlight: {
+    signal?: AbortSignal;
+    background: boolean;
+    promise: Promise<void>;
+  } | null = null;
+  let latestRequest: object | null = null;
 
   async function refresh(options?: ReadRequestOptions): Promise<void> {
-    try {
-      const raw = await getKimiWebApi().getClientConfig(MODEL_SWITCH_CONFIRM_CONFIG_NAME, options);
-      config.value = raw === null ? undefined : parseModelSwitchConfirmConfig(raw);
-    } catch {
-      config.value = undefined;
+    const signal = options?.signal;
+    const background = options?.background ?? true;
+    if (
+      refreshFlight !== null &&
+      refreshFlight.signal === signal &&
+      refreshFlight.background === background &&
+      signal?.aborted !== true
+    ) {
+      return refreshFlight.promise;
     }
+    config.value = undefined;
+    loadState = 'loading';
+    const requestId = {};
+    latestRequest = requestId;
+    const request = (async () => {
+      try {
+        const raw = await getKimiWebApi().getClientConfig(MODEL_SWITCH_CONFIRM_CONFIG_NAME, options);
+        if (latestRequest === requestId) {
+          config.value = raw === null ? undefined : parseModelSwitchConfirmConfig(raw);
+        }
+      } catch {
+        if (latestRequest === requestId) config.value = undefined;
+      }
+    })();
+    refreshFlight = { signal, background, promise: request };
+    try {
+      await request;
+    } finally {
+      if (latestRequest === requestId) loadState = 'settled';
+      if (refreshFlight?.promise === request) refreshFlight = null;
+    }
+  }
+
+  function needsLoad(): boolean {
+    return config.value === undefined && loadState !== 'settled';
   }
 
   function peek(): ModelSwitchConfirmConfig | undefined {
@@ -95,12 +133,16 @@ export const useModelSwitchConfirmStore = defineStore('kimi.modelSwitchConfirm',
     config.value = undefined;
     pending.value = null;
     compactionWait = null;
+    loadState = 'idle';
+    refreshFlight = null;
+    latestRequest = null;
   }
 
   return {
     config,
     pending,
     refresh,
+    needsLoad,
     peek,
     requestConfirm,
     settle,
