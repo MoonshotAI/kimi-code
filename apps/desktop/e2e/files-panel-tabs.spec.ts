@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import type { Locator, Page } from '@playwright/test';
 
 import { captureClipboardWrites } from './fixtures/clipboard';
 import { answerNativeDialog } from './fixtures/native-dialog';
@@ -13,6 +14,16 @@ const PROMPT = 'Point me at the project files';
 const LINKS = `Start with ${FILES.map(name => `[${name.split('.')[0]}](${name})`).join(', ')}.`;
 const EDIT_PROMPT = 'Bump the constant in a.ts';
 const EDIT_DONE = 'Bumped a to 42.';
+
+async function copyPreviewPath(window: Page, panel: Locator): Promise<void> {
+  if (process.platform === 'linux') {
+    await expect(panel.getByRole('button', { name: 'Choose application' })).toHaveCount(0);
+    await panel.getByRole('button', { name: 'Copy path', exact: true }).click();
+    return;
+  }
+  await panel.getByRole('button', { name: 'Choose application' }).click();
+  await window.getByRole('menuitem', { name: 'Copy path' }).click();
+}
 
 test.use({
   permissionMode: 'yolo',
@@ -81,8 +92,7 @@ test('file tabs open from links, cycle, preview markdown and images, go stale, p
     await panel().getByRole('tab', { name: 'a.ts' }).click();
     await expect(panel().getByText('export const a = 1;')).toBeVisible();
     const clipboardWrites = await captureClipboardWrites(app);
-    await panel().getByRole('button', { name: 'Choose application' }).click();
-    await app.window.getByRole('menuitem', { name: 'Copy path' }).click();
+    await copyPreviewPath(app.window, panel());
     if (process.platform === 'win32') {
       await expect.poll(clipboardWrites).toHaveLength(1);
     } else {
@@ -154,8 +164,7 @@ test('Copy path copies the native absolute path of the previewed file', async ({
   await app.window.getByRole('list').first().getByRole('button', { name: 'Link: a.ts' }).click();
   await expect(panel.getByText('export const a = 1;')).toBeVisible();
   const clipboardWrites = await captureClipboardWrites(app);
-  await panel.getByRole('button', { name: 'Choose application' }).click();
-  await app.window.getByRole('menuitem', { name: 'Copy path' }).click();
+  await copyPreviewPath(app.window, panel);
   await expect.poll(clipboardWrites).toEqual([join(app.workspace, 'a.ts')]);
 });
 
