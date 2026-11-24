@@ -3,4 +3,4 @@
 "@moonshot-ai/kimi-code": patch
 ---
 
-Fix the jump-to-latest button in the conversation not scrolling to the bottom after a touch scroll on mobile.
+Fix the jump-to-latest button in the conversation stopping partway instead of reaching the bottom on mobile, especially in Safari.

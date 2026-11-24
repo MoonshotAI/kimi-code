@@ -612,6 +612,36 @@ describe('follow()', () => {
     s.controller.follow();
     expect(s.distanceFromBottom()).toBe(0);
   });
+
+  it('keeps animating to the bottom when the browser clamps the position without user input', () => {
+    const s = setup();
+    scrollUserTo(s, 300);
+    s.controller.follow({ smooth: true });
+    s.frame();
+    s.frame();
+    const before = s.scrollTop;
+    let removed = 0;
+    for (let i = 11; s.maxTop > before - 400; i--, removed++) s.removeRow(`r${i}`);
+    expect(s.scrollTop).toBeLessThan(before - 300);
+    s.insertRows(12 - removed, blockRows(removed).map(row => ({ ...row, key: `back-${row.key}` })));
+    for (let i = 0; i < 40 && s.hasPendingFrame(); i++) s.frame();
+    s.frame();
+    expect(s.controller.state.following).toBe(true);
+    expect(s.distanceFromBottom()).toBe(0);
+  });
+
+  it('stops the follow animation when the user scrolls', () => {
+    const s = setup();
+    scrollUserTo(s, 300);
+    s.controller.follow({ smooth: true });
+    s.frame();
+    s.frame();
+    s.controller.onInput(wheel(-30));
+    expect(s.controller.state.mode.kind).toBe('anchored');
+    const writes = s.writes.length;
+    for (let i = 0; i < 20; i++) s.frame();
+    expect(s.writes.length).toBe(writes);
+  });
 });
 
 describe('snapshot and restore', () => {

@@ -365,7 +365,7 @@ export function createScrollController(adapter: ScrollAdapter, overrides: Partia
   }
 
   function adoptClamp(): boolean {
-    if ((!restoring && state.mode.kind !== 'navigating') || scrollInput || dragging || touching) return false;
+    if ((!restoring && state.mode.kind !== 'navigating' && !animation) || scrollInput || dragging || touching) return false;
     expectedTop = scroller.scrollTop;
     return true;
   }
