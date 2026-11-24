@@ -5312,10 +5312,49 @@ describe('KimiTUI work location', () => {
       panel.handleInput('\u001B');
       expect(slot(driver, WorktreePanelComponent)).toBeUndefined();
 
-      resolveSecond();
-      await vi.waitFor(() => {
-        expect(transcriptText(driver)).toContain('Deleted fix-login.');
+      let stopped = false;
+      const stopping = (driver as unknown as { stop(): Promise<void> }).stop().then(() => {
+        stopped = true;
       });
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(stopped).toBe(false);
+      expect(harness.close).not.toHaveBeenCalled();
+
+      resolveSecond();
+      await stopping;
+      expect(harness.close).toHaveBeenCalledOnce();
+      expect(transcriptText(driver)).toContain('Deleted fix-login.');
+    });
+
+    it('resolves relative startup --agent-file and --add-dir against the launch checkout before a sessionless /worktree switch', async () => {
+      const project = tempDir('kimi-location-project-');
+      const worktree = tempDir('kimi-location-worktree-');
+      const { harness } = worktreeHarness(project, worktree);
+      const driver = makeDriver(harness, {
+        ...makeStartupInput({ model: 'k2', agentFiles: ['./local.md'] }),
+        additionalDirs: ['../shared', '~/team-dir'],
+        workDir: project,
+        projectRoot: project,
+        isGitRepo: true,
+      }) as LocationDriver;
+      await driver.initMainTui();
+
+      const panel = await openPanel(driver);
+      panel.handleInput(DOWN);
+      panel.handleInput(ENTER);
+      await vi.waitFor(() => {
+        expect(driver.state.appState.workDir).toBe(worktree);
+      });
+
+      await driver.ensureSession();
+      expect(harness.createSession).toHaveBeenCalledWith(
+        expect.objectContaining({
+          workDir: worktree,
+          agentFiles: [resolve(project, 'local.md').replaceAll('\\', '/')],
+          additionalDirs: [resolve(project, '..', 'shared').replaceAll('\\', '/'), '~/team-dir'],
+        }),
+      );
     });
 
     it('refuses to delete a worktree that another window has open', async () => {

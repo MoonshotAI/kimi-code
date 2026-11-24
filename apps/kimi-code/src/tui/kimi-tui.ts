@@ -40,7 +40,7 @@ import {
   TuiMainScreen,
 } from '@moonshot-ai/pi-tui';
 
-import { resolveAdditionalDirs } from '#/cli/launch-paths';
+import { resolveAdditionalDirs, resolveLaunchPaths } from '#/cli/launch-paths';
 import type { CLIOptions } from '#/cli/options';
 import { MigrationScreenComponent, type MigrationScreenResult } from '#/migration/index';
 import { copyTextToClipboard } from '#/utils/clipboard/clipboard-text';
@@ -1186,19 +1186,36 @@ export class KimiTUI {
     if (target !== undefined) await this.planStartupResume(target);
   }
 
+  private resolveStartupPathsForLocationChange(launchDir: string): void {
+    const additionalDirs = resolveAdditionalDirs(
+      this.resolvedStartupAdditionalDirs ?? this.options.startup.additionalDirs,
+      launchDir,
+    );
+    if (additionalDirs !== undefined) this.resolvedStartupAdditionalDirs = additionalDirs;
+    const agentFiles =
+      this.state.appState.agentFiles !== undefined && this.state.appState.agentFiles.length > 0
+        ? resolveLaunchPaths({ agentFiles: [...this.state.appState.agentFiles], skillsDirs: [] }, launchDir)
+            .agentFiles
+        : undefined;
+    if (additionalDirs !== undefined || agentFiles !== undefined) {
+      this.setAppState({
+        ...(additionalDirs === undefined ? {} : { additionalDirs }),
+        ...(agentFiles === undefined ? {} : { agentFiles }),
+      });
+    }
+  }
+
   private async planStartupResume(target: SessionSummary): Promise<void> {
     const launchDir = this.state.appState.workDir;
     const plan = await planResume(this.harness, target, this.state.appState);
     this.startupResume = { target, plan };
     if (plan.kind === 'switch') {
-      const additionalDirs = resolveAdditionalDirs(this.options.startup.additionalDirs, launchDir);
-      this.resolvedStartupAdditionalDirs = additionalDirs;
+      this.resolveStartupPathsForLocationChange(launchDir);
       this.setAppState({
         workDir: plan.location.cwd,
         projectRoot: plan.location.projectRoot,
         isGitRepo: plan.location.isGitRepo,
         worktree: plan.location.worktree,
-        ...(additionalDirs === undefined ? {} : { additionalDirs }),
       });
     }
   }
@@ -1367,6 +1384,7 @@ export class KimiTUI {
       this.staging.releaseAll();
       this.staging.deleteStaged(this.imageStore.clear());
       await this.staging.drain();
+      await this.worktreePanel.waitForPendingDeletes();
       await this.harness.close();
     } finally {
       removeForceExitListener();
@@ -3249,6 +3267,9 @@ export class KimiTUI {
   async startSessionAt(location: WorkLocation): Promise<boolean> {
     const previous = this.currentWorkLocation();
     const replaced = this.session;
+    if (replaced === undefined && !sameDir(previous.cwd, location.cwd)) {
+      this.resolveStartupPathsForLocationChange(previous.cwd);
+    }
     if (!(await this.applyWorkLocationOrRollback(location))) return false;
     if (replaced === undefined) return true;
     await this.createNewSession({ environmentId: 'local' });

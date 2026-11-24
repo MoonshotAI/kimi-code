@@ -69,8 +69,14 @@ export class WorktreePanelController {
   private entering = false;
   private inspectToken = 0;
   private readonly pendingDeletes = new Map<string, PendingDelete>();
+  private readonly deleteTasks = new Set<Promise<void>>();
 
   constructor(private readonly host: WorktreePanelHost) {}
+
+  async waitForPendingDeletes(): Promise<void> {
+    if (this.deleteTasks.size === 0) return;
+    await Promise.allSettled(this.deleteTasks);
+  }
 
   async open(): Promise<void> {
     const listing = await this.fetchListing();
@@ -195,7 +201,10 @@ export class WorktreePanelController {
     });
     if (this.listing !== undefined) panel.setRows(this.visibleRows(this.listing));
     this.notify(this.pendingDeleteNotice());
-    void this.runBackgroundDelete(pendingKey, removal, choice, excludeSessionId);
+    const task = this.runBackgroundDelete(pendingKey, removal, choice, excludeSessionId).finally(() => {
+      this.deleteTasks.delete(task);
+    });
+    this.deleteTasks.add(task);
   }
 
   private async runBackgroundDelete(
