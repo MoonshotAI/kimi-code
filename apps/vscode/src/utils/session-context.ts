@@ -35,7 +35,7 @@ export function buildExportMarkdown(input: {
     "---",
     `session_id: ${input.sessionId}`,
     `exported_at: ${input.now.toISOString()}`,
-    `work_dir: ${input.workDir}`,
+    `work_dir: ${JSON.stringify(input.workDir)}`,
     `message_count: ${String(input.history.length)}`,
     `token_count: ${String(input.tokenCount)}`,
     "---",
