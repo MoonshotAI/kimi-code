@@ -20,7 +20,6 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices } from '#/_base/di/test';
 import { Error2 } from '#/_base/errors/errors';
-import { Emitter } from '#/_base/event';
 import { encodeWorkDirKey, toAbsoluteDir } from '#/_base/utils/workdir-slug';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IEnvironmentService } from '#/app/environment/environment';
@@ -142,7 +141,6 @@ describe('WorktreeService', () => {
   let repo: string;
   let realRepo: string;
   let flagEnabled: boolean;
-  let flagChanged: Emitter<void>;
   let disposables: DisposableStore;
   let service: IWorktreeService;
   let presence: ISessionPresence;
@@ -161,7 +159,6 @@ describe('WorktreeService', () => {
     peekImplicitError = undefined;
 
     disposables = new DisposableStore();
-    flagChanged = disposables.add(new Emitter<void>());
     const environment = { process: new HostProcessService() } as unknown as Environment;
     const lease = { environment, track: <T>(resource: T): T => resource, dispose: () => {} };
     const hostFs = new HostFileSystem();
@@ -188,7 +185,7 @@ describe('WorktreeService', () => {
         reg.definePartialInstance(ISessionIndex, { listRecent: async () => ({ items: indexed }) });
         reg.definePartialInstance(ILogService, { warn: () => {} });
         reg.define(ISessionPresence, SessionPresenceService);
-        reg.defineInstance(IFlagService, stubFlag((id) => id === 'worktree' && flagEnabled, flagChanged.event));
+        reg.defineInstance(IFlagService, stubFlag((id) => id === 'worktree' && flagEnabled));
         reg.define(IWorktreeService, WorktreeService);
       },
     });
@@ -509,6 +506,25 @@ describe('WorktreeService', () => {
       expect(created.worktree.branch).toBe('desk-branch');
       expect(git(created.worktree.path, 'symbolic-ref', '--short', 'HEAD')).toBe('desk-branch');
       expect(branches(repo)).toEqual(['desk-branch', 'main']);
+    });
+
+    it.skipIf(isWindows)('runs post-checkout hooks with HEAD attached to the requested branch', async () => {
+      const hook = join(repo, '.git', 'hooks', 'post-checkout');
+      writeFileSync(hook, '#!/bin/sh\ngit symbolic-ref -q HEAD > "$PWD/.hook-head"\n');
+      chmodSync(hook, 0o755);
+
+      const created = await create({ name: 'hooked', branch: 'feat-hooked' });
+
+      expect(readFileSync(join(created.worktree.path, '.hook-head'), 'utf8').trim()).toBe('refs/heads/feat-hooked');
+    });
+
+    it('reports sourceDirty when status.showUntrackedFiles is no and an untracked file exists', async () => {
+      git(repo, 'config', 'status.showUntrackedFiles', 'no');
+      writeFileSync(join(repo, 'untracked.txt'), 'draft\n');
+
+      const created = await create({ name: 'dirty-untracked' });
+
+      expect(created.sourceDirty).toBe(true);
     });
 
     it.skipIf(isWindows)('cleans up the directory, registration and new branch when git fails', async () => {
@@ -1383,36 +1399,17 @@ describe('WorktreeService', () => {
       own.dispose();
     });
 
-    it('writes no marker while the worktree flag is off', () => {
-      flagEnabled = false;
-      const sessionDir = indexSession('flag-off', realRepo);
-
-      presence.markOpen(sessionDir).dispose();
-
-      expect(existsSync(join(sessionDir, SESSION_PRESENCE_DIR))).toBe(false);
-    });
-
-    it('backfills markers and protects sessions opened before the worktree flag is enabled', async () => {
-      const created = await create({ name: 'early-open' });
+    it('persists presence markers even when the worktree flag is off so another flag-enabled client sees the open session', async () => {
+      const created = await create({ name: 'flag-off-open' });
       const wt = created.worktree.path;
       const sessionDir = indexSession('early', wt);
       const markers = join(sessionDir, SESSION_PRESENCE_DIR);
 
       flagEnabled = false;
-      flagChanged.fire();
       const open = presence.markOpen(sessionDir);
-      expect(existsSync(markers)).toBe(false);
-
-      flagEnabled = true;
-      flagChanged.fire();
       expect(readdirSync(markers)).toHaveLength(1);
 
-      flagEnabled = false;
-      flagChanged.fire();
       flagEnabled = true;
-      flagChanged.fire();
-      expect(readdirSync(markers)).toHaveLength(1);
-
       expect(await service.inspectRemoval({ repoRoot: realRepo, path: wt, deleteBranch: false })).toMatchObject({
         openSessionIds: ['early'],
         closedSessionCount: 0,

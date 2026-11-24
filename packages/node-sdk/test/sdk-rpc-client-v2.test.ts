@@ -5323,6 +5323,33 @@ describe('KimiHarness worktrees', () => {
     }
   });
 
+  it('rejects unsupported worktree methods on SDKRpcClientBase with NOT_IMPLEMENTED', async () => {
+    await expect(SDKRpcClientBase.prototype.resolveWorkLocation('/tmp/repo')).rejects.toMatchObject({
+      code: ErrorCodes.NOT_IMPLEMENTED,
+    });
+    await expect(SDKRpcClientBase.prototype.listWorktrees('/tmp/repo')).rejects.toMatchObject({
+      code: ErrorCodes.NOT_IMPLEMENTED,
+    });
+    await expect(SDKRpcClientBase.prototype.createWorktree({ cwd: '/tmp/repo' })).rejects.toMatchObject({
+      code: ErrorCodes.NOT_IMPLEMENTED,
+    });
+    await expect(
+      SDKRpcClientBase.prototype.runWorktreeSetupScript({ worktreePath: '/tmp/wt', sourceRoot: '/tmp/repo' }),
+    ).rejects.toMatchObject({
+      code: ErrorCodes.NOT_IMPLEMENTED,
+    });
+    await expect(
+      SDKRpcClientBase.prototype.inspectWorktreeRemoval({ repoRoot: '/tmp/repo', path: '/tmp/wt', deleteBranch: false }),
+    ).rejects.toMatchObject({
+      code: ErrorCodes.NOT_IMPLEMENTED,
+    });
+    await expect(
+      SDKRpcClientBase.prototype.removeWorktree({ repoRoot: '/tmp/repo', path: '/tmp/wt', deleteBranch: false, discard: 'all' }),
+    ).rejects.toMatchObject({
+      code: ErrorCodes.NOT_IMPLEMENTED,
+    });
+  });
+
   it('lists, inspects and removes a worktree', async () => {
     const { harness, repo } = await makeWorktreeHarness();
     try {

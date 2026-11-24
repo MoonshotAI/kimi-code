@@ -1,5 +1,4 @@
 import { Disposable } from '#/_base/di/lifecycle';
-import { Emitter, type Event } from '#/_base/event';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { parseBooleanEnv } from '#/_base/utils/env';
@@ -21,8 +20,6 @@ export const MASTER_ENV = 'KIMI_CODE_EXPERIMENTAL_FLAG';
 export class FlagService extends Disposable implements IFlagService {
   declare readonly _serviceBrand: undefined;
   readonly registry: IFlagRegistry;
-  private readonly _onDidChange = this._register(new Emitter<void>());
-  readonly onDidChange: Event<void> = this._onDidChange.event;
   private configOverrides: ExperimentalFlagConfig;
 
   constructor(
@@ -37,7 +34,6 @@ export class FlagService extends Disposable implements IFlagService {
       this.config.onDidChangeConfiguration((e) => {
         if (e.domain === EXPERIMENTAL_SECTION) {
           this.configOverrides = this.readConfig();
-          this._onDidChange.fire();
         }
       }),
     );
@@ -49,7 +45,6 @@ export class FlagService extends Disposable implements IFlagService {
 
   setConfigOverrides(overrides: ExperimentalFlagConfig | undefined): void {
     this.configOverrides = overrides ?? {};
-    this._onDidChange.fire();
   }
 
   enabled(id: FlagId): boolean {

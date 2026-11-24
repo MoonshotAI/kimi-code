@@ -169,13 +169,13 @@ export class WorktreeService implements IWorktreeService {
     let copiedFiles: readonly string[];
     let branchCreated = false;
     try {
+      if (plan.branch !== undefined) {
+        await this.createBranchRef(plan, signal);
+        branchCreated = true;
+      }
       await this.addWorktree(plan, signal, (text) => {
         emit({ type: 'output', step: 'add', text });
       });
-      if (plan.branch !== undefined) {
-        await this.attachNewBranch(plan, signal);
-        branchCreated = true;
-      }
       emit({ type: 'step', step: 'add', status: 'finished' });
 
       emit({ type: 'step', step: 'include', status: 'started' });
@@ -325,7 +325,9 @@ export class WorktreeService implements IWorktreeService {
       });
       if (exists.exitCode === 0) throw gitFailed(`Branch ${branch} already exists.`, exists);
     }
-    const status = await this.git(['status', '--porcelain=v1', '-z'], sourceRoot, { signal });
+    const status = await this.git(['status', '--porcelain=v1', '-z', '--untracked-files=normal'], sourceRoot, {
+      signal,
+    });
     if (status.exitCode !== 0) throw gitFailed(`Could not read the status of ${sourceRoot}.`, status);
     return {
       repoRoot: repo.root,
@@ -370,35 +372,29 @@ export class WorktreeService implements IWorktreeService {
     }
   }
 
+  private async createBranchRef(plan: CreationPlan, signal: AbortSignal | undefined): Promise<void> {
+    const branch = plan.branch!;
+    const created = await this.git(['update-ref', `refs/heads/${branch}`, plan.commit, ''], plan.sourceRoot, {
+      signal,
+    });
+    if (created.exitCode !== 0) throw gitFailed(`Could not create branch ${branch}.`, created);
+  }
+
   private async addWorktree(
     plan: CreationPlan,
     signal: AbortSignal | undefined,
     onOutput: (text: string) => void,
   ): Promise<void> {
-    const added = await this.git(['worktree', 'add', '--detach', plan.path, plan.commit], plan.sourceRoot, {
+    const args =
+      plan.branch === undefined
+        ? ['worktree', 'add', '--detach', '--', plan.path, plan.commit]
+        : ['worktree', 'add', '--', plan.path, plan.branch];
+    const added = await this.git(args, plan.sourceRoot, {
       signal,
       onOutput,
       untimed: true,
     });
     if (added.exitCode !== 0) throw gitFailed(`git worktree add failed for ${plan.path}.`, added);
-  }
-
-  private async attachNewBranch(plan: CreationPlan, signal: AbortSignal | undefined): Promise<void> {
-    const branch = plan.branch!;
-    const ref = `refs/heads/${branch}`;
-    const valid = await this.git(['check-ref-format', '--branch', branch], plan.sourceRoot, { signal });
-    if (valid.exitCode !== 0) throw gitFailed(`Invalid branch name ${branch}.`, valid);
-    const created = await this.git(['update-ref', ref, plan.commit, ''], plan.sourceRoot, { signal });
-    if (created.exitCode !== 0) throw gitFailed(`Could not create branch ${branch}.`, created);
-    try {
-      const attached = await this.git(['symbolic-ref', 'HEAD', ref], plan.path, { signal });
-      if (attached.exitCode !== 0) {
-        throw gitFailed(`Could not switch worktree ${plan.path} to branch ${branch}.`, attached);
-      }
-    } catch (error) {
-      await this.git(['update-ref', '-d', ref, plan.commit], plan.sourceRoot).catch(() => {});
-      throw error;
-    }
   }
 
   private async copyIncludes(plan: CreationPlan, signal: AbortSignal | undefined): Promise<readonly string[]> {
