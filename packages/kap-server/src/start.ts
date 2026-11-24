@@ -25,7 +25,7 @@ import {
   NOTIFY_USER_UI_CAPABILITY,
   PluginChanged,
   logSeed,
-  migrateLegacyMasterEnvTower,
+  resolveBootstrapEnvWithLegacyTowerMigration,
   resolveConfigPath,
   resolveKimiHome,
   resolveLoggingConfig,
@@ -219,17 +219,17 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   const logging = resolveLoggingConfig({ homeDir, env: process.env });
   let boundPort = port;
   const localOriginHost = host.includes(':') ? `[${host}]` : host;
-  const bootstrapEnv =
+  const baseBootstrapEnv =
     opts.pluginMarketplaceUrl === undefined
       ? opts.env
       : {
           ...(opts.env ?? process.env),
           KIMI_CODE_PLUGIN_MARKETPLACE_URL: opts.pluginMarketplaceUrl,
         };
-  migrateLegacyMasterEnvTower({
+  const bootstrapEnv = resolveBootstrapEnvWithLegacyTowerMigration({
     homeDir,
     configPath,
-    env: bootstrapEnv ?? process.env,
+    env: baseBootstrapEnv,
   });
   const { app: core } = bootstrap(
     {

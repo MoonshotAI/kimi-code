@@ -5994,4 +5994,98 @@ describe('setNotifyUserEnabled', () => {
     expect(useContextInspector().contextInspectorEnabled.value).toBe(false);
     expect(configStore().experimentalFlags['notify_user']).toBe(false);
   });
+
+  it('ignores stale out-of-order refreshServerMeta responses across rapid Lab toggles', async () => {
+    const { useContextInspector } = await import('@moonshot-ai/app-core');
+    useContextInspector().setContextInspectorEnabled(false);
+
+    let resolveFirstMeta!: (value: unknown) => void;
+    let resolveSecondMeta!: (value: unknown) => void;
+    apiMock.setConfig.mockResolvedValue({ providers: {} });
+    apiMock.getMeta
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveFirstMeta = resolve;
+          }),
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveSecondMeta = resolve;
+          }),
+      );
+
+    const firstToggle = configStore().setBetaFeaturesEnabled(true);
+    await Promise.resolve();
+    const secondToggle = configStore().setBetaFeaturesEnabled(false);
+
+    for (let i = 0; i < 6 && resolveSecondMeta === undefined; i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+
+    resolveSecondMeta({
+      serverVersion: '1.0.0',
+      openInApps: [],
+      dangerousBypassAuth: false,
+      experimentalFlags: { notify_user: false },
+      experimentalBeta: {
+        enabled: false,
+        source: 'config',
+        env: 'KIMI_CODE_EXPERIMENTAL_FLAG',
+        configValue: false,
+      },
+      experimentalFeatures: [
+        {
+          id: 'notify_user',
+          title: 'NotifyUser tool',
+          description: 'Progress updates',
+          env: 'KIMI_CODE_EXPERIMENTAL_NOTIFY_USER',
+          stage: 'beta',
+          effectTiming: 'next-session',
+          enabled: false,
+          active: false,
+          source: 'default',
+        },
+      ],
+      backend: 'v2',
+      webTitle: '',
+      homeDir: '/tmp/home',
+    });
+    await secondToggle;
+
+    resolveFirstMeta({
+      serverVersion: '1.0.0',
+      openInApps: [],
+      dangerousBypassAuth: false,
+      experimentalFlags: { notify_user: true },
+      experimentalBeta: {
+        enabled: true,
+        source: 'config',
+        env: 'KIMI_CODE_EXPERIMENTAL_FLAG',
+        configValue: true,
+      },
+      experimentalFeatures: [
+        {
+          id: 'notify_user',
+          title: 'NotifyUser tool',
+          description: 'Progress updates',
+          env: 'KIMI_CODE_EXPERIMENTAL_NOTIFY_USER',
+          stage: 'beta',
+          effectTiming: 'next-session',
+          enabled: true,
+          active: true,
+          source: 'beta-config',
+        },
+      ],
+      backend: 'v2',
+      webTitle: '',
+      homeDir: '/tmp/home',
+    });
+    await firstToggle;
+
+    expect(configStore().experimentalBeta?.enabled).toBe(false);
+    expect(configStore().experimentalFlags['notify_user']).toBe(false);
+    expect(useContextInspector().contextInspectorEnabled.value).toBe(false);
+  });
 });

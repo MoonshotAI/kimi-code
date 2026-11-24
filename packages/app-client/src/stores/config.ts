@@ -56,6 +56,8 @@ export const useConfigStore = defineStore('kimi.config', () => {
   let configCommittedGeneration = 0;
   let configWriteCommittedGeneration = 0;
   let configWriteQueue: Promise<unknown> = Promise.resolve();
+  let metaRequestGeneration = 0;
+  let metaCommittedGeneration = 0;
 
   function noteConfigWrite(): void {
     const generation = ++configWriteGeneration;
@@ -139,11 +141,13 @@ export const useConfigStore = defineStore('kimi.config', () => {
   async function refreshServerMeta(onError?: (error: unknown) => void): Promise<void> {
     const api = getKimiWebApi();
     if (typeof api.getMeta !== 'function') return;
+    const generation = ++metaRequestGeneration;
     const m = await api.getMeta().catch((error) => {
       onError?.(error);
       return null;
     });
-    if (!m) return;
+    if (!m || generation <= metaCommittedGeneration) return;
+    metaCommittedGeneration = generation;
     serverVersion.value = m.serverVersion;
     availableOpenInApps.value = m.openInApps;
     dangerousBypassAuth.value = m.dangerousBypassAuth;
@@ -162,6 +166,7 @@ export const useConfigStore = defineStore('kimi.config', () => {
   async function setExperimentalFlag(id: string, on: boolean): Promise<boolean> {
     const saved = await updateConfig({ experimental: { [id]: on } });
     if (!saved) return false;
+    metaCommittedGeneration = ++metaRequestGeneration;
     const existing = experimentalFeatures.value.find((feature) => feature.id === id);
     if (existing?.effectTiming !== 'restart') {
       experimentalFlags.value = { ...experimentalFlags.value, [id]: on };
@@ -186,6 +191,7 @@ export const useConfigStore = defineStore('kimi.config', () => {
   async function setBetaFeaturesEnabled(on: boolean): Promise<boolean> {
     const saved = await updateConfig({ experimental: { beta: on } });
     if (!saved) return false;
+    metaCommittedGeneration = ++metaRequestGeneration;
     experimentalBeta.value = {
       enabled: on,
       source: 'config',
@@ -231,6 +237,7 @@ export const useConfigStore = defineStore('kimi.config', () => {
     configCommittedGeneration = 0;
     configWriteCommittedGeneration = 0;
     configWriteQueue = Promise.resolve();
+    metaCommittedGeneration = ++metaRequestGeneration;
   }
 
   return {

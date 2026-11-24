@@ -25,6 +25,7 @@ import { FlagService, MASTER_ENV } from '#/app/flag/flagService';
 import {
   EXPERIMENTAL_MIGRATIONS_FILENAME,
   migrateLegacyMasterEnvTower,
+  resolveBootstrapEnvWithLegacyTowerMigration,
 } from '#/app/flag/legacyMasterEnvMigration';
 import { ILogService } from '#/_base/log/log';
 import { IAtomicTomlDocumentStore } from '#/persistence/interface/atomicDocumentStore';
@@ -448,5 +449,27 @@ describe('migrateLegacyMasterEnvTower', () => {
       }),
     ).toBe('migrated-tower');
     expect(readFileSync(configPath, 'utf8')).toContain('tower = true');
+  });
+
+  it('falls back to process env Tower override when config.toml cannot be written', () => {
+    mkdirSync(join(tempDir, 'sessions'));
+    const blockerFile = join(tempDir, 'readonly-parent');
+    writeFileSync(blockerFile, 'not-a-directory', 'utf8');
+    const unwritableConfigPath = join(blockerFile, 'config.toml');
+
+    expect(
+      migrateLegacyMasterEnvTower({
+        homeDir: tempDir,
+        configPath: unwritableConfigPath,
+        env: { [MASTER_ENV]: '1' },
+      }),
+    ).toBe('fallback-env');
+
+    const resolvedEnv = resolveBootstrapEnvWithLegacyTowerMigration({
+      homeDir: tempDir,
+      configPath: unwritableConfigPath,
+      env: { [MASTER_ENV]: '1' },
+    });
+    expect(resolvedEnv?.['KIMI_CODE_EXPERIMENTAL_TOWER']).toBe('1');
   });
 });

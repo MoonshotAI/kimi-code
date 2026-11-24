@@ -2317,7 +2317,7 @@ key = "${titleOAuthRef.key}"
       tempDirs.push(homeDir, workDir);
       const client = new SDKRpcClientV2({
         homeDir,
-        identity: TEST_IDENTITY,
+        identity: { ...TEST_IDENTITY, platform: 'kimi_code_desktop' },
         uiCapabilities: panel ? ['update_panel'] : [],
       });
       try {
@@ -2464,6 +2464,74 @@ key = "${titleOAuthRef.key}"
     },
     30_000,
   );
+
+  it('enables NotifyUser by default on CLI unless disabled by env', async () => {
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', '0');
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_NOTIFY_USER', '');
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-notify-cli-home-'));
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-notify-cli-work-'));
+    tempDirs.push(homeDir, workDir);
+    const client = new SDKRpcClientV2({
+      homeDir,
+      identity: TEST_IDENTITY,
+      uiCapabilities: ['update_panel'],
+    });
+    try {
+      await client.setConfig({
+        providers: {
+          stub: {
+            type: 'openai',
+            baseUrl: 'https://model.example.test/v1',
+            apiKey: 'YOUR_API_KEY',
+          },
+        },
+        models: { stub: { provider: 'stub', model: 'stub', maxContextSize: 32000 } },
+        defaultModel: 'stub',
+        experimental: { notify_user: false },
+      });
+      await client.createSession({ id: 'ses_notify_cli', workDir });
+      const lifecycle = getLiveSessionById(client.engineAccessor, 'ses_notify_cli')!.accessor.get(
+        IAgentLifecycleService,
+      );
+      await lifecycle.create({ agentId: 'main', binding: { profile: 'agent', model: 'stub' } });
+      const main = lifecycle.handleOf('main')!;
+      await main.accessor.get(IAgentToolActivationService).activate();
+      expect(
+        main.accessor
+          .get(IAgentToolRegistryService)
+          .list()
+          .some((tool) => tool.name === 'NotifyUser'),
+      ).toBe(true);
+    } finally {
+      await client.close();
+    }
+
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_NOTIFY_USER', '0');
+    const disabledClient = new SDKRpcClientV2({
+      homeDir,
+      identity: TEST_IDENTITY,
+      uiCapabilities: ['update_panel'],
+    });
+    try {
+      await disabledClient.createSession({ id: 'ses_notify_cli_off', workDir });
+      const lifecycle = getLiveSessionById(
+        disabledClient.engineAccessor,
+        'ses_notify_cli_off',
+      )!.accessor.get(IAgentLifecycleService);
+      await lifecycle.create({ agentId: 'main', binding: { profile: 'agent', model: 'stub' } });
+      const main = lifecycle.handleOf('main')!;
+      await main.accessor.get(IAgentToolActivationService).activate();
+      expect(
+        main.accessor
+          .get(IAgentToolRegistryService)
+          .list()
+          .some((tool) => tool.name === 'NotifyUser'),
+      ).toBe(false);
+    } finally {
+      await disabledClient.close();
+      vi.unstubAllEnvs();
+    }
+  });
 
   it('reloads workspace dirs without duplicating agent reminders', async () => {
     const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));

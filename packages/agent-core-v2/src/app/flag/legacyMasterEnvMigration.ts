@@ -37,6 +37,7 @@ export type MigrateLegacyMasterEnvTowerOutcome =
   | 'stamped-noop'
   | 'pending-master-env'
   | 'migrated-tower'
+  | 'fallback-env'
   | 'skipped-error';
 
 const EXISTING_INSTALL_MARKERS = ['sessions', 'credentials', 'user-history'] as const;
@@ -157,8 +158,22 @@ export function migrateLegacyMasterEnvTower(
           ) ?? `${stringifyToml(nextDoc).trimEnd()}\n`);
     writeFileAtomically(configPath, nextText);
   } catch {
-    return 'skipped-error';
+    return 'fallback-env';
   }
 
   return stampMigrationMarker(markerPath, record) ? 'migrated-tower' : 'skipped-error';
+}
+
+export function resolveBootstrapEnvWithLegacyTowerMigration(
+  input: MigrateLegacyMasterEnvTowerInput,
+): NodeJS.ProcessEnv | undefined {
+  const outcome = migrateLegacyMasterEnvTower(input);
+  if (outcome !== 'fallback-env') {
+    return input.env;
+  }
+  const baseEnv = input.env ?? process.env;
+  return {
+    ...baseEnv,
+    [TOWER_FLAG_ENV]: baseEnv[TOWER_FLAG_ENV] ?? '1',
+  };
 }

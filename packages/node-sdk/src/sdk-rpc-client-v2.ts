@@ -166,7 +166,7 @@ import {
   ensureKimiHome,
   ensureMainAgent,
   getOrRestoreAgent,
-  migrateLegacyMasterEnvTower,
+  resolveBootstrapEnvWithLegacyTowerMigration,
   reloadOnStale,
   agentContextOf,
   IAgentChangeNotifierService,
@@ -518,15 +518,15 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     });
 
     const identity = assertKimiHostIdentity(this.identity);
-    migrateLegacyMasterEnvTower({
+    const bootstrapEnv = resolveBootstrapEnvWithLegacyTowerMigration({
       homeDir: this.homeDir,
       configPath: this.configPath,
-      env: process.env,
     });
     const { app } = bootstrap(
       {
         homeDir: this.homeDir,
         configPath: this.configPath,
+        env: bootstrapEnv,
         clientIdentity: identity,
         args: {
           requestHeaders: createKimiDefaultHeaders({ homeDir: this.homeDir, ...identity }),
