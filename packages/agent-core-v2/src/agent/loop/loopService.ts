@@ -130,7 +130,6 @@ import {
   type TurnResult,
 } from './loop';
 import { TurnCancel, turnKey } from './turnOps';
-import { LoopDrained, LoopIdle } from './loopOps';
 import { EMPTY_LOOP_PROMPT, historyEntryFromContext } from './history';
 import {
   createLoop,
@@ -191,10 +190,6 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   private taskReconciliation: Promise<void> | undefined;
   private loop: Loop | undefined;
   private initialized = false;
-  private settlementGeneration = 0;
-  private macroGeneration = 0;
-  private lifecycleDrained = true;
-  private lifecycleIdle = true;
   private startPromise: Promise<void> | undefined;
   private closePromise: Promise<void> | undefined;
   private readonly loopHooks = createLoopHookRegistry();
@@ -209,7 +204,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     @IAgentToolRegistryService _toolRegistry: IAgentToolRegistryService,
     @IConfigService private readonly config: IConfigService,
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
-    @IEventBus private readonly events: IEventBus,
+    @IEventBus events: IEventBus,
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @ISessionMetadata private readonly metadata: ISessionMetadata,
@@ -242,10 +237,11 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     this.requester = {
       coreRequester: (options) => this.coreRequester(options),
       prepareOperation: async (options, _signal) => {
-        if (this.loop === undefined) throw new BugIndicatingError('Agent loop is not started');
+        await this.start();
+        const loop = this.loop!;
         const config = this.requestConfigSnapshot();
         const tools = options.tools ?? this.baselineTools();
-        return this.loop.operation((runtime) => {
+        return loop.operation((runtime) => {
           const requester = this.coreRequester({ ...options, runtime, tools, config });
           return requester.snapshot?.() ?? requester;
         });
@@ -325,6 +321,24 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
 
   private set disposing(value: boolean) {
     this.states.set(loopDisposingKey, value);
+  }
+
+  get started(): boolean {
+    return this.loop !== undefined || this.startPromise !== undefined;
+  }
+
+  get hasPersistedState(): boolean {
+    const snapshot = this.journal.snapshot();
+    const inbox = snapshot.input.inbox;
+    return (
+      snapshot.profileBound ||
+      (snapshot.input.messages?.length ?? 0) > 0 ||
+      (inbox?.normal?.length ?? 0) > 0 ||
+      (inbox?.notify?.length ?? 0) > 0 ||
+      (inbox?.remind?.length ?? 0) > 0 ||
+      (snapshot.input.nextTurnId ?? 0) > 0 ||
+      snapshot.input.unfinished !== undefined
+    );
   }
 
   async start(tools?: readonly Tool[]): Promise<void> {
@@ -879,7 +893,10 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     const loop = this.loop;
     if (loop === undefined) {
       this.initialized = false;
-      await this.initializeLoop(seededMessages);
+      this.startPromise ??= this.initializeLoop(seededMessages).finally(() => {
+        this.startPromise = undefined;
+      });
+      await this.startPromise;
       this.requesterExecution.recoveries.clear();
       return;
     }
@@ -1016,6 +1033,9 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
 
   private admit(input: UserMessage): { readonly id: string; readonly entry: UserMessage } {
     if (this.disposing) throw abortError('Agent loop disposed');
+    if (this.dispatcher.restorePhase === 'ready') {
+      void this.start().catch(() => this.close().catch(() => undefined));
+    }
     this.runGate.begin();
     const snapshot = this.snapshot();
     return this.prompts.admit(input, snapshot.state === 'running' || snapshot.paused || snapshot.queue.length > 0);
@@ -1424,38 +1444,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     return result === previous ? undefined : result;
   }
 
-  private hasActiveBackgroundTasks(): boolean {
-    return this.loop?.state.calls.some((call) => call.detached) ?? false;
-  }
-
   private maybeSettle(): void {
-    const generation = ++this.settlementGeneration;
-    const drained = !this.disposing && this.quiescenceDepth === 0 && !this.hasPendingRequests();
-    const idle = drained && !this.hasActiveBackgroundTasks();
-    if (!drained && this.lifecycleDrained) this.macroGeneration += 1;
-    if (!drained) this.lifecycleDrained = false;
-    if (!idle) this.lifecycleIdle = false;
-    if (drained && (!this.lifecycleDrained || !this.lifecycleIdle)) {
-      void this.turns.drain().then(() => {
-        if (generation !== this.settlementGeneration) return;
-        const currentDrained = !this.disposing && this.quiescenceDepth === 0 && !this.hasPendingRequests();
-        if (currentDrained && !this.lifecycleDrained) {
-          this.lifecycleDrained = true;
-          this.events.publish(new LoopDrained({ agentId: this.scopeContext.agentId, generation: this.macroGeneration }));
-        }
-        if (generation !== this.settlementGeneration) return;
-        const currentIdle =
-          !this.disposing &&
-          this.quiescenceDepth === 0 &&
-          !this.hasPendingRequests() &&
-          !this.hasActiveBackgroundTasks() &&
-          this.lifecycleDrained;
-        if (currentIdle && !this.lifecycleIdle) {
-          this.lifecycleIdle = true;
-          this.events.publish(new LoopIdle({ agentId: this.scopeContext.agentId, generation: this.macroGeneration }));
-        }
-      });
-    }
     if (this.hasPendingRequests() || this.settleWaiters.length === 0) return;
     const waiters = this.settleWaiters.splice(0);
     for (const resolve of waiters) resolve();

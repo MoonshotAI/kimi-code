@@ -2,7 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { copyTextToClipboard } from '@moonshot-ai/app-core/lib';
-import { IconButton, Icon, Input, Pill, Select } from '@moonshot-ai/app-ui';
+import { IconButton, Icon, Input, Pill, Select, StatusDot, Tooltip } from '@moonshot-ai/app-ui';
 import {
   clearTrace,
   downloadTraceLog,
@@ -204,15 +204,15 @@ function clearAll(): void {
   <div class="insp">
     <div class="insp-toolbar">
       <span class="insp-count">{{ t('panel.inspector.count', { shown: filtered.length, total: all.length }) }}</span>
-      <span
-        v-if="heartbeat"
-        class="insp-heartbeat"
-        :class="{ stale: heartbeat.stale }"
-        :title="t('panel.inspector.heartbeatHint', { count: heartbeat.count })"
-      >
-        <span class="insp-heartbeat-dot" />
-        {{ t('panel.inspector.heartbeat', { age: heartbeat.age }) }}
-      </span>
+      <Tooltip v-if="heartbeat" :text="t('panel.inspector.heartbeatHint', { count: heartbeat.count })">
+        <span
+          class="insp-heartbeat"
+          :class="{ stale: heartbeat.stale }"
+        >
+          <StatusDot :status="heartbeat.stale ? 'error' : 'ok'" size="sm" />
+          {{ t('panel.inspector.heartbeat', { age: heartbeat.age }) }}
+        </span>
+      </Tooltip>
       <div class="insp-actions">
         <IconButton
           size="sm"
@@ -252,18 +252,20 @@ function clearAll(): void {
           {{ t('panel.inspector.follow') }}
         </Pill>
       </div>
-      <div v-if="types.length > 0" class="insp-types" :title="t('panel.inspector.typesHint')">
-        <button
-          v-for="type in types"
-          :key="type"
-          type="button"
-          class="insp-type"
-          :class="typeMode(type)"
-          @click="cycleType(type)"
-        >
-          {{ type }}
-        </button>
-      </div>
+      <Tooltip v-if="types.length > 0" :text="t('panel.inspector.typesHint')">
+        <div class="insp-types">
+          <button
+            v-for="type in types"
+            :key="type"
+            type="button"
+            class="insp-type"
+            :class="typeMode(type)"
+            @click="cycleType(type)"
+          >
+            {{ type }}
+          </button>
+        </div>
+      </Tooltip>
     </div>
 
     <div ref="listEl" class="insp-list" @scroll="onListScroll">
@@ -337,17 +339,8 @@ function clearAll(): void {
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
-.insp-heartbeat-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--color-success);
-}
 .insp-heartbeat.stale {
   color: var(--color-danger);
-}
-.insp-heartbeat.stale .insp-heartbeat-dot {
-  background: var(--color-danger);
 }
 .insp-actions {
   margin-left: auto;

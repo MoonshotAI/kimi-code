@@ -774,7 +774,7 @@ export class SessionEventBroadcaster {
   }
 
   private sendGlobal(event: Event): void {
-    const { agentId: _agentId, sessionId: _sessionId, time, ...fields } = event;
+    const { agentId: _agentId, sessionId: _sessionId, time, ...fields } = this.withCurrentPendingInteraction(event);
     const envelope = {
       ...fields,
       event_created_at: time !== undefined ? new Date(time).toISOString() : new Date().toISOString(),
@@ -784,6 +784,16 @@ export class SessionEventBroadcaster {
         target.send(envelope, 'immediate');
       } catch {
       }
+    }
+  }
+
+  private withCurrentPendingInteraction(event: Event): Event {
+    if (event.type !== 'session' || event.change !== 'updated') return event;
+    try {
+      const { pendingInteraction } = resolveSessionFacts(this.opts.core, event.session.id);
+      return { ...event, session: { ...event.session, pending_interaction: pendingInteraction } };
+    } catch {
+      return event;
     }
   }
 

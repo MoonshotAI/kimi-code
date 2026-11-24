@@ -60,7 +60,7 @@ const dashOffset = computed(() => props.indeterminate
   transform: rotate(-90deg);
 }
 .ctx-ring-track {
-  stroke: var(--line);
+  stroke: var(--color-line);
 }
 .ctx-ring-fill {
   stroke: var(--color-accent);

@@ -134,7 +134,7 @@ onMounted(() => void refresh());
   </section>
 </template>
 
-<style scoped src="../settings/settings-common.css"></style>
+<style scoped src="@moonshot-ai/app-components/settings-common.css"></style>
 
 <style scoped>
 .browser-sites { min-width: 0; display: flex; flex-direction: column; align-items: stretch; gap: var(--space-3); }

@@ -214,7 +214,7 @@ watch([pluginId, () => props.row.installedPlugin?.version], () => {
 .plugin-details__title {
   color: var(--color-text-muted);
   font-size: var(--text-base);
-  font-weight: var(--weight-normal);
+  font-weight: var(--weight-regular);
 }
 
 .plugin-details__hero {
