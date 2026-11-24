@@ -9,6 +9,11 @@ export const providerConfigResponseSchema = z.object({
 });
 export type ProviderConfigResponse = z.infer<typeof providerConfigResponseSchema>;
 
+const toolsConfigSchema = z.object({
+  enabled: z.array(z.string()).optional(),
+  disabled: z.array(z.string()).optional(),
+});
+
 export const configResponseSchema = z
   .object({
     providers: z.record(z.string(), providerConfigResponseSchema).default({}),
@@ -30,10 +35,7 @@ export const configResponseSchema = z
     background: z.unknown().optional(),
     subagent: z.unknown().optional(),
     secondary_model: z.unknown().optional(),
-    tools: z.object({
-      enabled: z.array(z.string()).optional(),
-      disabled: z.array(z.string()).optional(),
-    }).optional(),
+    tools: toolsConfigSchema.optional(),
     experimental: z.record(z.string(), z.boolean()).optional(),
     telemetry: z.boolean().optional(),
     disable_feedback_survey: z.boolean().optional(),
@@ -62,10 +64,7 @@ export const patchConfigRequestSchema = z.object({
   background: z.unknown().optional(),
   subagent: z.unknown().optional(),
   secondary_model: z.unknown().optional(),
-  tools: z.object({
-    enabled: z.array(z.string()).optional(),
-    disabled: z.array(z.string()).optional(),
-  }).optional(),
+  tools: toolsConfigSchema.optional(),
   experimental: z.record(z.string(), z.boolean()).optional(),
   telemetry: z.boolean().optional(),
   disable_feedback_survey: z.boolean().optional(),
