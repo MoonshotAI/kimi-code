@@ -166,6 +166,7 @@ import {
   ensureKimiHome,
   ensureMainAgent,
   getOrRestoreAgent,
+  migrateLegacyMasterEnvTower,
   reloadOnStale,
   agentContextOf,
   IAgentChangeNotifierService,
@@ -274,7 +275,7 @@ import { KimiAuthFacade } from '#/auth';
 import { ensureConfigFile, HookDefSchema } from '#/config/index';
 import type { AgentContextData } from '#/context';
 import { ErrorCodes, isKimiErrorCode, KimiError, type KimiErrorCode } from '#/errors';
-import type { ExperimentalFeatureState } from '#/flag';
+import type { BetaMasterSwitchState, ExperimentalFeatureState } from '#/flag';
 import { KimiHarness } from '#/kimi-harness';
 import type { BeginGlobalMcpServerAuthResult } from '#/mcp';
 import { noopTelemetryClient } from '#/telemetry';
@@ -517,6 +518,11 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     });
 
     const identity = assertKimiHostIdentity(this.identity);
+    migrateLegacyMasterEnvTower({
+      homeDir: this.homeDir,
+      configPath: this.configPath,
+      env: process.env,
+    });
     const { app } = bootstrap(
       {
         homeDir: this.homeDir,
@@ -672,6 +678,10 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
 
   override async getExperimentalFeatures(): Promise<readonly ExperimentalFeatureState[]> {
     return this.klient.global.flags.list();
+  }
+
+  override async getExperimentalBetaState(): Promise<BetaMasterSwitchState> {
+    return this.klient.global.flags.betaState();
   }
 
   /**

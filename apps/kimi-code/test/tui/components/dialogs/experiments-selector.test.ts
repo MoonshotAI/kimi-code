@@ -1,4 +1,7 @@
-import type { ExperimentalFeatureState } from '@moonshot-ai/kimi-code-sdk';
+import type {
+  BetaMasterSwitchState,
+  ExperimentalFeatureState,
+} from '@moonshot-ai/kimi-code-sdk';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
@@ -6,10 +9,10 @@ import {
   type ExperimentalFeatureDraftChange,
 } from '#/tui/components/dialogs/experiments-selector';
 
-
 const ANSI = /\u001B\[[0-9;]*m/g;
 const ESC = String.fromCodePoint(27);
 const ENTER = '\r';
+const DOWN = '\u001B[B';
 
 function strip(text: string): string {
   return text.replaceAll(ANSI, '');
@@ -19,14 +22,26 @@ function feature(
   overrides: Partial<ExperimentalFeatureState> = {},
 ): ExperimentalFeatureState {
   return {
-    id: 'micro_compaction',
-    title: 'Micro compaction',
-    description: 'Trim older tool results.',
-    surface: 'core',
-    env: 'KIMI_CODE_EXPERIMENTAL_MICRO_COMPACTION',
-    defaultEnabled: true,
-    enabled: true,
+    id: 'prompt_prediction',
+    title: 'Prompt prediction',
+    description: 'Predict the next prompt after a completed main-agent turn.',
+    stage: 'experimental',
+    effectTiming: 'immediate',
+    env: 'KIMI_CODE_EXPERIMENTAL_PROMPT_PREDICTION',
+    enabled: false,
+    active: false,
     source: 'default',
+    ...overrides,
+  };
+}
+
+function betaState(
+  overrides: Partial<BetaMasterSwitchState> = {},
+): BetaMasterSwitchState {
+  return {
+    enabled: false,
+    source: 'default',
+    env: 'KIMI_CODE_EXPERIMENTAL_FLAG',
     ...overrides,
   };
 }
@@ -36,10 +51,29 @@ function text(component: ExperimentsSelectorComponent, width = 120): string {
 }
 
 describe('ExperimentsSelectorComponent', () => {
-  it('renders searchable feature toggles with source details', () => {
+  it('renders Beta and Experimental tiers, omits GA features, and shows effect timing hints', () => {
     const selector = new ExperimentsSelectorComponent({
+      betaState: betaState(),
       features: [
-        feature({ enabled: true, source: 'config', configValue: true }),
+        feature({
+          id: 'notify_user',
+          title: 'NotifyUser tool',
+          stage: 'ga',
+          enabled: true,
+          active: true,
+        }),
+        feature({
+          id: 'tower',
+          title: 'Tower mode',
+          description: 'Coordinate multiple agents on a shared objective.',
+          stage: 'experimental',
+          effectTiming: 'restart',
+          env: 'KIMI_CODE_EXPERIMENTAL_TOWER',
+          enabled: true,
+          active: false,
+          source: 'config',
+          configValue: true,
+        }),
       ],
       onApply: vi.fn(),
       onCancel: vi.fn(),
@@ -49,43 +83,62 @@ describe('ExperimentsSelectorComponent', () => {
 
     expect(out).toContain(' Experimental features  (type to search)');
     expect(out).toContain(' ↑↓ navigate · Space toggle · Enter apply · Esc cancel');
-    expect(out).toContain('  ❯ Micro compaction  enabled');
-    expect(out).toContain('    id micro_compaction · config · KIMI_CODE_EXPERIMENTAL_MICRO_COMPACTION');
-    expect(out).toContain('    Trim older tool results.');
+    expect(out).toContain(' Beta');
+    expect(out).toContain('  ❯ Enable all Beta features  disabled');
+    expect(out).toContain(' Experimental');
+    expect(out).toContain('    Tower mode  enabled');
+    expect(out).toContain('    id tower · config · KIMI_CODE_EXPERIMENTAL_TOWER · restart required');
+    expect(out).not.toContain('NotifyUser tool');
     expect(out).toContain(' [ Apply changes and reload ]  no changes');
   });
 
-  it('drafts changes with Space and applies them with Enter', () => {
+  it('dynamically locks child Beta features without mutating their config when toggling Enable all Beta features', () => {
     const onApply = vi.fn<(changes: readonly ExperimentalFeatureDraftChange[]) => void>();
-    const first = feature();
     const selector = new ExperimentsSelectorComponent({
-      features: [first],
+      betaState: betaState(),
+      features: [
+        feature({
+          id: 'context_preview',
+          title: 'Context preview',
+          stage: 'beta',
+          effectTiming: 'next-session',
+          env: 'KIMI_CODE_EXPERIMENTAL_CONTEXT_PREVIEW',
+          enabled: false,
+          active: false,
+          source: 'config',
+          configValue: false,
+        }),
+        feature(),
+      ],
       onApply,
       onCancel: vi.fn(),
     });
 
     selector.handleInput(' ');
-
-    expect(onApply).not.toHaveBeenCalled();
-    expect(text(selector)).toContain('  ❯ Micro compaction  disabled');
-    expect(text(selector)).toContain(
-      '    id micro_compaction · default · KIMI_CODE_EXPERIMENTAL_MICRO_COMPACTION · modified',
+    const afterMasterOn = text(selector);
+    expect(afterMasterOn).toContain('  ❯ Enable all Beta features  enabled');
+    expect(afterMasterOn).toContain('    Context preview  enabled');
+    expect(afterMasterOn).toContain(
+      '    id context_preview · locked by Enable all Beta features · new sessions',
     );
-    expect(text(selector)).toContain(' [ Apply changes and reload ]  1 change');
+    expect(afterMasterOn).toContain('    Prompt prediction  disabled');
+
+    selector.handleInput(DOWN);
+    selector.handleInput(' ');
+    expect(text(selector)).toContain('  ❯ Context preview  enabled');
 
     selector.handleInput(ENTER);
-
-    expect(onApply).toHaveBeenCalledWith([
-      { id: 'micro_compaction', enabled: false },
-    ]);
+    expect(onApply).toHaveBeenCalledWith([{ id: 'beta', enabled: true }]);
   });
 
-  it('does not draft changes for env-locked features', () => {
+  it('does not draft changes for env-locked master or per-feature switches', () => {
     const onApply = vi.fn<(changes: readonly ExperimentalFeatureDraftChange[]) => void>();
     const selector = new ExperimentsSelectorComponent({
+      betaState: betaState({ enabled: true, source: 'env' }),
       features: [
         feature({
           enabled: true,
+          active: true,
           source: 'env',
         }),
       ],
@@ -94,9 +147,11 @@ describe('ExperimentsSelectorComponent', () => {
     });
 
     selector.handleInput(' ');
+    selector.handleInput(DOWN);
+    selector.handleInput(' ');
     selector.handleInput(ENTER);
 
-    expect(text(selector)).toContain('  ❯ Micro compaction  enabled');
+    expect(text(selector)).toContain('locked by KIMI_CODE_EXPERIMENTAL_FLAG');
     expect(text(selector)).toContain(' [ Apply changes and reload ]  no changes');
     expect(onApply).not.toHaveBeenCalled();
   });
@@ -109,11 +164,11 @@ describe('ExperimentsSelectorComponent', () => {
       onCancel,
     });
 
-    selector.handleInput('m');
-    selector.handleInput('i');
-    selector.handleInput('c');
-    expect(text(selector)).toContain('Search: mic');
-    expect(text(selector)).toContain('Micro compaction');
+    selector.handleInput('p');
+    selector.handleInput('r');
+    selector.handleInput('o');
+    expect(text(selector)).toContain('Search: pro');
+    expect(text(selector)).toContain('Prompt prediction');
 
     selector.handleInput(ESC);
     expect(onCancel).not.toHaveBeenCalled();

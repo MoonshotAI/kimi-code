@@ -10019,6 +10019,105 @@
                         "dangerous_bypass_auth": {
                           "type": "boolean"
                         },
+                        "experimental_beta": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "config_value": {
+                              "type": "boolean"
+                            },
+                            "enabled": {
+                              "type": "boolean"
+                            },
+                            "env": {
+                              "minLength": 1,
+                              "type": "string"
+                            },
+                            "source": {
+                              "enum": [
+                                "env",
+                                "config",
+                                "default"
+                              ],
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "enabled",
+                            "source",
+                            "env"
+                          ],
+                          "type": "object"
+                        },
+                        "experimental_features": {
+                          "items": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "active": {
+                                "type": "boolean"
+                              },
+                              "config_value": {
+                                "type": "boolean"
+                              },
+                              "description": {
+                                "type": "string"
+                              },
+                              "effect_timing": {
+                                "enum": [
+                                  "immediate",
+                                  "next-session",
+                                  "restart"
+                                ],
+                                "type": "string"
+                              },
+                              "enabled": {
+                                "type": "boolean"
+                              },
+                              "env": {
+                                "minLength": 1,
+                                "type": "string"
+                              },
+                              "id": {
+                                "minLength": 1,
+                                "type": "string"
+                              },
+                              "source": {
+                                "enum": [
+                                  "env",
+                                  "master-env",
+                                  "beta-config",
+                                  "config",
+                                  "default"
+                                ],
+                                "type": "string"
+                              },
+                              "stage": {
+                                "enum": [
+                                  "experimental",
+                                  "beta",
+                                  "ga"
+                                ],
+                                "type": "string"
+                              },
+                              "title": {
+                                "minLength": 1,
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "title",
+                              "description",
+                              "stage",
+                              "effect_timing",
+                              "env",
+                              "enabled",
+                              "active",
+                              "source"
+                            ],
+                            "type": "object"
+                          },
+                          "type": "array"
+                        },
                         "experimental_flags": {
                           "additionalProperties": {
                             "type": "boolean"

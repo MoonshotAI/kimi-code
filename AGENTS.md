@@ -121,8 +121,10 @@
 
 ## 实验特性
 
-- 还没公开的功能，放在实验开关后面。开关由环境变量驱动，默认关闭：`KIMI_CODE_EXPERIMENTAL_<NAME>` 控制单个开关，`KIMI_CODE_EXPERIMENTAL_FLAG` 打开全部。优先级是：单个开关的环境变量 > 配置里的 `[experimental]` > 总开关环境变量 > 开关的 `default`。正式发布时，把对应条目的 `default` 改成 `true`。
-  - `packages/agent-core-v2` 和 kap-server 的模块：没有集中的开关目录。在所属领域里用 `registerFlagDefinition` 在导入时声明开关，再用 `IFlagService.enabled(id)` 检查。
+- 还没公开的功能放在实验开关后面，未配置时一律默认关闭，注册结构不设 `default` 字段；全量转正时直接移除开关（某端先行转正时可在 `stages` 中将该端设为 `'ga'`，不再出现在该端实验列表中，也不受其他端在共享 `config.toml` 里写入的关闭值影响）。
+- 实验功能只分两级：`beta`（确定上正式版、正在打磨）与 `experimental`（探索验证阶段）。不默认开启，不乱上 `beta`；正式功能不得依赖未转正的实验开关，依赖实验能力的功能必须继承实验性身份。
+- `KIMI_CODE_EXPERIMENTAL_<NAME>` 控制单个开关；`KIMI_CODE_EXPERIMENTAL_FLAG` 与 `config.toml` 的 `[experimental].beta` 只开启全部 `beta` 功能，不开启 `experimental` 功能。优先级：`beta` 为单项环境变量 > Beta 总开关（`KIMI_CODE_EXPERIMENTAL_FLAG` 或 `[experimental].beta`）> `[experimental].<id>` > `false`；`experimental` 为单项环境变量 > `[experimental].<id>` > `false`。
+  - `packages/agent-core-v2` 和 kap-server 的模块：没有集中的开关目录。在所属领域里用 `registerFlagDefinition` 声明各端 `stages` 与 `effectTiming`，再用 `IFlagService.enabled(id)` 检查。
 
 ## 技能
 

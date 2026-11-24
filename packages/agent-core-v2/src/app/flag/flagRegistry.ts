@@ -3,7 +3,15 @@ import type { IDisposable } from '#/_base/di/lifecycle';
 
 import type { IFlagService } from './flag';
 
-export type FlagSurface = 'core' | 'tui' | 'both';
+export const EXPERIMENTAL_SURFACES = ['tui', 'desktop', 'web'] as const;
+export type ExperimentalSurface = (typeof EXPERIMENTAL_SURFACES)[number];
+export type FlagSurface = ExperimentalSurface;
+
+export const EXPERIMENTAL_STAGES = ['experimental', 'beta', 'ga'] as const;
+export type ExperimentalStage = (typeof EXPERIMENTAL_STAGES)[number];
+
+export const EXPERIMENTAL_EFFECT_TIMINGS = ['immediate', 'next-session', 'restart'] as const;
+export type ExperimentalEffectTiming = (typeof EXPERIMENTAL_EFFECT_TIMINGS)[number];
 
 export type FlagId = string;
 
@@ -12,8 +20,8 @@ export interface FlagDefinitionInput {
   readonly title: string;
   readonly description: string;
   readonly env: string;
-  readonly default: boolean;
-  readonly surface: FlagSurface;
+  readonly stages: Partial<Record<ExperimentalSurface, ExperimentalStage>>;
+  readonly effectTiming?: ExperimentalEffectTiming;
   readonly isExposed?: (flags: IFlagService) => boolean;
 }
 

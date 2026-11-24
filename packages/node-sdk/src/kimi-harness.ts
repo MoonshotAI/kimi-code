@@ -1,5 +1,5 @@
 import { ErrorCodes, KimiError } from '#/errors';
-import type { ExperimentalFeatureState } from '#/flag';
+import type { BetaMasterSwitchState, ExperimentalFeatureState } from '#/flag';
 import type { ImageLimits } from '#/image';
 import { withTelemetryContext } from '#/telemetry';
 
@@ -477,6 +477,10 @@ export class KimiHarness {
 
   async getExperimentalFeatures(): Promise<readonly ExperimentalFeatureState[]> {
     return this.rpc.getExperimentalFeatures();
+  }
+
+  async getExperimentalBetaState(): Promise<BetaMasterSwitchState> {
+    return this.rpc.getExperimentalBetaState();
   }
 
   /**

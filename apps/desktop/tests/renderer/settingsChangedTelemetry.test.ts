@@ -23,6 +23,10 @@ const ACCEPTED: Record<string, readonly string[]> = {
   'font-terminal': ['same', 'system', 'kimi', 'custom'],
   'font-terminal-size': ['default', '9', '13', '20', '32'],
   'running-send-mode': ['steer', 'queue'],
+  'context-inspector': ['on', 'off'],
+  'beta-features': ['on', 'off'],
+  'notify-user': ['on', 'off'],
+  tower: ['on', 'off'],
   'browser-tab-title': [
     'workspace-session',
     'session-workspace',
@@ -43,6 +47,10 @@ const REJECTED: Record<string, readonly unknown[]> = {
   'font-code': ['Fira Code'],
   'font-terminal-size': ['8', '33', '13.5', '013', 13, 'Menlo'],
   'running-send-mode': ['auto', ''],
+  'context-inspector': ['true', true],
+  'beta-features': ['1', ''],
+  'notify-user': ['enabled', false],
+  tower: ['yes', 1],
   'browser-tab-title': ['custom', ''],
 };
 

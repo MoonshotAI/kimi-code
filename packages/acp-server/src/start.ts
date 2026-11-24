@@ -12,6 +12,7 @@ import {
   IAppendLogStore,
   ISessionIndexMirror,
   logSeed,
+  migrateLegacyMasterEnvTower,
   resolveConfigPath,
   resolveKimiHome,
   resolveLoggingConfig,
@@ -58,6 +59,7 @@ export async function runAcpServerWithStream(
 ): Promise<RunningAcpServer> {
   const homeDir = resolveKimiHome(opts.homeDir);
   const configPath = resolveConfigPath({ homeDir, configPath: opts.configPath });
+  migrateLegacyMasterEnvTower({ homeDir, configPath, env: process.env });
   const logging = resolveLoggingConfig({ homeDir, env: process.env });
   const { app: core } = bootstrap(
     {

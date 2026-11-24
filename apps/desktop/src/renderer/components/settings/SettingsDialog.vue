@@ -89,10 +89,51 @@ function onSessionMentionsChange(on: boolean): void {
   track('settings_changed', { key: 'session-mentions', value: on ? 'on' : 'off', source_panel: 'settings' });
 }
 
-const notifyUserEnabled = computed(() => configStore().experimentalFlags['notify_user'] === true);
+function onContextInspectorChange(on: boolean): void {
+  setContextInspectorEnabled(on);
+  track('settings_changed', { key: 'context-inspector', value: on ? 'on' : 'off', source_panel: 'settings' });
+}
+
+const betaMasterState = computed(() => configStore().experimentalBeta);
+const betaMasterEnabled = computed(() => betaMasterState.value?.enabled === true);
+const betaMasterLockedByEnv = computed(() => betaMasterState.value?.source === 'env');
+
+function findExperimentalFeature(id: string) {
+  return configStore().experimentalFeatures.find((feature) => feature.id === id);
+}
+
+const notifyUserFeature = computed(() => findExperimentalFeature('notify_user'));
+const notifyUserEnabled = computed(
+  () => notifyUserFeature.value?.enabled ?? configStore().experimentalFlags['notify_user'] === true,
+);
+const notifyUserLockedByEnv = computed(() => notifyUserFeature.value?.source === 'env');
+const notifyUserLocked = computed(() => notifyUserLockedByEnv.value || betaMasterEnabled.value);
+
+const towerFeature = computed(() => findExperimentalFeature('tower'));
+const towerToggleEnabled = computed(
+  () => towerFeature.value?.enabled ?? configStore().experimentalFlags['tower'] === true,
+);
+const towerLockedByEnv = computed(() => towerFeature.value?.source === 'env');
+const towerPendingRestart = computed(
+  () => towerFeature.value !== undefined && towerFeature.value.enabled !== towerFeature.value.active,
+);
+
+async function onBetaMasterChange(on: boolean): Promise<void> {
+  if (await configStore().setBetaFeaturesEnabled(on)) {
+    track('settings_changed', { key: 'beta-features', value: on ? 'on' : 'off', source_panel: 'settings' });
+  }
+}
 
 async function onNotifyUserChange(on: boolean): Promise<void> {
-  await configStore().setNotifyUserEnabled(on);
+  if (await configStore().setNotifyUserEnabled(on)) {
+    track('settings_changed', { key: 'notify-user', value: on ? 'on' : 'off', source_panel: 'settings' });
+  }
+}
+
+async function onTowerChange(on: boolean): Promise<void> {
+  if (await configStore().setExperimentalFlag('tower', on)) {
+    track('settings_changed', { key: 'tower', value: on ? 'on' : 'off', source_panel: 'settings' });
+  }
 }
 
 function onColorScheme(scheme: ColorScheme): void {
@@ -866,6 +907,17 @@ function archiveTime(iso: string): string {
               </span>
               <DockIconPicker :model-value="dockIconChoice" @update:model-value="onDockIconChange" />
             </div>
+            <div class="row">
+              <span class="rlabel">
+                {{ t('settings.sidebarTabs') }}
+                <span class="hint">{{ t('settings.sidebarTabsHint') }}</span>
+              </span>
+              <Switch
+                :model-value="sidebarTabs"
+                :label="t('settings.sidebarTabs')"
+                @update:model-value="onSidebarTabsChange"
+              />
+            </div>
             </div>
           </section>
 
@@ -1413,34 +1465,64 @@ function archiveTime(iso: string): string {
           </section>
         </section>
 
-        <!-- 实验室：early 功能的开关集合。多标签页的会话列表默认关——关掉时侧边栏
-             退回单一会话列表（无 进行中/已完成/工作空间 tabs，归档替代完成）。 -->
         <section v-show="activeTab === 'lab'" class="panel">
           <section class="sec">
-            <h3 class="sec-title">{{ t('settings.tabs.lab') }}</h3>
+            <h3 class="sec-title">{{ t('settings.lab.betaGroup') }}</h3>
             <div class="settings-group">
             <div class="row">
               <span class="rlabel">
-                {{ t('settings.lab.sidebarTabs') }}
-                <span class="hint">{{ t('settings.lab.sidebarTabsHint') }}</span>
+                {{ t('settings.lab.enableAllBeta') }}
+                <span class="hint">{{ t('settings.lab.enableAllBetaHint') }}</span>
+                <span v-if="betaMasterLockedByEnv && betaMasterState" class="hint">
+                  {{ t('settings.lab.lockedByEnv', { env: betaMasterState.env }) }}
+                </span>
               </span>
               <Switch
-                :model-value="sidebarTabs"
-                :label="t('settings.lab.sidebarTabs')"
-                @update:model-value="onSidebarTabsChange"
+                :model-value="betaMasterEnabled"
+                :disabled="betaMasterLockedByEnv"
+                :label="t('settings.lab.enableAllBeta')"
+                @update:model-value="onBetaMasterChange"
+              />
+            </div>
+            <div class="row">
+              <span class="rlabel">
+                {{ t('settings.lab.contextInspector') }}
+                <span class="hint">{{ t('settings.lab.contextInspectorHint') }}</span>
+                <span v-if="betaMasterEnabled" class="hint">
+                  {{ t('settings.lab.lockedByBetaMaster') }}
+                </span>
+              </span>
+              <Switch
+                :model-value="contextInspectorEnabled"
+                :disabled="betaMasterEnabled"
+                :label="t('settings.lab.contextInspector')"
+                @update:model-value="onContextInspectorChange"
               />
             </div>
             <div class="row">
               <span class="rlabel">
                 {{ t('settings.lab.notifyUser') }}
                 <span class="hint">{{ t('settings.lab.notifyUserHint') }}</span>
+                <span v-if="notifyUserLockedByEnv && notifyUserFeature" class="hint">
+                  {{ t('settings.lab.lockedByEnv', { env: notifyUserFeature.env }) }}
+                </span>
+                <span v-else-if="betaMasterEnabled" class="hint">
+                  {{ t('settings.lab.lockedByBetaMaster') }}
+                </span>
               </span>
               <Switch
                 :model-value="notifyUserEnabled"
+                :disabled="notifyUserLocked"
                 :label="t('settings.lab.notifyUser')"
                 @update:model-value="onNotifyUserChange"
               />
             </div>
+            </div>
+          </section>
+
+          <section class="sec">
+            <h3 class="sec-title">{{ t('settings.lab.experimentalGroup') }}</h3>
+            <div class="settings-group">
             <div class="row">
               <span class="rlabel">
                 {{ t('settings.lab.sessionMentions') }}
@@ -1454,13 +1536,20 @@ function archiveTime(iso: string): string {
             </div>
             <div class="row">
               <span class="rlabel">
-                {{ t('settings.lab.contextInspector') }}
-                <span class="hint">{{ t('settings.lab.contextInspectorHint') }}</span>
+                {{ t('settings.lab.tower') }}
+                <span class="hint">{{ t('settings.lab.towerHint') }}</span>
+                <span v-if="towerLockedByEnv && towerFeature" class="hint">
+                  {{ t('settings.lab.lockedByEnv', { env: towerFeature.env }) }}
+                </span>
+                <span v-else-if="towerPendingRestart" class="hint">
+                  {{ t('settings.lab.towerPendingRestart') }}
+                </span>
               </span>
               <Switch
-                :model-value="contextInspectorEnabled"
-                :label="t('settings.lab.contextInspector')"
-                @update:model-value="setContextInspectorEnabled"
+                :model-value="towerToggleEnabled"
+                :disabled="towerLockedByEnv"
+                :label="t('settings.lab.tower')"
+                @update:model-value="onTowerChange"
               />
             </div>
             </div>

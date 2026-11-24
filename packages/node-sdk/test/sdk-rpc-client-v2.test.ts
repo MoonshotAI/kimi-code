@@ -1143,8 +1143,13 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
         expect(typeof feature.title).toBe('string');
         expect(typeof feature.env).toBe('string');
         expect(typeof feature.enabled).toBe('boolean');
-        expect(typeof feature.defaultEnabled).toBe('boolean');
+        expect(typeof feature.active).toBe('boolean');
+        expect(['experimental', 'beta', 'ga']).toContain(feature.stage);
+        expect(['immediate', 'next-session', 'restart']).toContain(feature.effectTiming);
       }
+      const betaState = await harness.getExperimentalBetaState();
+      expect(typeof betaState.enabled).toBe('boolean');
+      expect(betaState.env).toBe('KIMI_CODE_EXPERIMENTAL_FLAG');
     } finally {
       await harness.close();
     }
@@ -4162,7 +4167,11 @@ describe('SDKRpcClientV2 engine telemetry', () => {
     tempDirs.push(homeDir);
     const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-tel-flags-work-'));
     tempDirs.push(workDir);
-    await writeFile(join(homeDir, 'config.toml'), '[experimental]\nnotify_user = true\n', 'utf-8');
+    await writeFile(
+      join(homeDir, 'config.toml'),
+      '[experimental]\nprompt_prediction = true\nwait_for = true\n',
+      'utf-8',
+    );
     const records: TelemetryRecord[] = [];
     const harness = createKimiHarness({
       homeDir,
@@ -4185,8 +4194,9 @@ describe('SDKRpcClientV2 engine telemetry', () => {
       });
       for (const record of started) {
         const flags = String(record.properties?.['experimental_flags'] ?? '').split(',');
-        expect(flags).toContain('notify_user');
+        expect(flags).toContain('prompt_prediction');
         expect(flags).toContain('wait_for');
+        expect(flags).not.toContain('notify_user');
       }
       await session.close();
       await harness.resumeSession({ id: session.id });

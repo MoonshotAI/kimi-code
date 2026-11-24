@@ -33,6 +33,7 @@ import type {
   AppSession,
   AppSessionRatingReport,
   AppSessionRatingOffer,
+  ServerMeta,
   SessionContextItemDetail,
   SessionContextItemsResponse,
   SessionContextSummary,
@@ -227,6 +228,26 @@ interface WireHealth {
   uptime_sec: number;
 }
 
+interface WireMetaExperimentalBeta {
+  enabled: boolean;
+  source: 'env' | 'config' | 'default';
+  env: string;
+  config_value?: boolean;
+}
+
+interface WireMetaExperimentalFeature {
+  id: string;
+  title: string;
+  description: string;
+  stage: 'experimental' | 'beta' | 'ga';
+  effect_timing: 'immediate' | 'next-session' | 'restart';
+  env: string;
+  enabled: boolean;
+  active: boolean;
+  source: 'env' | 'master-env' | 'beta-config' | 'config' | 'default';
+  config_value?: boolean;
+}
+
 interface WireMeta {
   kimi_agent_protocol_version?: string;
   server_version: string;
@@ -237,6 +258,8 @@ interface WireMeta {
   open_in_apps?: string[];
   dangerous_bypass_auth?: boolean;
   experimental_flags?: Record<string, boolean>;
+  experimental_beta?: WireMetaExperimentalBeta;
+  experimental_features?: WireMetaExperimentalFeature[];
   web_title?: string;
 }
 
@@ -361,19 +384,7 @@ export class DaemonKimiWebApi implements KimiWebApi {
     return { status: 'ok', uptimeSec: data.uptime_sec ?? 0 };
   }
 
-  async getMeta(): Promise<{
-    protocolVersion: string;
-    serverVersion: string;
-    serverId: string;
-    startedAt: string;
-    homeDir: string;
-    capabilities: Record<string, boolean>;
-    openInApps: string[];
-    dangerousBypassAuth: boolean;
-    experimentalFlags: Record<string, boolean>;
-    backend: 'v1' | 'v2';
-    webTitle: string;
-  }> {
+  async getMeta(): Promise<ServerMeta> {
     const data = await this.http.get<WireMeta>('/meta');
     return {
       protocolVersion: data.kimi_agent_protocol_version ?? '',
@@ -385,6 +396,32 @@ export class DaemonKimiWebApi implements KimiWebApi {
       openInApps: Array.isArray(data.open_in_apps) ? data.open_in_apps : [],
       dangerousBypassAuth: data.dangerous_bypass_auth === true,
       experimentalFlags: data.experimental_flags ?? {},
+      experimentalBeta: data.experimental_beta
+        ? {
+            enabled: data.experimental_beta.enabled,
+            source: data.experimental_beta.source,
+            env: data.experimental_beta.env,
+            ...(data.experimental_beta.config_value !== undefined
+              ? { configValue: data.experimental_beta.config_value }
+              : {}),
+          }
+        : undefined,
+      experimentalFeatures: Array.isArray(data.experimental_features)
+        ? data.experimental_features.map((feature) => ({
+            id: feature.id,
+            title: feature.title,
+            description: feature.description,
+            stage: feature.stage,
+            effectTiming: feature.effect_timing,
+            env: feature.env,
+            enabled: feature.enabled,
+            active: feature.active,
+            source: feature.source,
+            ...(feature.config_value !== undefined
+              ? { configValue: feature.config_value }
+              : {}),
+          }))
+        : undefined,
       backend: 'v2',
       webTitle: data.web_title ?? '',
     };

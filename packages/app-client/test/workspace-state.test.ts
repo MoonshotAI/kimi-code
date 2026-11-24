@@ -5914,7 +5914,8 @@ describe('useWorkspaceState — draft tower mode persists on session creation', 
 describe('setNotifyUserEnabled', () => {
   beforeEach(() => {
     apiMock.setConfig.mockReset();
-    configStore().experimentalFlags = {};
+    apiMock.getMeta.mockReset();
+    configStore().resetConfig();
   });
 
   it('does not update notify_user flag when the config write fails', async () => {
@@ -5925,7 +5926,72 @@ describe('setNotifyUserEnabled', () => {
 
   it('updates notify_user flag only after a successful write', async () => {
     apiMock.setConfig.mockResolvedValue({ providers: {}, defaultModel: 'model-new' });
+    apiMock.getMeta.mockResolvedValue(null);
     expect(await configStore().setNotifyUserEnabled(true)).toBe(true);
     expect(configStore().experimentalFlags['notify_user']).toBe(true);
+  });
+
+  it('keeps restart-timed tower inactive in experimentalFlags until server restart while updating beta master non-destructively', async () => {
+    const { useContextInspector } = await import('@moonshot-ai/app-core');
+    useContextInspector().setContextInspectorEnabled(false);
+
+    apiMock.getMeta.mockResolvedValueOnce({
+      serverVersion: '1.0.0',
+      openInApps: [],
+      dangerousBypassAuth: false,
+      experimentalFlags: { notify_user: false, tower: true },
+      experimentalBeta: {
+        enabled: false,
+        source: 'default',
+        env: 'KIMI_CODE_EXPERIMENTAL_FLAG',
+      },
+      experimentalFeatures: [
+        {
+          id: 'notify_user',
+          title: 'NotifyUser tool',
+          description: 'Progress updates',
+          env: 'KIMI_CODE_EXPERIMENTAL_NOTIFY_USER',
+          stage: 'beta',
+          effectTiming: 'next-session',
+          enabled: false,
+          active: false,
+          source: 'config',
+          configValue: false,
+        },
+        {
+          id: 'tower',
+          title: 'Tower mode',
+          description: 'Multi-agent mode',
+          env: 'KIMI_CODE_EXPERIMENTAL_TOWER',
+          stage: 'experimental',
+          effectTiming: 'restart',
+          enabled: true,
+          active: false,
+          source: 'config',
+          configValue: true,
+        },
+      ],
+      backend: 'v2',
+      webTitle: '',
+      homeDir: '/tmp/home',
+    });
+
+    await configStore().refreshServerMeta();
+    expect(configStore().experimentalFlags['tower']).toBe(false);
+    expect(useContextInspector().contextInspectorEnabled.value).toBe(false);
+
+    apiMock.setConfig.mockResolvedValue({ providers: {} });
+    apiMock.getMeta.mockResolvedValue(null);
+
+    expect(await configStore().setBetaFeaturesEnabled(true)).toBe(true);
+    expect(apiMock.setConfig).toHaveBeenCalledWith({ experimental: { beta: true } });
+    expect(useContextInspector().contextInspectorEnabled.value).toBe(true);
+    expect(localStorage.getItem(STORAGE_KEYS.contextInspector)).toBe('false');
+    expect(configStore().experimentalFlags['notify_user']).toBe(true);
+    expect(configStore().experimentalFlags['tower']).toBe(false);
+
+    expect(await configStore().setBetaFeaturesEnabled(false)).toBe(true);
+    expect(useContextInspector().contextInspectorEnabled.value).toBe(false);
+    expect(configStore().experimentalFlags['notify_user']).toBe(false);
   });
 });

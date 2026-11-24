@@ -12,7 +12,7 @@ import {
 import { DEFAULT_OAUTH_PROVIDER_NAME, PRODUCT_NAME } from '#/constant/app';
 import { CURRENT_MARK, SELECT_POINTER } from '#/tui/constant/symbols';
 import { currentTheme } from '#/tui/theme';
-import { SearchableList } from '#/tui/utils/searchable-list';
+import { renderSearchableListStatus, SearchableList } from '#/tui/utils/searchable-list';
 
 import type { ChoiceOption } from './choice-picker';
 
@@ -247,13 +247,9 @@ export class ModelSelectorComponent extends Container implements Focusable {
     }
     lines.push('');
 
-    if (searchable && view.query.length > 0) {
-      lines.push(currentTheme.fg('primary', ' Search: ') + currentTheme.fg('text', view.query));
-    }
+    lines.push(...renderSearchableListStatus(view, searchable));
 
-    if (view.items.length === 0) {
-      lines.push(currentTheme.fg('textMuted', '   No matches'));
-    } else {
+    if (view.items.length > 0) {
       const nameCap = Math.max(8, Math.floor(width * 0.5));
       let nameWidth = 0;
       for (let i = view.page.start; i < view.page.end; i++) {

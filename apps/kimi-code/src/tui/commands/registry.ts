@@ -280,7 +280,7 @@ export const BUILTIN_SLASH_COMMANDS = [
   },
   {
     name: 'experiments',
-    aliases: ['experimental'],
+    aliases: ['experimental', 'lab'],
     description: 'Manage experimental features',
     priority: 60,
     availability: 'idle-only',

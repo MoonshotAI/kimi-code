@@ -167,5 +167,85 @@ describe('DaemonKimiWebApi.getMeta experimental_flags', () => {
     const meta = await makeApi().getMeta();
 
     expect(meta.webTitle).toBe('');
+    expect(meta.experimentalBeta).toBeUndefined();
+    expect(meta.experimentalFeatures).toBeUndefined();
+  });
+
+  it('maps experimental_beta and experimental_features wire fields to camelCase', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        envelope({
+          ...wireMeta,
+          experimental_beta: {
+            enabled: true,
+            source: 'config',
+            env: 'KIMI_CODE_EXPERIMENTAL_FLAG',
+            config_value: true,
+          },
+          experimental_features: [
+            {
+              id: 'notify_user',
+              title: 'NotifyUser tool',
+              description: 'Send structured updates.',
+              env: 'KIMI_CODE_EXPERIMENTAL_NOTIFY_USER',
+              stage: 'beta',
+              effect_timing: 'next-session',
+              enabled: true,
+              active: true,
+              source: 'beta-config',
+              config_value: false,
+            },
+            {
+              id: 'tower',
+              title: 'Tower mode',
+              description: 'Coordinate multiple agents.',
+              env: 'KIMI_CODE_EXPERIMENTAL_TOWER',
+              stage: 'experimental',
+              effect_timing: 'restart',
+              enabled: true,
+              active: false,
+              source: 'config',
+              config_value: true,
+            },
+          ],
+        }),
+      ),
+    );
+
+    const meta = await makeApi().getMeta();
+
+    expect(meta.experimentalBeta).toEqual({
+      enabled: true,
+      source: 'config',
+      env: 'KIMI_CODE_EXPERIMENTAL_FLAG',
+      configValue: true,
+    });
+    expect(meta.experimentalFeatures).toEqual([
+      {
+        id: 'notify_user',
+        title: 'NotifyUser tool',
+        description: 'Send structured updates.',
+        env: 'KIMI_CODE_EXPERIMENTAL_NOTIFY_USER',
+        stage: 'beta',
+        effectTiming: 'next-session',
+        enabled: true,
+        active: true,
+        source: 'beta-config',
+        configValue: false,
+      },
+      {
+        id: 'tower',
+        title: 'Tower mode',
+        description: 'Coordinate multiple agents.',
+        env: 'KIMI_CODE_EXPERIMENTAL_TOWER',
+        stage: 'experimental',
+        effectTiming: 'restart',
+        enabled: true,
+        active: false,
+        source: 'config',
+        configValue: true,
+      },
+    ]);
   });
 });

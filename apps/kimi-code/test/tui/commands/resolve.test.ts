@@ -233,6 +233,11 @@ describe('resolveSlashCommandInput', () => {
       name: 'experiments',
       args: '',
     });
+    expect(resolve('/lab')).toMatchObject({
+      kind: 'builtin',
+      name: 'experiments',
+      args: '',
+    });
   });
 
   it('resolves /remote-control and /rc as built-ins', () => {

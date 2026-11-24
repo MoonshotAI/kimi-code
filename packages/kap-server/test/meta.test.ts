@@ -7,7 +7,11 @@ import { IFeatureManager } from '@moonshot-ai/agent-core-v2/app/feature/featureM
 import { getFeatureRecipes } from '@moonshot-ai/agent-core-v2/features/featureRegistry';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { metaCapabilitiesSchema } from '../src/protocol/rest-meta';
+import {
+  metaCapabilitiesSchema,
+  type MetaExperimentalBeta,
+  type MetaExperimentalFeature,
+} from '../src/protocol/rest-meta';
 import { type RunningServer, startServer } from '../src/start';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 import { authedFetch } from './helpers/auth';
@@ -18,6 +22,8 @@ interface MetaBody {
     kimi_agent_protocol_version?: string;
     home_dir?: string;
     experimental_flags?: Record<string, boolean>;
+    experimental_beta?: MetaExperimentalBeta;
+    experimental_features?: MetaExperimentalFeature[];
   };
 }
 
@@ -125,6 +131,123 @@ describe('/api/v1/meta experimental_flags', () => {
     expect(res.status).toBe(200);
 
     expect((await getMetaFlags(base))['notify_user']).toBe(true);
+  });
+
+  it('publishes surface-scoped experimental_beta and experimental_features and applies beta master non-destructively', async () => {
+    const base = await boot('[experimental]\nnotify_user = false\n');
+    const initialRes = await authedFetch(server as RunningServer, base, '/api/v1/meta');
+    const initialBody = (await initialRes.json()) as MetaBody;
+    expect(initialBody.data.experimental_beta).toEqual({
+      enabled: false,
+      source: 'default',
+      env: 'KIMI_CODE_EXPERIMENTAL_FLAG',
+    });
+    const initialIds = (initialBody.data.experimental_features ?? []).map((f) => f.id);
+    expect(initialIds).toContain('notify_user');
+    expect(initialIds).toContain('tower');
+    expect(initialIds).not.toContain('prompt_prediction');
+    expect(initialIds).not.toContain('wait_for');
+
+    const enableBetaRes = await authedFetch(server as RunningServer, base, '/api/v1/config', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ experimental: { beta: true, notify_user: false } }),
+    });
+    expect(enableBetaRes.status).toBe(200);
+
+    const betaRes = await authedFetch(server as RunningServer, base, '/api/v1/meta');
+    const betaBody = (await betaRes.json()) as MetaBody;
+    expect(betaBody.data.experimental_beta).toMatchObject({
+      enabled: true,
+      source: 'config',
+      config_value: true,
+    });
+    const notifyFeature = betaBody.data.experimental_features?.find((f) => f.id === 'notify_user');
+    const towerFeature = betaBody.data.experimental_features?.find((f) => f.id === 'tower');
+    expect(notifyFeature).toMatchObject({
+      stage: 'beta',
+      effect_timing: 'next-session',
+      enabled: true,
+      active: true,
+      source: 'beta-config',
+      config_value: false,
+    });
+    expect(towerFeature).toMatchObject({
+      stage: 'experimental',
+      effect_timing: 'restart',
+      enabled: false,
+      active: false,
+      source: 'default',
+    });
+
+    const enableTowerRes = await authedFetch(server as RunningServer, base, '/api/v1/config', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ experimental: { tower: true } }),
+    });
+    expect(enableTowerRes.status).toBe(200);
+
+    const pendingTowerRes = await authedFetch(server as RunningServer, base, '/api/v1/meta');
+    const pendingTowerBody = (await pendingTowerRes.json()) as MetaBody;
+    expect(
+      pendingTowerBody.data.experimental_features?.find((f) => f.id === 'tower'),
+    ).toMatchObject({
+      enabled: true,
+      active: false,
+      source: 'config',
+      config_value: true,
+    });
+  });
+});
+
+describe('/api/v1/meta legacy master env tower migration', () => {
+  let migratedServer: RunningServer | undefined;
+  let migratedHome: string | undefined;
+
+  afterEach(async () => {
+    vi.unstubAllEnvs();
+    if (migratedServer !== undefined) {
+      await migratedServer.close();
+      migratedServer = undefined;
+    }
+    if (migratedHome !== undefined) {
+      await rm(migratedHome, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+      migratedHome = undefined;
+    }
+  });
+
+  it('migrates KIMI_CODE_EXPERIMENTAL_FLAG=1 on an existing installation so tower assembles on startup', async () => {
+    migratedHome = await mkdtemp(join(tmpdir(), 'kimi-server-v2-meta-tower-mig-'));
+    await writeFile(join(migratedHome, 'config.toml'), 'default_model = "kimi-k2"\n', 'utf-8');
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', '1');
+
+    migratedServer = await startServer({
+      hostIdentity: {
+        ...TEST_HOST_IDENTITY,
+        platform: 'kimi_code_desktop',
+      },
+      host: '127.0.0.1',
+      port: 0,
+      homeDir: migratedHome,
+      logLevel: 'silent',
+    });
+
+    const base = `http://127.0.0.1:${migratedServer.port}`;
+    const res = await authedFetch(migratedServer, base, '/api/v1/meta');
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as MetaBody;
+    expect(body.data.experimental_beta).toMatchObject({
+      enabled: true,
+      source: 'env',
+    });
+    expect(body.data.experimental_features?.find((f) => f.id === 'tower')).toMatchObject({
+      stage: 'experimental',
+      effect_timing: 'restart',
+      enabled: true,
+      active: true,
+      source: 'config',
+      config_value: true,
+    });
   });
 });
 

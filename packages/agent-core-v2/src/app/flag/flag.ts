@@ -4,13 +4,19 @@ import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiatio
 import { registerConfigSection } from '#/app/config/configSectionContributions';
 import { cloneRecord, isPlainObject, setDefined } from '#/app/config/toml';
 
-import type { FlagId, FlagSurface, IFlagRegistry } from './flagRegistry';
+import type {
+  ExperimentalEffectTiming,
+  ExperimentalStage,
+  FlagId,
+  IFlagRegistry,
+} from './flagRegistry';
 
 export type ExperimentalFlagMap = Record<string, boolean>;
 
 export type ExperimentalFlagConfig = Partial<Record<FlagId, boolean>>;
 
 export const EXPERIMENTAL_SECTION = 'experimental';
+export const BETA_MASTER_CONFIG_KEY = 'beta';
 
 export const ExperimentalConfigSchema = z.record(z.string(), z.boolean());
 
@@ -33,16 +39,31 @@ registerConfigSection(EXPERIMENTAL_SECTION, ExperimentalConfigSchema, {
   toToml: experimentalToToml,
 });
 
-export type ExperimentalFlagSource = 'master-env' | 'env' | 'config' | 'default';
+export type BetaMasterSwitchSource = 'env' | 'config' | 'default';
+
+export interface BetaMasterSwitchState {
+  readonly enabled: boolean;
+  readonly source: BetaMasterSwitchSource;
+  readonly env: string;
+  readonly configValue?: boolean;
+}
+
+export type ExperimentalFlagSource =
+  | 'env'
+  | 'master-env'
+  | 'beta-config'
+  | 'config'
+  | 'default';
 
 export interface ExperimentalFeatureState {
   readonly id: FlagId;
   readonly title: string;
   readonly description: string;
-  readonly surface: FlagSurface;
+  readonly stage: ExperimentalStage;
+  readonly effectTiming: ExperimentalEffectTiming;
   readonly env: string;
-  readonly defaultEnabled: boolean;
   readonly enabled: boolean;
+  readonly active: boolean;
   readonly source: ExperimentalFlagSource;
   readonly configValue?: boolean;
 }
@@ -51,6 +72,7 @@ export interface IFlagService {
   readonly _serviceBrand: undefined;
 
   readonly registry: IFlagRegistry;
+  betaState(): BetaMasterSwitchState;
   enabled(id: FlagId): boolean;
   snapshot(): ExperimentalFlagMap;
   enabledIds(): readonly FlagId[];

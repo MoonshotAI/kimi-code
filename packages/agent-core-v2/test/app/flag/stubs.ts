@@ -1,5 +1,6 @@
 import { IFlagService } from '#/app/flag/flag';
 import type {
+  BetaMasterSwitchState,
   ExperimentalFeatureState,
   ExperimentalFlagConfig,
   ExperimentalFlagMap,
@@ -17,6 +18,11 @@ export function stubFlag(enabled: boolean | ((id: string) => boolean) = false): 
   return {
     _serviceBrand: undefined,
     registry,
+    betaState: (): BetaMasterSwitchState => ({
+      enabled: false,
+      source: 'default',
+      env: 'KIMI_CODE_EXPERIMENTAL_FLAG',
+    }),
     enabled: isEnabled,
     snapshot: (): ExperimentalFlagMap => ({}),
     enabledIds: () => [],

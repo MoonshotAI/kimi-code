@@ -6,39 +6,110 @@ import {
   visibleWidth,
   type Focusable,
 } from '@moonshot-ai/pi-tui';
-import type { ExperimentalFeatureState } from '@moonshot-ai/kimi-code-sdk';
+import {
+  BETA_MASTER_CONFIG_KEY,
+  MASTER_ENV,
+  type BetaMasterSwitchState,
+  type ExperimentalFeatureState,
+} from '@moonshot-ai/kimi-code-sdk';
 
 import { SELECT_POINTER } from '#/tui/constant/symbols';
 import { currentTheme } from '#/tui/theme';
 import { printableChar } from '#/tui/utils/printable-key';
-import { SearchableList } from '#/tui/utils/searchable-list';
+import { renderSearchableListStatus, SearchableList } from '#/tui/utils/searchable-list';
 
 const ELLIPSIS = '…';
+const DEFAULT_BETA_STATE: BetaMasterSwitchState = {
+  enabled: false,
+  source: 'default',
+  env: MASTER_ENV,
+};
 
 export interface ExperimentalFeatureDraftChange {
-  readonly id: ExperimentalFeatureState['id'];
+  readonly id: string;
   readonly enabled: boolean;
 }
 
 export interface ExperimentsSelectorOptions {
   readonly features: readonly ExperimentalFeatureState[];
+  readonly betaState?: BetaMasterSwitchState;
   readonly onApply: (changes: readonly ExperimentalFeatureDraftChange[]) => void;
   readonly onCancel: () => void;
 }
+
+type SelectorGroup = 'beta' | 'experimental';
+
+type SelectorItem =
+  | {
+      readonly kind: 'beta-master';
+      readonly id: string;
+      readonly title: string;
+      readonly description: string;
+      readonly group: 'beta';
+      readonly state: BetaMasterSwitchState;
+    }
+  | {
+      readonly kind: 'feature';
+      readonly id: string;
+      readonly title: string;
+      readonly description: string;
+      readonly group: SelectorGroup;
+      readonly feature: ExperimentalFeatureState;
+    };
 
 export class ExperimentsSelectorComponent extends Container implements Focusable {
   focused = false;
 
   private readonly opts: ExperimentsSelectorOptions;
-  private readonly list: SearchableList<ExperimentalFeatureState>;
-  private readonly draft = new Map<ExperimentalFeatureState['id'], boolean>();
+  private readonly betaState: BetaMasterSwitchState;
+  private readonly items: readonly SelectorItem[];
+  private readonly list: SearchableList<SelectorItem>;
+  private readonly draft = new Map<string, boolean>();
 
   constructor(opts: ExperimentsSelectorOptions) {
     super();
     this.opts = opts;
+    this.betaState = opts.betaState ?? DEFAULT_BETA_STATE;
+    const visibleFeatures = opts.features.filter((feature) => feature.stage !== 'ga');
+    const betaItems: SelectorItem[] = [
+      {
+        kind: 'beta-master',
+        id: BETA_MASTER_CONFIG_KEY,
+        title: 'Enable all Beta features',
+        description:
+          'Enable upcoming Beta features that are being polished before general release.',
+        group: 'beta',
+        state: this.betaState,
+      },
+      ...visibleFeatures
+        .filter((feature) => feature.stage === 'beta')
+        .map(
+          (feature): SelectorItem => ({
+            kind: 'feature',
+            id: feature.id,
+            title: feature.title,
+            description: feature.description,
+            group: 'beta',
+            feature,
+          }),
+        ),
+    ];
+    const experimentalItems: SelectorItem[] = visibleFeatures
+      .filter((feature) => feature.stage === 'experimental')
+      .map(
+        (feature): SelectorItem => ({
+          kind: 'feature',
+          id: feature.id,
+          title: feature.title,
+          description: feature.description,
+          group: 'experimental',
+          feature,
+        }),
+      );
+    this.items = [...betaItems, ...experimentalItems];
     this.list = new SearchableList({
-      items: opts.features,
-      toSearchText: (feature) => `${feature.title} ${feature.id} ${feature.description}`,
+      items: this.items,
+      toSearchText: (item) => `${item.title} ${item.id} ${item.description} ${item.group}`,
       searchable: true,
     });
   }
@@ -79,18 +150,19 @@ export class ExperimentsSelectorComponent extends Container implements Focusable
       '',
     ];
 
-    if (view.query.length > 0) {
-      lines.push(currentTheme.fg('primary', ` Search: `) + currentTheme.fg('text', view.query));
-    }
+    lines.push(...renderSearchableListStatus(view));
 
-    if (view.items.length === 0) {
-      lines.push(currentTheme.fg('textMuted', '   No matches'));
-    }
-
+    let currentGroup: SelectorGroup | undefined;
     for (let i = view.page.start; i < view.page.end; i++) {
-      const feature = view.items[i]!;
+      const item = view.items[i]!;
+      if (item.group !== currentGroup) {
+        if (currentGroup !== undefined) lines.push('');
+        currentGroup = item.group;
+        const heading = item.group === 'beta' ? ' Beta' : ' Experimental';
+        lines.push(currentTheme.boldFg('textStrong', heading));
+      }
       const selected = i === view.selectedIndex;
-      lines.push(...this.renderFeature(feature, selected, width));
+      lines.push(...this.renderItem(item, selected, width));
     }
 
     lines.push('');
@@ -98,7 +170,7 @@ export class ExperimentsSelectorComponent extends Container implements Focusable
       lines.push(
         currentTheme.fg(
           'textMuted',
-          ` ${String(view.items.length)} / ${String(this.opts.features.length)}`,
+          ` ${String(view.items.length)} / ${String(this.items.length)}`,
         ),
       );
     } else if (view.page.end < view.items.length) {
@@ -114,30 +186,63 @@ export class ExperimentsSelectorComponent extends Container implements Focusable
     return lines.map((line) => truncateToWidth(line, width, ELLIPSIS));
   }
 
-  private toggleDraft(feature: ExperimentalFeatureState): void {
-    if (isLocked(feature)) return;
+  private effectiveBetaMasterEnabled(): boolean {
+    if (this.betaState.source === 'env') return true;
+    return this.draft.get(BETA_MASTER_CONFIG_KEY) ?? this.betaState.enabled;
+  }
 
-    const enabled = !this.effectiveEnabled(feature);
-    if (enabled === feature.enabled) {
-      this.draft.delete(feature.id);
+  private baselineItemEnabled(item: SelectorItem): boolean {
+    if (item.kind === 'beta-master') return item.state.enabled;
+    const { feature } = item;
+    if (feature.source === 'env') return feature.enabled;
+    if (feature.stage === 'beta' && this.effectiveBetaMasterEnabled()) return true;
+    if (feature.configValue !== undefined) return feature.configValue;
+    if (feature.source === 'master-env' || feature.source === 'beta-config') return false;
+    return feature.enabled;
+  }
+
+  private isItemLocked(item: SelectorItem): boolean {
+    if (item.kind === 'beta-master') return item.state.source === 'env';
+    if (item.feature.source === 'env') return true;
+    if (item.feature.stage === 'beta' && this.effectiveBetaMasterEnabled()) return true;
+    return false;
+  }
+
+  private toggleDraft(item: SelectorItem): void {
+    if (this.isItemLocked(item)) return;
+    const next = !this.effectiveItemEnabled(item);
+    const initial =
+      item.kind === 'beta-master'
+        ? item.state.enabled
+        : (item.feature.configValue ??
+          (item.feature.source === 'master-env' || item.feature.source === 'beta-config'
+            ? false
+            : item.feature.enabled));
+    if (next === initial) {
+      this.draft.delete(item.id);
       return;
     }
-    this.draft.set(feature.id, enabled);
+    this.draft.set(item.id, next);
   }
 
-  private effectiveEnabled(feature: ExperimentalFeatureState): boolean {
-    return this.draft.get(feature.id) ?? feature.enabled;
+  private effectiveItemEnabled(item: SelectorItem): boolean {
+    if (item.kind === 'beta-master') return this.effectiveBetaMasterEnabled();
+    if (item.feature.source === 'env') return item.feature.enabled;
+    if (item.feature.stage === 'beta' && this.effectiveBetaMasterEnabled()) return true;
+    if (this.draft.has(item.id)) return this.draft.get(item.id)!;
+    return this.baselineItemEnabled(item);
   }
 
-  private isDraftChanged(feature: ExperimentalFeatureState): boolean {
-    return this.effectiveEnabled(feature) !== feature.enabled;
+  private isDraftChanged(item: SelectorItem): boolean {
+    if (this.isItemLocked(item)) return false;
+    return this.draft.has(item.id);
   }
 
   private draftChanges(): ExperimentalFeatureDraftChange[] {
     const changes: ExperimentalFeatureDraftChange[] = [];
-    for (const feature of this.opts.features) {
-      if (this.isDraftChanged(feature)) {
-        changes.push({ id: feature.id, enabled: this.effectiveEnabled(feature) });
+    for (const item of this.items) {
+      if (this.isDraftChanged(item)) {
+        changes.push({ id: item.id, enabled: this.draft.get(item.id)! });
       }
     }
     return changes;
@@ -149,63 +254,71 @@ export class ExperimentsSelectorComponent extends Container implements Focusable
     const label = '[ Apply changes and reload ]';
     const summary =
       count === 0 ? 'no changes' : `${String(count)} ${count === 1 ? 'change' : 'changes'}`;
-    const button = count === 0
-      ? currentTheme.fg('textDim', label)
-      : currentTheme.boldFg('primary', label);
-    const summaryText = count === 0
-      ? currentTheme.fg('textMuted', summary)
-      : currentTheme.fg('success', summary);
+    const button =
+      count === 0
+        ? currentTheme.fg('textDim', label)
+        : currentTheme.boldFg('primary', label);
+    const summaryText =
+      count === 0 ? currentTheme.fg('textMuted', summary) : currentTheme.fg('success', summary);
     return ` ${button}  ${summaryText}`;
   }
 
-  private renderFeature(
-    feature: ExperimentalFeatureState,
-    selected: boolean,
-    width: number,
-  ): string[] {
+  private renderItem(item: SelectorItem, selected: boolean, width: number): string[] {
     const pointer = selected ? SELECT_POINTER : ' ';
     const prefix = currentTheme.fg(selected ? 'primary' : 'textDim', `  ${pointer} `);
-    const label = selected ? currentTheme.boldFg('primary', feature.title) : currentTheme.fg('text', feature.title);
-    const enabled = this.effectiveEnabled(feature);
+    const label = selected
+      ? currentTheme.boldFg('primary', item.title)
+      : currentTheme.fg('text', item.title);
+    const enabled = this.effectiveItemEnabled(item);
     const status = enabled ? 'enabled' : 'disabled';
-    const statusText = enabled ? currentTheme.fg('success', status) : currentTheme.fg('textDim', status);
-    const detail = this.isDraftChanged(feature)
-      ? `${featureDetail(feature)} · modified`
-      : featureDetail(feature);
+    const statusText = enabled
+      ? currentTheme.fg('success', status)
+      : currentTheme.fg('textDim', status);
+    const baseDetail = this.itemDetail(item);
+    const detail = this.isDraftChanged(item) ? `${baseDetail} · modified` : baseDetail;
     const lines = [
       `${prefix}${label}  ${statusText}`,
       currentTheme.fg('textMuted', `    ${detail}`),
     ];
     const descriptionWidth = Math.max(1, width - 4);
-    for (const line of wrapText(feature.description, descriptionWidth)) {
+    for (const line of wrapText(item.description, descriptionWidth)) {
       lines.push(currentTheme.fg('textMuted', `    ${line}`));
     }
     return lines;
   }
-}
 
-function isLocked(feature: ExperimentalFeatureState): boolean {
-  return feature.source === 'env' || feature.source === 'master-env';
-}
-
-function featureDetail(feature: ExperimentalFeatureState): string {
-  const source = sourceLabel(feature);
-  if (feature.source === 'env' || feature.source === 'master-env') {
-    return `id ${feature.id} · ${source}`;
+  private itemDetail(item: SelectorItem): string {
+    if (item.kind === 'beta-master') {
+      if (item.state.source === 'env') {
+        return `id ${item.id} · locked by ${item.state.env}`;
+      }
+      return `id ${item.id} · ${item.state.source} · ${item.state.env}`;
+    }
+    const { feature } = item;
+    const timingSuffix = effectTimingLabel(feature.effectTiming);
+    if (feature.source === 'env') {
+      return `id ${feature.id} · locked by ${feature.env}${timingSuffix}`;
+    }
+    if (feature.stage === 'beta' && this.effectiveBetaMasterEnabled()) {
+      const lockLabel =
+        this.betaState.source === 'env'
+          ? `locked by ${this.betaState.env}`
+          : 'locked by Enable all Beta features';
+      return `id ${feature.id} · ${lockLabel}${timingSuffix}`;
+    }
+    const baseSource = feature.configValue !== undefined ? 'config' : 'default';
+    return `id ${feature.id} · ${baseSource} · ${feature.env}${timingSuffix}`;
   }
-  return `id ${feature.id} · ${source} · ${feature.env}`;
 }
 
-function sourceLabel(feature: ExperimentalFeatureState): string {
-  switch (feature.source) {
-    case 'master-env':
-      return 'locked by KIMI_CODE_EXPERIMENTAL_FLAG';
-    case 'env':
-      return `locked by ${feature.env}`;
-    case 'config':
-      return 'config';
-    case 'default':
-      return 'default';
+function effectTimingLabel(timing: ExperimentalFeatureState['effectTiming']): string {
+  switch (timing) {
+    case 'immediate':
+      return '';
+    case 'next-session':
+      return ' · new sessions';
+    case 'restart':
+      return ' · restart required';
   }
 }
 

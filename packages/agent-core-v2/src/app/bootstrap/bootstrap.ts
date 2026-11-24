@@ -14,6 +14,7 @@ import {
 import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
 import { FileSkillDiscovery } from '#/features/skill/catalog/fileSkillDiscovery';
 import { ISkillDiscovery } from '#/features/skill/catalog/skillDiscovery';
+import type { ExperimentalSurface } from '#/app/flag/flagRegistry';
 
 export type HostUiCapability = 'update_panel';
 
@@ -25,6 +26,7 @@ export interface HostArgs {
   readonly replyStyleGuide?: string;
   readonly nonInteractive?: boolean;
   readonly uiCapabilities?: readonly HostUiCapability[];
+  readonly surface?: ExperimentalSurface;
 }
 
 export interface HostArgsInput {
@@ -35,9 +37,23 @@ export interface HostArgsInput {
   readonly replyStyleGuide?: string;
   readonly nonInteractive?: boolean;
   readonly uiCapabilities?: readonly HostUiCapability[];
+  readonly surface?: ExperimentalSurface;
 }
 
-export function resolveHostArgs(input: HostArgsInput | undefined): HostArgs {
+export function resolveExperimentalSurface(
+  identity?: KimiHostIdentity,
+  explicit?: ExperimentalSurface,
+): ExperimentalSurface {
+  if (explicit !== undefined) return explicit;
+  if (identity?.platform === 'kimi_code_desktop') return 'desktop';
+  if (identity?.userAgentSuffix === 'web') return 'web';
+  return 'tui';
+}
+
+export function resolveHostArgs(
+  input: HostArgsInput | undefined,
+  identity?: KimiHostIdentity,
+): HostArgs {
   return {
     agentFiles: input?.agentFiles,
     skillDirs: input?.skillDirs,
@@ -46,6 +62,7 @@ export function resolveHostArgs(input: HostArgsInput | undefined): HostArgs {
     replyStyleGuide: input?.replyStyleGuide,
     nonInteractive: input?.nonInteractive,
     uiCapabilities: input?.uiCapabilities,
+    surface: resolveExperimentalSurface(identity, input?.surface),
   };
 }
 
@@ -123,7 +140,7 @@ export function resolveBootstrapOptions(input: BootstrapInput): IBootstrapOption
     cwd: input.cwd ?? process.cwd(),
     env,
     clientIdentity: input.clientIdentity,
-    args: resolveHostArgs(input.args),
+    args: resolveHostArgs(input.args, input.clientIdentity),
   };
 }
 

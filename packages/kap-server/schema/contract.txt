@@ -324,6 +324,23 @@ GET /api/v1/meta response 200.data.capabilities.tasks: enum true
 GET /api/v1/meta response 200.data.capabilities.websocket: enum true
 GET /api/v1/meta response 200.data.capabilities: object closed
 GET /api/v1/meta response 200.data.dangerous_bypass_auth: boolean
+GET /api/v1/meta response 200.data.experimental_beta.config_value: boolean optional
+GET /api/v1/meta response 200.data.experimental_beta.enabled: boolean
+GET /api/v1/meta response 200.data.experimental_beta.env: string minLength=1
+GET /api/v1/meta response 200.data.experimental_beta.source: enum "config"|"default"|"env"
+GET /api/v1/meta response 200.data.experimental_beta: object closed optional
+GET /api/v1/meta response 200.data.experimental_features: array optional
+GET /api/v1/meta response 200.data.experimental_features[].active: boolean
+GET /api/v1/meta response 200.data.experimental_features[].config_value: boolean optional
+GET /api/v1/meta response 200.data.experimental_features[].description: string
+GET /api/v1/meta response 200.data.experimental_features[].effect_timing: enum "immediate"|"next-session"|"restart"
+GET /api/v1/meta response 200.data.experimental_features[].enabled: boolean
+GET /api/v1/meta response 200.data.experimental_features[].env: string minLength=1
+GET /api/v1/meta response 200.data.experimental_features[].id: string minLength=1
+GET /api/v1/meta response 200.data.experimental_features[].source: enum "beta-config"|"config"|"default"|"env"|"master-env"
+GET /api/v1/meta response 200.data.experimental_features[].stage: enum "beta"|"experimental"|"ga"
+GET /api/v1/meta response 200.data.experimental_features[].title: string minLength=1
+GET /api/v1/meta response 200.data.experimental_features[]: object closed
 GET /api/v1/meta response 200.data.experimental_flags: object optional
 GET /api/v1/meta response 200.data.experimental_flags{*}: boolean optional
 GET /api/v1/meta response 200.data.features: array optional

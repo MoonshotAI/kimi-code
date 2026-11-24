@@ -331,6 +331,7 @@ export * from '#/app/flag/flagRegistry';
 export * from '#/app/flag/flagRegistryService';
 export * from '#/app/flag/flag';
 export * from '#/app/flag/flagService';
+export * from '#/app/flag/legacyMasterEnvMigration';
 
 export * from '#/agent/modeMutex/modeMutex';
 import '#/agent/modeMutex/modeMutexService';

@@ -39,7 +39,10 @@ describe('NotifyUserTool', () => {
     telemetry = [];
     ctx = createTestAgent({ telemetry: recordingTelemetry(telemetry) });
     ctx.get(IFlagService).setConfigOverrides({ notify_user: true });
-    Object.assign(ctx.get(IBootstrapService).args, { uiCapabilities: [NOTIFY_USER_UI_CAPABILITY] });
+    Object.assign(ctx.get(IBootstrapService).args, {
+      uiCapabilities: [NOTIFY_USER_UI_CAPABILITY],
+      surface: 'desktop',
+    });
     await ctx.restorePersisted();
   });
 
@@ -80,11 +83,15 @@ describe('NotifyUserTool', () => {
     ]);
   });
 
-  it('is off by default, can be turned on, and the default profile allows it', () => {
+  it('is GA on TUI and Beta (off by default, toggleable via config or beta master) on desktop and web', () => {
     expect(ctx.get(IAgentToolPolicyService).isToolActive(NOTIFY_USER_TOOL_NAME)).toBe(true);
     expect(notifyUserFlag.id).toBe(NOTIFY_USER_FLAG_ID);
     expect(notifyUserFlag.env).toBe(NOTIFY_USER_FLAG_ENV);
-    expect(notifyUserFlag.default).toBe(false);
+    expect(notifyUserFlag.stages).toEqual({
+      tui: 'ga',
+      desktop: 'beta',
+      web: 'beta',
+    });
 
     const flags = ctx.get(IFlagService);
     flags.setConfigOverrides({});
@@ -93,6 +100,12 @@ describe('NotifyUserTool', () => {
     expect(flags.enabled(NOTIFY_USER_FLAG_ID)).toBe(true);
     flags.setConfigOverrides({ notify_user: false });
     expect(flags.enabled(NOTIFY_USER_FLAG_ID)).toBe(false);
+    flags.setConfigOverrides({ notify_user: false, beta: true });
+    expect(flags.enabled(NOTIFY_USER_FLAG_ID)).toBe(true);
+
+    Object.assign(ctx.get(IBootstrapService).args, { surface: 'tui' });
+    flags.setConfigOverrides({ notify_user: false });
+    expect(flags.enabled(NOTIFY_USER_FLAG_ID)).toBe(true);
   });
 
   it('is offered only when the flag is on and the host renders the update panel', () => {

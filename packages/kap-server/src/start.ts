@@ -25,6 +25,7 @@ import {
   NOTIFY_USER_UI_CAPABILITY,
   PluginChanged,
   logSeed,
+  migrateLegacyMasterEnvTower,
   resolveConfigPath,
   resolveKimiHome,
   resolveLoggingConfig,
@@ -218,17 +219,23 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   const logging = resolveLoggingConfig({ homeDir, env: process.env });
   let boundPort = port;
   const localOriginHost = host.includes(':') ? `[${host}]` : host;
+  const bootstrapEnv =
+    opts.pluginMarketplaceUrl === undefined
+      ? opts.env
+      : {
+          ...(opts.env ?? process.env),
+          KIMI_CODE_PLUGIN_MARKETPLACE_URL: opts.pluginMarketplaceUrl,
+        };
+  migrateLegacyMasterEnvTower({
+    homeDir,
+    configPath,
+    env: bootstrapEnv ?? process.env,
+  });
   const { app: core } = bootstrap(
     {
       homeDir,
       configPath,
-      env:
-        opts.pluginMarketplaceUrl === undefined
-          ? opts.env
-          : {
-              ...(opts.env ?? process.env),
-              KIMI_CODE_PLUGIN_MARKETPLACE_URL: opts.pluginMarketplaceUrl,
-            },
+      env: bootstrapEnv,
       clientIdentity: opts.hostIdentity,
       args: {
         requestHeaders: createKimiDefaultHeaders({ homeDir, ...opts.hostIdentity }),
@@ -236,6 +243,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
         displayName: opts.hostIdentity.displayName,
         replyStyleGuide: opts.hostIdentity.replyStyleGuide,
         uiCapabilities: [NOTIFY_USER_UI_CAPABILITY],
+        surface: opts.hostIdentity.platform === 'kimi_code_desktop' ? 'desktop' : 'web',
       },
     },
     [...logSeed(logging), ...(opts.seeds ?? [])],

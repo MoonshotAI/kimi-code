@@ -249,8 +249,10 @@ describe('tower flag — resolution', () => {
     expect(flags.explain(TOWER_FLAG_ID)).toMatchObject({
       id: TOWER_FLAG_ID,
       env: TOWER_FLAG_ENV,
-      defaultEnabled: false,
+      stage: 'experimental',
+      effectTiming: 'restart',
       enabled: false,
+      active: false,
       source: 'default',
     });
   });
@@ -281,24 +283,23 @@ describe('tower flag — resolution', () => {
     });
   });
 
-  it('lets the master env turn the flag on only when env and config are unset', async () => {
+  it('ignores the beta master env and beta config switch because tower is experimental', async () => {
     const masterOnly = makeFlags({ [MASTER_ENV]: 'true' });
     expect(masterOnly.flags.explain(TOWER_FLAG_ID)).toMatchObject({
-      enabled: true,
-      source: 'master-env',
-    });
-
-    const configured = makeFlags({ [MASTER_ENV]: 'true' });
-    await configured.config.set(EXPERIMENTAL_SECTION, { [TOWER_FLAG_ID]: false });
-    expect(configured.flags.explain(TOWER_FLAG_ID)).toMatchObject({
       enabled: false,
-      source: 'config',
-      configValue: false,
+      source: 'default',
     });
 
-    const overridden = makeFlags({ [TOWER_FLAG_ENV]: 'false', [MASTER_ENV]: 'true' });
+    const betaConfigured = makeFlags();
+    await betaConfigured.config.set(EXPERIMENTAL_SECTION, { beta: true });
+    expect(betaConfigured.flags.explain(TOWER_FLAG_ID)).toMatchObject({
+      enabled: false,
+      source: 'default',
+    });
+
+    const overridden = makeFlags({ [TOWER_FLAG_ENV]: 'true', [MASTER_ENV]: 'false' });
     expect(overridden.flags.explain(TOWER_FLAG_ID)).toMatchObject({
-      enabled: false,
+      enabled: true,
       source: 'env',
     });
   });
