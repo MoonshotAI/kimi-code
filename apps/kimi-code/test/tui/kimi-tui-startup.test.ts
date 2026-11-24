@@ -4539,6 +4539,34 @@ describe('KimiTUI resume location and sessions tabs', () => {
     expect(transcriptText(driver)).toContain(`Switched to ${worktree} to resume this session.`);
   });
 
+  it('resolves relative startup --add-dir against the launch checkout before switching to a resumed worktree session', async () => {
+    const { project, worktree, resolveWorkLocation } = places();
+    const harness = makeHarness(makeSession({ id: 'ses-wt' }), {
+      listSessions: vi.fn(async () => [
+        { id: 'ses-wt', title: 'Worktree work', workDir: worktree, projectWorkDir: project },
+      ]),
+      resolveWorkLocation,
+    });
+    const driver = makeDriver(harness, {
+      ...makeStartupInput({ session: 'ses-wt', model: 'k2' }),
+      additionalDirs: ['../shared', '~/team-dir'],
+      workDir: project,
+      projectRoot: project,
+      isGitRepo: true,
+    }) as ResumeDriver;
+
+    await driver.locateStartupSession();
+    const expectedShared = resolve(project, '..', 'shared').replaceAll('\\', '/');
+    expect(driver.state.appState.additionalDirs).toEqual([expectedShared, '~/team-dir']);
+
+    await expect(driver.init()).resolves.toBe(true);
+    expect(harness.resumeSession).toHaveBeenCalledWith({
+      id: 'ses-wt',
+      additionalDirs: [expectedShared, '~/team-dir'],
+      replayTurnLimit: REPLAY_FETCH_TURN_LIMIT,
+    });
+  });
+
   it('resumes a same-project session whose worktree directory was deleted and warns in the transcript', async () => {
     const { project, resolveWorkLocation } = places();
     const missing = join(project, 'gone-worktree');

@@ -40,6 +40,7 @@ import {
   TuiMainScreen,
 } from '@moonshot-ai/pi-tui';
 
+import { resolveAdditionalDirs } from '#/cli/launch-paths';
 import type { CLIOptions } from '#/cli/options';
 import { MigrationScreenComponent, type MigrationScreenResult } from '#/migration/index';
 import { copyTextToClipboard } from '#/utils/clipboard/clipboard-text';
@@ -447,6 +448,7 @@ export class KimiTUI {
   private readonly telemetryDisabled: boolean;
   private startupNotice: string | undefined;
   private startupResume?: { readonly target: SessionSummary; readonly plan: ResumePlan };
+  private resolvedStartupAdditionalDirs?: readonly string[];
   private lastActivityMode: string | undefined;
   private currentLoadingTip: { kind: LoadingTipKind; tip: string | undefined } | undefined =
     undefined;
@@ -1185,14 +1187,18 @@ export class KimiTUI {
   }
 
   private async planStartupResume(target: SessionSummary): Promise<void> {
+    const launchDir = this.state.appState.workDir;
     const plan = await planResume(this.harness, target, this.state.appState);
     this.startupResume = { target, plan };
     if (plan.kind === 'switch') {
+      const additionalDirs = resolveAdditionalDirs(this.options.startup.additionalDirs, launchDir);
+      this.resolvedStartupAdditionalDirs = additionalDirs;
       this.setAppState({
         workDir: plan.location.cwd,
         projectRoot: plan.location.projectRoot,
         isGitRepo: plan.location.isGitRepo,
         worktree: plan.location.worktree,
+        ...(additionalDirs === undefined ? {} : { additionalDirs }),
       });
     }
   }
@@ -1224,7 +1230,8 @@ export class KimiTUI {
       agentProfile: startup.agentProfile,
       agentFiles: startup.agentFiles?.length ? [...startup.agentFiles] : undefined,
     };
-    const startupAdditionalDirs = this.options.startup.additionalDirs ?? [];
+    const startupAdditionalDirs =
+      this.resolvedStartupAdditionalDirs ?? this.options.startup.additionalDirs ?? [];
     if (startupAdditionalDirs.length > 0) {
       createSessionOptions.additionalDirs = [...startupAdditionalDirs];
     }
@@ -3362,7 +3369,7 @@ export class KimiTUI {
     };
     const additionalDirs =
       this.session === undefined && this.state.appState.sessionId === '' && !this.hasSessionHistory
-        ? (this.options.startup.additionalDirs ?? [])
+        ? (this.resolvedStartupAdditionalDirs ?? this.options.startup.additionalDirs ?? [])
         : this.state.appState.additionalDirs;
     if (additionalDirs.length > 0) {
       options.additionalDirs = [...additionalDirs];
