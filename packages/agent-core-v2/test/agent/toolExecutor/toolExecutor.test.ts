@@ -487,7 +487,7 @@ describe('AgentToolExecutorService', () => {
       }),
     ]);
 
-    expect(results).toEqual([expect.objectContaining({ stopTurn: false })]);
+    expect(results).toEqual([expect.objectContaining({ output: 'Read result' })]);
     expect(readTool.calls).toHaveLength(1);
     expect(readTool.calls[0]?.args).toEqual({
       path: 'src/main.swift',
