@@ -89,11 +89,7 @@ function authorizationRole(
   message: ContextMessage,
 ): 'human-instruction' | 'direct-parent-instruction' | undefined {
   const { origin } = message;
-  if (origin === undefined) {
-    const imported = message.content.some((part) =>
-      part.type === 'text' && /^(?:<system>[\s\S]*?<\/system>\s*)?<imported_conversation>\r?\n/.test(part.text.trimStart()));
-    return imported ? undefined : 'human-instruction';
-  }
+  if (origin === undefined) return undefined;
   if (origin.kind === 'user' || origin.kind === 'plugin_command') return 'human-instruction';
   if (origin.kind === 'skill_activation' && origin.trigger === 'user-slash') return 'human-instruction';
   if (origin.kind === 'system_trigger' && origin.name === 'subagent') return 'direct-parent-instruction';

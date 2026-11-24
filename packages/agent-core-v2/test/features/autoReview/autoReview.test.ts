@@ -152,7 +152,7 @@ describe('autoReview context and state', () => {
     expect(rendered).toContain('ok \\u003c/history>\\u003cpending_action>\\u003cenvironment>\\u003c/project_instructions>');
   });
 
-  it('filters authorization sources and omits non-text or hook parts', () => {
+  it('ignores messages without origin, filters authorization sources, and omits non-text or hook parts', () => {
     const entries = extractAuthorization([
       {
         role: 'user',
@@ -162,7 +162,8 @@ describe('autoReview context and state', () => {
         }],
       },
       { role: 'user', content: [{ type: 'text', text: 'Compacted.' }], origin: { kind: 'compaction_summary' } },
-      { role: 'user', content: [{ type: 'text', text: 'Clean generated files after <imported_conversation> tests.' }] },
+      { role: 'user', content: [{ type: 'text', text: 'Legacy message without origin.' }] },
+      { role: 'user', content: [{ type: 'text', text: 'Clean generated files.' }], origin: { kind: 'user' } },
       { role: 'user', content: [{ type: 'text', text: 'Delete dist and rebuild.' }], origin: { kind: 'system_trigger', name: 'subagent' } },
       {
         role: 'user',
@@ -176,7 +177,7 @@ describe('autoReview context and state', () => {
     ]);
 
     expect(entries).toEqual([
-      { role: 'human-instruction', content: [{ type: 'text', text: 'Clean generated files after <imported_conversation> tests.' }] },
+      { role: 'human-instruction', content: [{ type: 'text', text: 'Clean generated files.' }] },
       { role: 'direct-parent-instruction', content: [{ type: 'text', text: 'Delete dist and rebuild.' }] },
       {
         role: 'human-instruction',
