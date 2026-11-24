@@ -7,6 +7,7 @@ import { sessionInfoStore } from '@moonshot-ai/app-client/stores';
 import type { PanelTab } from '@moonshot-ai/app-client/composables';
 import type { PanelLauncherType } from '@moonshot-ai/app-client/panel';
 import SessionInfoContext from './SessionInfoContext.vue';
+import SessionInfoDevice from './SessionInfoDevice.vue';
 import SessionInfoFolder from './SessionInfoFolder.vue';
 import SessionInfoTabs from './SessionInfoTabs.vue';
 import type { SessionInfoMode } from '../../composables/useSessionInfoLayout';
@@ -44,6 +45,7 @@ const { t } = useI18n();
 const { contextInspectorEnabled } = useContextInspector();
 const store = sessionInfoStore();
 const rows = computed(() => store.rows(props.sessionId));
+const deviceTarget = computed(() => store.deviceForSession(props.sessionId));
 const contextState = computed(() => store.contextState?.(props.sessionId));
 const showFolders = ref(false);
 let folderLoadingTimer: ReturnType<typeof setTimeout> | undefined;
@@ -99,6 +101,7 @@ watch(
 <template>
   <aside class="session-info" :class="`is-${mode}`" role="complementary" :aria-label="t('header.sessionInfo')">
     <div class="si-body">
+      <SessionInfoDevice :target="deviceTarget" />
       <div v-if="showFolders" class="si-folders">
         <SessionInfoFolder
           v-for="row in rows"

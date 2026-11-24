@@ -25,6 +25,7 @@ import turnFoldSource from '../../../../packages/app-components/src/chat/TurnFol
 const store = vi.hoisted(() => ({
   rows: vi.fn(),
   foldersForSession: vi.fn(),
+  deviceForSession: vi.fn(),
   contextState: vi.fn<(_sessionId: string) => SessionContextInfoState | undefined>(),
   observe: vi.fn(),
   observeContext: vi.fn(),
@@ -43,6 +44,7 @@ let host: HTMLDivElement | undefined;
 beforeEach(() => {
   store.rows.mockReset();
   store.foldersForSession.mockReset();
+  store.deviceForSession.mockReset();
   store.contextState.mockReset();
   store.observe.mockReset();
   store.observeContext.mockReset();

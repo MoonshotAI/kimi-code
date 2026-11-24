@@ -1090,6 +1090,21 @@ export interface RemoteControlStatus {
   };
 }
 
+export interface AppGpuStats {
+  index: number;
+  name: string;
+  memoryTotal?: number;
+  memoryUsed?: number;
+  utilization?: number;
+}
+
+export interface AppSystemStats {
+  cpu: { usage?: number; cores: number; limited: boolean };
+  memory: { total: number; used: number; limited: boolean };
+  disk?: { path: string; total: number; used: number; available: number };
+  gpus: AppGpuStats[];
+}
+
 export interface AppServerMeta {
   protocolVersion: string;
   serverVersion: string;
@@ -1120,6 +1135,7 @@ export interface KimiWebApi {
   dispose(): void;
   getHealth(): Promise<{ status: 'ok'; uptimeSec: number }>;
   getMeta(): Promise<AppServerMeta>;
+  getSystemStats(path?: string, options?: ReadRequestOptions): Promise<AppSystemStats>;
   getRemoteControlStatus(): Promise<RemoteControlStatus>;
   setRemoteControlEnabled(enabled: boolean): Promise<RemoteControlStatus>;
   listRemoteControlDevices(): Promise<RcDeviceList>;

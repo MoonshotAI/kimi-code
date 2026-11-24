@@ -546,6 +546,13 @@ export interface WireDevice {
   upgrade_error?: string;
 }
 
+export interface WireSystemStats {
+  cpu: { usage?: number; cores: number; limited: boolean };
+  memory: { total: number; used: number; limited: boolean };
+  disk?: { path: string; total: number; used: number; available: number };
+  gpus: Array<{ index: number; name: string; memory_total?: number; memory_used?: number; utilization?: number }>;
+}
+
 export interface WireDeviceTestResult {
   connected: boolean;
   remote_version?: string;

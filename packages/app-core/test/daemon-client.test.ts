@@ -125,6 +125,29 @@ it('opens daemon authentication only for server credentials and not Kimi login e
   }
 });
 
+it('reads system stats as a background request and maps GPU fields', async () => {
+  const request = vi.fn().mockResolvedValue(envelope({
+    cpu: { usage: 0.5, cores: 4, limited: true },
+    memory: { total: 8, used: 2, limited: true },
+    disk: { path: '/srv/app', total: 10, used: 4, available: 5 },
+    gpus: [{ index: 0, name: 'NVIDIA L4', memory_total: 24, memory_used: 12, utilization: 0.5 }],
+  }));
+  vi.stubGlobal('fetch', request);
+  try {
+    const stats = await createApi().getSystemStats('/srv/app', { background: true });
+
+    expect(request.mock.calls[0]?.[0]).toBe('http://daemon.test/api/v1/system/stats?path=%2Fsrv%2Fapp');
+    expect(stats).toEqual({
+      cpu: { usage: 0.5, cores: 4, limited: true },
+      memory: { total: 8, used: 2, limited: true },
+      disk: { path: '/srv/app', total: 10, used: 4, available: 5 },
+      gpus: [{ index: 0, name: 'NVIDIA L4', memoryTotal: 24, memoryUsed: 12, utilization: 0.5 }],
+    });
+  } finally {
+    vi.unstubAllGlobals();
+  }
+});
+
 describe('DaemonKimiWebApi lists across devices', () => {
   beforeEach(() => {
     vi.stubGlobal('fetch', vi.fn());

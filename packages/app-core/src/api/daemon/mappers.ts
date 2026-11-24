@@ -12,6 +12,7 @@ import type {
   AppMcpAuthStatus,
   AppMcpServerLocator,
   AppModel,
+  AppSystemStats,
   AppPluginCapabilities,
   AppPluginMarketplaceEntry,
   AppPluginMcpServerInfo,
@@ -65,6 +66,7 @@ import type {
   WireWorkspace,
   WireEvent,
   WireDevice,
+  WireSystemStats,
   WireConfig,
   WireInteraction,
 } from './wire';
@@ -663,6 +665,21 @@ export function toAppDevice(wire: WireDevice): AppDevice {
     remoteUpgrade: wire.remote_upgrade,
     upgradeStatus: wire.upgrade_status,
     upgradeError: wire.upgrade_error,
+  };
+}
+
+export function toAppSystemStats(wire: WireSystemStats): AppSystemStats {
+  return {
+    cpu: wire.cpu,
+    memory: wire.memory,
+    disk: wire.disk,
+    gpus: wire.gpus.map((gpu) => ({
+      index: gpu.index,
+      name: gpu.name,
+      memoryTotal: gpu.memory_total,
+      memoryUsed: gpu.memory_used,
+      utilization: gpu.utilization,
+    })),
   };
 }
 

@@ -21,6 +21,11 @@ export type SessionFolderGitState =
   | { status: 'non-git' }
   | { status: 'error' };
 
+export interface SessionDevicePlace {
+  readonly deviceId: string;
+  readonly path: string;
+}
+
 export interface SessionFolderInfoRow extends WorkspaceFolder {
   state: SessionFolderGitState;
 }
@@ -43,12 +48,23 @@ export const useSessionInfoStore = defineStore('kimi.sessionInfo', () => {
   const contextInFlightBySession = new Map<string, Promise<void>>();
   const contextQueuedRefreshBySession = new Map<string, Promise<void>>();
 
-  function foldersForSession(sessionId: string): WorkspaceFolder[] {
+  function placeOfSession(sessionId: string) {
     const session = sessionsStore().sessions.find((item) => item.id === sessionId);
-    if (!session) return [];
+    if (!session) return undefined;
     const workspaceId = workspacesStore().workspaceIdForSession(session);
     const workspace = workspacesStore().mergedWorkspaces.find((item) => item.id === workspaceId);
-    return workspaceFolders({ root: workspace?.root ?? session.cwd, additionalDirs: workspace?.additionalDirs ?? [] });
+    return { root: workspace?.root ?? session.cwd, workspace, deviceId: session.deviceId ?? workspace?.deviceId };
+  }
+
+  function foldersForSession(sessionId: string): WorkspaceFolder[] {
+    const place = placeOfSession(sessionId);
+    if (!place) return [];
+    return workspaceFolders({ root: place.root, additionalDirs: place.workspace?.additionalDirs ?? [] });
+  }
+
+  function deviceForSession(sessionId: string): SessionDevicePlace | undefined {
+    const place = placeOfSession(sessionId);
+    return place?.deviceId === undefined ? undefined : { deviceId: place.deviceId, path: place.root };
   }
 
   function rows(sessionId: string): SessionFolderInfoRow[] {
@@ -308,6 +324,7 @@ export const useSessionInfoStore = defineStore('kimi.sessionInfo', () => {
 
   return {
     foldersForSession,
+    deviceForSession,
     rows,
     contextState,
     observe,

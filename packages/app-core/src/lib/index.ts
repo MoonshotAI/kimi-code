@@ -19,6 +19,7 @@ export * from './bundledFonts';
 export * from './formatDuration';
 export * from './formatMessageTime';
 export * from './formatTokens';
+export * from './formatByteSize';
 export * from './formatZonedDateTime';
 export * from './deviceDisplay';
 export * from './isAbsoluteLocalPath';

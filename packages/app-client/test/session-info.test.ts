@@ -63,6 +63,18 @@ describe('sessionInfoStore', () => {
     expect(sessionInfoStore().foldersForSession('missing')).toEqual([]);
   });
 
+  it('names the device and project root of a remote session and nothing for a local one', () => {
+    sessionsStore().setSessions([
+      { id: 's1', workspaceId: 'ws1', cwd: '/srv/app/src', deviceId: 'gpu-box' } as AppSession,
+      { id: 's2', workspaceId: 'ws2', cwd: '/local' } as AppSession,
+    ]);
+    workspacesStore().workspaces = [{ ...seedWorkspace('ws1', '/srv/app', []), deviceId: 'gpu-box' }, seedWorkspace('ws2', '/local', [])];
+
+    expect(sessionInfoStore().deviceForSession('s1')).toEqual({ deviceId: 'gpu-box', path: '/srv/app' });
+    expect(sessionInfoStore().deviceForSession('s2')).toBeUndefined();
+    expect(sessionInfoStore().deviceForSession('missing')).toBeUndefined();
+  });
+
   it('resolves a historical session workspace by cwd when workspaceId is missing', () => {
     sessionsStore().setSessions([{ id: 's1', cwd: '/shared' } as AppSession]);
     workspacesStore().workspaces = [seedWorkspace('ws1', '/shared', ['/one'])];

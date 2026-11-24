@@ -19,6 +19,7 @@ import type {
   AppProvider,
   AppProviderDetail,
   AppServerMeta,
+  AppSystemStats,
   AuthResult,
   CreateFeedbackInput,
   FeedbackAttachmentInput,
@@ -125,6 +126,7 @@ import {
   toWireSessionRatingReport,
   toAppWorkspace,
   toAppDevice,
+  toAppSystemStats,
   wireEventSessionId,
 } from './mappers';
 import type {
@@ -136,6 +138,7 @@ import type {
   WireCreateProviderRequest,
   WireEvent,
   WireDevice,
+  WireSystemStats,
   WireDeviceDefinition,
   WireDeviceTestResult,
   WireSshDeviceDefinition,
@@ -1674,6 +1677,10 @@ export class DaemonKimiWebApi implements KimiWebApi {
         isDir: e.is_dir,
       })),
     };
+  }
+
+  async getSystemStats(path?: string, options?: ReadRequestOptions): Promise<AppSystemStats> {
+    return toAppSystemStats(await this.http.get<WireSystemStats>('/system/stats', { path }, options));
   }
 
   async listDevices(): Promise<AppDevice[]> {
