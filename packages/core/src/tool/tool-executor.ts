@@ -6,6 +6,7 @@ import { clock } from '#/utils/clock';
 import { log, type LogContext } from '#/utils/log';
 import { now } from '#/utils/now';
 import { parseToolCallArguments } from '#/tool/args';
+import { normalizeToolArgs } from '#/tool/tool-args-normalize';
 
 import { memoryOutputStore } from './output-store';
 import { ToolTimeoutError } from './types';
@@ -331,6 +332,7 @@ class CallControl<TContext> {
       if (tool === undefined) {
         throw new ToolStop(rejected('resolve', `Tool "${this.call.name}" not found`, undefined, 'resolve'));
       }
+      this.setArgs(normalizeToolArgs(tool, parsed.data));
       this.decideSync('validate', (ctx) => this.host.hook?.validating?.(ctx));
       const synthetic = await this.prepare(tool);
       if (synthetic !== undefined) return this.returned(synthetic);
