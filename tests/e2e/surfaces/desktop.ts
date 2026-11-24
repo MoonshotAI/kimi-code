@@ -152,8 +152,7 @@ class DesktopDriver extends PageDriver {
   }
 
   private dropOutput(): void {
-    this.child.stdout?.destroy();
-    this.child.stderr?.destroy();
+    for (const pipe of this.child.stdio) pipe?.destroy();
   }
 
   private async wait<T>(label: string, check: () => T | undefined): Promise<Exclude<T, undefined>> {
