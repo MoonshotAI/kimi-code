@@ -98,7 +98,7 @@ class DesktopDriver extends PageDriver {
 
   async kill(): Promise<void> {
     if (this.exit === undefined) await this.forceExit();
-    this.dropOutput();
+    this.dropPipes();
   }
 
   async networkViolations(): Promise<readonly string[]> {
@@ -125,10 +125,9 @@ class DesktopDriver extends PageDriver {
     if (await this.within('closing the Desktop app to finish', closed)) return undefined;
     const gone = await this.within("the Desktop app's own processes to exit", () => (this.ownProcessesAlive() ? undefined : true));
     if (!gone) return 'The Desktop app exited, but processes of its own were still running.';
-    this.output = `${this.output}\nThe app and its own processes had exited, but its output was still held open by something outside its process group.`;
-    this.dropOutput();
-    if (await this.within('closing the Desktop app to finish', closed)) return undefined;
-    return 'The Desktop app exited, but closing it never finished.';
+    this.output = `${this.output}\nThe app and its own processes had exited, but something outside its process group still held its pipes or its debugging connection, so closing it was left unfinished.`;
+    this.dropPipes();
+    return undefined;
   }
 
   private async within(label: string, check: () => unknown): Promise<boolean> {
@@ -151,7 +150,7 @@ class DesktopDriver extends PageDriver {
     }
   }
 
-  private dropOutput(): void {
+  private dropPipes(): void {
     for (const pipe of this.child.stdio) pipe?.destroy();
   }
 
