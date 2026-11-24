@@ -6,6 +6,7 @@ export interface PorcelainWorktree {
   readonly branch: string | undefined;
   readonly bare: boolean;
   readonly prunable: boolean;
+  readonly locked: boolean;
 }
 
 const BRANCH_PREFIX = 'refs/heads/';
@@ -29,6 +30,7 @@ export function parseWorktreeList(output: string): readonly PorcelainWorktree[] 
       branch: branch?.startsWith(BRANCH_PREFIX) === true ? branch.slice(BRANCH_PREFIX.length) : branch,
       bare: attributes.has('bare'),
       prunable: attributes.has('prunable'),
+      locked: attributes.has('locked'),
     });
   }
   return entries;
@@ -69,4 +71,15 @@ export function hiddenIndexEntries(output: string): HiddenIndexEntry[] {
     }
   }
   return entries;
+}
+
+export function submodulePaths(output: string): string[] {
+  const paths: string[] = [];
+  for (const field of splitNul(output)) {
+    const tab = field.indexOf('\t');
+    if (tab === -1) continue;
+    const [, mode = ''] = field.slice(0, tab).split(' ');
+    if (mode === '160000') paths.push(field.slice(tab + 1));
+  }
+  return paths;
 }

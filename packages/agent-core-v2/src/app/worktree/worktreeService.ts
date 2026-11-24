@@ -42,6 +42,7 @@ import {
   hiddenIndexEntries,
   parseWorktreeList,
   splitNul,
+  submodulePaths,
   type PorcelainWorktree,
 } from './worktreePorcelain';
 
@@ -254,9 +255,18 @@ export class WorktreeService implements IWorktreeService {
         { details: { path: check.path, uniqueCommits: check.uniqueCommits } },
       );
     }
-
-    const forceArgs = check.missing || check.uncommittedFiles > 0 ? ['--force'] : [];
-    const removed = await this.git(['worktree', 'remove', ...forceArgs, check.path], repo.root);
+    const allowForce = input.force === true;
+    const forceArgs =
+      allowForce && check.locked === true
+        ? ['--force', '--force']
+        : allowForce
+          ? ['--force']
+          : check.hasSubmodules === true
+            ? []
+            : check.missing || check.uncommittedFiles > 0
+              ? ['--force']
+              : [];
+    const removed = await this.git(['worktree', 'remove', ...forceArgs, check.path], repo.root, { untimed: true });
     if (removed.exitCode !== 0) throw gitFailed(`Could not remove the worktree at ${check.path}.`, removed);
     if (input.deleteBranch && check.branch !== undefined && target.worktree.head !== undefined) {
       const deleted = await this.git(
@@ -289,11 +299,10 @@ export class WorktreeService implements IWorktreeService {
 
     const worktreesDir = this.worktreesDir(repo.root);
     await this.fs.mkdir(worktreesDir, { recursive: true });
-    const parent = await canonicalPath(this.fs, worktreesDir);
+    const rawParent = resolve(worktreesDir);
+    const parent = await canonicalPath(this.fs, rawParent);
     const registered = new Set(
-      (await this.linkedEntries(repo))
-        .filter(({ worktree }) => worktree.managed)
-        .map(({ worktree }) => worktree.name),
+      (await this.managedEntries(repo, rawParent, parent)).map(({ worktree }) => worktree.name),
     );
     const taken = async (candidate: string): Promise<boolean> =>
       registered.has(candidate) || (await this.exists(join(parent, candidate)));
@@ -426,37 +435,130 @@ export class WorktreeService implements IWorktreeService {
     return { root: await canonicalPath(this.fs, repoRoot), bare: main.bare, entries };
   }
 
+  private async managedParentDirs(repo: Repository): Promise<{ readonly raw: string; readonly canonical: string }> {
+    const raw = resolve(this.worktreesDir(repo.root));
+    const canonical = await canonicalPath(this.fs, raw);
+    return { raw, canonical };
+  }
+
+  private async resolveManagedOrLocked(
+    entry: PorcelainWorktree,
+    parentCanonical: string,
+  ): Promise<LinkedEntry | undefined> {
+    const lstat = await this.fs.lstat(entry.path).catch(() => undefined);
+    if (lstat?.isSymbolicLink === true) return undefined;
+    const path =
+      lstat === undefined || sameDir(dirname(entry.path), parentCanonical)
+        ? entry.path
+        : await canonicalPath(this.fs, entry.path);
+    const missing = entry.prunable || lstat?.isDirectory !== true;
+    const managed = sameDir(dirname(path), parentCanonical);
+    return {
+      entry,
+      worktree: { path, name: basename(path), head: entry.head, branch: entry.branch, missing, managed },
+    };
+  }
+
+  private async managedEntries(
+    repo: Repository,
+    rawParent: string,
+    canonicalParent: string,
+  ): Promise<readonly LinkedEntry[]> {
+    const candidates = repo.entries
+      .slice(1)
+      .filter((entry) => sameDir(dirname(entry.path), canonicalParent) || sameDir(dirname(entry.path), rawParent));
+    const resolved = await Promise.all(
+      candidates.map((entry) => this.resolveManagedOrLocked(entry, canonicalParent)),
+    );
+    return resolved.filter((item): item is LinkedEntry => item !== undefined && item.worktree.managed);
+  }
+
   private async linkedEntries(repo: Repository): Promise<readonly LinkedEntry[]> {
-    const parent = await canonicalPath(this.fs, this.worktreesDir(repo.root));
-    const found: LinkedEntry[] = [];
-    for (const entry of repo.entries.slice(1)) {
-      const lstat = await this.fs.lstat(entry.path).catch(() => undefined);
-      if (lstat?.isSymbolicLink === true) continue;
-      const path = await canonicalPath(this.fs, entry.path);
-      const missing = entry.prunable || lstat?.isDirectory !== true;
-      const managed = sameDir(dirname(path), parent);
-      found.push({
+    const parent = await this.managedParentDirs(repo);
+    const entries = repo.entries.slice(1);
+    const results = Array.from<LinkedEntry | undefined>({ length: entries.length });
+    const toProbe: { readonly index: number; readonly entry: PorcelainWorktree }[] = [];
+
+    for (let i = 0; i < entries.length; i++) {
+      const entry = entries[i]!;
+      const maybeManaged =
+        sameDir(dirname(entry.path), parent.canonical) || sameDir(dirname(entry.path), parent.raw);
+      if (entry.prunable) {
+        results[i] = {
+          entry,
+          worktree: {
+            path: entry.path,
+            name: basename(entry.path),
+            head: entry.head,
+            branch: entry.branch,
+            missing: true,
+            managed: maybeManaged,
+          },
+        };
+        continue;
+      }
+      if (maybeManaged || entry.locked) {
+        toProbe.push({ index: i, entry });
+        continue;
+      }
+      results[i] = {
         entry,
-        worktree: { path, name: basename(path), head: entry.head, branch: entry.branch, missing, managed },
-      });
+        worktree: {
+          path: entry.path,
+          name: basename(entry.path),
+          head: entry.head,
+          branch: entry.branch,
+          missing: false,
+          managed: false,
+        },
+      };
     }
-    return found;
+
+    if (toProbe.length > 0) {
+      await Promise.all(
+        toProbe.map(async ({ index, entry }) => {
+          results[index] = await this.resolveManagedOrLocked(entry, parent.canonical);
+        }),
+      );
+    }
+
+    return results.filter((item): item is LinkedEntry => item !== undefined);
   }
 
   private async findLinkedEntry(repo: Repository, path: string): Promise<LinkedEntry> {
     const normalized = resolve(path);
-    const lstat = await this.fs.lstat(normalized).catch(() => undefined);
-    const wanted = lstat?.isSymbolicLink === true ? undefined : await canonicalPath(this.fs, normalized);
-    const match =
-      wanted === undefined
-        ? undefined
-        : (await this.linkedEntries(repo)).find(({ worktree }) => sameDir(worktree.path, wanted));
-    if (match === undefined) {
+    const targetStat = await this.fs.lstat(normalized).catch(() => undefined);
+    if (targetStat?.isSymbolicLink === true) {
       throw new Error2(ErrorCodes.WORKTREE_NOT_FOUND, `${path} is not a linked worktree of ${repo.root}.`, {
         details: { path, repoRoot: repo.root },
       });
     }
-    return match;
+    const wanted = await canonicalPath(this.fs, normalized);
+    const parent = await this.managedParentDirs(repo);
+    const linked = repo.entries.slice(1);
+    let matched = linked.find((entry) => sameDir(entry.path, wanted) || sameDir(entry.path, normalized));
+    if (matched === undefined) {
+      const nonPrunable = linked.filter((entry) => !entry.prunable);
+      const canonicalized = await Promise.all(
+        nonPrunable.map(async (entry) => ({
+          entry,
+          canonical: await canonicalPath(this.fs, entry.path),
+        })),
+      );
+      matched = canonicalized.find(({ canonical }) => sameDir(canonical, wanted))?.entry;
+    }
+    if (matched === undefined) {
+      throw new Error2(ErrorCodes.WORKTREE_NOT_FOUND, `${path} is not a linked worktree of ${repo.root}.`, {
+        details: { path, repoRoot: repo.root },
+      });
+    }
+    const resolved = await this.resolveManagedOrLocked(matched, parent.canonical);
+    if (resolved === undefined) {
+      throw new Error2(ErrorCodes.WORKTREE_NOT_FOUND, `${path} is not a linked worktree of ${repo.root}.`, {
+        details: { path, repoRoot: repo.root },
+      });
+    }
+    return resolved;
   }
 
   private async measureRemoval(
@@ -467,27 +569,51 @@ export class WorktreeService implements IWorktreeService {
   ): Promise<WorktreeRemovalCheck> {
     const { worktree } = target;
     let uncommittedFiles = 0;
+    let hasSubmodules = false;
     if (!worktree.missing) {
-      const status = await this.git(['status', '--porcelain=v1', '-z', '--untracked-files=all'], worktree.path);
+      const [status, indexInfo] = await Promise.all([
+        this.git(['status', '--porcelain=v1', '-z', '--untracked-files=all'], worktree.path),
+        this.inspectIndex(worktree.path),
+      ]);
       if (status.exitCode !== 0) throw gitFailed(`Could not read the status of ${worktree.path}.`, status);
-      uncommittedFiles = countStatusEntries(status.stdout) + (await this.countHiddenEdits(worktree.path));
+      uncommittedFiles = countStatusEntries(status.stdout) + indexInfo.hiddenEdits;
+      hasSubmodules = indexInfo.hasSubmodules;
     }
-    const sessions = await this.presence.sessionsUnder(worktree.path, { excludeSessionId });
+    const [sessions, uniqueCommits] = await Promise.all([
+      this.presence.sessionsUnder(worktree.path, { excludeSessionId }),
+      this.countUniqueCommits(repo, target, deleteBranch),
+    ]);
     return {
       path: worktree.path,
       missing: worktree.missing,
       branch: worktree.branch,
       uncommittedFiles,
-      uniqueCommits: await this.countUniqueCommits(repo, target, deleteBranch),
+      uniqueCommits,
       openSessionIds: sessions.openSessionIds,
       closedSessionCount: sessions.closedSessionCount,
+      ...(hasSubmodules ? { hasSubmodules: true } : {}),
+      ...(target.entry.locked ? { locked: true } : {}),
     };
   }
 
-  private async countHiddenEdits(root: string): Promise<number> {
+  private async inspectIndex(root: string): Promise<{ readonly hiddenEdits: number; readonly hasSubmodules: boolean }> {
     const listed = await this.git(['ls-files', '-v', '-s', '-z'], root);
     if (listed.exitCode !== 0) throw gitFailed(`Could not read the index of ${root}.`, listed);
     const hidden = hiddenIndexEntries(listed.stdout);
+    const submodules = submodulePaths(listed.stdout);
+    const [hiddenEdits, initializedSubmodules] = await Promise.all([
+      this.countHiddenEntries(root, hidden),
+      submodules.length === 0
+        ? Promise.resolve(false)
+        : Promise.all(submodules.map((subPath) => this.exists(join(root, subPath, '.git')))).then((hits) =>
+            hits.some(Boolean),
+          ),
+    ]);
+    return { hiddenEdits, hasSubmodules: initializedSubmodules };
+  }
+
+  private async countHiddenEntries(root: string, hidden: ReturnType<typeof hiddenIndexEntries>): Promise<number> {
+    if (hidden.length === 0) return 0;
     const checked = await Promise.all(
       hidden.map(async (entry) => ({
         entry,
@@ -531,9 +657,13 @@ export class WorktreeService implements IWorktreeService {
   private async countUniqueCommits(repo: Repository, target: LinkedEntry, deleteBranch: boolean): Promise<number> {
     const { branch, head } = target.worktree;
     if (head === undefined) return 0;
-    const otherHeads = repo.entries
-      .filter((entry) => entry !== target.entry)
-      .flatMap((entry) => (entry.head === undefined ? [] : [entry.head]));
+    const otherHeads = [
+      ...new Set(
+        repo.entries
+          .filter((entry) => entry !== target.entry)
+          .flatMap((entry) => (entry.head === undefined ? [] : [entry.head])),
+      ),
+    ];
     let tip: string;
     let excluded: string[];
     if (branch !== undefined) {
@@ -544,9 +674,11 @@ export class WorktreeService implements IWorktreeService {
       tip = head;
       excluded = ['--branches'];
     }
+    const args = ['rev-list', '--count', tip, '--not', ...excluded, '--remotes', '--tags'];
     const counted = await this.git(
-      ['rev-list', '--count', tip, '--not', ...excluded, '--remotes', '--tags', ...otherHeads],
+      otherHeads.length > 0 ? [...args, '--stdin'] : args,
       repo.root,
+      otherHeads.length > 0 ? { stdin: otherHeads.map((sha) => `^${sha}\n`).join('') } : undefined,
     );
     if (counted.exitCode !== 0) throw gitFailed(`Could not count the commits only reachable from ${tip}.`, counted);
     return Number.parseInt(counted.stdout.trim(), 10);

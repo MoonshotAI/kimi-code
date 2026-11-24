@@ -1113,6 +1113,67 @@ describe('WorktreeService', () => {
       expect(branches(repo)).toContain('branch-a');
       expect(branches(repo)).not.toContain('branch-b');
     });
+
+    it('detects initialized git submodules and requires force to remove the worktree', async () => {
+      const subSource = mkdtempSync(join(tmpdir(), 'kimi-sub-source-'));
+      try {
+        git(subSource, 'init', '-q');
+        git(subSource, 'config', 'user.email', 'test@example.com');
+        git(subSource, 'config', 'user.name', 'Test');
+        git(subSource, 'config', 'commit.gpgsign', 'false');
+        commitFile(subSource, 'lib.txt', 'v1\n');
+
+        git(repo, '-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', subSource, 'vendor/lib');
+        git(repo, 'commit', '-q', '-m', 'add submodule');
+
+        const created = await create({ name: 'with-sub' });
+        const wt = created.worktree.path;
+        const beforeInit = await service.inspectRemoval({ repoRoot: realRepo, path: wt, deleteBranch: false });
+        expect(beforeInit.hasSubmodules).toBeUndefined();
+
+        git(wt, '-c', 'protocol.file.allow=always', 'submodule', 'update', '--init', '-q');
+
+        const check = await service.inspectRemoval({ repoRoot: realRepo, path: wt, deleteBranch: false });
+        expect(check.hasSubmodules).toBe(true);
+
+        const refused = await failure(service.remove(removal(wt, { discard: 'all' })));
+        expect(refused.code).toBe('worktree.git_failed');
+        expect(refused.details?.['stderr']).toContain('submodules');
+        expect(existsSync(wt)).toBe(true);
+
+        await service.remove({ ...removal(wt), force: true });
+        expect(existsSync(wt)).toBe(false);
+        expect(registeredPaths(repo)).toEqual([realRepo]);
+      } finally {
+        rmSync(subSource, { recursive: true, force: true });
+      }
+    });
+
+    it('detects locked worktrees (including unavailable removable-drive paths) and requires force to remove them', async () => {
+      const created = await create({ name: 'locked-wt' });
+      const wt = created.worktree.path;
+      git(repo, 'worktree', 'lock', '--reason', 'on external drive', wt);
+
+      const check = await service.inspectRemoval({ repoRoot: realRepo, path: wt, deleteBranch: false });
+      expect(check.locked).toBe(true);
+      expect(check.missing).toBe(false);
+
+      const refused = await failure(service.remove(removal(wt, { discard: 'all' })));
+      expect(refused.code).toBe('worktree.git_failed');
+      expect(refused.details?.['stderr']).toContain('locked');
+      expect(existsSync(wt)).toBe(true);
+
+      rmSync(wt, { recursive: true, force: true });
+      const listedMissing = await service.list(repo);
+      expect(listedMissing.worktrees.find((item) => item.name === 'locked-wt')?.missing).toBe(true);
+
+      const checkMissing = await service.inspectRemoval({ repoRoot: realRepo, path: wt, deleteBranch: false });
+      expect(checkMissing.locked).toBe(true);
+      expect(checkMissing.missing).toBe(true);
+
+      await service.remove({ ...removal(wt), force: true });
+      expect(registeredPaths(repo)).toEqual([realRepo]);
+    });
   });
 
   describe('runSetupScript', () => {

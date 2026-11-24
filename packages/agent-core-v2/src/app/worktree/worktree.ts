@@ -87,10 +87,13 @@ export interface WorktreeRemovalCheck {
   readonly uniqueCommits: number;
   readonly openSessionIds: readonly string[];
   readonly closedSessionCount: number;
+  readonly hasSubmodules?: boolean;
+  readonly locked?: boolean;
 }
 
 export interface RemoveWorktreeInput extends InspectWorktreeRemovalInput {
   readonly discard: Pick<WorktreeRemovalCheck, 'uncommittedFiles' | 'uniqueCommits'> | 'all';
+  readonly force?: boolean;
 }
 
 export interface WorktreeLocation {
