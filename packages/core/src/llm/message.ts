@@ -237,6 +237,27 @@ export interface ToolMessage {
 
 export type Message = SystemMessage | UserMessage | AssistantMessage | ToolMessage;
 
+export const TOOL_LIFECYCLE_PART_KIND = 'tool_lifecycle';
+
+export interface ToolLifecycleContentPartMeta extends ContentPartMeta {
+  readonly kind: typeof TOOL_LIFECYCLE_PART_KIND;
+  readonly added: readonly string[];
+  readonly removed: readonly string[];
+}
+
+export function readToolLifecycleMeta(part: ContentPart): ToolLifecycleContentPartMeta | undefined {
+  if (part.type !== 'text') return undefined;
+  const meta = part.meta;
+  if (meta?.kind !== TOOL_LIFECYCLE_PART_KIND) return undefined;
+  if (!Array.isArray(meta['added']) || !meta['added'].every((name) => typeof name === 'string')) {
+    return undefined;
+  }
+  if (!Array.isArray(meta['removed']) || !meta['removed'].every((name) => typeof name === 'string')) {
+    return undefined;
+  }
+  return meta as ToolLifecycleContentPartMeta;
+}
+
 export function isVacuousContentPart(part: ContentPart): boolean {
   switch (part.type) {
     case 'text':

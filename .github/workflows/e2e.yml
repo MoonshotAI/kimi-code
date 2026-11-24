@@ -30,7 +30,16 @@ jobs:
           name: e2e-cli
           path: |
             apps/kimi-code/dist/
+            apps/kimi-code/dist-web/
             apps/kimi-code/native/
+          if-no-files-found: error
+          retention-days: 1
+      - uses: actions/upload-artifact@v7
+        with:
+          name: e2e-desktop
+          path: |
+            apps/desktop/out/
+            apps/desktop/desktop-dist/
           if-no-files-found: error
           retention-days: 1
 
@@ -89,6 +98,70 @@ jobs:
         if: failure()
         with:
           name: e2e-acp-failure
+          path: |
+            tests/e2e/test-results/
+            tests/e2e/playwright-report/
+          retention-days: 7
+
+  desktop:
+    name: Desktop (optional)
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - uses: actions/download-artifact@v8
+        with:
+          name: e2e-desktop
+          path: apps/desktop
+      - name: Install a virtual display and the libraries Electron needs
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb libgtk-3-0 libgbm1 libasound2t64
+      - name: Run the scenarios and driver self-tests on Desktop
+        run: xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" pnpm --filter @moonshot-ai/e2e exec playwright test --project=desktop --workers=1
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: e2e-desktop-failure
+          path: |
+            tests/e2e/test-results/
+            tests/e2e/playwright-report/
+          retention-days: 7
+
+  web:
+    name: Web (optional)
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - uses: actions/download-artifact@v8
+        with:
+          name: e2e-cli
+          path: apps/kimi-code
+      - name: Install the browser the Web scenarios run in
+        run: pnpm --filter @moonshot-ai/e2e exec playwright install --with-deps chromium
+      - name: Run the scenarios and driver self-tests on the Web interface
+        run: pnpm --filter @moonshot-ai/e2e exec playwright test --project=web
+        env:
+          TESTKIT_CLI_BUILD: dist
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: e2e-web-failure
           path: |
             tests/e2e/test-results/
             tests/e2e/playwright-report/

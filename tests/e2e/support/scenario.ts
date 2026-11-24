@@ -16,7 +16,9 @@ import { fakeModelConfig, startFakeModel, type FakeModel } from '@moonshot-ai/te
 import { expect, test as base, type TestInfo } from '@playwright/test';
 
 import { startAcp } from '../surfaces/acp';
+import { startDesktop } from '../surfaces/desktop';
 import { startTui } from '../surfaces/tui';
+import { startWeb } from '../surfaces/web';
 import { SURFACES, VERBS, type Product, type Surface, type SurfaceDriver, type SurfaceLaunch, type Verb } from './verbs';
 
 export { expect };
@@ -67,8 +69,9 @@ function startSurface(surface: Surface, launch: SurfaceLaunch): Promise<SurfaceD
     case 'acp':
       return startAcp(launch);
     case 'desktop':
+      return startDesktop(launch);
     case 'web':
-      throw new Error(`The ${surface} surface has no driver yet.`);
+      return startWeb(launch);
   }
 }
 
@@ -266,8 +269,9 @@ class ScenarioSession {
       await testInfo.attach('model-requests', { body: JSON.stringify({ requests, problems: model.problems() }, null, 2), contentType: 'application/json' });
     }
     if (driver !== undefined) {
-      for (const { name, body } of await driver.diagnostics()) {
-        await testInfo.attach(name, { body, contentType: 'text/plain' });
+      for (const diagnostic of await driver.diagnostics()) {
+        if ('path' in diagnostic) await testInfo.attach(diagnostic.name, { path: diagnostic.path });
+        else await testInfo.attach(diagnostic.name, { body: diagnostic.body, contentType: 'text/plain' });
       }
       const violations = await driver.networkViolations().catch((error: unknown) => [problemOf(error)]);
       await testInfo.attach('network-guard', { body: violations.join('\n'), contentType: 'text/plain' });
