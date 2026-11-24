@@ -152,6 +152,14 @@ function tailOf(bytes: Buffer, limit: number | undefined): { text: string; trunc
   return { text: bytes.subarray(start).toString('utf8'), truncated: true };
 }
 
+function exitStatusOf(child: ChildProcess): Promise<TerminalExitStatus> {
+  return new Promise((resolve) => {
+    child.once('exit', (exitCode, signal) => {
+      resolve({ exitCode, signal });
+    });
+  });
+}
+
 class AcpDriver implements SurfaceDriver {
   private readonly proc: TestProcess;
   private readonly home: TestHome;
@@ -466,40 +474,36 @@ class AcpDriver implements SurfaceDriver {
     const requested = Object.fromEntries((params.env ?? []).map(({ name, value }) => [name, value]));
     const output = await open(log, 'w');
     let child: ChildProcess;
+    let exited: Promise<TerminalExitStatus>;
     try {
-      child = await this.started(
-        spawn(params.command, params.args ?? [], {
-          cwd: params.cwd ?? this.home.workspace,
-          env: { ...kimiCliEnv(this.home), ...requested },
-          stdio: ['ignore', output.fd, output.fd],
-          detached: true,
-        }),
-      );
+      child = spawn(params.command, params.args ?? [], {
+        cwd: params.cwd ?? this.home.workspace,
+        env: { ...kimiCliEnv(this.home), ...requested },
+        stdio: ['ignore', output.fd, output.fd],
+        detached: true,
+      });
+      exited = exitStatusOf(child);
+      await this.started(child);
     } catch (error) {
       throw RequestError.internalError(undefined, `the editor could not start ${params.command}: ${reasonOf(error)}`);
     } finally {
       await output.close();
     }
     if (child.pid === undefined) throw RequestError.internalError(undefined, `the editor could not start ${params.command}: no process id`);
-    let settle: (status: TerminalExitStatus) => void = () => undefined;
-    const exited = new Promise<TerminalExitStatus>((resolve) => {
-      settle = resolve;
-    });
     const terminal: Terminal = { command: params.args?.[1], log, limit: params.outputByteLimit ?? undefined, pid: child.pid, exited, exit: undefined };
-    child.once('exit', (exitCode, signal) => {
-      terminal.exit = { exitCode, signal };
-      settle(terminal.exit);
+    void exited.then((status) => {
+      terminal.exit = status;
     });
     this.spawned.set(terminalId, terminal);
     this.terminals.set(terminalId, terminal);
     return { terminalId };
   }
 
-  private started(child: ChildProcess): Promise<ChildProcess> {
+  private started(child: ChildProcess): Promise<void> {
     return new Promise((resolve, reject) => {
       child.once('error', reject);
       child.once('spawn', () => {
-        resolve(child);
+        resolve();
       });
     });
   }
