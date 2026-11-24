@@ -238,6 +238,18 @@ describe('WorktreeExitController', () => {
         h.host.hasIgnoredFiles.mockResolvedValue(true);
       },
     ],
+    [
+      'an initialized submodule exists in the worktree',
+      (h: ReturnType<typeof makeHost>) => {
+        h.host.harness.inspectWorktreeRemoval.mockResolvedValue(check({ hasSubmodules: true }));
+      },
+    ],
+    [
+      'the worktree is locked',
+      (h: ReturnType<typeof makeHost>) => {
+        h.host.harness.inspectWorktreeRemoval.mockResolvedValue(check({ locked: true }));
+      },
+    ],
   ])('asks instead of deleting when %s', async (_case, vary) => {
     const harness = makeHost();
     harness.untouched();

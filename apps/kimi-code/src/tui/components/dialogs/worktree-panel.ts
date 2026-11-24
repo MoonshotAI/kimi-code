@@ -1,6 +1,7 @@
 import {
   Key,
   matchesKey,
+  truncateToWidth,
   visibleWidth,
   type Focusable,
   type TuiMouseEvent,
@@ -25,10 +26,8 @@ import { truncatePathLeft } from './session-picker';
 
 export type WorktreePanelRow =
   | { readonly kind: 'source'; readonly path: string; readonly current: boolean }
-  | { readonly kind: 'worktree'; readonly worktree: KimiWorktree; readonly current: boolean }
-  | { readonly kind: 'new' };
+  | { readonly kind: 'worktree'; readonly worktree: KimiWorktree; readonly current: boolean };
 
-export type WorktreePanelTarget = Exclude<WorktreePanelRow, { readonly kind: 'new' }>;
 export type WorktreeRow = Extract<WorktreePanelRow, { readonly kind: 'worktree' }>;
 
 export interface WorktreePanelNotice {
@@ -41,39 +40,59 @@ export interface WorktreePanelOptions {
   readonly rows: readonly WorktreePanelRow[];
   readonly pageSize?: number;
   readonly layout?: DockLayout;
-  readonly onOpen: (row: WorktreePanelTarget) => void;
-  readonly onNew: () => void;
+  readonly onOpen: (row: WorktreePanelRow) => void;
+  readonly onNew: (initialName?: string) => void;
   readonly onDelete: (row: WorktreeRow) => void;
   readonly onCancel: () => void;
 }
 
 const HINT = '↑↓ navigate · Enter open · Ctrl+N new · Ctrl+X delete · Esc cancel';
-const NEW_ROW_LABEL = '+ New worktree';
-const MISSING_NOTICE = "This worktree's directory is missing. Delete it to clean up the git record.";
+const MISSING_NOTICE = "This worktree's directory is missing. Press Ctrl+X to remove the git record.";
 const SOURCE_DELETE_NOTICE = "You can't delete the source checkout.";
 const CURRENT_DELETE_NOTICE = "You're in this worktree. Leave it first, or exit Kimi Code to clean it up.";
 const CURRENT_EXTERNAL_DELETE_NOTICE = "You're in this worktree. Switch to another checkout first.";
-const MIN_PATH_WIDTH = 12;
+const MIN_NAME_WIDTH = 8;
+const MAX_SUGGESTED_WORKTREE_NAME = 64;
+const WINDOWS_DEVICE_NAME = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/;
+
+export function suggestWorktreeName(query: string): string | undefined {
+  const sanitized = query
+    .trim()
+    .toLowerCase()
+    .replaceAll(/[/\\\s]+/g, '-')
+    .replaceAll(/[^a-z0-9._-]+/g, '-')
+    .replaceAll(/\.{2,}/g, '-')
+    .replaceAll(/-{2,}/g, '-')
+    .replace(/^[-.]+|[-.]+$/g, '')
+    .slice(0, MAX_SUGGESTED_WORKTREE_NAME)
+    .replace(/[-.]+$/g, '');
+  if (sanitized.length === 0 || WINDOWS_DEVICE_NAME.test(sanitized)) return undefined;
+  return sanitized;
+}
 
 export class WorktreePanelComponent extends DockSection implements Focusable {
   focused = false;
   private readonly list: SearchableList<WorktreePanelRow>;
   private readonly shownAt = Date.now();
+  private totalRows: number;
   private notice: WorktreePanelNotice | undefined;
   private rowRegions: readonly MouseRowRegion[] = [];
+  private emptyCreateRow: MouseRowRegion | undefined;
 
   constructor(private readonly opts: WorktreePanelOptions) {
     super(opts.layout);
+    this.totalRows = opts.rows.length;
     this.list = new SearchableList({
       items: opts.rows,
-      toSearchText: rowSearchText,
+      toSearchText: (row) => rowSearchText(row, opts.repoName),
       pageSize: opts.layout === undefined ? opts.pageSize : opts.layout.maxBodyRows,
-      initialIndex: Math.max(0, opts.rows.findIndex((row) => row.kind !== 'new' && row.current)),
+      initialIndex: Math.max(0, opts.rows.findIndex((row) => row.current)),
       searchable: true,
     });
   }
 
   setRows(rows: readonly WorktreePanelRow[]): void {
+    this.totalRows = rows.length;
     this.list.setItems(rows);
   }
 
@@ -97,11 +116,15 @@ export class WorktreePanelComponent extends DockSection implements Focusable {
     }
     const row = this.list.selected();
     if (matchesKey(data, Key.enter)) {
-      if (row !== undefined) this.open(row);
+      if (row !== undefined) {
+        this.open(row);
+      } else {
+        this.opts.onNew(suggestWorktreeName(this.list.view().query));
+      }
       return;
     }
     if (matchesKey(data, Key.ctrl('n'))) {
-      this.opts.onNew();
+      this.opts.onNew(suggestWorktreeName(this.list.view().query));
       return;
     }
     if (matchesKey(data, Key.ctrl('x'))) {
@@ -130,6 +153,18 @@ export class WorktreePanelComponent extends DockSection implements Focusable {
   protected override handlePartMouse(part: DockPart, event: TuiMouseEvent): TuiMouseEventResult | undefined {
     if (!this.focused) return focusOnUnfocusedMouse(event);
     if (part !== 'body') return undefined;
+    if (this.emptyCreateRow !== undefined) {
+      return handleSelectableListMouse({
+        event,
+        focused: this.focused,
+        shownAt: this.shownAt,
+        regions: [this.emptyCreateRow],
+        select: () => false,
+        activate: () => {
+          this.opts.onNew(suggestWorktreeName(this.list.view().query));
+        },
+      });
+    }
     return handleSelectableListMouse({
       event,
       focused: this.focused,
@@ -171,20 +206,26 @@ export class WorktreePanelComponent extends DockSection implements Focusable {
     const rows = this.layout === undefined ? view.items.slice(view.page.start, view.page.end) : view.items;
     if (rows.length === 0) {
       this.rowRegions = [];
-      return [currentTheme.fg('textMuted', '  No matching worktrees.')];
+      const suggested = suggestWorktreeName(view.query);
+      const heading = view.query.trim().length > 0 ? '  No matches' : '  No worktrees yet.';
+      const cta = suggested === undefined ? '+ Create new worktree' : `+ Create "${suggested}"`;
+      this.emptyCreateRow = { start: 2, end: 3, index: 0 };
+      return [
+        currentTheme.fg('textMuted', heading),
+        '',
+        currentTheme.fg('primary', `  ${SELECT_POINTER} `) +
+          currentTheme.boldFg('primary', cta) +
+          currentTheme.fg('textMuted', '  from HEAD'),
+      ];
     }
-    const sideWidth = Math.max(0, ...rows.map((row) => visibleWidth(rowSidePlain(row))));
-    const maxPathBudget = Math.max(MIN_PATH_WIDTH, width - 4 - (sideWidth > 0 ? sideWidth + 2 : 0));
-    const pathWidth = Math.min(
-      Math.max(0, ...rows.map((row) => (row.kind === 'new' ? 0 : visibleWidth(abbreviateHome(rowPath(row)))))),
-      maxPathBudget,
-    );
+    this.emptyCreateRow = undefined;
+    const nameWidth = measureNameWidth(rows, this.opts.repoName, width);
     const regions: MouseRowRegion[] = [];
     const lines: string[] = [];
     rows.forEach((row, offset) => {
       const index = startIndex + offset;
       const start = lines.length;
-      lines.push(renderRow(row, index === view.selectedIndex, pathWidth));
+      lines.push(renderRow(row, this.opts.repoName, index === view.selectedIndex, nameWidth));
       regions.push({ start, end: lines.length, index });
     });
     this.rowRegions = regions;
@@ -194,12 +235,42 @@ export class WorktreePanelComponent extends DockSection implements Focusable {
   private renderFoot(width: number): string[] {
     const view = this.list.view();
     const lines = [''];
-    if (this.layout === undefined) {
-      const below = view.items.length - view.page.end;
-      if (below > 0) lines.push(currentTheme.fg('textMuted', ` ▼ ${String(below)} more`));
+    const selected = view.items[view.selectedIndex];
+    const count = this.counterText(view);
+    if (selected !== undefined) {
+      const rightPlain = count === '' ? '' : `${count} `;
+      const rightWidth = visibleWidth(rightPlain);
+      const leftBudget = Math.max(1, width - 1 - (rightWidth > 0 ? rightWidth + 2 : 1));
+      const path = truncatePathLeft(abbreviateHome(rowPath(selected)), leftBudget);
+      const leftStyled = ` ${currentTheme.fg('textMuted', path)}`;
+      if (rightWidth === 0) {
+        lines.push(leftStyled);
+      } else {
+        const gap = Math.max(1, width - (1 + visibleWidth(path)) - rightWidth);
+        lines.push(`${leftStyled}${' '.repeat(gap)}${currentTheme.fg('textMuted', rightPlain)}`);
+      }
+    } else if (count !== '') {
+      const rightPlain = `${count} `;
+      const pad = Math.max(1, width - visibleWidth(rightPlain));
+      lines.push(`${' '.repeat(pad)}${currentTheme.fg('textMuted', rightPlain)}`);
     }
     lines.push(currentTheme.fg('primary', '─'.repeat(width)));
     return lines;
+  }
+
+  private counterText(view: ReturnType<SearchableList<WorktreePanelRow>['view']>): string {
+    if (view.query.length > 0) return `${String(view.items.length)} / ${String(this.totalRows)}`;
+    if (this.layout === undefined) {
+      const visibleCount = view.page.end - view.page.start;
+      if (view.items.length > visibleCount) {
+        return `${String(view.page.start + 1)}–${String(view.page.end)} / ${String(view.items.length)}`;
+      }
+      return '';
+    }
+    if (view.items.length > this.layout.maxBodyRows) {
+      return `${String(view.selectedIndex + 1)} / ${String(view.items.length)}`;
+    }
+    return '';
   }
 
   private finishLines(lines: readonly string[], width: number): string[] {
@@ -225,9 +296,7 @@ export class WorktreePanelComponent extends DockSection implements Focusable {
   }
 
   private open(row: WorktreePanelRow): void {
-    if (row.kind === 'new') {
-      this.opts.onNew();
-    } else if (row.current) {
+    if (row.current) {
       this.opts.onCancel();
     } else if (row.kind === 'worktree' && row.worktree.missing) {
       this.notice = { text: MISSING_NOTICE, tone: 'warning' };
@@ -237,7 +306,6 @@ export class WorktreePanelComponent extends DockSection implements Focusable {
   }
 
   private delete(row: WorktreePanelRow): void {
-    if (row.kind === 'new') return;
     if (row.kind === 'source') {
       this.notice = { text: SOURCE_DELETE_NOTICE, tone: 'warning' };
     } else if (row.current) {
@@ -251,50 +319,54 @@ export class WorktreePanelComponent extends DockSection implements Focusable {
   }
 }
 
-function rowSearchText(row: WorktreePanelRow): string {
-  if (row.kind === 'new') return NEW_ROW_LABEL;
-  if (row.kind === 'source') return `${abbreviateHome(row.path)} ${row.path} source`;
-  const branch = row.worktree.branch ?? 'detached';
-  return `${row.worktree.name} ${abbreviateHome(row.worktree.path)} ${row.worktree.path} ${branch}`;
+function rowName(row: WorktreePanelRow, repoName: string): string {
+  return row.kind === 'source' ? repoName : row.worktree.name;
 }
 
-function rowPath(row: WorktreePanelTarget): string {
+function rowPath(row: WorktreePanelRow): string {
   return row.kind === 'source' ? row.path : row.worktree.path;
 }
 
+function rowSearchText(row: WorktreePanelRow, repoName: string): string {
+  if (row.kind === 'source') return `${repoName} ${abbreviateHome(row.path)} ${row.path} source`;
+  const branch = row.worktree.branch ?? 'detached';
+  const status = row.worktree.missing ? `missing ${branch}` : branch;
+  return `${row.worktree.name} ${abbreviateHome(row.worktree.path)} ${row.worktree.path} ${status}`;
+}
+
+function measureNameWidth(rows: readonly WorktreePanelRow[], repoName: string, width: number): number {
+  const cap = Math.max(MIN_NAME_WIDTH, Math.floor(width * 0.45));
+  let measured = MIN_NAME_WIDTH;
+  for (const row of rows) {
+    const w = visibleWidth(rowName(row, repoName));
+    if (w >= cap) return cap;
+    if (w > measured) measured = w;
+  }
+  return measured;
+}
+
 function rowSideTag(row: WorktreePanelRow): { readonly text: string; readonly tone: ColorToken } | undefined {
-  if (row.kind === 'new') return undefined;
   if (row.kind === 'source') return { text: 'source', tone: 'textMuted' };
   if (row.worktree.missing) return { text: 'missing', tone: 'warning' };
-  if (row.worktree.branch !== undefined) return { text: row.worktree.branch, tone: 'textDim' };
+  if (row.worktree.branch !== undefined) return { text: row.worktree.branch, tone: 'textMuted' };
   if (row.worktree.head !== undefined && row.worktree.head.length > 0) {
-    return { text: `detached ${row.worktree.head.slice(0, WORKTREE_SHORT_SHA_LENGTH)}`, tone: 'textDim' };
+    return { text: `detached ${row.worktree.head.slice(0, WORKTREE_SHORT_SHA_LENGTH)}`, tone: 'textMuted' };
   }
   return undefined;
 }
 
-function rowSidePlain(row: WorktreePanelRow): string {
-  if (row.kind === 'new') return '';
-  const tag = rowSideTag(row)?.text ?? '';
-  const current = row.current ? (tag === '' ? CURRENT_MARK : ` ${CURRENT_MARK}`) : '';
-  return tag + current;
-}
-
-function renderRow(row: WorktreePanelRow, selected: boolean, pathWidth: number): string {
+function renderRow(row: WorktreePanelRow, repoName: string, selected: boolean, nameWidth: number): string {
   const pointer = currentTheme.fg(selected ? 'primary' : 'textDim', `  ${selected ? SELECT_POINTER : ' '} `);
-  if (row.kind === 'new') {
-    return pointer + (selected ? currentTheme.boldFg('primary', NEW_ROW_LABEL) : currentTheme.fg('accent', NEW_ROW_LABEL));
-  }
-  const path = truncatePathLeft(abbreviateHome(rowPath(row)), pathWidth);
-  const split = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\')) + 1;
-  const label = selected
-    ? currentTheme.boldFg('primary', path)
-    : currentTheme.fg('textMuted', path.slice(0, split)) + currentTheme.fg('text', path.slice(split));
+  const name = truncateToWidth(rowName(row, repoName), nameWidth, '…');
+  const label = selected ? currentTheme.boldFg('primary', name) : currentTheme.fg('text', name);
   const tag = rowSideTag(row);
   const side = tag === undefined ? '' : currentTheme.fg(tag.tone, tag.text);
   const current = row.current
     ? (side === '' ? '' : ' ') + currentTheme.fg('success', CURRENT_MARK)
     : '';
-  const tail = side === '' && current === '' ? '' : `${' '.repeat(Math.max(0, pathWidth - visibleWidth(path)))}  ${side}${current}`;
+  const tail =
+    side === '' && current === ''
+      ? ''
+      : `${' '.repeat(Math.max(0, nameWidth - visibleWidth(name)))}  ${side}${current}`;
   return pointer + label + tail;
 }

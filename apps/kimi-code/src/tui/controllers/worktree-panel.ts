@@ -24,7 +24,6 @@ import {
   WorktreePanelComponent,
   type WorktreePanelNotice,
   type WorktreePanelRow,
-  type WorktreePanelTarget,
   type WorktreeRow,
 } from '#/tui/components/dialogs/worktree-panel';
 import {
@@ -57,11 +56,19 @@ interface Destination {
   readonly missingSubdir?: string;
 }
 
+interface PendingDelete {
+  readonly rowPath: string;
+  readonly canonicalPath: string;
+  readonly name: string;
+}
+
 export class WorktreePanelController {
   private listing: WorktreeListing | undefined;
   private panel: WorktreePanelComponent | undefined;
   private mounted: (Component & Focusable) | undefined;
-  private busy = false;
+  private entering = false;
+  private inspectToken = 0;
+  private readonly pendingDeletes = new Map<string, PendingDelete>();
 
   constructor(private readonly host: WorktreePanelHost) {}
 
@@ -70,7 +77,7 @@ export class WorktreePanelController {
     if (listing === undefined) return;
     this.panel = new WorktreePanelComponent({
       repoName: basename(listing.repoRoot),
-      rows: panelRows(listing),
+      rows: this.visibleRows(listing),
       pageSize: WORKTREE_PANEL_PAGE_SIZE,
       layout:
         this.host.state.dockContainer === undefined
@@ -79,8 +86,8 @@ export class WorktreePanelController {
       onOpen: (row) => {
         void this.enter(row);
       },
-      onNew: () => {
-        this.showForm();
+      onNew: (initialName) => {
+        this.showForm(initialName);
       },
       onDelete: (row) => {
         void this.delete(row);
@@ -89,24 +96,34 @@ export class WorktreePanelController {
         this.close();
       },
     });
+    const pendingNotice = this.pendingDeleteNotice();
+    if (pendingNotice !== undefined) this.panel.setNotice(pendingNotice);
     this.mount(this.panel);
   }
 
-  private async enter(row: WorktreePanelTarget): Promise<void> {
+  private async enter(row: WorktreePanelRow): Promise<void> {
     const listing = this.listing;
-    if (this.busy || listing === undefined) return;
-    const destination = await destinationFor(listing, row, this.host.state.appState);
-    this.close();
-    if (!(await this.host.startSessionAt(destination.location))) return;
-    this.host.showStatus(arrivalNotice(row, listing.repoRoot));
-    if (destination.missingSubdir !== undefined) {
-      this.host.showStatus(missingSubdirNotice(destination.missingSubdir, row.kind), 'warning');
+    if (this.entering || listing === undefined) return;
+    this.entering = true;
+    this.inspectToken += 1;
+    try {
+      const destination = await destinationFor(listing, row, this.host.state.appState);
+      this.close();
+      if (!(await this.host.startSessionAt(destination.location))) return;
+      this.host.showStatus(arrivalNotice(row, listing.repoRoot));
+      if (destination.missingSubdir !== undefined) {
+        this.host.showStatus(missingSubdirNotice(destination.missingSubdir, row.kind), 'warning');
+      }
+    } finally {
+      this.entering = false;
     }
   }
 
-  private showForm(): void {
-    if (this.busy) return;
+  private showForm(initialName?: string): void {
+    if (this.entering) return;
+    this.inspectToken += 1;
     const form: WorktreeFormComponent = new WorktreeFormComponent({
+      initialName,
       onSubmit: (value) => {
         void this.create(form, value);
       },
@@ -137,54 +154,118 @@ export class WorktreePanelController {
 
   private async delete(row: WorktreeRow): Promise<void> {
     const { listing, panel } = this;
-    if (this.busy || listing === undefined || panel === undefined) return;
-    this.busy = true;
+    if (this.entering || listing === undefined || panel === undefined) return;
+    if (this.isPendingDelete(row.worktree.path)) return;
+    const token = ++this.inspectToken;
+    const name = row.worktree.name;
+    const excludeSessionId = this.host.session?.id;
+    this.notify({ text: `Checking ${name}…`, tone: 'textMuted' });
+    let removal: WorktreeRemoval;
     try {
-      const name = row.worktree.name;
-      const excludeSessionId = this.host.session?.id;
-      this.notify({ text: `Checking ${name}…`, tone: 'textMuted' });
-      let removal: WorktreeRemoval;
-      try {
-        removal = await inspectWorktreeRemoval(this.host.harness, {
-          repoRoot: listing.repoRoot,
-          worktree: row.worktree,
-          excludeSessionId,
-        });
-      } catch (error) {
+      removal = await inspectWorktreeRemoval(this.host.harness, {
+        repoRoot: listing.repoRoot,
+        worktree: row.worktree,
+        excludeSessionId,
+      });
+    } catch (error) {
+      if (token === this.inspectToken && this.mounted === panel) {
         this.notify({ text: engineMessage(error), tone: 'error' });
-        return;
       }
-      if (this.mounted !== panel) return;
-      if (removal.openSessionIds.length > 0) {
-        this.notify({ text: inUseNotice(name), tone: 'warning' });
-        return;
-      }
-      const choice = await this.choose<WorktreeDeleteChoice | 'keep'>((onChoose) =>
-        createWorktreeDeletePrompt({ removal, onChoose }),
-      );
-      if (choice === undefined) return;
-      this.mount(panel);
-      if (choice === 'keep') {
-        this.notify(undefined);
-        return;
-      }
-      this.notify({ text: `Deleting ${name}…`, tone: 'textMuted' });
-      try {
-        await removeWorktree(this.host.harness, removal, choice, excludeSessionId);
-      } catch (error) {
-        this.notify(
-          isKimiError(error) && error.code === ErrorCodes.WORKTREE_IN_USE
-            ? { text: inUseNotice(name), tone: 'warning' }
-            : { text: engineMessage(error), tone: 'error' },
-        );
-        return;
-      }
-      const refreshed = await this.fetchListing();
-      if (refreshed !== undefined) panel.setRows(panelRows(refreshed));
-      this.notify({ text: `Deleted ${name}.`, tone: 'success' });
-    } finally {
-      this.busy = false;
+      return;
     }
+    if (token !== this.inspectToken || this.mounted !== panel) return;
+    if (removal.openSessionIds.length > 0) {
+      this.notify({ text: inUseNotice(name), tone: 'warning' });
+      return;
+    }
+    const choice = await this.choose<WorktreeDeleteChoice | 'keep'>((onChoose) =>
+      createWorktreeDeletePrompt({ removal, onChoose }),
+    );
+    if (choice === undefined || token !== this.inspectToken) return;
+    this.mount(panel);
+    if (choice === 'keep') {
+      this.notify(this.pendingDeleteNotice());
+      return;
+    }
+    const pendingKey = removal.path;
+    this.pendingDeletes.set(pendingKey, {
+      rowPath: row.worktree.path,
+      canonicalPath: removal.path,
+      name,
+    });
+    if (this.listing !== undefined) panel.setRows(this.visibleRows(this.listing));
+    this.notify(this.pendingDeleteNotice());
+    void this.runBackgroundDelete(pendingKey, removal, choice, excludeSessionId);
+  }
+
+  private async runBackgroundDelete(
+    pendingKey: string,
+    removal: WorktreeRemoval,
+    choice: WorktreeDeleteChoice,
+    excludeSessionId: string | undefined,
+  ): Promise<void> {
+    try {
+      await removeWorktree(this.host.harness, removal, choice, excludeSessionId);
+    } catch (error) {
+      this.pendingDeletes.delete(pendingKey);
+      if (this.panel !== undefined && this.listing !== undefined) {
+        this.panel.setRows(this.visibleRows(this.listing));
+      }
+      const notice: WorktreePanelNotice =
+        isKimiError(error) && error.code === ErrorCodes.WORKTREE_IN_USE
+          ? { text: inUseNotice(removal.name), tone: 'warning' }
+          : { text: engineMessage(error), tone: 'error' };
+      this.reportBackgroundResult(notice);
+      return;
+    }
+    this.pendingDeletes.delete(pendingKey);
+    if (this.listing !== undefined) {
+      this.listing = {
+        ...this.listing,
+        worktrees: this.listing.worktrees.filter((worktree) => !sameDir(worktree.path, removal.path)),
+      };
+      if (this.panel !== undefined) this.panel.setRows(this.visibleRows(this.listing));
+    }
+    const activePanel = this.panel;
+    if (activePanel !== undefined && this.mounted === activePanel) {
+      const refreshed = await this.fetchListing();
+      if (refreshed !== undefined && this.panel === activePanel) {
+        activePanel.setRows(this.visibleRows(refreshed));
+      }
+    }
+    const done = deletedNotice(removal, choice);
+    const remaining = this.pendingDeleteText();
+    this.reportBackgroundResult({
+      text: remaining === undefined ? done : `${done} ${remaining}`,
+      tone: 'success',
+    });
+  }
+
+  private visibleRows(listing: WorktreeListing): WorktreePanelRow[] {
+    if (this.pendingDeletes.size === 0) return panelRows(listing);
+    return panelRows({
+      ...listing,
+      worktrees: listing.worktrees.filter((worktree) => !this.isPendingDelete(worktree.path)),
+    });
+  }
+
+  private isPendingDelete(path: string): boolean {
+    for (const pending of this.pendingDeletes.values()) {
+      if (sameDir(pending.rowPath, path) || sameDir(pending.canonicalPath, path)) return true;
+    }
+    return false;
+  }
+
+  private pendingDeleteText(): string | undefined {
+    const names = [...this.pendingDeletes.values()].map((pending) => pending.name);
+    if (names.length === 0) return undefined;
+    if (names.length === 1) return `Deleting ${names[0]}…`;
+    return `Deleting ${String(names.length)} worktrees…`;
+  }
+
+  private pendingDeleteNotice(): WorktreePanelNotice | undefined {
+    const text = this.pendingDeleteText();
+    return text === undefined ? undefined : { text, tone: 'textMuted' };
   }
 
   private async fetchListing(): Promise<WorktreeListing | undefined> {
@@ -202,6 +283,17 @@ export class WorktreePanelController {
       this.panel.setNotice(notice);
       this.host.state.ui.requestRender();
     } else if (notice !== undefined && notice.tone !== 'textMuted') {
+      this.host.showStatus(notice.text, notice.tone);
+    }
+  }
+
+  private reportBackgroundResult(notice: WorktreePanelNotice): void {
+    if (this.panel !== undefined && this.mounted === this.panel) {
+      this.panel.setNotice(notice);
+      this.host.state.ui.requestRender();
+    } else if (notice.tone === 'error') {
+      this.host.showError(notice.text);
+    } else {
       this.host.showStatus(notice.text, notice.tone);
     }
   }
@@ -231,6 +323,7 @@ export class WorktreePanelController {
   }
 
   private close(): void {
+    this.inspectToken += 1;
     if (this.mounted !== undefined) this.host.restoreEditor();
   }
 }
@@ -271,13 +364,12 @@ function panelRows(listing: WorktreeListing): WorktreePanelRow[] {
     ...(currentWorktree === undefined ? [] : [currentWorktree]),
     ...(sourceRow === undefined ? [] : [sourceRow]),
     ...otherWorktrees,
-    { kind: 'new' },
   ];
 }
 
 async function destinationFor(
   listing: WorktreeListing,
-  row: WorktreePanelTarget,
+  row: WorktreePanelRow,
   appState: Pick<AppState, 'workDir'>,
 ): Promise<Destination> {
   const subdir = await relativeInside(listing.currentCheckoutRoot, appState.workDir);
@@ -301,13 +393,19 @@ async function destinationFor(
       };
 }
 
-function arrivalNotice(row: WorktreePanelTarget, repoRoot: string): string {
+function arrivalNotice(row: WorktreePanelRow, repoRoot: string): string {
   return row.kind === 'source'
     ? `Back in ${abbreviateHome(repoRoot)}`
     : `Now working in worktree ${row.worktree.name}`;
 }
 
-function missingSubdirNotice(subdir: string, target: WorktreePanelTarget['kind']): string {
+function deletedNotice(removal: WorktreeRemoval, choice: WorktreeDeleteChoice): string {
+  return choice === 'delete-branch' && removal.branch !== undefined
+    ? `Deleted ${removal.name} and branch ${removal.branch}.`
+    : `Deleted ${removal.name}.`;
+}
+
+function missingSubdirNotice(subdir: string, target: WorktreePanelRow['kind']): string {
   return target === 'source'
     ? `${subdir} doesn't exist in the source checkout, so the session starts at the repository root.`
     : `${subdir} doesn't exist at this commit, so the session starts at the worktree root.`;

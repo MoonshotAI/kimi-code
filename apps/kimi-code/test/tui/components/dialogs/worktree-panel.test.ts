@@ -12,7 +12,11 @@ import {
   type WorktreeRemoval,
 } from '#/tui/components/dialogs/worktree-choices';
 import { WorktreeFormComponent } from '#/tui/components/dialogs/worktree-form';
-import { WorktreePanelComponent, type WorktreePanelRow } from '#/tui/components/dialogs/worktree-panel';
+import {
+  suggestWorktreeName,
+  WorktreePanelComponent,
+  type WorktreePanelRow,
+} from '#/tui/components/dialogs/worktree-panel';
 
 const ENTER = '\r';
 const ESC = '\u001B';
@@ -61,7 +65,6 @@ function rows(current: 'source' | string = 'source'): WorktreePanelRow[] {
       current: current === 'feat-ui',
     },
     { kind: 'worktree', worktree: worktree('gone', { missing: true }), current: false },
-    { kind: 'new' },
   ];
 }
 
@@ -110,8 +113,22 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
+describe('suggestWorktreeName', () => {
+  it('normalizes branch-style queries into valid worktree directory names', () => {
+    expect(suggestWorktreeName('feat/haha')).toBe('feat-haha');
+    expect(suggestWorktreeName('  Feat / My Task!  ')).toBe('feat-my-task');
+    expect(suggestWorktreeName('..a..b..')).toBe('a-b');
+    expect(suggestWorktreeName('v1.2_beta')).toBe('v1.2_beta');
+    expect(suggestWorktreeName('')).toBeUndefined();
+    expect(suggestWorktreeName('中文')).toBeUndefined();
+    expect(suggestWorktreeName('CON')).toBeUndefined();
+    expect(suggestWorktreeName('nul.txt')).toBeUndefined();
+    expect(suggestWorktreeName(`${'a'.repeat(63)}/b`)).toBe('a'.repeat(63));
+  });
+});
+
 describe('WorktreePanelComponent', () => {
-  it('lists the source first, then worktrees with branch or detached short SHA, then the new row', () => {
+  it('renders a two-column checkout list with a selected-path footer and no + New row', () => {
     const { text } = makePanel();
     const lines = text().split('\n');
 
@@ -119,18 +136,19 @@ describe('WorktreePanelComponent', () => {
     expect(lines[2]).toBe(' ↑↓ navigate · Enter open · Ctrl+N new · Ctrl+X delete · Esc cancel');
     const body = lines.filter((line) => line.startsWith('  ')).map((line) => line.trimEnd());
     expect(body).toEqual([
-      '  ❯ ~/code/repo                               source ← current',
-      '    ~/.kimi-code/worktrees/wd_repo/fix-login  detached abc1234',
-      '    ~/.kimi-code/worktrees/wd_repo/feat-ui    feat/ui',
-      '    ~/.kimi-code/worktrees/wd_repo/gone       missing',
-      '    + New worktree',
+      '  ❯ repo       source ← current',
+      '    fix-login  detached abc1234',
+      '    feat-ui    feat/ui',
+      '    gone       missing',
     ]);
+    expect(lines.at(-2)?.trimEnd()).toBe(' ~/code/repo');
+    expect(text()).not.toContain('+ New worktree');
   });
 
-  it('starts on the current worktree and closes when it is entered', () => {
+  it('starts on the current worktree, shows its path in the footer, and closes on Enter', () => {
     const { panel, handlers, text } = makePanel('fix-login');
-    expect(text()).toContain('❯ ~/.kimi-code/worktrees/wd_repo/fix-login');
-    expect(text()).toMatch(/fix-login\s+detached abc1234 ← current/);
+    expect(text()).toMatch(/❯ fix-login\s+detached abc1234 ← current/);
+    expect(text().split('\n').at(-2)?.trimEnd()).toBe(' ~/.kimi-code/worktrees/wd_repo/fix-login');
 
     panel.handleInput(ENTER);
 
@@ -138,9 +156,10 @@ describe('WorktreePanelComponent', () => {
     expect(handlers.onOpen).not.toHaveBeenCalled();
   });
 
-  it('opens another checkout on Enter', () => {
-    const { panel, handlers } = makePanel();
+  it('opens another checkout on Enter and updates the footer path as selection moves', () => {
+    const { panel, handlers, text } = makePanel();
     panel.handleInput(DOWN);
+    expect(text().split('\n').at(-2)?.trimEnd()).toBe(' ~/.kimi-code/worktrees/wd_repo/fix-login');
     panel.handleInput(ENTER);
 
     expect(handlers.onOpen).toHaveBeenCalledWith(
@@ -157,20 +176,34 @@ describe('WorktreePanelComponent', () => {
 
     expect(handlers.onOpen).not.toHaveBeenCalled();
     expect(text().split('\n')[3]).toBe(
-      " This worktree's directory is missing. Delete it to clean up the git record.",
+      " This worktree's directory is missing. Press Ctrl+X to remove the git record.",
     );
 
-    panel.handleInput(DOWN);
+    panel.handleInput('\u001B[A');
     expect(text()).not.toContain('directory is missing');
   });
 
-  it('opens the form from Ctrl+N and the new row', () => {
-    const { panel, handlers } = makePanel();
+  it('opens the form from Ctrl+N and prefills a normalized name from an empty search query', () => {
+    const { panel, handlers, text } = makePanel();
     panel.handleInput(CTRL_N);
-    for (let i = 0; i < 4; i += 1) panel.handleInput(DOWN);
-    panel.handleInput(ENTER);
+    expect(handlers.onNew).toHaveBeenLastCalledWith(undefined);
 
-    expect(handlers.onNew).toHaveBeenCalledTimes(2);
+    for (const ch of 'feat/haha') panel.handleInput(ch);
+    expect(text()).toContain('No matches');
+    expect(text()).toContain('❯ + Create "feat-haha"  from HEAD');
+    expect(text()).toContain('0 / 4');
+
+    panel.handleInput(ENTER);
+    expect(handlers.onNew).toHaveBeenLastCalledWith('feat-haha');
+
+    panel.handleInput(CTRL_N);
+    expect(handlers.onNew).toHaveBeenLastCalledWith('feat-haha');
+
+    panel.handleInput(ESC);
+    for (const ch of '@@@') panel.handleInput(ch);
+    expect(text()).toContain('❯ + Create new worktree  from HEAD');
+    panel.handleInput(ENTER);
+    expect(handlers.onNew).toHaveBeenLastCalledWith(undefined);
   });
 
   it('refuses to delete the source checkout or the current worktree', () => {
@@ -192,7 +225,6 @@ describe('WorktreePanelComponent', () => {
           current: true,
         },
         { kind: 'source', path: '/home/me/code/repo', current: false },
-        { kind: 'new' },
       ],
     });
     externalCurrent.panel.handleInput(CTRL_X);
@@ -218,13 +250,14 @@ describe('WorktreePanelComponent', () => {
     ).toEqual(['fix-login', 'gone']);
   });
 
-  it('filters worktrees by typing, clears the query on Backspace or first Esc, and reports empty matches', () => {
+  it('filters worktrees by typing, shows match count, and clears on Backspace or first Esc', () => {
     const { panel, handlers, text } = makePanel();
     for (const ch of 'feat/ui') panel.handleInput(ch);
 
     expect(text()).toContain(' Search: feat/ui');
     expect(text()).toContain('Backspace clear · ↑↓ navigate');
     expect(text()).toContain('feat-ui');
+    expect(text()).toContain('1 / 4');
     expect(text()).not.toContain('fix-login');
 
     panel.handleInput(ENTER);
@@ -240,7 +273,7 @@ describe('WorktreePanelComponent', () => {
     expect(text()).toContain('fix-login');
 
     for (const ch of 'zzzz-none') panel.handleInput(ch);
-    expect(text()).toContain('No matching worktrees.');
+    expect(text()).toContain('No matches');
     panel.handleInput(ESC);
     panel.handleInput(ESC);
     expect(handlers.onCancel).toHaveBeenCalledTimes(1);
@@ -255,15 +288,14 @@ describe('WorktreePanelComponent', () => {
     expect(handlers.onCancel).toHaveBeenCalledTimes(1);
   });
 
-  it('pages long lists in inline mode', () => {
+  it('pages large lists with a footer range counter without scanning every row', () => {
     const many: WorktreePanelRow[] = [
       { kind: 'source', path: '/home/me/code/repo', current: true },
-      ...Array.from({ length: 12 }, (_, i) => ({
+      ...Array.from({ length: 500 }, (_, i) => ({
         kind: 'worktree' as const,
         worktree: worktree(`wt-${String(i)}`),
         current: false,
       })),
-      { kind: 'new' },
     ];
     const panel = new WorktreePanelComponent({
       repoName: 'repo',
@@ -275,7 +307,9 @@ describe('WorktreePanelComponent', () => {
       onCancel: vi.fn(),
     });
 
-    expect(stripVTControlCharacters(panel.render(100).join('\n'))).toContain(' ▼ 6 more');
+    const rendered = stripVTControlCharacters(panel.render(100).join('\n'));
+    expect(rendered).toContain('~/code/repo');
+    expect(rendered).toContain('1–8 / 501');
   });
 
   it('supports fullscreen ScrollView mouse move, click, and wheel scrolling', async () => {
@@ -297,7 +331,7 @@ describe('WorktreePanelComponent', () => {
       vt.sendInput(`\u001B[<35;8;${String(fixLoginRow + 1)}M`);
       await vt.waitForRender();
       screen = vt.getViewport().map((line) => stripVTControlCharacters(line));
-      expect(screen[fixLoginRow]).toContain('❯ ~/.kimi-code/worktrees/wd_repo/fix-login');
+      expect(screen[fixLoginRow]).toContain('❯ fix-login');
 
       vt.sendInput(`\u001B[<0;8;${String(fixLoginRow + 1)}M`);
       vt.sendInput(`\u001B[<0;8;${String(fixLoginRow + 1)}m`);
@@ -310,13 +344,15 @@ describe('WorktreePanelComponent', () => {
       vt.sendInput(`\u001B[<65;8;${String(fixLoginRow + 1)}M`);
       await vt.waitForRender();
       screen = vt.getViewport().map((line) => stripVTControlCharacters(line));
-      const newRow = screen.findIndex((line) => line.includes('+ New worktree'));
-      expect(newRow).toBeGreaterThan(0);
+      const goneRow = screen.findIndex((line) => line.includes('gone'));
+      expect(goneRow).toBeGreaterThan(0);
 
-      vt.sendInput(`\u001B[<0;8;${String(newRow + 1)}M`);
-      vt.sendInput(`\u001B[<0;8;${String(newRow + 1)}m`);
+      vt.sendInput(`\u001B[<0;8;${String(goneRow + 1)}M`);
+      vt.sendInput(`\u001B[<0;8;${String(goneRow + 1)}m`);
       await vt.waitForRender();
-      expect(handlers.onNew).toHaveBeenCalledOnce();
+      expect(vt.getViewport().map((line) => stripVTControlCharacters(line)).join('\n')).toContain(
+        "This worktree's directory is missing.",
+      );
     } finally {
       ui.stop();
       vi.restoreAllMocks();
@@ -325,9 +361,9 @@ describe('WorktreePanelComponent', () => {
 });
 
 describe('WorktreeFormComponent', () => {
-  function makeForm() {
+  function makeForm(initialName?: string) {
     const handlers = { onSubmit: vi.fn(), onCancel: vi.fn() };
-    const form = new WorktreeFormComponent(handlers);
+    const form = new WorktreeFormComponent({ initialName, ...handlers });
     form.focused = true;
     const text = (): string => stripVTControlCharacters(form.render(90).join('\n').replaceAll(APC, ''));
     const type = (value: string): void => {
@@ -346,6 +382,14 @@ describe('WorktreeFormComponent', () => {
     expect(lines[3]).toMatch(/^╰─+╯$/);
     expect(lines[4]).toBe(' Tab next field · Enter create · Esc cancel');
     expect(lines[5]).toBe(' Leave Name empty for a generated name. Base takes a branch, tag, or commit.');
+  });
+
+  it('prefills the Name field when initialName is supplied', () => {
+    const { form, handlers, text } = makeForm('feat-haha');
+    expect(text()).toMatch(/│ Name {2}feat-haha\s+│/);
+
+    form.handleInput(ENTER);
+    expect(handlers.onSubmit).toHaveBeenCalledWith({ name: 'feat-haha', base: undefined });
   });
 
   it('submits trimmed values from any field and leaves empty fields to the engine', () => {
@@ -420,6 +464,19 @@ describe('createWorktreeDeletePrompt', () => {
     expect(text).not.toContain('exist only');
     expect(text).not.toContain('earlier session');
     expect(text).not.toContain('Discards');
+  });
+
+  it('offers explicit Force delete options when submodules or a worktree lock are present', () => {
+    const subText = promptText(removal({ hasSubmodules: true, branch: 'feat/sub' }));
+    expect(subText).toContain('Contains git submodules. Force delete is required.');
+    expect(subText).toContain('Force delete worktree');
+    expect(subText).toContain('Force delete worktree and branch feat/sub');
+
+    const lockedText = promptText(removal({ locked: true }));
+    expect(lockedText).toContain(
+      'This worktree is locked (for example, on a removable drive). Force delete is required.',
+    );
+    expect(lockedText).toContain('Force delete worktree');
   });
 
   it('offers to delete the branch, counting the commits only it holds', () => {

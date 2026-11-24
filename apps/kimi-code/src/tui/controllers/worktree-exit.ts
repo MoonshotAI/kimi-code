@@ -159,7 +159,9 @@ export class WorktreeExitController {
       removal.branch === undefined &&
       removal.uncommittedFiles === 0 &&
       removal.commitsLostWithWorktree === 0 &&
-      removal.closedSessionCount === 0
+      removal.closedSessionCount === 0 &&
+      removal.hasSubmodules !== true &&
+      removal.locked !== true
     );
   }
 

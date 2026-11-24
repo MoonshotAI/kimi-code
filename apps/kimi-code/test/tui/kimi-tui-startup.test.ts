@@ -5221,7 +5221,72 @@ describe('KimiTUI work location', () => {
         discard: { uncommittedFiles: 2, uniqueCommits: 1 },
         excludeSessionId: 'ses-1',
       });
-      expect(panelText(driver)).not.toContain(basename(worktree));
+      expect(panelText(driver)).not.toContain('  fix-login');
+    });
+
+    it('removes a worktree optimistically without blocking and rolls back if background deletion fails', async () => {
+      const project = tempDir('kimi-location-project-');
+      const worktree = tempDir('kimi-location-worktree-');
+      const { harness, inspectWorktreeRemoval, removeWorktree } = worktreeHarness(project, worktree);
+      inspectWorktreeRemoval.mockResolvedValue(removalCheck(worktree, { hasSubmodules: true }));
+
+      let rejectRemove!: (error: Error) => void;
+      removeWorktree.mockImplementationOnce(
+        () =>
+          new Promise<void>((_resolve, reject) => {
+            rejectRemove = reject;
+          }),
+      );
+
+      const driver = await startAt(project, harness);
+      await driver.ensureSession();
+      const panel = await openPanel(driver);
+
+      panel.handleInput(DOWN);
+      panel.handleInput(CTRL_X);
+      const prompt = await choose(driver, [DOWN, ENTER]);
+      expect(prompt).toContain('Contains git submodules. Force delete is required.');
+      expect(prompt).toContain('Force delete worktree');
+
+      expect(panelText(driver)).toContain('Deleting fix-login…');
+      expect(panelText(driver)).not.toContain('  fix-login');
+      expect(removeWorktree).toHaveBeenCalledWith({
+        repoRoot: project,
+        path: worktree,
+        deleteBranch: false,
+        discard: { uncommittedFiles: 0, uniqueCommits: 0 },
+        force: true,
+        excludeSessionId: 'ses-1',
+      });
+
+      rejectRemove(
+        new KimiError(ErrorCodes.WORKTREE_GIT_FAILED, 'Could not remove the worktree.', {
+          details: { stderr: 'permission denied' },
+        }),
+      );
+      await vi.waitFor(() => {
+        expect(panelText(driver)).toContain('permission denied');
+      });
+      expect(panelText(driver)).toContain('fix-login');
+
+      let resolveSecond!: () => void;
+      removeWorktree.mockImplementationOnce(
+        () =>
+          new Promise<void>((resolve) => {
+            resolveSecond = resolve;
+          }),
+      );
+      panel.handleInput(DOWN);
+      panel.handleInput(CTRL_X);
+      await choose(driver, [DOWN, ENTER]);
+
+      panel.handleInput('\u001B');
+      expect(slot(driver, WorktreePanelComponent)).toBeUndefined();
+
+      resolveSecond();
+      await vi.waitFor(() => {
+        expect(transcriptText(driver)).toContain('Deleted fix-login.');
+      });
     });
 
     it('refuses to delete a worktree that another window has open', async () => {
@@ -5254,7 +5319,7 @@ describe('KimiTUI work location', () => {
       await vi.waitFor(() => {
         expect(panelText(driver)).toContain('fix-login is open in another Kimi Code window.');
       });
-      expect(panelText(driver)).toContain(basename(worktree));
+      expect(panelText(driver)).toContain('fix-login');
     });
 
     it('resumes a same-project session from /sessions even when its directory was deleted and resolveSessionEnvironment rejects missing paths', async () => {

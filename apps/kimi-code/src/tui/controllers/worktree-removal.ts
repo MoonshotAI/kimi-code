@@ -42,6 +42,8 @@ export async function inspectWorktreeRemoval(
     commitsLostWithBranch: branchCheck?.uniqueCommits ?? 0,
     openSessionIds: check.openSessionIds,
     closedSessionCount: check.closedSessionCount,
+    ...(check.hasSubmodules === true ? { hasSubmodules: true } : {}),
+    ...(check.locked === true ? { locked: true } : {}),
   };
 }
 
@@ -52,11 +54,13 @@ export async function removeWorktree(
   excludeSessionId?: string,
 ): Promise<void> {
   const losses = removalLosses(removal, choice);
+  const force = removal.hasSubmodules === true || removal.locked === true;
   await harness.removeWorktree({
     repoRoot: removal.repoRoot,
     path: removal.path,
     deleteBranch: choice === 'delete-branch',
     discard: { uncommittedFiles: losses.files, uniqueCommits: losses.commits },
+    ...(force ? { force: true } : {}),
     excludeSessionId,
   });
 }

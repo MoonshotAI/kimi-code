@@ -21,6 +21,7 @@ export interface WorktreeFormValue {
 }
 
 export interface WorktreeFormOptions {
+  readonly initialName?: string;
   readonly onSubmit: (value: WorktreeFormValue) => void;
   readonly onCancel: () => void;
 }
@@ -48,7 +49,11 @@ export class WorktreeFormComponent implements Component, Focusable {
   private field: WorktreeFormField = 'name';
   private error: string | undefined;
 
-  constructor(private readonly opts: WorktreeFormOptions) {}
+  constructor(private readonly opts: WorktreeFormOptions) {
+    if (opts.initialName !== undefined && opts.initialName.length > 0) {
+      this.inputs.name.setValue(opts.initialName);
+    }
+  }
 
   showError(message: string, field?: WorktreeFormField): void {
     this.error = message;

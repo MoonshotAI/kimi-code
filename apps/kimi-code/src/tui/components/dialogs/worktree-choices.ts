@@ -84,6 +84,8 @@ export interface WorktreeRemoval {
   readonly commitsLostWithBranch: number;
   readonly openSessionIds: readonly string[];
   readonly closedSessionCount: number;
+  readonly hasSubmodules?: boolean;
+  readonly locked?: boolean;
 }
 
 export type WorktreeDeleteChoice = 'delete' | 'delete-branch';
@@ -110,7 +112,12 @@ function discards(losses: { readonly files: number; readonly commits: number }):
   return parts.length === 0 ? undefined : `Discards ${parts.join(' and ')}`;
 }
 
+function requiresForce(removal: WorktreeRemoval): boolean {
+  return removal.hasSubmodules === true || removal.locked === true;
+}
+
 function worktreeDeleteOptions(removal: WorktreeRemoval): ChoiceOption[] {
+  const verb = requiresForce(removal) ? 'Force delete' : 'Delete';
   const option = (value: WorktreeDeleteChoice, label: string): ChoiceOption => ({
     value,
     label,
@@ -120,13 +127,24 @@ function worktreeDeleteOptions(removal: WorktreeRemoval): ChoiceOption[] {
   });
   return [
     { value: 'keep', label: 'Keep it' },
-    option('delete', 'Delete worktree'),
-    ...(removal.branch === undefined ? [] : [option('delete-branch', `Delete worktree and branch ${removal.branch}`)]),
+    option('delete', `${verb} worktree`),
+    ...(removal.branch === undefined
+      ? []
+      : [option('delete-branch', `${verb} worktree and branch ${removal.branch}`)]),
   ];
 }
 
 function removalNotice(removal: WorktreeRemoval): ChoiceNoticeLine[] {
   const lines: ChoiceNoticeLine[] = [{ text: abbreviateHome(removal.path), tone: 'text' }];
+  if (removal.hasSubmodules === true) {
+    lines.push({ text: 'Contains git submodules. Force delete is required.', tone: 'warning' });
+  }
+  if (removal.locked === true) {
+    lines.push({
+      text: 'This worktree is locked (for example, on a removable drive). Force delete is required.',
+      tone: 'warning',
+    });
+  }
   if (removal.uncommittedFiles > 0) {
     const files = counted(removal.uncommittedFiles, 'uncommitted file', 'uncommitted files');
     lines.push({ text: `${files} will be lost.`, tone: 'warning' });
