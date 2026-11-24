@@ -171,7 +171,8 @@ export class BashTool implements IBashTool {
     const env = view.host;
     const effectiveCwd = view.resolve(cwd ?? view.workDir);
     const shellCwd = view.shellPathBridge?.toShellPath(effectiveCwd) ?? effectiveCwd;
-    const shellCommand = `cd ${shellQuote(shellCwd)} && ${command}`;
+    const shellCommand = `cd ${shellQuote(shellCwd)} || exit 1
+${command}`;
     const noninteractiveEnv: Record<string, string> = {
       NO_COLOR: '1',
       TERM: 'dumb',
