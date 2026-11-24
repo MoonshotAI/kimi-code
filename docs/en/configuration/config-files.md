@@ -428,17 +428,6 @@ Name matching follows the same rules as the same-named fields in an agent file: 
 disabled = ["WebSearch", "FetchURL", "mcp__github__*"]
 ```
 
-Changes to `[tools]` apply immediately to current and new sessions. In Kimi Code Desktop and the Web UI, you can also toggle built-in tools under **Settings → Agent & Sessions → Built-in tools**; saving writes this global section on the local machine. For projects on remote SSH hosts, configure `[tools]` in the remote host's `config.toml`.
-
-Some modes require specific tools before you can enter them:
-
-- Plan mode requires `ExitPlanMode`. When it is disabled, entering Plan mode is rejected, and `defaultPlanMode` skips automatic entry.
-- Swarm mode requires `AgentSwarm`.
-- Tower mode requires the experiment flag and the complete Tower tool set (`TowerInit`, `TowerPlan`, `TowerSpawn`, `TowerMerge`, `TowerRebase`, `TowerTeardown`, `TowerComplete`, `TowerSend`, `TowerInbox`, `TowerFinding`, `TowerReview`, `TowerMission`, and `TowerStatus`).
-- Creating or resuming a Goal requires `UpdateGoal`. Pausing or canceling an existing Goal remains available.
-
-Re-enable the required tool to restore entry. Turning off a tool does not force-exit a mode that is already active, and exiting an active mode remains available.
-
 ::: warning Note
 Like the `tools` / `disallowedTools` fields of an agent file, this section shapes the tools shown to the model and is enforced again before execution. [Permission rules](#permission) remain a separate control for operations that require approval.
 :::

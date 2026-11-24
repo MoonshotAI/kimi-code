@@ -178,9 +178,11 @@ describe('decideComposerSubmit — bare work-mode commands', () => {
       .toMatchObject({ kind: 'disabled-command', cmd: '/tower' });
   });
 
-  it('leaves /tower off as a prompt when the Tower experiment is off', () => {
+  it('keeps /tower off recognizable when the Tower experiment is off so persisted Tower state can be released', () => {
     expect(decideComposerSubmit(input({ text: '/tower off', rewritten: '/tower off', towerEnabled: false, towerAvailable: false })))
-      .toMatchObject({ kind: 'submit', text: '/tower off' });
+      .toMatchObject({ kind: 'builtin-command', cmd: '/tower off' });
+    expect(decideComposerSubmit(input({ text: '/tower on', rewritten: '/tower on', towerEnabled: false, towerAvailable: false })))
+      .toMatchObject({ kind: 'submit', text: '/tower on' });
   });
 
   it('still matches the bare command when attachment pills ride along (wholesale removal, no fake args)', () => {

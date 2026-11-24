@@ -75,12 +75,13 @@ export function decideSubmitKind(input: SubmitKindInput): SubmitKind {
   const controlArg = command === undefined ? '' : bareText.trim().slice(command.length).trim();
   const swarmControlAllowed = command === '/swarm' && controlArg === 'off';
   const goalControlAllowed = command === '/goal' && ['pause', 'cancel'].includes(controlArg);
+  const towerExitAllowed = command === '/tower' && controlArg === 'off';
   const towerCommandAllowed =
-    command === '/tower' &&
-    (controlArg === 'off' ||
-      (controlArg === '' && input.towerActive === true) ||
-      controlArg === 'status' ||
-      controlArg === 'teardown');
+    towerExitAllowed ||
+    (command === '/tower' &&
+      ((controlArg === '' && input.towerActive === true) ||
+        controlArg === 'status' ||
+        controlArg === 'teardown'));
   if (
     (command === '/plan' && input.planEnabled === false) ||
     (command === '/swarm' && input.swarmEnabled === false && !swarmControlAllowed) ||
@@ -97,7 +98,7 @@ export function decideSubmitKind(input: SubmitKindInput): SubmitKind {
     const extra = input.extraBuiltins?.find((item) => item.name === extraToken);
     const cmdToken = extra?.name ?? parseSlash(bareText)?.cmd;
     const matched = extra ?? (cmdToken ? matchSlashItem(buildSlashItems(skills, {
-      towerEnabled: input.towerEnabled,
+      towerEnabled: input.towerEnabled || towerExitAllowed,
       planEnabled: input.planEnabled,
       swarmEnabled: input.swarmEnabled !== false || swarmControlAllowed,
       goalEnabled: input.goalEnabled !== false || goalControlAllowed,
