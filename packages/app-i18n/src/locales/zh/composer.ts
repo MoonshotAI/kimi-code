@@ -3,6 +3,7 @@ export default {
   placeholder: '输入消息…',
   placeholderHints: "输入 <kbd>{'@'}</kbd> 引用文件，以 <kbd>/</kbd> 开头使用命令或技能",
   commandArgumentHint: '在 {command} 后输入{argument}',
+  promptPredictionHint: '预测：{prediction}。按 Tab 或右方向键填入。',
   send: '发送 ↵',
   queueLabel: '队列',
   placeholderRunning: '输入会加入队列 · <kbd>Ctrl</kbd>+<kbd>S</kbd> 立即插入运行中的回合',
