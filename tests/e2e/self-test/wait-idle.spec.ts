@@ -1,4 +1,4 @@
-import { edit, held, httpError, read, say } from '@moonshot-ai/testkit/model';
+import { bash, edit, held, httpError, read, say } from '@moonshot-ai/testkit/model';
 
 import { expect, selfTest } from '../support/scenario';
 
@@ -53,6 +53,19 @@ selfTest('waitIdle', {
         await product.send('Try again.');
         await product.waitIdle();
         await product.expectReply('Recovered.');
+      },
+    },
+    'returns once a command has finished, even though it left a process running in the background': {
+      workspace: { 'linger.sh': 'here=$PWD\nfor tick in $(seq 1 300); do [ -d "$here" ] || exit 0; sleep 1; done\n' },
+      run: async ({ product, model }) => {
+        const command = 'sh linger.sh > /dev/null 2>&1 & echo started | tee /dev/null';
+        model.script(bash(command), say('Started it.'));
+        await product.send('Start something in the background.');
+        await product.approve();
+        await product.waitIdle();
+        expect(model.requests('main')[1]?.texts('tool').join('\n')).toContain('started');
+        await product.expectTool({ name: 'Bash', target: command, status: 'done' });
+        await product.expectReply('Started it.');
       },
     },
   },
