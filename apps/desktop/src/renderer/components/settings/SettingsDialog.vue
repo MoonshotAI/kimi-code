@@ -7,7 +7,7 @@ import { serverEndpointLabel } from '../../api/config';
 import { useDialogFocus } from '@moonshot-ai/app-components';
 import { useConfirmDialog } from '@moonshot-ai/app-client/composables';
 import LanguageSwitcher from './LanguageSwitcher.vue';
-import { BrowserTabTitleSetting, FontSettingsPage, FontSettingsRow, GlobalAgentsMdSetting, useSettingsSubpage } from '@moonshot-ai/app-components';
+import { BrowserTabTitleSetting, DefaultToolsPanel, DefaultToolsRow, FontSettingsPage, FontSettingsRow, GlobalAgentsMdSetting, useSettingsSubpage } from '@moonshot-ai/app-components';
 import type { FontTarget } from '@moonshot-ai/app-core';
 import ShortcutsPanel from './ShortcutsPanel.vue';
 import type { ShortcutActionId } from '../../../shared/action-ids';
@@ -661,10 +661,12 @@ function toggleAutoSessionTitle(): void {
 
 const globalAgentsMdSettingRef = ref<InstanceType<typeof GlobalAgentsMdSetting> | null>(null);
 const globalAgentsMdOpen = ref(false);
+const defaultToolsPanelRef = ref<InstanceType<typeof DefaultToolsPanel> | null>(null);
 
 async function setTab(tab: SettingsTab): Promise<void> {
   if (tab !== activeTab.value) {
     if (globalAgentsMdOpen.value && !(await globalAgentsMdSettingRef.value?.confirmDiscard())) return;
+    if (fontPageTarget.value === 'tools' && !(await defaultToolsPanelRef.value?.confirmDiscard())) return;
     clearHighlightTimer();
     highlightedSetting.value = null;
   }
@@ -673,11 +675,12 @@ async function setTab(tab: SettingsTab): Promise<void> {
 
 async function requestClose(): Promise<void> {
   if (globalAgentsMdOpen.value && !(await globalAgentsMdSettingRef.value?.confirmDiscard())) return;
+  if (fontPageTarget.value === 'tools' && !(await defaultToolsPanelRef.value?.confirmDiscard())) return;
   emit('close');
 }
 
 const bodyRef = ref<HTMLElement | null>(null);
-const fontPage = useSettingsSubpage<FontTarget>(() => bodyRef.value);
+const fontPage = useSettingsSubpage<FontTarget | 'tools'>(() => bodyRef.value);
 const fontPageTarget = fontPage.page;
 watch(activeTab, () => {
   fontPage.reset();
@@ -812,7 +815,7 @@ function archiveTime(iso: string): string {
         </header>
         <div ref="bodyRef" class="body" :class="{ scrolling: bodyScrolling }" @scroll="onBodyScroll">
         <section v-show="activeTab === 'general'" class="panel">
-          <FontSettingsPage v-if="fontPageTarget" :key="fontPageTarget" :target="fontPageTarget" @back="fontPage.back()" />
+          <FontSettingsPage v-if="fontPageTarget && fontPageTarget !== 'tools'" :key="fontPageTarget" :target="fontPageTarget" @back="fontPage.back()" />
           <div v-show="!fontPageTarget" class="panel-sections">
           <section class="sec">
             <h3 class="sec-title">{{ t('settings.appearance') }}</h3>
@@ -1076,7 +1079,8 @@ function archiveTime(iso: string): string {
         </section>
 
         <section v-show="activeTab === 'agent'" class="panel">
-          <div v-show="!globalAgentsMdOpen">
+          <DefaultToolsPanel v-if="fontPageTarget === 'tools'" ref="defaultToolsPanelRef" @back="fontPage.back()" />
+          <div v-show="!fontPageTarget && !globalAgentsMdOpen">
           <section class="sec">
             <div class="sec-head">
               <h3 class="sec-title">{{ t('settings.agentDefaults') }}</h3>
@@ -1153,11 +1157,16 @@ function archiveTime(iso: string): string {
             </div>
             </div>
           </section>
+
+          <section class="sec">
+            <h3 class="sec-title">{{ t('settings.defaultTools') }}</h3>
+            <DefaultToolsRow @open="fontPage.open('tools', $event)" />
+          </section>
           </div>
 
-          <GlobalAgentsMdSetting ref="globalAgentsMdSettingRef" @open-change="globalAgentsMdOpen = $event" />
+          <GlobalAgentsMdSetting v-show="!fontPageTarget" ref="globalAgentsMdSettingRef" @open-change="globalAgentsMdOpen = $event" />
 
-          <div v-show="!globalAgentsMdOpen">
+          <div v-show="!fontPageTarget && !globalAgentsMdOpen">
           <section v-if="config" class="sec">
             <div class="sec-head">
               <h3 class="sec-title">{{ t('settings.secondaryModelSection') }}</h3>

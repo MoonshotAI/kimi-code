@@ -1928,6 +1928,10 @@ let sendGeneration = 0;
 // command, stale row) fails the enable write server-side and toasts the
 // daemon's own error.
 const towerEnabled = computed(() => client.experimentalFlags.value['tower'] === true);
+const towerEntryEnabled = computed(() => towerEnabled.value && client.towerModeAvailable.value);
+const planEntryEnabled = computed(() => client.planModeAvailable.value);
+const swarmEntryEnabled = computed(() => client.swarmModeAvailable.value);
+const goalEntryEnabled = computed(() => client.goalModeAvailable.value);
 
 // Mobile settings sheet's tower toggle: the sheet hides the row while the
 // flag is off, so this only forwards.
@@ -2842,7 +2846,10 @@ function openPr(url: string): void {
       :goal-active="mobileGoalActive"
       :swarm-mode="swarmMode"
       :tower-mode="client.towerMode.value"
-      :tower-enabled="towerEnabled"
+      :tower-enabled="towerEntryEnabled"
+      :plan-enabled="planEntryEnabled"
+      :swarm-enabled="swarmEntryEnabled"
+      :goal-enabled="goalEntryEnabled"
       :color-scheme="colorScheme"
       :font-scale="fontScale"
       :managed-provider-status="managedProviderStatus"

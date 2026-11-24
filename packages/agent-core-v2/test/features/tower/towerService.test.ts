@@ -233,6 +233,7 @@ describe('AgentTowerService', () => {
     policyInactiveTools = [];
     ix.stub(IAgentToolPolicyService, {
       isToolActive: (name: string) => !policyInactiveTools.includes(name),
+      isToolActiveForProfile: (_profile: unknown, name: string) => !policyInactiveTools.includes(name),
     } as unknown as IAgentToolPolicyService);
     ix.stub(IAgentLoopService, {
       ...stubLoopWithHooks(),
@@ -274,6 +275,31 @@ describe('AgentTowerService', () => {
     );
     return executorEvents.fireBeforeExecute(ctx);
   }
+
+  it('enter() reports tools-disabled when any required Tower tool is unavailable', async () => {
+    policyInactiveTools = ['TowerSpawn'];
+    const tower = ix.get(IAgentTowerService);
+
+    await expect(tower.enter()).resolves.toEqual({ entered: false, reason: 'tools-disabled' });
+    expect(tower.isActive).toBe(false);
+    expect(towerEnterFailureMessage({ entered: false, reason: 'tools-disabled' })).toContain('complete Tower tool set');
+  });
+
+  it('reports toolsAvailable as false while the experiment is off or the feature is not assembled', () => {
+    const tower = ix.get(IAgentTowerService);
+    expect(tower.toolsAvailable).toBe(true);
+
+    towerFlagOn = false;
+    expect(tower.toolsAvailable).toBe(false);
+    towerFlagOn = true;
+
+    _setTowerFeatureAssembledForTests(false);
+    try {
+      expect(tower.toolsAvailable).toBe(false);
+    } finally {
+      _setTowerFeatureAssembledForTests(true);
+    }
+  });
 
   it('enter / exit toggle isActive and emit agent.status.updated via wire', async () => {
     const tower = ix.get(IAgentTowerService);

@@ -136,6 +136,21 @@ describe('decideComposerSubmit — bare work-mode commands', () => {
     });
   });
 
+  it.each([
+    { text: '/plan', planEnabled: false },
+    { text: '/swarm', swarmEnabled: false },
+    { text: '/goal', goalEnabled: false },
+    { text: '/goal resume', goalEnabled: false, cmd: '/goal' },
+  ])('does not consume $text locally when its required tool is disabled', (disabled) => {
+    expect(decideComposerSubmit(input({ text: disabled.text, rewritten: disabled.text, ...disabled })))
+      .toMatchObject({ kind: 'disabled-command', cmd: 'cmd' in disabled ? disabled.cmd : disabled.text });
+  });
+
+  it.each(['/goal pause', '/goal cancel'])('keeps %s available when UpdateGoal is disabled', (text) => {
+    expect(decideComposerSubmit(input({ text, rewritten: text, goalEnabled: false })))
+      .toMatchObject({ kind: 'builtin-command', cmd: text });
+  });
+
   it('still matches the bare command when attachment pills ride along (wholesale removal, no fake args)', () => {
     const text = `/plan ${fileLink('abc12345')}`;
     const plan = decideComposerSubmit(input({ text, rewritten: `/plan ${fileLink('1')}` }));

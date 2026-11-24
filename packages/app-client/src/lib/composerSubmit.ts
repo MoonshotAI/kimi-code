@@ -17,6 +17,9 @@ export interface SubmitKindInput {
   goalMode: boolean;
   towerEnabled: boolean;
   extraBuiltins?: readonly SlashCommand[];
+  planEnabled?: boolean;
+  swarmEnabled?: boolean;
+  goalEnabled?: boolean;
 }
 
 export interface SubmitDecisionInput extends SubmitKindInput {
@@ -32,6 +35,7 @@ export type SubmitDecision =
   | { kind: 'builtin-command'; cmd: string; leave: boolean; historyText: string; restoreText: string;
       editText?: string }
   | { kind: 'invalid-command'; cmd: string }
+  | { kind: 'disabled-command'; cmd: string }
   | { kind: 'unresolved-skill-command'; cmd: string; restoreText: string; attachments: PromptAttachment[]; historyText: string }
   | { kind: 'multi-skill-activation'; text: string; skills: { name: string; path?: string }[]; restoreText: string; editText: string; attachments: PromptAttachment[]; historyText: string }
   | { kind: 'submit'; text: string; restoreText: string; editText: string; attachments: PromptAttachment[]; historyText: string };
@@ -43,6 +47,7 @@ export type SubmitKind =
   | { kind: 'skill-activation'; skillName: string; skillPath?: string }
   | { kind: 'skill-command'; cmdToken: string; matched: SlashCommand }
   | { kind: 'invalid-command'; cmdToken: string }
+  | { kind: 'disabled-command'; cmdToken: string }
   | { kind: 'builtin-command'; cmdToken: string; noArgs: boolean }
   | { kind: 'prompt-command'; cmdToken: string; target: 'main' | 'side' }
   | { kind: 'unresolved-skill-command'; cmdToken: string }
@@ -64,13 +69,30 @@ export function decideSubmitKind(input: SubmitKindInput): SubmitKind {
   const bareText = removeAttachmentLinks(trimmed);
   const bareModeCommand = bareText.trim();
 
+  const command = parseSlash(bareText)?.cmd;
+  const goalControlAllowed =
+    command === '/goal' && ['pause', 'cancel'].includes(bareText.trim().slice(command.length).trim());
+  if (
+    (command === '/plan' && input.planEnabled === false) ||
+    (command === '/swarm' && input.swarmEnabled === false) ||
+    (command === '/goal' && input.goalEnabled === false && !goalControlAllowed)
+  ) {
+    return { kind: 'disabled-command', cmdToken: command };
+  }
+
   const bareMode = modeCommandFor(bareModeCommand);
   if (bareMode !== undefined) return { kind: 'mode', mode: bareMode, bareModeCommand };
   if (trimmed) {
     const extraToken = bareModeCommand.match(/^\/\S+/)?.[0];
     const extra = input.extraBuiltins?.find((item) => item.name === extraToken);
     const cmdToken = extra?.name ?? parseSlash(bareText)?.cmd;
-    const matched = extra ?? (cmdToken ? matchSlashItem(buildSlashItems(skills, { towerEnabled: input.towerEnabled }), cmdToken) : undefined);
+    const matched = extra ?? (cmdToken ? matchSlashItem(buildSlashItems(skills, {
+      towerEnabled: input.towerEnabled,
+      planEnabled: input.planEnabled,
+      swarmEnabled: input.swarmEnabled,
+      goalEnabled: input.goalEnabled !== false || goalControlAllowed,
+      extraBuiltins: input.extraBuiltins,
+    }), cmdToken) : undefined);
     const staleSkillPill =
       skillMentions.length === 1 && skillsLoaded && !skills.some((skill) => {
         const mention = skillMentions[0]!;
@@ -175,6 +197,8 @@ export function decideComposerSubmit(input: SubmitDecisionInput): SubmitDecision
     }
     case 'invalid-command':
       return { kind: 'invalid-command', cmd: plan.cmdToken };
+    case 'disabled-command':
+      return { kind: 'disabled-command', cmd: plan.cmdToken };
     case 'builtin-command': {
       if (plan.noArgs) {
         return { kind: 'builtin-command', cmd: plan.cmdToken, leave: leaves(plan.cmdToken), historyText: plan.cmdToken, restoreText: trimmed };

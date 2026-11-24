@@ -427,6 +427,17 @@ slug = "acme-dev"        # 可选
 disabled = ["WebSearch", "FetchURL", "mcp__github__*"]
 ```
 
+对 `[tools]` 的修改会立即应用于当前及新会话。在 Kimi Code 桌面端和 Web 界面中，也可以通过「设置 → 智能体与会话 → 内置工具」切换内置工具开关，保存后会写入这一全局配置段。
+
+部分模式依赖特定工具才能进入：
+
+- Plan 模式依赖 `ExitPlanMode`。禁用后无法进入 Plan 模式，`defaultPlanMode` 也会跳过自动进入。
+- Swarm 模式依赖 `AgentSwarm`。
+- Tower 模式依赖实验开关以及完整的 Tower 工具集（`TowerInit`、`TowerPlan`、`TowerSpawn`、`TowerMerge`、`TowerRebase`、`TowerTeardown`、`TowerComplete`、`TowerSend`、`TowerInbox`、`TowerFinding`、`TowerReview`、`TowerMission`、`TowerStatus`）。
+- 创建或恢复目标（Goal）依赖 `UpdateGoal`；暂停或取消已有目标不受影响。
+
+重新启用对应工具即可恢复进入。禁用工具不会强制退出已开启的模式，退出当前模式的操作也仍然可用。
+
 ::: warning 注意
 与 Agent 文件中的 `tools` / `disallowedTools` 一样，本节不仅决定模型能 "看到" 哪些工具，还会在执行前再次强制检查。[权限规则](#permission)仍是独立的控制层，用于决定哪些操作需要审批。
 :::

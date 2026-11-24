@@ -14,6 +14,7 @@ import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
+import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { denyToolExecution } from '#/agent/toolExecutor/beforeToolExecuteEvent';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import {
@@ -65,6 +66,7 @@ export class AgentPlanService extends Service implements IAgentPlanService {
     @ISessionContext private readonly sessionCtx: ISessionContext,
     @IAgentToolExecutorService toolExecutor: IAgentToolExecutorService,
     @IAgentToolApprovalService private readonly toolApproval: IAgentToolApprovalService,
+    @IAgentToolPolicyService private readonly toolPolicy: IAgentToolPolicyService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IAgentStateService private readonly agentState: IAgentStateService,
   ) {
@@ -188,6 +190,12 @@ export class AgentPlanService extends Service implements IAgentPlanService {
     }
     if (this.isActive) {
       throw new Error2(ErrorCodes.SESSION_PLAN_MODE_INVALID, 'Already in plan mode');
+    }
+    if (!this.toolPolicy.isToolActive('ExitPlanMode')) {
+      throw new Error2(
+        ErrorCodes.SESSION_PLAN_MODE_INVALID,
+        'Plan mode requires the ExitPlanMode tool; enable it before entering plan mode',
+      );
     }
 
     const target = this.planFileTarget(id);

@@ -7,6 +7,7 @@ export * from './codeLanguage';
 export * from './connectIssue';
 export * from './cronHumanize';
 export * from './cronSchedule';
+export * from './defaultTools';
 export * from './desktopFlag';
 export * from './emojiData';
 export * from './effortSwitch';

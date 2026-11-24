@@ -7,7 +7,12 @@ import type { WorkspaceConfig } from '#/tool/path-access';
 import type { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import type { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { ReadMediaFileTool } from '#/agent/tools/read-media-file/readMediaFileTool';
+import { READ_MEDIA_FILE_TOOL_NAME } from '#/agent/tools/read-media-file/read-media-file';
 import type { VideoUploader } from '#/llm-adapter/model/media';
+
+export const USER_CONFIGURABLE_MEDIA_TOOLS = [
+  { name: READ_MEDIA_FILE_TOOL_NAME, source: 'builtin' as const },
+] as const;
 
 export interface RegisterMediaToolsDeps {
   readonly attachmentStore: ISessionMediaStore;

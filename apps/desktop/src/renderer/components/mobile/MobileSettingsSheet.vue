@@ -49,7 +49,10 @@ const props = withDefaults(
     status: ConversationStatus;
     thinking?: ThinkingLevel;
     planMode?: boolean;
+    planEnabled?: boolean;
+    swarmEnabled?: boolean;
     goalMode?: boolean;
+    goalEnabled?: boolean;
     goalActive?: boolean;
     swarmMode?: boolean;
     /** Tower-mode state for the session (experimental). */
@@ -308,7 +311,7 @@ function toggleAutoSessionTitle(): void {
         >{{ thinkingLevel === 'off' ? t('status.planOff') : effortLabel(thinkingLevel) }}</span>
       </div>
 
-      <button type="button" class="srow" role="switch" :aria-checked="planOn" @click="onTogglePlan">
+      <button v-if="planOn || planEnabled" type="button" class="srow" role="switch" :aria-checked="planOn" @click="onTogglePlan">
         <span class="srow-main">
           <span class="srow-label">{{ t('status.statusPlanMode') }}</span>
           <span class="srow-sub">{{ t('mobile.planModeSub') }}</span>
@@ -316,14 +319,14 @@ function toggleAutoSessionTitle(): void {
         <Switch :model-value="planOn" size="lg" decorative />
       </button>
 
-      <button v-if="!goalActive" type="button" class="srow" role="switch" :aria-checked="goalOn" @click="onToggleGoal">
+      <button v-if="!goalActive && goalEnabled" type="button" class="srow" role="switch" :aria-checked="goalOn" @click="onToggleGoal">
         <span class="srow-main">
           <span class="srow-label">{{ t('status.goalLabel') }}</span>
           <span class="srow-sub">{{ t('mobile.goalModeSub') }}</span>
         </span>
         <Switch :model-value="goalOn" size="lg" decorative />
       </button>
-      <button v-else type="button" class="srow" @click="onToggleGoal">
+      <button v-else-if="goalActive" type="button" class="srow" @click="onToggleGoal">
         <span class="srow-main">
           <span class="srow-label">{{ t('status.goalLabel') }}</span>
           <span class="srow-sub">{{ t('mobile.goalModeSub') }}</span>
@@ -331,7 +334,7 @@ function toggleAutoSessionTitle(): void {
         <Icon class="srow-chevron" name="chevron-right" size="sm" aria-hidden="true" />
       </button>
 
-      <button type="button" class="srow" role="switch" :aria-checked="swarmOn" @click="emit('toggleSwarm')">
+      <button v-if="swarmOn || swarmEnabled" type="button" class="srow" role="switch" :aria-checked="swarmOn" @click="emit('toggleSwarm')">
         <span class="srow-main">
           <span class="srow-label">{{ t('status.statusSwarmMode') }}</span>
           <span class="srow-sub">{{ t('mobile.swarmModeSub') }}</span>
@@ -339,7 +342,7 @@ function toggleAutoSessionTitle(): void {
         <Switch :model-value="swarmOn" size="lg" decorative />
       </button>
 
-      <button v-if="towerEnabled" type="button" class="srow" role="switch" :aria-checked="towerOn" @click="emit('toggleTower')">
+      <button v-if="towerOn || towerEnabled" type="button" class="srow" role="switch" :aria-checked="towerOn" @click="emit('toggleTower')">
         <span class="srow-main">
           <span class="srow-label">{{ t('status.statusTowerMode') }}</span>
           <span class="srow-sub">{{ t('mobile.towerModeSub') }}</span>
