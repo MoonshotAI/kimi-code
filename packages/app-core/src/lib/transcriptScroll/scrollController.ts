@@ -1,6 +1,6 @@
 import { nextJumpPillVisible } from '../followScroll';
 import { createDomAnchors, resolvedExactly, ROW_KEY_ATTRIBUTE, type AnchorCandidate, type AnchorPath, type PickOptions } from './anchor';
-import { isUnexpectedScroll, readScrollIntent } from './intent';
+import { isUnexpectedScroll, readScrollIntent, USER_SCROLL_TOLERANCE } from './intent';
 import type { LayoutModel } from './layoutModel';
 
 export const FOLLOW_THRESHOLD = 24;
@@ -633,7 +633,7 @@ export function createScrollController(adapter: ScrollAdapter, overrides: Partia
       return;
     }
     held = null;
-    if (state.mode.kind !== 'anchored' || dragging || touching || maxTop() - scroller.scrollTop > options.followThreshold) return;
+    if (state.mode.kind !== 'anchored' || dragging || touching || maxTop() - scroller.scrollTop > USER_SCROLL_TOLERANCE) return;
     setMode({ kind: 'follow' });
     correct('follow');
   }

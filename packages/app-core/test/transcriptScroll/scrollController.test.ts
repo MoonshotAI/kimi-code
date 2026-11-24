@@ -458,6 +458,23 @@ describe('hold', () => {
     expect(s.distanceFromBottom()).toBe(0);
   });
 
+  it('keeps the clicked element still when content below it expands near the bottom', () => {
+    const s = setup();
+    const el = s.blockEl('r11', 'head');
+    const before = s.visualTop(el);
+    s.controller.hold(el);
+    s.setChildHeight('r11', 'md', 2, 100);
+    s.frame();
+    s.frame(HOLD_MS);
+    s.frame();
+    expect(s.visualTop(el)).toBe(before);
+    expect(s.distanceFromBottom()).toBe(20);
+    expect(s.controller.state.mode.kind).toBe('anchored');
+    s.userScroll(s.maxTop);
+    s.frame();
+    expect(s.controller.state.mode.kind).toBe('follow');
+  });
+
   it('honors a longer hold and stays anchored away from the bottom', () => {
     const s = setup();
     s.controller.hold(s.blockEl('r11', 'head'), HOLD_MS * 2);
