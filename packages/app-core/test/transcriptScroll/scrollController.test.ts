@@ -369,6 +369,53 @@ describe('scrollbar drags and touch', () => {
     s.controller.onInput(new Event('touchend'));
     expect(s.distanceFromBottom()).toBe(0);
   });
+
+  it('releases the touch on touchend when scrollend already arrived while the finger was down', () => {
+    const s = setup();
+    s.controller.onInput(new Event('touchstart'));
+    s.controller.onInput(new Event('touchmove'));
+    scrollUserTo(s, 1000);
+    s.controller.onInput(new Event('scrollend'));
+    s.controller.onInput(new Event('touchend'));
+    s.controller.follow();
+    expect(s.distanceFromBottom()).toBe(0);
+    s.setChildHeight('r11', 'md', 3, 300);
+    s.frame();
+    expect(s.distanceFromBottom()).toBe(0);
+  });
+
+  it('keeps waiting for scrollend when the touch scrolled again after an early scrollend', () => {
+    const s = setup();
+    s.controller.onInput(new Event('touchstart'));
+    s.controller.onInput(new Event('touchmove'));
+    scrollUserTo(s, 1000);
+    s.controller.onInput(new Event('scrollend'));
+    scrollUserTo(s, 900);
+    const mode = anchored(s);
+    const el = resolve(s, mode.anchor);
+    const writes = s.writes.length;
+    s.setBlockHeight('r1', 'head', 130);
+    s.frame();
+    s.controller.onInput(new Event('touchend'));
+    expect(s.writes.length).toBe(writes);
+    s.controller.onInput(new Event('scrollend'));
+    expect(s.writes.at(-1)?.reason).toBe('scroll-end');
+    expect(s.visualTop(el)).toBe(mode.offset);
+  });
+
+  it.each([false, true])('jumps to the bottom after a touch whose touchend never arrived (smooth: %s)', (smooth) => {
+    const s = setup();
+    s.controller.onInput(new Event('touchstart'));
+    s.controller.onInput(new Event('touchmove'));
+    scrollUserTo(s, 1000);
+    s.controller.follow({ smooth });
+    for (let i = 0; i < 40 && s.hasPendingFrame(); i++) s.frame();
+    expect(s.distanceFromBottom()).toBe(0);
+    s.setChildHeight('r11', 'md', 3, 300);
+    s.frame();
+    expect(s.distanceFromBottom()).toBe(0);
+    expect(s.controller.state.following).toBe(true);
+  });
 });
 
 describe('hold', () => {
