@@ -1158,7 +1158,12 @@ export class KimiTUI {
       this.modelMigration.request();
     });
     if (this.options.startup.worktree !== undefined) {
-      void this.worktreeCreation.run(this.options.startup.worktree);
+      void this.worktreeCreation.run(this.options.startup.worktree, {
+        enter: async (location) => {
+          await this.applyWorkLocation(location, { environmentId: 'local' });
+          return true;
+        },
+      });
     }
   }
 
@@ -3257,7 +3262,7 @@ export class KimiTUI {
       return true;
     } catch (error) {
       await this.applyWorkLocation(previous, {
-        resolveEnvironment: isDirectory(previous.cwd),
+        resolveEnvironment: options?.resolveEnvironment === false ? false : isDirectory(previous.cwd),
         environmentId: options?.environmentId,
       }).catch(() => {});
       this.showError(formatErrorMessage(error));
@@ -3825,7 +3830,7 @@ export class KimiTUI {
       if (plan?.kind === 'switch') {
         if (
           !(await this.applyWorkLocationOrRollback(plan.location, {
-            resolveEnvironment: !plan.missing,
+            resolveEnvironment: false,
           }))
         ) {
           await Promise.resolve(session.close?.()).catch(() => {});
@@ -3963,7 +3968,7 @@ export class KimiTUI {
         projectRoot,
         isGitRepo: this.state.appState.isGitRepo ?? false,
       };
-    await this.applyWorkLocation(location);
+    await this.applyWorkLocation(location, { environmentId: 'local' });
     return true;
   }
 

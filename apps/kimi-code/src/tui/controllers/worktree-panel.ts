@@ -251,11 +251,20 @@ export class WorktreePanelController {
   }
 
   private visibleRows(listing: WorktreeListing): WorktreePanelRow[] {
-    if (this.pendingDeletes.size === 0) return panelRows(listing);
-    return panelRows({
-      ...listing,
-      worktrees: listing.worktrees.filter((worktree) => !this.isPendingDelete(worktree.path)),
-    });
+    const markCurrent = !this.usesProjectRootFallback();
+    if (this.pendingDeletes.size === 0) return panelRows(listing, markCurrent);
+    return panelRows(
+      {
+        ...listing,
+        worktrees: listing.worktrees.filter((worktree) => !this.isPendingDelete(worktree.path)),
+      },
+      markCurrent,
+    );
+  }
+
+  private usesProjectRootFallback(): boolean {
+    const { workDir, projectRoot } = this.host.state.appState;
+    return !isDirectory(workDir) && projectRoot !== undefined;
   }
 
   private isPendingDelete(path: string): boolean {
@@ -278,8 +287,10 @@ export class WorktreePanelController {
   }
 
   private async fetchListing(): Promise<WorktreeListing | undefined> {
+    const { workDir, projectRoot } = this.host.state.appState;
+    const queryDir = isDirectory(workDir) || projectRoot === undefined ? workDir : projectRoot;
     try {
-      this.listing = await this.host.harness.listWorktrees(this.host.state.appState.workDir);
+      this.listing = await this.host.harness.listWorktrees(queryDir);
       return this.listing;
     } catch (error) {
       this.host.showError(engineMessage(error));
@@ -354,18 +365,18 @@ async function relativeInside(root: string, dir: string): Promise<string | undef
   return isOutsideRoot(direct) ? undefined : direct;
 }
 
-function panelRows(listing: WorktreeListing): WorktreePanelRow[] {
+function panelRows(listing: WorktreeListing, markCurrent = true): WorktreePanelRow[] {
   const sourceRow: WorktreePanelRow | undefined = listing.bare
     ? undefined
     : {
         kind: 'source',
         path: listing.repoRoot,
-        current: sameDir(listing.currentCheckoutRoot, listing.repoRoot),
+        current: markCurrent && sameDir(listing.currentCheckoutRoot, listing.repoRoot),
       };
   const worktreeRows: WorktreeRow[] = listing.worktrees.map((worktree) => ({
     kind: 'worktree',
     worktree,
-    current: sameDir(listing.currentCheckoutRoot, worktree.path),
+    current: markCurrent && sameDir(listing.currentCheckoutRoot, worktree.path),
   }));
   const currentWorktree = worktreeRows.find((row) => row.current);
   const otherWorktrees = worktreeRows.filter((row) => !row.current);
@@ -381,7 +392,9 @@ async function destinationFor(
   row: WorktreePanelRow,
   appState: Pick<AppState, 'workDir'>,
 ): Promise<Destination> {
-  const subdir = await relativeInside(listing.currentCheckoutRoot, appState.workDir);
+  const subdir = isDirectory(appState.workDir)
+    ? await relativeInside(listing.currentCheckoutRoot, appState.workDir)
+    : undefined;
   const targetRoot = row.kind === 'source' ? listing.repoRoot : row.worktree.path;
   const worktree =
     row.kind === 'worktree' && row.worktree.managed

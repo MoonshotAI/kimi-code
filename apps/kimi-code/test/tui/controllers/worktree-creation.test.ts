@@ -413,4 +413,19 @@ describe('WorktreeCreationController', () => {
     await running;
     expect(host.applyWorkLocation).toHaveBeenCalledOnce();
   });
+
+  it('falls back to projectRoot when creating a worktree from a missing workDir', async () => {
+    const { host, controller } = makeHost();
+    host.state.appState = { workDir: '/nonexistent-kimi-missing-worktree', projectRoot: '/repo' } as {
+      workDir: string;
+      projectRoot?: string;
+    };
+
+    await controller.run({ name: 'fix-login' });
+
+    expect(host.harness.createWorktree).toHaveBeenCalledWith(
+      { cwd: '/repo', name: 'fix-login', base: undefined },
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+  });
 });

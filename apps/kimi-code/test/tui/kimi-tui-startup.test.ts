@@ -5676,15 +5676,13 @@ describe('KimiTUI work location', () => {
       const resumed = makeSession({ id: 'ses-resumed' });
       const harness = makeHarness(current, {
         resumeSession: vi.fn(async () => resumed),
-        resolveSessionEnvironment: vi.fn(async (options: { workDir?: string; environmentCwd?: string }) => {
-          if (options.workDir === targetDir) {
-            throw new Error(`Environment rejected ${targetDir}`);
-          }
-          return { environmentId: 'local', cwd: options.environmentCwd };
-        }),
       });
       const driver = await startAt(project, harness, {}, { projectRoot: project, isGitRepo: true });
       await driver.ensureSession();
+      vi.spyOn(
+        driver as unknown as { refreshSkillCommands: () => Promise<void> },
+        'refreshSkillCommands',
+      ).mockRejectedValueOnce(new Error(`Skills reload failed for ${targetDir}`));
 
       const ok = await (
         driver as unknown as {
@@ -5713,7 +5711,77 @@ describe('KimiTUI work location', () => {
       expect(driver.state.appState.workDir).toBe(project);
       expect(driver.state.appState.worktree).toBeUndefined();
       expect(driver.state.appState.sessionId).toBe('ses-current');
-      expect(transcriptText(driver)).toContain(`Environment rejected ${targetDir}`);
+      expect(transcriptText(driver)).toContain(`Skills reload failed for ${targetDir}`);
+    });
+
+    it('skips default-environment resolution when resuming a same-project session in another directory', async () => {
+      const project = tempDir('kimi-resume-skip-env-project-');
+      const targetDir = join(project, 'wt-target');
+      mkdirSync(targetDir);
+      const current = makeSession({ id: 'ses-current' });
+      const resumed = makeSession({ id: 'ses-resumed' });
+      const resolveSessionEnvironment = vi.fn(async (options: { workDir?: string; environmentId?: string; environmentCwd?: string }) => {
+        if (options.workDir === targetDir && options.environmentId === undefined) {
+          throw new Error('Configured default remote environment is unavailable');
+        }
+        return { environmentId: 'local', cwd: options.environmentCwd };
+      });
+      const harness = makeHarness(current, {
+        resumeSession: vi.fn(async () => resumed),
+        resolveSessionEnvironment,
+      });
+      const driver = await startAt(project, harness, {}, { projectRoot: project, isGitRepo: true });
+      await driver.ensureSession();
+      resolveSessionEnvironment.mockClear();
+
+      const ok = await (
+        driver as unknown as {
+          resumeSession(
+            id: string,
+            plan: {
+              kind: 'switch';
+              location: { cwd: string; projectRoot: string; isGitRepo: boolean; worktree: { root: string; name: string; repoRoot: string } };
+              missing: boolean;
+            },
+          ): Promise<boolean>;
+        }
+      ).resumeSession('ses-resumed', {
+        kind: 'switch',
+        location: {
+          cwd: targetDir,
+          projectRoot: project,
+          isGitRepo: true,
+          worktree: { root: targetDir, name: 'wt-target', repoRoot: project },
+        },
+        missing: false,
+      });
+
+      expect(ok).toBe(true);
+      expect(resolveSessionEnvironment).not.toHaveBeenCalled();
+      expect(driver.state.appState.workDir).toBe(targetDir);
+      expect(driver.state.appState.sessionId).toBe('ses-resumed');
+    });
+
+    it('falls back to projectRoot in /worktree and lets the user switch back to source when active workDir is missing', async () => {
+      const project = tempDir('kimi-missing-wt-panel-project-');
+      const missingWt = join(project, 'deleted-wt');
+      const otherWt = tempDir('kimi-missing-wt-panel-other-');
+      const { harness, listWorktrees } = worktreeHarness(project, otherWt);
+      const driver = await startAt(missingWt, harness, {}, {
+        projectRoot: project,
+        isGitRepo: true,
+        worktree: { root: missingWt, name: 'deleted-wt', repoRoot: project },
+      });
+
+      const panel = await openPanel(driver);
+      expect(listWorktrees).toHaveBeenCalledWith(project);
+      expect(panelText(driver)).not.toContain('← current');
+
+      panel.handleInput(ENTER);
+      await vi.waitFor(() => {
+        expect(driver.state.appState.workDir).toBe(project);
+      });
+      expect(driver.state.appState.worktree).toBeUndefined();
     });
 
     it('falls back to the worktree root instead of following an escaping directory symlink', async () => {

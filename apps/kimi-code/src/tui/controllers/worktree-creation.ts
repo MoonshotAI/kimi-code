@@ -29,6 +29,7 @@ import { WORKTREE_SETUP_OUTPUT_LINES } from '#/tui/constant/worktree';
 import type { TUIState } from '#/tui/tui-state';
 import type { WorkLocation } from '#/tui/types';
 import { formatErrorMessage } from '#/tui/utils/event-payload';
+import { isDirectory } from '#/utils/session-directory';
 
 export interface WorktreeCreationRequest {
   readonly name?: string;
@@ -97,7 +98,8 @@ export class WorktreeCreationController {
   async run(request: WorktreeCreationRequest, options: WorktreeCreationOptions = {}): Promise<void> {
     if (this.running || this.disposed) return;
     this.running = true;
-    const { workDir } = this.host.state.appState;
+    const { workDir, projectRoot } = this.host.state.appState;
+    const sourceDir = isDirectory(workDir) || projectRoot === undefined ? workDir : projectRoot;
     const block = new WorktreeProgressComponent(() => {
       this.host.state.ui.requestRender();
     });
@@ -106,7 +108,7 @@ export class WorktreeCreationController {
     this.host.state.ui.requestRender();
     const progress = new ProgressRows(block, () => this.host.state.ui.requestRender());
     try {
-      const created = await this.create(request, workDir, progress, options);
+      const created = await this.create(request, sourceDir, progress, options);
       if (created === undefined) return;
       const record: WorktreeRunRecord = {
         name: created.worktree.name,
@@ -144,7 +146,7 @@ export class WorktreeCreationController {
         sourceDir: created.sourceRoot,
         sourceDirty: created.sourceDirty,
         missingSubdir: created.cwdFallback
-          ? relative(created.sourceRoot, await realpath(workDir).catch(() => workDir))
+          ? relative(created.sourceRoot, await realpath(sourceDir).catch(() => sourceDir))
           : undefined,
       });
     } catch (error) {
