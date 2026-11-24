@@ -319,7 +319,7 @@ describe('Composer toolbar popup viewport clamping', () => {
     window.dispatchEvent(new Event('resize'));
     await nextTick();
     expect(permPill.classList.contains('open')).toBe(false);
-    expect(menu.classList.contains('composer-menu-pop-leave-active')).toBe(true);
+    expect(menu.classList.contains('ui-menu-pop-leave-active')).toBe(true);
   });
 
   it('respects narrowed visualViewport bounds when clamping horizontally', async () => {

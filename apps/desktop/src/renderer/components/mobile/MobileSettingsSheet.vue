@@ -22,7 +22,7 @@ import type { FontTarget } from '@moonshot-ai/app-core';
 import LanguageSwitcher from '../settings/LanguageSwitcher.vue';
 import PlanUsageCard from '../settings/PlanUsageCard.vue';
 import { formatTokens } from '@moonshot-ai/app-core/lib';
-import { Badge, Icon, SegmentedControl } from '@moonshot-ai/app-ui';
+import { Avatar, Badge, Icon, SegmentedControl, Switch } from '@moonshot-ai/app-ui';
 
 const { t } = useI18n();
 
@@ -195,15 +195,6 @@ function onTogglePlan(): void {
 const swarmOn = computed<boolean>(() => props.swarmMode === true);
 const towerOn = computed<boolean>(() => props.towerMode === true);
 
-const avatarLoadFailed = ref(false);
-watch(
-  () => props.managedUserInfo?.avatar,
-  () => {
-    avatarLoadFailed.value = false;
-  },
-);
-const showAvatar = computed(() => Boolean(props.managedUserInfo?.avatar) && !avatarLoadFailed.value);
-
 const accountLevel = computed(() => props.managedUserInfo?.userLevelName?.trim() ?? '');
 
 const signedIn = computed(() => props.managedProviderStatus === 'authenticated');
@@ -322,7 +313,7 @@ function toggleAutoSessionTitle(): void {
           <span class="srow-label">{{ t('status.statusPlanMode') }}</span>
           <span class="srow-sub">{{ t('mobile.planModeSub') }}</span>
         </span>
-        <span class="toggle" :class="{ on: planOn }" aria-hidden="true" />
+        <Switch :model-value="planOn" size="lg" decorative />
       </button>
 
       <button v-if="!goalActive" type="button" class="srow" role="switch" :aria-checked="goalOn" @click="onToggleGoal">
@@ -330,7 +321,7 @@ function toggleAutoSessionTitle(): void {
           <span class="srow-label">{{ t('status.goalLabel') }}</span>
           <span class="srow-sub">{{ t('mobile.goalModeSub') }}</span>
         </span>
-        <span class="toggle" :class="{ on: goalOn }" aria-hidden="true" />
+        <Switch :model-value="goalOn" size="lg" decorative />
       </button>
       <button v-else type="button" class="srow" @click="onToggleGoal">
         <span class="srow-main">
@@ -345,7 +336,7 @@ function toggleAutoSessionTitle(): void {
           <span class="srow-label">{{ t('status.statusSwarmMode') }}</span>
           <span class="srow-sub">{{ t('mobile.swarmModeSub') }}</span>
         </span>
-        <span class="toggle" :class="{ on: swarmOn }" aria-hidden="true" />
+        <Switch :model-value="swarmOn" size="lg" decorative />
       </button>
 
       <button v-if="towerEnabled" type="button" class="srow" role="switch" :aria-checked="towerOn" @click="emit('toggleTower')">
@@ -353,7 +344,7 @@ function toggleAutoSessionTitle(): void {
           <span class="srow-label">{{ t('status.statusTowerMode') }}</span>
           <span class="srow-sub">{{ t('mobile.towerModeSub') }}</span>
         </span>
-        <span class="toggle" :class="{ on: towerOn }" aria-hidden="true" />
+        <Switch :model-value="towerOn" size="lg" decorative />
       </button>
 
       <button type="button" class="srow" @click="cyclePermission">
@@ -450,28 +441,28 @@ function toggleAutoSessionTitle(): void {
           <span class="srow-label">{{ t('settings.pasteImageAutoMention') }}</span>
           <span class="srow-sub">{{ t('settings.pasteImageAutoMentionHint') }}</span>
         </span>
-        <span class="toggle" :class="{ on: pasteImageAutoMention }" aria-hidden="true" />
+        <Switch :model-value="pasteImageAutoMention" size="lg" decorative />
       </button>
       <button type="button" class="srow" role="switch" :aria-checked="turnFolding" @click="setTurnFolding(!turnFolding)">
         <span class="srow-main">
           <span class="srow-label">{{ t('settings.turnFolding') }}</span>
           <span class="srow-sub">{{ t('settings.turnFoldingHint') }}</span>
         </span>
-        <span class="toggle" :class="{ on: turnFolding }" aria-hidden="true" />
+        <Switch :model-value="turnFolding" size="lg" decorative />
       </button>
       <button type="button" class="srow" role="switch" :aria-checked="activityRunFolding" @click="setActivityRunFolding(!activityRunFolding)">
         <span class="srow-main">
           <span class="srow-label">{{ t('settings.activityRunFolding') }}</span>
           <span class="srow-sub">{{ t('settings.activityRunFoldingHint') }}</span>
         </span>
-        <span class="toggle" :class="{ on: activityRunFolding }" aria-hidden="true" />
+        <Switch :model-value="activityRunFolding" size="lg" decorative />
       </button>
       <button type="button" class="srow" role="switch" :aria-checked="client.config.value?.autoSessionTitle !== false" @click="toggleAutoSessionTitle()">
         <span class="srow-main">
           <span class="srow-label">{{ t('settings.autoSessionTitle') }}</span>
           <span class="srow-sub">{{ t('settings.autoSessionTitleHint') }}</span>
         </span>
-        <span class="toggle" :class="{ on: client.config.value?.autoSessionTitle !== false }" aria-hidden="true" />
+        <Switch :model-value="client.config.value?.autoSessionTitle !== false" size="lg" decorative />
       </button>
 
       <div v-if="serverVersion" class="srow read-only">
@@ -486,10 +477,7 @@ function toggleAutoSessionTitle(): void {
     <div class="card">
       <template v-if="signedIn">
         <div class="srow read-only acct-profile">
-          <span class="acct-avatar" aria-hidden="true">
-            <img v-if="showAvatar" :src="managedUserInfo?.avatar" alt="" @error="avatarLoadFailed = true" />
-            <Icon v-else name="user" size="md" />
-          </span>
+          <Avatar :src="managedUserInfo?.avatar" size="lg" shape="circle" aria-hidden="true" />
           <span class="srow-main">
             <span class="acct-name-row">
               <span class="srow-label">{{ managedUserInfo?.nickname || t('sidebar.defaultUserName') }}</span>
@@ -561,17 +549,7 @@ function toggleAutoSessionTitle(): void {
   z-index: 1;
   background-color: var(--color-accent-soft);
   box-shadow: inset 0 0 0 1.5px var(--color-accent-bd);
-  animation: mobile-settings-row-highlight var(--duration-flash) var(--ease-out);
-}
-@keyframes mobile-settings-row-highlight {
-  0% {
-    background-color: color-mix(in srgb, var(--color-accent) 18%, var(--color-surface));
-    box-shadow: inset 0 0 0 1.5px var(--color-accent);
-  }
-  100% {
-    background-color: var(--color-accent-soft);
-    box-shadow: inset 0 0 0 1.5px var(--color-accent-bd);
-  }
+  animation: ui-row-highlight var(--duration-flash) var(--ease-out);
 }
 @media (prefers-reduced-motion: reduce) {
   .card > .srow {
@@ -631,13 +609,13 @@ function toggleAutoSessionTitle(): void {
 .providers-page {
   margin: 0 max(var(--space-4), var(--safe-right)) 0 max(var(--space-4), var(--safe-left));
 }
-.providers-page :deep(.pp-title) {
+.providers-page :deep(.pp-head .sec-title) {
   display: none;
 }
 .srow-val {
   flex: none;
   font-family: var(--font-mono);
-  font-size: var(--ui-font-size);
+  font-size: var(--text-base);
   font-weight: 500;
   color: var(--color-accent-hover);
 }
@@ -660,32 +638,6 @@ function toggleAutoSessionTitle(): void {
   line-height: 1;
 }
 
-.toggle {
-  flex: none;
-  width: 44px;
-  height: 26px;
-  border-radius: var(--radius-full);
-  background: var(--color-line);
-  position: relative;
-  transition: background 0.18s;
-}
-.toggle.on { background: var(--color-accent); }
-.toggle::after {
-  content: "";
-  position: absolute;
-  top: 3px;
-  left: 3px;
-  width: 20px;
-  height: 20px;
-  border-radius: var(--radius-full);
-  box-sizing: border-box;
-  background: var(--color-bg);
-  border: var(--p-hairline) solid var(--color-line);
-  box-shadow: var(--shadow-xs);
-  transition: left 0.18s;
-}
-.toggle.on::after { left: 21px; }
-
 .srow.pref {
   flex-wrap: wrap;
   cursor: default;
@@ -696,23 +648,6 @@ function toggleAutoSessionTitle(): void {
 
 .srow.acct.in .srow-label { color: var(--color-accent-hover); font-weight: 500; }
 .srow.acct.out .srow-label { color: var(--color-danger); }
-.acct-avatar {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 40px;
-  height: 40px;
-  flex: none;
-  border-radius: 50%;
-  background: var(--color-surface-sunken);
-  color: var(--color-text-muted);
-}
-.acct-avatar img {
-  width: 100%;
-  height: 100%;
-  border-radius: 50%;
-  object-fit: cover;
-}
 .acct-name-row {
   display: flex;
   align-items: center;
@@ -756,5 +691,5 @@ function toggleAutoSessionTitle(): void {
 .srow,
 .srow-sub,
 .srow-val,
-.cache-note { font-family: var(--sans); }
+.cache-note { font-family: var(--font-ui); }
 </style>

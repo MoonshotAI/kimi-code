@@ -203,7 +203,7 @@ function sign(line: DiffViewLine): string {
   border-radius: var(--radius-md);
   background: var(--color-well);
   overflow: auto;
-  max-height: calc(24 * 1.5 * var(--ui-font-size));
+  max-height: calc(24 * 1.5 * var(--text-base));
   overscroll-behavior: contain;
   font-family: var(--font-mono);
   font-size: var(--code-font-size);

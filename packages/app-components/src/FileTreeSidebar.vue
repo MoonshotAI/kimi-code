@@ -170,7 +170,8 @@ onBeforeUnmount(() => {
         :disabled="anyLoading"
         @click="refresh"
       >
-        <Icon name="refresh" size="md" :class="{ 'fts-spinning': anyLoading }" />
+        <Spinner v-if="anyLoading" size="xs" />
+        <Icon v-else name="refresh" size="md" />
       </IconButton>
     </div>
     <div v-if="rootFailed && !searchActive" class="fts-error">
@@ -262,7 +263,7 @@ onBeforeUnmount(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--muted);
+  color: var(--color-text-faint);
 }
 
 .fts-hint {
@@ -270,17 +271,7 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: center;
   padding: var(--space-4) var(--space-2);
-  color: var(--muted);
+  color: var(--color-text-faint);
   font-size: var(--text-xs);
-}
-
-@keyframes fts-spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-.fts-spinning {
-  animation: fts-spin 0.7s linear infinite;
 }
 </style>

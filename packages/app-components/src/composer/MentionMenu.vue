@@ -380,7 +380,7 @@ defineExpose({ el: menuEl });
   justify-content: center;
   width: var(--p-ic-sm);
   height: var(--p-ic-sm);
-  color: var(--muted);
+  color: var(--color-text-faint);
   flex-shrink: 0;
 }
 
@@ -401,7 +401,7 @@ defineExpose({ el: menuEl });
   border: var(--p-hairline) solid var(--color-line);
   border-radius: var(--radius-xs);
   background: var(--color-well);
-  color: var(--muted);
+  color: var(--color-text-faint);
   flex-shrink: 0;
 }
 

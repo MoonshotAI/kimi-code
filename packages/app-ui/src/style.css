@@ -1,40 +1,14 @@
 @import './markdown-tokens.css';
+@import './menu-layer.css';
 
 :root {
-  --dim: var(--color-text-muted);
-  --muted: var(--color-text-faint);
-  --faint: var(--color-text-quaternary);
-  /* Legacy hairline aliases — kept for one version cycle; new work references
-     --color-line / --color-subtle directly. Declared only here so they follow
-     the dark overrides of their targets automatically. */
-  --line: var(--color-line);
-  --line2: var(--color-subtle);
-  --panel: #f5f5f5;
   --panel2: rgba(0, 0, 0, 0.05);
-  --bg: #ffffff;
-  /* Brand blue = Kimi KMBlue (#1783ff), matched to kimi.com's palette. */
-  --blue: #1783ff;
-  --logo: #1783ff;
   --star: #eab308;
-  /* Subtle hover wash for icon buttons (toast close, etc.). */
-  --hover: var(--color-hover);
-  /* Legacy aliases over the font-scale tokens (see the type-scale block
-     below): chrome sizes stay relative to --ui-b2 so everything keeps shifting
-     together, and chat prose rides --md-b1 (2px up from UI body by design). */
-  --ui-font-size: var(--ui-b2);
-  --ui-font-size-sm: calc(var(--ui-font-size) - 1px);
-  --ui-font-size-xs: calc(var(--ui-font-size) - 2px);
-  --ui-font-size-lg: calc(var(--ui-font-size) + 1px);
-  --ui-font-size-xl: calc(var(--ui-font-size) + 2px);
   --content-font-size: var(--md-b1);
   /* Standalone code surfaces (diff view, file preview, tool cards): one step
      below body text, 12px at Medium. Prose-embedded code (markdown blocks)
      stays on the --md-* ramp. */
   --code-font-size: calc(var(--content-font-size) - 2px);
-  --mono: var(--font-mono);
-  /* Body/UI font follows the canonical UI font token. Mirrors --font-ui
-     so the legacy alias can never drift from the current text face. */
-  --sans: var(--font-ui);
   color-scheme: light dark;
 }
 
@@ -51,24 +25,14 @@ html[data-color-scheme="system"] {
 /* Dark mode variables — applied when explicitly chosen or via system preference. */
 html[data-color-scheme="dark"] {
   color-scheme: dark;
-  --panel: #1f1f1f;
   --panel2: #121212;
-  --bg: #121212;
-  --blue: #1a88ff;
-  --logo: #1a88ff;
   --star: #facc15;
-  --hover: var(--color-hover);
 }
 
 @media (prefers-color-scheme: dark) {
   html[data-color-scheme="system"] {
-    --panel: #1f1f1f;
     --panel2: #121212;
-    --bg: #121212;
-    --blue: #1a88ff;
-    --logo: #1a88ff;
     --star: #facc15;
-    --hover: var(--color-hover);
   }
 }
 
@@ -689,6 +653,34 @@ html[data-color-scheme="dark"] {
   --p-add-menu-h: var(--p-slash-menu-h);
 }
 
+@keyframes ui-fade-out {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+@keyframes ui-row-highlight {
+  0% {
+    background-color: color-mix(in srgb, var(--color-accent) 18%, var(--color-surface));
+    box-shadow: inset 0 0 0 1.5px var(--color-accent);
+  }
+  100% {
+    background-color: var(--color-accent-soft);
+    box-shadow: inset 0 0 0 1.5px var(--color-accent-bd);
+  }
+}
+@keyframes ui-row-flash {
+  0% { background: var(--color-accent-soft); }
+  100% { background: transparent; }
+}
+@keyframes ui-breathe {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+
 @media (max-resolution: 1.1dppx) {
   :root { --p-hairline: 1px; }
 }
@@ -1142,7 +1134,7 @@ a.mention-folder {
   justify-content: center;
   width: var(--p-ic-sm);
   height: var(--p-ic-sm);
-  color: var(--muted);
+  color: var(--color-text-faint);
   align-self: center;
   flex-shrink: 0;
 }
@@ -1214,29 +1206,31 @@ a.mention-folder {
   white-space: normal;
 }
 
-.mention-tip {
+.ui-tip-surface {
   position: fixed;
   z-index: var(--z-tooltip);
-  /* Width cap with the narrow-viewport clamp folded in — position() only
-     reads the resulting box. */
-  max-width: min(var(--p-mention-tip-w), calc(100vw - 2 * var(--p-mention-tip-vmargin)));
-  /* Same inset as TooltipBubble (4px × 8px). */
   padding: var(--space-1) var(--space-2);
   border-radius: var(--radius-sm);
   background: var(--color-text);
   color: var(--color-bg);
+  font-family: var(--font-ui);
+  font-size: var(--text-xs);
+  overflow-wrap: anywhere;
+}
+
+.mention-tip {
+  /* Width cap with the narrow-viewport clamp folded in — position() only
+     reads the resulting box. */
+  max-width: min(var(--p-mention-tip-w), calc(100vw - 2 * var(--p-mention-tip-vmargin)));
   /* Ink levels ON THE INVERTED SKIN (currentColor = --color-bg here): the
      quote tooltip's muted comment block and the
      fainter provenance header — one semantic home so a theme tune reaches
      every quote row at once. */
   --p-tip-ink: color-mix(in srgb, currentColor 80%, transparent);
   --p-tip-ink-weak: color-mix(in srgb, currentColor 55%, transparent);
-  font-family: var(--font-ui);
-  font-size: var(--text-xs);
   /* Mirror the .text-ui-c1 utility's integer-px line height (token, never a
      unitless ratio). */
   line-height: round(calc(var(--text-xs) * 1.5), 1px);
-  overflow-wrap: anywhere;
   opacity: 0;
   transition: opacity var(--duration-fast) var(--ease-out);
 }

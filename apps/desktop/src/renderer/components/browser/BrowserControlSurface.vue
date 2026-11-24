@@ -313,13 +313,12 @@ html, body, #app { width: 100%; height: 100%; margin: 0; overflow: hidden; backg
 @keyframes control-click { from { transform: translate(-50%, -50%) scale(1); opacity: 1; } to { transform: translate(-50%, -50%) scale(2); opacity: 0; } }
 @keyframes control-target { from { opacity: 0; } to { opacity: 1; } }
 @keyframes control-scan { from { transform: translateY(-100%); opacity: 1; } 85% { opacity: 1; } to { transform: translateY(100vh); opacity: 0; } }
-@keyframes control-scan-reduced { from { opacity: 1; } to { opacity: 0; } }
 @keyframes control-click-reduced { from { transform: translate(-50%, -50%); opacity: 1; } to { transform: translate(-50%, -50%); opacity: 0; } }
 .reduced .control-spectrum { animation: none; }
 .reduced .control-ring { animation-name: control-click-reduced; }
 .reduced .control-held-ring { animation: none; transform: translate(-50%, -50%); }
 .reduced .control-target { animation: none; }
-.reduced .control-scan { bottom: 0; height: auto; border-bottom: 0; background: var(--browser-control-scan-fill); animation-name: control-scan-reduced; }
+.reduced .control-scan { bottom: 0; height: auto; border-bottom: 0; background: var(--browser-control-scan-fill); animation-name: ui-fade-out; }
 .reduced .control-toolbar.blocked { animation: none; background: var(--color-danger-soft); }
 @media (max-width: 280px) { .control-toolbar { flex-direction: column; } .control-status { align-items: center; } .control-actions { border-left: 0; padding-left: 0; } }
 @media (max-width: 340px) { .control-toolbar { gap: var(--space-2); padding-inline: var(--space-2); max-width: calc(100% - var(--space-4)); } }
