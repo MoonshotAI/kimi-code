@@ -4004,36 +4004,72 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": false,
-                  "properties": {
-                    "code": {
-                      "enum": [
-                        40301
+                  "oneOf": [
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "code": {
+                          "enum": [
+                            40301
+                          ],
+                          "type": "number"
+                        },
+                        "data": {
+                          "enum": [
+                            null
+                          ],
+                          "nullable": true,
+                          "type": "string"
+                        },
+                        "details": {},
+                        "msg": {
+                          "type": "string"
+                        },
+                        "request_id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "msg",
+                        "data",
+                        "request_id"
                       ],
-                      "type": "number"
+                      "type": "object"
                     },
-                    "data": {
-                      "enum": [
-                        null
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "code": {
+                          "enum": [
+                            40302
+                          ],
+                          "type": "number"
+                        },
+                        "data": {
+                          "enum": [
+                            null
+                          ],
+                          "nullable": true,
+                          "type": "string"
+                        },
+                        "details": {},
+                        "msg": {
+                          "type": "string"
+                        },
+                        "request_id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "msg",
+                        "data",
+                        "request_id"
                       ],
-                      "nullable": true,
-                      "type": "string"
-                    },
-                    "details": {},
-                    "msg": {
-                      "type": "string"
-                    },
-                    "request_id": {
-                      "type": "string"
+                      "type": "object"
                     }
-                  },
-                  "required": [
-                    "code",
-                    "msg",
-                    "data",
-                    "request_id"
-                  ],
-                  "type": "object"
+                  ]
                 }
               }
             },

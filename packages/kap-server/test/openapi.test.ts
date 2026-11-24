@@ -113,7 +113,11 @@ describe('server-v2 OpenAPI', () => {
     const doc = await fetchOpenApi();
     const responses = asRecord(operation(doc, '/api/v1/fs:content', 'put')['responses']);
     const schemaAt = (status: string) => asRecord(asRecord(asRecord(asRecord(responses[status])['content'])['application/json'])['schema']);
-    for (const [status, code] of [['400', 40001], ['403', 40301], ['412', 41201], ['413', 41302]] as const) {
+    expect(schemaAt('403')).toMatchObject({ oneOf: [
+      { properties: { code: { enum: [40301] } } },
+      { properties: { code: { enum: [40302] } } },
+    ] });
+    for (const [status, code] of [['400', 40001], ['412', 41201], ['413', 41302]] as const) {
       expect(responses[status], `HTTP ${status}`).toBeDefined();
       expect(schemaAt(status)).toMatchObject({ properties: { code: { enum: [code] }, data: { nullable: true } } });
     }

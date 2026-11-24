@@ -54,7 +54,9 @@ describe('PUT /api/v1/fs:content', () => {
     const project = join(root, 'AGENTS.md');
     await writeFile(project, 'keep');
     for (const path of [project, join(home, 'other.txt'), 'AGENTS.md']) {
-      expect((await put(path, 'no')).status).toBe(403);
+      const denied = await put(path, 'no');
+      expect(denied.status).toBe(403);
+      expect(await denied.json()).toMatchObject({ code: 40302 });
     }
     expect((await put(file, 'no', 'missing', 'remote')).status).toBe(403);
     expect(await readFile(project, 'utf8')).toBe('keep');
@@ -98,6 +100,21 @@ describe('PUT /api/v1/fs:content', () => {
     const streamed = await fetch(`${base}${url}`, upload);
     expect(streamed.status).toBe(413);
     expect(await streamed.json()).toMatchObject(expected);
+    expect(await readFile(file, 'utf8')).toBe('unchanged');
+  });
+
+  it.each([
+    ['application/octet-stream', Buffer.from('not a text request')],
+    ['application/json', Buffer.from('{}')],
+    ['text/plain', Buffer.from([0xc3, 0x28])],
+  ] as const)('returns a validation error for invalid %s input without modifying the file', async (contentType, body) => {
+    await writeFile(file, 'unchanged');
+    const query = new URLSearchParams({ path: file, revision: digest('unchanged') });
+    const response = await fetch(`${base}/api/v1/fs:content?${query.toString()}`, {
+      method: 'PUT', headers: authHeaders(server, { 'content-type': contentType }), body,
+    });
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ code: 40001, data: null, request_id: expect.any(String) });
     expect(await readFile(file, 'utf8')).toBe('unchanged');
   });
 

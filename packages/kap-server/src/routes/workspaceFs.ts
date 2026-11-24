@@ -154,16 +154,19 @@ export function registerWorkspaceFsRoutes(app: WorkspaceFsRouteHost, core: Scope
   const writable = new WritableHostFiles(core.accessor.get(IBootstrapService).homeDir);
   app.register(async (scope) => {
     scope.setErrorHandler((error, req, reply) => {
-      if (error instanceof Error && 'code' in error && error.code === 'FST_ERR_CTP_BODY_TOO_LARGE') {
-        return sendRawError(reply, errEnvelope(ErrorCode.FS_TOO_LARGE, 'File exceeds the edit size limit', req.id));
+      if (error instanceof FileWriteError) return sendRawError(reply, errEnvelope(error.code, error.message, req.id));
+      if (error instanceof Error && 'code' in error) {
+        if (error.code === 'FST_ERR_CTP_BODY_TOO_LARGE') return sendRawError(reply, errEnvelope(ErrorCode.FS_TOO_LARGE, 'File exceeds the edit size limit', req.id));
+        if (error.code === 'FST_ERR_CTP_INVALID_MEDIA_TYPE') return sendRawError(reply, errEnvelope(ErrorCode.VALIDATION_FAILED, 'Expected a text/plain UTF-8 file', req.id));
       }
       throw error;
     });
+    scope.removeAllContentTypeParsers();
     scope.addContentTypeParser('text/plain', { parseAs: 'buffer' }, (_req, bytes: Buffer, done) => {
       try {
         done(null, new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes));
       } catch {
-        done(Object.assign(new Error('Expected valid UTF-8 text'), { statusCode: 400 }));
+        done(new FileWriteError(ErrorCode.VALIDATION_FAILED, 'Expected valid UTF-8 text'));
       }
     });
     const route = defineRoute({
@@ -173,7 +176,7 @@ export function registerWorkspaceFsRoutes(app: WorkspaceFsRouteHost, core: Scope
       errors: { [ErrorCode.VALIDATION_FAILED]: {}, [ErrorCode.INTERNAL_ERROR]: {} },
       rawResponse: {
         400: httpErrorSchema(ErrorCode.VALIDATION_FAILED),
-        403: httpErrorSchema(ErrorCode.FS_WRITE_NOT_ALLOWED),
+        403: { oneOf: [httpErrorSchema(ErrorCode.HOST_NOT_ALLOWED), httpErrorSchema(ErrorCode.FS_WRITE_NOT_ALLOWED)] },
         412: httpErrorSchema(ErrorCode.FS_CONTENT_CHANGED),
         413: httpErrorSchema(ErrorCode.FS_TOO_LARGE),
       },
@@ -187,7 +190,6 @@ export function registerWorkspaceFsRoutes(app: WorkspaceFsRouteHost, core: Scope
       try {
         reply.send(okEnvelope(await writable.replace(req.query.path, req.body, req.query.revision), req.id));
       } catch (err) {
-        if (err instanceof FileWriteError) return void fail(err.code, err.message);
         const code = (err as NodeJS.ErrnoException).code;
         if (code === 'ENOENT') return void fail(ErrorCode.FS_CONTENT_CHANGED, 'File is no longer present');
         if (code === 'EACCES' || code === 'EPERM' || code === 'ELOOP') return void fail(ErrorCode.FS_WRITE_NOT_ALLOWED, 'Writing this file is not allowed');

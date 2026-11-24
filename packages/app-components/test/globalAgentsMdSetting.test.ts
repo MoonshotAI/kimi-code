@@ -117,6 +117,33 @@ describe('global AGENTS.md setting', () => {
     expect(context.page()?.textContent).not.toContain('Saved');
   });
 
+  it('preserves CRLF through textarea edits, undo and consecutive saves', async () => {
+    const path = '/home/.kimi-code/AGENTS.md';
+    fakes.readHostTextFile.mockResolvedValueOnce({ path, content: '\uFEFFone\r\n\r\ntwo\r\n', revision: 'original' });
+    const context = await mountSetting();
+    await openEditor(context);
+    const original = context.editor()!.value;
+    expect(original).toBe('\uFEFFone\n\ntwo\n');
+
+    edit(context, original.replace('two', 'Two'));
+    edit(context, original);
+    await flush();
+    expect(context.save().disabled).toBe(true);
+
+    edit(context, original.replace('two', 'Two'));
+    await flush();
+    context.save().click();
+    await flush();
+    expect(fakes.writeHostTextFile).toHaveBeenLastCalledWith(path, '\uFEFFone\r\n\r\nTwo\r\n', 'original');
+    expect(context.save().disabled).toBe(true);
+
+    edit(context, context.editor()!.value + 'three');
+    await flush();
+    context.save().click();
+    await flush();
+    expect(fakes.writeHostTextFile).toHaveBeenLastCalledWith(path, '\uFEFFone\r\n\r\nTwo\r\nthree', 'updated');
+  });
+
   it('offers to create a missing file on first save', async () => {
     fakes.readHostTextFile.mockResolvedValue({
       path: '/home/.kimi-code/AGENTS.md',

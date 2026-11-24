@@ -28,6 +28,7 @@ const saving = ref(false);
 const loadError = ref('');
 const saveError = ref('');
 let operationGeneration = 0;
+let lineEnding = '\n';
 
 const dirty = computed(() => !loading.value && loadError.value === '' && draft.value !== savedContent.value);
 const statusText = computed(() => {
@@ -78,8 +79,9 @@ async function load(): Promise<void> {
     if (generation !== operationGeneration) return;
     const result = await client.readHostTextFile(resolveLocalPath(home, 'AGENTS.md'));
     if (generation !== operationGeneration) return;
-    draft.value = result.content;
-    savedContent.value = result.content;
+    lineEnding = /\r\n|\r|\n/.exec(result.content)?.[0] ?? '\n';
+    draft.value = result.content.replaceAll(/\r\n?/g, '\n');
+    savedContent.value = draft.value;
     filePath.value = result.path;
     revision.value = result.revision;
   } catch (error) {
@@ -114,7 +116,8 @@ async function onSave(): Promise<void> {
   saving.value = true;
   saveError.value = '';
   try {
-    const result = await client.writeHostTextFile(filePath.value, content, revision.value);
+    const fileContent = lineEnding === '\n' ? content : content.replaceAll('\n', lineEnding);
+    const result = await client.writeHostTextFile(filePath.value, fileContent, revision.value);
     if (generation !== operationGeneration) return;
     savedContent.value = content;
     revision.value = result.revision;

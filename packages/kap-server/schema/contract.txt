@@ -3473,12 +3473,19 @@ PUT /api/v1/fs:content response 200<code=0>: object closed
 PUT /api/v1/fs:content response 200<code=40001>: shape a642160a
 PUT /api/v1/fs:content response 200<code=50001>: shape c8fef53e
 PUT /api/v1/fs:content response 400: shape a642160a
-PUT /api/v1/fs:content response 403.code: enum 40301
-PUT /api/v1/fs:content response 403.data: enum null nullable
-PUT /api/v1/fs:content response 403.details: any optional
-PUT /api/v1/fs:content response 403.msg: string
-PUT /api/v1/fs:content response 403.request_id: string
-PUT /api/v1/fs:content response 403: object closed
+PUT /api/v1/fs:content response 403: oneOf
+PUT /api/v1/fs:content response 403<code=40301>.code: enum 40301
+PUT /api/v1/fs:content response 403<code=40301>.data: enum null nullable
+PUT /api/v1/fs:content response 403<code=40301>.details: any optional
+PUT /api/v1/fs:content response 403<code=40301>.msg: string
+PUT /api/v1/fs:content response 403<code=40301>.request_id: string
+PUT /api/v1/fs:content response 403<code=40301>: object closed
+PUT /api/v1/fs:content response 403<code=40302>.code: enum 40302
+PUT /api/v1/fs:content response 403<code=40302>.data: enum null nullable
+PUT /api/v1/fs:content response 403<code=40302>.details: any optional
+PUT /api/v1/fs:content response 403<code=40302>.msg: string
+PUT /api/v1/fs:content response 403<code=40302>.request_id: string
+PUT /api/v1/fs:content response 403<code=40302>: object closed
 PUT /api/v1/fs:content response 412.code: enum 41201
 PUT /api/v1/fs:content response 412.data: enum null nullable
 PUT /api/v1/fs:content response 412.details: any optional
