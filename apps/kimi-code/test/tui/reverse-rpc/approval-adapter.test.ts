@@ -338,39 +338,4 @@ describe('approval adapter', () => {
       selectedLabel: 'Approve for this session',
     });
   });
-
-  it('formats structured auto review detail into a leading review display block', () => {
-    const denied = adaptApprovalRequest({
-      toolCallId: 'tc-denied',
-      toolName: 'Bash',
-      action: 'run',
-      display: { kind: 'command', command: 'terraform apply' },
-      approvalDetail: {
-        outcome: 'denied',
-        risk: 'medium',
-        reason: 'Creating remote resources was not explicitly authorized.',
-      },
-    });
-    expect(denied.display[0]).toEqual({
-      type: 'review',
-      title: 'Auto Review: denied (medium risk)',
-      detail: 'Creating remote resources was not explicitly authorized.',
-    });
-
-    const failed = adaptApprovalRequest({
-      toolCallId: 'tc-failed',
-      toolName: 'Bash',
-      action: 'run',
-      display: { kind: 'command', command: 'terraform apply' },
-      approvalDetail: {
-        outcome: 'failed',
-        reason: 'The review context exceeded the model window.',
-      },
-    });
-    expect(failed.display[0]).toEqual({
-      type: 'review',
-      title: 'Auto Review failed',
-      detail: 'The review context exceeded the model window.',
-    });
-  });
 });

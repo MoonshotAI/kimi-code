@@ -4,6 +4,7 @@ import { describe, expect, it, onTestFinished, vi } from 'vitest';
 
 import type { GutterContainer } from '#/tui/components/chrome/gutter-container';
 import { ApprovalPanelComponent } from '#/tui/components/dialogs/approval-panel';
+import { adaptApprovalRequest } from '#/tui/reverse-rpc/approval/adapter';
 import { currentTheme } from '#/tui/theme';
 import type {
   DiffDisplayBlock,
@@ -122,33 +123,36 @@ describe('ApprovalPanelComponent', () => {
     expect(out).not.toContain('⚠');
   });
 
-  it('renders the reviewer reason before the pending command', () => {
-    const pending: PendingApproval = {
-      data: {
-        id: 'approval_review',
-        tool_call_id: 'tool_review',
-        tool_name: 'Bash',
-        action: 'run',
-        description: '',
-        display: [
-          {
-            type: 'review',
-            title: 'Auto Review: denied (medium risk)',
-            detail: 'Creating remote resources was not explicitly authorized.',
-          },
-          { type: 'shell', language: 'bash', command: 'terraform apply' },
-        ],
-        choices: [{ label: 'Approve once', response: 'approved' }],
+  it('renders adapted auto review details before the pending command', () => {
+    const data = adaptApprovalRequest({
+      toolCallId: 'tool_review',
+      toolName: 'Bash',
+      action: 'run',
+      display: { kind: 'command', command: 'terraform apply' },
+      approvalDetail: {
+        outcome: 'denied',
+        risk: 'medium',
+        reason: 'Creating remote resources was not explicitly authorized.',
       },
-    };
-
-    const rendered = mount(new ApprovalPanelComponent(pending, () => {})).render(100).join('\n');
+    });
+    const rendered = mount(new ApprovalPanelComponent({ data }, () => {})).render(100).join('\n');
     const out = strip(rendered);
     expect(out).toContain('Auto Review: denied (medium risk)');
     expect(out).toContain('Creating remote resources was not explicitly authorized.');
     expect(out.indexOf('Auto Review: denied')).toBeLessThan(out.indexOf('terraform apply'));
     const titleLine = rendered.split('\n').find((line) => strip(line).includes('Auto Review: denied'));
     expect(titleLine).toContain(currentTheme.fg('warning', 'Auto Review: denied (medium risk)'));
+
+    const failed = adaptApprovalRequest({
+      toolCallId: 'tool_failed',
+      toolName: 'Bash',
+      action: 'run',
+      display: { kind: 'command', command: 'terraform apply' },
+      approvalDetail: { outcome: 'failed', reason: 'Review timed out.' },
+    });
+    expect(strip(mount(new ApprovalPanelComponent({ data: failed }, () => {})).render(100).join('\n'))).toContain(
+      'Auto Review failed',
+    );
   });
 
   it('wraps a long single-line shell command instead of truncating it', () => {

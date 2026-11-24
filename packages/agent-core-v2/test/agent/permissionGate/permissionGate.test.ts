@@ -263,45 +263,19 @@ describe('AgentPermissionGate', () => {
     nonModePolicyResult = fallbackAsk;
   }
 
-  it('reviews only mode approvals that Always Ask would ask about', async () => {
+  it('reviews only Bash and MCP calls that Always Ask would ask about', async () => {
     const reviewer = createAutoReviewReviewer(
       stubFlag(() => autoReviewEnabled),
       stubPermissionModeService(() => mode),
       ix.get(IAgentPermissionPolicyService),
       { review },
     );
-    const ctx = makeContext('Bash');
 
     policyResult = modeApproval;
     nonModePolicyResult = fallbackAsk;
-    expect(await reviewer(ctx, modeApproval)).toBeUndefined();
+    expect(await reviewer(makeContext('Bash'), modeApproval)).toBeUndefined();
 
     autoReviewEnabled = true;
-    expect(await reviewer(ctx, modeApproval)).toBeDefined();
-
-    for (const evaluation of [
-      { policyName: 'user-configured-allow', result: { kind: 'approve' } },
-      { policyName: 'session-approval-history', result: { kind: 'approve' } },
-      { policyName: 'user-configured-deny', result: { kind: 'deny' } },
-    ] satisfies PermissionPolicyEvaluation[]) {
-      expect(await reviewer(ctx, evaluation)).toBeUndefined();
-    }
-
-    for (const policyName of ['default-tool-approve', 'git-cwd-write-approve', 'user-configured-allow']) {
-      nonModePolicyResult = { policyName, result: { kind: 'approve' } };
-      expect(await reviewer(ctx, modeApproval)).toBeUndefined();
-    }
-  });
-
-  it('reviews only Bash and MCP tools', async () => {
-    reviewModeApprovals();
-    const reviewer = createAutoReviewReviewer(
-      stubFlag(() => autoReviewEnabled),
-      stubPermissionModeService(() => mode),
-      ix.get(IAgentPermissionPolicyService),
-      { review },
-    );
-
     for (const toolName of ['Bash', 'mcp__filesystem__write_file']) {
       expect(await reviewer(makeContext(toolName), modeApproval)).toBeDefined();
       expect(await reviewer(makeContext(toolName), fallbackAsk)).toBeDefined();
@@ -310,50 +284,47 @@ describe('AgentPermissionGate', () => {
       expect(await reviewer(makeContext(toolName), modeApproval)).toBeUndefined();
       expect(await reviewer(makeContext(toolName), fallbackAsk)).toBeUndefined();
     }
+    for (const evaluation of [
+      { policyName: 'user-configured-allow', result: { kind: 'approve' } },
+      { policyName: 'session-approval-history', result: { kind: 'approve' } },
+      { policyName: 'user-configured-deny', result: { kind: 'deny' } },
+    ] satisfies PermissionPolicyEvaluation[]) {
+      expect(await reviewer(makeContext('Bash'), evaluation)).toBeUndefined();
+    }
+    for (const policyName of ['default-tool-approve', 'git-cwd-write-approve', 'user-configured-allow']) {
+      nonModePolicyResult = { policyName, result: { kind: 'approve' } };
+      expect(await reviewer(makeContext('Bash'), modeApproval)).toBeUndefined();
+    }
     expect(review).not.toHaveBeenCalled();
   });
 
-  it('keeps static asks for tools outside the review scope on the user path', async () => {
-    autoReviewEnabled = true;
-    mode = 'yolo';
-    policyResult = { policyName: 'sensitive-file-access-ask', result: { kind: 'ask' } };
-    make();
-
-    await executorEvents.fireBeforeExecute(makeContext('Write', { path: '.env' }));
-
-    expect(review).not.toHaveBeenCalled();
-    expect(requestToolApproval).toHaveBeenCalledTimes(1);
-  });
-
-  it('reviews a static ask before falling back to the user in Ask When Needed', async () => {
-    autoReviewEnabled = true;
-    mode = 'yolo';
+  it('reviews eligible static asks in Ask When Needed and leaves ineligible ones on the user path', async () => {
     policyResult = { policyName: 'sensitive-file-access-ask', result: { kind: 'ask' } };
     autoReviewOutcome = { decision: 'deny', risk: 'high' };
+
+    autoReviewEnabled = true;
+    mode = 'yolo';
     make();
-
     await executorEvents.fireBeforeExecute(makeContext('Bash'));
-
     expect(review).toHaveBeenCalledWith(expect.anything(), 'sensitive-file-access-ask');
     expect(resolvePermissionResolution).toHaveBeenCalledWith(
       expect.objectContaining({ kind: 'ask' }),
       expect.anything(),
       'auto-review',
     );
-  });
 
-  it('keeps static asks on the user path when review is disabled or the mode is Always Ask', async () => {
-    for (const [enabled, nextMode] of [[false, 'yolo'], [true, 'manual']] as const) {
+    for (const [enabled, nextMode, toolName] of [
+      [false, 'yolo', 'Bash'],
+      [true, 'manual', 'Bash'],
+      [true, 'yolo', 'Write'],
+    ] as const) {
+      vi.clearAllMocks();
       autoReviewEnabled = enabled;
       mode = nextMode;
-      policyResult = { policyName: 'sensitive-file-access-ask', result: { kind: 'ask' } };
       make();
-
-      await executorEvents.fireBeforeExecute(makeContext('Bash'));
-
+      await executorEvents.fireBeforeExecute(makeContext(toolName));
       expect(review).not.toHaveBeenCalled();
       expect(requestToolApproval).toHaveBeenCalledTimes(1);
-      vi.clearAllMocks();
     }
   });
 

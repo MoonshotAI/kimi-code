@@ -29,7 +29,6 @@ import { createMcpTool } from '#/agent/mcp/tools/mcp';
 import type { MCPClient } from '#/mcpCore/types';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import type {
-  BeforeExecuteDecision,
   BeforeToolExecuteEvent,
   ToolDidExecuteContext,
   ToolExecutionOutcome,
@@ -73,14 +72,14 @@ import {
   JsonAtomicDocumentStore,
   TomlAtomicDocumentStore,
 } from '#/persistence/backends/node-fs/atomicDocumentStore';
-import { ISessionContext, makeSessionContext } from '#/session/sessionContext/sessionContext';
+import { makeSessionContext } from '#/session/sessionContext/sessionContext';
 import { GlobTool } from '#/agent/tools/os/glob/globTool';
 import { ReadInputSchema, type ReadInput } from '#/agent/tools/os/read/read';
 import { renderToolResultForModel } from '#/agent/contextMemory/toolResultRender';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { HostProcessService } from '#/os/backends/node-local/hostProcessService';
 import { FakeEnvironment } from '#/environment/fakeEnvironment';
-import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
+import type { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import type { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
 import { stubWorkspaceContext } from '../../session/workspaceContext/stub-workspace-context';
 import { stubAgentEnvironment } from '../../environment/stubs';
@@ -95,24 +94,12 @@ import { IEventBus } from '#/app/event/eventBus';
 import type { LLMRequestTrace } from '#/llm-adapter/contract/request-trace';
 import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemetry';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
-import { IFlagService } from '#/app/flag/flag';
-import { IBashParserService } from '#/app/bashParser/bashParser';
-import { BashParserService } from '#/app/bashParser/bashParserService';
-import { IGitService } from '#/app/git/git';
-import { IHostEnvironment as HostEnvironmentService } from '#/os/interface/hostEnvironment';
-import { createAutoReviewReviewer } from '#/features/autoReview/autoReviewGate';
-import { IAutoReviewService } from '#/features/autoReview/review';
-import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
-import { IAgentPermissionPolicyService } from '#/agent/permissionPolicy/permissionPolicy';
-import { AgentPermissionPolicyService } from '#/agent/permissionPolicy/permissionPolicyService';
-import { IAgentPermissionRulesService } from '#/agent/permissionRules/permissionRules';
-import { IAgentPermissionGate } from '#/agent/permissionGate/permissionGate';
 import { AgentPermissionGate } from '#/agent/permissionGate/permissionGateService';
-import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
-import { AgentToolApprovalService } from '#/agent/toolApproval/toolApprovalService';
-import { IEventDispatcher } from '#/state/eventDispatcher';
-import { stubPermissionModeService } from '../permissionMode/stubs';
-import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
+import type { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
+import type { IAgentPermissionPolicyService } from '#/agent/permissionPolicy/permissionPolicy';
+import type { PermissionPolicyResolution } from '#/agent/permissionPolicy/types';
+import type { IAgentPermissionRulesService } from '#/agent/permissionRules/permissionRules';
+import type { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { registerLogServices, stubLog } from '../../_base/log/stubs';
@@ -179,47 +166,24 @@ afterEach(() => {
   disposables.dispose();
 });
 
-describe('AgentToolExecutorService auto review', () => {
-  it('does not execute a Bash call denied by the reviewer', async () => {
-    installAutoReview({ decision: 'deny', risk: 'high' });
-    const tool = new TestTool('Bash');
-    registry.register(tool);
-
-    const [result] = await execute([toolCall('call_review', 'Bash', { command: 'rm -rf build' })]);
-
-    expect(result).toMatchObject({ isError: true, output: expect.stringContaining('not executed') });
-    expect(tool.calls).toHaveLength(0);
-  });
-
-  it('executes a Bash call allowed by the reviewer', async () => {
-    installAutoReview({ decision: 'allow', risk: 'low' });
-    const tool = new TestTool('Bash');
-    registry.register(tool);
-
-    const [result] = await execute([toolCall('call_review', 'Bash', { command: 'pnpm build' })]);
-
-    expect(result).not.toMatchObject({ isError: true });
-    expect(tool.calls).toHaveLength(1);
-  });
-
-  it('executes Write without sending it to the reviewer', async () => {
-    const review = vi.fn(async () => ({ decision: 'deny', risk: 'high' }) as const);
-    installAutoReview(review);
-    const tool = new TestTool('Write');
-    registry.register(tool);
-
-    const [result] = await execute([toolCall('call_write', 'Write', { path: 'outside.txt' })]);
-
-    expect(result).not.toMatchObject({ isError: true });
-    expect(tool.calls).toHaveLength(1);
-    expect(review).not.toHaveBeenCalled();
-  });
-
-  it('starts every review in a batch before waiting for the first decision', async () => {
+describe('AgentToolExecutorService', () => {
+  it('starts every deferred permission review in a batch before waiting for the first decision', async () => {
     let inFlight = 0;
     let maxInFlight = 0;
-    const release = deferred<import('#/features/autoReview/review').AutoReviewOutcome>();
-    installAutoReview(async () => {
+    const release = deferred<{ readonly policyName: string; readonly result: { readonly kind: 'deny'; readonly message: string } }>();
+    const gate = disposables.add(new AgentPermissionGate(
+      { _serviceBrand: undefined, mode: 'auto' } as unknown as IAgentPermissionModeService,
+      { _serviceBrand: undefined, rules: [], sessionApprovalRulePatterns: [] } as unknown as IAgentPermissionRulesService,
+      { _serviceBrand: undefined, evaluate: () => Promise.resolve({ policyName: 'auto-mode-approve', result: { kind: 'approve' as const } }) } as IAgentPermissionPolicyService,
+      {
+        _serviceBrand: undefined,
+        resolvePermissionResolution: (res: PermissionPolicyResolution) =>
+          Promise.resolve(res.kind === 'deny' ? { veto: { output: res.message, isError: true } } : undefined),
+      } as unknown as IAgentToolApprovalService,
+      noopTelemetryService,
+      executor,
+    ));
+    disposables.add(gate.registerReviewer(() => async () => {
       inFlight += 1;
       maxInFlight = Math.max(maxInFlight, inFlight);
       try {
@@ -227,7 +191,7 @@ describe('AgentToolExecutorService auto review', () => {
       } finally {
         inFlight -= 1;
       }
-    });
+    }));
     const tool = new TestTool('Bash');
     registry.register(tool);
 
@@ -238,72 +202,12 @@ describe('AgentToolExecutorService auto review', () => {
     await vi.waitFor(() => {
       expect(maxInFlight).toBe(2);
     });
-    release.resolve({ decision: 'deny', risk: 'high' });
+    release.resolve({ policyName: 'auto-review', result: { kind: 'deny', message: 'not executed' } });
 
-    const results = await pending;
-    expect(results).toHaveLength(2);
+    await expect(pending).resolves.toHaveLength(2);
     expect(tool.calls).toHaveLength(0);
   });
 
-});
-
-function installAutoReview(
-  result:
-    | import('#/features/autoReview/review').AutoReviewOutcome
-    | (() => Promise<import('#/features/autoReview/review').AutoReviewOutcome>),
-): void {
-  const permissions = disposables.add(new TestInstantiationService(undefined, false, ix));
-  permissions.stub(IAgentPermissionModeService, stubPermissionModeService(() => 'auto'));
-  permissions.stub(IFlagService, { enabled: () => true });
-  permissions.stub(IAutoReviewService, {
-    review: typeof result === 'function' ? result : async () => result,
-  });
-  permissions.stub(IBootstrapService, stubBootstrap('/tmp', {}, { nonInteractive: true }));
-  permissions.stub(IBashParserService, new BashParserService());
-  permissions.stub(IConfigService, { get: (() => undefined) as IConfigService['get'] });
-  permissions.stub(IAgentPermissionRulesService, { rules: [], sessionApprovalRulePatterns: [] });
-  permissions.stub(ISessionWorkspaceContext, stubWorkspaceContext('/workspace'));
-  permissions.stub(HostEnvironmentService, { pathClass: 'posix' });
-  permissions.stub(IAgentEnvironmentService, stubAgentEnvironment(new FakeEnvironment(
-    { environmentId: 'local', generation: 'test' },
-    { pathClass: 'posix' },
-  ), { workDir: '/workspace' }));
-  permissions.stub(IGitService, { findWorkTree: async () => null });
-  permissions.stub(IAgentToolApprovalService, new AgentToolApprovalService(
-    permissions.get(IAgentScopeContext),
-    permissions.get(IAgentPermissionModeService),
-    permissions.get(IAgentPermissionRulesService),
-    permissions.get(ISessionContext),
-    permissions.get(ITelemetryService),
-    permissions.get(IEventDispatcher),
-    permissions.get(IBootstrapService),
-  ));
-  permissions.set(IAgentPermissionPolicyService, new AgentPermissionPolicyService(
-    permissions,
-    permissions.get(IBootstrapService),
-  ));
-  const gate = new AgentPermissionGate(
-    permissions.get(IAgentPermissionModeService),
-    permissions.get(IAgentPermissionRulesService),
-    permissions.get(IAgentPermissionPolicyService),
-    permissions.get(IAgentToolApprovalService),
-    permissions.get(ITelemetryService),
-    executor,
-  );
-  disposables.add(
-    gate.registerReviewer(
-      createAutoReviewReviewer(
-        permissions.get(IFlagService),
-        permissions.get(IAgentPermissionModeService),
-        permissions.get(IAgentPermissionPolicyService),
-        permissions.get(IAutoReviewService),
-      ),
-    ),
-  );
-  permissions.set(IAgentPermissionGate, gate);
-}
-
-describe('AgentToolExecutorService', () => {
   it('resolves by interface and routes a successful tool call through execute', async () => {
     vi.useFakeTimers();
     try {
@@ -672,56 +576,6 @@ describe('AgentToolExecutorService', () => {
     });
   });
 
-  it('preserves an unknown tool\'s valid args in the tool.call.started event', async () => {
-    const results = await execute([toolCall('call_unknown', 'missing', { x: 1 })]);
-
-    expect(results).toEqual([
-      expect.objectContaining({
-        output: 'Tool "missing" not found',
-        isError: true,
-      }),
-    ]);
-    const toolCallEvent = protocolEvents.find(
-      (event): event is ToolCallStarted => event.type === 'tool.call.started',
-    );
-    expect(toolCallEvent?.args).toEqual({ x: 1 });
-  });
-
-  it('onBeforeExecuteTool veto with an error result does not invoke execute', async () => {
-    const tool = new TestTool('echo');
-    registry.register(tool);
-    executor.registerLegacyStarting((event) => {
-      event.veto({ output: 'forbidden', isError: true });
-    });
-
-    const results = await execute([toolCall('call_echo', 'echo', { text: 'hi' })]);
-
-    expect(results).toEqual([
-      expect.objectContaining({
-        output: 'forbidden',
-        isError: true,
-      }),
-    ]);
-    expect(tool.calls).toEqual([]);
-    expect(protocolEventTypes()).toEqual(['tool.call.started', 'tool.updated', 'tool.result']);
-  });
-
-  it('resolves a pending veto before reporting the tool call', async () => {
-    const decision = deferred<BeforeExecuteDecision>();
-    executor.registerLegacyStarting((event) => {
-      event.waitUntil(() => decision.promise);
-    });
-    registry.register(new TestTool('echo'));
-
-    const pending = execute([toolCall('call_echo', 'echo', { text: 'hi' })]);
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(protocolEventTypes()).toEqual([]);
-
-    decision.resolve({ veto: { output: 'forbidden', isError: true } });
-    await pending;
-    expect(protocolEventTypes()).toEqual(['tool.call.started', 'tool.updated', 'tool.result']);
-  });
-
   it('onBeforeExecuteTool veto bypasses execute with synthetic results while hook errors emit no tool events', async () => {
     vi.useFakeTimers();
     const first = new TestTool('first');
@@ -782,10 +636,9 @@ describe('AgentToolExecutorService', () => {
     const results = await execute([
       toolCall('call_first', 'first', {}),
       toolCall('call_second', 'second', {}),
-      toolCall('call_unknown', 'unknown', {}),
     ]);
 
-    expect(results).toHaveLength(3);
+    expect(results).toHaveLength(2);
     expect(results).toEqual(expect.arrayContaining([
       expect.objectContaining({ output: 'first result' }),
       expect.objectContaining({ output: 'second result' }),

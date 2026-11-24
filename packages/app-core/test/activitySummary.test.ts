@@ -12,19 +12,8 @@ import {
 const i18n = createKimiI18n({ locale: 'zh' });
 const t: Translator = (key, params) => (params === undefined ? i18n.global.t(key) : i18n.global.t(key, params));
 
-function tool(
-  name: string,
-  over: Partial<{ arg: string; status: 'ok' | 'running' | 'error'; autoReviewing: boolean }> = {},
-): ActivitySummaryItem {
-  return {
-    kind: 'tool',
-    tool: {
-      name,
-      arg: over.arg ?? '{}',
-      status: over.status ?? 'ok',
-      autoReviewing: over.autoReviewing,
-    },
-  };
+function tool(name: string, over: Partial<{ arg: string; status: 'ok' | 'running' | 'error' }> = {}): ActivitySummaryItem {
+  return { kind: 'tool', tool: { name, arg: over.arg ?? '{}', status: over.status ?? 'ok' } };
 }
 
 const thinking: ActivitySummaryItem = { kind: 'thinking' };
@@ -232,7 +221,6 @@ describe('summarizeLive', () => {
       i18n.global.locale.value = 'zh';
     }
   });
-
 });
 
 describe('clause providers', () => {

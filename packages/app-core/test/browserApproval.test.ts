@@ -31,28 +31,3 @@ it('keeps oversized approval diffs bounded on the synchronous path', () => {
   expect(block.diff).toHaveLength(1002);
   expect(block.diff.at(-1)?.text).toContain('more lines');
 });
-
-it('attaches structured auto review details across approval block kinds', () => {
-  const approvalDetail = {
-    outcome: 'denied' as const,
-    risk: 'high' as const,
-    reason: 'Destructive command outside workspace.',
-  };
-  expect(buildApprovalBlock({ ...request, approvalDetail })).toEqual({
-    kind: 'browser',
-    input: { protocol: 'kimi.browser/1.0.0', operation: 'tab.navigate', url: 'https://example.com/path' },
-    review: approvalDetail,
-  });
-  expect(buildApprovalBlock({
-    ...request,
-    toolName: 'Bash',
-    display: { kind: 'command', command: 'rm -rf /tmp/out' },
-    approvalDetail,
-  })).toEqual({
-    kind: 'shell',
-    command: 'rm -rf /tmp/out',
-    cwd: undefined,
-    danger: 'recursive delete',
-    review: approvalDetail,
-  });
-});

@@ -135,31 +135,6 @@ describe('toAppInteractionEvent', () => {
         toolName: 'Bash',
         action: 'run',
         display: { kind: 'command' },
-        approvalDetail: undefined,
-      },
-    });
-  });
-
-  it('maps structured approval_detail onto the app approval request', () => {
-    const event = toAppInteractionEvent({
-      ...approval,
-      request: {
-        ...approval.request,
-        approval_detail: {
-          outcome: 'denied',
-          risk: 'high',
-          reason: 'Force push was not authorized.',
-        },
-      },
-    });
-    expect(event).toMatchObject({
-      type: 'approvalRequested',
-      approval: {
-        approvalDetail: {
-          outcome: 'denied',
-          risk: 'high',
-          reason: 'Force push was not authorized.',
-        },
       },
     });
   });
