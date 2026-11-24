@@ -90,7 +90,9 @@ export function extractReasoningStrings(source: unknown): { key: string; value: 
   const found: { key: string; value: string }[] = [];
   for (const key of KNOWN_REASONING_KEYS) {
     const value = record[key];
-    if (typeof value === 'string') found.push({ key, value });
+    if (typeof value !== 'string') continue;
+    if (found.some((existing) => existing.value === value)) continue;
+    found.push({ key, value });
   }
   return found;
 }
