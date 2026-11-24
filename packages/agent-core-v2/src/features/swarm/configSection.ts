@@ -42,3 +42,13 @@ export function resolveSwarmTimeoutMs(config: IConfigService): number {
     config.get<SwarmConfig | undefined>(SWARM_SECTION)?.timeoutMs ?? DEFAULT_SWARM_TIMEOUT_MS
   );
 }
+
+export const DEFAULT_SWARM_MODE_SECTION = 'defaultSwarmMode';
+
+export const DefaultSwarmModeSchema = z.boolean().optional();
+
+export type DefaultSwarmMode = z.infer<typeof DefaultSwarmModeSchema>;
+
+registerConfigSection(DEFAULT_SWARM_MODE_SECTION, DefaultSwarmModeSchema, {
+  defaultValue: false,
+});
