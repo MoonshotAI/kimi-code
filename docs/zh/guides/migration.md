@@ -31,7 +31,7 @@ kimi migrate
 
 **会被迁移的内容**：配置（`config.toml`）、MCP 服务配置、输入历史，以及你选择迁移的聊天会话。
 
-**不会被迁移的内容**：OAuth 登录凭证和 MCP 服务的授权都不会被复制，迁移后需要在 kimi-code 里重新执行 `/login` 和重新授权 MCP 服务。kimi-cli 的插件也不在迁移范围内。
+**不会被迁移的内容**：OAuth 登录凭证和 MCP 服务的授权都不会被复制，迁移后需要在 kimi-code 里重新执行 `/login` 和重新授权 MCP 服务。`config.toml` 中的旧版 [`[experimental]`](../configuration/config-files.md#experimental) 实验开关与 kimi-cli 的插件也不会被迁移；迁移后可在 `~/.kimi-code/config.toml` 中或通过 `/experiments` 重新配置实验功能。
 
 ::: tip 提示
 迁移**不会改动或删除** `~/.kimi/` 下的任何旧数据。kimi-cli 仍可照常使用，两者互不影响。迁移也可以重复运行，已经迁移过的会话不会被重复导入。
