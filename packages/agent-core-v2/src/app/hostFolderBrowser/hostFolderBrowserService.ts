@@ -51,8 +51,17 @@ export class HostFolderBrowser implements IHostFolderBrowser {
           if (targetStat.isDirectory()) {
             entries.push({ name: d.name, path: entryPath, is_dir: true as const });
           }
-        } catch {
-          // Ignore broken symlinks, loops (ELOOP), or unreadable targets.
+        } catch (err) {
+          const code = (err as NodeJS.ErrnoException).code;
+          if (
+            code !== 'ENOENT' &&
+            code !== 'ENOTDIR' &&
+            code !== 'ELOOP' &&
+            code !== 'EACCES' &&
+            code !== 'EPERM'
+          ) {
+            throw err;
+          }
         }
       }
     }

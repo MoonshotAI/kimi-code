@@ -1,5 +1,6 @@
 ---
 "@moonshot-ai/agent-core-v2": patch
+"@moonshot-ai/kap-server": patch
 "@moonshot-ai/kimi-code-sdk": patch
 "@moonshot-ai/kimi-code": patch
 "kimi-code-app": patch
