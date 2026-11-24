@@ -680,9 +680,14 @@ async function setTab(tab: SettingsTab): Promise<void> {
   activeTab.value = tab;
 }
 
+async function confirmDiscard(): Promise<boolean> {
+  if (globalAgentsMdOpen.value && !(await globalAgentsMdSettingRef.value?.confirmDiscard())) return false;
+  if (defaultToolsOpen.value && !(await defaultToolsSettingRef.value?.confirmDiscard())) return false;
+  return true;
+}
+
 async function requestClose(): Promise<void> {
-  if (globalAgentsMdOpen.value && !(await globalAgentsMdSettingRef.value?.confirmDiscard())) return;
-  if (defaultToolsOpen.value && !(await defaultToolsSettingRef.value?.confirmDiscard())) return;
+  if (!(await confirmDiscard())) return;
   emit('close');
 }
 
@@ -789,6 +794,8 @@ function archiveTime(iso: string): string {
   const pad = (n: number): string => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
+
+defineExpose({ confirmDiscard });
 </script>
 
 <template>

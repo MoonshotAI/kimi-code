@@ -146,7 +146,6 @@ describe('decideComposerSubmit — bare work-mode commands', () => {
     { text: '/tower', towerAvailable: false, cmd: '/tower' },
     { text: '/tower on', towerAvailable: false, cmd: '/tower' },
     { text: '/tower main', towerAvailable: false, cmd: '/tower' },
-    { text: '/tower status', towerAvailable: false, cmd: '/tower' },
   ])('does not consume $text locally when its required tool is disabled', (disabled) => {
     expect(decideComposerSubmit(input({ text: disabled.text, rewritten: disabled.text, ...disabled })))
       .toMatchObject({ kind: 'disabled-command', cmd: 'cmd' in disabled ? disabled.cmd : disabled.text });
@@ -165,6 +164,18 @@ describe('decideComposerSubmit — bare work-mode commands', () => {
   it('keeps /tower off available when Tower tools are disabled', () => {
     expect(decideComposerSubmit(input({ text: '/tower off', rewritten: '/tower off', towerAvailable: false })))
       .toMatchObject({ kind: 'builtin-command', cmd: '/tower off' });
+  });
+
+  it.each(['/tower status', '/tower teardown'])('keeps %s dispatchable when Tower is degraded', (text) => {
+    expect(decideComposerSubmit(input({ text, rewritten: text, towerActive: true, towerAvailable: false })))
+      .toMatchObject({ kind: 'builtin-command', cmd: text });
+  });
+
+  it('keeps bare /tower as an exit toggle while active, but blocks it as entry when inactive', () => {
+    expect(decideComposerSubmit(input({ text: '/tower', rewritten: '/tower', towerActive: true, towerAvailable: false })))
+      .toMatchObject({ kind: 'builtin-command', cmd: '/tower' });
+    expect(decideComposerSubmit(input({ text: '/tower', rewritten: '/tower', towerActive: false, towerAvailable: false })))
+      .toMatchObject({ kind: 'disabled-command', cmd: '/tower' });
   });
 
   it('leaves /tower off as a prompt when the Tower experiment is off', () => {

@@ -1793,6 +1793,7 @@ function submitCommandContext() {
     goalMode: goalMode.value,
     towerEnabled: towerExperimentEnabled.value,
     towerAvailable: towerAvailable.value,
+    towerActive: towerOn.value,
     extraBuiltins: props.extraBuiltinCommands,
     planEnabled: planEnabled.value,
     swarmEnabled: swarmEnabled.value,

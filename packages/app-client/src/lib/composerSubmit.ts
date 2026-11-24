@@ -17,6 +17,7 @@ export interface SubmitKindInput {
   goalMode: boolean;
   towerEnabled: boolean;
   towerAvailable?: boolean;
+  towerActive?: boolean;
   extraBuiltins?: readonly SlashCommand[];
   planEnabled?: boolean;
   swarmEnabled?: boolean;
@@ -74,12 +75,17 @@ export function decideSubmitKind(input: SubmitKindInput): SubmitKind {
   const controlArg = command === undefined ? '' : bareText.trim().slice(command.length).trim();
   const swarmControlAllowed = command === '/swarm' && controlArg === 'off';
   const goalControlAllowed = command === '/goal' && ['pause', 'cancel'].includes(controlArg);
-  const towerControlAllowed = command === '/tower' && controlArg === 'off';
+  const towerCommandAllowed =
+    command === '/tower' &&
+    (controlArg === 'off' ||
+      (controlArg === '' && input.towerActive === true) ||
+      controlArg === 'status' ||
+      controlArg === 'teardown');
   if (
     (command === '/plan' && input.planEnabled === false) ||
     (command === '/swarm' && input.swarmEnabled === false && !swarmControlAllowed) ||
     (command === '/goal' && input.goalEnabled === false && !goalControlAllowed) ||
-    (command === '/tower' && input.towerEnabled && input.towerAvailable === false && !towerControlAllowed)
+    (command === '/tower' && input.towerEnabled && input.towerAvailable === false && !towerCommandAllowed)
   ) {
     return { kind: 'disabled-command', cmdToken: command };
   }
