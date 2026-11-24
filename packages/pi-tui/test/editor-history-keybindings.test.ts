@@ -58,4 +58,31 @@ describe("Editor prompt history keybindings", () => {
 		editor.handleInput("\x1b[A");
 		assert.strictEqual(editor.getText(), "new project prompt");
 	});
+
+	it("restores the pre-browse draft and host draft state when clearHistory() runs during recall", () => {
+		setKeybindings(
+			new KeybindingsManager(TUI_KEYBINDINGS, {
+				"tui.editor.historyPrevious": "ctrl+p",
+			}),
+		);
+		const editor = new Editor(new TuiMainScreen(new VirtualTerminal()), defaultEditorTheme);
+		const restored: unknown[] = [];
+		editor.onHistoryDraftSave = () => ({ mode: "shell" });
+		editor.onHistoryDraftRestore = (draft) => {
+			restored.push(draft);
+		};
+		editor.addToHistory("first prompt");
+		editor.addToHistory("second prompt");
+		editor.setText("in-progress draft");
+
+		editor.handleInput("\x10");
+		assert.strictEqual(editor.getText(), "second prompt");
+
+		editor.clearHistory();
+		assert.strictEqual(editor.getText(), "in-progress draft");
+		assert.deepStrictEqual(restored, [{ mode: "shell" }]);
+
+		editor.handleInput("\x10");
+		assert.strictEqual(editor.getText(), "in-progress draft");
+	});
 });

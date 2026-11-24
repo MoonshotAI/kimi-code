@@ -501,6 +501,21 @@ describe('AgentEnvironmentBindingService missing workdir reminder', () => {
     });
   });
 
+  it('does not report recovery when stat fails with an unexpected error', async () => {
+    const ctx = setup({ sessionCwd: '/workspace/gone' });
+    const fs = {
+      stat: vi.fn(async (): Promise<HostFileStat> => {
+        throw new HostFsError('os.fs.permission_denied', 'denied');
+      }),
+    } as unknown as IHostFileSystem;
+    await ctx.localRegistration.remove();
+    ctx.registry.register(probingEnvironment('local', LOCAL_HOST, fs));
+    const provider = ctx.reminderProviders.get(MISSING_WORKDIR_REMINDER_VARIANT)!;
+
+    const result = await provider(injectionContext({ lastDisclosure: { missingCwd: '/workspace/gone' } }));
+    expect(result).toBeUndefined();
+  });
+
   it('stays silent when the directory exists or the agent is bound to a remote environment', async () => {
     const existing = await setupLocalFs(['/workspace/gone']);
     const existingProvider = existing.reminderProviders.get(MISSING_WORKDIR_REMINDER_VARIANT);

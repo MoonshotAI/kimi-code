@@ -859,7 +859,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   override async resolveWorkLocation(cwd: string): Promise<WorkLocation> {
     const resolved = normalizeRequiredWorkDir('resolveWorkLocation', cwd);
     await this.configReady;
-    return this.engineAccessor.get(IWorktreeService).locate(resolved);
+    return withKimiErrors(this.engineAccessor.get(IWorktreeService).locate(resolved));
   }
 
   override async listWorktrees(cwd: string): Promise<WorktreeListing> {

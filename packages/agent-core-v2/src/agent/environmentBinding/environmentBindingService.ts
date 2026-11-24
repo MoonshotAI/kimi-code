@@ -221,11 +221,13 @@ export class AgentEnvironmentBindingService implements IAgentEnvironmentBindingS
     try {
       const fs = lease.environment.fs;
       if (fs === undefined) return undefined;
-      const missing = await fs.stat(cwd).then(
-        (stat) => !stat.isDirectory,
-        (error: unknown) => isHostFsNotFound(error) || isHostFsNotDirectory(error),
+      const state: 'present' | 'missing' | 'unknown' = await fs.stat(cwd).then(
+        (stat) => (stat.isDirectory ? 'present' : 'missing'),
+        (error: unknown) =>
+          isHostFsNotFound(error) || isHostFsNotDirectory(error) ? 'missing' : 'unknown',
       );
-      if (!missing) {
+      if (state === 'unknown') return undefined;
+      if (state === 'present') {
         if (context.lastDisclosure?.missingCwd !== cwd) return undefined;
         return {
           content: `The working directory \`${cwd}\` is available again.`,

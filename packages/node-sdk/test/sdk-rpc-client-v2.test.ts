@@ -5299,7 +5299,7 @@ describe('KimiHarness worktrees', () => {
   });
 
   it('restates worktree engine errors as KimiError with their details', async () => {
-    const { harness, repo } = await makeWorktreeHarness();
+    const { harness, homeDir, repo } = await makeWorktreeHarness();
     try {
       const created = await harness.createWorktree({ cwd: repo, name: 'feat-a' });
 
@@ -5314,6 +5314,10 @@ describe('KimiHarness worktrees', () => {
         code: ErrorCodes.WORKTREE_INVALID_NAME,
         details: { name: 'feat/login', reason: 'slash' },
       });
+
+      await writeFile(join(homeDir, 'projects.json'), '{not-valid-json');
+      const locateErr: unknown = await harness.resolveWorkLocation(repo).catch((error: unknown) => error);
+      expect(isKimiError(locateErr)).toBe(true);
     } finally {
       await harness.close();
     }
