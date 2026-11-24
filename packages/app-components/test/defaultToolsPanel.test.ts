@@ -40,6 +40,7 @@ vi.mock('@moonshot-ai/app-client/composables', () => ({
 
 import DefaultToolsPanel from '../src/settings/DefaultToolsPanel.vue';
 import DefaultToolsRow from '../src/settings/DefaultToolsRow.vue';
+import DefaultToolsSetting from '../src/settings/DefaultToolsSetting.vue';
 
 let app: App | null = null;
 let host: HTMLDivElement | null = null;
@@ -116,7 +117,7 @@ describe('DefaultToolsPanel', () => {
     expect(host?.textContent).not.toContain('Enable all');
     expect(host?.textContent).not.toContain('Disable all');
     expect(host?.textContent).not.toContain('2 enabled');
-    expect(host?.textContent).toContain('Changes apply immediately to current and new sessions');
+    expect(host?.textContent).toContain('Enable or disable the tools available to the agent. Disabled tools become unavailable.');
     expect(button('Save')?.disabled).toBe(true);
   });
 
@@ -270,10 +271,58 @@ describe('DefaultToolsRow', () => {
 
     const entry = host.querySelector<HTMLButtonElement>('.dt-entry')!;
     expect(entry.textContent).toContain('Built-in tools');
-    expect(entry.textContent).toContain('Choose which built-in tools are available in current and new sessions');
+    expect(entry.textContent).toContain('Enable or disable the tools available to the agent');
     expect(entry.querySelectorAll('svg')).toHaveLength(1);
     expect(entry.querySelector('svg')?.getAttribute('data-icon')).toBe('chevron-right');
     entry.click();
     expect(fakes.open).toHaveBeenCalledWith(entry);
+  });
+});
+
+
+describe('DefaultToolsSetting', () => {
+  it('opens the subpage with an inline back button like GlobalAgentsMdSetting and confirms discard once', async () => {
+    host = document.createElement('div');
+    document.body.append(host);
+    const openChanges: boolean[] = [];
+    let setting!: { confirmDiscard: () => Promise<boolean>; reset: () => void };
+    app = createApp({
+      setup: () => () => h(DefaultToolsSetting, {
+        ref: (value) => { setting = value as typeof setting; },
+        onOpenChange: (open: boolean) => openChanges.push(open),
+      }),
+    });
+    app.provide(IconResolverKey, (name) => ({ render: () => h('svg', { 'data-icon': name }) }));
+    app.use(createKimiI18n({ locale: 'en' }));
+    app.mount(host);
+    await flush();
+
+    expect(openChanges).toEqual([false]);
+    host.querySelector<HTMLButtonElement>('.dt-entry')!.click();
+    await flush();
+    expect(openChanges).toEqual([false, true]);
+
+    const back = host.querySelector<HTMLButtonElement>('.settings-subpage-back')!;
+    expect(host.querySelector('.settings-subpage')?.contains(back)).toBe(true);
+
+    switchNamed('tools.label.bash').click();
+    await flush();
+    back.click();
+    await flush();
+    expect(fakes.confirm).toHaveBeenCalledOnce();
+    expect(openChanges).toEqual([false, true, false]);
+    expect(host.querySelector('.dt-entry')).not.toBeNull();
+
+    host.querySelector<HTMLButtonElement>('.dt-entry')!.click();
+    await flush();
+    switchNamed('tools.label.bash').click();
+    await flush();
+    fakes.confirm.mockResolvedValueOnce(false);
+    await expect(setting.confirmDiscard()).resolves.toBe(false);
+    expect(openChanges).toEqual([false, true, false, true]);
+
+    setting.reset();
+    await flush();
+    expect(openChanges).toEqual([false, true, false, true, false]);
   });
 });

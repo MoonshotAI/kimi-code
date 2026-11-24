@@ -144,6 +144,7 @@ export { default as PluginsPanel } from './settings/PluginsPanel.vue';
 export { default as HostsPanel } from './settings/HostsPanel.vue';
 export { default as DefaultToolsPanel } from './settings/DefaultToolsPanel.vue';
 export { default as DefaultToolsRow } from './settings/DefaultToolsRow.vue';
+export { default as DefaultToolsSetting } from './settings/DefaultToolsSetting.vue';
 export { default as SecondaryModelPicker } from './settings/SecondaryModelPicker.vue';
 
 export * from './chatTurnRendering';

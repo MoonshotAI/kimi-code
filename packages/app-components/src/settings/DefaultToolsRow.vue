@@ -48,10 +48,13 @@ function open(): void {
 
 <style scoped>
 .dt-entry-label {
+  line-height: var(--leading-normal);
   color: var(--color-text);
 }
 .dt-entry-hint {
+  font-family: var(--font-ui);
   font-size: var(--text-xs);
+  line-height: var(--leading-normal);
   font-weight: var(--weight-regular);
   color: var(--color-text-faint);
 }

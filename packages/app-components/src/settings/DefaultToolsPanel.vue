@@ -147,6 +147,7 @@ defineExpose({ confirmDiscard });
 
 <template>
   <SettingsSubpage
+    class="dt-subpage"
     :parent-title="t('settings.tabs.agent')"
     :title="t('settings.defaultTools')"
     :description="t('settings.defaultToolsHint')"
@@ -201,14 +202,20 @@ defineExpose({ confirmDiscard });
 <style scoped src="./settings-common.css"></style>
 
 <style scoped>
+.dt-subpage.settings-subpage { padding-bottom: 0; }
 .dt-list { padding-bottom: var(--space-3); }
 .dt-section { margin-bottom: var(--space-4); }
 .dt-group-title {
   margin: 0 0 var(--space-2);
   font-family: var(--font-ui);
   font-size: var(--text-xs);
+  line-height: var(--leading-tight);
   font-weight: var(--weight-medium);
   color: var(--color-text-muted);
+}
+.settings-group > .row {
+  min-height: 44px;
+  padding: var(--space-2) var(--space-4);
 }
 .settings-group > .row:hover { background: var(--color-hover); }
 .dt-label {
@@ -220,12 +227,14 @@ defineExpose({ confirmDiscard });
 }
 .dt-text {
   min-width: 0;
+  line-height: var(--leading-tight);
   color: var(--color-text);
 }
 .dt-name {
   overflow: hidden;
   font-family: var(--font-mono);
   font-size: var(--text-xs);
+  line-height: var(--leading-normal);
   font-weight: var(--weight-regular);
   color: var(--color-text-faint);
   text-overflow: ellipsis;
@@ -251,14 +260,15 @@ defineExpose({ confirmDiscard });
 }
 .dt-footer {
   position: sticky;
-  bottom: 0;
+  bottom: calc(-1 * var(--space-5));
+  z-index: 2;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: var(--space-3);
   min-height: var(--space-6);
-  margin-top: auto;
-  padding: var(--space-3) 0 var(--space-1);
+  margin: auto 0 calc(-1 * var(--space-5));
+  padding: var(--space-3) 0 var(--space-5);
   border-top: var(--p-hairline) solid var(--color-line);
   background: var(--color-bg);
 }
