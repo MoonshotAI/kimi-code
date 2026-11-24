@@ -151,7 +151,10 @@ describe('server-v2 /api/v1 tools', () => {
       expect(tools).toContainEqual({ name: 'TodoList', source: 'builtin' });
       expect(tools).toContainEqual({ name: 'ReadMediaFile', source: 'builtin' });
       expect(tools).toContainEqual({ name: 'TowerInit', source: 'builtin' });
+      expect(tools).toContainEqual({ name: 'TowerSpawn', source: 'builtin' });
       expect(tools).toContainEqual({ name: 'TowerTeardown', source: 'builtin' });
+      expect(tools).toContainEqual({ name: 'TowerSend', source: 'builtin' });
+      expect(tools).toContainEqual({ name: 'TowerComplete', source: 'builtin' });
       expect(new Set(tools.map((tool) => tool.name)).size).toBe(tools.length);
       expect(tools.some((tool) => tool.name === 'select_tools')).toBe(false);
     });

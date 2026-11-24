@@ -2239,14 +2239,14 @@ describe('server-v2 /api/v1/sessions', () => {
     await session!.accessor.get(IAgentLifecycleService).create({ agentId: MAIN_AGENT_ID });
     const main = session!.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID)!;
     const loop = main.accessor.get(IAgentLoopService);
-    loop.replaceHistory(historyEntries([
+    await loop.initializeHistory(historyEntries([
       ...loop.history(),
       {
         role: 'user',
         content: [{ type: 'text', text: 'selected through REST' }],
         origin: { kind: 'user' },
       },
-    ]), 'fork');
+    ]));
     await main.accessor.get(IWireService).flush();
     const cron = main.accessor.get(IAgentCronService);
     const task = cron.addTask({ cron: '0 9 * * *', prompt: 'fork me', recurring: true });
