@@ -1514,7 +1514,7 @@ describe('merge gate', () => {
     });
 
     await expect(store.merge(mission.branch, { activeAgentIds: new Set() })).rejects.toThrow(
-      /waiting for explicit human acceptance/,
+      /waiting for artifact acceptance/,
     );
 
     await store.registerAgent(
@@ -1568,7 +1568,7 @@ describe('merge gate', () => {
     await writeFile(store.abs(review.file), raw.replace(/^mission:.*\r?\n/m, ''));
 
     await expect(store.merge(mission.branch, { activeAgentIds: new Set() })).rejects.toThrow(
-      /mission-matching explicit human acceptance/,
+      /mission-matching artifact acceptance/,
     );
 
     await store.submitReview('tower', {
@@ -1623,7 +1623,7 @@ describe('merge gate', () => {
 
     await commitFile(worktreeOf(mission), 'reports/extra.csv', 'name,value\na,1\n', 'add data');
     await expect(store.merge(mission.branch, { activeAgentIds: new Set() })).rejects.toThrow(
-      /fresh explicit human acceptance/,
+      /fresh artifact acceptance/,
     );
     await expect(cleanReview('tower', mission.branch)).rejects.toThrow(
       /advanced after the artifact acceptance-request/,
@@ -3575,56 +3575,70 @@ describe('concurrent state writes', () => {
     type LockDriver = { withStateLock: <T>(fn: () => Promise<T>) => Promise<T> };
     const drive = <T>(s: TowerStore, fn: () => Promise<T>): Promise<T> =>
       (s as unknown as LockDriver).withStateLock(fn);
+    const hold = (
+      s: TowerStore,
+    ): { readonly entered: Promise<void>; readonly release: () => void; readonly run: Promise<void> } => {
+      let markEntered!: () => void;
+      const entered = new Promise<void>((resolve) => {
+        markEntered = resolve;
+      });
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const run = drive(s, async () => {
+        markEntered();
+        await gate;
+      });
+      return { entered, release, run };
+    };
     const lockPath = `${store.abs(STATE_FILE)}.lock`;
-    const first = new TowerStore(repo);
     const impatient = new TowerStore(repo, { stateLockTimeoutMs: 150, stateLockPollMs: 20 });
-    const second = new TowerStore(repo);
 
-    let markEntered!: () => void;
-    const entered = new Promise<void>((resolve) => {
-      markEntered = resolve;
-    });
-    let openGate!: () => void;
-    const gate = new Promise<void>((resolve) => {
-      openGate = resolve;
-    });
-    const firstRun = drive(first, async () => {
-      markEntered();
-      await gate;
-    });
-    await entered;
-
+    const staleDuringCreate = hold(new TowerStore(repo));
+    await staleDuringCreate.entered;
     await expect(drive(impatient, async () => undefined)).rejects.toThrow(/tower state lock/);
-
     await rm(lockPath, { force: true });
-    let releaseSecond!: () => void;
-    const secondGate = new Promise<void>((resolve) => {
-      releaseSecond = resolve;
-    });
-    const secondRun = drive(second, async () => {
-      await secondGate;
-    });
 
-    let heldContent = '';
-    for (;;) {
-      try {
-        heldContent = await readFile(lockPath, 'utf8');
-        break;
-      } catch {
-        await new Promise<void>((resolve) => {
-          setTimeout(resolve, 10);
-        });
-      }
+    const staleAfterWrite = hold(new TowerStore(repo));
+    await staleAfterWrite.entered;
+    await rm(lockPath, { force: true });
+
+    const probe = await open(store.abs(STATE_FILE), 'r');
+    const fileHandlePrototype = Object.getPrototypeOf(probe) as FileHandle;
+    await probe.close();
+    const originalWrite = fileHandlePrototype.writeFile;
+    let windowOpened = false;
+    let contentAfterStaleRelease: unknown;
+    const writeSpy = vi.spyOn(fileHandlePrototype, 'writeFile').mockImplementation(
+      (async function (this: FileHandle, data: string, options?: BufferEncoding) {
+        if (!windowOpened && data.startsWith('pid=')) {
+          windowOpened = true;
+          staleDuringCreate.release();
+          await staleDuringCreate.run;
+          contentAfterStaleRelease = await readFile(lockPath, 'utf8').catch((error: unknown) => error);
+        }
+        return originalWrite.call(this, data, options);
+      }) as typeof originalWrite,
+    );
+    const holder = hold(new TowerStore(repo));
+    try {
+      await holder.entered;
+    } finally {
+      writeSpy.mockRestore();
     }
+
+    expect(windowOpened).toBe(true);
+    expect(contentAfterStaleRelease).toBe('');
+    const heldContent = await readFile(lockPath, 'utf8');
     expect(heldContent).toMatch(/pid=\d+ since=\S+ token=[0-9a-f-]+/);
 
-    openGate();
-    await firstRun;
-
+    staleAfterWrite.release();
+    await staleAfterWrite.run;
     expect(await readFile(lockPath, 'utf8')).toBe(heldContent);
 
-    releaseSecond();
-    await secondRun;
+    holder.release();
+    await holder.run;
     await expect(readFile(lockPath, 'utf8')).rejects.toThrow(/ENOENT/);
   });
 });
@@ -4801,7 +4815,7 @@ describe('state lock recovery and prepared writes', () => {
     }
   });
 
-  it('runs TowerComplete validation outside the state lock and stays idempotent under concurrency', async () => {
+  it('runs TowerComplete validation outside the state lock', async () => {
     const mission = await setupMission({
       title: 'feature x',
       scope: 'src/x/**',
@@ -4822,18 +4836,32 @@ describe('state lock recovery and prepared writes', () => {
       },
     );
     try {
-      const results = await Promise.all([
-        store.complete('w1', 'same completion report'),
-        store.complete('w1', 'same completion report'),
-      ]);
+      await store.complete('w1', 'same completion report');
       expect(observed.length).toBeGreaterThan(0);
       expect(observed).not.toContain(true);
-      expect(results.filter((result) => result.notificationCreated)).toHaveLength(1);
-      const messages = await store.readInbox('tower', 20);
-      expect(messages.filter((item) => item.action === 'complete')).toHaveLength(1);
     } finally {
       spy.mockRestore();
     }
+  });
+
+  it('keeps TowerComplete idempotent under concurrency', async () => {
+    const mission = await setupMission({
+      title: 'feature x',
+      scope: 'src/x/**',
+      file: 'src/x/x.ts',
+      content: 'x\n',
+      status: 'active',
+    });
+    await store.registerAgent(
+      rosterEntry({ name: 'w1', kind: 'worker', missionId: mission.id }),
+    );
+    const results = await Promise.all([
+      store.complete('w1', 'same completion report'),
+      store.complete('w1', 'same completion report'),
+    ]);
+    expect(results.filter((result) => result.notificationCreated)).toHaveLength(1);
+    const messages = await store.readInbox('tower', 20);
+    expect(messages.filter((item) => item.action === 'complete')).toHaveLength(1);
   });
 
   it('publishes a completion notification atomically while another complete prepares', async () => {

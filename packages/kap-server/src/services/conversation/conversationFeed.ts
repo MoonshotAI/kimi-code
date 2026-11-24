@@ -62,6 +62,7 @@ import {
   undoConversationTurns,
   type ConversationFork,
   type ConversationState,
+  type FeedbackTurnAttribution,
   type RunningWork,
 } from './conversationFold';
 import { isoTime, mediaPartOf, mediaTypeOf, mediaUrlOf } from './conversationItems';
@@ -153,6 +154,42 @@ export class ConversationFeed implements IDisposable {
     return this.state.turns;
   }
 
+  hasTrailingRejectedPrompt(): boolean {
+    return this.state.trailingRejectedPrompt;
+  }
+
+  latestPromptId(): string | undefined {
+    return this.state.latestPromptId;
+  }
+
+  feedbackTurn(turnId: string, replyId?: string): FeedbackTurnAttribution | undefined {
+    const turn = this.state.turns.find((entry) => entry.turn_id === turnId);
+    if (turn?.kind !== 'agent' || turn.status !== 'ended') return undefined;
+    const replyIndex = turn.items.findLastIndex((item) =>
+      item.type === 'assistant_message' && item.text.trim().length > 0 &&
+      (replyId === undefined || item.item_id === replyId),
+    );
+    if (replyIndex === -1) return undefined;
+    const saved = this.state.feedbackAttribution.get(turnId);
+    const stepIndex = turn.items[replyIndex]?.step_index;
+    const step = saved?.modelSteps?.find(entry => entry.step === stepIndex && entry.role === 'step');
+    if (step !== undefined) return {
+      requestId: step.requestId,
+      replyModel: step,
+      modelSteps: saved?.modelSteps?.filter(entry => entry.step <= step.step),
+    };
+    const lastStep = this.state.steps[turnId]?.at(-1);
+    const finalRequest = lastStep === undefined
+      ? turn.outcome === 'completed' && replyIndex === turn.items.length - 1
+      : lastStep.index === stepIndex;
+    if (!finalRequest || saved?.modelSteps !== undefined) return {};
+    const lastReplyIndex = turn.items.findLastIndex(item =>
+      (item.type === 'assistant_message' && item.text.trim().length > 0) || (item.type === 'user_message' && item.placement === 'steer'),
+    );
+    if (replyIndex !== lastReplyIndex) return {};
+    return saved ?? {};
+  }
+
   undo(turnId: string): Promise<readonly string[]> {
     const run = this.undoQueue.then(() => this.undoNow(turnId));
     this.undoQueue = run.catch(() => undefined);
@@ -179,6 +216,7 @@ export class ConversationFeed implements IDisposable {
   }
 
   async page(before: number | undefined, limit: number): Promise<ConversationTurnsPage> {
+    this.flushPending();
     const turns = (this.beforeReplay ?? this.state).turns;
     const end = before === undefined ? turns.length : turns.findIndex((turn) => turn.ordinal >= before);
     const stop = end === -1 ? turns.length : end;

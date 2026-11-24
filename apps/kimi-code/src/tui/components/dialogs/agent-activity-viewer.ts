@@ -19,6 +19,7 @@ import { currentTheme } from '#/tui/theme';
 import type { ToolCallBlockData } from '#/tui/types';
 import { printableChar } from '#/tui/utils/printable-key';
 import { AssistantMessageComponent } from '../messages/assistant-message';
+import { ThinkingComponent } from '../messages/thinking';
 import { extractKeyArgument } from '../messages/tool-call';
 import { pickChip } from '../messages/tool-renderers/chip';
 import { pickResultRenderer } from '../messages/tool-renderers/registry';
@@ -153,7 +154,10 @@ export class AgentActivityViewer extends Container implements Focusable {
   private buildLines(innerWidth: number): string[] {
     const record = this.props.record;
     if (record === undefined) {
-      return [currentTheme.dim(`${MESSAGE_INDENT}[no activity recorded]`)];
+      const message = this.props.info?.detached === false
+        ? 'Waiting for activity…'
+        : '[no activity recorded]';
+      return [currentTheme.dim(`${MESSAGE_INDENT}${message}`)];
     }
 
     const out: string[] = [];
@@ -161,6 +165,10 @@ export class AgentActivityViewer extends Container implements Focusable {
       out.push(currentTheme.dim(`── step ${String(step.step)} ──`));
       if (step.retrying !== undefined) {
         out.push(currentTheme.fg('warning', `${MESSAGE_INDENT}↻ ${step.retrying}`));
+      }
+      if (step.thinkingTail !== undefined && step.thinkingTail.trim().length > 0) {
+        const thinking = new ThinkingComponent(step.thinkingTail);
+        out.push(currentTheme.dim(`${MESSAGE_INDENT}Thinking`), ...thinking.renderRowDetail(innerWidth));
       }
       if (step.textTail.trim().length > 0) {
         const message = new AssistantMessageComponent();
@@ -186,7 +194,7 @@ export class AgentActivityViewer extends Container implements Focusable {
       out.push(...message.render(innerWidth));
     }
 
-    if (out.length === 0) {
+    if (out.length === 0 && record.status === 'running') {
       out.push(currentTheme.dim(`${MESSAGE_INDENT}Waiting for activity…`));
     }
     return out;
@@ -282,8 +290,11 @@ export class AgentActivityViewer extends Container implements Focusable {
     } else {
       segments.push(currentTheme.boldFg('text', this.props.taskId));
     }
-    if (info !== undefined) {
-      segments.push(currentTheme.fg(statusColor(info.status), STATUS_LABEL[info.status]));
+    const status = info?.status ?? record?.status;
+    if (status === 'cancelled') {
+      segments.push(currentTheme.fg('error', 'cancelled'));
+    } else if (status !== undefined) {
+      segments.push(currentTheme.fg(statusColor(status), STATUS_LABEL[status]));
     }
     if (record !== undefined && record.steps.length > 0) {
       const from = record.steps[0]!.step;

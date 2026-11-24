@@ -18,7 +18,6 @@ import { ModelSelectorComponent } from '#/tui/components/dialogs/model-selector'
 import { BannerComponent } from '#/tui/components/chrome/banner';
 import { WelcomeComponent } from '#/tui/components/chrome/welcome';
 import { MoonLoader } from '#/tui/components/chrome/moon-loader';
-import type { FooterGitBinding } from '#/tui/components/chrome/footer';
 import { KimiTUI, type KimiTUIStartupInput, type TUIState } from '#/tui/kimi-tui';
 import { maybeShowModelMigrationPrompt } from '#/tui/controllers/model-migration';
 import type { ApprovalPanelData, QuestionPanelData } from '#/tui/reverse-rpc/types';

@@ -1040,12 +1040,14 @@ export interface AgentStateSnapshot {
       id?: string;
       name?: string;
     };
+    omitted?: 'degraded' | 'stripped' | 'budget' | 'unsupported' | 'protocol_unsupported' | 'unavailable';
   } | /* AudioURLPart — packages/core/src/llm/message.ts */ {
     type: 'audio_url';
     audioUrl: {
       url: string;
       id?: string;
     };
+    omitted?: 'degraded' | 'stripped' | 'budget' | 'unsupported' | 'protocol_unsupported' | 'unavailable';
   } | /* VideoURLPart — packages/core/src/llm/message.ts */ {
     type: 'video_url';
     videoUrl: {
@@ -1053,6 +1055,7 @@ export interface AgentStateSnapshot {
       id?: string;
       name?: string;
     };
+    omitted?: 'degraded' | 'stripped' | 'budget' | 'unsupported' | 'protocol_unsupported' | 'unavailable';
   }>;
   // src/agent/media/mediaToolsRegistrar.ts
   'media.registeredKey': string | undefined;

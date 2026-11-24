@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
 import { createServer, type Server } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -8,6 +8,7 @@ import { pino } from 'pino';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  createDecorator,
   IBootstrapService,
   IFileSystemStorageService,
   IHostRequestHeaders,
@@ -15,9 +16,12 @@ import {
   IOAuthToolkit,
   ITelemetryService,
   noopTelemetryService,
+  Scope,
+  SyncDescriptor,
 } from '@moonshot-ai/agent-core-v2';
 
 import { listLiveServerInstances } from '../src/instanceRegistry';
+import * as apiV1Routes from '../src/routes/registerApiV1Routes';
 import {
   listenWithPortRetry,
   type RunningServer,
@@ -39,6 +43,7 @@ describe('server-v2 boot', () => {
       await rm(home, { recursive: true, force: true });
       home = undefined;
     }
+    vi.restoreAllMocks();
   });
 
   it('boots agent-core-v2 and serves the basic /api/v1 routes', async () => {
@@ -216,6 +221,47 @@ describe('server-v2 boot', () => {
     expect(shutdown).not.toHaveBeenCalled();
   });
 
+  it('resolves close only after the engine has finished disposing its services', async () => {
+    home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-engine-dispose-'));
+    const events: string[] = [];
+    let releaseDispose!: () => void;
+    const disposeGate = new Promise<void>((resolve) => {
+      releaseDispose = resolve;
+    });
+    class SlowToDispose {
+      declare readonly _serviceBrand: undefined;
+      async dispose(): Promise<void> {
+        events.push('dispose started');
+        await disposeGate;
+        events.push('dispose finished');
+      }
+    }
+    const ISlowToDispose = createDecorator<SlowToDispose>('slowToDisposeBootTestService');
+    server = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
+      host: '127.0.0.1',
+      port: 0,
+      homeDir: home,
+      logLevel: 'silent',
+      seeds: [[ISlowToDispose, new SyncDescriptor(SlowToDispose)]],
+    });
+    server.core.accessor.get(ISlowToDispose);
+
+    const closing = server.close().then(() => {
+      events.push('close resolved');
+    });
+    server = undefined;
+    try {
+      await vi.waitFor(() => expect(events).toContain('dispose started'));
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(events).toEqual(['dispose started']);
+    } finally {
+      releaseDispose();
+    }
+    await closing;
+    expect(events).toEqual(['dispose started', 'dispose finished', 'close resolved']);
+  });
+
   it('completes server cleanup when owned telemetry shutdown fails', async () => {
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-telemetry-failure-'));
     const storage = new InMemoryStorageService();
@@ -305,11 +351,9 @@ describe('server-v2 boot', () => {
     expect(process.listenerCount('uncaughtException')).toBe(exceptionBefore.length);
   });
 
-  it('does not leave process handlers installed when startup fails', async () => {
+  it('rejects missing web assets before writing to the home directory', async () => {
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-'));
     const emptyAssets = await mkdtemp(join(tmpdir(), 'kimi-server-v2-assets-'));
-    const rejectionBefore = process.listenerCount('unhandledRejection');
-    const exceptionBefore = process.listenerCount('uncaughtException');
     try {
       await expect(
         startServer({
@@ -321,11 +365,37 @@ describe('server-v2 boot', () => {
           webAssetsDir: emptyAssets,
         }),
       ).rejects.toThrow('web assets');
-      expect(process.listenerCount('unhandledRejection')).toBe(rejectionBefore);
-      expect(process.listenerCount('uncaughtException')).toBe(exceptionBefore);
+      expect(await readdir(home)).toEqual([]);
     } finally {
       await rm(emptyAssets, { recursive: true, force: true });
     }
+  });
+
+  it('releases the instance registration, the core and process handlers when startup fails after boot', async () => {
+    home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-'));
+    const createApp = vi.spyOn(Scope, 'createApp');
+    vi.spyOn(apiV1Routes, 'registerApiV1Routes').mockImplementationOnce(() => {
+      throw new Error('api route registration unavailable');
+    });
+    const rejectionBefore = process.listenerCount('unhandledRejection');
+    const exceptionBefore = process.listenerCount('uncaughtException');
+
+    await expect(
+      startServer({
+        hostIdentity: TEST_HOST_IDENTITY,
+        host: '127.0.0.1',
+        port: 0,
+        homeDir: home,
+        logLevel: 'silent',
+      }),
+    ).rejects.toThrow('api route registration unavailable');
+
+    expect(process.listenerCount('unhandledRejection')).toBe(rejectionBefore);
+    expect(process.listenerCount('uncaughtException')).toBe(exceptionBefore);
+    expect(await listLiveServerInstances(home)).toEqual([]);
+    expect(createApp).toHaveBeenCalledTimes(1);
+    const core = createApp.mock.results[0]?.value as Scope;
+    expect(() => core.accessor.get(IBootstrapService)).toThrow();
   });
 });
 

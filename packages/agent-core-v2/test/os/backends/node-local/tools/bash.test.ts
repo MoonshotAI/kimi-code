@@ -8,6 +8,7 @@ import {
   type AgentTaskOutputChunk,
   type AgentTaskOutputSnapshot,
   type AgentTaskStatus,
+  AgentTaskPersistence,
 } from '#/agent/task/task';
 import { userCancellationReason } from '#/_base/utils/abort';
 import { Event } from '#/_base/event';
@@ -47,7 +48,6 @@ import {
 import type { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { AgentTaskRequestService, AgentTaskService } from '#/agent/task/taskService';
 import { createTaskCompletionEntry, IAgentTaskOutputService } from '#/agent/task/taskOutput';
-import { AgentTaskPersistence } from '#/agent/task/task';
 
 const posixEnv: IHostEnvironment = {
   _serviceBrand: undefined,
@@ -540,6 +540,8 @@ describe('BashTool', () => {
       NO_COLOR: '1',
       TERM: 'dumb',
       GIT_TERMINAL_PROMPT: process.env['GIT_TERMINAL_PROMPT'] ?? '0',
+      KIMI_CODE_SESSION_ID: 's',
+      KIMI_CODE_WORKSPACE_ID: 'w',
     });
     expect(proc.stdin.end).toHaveBeenCalledTimes(1);
     expect(result).toMatchObject({
@@ -1376,7 +1378,7 @@ describe('BashTool background mode', () => {
     });
   });
 
-  it('keeps task metadata independent when noisy foreground output is detached', async () => {
+  it('truncates noisy foreground output in the detach acknowledgement while keeping metadata and the full task log', async () => {
     const { proc, finish } = pendingProcess();
     const { runner } = createTestRunner(proc);
     const { service } = createTaskChannel();
@@ -1391,9 +1393,11 @@ describe('BashTool background mode', () => {
       expect((proc.stdout as PassThrough).listenerCount('data')).toBeGreaterThanOrEqual(1);
     });
 
-    (proc.stdout as PassThrough).write(
-      Array.from({ length: 6000 }, (_, index) => `noisy output line ${String(index)}\n`).join(''),
-    );
+    const noisyOutput = Array.from(
+      { length: 6000 },
+      (_, index) => `noisy output line ${String(index)}\n`,
+    ).join('');
+    (proc.stdout as PassThrough).write(noisyOutput);
     service.detach(task.taskId);
     const result = await running;
 
@@ -1403,9 +1407,14 @@ describe('BashTool background mode', () => {
     expect(output).toContain(`task_id: ${task.taskId}`);
     expect(output).toContain('automatic_notification: true');
     expect(output).toContain('foreground_output:');
-    expect(output).toContain('noisy output line 0');
-    expect(output).toContain('noisy output line 5999');
-    expect(output).not.toContain('[...truncated]');
+    expect(output).toContain('noisy output line 0\n');
+    expect(output).not.toContain('noisy output line 5999\n');
+    expect(output).toContain(
+      `foreground output truncated: ${String(noisyOutput.length)} characters`,
+    );
+    expect(output).toContain('only the first 50000 are shown');
+    expect(output).toContain('The task is still running');
+    expect(output).toContain(`TaskOutput(task_id="${task.taskId}")`);
     expect(output.indexOf(`task_id: ${task.taskId}`)).toBeLessThan(
       output.indexOf('foreground_output:'),
     );
@@ -1415,6 +1424,154 @@ describe('BashTool background mode', () => {
       status: 'completed',
       detached: true,
     });
+    const fullOutput = await service.readOutput(task.taskId);
+    expect(fullOutput).toContain('noisy output line 0\n');
+    expect(fullOutput).toContain('noisy output line 5999\n');
+  });
+
+  it('truncates the acknowledgement when the user detaches after output beyond the cap', async () => {
+    const { proc, finish } = pendingProcess();
+    const { runner } = createTestRunner(proc);
+    const { service } = createTaskChannel();
+    const tool = bashTool(runner, createTestEnv(), createTestCtx(), service);
+
+    const running = executeTool(tool, context({ command: 'flood then run', timeout: 60 }));
+    await vi.waitFor(() => {
+      expect(service.list(false)).toHaveLength(1);
+    });
+    const task = service.list(false)[0]!;
+    await vi.waitFor(() => {
+      expect((proc.stdout as PassThrough).listenerCount('data')).toBeGreaterThanOrEqual(1);
+    });
+
+    (proc.stdout as PassThrough).write(`${'h'.repeat(50_000)}TAIL-BEFORE-DETACH\n`);
+    service.detach(task.taskId);
+    const result = await running;
+    (proc.stdout as PassThrough).write('after detach\n');
+
+    expect(result).toMatchObject({ isError: false });
+    const output = result.output as string;
+    expect(output).toContain('h'.repeat(50_000));
+    expect(output).not.toContain('TAIL-BEFORE-DETACH');
+    expect(output).not.toContain('after detach');
+    expect(output).toContain('foreground output truncated: 50019 characters');
+    expect(output).toContain('only the first 50000 are shown');
+    expect(output).toContain(`TaskOutput(task_id="${task.taskId}")`);
+
+    await vi.waitFor(async () => {
+      const fullOutput = await service.readOutput(task.taskId);
+      expect(fullOutput).toContain('TAIL-BEFORE-DETACH');
+      expect(fullOutput).toContain('after detach');
+    });
+
+    finish();
+    await expect(service.wait(task.taskId)).resolves.toMatchObject({ status: 'completed' });
+  });
+
+  it('truncates the acknowledgement when a noisy foreground command times out into the background', async () => {
+    vi.useFakeTimers();
+    try {
+      const { proc, finish } = pendingProcess();
+      const { runner } = createTestRunner(proc);
+      const { service } = createTaskChannel();
+      const tool = bashTool(runner, createTestEnv(), createTestCtx(), service);
+
+      const running = executeTool(tool, context({ command: 'noisy sleep', timeout: 1 }));
+      await vi.waitFor(() => {
+        expect(service.list(false)).toHaveLength(1);
+      });
+      await vi.waitFor(() => {
+        expect((proc.stdout as PassThrough).listenerCount('data')).toBeGreaterThanOrEqual(1);
+      });
+      (proc.stdout as PassThrough).write(`${'n'.repeat(60_000)}TAIL-BEFORE-TIMEOUT\n`);
+      await vi.advanceTimersByTimeAsync(0);
+
+      await vi.advanceTimersByTimeAsync(1_000);
+      const result = await running;
+
+      expect(result).toMatchObject({
+        isError: false,
+        brief: expect.stringContaining('after timeout'),
+      });
+      const output = result.output as string;
+      expect(output).toContain('The task now runs in the background.');
+      expect(output).toContain('foreground output truncated: 60020 characters');
+      expect(output).toContain('only the first 50000 are shown');
+      expect(output).not.toContain('TAIL-BEFORE-TIMEOUT');
+      const taskId = /^task_id: (\S+)/m.exec(output)?.[1];
+      expect(taskId).toBeDefined();
+      expect(output).toContain(`TaskOutput(task_id="${taskId!}")`);
+
+      (proc.stdout as PassThrough).write('after timeout\n');
+      finish(0);
+      const completed = service.wait(taskId!);
+      await vi.advanceTimersByTimeAsync(250);
+      await expect(completed).resolves.toMatchObject({ status: 'completed' });
+      const fullOutput = await service.readOutput(taskId!);
+      expect(fullOutput).toContain('TAIL-BEFORE-TIMEOUT');
+      expect(fullOutput).toContain('after timeout');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('leaves the detach acknowledgement untouched at exactly the delivery cap boundary', async () => {
+    const { proc, finish } = pendingProcess();
+    const { runner } = createTestRunner(proc);
+    const { service } = createTaskChannel();
+    const tool = bashTool(runner, createTestEnv(), createTestCtx(), service);
+
+    const running = executeTool(tool, context({ command: 'edge', timeout: 60 }));
+    await vi.waitFor(() => {
+      expect(service.list(false)).toHaveLength(1);
+    });
+    const task = service.list(false)[0]!;
+    await vi.waitFor(() => {
+      expect((proc.stdout as PassThrough).listenerCount('data')).toBeGreaterThanOrEqual(1);
+    });
+
+    (proc.stdout as PassThrough).write('x'.repeat(50_000));
+    service.detach(task.taskId);
+    const result = await running;
+
+    expect(result).toMatchObject({ isError: false });
+    const output = result.output as string;
+    expect(output).toContain(`foreground_output:\n${'x'.repeat(50_000)}`);
+    expect(output.endsWith('x'.repeat(50_000))).toBe(true);
+    expect(output).not.toContain('foreground output truncated');
+
+    finish();
+    await expect(service.wait(task.taskId)).resolves.toMatchObject({ status: 'completed' });
+  });
+
+  it('omits the TaskOutput hint from the truncation notice when task tools are disabled', async () => {
+    const { proc, finish } = pendingProcess();
+    const { runner } = createTestRunner(proc);
+    const { service } = createTaskChannel();
+    const tool = bashTool(runner, createTestEnv(), createTestCtx(), service, stubToolPolicy(() => false));
+
+    const running = executeTool(tool, context({ command: 'flood', timeout: 60 }));
+    await vi.waitFor(() => {
+      expect(service.list(false)).toHaveLength(1);
+    });
+    const task = service.list(false)[0]!;
+    await vi.waitFor(() => {
+      expect((proc.stdout as PassThrough).listenerCount('data')).toBeGreaterThanOrEqual(1);
+    });
+
+    (proc.stdout as PassThrough).write('y'.repeat(60_000));
+    service.detach(task.taskId);
+    const result = await running;
+
+    expect(result).toMatchObject({ isError: false });
+    const output = result.output as string;
+    expect(output).toContain('foreground output truncated: 60000 characters');
+    expect(output).toContain('only the first 50000 are shown');
+    expect(output).toContain('you will be automatically notified when it completes');
+    expect(output).not.toContain('TaskOutput');
+
+    finish();
+    await expect(service.wait(task.taskId)).resolves.toMatchObject({ status: 'completed' });
   });
 
   it('requires background tools to be enabled and description for background commands', async () => {

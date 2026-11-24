@@ -185,6 +185,7 @@ export class McpConnectionManager implements McpConnectionView {
   private initialLoadAttemptId = 0;
   private initialLoadStartedAt: number | undefined;
   private initialLoadFinishedAt: number | undefined;
+  private disposed = false;
 
   readonly oauthService: McpOAuthService | undefined;
   private readonly log: Logger;
@@ -260,6 +261,7 @@ export class McpConnectionManager implements McpConnectionView {
   }
 
   connectAll(configs: Record<string, McpServerConfig>): Promise<void> {
+    if (this.disposed) return Promise.resolve();
     const attemptId = ++this.initialLoadAttemptId;
     this.initialLoadStartedAt = Date.now();
     this.initialLoadFinishedAt = undefined;
@@ -273,6 +275,7 @@ export class McpConnectionManager implements McpConnectionView {
   }
 
   async connect(name: string, config: McpServerConfig): Promise<void> {
+    if (this.disposed) return;
     const entry = this.upsert(name, config);
     await (entry.attemptPromise ?? this.operationTails.get(name));
   }
@@ -455,6 +458,11 @@ export class McpConnectionManager implements McpConnectionView {
       }
     }
     return this.isCurrent(entry, authGuard);
+  }
+
+  dispose(): Promise<void> {
+    this.disposed = true;
+    return this.shutdown();
   }
 
   async shutdown(): Promise<void> {

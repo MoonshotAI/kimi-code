@@ -1,4 +1,4 @@
-import { IConfigService, ITelemetryService, type Scope } from '@moonshot-ai/agent-core-v2';
+import { IBootstrapService, IConfigService, ITelemetryService, type Scope } from '@moonshot-ai/agent-core-v2';
 import { FiberState } from '@moonshot-ai/agent-core-v2/_base/di/fiber';
 import { IFeatureManager } from '@moonshot-ai/agent-core-v2/app/feature/featureManager';
 import { IFlagService } from '@moonshot-ai/agent-core-v2/app/flag/flag';
@@ -13,6 +13,8 @@ import { registerAuthRoute } from './auth';
 import { registerCapabilitiesRoutes } from './capabilities';
 import { registerClientConfigsRoutes } from './clientConfigs';
 import { registerConfigRoutes } from './config';
+import { registerContextRoutes } from './context';
+import { registerFeedbackRoutes } from './feedback';
 import { registerFileHistoryRoutes } from './fileHistory';
 import { registerFilesRoutes } from './files';
 import { registerFsRoutes } from './fs';
@@ -58,6 +60,7 @@ interface ApiV1RouteHost {
 }
 
 export interface RegisterApiV1RoutesOptions {
+  readonly serverId?: string;
   readonly serverVersion: string;
   readonly hostIdentity: KimiHostIdentity;
   readonly debugEndpoints?: boolean;
@@ -88,8 +91,10 @@ export async function registerApiV1Routes(
 
       registerMetaRoute(apiV1, {
         serverVersion: opts.serverVersion,
-        serverId: ulid(),
+        product: opts.hostIdentity.productName,
+        serverId: opts.serverId ?? ulid(),
         startedAt: new Date().toISOString(),
+        homeDir: core.accessor.get(IBootstrapService).homeDir,
         dangerousBypassAuth: opts.dangerousBypassAuth === true,
         webTitle: opts.webTitle,
         getExperimentalFlags: async () => {
@@ -135,6 +140,10 @@ export async function registerApiV1Routes(
         core,
         hostSources(opts.hostBridges),
       );
+      registerContextRoutes(
+        apiV1 as unknown as Parameters<typeof registerContextRoutes>[0],
+        core,
+      );
       registerHostsRoutes(apiV1 as unknown as Parameters<typeof registerHostsRoutes>[0], core, opts.hostBridges);
       if (opts.managedHost === true) {
         registerImportProvidersRoute(apiV1 as unknown as Parameters<typeof registerImportProvidersRoute>[0], core);
@@ -178,6 +187,11 @@ export async function registerApiV1Routes(
         core,
       );
       registerFilesRoutes(apiV1 as unknown as Parameters<typeof registerFilesRoutes>[0], core);
+      registerFeedbackRoutes(apiV1 as unknown as Parameters<typeof registerFeedbackRoutes>[0], core, {
+        hostIdentity: opts.hostIdentity,
+        conversations: opts.conversations,
+        hostBridges: opts.hostBridges,
+      });
       registerSessionMediaRoutes(
         apiV1 as unknown as Parameters<typeof registerSessionMediaRoutes>[0],
         core,
@@ -191,6 +205,7 @@ export async function registerApiV1Routes(
       );
       registerConversationRoutes(
         apiV1 as unknown as Parameters<typeof registerConversationRoutes>[0],
+        core,
         opts.conversations,
       );
       if (opts.enableShutdown !== false) {

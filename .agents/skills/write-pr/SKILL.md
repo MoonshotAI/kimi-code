@@ -13,24 +13,25 @@ description: 在 kimi-code 仓库里创建或更新 PR 时使用：如何写出�
 
    `Read(.github/pull_request_template.md)`
 
-2. 找到或创建 PR：
-   - 先查当前分支有没有 PR：`gh pr view --json url,number,title,state 2>/dev/null`。
-   - 没有的话，看 `git status --short --branch` 和当前分支上的提交。
-   - 提交剩余改动，带 upstream 推送分支，用 `gh pr create` 创建 PR。
-   - 遵守仓库的 git 安全规范。
+2. 推送代码前检查待提的改动：
+   - 仅编辑 PR 描述时可直接进入第 3 步。已有开放 PR 时，用 `gh pr view --json url,number,title,state,baseRefName,baseRefOid` 取实际目标分支和提交，以 `baseRefOid` 为 `<base-sha>`；本地缺少该提交时，从目标仓库取回。新建 PR 时，先 `git fetch <目标仓库远端> refs/heads/<目标分支>`，取这次 `git rev-parse FETCH_HEAD` 的结果作为 `<base-sha>`。
+   - 首次检查时，读 `git diff <base-sha>...HEAD`，再结合 `git status --short` 检查本次准备提交的暂存、未暂存和新文件。更新已有 PR 时，若此前已做过复用检查，只检查此后改变的代码。
+   - 若代码新增或改写了可能已有实现的能力，或引入第三方工具依赖，先使用 [review-duplication](../review-duplication/SKILL.md) 做作者自查。发现重复时，按该技能向用户汇报并给出建议，暂停提 PR 流程，等用户明确决定。若决定保留独立实现，在 Code Changes 说明理由。
+   - 按仓库的 git 规范提交本次改动。每次推送前运行 `pnpm run check:duplication <base-sha>`，包括只改文档的提交。jscpd 按 `.jscpd.json` 配置的源码范围比较新增重复，文档正文和其中的代码块均不参与比较。若扫描范围内还有本次提交之外的改动，在待推送 HEAD 的干净 worktree 中运行。若 jscpd 报出新增重复，从 `.tmp/jscpd/jscpd-report.json` 读取 `isNew` 条目的两端位置，按同一流程向用户汇报并等待决定。若用户选择修改，完成后重新运行检查。
+   - 检查通过后推送分支。新 PR 需要编号来上传视觉证据时，此时可用 `gh pr create` 创建，其余情况在第 5 步发布描述时创建。
 
 3. 收集解释改动所需的上下文：
    - 读关联的 issue 和相关任务产物。
-   - 读完整 diff（`git diff main...HEAD`）和足够的周边代码，理解行为与归属。
+   - 读相对目标分支的完整 diff（`git diff <base>...HEAD`）和足够的周边代码，理解行为与归属。
    - PR 已存在时，用 `gh pr view` 拿元数据和改动文件列表。
    - 改动让用户看到的界面或输出变了的，准备视觉证据，见"UI/UX 变化的视觉证据"。
 
 4. 按模板各节写描述。描述用用户当前使用的语言，行为变化表也一样；只有三样固定：PR 标题保持英文 Conventional Commit，changeset 保持英文（见 `gen-changesets` skill），节标题沿用模板原文。
+   - **Screenshots / Recordings**：模板里没有这一节。有可见的 UI/UX 变化时作为第一节放在描述最前面（Requirement or Bug 之前），让 reviewer 打开 PR 先看到效果；没有就不加，见"UI/UX 变化的视觉证据"。
    - **Requirement or Bug**：两三句话讲清谁遇到了什么问题、这个 PR 之后能做到什么；有 issue 的写 `Resolve #<number>`，再补一句背景。解决办法留给 Code Changes。
    - **Bug Reproduction Steps**：只有 bug 类 PR 需要；feature 写 `N/A`。步骤已在 issue 里的写 `See linked issue`。
    - **Root Cause**：只有 bug 类 PR 需要；feature 写 `N/A`。说明根因，以及这是根本修复还是绕过。机制要靠时序或状态才说得清的，用图，见"代码变更的可视化大纲"。
    - **Code Changes**：先判断要不要先建立整体理解，再讲具体变化，见"讲清楚改动"。
-   - **Screenshots / Recordings**：模板里没有这一节。有可见的 UI/UX 变化时加在 Code Changes 后面，没有就不加，见"UI/UX 变化的视觉证据"。
    - **Behavior Changes and Affected Users**：先填行为变化表，再列受影响模块与测试覆盖，见"行为变化与受影响人群"。验证只写结论：覆盖了哪些场景、哪些没验证；测试文件清单、全量运行结果和修复过程放进折叠块。
    - **Checklist**：勾上所有适用的项。
 
@@ -189,7 +190,7 @@ interface SessionEvents {
 | GIF | 只用于交互和时序：按键、展开折叠、流式输出、动画 | 本机有录屏工具就录；没有就退回关键帧截图或文本快照，不为此装工具 |
 
 写法：
-- 加在 Code Changes 后面，节标题 `## Screenshots / Recordings`。
+- 作为第一节放在描述最前面（Requirement or Bug 之前），节标题 `## Screenshots / Recordings`。
 - 改动前后用两列表格并排；全新的界面只放改动后。每组图前用一句话说明该看哪里。
 - 证据来自 PR 分支的真实运行或测试渲染，不要手画示意图冒充。文本快照保持原样，不手工调整对齐。
 - GIF 只录能说明问题的几秒，体积控制在几 MB 内。

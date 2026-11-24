@@ -9,3 +9,6 @@ src/generated/vis-web-asset.ts
 
 # Copied from packages/pi-tui/native at build time by scripts/copy-native-assets.mjs
 /native/
+
+# Built from the desktop renderer web variant by scripts/sync-web-dist.mjs.
+/dist-web/

@@ -1,5 +1,5 @@
 import type { PromptOrigin, UserPromptOrigin } from '#/agent/contextMemory/types';
-/* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
+/* oxlint-disable typescript-eslint/no-unsafe-declaration-merging -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
 import { z } from 'zod';
 
 import { AgentEvent2, registerEvent2Class } from '#/app/event/event2';
@@ -76,6 +76,14 @@ export interface PromptSteeredEvent {
   readonly content: readonly MessageContent[];
   readonly steeredAt: string;
   readonly messageId?: string;
+}
+
+export interface PromptQueuedEvent {
+  readonly type: 'prompt.queued';
+  readonly promptId: string;
+  readonly content: readonly MessageContent[];
+  readonly queueLength: number;
+  readonly clientMetadata?: UserPromptOrigin['clientMetadata'];
 }
 
 export interface PromptSteeredPayload {

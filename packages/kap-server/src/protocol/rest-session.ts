@@ -9,6 +9,7 @@ import {
 } from '@moonshot-ai/agent-core-v2/app/sessionLegacy/sessionProtocol';
 
 import { ErrorCode } from './error-codes';
+import { pendingInteractionSchema } from './interaction';
 import {
   creationOnlyProfileSchema,
   sessionActivitySchema,
@@ -99,6 +100,7 @@ export const listSessionsQuerySchema = z
     activity: repeatedParam(sessionActivitySchema),
     updated_after: isoDateTimeSchema.optional(),
     updated_before: isoDateTimeSchema.optional(),
+    query: z.string().optional(),
     sort: sessionsSortSchema.optional(),
     view: sessionsViewSchema.optional(),
     group_page_size: z.coerce.number().int().min(1).max(IDS_PROJECTION_PAGE_SIZE_MAX).optional(),
@@ -395,6 +397,31 @@ export const sessionCancelResponseSchema = z.object({
   cancelled: z.boolean(),
 });
 export type SessionCancelResponse = z.infer<typeof sessionCancelResponseSchema>;
+
+export const DEFAULT_SESSION_WAIT_TIMEOUT_MS = 15_000;
+export const MAX_SESSION_WAIT_TIMEOUT_MS = 60_000;
+
+export const waitSessionBodySchema = z.object({
+  timeout_ms: z.number().int().min(0).max(MAX_SESSION_WAIT_TIMEOUT_MS).optional(),
+});
+
+export const waitSessionRequestSchema = z.preprocess(
+  (value) => (value === undefined ? {} : value),
+  waitSessionBodySchema,
+);
+export type WaitSessionRequest = z.infer<typeof waitSessionRequestSchema>;
+
+export const waitSessionResponseSchema = z.object({
+  session: sessionSchema,
+  pending_interactions: z.array(pendingInteractionSchema),
+  timed_out: z.boolean(),
+});
+export type WaitSessionResponse = z.infer<typeof waitSessionResponseSchema>;
+
+export const sessionContinueResponseSchema = z.object({
+  continued: z.literal(true),
+});
+export type SessionContinueResponse = z.infer<typeof sessionContinueResponseSchema>;
 
 function fitsUtf8ByteLimit(value: string, limit: number): boolean {
   let bytes = 0;

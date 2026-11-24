@@ -1,8 +1,3 @@
-import { chmod, mkdir, mkdtemp, open, readFile, readdir, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
-import { deflateSync } from 'node:zlib';
-
 import {
   agentContextOf,
   IAgentTitlePromptSource,
@@ -26,6 +21,23 @@ import {
   getLiveSessionById,
   resumeSessionById,
 } from '@moonshot-ai/agent-core-v2';
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  open,
+  readFile,
+  readdir,
+  realpath,
+  rename,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
+import { deflateSync } from 'node:zlib';
+
 import type { PromptOrigin } from '@moonshot-ai/agent-core-v2/agent/contextMemory/types';
 import { HostFileSystem } from '@moonshot-ai/agent-core-v2/os/backends/node-local/hostFsService';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';

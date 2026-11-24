@@ -22,7 +22,7 @@ import { TaskOutputInputSchema } from '#/agent/tools/task/task-output/task-outpu
 import { TaskOutputTool } from '#/agent/tools/task/task-output/taskOutputTool';
 import { TaskStopInputSchema } from '#/agent/tools/task/task-stop/task-stop';
 import { TaskStopTool } from '#/agent/tools/task/task-stop/taskStopTool';
-import { WaitForInputSchema } from '#/agent/tools/task/task-wait/task-wait';
+import { WaitForInputSchema, IWaitForTool } from '#/agent/tools/task/task-wait/task-wait';
 import { WaitForTool, startWaitProgress, waitForProgressUpdate } from '#/agent/tools/task/task-wait/taskWaitTool';
 import { abortError } from '#/_base/utils/abort';
 import { Event } from '#/_base/event';
@@ -38,7 +38,6 @@ import {
 import type { AgentTaskFields } from '#/agent/task/handler';
 import type { AgentToolExecutionHandler } from '#/agent/toolExecutor/toolExecutor';
 import type { ToolExecutionSnapshot, ToolResult, ToolDetachAck } from '#/tool/executor';
-import { IWaitForTool } from '#/agent/tools/task/task-wait/task-wait';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { ToolUpdated } from '#/agent/toolExecutor/toolExecutorEvents';
@@ -1365,12 +1364,18 @@ describe('WaitForTool (harness)', () => {
       }));
       expect(tasks.getTask(taskId)?.status).toBe('running');
       await ctx.get(IAgentLoopService).settled();
+      const lifecycleEvents = () => ctx.allEvents.filter(
+        (event) => event.type === '[rpc]' && (event.event === 'loop.drained' || event.event === 'loop.idle'),
+      ).map((event) => event.event);
+      expect(lifecycleEvents()).toContain('loop.drained');
+      expect(lifecycleEvents()).not.toContain('loop.idle');
       ctx.mockNextResponse({ type: 'text', text: 'The background work has finished.' });
       const notified = vi.waitFor(() => expect(taskNotifications(ctx, taskId)).toHaveLength(1));
       controlled.resolve('');
       await notified;
       await ctx.get(IAgentLoopService).settled();
       expect(tasks.getTask(taskId)?.status).toBe('completed');
+      expect(lifecycleEvents()).toContain('loop.idle');
       expect(taskNotifications(ctx, taskId)).toHaveLength(1);
       await ctx.expectResumeMatches();
     } finally {

@@ -20,5 +20,5 @@ describe('OpenAI Responses decode fixtures', () => {
 });
 
 describe('OpenAI Responses transport fixtures', () => {
-  runTransportFixtures(openAIResponsesProtocol, openAIResponsesTransportFixtures);
+  runTransportFixtures(openAIResponsesProtocol, openAIResponsesTransportFixtures, 'openai-responses');
 });

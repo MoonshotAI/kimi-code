@@ -1,4 +1,4 @@
-/* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
+/* oxlint-disable typescript-eslint/no-unsafe-declaration-merging -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
 import { z } from 'zod';
 
 import type { IAgentScopeHandle } from '#/_base/di/scope';
@@ -142,7 +142,6 @@ export interface AgentRunSpawnedMeta {
   readonly description?: string;
   readonly swarmIndex?: number;
   readonly runInBackground?: boolean;
-  readonly fork?: boolean;
   readonly model?: string;
   readonly modelSource?: SubagentModelSource;
   readonly taskId?: string;
@@ -187,7 +186,6 @@ export function emitAgentRunSpawned(
   const telemetryEvent: SubagentCreatedEvent = {
     subagent_name: meta.profileName,
     run_in_background: meta.runInBackground ?? false,
-    fork: meta.fork ?? false,
     agent_id: targetAgentId,
     parent_agent_id: requester.id,
     parent_tool_call_id: meta.parentToolCallId ?? '',

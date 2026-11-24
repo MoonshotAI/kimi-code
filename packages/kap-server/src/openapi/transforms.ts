@@ -43,7 +43,10 @@ import {
   deleteSessionResponseSchema,
   getSessionResponseSchema,
   sessionCancelResponseSchema,
+  sessionContinueResponseSchema,
   takeoverSessionResponseSchema,
+  waitSessionBodySchema,
+  waitSessionResponseSchema,
 } from '../protocol/rest-session';
 
 const binarySchema = {
@@ -105,15 +108,35 @@ export function transformOpenApiDocument(
   const paths = asRecord(document['paths']);
   if (paths === undefined) return document;
 
-  patchFileUpload(paths);
+  patchFileUpload(paths, '/api/v1/files', fileUploadMultipartSchema);
+  patchFileUpload(paths, '/api/v1/feedback/{feedback_id}/attachments', {
+    type: 'object',
+    properties: { file: binarySchema },
+    required: ['file'],
+  });
   patchFileDownload(paths);
+  patchKapSpec(paths);
   patchSessionExport(paths);
   patchSessionAction(paths);
+  patchAgentAction(paths);
   patchFsAction(paths);
   patchFsDownload(paths);
   patchWorkspaceFsContent(paths);
 
   return document;
+}
+
+function patchKapSpec(paths: Record<string, unknown>): void {
+  const operation = getOperation(paths, '/api/v1/kap.md', 'get');
+  if (operation === undefined) return;
+  setResponse(operation, '200', {
+    description: 'Built-in Kimi Agent Protocol (KAP) Markdown specification',
+    content: {
+      'text/markdown': {
+        schema: { type: 'string' },
+      },
+    },
+  });
 }
 
 function patchSessionExport(paths: Record<string, unknown>): void {
@@ -136,15 +159,19 @@ function patchSessionExport(paths: Record<string, unknown>): void {
   });
 }
 
-function patchFileUpload(paths: Record<string, unknown>): void {
-  const operation = getOperation(paths, '/api/v1/files', 'post');
+function patchFileUpload(
+  paths: Record<string, unknown>,
+  path: string,
+  schema: Record<string, unknown>,
+): void {
+  const operation = getOperation(paths, path, 'post');
   if (operation === undefined) return;
 
   operation['requestBody'] = {
     required: true,
     content: {
       'multipart/form-data': {
-        schema: fileUploadMultipartSchema,
+        schema,
       },
     },
   };
@@ -186,6 +213,21 @@ function patchSessionAction(paths: Record<string, unknown>): void {
     'runSessionCancelAction',
     sessionCancelResponseSchema,
     cancelSessionBodySchema,
+  );
+  projectSessionAction(
+    paths,
+    pathItem,
+    'wait',
+    'runSessionWaitAction',
+    waitSessionResponseSchema,
+    waitSessionBodySchema,
+  );
+  projectSessionAction(
+    paths,
+    pathItem,
+    'continue',
+    'runSessionContinueAction',
+    sessionContinueResponseSchema,
   );
   projectSessionAction(
     paths,
@@ -257,6 +299,22 @@ function projectSessionAction(
     });
   }
   paths[`/api/v1/sessions/{session_id}:${action}`] = cloned;
+}
+
+function patchAgentAction(paths: Record<string, unknown>): void {
+  const internalPath = '/api/v1/sessions/{session_id}/agents/{tail}';
+  const pathItem = asRecord(paths[internalPath]);
+  const operation = asRecord(pathItem?.['post']);
+  if (pathItem === undefined || operation === undefined) return;
+
+  const cloned = cloneRecord(pathItem);
+  replacePathParamName(cloned, 'tail', 'agent_id');
+  const clonedOperation = asRecord(cloned['post']);
+  if (clonedOperation !== undefined) {
+    clonedOperation['operationId'] = 'runAgentCloseAction';
+  }
+  paths['/api/v1/sessions/{session_id}/agents/{agent_id}:close'] = cloned;
+  delete paths[internalPath];
 }
 
 function patchFsAction(paths: Record<string, unknown>): void {

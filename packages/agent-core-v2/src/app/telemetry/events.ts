@@ -200,6 +200,15 @@ export interface PermissionPolicyDecisionEvent {
   tool_name: string;
   permission_mode: TelemetryPermissionMode;
   decision: 'approve' | 'deny' | 'ask';
+  command_family?: string;
+  command_count?: number;
+  executable_name?: string;
+  read_only_rejection?:
+    | 'parse_failed'
+    | 'unsupported_structure'
+    | 'unsupported_command'
+    | 'unsafe_arguments'
+    | 'path_check_failed';
   [key: string]: TelemetryPrimitive;
 }
 
@@ -500,7 +509,6 @@ export interface FsSuggestNodeFallbackEvent {
 export interface SubagentCreatedEvent {
   subagent_name: string;
   run_in_background: boolean;
-  fork: boolean;
   agent_id: string;
   parent_agent_id: string;
   parent_tool_call_id: string;
@@ -907,6 +915,10 @@ export const telemetryEventDefinitions = {
       tool_name: 'Tool being gated',
       permission_mode: 'Active permission mode',
       decision: 'Policy decision',
+      command_family: 'Approved read-only command family, with a supported subcommand when available; multiple for compound commands',
+      command_count: 'Number of commands in an approved compound read-only invocation',
+      executable_name: 'Normalized executable basename considered by read-only analysis',
+      read_only_rejection: 'Coarse reason static read-only analysis did not approve the command',
     },
   }),
   permission_approval_result: defineAgentTelemetryEvent<PermissionApprovalResultEvent>({
@@ -1328,13 +1340,12 @@ export const telemetryEventDefinitions = {
     properties: {
       subagent_name: 'Profile name of the subagent',
       run_in_background: 'Whether the subagent runs in the background',
-      fork: 'Whether the subagent was forked with a snapshot of the parent conversation history',
       agent_id: 'Child agent id',
       parent_agent_id: 'Parent (caller) agent id',
       parent_tool_call_id: "Tool call id of the launching call in the parent agent; '' when not launched from a tool call",
       model: 'Model alias the subagent binds to (secondary-model choice or inherited caller model); omitted when no binding was resolved',
       model_source:
-        "How the bound model was chosen: 'inherited' = caller's own model (no pool or fork), 'secondary_pool' = [secondary_model.models] pool pick; omitted when no binding resolution happened (e.g. resume)",
+        "How the bound model was chosen: 'inherited' = caller's own model (no pool), 'secondary_pool' = [secondary_model.models] pool pick; omitted when no binding resolution happened (e.g. resume)",
     },
   }),
   mcp_connected: defineTelemetryEvent<McpConnectedEvent>({

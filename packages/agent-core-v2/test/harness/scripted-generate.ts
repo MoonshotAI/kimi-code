@@ -120,6 +120,14 @@ export function createMockProvider(handler: MockProviderHandler): MockProvider {
   };
 }
 
+export function fetchBackedProvider(fetchImpl: typeof fetch): MockProvider {
+  let index = 0;
+  return {
+    respond: (request) => prepareProviderAttempt(request, {}, index++),
+    fetch: fetchImpl,
+  };
+}
+
 export function providerHttpError(
   statusCode: number,
   message: string,

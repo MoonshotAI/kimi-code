@@ -10,7 +10,6 @@ import {
   IBootstrapService,
   IConfigService,
   IPluginService,
-  ISessionAgentProfileCatalog,
   ISessionActivityView,
   ISessionBtwService,
   ISessionContext,
@@ -23,21 +22,30 @@ import {
   ISessionManager,
   IWorkspaceInstanceManager,
   IWorkspaceService,
+  IWireService,
   closeSessionById,
+  drainSessionMetadataWrites,
+  followSessionLifecycles,
   getLiveSessionById,
   getOrRestoreAgent,
+  interactions,
   programForSession,
-  resolveSubagentModelPool,
   reloadOnStale,
   resumeSessionById,
   setSessionArchived,
+  toDisposable,
   Error2,
   type IAgentScopeHandle,
+  type IDisposable,
+  type ISessionScopeHandle,
   type Scope,
-  type SubagentModelPoolSnapshot,
 } from '@moonshot-ai/agent-core-v2';
+import type { ServerResponse } from 'node:http';
 import { ISessionLockService } from '@moonshot-ai/agent-core-v2/persistence/interface/sessionLock';
 import { IAtomicDocumentStore } from '@moonshot-ai/agent-core-v2/persistence/interface/atomicDocumentStore';
+import { ISessionRunGate } from '@moonshot-ai/agent-core-v2/session/sessionActivity/sessionRunGate';
+import { historyEntryFromContext } from '@moonshot-ai/agent-core-v2/agent/loop/history';
+import { wrapSystemReminder } from '@moonshot-ai/agent-core-v2/features/reminder/systemReminder';
 import {
   legacySessionMetaScopeOf,
   sessionScopeOf,
@@ -45,6 +53,8 @@ import {
 } from '@moonshot-ai/agent-core-v2/workspace/sessionLifecycle/internal/addressing';
 import { SessionMetaUpdated } from '@moonshot-ai/agent-core-v2/session/sessionMetadata/sessionMetaEvents';
 import { ErrorCode } from '../protocol/error-codes';
+import { listPendingInteractions } from '../protocol/interaction-wire';
+import type { PendingInteraction } from '../protocol/interaction';
 import type { ConversationService } from '../services/conversation/conversationService';
 import { findOnHosts, hostGet, HostSourceError, type HostSources } from '../services/hosts/hostFanout';
 import {
@@ -53,9 +63,12 @@ import {
   compactSessionRequestSchema,
   compactSessionResponseSchema,
   createSessionRequestSchema,
+  DEFAULT_SESSION_WAIT_TIMEOUT_MS,
   deleteSessionResponseSchema,
   forkSessionRequestSchema,
+  MAX_SESSION_WAIT_TIMEOUT_MS,
   sessionCancelResponseSchema,
+  sessionContinueResponseSchema,
   sessionWarningsResponseSchema,
   startBtwSessionResponseSchema,
   takeoverSessionResponseSchema,
@@ -63,6 +76,8 @@ import {
   undoSessionResponseSchema,
   updateSessionProfileRequestSchema,
   updateSessionProfileResponseSchema,
+  waitSessionRequestSchema,
+  waitSessionResponseSchema,
 } from '../protocol/rest-session';
 import {
   sessionSchema,
@@ -142,6 +157,7 @@ const sessionActionRequestSchema = z.preprocess(
     turn_id: z.string().min(1).optional(),
     agent_id: z.string().min(1).optional(),
     include_background: z.boolean().optional(),
+    timeout_ms: z.number().int().min(0).max(MAX_SESSION_WAIT_TIMEOUT_MS).optional(),
     count: z.number().int().positive().optional(),
     page_size: z.number().int().min(1).max(100).optional(),
   }),
@@ -469,20 +485,26 @@ export function registerSessionsRoutes(
           compactSessionResponseSchema,
           undoSessionResponseSchema,
           sessionCancelResponseSchema,
+          sessionContinueResponseSchema,
           startBtwSessionResponseSchema,
           archiveSessionResponseSchema,
           deleteSessionResponseSchema,
           takeoverSessionResponseSchema,
+          waitSessionResponseSchema,
         ]),
       },
       errors: {
         [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
+        [ErrorCode.AUTH_PROVISIONING_REQUIRED]: {},
+        [ErrorCode.AUTH_TOKEN_MISSING]: {},
+        [ErrorCode.AUTH_MODEL_NOT_RESOLVED]: {},
         [ErrorCode.SESSION_NOT_FOUND]: {},
         [ErrorCode.SESSION_BUSY]: {},
         ...sessionConflictErrors,
         [ErrorCode.COMPACTION_UNABLE]: {},
         [ErrorCode.SESSION_UNDO_UNAVAILABLE]: {},
         [ErrorCode.TURN_NOT_FOUND]: {},
+        [ErrorCode.TURN_NOT_CONTINUABLE]: {},
       },
       description: 'Run a session action',
       tags: ['sessions'],
@@ -565,6 +587,8 @@ type SessionAction =
   | 'compact'
   | 'undo'
   | 'cancel'
+  | 'wait'
+  | 'continue'
   | 'btw'
   | 'restore'
   | 'archive'
@@ -579,6 +603,7 @@ interface SessionActionExtra {
     readonly id: string;
   };
   readonly reply: {
+    readonly raw?: ServerResponse;
     readonly send: (payload: unknown) => unknown;
   };
 }
@@ -593,6 +618,8 @@ const sessionActions: ActionTable<SessionAction, SessionActionExtra> = {
   compact: { body: compactSessionRequestSchema, handle: compactSessionAction },
   undo: { body: undoSessionRequestSchema, handle: undoSessionAction },
   cancel: { body: cancelSessionRequestSchema, handle: cancelSessionAction },
+  wait: { body: waitSessionRequestSchema, handle: waitSessionAction },
+  continue: { handle: continueSessionAction },
   btw: { handle: btwSessionAction },
   restore: { handle: restoreSessionAction },
   archive: { handle: archiveSessionAction },
@@ -600,6 +627,187 @@ const sessionActions: ActionTable<SessionAction, SessionActionExtra> = {
   reload: { handle: reloadSessionAction },
   takeover: { handle: takeoverSessionAction },
 };
+
+async function readWaitSnapshot(
+  core: Scope,
+  id: string,
+): Promise<{
+  session: Session;
+  pendingInteractions: PendingInteraction[];
+  settled: boolean;
+  live: ISessionScopeHandle | undefined;
+}> {
+  const live = getLiveSessionById(core.accessor, id);
+  const pendingInteractions = listPendingInteractions(id);
+  let baseSession: Session;
+  if (live !== undefined) {
+    const meta = await live.accessor.get(ISessionMetadata).read();
+    const ctx = live.accessor.get(ISessionContext);
+    baseSession = toWireSession(
+      { ...meta, workspaceId: ctx.workspaceId },
+      ctx.cwd,
+      resolveSessionFacts(core, id),
+    );
+  } else {
+    const summary = await core.accessor.get(ISessionIndex).get(id);
+    if (summary === undefined) {
+      throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${id} does not exist`);
+    }
+    const cwd =
+      summary.cwd ?? (await core.accessor.get(IWorkspaceService).get(summary.workspaceId))?.root;
+    if (cwd === undefined) {
+      throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${id} has no recoverable cwd`);
+    }
+    baseSession = toWireSession(summary, cwd, resolveSessionFacts(core, id));
+  }
+  const session =
+    pendingInteractions.length > 0 && baseSession.pending_interaction === 'none'
+      ? { ...baseSession, pending_interaction: pendingInteractions[0]!.kind }
+      : baseSession;
+  const settled =
+    session.activity !== 'turn' ||
+    session.pending_interaction !== 'none' ||
+    pendingInteractions.length > 0;
+  return { session, pendingInteractions, settled, live };
+}
+
+async function persistSessionWrites(live: ISessionScopeHandle | undefined): Promise<void> {
+  if (live === undefined) return;
+  const agents = live.accessor.get(IAgentLifecycleService);
+  for (const agent of agents.list()) {
+    await agents.handleOf(agent.agentId)?.accessor.get(IWireService).flush();
+  }
+  await drainSessionMetadataWrites();
+}
+
+async function waitSessionAction(
+  ctx: SessionActionCtx<z.infer<typeof waitSessionRequestSchema>>,
+): Promise<void> {
+  const { core, req, reply, id, body } = ctx;
+  const timeoutMs = body.timeout_ms ?? DEFAULT_SESSION_WAIT_TIMEOUT_MS;
+  const initial = await readWaitSnapshot(core, id);
+  if (initial.settled) {
+    await persistSessionWrites(initial.live);
+    reply.send(
+      okEnvelope(
+        {
+          session: initial.session,
+          pending_interactions: initial.pendingInteractions,
+          timed_out: false,
+        },
+        req.id,
+      ),
+    );
+    return;
+  }
+  if (timeoutMs === 0 || initial.live === undefined) {
+    reply.send(
+      okEnvelope(
+        {
+          session: initial.session,
+          pending_interactions: initial.pendingInteractions,
+          timed_out: initial.live !== undefined,
+        },
+        req.id,
+      ),
+    );
+    return;
+  }
+
+  const liveHandle = initial.live;
+  const raw = reply.raw;
+  const outcome = await new Promise<'settled' | 'timeout' | 'aborted'>((resolve) => {
+    let done = false;
+    const disposables: IDisposable[] = [];
+    const onClose = (): void => {
+      if (raw?.writableFinished === true) return;
+      finish('aborted');
+    };
+    const finish = (result: 'settled' | 'timeout' | 'aborted'): void => {
+      if (done) return;
+      done = true;
+      raw?.off('close', onClose);
+      for (const d of disposables.splice(0)) d.dispose();
+      resolve(result);
+    };
+
+    raw?.once('close', onClose);
+    if (raw?.destroyed === true && !raw.writableFinished) {
+      finish('aborted');
+      return;
+    }
+
+    try {
+      disposables.push(
+        liveHandle.accessor.get(ISessionActivityView).onDidChange(({ state }) => {
+          if (!state.mainTurnActive || state.pendingInteraction !== 'none') {
+            finish('settled');
+          }
+        }),
+      );
+    } catch {
+      finish('settled');
+      return;
+    }
+
+    disposables.push(
+      toDisposable(
+        interactions.onDidChangePending(() => {
+          if (listPendingInteractions(id).length > 0) {
+            finish('settled');
+          }
+        }),
+      ),
+      followSessionLifecycles(core.accessor, (service) => {
+        const closeSub = service.onDidCloseSession((event) => {
+          if (event.sessionId === id) finish('settled');
+        });
+        const archiveSub = service.onDidArchiveSession((event) => {
+          if (event.sessionId === id) finish('settled');
+        });
+        return {
+          dispose: () => {
+            closeSub.dispose();
+            archiveSub.dispose();
+          },
+        };
+      }),
+    );
+    const deleteSub = core.accessor.get(ISessionManager).onWillDeleteSession?.((event) => {
+      if (event.sessionId === id) finish('settled');
+    });
+    if (deleteSub !== undefined) disposables.push(deleteSub);
+
+    const timer = setTimeout(() => finish('timeout'), timeoutMs);
+    disposables.push(toDisposable(() => clearTimeout(timer)));
+
+    const recheck = resolveSessionFacts(core, id);
+    if (
+      !recheck.mainTurnActive ||
+      recheck.pendingInteraction !== 'none' ||
+      listPendingInteractions(id).length > 0
+    ) {
+      finish('settled');
+    }
+  });
+
+  if (outcome === 'aborted') {
+    return;
+  }
+
+  const after = await readWaitSnapshot(core, id);
+  if (after.settled) await persistSessionWrites(after.live);
+  reply.send(
+    okEnvelope(
+      {
+        session: after.session,
+        pending_interactions: after.pendingInteractions,
+        timed_out: outcome === 'timeout' && !after.settled,
+      },
+      req.id,
+    ),
+  );
+}
 
 async function forkSessionAction(
   ctx: SessionActionCtx<z.infer<typeof forkSessionRequestSchema>>,
@@ -756,6 +964,108 @@ async function cancelSessionAction(
   reply.send(okEnvelope({ cancelled }, req.id));
 }
 
+const CONTINUE_INTERRUPTED_REMINDER =
+  'No new user message was sent. Continue the interrupted work from where it stopped; do not repeat steps that already completed.';
+
+async function continueSessionAction(ctx: SessionActionCtx): Promise<void> {
+  const { core, conversations, req, reply, id } = ctx;
+  await reloadOnStale(core.accessor, id, async () => {
+    const session = await resumeSessionById(core.accessor, id);
+    if (session === undefined) {
+      throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${id} does not exist`);
+    }
+    const agent = await ensureMainAgent(session);
+    const loop = agent.accessor.get(IAgentLoopService);
+    await loop.start();
+
+    const assertIdle = (): void => {
+      const snap = loop.snapshot();
+      const compacting = agent.accessor.get(IAgentFullCompactionService).compacting !== null;
+      if (snap.state === 'running' || snap.paused || snap.hasPendingRequests || compacting) {
+        throw new Error2(ErrorCodes.SESSION_BUSY, `session ${id} is currently busy`);
+      }
+    };
+
+    assertIdle();
+    session.accessor.get(ISessionRunGate).begin();
+    const feed = await conversations.feed(id, MAIN_AGENT_ID);
+
+    const resolveContinuableState = (): {
+      continuable: boolean;
+      ownerPromptId?: string;
+    } => {
+      if (feed.hasTrailingRejectedPrompt()) {
+        return { continuable: false };
+      }
+      const turns = feed.turns();
+      const latestTurn = turns.findLast((turn) => turn.kind === 'agent');
+      if (latestTurn === undefined) {
+        return { continuable: false };
+      }
+      let ownerPromptId = feed.latestPromptId();
+      if (ownerPromptId === undefined) {
+        const firstItem = latestTurn.items[0];
+        if (firstItem?.type === 'notification') {
+          ownerPromptId = firstItem.item_id;
+        }
+      }
+      if (ownerPromptId === undefined) {
+        for (let i = turns.length - 1; i >= 0; i -= 1) {
+          for (let j = turns[i]!.items.length - 1; j >= 0; j -= 1) {
+            const item = turns[i]!.items[j]!;
+            if (item.type === 'user_message' && item.prompt_ids.length > 0) {
+              ownerPromptId = item.prompt_ids.at(-1);
+              break;
+            }
+          }
+          if (ownerPromptId !== undefined) break;
+        }
+      }
+      return {
+        continuable:
+          latestTurn.status === 'ended' &&
+          (latestTurn.outcome === 'interrupted' ||
+            (latestTurn.outcome === 'failed' && latestTurn.end_reason !== 'blocked')),
+        ownerPromptId,
+      };
+    };
+
+    if (!resolveContinuableState().continuable) {
+      throw new Error2(
+        ErrorCodes.TURN_NOT_CONTINUABLE,
+        `session ${id} has no interrupted or failed turn to continue`,
+      );
+    }
+
+    const sessionModel = loop.getModel();
+    await core.accessor.get(IAuthSummaryService).ensureReady(sessionModel || undefined);
+
+    assertIdle();
+    session.accessor.get(ISessionRunGate).begin();
+    const finalState = resolveContinuableState();
+    if (!finalState.continuable) {
+      throw new Error2(
+        ErrorCodes.TURN_NOT_CONTINUABLE,
+        `session ${id} has no interrupted or failed turn to continue`,
+      );
+    }
+
+    loop.continueTurn([
+      historyEntryFromContext({
+        role: 'user',
+        content: [{ type: 'text', text: wrapSystemReminder(CONTINUE_INTERRUPTED_REMINDER) }],
+        origin: {
+          kind: 'injection',
+          variant: 'turn_continue',
+          ownerPromptId: finalState.ownerPromptId,
+        },
+      }),
+    ]);
+    requestLog(req)?.info({ session_id: id, action: 'continue' }, 'session action completed');
+    reply.send(okEnvelope({ continued: true }, req.id));
+  });
+}
+
 async function btwSessionAction(ctx: SessionActionCtx): Promise<void> {
   const { core, req, reply, id } = ctx;
   const session = await resumeSessionById(core.accessor, id);
@@ -845,39 +1155,17 @@ async function reloadSessionAction(ctx: SessionActionCtx): Promise<void> {
   }
   const workspaceId =
     live?.accessor.get(ISessionContext).workspaceId ?? indexEntry?.workspaceId;
-  let previousSubagentNames: readonly string[] | undefined;
-  let previousModelPool: SubagentModelPoolSnapshot | null | undefined;
-  let staleNotifier: IAgentChangeNotifierService | undefined;
-  if (live !== undefined) {
-    const main = live.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID);
-    if (main !== undefined) {
-      previousSubagentNames = main.accessor
-        .get(ISessionAgentProfileCatalog)
-        .list()
-        .map((profile) => profile.name);
-      const pool = resolveSubagentModelPool(main.accessor.get(IConfigService));
-      previousModelPool =
-        pool === undefined
-          ? null
-          : { defaultModel: pool.defaultModel, models: { ...pool.models } };
-      staleNotifier = main.accessor.get(IAgentChangeNotifierService);
-      staleNotifier.mute();
-    }
-  }
+  const reloadGuard = live
+    ?.accessor.get(IAgentLifecycleService)
+    .handleOf(MAIN_AGENT_ID)
+    ?.accessor.get(IAgentChangeNotifierService)
+    .prepareForReload();
   try {
     await core.accessor.get(IConfigService).reload();
     await core.accessor.get(IPluginService).reloadPlugins();
     await refreshWorkspaceCatalogs(core, workspaceId, id);
   } catch (error) {
-    if (staleNotifier !== undefined) {
-      staleNotifier.unmute();
-      await Promise.all([
-        staleNotifier.notifyAgentsMdChanges(),
-        staleNotifier.notifySkillChanges(),
-        staleNotifier.notifySubagentChanges({}),
-        staleNotifier.notifyWorkspaceDirsChanges(),
-      ]).catch(() => undefined);
-    }
+    await reloadGuard?.restoreAfterFailure();
     throw error;
   }
   if (live !== undefined) {
@@ -890,11 +1178,9 @@ async function reloadSessionAction(ctx: SessionActionCtx): Promise<void> {
   const main = handle.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID);
   await main?.accessor.get(IAgentPluginService).refreshSessionStart();
   if (main !== undefined) {
-    const notifier = main.accessor.get(IAgentChangeNotifierService);
-    await notifier.notifyAgentsMdChanges();
-    await notifier.notifySkillChanges();
-    await notifier.notifySubagentChanges({ previousSubagentNames, previousModelPool });
-    await notifier.notifyWorkspaceDirsChanges();
+    await main
+      .accessor.get(IAgentChangeNotifierService)
+      .notifyAllChanges({ previousSubagentNames: reloadGuard?.previousSubagentNames });
     main.accessor.get(IAgentLoopService).flushReminders();
   }
   const meta = await handle.accessor.get(ISessionMetadata).read();

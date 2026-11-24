@@ -1,14 +1,12 @@
-import { mkdir, mkdtemp, realpath, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
 
-import { IModelCatalog, IWorkspaceInstanceManager, IWorkspaceService } from '@moonshot-ai/agent-core-v2';
-import { afterAll, beforeAll, beforeEach, afterEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { type RunningServer, startServer } from '../src/start';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 import { authHeaders } from './helpers/auth';
-import { fakeModelCatalog } from './helpers/fakeModelCatalog';
 
 interface Envelope<T> {
   code: number;

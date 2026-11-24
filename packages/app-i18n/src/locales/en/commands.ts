@@ -1,0 +1,31 @@
+export default {
+  new: { desc: 'Create a new session' },
+  clear: { desc: 'Clear and start a new session' },
+  login: { desc: 'Sign in to Kimi in the browser' },
+  plan: { desc: 'Toggle plan mode on/off' },
+  swarm: { desc: 'Toggle swarm mode; /swarm <task> runs a task in swarm' },
+  tower: { desc: 'Toggle tower mode; /tower <base-branch> turns it on with a base branch' },
+  goal: { desc: "Create/control a goal: /goal <objective>, /goal pause{'|'}resume{'|'}cancel" },
+  btw: { desc: 'Side chat: /btw <question> asks a forked side session', argHint: '[question]' },
+  compact: { desc: 'Compact the conversation history', argHint: '[instructions]', requiresSession: 'Open a session to compact its history' },
+  compactQueue: {
+    alreadyQueued: 'A /compact is already queued',
+    compacting: 'Compaction is already running — wait for it to finish',
+    skippedAuto: 'Skipped the queued /compact — context was already auto-compacted',
+  },
+  fork: { desc: 'Fork this session into a new one' },
+  reload: {
+    desc: 'Reload the session to pick up external changes',
+    busy: 'Session is busy — wait for the current turn to finish, then reload again.',
+    archived: 'Archived sessions cannot be reloaded — restore the session first.',
+  },
+  export: {
+    desc: 'Download this session and troubleshooting logs as a ZIP',
+    noSession: 'Open a session before exporting it.',
+    started: 'Exporting session…',
+    done: 'Session exported.',
+    tooLarge: 'Session data exceeds the export size limit. Export it from a terminal instead: kimi export {sessionId} -o session.zip',
+  },
+  status: { desc: 'View session status' },
+  undo: { desc: 'Undo the last message' },
+} as const;

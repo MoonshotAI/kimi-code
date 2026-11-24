@@ -1,0 +1,169 @@
+@property --markdown-edge-top {
+  syntax: "<number>";
+  inherits: true;
+  initial-value: 0;
+}
+
+@property --markdown-edge-bottom {
+  syntax: "<number>";
+  inherits: true;
+  initial-value: 0;
+}
+
+@property --markdown-edge-left {
+  syntax: "<number>";
+  inherits: true;
+  initial-value: 0;
+}
+
+@property --markdown-edge-right {
+  syntax: "<number>";
+  inherits: true;
+  initial-value: 0;
+}
+
+:root {
+  --markdown-font-scale: 1;
+  --markdown-z-gutter: 2;
+  --markdown-z-controls: 2;
+  --markdown-z-edges: 3;
+  --markdown-z-scrollbar: 4;
+  --markdown-font-family: var(--font-transcript, -apple-system, BlinkMacSystemFont, "Segoe UI Variable Text", "Segoe UI", system-ui, "Ubuntu Sans", Ubuntu, "Adwaita Sans", Cantarell, "Noto Sans", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei UI", "Microsoft YaHei", "Noto Sans CJK SC", "Source Han Sans SC", "WenQuanYi Micro Hei", sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji");
+  --markdown-code-font-family: var(--font-mono, ui-monospace, "SF Mono", SFMono-Regular, Menlo, "Cascadia Mono", Consolas, monospace);
+  --markdown-font-weight-regular: 400;
+  --markdown-font-weight-emphasis: 600;
+  --markdown-letter-spacing: 0;
+  --markdown-h1-font-size: calc(1.25rem * var(--markdown-font-scale));
+  --markdown-h1-line-height: 1.6;
+  --markdown-h2-font-size: calc(1.125rem * var(--markdown-font-scale));
+  --markdown-h2-line-height: calc(28 / 18);
+  --markdown-h3-font-size: calc(1rem * var(--markdown-font-scale));
+  --markdown-h3-line-height: 1.625;
+  --markdown-body-font-size: calc(0.875rem * var(--markdown-font-scale));
+  --markdown-body-line-height: calc(22 / 14);
+  --markdown-quote-font-size: calc(0.875rem * var(--markdown-font-scale));
+  --markdown-quote-line-height: calc(22 / 14);
+  --markdown-table-font-size: calc(0.875rem * var(--markdown-font-scale));
+  --markdown-table-line-height: calc(22 / 14);
+  --markdown-code-font-size: calc(0.875rem * var(--markdown-font-scale));
+  --markdown-code-line-height: calc(22 / 14);
+  --markdown-code-header-font-size: calc(0.875rem * var(--markdown-font-scale));
+  --markdown-code-header-line-height: calc(20 / 14);
+  --markdown-image-caption-font-size: calc(0.75rem * var(--markdown-font-scale));
+  --markdown-image-caption-line-height: 1.5;
+
+  --markdown-text-color: light-dark(rgb(0 0 0 / 90%), rgb(255 255 255 / 84%));
+  --markdown-secondary-icon-color: light-dark(rgb(0 0 0 / 45%), rgb(255 255 255 / 42%));
+  --markdown-link-color: light-dark(#0f6ef2, #3393ff);
+  --markdown-link-hover-background: color-mix(in srgb, var(--markdown-link-color) 10%, transparent);
+  --markdown-link-padding-block: 0.125rem;
+  --markdown-link-padding-inline: 0.25rem;
+  --markdown-link-radius: 0.25rem;
+  --markdown-border-color: light-dark(rgb(0 0 0 / 13%), rgb(255 255 255 / 12%));
+  --markdown-quote-rule-color: light-dark(rgb(0 0 0 / 15%), rgb(255 255 255 / 18%));
+  --markdown-inline-code-background: var(--color-selected);
+  --markdown-code-background: light-dark(#ffffff, #292929);
+  --markdown-code-header-background: light-dark(rgb(255 255 255 / 90%), rgb(41 41 41 / 90%));
+  --markdown-code-action-background: light-dark(rgb(255 255 255 / 90%), rgb(41 41 41 / 90%));
+  --markdown-code-action-hover-background: light-dark(rgb(0 0 0 / 3%), rgb(255 255 255 / 5%));
+  --markdown-code-toggle-background: light-dark(rgb(0 0 0 / 5%), rgb(255 255 255 / 10%));
+  --markdown-code-toggle-selected-background: light-dark(#ffffff, #4d4d4d);
+  --markdown-task-checked-color: var(--color-fill-4);
+  --markdown-task-unchecked-color: var(--color-fill-4);
+  --markdown-task-check-color: #ffffff;
+  --markdown-image-background: light-dark(#f5f5f5, #1f1f1f);
+  --markdown-image-caption-background: rgb(0 0 0 / 60%);
+  --markdown-image-caption-color: #ffffff;
+  --markdown-syntax-heading-color: light-dark(#2f6fc4, #5397e6);
+  --markdown-syntax-property-color: light-dark(#2f6fc4, #5397e6);
+  --markdown-syntax-string-color: light-dark(#22863a, #98c379);
+  --markdown-syntax-keyword-color: light-dark(#a500b5, #d876e3);
+  --markdown-syntax-function-color: light-dark(#2f6fc4, #5397e6);
+  --markdown-syntax-number-color: light-dark(#8b6b00, #d5a700);
+  --markdown-syntax-comment-color: light-dark(#737373, #909090);
+
+  --markdown-block-space-before: 0.75rem;
+  --markdown-heading-space-before: 1.25rem;
+  --markdown-paragraph-gap: 1rem;
+  --markdown-divider-space-before: 1.75rem;
+  --markdown-divider-width: var(--p-hairline);
+  --markdown-list-indent: 1.5rem;
+  --markdown-list-item-gap: 0.5rem;
+  --markdown-list-group-gap: 0.75rem;
+  --markdown-task-size: 1.5rem;
+  --markdown-task-label-gap: 0.5rem;
+  --markdown-task-item-gap: 0.75rem;
+  --markdown-quote-gutter: 1.5rem;
+  --markdown-quote-rule-width: 0.125rem;
+  --markdown-quote-rule-inset: 0.125rem;
+  --markdown-quote-rule-radius: 999rem;
+  --markdown-math-display-padding-bottom: 0.25em;
+
+  --markdown-inline-code-font-size-adjust: ex-height 0.5;
+  --markdown-inline-code-padding-inline: 0.25rem;
+  --markdown-inline-code-padding-block: 0;
+  --markdown-inline-code-radius: 0.25rem;
+  --markdown-code-gutter-background: light-dark(#ffffff, #292929);
+  --markdown-code-edge-size: 0.8125rem;
+  --markdown-code-edge-strong-color: light-dark(rgb(0 0 0 / 1.5%), rgb(255 255 255 / 1.5%));
+  --markdown-code-edge-medium-color: light-dark(rgb(0 0 0 / 1%), rgb(255 255 255 / 1%));
+  --markdown-code-edge-soft-color: light-dark(rgb(0 0 0 / 0.75%), rgb(255 255 255 / 0.75%));
+  --markdown-code-max-height: 31.25rem;
+  --markdown-code-scrollbar-size: 0.625rem;
+  --markdown-code-scrollbar-idle-size: 0.25rem;
+  --markdown-code-scrollbar-edge-gap: 0.25rem;
+  --markdown-code-scrollbar-transition-duration: 120ms;
+  --markdown-code-scrollbar-idle-delay: 500ms;
+  --markdown-code-scrollbar-thumb: light-dark(rgb(0 0 0 / 18%), rgb(255 255 255 / 16%));
+  --markdown-code-scrollbar-thumb-hover: light-dark(rgb(0 0 0 / 55%), rgb(255 255 255 / 50%));
+  --markdown-code-radius: 1rem;
+  --markdown-code-border-width: var(--p-hairline);
+  --markdown-code-padding-inline: 1rem;
+  --markdown-code-padding-bottom: 1rem;
+  --markdown-code-header-padding-start: 1rem;
+  --markdown-code-header-padding-end: 0.5rem;
+  --markdown-code-header-padding-block: 0.5rem;
+  --markdown-code-header-min-height: calc(var(--markdown-code-action-size) + 2 * var(--markdown-code-header-padding-block));
+  --markdown-code-action-gap: 0.375rem;
+  --markdown-code-action-size: 1.625rem;
+  --markdown-code-action-icon-size: 0.875rem;
+  --markdown-code-action-radius: 0.5rem;
+  --markdown-code-toggle-padding: 0.125rem;
+  --markdown-code-toggle-radius: 1.25rem;
+  --markdown-code-toggle-item-padding-inline: 0.75rem;
+  --markdown-code-toggle-item-padding-block: 0.0625rem;
+  --markdown-code-toggle-item-min-width: 2rem;
+  --markdown-code-toggle-item-gap: 0.25rem;
+  --markdown-code-toggle-item-radius: 1rem;
+  --markdown-code-toggle-item-inactive-radius: 0.25rem;
+  --markdown-code-toggle-preview-radius: 1.25rem;
+  --markdown-code-backdrop-blur: 0.9375rem;
+  --markdown-code-shadow: none;
+  --markdown-diagram-actor-background: #fff8e6;
+  --markdown-diagram-actor-border-color: #ffcc4b;
+  --markdown-diagram-actor-text-color: #2e2f33;
+
+  --markdown-table-fade-size: 2.25rem;
+  --markdown-table-border-width: 1px;
+  --markdown-table-column-border-width: var(--p-hairline);
+  --markdown-table-radius: 0.75rem;
+  --markdown-table-cell-padding-block: 0.375rem;
+  --markdown-table-cell-padding-start: 0.5rem;
+  --markdown-table-cell-padding-end: 0.5rem;
+  --markdown-table-header-border-width: 1px;
+  --markdown-table-header-column-border-width: 1px;
+  --markdown-table-row-border-width: var(--p-hairline);
+  --markdown-table-selection-background: light-dark(rgb(15 110 242 / 10%), rgb(51 147 255 / 18%));
+  --markdown-image-radius: 0.75rem;
+  --markdown-image-border-width: var(--p-hairline);
+  --markdown-image-placeholder-width: 100%;
+  --markdown-image-placeholder-height: 8rem;
+  --markdown-image-caption-padding-inline: 0.75rem;
+  --markdown-image-caption-padding-block: 0.5rem;
+  --markdown-image-caption-shadow: 0.0625rem 0.0625rem 0.125rem rgb(0 0 0 / 20%);
+}
+
+html[data-font-scale="small"] { --markdown-font-scale: calc(12 / 14); }
+html[data-font-scale="medium"] { --markdown-font-scale: 1; }
+html[data-font-scale="large"] { --markdown-font-scale: calc(16 / 14); }
+html[data-font-scale="xlarge"] { --markdown-font-scale: calc(18 / 14); }

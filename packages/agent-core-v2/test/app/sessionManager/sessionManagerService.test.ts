@@ -5,13 +5,11 @@ import { Emitter, Event } from '#/_base/event';
 import type { ISessionScopeHandle } from '#/_base/di/scope';
 import type { ServicesAccessor } from '#/_base/di/instantiation';
 import { Error2 } from '#/_base/errors/errors';
-import type { ILogService } from '#/_base/log/log';
 import type { IConfigService } from '#/app/config/config';
 import type { ISessionIndex } from '#/app/sessionIndex/sessionIndex';
 import { ISessionManager } from '#/app/sessionManager/sessionManager';
 import { reloadOnStale } from '#/app/sessionManager/sessionLookup';
 import { SessionManager } from '#/app/sessionManager/sessionManagerService';
-import { FakeEnvironment } from '#/environment/fakeEnvironment';
 import { EnvironmentRegistry } from '#/environment/environmentRegistry';
 import { ErrorCodes } from '#/errors';
 import { IAgentCronService } from '#/features/cron/cronService';
@@ -21,7 +19,7 @@ import { Program } from '#/program/program';
 import type { ProgramSessionControllerInput } from '#/program/programDependencies';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionActivityView } from '#/session/sessionActivity/sessionActivity';
-import { fakeEnvironment, connectableEnvironment } from '../../environment/stubs';
+import { fakeEnvironment } from '../../environment/stubs';
 import type {
   SessionArchivedEvent,
   SessionCloseReason,
@@ -52,7 +50,6 @@ function makeSessionManager(
     readonly locks?: InMemorySessionLockService;
   } = {},
 ): SessionManager {
-  const log = { _serviceBrand: undefined, warn: () => {}, info: () => {}, error: () => {} } as unknown as ILogService;
   const environments = {
     ready: Promise.resolve(),
     current: (id: string) => environmentRegistryOf(workspaces)?.current(id),
@@ -824,8 +821,7 @@ describe('SessionManager controller retirement', () => {
         watch: behavior,
         git: behavior,
         instructions: { ...behavior, snapshot: {} },
-        mcpConfig: { ...behavior, servers: () => ({}) },
-        mcp: behavior,
+        mcp: { ...behavior, servers: () => ({}) },
         trust: { ...behavior, isTrusted: () => false },
         skills: { ...behavior, catalog },
         agentProfiles: behavior,

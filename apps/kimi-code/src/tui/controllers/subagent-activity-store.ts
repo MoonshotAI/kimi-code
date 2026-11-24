@@ -28,6 +28,7 @@ export interface SubToolCallActivity {
 export interface SubagentStepActivity {
   readonly step: number;
   textTail: string;
+  thinkingTail?: string;
   readonly toolCalls: SubToolCallActivity[];
   retrying?: string;
 }
@@ -41,7 +42,7 @@ export interface SubagentActivityRecord {
   effort?: string;
   readonly steps: SubagentStepActivity[];
   totalSteps: number;
-  status: 'running' | 'completed' | 'failed';
+  status: 'running' | 'completed' | 'failed' | 'cancelled';
   resultSummary?: string;
   error?: string;
   version: number;
@@ -79,11 +80,15 @@ export class SubagentActivityStore {
 
   ensureRecord(spawn: SubagentActivitySpawn): SubagentActivityRecord {
     const existing = this.records.get(spawn.agentId);
-    if (existing !== undefined) {
+    if (existing !== undefined && existing.parentToolCallId === spawn.parentToolCallId) {
       existing.status = 'running';
       existing.resultSummary = undefined;
       existing.error = undefined;
       return existing;
+    }
+    const earlyActivity = existing?.parentToolCallId === '' ? existing : undefined;
+    if (existing !== undefined && earlyActivity === undefined) {
+      this.dropStreamingBuffers(spawn.agentId);
     }
     const record: SubagentActivityRecord = {
       agentId: spawn.agentId,
@@ -92,8 +97,8 @@ export class SubagentActivityStore {
       parentToolCallId: spawn.parentToolCallId,
       model: spawn.model,
       effort: spawn.effort,
-      steps: [],
-      totalSteps: 0,
+      steps: earlyActivity?.steps ?? [],
+      totalSteps: earlyActivity?.totalSteps ?? 0,
       status: 'running',
       version: 0,
     };
@@ -101,8 +106,12 @@ export class SubagentActivityStore {
     return record;
   }
 
-  get(agentId: string): SubagentActivityRecord | undefined {
-    return this.records.get(agentId);
+  get(agentId: string, parentToolCallId?: string): SubagentActivityRecord | undefined {
+    const record = this.records.get(agentId);
+    if (parentToolCallId !== undefined && record?.parentToolCallId !== parentToolCallId) {
+      return undefined;
+    }
+    return record;
   }
 
   agentIds(): readonly string[] {
@@ -132,10 +141,12 @@ export class SubagentActivityStore {
         this.bump(record);
         return;
       }
-      case 'assistant.delta': {
+      case 'assistant.delta':
+      case 'thinking.delta': {
         const record = this.recordFor(event.agentId);
         const step = this.currentStep(record);
-        step.textTail = tail(step.textTail + event.delta, SUBAGENT_STEP_TEXT_TAIL_CHARS);
+        const field = event.type === 'assistant.delta' ? 'textTail' : 'thinkingTail';
+        step[field] = tail((step[field] ?? '') + event.delta, SUBAGENT_STEP_TEXT_TAIL_CHARS);
         this.bump(record);
         return;
       }
@@ -242,6 +253,14 @@ export class SubagentActivityStore {
     if (record === undefined) return;
     record.status = 'failed';
     record.error = error;
+    this.dropStreamingBuffers(agentId);
+    this.bump(record);
+  }
+
+  markCancelled(agentId: string): void {
+    const record = this.records.get(agentId);
+    if (record === undefined) return;
+    record.status = 'cancelled';
     this.dropStreamingBuffers(agentId);
     this.bump(record);
   }

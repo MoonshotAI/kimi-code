@@ -51,16 +51,19 @@ export interface ThinkPart extends ContentPartBase {
 export interface ImageURLPart {
   type: 'image_url';
   imageUrl: { url: string; id?: string; name?: string };
+  omitted?: MediaPlaceholderReason;
 }
 
 export interface AudioURLPart {
   type: 'audio_url';
   audioUrl: { url: string; id?: string };
+  omitted?: MediaPlaceholderReason;
 }
 
 export interface VideoURLPart {
   type: 'video_url';
   videoUrl: { url: string; id?: string; name?: string };
+  omitted?: MediaPlaceholderReason;
 }
 
 export type MediaPart = ImageURLPart | AudioURLPart | VideoURLPart;
@@ -77,13 +80,25 @@ export function mediaKindOfPart(part: MediaPart): MediaKind {
   return 'audio';
 }
 
-export function mediaKeyOf(part: MediaPart): string {
-  const media = part.type === 'image_url'
+function mediaSourceOf(part: MediaPart): ImageURLPart['imageUrl'] | AudioURLPart['audioUrl'] | VideoURLPart['videoUrl'] {
+  return part.type === 'image_url'
     ? part.imageUrl
     : part.type === 'audio_url'
       ? part.audioUrl
       : part.videoUrl;
+}
+
+export function mediaKeyOf(part: MediaPart): string {
+  const media = mediaSourceOf(part);
   return `${part.type}\0${media.id ?? ''}\0${media.url}`;
+}
+
+export function mediaOmissionOf(part: MediaPart): MediaPlaceholderReason | undefined {
+  return part.omitted;
+}
+
+export function omitMediaPart(part: MediaPart, reason: MediaPlaceholderReason): MediaPart {
+  return { ...part, omitted: reason };
 }
 
 export type MediaPlaceholderReason =
@@ -182,6 +197,7 @@ export interface ToolMessageAttributes extends MessageAttributes {
   isError?: true;
   stopTurn?: true;
   detached?: true;
+  durationMs?: number;
 }
 
 export interface AssistantMessageAttributes extends MessageAttributes {

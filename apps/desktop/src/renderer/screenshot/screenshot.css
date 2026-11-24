@@ -1,0 +1,44 @@
+:root {
+  color-scheme: light;
+  --shot-toolbar-bg: #fafafa;
+  --shot-toolbar-line: rgba(0, 0, 0, 0.16);
+  --shot-toolbar-text: #262626;
+  --shot-toolbar-muted: #737373;
+  --shot-toolbar-hover: rgba(0, 0, 0, 0.07);
+  --shot-comment-bg: #ffffff;
+  --shot-comment-focus-line: rgba(0, 0, 0, 0.25);
+  --shot-selection: #ffffff;
+  --shot-selection-edge: rgba(0, 0, 0, 0.65);
+  --shot-label-bg: rgba(0, 0, 0, 0.8);
+  --shot-dim: rgba(0, 0, 0, 0.5);
+  --color-text: var(--shot-toolbar-text);
+  --color-text-muted: var(--shot-toolbar-muted);
+  --color-hover: var(--shot-toolbar-hover);
+  --color-surface-overlay: var(--shot-comment-bg);
+  --color-line-strong: var(--shot-toolbar-line);
+  --color-text-faint: var(--shot-toolbar-muted);
+  --color-composer-focus-line: var(--shot-comment-focus-line);
+  --color-send-bg: #262626;
+  --color-send-icon: #ffffff;
+  font-family: var(--font-ui);
+}
+
+html,
+body,
+#app {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  background: transparent;
+}
+
+button,
+textarea,
+input {
+  font: inherit;
+}
+
+* {
+  box-sizing: border-box;
+}

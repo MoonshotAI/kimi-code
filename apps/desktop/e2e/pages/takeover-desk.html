@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<style>html{background:#fff;color:#111}</style>
+<title>Draft desk</title>
+<h1>Draft desk</h1>
+<button type="button" id="delete">Delete draft</button>
+<button type="button" id="rename">Rename draft</button>
+<button type="button" id="status">Show status</button>
+<p id="result" style="margin-top:4rem">No decision yet</p>
+<script>
+  const result = document.getElementById('result');
+  document.getElementById('delete').addEventListener('click', () => {
+    result.textContent = confirm('Delete the draft?') ? 'Draft deleted' : 'Draft kept';
+  });
+  document.getElementById('rename').addEventListener('click', () => {
+    try {
+      result.textContent = `prompt returned ${JSON.stringify(prompt('New draft name?', 'Untitled'))}`;
+    } catch (error) {
+      result.textContent = `Rename failed: ${error.message}`;
+    }
+  });
+  document.getElementById('status').addEventListener('click', () => {
+    alert('Everything is up to date');
+    result.textContent = 'Status acknowledged';
+  });
+</script>
+</html>

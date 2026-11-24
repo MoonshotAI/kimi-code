@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<style>html{background:#fff;color:#111}</style>
+<title>Background sync</title>
+<h1>Background sync</h1>
+<button type="button" id="later">Sync in the background</button>
+<button type="button" id="now">Show status</button>
+<p id="result">Idle</p>
+<script>
+  const result = document.getElementById('result');
+  document.getElementById('later').addEventListener('click', () => {
+    result.textContent = 'Syncing';
+    setTimeout(() => {
+      alert('Sync finished');
+      result.textContent = 'Sync acknowledged';
+    }, 2000);
+  });
+  document.getElementById('now').addEventListener('click', () => {
+    alert('Everything is up to date');
+    result.textContent = 'Status acknowledged';
+  });
+</script>
+</html>

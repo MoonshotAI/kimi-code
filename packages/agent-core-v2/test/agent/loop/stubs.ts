@@ -53,9 +53,8 @@ export function submitPromptTurn(
 }
 import type { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import type { BeforeToolExecuteEvent, ToolDidExecuteContext, WillExecuteToolEvent } from '#/agent/toolExecutor/toolHooks';
-import { OrderedHookSlot } from '#/hooks';
+import { OrderedHookSlot, createHooks } from '#/hooks';
 import type { ContextMessage, PromptOrigin } from '#/agent/contextMemory/types';
-import { createHooks } from '#/hooks';
 import type { IWireService } from '#/wire/wire';
 
 import { stubAgentWire } from '../../wire/stubs';
@@ -172,6 +171,8 @@ export function stubLoopWithHooks(options: StubLoopOptions = {}): StubLoop {
     addActiveTool: () => {},
     removeActiveTool: () => {},
     history: () => messages,
+    rawHistory: () => messages,
+    previewRequestContent: () => ({ systemPrompt: '', tools: [], messages }),
     historyRevision: () => 0,
     replaceHistory(next, _reason, onAccepted) {
       messages.splice(0, messages.length, ...next.map((entry) => contextFromHistoryEntry(entry)));
@@ -303,6 +304,7 @@ export function stubLoopWithHooks(options: StubLoopOptions = {}): StubLoop {
     flushReminders() {
       stub.drainNextBatch(stub, ['message']);
     },
+    continueTurn() {},
   };
   return stub;
 }

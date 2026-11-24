@@ -75,7 +75,7 @@ export interface FeedbackPromptResult {
 
 export function promptFeedbackInput(host: SlashCommandHost): Promise<FeedbackPromptResult | undefined> {
   return new Promise((resolve) => {
-    const dialog = new FeedbackInputDialogComponent((result: FeedbackInputDialogResult) => {
+    const dialog = new FeedbackInputDialogComponent(host.state.ui, (result: FeedbackInputDialogResult) => {
       host.restoreEditor();
       resolve(result.kind === 'ok' ? { value: result.value } : undefined);
     });

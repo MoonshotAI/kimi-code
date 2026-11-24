@@ -9,6 +9,9 @@ import type { ToolCall } from '#human/message';
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { setClock } from '@moonshot-ai/core/utils/clock';
+import { setNow } from '@moonshot-ai/core/utils/now';
+
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices, TestInstantiationService } from '#/_base/di/test';
@@ -42,10 +45,10 @@ import {
   runLegacyStarting,
   runLegacyBeforeExecute,
 } from '#/agent/toolExecutor/legacyHooks';
+import { toolExecutorHook } from '../../harness/toolHooks';
 import {
   LegacyExecutableToolAdapter,
   ToolExecutor as HandlerToolExecutor,
-  composeToolExecutorHooks,
   fileOutputStore,
   isToolDetachAck,
   legacyToolDurationMs,
@@ -65,7 +68,10 @@ import type { IAgentLoopService } from '#/agent/loop/loop';
 import type { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { ReadMediaFileTool } from '#/agent/tools/read-media-file/readMediaFileTool';
 import { SessionMediaStoreService } from '#/agent/media/sessionMediaStoreService';
-import { JsonAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDocumentStore';
+import {
+  JsonAtomicDocumentStore,
+  TomlAtomicDocumentStore,
+} from '#/persistence/backends/node-fs/atomicDocumentStore';
 import { makeSessionContext } from '#/session/sessionContext/sessionContext';
 import { GlobTool } from '#/agent/tools/os/glob/globTool';
 import { ReadInputSchema, type ReadInput } from '#/agent/tools/os/read/read';
@@ -80,7 +86,6 @@ import { stubAgentEnvironment } from '../../environment/stubs';
 import { ConfigRegistry, ConfigService } from '#/app/config/configService';
 import { IConfigRegistry, IConfigService } from '#/app/config/config';
 import { IAtomicTomlDocumentStore } from '#/persistence/interface/atomicDocumentStore';
-import { TomlAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDocumentStore';
 import { ILogService } from '#/_base/log/log';
 import { makeAgentScopeContext, IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
@@ -1085,7 +1090,7 @@ describe('onWillExecuteTool', () => {
   it('awaits waitUntil work and lets calls through when it returns undefined', async () => {
     const tool = new TestTool('echo');
     registry.register(tool);
-    const gate = deferred<void>();
+    const gate = deferred();
     registerLegacyWill(executor, (event) => {
       event.waitUntil(gate.promise);
     });
@@ -1946,9 +1951,16 @@ class ControlledTool implements ExecutableTool<Record<string, unknown>> {
 }
 
 describe('ToolExecutor handler kernel', () => {
+  afterEach(() => {
+    setNow();
+    setClock();
+  });
+
   it('settles success, business failure and invalid args with distinct outcomes and clocks', async () => {
     let wall = 1_000;
     let monotonic = 100;
+    setNow(() => (wall += 1_000));
+    setClock(() => (monotonic += 5));
     const invalidExecute = vi.fn(() => ({ content: textToolContent('must not run') }));
     const executor = new HandlerToolExecutor([
       {
@@ -1979,10 +1991,7 @@ describe('ToolExecutor handler kernel', () => {
         },
         execute: invalidExecute,
       },
-    ], {
-      now: () => (wall += 1_000),
-      tick: () => (monotonic += 5),
-    });
+    ]);
 
     const succeeded = executor.execute(toolCall('success-1', 'success', {}), undefined);
     const successResult = await succeeded.wait();
@@ -2016,8 +2025,8 @@ describe('ToolExecutor handler kernel', () => {
   });
 
   it('returns a detach ack while wait continues to the real final result', async () => {
-    const started = deferred<void>();
-    const release = deferred<void>();
+    const started = deferred();
+    const release = deferred();
     const executor = new HandlerToolExecutor([{
       name: 'background',
       description: 'background',
@@ -2075,9 +2084,9 @@ describe('ToolExecutor handler kernel', () => {
   });
 
   it('stops one execution through its internal signal without aborting another', async () => {
-    const firstStarted = deferred<void>();
-    const secondStarted = deferred<void>();
-    const secondRelease = deferred<void>();
+    const firstStarted = deferred();
+    const secondStarted = deferred();
+    const secondRelease = deferred();
     let secondSignal: AbortSignal | undefined;
     const executor = new HandlerToolExecutor([
       {
@@ -2123,8 +2132,8 @@ describe('ToolExecutor handler kernel', () => {
   });
 
   it('calls stopping once and uses asynchronous abandon as its final fallback', async () => {
-    const started = deferred<void>();
-    const abandon = deferred<void>();
+    const started = deferred();
+    const abandon = deferred();
     let stoppingCalls = 0;
     const executor = new HandlerToolExecutor([{
       name: 'hanging',
@@ -2175,8 +2184,8 @@ describe('ToolExecutor handler kernel', () => {
   it('composes hooks in order and seals responses after execute settles', async () => {
     const events: string[] = [];
     let prepareCalls = 0;
-    const afterEntered = deferred<void>();
-    const afterRelease = deferred<void>();
+    const afterEntered = deferred();
+    const afterRelease = deferred();
     const first = {
       label: 'first',
       validating() {
@@ -2237,7 +2246,7 @@ describe('ToolExecutor handler kernel', () => {
         events.push('execute');
         return { content: textToolContent('raw') };
       },
-    }], { hook: composeToolExecutorHooks([first, second]) });
+    }], { hook: toolExecutorHook([first, second]) });
 
     const handler = executor.execute(toolCall('hooked-1', 'hooked', {}), undefined);
     const response = Promise.resolve(handler);
@@ -2304,8 +2313,8 @@ describe('ToolExecutor handler kernel', () => {
   });
 
   it('reads fields and output mid-run and surfaces flush and close errors', async () => {
-    const started = deferred<void>();
-    const release = deferred<void>();
+    const started = deferred();
+    const release = deferred();
     const store = memoryOutputStore();
     const outputStore = {
       open(taskId: string) {
@@ -2391,8 +2400,8 @@ describe('ToolExecutor handler kernel', () => {
   });
 
   it('runs legacy preparation, finalization, synthetic short-circuiting and updates', async () => {
-    const started = deferred<void>();
-    const release = deferred<void>();
+    const started = deferred();
+    const release = deferred();
     const steerSignal = new AbortController().signal;
     const remind = vi.fn();
     const legacy: ExecutableTool<Record<string, unknown>> = {
@@ -2525,6 +2534,8 @@ describe('ToolExecutor handler kernel', () => {
       ],
       outcome: { type: 'success' },
     });
+    expect(final.durationMs).toBeTypeOf('number');
+    expect(final.durationMs).toBe(legacyToolDurationMs(handler.snapshot()));
     expect(final).not.toHaveProperty('stopTurn');
     expect(final).not.toHaveProperty('note');
     expect(final).not.toHaveProperty('spill');
@@ -2539,6 +2550,7 @@ describe('ToolExecutor handler kernel', () => {
         ...textToolContent('finalized note'),
       ],
       outcome: { type: 'failed', error: { type: 'error' } },
+      durationMs: 0,
     });
     const successfulSynthetic = executor.execute(
       toolCall('legacy-3', 'legacy', { synthetic: 'success' }),
@@ -2550,6 +2562,7 @@ describe('ToolExecutor handler kernel', () => {
         ...textToolContent('success note'),
       ],
       outcome: { type: 'success' },
+      durationMs: 0,
     });
     expect(startingCalls).toBe(1);
     expect(permittingCalls).toBe(1);
@@ -2564,9 +2577,9 @@ describe('ToolExecutor handler kernel', () => {
     expect(executor.removeExecute(replacement)).toBe(true);
     expect(executor.list()).toEqual([]);
 
-    const slowResolve = deferred<void>();
-    const slowFinalize = deferred<void>();
-    const slowFinalizerEntered = deferred<void>();
+    const slowResolve = deferred();
+    const slowFinalize = deferred();
+    const slowFinalizerEntered = deferred();
     let syntheticNow = 0;
     const slowSyntheticExecutor = new HandlerToolExecutor([
       new LegacyExecutableToolAdapter({
@@ -2603,13 +2616,13 @@ describe('ToolExecutor handler kernel', () => {
       await vi.advanceTimersByTimeAsync(ms);
     };
     try {
-      const cooperativeStarted = deferred<void>();
-      const cooperativeFinalizerStarted = deferred<void>();
-      const hangingStarted = deferred<void>();
-      const slowExecutionStarted = deferred<void>();
-      const slowFinalizerStarted = deferred<void>();
-      const finalizerRelease = deferred<void>();
-      const slowFinalizerRelease = deferred<void>();
+      const cooperativeStarted = deferred();
+      const cooperativeFinalizerStarted = deferred();
+      const hangingStarted = deferred();
+      const slowExecutionStarted = deferred();
+      const slowFinalizerStarted = deferred();
+      const finalizerRelease = deferred();
+      const slowFinalizerRelease = deferred();
       const cancellable: ExecutableTool<Record<string, unknown>> = {
         name: 'cancellable',
         description: 'cancellable',
@@ -2688,14 +2701,18 @@ describe('ToolExecutor handler kernel', () => {
       await expect(stopping).resolves.toMatchObject({
         content: textToolContent('finalized cooperative output'),
         outcome: { type: 'aborted', error: { type: 'stopped', reason: 'stop cooperative' } },
+        durationMs: 0,
       });
       expect(finalizerCalls).toEqual(['cooperative-1']);
       expect(legacyToolDurationMs(cooperative.snapshot())).toBe(0);
 
       await advance(1);
-      await expect(hangingStop).resolves.toMatchObject({
+      const hangingResult = await hangingStop;
+      expect(hangingResult).toMatchObject({
         outcome: { type: 'aborted', error: { type: 'abandoned', reason: 'stop hanging' } },
+        durationMs: 2_000,
       });
+      expect(hangingResult.durationMs).toBe(legacyToolDurationMs(hanging.snapshot()));
       expect(cooperative.snapshot().error).toMatchObject({ type: 'stopped' });
       expect(hanging.snapshot().error).toMatchObject({ type: 'abandoned' });
       expect(legacyToolDurationMs(hanging.snapshot())).toBe(2_000);
@@ -2727,6 +2744,7 @@ describe('ToolExecutor handler kernel', () => {
       await advance(1);
       await expect(slowSettled).resolves.toMatchObject({
         outcome: { type: 'aborted', error: { type: 'abandoned', reason: 'stop slow finalizer' } },
+        durationMs: 100,
       });
       await expect(slowStopping).resolves.toMatchObject({
         outcome: { type: 'aborted', error: { type: 'abandoned' } },
@@ -2745,5 +2763,53 @@ describe('ToolExecutor handler kernel', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('fills returned durations from the injected preparation clock', async () => {
+    let now = 0;
+    const timed: ExecutableTool<Record<string, unknown>> = {
+      name: 'timed',
+      description: 'timed',
+      parameters: { type: 'object', additionalProperties: true },
+      resolveExecution: (args) => {
+        if (args['synthetic'] === true) {
+          return { output: 'synthetic output' } as unknown as ToolExecution;
+        }
+        return {
+          approvalRule: 'timed',
+          execute: async () => {
+            now = 40;
+            if (args['fail'] === true) return { output: 'timed failure', isError: true };
+            return { output: 'timed output' };
+          },
+        };
+      },
+    };
+    const executor = new HandlerToolExecutor([
+      new LegacyExecutableToolAdapter(timed, undefined, () => now),
+    ]);
+    const agentContext = {
+      origin: 'loop' as const,
+      turnId: 3,
+      trace: { requestId: 'trace-timed' },
+      metadata: { source: 'test' },
+      steerSignal: new AbortController().signal,
+      remind: vi.fn(),
+    };
+
+    const ran = executor.execute(toolCall('timed-1', 'timed', {}), agentContext);
+    expect(await ran.wait()).toMatchObject({ outcome: { type: 'success' }, durationMs: 40 });
+    expect(ran.snapshot().prepared?.durationMs).toBe(40);
+
+    now = 0;
+    const failed = executor.execute(toolCall('timed-2', 'timed', { fail: true }), agentContext);
+    expect(await failed.wait()).toMatchObject({
+      outcome: { type: 'failed', error: { type: 'error' } },
+      durationMs: 40,
+    });
+
+    const synthetic = executor.execute(toolCall('timed-3', 'timed', { synthetic: true }), agentContext);
+    expect(await synthetic.wait()).toMatchObject({ outcome: { type: 'success' }, durationMs: 0 });
+    expect(legacyToolDurationMs(synthetic.snapshot())).toBe(0);
   });
 });

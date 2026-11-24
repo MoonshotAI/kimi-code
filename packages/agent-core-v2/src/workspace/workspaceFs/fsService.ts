@@ -33,6 +33,9 @@ import {
   type FsSuggestRequest,
   type FsSuggestResponse,
   type FsSuggestStreamEvent,
+  type FsDownloadResolved,
+  type FsPathResolved,
+  IWorkspaceFsService,
 } from './fs';
 
 const FsWireErrorCode = {
@@ -70,7 +73,6 @@ import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext
 import { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
 import { IWorkspaceGitService } from '#/workspace/workspaceGit/workspaceGit';
 
-import { type FsDownloadResolved, type FsPathResolved, IWorkspaceFsService } from './fs';
 import { readStream, runCommand } from './internal/fsProcess';
 import { ensureRgPath, type RgProbe, type RgResolution } from './internal/rgLocator';
 import { ensureFdPath, suggestWithFd, suggestWithFdEvents, type FdResolution } from './internal/fdSuggest';

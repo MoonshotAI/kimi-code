@@ -172,22 +172,31 @@ body {
 
 /* --- Tables --- */
 .vp-doc table {
-  border-radius: var(--kimi-radius-code);
-  overflow: hidden;
-  border-collapse: separate;
-  border-spacing: 0;
+  border-collapse: collapse;
   display: table;
   width: 100%;
+  margin: 20px 0;
 }
 .vp-doc tr {
   background: transparent !important;
-  border-top: 1px solid var(--vp-c-divider);
+  border: none;
 }
-.vp-doc tr:first-child { border-top: none; }
+.vp-doc th,
+.vp-doc td {
+  border: none;
+  border-bottom: 1px solid var(--vp-c-divider);
+  padding: 14px 20px 14px 0;
+  vertical-align: top;
+}
+.vp-doc th:last-child,
+.vp-doc td:last-child {
+  padding-right: 0;
+}
 .vp-doc th {
-  background: var(--vp-c-bg-soft);
+  background: transparent;
   font-weight: 600;
   color: var(--vp-c-text-1);
+  white-space: nowrap;
 }
 
 /* --- Outline / TOC --- */

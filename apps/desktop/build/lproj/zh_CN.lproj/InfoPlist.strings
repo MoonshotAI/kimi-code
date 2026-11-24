@@ -1,0 +1,7 @@
+/* Localized TCC usage descriptions (see mac.extendInfo in electron-builder.config.cjs). */
+"NSDesktopFolderUsageDescription" = "只有当你打开位于桌面文件夹中的项目时，Kimi Code 才会访问其中的文件。";
+"NSDocumentsFolderUsageDescription" = "只有当你打开位于文稿文件夹中的项目时，Kimi Code 才会访问其中的文件。";
+"NSDownloadsFolderUsageDescription" = "只有当你打开位于下载文件夹中的项目时，Kimi Code 才会访问其中的文件。";
+"NSCameraUsageDescription" = "只有当你允许内嵌浏览器中的网站使用摄像头时，Kimi Code 才会访问你的摄像头。";
+"NSMicrophoneUsageDescription" = "只有当你允许内嵌浏览器中的网站使用麦克风时，Kimi Code 才会访问你的麦克风。";
+"NSLocationUsageDescription" = "只有当你允许内嵌浏览器中的网站使用你的位置时，Kimi Code 才会访问你的位置。";

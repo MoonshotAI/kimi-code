@@ -395,7 +395,7 @@ export class SubAgentEventHandler {
   private handleSubagentCancelled(
     event: SubagentLifecycleEventOf<'subagent.cancelled'>,
   ): void {
-    this.activityStore.markFailed(event.subagentId);
+    this.activityStore.markCancelled(event.subagentId);
     this.pruneForegroundOnlyRecord(event.subagentId);
     const backgroundMeta = this.backgroundAgentMetadata.get(event.subagentId);
     if (backgroundMeta !== undefined) {
@@ -789,7 +789,7 @@ export class SubAgentEventHandler {
   }
 
   private getOrActivateToolComponent(parentToolCallId: string) {
-    let component = this.host.streamingUI.getToolComponent(parentToolCallId);
+    const component = this.host.streamingUI.getToolComponent(parentToolCallId);
     if (component !== undefined) return component;
     const toolCall = this.host.streamingUI.getActiveToolCall(parentToolCallId);
     if (toolCall === undefined) return undefined;

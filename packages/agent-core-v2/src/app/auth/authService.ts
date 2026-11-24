@@ -736,6 +736,7 @@ export class AuthSummaryService implements IAuthSummaryService {
         if (nonEmpty(token) !== undefined) return;
         throw new AuthTokenMissingError(providerKey);
       }
+      if (provider?.type === 'vertexai') return;
       throw new AuthTokenMissingError(providerName);
     } catch (error) {
       this.telemetry.track2('auth_ensure_ready_failed', {

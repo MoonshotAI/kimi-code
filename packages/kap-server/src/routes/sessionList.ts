@@ -77,6 +77,7 @@ interface NormalizedQuery {
   readonly updatedBefore?: number;
   readonly archived: SessionsArchivedFilter;
   readonly hasPrompt?: boolean;
+  readonly text?: string;
   readonly view: SessionsView;
   readonly groupPageSize: number;
   readonly sort: SessionsSort;
@@ -91,6 +92,13 @@ export function mapSessionActivity(facts: SessionFacts): SessionActivity {
   if (facts.mainTurnActive) return 'turn';
   if (facts.busy) return 'background';
   return 'idle';
+}
+
+function matchesText(summary: SessionSummary, text: string): boolean {
+  return (
+    summary.id.toLowerCase() === text ||
+    [summary.title, summary.lastPrompt].some((value) => value?.toLowerCase().includes(text) === true)
+  );
 }
 
 function sortKeyOf(sort: SessionsSort): (summary: SessionSummary) => number {
@@ -126,6 +134,7 @@ function queryFingerprint(query: NormalizedQuery): string {
     query.includeGit,
     query.pageSize,
     query.projection,
+    query.text ?? null,
   ];
   return createHash('sha256').update(JSON.stringify(canonical)).digest('base64url').slice(0, 16);
 }
@@ -284,6 +293,7 @@ async function listSessionsHere(
   gitResolver: GitDomainResolver,
   raw: Omit<ListSessionsQuery, 'hosts'>,
 ): Promise<SessionsListOutcome> {
+      const text = raw.query?.trim().toLowerCase();
       const query: NormalizedQuery = {
         workspaceFilter: asArray(raw.workspace_id),
         busy: raw.busy,
@@ -292,6 +302,7 @@ async function listSessionsHere(
         updatedBefore: raw.updated_before === undefined ? undefined : Date.parse(raw.updated_before),
         archived: raw.archived ?? (raw.archived_only === true ? 'true' : raw.include_archive === true ? 'all' : 'false'),
         hasPrompt: raw.exclude_empty === true ? true : raw.has_prompt,
+        text: text === '' ? undefined : text,
         view: raw.view ?? 'flat',
         groupPageSize: raw.group_page_size ?? DEFAULT_GROUP_PAGE_SIZE,
         sort: raw.sort ?? 'updated_at_desc',
@@ -355,6 +366,7 @@ async function listSessionsHere(
         ) {
           return false;
         }
+        if (query.text !== undefined && !matchesText(summary, query.text)) return false;
         if (query.updatedAfter !== undefined && summary.updatedAt < query.updatedAfter) {
           return false;
         }
@@ -568,7 +580,7 @@ export function registerSessionListAndBatchRoutes(
         [ErrorCode.HOST_UNAVAILABLE]: {},
       },
       description:
-        "List sessions with filtering, sorting, optional workspace grouping (view=by_workspace), optional git branch/PR metadata (include=git), or lightweight id projection (fields=id,archived; page_size ceiling relaxed to 10000). Paginate with page_token, 1-based page, or flat before_id/after_id cursors. hosts=include merges sessions from the app-created projects on every SSH host.",
+        "List sessions with filtering (query matches title or last prompt as a case-insensitive substring, or an exact session id), sorting, optional workspace grouping (view=by_workspace), optional git branch/PR metadata (include=git), or lightweight id projection (fields=id,archived; page_size ceiling relaxed to 10000). Paginate with page_token, 1-based page, or flat before_id/after_id cursors. hosts=include merges sessions from the app-created projects on every SSH host.",
       tags: ['sessions'],
     },
     async (req, reply) => {

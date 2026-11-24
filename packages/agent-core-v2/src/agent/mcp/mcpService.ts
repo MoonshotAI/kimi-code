@@ -13,8 +13,6 @@ import { IAgentStateService } from '#/agent/state/agentState';
 import { environmentTempTarget, IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { ISessionMediaStore } from '#/agent/media/sessionMediaStore';
-import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
-import { runLegacyBeforeExecute } from '#/agent/toolExecutor/legacyHooks';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IAgentLoopService } from '#/agent/loop/loop';
@@ -63,7 +61,6 @@ export class AgentMcpService extends Service implements IAgentMcpService {
   constructor(
     @ISessionMcpHandle private readonly mcpHandle: ISessionMcpHandle,
     @IAgentToolRegistryService private readonly registry: IAgentToolRegistryService,
-    @IAgentToolExecutorService toolExecutor: IAgentToolExecutorService,
     @IAgentLoopService private readonly loop: IAgentLoopService,
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @ITelemetryService private readonly telemetry: ITelemetryService,
@@ -78,15 +75,6 @@ export class AgentMcpService extends Service implements IAgentMcpService {
     this.states.contributeState(mcpMcpToolsByServerKey);
     this.states.contributeState(mcpDiscoveryWritesReadyKey);
     this.attachMcpTools();
-    loop.hooks.onWillBeginStep.register('mcp', async (ctx, next) => {
-      await this.waitForInitialLoad(ctx.signal);
-      await next();
-    });
-    this._register(toolExecutor.registerHook({
-      beforeExecute: (context) => runLegacyBeforeExecute(context, (event) => {
-        event.waitUntil(this.waitForInitialLoad(event.signal));
-      }),
-    }));
     this._register(
       this.dispatcher.hooks.onDidRestore.register('mcp', async (_ctx, next) => {
         await this.flushPendingDiscoveries();

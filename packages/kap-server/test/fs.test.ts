@@ -1,9 +1,8 @@
 import { execFileSync } from 'node:child_process';
-import { Error2, ErrorCodes, IEnvironmentService, IModelCatalog, ISessionManager, IWorkspaceInstanceManager, WorkspaceFsService } from '@moonshot-ai/agent-core-v2';
+import { Error2, ErrorCodes, IModelCatalog, IWorkspaceInstanceManager, WorkspaceFsService } from '@moonshot-ai/agent-core-v2';
 import { chmod, mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, sep } from 'node:path';
-import { HostFileSystem } from '@moonshot-ai/agent-core-v2/os/backends/node-local/hostFsService';
 import { ErrorCode } from '../src/protocol/error-codes';
 import { sendMappedError } from '../src/routes/fs';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';

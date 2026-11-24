@@ -1,9 +1,15 @@
 import { AsyncEmitter } from '#/_base/event';
 import type { IDisposable } from '#/_base/di/lifecycle';
 import type { IAgentToolExecutorService } from './toolExecutor';
-import type { AfterExecuteHookContext, ToolDecisionContext, ToolResult, ToolStartingDecision } from '#/tool/executor';
+import type {
+  AfterExecuteHookContext,
+  ToolDecisionContext,
+  ToolResult,
+  ToolStartingDecision,
+  LegacyToolAgentContext,
+  LegacyToolPreparation,
+} from '#/tool/executor';
 import { toLegacyToolReturn } from '#/tool/executor';
-import type { LegacyToolAgentContext, LegacyToolPreparation } from '#/tool/executor';
 import type { ExecutableToolResult } from '#/tool/toolContract';
 
 import { BeforeToolExecuteEmitter } from './beforeToolExecuteEvent';

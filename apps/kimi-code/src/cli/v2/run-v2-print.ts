@@ -68,8 +68,8 @@ import type {
   AssistantDelta,
   ThinkingDelta,
   ToolCallDelta,
+  TurnStepRetrying,
 } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
-import type { TurnStepRetrying } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
 import type { HookResult } from '@moonshot-ai/agent-core-v2/features/externalHooks/agent/agentExternalHooksService';
 import type {
   ToolCallStarted,
@@ -764,7 +764,6 @@ export function createPrintTurnEndings(): PrintTurnEndings & {
             settled = true;
             clearTimeout(timer);
             waiter = undefined;
-            // oxlint-disable-next-line promise/no-multiple-resolved -- `settled` guards the single resolve; the rule cannot see it
             resolve(value);
           };
           const timer = Number.isFinite(ms)

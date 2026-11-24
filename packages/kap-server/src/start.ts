@@ -46,7 +46,7 @@ import { transformOpenApiDocument } from './openapi/transforms';
 import { registerRequestLogging } from './requestLogging';
 import { resolveRequestId } from './request-id';
 import { registerApiV1Routes } from './routes/registerApiV1Routes';
-import { registerWebAssetRoutes } from './routes/webAssets';
+import { assertWebAssets, registerWebAssetRoutes } from './routes/webAssets';
 import {
   createServerLogger,
   type ServerLogger,
@@ -116,6 +116,7 @@ export interface ServerStartOptions {
   readonly pluginMarketplaceUrl?: string;
   readonly configPath?: string;
   readonly instancesDir?: string;
+  readonly skipInstanceRegistry?: boolean;
   readonly logLevel?: ServerLogLevel;
   readonly logger?: ServerLogger;
   readonly debugEndpoints?: boolean;
@@ -161,24 +162,14 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   const serverVersion = opts.serverVersion ?? getServerVersion();
   const idleReclaimMs = resolveSessionIdleReclaimMs(opts.env ?? process.env);
   const disableAuth = opts.disableAuth === true || opts.socketPath !== undefined;
-  const registration: InstanceRegistration =
-    opts.socketPath !== undefined
-      ? { serverId: 'socket', update: async () => {}, release: async () => {} }
-      : await createInstanceRegistry({
-          instancesDir: opts.instancesDir ?? join(homeDir, 'server', 'instances'),
-        }).register({
-          pid: process.pid,
-          host,
-          port,
-          startedAt: Date.now(),
-          serverVersion,
-        });
   const exposureClass = classify(host, { bindClass: opts.bindClass });
   if (exposureClass !== 'loopback' && opts.insecureNoTls !== true) {
-    await registration.release();
     throw new Error(
       `Refusing to bind ${host} (${exposureClass}) without TLS; terminate TLS at a reverse proxy or pass --insecure-no-tls.`,
     );
+  }
+  if (opts.webAssetsDir !== undefined) {
+    await assertWebAssets(opts.webAssetsDir);
   }
   const enableShutdown = exposureClass === 'loopback' || opts.allowRemoteShutdown === true;
   const debugEndpoints = exposureClass === 'loopback' && opts.debugEndpoints === true;
@@ -195,8 +186,6 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
       'uncaughtException',
     );
   };
-  const authFailureLimiter =
-    exposureClass === 'loopback' ? undefined : createAuthFailureLimiter({ logger });
 
   const configPath = resolveConfigPath({ homeDir, configPath: opts.configPath });
   let authTokenService: IAuthTokenService;
@@ -210,6 +199,21 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     authTokenService = createAuthTokenService({ tokenStore, passwordHash });
   }
   const validateCredential = createCredentialValidator(authTokenService, opts.rpcToken);
+  const registration: InstanceRegistration =
+    opts.socketPath !== undefined || opts.skipInstanceRegistry === true
+      ? { serverId: 'socket', update: async () => {}, release: async () => {} }
+      : await createInstanceRegistry({
+          instancesDir: opts.instancesDir ?? join(homeDir, 'server', 'instances'),
+        }).register({
+          pid: process.pid,
+          host,
+          port,
+          startedAt: Date.now(),
+          serverVersion,
+          product: opts.hostIdentity.productName,
+        });
+  const authFailureLimiter =
+    exposureClass === 'loopback' ? undefined : createAuthFailureLimiter({ logger });
   const logging = resolveLoggingConfig({ homeDir, env: process.env });
   let boundPort = port;
   const localOriginHost = host.includes(':') ? `[${host}]` : host;
@@ -396,6 +400,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
       const appendLogStore = core.accessor.get(IAppendLogStore);
       legacyAcpBindingSubscription?.dispose();
       core.dispose();
+      await core.instantiation.disposeAsync();
       await appendLogStore.drainRetirements();
       await drainSessionIndexMirror();
       await drainGlobalSearchDisposals();
@@ -522,36 +527,6 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     });
   }
 
-  await registerOpenApi();
-
-  await registerApiV1Routes(app, core, {
-    serverVersion,
-    hostIdentity: opts.hostIdentity,
-    debugEndpoints,
-    enableShutdown,
-    remoteControl: {
-      service: remoteControlManager,
-      devices: remoteControlDevices,
-      homeDir,
-      staticEnableError:
-        opts.socketPath !== undefined
-          ? 'Remote Control requires a TCP listener.'
-          : exposureClass !== 'loopback'
-            ? 'Remote Control requires a loopback host.'
-            : opts.disableAuth === true
-              ? 'Remote Control cannot be combined with --dangerous-bypass-auth.'
-              : undefined,
-    },
-    onShutdown: requestClose,
-    drainIdleSessions,
-    hostBridges,
-    conversations,
-    sessionRating,
-    dangerousBypassAuth: opts.disableAuth === true,
-    managedHost: opts.managedBy === 'ensure-daemon',
-    webTitle: opts.webTitle,
-  });
-
   const wssV1 = registerWsV1(core, {
     registry: connectionRegistry,
     broadcaster,
@@ -650,24 +625,55 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     await broadcaster.close();
   });
 
-  registerHostProxyRoutes(app, hostBridges);
-
-  app.get('/asyncapi.json', async (_req, reply) => {
-    return reply
-      .type('application/json')
-      .send(createAsyncApiDocument({ version: serverVersion, serverHost: host }));
-  });
-
-  app.get('/openapi.json', async (_req, reply) => {
-    const openApiDocument = (app as unknown as { swagger(): unknown }).swagger();
-    return reply.type('application/json').send(openApiDocument);
-  });
-
-  if (opts.webAssetsDir !== undefined) {
-    await registerWebAssetRoutes(app, opts.webAssetsDir);
-  }
-
   try {
+    await registerOpenApi();
+
+    await registerApiV1Routes(app, core, {
+      serverId: registration.serverId,
+      serverVersion,
+      hostIdentity: opts.hostIdentity,
+      debugEndpoints,
+      enableShutdown,
+      remoteControl: {
+        service: remoteControlManager,
+        devices: remoteControlDevices,
+        homeDir,
+        staticEnableError:
+          opts.socketPath !== undefined
+            ? 'Remote Control requires a TCP listener.'
+            : exposureClass !== 'loopback'
+              ? 'Remote Control requires a loopback host.'
+              : opts.disableAuth === true
+                ? 'Remote Control cannot be combined with --dangerous-bypass-auth.'
+                : undefined,
+      },
+      onShutdown: requestClose,
+      drainIdleSessions,
+      hostBridges,
+      conversations,
+      sessionRating,
+      dangerousBypassAuth: opts.disableAuth === true,
+      managedHost: opts.managedBy === 'ensure-daemon',
+      webTitle: opts.webTitle,
+    });
+
+    registerHostProxyRoutes(app, hostBridges);
+
+    app.get('/asyncapi.json', async (_req, reply) => {
+      return reply
+        .type('application/json')
+        .send(createAsyncApiDocument({ version: serverVersion, serverHost: host }));
+    });
+
+    app.get('/openapi.json', async (_req, reply) => {
+      const openApiDocument = (app as unknown as { swagger(): unknown }).swagger();
+      return reply.type('application/json').send(openApiDocument);
+    });
+
+    if (opts.webAssetsDir !== undefined) {
+      registerWebAssetRoutes(app, opts.webAssetsDir);
+    }
+
     if (opts.socketPath !== undefined) {
       await app.ready();
       rpcServer = await startUnixRpcServer(opts.socketPath, { app, wssV1, wssDebug });

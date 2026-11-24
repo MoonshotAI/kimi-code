@@ -18,7 +18,6 @@ const DESCRIPTION_MAX_LINES = 2;
 const ELLIPSIS = '…';
 const ELLIPSIS_WIDTH = visibleWidth(ELLIPSIS);
 
-// oxlint-disable-next-line no-control-regex -- ESC (\x1b) is required to match ANSI SGR escape sequences
 const TRAILING_ANSI_RESET = /(?:\u001B\[0m)+$/;
 
 function truncatePlainToWidth(text: string, maxWidth: number): string {

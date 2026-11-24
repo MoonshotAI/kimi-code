@@ -36,13 +36,11 @@ import {
 import { ISessionSubagentService } from '#/session/subagent/subagent';
 import { SessionSubagentService } from '#/session/subagent/subagentService';
 import {
-  FORK_CONTEXT_NOTICE,
   type SpawnedSubagent,
   type SpawnSubagentOptions,
   type SubagentSpawnPlan,
   type SubagentSpawnPlanInput,
 } from '#/session/subagent/spawn';
-import { IAgentReminderService } from '#/features/reminder/reminderService';
 import { IWorkspaceInstanceManager } from '#/workspace/workspaceInstance/workspaceInstanceManager';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
@@ -66,14 +64,12 @@ describe('SessionSubagentService planSpawn and spawn', () => {
   let caller: IAgentScopeHandle;
   let createdHandles: Map<string, IAgentScopeHandle>;
   let createAgent: ReturnType<typeof vi.fn>;
-  let forkAgent: ReturnType<typeof vi.fn>;
   let acquireEnvironment: ReturnType<typeof vi.fn>;
   let acquireWhenReadyEnvironment: ReturnType<typeof vi.fn>;
   let callerPermissionMode: { mode: string; setMode: ReturnType<typeof vi.fn> };
   let createdPermissionMode: { mode: string; setMode: ReturnType<typeof vi.fn> };
   let callerUserTools: IAgentUserToolService;
   let createdUserTools: IAgentUserToolService;
-  let createdReminder: { notify: ReturnType<typeof vi.fn> };
   let lease: EnvironmentLease;
   let callerBinding: EnvironmentBinding;
 
@@ -106,7 +102,6 @@ describe('SessionSubagentService planSpawn and spawn', () => {
           }
           if (serviceId === IAgentPermissionModeService) return createdPermissionMode;
           if (serviceId === IAgentUserToolService) return createdUserTools;
-          if (serviceId === IAgentReminderService) return createdReminder;
           return undefined;
         },
       } as IAgentScopeHandle['accessor'],
@@ -143,7 +138,6 @@ describe('SessionSubagentService planSpawn and spawn', () => {
     createdPermissionMode = { mode: 'manual', setMode: vi.fn() };
     callerUserTools = userToolsStub();
     createdUserTools = userToolsStub();
-    createdReminder = { notify: vi.fn() };
     lease = {
       environment: new FakeEnvironment({ environmentId: 'acp:s1', generation: 'g1' }),
       track: (resource) => resource,
@@ -192,10 +186,6 @@ describe('SessionSubagentService planSpawn and spawn', () => {
       createdHandles.set(agentId, createdHandle(agentId));
       return stubAgentContext(agentId, 1);
     });
-    forkAgent = vi.fn(async () => {
-      createdHandles.set('agent-fork', createdHandle('agent-fork'));
-      return stubAgentContext('agent-fork', 1);
-    });
     ix.stub(IAgentLifecycleService, {
       _serviceBrand: undefined,
       onDidCreate: Event.None,
@@ -203,7 +193,6 @@ describe('SessionSubagentService planSpawn and spawn', () => {
       onWillClose: Event.None,
       onDidClose: Event.None,
       create: createAgent,
-      fork: forkAgent,
       get: (agentId: string) => (agentId === CALLER_ID ? stubAgentContext(CALLER_ID, 1) : undefined),
       handleOf: (agentId: string) =>
         agentId === CALLER_ID ? caller : createdHandles.get(agentId),
@@ -288,21 +277,12 @@ describe('SessionSubagentService planSpawn and spawn', () => {
     throw new Error('spawn did not throw');
   }
 
-  function spawnNonForkChild(svc: ISessionSubagentService): Promise<SpawnedSubagent> {
+  function spawnChild(svc: ISessionSubagentService): Promise<SpawnedSubagent> {
     return svc.spawn({
       callerAgentId: CALLER_ID,
-      plan: { profileName: 'coder', model: 'provider/fast', modelSource: 'secondary_pool', thinking: 'low', fork: false },
+      plan: { profileName: 'coder', model: 'provider/fast', modelSource: 'secondary_pool', thinking: 'low' },
       labels: { parentAgentId: 'main' },
       prompt: 'Review the file',
-    });
-  }
-
-  function spawnForkChild(svc: ISessionSubagentService): Promise<SpawnedSubagent> {
-    return svc.spawn({
-      callerAgentId: CALLER_ID,
-      plan: { profileName: 'orchestrator', model: 'main-model', modelSource: 'inherited', thinking: 'high', fork: true },
-      labels: { parentAgentId: 'main' },
-      prompt: 'Continue the analysis',
     });
   }
 
@@ -374,7 +354,6 @@ describe('SessionSubagentService planSpawn and spawn', () => {
       model: 'provider/fast',
       modelSource: 'secondary_pool',
       thinking: 'max',
-      fork: false,
     });
   });
 
@@ -494,7 +473,6 @@ describe('SessionSubagentService planSpawn and spawn', () => {
       model: 'provider/fast',
       modelSource: 'secondary_pool',
       thinking: 'max',
-      fork: false,
     });
   });
 
@@ -508,59 +486,25 @@ describe('SessionSubagentService planSpawn and spawn', () => {
       model: 'main-model',
       modelSource: 'inherited',
       thinking: 'high',
-      fork: false,
     });
   });
 
-  it('skips the allowlist check when forking', async () => {
-    callerData = { ...callerData, profileName: 'coder', subagents: ['explore'] };
+  it('creates the child with the plan binding from the spawn plan', async () => {
     const svc = service();
 
-    const plan = await svc.planSpawn({ callerAgentId: CALLER_ID, fork: true });
-
-    expect(plan.profileName).toBe('coder');
-  });
-
-  it('skips the unknown-profile check when forking', async () => {
-    callerData = { ...callerData, profileName: 'ghost' };
-    const svc = service();
-
-    const plan = await svc.planSpawn({ callerAgentId: CALLER_ID, fork: true });
-
-    expect(plan.profileName).toBe('ghost');
-  });
-
-  it('returns the caller binding when forking', async () => {
-    const svc = service();
-
-    const plan = await svc.planSpawn({ callerAgentId: CALLER_ID, fork: true });
-
-    expect(plan).toEqual({
-      profileName: 'orchestrator',
-      model: 'main-model',
-      modelSource: 'inherited',
-      thinking: 'high',
-      fork: true,
-    });
-  });
-
-  it('creates the child with the plan binding when the plan is not a fork', async () => {
-    const svc = service();
-
-    await spawnNonForkChild(svc);
+    await spawnChild(svc);
 
     expect(createAgent).toHaveBeenCalledWith(
       expect.objectContaining({
         binding: { profile: 'coder', model: 'provider/fast', thinking: 'low' },
       }),
     );
-    expect(forkAgent).not.toHaveBeenCalled();
   });
 
-  it('creates the child with the task labels when the plan is not a fork', async () => {
+  it('creates the child with the task labels from the spawn plan', async () => {
     const svc = service();
 
-    await spawnNonForkChild(svc);
+    await spawnChild(svc);
 
     expect(createAgent).toHaveBeenCalledWith(
       expect.objectContaining({ labels: { parentAgentId: 'main' } }),
@@ -570,7 +514,7 @@ describe('SessionSubagentService planSpawn and spawn', () => {
   it('creates the child on the acquired environment lease', async () => {
     const svc = service();
 
-    await spawnNonForkChild(svc);
+    await spawnChild(svc);
 
     expect(createAgent).toHaveBeenCalledWith(expect.objectContaining({ environmentId: 'acp:s1' }));
   });
@@ -579,7 +523,7 @@ describe('SessionSubagentService planSpawn and spawn', () => {
     callerBinding = { environmentId: 'acp:s1', cwd: '/remote/repo' };
     const svc = service();
 
-    await spawnNonForkChild(svc);
+    await spawnChild(svc);
 
     expect(createAgent).toHaveBeenCalledWith(
       expect.objectContaining({ environmentId: 'acp:s1', environmentCwd: '/remote/repo' }),
@@ -589,7 +533,7 @@ describe('SessionSubagentService planSpawn and spawn', () => {
   it('inherits the caller permission mode and user tools', async () => {
     const svc = service();
 
-    await spawnNonForkChild(svc);
+    await spawnChild(svc);
 
     expect(createdPermissionMode.setMode).toHaveBeenCalledWith('auto');
     expect(createdUserTools.inheritUserTools).toHaveBeenCalledWith(callerUserTools);
@@ -606,7 +550,7 @@ describe('SessionSubagentService planSpawn and spawn', () => {
     ];
     const svc = service();
 
-    const spawned = await spawnNonForkChild(svc);
+    const spawned = await spawnChild(svc);
 
     expect(spawned).toEqual({
       agentId: 'agent-child',
@@ -620,65 +564,9 @@ describe('SessionSubagentService planSpawn and spawn', () => {
   it('releases the environment lease after spawn', async () => {
     const svc = service();
 
-    await spawnNonForkChild(svc);
+    await spawnChild(svc);
 
     expect(lease.dispose).toHaveBeenCalled();
-  });
-
-  it('delegates to manager.fork with the caller labels when the plan is a fork', async () => {
-    const svc = service();
-
-    await spawnForkChild(svc);
-
-    expect(forkAgent).toHaveBeenCalledWith(
-      expect.objectContaining({ agentId: 'main' }),
-      { labels: { parentAgentId: 'main' } },
-    );
-    expect(createAgent).not.toHaveBeenCalled();
-  });
-
-  it('preserves the fork snapshot active tool names when inheriting user tools', async () => {
-    callerData = { ...callerData, activeToolNames: ['Agent', 'Read'] };
-    const svc = service();
-
-    await spawnForkChild(svc);
-
-    expect(createdUserTools.inheritUserTools).toHaveBeenCalledWith(callerUserTools, [
-      'Agent',
-      'Read',
-    ]);
-  });
-
-  it('delivers the fork notice as a reminder injection when the plan is a fork', async () => {
-    const svc = service();
-
-    const spawned = await spawnForkChild(svc);
-
-    expect(spawned).toEqual({
-      agentId: 'agent-fork',
-      profileName: 'orchestrator',
-      model: 'main-model',
-      modelSource: 'inherited',
-      promptText: 'Continue the analysis',
-    });
-    expect(createdReminder.notify).toHaveBeenCalledWith(FORK_CONTEXT_NOTICE, {
-      variant: 'fork_context',
-    });
-  });
-
-  it('does not require the process capability when forking', async () => {
-    acquireEnvironment.mockImplementation(() => {
-      throw new Error('process capability is no longer available');
-    });
-    const svc = service();
-
-    await expect(spawnForkChild(svc)).resolves.toMatchObject({ agentId: 'agent-fork' });
-
-    expect(acquireEnvironment).not.toHaveBeenCalled();
-    expect(forkAgent).toHaveBeenCalledWith(
-      expect.objectContaining({ agentId: 'main' }),
-      { labels: { parentAgentId: 'main' } },
-    );
   });
 
   it('wraps a create rejection with the secondary-model config hint', async () => {
@@ -693,7 +581,7 @@ describe('SessionSubagentService planSpawn and spawn', () => {
 
     const error = await spawnError(svc, {
       callerAgentId: CALLER_ID,
-      plan: { profileName: 'coder', model: 'provider/bad', modelSource: 'secondary_pool', thinking: 'low', fork: false },
+      plan: { profileName: 'coder', model: 'provider/bad', modelSource: 'secondary_pool', thinking: 'low' },
       prompt: 'Review the file',
     });
 
@@ -711,7 +599,6 @@ describe('SessionSubagentService planSpawn and spawn', () => {
       profileName: 'coder',
       model: 'main-model',
       thinking: 'high',
-      fork: false,
     };
 
     await expect(
@@ -719,6 +606,5 @@ describe('SessionSubagentService planSpawn and spawn', () => {
     ).rejects.toThrow('process capability is no longer available');
 
     expect(createAgent).not.toHaveBeenCalled();
-    expect(forkAgent).not.toHaveBeenCalled();
   });
 });

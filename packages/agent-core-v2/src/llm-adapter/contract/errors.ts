@@ -653,6 +653,7 @@ export function errorFromLlmMessage(
         diagnostics,
         false,
       );
+    case 'invalid_tool_arguments':
     case 'provider':
       return new ChatProviderError(
         error.message,

@@ -9,7 +9,7 @@ import {
   decidePassiveUpdate,
   isRolloutBypassedByExperimentalEnv,
   isRolloutEligible,
-  MAX_ROLLOUT_DELAY_SECONDS,
+  UNCOVERED_ROLLOUT_DELAY_SECONDS,
   rolloutBucket,
   rolloutDelayForBucket,
   rolloutDelaySeconds,
@@ -72,16 +72,23 @@ describe('rolloutDelayForBucket', () => {
     expect(rolloutDelayForBucket(STANDARD_ROLLOUT, 99)).toBe(86_400);
   });
 
-  it('clamps oversized delays to 24h', () => {
+  it('honors plan delays beyond 24h', () => {
     const rollout: readonly RolloutBatch[] = [{ percent: 100, delaySeconds: 999_999 }];
-    expect(rolloutDelayForBucket(rollout, 50)).toBe(MAX_ROLLOUT_DELAY_SECONDS);
+    expect(rolloutDelayForBucket(rollout, 50)).toBe(999_999);
   });
 
   it('assigns buckets not covered by the plan to the slowest cohort', () => {
     const rollout: readonly RolloutBatch[] = [{ percent: 30, delaySeconds: 0 }];
     expect(rolloutDelayForBucket(rollout, 29)).toBe(0);
-    expect(rolloutDelayForBucket(rollout, 30)).toBe(MAX_ROLLOUT_DELAY_SECONDS);
-    expect(rolloutDelayForBucket(rollout, 99)).toBe(MAX_ROLLOUT_DELAY_SECONDS);
+    expect(rolloutDelayForBucket(rollout, 30)).toBe(UNCOVERED_ROLLOUT_DELAY_SECONDS);
+    expect(rolloutDelayForBucket(rollout, 99)).toBe(UNCOVERED_ROLLOUT_DELAY_SECONDS);
+  });
+
+  it('keeps uncovered buckets behind the longest configured delay', () => {
+    const rollout: readonly RolloutBatch[] = [{ percent: 30, delaySeconds: 172_800 }];
+    expect(rolloutDelayForBucket(rollout, 29)).toBe(172_800);
+    expect(rolloutDelayForBucket(rollout, 30)).toBe(172_800);
+    expect(rolloutDelayForBucket(rollout, 99)).toBe(172_800);
   });
 
   it('tolerates percents summing past 100', () => {
@@ -141,9 +148,10 @@ describe('isRolloutEligible', () => {
     expect(isRolloutEligible(manifest, 'device-a', secondsAfterPublish(-3_600))).toBe(false);
   });
 
-  it('is always eligible 24h after publish regardless of the plan', () => {
+  it('honors eligibility delays beyond 24h', () => {
     const manifest = makeManifest({ rollout: [{ percent: 100, delaySeconds: 999_999 }] });
-    expect(isRolloutEligible(manifest, 'device-a', secondsAfterPublish(86_400))).toBe(true);
+    expect(isRolloutEligible(manifest, 'device-a', secondsAfterPublish(86_400))).toBe(false);
+    expect(isRolloutEligible(manifest, 'device-a', secondsAfterPublish(999_999))).toBe(true);
   });
 
   it('fails open when publishedAt cannot be parsed', () => {
@@ -197,6 +205,22 @@ describe('decidePassiveUpdate', () => {
       bucket: rolloutBucket('device-a', '2.0.0'),
       delaySeconds: 86_400,
       eligibleAt: new Date(PUBLISHED_AT_MS + 86_400 * 1000).toISOString(),
+    });
+  });
+
+  it('reports held without throwing when the batch delay exceeds the Date range', () => {
+    const manifest = makeManifest({ rollout: [{ percent: 100, delaySeconds: 8_640_000_000_000 }] });
+    const decision = decidePassiveUpdate(
+      '1.0.0',
+      { channel: 'stable', latest: '2.0.0', manifest },
+      'device-a',
+      now,
+    );
+    expect(decision).toMatchObject({
+      plan: { kind: 'none' },
+      reason: 'held',
+      delaySeconds: 8_640_000_000_000,
+      eligibleAt: null,
     });
   });
 

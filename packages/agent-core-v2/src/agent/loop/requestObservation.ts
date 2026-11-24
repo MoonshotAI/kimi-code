@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { isManagedKimiCodeBaseUrl } from '@moonshot-ai/kimi-code-oauth';
 
 import { ILogService, type LogContext } from '#/_base/log/log';
 import { isAbortError } from '#/_base/utils/abort';
@@ -125,7 +126,15 @@ export class AgentLoopRequestObserver {
   setRequestId(source: AgentLLMRequestSource, requestId: string | undefined, active = true): void {
     if (source.type !== 'turn') return;
     this.telemetry.setContext({ request_id: active ? requestId : undefined });
-    this.attribution.noteActiveRequest(this.scopeContext.agentId, requestId, active);
+    this.attribution.noteActiveRequest(this.scopeContext.agentId, requestId, active, source);
+  }
+
+  noteModel(request: ResolvedRequestContext): void {
+    const { source, model } = request;
+    if (source.type !== 'turn' || source.step === undefined) return;
+    this.attribution.noteModel(this.scopeContext.agentId, source.turnId, source.step, {
+      model: model.spec.name, provider: model.protocol, isKfc: isManagedKimiCodeBaseUrl(model.endpoint.baseUrl),
+    });
   }
 
   recordAttempt(
@@ -203,12 +212,12 @@ export class AgentLoopRequestObserver {
     infiniteRetry: boolean,
   ): void {
     const request = observation.requireContext();
-    if (event.type === 'llm.streaming.request_id') {
+    if (event.type === 'llm.delta.request_id') {
       observation.setRequestId(event.requestId);
       return;
     }
-    if (event.type === 'llm.streaming.headers') return;
-    if (event.type !== 'llm.retrying') return;
+    if (event.type === 'llm.delta.response_header') return;
+    if (event.type !== 'llm.retry') return;
     if (event.reason === 'backoff') {
       if (infiniteRetry) {
         this.log.warn('llm request failed; retrying indefinitely (KIMI_CODE_INFINITE_RETRY)', {
@@ -221,6 +230,16 @@ export class AgentLoopRequestObserver {
       }
       return;
     }
+    if (event.reason === 'invalid_tool_arguments') {
+      this.log.warn('tool call arguments invalid; requesting a corrected tool call', {
+        model: request.model.spec.name,
+        ...request.logFields,
+        attempt: event.failedAttempt,
+        ...retryErrorFields(event.error),
+      });
+      return;
+    }
+    if (event.reason !== 'recovery') return;
     if (event.strategy === 'structure') {
       this.log.warn('provider rejected request structure; resending with strict projection', {
         model: request.model.spec.name,
@@ -561,6 +580,7 @@ export class AgentRequestObservation {
 
   prepare(context: ResolvedRequestContext): void {
     this.context = context;
+    this.observer.noteModel(context);
   }
 
   get currentRequestId(): string | undefined {

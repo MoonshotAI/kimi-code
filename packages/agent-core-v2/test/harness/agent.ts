@@ -27,7 +27,7 @@ import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import '#/features/reminder/reminderFeature';
 import { BUILTIN_REPLAYABLE_STATE_KEYS } from '../state/builtinReplayableKeys';
-import type { ContextMessage } from '#/agent/contextMemory/types';
+import type { ContextMessage, AgentContextData } from '#/agent/contextMemory/types';
 import { IAgentCronService } from '#/features/cron/cronService';
 import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
 import { IAgentGoalService } from '#/features/goal/goalService';
@@ -44,7 +44,11 @@ import { ISessionSkillCatalogData } from '#/features/skill/session/skillCatalogD
 import type { PermissionData, PermissionMode } from '#/agent/permissionPolicy/types';
 import type { PermissionRule } from '#/agent/permissionRules/permissionRules';
 import { IAgentPlanService, type PlanData } from '#/features/plan/plan';
-import { IAgentProfileService, type AgentConfigData } from '#/agent/profile/profile';
+import {
+  IAgentProfileService,
+  type AgentConfigData,
+  type ProfileSetModelResult,
+} from '#/agent/profile/profile';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import type {
   LoopNotifyMessage,
@@ -54,16 +58,18 @@ import type {
 } from '#/agent/loop/loop';
 import type { AgentCommandInfo } from '#/agent/command/agentCommand';
 import { IAgentCommandService } from '#/agent/command/agentCommand';
-import type { AgentContextData } from '#/agent/contextMemory/types';
 import type { CreateGoalInput, GoalSnapshot, GoalToolResult } from '#/features/goal/types';
 import { IAgentConversationUndoService } from '#/agent/undo/undo';
 import type { RunShellCommandInput, RunShellCommandResult } from '#/agent/shellCommand/shellCommand';
-import type { ProfileSetModelResult } from '#/agent/profile/profile';
 import type { SwarmModeTrigger } from '#/features/swarm/agent/swarm';
 import type { UserToolRegistration } from '#/agent/userTool/userTool';
 import type { ActivatePluginCommandPayload } from '#/agent/pluginCommand/pluginCommand';
 import { IAgentPluginCommandService } from '#/agent/pluginCommand/pluginCommand';
-import type { ToolInfo } from '#/tool/toolContract';
+import type {
+  ToolInfo,
+  ExecutableToolOutput as ToolOutput,
+  ExecutableToolResult,
+} from '#/tool/toolContract';
 
 type EmptyPayload = {};
 type CreateGoalPayload = CreateGoalInput;
@@ -95,10 +101,6 @@ import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnviro
 import type { EnvironmentBinding, EnvironmentLease } from '#/environment/environment';
 import { LocalEnvironment } from '#/environment/localEnvironment';
 import { IAgentToolDedupeService } from '#/agent/toolDedupe/toolDedupe';
-import type {
-  ExecutableToolOutput as ToolOutput,
-  ExecutableToolResult,
-} from '#/tool/toolContract';
 import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
@@ -111,7 +113,7 @@ import { EVENT2_REGISTRY, event2FromRecord } from '#/app/event/event2';
 import { IProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocol';
 import { ProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocolAdapterRegistry';
 import { summarizeSkill, type SkillCatalog } from '#/features/skill/catalog/types';
-import { type ModelCapability } from '@moonshot-ai/core/llm/request';
+import { type ModelCapability, type ThinkingEffort } from '@moonshot-ai/core/llm/request';
 import {
   isToolCall,
   isToolCallPart,
@@ -120,7 +122,6 @@ import {
   type StreamedMessagePart,
   type ToolDescription as KosongTool,
 } from '@moonshot-ai/core/llm/message';
-import { type ThinkingEffort } from '@moonshot-ai/core/llm/request';
 import { type TokenUsage } from '@moonshot-ai/core/llm/usage';
 import type { AgentLLMRequestSource } from '#/agent/loop/requesterContract';
 import { type AgentModelDefinition } from '#/state/agentModel';
@@ -249,8 +250,10 @@ import { guardPromptCachePrefix, PromptCacheGuardedLoopRequester } from './promp
 import {
   createScriptedGenerate,
   createMockProvider,
+  fetchBackedProvider,
   withMockProvider,
   type MockProvider,
+  type MockProviderResponse,
 } from './scripted-generate';
 import { project as projectContext } from '#/agent/loop/projection';
 import {
@@ -472,8 +475,13 @@ interface ConfigureOptions {
 
 export type TestAgentContext = AgentTestContext;
 
+export interface TestModelEndpoint {
+  readonly fetch: typeof fetch;
+}
+
 export interface TestAgentOptions {
   readonly generate?: MockProvider | undefined;
+  readonly model?: TestModelEndpoint;
   readonly telemetry?: ITelemetryService | undefined;
   readonly persistence?: WireRecordPersistence | undefined;
   readonly hookEngine?:
@@ -509,7 +517,7 @@ export type TestAgentServiceOverride =
   | TestAgentScopedServiceOverride
   | readonly TestAgentServiceOverride[];
 
-type TestAgentInput = TestAgentServiceOverride | TestAgentOptions;
+export type TestAgentInput = TestAgentServiceOverride | TestAgentOptions;
 
 export function appServices(group: TestAgentServiceGroup): TestAgentServiceOverride {
   return scopedServices('app', group);
@@ -1136,11 +1144,28 @@ export class AgentTestContext {
   readonly emitter = new EventEmitter();
   readonly allEvents: EventSnapshotEntry[] = this.snapshots.entries;
   readonly rpc: PromiseAgentAPI;
-  readonly llmCalls = this.scriptedGenerate.calls;
-  readonly lastLlmInput = this.scriptedGenerate.lastInput;
-  readonly llmInputs = this.scriptedGenerate.inputs;
-  readonly mockNextResponse = this.scriptedGenerate.mockNextResponse;
-  readonly mockNextProviderResponse = this.scriptedGenerate.mockNextProviderResponse;
+  get llmCalls(): ReturnType<typeof createScriptedGenerate>['calls'] {
+    this.requireScriptedModel('llmCalls');
+    return this.scriptedGenerate.calls;
+  }
+
+  readonly lastLlmInput = (): ReturnType<ReturnType<typeof createScriptedGenerate>['lastInput']> => {
+    this.requireScriptedModel('lastLlmInput');
+    return this.scriptedGenerate.lastInput();
+  };
+
+  readonly llmInputs = (): ReturnType<ReturnType<typeof createScriptedGenerate>['inputs']> => {
+    this.requireScriptedModel('llmInputs');
+    return this.scriptedGenerate.inputs();
+  };
+  readonly mockNextResponse = (...response: StreamedMessagePart[]): void => {
+    this.requireScriptedModel('mockNextResponse');
+    this.scriptedGenerate.mockNextResponse(...response);
+  };
+  readonly mockNextProviderResponse = (input: MockProviderResponse): void => {
+    this.requireScriptedModel('mockNextProviderResponse');
+    this.scriptedGenerate.mockNextProviderResponse(input);
+  };
 
   constructor(overrides: readonly TestAgentServiceOverride[] = [], options: TestAgentOptions = {}) {
     this.options = options;
@@ -1200,7 +1225,9 @@ export class AgentTestContext {
           reg.defineInstance(
             IProtocolAdapterRegistry,
             createGenerateBackedGateway(
-              guardPromptCachePrefix(options.generate ?? this.scriptedGenerate.provider),
+              guardPromptCachePrefix(
+                options.generate ?? (options.model === undefined ? this.scriptedGenerate.provider : fetchBackedProvider(options.model.fetch)),
+              ),
             ),
           );
           reg.defineInstance(
@@ -1832,7 +1859,7 @@ export class AgentTestContext {
 
   configureRuntimeModel(
     provider: TestProviderConfig,
-    modelCapabilities?: TestModelCapabilities | undefined,
+    modelCapabilities?: TestModelCapabilities,
     preserveProfile = false,
   ): void {
     this.kimiConfig = configWithProvider(this.kimiConfig, provider, modelCapabilities);
@@ -2237,6 +2264,11 @@ export class AgentTestContext {
 
   async dispose(): Promise<void> {
     await this.close();
+  }
+
+  private requireScriptedModel(api: string): void {
+    if (this.options.model === undefined) return;
+    throw new Error(`${api} belongs to the built-in harness model, but this agent uses the testkit model; script replies with model.script(...) and read requests with model.requests()`);
   }
 
   private takeUntilRpc(method: string): Promise<{

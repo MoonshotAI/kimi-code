@@ -1,10 +1,9 @@
-import type { HostUiCapability } from '@moonshot-ai/agent-core-v2';
+import type { HostUiCapability, ContentPart } from '@moonshot-ai/agent-core-v2';
 import type {
   ExportSessionManifest,
   ShellEnvironment,
 } from '@moonshot-ai/agent-core-v2/app/sessionExport/sessionExport';
 import type { KimiHostIdentity, OAuthRefreshOutcome } from '@moonshot-ai/kimi-code-oauth';
-import type { ContentPart } from '@moonshot-ai/agent-core-v2';
 
 import type { ResumeSessionResult } from '#/replay';
 import type { PermissionMode } from '#/permission';
@@ -473,6 +472,7 @@ export interface SessionStatus {
   readonly planMode: boolean;
   readonly swarmMode?: boolean;
   readonly towerMode?: boolean;
+  readonly loopLifecycleEvents?: boolean;
   readonly contextTokens: number;
   readonly maxContextTokens: number;
   readonly contextUsage: number;

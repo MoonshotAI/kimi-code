@@ -38,6 +38,7 @@ export interface AppState {
   inputMode: 'prompt' | 'bash';
   swarmMode: boolean;
   towerMode: boolean;
+  loopLifecycleEvents?: boolean;
   thinkingEffort: ThinkingEffort;
   configDefaultPlanMode?: boolean;
   lazySessionThinking?: ThinkingEffort;

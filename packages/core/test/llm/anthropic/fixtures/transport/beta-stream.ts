@@ -2,7 +2,7 @@ import { testModule } from '../../../harness';
 import type { AnthropicTransportFixture } from '../types';
 
 export default {
-  name: 'beta-stream',
+  name: 'as an Anthropic beta user, I want beta streaming responses to preserve their protocol metadata',
   module: testModule({ options: { betaApi: true } }),
   endpoint: { baseUrl: 'https://example.test', apiKey: 'test-key' },
   response: {

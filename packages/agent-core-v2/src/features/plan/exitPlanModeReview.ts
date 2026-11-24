@@ -9,12 +9,8 @@ import type {
 } from '#/agent/toolExecutor/toolHooks';
 import type { PlanResolvedEvent, PlanSubmittedEvent } from '#/app/telemetry/events';
 import type { ITelemetryService } from '#/app/telemetry/telemetry';
-import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 
 import type { IAgentPlanService } from './plan';
-
-type PlanReviewDisplay = Extract<ToolInputDisplay, { kind: 'plan_review' }>;
-type PlanReviewOption = NonNullable<PlanReviewDisplay['options']>[number];
 
 const PLAN_REVIEW_NON_INTERACTIVE_MESSAGE =
   'Nobody can review this plan in a non-interactive run, so plan mode stays active for the rest of this run and you cannot edit files other than the plan file.';
@@ -42,23 +38,17 @@ export class ExitPlanModeReview {
         reason: {
           has_options: display.options !== undefined,
         },
-        resolveApproval: (result) => this.approvalResult(result, display),
+        resolveApproval: (result) => this.approvalResult(result),
         resolveNonInteractive: () => ({ kind: 'deny', message: PLAN_REVIEW_NON_INTERACTIVE_MESSAGE }),
       },
       'exit-plan-mode-review-ask',
     );
   }
 
-  private approvalResult(
-    result: ApprovalResponse,
-    display: PlanReviewDisplay,
-  ): PermissionPolicyResolution | undefined {
+  private approvalResult(result: ApprovalResponse): PermissionPolicyResolution | undefined {
     if (result.decision !== 'approved') {
       return this.rejectedApprovalResult(result);
     }
-
-    const selected = selectedExitPlanModeOption(display.options, result.selectedLabel);
-    this.plan.exit();
 
     if (result.selectedLabel !== undefined && result.selectedLabel.length > 0) {
       this.trackPlanTelemetry('plan_resolved', {
@@ -69,17 +59,10 @@ export class ExitPlanModeReview {
       this.trackPlanTelemetry('plan_resolved', { outcome: 'approved' });
     }
 
-    const optionPrefix =
-      selected === undefined
-        ? ''
-        : `Selected approach: ${selected.label}\nExecute ONLY the selected approach. Do not execute any unselected alternatives.\n\n`;
-    const savedTo = display.path !== undefined ? `Plan saved to: ${display.path}\n\n` : '';
-    const formattedPlan = `Plan mode deactivated. All tools are now available.\n${savedTo}## Approved Plan:\n${display.plan}`;
     return {
-      kind: 'result',
-      result: {
-        isError: false,
-        output: `Exited plan mode. ${optionPrefix}${formattedPlan}`,
+      kind: 'approve',
+      executionMetadata: {
+        planReview: { selectedLabel: result.selectedLabel },
       },
     };
   }
@@ -166,12 +149,4 @@ export class ExitPlanModeReview {
       this.telemetry.track2('plan_resolved', properties as PlanResolvedEvent);
     }
   }
-}
-
-function selectedExitPlanModeOption(
-  options: readonly PlanReviewOption[] | undefined,
-  label: string | undefined,
-): PlanReviewOption | undefined {
-  if (options === undefined || label === undefined) return undefined;
-  return options.find((option) => option.label === label);
 }

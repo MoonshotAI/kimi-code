@@ -4,6 +4,7 @@ import {
   APIError as RawOpenAISDKAPIError,
   OpenAIError as RawOpenAISDKError,
 } from 'openai';
+import { v4 as randomUUID } from 'uuid';
 
 import { headersToRecord, parseRetryAfterMs } from '#/llm/protocol/kit/http';
 import { isAbortError, toLlmErrorMessage } from '#/llm/protocol/errors';
@@ -14,11 +15,15 @@ import {
   isUnreachableConnection,
   toLlmTransportErrorMessage,
 } from '#/llm/protocol/rules/status';
-import type { LlmRemoteErrorMessage } from '#/llm/response';
-import { NO_FINISH, type FinishInfo, type FinishReason } from '#/llm/response';
+import {
+  type LlmRemoteErrorMessage,
+  NO_FINISH,
+  type FinishInfo,
+  type FinishReason,
+  type TokenUsage,
+} from '#/llm/response';
 import type { StreamedMessagePart, ThinkPart } from '#/llm/message';
 import type { DecodeSink, Decoder } from '#/llm/protocol/protocol';
-import type { TokenUsage } from '#/llm/response';
 
 export type RawUsage = {
   prompt_tokens?: number;
@@ -253,7 +258,7 @@ export function createDecoder(
         return [
           {
             type: 'function',
-            id: toolCall.id ?? crypto.randomUUID(),
+            id: toolCall.id ?? randomUUID(),
             name: functionName,
             arguments: functionArguments ?? null,
             extras: toolCall.extras,
@@ -291,7 +296,7 @@ export function createDecoder(
       return [
         {
           type: 'function',
-          id: buffered.id ?? toolCall.id ?? crypto.randomUUID(),
+          id: buffered.id ?? toolCall.id ?? randomUUID(),
           name: functionName,
           arguments: initialArguments,
           extras: buffered.extras,

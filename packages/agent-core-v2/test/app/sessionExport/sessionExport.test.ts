@@ -1023,6 +1023,8 @@ function liveSessionHandle(options: {
           noteUserInput: () => {},
           noteActiveRequest: () => {},
           noteSubagentDispatch: () => ({}),
+          noteModel: () => {},
+          finishModelSteps: () => undefined,
         } satisfies ISessionRequestAttributionService,
       ],
     ]),
@@ -1066,6 +1068,7 @@ function stubSessionMetadata(meta: SessionMeta): ISessionMetadata {
     setGeneratedTitleIfUncustomized: async () => false,
     setArchived: async () => {},
     registerAgent: async () => {},
+    unregisterAgent: async () => {},
   };
 }
 

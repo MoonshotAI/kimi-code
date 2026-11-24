@@ -2,6 +2,7 @@ import {
   IBashParserService,
   type BashParseResult,
   type BashSyntaxNode,
+  normalizeBashCommandName,
 } from '#/app/bashParser/bashParser';
 import { IConfigService } from '#/app/config/config';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
@@ -317,12 +318,7 @@ function analyzeInvocation(
 }
 
 function normalizeCommandName(raw: string): string {
-  let name = raw;
-  const separator = Math.max(name.lastIndexOf('/'), name.lastIndexOf('\\'));
-  if (separator >= 0) name = name.slice(separator + 1);
-  name = name.toLowerCase();
-  if (name.endsWith('.exe')) name = name.slice(0, -'.exe'.length);
-  return name;
+  return normalizeBashCommandName(raw);
 }
 
 function dropLeadingOptions(args: readonly string[], valueOptions: ReadonlySet<string>): string[] {

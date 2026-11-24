@@ -1,0 +1,37 @@
+{
+  "name": "@moonshot-ai/app-components",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./support": "./src/support.ts"
+  },
+  "dependencies": {
+    "@chenglou/pretext": "0.0.8",
+    "@lobehub/icons-static-svg": "^1.95.0",
+    "@moonshot-ai/app-client": "workspace:*",
+    "@moonshot-ai/app-composer": "workspace:*",
+    "@moonshot-ai/app-core": "workspace:*",
+    "@moonshot-ai/app-i18n": "workspace:*",
+    "@moonshot-ai/app-markdown": "workspace:*",
+    "@moonshot-ai/app-ui": "workspace:*",
+    "@rive-app/canvas": "2.38.5",
+    "@toon-format/toon": "4.1.1",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
+    "uuid": "14.0.1",
+    "vue-i18n": "^11.4.5"
+  },
+  "peerDependencies": {
+    "shiki": "^4.3.0",
+    "vue": "^3.5.35"
+  },
+  "devDependencies": {
+    "@moonshot-ai/vite-preset": "workspace:*",
+    "shiki": "^4.3.0",
+    "typescript": "6.0.2",
+    "vue": "^3.5.35",
+    "vue-tsc": "~3.2.0"
+  }
+}

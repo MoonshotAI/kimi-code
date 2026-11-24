@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { v4 as randomUUID } from "uuid";
 
 import { getForkTurnIndex } from "../shared/fork-turn-index";
 
@@ -20,7 +21,7 @@ function message(
   options: Partial<TestMessage> = {},
 ): TestMessage {
   return {
-    id: crypto.randomUUID(),
+    id: randomUUID(),
     role,
     content: "",
     timestamp: 1,

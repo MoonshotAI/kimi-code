@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<style>html{background:#fff;color:#111}</style>
+<title>Expense report</title>
+<h1>Expense report</h1>
+<label>Receipt <input type="file" id="receipt"></label>
+<p id="status">No receipt yet</p>
+<ul id="received" aria-label="Received files"></ul>
+<script>
+  const input = document.getElementById('receipt');
+  const status = document.getElementById('status');
+  let cancels = 0;
+  input.addEventListener('change', () => {
+    for (const file of input.files) {
+      const item = document.createElement('li');
+      item.textContent = file.name;
+      document.getElementById('received').append(item);
+    }
+    status.textContent = `Received ${input.files.length} file(s)`;
+  });
+  input.addEventListener('cancel', () => {
+    cancels += 1;
+    status.textContent = `Picker cancelled ${cancels} time(s)`;
+  });
+</script>
+</html>
