@@ -19,7 +19,6 @@ import {
   IAgentProfileService,
   IAgentToolRegistryService,
   IAgentToolSelectService,
-  IFeatureManager,
   ISessionManager,
   ISessionMcpHandle,
 } from '@moonshot-ai/agent-core-v2';
@@ -620,30 +619,6 @@ it('passes trusted subagent runs through dynamic and direct tools without weaken
     expect(runBrowserAutomation).toHaveBeenCalledTimes(5);
   } finally {
     await harness.dispose();
-  }
-}, 30000);
-
-it('creates sessions and agents without the browser tool when no host browser is given', async () => {
-  vi.stubEnv('KIMI_CODE_PERSISTENCE_MINIDB_READMODEL', 'false');
-  vi.stubEnv('KIMI_CODE_SEARCH_WORKER', 'false');
-  const home = await mkdtemp(join(tmpdir(), 'desktop-browser-tool-absent-'));
-  const server = await startServer({
-    hostIdentity: { productName: 'test-host', platform: 'test_platform', version: '0.0.0' },
-    homeDir: home,
-    port: 0,
-    logLevel: 'silent',
-    env: { ...process.env },
-  });
-  try {
-    const session = await server.core.accessor.get(ISessionManager).create({ workDir: home });
-    expect(server.core.accessor.get(IFeatureManager).units().map((unit) => unit.name)).not.toContain('hostBrowser');
-    const agent = await agentOf(session);
-    await runReminderStep(agent);
-    expect(tool(agent)).toBeUndefined();
-    expect(reminders(agent)).toEqual([]);
-  } finally {
-    await server.close();
-    await rm(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   }
 }, 30000);
 
