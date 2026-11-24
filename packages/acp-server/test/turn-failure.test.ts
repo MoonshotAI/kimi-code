@@ -1,5 +1,8 @@
+import { writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+
 import { writeKimiConfig } from '@moonshot-ai/testkit/fixtures';
-import { call, fakeModelConfig, finishWith, httpError, say } from '@moonshot-ai/testkit/model';
+import { fakeModelConfig, finishWith, httpError, read, say } from '@moonshot-ai/testkit/model';
 import {
   homeFixtures,
   modelFixtures,
@@ -87,7 +90,9 @@ describe('how session/prompt answers a turn that ended', () => {
   });
 
   test('answers with the error when a turn runs out of steps', { timeout: 30_000 }, async ({ model, testHome }) => {
-    model.script(call('Glob', { pattern: '*' }));
+    const notes = join(testHome.workspace, 'notes.txt');
+    await writeFile(notes, 'Step one.\n');
+    model.script(read(notes));
     await inAcpSession({ model, testHome }, { max_steps_per_turn: 1 }, async (client, sessionId) => {
       expect(await promptAnswer(client, sessionId, 'Keep going.')).toMatchObject({
         error: {
