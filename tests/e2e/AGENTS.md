@@ -1,6 +1,6 @@
 # 新 E2E
 
-一端是模拟的用户输入，另一端是真实的产品进程，中间只有 testkit 的假模型是假的。每个场景查三样：模型收到了什么、界面显示了什么、磁盘变成了什么样。同一个场景要在 TUI、Web、Desktop、ACP 四个面上各跑一遍；目前接通了 TUI、ACP 和 Desktop，Web 的驱动接入之前，`playwright.config.ts` 里没有它的 project。
+一端是模拟的用户输入，另一端是真实的产品进程，中间只有 testkit 的假模型是假的。每个场景查三样：模型收到了什么、界面显示了什么、磁盘变成了什么样。同一个场景要在 TUI、Web、Desktop、ACP 四个面上各跑一遍，四个面都已接通。
 
 旧 E2E 不在这里：`apps/desktop/e2e/`、`apps/desktop/test/e2e/`、`apps/kimi-code/test/e2e/`，以及 `packages/acp-server/test/` 里的 e2e 和 parity 测试。不要把它们搬进来，也不要 import 它们的夹具。KAP 协议本身的场景在 `tests/scenarios/`。
 
@@ -21,9 +21,10 @@ playwright.config.ts               一个面一个 project
 - TUI 驱动借系统的 `script` 命令给 CLI 一个真终端，只支持 Linux 和 macOS。
 - ACP 驱动把 `kimi acp` 当子进程启动，自己扮演编辑器：声明 fs 和终端两种能力，读写文件用真实的磁盘，跑命令用真实的 shell。终端命令跑在自己的进程组里，所以也只支持 Linux 和 macOS。
 - Desktop 跑的是构建产物，先 `pnpm --filter kimi-code-app run build`，再 `pnpm --filter @moonshot-ai/e2e exec playwright test --project=desktop`。改了 `apps/desktop` 或它依赖的 `packages/` 之后要重新构建，否则测到的是旧界面。Desktop 的用例一个一个跑。Linux 上没有显示器时，外面套一层 `xvfb-run -a`。
-- Desktop 的窗口默认不显示。想看着跑，设 `E2E_HEADED=1`。
+- Web 跑的是 CLI 自带的 Web 界面。先 `pnpm sync:web` 把界面构建出来，改了 `apps/desktop/src/renderer` 或它依赖的 `packages/` 之后要重跑；第一次还要装浏览器：`pnpm --filter @moonshot-ai/e2e exec playwright install chromium`。然后 `pnpm --filter @moonshot-ai/e2e exec playwright test --project=web`。CLI 本身和 TUI 一样，默认跑源码，设 `TESTKIT_CLI_BUILD=dist` 跑构建产物。结束时驱动给服务端发 Ctrl+C，所以也只支持 Linux 和 macOS。
+- Desktop 的窗口和 Web 的浏览器默认都不显示。想看着跑，设 `E2E_HEADED=1`。
 - 工作区必须在 git 工作树之外。`TMPDIR` 如果在某个仓库里，夹具会直接报错：POSIX 上，工作区在 git 工作树里时，Edit 和 Write 会被自动批准，审批场景会挂住。
-- CI：`.github/workflows/e2e.yml`，每个 PR 都在 Linux 上跑，作业名带 optional；Desktop 作业跑在 xvfb 的虚拟显示器里。仓库目前没有必过检查，所以它红了不挡合并。
+- CI：`.github/workflows/e2e.yml`，每个 PR 都在 Linux 上跑，作业名带 optional；Desktop 作业跑在 xvfb 的虚拟显示器里，Web 作业先装 Chromium。仓库目前没有必过检查，所以它红了不挡合并。
 
 ## 写场景
 
@@ -64,7 +65,7 @@ scenario('reads one file and edits another after approval', { workspace: { 'a.tx
 | 前置准备只能用用户自己也能用的方式：配置文件、命令行参数、用户文档里公开的环境变量。绕不过去的界面就在界面上走。隔离用的环境变量一律来自 testkit 的 `testEnv()` 和 `kimiCliEnv()`，驱动不自己拼 | 评审；`scripts/checks/e2e-boundary.mjs` 要求这个目录里出现的每个 `KIMI_*` 名字都写在 `docs/en/configuration/env-vars.md` 里 |
 | 产品专门为测试加的开关和其他例外，只能登记在 `scripts/checks/e2e-boundary.json` 里并写明理由；不再用到的条目会被报出来 | `scripts/checks/e2e-boundary.mjs` |
 | 改变状态的动作等到界面上出现证据才返回。动作先等到确定的状态再下结论：审批出现了或回合结束了，期望成立了或回合结束了，不靠超时来判断 | 驱动自测 |
-| `expectTool` 和 `expectReply` 只看最近一条用户消息之后的内容，工具卡片不算回复，工具调用前后的两段话不拼在一起匹配；被用户停止而没跑完的工具算 `failed`；回合是否结束要看产品自己的信号（TUI 的活动指示，ACP 的 `session/prompt` 答复，Desktop 上 `Interrupt` 按钮不在、没有审批卡、输入框可见，并且页面内容连续两次读到的都一样），不能凭转录里出现的某段文字 | 驱动自测 |
+| `expectTool` 和 `expectReply` 只看最近一条用户消息之后的内容，工具卡片不算回复，工具调用前后的两段话不拼在一起匹配；被用户停止而没跑完的工具算 `failed`；回合是否结束要看产品自己的信号（TUI 的活动指示，ACP 的 `session/prompt` 答复，Desktop 和 Web 上 `Interrupt` 按钮不在、没有审批卡、输入框可见，并且页面内容连续两次读到的都一样），不能凭转录里出现的某段文字 | 驱动自测 |
 | 每个动作在每个面上都要有正例和反例。自测写成 `selfTest('动作', { positive, negative })`，放在以动作命名的文件里；要加动作，先改 `VERBS` | `selfTest()` 登记时检查每个面都有正反例；`self-test/coverage.spec.ts` 检查每个动作都有自测文件 |
 | 动作的含义由自测固定，改自测就等于改含义 | CODEOWNERS 评审 |
 | 产品不连真网络：会去 CDN 下载的工具和 Desktop 启动时要取的模型目录，在 `surfaces/offline.ts` 里桩成 404，其余对外连接由 testkit 的网络守卫记下 | 收尾检查 |
@@ -72,6 +73,9 @@ scenario('reads one file and edits another after approval', { workspace: { 'a.tx
 | Desktop 和 Web 上，工具卡片靠三样认出来：工具标签（Bash 的标签是 `Run`）、目标、状态。文件类工具的目标对的是文件按钮上的完整路径，不是只对文件名；Bash 的目标对的是卡片头上的命令，命令输出里的文字不算。回复只认 Markdown 渲染出来的那一块，思考块和工具卡片不算。一块内容要么是回复、要么是卡片：回复里写了工具标签和目标（例如加粗的 `Run` 后面跟一段命令，或者被渲染成文件链接的文件名）不算工具卡片 | 驱动自测 |
 | Desktop 用启动参数 `--workspace=` 打开工作区，引导向导在界面上点 `Skip` 跳过。网络分三路：主进程里 Node 发的请求由 testkit 的网络守卫记下；渲染进程的请求由驱动记下（只看不拦）；域名解析用启动参数关掉。有一路记不到：主进程经 Electron 的 `net` 发的请求走 Chromium 的网络栈，只会因为域名解析被关而失败，不会让用例变红 | 评审 |
 | Desktop 的发送要认出「新出现的那条消息」：看消息在对话里的位置，不数同样文字出现了几次，也不记这一行的内部标识。对话列表只渲染视口附近的行，而且新消息这一行在服务端确认前后会换标识 | 驱动自测 |
+| Web 把 `kimi web --port 0 --no-open` 当子进程启动，读它打印的 `Local:` 地址，用 Chromium 打开。地址原样使用，不加任何额外参数。引导向导在界面上点 `Skip` 跳过，工作区在页面的 `New project` 对话框里填路径添加。服务端进程用 testkit 的网络守卫，页面这一侧和 Desktop 一样由驱动记下 | 评审 |
+| Web 结束时，页面里不能有未捕获的错误，页面不能有发往本机以外的请求或 socket；关掉浏览器之后给服务端所在的进程组发 Ctrl+C，它要在限时内以 0 退出。这一条查得出服务端卡住或崩溃，查不出「关闭过程出了错」：产品在关闭出错时也以 0 退出，默认也不打印日志 | 收尾检查 |
+| Desktop 和 Web 共用的记录和收尾在 `surfaces/page-driver.ts` 里：发往本机以外的请求和 socket、页面里的未捕获错误、trace、失败时的页面内容。这两个面的驱动只管各自的进程怎么启动、怎么退出 | 评审 |
 | Desktop 结束时，窗口里不能有未捕获的错误，应用要以 0 退出，渲染进程不能有发往本机以外的请求。退出用的是 Playwright 的 `close()`，它在主进程里调用应用的退出，不是用户点的退出；这是驱动里唯一一处在产品进程里执行代码的地方，查的是应用收到退出请求后能不能干净退出 | Desktop 驱动的收尾检查 |
 | Desktop 和 Web 的驱动按产品的默认设置和英文界面工作。「消息自动折叠」默认是关的，打开之后被折起来的卡片驱动找不到 | 评审 |
 | ACP 上工具的结果不能只看 agent 自己报的状态，还要核对编辑器这一侧：Read 完成，要在这次工具调用期间有一条同一路径、编辑器答复成功的 `fs/read_text_file`；Edit 和 Write 完成，要有同样条件的 `fs/write_text_file`；Bash 完成，它引用的终端必须是编辑器建的、跑的是这条命令、退出码是 0 | ACP 驱动的 `expectTool`。场景和自测只能证明它不误报；真实产品造不出反例，靠改坏驱动的破坏性检查和评审 |
@@ -83,7 +87,7 @@ scenario('reads one file and edits another after approval', { workspace: { 'a.tx
 
 - **先分清是产品坏了还是驱动坏了。** 自测也红，多半是驱动或产品的界面变了；只有场景红，先看场景断言的那条产品行为。
 - **不许靠重试、加等待、跳过让它变绿。** flaky 用例照根 `AGENTS.md` 的规则处理：先找根因。实在找不到根因可以删，PR 里写明删掉的用例原来覆盖什么、现在由谁覆盖。
-- **看失败附件。** 每个失败的用例都附上假模型的请求摘要、网络守卫的记录和产品日志；TUI 另有完整的屏幕内容、最近的输入和退出码；ACP 另有按顺序记下的 JSON-RPC 消息（最近 4000 条）、不是 JSON-RPC 的 stdout 行和 stderr 末尾；Desktop 另有 Playwright trace（用 `pnpm --filter @moonshot-ai/e2e exec playwright show-trace <trace.zip>` 打开）、页面内容的末尾、应用的输出和窗口里的未捕获错误。隔离目录在失败时保留，路径记在用例的 `test home` 标注里。
+- **看失败附件。** 每个失败的用例都附上假模型的请求摘要、网络守卫的记录和产品日志；TUI 另有完整的屏幕内容、最近的输入和退出码；ACP 另有按顺序记下的 JSON-RPC 消息（最近 4000 条）、不是 JSON-RPC 的 stdout 行和 stderr 末尾；Desktop 和 Web 另有 Playwright trace（用 `pnpm --filter @moonshot-ai/e2e exec playwright show-trace <trace.zip>` 打开）、页面内容的末尾、应用或服务端的输出和页面里的未捕获错误。隔离目录在失败时保留，路径记在用例的 `test home` 标注里。
 
 ## 不在这里做的事
 

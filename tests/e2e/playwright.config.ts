@@ -15,5 +15,6 @@ export default defineConfig<SurfaceOptions>({
     { name: 'tui', use: { surface: 'tui' } },
     { name: 'acp', use: { surface: 'acp' } },
     { name: 'desktop', use: { surface: 'desktop' }, workers: 1 },
+    { name: 'web', use: { surface: 'web' } },
   ],
 });
