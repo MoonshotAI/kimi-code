@@ -39,7 +39,7 @@ const error = ref('');
 const testFailure = ref<{ failure?: AppHostConnectFailure; reason: string; hint: string; detail: string }>();
 const pendingIds = ref<Record<string, boolean>>({});
 const flashId = ref('');
-const backButton = ref<HTMLButtonElement>();
+const backButton = ref<InstanceType<typeof IconButton>>();
 const nameInput = ref<InstanceType<typeof Input>>();
 const loadFailed = ref(false);
 const sshHosts = ref<AppSshConfigHosts | null>(null);
@@ -295,7 +295,7 @@ function fillForm(row: AppHost | undefined): void {
 function openAddPage(): void {
   if (detectedHosts.value.length > 0) {
     addTab.value = 'config';
-    void nextTick(() => backButton.value?.focus({ preventScroll: true }));
+    void nextTick(() => backButton.value?.el?.focus({ preventScroll: true }));
     return;
   }
   addTab.value = 'manual';
@@ -542,9 +542,9 @@ void loadHosts();
 <template>
   <section ref="rootEl" :class="subpage ? 're-page' : 're'" @keydown="onKeydown">
     <div v-if="subpage" class="re-page-head">
-      <button ref="backButton" type="button" class="re-back" :aria-label="t('settings.hosts.back')" @click="back">
+      <IconButton ref="backButton" class="re-nav" size="sm" :label="t('settings.hosts.back')" @click="back">
         <Icon name="arrow-left" size="sm" />
-      </button>
+      </IconButton>
       <span class="re-page-title">{{ pageMode === 'edit' && original ? hostDisplayName(original) : t('settings.hosts.add') }}</span>
     </div>
     <div v-else class="re-head">
@@ -830,9 +830,7 @@ void loadHosts();
   border-bottom: var(--p-hairline) solid var(--color-line);
   background: var(--color-bg);
 }
-.re-back { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; margin-left: calc(-1 * var(--space-2)); border: none; border-radius: var(--radius-sm); background: transparent; color: var(--color-text-muted); cursor: pointer; }
-.re-back:hover { background: var(--color-hover); color: var(--color-text-strong); }
-.re-back:focus-visible { outline: none; box-shadow: var(--p-focus-ring); }
+.re-nav { margin-left: calc(-1 * var(--space-2)); }
 .re-page-title { flex: 1; min-width: 0; overflow: hidden; color: var(--color-text); font-family: var(--font-ui); font-size: var(--text-base); font-weight: var(--weight-medium); text-overflow: ellipsis; white-space: nowrap; }
 .re-input-row { display: flex; align-items: center; gap: var(--space-2); }
 .re-input-row > :first-child { flex: 1; min-width: 0; }

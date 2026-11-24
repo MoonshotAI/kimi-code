@@ -270,9 +270,9 @@ onUnmounted(() => {
                 <Kbd v-if="liveKeys.length > 0" :keys="liveKeys" />
                 <span v-else>{{ t('shortcuts.recording') }}</span>
               </span>
-              <button type="button" class="sc-cancel" @click="stopRecording">
+              <Button variant="ghost" size="xs" @click="stopRecording">
                 {{ t('common.cancel') }}
-              </button>
+              </Button>
             </template>
             <template v-else>
               <Kbd v-if="bindingKeys(action.id).length > 0" :keys="bindingKeys(action.id)" />
@@ -397,25 +397,6 @@ onUnmounted(() => {
   background: var(--color-surface-overlay);
   color: var(--color-text);
   font-size: var(--text-sm);
-}
-.sc-cancel {
-  border: none;
-  border-radius: var(--radius-md);
-  background: transparent;
-  padding: var(--space-1) var(--space-2);
-  color: var(--color-text-muted);
-  font-family: var(--font-ui);
-  font-size: var(--text-sm);
-  cursor: pointer;
-  transition: background var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out);
-}
-.sc-cancel:hover {
-  background: var(--color-hover);
-  color: var(--color-text);
-}
-.sc-cancel:focus-visible {
-  outline: none;
-  box-shadow: var(--p-focus-ring);
 }
 .sc-unassigned {
   font-size: var(--text-sm);

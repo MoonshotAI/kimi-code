@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { Icon, Tooltip } from '@moonshot-ai/app-ui';
+import { Icon, IconButton, Tooltip } from '@moonshot-ai/app-ui';
 import FilterSelect from './FilterSelect.vue';
 import { pageItems } from '@moonshot-ai/app-components';
 
@@ -39,15 +39,14 @@ const sizeValue = computed({
       <FilterSelect v-model="sizeValue" :options="sizeOptions" :aria-label="t('admin.pageSize', { n: pageSize })" />
       <div v-if="total > 0" class="sa-pages">
         <Tooltip :text="t('admin.prevPage')">
-          <button
-            class="sa-pg"
-            type="button"
+          <IconButton
+            size="sm"
             :disabled="page === 1"
-            :aria-label="t('admin.prevPage')"
+            :label="t('admin.prevPage')"
             @click="emit('update:page', page - 1)"
           >
             <Icon name="chevron-left" size="sm" />
-          </button>
+          </IconButton>
         </Tooltip>
         <template v-for="(it, i) in items" :key="i">
           <span v-if="it === '…'" class="sa-ellipsis">…</span>
@@ -62,15 +61,14 @@ const sizeValue = computed({
           </button>
         </template>
         <Tooltip :text="t('admin.nextPage')">
-          <button
-            class="sa-pg"
-            type="button"
+          <IconButton
+            size="sm"
             :disabled="page === totalPages"
-            :aria-label="t('admin.nextPage')"
+            :label="t('admin.nextPage')"
             @click="emit('update:page', page + 1)"
           >
             <Icon name="chevron-right" size="sm" />
-          </button>
+          </IconButton>
         </Tooltip>
       </div>
     </div>
@@ -130,14 +128,6 @@ const sizeValue = computed({
 }
 .sa-pg.cur:hover {
   background: var(--color-selected);
-}
-.sa-pg:disabled {
-  opacity: 0.38;
-  cursor: default;
-}
-.sa-pg:disabled:hover {
-  background: transparent;
-  color: var(--color-text-muted);
 }
 .sa-ellipsis {
   padding: 0 var(--space-1);
