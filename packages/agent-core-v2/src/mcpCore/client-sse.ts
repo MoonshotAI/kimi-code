@@ -3,13 +3,13 @@ import type { McpServerSseConfig } from './config-schema';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import type { OAuthClientProvider } from '@modelcontextprotocol/sdk/client/auth.js';
 import { SSEClientTransport, SseError } from '@modelcontextprotocol/sdk/client/sse.js';
-import { ToolListChangedNotificationSchema } from '@modelcontextprotocol/sdk/types.js';
 
 import {
   buildRequestOptions,
   KIMI_MCP_CLIENT_NAME,
   KIMI_MCP_CLIENT_VERSION,
   MCP_LIVENESS_PROBE_TIMEOUT_MS,
+  onMcpToolsChanged,
   toMcpToolDefinition,
   toMcpToolResult,
   type SessionEvidence,
@@ -99,10 +99,7 @@ export class SseMcpClient implements MCPClient {
   }
 
   onToolsChanged(listener: () => void): void {
-    this.client.setNotificationHandler(ToolListChangedNotificationSchema, () => {
-      if (this.closed || !this.ready) return;
-      listener();
-    });
+    onMcpToolsChanged(this.client, () => !this.closed && this.ready, listener);
   }
 
   async listTools(): Promise<MCPToolDefinition[]> {

@@ -1,7 +1,7 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { ReadBuffer, serializeMessage } from '@modelcontextprotocol/sdk/shared/stdio.js';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
-import { ToolListChangedNotificationSchema, type JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js';
+import type { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js';
 
 import { proxyEnvForChild, reconcileChildNoProxy } from '#/_base/utils/proxy';
 import { LOCAL_ENVIRONMENT_ID } from '#/environment/environment';
@@ -16,6 +16,7 @@ import {
   KIMI_MCP_CLIENT_VERSION,
   MCP_LIVENESS_PROBE_TIMEOUT_MS,
   McpClassifiedStartupError,
+  onMcpToolsChanged,
   toMcpToolDefinition,
   toMcpToolResult,
   type SessionEvidence,
@@ -108,10 +109,7 @@ export class StdioMcpClient implements MCPClient {
   }
 
   onToolsChanged(listener: () => void): void {
-    this.client.setNotificationHandler(ToolListChangedNotificationSchema, () => {
-      if (this.closed || !this.ready) return;
-      listener();
-    });
+    onMcpToolsChanged(this.client, () => !this.closed && this.ready, listener);
   }
 
   async listTools(): Promise<MCPToolDefinition[]> {

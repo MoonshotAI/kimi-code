@@ -1,5 +1,10 @@
 import { getCoreVersion } from '#/_base/version';
-import { ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js';
+import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import {
+  ErrorCode,
+  McpError,
+  ToolListChangedNotificationSchema,
+} from '@modelcontextprotocol/sdk/types.js';
 
 import type { MCPClient, MCPToolDefinition, MCPToolResult } from './types';
 
@@ -16,6 +21,17 @@ export type SessionEvidence =
   | { readonly kind: 'weak'; readonly reason: UnexpectedCloseReason };
 
 export type SessionEvidenceListener = (evidence: SessionEvidence) => void;
+
+export function onMcpToolsChanged(
+  client: Client,
+  isActive: () => boolean,
+  listener: () => void,
+): void {
+  client.setNotificationHandler(ToolListChangedNotificationSchema, () => {
+    if (!isActive()) return;
+    listener();
+  });
+}
 
 export type McpFailureKind = 'config' | 'protocol' | 'auth-static' | 'auth-oauth' | 'transport';
 
