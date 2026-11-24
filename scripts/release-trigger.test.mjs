@@ -53,7 +53,7 @@ afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: tru
 await test('merged version PR waits for its push CI, not newer or PR runs', () => {
   const result = run();
   assert.equal(result.status, 0, result.stderr);
-  assert.equal(result.output, 'publish=true\n');
+  assert.equal(result.output, 'publish=true\nci-run-id=7\n');
   assert.deepEqual(result.calls.at(-1), ['run', 'watch', '7', '--repo', repo, '--exit-status', '--interval', '10']);
 });
 
