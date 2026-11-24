@@ -69,9 +69,14 @@ class DesktopDriver extends PageDriver {
   async close(): Promise<void> {
     if (this.exit !== undefined) throw new Error(`The Desktop app exited before the scenario closed it.\n${this.describe()}`);
     await this.leave();
-    const closing = this.app.close().then(
-      () => undefined,
-      (error: unknown) => reasonOf(error),
+    let closed: { readonly refused: string | undefined } | undefined;
+    void this.app.close().then(
+      () => {
+        closed = { refused: undefined };
+      },
+      (error: unknown) => {
+        closed = { refused: reasonOf(error) };
+      },
     );
     let exit;
     try {
@@ -79,10 +84,11 @@ class DesktopDriver extends PageDriver {
     } catch (cause) {
       throw new Error(`The Desktop app did not exit after it was asked to quit.\n${this.describe()}`, { cause });
     }
-    const refused = await closing;
+    const stuck = await this.finishClosing(() => closed);
     const problems = [
       ...(exit.code === 0 ? [] : [`The Desktop app exited with code ${String(exit.code)} and signal ${String(exit.signal)}.`]),
-      ...(refused === undefined ? [] : [`Closing the Desktop app reported: ${refused}`]),
+      ...(stuck === undefined ? [] : [stuck]),
+      ...(closed?.refused === undefined ? [] : [`Closing the Desktop app reported: ${closed.refused}`]),
       ...this.pageProblems(),
     ];
     if (problems.length > 0) throw new Error(`${problems.join('\n')}\n${this.describe()}`);
@@ -97,6 +103,7 @@ class DesktopDriver extends PageDriver {
     } catch {
       this.output = `${this.output}\nThe Desktop app did not exit after it was killed.`;
     }
+    this.dropOutput();
   }
 
   async networkViolations(): Promise<readonly string[]> {
@@ -107,6 +114,41 @@ class DesktopDriver extends PageDriver {
     if (this.exit === undefined) await this.readPage();
     await this.saveTrace();
     return [...this.pageDiagnostics(), { name: 'desktop-session', body: this.describe() }];
+  }
+
+  private async finishClosing(closed: () => object | undefined): Promise<string | undefined> {
+    if (await this.within('closing the Desktop app to finish', closed)) return undefined;
+    const gone = await this.within("the Desktop app's own processes to exit", () => (this.ownProcessesAlive() ? undefined : true));
+    if (!gone) return 'The Desktop app exited, but processes of its own were still running.';
+    this.output = `${this.output}\nThe app and its own processes had exited, but its output was still held open by something outside its process group.`;
+    this.dropOutput();
+    if (await this.within('closing the Desktop app to finish', closed)) return undefined;
+    return 'The Desktop app exited, but closing it never finished.';
+  }
+
+  private async within(label: string, check: () => unknown): Promise<boolean> {
+    try {
+      await until(label, check, { timeoutMs: TIMEOUTS.wait });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  private ownProcessesAlive(): boolean {
+    const pid = this.app.process().pid;
+    if (pid === undefined) return false;
+    try {
+      process.kill(-pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  private dropOutput(): void {
+    this.app.process().stdout?.destroy();
+    this.app.process().stderr?.destroy();
   }
 
   private async wait<T>(label: string, check: () => T | undefined): Promise<Exclude<T, undefined>> {
