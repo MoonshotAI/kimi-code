@@ -57,7 +57,7 @@ export default {
             { type: 'input_text', text: 'Weather?' },
             { type: 'input_image', detail: 'auto', image_url: 'https://example.test/a.png' },
             { type: 'input_file', file_data: 'AAAA', filename: 'inline.wav' },
-            { type: 'input_text', text: '(video omitted: not supported by this provider)' },
+            { type: 'input_file', file_url: 'https://example.test/a.mp4' },
           ],
         },
       ],

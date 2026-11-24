@@ -3,6 +3,7 @@ import { shake } from 'radashi';
 
 import type { ContentPart, Message, ToolDescription } from '#/llm/message';
 import type { LlmSampling, ResponseFormat, ThinkingRequestOptions } from '#/llm/request';
+import { capabilityAccepts } from '#/llm/request';
 import { mediaUrlOf } from '#/llm/protocol/kit/media';
 import { withExtras } from '#/llm/protocol/kit/params';
 import type { NativeModule, PipelineSpec } from '#/llm/protocol/pipeline';
@@ -65,9 +66,40 @@ function mapAudioUrlToInputItem(url: string): NativePart | null {
   return null;
 }
 
+const VIDEO_FILE_EXTENSIONS: Readonly<Record<string, string>> = {
+  mp4: 'mp4',
+  mpeg: 'mpeg',
+  quicktime: 'mov',
+  webm: 'webm',
+  'x-matroska': 'mkv',
+  'x-msvideo': 'avi',
+  'x-ms-wmv': 'wmv',
+  'x-m4v': 'm4v',
+  ogg: 'ogv',
+  'x-flv': 'flv',
+  '3gpp': '3gp',
+  '3gpp2': '3g2',
+};
+
+function mapVideoUrlToInputItem(url: string): NativePart | null {
+  if (url.startsWith('ms://') || url.startsWith('http://') || url.startsWith('https://')) {
+    return { type: 'input_file', file_url: url };
+  }
+  if (!url.startsWith('data:video/')) return null;
+  const parts = url.split(',', 2);
+  if (parts.length !== 2 || parts[0] === undefined || parts[1] === undefined) return null;
+  const subtypePart = parts[0].split('/')[1];
+  if (subtypePart === undefined) return null;
+  const [subtype = ''] = subtypePart.split(';');
+  const ext = VIDEO_FILE_EXTENSIONS[subtype.toLowerCase()];
+  if (ext === undefined) return null;
+  return { type: 'input_file', file_data: url, filename: `inline.${ext}` };
+}
+
 function contentPartsToInputItems(
   parts: readonly ContentPart[],
   detail: 'auto' | undefined,
+  videoIn: boolean,
 ): NativePart[] {
   const items: NativePart[] = [];
   for (const part of parts) {
@@ -89,9 +121,11 @@ function contentPartsToInputItems(
         items.push(mapped ?? { type: 'input_text', text: OMITTED_AUDIO_PLACEHOLDER });
         break;
       }
-      case 'video_url':
-        items.push({ type: 'input_text', text: OMITTED_VIDEO_PLACEHOLDER });
+      case 'video_url': {
+        const mapped = videoIn ? mapVideoUrlToInputItem(mediaUrlOf(part)) : null;
+        items.push(mapped ?? { type: 'input_text', text: OMITTED_VIDEO_PLACEHOLDER });
         break;
+      }
       case 'think':
         break;
     }
@@ -135,6 +169,7 @@ function usesOpenAIResponsesDeveloperRole(modelName: string): boolean {
 type OpenAIResponsesModule = LlmModule<OpenAIResponsesOptions>;
 
 function lowerMessage(message: Message, module: OpenAIResponsesModule): NativeMessage[] {
+  const videoIn = capabilityAccepts(module.model.spec.capability, 'video');
   if (message.role === 'tool') {
     return [
       {
@@ -142,7 +177,7 @@ function lowerMessage(message: Message, module: OpenAIResponsesModule): NativeMe
         output:
           module.options?.toolMessageConversion === 'extract_text'
             ? convertToolResultToPlainText(message)
-            : contentPartsToInputItems(message.content, undefined),
+            : contentPartsToInputItems(message.content, undefined, videoIn),
         type: 'function_call_output',
       },
     ];
@@ -167,7 +202,7 @@ function lowerMessage(message: Message, module: OpenAIResponsesModule): NativeMe
         });
       } else {
         result.push({
-          content: contentPartsToInputItems(pendingParts, 'auto'),
+          content: contentPartsToInputItems(pendingParts, 'auto', videoIn),
           role,
           type: 'message',
         });
@@ -288,7 +323,12 @@ export const openAIResponsesMedia: MediaSupport = {
   kinds: {
     image: { mimes: 'any', sources: ['url', 'inline', 'file'], inToolResult: 'native' },
     audio: { mimes: 'any', sources: ['url', 'inline', 'file'], inToolResult: 'native' },
-    video: { mimes: 'any', sources: ['url', 'inline', 'file'], inToolResult: 'native' },
+    video: {
+      mimes: 'any',
+      inlineMimes: new Set(Object.keys(VIDEO_FILE_EXTENSIONS).map((subtype) => `video/${subtype}`)),
+      sources: ['url', 'inline', 'file'],
+      inToolResult: 'native',
+    },
   },
 };
 

@@ -2,6 +2,7 @@ import { resolveEndpoint } from '@moonshot-ai/core/llm/endpoint';
 import type { ContentPart, ImageURLPart, MediaKind, VideoURLPart } from '@moonshot-ai/core/llm/message';
 import type { ImageUploadInput, VideoUploadInput } from '#human/media/upload';
 import {
+  acceptsInlineMime,
   acceptsMime,
   acceptsSource,
   mediaSupportAt,
@@ -99,6 +100,10 @@ export function mediaSupportForRequest(
 
 export function mediaAcceptsMime(support: MediaKindSupport, mimeType: string): boolean {
   return acceptsMime(support, mimeType);
+}
+
+export function mediaAcceptsInlineMime(support: MediaKindSupport, mimeType: string): boolean {
+  return acceptsInlineMime(support, mimeType);
 }
 
 export function mediaAcceptsSource(
