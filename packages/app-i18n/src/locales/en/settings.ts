@@ -86,6 +86,8 @@ export default {
     sessionMentionsHint: "Search for and reference other sessions from the {'@'} menu. The agent reads the referenced session logs on its own.",
     contextInspector: 'Context usage',
     contextInspectorHint: 'Show context usage and composition in the composer ring and session info, and inspect each item the model receives.',
+    promptPrediction: 'Prompt prediction',
+    promptPredictionHint: 'After a turn completes, predict what you might type next and show it as the composer placeholder. Press Tab or Right Arrow to insert it.',
   },
   plugins: {
     localOnlyHint: 'Plugins and MCP servers apply to projects on this machine only. Projects on SSH hosts use what is set up on each host',

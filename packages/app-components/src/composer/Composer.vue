@@ -247,12 +247,64 @@ const browserCaptures = ref<BrowserCapture[]>([]);
 
 const towerEnabled = computed(() => client.experimentalFlags.value['tower'] === true);
 
+const attachmentEntries = ref<AttachmentEntry[]>([]);
+const attachmentInventoryState = shallowRef<AttachmentInventoryState>({
+  orderedIds: [],
+  activeIds: new Set(),
+  refCounts: new Map(),
+  resourceRevision: 0,
+});
+const activeAttachmentEntries = computed(() => {
+  const byAttId = new Map(attachmentEntries.value.map((entry) => [entry.attId, entry] as const));
+  return attachmentInventoryState.value.orderedIds
+    .map((attId) => byAttId.get(attId))
+    .filter((entry): entry is AttachmentEntry => entry !== undefined);
+});
+
+const promptPredictionIdle = computed(() =>
+  client.experimentalFlags.value['prompt_prediction'] === true &&
+  client.promptPredictionHasTurn?.value === true &&
+  props.placeholderText === undefined &&
+  !starting.value &&
+  !isSideChat.value &&
+  !running.value &&
+  !goalMode.value &&
+  !planArmed.value &&
+  !planMode.value &&
+  text.value.trim().length === 0 &&
+  activeAttachmentEntries.value.length === 0
+);
+const promptPredictionSuggestion = computed(() => {
+  const suggestion = client.promptPrediction?.value ?? null;
+  if (!promptPredictionIdle.value || suggestion === null || suggestion.sessionId !== sessionId.value) return undefined;
+  return suggestion;
+});
+const promptPredictionText = computed(() => promptPredictionSuggestion.value?.text);
+const promptPredictionPlaceholderActive = computed(() => promptPredictionIdle.value || promptPredictionText.value !== undefined);
+const promptPredictionPlaceholder = computed(() => promptPredictionText.value ?? placeholder.value);
+const promptPredictionActionAvailable = computed(() => promptPredictionIdle.value);
+const promptPredictionA11yId = useId();
+const promptPredictionA11yText = computed(() => {
+  const prediction = promptPredictionText.value;
+  return prediction === undefined ? '' : t('composer.promptPredictionHint', { prediction });
+});
+
 const { text, editorRef, loadForEdit: loadTextForEdit, clearDraft, loadDraftAttachments, saveDraftAttachments, saveDraft, loadRestorableDraftSnapshot, saveDraftSnapshot } = useComposerDraft({
   sessionId: () => scopeId.value,
   onBeforeSessionSave: (sid) => {
     restoreBrowsingDraftForDeparture(sid);
     if (editor !== null && editorSessionScope === composerSessionScope(sid)) saveDraftSnapshot(sid, editor.getSnapshot());
   },
+});
+
+let insertedPromptPredictionRevision: string | undefined;
+watch(promptPredictionSuggestion, (suggestion) => {
+  if (suggestion?.accepted !== true) return;
+  const revision = `${suggestion.predictionId}:${String(suggestion.acceptedRevision)}`;
+  if (insertedPromptPredictionRevision === revision) return;
+  insertedPromptPredictionRevision = revision;
+  loadTextForEdit(suggestion.text);
+  handleInput();
 });
 
 const highlightCommands = computed(() => buildSlashItems([], { towerEnabled: towerEnabled.value, extraBuiltins: props.extraBuiltinCommands }));
@@ -274,13 +326,6 @@ const commandArgumentDescription = computed(() => {
 
 const commandArgumentDescriptionId = useId();
 
-const attachmentEntries = ref<AttachmentEntry[]>([]);
-const attachmentInventoryState = shallowRef<AttachmentInventoryState>({
-  orderedIds: [],
-  activeIds: new Set(),
-  refCounts: new Map(),
-  resourceRevision: 0,
-});
 let releaseAttachmentStore: (() => void) | null = null;
 let inventoryReady = false;
 
@@ -288,12 +333,6 @@ function attachmentScope(sid = scopeId.value): string {
   return composerSessionScope(sid);
 }
 
-const activeAttachmentEntries = computed(() => {
-  const byAttId = new Map(attachmentEntries.value.map((entry) => [entry.attId, entry] as const));
-  return attachmentInventoryState.value.orderedIds
-    .map((attId) => byAttId.get(attId))
-    .filter((entry): entry is AttachmentEntry => entry !== undefined);
-});
 const activeMediaEntries = computed(() =>
   activeAttachmentEntries.value.filter(
     (entry): entry is AttachmentEntry & { kind: 'image' | 'video' } =>
@@ -658,7 +697,9 @@ onMounted(() => {
     );
   });
   watchEffect(() => {
-    editor?.setPlaceholder(commandArgumentPlaceholder.value || placeholder.value);
+    editor?.setPlaceholder(commandArgumentPlaceholder.value || promptPredictionPlaceholder.value, {
+      allowWhitespace: commandArgumentPlaceholder.value === '' && promptPredictionPlaceholderActive.value,
+    });
   });
 
   function restoreSessionState(sid: string | undefined): void {
@@ -742,8 +783,12 @@ onMounted(() => {
     const dom = editor?.dom;
     if (!dom) return;
     dom.setAttribute('aria-label', t('composer.inputLabel'));
-    dom.setAttribute('aria-placeholder', placeholderText(placeholder.value));
-    if (commandArgumentDescription.value) dom.setAttribute('aria-describedby', commandArgumentDescriptionId);
+    dom.setAttribute('aria-placeholder', placeholderText(commandArgumentPlaceholder.value || promptPredictionPlaceholder.value));
+    const descriptionIds = [
+      commandArgumentDescription.value ? commandArgumentDescriptionId : '',
+      promptPredictionA11yText.value ? promptPredictionA11yId : '',
+    ].filter((id) => id !== '').join(' ');
+    if (descriptionIds) dom.setAttribute('aria-describedby', descriptionIds);
     else dom.removeAttribute('aria-describedby');
     dom.setAttribute('aria-expanded', String(!!menuAriaControls.value));
     const controls = menuAriaControls.value;
@@ -1068,6 +1113,7 @@ function handleEditorBlur(): void {
 function handleInput(): void {
   resetHistoryBrowse();
   if (!isSideChat.value) {
+    client.handlePromptPredictionInput();
     updateSlashMenu();
     updateMentionMenu();
   }
@@ -1869,6 +1915,7 @@ function handleSubmit(): void {
     decision.kind === 'prompt-command' ||
     (decision.kind === 'builtin-command' && decision.leave === true);
   if (sessionBound && !passSubmitGate()) return;
+  if (!isSideChat.value) client.handlePromptPredictionSubmit(text.value);
   const snapshot = editor?.getSnapshot();
   const restoreEntries = snapshotAttachmentEntries(activeAttachmentEntries.value);
   history.push(decision.historyText, snapshot);
@@ -1994,6 +2041,12 @@ function handleCompositionEnd(): void {
 
 function isComposingKeyEvent(e: KeyboardEvent): boolean {
   return isComposingText || e.isComposing || e.keyCode === 229;
+}
+
+function acceptPromptPrediction(key: 'tab' | 'right'): boolean {
+  if (!promptPredictionActionAvailable.value) return false;
+  const prediction = client.acceptPromptPrediction(key);
+  return prediction !== null || (client.promptPredictionPending?.value ?? null) !== null;
 }
 
 function handleKeydown(e: KeyboardEvent): boolean {
@@ -2122,6 +2175,18 @@ function handleKeydown(e: KeyboardEvent): boolean {
         return true;
       }
     }
+  }
+
+  if (
+    (e.key === 'Tab' || e.key === 'ArrowRight') &&
+    !e.shiftKey &&
+    !e.altKey &&
+    !e.metaKey &&
+    !e.ctrlKey &&
+    acceptPromptPrediction(e.key === 'Tab' ? 'tab' : 'right')
+  ) {
+    e.preventDefault();
+    return true;
   }
 
   if (e.key === 's' && (e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey) {
@@ -3453,6 +3518,7 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
             :data-wm="workMode ? 'true' : 'false'"
           ></div>
           <span :id="commandArgumentDescriptionId" class="composer-sr-only" role="status">{{ commandArgumentDescription }}</span>
+          <span :id="promptPredictionA11yId" class="composer-sr-only" role="status">{{ promptPredictionA11yText }}</span>
           <Tooltip :text="expanded ? t('composer.collapseTitle') : t('composer.expandTitle')">
           <button
             v-if="expanded || isGrown"
