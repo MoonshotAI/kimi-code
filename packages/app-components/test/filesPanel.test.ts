@@ -18,9 +18,10 @@ const fakes = vi.hoisted(() => ({
     selectFileTreeRoot: ReturnType<typeof vi.fn>;
   },
   workspaces: null as unknown as {
-    workspaces: Array<{ id: string; root: string; name: string; additionalDirs: string[] }>;
-    mergedWorkspaces: Array<{ id: string; root: string; name: string; additionalDirs: string[] }>;
+    workspaces: Array<{ id: string; root: string; name: string; additionalDirs: string[]; hostId?: string }>;
+    mergedWorkspaces: Array<{ id: string; root: string; name: string; additionalDirs: string[]; hostId?: string }>;
   },
+  previewOptions: null as unknown as { client: { getFsHome: (hostId?: string) => Promise<{ home: string; recentRoots: string[] }> } },
   preview: null as unknown as Record<string, unknown> & {
     openFilePreview: ReturnType<typeof vi.fn>;
     closeFilePreview: ReturnType<typeof vi.fn>;
@@ -39,7 +40,10 @@ vi.mock('@moonshot-ai/app-client/stores', () => ({
 
 vi.mock('@moonshot-ai/app-client/contracts', () => ({ track: vi.fn() }));
 vi.mock('@moonshot-ai/app-client/composables', () => ({
-  useFilePreview: () => fakes.preview,
+  useFilePreview: (options: unknown) => {
+    fakes.previewOptions = options as { client: { getFsHome: (hostId?: string) => Promise<{ home: string; recentRoots: string[] }> } };
+    return fakes.preview;
+  },
 }));
 vi.mock('@moonshot-ai/app-ui', () => ({
   EmptyState: { render: () => null },
@@ -103,6 +107,7 @@ beforeEach(() => {
     status: ref({ cwd: '/repo' }),
     turns: ref([]),
     getFileDownloadUrl: vi.fn(),
+    getFsHome: vi.fn(async () => ({ home: '/home/test', recentRoots: [] })),
     readHostFileContent: vi.fn(),
     readFileContent: vi.fn(),
     readWorkspaceFileBlob: vi.fn(),
@@ -128,6 +133,7 @@ beforeEach(() => {
     workspaces: items,
     mergedWorkspaces: items,
   };
+  fakes.previewOptions = null;
   fakes.preview = {
     previewTarget: ref(null),
     previewFile: ref(null),
@@ -224,6 +230,15 @@ describe('FilesPanel draft preview scope', () => {
 
     expect(sidebar.getAttribute('data-workspace-id')).toBe('w1');
     expect(sidebar.getAttribute('data-root')).toBe('/extra-a');
+  });
+
+  it('queries the home directory on the active workspace host', async () => {
+    fakes.workspaces.mergedWorkspaces[0]!.hostId = 'devbox';
+    await mountPanel();
+
+    await fakes.previewOptions.client.getFsHome();
+
+    expect(fakes.client.getFsHome).toHaveBeenCalledWith('devbox');
   });
 
   it('does not treat a derived workspace ID as registered', async () => {

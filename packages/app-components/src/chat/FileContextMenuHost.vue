@@ -28,6 +28,7 @@ const localWorkspace = computed(() => workspacesStore().isLocalWorkspace);
 
 const state = useFileContextMenuState();
 const homePath = ref('');
+const homePending = ref(false);
 let homeSeq = 0;
 
 watch(
@@ -35,9 +36,14 @@ watch(
   async ([open, path]) => {
     const seq = ++homeSeq;
     homePath.value = '';
-    if (!open || (path !== '~' && !path.startsWith('~/'))) return;
-    const { home } = await workspacesStore().getFsHome();
-    if (seq === homeSeq) homePath.value = home;
+    homePending.value = open && (path === '~' || path.startsWith('~/'));
+    if (!homePending.value) return;
+    try {
+      const { home } = await workspacesStore().getFsHome(workspacesStore().visibleWorkspace?.hostId);
+      if (seq === homeSeq) homePath.value = home;
+    } finally {
+      if (seq === homeSeq) homePending.value = false;
+    }
   },
   { immediate: true },
 );
@@ -58,6 +64,7 @@ const canOpenWith = computed(
     /\.(md|markdown|mdx)$/i.test(targetPath.value),
 );
 const canAddToChat = computed(() => insertPathMention !== undefined && !state.deleted);
+const canCopyPath = computed(() => !homePending.value);
 
 const catalog = ref<OpenInAppEntry[]>([]);
 const availableApps = computed(() => catalog.value.filter((app) => app.id !== 'finder' && app.id !== 'explorer'));
@@ -286,7 +293,7 @@ async function copyPath(): Promise<void> {
         <Icon name="folder" size="sm" />
         {{ t('conversation.revealInFolder') }}
       </MenuItem>
-      <MenuItem @mouseenter="closeOpenWithMenu" @focusin="closeOpenWithMenu" @click="copyPath">
+      <MenuItem v-if="canCopyPath" @mouseenter="closeOpenWithMenu" @focusin="closeOpenWithMenu" @click="copyPath">
         <Icon name="copy" size="sm" />
         {{ t('conversation.copyPath') }}
       </MenuItem>

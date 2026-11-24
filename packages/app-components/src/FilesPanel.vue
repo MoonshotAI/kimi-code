@@ -60,7 +60,7 @@ const { position: treePosition } = useFileTreePosition();
 const previewClient = {
   status: computed(() => ({ ...client.status.value, cwd: cwd.value })),
   getFileDownloadUrl: client.getFileDownloadUrl,
-  getFsHome: client.getFsHome,
+  getFsHome: () => client.getFsHome(workspace.value?.hostId),
   readHostFileContent: client.readHostFileContent,
   readFileContent: async (path: string) => {
     if (sessionId.value !== null) return client.readFileContent(path);

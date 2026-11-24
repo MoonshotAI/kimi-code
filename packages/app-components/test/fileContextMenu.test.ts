@@ -3,7 +3,7 @@ import { createApp, h, type App } from 'vue';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
 const lib = vi.hoisted(() => ({ copy: vi.fn<(text: string) => Promise<boolean>>() }));
-const workspaceLocation = vi.hoisted(() => ({ local: { value: true }, getFsHome: vi.fn() }));
+const workspaceLocation = vi.hoisted(() => ({ local: { value: true }, visibleWorkspace: null as { hostId?: string } | null, getFsHome: vi.fn() }));
 
 vi.mock('@moonshot-ai/app-core/lib', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
@@ -11,7 +11,7 @@ vi.mock('@moonshot-ai/app-core/lib', async (importOriginal) => ({
 }));
 vi.mock('@moonshot-ai/app-client/stores', () => ({
   useWarningsStore: () => ({ pushWarning: vi.fn() }),
-  workspacesStore: () => ({ isLocalWorkspace: workspaceLocation.local.value, getFsHome: workspaceLocation.getFsHome }),
+  workspacesStore: () => ({ isLocalWorkspace: workspaceLocation.local.value, visibleWorkspace: workspaceLocation.visibleWorkspace, getFsHome: workspaceLocation.getFsHome }),
 }));
 
 import { createKimiI18n } from '@moonshot-ai/app-i18n';
@@ -36,6 +36,7 @@ function rightClickOn(el: Element, cwd?: string, x = 40, y = 50): void {
 
 beforeEach(() => {
   workspaceLocation.local.value = true;
+  workspaceLocation.visibleWorkspace = null;
   workspaceLocation.getFsHome.mockReset().mockResolvedValue({ home: '/Users/test', recentRoots: [] });
   lib.copy.mockReset().mockResolvedValue(true);
   document.body.innerHTML = '';
@@ -404,6 +405,38 @@ it('expands a tilde path before opening it with VS Code', async () => {
   await flush();
   expect(open).toHaveBeenCalledWith('vscode', { path: '/Users/test/agent-workspace/rules/common.md' });
   expect(openWithDefaultApp).not.toHaveBeenCalled();
+});
+
+it('queries the home directory on the visible workspace host', async () => {
+  workspaceLocation.visibleWorkspace = { hostId: 'devbox' };
+  mountHost();
+  const host = document.createElement('div');
+  host.innerHTML = '<button data-file-path="~/agent-workspace/rules/common.md">common.md</button>';
+  document.body.append(host);
+
+  rightClickOn(host.querySelector('button')!, '/repo');
+  await flush();
+
+  expect(workspaceLocation.getFsHome).toHaveBeenCalledWith('devbox');
+});
+
+it('hides Copy path until the home directory resolves', async () => {
+  let resolveHome!: (value: { home: string; recentRoots: string[] }) => void;
+  workspaceLocation.getFsHome.mockImplementation(() => new Promise((resolve) => { resolveHome = resolve; }));
+  mountHost();
+  const host = document.createElement('div');
+  host.innerHTML = '<button data-file-path="~/agent-workspace/rules/common.md">common.md</button>';
+  document.body.append(host);
+
+  rightClickOn(host.querySelector('button')!, '/repo');
+  await flush();
+  expect(menuTexts().join('|')).not.toContain('Copy path');
+
+  resolveHome({ home: '/Users/test', recentRoots: [] });
+  await flush();
+  menuItem(menuEl()!, 'Copy path').click();
+  await flush();
+  expect(lib.copy).toHaveBeenCalledWith('/Users/test/agent-workspace/rules/common.md');
 });
 
 it('does not offer open-with for unsupported, deleted, or symlinked files', async () => {
