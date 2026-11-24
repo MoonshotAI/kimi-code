@@ -29,11 +29,8 @@ export function buildReviewMessages(
   approvedToolCallIds?: ReadonlySet<string>,
   gitStatus?: ReviewGitStatus,
 ): ReturnType<typeof createUserMessage>[] {
-  const pendingIndex = context.toolCalls.findIndex((call) => call.id === context.toolCall.id);
-  const pendingIds = new Set(
-    pendingIndex < 0
-      ? [context.toolCall.id]
-      : context.toolCalls.slice(pendingIndex).map((call) => call.id),
+  const completedIds = new Set(
+    messages.flatMap((message) => (message.role === 'tool' ? [message.toolCallId] : [])),
   );
   return [createUserMessage(renderPrompt(REVIEW_REQUEST, {
     environment: sectionJson({ cwd }),
@@ -46,7 +43,7 @@ export function buildReviewMessages(
       ...inherited.map((entry) => ({ kind: 'instruction', ...entry })),
       ...messages.flatMap((message) => [
         ...authorizationEntry(message).map((entry) => ({ kind: 'instruction', ...entry })),
-        ...actionEntries(message, pendingIds, approvedToolCallIds),
+        ...actionEntries(message, completedIds, approvedToolCallIds),
       ]),
     ]),
     pending_action: sectionJson({
@@ -105,12 +102,12 @@ function authorizationRole(
 
 function actionEntries(
   message: ContextMessage,
-  pendingIds: ReadonlySet<string>,
+  completedIds: ReadonlySet<string>,
   approvedToolCallIds: ReadonlySet<string> | undefined,
 ): unknown[] {
   if (message.role !== 'assistant') return [];
   return message.toolCalls
-    .filter((call) => !pendingIds.has(call.id))
+    .filter((call) => completedIds.has(call.id))
     .map((call) => ({
       kind: 'tool-call',
       role: 'fact',

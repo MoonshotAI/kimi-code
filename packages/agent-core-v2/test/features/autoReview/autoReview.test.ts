@@ -65,7 +65,7 @@ const bashTool: ExecutableTool = {
 };
 
 describe('autoReview context and state', () => {
-  it('strips tool metadata and outputs while keeping chronological prefix stability', () => {
+  it('keeps only completed tool calls, strips metadata and outputs, and keeps chronological prefix stability', () => {
     const turn1: ContextMessage[] = [
       { role: 'user', content: [{ type: 'text', text: 'Only remove generated files.' }], origin: { kind: 'user' } },
       {
@@ -77,17 +77,15 @@ describe('autoReview context and state', () => {
         ],
       },
       { role: 'tool', toolCallId: 'mkdir', content: [{ type: 'text', text: 'untrusted tool output' }] },
+      { role: 'tool', toolCallId: 'ls', content: [{ type: 'text', text: 'untrusted tool output' }] },
     ];
+    const running = toolCallFor('running', 'Bash', { command: 'rm generated/running' });
     const pending = toolCallFor('rm', 'Bash', { command: 'rm generated/file' });
     const sibling = toolCallFor('sibling', 'Bash', { command: 'rm generated/other' });
-    const ctx: ResolvedToolExecutionHookContext = {
-      ...reviewContext({ id: 'rm', toolName: 'Bash', args: { command: 'rm generated/file' }, tool: bashTool }),
-      toolCall: pending,
-      toolCalls: [pending, sibling],
-    };
+    const ctx = reviewContext({ id: 'rm', toolName: 'Bash', args: { command: 'rm generated/file' }, tool: bashTool });
 
     const first = messageText(buildReviewMessages(
-      [...turn1, { role: 'assistant', content: [], toolCalls: [pending, sibling] }],
+      [...turn1, { role: 'assistant', content: [], toolCalls: [running, pending, sibling] }],
       [],
       'Do not delete user-data.',
       ['/workspace/AGENTS.md'],
@@ -100,6 +98,8 @@ describe('autoReview context and state', () => {
     expect(first).toContain('Do not delete user-data.');
     expect(first).toContain('"id":"mkdir","name":"Bash","arguments":"{\\"command\\":\\"mkdir generated\\"}","approved":true');
     expect(first).toContain('"id":"ls","name":"Bash"');
+    expect(first).not.toContain('"id":"running"');
+    expect(first).not.toContain('"id":"rm"');
     expect(first).not.toContain('"id":"sibling"');
     expect(first).toContain('"gitStatus":{"branch":"feat/sub","clean":false,"entries":{"dirty.ts":"modified"}}');
     expect(first).not.toContain('Execute a shell command.');
@@ -418,6 +418,7 @@ describe('AutoReviewService', () => {
     history = [
       { role: 'user', content: [{ type: 'text', text: 'Only remove generated files.' }], origin: { kind: 'user' } },
       { role: 'assistant', content: [], toolCalls: [toolCallFor('mkdir', 'Bash', { command: 'mkdir generated' })] },
+      { role: 'tool', toolCallId: 'mkdir', content: [{ type: 'text', text: '' }] },
     ];
     workspaceDir = '/workspace';
     compactions = [];
@@ -519,6 +520,7 @@ describe('AutoReviewService', () => {
       { role: 'user', content: [{ type: 'text', text: 'Delegate cleanup.' }], origin: { kind: 'system_trigger', name: 'subagent' } },
       { role: 'user', content: [{ type: 'text', text: 'Also remove coverage.' }], origin: { kind: 'user' } },
       { role: 'assistant', content: [], toolCalls: [toolCallFor('child-call', 'Bash', { command: 'rm -rf coverage' })] },
+      { role: 'tool', toolCallId: 'child-call', content: [{ type: 'text', text: '' }] },
     ];
     const child = harness.spawn({
       agentId: 'child-1',
