@@ -1,6 +1,7 @@
 import { produce } from 'immer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { ServiceCollection } from '#/_base/di/serviceCollection';
 import { createServices } from '#/_base/di/test';
@@ -29,7 +30,9 @@ import {
   AutoReviewCompleted,
 } from '#/features/autoReview/autoReviewEvents';
 import { AUTO_REVIEW_SECTION } from '#/features/autoReview/configSection';
+import { extractAuthorization } from '#/features/autoReview/context';
 import {
+  IAutoReviewService,
   ISessionAutoReviewService,
   type AutoReviewOutcome,
 } from '#/features/autoReview/review';
@@ -129,6 +132,7 @@ describe('AutoReviewService', () => {
   let parentAgentId: string | undefined;
   let forkedFrom: string | undefined;
   let gitStatusAt: ((cwd: string) => Promise<FsGitStatusResponse>) | undefined;
+  let workspaceDir: string;
   let agentsMd: string;
   let telemetry: TelemetryRecord[];
   let reviewEvents: AutoReviewCompleted[];
@@ -146,6 +150,7 @@ describe('AutoReviewService', () => {
     parentAgentId = undefined;
     forkedFrom = undefined;
     gitStatusAt = undefined;
+    workspaceDir = '/workspace';
     response = {
       message: { role: 'assistant', content: [{ type: 'text', text: '{"risk":"low","decision":"allow","reason":null}' }], toolCalls: [] },
       usage: emptyUsage(),
@@ -170,6 +175,8 @@ describe('AutoReviewService', () => {
     secondaryModel?: SecondaryModelConfig,
   ): Harness {
     const registry = new ProtocolAdapterRegistry();
+    const agentReviewers = new Map<string, AutoReviewService>();
+    const workspace = stubWorkspaceContext('/workspace');
     let selectedAlias = 'main-model';
     let states!: IAgentStateService;
     let sessionState!: ReturnType<typeof registerStateServices>['session'];
@@ -235,17 +242,32 @@ describe('AutoReviewService', () => {
           }),
         );
         reg.definePartialInstance(IAgentLifecycleService, {
-          handleOf: (id) =>
-            id === 'main' && mainHistory !== undefined
+          handleOf: (id) => {
+            const agentReviewer = agentReviewers.get(id);
+            if (agentReviewer !== undefined) {
+              return {
+                id,
+                kind: 'agent',
+                accessor: { get: () => agentReviewer },
+                dispose: () => {},
+              } as unknown as ReturnType<IAgentLifecycleService['handleOf']>;
+            }
+            return id === 'main' && mainHistory !== undefined
               ? ({
                   id: 'main',
                   kind: 'agent',
                   accessor: {
-                    get: () => ({ history: () => mainHistory ?? [] }),
+                    get: (serviceId: unknown) => serviceId === IAutoReviewService
+                      ? {
+                          humanAuthorization: () => extractAuthorization(mainHistory ?? [])
+                            .filter((entry) => entry.role === 'human-instruction'),
+                        }
+                      : { history: () => mainHistory ?? [] },
                   },
                   dispose: () => {},
                 } as unknown as ReturnType<IAgentLifecycleService['handleOf']>)
-              : undefined,
+              : undefined;
+          },
         });
         reg.definePartialInstance(IEventDispatcher, {
           dispatch: async (event) => {
@@ -258,7 +280,10 @@ describe('AutoReviewService', () => {
           get agentsMd() { return agentsMd; },
           agentsMdPaths: ['/workspace/AGENTS.md'],
         });
-        reg.defineInstance(ISessionWorkspaceContext, stubWorkspaceContext('/workspace'));
+        reg.defineInstance(ISessionWorkspaceContext, {
+          ...workspace,
+          get workDir() { return workspaceDir; },
+        });
         if (gitStatusAt !== undefined) {
           const statusAt = gitStatusAt;
           reg.definePartialInstance(ISessionWorkdir, {
@@ -275,11 +300,13 @@ describe('AutoReviewService', () => {
           },
         });
         reg.define(ISessionAutoReviewService, SessionAutoReviewService);
+        reg.define(IAutoReviewService, AutoReviewService);
       },
       strict: true,
     });
     const sessionReviewer = ix.get(ISessionAutoReviewService) as SessionAutoReviewService;
-    const reviewer = ix.createInstance(AutoReviewService);
+    const reviewer = ix.get(IAutoReviewService) as AutoReviewService;
+    agentReviewers.set(agentId, reviewer);
     const foldCtx = {
       silent: false,
       checkpoint: () => {},
@@ -315,10 +342,13 @@ describe('AutoReviewService', () => {
                 }),
               ],
               [IAgentLoopService, { _serviceBrand: undefined, history: options.getHistory }],
+              [IAutoReviewService, new SyncDescriptor(AutoReviewService)],
             ),
           ),
         );
-        return childIx.createInstance(AutoReviewService);
+        const childReviewer = childIx.get(IAutoReviewService) as AutoReviewService;
+        agentReviewers.set(options.agentId, childReviewer);
+        return childReviewer;
       },
     };
   }
@@ -618,6 +648,40 @@ describe('AutoReviewService', () => {
     expect(sentContent()).not.toContain('Already forked parent instruction.');
   });
 
+  it('snapshots ancestor human instructions across nested subagents even after ancestors compact', async () => {
+    const harness = createHarness();
+    let childHistory: readonly ContextMessage[] = [
+      { role: 'user', content: [{ type: 'text', text: 'Delegate cleanup.' }], origin: { kind: 'system_trigger', name: 'subagent' } },
+      { role: 'user', content: [{ type: 'text', text: 'Also remove coverage.' }], origin: { kind: 'user' } },
+    ];
+    const child = harness.createAgentReviewer({
+      agentId: 'child-1',
+      parentAgentId: 'main',
+      getHistory: () => childHistory,
+    });
+
+    const grandchild = harness.createAgentReviewer({
+      agentId: 'grandchild-1',
+      parentAgentId: 'child-1',
+      getHistory: () => [
+        { role: 'user', content: [{ type: 'text', text: 'Run the cleanup.' }], origin: { kind: 'system_trigger', name: 'subagent' } },
+      ],
+    });
+
+    history = [{ role: 'user', content: [{ type: 'text', text: 'Main compacted.' }], origin: { kind: 'compaction_summary' } }];
+    childHistory = [{ role: 'user', content: [{ type: 'text', text: 'Child compacted.' }], origin: { kind: 'compaction_summary' } }];
+
+    await review(grandchild);
+
+    expect(sentContent()).toContain('Only remove generated files.');
+    expect(sentContent()).toContain('Also remove coverage.');
+    expect(sentContent()).toContain('Run the cleanup.');
+    expect(sentContent()).not.toContain('Delegate cleanup.');
+    expect(sentContent()).not.toContain('Main compacted.');
+    expect(sentContent()).not.toContain('Child compacted.');
+    expect(child.humanAuthorization()).toHaveLength(1);
+  });
+
   it('excludes UserPromptSubmit hook parts and omits non-text attachments', async () => {
     history = [{
       role: 'user',
@@ -700,6 +764,44 @@ describe('AutoReviewService', () => {
       return response;
     }));
     expect(rewritten).toMatchObject({ decision: 'failed', reason: expect.stringContaining('changed') });
+  });
+
+  it('re-reviews once when instructions are appended during review', async () => {
+    let calls = 0;
+    const result = await review(service(async () => {
+      calls += 1;
+      if (calls === 1) {
+        history = [...history, { role: 'user', content: [{ type: 'text', text: 'You may also delete generated/cache.' }], origin: { kind: 'user' } }];
+      }
+      return response;
+    }));
+
+    expect(result).toEqual({ decision: 'allow', risk: 'low' });
+    expect(requests).toHaveLength(2);
+    expect(sentContent(0)).not.toContain('You may also delete generated/cache.');
+    expect(sentContent(1)).toContain('You may also delete generated/cache.');
+  });
+
+  it('fails when instructions are appended again during the re-review', async () => {
+    let calls = 0;
+    const result = await review(service(async () => {
+      calls += 1;
+      history = [...history, { role: 'user', content: [{ type: 'text', text: `Extra instruction ${calls}` }], origin: { kind: 'user' } }];
+      return response;
+    }));
+
+    expect(result).toEqual({ decision: 'failed', reason: 'Authorization changed during review.' });
+    expect(requests).toHaveLength(2);
+  });
+
+  it('fails when the working directory changes during review', async () => {
+    const result = await review(service(async () => {
+      workspaceDir = '/elsewhere';
+      return response;
+    }));
+
+    expect(result).toEqual({ decision: 'failed', reason: 'Authorization changed during review.' });
+    expect(requests).toHaveLength(1);
   });
 
   it('fails a context overflow without retry and starts compaction', async () => {

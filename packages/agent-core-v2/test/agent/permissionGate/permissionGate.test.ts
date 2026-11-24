@@ -133,7 +133,7 @@ describe('AgentPermissionGate', () => {
           stubFlag(() => autoReviewEnabled),
           stubPermissionModeService(() => mode),
           ix.get(IAgentPermissionPolicyService),
-          { _serviceBrand: undefined, review },
+          { _serviceBrand: undefined, humanAuthorization: () => [], review },
         ),
       ),
     );
@@ -268,7 +268,7 @@ describe('AgentPermissionGate', () => {
       stubFlag(() => autoReviewEnabled),
       stubPermissionModeService(() => mode),
       ix.get(IAgentPermissionPolicyService),
-      { _serviceBrand: undefined, review },
+      { _serviceBrand: undefined, humanAuthorization: () => [], review },
     );
     const ctx = makeContext('Bash');
 

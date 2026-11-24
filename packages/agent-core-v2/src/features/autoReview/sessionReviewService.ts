@@ -1,13 +1,8 @@
 import { z } from 'zod';
 
-import { ref, type LiveRef } from '#/_base/di/instantiation';
-import { Disposable, toDisposable, type IDisposable } from '#/_base/di/lifecycle';
 import { Service } from '#/_base/di/service';
-import { abortable, createDeadlineAbortSignal, type DeadlineAbortSignal } from '#/_base/utils/abort';
+import { type DeadlineAbortSignal } from '#/_base/utils/abort';
 import { sleepForRetry } from '#/_base/utils/retry';
-import { IAgentLoopService } from '#/agent/loop/loop';
-import type { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
 import { IConfigService } from '#/app/config/config';
 import { THINKING_SECTION } from '#/app/kosongConfig/configSection';
 import { Error2, ErrorCodes } from '#/errors';
@@ -17,14 +12,10 @@ import { resolveMaxOutputTokens } from '#/llm-adapter/model/completion-budget';
 import type { ModelOverrides } from '#/llm-adapter/model/model.types';
 import { requiresStrictThinkingValidation, type ThinkingConfig } from '#/llm-adapter/model/thinking';
 import { IProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocol';
-import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
-import { subagentParentAgentId } from '#/session/agentLifecycle/subagentMetadata';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
 import { resolveSubagentModelPool } from '#/session/subagent/configSection';
 import { ISessionUsageService } from '#/session/usage/sessionUsage';
-import { ISessionWorkdir } from '#/session/workdir/workdir';
-import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import type { Message } from '@moonshot-ai/core/llm/message';
 import { credentialRecovery } from '@moonshot-ai/core/llm/policy/credentials';
 import { readRetryAfterMs, retryBackoffDelay } from '@moonshot-ai/core/llm/policy/retry';
@@ -35,15 +26,9 @@ import { resolveThinkingEffortForModel, resolveThinkingKeep } from '@moonshot-ai
 import REVIEW_POLICY from './auto-review-policy.md?raw';
 import { AUTO_REVIEW_SECTION, type AutoReviewConfig } from './configSection';
 import {
-  buildReviewMessages,
-  extractAuthorization,
-  sameAuthorization,
-  type ReviewGitStatus,
-  type ReviewText,
-} from './context';
-import {
   ISessionAutoReviewService,
   type AutoReviewOutcome,
+  type ProjectInstructions,
   type SessionReviewInput,
   type SessionReviewRun,
 } from './review';
@@ -51,7 +36,6 @@ import {
 const AUTO_REVIEW_REQUEST_KIND = 'auto_review';
 const MAX_REVIEW_ATTEMPTS = 3;
 const MAX_CONCURRENT_REVIEWS = 4;
-const MAX_GIT_STATUS_ENTRIES = 50;
 
 const DecisionSchema = z.union([
   z.object({
@@ -88,22 +72,15 @@ const RESPONSE_FORMAT = {
   },
 } as const;
 
-interface ProjectInstructions {
-  readonly agentsMd?: string;
-  readonly agentsMdPaths?: readonly string[];
-}
-
 type AttemptResult =
   | AutoReviewOutcome
-  | { readonly decision: 'appended' }
   | { readonly decision: 'retry'; readonly reason: string; readonly retryAfterMs?: number };
 
 export class SessionAutoReviewService extends Service implements ISessionAutoReviewService {
   declare readonly _serviceBrand: undefined;
-  private projectInstructions: Promise<ProjectInstructions> | undefined;
+  private cachedInstructions: Promise<ProjectInstructions> | undefined;
   private activeReviews = 0;
   private readonly reviewSlots: Array<() => void> = [];
-  private readonly inheritedByAgent = new Map<string, readonly ReviewText[]>();
 
   constructor(
     @IConfigService private readonly configService: IConfigService,
@@ -112,20 +89,32 @@ export class SessionAutoReviewService extends Service implements ISessionAutoRev
     @ISessionUsageService private readonly usage: ISessionUsageService,
     @ISessionContext private readonly session: ISessionContext,
     @ISessionInstructionsProvider private readonly instructions: ISessionInstructionsProvider,
-    @ISessionWorkspaceContext private readonly workspace: ISessionWorkspaceContext,
-    @IAgentLifecycleService private readonly agentLifecycle: IAgentLifecycleService,
-    @ref(ISessionWorkdir) private readonly workdir: LiveRef<ISessionWorkdir>,
   ) {
     super();
     this.assertConfiguredModelValid();
   }
 
-  snapshotParentInstructions(scopeContext: IAgentScopeContext): IDisposable {
-    const own = this.inheritedAuthorization(scopeContext);
-    if (own.length === 0) return Disposable.None;
-    return toDisposable(() => {
-      this.inheritedByAgent.delete(scopeContext.agentId);
-    });
+  projectInstructions(): Promise<ProjectInstructions> {
+    if (this.cachedInstructions === undefined) {
+      this.cachedInstructions = this.instructions.ready.then(() => ({
+        agentsMd: this.instructions.agentsMd,
+        agentsMdPaths: this.instructions.agentsMdPaths === undefined
+          ? undefined
+          : [...this.instructions.agentsMdPaths],
+      }));
+      void this.cachedInstructions.catch(() => undefined);
+    }
+    return this.cachedInstructions;
+  }
+
+  async execute(input: SessionReviewInput): Promise<SessionReviewRun> {
+    const config = this.configService.get<AutoReviewConfig>(AUTO_REVIEW_SECTION);
+    const modelAlias =
+      config?.model ??
+      resolveSubagentModelPool(this.configService)?.defaultModel ??
+      input.mainModelAlias;
+    const outcome = await this.runWithDeadline(input, modelAlias);
+    return { modelAlias, outcome };
   }
 
   private assertConfiguredModelValid(): void {
@@ -142,36 +131,17 @@ export class SessionAutoReviewService extends Service implements ISessionAutoRev
     }
   }
 
-  async execute(input: SessionReviewInput): Promise<SessionReviewRun> {
-    const config = this.configService.get<AutoReviewConfig>(AUTO_REVIEW_SECTION);
-    const modelAlias =
-      config?.model ??
-      resolveSubagentModelPool(this.configService)?.defaultModel ??
-      input.mainModelAlias;
-    const outcome = await this.runWithDeadline(input, modelAlias, config?.timeoutMs ?? 30000);
-    return { modelAlias, outcome };
-  }
-
   private async runWithDeadline(
     input: SessionReviewInput,
     modelAlias: string,
-    timeoutMs: number,
   ): Promise<AutoReviewOutcome> {
-    const { context } = input;
-    const deadline = createDeadlineAbortSignal(context.signal, timeoutMs);
+    const { deadline } = input;
     let acquired = false;
     try {
-      const projectInstructions = await this.loadProjectInstructions();
       await this.acquireSlot(deadline.signal);
       acquired = true;
-      let appended = false;
       for (let attempt = 1; attempt <= MAX_REVIEW_ATTEMPTS; attempt += 1) {
-        const result = await this.reviewOnce(input, modelAlias, projectInstructions, deadline);
-        if (result.decision === 'appended') {
-          if (appended) return { decision: 'failed', reason: 'Authorization changed during review.' };
-          appended = true;
-          continue;
-        }
+        const result = await this.reviewOnce(input, modelAlias);
         if (result.decision !== 'retry') return result;
         if (attempt === MAX_REVIEW_ATTEMPTS) return { decision: 'failed', reason: result.reason };
         const delayMs = Math.min(
@@ -183,70 +153,34 @@ export class SessionAutoReviewService extends Service implements ISessionAutoRev
       }
       return { decision: 'failed', reason: 'Review timed out.' };
     } catch (error) {
-      context.signal.throwIfAborted();
       if (deadline.signal.aborted) return deadlineFailure(deadline);
       return { decision: 'failed', reason: error instanceof Error ? error.message : String(error) };
     } finally {
       if (acquired) this.releaseSlot();
-      deadline.clear();
     }
   }
 
   private async reviewOnce(
     input: SessionReviewInput,
     modelAlias: string,
-    projectInstructions: ProjectInstructions,
-    deadline: DeadlineAbortSignal,
   ): Promise<AttemptResult> {
-    const history = input.readHistory();
-    const inherited = this.inheritedAuthorization(input.scopeContext);
-    const authorization = inherited.length === 0
-      ? extractAuthorization(history)
-      : [...inherited, ...extractAuthorization(history)];
-    const cwd = this.workspace.workDir;
-    const gitStatus = await abortable(this.readGitStatus(cwd, input.context), deadline.signal);
-    const messages = buildReviewMessages(
-      history,
-      authorization,
-      projectInstructions.agentsMd,
-      projectInstructions.agentsMdPaths,
-      cwd,
-      input.context,
-      input.readApprovedIds(),
-      gitStatus,
-    );
+    const { deadline } = input;
     let outcome: LlmOutcome;
     try {
-      outcome = await this.sendRequest(modelAlias, messages, deadline.signal);
+      outcome = await this.sendRequest(modelAlias, input.messages, deadline.signal);
     } catch (error) {
-      input.context.signal.throwIfAborted();
       if (deadline.signal.aborted) return deadlineFailure(deadline);
       const mapped = llmMessageFromError(error);
       if (mapped !== undefined) return classifyLlmError(mapped);
       throw error;
     }
-    input.context.signal.throwIfAborted();
     if (outcome.type === 'aborted') return deadlineFailure(deadline);
     if (outcome.type === 'failed') return classifyFailedOutcome(outcome, deadline);
     void this.usage.record(input.agentContext, modelAlias, outcome.usage, {
       type: 'operation',
-      turnId: input.context.turnId,
+      turnId: input.turnId,
       requestKind: AUTO_REVIEW_REQUEST_KIND,
     });
-    if (this.workspace.workDir !== cwd) {
-      return { decision: 'failed', reason: 'Authorization changed during review.' };
-    }
-    const latestHistory = input.readHistory();
-    if (latestHistory !== history) {
-      const current = inherited.length === 0
-        ? extractAuthorization(latestHistory)
-        : [...inherited, ...extractAuthorization(latestHistory)];
-      if (!sameAuthorization(authorization, current)) {
-        return sameAuthorization(authorization, current.slice(0, authorization.length))
-          ? { decision: 'appended' }
-          : { decision: 'failed', reason: 'Authorization changed during review.' };
-      }
-    }
     if (outcome.message.toolCalls.length > 0) {
       return { decision: 'failed', reason: 'The reviewer attempted a tool call.' };
     }
@@ -295,66 +229,6 @@ export class SessionAutoReviewService extends Service implements ISessionAutoRev
         recoveries: [credentialRecovery],
       },
     }).generate({}, { signal });
-  }
-
-  private loadProjectInstructions(): Promise<ProjectInstructions> {
-    if (this.projectInstructions === undefined) {
-      this.projectInstructions = this.instructions.ready.then(() => ({
-        agentsMd: this.instructions.agentsMd,
-        agentsMdPaths: this.instructions.agentsMdPaths === undefined
-          ? undefined
-          : [...this.instructions.agentsMdPaths],
-      }));
-      void this.projectInstructions.catch(() => undefined);
-    }
-    return this.projectInstructions;
-  }
-
-  private inheritedAuthorization(scopeContext: IAgentScopeContext): readonly ReviewText[] {
-    if (
-      scopeContext.agentId === MAIN_AGENT_ID ||
-      (scopeContext.meta?.forkedFrom ?? scopeContext.forkedFrom) !== undefined
-    ) {
-      return [];
-    }
-    const cached = this.inheritedByAgent.get(scopeContext.agentId);
-    if (cached !== undefined) return cached;
-    const resolved = this.readParentHumanInstructions(scopeContext.meta);
-    if (resolved.length > 0) this.inheritedByAgent.set(scopeContext.agentId, resolved);
-    return resolved;
-  }
-
-  private readParentHumanInstructions(meta: IAgentScopeContext['meta']): readonly ReviewText[] {
-    const parentId = subagentParentAgentId(meta) ?? meta?.parentAgentId ?? MAIN_AGENT_ID;
-    const parent = this.agentLifecycle.handleOf(parentId);
-    if (parent === undefined) return [];
-    const inherited = this.inheritedByAgent.get(parentId) ?? [];
-    const own = extractAuthorization(parent.accessor.get(IAgentLoopService).history())
-      .filter((entry) => entry.role === 'human-instruction');
-    return inherited.length === 0 ? own : [...inherited, ...own];
-  }
-
-  private async readGitStatus(
-    cwd: string,
-    context: ResolvedToolExecutionHookContext,
-  ): Promise<ReviewGitStatus | undefined> {
-    const git = this.workdir?.current?.git;
-    if (git === undefined) return undefined;
-    const argCwd = isRecord(context.args) && typeof context.args['cwd'] === 'string' && context.args['cwd'].length > 0
-      ? context.args['cwd']
-      : undefined;
-    const targetCwd = argCwd === undefined ? cwd : this.workspace.resolve(argCwd);
-    try {
-      const status = await git.statusAt(targetCwd, { includePullRequest: false, includeStats: false });
-      const keys = Object.keys(status.entries);
-      if (keys.length === 0) return { branch: status.branch, clean: true };
-      const entries = Object.fromEntries(
-        keys.slice(0, MAX_GIT_STATUS_ENTRIES).map((key) => [key, status.entries[key]!]),
-      );
-      return { branch: status.branch, clean: false, entries };
-    } catch {
-      return undefined;
-    }
   }
 
   private acquireSlot(signal: AbortSignal): Promise<void> {
@@ -410,6 +284,9 @@ function classifyLlmError(
 }
 
 function deadlineFailure(deadline: DeadlineAbortSignal): AutoReviewOutcome {
+  if (deadline.signal.aborted && !deadline.timedOut()) {
+    throw deadline.signal.reason;
+  }
   return {
     decision: 'failed',
     reason: deadline.timedOut() ? 'Review timed out.' : 'Review cancelled.',
@@ -422,8 +299,4 @@ function parseJson(text: string): unknown {
   } catch {
     return undefined;
   }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null;
 }
