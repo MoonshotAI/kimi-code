@@ -28,7 +28,7 @@ export default {
     nameDuplicate: 'This name is already in use',
     formHint: 'Connect to a host over SSH. Kimi Code CLI must be installed on the host',
     targetLabel: 'SSH address',
-    targetHint: "user{'@'}host, an ssh:// address, or an alias in ~/.ssh/config",
+    targetHint: "user{'@'}host[:port], an ssh:// address, or an alias in ~/.ssh/config",
     targetPlaceholder: "user{'@'}example.com",
     targetRequired: 'Enter an SSH address',
     identityLabel: 'SSH key',
