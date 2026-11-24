@@ -1,3 +1,4 @@
+import { mergeInPlace as mergeCoreInPlace } from '@moonshot-ai/core/llm/message';
 import type {
   ContentPart as CoreContentPart,
   Message as CoreMessage,
@@ -52,22 +53,8 @@ export interface VideoURLPart {
 
 export type ContentPart = TextPart | ThinkPart | ImageURLPart | AudioURLPart | VideoURLPart;
 
-export interface ToolCall {
-  type: 'function';
-  id: string;
-  name: string;
-  arguments: string | null;
-  extras?: Record<string, unknown>;
-  rawId?: string;
-  _streamIndex?: number | string;
-}
-
-export interface ToolCallPart {
-  type: 'tool_call_part';
-  argumentsPart: string | null;
-  index?: number | string;
-  extras?: Record<string, unknown>;
-}
+export type ToolCall = Extract<CoreStreamedMessagePart, { type: 'function' }>;
+export type ToolCallPart = Extract<CoreStreamedMessagePart, { type: 'tool_call_part' }>;
 
 export type StreamedMessagePart = ContentPart | ToolCall | ToolCallPart;
 
@@ -138,16 +125,7 @@ export function mergeInPlace(target: StreamedMessagePart, source: StreamedMessag
   }
 
   if (target.type === 'function' && source.type === 'tool_call_part') {
-    if (source.argumentsPart !== null) {
-      target.arguments =
-        target.arguments === null
-          ? source.argumentsPart
-          : target.arguments + source.argumentsPart;
-    }
-    if (source.extras !== undefined) {
-      target.extras = { ...target.extras, ...source.extras };
-    }
-    return true;
+    return mergeCoreInPlace(target, source);
   }
 
   return false;
@@ -253,36 +231,34 @@ export function createMessageAccumulator(): MessageAccumulator {
       deferredThink = null;
     }
   };
+  const push = (part: StreamedMessagePart): void => {
+    if (isToolCallPart(part) && part.index !== undefined) {
+      const isPending = pending !== null && isToolCall(pending) && pending._streamIndex === part.index;
+      const arrayIndex = isPending ? undefined : toolCallIndexMap.get(part.index);
+      if (arrayIndex !== undefined) {
+        const target = message.toolCalls[arrayIndex];
+        if (target !== undefined) mergeCoreInPlace(target, part);
+        return;
+      }
+    }
+    if (part.type === 'text') {
+      deferredThink = null;
+    }
+    if (pending === null) {
+      pending = structuredClone(part);
+      return;
+    }
+    if (pending.type === 'text' && part.type === 'think' && isVacuousContentPart(part)) {
+      deferredThink = structuredClone(part);
+      return;
+    }
+    if (!mergeInPlace(pending, part)) {
+      flush();
+      pending = structuredClone(part);
+    }
+  };
   return {
-    push(part: StreamedMessagePart) {
-      if (
-        isToolCallPart(part) &&
-        part.index !== undefined &&
-        !(pending !== null && isToolCall(pending) && pending._streamIndex === part.index)
-      ) {
-        const arrayIndex = toolCallIndexMap.get(part.index);
-        if (arrayIndex !== undefined) {
-          const target = message.toolCalls[arrayIndex];
-          if (target !== undefined) mergeInPlace(target, part);
-          return;
-        }
-      }
-      if (part.type === 'text') {
-        deferredThink = null;
-      }
-      if (pending === null) {
-        pending = structuredClone(part);
-        return;
-      }
-      if (pending.type === 'text' && part.type === 'think' && isVacuousContentPart(part)) {
-        deferredThink = structuredClone(part);
-        return;
-      }
-      if (!mergeInPlace(pending, part)) {
-        flush();
-        pending = structuredClone(part);
-      }
-    },
+    push,
     finish(): AssistantMessage {
       flush();
       return message;

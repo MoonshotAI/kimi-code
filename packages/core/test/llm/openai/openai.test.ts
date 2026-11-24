@@ -173,6 +173,74 @@ describe('OpenAI Gemini tool-call context', () => {
     ]);
   });
 
+  it('preserves metadata for indexless continuation deltas', () => {
+    expectThoughtSignatureRoundTrip([
+      {
+        choices: [{
+          delta: {
+            tool_calls: [{
+              id: 'call_1',
+              function: { name: 'weather', arguments: '{"city":' },
+              extras: { existing: 'preserved' },
+            }],
+          },
+        }],
+      },
+      {
+        choices: [{
+          delta: {
+            tool_calls: [{
+              function: { arguments: '"sf"}' },
+              extra_content: { google: { thought_signature: 'sig-tool' } },
+            }],
+          },
+        }],
+      },
+      { choices: [{ delta: {}, finish_reason: 'tool_calls' }] },
+    ]);
+  });
+
+  it('replays extra_content only within the originating provider', () => {
+    const assistant = accumulatedMessage(decodeParts([
+      {
+        choices: [{
+          delta: {
+            tool_calls: [{
+              index: 0,
+              id: 'call_1',
+              function: { name: 'weather', arguments: '{}' },
+              extra_content: { google: { thought_signature: 'sig-tool' } },
+            }],
+          },
+        }],
+      },
+      { choices: [{ delta: {}, finish_reason: 'tool_calls' }] },
+    ]));
+    assistant.attributes = { model: { provider: 'gemini-openai', model: 'gemini-test' } };
+    const messages = [
+      { role: 'user' as const, content: [{ type: 'text' as const, text: 'weather?' }] },
+      assistant,
+      {
+        role: 'tool' as const,
+        toolCallId: 'call_1',
+        content: [{ type: 'text' as const, text: 'sunny' }],
+      },
+    ];
+    const sameProvider = openAIProtocol.encode(testModule({
+      model: { spec: { provider: 'gemini-openai', name: 'gemini-test' } },
+      messages,
+    }));
+    expect(sameProvider.params.messages[1]).toMatchObject({
+      tool_calls: [{ extra_content: { google: { thought_signature: 'sig-tool' } } }],
+    });
+
+    const otherProvider = openAIProtocol.encode(testModule({
+      model: { spec: { provider: 'openai', name: 'gpt-test' } },
+      messages,
+    }));
+    expect(otherProvider.params.messages[1]).not.toHaveProperty('tool_calls[0].extra_content');
+  });
+
   it('does not create empty extras from null provider metadata', () => {
     const assistant = accumulatedMessage(decodeParts([
       {

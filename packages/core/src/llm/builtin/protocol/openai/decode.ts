@@ -275,8 +275,12 @@ export function createDecoder(
           },
         ];
       }
-      if (hasArguments) {
-        return [{ type: 'tool_call_part', argumentsPart: functionArguments }];
+      if (hasArguments || extras !== undefined) {
+        return [{
+          type: 'tool_call_part',
+          argumentsPart: hasArguments ? functionArguments : null,
+          ...(extras === undefined ? {} : { extras }),
+        }];
       }
       return [];
     }
