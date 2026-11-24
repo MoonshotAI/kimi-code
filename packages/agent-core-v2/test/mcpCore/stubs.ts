@@ -185,6 +185,7 @@ export async function startInProcessHttpMcpServer(opts?: {
 
   return {
     url: `http://127.0.0.1:${port}/mcp`,
+    mcpServer,
     close: () => closeServer(httpServer),
   };
 }

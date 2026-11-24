@@ -131,6 +131,50 @@ describe('McpConnectionManager', () => {
     }
   }, 20000);
 
+  it('refreshes a connected server after tool additions, updates, and removals', async () => {
+    const server = await startInProcessHttpMcpServer();
+    const cm = createManager();
+    try {
+      await cm.connect('remote', { transport: 'http', url: server.url });
+      expect(cm.resolved('remote')?.tools.map((tool) => tool.name)).toEqual(['echo']);
+
+      const statuses: McpServerEntry[] = [];
+      cm.onStatusChange((entry) => {
+        if (entry.name === 'remote') statuses.push(entry);
+      });
+      const added = server.mcpServer.registerTool(
+        'added',
+        { description: 'Initial description', inputSchema: {} },
+        () => ({ content: [{ type: 'text', text: 'added' }] }),
+      );
+      await vi.waitFor(() => {
+        expect(cm.resolved('remote')?.tools.map((tool) => tool.name)).toEqual(['echo', 'added']);
+        expect(cm.get('remote')?.toolCount).toBe(2);
+        expect(statuses).toHaveLength(1);
+      });
+
+      statuses.length = 0;
+      added.update({ description: 'Updated description' });
+      await vi.waitFor(() => {
+        expect(
+          cm.resolved('remote')?.tools.find((tool) => tool.name === 'added')?.description,
+        ).toBe('Updated description');
+        expect(statuses).toHaveLength(1);
+      });
+
+      statuses.length = 0;
+      added.remove();
+      await vi.waitFor(() => {
+        expect(cm.resolved('remote')?.tools.map((tool) => tool.name)).toEqual(['echo']);
+        expect(cm.get('remote')?.toolCount).toBe(1);
+        expect(statuses).toHaveLength(1);
+      });
+    } finally {
+      await cm.shutdown();
+      await server.close();
+    }
+  }, 15000);
+
   it('isolates permanent startup and discovery failures without retry or blocking the rest', async () => {
     const statuses: string[] = [];
     const cm = createManager({

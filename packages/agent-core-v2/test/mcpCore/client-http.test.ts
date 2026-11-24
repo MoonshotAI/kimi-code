@@ -140,6 +140,30 @@ describe('HttpMcpClient', () => {
     }
   }, 15000);
 
+  it('notifies after the server changes its tool list', async () => {
+    const server = await startInProcessHttpMcpServer();
+    cleanups.push(server.close);
+
+    const client = new HttpMcpClient({ transport: 'http', url: server.url });
+    const listener = vi.fn();
+    client.onToolsChanged(listener);
+    try {
+      await client.connect();
+      server.mcpServer.registerTool(
+        'added',
+        { description: 'Added later', inputSchema: {} },
+        () => ({ content: [{ type: 'text', text: 'added' }] }),
+      );
+      await vi.waitFor(() => {
+        expect(listener).toHaveBeenCalledTimes(1);
+      });
+      const tools = await client.listTools();
+      expect(tools.map((tool) => tool.name)).toEqual(['echo', 'added']);
+    } finally {
+      await client.close();
+    }
+  }, 15000);
+
   it('reports weak session evidence when the SDK exhausts push-stream reconnects', async () => {
     const server = await startInProcessHttpMcpServer();
     cleanups.push(server.close);
