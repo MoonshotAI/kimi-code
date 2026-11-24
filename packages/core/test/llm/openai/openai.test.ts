@@ -28,7 +28,7 @@ describe('OpenAI transport fixtures', () => {
 });
 
 describe('OpenAI Gemini tool-call context', () => {
-  function expectThoughtSignatureRoundTrip(chunks: Iterable<OpenAIRawChunk>): void {
+  function decodeParts(chunks: Iterable<OpenAIRawChunk>): StreamedMessagePart[] {
     const parts: StreamedMessagePart[] = [];
     const sink: DecodeSink = {
       onDelta: (part) => parts.push(part),
@@ -41,7 +41,11 @@ describe('OpenAI Gemini tool-call context', () => {
     const decoder = openAIProtocol.decoder(testModule(), sink);
     for (const chunk of chunks) decoder.push(chunk);
     decoder.end();
-    const assistant = accumulatedMessage(parts);
+    return parts;
+  }
+
+  function expectThoughtSignatureRoundTrip(chunks: Iterable<OpenAIRawChunk>): void {
+    const assistant = accumulatedMessage(decodeParts(chunks));
     expect(assistant.toolCalls[0]?.extras).toEqual({
       existing: 'preserved',
       extra_content: { google: { thought_signature: 'sig-tool' } },
@@ -127,5 +131,64 @@ describe('OpenAI Gemini tool-call context', () => {
       },
       { choices: [{ delta: {}, finish_reason: 'tool_calls' }] },
     ]);
+  });
+
+  it.each([
+    {
+      name: 'extras before extra_content',
+      first: { extras: { existing: 'preserved' } },
+      second: { extra_content: { google: { thought_signature: 'sig-tool' } } },
+    },
+    {
+      name: 'extra_content before extras',
+      first: { extra_content: { google: { thought_signature: 'sig-tool' } } },
+      second: { extras: { existing: 'preserved' } },
+    },
+  ])('propagates $name after the function name', ({ first, second }) => {
+    expectThoughtSignatureRoundTrip([
+      {
+        choices: [{
+          delta: {
+            tool_calls: [{
+              index: 0,
+              id: 'call_1',
+              function: { name: 'weather', arguments: '{"city":' },
+              ...first,
+            }],
+          },
+        }],
+      },
+      {
+        choices: [{
+          delta: {
+            tool_calls: [{
+              index: 0,
+              function: { arguments: '"sf"}' },
+              ...second,
+            }],
+          },
+        }],
+      },
+      { choices: [{ delta: {}, finish_reason: 'tool_calls' }] },
+    ]);
+  });
+
+  it('does not create empty extras from null provider metadata', () => {
+    const assistant = accumulatedMessage(decodeParts([
+      {
+        choices: [{
+          delta: {
+            tool_calls: [{
+              index: 0,
+              id: 'call_1',
+              function: { name: 'weather', arguments: '{}' },
+              extras: null,
+            }],
+          },
+        }],
+      },
+      { choices: [{ delta: {}, finish_reason: 'tool_calls' }] },
+    ]));
+    expect(assistant.toolCalls[0]).not.toHaveProperty('extras');
   });
 });

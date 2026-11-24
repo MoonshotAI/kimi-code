@@ -66,6 +66,7 @@ export interface ToolCallPart {
   type: 'tool_call_part';
   argumentsPart: string | null;
   index?: number | string;
+  extras?: Record<string, unknown>;
 }
 
 export type StreamedMessagePart = ContentPart | ToolCall | ToolCallPart;
@@ -142,6 +143,9 @@ export function mergeInPlace(target: StreamedMessagePart, source: StreamedMessag
         target.arguments === null
           ? source.argumentsPart
           : target.arguments + source.argumentsPart;
+    }
+    if (source.extras !== undefined) {
+      target.extras = { ...target.extras, ...source.extras };
     }
     return true;
   }
@@ -259,12 +263,7 @@ export function createMessageAccumulator(): MessageAccumulator {
         const arrayIndex = toolCallIndexMap.get(part.index);
         if (arrayIndex !== undefined) {
           const target = message.toolCalls[arrayIndex];
-          if (target !== undefined && part.argumentsPart !== null) {
-            target.arguments =
-              target.arguments === null
-                ? part.argumentsPart
-                : target.arguments + part.argumentsPart;
-          }
+          if (target !== undefined) mergeInPlace(target, part);
           return;
         }
       }

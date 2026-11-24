@@ -36,8 +36,8 @@ export type RawStreamToolCallDelta = {
   index?: number | string;
   id?: string;
   function?: { name?: string; arguments?: string } | null;
-  extras?: Record<string, unknown>;
-  extra_content?: Record<string, unknown>;
+  extras?: Record<string, unknown> | null;
+  extra_content?: Record<string, unknown> | null;
 };
 
 export type RawChunk = {
@@ -58,8 +58,8 @@ type RawToolCall = {
   id?: string;
   type?: string;
   function?: { name?: string; arguments?: string } | null;
-  extras?: Record<string, unknown>;
-  extra_content?: Record<string, unknown>;
+  extras?: Record<string, unknown> | null;
+  extra_content?: Record<string, unknown> | null;
 };
 
 export type RawResponse = {
@@ -252,15 +252,14 @@ export function createDecoder(
   function convertStreamToolCall(
     toolCall: RawStreamToolCallDelta,
   ): StreamedMessagePart[] {
-    if (toolCall.function === undefined || toolCall.function === null) {
-      return [];
-    }
     const streamIndex = toolCall.index;
-    const functionName = toolCall.function.name;
-    const functionArguments = toolCall.function.arguments;
-    const extras = toolCall.extra_content === undefined
-      ? toolCall.extras
-      : { ...toolCall.extras, extra_content: toolCall.extra_content };
+    const functionName = toolCall.function?.name;
+    const functionArguments = toolCall.function?.arguments;
+    const rawExtras = toolCall.extras ?? undefined;
+    const extraContent = toolCall.extra_content ?? undefined;
+    const extras = extraContent === undefined
+      ? rawExtras
+      : { ...rawExtras, extra_content: extraContent };
     const hasConcreteName = typeof functionName === 'string' && functionName.length > 0;
     const hasArguments = typeof functionArguments === 'string' && functionArguments.length > 0;
 
@@ -315,10 +314,15 @@ export function createDecoder(
         },
       ];
     }
-    if (!hasArguments) {
+    if (!hasArguments && extras === undefined) {
       return [];
     }
-    return [{ type: 'tool_call_part', argumentsPart: functionArguments, index: streamIndex }];
+    return [{
+      type: 'tool_call_part',
+      argumentsPart: hasArguments ? functionArguments : null,
+      index: streamIndex,
+      ...(extras === undefined ? {} : { extras }),
+    }];
   }
 
   return {
