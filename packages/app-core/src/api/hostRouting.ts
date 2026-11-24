@@ -141,6 +141,8 @@ const ROUTES = {
   downloadHostFile: 'local',
   getConfig: 'local',
   setConfig: 'local',
+  readHostTextFile: 'local',
+  writeHostTextFile: 'local',
   getAuth: 'local',
   startOAuthLogin: 'local',
   pollOAuthLogin: 'local',
