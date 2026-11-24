@@ -3,19 +3,21 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import {
+  HOST_BROWSER_DIALOGS_REMINDER_VARIANT,
   IAgentFullCompactionService,
   IAgentLifecycleService,
   IAgentLoopService,
+  IHostBrowser,
   ISessionManager,
   type IAgentScopeHandle,
   type ISessionScopeHandle,
 } from '@moonshot-ai/agent-core-v2';
 import { startServer } from '@moonshot-ai/kap-server';
 import {
-  DESKTOP_BROWSER_DIALOGS_REMINDER_VARIANT,
   formatBrowserDialogReminder,
-  registerDesktopBrowserDialogReminder,
+  registerBrowserDialogCleanup,
 } from '../../../src/main/browser/browser-dialog-reminder';
+import { createDesktopBrowserHost } from '../../../src/main/browser/browser-host';
 import {
   configureBrowserDialogs,
   forgetBrowserDialogSession,
@@ -85,7 +87,7 @@ async function mainAgent(session: ISessionScopeHandle): Promise<IAgentScopeHandl
 
 function reminders(agent: IAgentScopeHandle): string[] {
   return agent.accessor.get(IAgentLoopService).history()
-    .filter(message => message.origin?.kind === 'injection' && message.origin.variant === DESKTOP_BROWSER_DIALOGS_REMINDER_VARIANT)
+    .filter(message => message.origin?.kind === 'injection' && message.origin.variant === HOST_BROWSER_DIALOGS_REMINDER_VARIANT)
     .map(message => JSON.stringify(message.content));
 }
 
@@ -109,16 +111,6 @@ it('injects undelivered dialogs once at the start of a main agent turn, per sess
   vi.stubEnv('KIMI_CODE_EXPERIMENTAL_PERSISTENCE_MINIDB_READMODEL', 'false');
   vi.stubEnv('KIMI_CODE_EXPERIMENTAL_SEARCH_WORKER', 'false');
   const home = await mkdtemp(join(tmpdir(), 'desktop-browser-dialog-reminder-'));
-  const server = await startServer({
-    hostIdentity: { productName: 'test-host', platform: 'test_platform', version: '0.0.0' },
-    homeDir: home,
-    port: 0,
-    logLevel: 'silent',
-  });
-  let controlled = true;
-  configureBrowserDialogs({ isAgentControlled: () => controlled });
-  const sessions = server.core.accessor.get(ISessionManager);
-  const existing = await sessions.create({ workDir: home });
   const queued = new Map<string, BrowserDialogReminder | undefined>();
   const source = {
     collect: vi.fn(async (sessionId: string) => {
@@ -128,7 +120,19 @@ it('injects undelivered dialogs once at the start of a main agent turn, per sess
     }),
     forgetSession: vi.fn(() => forgetBrowserDialogSession(['browser-1'])),
   };
-  const registration = registerDesktopBrowserDialogReminder(server.core, source);
+  const host = createDesktopBrowserHost({ enabled: () => true, onDidChange: () => () => {} }, undefined, source);
+  const server = await startServer({
+    hostIdentity: { productName: 'test-host', platform: 'test_platform', version: '0.0.0' },
+    homeDir: home,
+    port: 0,
+    logLevel: 'silent',
+    seeds: [[IHostBrowser, host]],
+  });
+  let controlled = true;
+  configureBrowserDialogs({ isAgentControlled: () => controlled });
+  const sessions = server.core.accessor.get(ISessionManager);
+  const existing = await sessions.create({ workDir: home });
+  const registration = registerBrowserDialogCleanup(server.core, source.forgetSession);
   let closed = false;
   try {
     const createdDir = join(home, 'created');

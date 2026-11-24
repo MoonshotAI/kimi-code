@@ -1,4 +1,4 @@
-import type { DesktopBrowserAgentControl } from './browser-mcp';
+import type { DesktopBrowserAgentControl } from './browser-tool';
 import { getBrowserPreferences } from '../app/ui-state';
 
 const listeners = new Set<(enabled: boolean) => void>();

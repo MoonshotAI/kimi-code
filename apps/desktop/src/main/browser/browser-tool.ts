@@ -1,12 +1,4 @@
 import { formatBrowserToolResult } from './browser-tool-output';
-import { randomBytes, randomUUID } from 'node:crypto';
-import { createServer, type ServerResponse, type Server as HttpServer } from 'node:http';
-import type { AddressInfo } from 'node:net';
-
-import { Server } from '@modelcontextprotocol/sdk/server/index.js';
-import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
-import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
-
 import {
   BROWSER_AUTOMATION_PROTOCOL,
   describeInvalidBrowserRunRequest,
@@ -17,18 +9,10 @@ import { isAgentLocalFileAddress, runBrowserAutomation } from './browser-automat
 import type { BrowserOperationErrorCode, BrowserOperationResultEvent } from '../diagnostics/telemetry-events';
 import { trySendDesktopEvent } from '../diagnostics/track';
 import { BROWSER_RUN_TOOL_SCHEMA } from './browser-tool-schema';
-import { browserValidators } from '../../shared/browser-control';
 import type { BrowserSubagentRun } from '../../shared/browser-run';
-import { DESKTOP_BROWSER_SUBAGENT_RUN, DESKTOP_BROWSER_SUBAGENT_RUN_REASON, type DesktopBrowserSubagentRun } from './browser-subagent-control';
+import { DESKTOP_BROWSER_SUBAGENT_RUN_REASON, type DesktopBrowserSubagentRun } from './browser-subagent-control';
 
-function rejectRequest(response: ServerResponse, error: unknown): void {
-  if (response.destroyed || response.writableEnded) return;
-  if (response.headersSent) { response.destroy(); return; }
-  response.writeHead(500, { 'content-type': 'application/json' });
-  response.end(JSON.stringify({ error: error instanceof Error ? error.message : String(error) }));
-}
-
-const TOOL_NAME = 'run';
+export const DESKTOP_BROWSER_TOOL_NAME = 'mcp__desktop_browser__run';
 
 const TOOL_DESCRIPTION = `Browse and interact with web pages in Kimi Code Desktop, using screenshots or element references.
 
@@ -76,22 +60,11 @@ History and downloads:
 - browser.get_history and browser.get_downloads read retained records across conversations in the current application profile, newest first (up to 200 history entries or 100 downloads).
 - Download records include status and an optional savePath; query again for progress. A recorded path does not guarantee the file still exists. Times are Unix milliseconds and sizes are bytes; totalBytes=0 may mean unknown.`;
 
-export const DESKTOP_BROWSER_MCP_TOOL = {
-  name: TOOL_NAME,
+export const DESKTOP_BROWSER_TOOL = {
+  name: DESKTOP_BROWSER_TOOL_NAME,
   description: TOOL_DESCRIPTION,
-  inputSchema: BROWSER_RUN_TOOL_SCHEMA,
-} as const;
-
-export interface DesktopBrowserMcpHandle {
-  readonly url: string;
-  readonly token: string;
-  readonly config: {
-    transport: 'http';
-    url: string;
-    headers: { Authorization: string };
-  };
-  close(): Promise<void>;
-}
+  parameters: BROWSER_RUN_TOOL_SCHEMA as unknown as Record<string, unknown>,
+};
 
 export interface DesktopBrowserAgentControl {
   enabled(): boolean;
@@ -99,8 +72,8 @@ export interface DesktopBrowserAgentControl {
 }
 
 export interface DesktopBrowserAccess {
-  allows(sessionId: string | undefined): boolean;
-  resolveRun?(sessionId: string | undefined, run: BrowserSubagentRun): DesktopBrowserSubagentRun | null;
+  allows(sessionId: string): boolean;
+  resolveRun(sessionId: string, run: BrowserSubagentRun): DesktopBrowserSubagentRun | null;
 }
 
 export const DESKTOP_BROWSER_UNAVAILABLE_NOTICE = 'tell the user (or your parent agent) that the built-in browser is unavailable and why.';
@@ -116,21 +89,20 @@ export const DESKTOP_BROWSER_CONTROL_OFF_REASON = 'Agent control of the built-in
 export const DESKTOP_BROWSER_DISABLED_ERROR = describeBlockedDesktopBrowser(DESKTOP_BROWSER_CONTROL_OFF_REASON);
 export const DESKTOP_BROWSER_SUBAGENT_RUN_ERROR = describeBlockedDesktopBrowser(DESKTOP_BROWSER_SUBAGENT_RUN_REASON);
 
-const ALWAYS_ALLOWED: DesktopBrowserAccess = { allows: () => true };
+export type DesktopBrowserToolContent =
+  | { type: 'text'; text: string }
+  | { type: 'image'; data: string; mimeType: string };
 
-export interface StartDesktopBrowserMcpOptions {
-  readonly token?: string;
-  readonly access?: DesktopBrowserAccess;
+export interface DesktopBrowserToolResult {
+  content: DesktopBrowserToolContent[];
+  isError: boolean;
 }
 
-function closeHttpServer(server: HttpServer): Promise<void> {
-  return new Promise((resolve, reject) => {
-    server.close((error) => {
-      if (error !== undefined) reject(error);
-      else resolve();
-    });
-    server.closeIdleConnections();
-  });
+export interface DesktopBrowserToolRequest {
+  readonly sessionId: string;
+  readonly args: unknown;
+  readonly run?: BrowserSubagentRun;
+  readonly signal: AbortSignal;
 }
 
 function browserOperationOf(args: unknown): BrowserOperationResultEvent['operation'] {
@@ -139,196 +111,57 @@ function browserOperationOf(args: unknown): BrowserOperationResultEvent['operati
   return BROWSER_OPERATIONS.find(item => item === operation) ?? 'unknown';
 }
 
-function createProtocolServer(sessionId: string | undefined, access: DesktopBrowserAccess): Server {
-  const protocolServer = new Server(
-    { name: 'desktop_browser', version: '1.0.0' },
-    { capabilities: { tools: {} } },
-  );
-
-  protocolServer.setRequestHandler(ListToolsRequestSchema, () =>
-    Promise.resolve({ tools: access.allows(sessionId) ? [DESKTOP_BROWSER_MCP_TOOL] : [] }),
-  );
-  protocolServer.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
-    const startedAt = Date.now();
-    let operation = browserOperationOf(request.params.arguments);
-    let caller: BrowserOperationResultEvent['caller'] = 'main';
-    let errorCode: BrowserOperationErrorCode | undefined = 'INTERNAL_ERROR';
-    try {
-      if (request.params.name !== TOOL_NAME) {
-        errorCode = 'UNKNOWN_TOOL';
-        return {
-          content: [{ type: 'text', text: `Unknown tool: ${request.params.name}` }],
-          isError: true,
-        };
-      }
-      if (!access.allows(sessionId)) {
-        errorCode = 'CONTROL_DISABLED';
-        return { content: [{ type: 'text', text: DESKTOP_BROWSER_DISABLED_ERROR }], isError: true };
-      }
-      let args = request.params.arguments;
-      let run: DesktopBrowserSubagentRun | undefined;
-      if (typeof args === 'object' && args !== null && !Array.isArray(args) && Object.hasOwn(args, DESKTOP_BROWSER_SUBAGENT_RUN)) {
-        const stripped = { ...args } as Record<string, unknown>;
-        const identity = stripped[DESKTOP_BROWSER_SUBAGENT_RUN];
-        delete stripped[DESKTOP_BROWSER_SUBAGENT_RUN];
-        args = stripped;
-        if (!browserValidators.subagentRun.Check(identity)) {
-          errorCode = 'SUBAGENT_RUN_INVALID';
-          return { content: [{ type: 'text', text: DESKTOP_BROWSER_SUBAGENT_RUN_ERROR }], isError: true };
-        }
-        run = access.resolveRun?.(sessionId, identity) ?? undefined;
-        if (run === undefined) {
-          errorCode = 'SUBAGENT_RUN_INVALID';
-          return { content: [{ type: 'text', text: DESKTOP_BROWSER_SUBAGENT_RUN_ERROR }], isError: true };
-        }
-        caller = 'subagent';
-      }
-      const requestOptions = { isLocalFileAddress: isAgentLocalFileAddress };
-      const input = asBrowserRunRequest(args, requestOptions);
-      if (input === null) {
-        errorCode = 'INVALID_ARGS';
-        return {
-          content: [{ type: 'text', text: describeInvalidBrowserRunRequest(args, requestOptions) }],
-          isError: true,
-        };
-      }
-      const result = run === undefined
-        ? await runBrowserAutomation(input, extra.signal, sessionId)
-        : await runBrowserAutomation(input, extra.signal, sessionId, run);
-      operation = result.operation;
-      errorCode = result.ok ? undefined : result.error?.code ?? 'INTERNAL_ERROR';
-      const content: Array<
-        | { type: 'text'; text: string }
-        | { type: 'image'; data: string; mimeType: string }
-      > = [{ type: 'text', text: formatBrowserToolResult(result) }];
-      const image = result.visual ?? result.crop;
-      if (image !== undefined) {
-        content.push({
-          type: 'image',
-          data: image.data,
-          mimeType: image.mimeType,
-        });
-      }
-      return { content, isError: !result.ok };
-    } finally {
-      try {
-        trySendDesktopEvent('browser_operation_result', {
-          operation,
-          ok: errorCode === undefined,
-          ...(errorCode === undefined ? {} : { error_code: errorCode }),
-          duration_ms: Date.now() - startedAt,
-          caller,
-          ...(sessionId === undefined ? {} : { session_id: sessionId }),
-        });
-      } catch {}
-    }
-  });
-  return protocolServer;
+function refusal(text: string): DesktopBrowserToolResult {
+  return { content: [{ type: 'text', text }], isError: true };
 }
 
-export async function startDesktopBrowserMcp(
-  options: StartDesktopBrowserMcpOptions = {},
-): Promise<DesktopBrowserMcpHandle> {
-  const token = options.token ?? randomBytes(32).toString('base64url');
-  const access = options.access ?? ALWAYS_ALLOWED;
-  const sessions = new Map<
-    string,
-    { server: Server; transport: StreamableHTTPServerTransport; owner: string | undefined }
-  >();
-
-  const httpServer = createServer((request, response) => {
-    let url: URL;
-    try { url = new URL(request.url ?? '/', 'http://127.0.0.1'); }
-    catch { response.writeHead(400).end('invalid request target'); return; }
-    if (url.pathname !== '/mcp') {
-      response.writeHead(404).end('not found');
-      return;
+export async function runDesktopBrowserTool(access: DesktopBrowserAccess, request: DesktopBrowserToolRequest): Promise<DesktopBrowserToolResult> {
+  const { sessionId, args, signal } = request;
+  const startedAt = Date.now();
+  let operation = browserOperationOf(args);
+  let caller: BrowserOperationResultEvent['caller'] = 'main';
+  let errorCode: BrowserOperationErrorCode | undefined = 'INTERNAL_ERROR';
+  try {
+    if (!access.allows(sessionId)) {
+      errorCode = 'CONTROL_DISABLED';
+      return refusal(DESKTOP_BROWSER_DISABLED_ERROR);
     }
-    if (request.headers.authorization !== `Bearer ${token}`) {
-      response.writeHead(401, { 'content-type': 'application/json' });
-      response.end(JSON.stringify({ error: 'unauthorized' }));
-      return;
-    }
-    const rawSessionId = request.headers['mcp-session-id'];
-    const sessionId = Array.isArray(rawSessionId) ? rawSessionId[0] : rawSessionId;
-    if (sessionId !== undefined) {
-      const session = sessions.get(sessionId);
-      if (session === undefined) {
-        response.writeHead(404, { 'content-type': 'application/json' });
-        response.end(JSON.stringify({ error: 'unknown MCP session' }));
-        return;
+    let run: DesktopBrowserSubagentRun | undefined;
+    if (request.run !== undefined) {
+      run = access.resolveRun(sessionId, request.run) ?? undefined;
+      if (run === undefined) {
+        errorCode = 'SUBAGENT_RUN_INVALID';
+        return refusal(DESKTOP_BROWSER_SUBAGENT_RUN_ERROR);
       }
-      void session.transport.handleRequest(request, response).catch(async (error: unknown) => {
-        sessions.delete(sessionId);
-        rejectRequest(response, error);
-        await session.server.close().catch(() => undefined);
+      caller = 'subagent';
+    }
+    const requestOptions = { isLocalFileAddress: isAgentLocalFileAddress };
+    const input = asBrowserRunRequest(args, requestOptions);
+    if (input === null) {
+      errorCode = 'INVALID_ARGS';
+      return refusal(describeInvalidBrowserRunRequest(args, requestOptions));
+    }
+    const result = run === undefined
+      ? await runBrowserAutomation(input, signal, sessionId)
+      : await runBrowserAutomation(input, signal, sessionId, run);
+    operation = result.operation;
+    errorCode = result.ok ? undefined : result.error?.code ?? 'INTERNAL_ERROR';
+    const content: DesktopBrowserToolContent[] = [{ type: 'text', text: formatBrowserToolResult(result) }];
+    const image = result.visual ?? result.crop;
+    if (image !== undefined) {
+      content.push({ type: 'image', data: image.data, mimeType: image.mimeType });
+    }
+    return { content, isError: !result.ok };
+  } finally {
+    try {
+      trySendDesktopEvent('browser_operation_result', {
+        operation,
+        ok: errorCode === undefined,
+        ...(errorCode === undefined ? {} : { error_code: errorCode }),
+        duration_ms: Date.now() - startedAt,
+        caller,
+        session_id: sessionId,
       });
-      return;
-    }
-    if (request.method !== 'POST') {
-      response.writeHead(400, { 'content-type': 'application/json' });
-      response.end(JSON.stringify({ error: 'MCP session id is required' }));
-      return;
-    }
-    void (async () => {
-      const rawOwner = request.headers['x-kimi-session-id'];
-      const owner = typeof rawOwner === 'string' ? rawOwner : undefined;
-      const server = createProtocolServer(owner, access);
-      const transport = new StreamableHTTPServerTransport({
-        sessionIdGenerator: () => randomUUID(),
-      });
-      try {
-        await server.connect(transport);
-        await transport.handleRequest(request, response);
-      } catch (error) {
-        await server.close().catch(() => undefined);
-        throw error;
-      }
-      const createdId = transport.sessionId;
-      if (createdId === undefined) {
-        await server.close().catch(() => undefined);
-        return;
-      }
-      sessions.set(createdId, { server, transport, owner });
-      transport.onclose = () => {
-        sessions.delete(createdId);
-      };
-      if (owner === undefined) return;
-      for (const [id, previous] of sessions) {
-        if (id === createdId || previous.owner !== owner) continue;
-        sessions.delete(id);
-        void previous.server.close().catch(() => undefined);
-      }
-    })().catch((error: unknown) => {
-      rejectRequest(response, error);
-    });
-  });
-  await new Promise<void>((resolve, reject) => {
-    httpServer.once('error', reject);
-    httpServer.listen(0, '127.0.0.1', () => {
-      httpServer.removeListener('error', reject);
-      resolve();
-    });
-  });
-  const address = httpServer.address() as AddressInfo;
-  const url = `http://127.0.0.1:${address.port}/mcp`;
-  let closed = false;
-  return {
-    url,
-    token,
-    config: {
-      transport: 'http',
-      url,
-      headers: { Authorization: `Bearer ${token}` },
-    },
-    async close() {
-      if (closed) return;
-      closed = true;
-      await Promise.all(
-        [...sessions.values()].map(({ server }) => server.close().catch(() => undefined)),
-      );
-      sessions.clear();
-      await closeHttpServer(httpServer).catch(() => undefined);
-    },
-  };
+    } catch {}
+  }
 }

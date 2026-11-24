@@ -15,6 +15,7 @@ import {
   IAgentProfileService,
   IAgentToolRegistryService,
   IAgentToolSelectService,
+  IHostBrowser,
   ISessionManager,
   ISessionMcpHandle,
 } from '@moonshot-ai/agent-core-v2';
@@ -27,17 +28,15 @@ import {
   DESKTOP_BROWSER_DISABLED_REMINDER,
   DESKTOP_BROWSER_ENABLED_REMINDER,
   DESKTOP_BROWSER_REMINDER_VARIANT,
-  createDesktopBrowserAccess,
-  registerDesktopBrowserMcp,
-} from '../../../src/main/browser/browser-mcp-registration';
+  createDesktopBrowserHost,
+} from '../../../src/main/browser/browser-host';
 import { runBrowserAutomation } from '../../../src/main/browser/browser-automation';
 import {
   DESKTOP_BROWSER_BLOCKED_GUIDANCE,
   DESKTOP_BROWSER_DISABLED_ERROR,
-  DESKTOP_BROWSER_MCP_TOOL,
-  startDesktopBrowserMcp,
+  DESKTOP_BROWSER_TOOL,
   type DesktopBrowserAgentControl,
-} from '../../../src/main/browser/browser-mcp';
+} from '../../../src/main/browser/browser-tool';
 import { browserControlOwnership } from '../../../src/main/browser/browser-control-ownership';
 
 vi.mock('../../../src/main/browser/browser-automation', () => ({
@@ -74,25 +73,23 @@ async function startBrowserTestServer(prefix: string, control: Control, subagent
   vi.stubEnv('KIMI_CODE_PERSISTENCE_MINIDB_READMODEL', 'false');
   vi.stubEnv('KIMI_CODE_SEARCH_WORKER', 'false');
   const home = await mkdtemp(join(tmpdir(), prefix));
-  const access = createDesktopBrowserAccess(control, subagentControl);
-  const browser = await startDesktopBrowserMcp({ access });
+  const access = createDesktopBrowserHost(control, subagentControl);
   const server = await startServer({
     hostIdentity: { productName: 'test-host', platform: 'test_platform', version: '0.0.0' },
     homeDir: home,
     port: 0,
     logLevel: 'silent',
     env: { ...process.env },
+    seeds: [[IHostBrowser, access]],
   });
-  const registration = registerDesktopBrowserMcp(server.core, browser.config, access);
   const sessions = server.core.accessor.get(ISessionManager);
   return {
     home,
     access,
     sessions,
     async dispose() {
-      registration.dispose();
       await server.close();
-      await browser.close();
+      access.dispose();
       await rm(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
     },
   };
@@ -177,7 +174,7 @@ it('offers the browser as a deferred tool with the published schema and restores
     await selection.prepareForRequest();
     expect(selection.enabled()).toBe(true);
     expect(registry.resolve('select_tools')).toBeDefined();
-    expect(tool(agent)).toMatchObject({ description: DESKTOP_BROWSER_MCP_TOOL.description, parameters: DESKTOP_BROWSER_MCP_TOOL.inputSchema });
+    expect(tool(agent)).toMatchObject({ description: DESKTOP_BROWSER_TOOL.description, parameters: DESKTOP_BROWSER_TOOL.parameters });
     await selection.prepareForRequest();
     expect(selection.shapeTools(registry.list()).map((entry) => entry.name)).not.toContain(NAME);
     expect(selection.loadableToolsAnnouncement()?.content[0]).toMatchObject({ text: expect.stringContaining(NAME) });
@@ -528,7 +525,8 @@ it('passes trusted subagent runs through dynamic and direct tools without weaken
         state: activity.running ? 'running' : 'idle',
         activeTurnId: activity.turnId,
       }));
-      if (dynamic) expect(agent.accessor.get(IAgentToolSelectService).load([NAME]).toLoad).toEqual([NAME]);
+      const loaded = dynamic ? agent.accessor.get(IAgentToolSelectService).load([NAME]).toLoad : [NAME];
+      expect(loaded).toEqual([NAME]);
       return { agent, activity };
     };
 

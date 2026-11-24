@@ -776,8 +776,7 @@ describe('native browser IPC', () => {
       { startServer },
       core,
       { ISessionEventBus },
-      { startDesktopBrowserMcp },
-      { createDesktopBrowserAccess, registerDesktopBrowserMcp },
+      { createDesktopBrowserHost },
       automation,
       { isBrowserUiRequest },
       { browserCommandTakesControl },
@@ -790,8 +789,7 @@ describe('native browser IPC', () => {
       import('@moonshot-ai/kap-server'),
       import('@moonshot-ai/agent-core-v2'),
       import('@moonshot-ai/agent-core-v2/app/event/eventBus'),
-      import('../../../src/main/browser/browser-mcp'),
-      import('../../../src/main/browser/browser-mcp-registration'),
+      import('../../../src/main/browser/browser-host'),
       import('../../../src/main/browser/browser-automation'),
       import('../../../src/shared/browser-automation'),
       import('../../../src/renderer/lib/browserExecutionReadiness'),
@@ -820,22 +818,20 @@ describe('native browser IPC', () => {
       return next;
     });
     let server: Awaited<ReturnType<typeof startServer>> | undefined;
-    let browser: Awaited<ReturnType<typeof startDesktopBrowserMcp>> | undefined;
-    let registration: ReturnType<typeof registerDesktopBrowserMcp> | undefined;
+    let access: ReturnType<typeof createDesktopBrowserHost> | undefined;
     let closeHost: (() => void) | undefined;
     try {
       expect(actualControls.browserAgentControl.enabled()).toBe(true);
       expect(actualControls.browserSubagentControl.enabled()).toBe(false);
-      const access = createDesktopBrowserAccess(actualControls.browserAgentControl, actualControls.browserSubagentControl);
-      browser = await startDesktopBrowserMcp({ access });
+      access = createDesktopBrowserHost(actualControls.browserAgentControl, actualControls.browserSubagentControl);
       server = await startServer({
         hostIdentity: { productName: 'test-host', platform: 'test_platform', version: '0.0.0' },
         homeDir: home,
         port: 0,
         logLevel: 'silent',
         env: { ...process.env, KIMI_CODE_EXPERIMENTAL_PERSISTENCE_MINIDB_READMODEL: 'false', KIMI_CODE_EXPERIMENTAL_SEARCH_WORKER: 'false' },
+        seeds: [[core.IHostBrowser, access]],
       });
-      registration = registerDesktopBrowserMcp(server.core, browser.config, access);
       const sessions = server.core.accessor.get(core.ISessionManager);
       const session = await sessions.create({ workDir: home });
       await session.accessor.get(core.ISessionMcpHandle).ready;
@@ -959,7 +955,6 @@ describe('native browser IPC', () => {
 
       let callSequence = 0;
       const call = async (agent: Agent, turnId: number, operation: string, fields: Record<string, unknown> = {}) => {
-        if (agent === main) return main.accessor.get(core.IAgentMcpService).resolved('desktop_browser')!.client.callTool('run', { protocol, operation, ...fields });
         const toolCall = { type: 'function' as const, id: `call-${++callSequence}`, name, arguments: JSON.stringify({ protocol, operation, ...fields }) };
         const executor = agent.accessor.get(core.IAgentToolExecutorService);
         const result = await executor.executor.execute(toolCall, { origin: 'loop', turnId });
@@ -974,9 +969,9 @@ describe('native browser IPC', () => {
       expect(pageStates.get('browser-1')?.url).toBe('https://example.com/');
       expect(pageStates.get('browser-2')?.url).toBe('https://example.com/');
 
-      const mainDenied = await main.accessor.get(core.IAgentMcpService).resolved('desktop_browser')!.client.callTool('run', { protocol, operation: 'browser.create_tab', url: 'https://example.com/' });
+      const mainDenied = await call(main, 1, 'browser.create_tab', { url: 'https://example.com/' });
       expect(mainDenied.isError).toBe(true);
-      expect(JSON.stringify(mainDenied.content)).toContain('Browser control requires a running turn.');
+      expect(JSON.stringify(mainDenied.output)).toContain('Browser control requires a running turn.');
 
       let requestCount = rendererRequests.length;
       await handler(IPC.browserUpdatePreferences)({ sender: mainSender }, { subagentControl: false });
@@ -1000,7 +995,7 @@ describe('native browser IPC', () => {
       expect(mainRelease.isError).toBe(true);
       expect(JSON.stringify(mainRelease)).toContain('TAB_NOT_ACTIVE');
       expect((await call(worker.agent, 7, 'tab.navigate', { tabId: 'tab-1', url: 'https://example.net/' })).isError).not.toBe(true);
-      const currentRun = access.runs.resolve(session.id, { agentId: 'worker', generation: workerContext.generation, turnId: 7 })!;
+      const currentRun = access!.runs.resolve(session.id, { agentId: 'worker', generation: workerContext.generation, turnId: 7 })!;
       const currentState = await automation.runBrowserAutomation({ protocol, operation: 'browser.get_state' }, undefined, session.id, currentRun);
       expect(currentState.browser?.activeTabId, JSON.stringify(currentState)).toBe('tab-1');
       expect((await call(main, 1, 'browser.activate_tab', { tabId: 'tab-1' })).isError).not.toBe(true);
@@ -1015,9 +1010,8 @@ describe('native browser IPC', () => {
       expect((await call(direct.agent, 8, 'browser.get_state')).isError).toBe(true);
       expect(rendererRequests).toHaveLength(requestCount);
     } finally {
-      registration?.dispose();
       await server?.close();
-      await browser?.close();
+      access?.dispose();
       closeHost?.();
       (await import('../../../src/main/browser/browser-control-ownership')).browserControlOwnership.reset();
       vi.mocked(app).getPath.mockImplementation(name => `/tmp/${name}`);

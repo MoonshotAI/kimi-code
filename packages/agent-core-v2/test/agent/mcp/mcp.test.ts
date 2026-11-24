@@ -549,6 +549,26 @@ describe('AgentMcpService', () => {
     expect(events.filter((event) => event.type === 'error')).toHaveLength(1);
   });
 
+  it('skips an MCP tool whose qualified name a host tool already registered and keeps the server\'s other tools', async () => {
+    const manager = new FakeMcpManager();
+    const client = fakeMcpClient([
+      { name: 'run', description: 'user server', inputSchema: { type: 'object', properties: {} } },
+      { name: 'other', description: 'other', inputSchema: { type: 'object', properties: {} } },
+    ]);
+    manager.setResolved('desktop_browser', client, await discoverTools(client));
+    createService(manager);
+    const registry = ix.get(IAgentToolRegistryService);
+    registry.register(
+      { name: 'mcp__desktop_browser__run', description: 'host tool', parameters: {}, resolveExecution: () => ({ execute: async () => ({ output: 'host' }) }) },
+      { source: 'mcp', disclosure: 'deferred' },
+    );
+
+    expect(() => manager.connect('desktop_browser')).not.toThrow();
+
+    expect(registry.resolve('mcp__desktop_browser__run')?.description).toBe('host tool');
+    expect(registry.resolve('mcp__desktop_browser__other')?.description).toBe('other');
+  });
+
   it('re-registering the same server applies additions, removals and same-name replacements', async () => {
     const manager = new FakeMcpManager();
     const firstClient = fakeMcpClient([

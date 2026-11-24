@@ -6,23 +6,31 @@ const {
   installProxyMock,
   createKimiDeviceIdMock,
   wireDesktopTelemetryMock,
-  startDesktopBrowserMcpMock,
+  createDesktopBrowserHostMock,
   configureSearchWorkerRuntimeMock,
-  browserMcpCloseMock,
-  registerBrowserMcpMock,
+  hostDisposeMock,
+  registerDialogCleanupMock,
   registrationDisposeMock,
-  browserAccess,
+  startBrowserTestEndpointMock,
+  testEndpointCloseMock,
+  browserHost,
+  forgetSessionBrowserDialogsMock,
+  collectBrowserDialogReminderMock,
 } = vi.hoisted(() => ({
   startServerMock: vi.fn(),
   installProxyMock: vi.fn(),
   createKimiDeviceIdMock: vi.fn(() => 'device-1'),
   wireDesktopTelemetryMock: vi.fn(),
-  startDesktopBrowserMcpMock: vi.fn(),
+  createDesktopBrowserHostMock: vi.fn(),
   configureSearchWorkerRuntimeMock: vi.fn(),
-  browserMcpCloseMock: vi.fn().mockResolvedValue(undefined),
-  registerBrowserMcpMock: vi.fn(),
+  hostDisposeMock: vi.fn(),
+  registerDialogCleanupMock: vi.fn(),
   registrationDisposeMock: vi.fn(),
-  browserAccess: { allows: () => true },
+  startBrowserTestEndpointMock: vi.fn(),
+  testEndpointCloseMock: vi.fn().mockResolvedValue(undefined),
+  browserHost: { dispose: vi.fn() },
+  forgetSessionBrowserDialogsMock: vi.fn(),
+  collectBrowserDialogReminderMock: vi.fn(),
 }));
 
 vi.mock('electron', () => ({
@@ -44,16 +52,18 @@ vi.mock('@moonshot-ai/kimi-code-sdk', () => ({
   installGlobalProxyDispatcher: installProxyMock,
   resolveKimiHome: () => '/tmp/kimi-test',
 }));
-vi.mock('../../../src/main/browser/browser-mcp-registration', () => ({
-  createDesktopBrowserAccess: () => browserAccess,
-  registerDesktopBrowserMcp: registerBrowserMcpMock,
+vi.mock('../../../src/main/browser/browser-host', () => ({
+  createDesktopBrowserHost: createDesktopBrowserHostMock,
+}));
+vi.mock('../../../src/main/browser/browser-test-endpoint', () => ({
+  startBrowserTestEndpoint: startBrowserTestEndpointMock,
 }));
 vi.mock('../../../src/main/browser/browser-dialog-reminder', () => ({
-  registerDesktopBrowserDialogReminder: vi.fn(() => ({ dispose: vi.fn() })),
+  registerBrowserDialogCleanup: registerDialogCleanupMock,
 }));
 vi.mock('../../../src/main/browser/browser-automation', () => ({
-  collectBrowserDialogReminder: vi.fn(),
-  forgetSessionBrowserDialogs: vi.fn(),
+  collectBrowserDialogReminder: collectBrowserDialogReminderMock,
+  forgetSessionBrowserDialogs: forgetSessionBrowserDialogsMock,
 }));
 vi.mock('../../../src/main/diagnostics/telemetry', () => ({
   wireDesktopTelemetry: wireDesktopTelemetryMock,
@@ -62,11 +72,10 @@ vi.mock('../../../src/main/browser/browser-agent-control', () => ({
   browserAgentControl: { enabled: () => true, onDidChange: () => () => undefined },
   browserSubagentControl: { enabled: () => false, onDidChange: () => () => undefined },
 }));
-vi.mock('../../../src/main/browser/browser-mcp', () => ({
-  startDesktopBrowserMcp: startDesktopBrowserMcpMock,
-}));
 
+import { IHostBrowser } from '@moonshot-ai/agent-core-v2/features/hostBrowser/hostBrowser';
 import { startDesktopServer } from '../../../src/main/server/embedded-server';
+import { browserAgentControl, browserSubagentControl } from '../../../src/main/browser/browser-agent-control';
 import { desktopServerSecret } from '../../../src/main/server/server-auth';
 
 describe('startDesktopServer', () => {
@@ -75,34 +84,29 @@ describe('startDesktopServer', () => {
   }
 
   beforeEach(() => {
-    registerBrowserMcpMock.mockReset().mockReturnValue({ dispose: registrationDisposeMock });
+    registerDialogCleanupMock.mockReset().mockReturnValue({ dispose: registrationDisposeMock });
     registrationDisposeMock.mockReset();
+    hostDisposeMock.mockReset();
+    browserHost.dispose = hostDisposeMock;
+    createDesktopBrowserHostMock.mockReset().mockReturnValue(browserHost);
+    testEndpointCloseMock.mockReset().mockResolvedValue(undefined);
+    startBrowserTestEndpointMock.mockReset().mockResolvedValue({ url: 'http://127.0.0.1:60001/run', close: testEndpointCloseMock });
+    vi.unstubAllEnvs();
     startServerMock.mockReset();
     installProxyMock.mockReset();
     createKimiDeviceIdMock.mockReset().mockReturnValue('device-1');
     wireDesktopTelemetryMock.mockReset().mockResolvedValue(null);
-    browserMcpCloseMock.mockReset().mockResolvedValue(undefined);
-    startDesktopBrowserMcpMock.mockReset().mockResolvedValue({
-      url: 'http://127.0.0.1:60001/mcp',
-      token: 'secret',
-      config: {
-        transport: 'http',
-        url: 'http://127.0.0.1:60001/mcp',
-        headers: { Authorization: 'Bearer secret' },
-      },
-      close: browserMcpCloseMock,
-    });
   });
 
-  it.each(['registration', 'telemetry'])('closes both servers when %s initialization fails', async (step) => {
+  it.each(['registration', 'telemetry'])('closes the server and the browser host when %s initialization fails', async (step) => {
     const close = vi.fn().mockRejectedValue(new Error('close failure'));
     startServerMock.mockResolvedValue({ host: '127.0.0.1', port: 1234, core: core(), close });
     const failure = new Error('initialization failed');
-    if (step === 'registration') registerBrowserMcpMock.mockImplementationOnce(() => { throw failure; });
+    if (step === 'registration') registerDialogCleanupMock.mockImplementationOnce(() => { throw failure; });
     else wireDesktopTelemetryMock.mockRejectedValueOnce(failure);
     await expect(startDesktopServer({})).rejects.toBe(failure);
     expect(close).toHaveBeenCalledOnce();
-    expect(browserMcpCloseMock).toHaveBeenCalledOnce();
+    expect(hostDisposeMock).toHaveBeenCalledOnce();
     if (step === 'telemetry') expect(registrationDisposeMock).toHaveBeenCalledOnce();
   });
 
@@ -121,7 +125,7 @@ describe('startDesktopServer', () => {
     });
 
     expect(installProxyMock).toHaveBeenCalledOnce();
-    expect(startDesktopBrowserMcpMock).toHaveBeenCalledWith({ access: browserAccess, token: undefined });
+    expect(createDesktopBrowserHostMock).toHaveBeenCalledWith(browserAgentControl, browserSubagentControl, { collect: collectBrowserDialogReminderMock });
     expect(startServerMock).toHaveBeenCalledOnce();
     expect(configureSearchWorkerRuntimeMock).toHaveBeenCalledWith(fileURLToPath(new URL('../../../src/main/server/search-worker.cjs', import.meta.url)));
     const args = startServerMock.mock.calls[0]![0];
@@ -141,12 +145,9 @@ describe('startDesktopServer', () => {
       displayName: 'Kimi Code',
       replyStyleGuide: expect.stringContaining('desktop app'),
     });
-    expect(args.seeds).toBeUndefined();
-    expect(registerBrowserMcpMock).toHaveBeenCalledWith(appCore, {
-      transport: 'http',
-      url: 'http://127.0.0.1:60001/mcp',
-      headers: { Authorization: 'Bearer secret' },
-    }, browserAccess);
+    expect(args.seeds).toEqual([[IHostBrowser, browserHost]]);
+    expect(registerDialogCleanupMock).toHaveBeenCalledWith(appCore, forgetSessionBrowserDialogsMock);
+    expect(startBrowserTestEndpointMock).not.toHaveBeenCalled();
 
     expect(wireDesktopTelemetryMock).toHaveBeenCalledWith(appCore, {
       deviceId: 'device-1',
@@ -157,7 +158,7 @@ describe('startDesktopServer', () => {
     await handle.close();
     expect(close).toHaveBeenCalledOnce();
     expect(registrationDisposeMock).toHaveBeenCalledOnce();
-    expect(browserMcpCloseMock).toHaveBeenCalledOnce();
+    expect(hostDisposeMock).toHaveBeenCalledOnce();
   });
 
   it('passes the minted device id to telemetry', async () => {
@@ -208,7 +209,25 @@ describe('startDesktopServer', () => {
     await startDesktopServer({ debugEndpoints: true });
 
     expect(startServerMock.mock.calls[0]![0].debugEndpoints).toBe(true);
-    expect(startDesktopBrowserMcpMock).toHaveBeenCalledWith({ access: browserAccess, token: undefined });
+    expect(startBrowserTestEndpointMock).not.toHaveBeenCalled();
+  });
+
+  it('opens the browser test endpoint only with debug endpoints and a test token', async () => {
+    startServerMock.mockResolvedValue({
+      host: '127.0.0.1',
+      port: 54321,
+      core: core(),
+      close: vi.fn().mockResolvedValue(undefined),
+    });
+    vi.stubEnv('KIMI_BROWSER_TEST_TOKEN', 'browser-test-token');
+
+    await startDesktopServer({});
+    expect(startBrowserTestEndpointMock).not.toHaveBeenCalled();
+
+    const handle = await startDesktopServer({ debugEndpoints: true });
+    expect(startBrowserTestEndpointMock).toHaveBeenCalledExactlyOnceWith(browserHost, 'browser-test-token');
+    await handle.close();
+    expect(testEndpointCloseMock).toHaveBeenCalledOnce();
   });
 
   it('close shuts telemetry down before closing the server', async () => {

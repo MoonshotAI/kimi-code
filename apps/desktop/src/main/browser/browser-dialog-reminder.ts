@@ -1,15 +1,7 @@
-import type { ContextInjectionContext, IAgentScopeHandle, IDisposable, ISessionScopeHandle, Scope } from '@moonshot-ai/agent-core-v2';
-import { IAgentLifecycleService, IAgentReminderService, MAIN_AGENT_ID } from '@moonshot-ai/agent-core-v2';
+import type { IDisposable, Scope } from '@moonshot-ai/agent-core-v2';
 import { ISessionManager } from '@moonshot-ai/agent-core-v2/app/sessionManager/sessionManager';
 import type { BrowserDialogRecord, BrowserPendingDialog } from '../../shared/browser-dialogs';
 import type { BrowserDialogReminder } from './browser-automation';
-
-export const DESKTOP_BROWSER_DIALOGS_REMINDER_VARIANT = 'desktop-browser-dialogs';
-
-export interface BrowserDialogReminderSource {
-  collect(sessionId: string): Promise<BrowserDialogReminder | undefined>;
-  forgetSession(sessionId: string): void;
-}
 
 const ANSWERERS: Record<BrowserDialogRecord['answerer'], string> = { agent: 'you', user: 'the user', auto: 'the app automatically' };
 
@@ -44,63 +36,7 @@ export function formatBrowserDialogReminder(reminder: BrowserDialogReminder): st
   return lines.join('\n');
 }
 
-function dialogReminder(sessionId: string, source: BrowserDialogReminderSource) {
-  return async (context: ContextInjectionContext) => {
-    if (!context.isNewTurn) return undefined;
-    const reminder = await source.collect(sessionId);
-    return reminder === undefined ? undefined : formatBrowserDialogReminder(reminder);
-  };
-}
-
-export function registerDesktopBrowserDialogReminder(core: Scope, source: BrowserDialogReminderSource): IDisposable {
+export function registerBrowserDialogCleanup(core: Scope, forgetSession: (sessionId: string) => void): IDisposable {
   const sessions = core.accessor.get(ISessionManager);
-  if (sessions.onDidCreateSession === undefined) throw new Error('Session creation hooks are unavailable');
-  const attached = new Map<string, () => void>();
-  let disposed = false;
-
-  const attachSession = (session: ISessionScopeHandle): void => {
-    if (disposed || attached.has(session.id)) return;
-    const lifecycle = session.accessor.get(IAgentLifecycleService);
-    let registration: IDisposable | undefined;
-    const attachAgent = (agentId: string, handle: IAgentScopeHandle | undefined): void => {
-      if (agentId !== MAIN_AGENT_ID || handle === undefined || registration !== undefined) return;
-      registration = handle.accessor.get(IAgentReminderService).register(DESKTOP_BROWSER_DIALOGS_REMINDER_VARIANT, dialogReminder(session.id, source));
-    };
-    const created = lifecycle.onDidCreateScope(({ context, handle }) => attachAgent(context.agentId, handle));
-    const closed = lifecycle.onDidClose(({ agentId }) => {
-      if (agentId !== MAIN_AGENT_ID) return;
-      registration?.dispose();
-      registration = undefined;
-    });
-    attached.set(session.id, () => {
-      created.dispose();
-      closed.dispose();
-      registration?.dispose();
-      registration = undefined;
-    });
-    attachAgent(MAIN_AGENT_ID, lifecycle.handleOf(MAIN_AGENT_ID));
-  };
-  const detachSession = (sessionId: string): void => {
-    attached.get(sessionId)?.();
-    attached.delete(sessionId);
-  };
-
-  const subscriptions: IDisposable[] = [sessions.onDidCreateSession(event => attachSession(event.handle))];
-  if (sessions.onDidCloseSession !== undefined) subscriptions.push(sessions.onDidCloseSession(({ sessionId }) => detachSession(sessionId)));
-  if (sessions.onWillDeleteSession !== undefined) {
-    subscriptions.push(sessions.onWillDeleteSession(({ sessionId }) => {
-      detachSession(sessionId);
-      source.forgetSession(sessionId);
-    }));
-  }
-  for (const session of sessions.list()) attachSession(session);
-
-  return {
-    dispose() {
-      if (disposed) return;
-      disposed = true;
-      for (const subscription of subscriptions) subscription.dispose();
-      for (const sessionId of Array.from(attached.keys())) detachSession(sessionId);
-    },
-  };
+  return sessions.onWillDeleteSession?.(({ sessionId }) => forgetSession(sessionId)) ?? { dispose: () => {} };
 }

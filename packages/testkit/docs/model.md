@@ -103,7 +103,7 @@ agent-core-v2 的集成测试不起服务端，用 harness 的 `testkitAgentFixt
 | 后台请求、子 agent 与工具结果 | 桌面的 OpenAI 配置没有 Kimi 路由元数据。按 `model.lane('main').waitForRequest(n)` 等主通道，避免全局序号被无工具的 `side` 请求占用。自定义子 agent 路由可同时匹配 `request.tools.length > 0` 和 `firstUserText`。工具结果与实际请求中的调用 ID 配对。 |
 | 需要让未编排回合保持运行 | 在对应通道显式设置 `unscripted('hang')`，模型发出第一块后挂起。用 `waitForHeldTurn()` 等请求就位；`releaseHeld()` 放行已经到达的挂起点。由桌面夹具验证并关闭模型。 |
 
-Electron 窗口、原生对话框、剪贴板、Browser MCP、重启后的用户数据和失败 trace 由桌面夹具管理。测 renderer 与 KAP 的重连时，在 Playwright 端切断 REST 或 WebSocket；测 provider 回复中断时，使用模型的 `hold.cut()`。这两种断连发生在不同的连接上。[桌面重连用例](../../../apps/desktop/e2e/turn-reconnect.spec.ts) · [KAP 场景指南](kap-scenarios.md)
+Electron 窗口、原生对话框、剪贴板、内置浏览器的测试入口、重启后的用户数据和失败 trace 由桌面夹具管理。测 renderer 与 KAP 的重连时，在 Playwright 端切断 REST 或 WebSocket；测 provider 回复中断时，使用模型的 `hold.cut()`。这两种断连发生在不同的连接上。[桌面重连用例](../../../apps/desktop/e2e/turn-reconnect.spec.ts) · [KAP 场景指南](kap-scenarios.md)
 
 从仓库根目录单独运行表中取消与后续回合的桌面用例。这个命令会构建桌面应用，并用 Playwright 启动 Electron。[完整用例](../../../apps/desktop/e2e/turn-stop-then-send.spec.ts)
 

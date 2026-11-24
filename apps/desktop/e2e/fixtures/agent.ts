@@ -1,5 +1,3 @@
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { decode } from '@toon-format/toon';
 
 import { BROWSER_AUTOMATION_PROTOCOL } from '../../src/shared/browser-automation';
@@ -61,30 +59,15 @@ const matches = (row: BrowserElementRow, target: BrowserTarget): boolean =>
   (target.role === undefined || row.role === target.role)
   && (typeof target.name === 'string' ? row.name === target.name : target.name.test(row.name));
 
-export async function connectBrowserAgent(mcpUrl: string, token: string, sessionId: string): Promise<BrowserAgent> {
-  const connect = async (): Promise<Client> => {
-    const client = new Client({ name: 'kimi-desktop-e2e', version: '1.0.0' });
-    const transport = new StreamableHTTPClientTransport(new URL(mcpUrl), {
-      requestInit: { headers: { Authorization: `Bearer ${token}`, 'X-Kimi-Session-Id': sessionId } },
-    });
-    await client.connect(transport);
-    return client;
-  };
-  let client = await connect();
-  const callRun = (operation: string, params: Record<string, unknown>) =>
-    client.callTool({ name: 'run', arguments: { protocol: BROWSER_AUTOMATION_PROTOCOL, operation, ...params } });
+export function connectBrowserAgent(endpointUrl: string, token: string, sessionId: string): BrowserAgent {
   const run = async (operation: string, params: Record<string, unknown> = {}): Promise<BrowserResult> => {
-    let response: Awaited<ReturnType<typeof callRun>>;
-    try {
-      response = await callRun(operation, params);
-    } catch (error) {
-      if (!String(error).includes('unknown MCP session')) throw error;
-      const replaced = client;
-      client = await connect();
-      void replaced.close().catch(() => undefined);
-      response = await callRun(operation, params);
-    }
-    const content = response.content as Array<{ type: string; text?: string }>;
+    const response = await fetch(endpointUrl, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ sessionId, args: { protocol: BROWSER_AUTOMATION_PROTOCOL, operation, ...params } }),
+    });
+    if (!response.ok) throw new Error(`Browser test endpoint failed for ${operation}: ${response.status} ${await response.text()}`);
+    const { content } = await response.json() as { content: Array<{ type: string; text?: string }> };
     const text = content.find(part => part.type === 'text')?.text ?? '';
     try {
       return (text.trimStart().startsWith('{') ? JSON.parse(text) : decode(text)) as BrowserResult;
@@ -130,6 +113,6 @@ export async function connectBrowserAgent(mcpUrl: string, token: string, session
         },
       };
     },
-    close: () => client.close(),
+    close: () => Promise.resolve(),
   };
 }
