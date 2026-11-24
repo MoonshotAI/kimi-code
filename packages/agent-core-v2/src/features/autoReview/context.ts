@@ -90,7 +90,7 @@ function authorizationRole(
   const { origin } = message;
   if (origin === undefined) {
     const imported = message.content.some((part) =>
-      part.type === 'text' && part.text.includes('<imported_conversation>'));
+      part.type === 'text' && /^(?:<system>[\s\S]*?<\/system>\s*)?<imported_conversation>\r?\n/.test(part.text.trimStart()));
     return imported ? undefined : 'human-instruction';
   }
   if (origin.kind === 'user' || origin.kind === 'plugin_command') return 'human-instruction';

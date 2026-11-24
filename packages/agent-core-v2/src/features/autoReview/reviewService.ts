@@ -1,5 +1,3 @@
-import { resolve } from 'node:path';
-
 import { z } from 'zod';
 
 import { ref, type LiveRef } from '#/_base/di/instantiation';
@@ -8,8 +6,8 @@ import { ILogService } from '#/_base/log/log';
 import { abortable, createDeadlineAbortSignal, type DeadlineAbortSignal } from '#/_base/utils/abort';
 import { readRetryAfterMs, retryBackoffDelay, sleepForRetry } from '#/_base/utils/retry';
 import { IConfigService } from '#/app/config/config';
+import { IEventBus } from '#/app/event/eventBus';
 import { IFlagService } from '#/app/flag/flag';
-import { IGitService } from '#/app/git/git';
 import { THINKING_SECTION } from '#/app/kosongConfig/configSection';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import {
@@ -24,6 +22,7 @@ import type { LlmOutcome } from '@moonshot-ai/core/llm/response';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
 import { IAgentPermissionGate } from '#/agent/permissionGate/permissionGate';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
+import { PermissionApprovalResolved } from '#/agent/toolApproval/toolApprovalService';
 import { IModelCatalog } from '#/llm-adapter/model/catalog';
 import { resolveMaxOutputTokens } from '#/llm-adapter/model/completion-budget';
 import type { ModelOverrides } from '#/llm-adapter/model/model.types';
@@ -51,6 +50,7 @@ import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
 import { resolveSubagentModelPool } from '#/session/subagent/configSection';
 import { ISessionUsageService } from '#/session/usage/sessionUsage';
+import { ISessionWorkdir } from '#/session/workdir/workdir';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 
 import { AutoReviewCompleted, AutoReviewStarted } from './autoReviewEvents';
@@ -127,6 +127,7 @@ interface ProjectInstructions {
 export class AutoReviewService extends Service implements IAutoReviewService {
   declare readonly _serviceBrand: undefined;
   private projectInstructions: Promise<ProjectInstructions> | undefined;
+  private inheritedAuthorization: readonly ReviewText[] | undefined;
   private activeReviews = 0;
   private readonly reviewSlots: Array<() => void> = [];
   private readonly approvedToolCallIds = new Set<string>();
@@ -136,6 +137,7 @@ export class AutoReviewService extends Service implements IAutoReviewService {
     @IFlagService private readonly flags: IFlagService,
     @IAgentPermissionModeService private readonly modeService: IAgentPermissionModeService,
     @IAgentPermissionGate permissionGate: IAgentPermissionGate,
+    @IEventBus eventBus: IEventBus,
     @IModelCatalog private readonly models: IModelCatalog,
     @IProtocolAdapterRegistry private readonly protocols: IProtocolAdapterRegistry,
     @ISessionUsageService private readonly usage: ISessionUsageService,
@@ -150,17 +152,23 @@ export class AutoReviewService extends Service implements IAutoReviewService {
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @ILogService private readonly log: ILogService,
     @IAgentLifecycleService private readonly agentLifecycle: IAgentLifecycleService,
-    @ref(IGitService) private readonly git: LiveRef<IGitService>,
+    @ref(ISessionWorkdir) private readonly workdir: LiveRef<ISessionWorkdir>,
   ) {
     super();
     if (this.flags.enabled(AUTO_REVIEW_FLAG_ID)) {
       void this.loadProjectInstructions();
+      this.inheritedAuthorization = this.readInheritedAuthorization();
     }
     this._register(
+      eventBus.subscribe(PermissionApprovalResolved, (event) => {
+        if (event.agentId === this.scopeContext.agentId && event.decision === 'approved') {
+          this.approvedToolCallIds.add(event.toolCallId);
+        }
+      }),
+    );
+    this._register(
       permissionGate.registerReviewer(
-        createAutoReviewReviewer(this.flags, this.modeService, this, (toolCallId) => {
-          this.approvedToolCallIds.add(toolCallId);
-        }),
+        createAutoReviewReviewer(this.flags, this.modeService, this),
       ),
     );
   }
@@ -368,32 +376,35 @@ export class AutoReviewService extends Service implements IAutoReviewService {
 
   private currentAuthorization(history: readonly ContextMessage[] = this.loop.history()): ReviewText[] {
     const local = extractAuthorization(history);
+    const inherited = (this.inheritedAuthorization ??= this.readInheritedAuthorization());
+    return inherited.length === 0 ? local : [...inherited, ...local];
+  }
+
+  private readInheritedAuthorization(): readonly ReviewText[] {
     if (
       this.scopeContext.agentId === MAIN_AGENT_ID ||
-      local.some((entry) => entry.role === 'human-instruction')
+      (this.scopeContext.meta?.forkedFrom ?? this.scopeContext.forkedFrom) !== undefined
     ) {
-      return local;
+      return [];
     }
     const main = this.agentLifecycle.handleOf(MAIN_AGENT_ID);
-    if (main === undefined) return local;
-    const inherited = extractAuthorization(
-      main.accessor.get(IAgentLoopService).history(),
-    ).filter((entry) => entry.role === 'human-instruction');
-    return inherited.length === 0 ? local : [...inherited, ...local];
+    if (main === undefined) return [];
+    return extractAuthorization(main.accessor.get(IAgentLoopService).history())
+      .filter((entry) => entry.role === 'human-instruction');
   }
 
   private async readGitStatus(
     cwd: string,
     context: ResolvedToolExecutionHookContext,
   ): Promise<ReviewGitStatus | undefined> {
-    const git = this.git?.current;
+    const git = this.workdir?.current?.git;
     if (git === undefined) return undefined;
     const argCwd = isRecord(context.args) && typeof context.args['cwd'] === 'string' && context.args['cwd'].length > 0
       ? context.args['cwd']
       : undefined;
-    const targetCwd = argCwd === undefined ? cwd : resolve(cwd, argCwd);
+    const targetCwd = argCwd === undefined ? cwd : this.workspace.resolve(argCwd);
     try {
-      const status = await git.status(targetCwd, {
+      const status = await git.statusAt(targetCwd, {
         includePullRequest: false,
         includeStats: false,
       });
@@ -467,11 +478,7 @@ export class AutoReviewService extends Service implements IAutoReviewService {
   }
 }
 
-function reviewRequestError(outcome: Exclude<LlmOutcome, { readonly type: 'done' }>): Error {
-  if (outcome.type === 'aborted') {
-    const message = outcome.reason instanceof Error ? outcome.reason.message : 'The operation was aborted.';
-    return new DOMException(message, 'AbortError');
-  }
+function reviewRequestError(outcome: Extract<LlmOutcome, { readonly type: 'failed' }>): Error {
   const classified =
     outcome.error.kind === 'unknown' && outcome.rawError !== undefined
       ? llmMessageFromError(outcome.rawError)
@@ -479,11 +486,7 @@ function reviewRequestError(outcome: Exclude<LlmOutcome, { readonly type: 'done'
   if (outcome.error.kind === 'unknown' && classified === undefined && outcome.rawError instanceof Error) {
     return withErrorDiagnostics(translateProviderError(outcome.rawError), outcome.diagnostics);
   }
-  const error = classified ?? outcome.error;
-  return errorFromLlmMessage(
-    error.kind === 'auth' ? { ...error, kind: 'status' as const } : error,
-    outcome.diagnostics,
-  );
+  return errorFromLlmMessage(classified ?? outcome.error, outcome.diagnostics);
 }
 
 function reviewResult(outcome: AutoReviewResult | ReviewFailure): AutoReviewResult {

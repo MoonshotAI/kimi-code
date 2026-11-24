@@ -2,17 +2,20 @@ import { describe, expect, it } from 'vitest';
 import { detectShellDanger } from '../src/lib/shellDanger';
 
 describe('detectShellDanger', () => {
-  it('flags recursive forced deletes, including combined and long flags', () => {
-    expect(detectShellDanger('rm -rf /tmp/x')).toBe('rm -rf');
-    expect(detectShellDanger('rm -fr foo/')).toBe('rm -rf');
-    expect(detectShellDanger('rm -r -f /')).toBe('rm -rf');
-    expect(detectShellDanger('rm -rfi node_modules')).toBe('rm -rf');
-    expect(detectShellDanger('rm --recursive /tmp/x')).toBe('rm -rf');
-    expect(detectShellDanger('rm --force foo')).toBe('rm -rf');
+  it('distinguishes recursive deletes from force-only deletes across flag orders', () => {
+    expect(detectShellDanger('rm -rf /tmp/x')).toBe('recursive delete');
+    expect(detectShellDanger('rm -fr foo/')).toBe('recursive delete');
+    expect(detectShellDanger('rm -r -f /')).toBe('recursive delete');
+    expect(detectShellDanger('rm -f -r /tmp/x')).toBe('recursive delete');
+    expect(detectShellDanger('rm -rfi node_modules')).toBe('recursive delete');
+    expect(detectShellDanger('rm --recursive /tmp/x')).toBe('recursive delete');
+    expect(detectShellDanger('rm -f foo')).toBe('force delete');
+    expect(detectShellDanger('rm --force foo')).toBe('force delete');
+    expect(detectShellDanger('sudo rm -f foo')).toBe('force delete');
   });
 
-  it('flags privilege escalation and force-push', () => {
-    expect(detectShellDanger('sudo apt-get install x')).toBe('sudo');
+  it('flags force-push while ignoring standalone sudo', () => {
+    expect(detectShellDanger('sudo apt-get install x')).toBeUndefined();
     expect(detectShellDanger('git push --force origin main')).toBe('git push --force');
     expect(detectShellDanger('git push -f')).toBe('git push --force');
     expect(detectShellDanger('git push --force-with-lease')).toBe('git push --force');

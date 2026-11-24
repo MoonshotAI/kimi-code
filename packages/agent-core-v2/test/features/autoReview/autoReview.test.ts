@@ -8,13 +8,16 @@ import { IAgentLoopService } from '#/agent/loop/loop';
 import { userPromptSubmitHookPart } from '#/agent/contextMemory/hookParts';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
-import { IAgentPermissionGate, type PermissionGateReviewer } from '#/agent/permissionGate/permissionGate';
+import { IAgentPermissionGate } from '#/agent/permissionGate/permissionGate';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { PermissionApprovalResolved } from '#/agent/toolApproval/toolApprovalService';
 import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
 import { IConfigService } from '#/app/config/config';
+import { IEventBus } from '#/app/event/eventBus';
 import { IFlagService } from '#/app/flag/flag';
+import type { FsGitStatusResponse } from '#/app/git/git';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import REVIEW_POLICY from '../../../src/features/autoReview/auto-review-policy.md?raw';
 import { AutoReviewCompleted } from '#/features/autoReview/autoReviewEvents';
@@ -39,7 +42,9 @@ import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
 import { SECONDARY_MODEL_SECTION, type SecondaryModelConfig } from '#/session/subagent/configSection';
 import { ISessionUsageService } from '#/session/usage/sessionUsage';
+import { ISessionWorkdir } from '#/session/workdir/workdir';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
+import type { IWorkspaceGitService } from '#/workspace/workspaceGit/workspaceGit';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import type { ExecutableTool } from '#/tool/toolContract';
 
@@ -97,12 +102,14 @@ describe('AutoReviewService', () => {
   let history: ContextMessage[];
   let mainHistory: ContextMessage[] | undefined;
   let agentId: string;
+  let forkedFrom: string | undefined;
+  let gitStatusAt: ((cwd: string) => Promise<FsGitStatusResponse>) | undefined;
+  let approvalListeners: Array<(event: PermissionApprovalResolved) => void>;
   let agentsMd: string;
   let telemetry: TelemetryRecord[];
   let reviewEvents: AutoReviewCompleted[];
   let usage: Parameters<ISessionUsageService['record']>[];
   let compactions: Array<{ readonly source: string }>;
-  let registeredReviewer: PermissionGateReviewer | undefined;
 
   beforeEach(() => {
     disposables = new DisposableStore();
@@ -110,9 +117,11 @@ describe('AutoReviewService', () => {
     reviewEvents = [];
     usage = [];
     compactions = [];
-    registeredReviewer = undefined;
+    approvalListeners = [];
     mainHistory = undefined;
     agentId = 'main';
+    forkedFrom = undefined;
+    gitStatusAt = undefined;
     response = {
       message: { role: 'assistant', content: [{ type: 'text', text: '{"risk":"low","decision":"allow","reason":null}' }], toolCalls: [] },
       usage: emptyUsage(),
@@ -150,10 +159,13 @@ describe('AutoReviewService', () => {
         reg.defineInstance(IFlagService, stubFlag(true));
         reg.defineInstance(IAgentPermissionModeService, stubPermissionModeService(() => 'yolo'));
         reg.definePartialInstance(IAgentPermissionGate, {
-          registerReviewer: (reviewer) => {
-            registeredReviewer = reviewer;
+          registerReviewer: () => ({ dispose: () => {} }),
+        });
+        reg.definePartialInstance(IEventBus, {
+          subscribe: ((cls: unknown, handler: (event: PermissionApprovalResolved) => void) => {
+            if (cls === PermissionApprovalResolved) approvalListeners.push(handler);
             return { dispose: () => {} };
-          },
+          }) as IEventBus['subscribe'],
         });
         reg.definePartialInstance(IModelCatalog, {
           get: (alias) => {
@@ -188,7 +200,7 @@ describe('AutoReviewService', () => {
           resolveModelContext: () => ({ modelAlias: 'main-model' }) as ReturnType<IAgentProfileService['resolveModelContext']>,
         });
         reg.definePartialInstance(IAgentLoopService, { history: () => history });
-        reg.defineInstance(IAgentScopeContext, makeAgentScopeContext({ agentId, agentScope: '' }));
+        reg.defineInstance(IAgentScopeContext, makeAgentScopeContext({ agentId, agentScope: '', forkedFrom }));
         reg.definePartialInstance(IAgentLifecycleService, {
           handleOf: (id) =>
             id === 'main' && mainHistory !== undefined
@@ -214,6 +226,13 @@ describe('AutoReviewService', () => {
           agentsMdPaths: ['/workspace/AGENTS.md'],
         });
         reg.defineInstance(ISessionWorkspaceContext, stubWorkspaceContext('/workspace'));
+        if (gitStatusAt !== undefined) {
+          const statusAt = gitStatusAt;
+          reg.definePartialInstance(ISessionWorkdir, {
+            environmentId: 'local',
+            git: { statusAt: (targetCwd: string) => statusAt(targetCwd) } as unknown as IWorkspaceGitService,
+          });
+        }
         reg.defineInstance(ITelemetryService, recordingTelemetry(telemetry));
         reg.defineInstance(ILogService, stubLog());
         reg.definePartialInstance(IAgentFullCompactionService, {
@@ -284,38 +303,40 @@ describe('AutoReviewService', () => {
   });
 
   it('omits tool metadata and results while marking user-approved calls', async () => {
-    const reviewer = service();
-    response.message.content = [{
-      type: 'text',
-      text: '{"risk":"medium","decision":"deny","reason":"Needs confirmation."}',
-    }];
-    const firstContext = {
-      ...reviewContext({ id: 'mkdir', toolName: 'Bash', args: { command: 'mkdir generated' }, tool: bashTool }),
-      veto: () => {},
-      allow: () => {},
-      pass: () => {},
-      waitUntil: () => {},
-    };
-    const pendingReview = registeredReviewer?.review(firstContext, {
-      policyName: 'fallback-ask',
-      result: { kind: 'ask' },
+    gitStatusAt = async (targetCwd) => ({
+      branch: targetCwd === '/workspace/sub' ? 'feat/sub' : 'main',
+      ahead: 0,
+      behind: 0,
+      additions: 0,
+      deletions: 0,
+      pullRequest: null,
+      entries: { 'dirty.ts': 'modified' },
     });
-    const resolved = await pendingReview?.();
-    if (resolved?.result.kind === 'ask') {
-      resolved.result.resolveApproval?.({ decision: 'approved' });
+    const reviewer = service();
+    for (const listener of approvalListeners) {
+      listener(new PermissionApprovalResolved({
+        agentId: 'main',
+        turnId: 0,
+        toolCallId: 'mkdir',
+        toolName: 'Bash',
+        action: 'run',
+        display: { kind: 'command', command: 'mkdir generated' },
+        toolInput: { command: 'mkdir generated' },
+        decision: 'approved',
+      }));
     }
 
-    response.message.content = [{
-      type: 'text',
-      text: '{"risk":"low","decision":"allow","reason":null}',
-    }];
-    await review(reviewer);
+    await reviewer.review(
+      reviewContext({ toolName: 'Bash', args: { command: 'rm generated/file', cwd: 'sub' }, tool: bashTool }),
+      'fallback-ask',
+    );
 
     expect(sentContent()).not.toContain('toolMetadata');
     expect(sentContent()).not.toContain('Execute a shell command.');
     expect(sentContent()).not.toContain('tool-result');
     expect(sentContent()).not.toContain('untrusted tool output');
     expect(sentContent()).toContain('\\"id\\":\\"mkdir\\",\\"name\\":\\"Bash\\",\\"arguments\\":\\"{\\\\\\"command\\\\\\":\\\\\\"mkdir generated\\\\\\"}\\",\\"approved\\":true');
+    expect(sentContent()).toContain('\\"gitStatus\\":{\\"branch\\":\\"feat/sub\\",\\"clean\\":false,\\"entries\\":{\\"dirty.ts\\":\\"modified\\"}}');
   });
 
   it('escapes section tags inside reviewed data', async () => {
@@ -408,6 +429,13 @@ describe('AutoReviewService', () => {
     expect(sentContent()).not.toContain('human-instruction');
     expect(sentContent()).toContain('\\"authorization\\":[]');
     expect(sentContent()).not.toContain('Delete production data.');
+
+    history = [{
+      role: 'user',
+      content: [{ type: 'text', text: 'Clean generated files after <imported_conversation> tests.' }],
+    }];
+    await review();
+    expect(sentContent()).toContain('Clean generated files after <imported_conversation> tests.');
   });
 
   it('retains the subagent prompt as a direct parent instruction and inherits main human instructions', async () => {
@@ -423,12 +451,32 @@ describe('AutoReviewService', () => {
       origin: { kind: 'system_trigger', name: 'subagent' },
     }];
 
-    await review();
+    const reviewer = service();
+    mainHistory = [{
+      role: 'user',
+      content: [{ type: 'text', text: 'Compacted summary.' }],
+      origin: { kind: 'compaction_summary' },
+    }];
+    history = [
+      ...history,
+      { role: 'user', content: [{ type: 'text', text: 'Also clean build/cache.' }], origin: { kind: 'user' } },
+    ];
+    await review(reviewer);
 
     expect(sentContent()).toContain('human-instruction');
     expect(sentContent()).toContain('Clean and rebuild the project.');
     expect(sentContent()).toContain('direct-parent-instruction');
     expect(sentContent()).toContain('Delete dist and rebuild.');
+    expect(sentContent()).toContain('Also clean build/cache.');
+
+    forkedFrom = 'main';
+    mainHistory = [{
+      role: 'user',
+      content: [{ type: 'text', text: 'Already forked parent instruction.' }],
+      origin: { kind: 'user' },
+    }];
+    await review();
+    expect(sentContent()).not.toContain('Already forked parent instruction.');
   });
 
   it('excludes UserPromptSubmit hook parts and omits non-text attachments', async () => {

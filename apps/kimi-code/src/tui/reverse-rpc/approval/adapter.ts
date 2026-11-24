@@ -217,8 +217,8 @@ function describeApproval(display: ToolInputDisplay, action: string): string {
 }
 
 const DANGER_PATTERNS: Array<{ pattern: RegExp; label: string }> = [
-  { pattern: /\brm\s+(-[a-zA-Z]*[rR][a-zA-Z]*|--recursive\b)/, label: 'recursive delete' },
-  { pattern: /\brm\s+(-[a-zA-Z]*[fF][a-zA-Z]*|--force\b)/i, label: 'force delete' },
+  { pattern: /\brm\b[^|;&\n]*?\s(?:-[a-zA-Z]*[rR][a-zA-Z]*|--recursive)(?=\s|$|[|;&])/, label: 'recursive delete' },
+  { pattern: /\brm\b[^|;&\n]*?\s(?:-[a-zA-Z]*[fF][a-zA-Z]*|--force)(?=\s|$|[|;&])/, label: 'force delete' },
   { pattern: /\b(curl|wget)\b[^|]*\|\s*(sh|bash|zsh)\b/i, label: 'pipe to shell' },
   { pattern: /\bdd\b[^|]*\bof=/i, label: 'dd write' },
   { pattern: /\bmkfs\b/i, label: 'mkfs' },
@@ -228,8 +228,9 @@ const DANGER_PATTERNS: Array<{ pattern: RegExp; label: string }> = [
 ];
 
 function detectDanger(command: string): string | undefined {
+  const bare = command.replace(/"[^"]*"|'[^']*'/g, ' ');
   for (const { pattern, label } of DANGER_PATTERNS) {
-    if (pattern.test(command)) return label;
+    if (pattern.test(bare)) return label;
   }
   return undefined;
 }

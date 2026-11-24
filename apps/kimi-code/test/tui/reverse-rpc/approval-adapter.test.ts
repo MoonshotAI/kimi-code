@@ -56,10 +56,13 @@ describe('approval adapter', () => {
 
     expect(dangerOf('rm -rf /tmp/cache')).toBe('recursive delete');
     expect(dangerOf('rm -fr /tmp/cache')).toBe('recursive delete');
+    expect(dangerOf('rm -f -r /tmp/cache')).toBe('recursive delete');
+    expect(dangerOf('rm -f --recursive /tmp/cache')).toBe('recursive delete');
     expect(dangerOf('rm --recursive /tmp/cache')).toBe('recursive delete');
     expect(dangerOf('rm -f /tmp/cache/file.txt')).toBe('force delete');
     expect(dangerOf('rm --force /tmp/cache/file.txt')).toBe('force delete');
     expect(dangerOf('rm /tmp/cache/file.txt')).toBeUndefined();
+    expect(dangerOf('echo "rm -rf /tmp/cache"')).toBeUndefined();
     expect(dangerOf('sudo rm -f /tmp/cache/file.txt')).toBe('force delete');
   });
 
