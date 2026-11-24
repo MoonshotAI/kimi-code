@@ -422,7 +422,7 @@ async function listSessionsHere(
         }
         return summaries.map((summary) =>
           toWireSession(
-            summary,
+            { ...summary, workspaceRoot: roots.get(summary.workspaceId) },
             requiredCwdOf(summary),
             factsOf(summary.id),
             gitBySession === undefined

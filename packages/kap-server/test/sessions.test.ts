@@ -57,6 +57,8 @@ import {
 import { ISessionLockService } from '@moonshot-ai/agent-core-v2/persistence/interface/sessionLock';
 import { IHostProcessService, type IHostProcess } from '@moonshot-ai/agent-core-v2/os/interface/hostProcess';
 import { FakeEnvironment } from '@moonshot-ai/agent-core-v2/environment/fakeEnvironment';
+import { HostFileSystem } from '@moonshot-ai/agent-core-v2/os/backends/node-local/hostFsService';
+import { HostProcessService } from '@moonshot-ai/agent-core-v2/os/backends/node-local/hostProcessService';
 import { TurnEnded, TurnPrompt, TurnSteer } from '@moonshot-ai/agent-core-v2/agent/loop/turnOps';
 import { ContextAppendMessage } from '@moonshot-ai/agent-core-v2/agent/contextMemory/contextEvents';
 import type { PromptOrigin } from '@moonshot-ai/agent-core-v2/agent/contextMemory/types';
@@ -90,7 +92,10 @@ interface Envelope<T> {
 interface SessionWire {
   id: string;
   workspace_id: string;
+  workspace_root?: string;
   cwd: string;
+  environment_id: string;
+  environment_cwd?: string;
   title: string;
   created_at: string;
   updated_at: string;
@@ -468,6 +473,9 @@ describe('server-v2 /api/v1/sessions', () => {
     expect(typeof body.data.workspace_id).toBe('string');
     expect(body.data.title).toBe('hello');
     expect(body.data.cwd).toBe(cwd);
+    expect(body.data.workspace_root).toBe(cwd);
+    expect(body.data.environment_id).toBe('local');
+    expect(body.data).not.toHaveProperty('environment_cwd');
     expect(body.data.activity).toBe('idle');
     expect(body.data.pending_interaction).toBe('none');
     expect(body.data).not.toHaveProperty('agent_config');
@@ -478,10 +486,102 @@ describe('server-v2 /api/v1/sessions', () => {
     expect(Number.isNaN(Date.parse(body.data.created_at))).toBe(false);
   });
 
-  it('rejects create without cwd or workspace_id (40001)', async () => {
-    const { body } = await postJson<null>('/api/v1/sessions', { title: 'no cwd' });
+  it('creates a session from workspace_root', async () => {
+    const cwd = home as string;
+    const legacy = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
+    const { body } = await postJson<SessionWire>('/api/v1/sessions', { workspace_root: cwd });
+    expect(body.code).toBe(0);
+    expect(body.data).toMatchObject({
+      workspace_id: legacy.body.data.workspace_id,
+      workspace_root: cwd,
+      cwd,
+      environment_id: 'local',
+    });
+    expect(body.data).not.toHaveProperty('environment_cwd');
+  });
+
+  it.each([
+    [
+      'cwd',
+      { workspace_root: '/projects/a', cwd: '/projects/b' },
+      'cwd (/projects/b) must equal workspace_root (/projects/a)',
+    ],
+    [
+      'metadata.cwd',
+      { workspace_root: '/projects/a', metadata: { cwd: '/projects/b' } },
+      'metadata.cwd (/projects/b) must equal workspace_root (/projects/a)',
+    ],
+    [
+      'cwd',
+      { cwd: '/projects/b', metadata: { cwd: '/projects/a' } },
+      'cwd (/projects/b) must equal metadata.cwd (/projects/a)',
+    ],
+  ])('rejects create when %s disagrees with the other workspace root field (40001)', async (path, request, message) => {
+    const { body } = await postJson<null>('/api/v1/sessions', request);
     expect(body.code).toBe(40001);
-    expect(body.details?.[0]?.path).toBe('metadata.cwd');
+    expect(body.details?.[0]).toEqual({ path, message });
+  });
+
+  it('reports the environment_cwd of a local session in the create response', async () => {
+    const cwd = home as string;
+    const nested = join(cwd, 'nested');
+    await mkdir(nested, { recursive: true });
+    const created = await postJson<SessionWire>('/api/v1/sessions', {
+      metadata: { cwd },
+      environment_id: 'local',
+      environment_cwd: nested,
+    });
+    expect(created.body.code).toBe(0);
+
+    const got = await getJson<SessionWire>(`/api/v1/sessions/${created.body.data.id}`);
+    expect(got.body.data.cwd).toBe(nested);
+    expect(created.body.data.cwd).toBe(nested);
+  });
+
+  it('reports the requested cwd of a remote session in the create response', async () => {
+    const cwd = home as string;
+    const remote = await realpath(await mkdtemp(join(tmpdir(), 'kimi-server-v2-sessions-remote-')));
+    const environment = Object.assign(
+      new FakeEnvironment(
+        { environmentId: 'remote-create', generation: 'remote-create-generation' },
+        { capabilities: ['fs', 'process'] },
+      ),
+      { fs: new HostFileSystem(), process: new HostProcessService() },
+    );
+    const registration = (server as RunningServer).core.accessor.get(IEnvironmentService).register(environment);
+    try {
+      const local = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
+      const created = await postJson<SessionWire>('/api/v1/sessions', {
+        metadata: { cwd: `${cwd}/` },
+        environment_id: 'remote-create',
+        environment_cwd: remote,
+      });
+      expect(created.body.code).toBe(0);
+      expect(created.body.data.workspace_id).toBe(local.body.data.workspace_id);
+
+      const got = await getJson<SessionWire>(`/api/v1/sessions/${created.body.data.id}`);
+      expect(created.body.data.cwd).toBe(got.body.data.cwd);
+      const location = {
+        workspace_root: cwd,
+        cwd: `${cwd}/`,
+        environment_id: 'remote-create',
+        environment_cwd: remote,
+      };
+      expect(created.body.data).toMatchObject(location);
+      expect(got.body.data).toMatchObject(location);
+    } finally {
+      await registration.remove();
+      await rm(remote, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects create without workspace_root or workspace_id (40001)', async () => {
+    const { body } = await postJson<null>('/api/v1/sessions', { title: 'no root' });
+    expect(body.code).toBe(40001);
+    expect(body.details?.[0]).toEqual({
+      path: 'workspace_root',
+      message: 'either workspace_id or workspace_root is required',
+    });
   });
 
   it('rejects create with unknown workspace_id (40410)', async () => {
@@ -3911,6 +4011,37 @@ kapTest('loads a persisted subagent only when the Agent tool resumes it after a 
   expect(agents.handleOf(childId)).toBeDefined();
 });
 
+kapTest('reports the project root and where the agent works on every view of a session', { timeout: 30_000 }, async ({ kap }) => {
+  const root = kap.home.workspace;
+  const packageDir = join(root, 'packages', 'app');
+  await mkdir(packageDir, { recursive: true });
+  const socket = await kap.connect();
+  const created = await kap.rest.post<SessionWire>('/api/v1/sessions', {
+    workspace_root: root,
+    environment_id: 'local',
+    environment_cwd: packageDir,
+  });
+  const location = { workspace_root: root, cwd: packageDir, environment_id: 'local', environment_cwd: packageDir };
+
+  expect(created).toMatchObject(location);
+  expect(await kap.rest.get<SessionWire>(`/api/v1/sessions/${created.id}`)).toMatchObject(location);
+  const page = await kap.rest.get<PageWire>('/api/v1/sessions');
+  expect(page.items.find((item) => item.id === created.id)).toMatchObject(location);
+  expect((await kap.wait(created.id, 0)).session).toMatchObject(location);
+  const profile = await kap.rest.post<{ session: SessionWire }>(`/api/v1/sessions/${created.id}/profile`, { title: 'renamed' });
+  expect(profile.session).toMatchObject(location);
+  const forked = await kap.rest.post<SessionWire>(`/api/v1/sessions/${created.id}:fork`, {});
+  expect(forked).toMatchObject({ workspace_root: root, environment_id: 'local', environment_cwd: packageDir });
+  await kap.rest.post(`/api/v1/sessions/${created.id}:archive`, {});
+  expect(await kap.rest.post<SessionWire>(`/api/v1/sessions/${created.id}:restore`, {})).toMatchObject(location);
+  expect(await kap.rest.post<SessionWire>(`/api/v1/sessions/${created.id}:reload`, {})).toMatchObject(location);
+
+  const sessionFrame = (change: string) => socket.waitFor(
+    (frame) => frame.type === 'session' && frame['change'] === change && (frame['session'] as SessionWire).id === created.id,
+  );
+  expect((await sessionFrame('created'))['session']).toMatchObject(location);
+  expect((await sessionFrame('updated'))['session']).toMatchObject(location);
+});
 
 kapTest('a session whose saved model was removed opens with history and a model error notice', { timeout: 30_000 }, async ({ kap, model }) => {
   model.script(say('history from removed model'));

@@ -16178,6 +16178,13 @@
                                           "archived_at": {},
                                           "created_at": {},
                                           "cwd": {
+                                            "deprecated": true,
+                                            "type": "string"
+                                          },
+                                          "environment_cwd": {
+                                            "type": "string"
+                                          },
+                                          "environment_id": {
                                             "type": "string"
                                           },
                                           "git": {
@@ -16252,6 +16259,9 @@
                                           "updated_at": {},
                                           "workspace_id": {
                                             "pattern": "^wd_[a-z0-9._-]+_[0-9a-f]{12}$|^wm_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                                            "type": "string"
+                                          },
+                                          "workspace_root": {
                                             "type": "string"
                                           }
                                         },
@@ -16343,6 +16353,13 @@
                                                 "archived_at": {},
                                                 "created_at": {},
                                                 "cwd": {
+                                                  "deprecated": true,
+                                                  "type": "string"
+                                                },
+                                                "environment_cwd": {
+                                                  "type": "string"
+                                                },
+                                                "environment_id": {
                                                   "type": "string"
                                                 },
                                                 "git": {
@@ -16417,6 +16434,9 @@
                                                 "updated_at": {},
                                                 "workspace_id": {
                                                   "pattern": "^wd_[a-z0-9._-]+_[0-9a-f]{12}$|^wm_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                                                  "type": "string"
+                                                },
+                                                "workspace_root": {
                                                   "type": "string"
                                                 }
                                               },
@@ -16701,6 +16721,7 @@
                     "type": "object"
                   },
                   "cwd": {
+                    "deprecated": true,
                     "minLength": 1,
                     "type": "string"
                   },
@@ -16716,6 +16737,7 @@
                     "additionalProperties": {},
                     "properties": {
                       "cwd": {
+                        "deprecated": true,
                         "minLength": 1,
                         "type": "string"
                       }
@@ -16728,6 +16750,10 @@
                   },
                   "workspace_id": {
                     "pattern": "^wd_[a-z0-9._-]+_[0-9a-f]{12}$|^wm_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                    "type": "string"
+                  },
+                  "workspace_root": {
+                    "minLength": 1,
                     "type": "string"
                   }
                 },
@@ -16769,6 +16795,13 @@
                             "archived_at": {},
                             "created_at": {},
                             "cwd": {
+                              "deprecated": true,
+                              "type": "string"
+                            },
+                            "environment_cwd": {
+                              "type": "string"
+                            },
+                            "environment_id": {
                               "type": "string"
                             },
                             "git": {
@@ -16843,6 +16876,9 @@
                             "updated_at": {},
                             "workspace_id": {
                               "pattern": "^wd_[a-z0-9._-]+_[0-9a-f]{12}$|^wm_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                              "type": "string"
+                            },
+                            "workspace_root": {
                               "type": "string"
                             }
                           },
@@ -17377,6 +17413,13 @@
                             "archived_at": {},
                             "created_at": {},
                             "cwd": {
+                              "deprecated": true,
+                              "type": "string"
+                            },
+                            "environment_cwd": {
+                              "type": "string"
+                            },
+                            "environment_id": {
                               "type": "string"
                             },
                             "git": {
@@ -17451,6 +17494,9 @@
                             "updated_at": {},
                             "workspace_id": {
                               "pattern": "^wd_[a-z0-9._-]+_[0-9a-f]{12}$|^wm_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                              "type": "string"
+                            },
+                            "workspace_root": {
                               "type": "string"
                             }
                           },
@@ -20921,6 +20967,10 @@
                           "additionalProperties": false,
                           "properties": {
                             "cwd": {
+                              "deprecated": true,
+                              "type": "string"
+                            },
+                            "environment_cwd": {
                               "type": "string"
                             },
                             "environment_id": {
@@ -22934,6 +22984,7 @@
                     "additionalProperties": {},
                     "properties": {
                       "cwd": {
+                        "deprecated": true,
                         "minLength": 1,
                         "type": "string"
                       }
@@ -23033,6 +23084,13 @@
                                 "archived_at": {},
                                 "created_at": {},
                                 "cwd": {
+                                  "deprecated": true,
+                                  "type": "string"
+                                },
+                                "environment_cwd": {
+                                  "type": "string"
+                                },
+                                "environment_id": {
                                   "type": "string"
                                 },
                                 "git": {
@@ -23107,6 +23165,9 @@
                                 "updated_at": {},
                                 "workspace_id": {
                                   "pattern": "^wd_[a-z0-9._-]+_[0-9a-f]{12}$|^wm_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                                  "type": "string"
+                                },
+                                "workspace_root": {
                                   "type": "string"
                                 }
                               },
@@ -33195,6 +33256,13 @@
                             "archived_at": {},
                             "created_at": {},
                             "cwd": {
+                              "deprecated": true,
+                              "type": "string"
+                            },
+                            "environment_cwd": {
+                              "type": "string"
+                            },
+                            "environment_id": {
                               "type": "string"
                             },
                             "git": {
@@ -33269,6 +33337,9 @@
                             "updated_at": {},
                             "workspace_id": {
                               "pattern": "^wd_[a-z0-9._-]+_[0-9a-f]{12}$|^wm_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                              "type": "string"
+                            },
+                            "workspace_root": {
                               "type": "string"
                             }
                           },
@@ -34499,6 +34570,13 @@
                                 "archived_at": {},
                                 "created_at": {},
                                 "cwd": {
+                                  "deprecated": true,
+                                  "type": "string"
+                                },
+                                "environment_cwd": {
+                                  "type": "string"
+                                },
+                                "environment_id": {
                                   "type": "string"
                                 },
                                 "git": {
@@ -34573,6 +34651,9 @@
                                 "updated_at": {},
                                 "workspace_id": {
                                   "pattern": "^wd_[a-z0-9._-]+_[0-9a-f]{12}$|^wm_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                                  "type": "string"
+                                },
+                                "workspace_root": {
                                   "type": "string"
                                 }
                               },
