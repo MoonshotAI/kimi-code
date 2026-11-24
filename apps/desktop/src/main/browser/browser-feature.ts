@@ -2,9 +2,9 @@ import { ScopeActivation } from '@moonshot-ai/agent-core-v2/_base/di/instantiati
 import { LifecycleScope } from '@moonshot-ai/agent-core-v2/app/scopes';
 import { Feature } from '@moonshot-ai/agent-core-v2/features/feature';
 
-import { IAgentHostBrowserService, ISessionHostBrowserService } from './hostBrowser';
-import { AgentHostBrowserService } from './agentHostBrowserService';
-import { SessionHostBrowserService } from './sessionHostBrowserService';
+import { IAgentHostBrowserService, ISessionHostBrowserService } from './browser-host-contract';
+import { AgentHostBrowserService } from './browser-agent-service';
+import { SessionHostBrowserService } from './browser-session-service';
 
 export class HostBrowserFeature extends Feature {
   static override readonly name = 'hostBrowser';

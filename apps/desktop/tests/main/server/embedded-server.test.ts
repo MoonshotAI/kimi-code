@@ -74,6 +74,8 @@ vi.mock('../../../src/main/browser/browser-agent-control', () => ({
 }));
 
 import { startDesktopServer } from '../../../src/main/server/embedded-server';
+import { HostBrowserFeature } from '../../../src/main/browser/browser-feature';
+import { IHostBrowser } from '../../../src/main/browser/browser-host-contract';
 import { browserAgentControl, browserSubagentControl } from '../../../src/main/browser/browser-agent-control';
 import { desktopServerSecret } from '../../../src/main/server/server-auth';
 
@@ -144,7 +146,8 @@ describe('startDesktopServer', () => {
       displayName: 'Kimi Code',
       replyStyleGuide: expect.stringContaining('desktop app'),
     });
-    expect(args.hostBrowser).toBe(browserHost);
+    expect(args.seeds).toEqual([[IHostBrowser, browserHost]]);
+    expect(args.features).toEqual([HostBrowserFeature]);
     expect(registerDialogCleanupMock).toHaveBeenCalledWith(appCore, forgetSessionBrowserDialogsMock);
     expect(startBrowserTestEndpointMock).not.toHaveBeenCalled();
 

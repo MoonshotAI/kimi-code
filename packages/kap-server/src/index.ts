@@ -33,17 +33,3 @@ export type {
   InstanceRegistryOptions,
   ServerInstanceInfo,
 } from './instanceRegistry';
-export type {
-  HostBrowserMessages,
-  HostBrowserRun,
-  HostBrowserRunRequest,
-  HostBrowserRunResult,
-  HostBrowserSubagent,
-  HostBrowserSubagentState,
-  HostBrowserToolDefinition,
-  IHostBrowser,
-} from './services/hostBrowser/hostBrowser';
-export {
-  HOST_BROWSER_DIALOGS_REMINDER_VARIANT,
-  HOST_BROWSER_REMINDER_VARIANT,
-} from './services/hostBrowser/agentHostBrowserService';

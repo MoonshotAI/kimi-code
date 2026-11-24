@@ -10,7 +10,7 @@ import { IAgentLifecycleService } from '@moonshot-ai/agent-core-v2/session/agent
 import { ISessionContext } from '@moonshot-ai/agent-core-v2/session/sessionContext/sessionContext';
 import { SubagentSpawned } from '@moonshot-ai/agent-core-v2/session/subagent/mirrorAgentRun';
 
-import { IHostBrowser, type ISessionHostBrowserService } from './hostBrowser';
+import { IHostBrowser, type ISessionHostBrowserService } from './browser-host-contract';
 
 function toolResults(history: readonly ContextMessage[]): Map<string, string> {
   const results = new Map<string, string>();

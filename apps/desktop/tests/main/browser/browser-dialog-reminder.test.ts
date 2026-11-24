@@ -10,7 +10,10 @@ import {
   type IAgentScopeHandle,
   type ISessionScopeHandle,
 } from '@moonshot-ai/agent-core-v2';
-import { HOST_BROWSER_DIALOGS_REMINDER_VARIANT, startServer } from '@moonshot-ai/kap-server';
+import { startServer } from '@moonshot-ai/kap-server';
+import { HOST_BROWSER_DIALOGS_REMINDER_VARIANT } from '../../../src/main/browser/browser-agent-service';
+import { HostBrowserFeature } from '../../../src/main/browser/browser-feature';
+import { IHostBrowser } from '../../../src/main/browser/browser-host-contract';
 import {
   formatBrowserDialogReminder,
   registerBrowserDialogCleanup,
@@ -125,7 +128,8 @@ it('injects undelivered dialogs once at the start of a main agent turn, per sess
     homeDir: home,
     port: 0,
     logLevel: 'silent',
-    hostBrowser: host,
+    seeds: [[IHostBrowser, host]],
+    features: [HostBrowserFeature],
   });
   let controlled = true;
   configureBrowserDialogs({ isAgentControlled: () => controlled });

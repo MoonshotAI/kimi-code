@@ -18,6 +18,8 @@ import { log } from '../diagnostics/log';
 import { createDesktopServerLogger } from './server-log';
 import { createDesktopAuthTokenService } from './server-auth';
 import { wireDesktopTelemetry } from '../diagnostics/telemetry';
+import { HostBrowserFeature } from '../browser/browser-feature';
+import { IHostBrowser } from '../browser/browser-host-contract';
 import { createDesktopBrowserHost } from '../browser/browser-host';
 import { startBrowserTestEndpoint, type BrowserTestEndpoint } from '../browser/browser-test-endpoint';
 import { browserAgentControl, browserSubagentControl } from '../browser/browser-agent-control';
@@ -68,7 +70,8 @@ export async function startDesktopServer(
       corsOrigins: ['app://renderer', ...(opts.extraCorsOrigins ?? [])],
       authTokenService: createDesktopAuthTokenService(homeDir),
       debugEndpoints: opts.debugEndpoints === true,
-      hostBrowser: browserHost,
+      seeds: [[IHostBrowser, browserHost]],
+      features: [HostBrowserFeature],
     });
   } catch (error) {
     browserHost.dispose();

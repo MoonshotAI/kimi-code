@@ -1,5 +1,5 @@
 import type { IDisposable } from '@moonshot-ai/agent-core-v2';
-import type { IHostBrowser } from '@moonshot-ai/kap-server';
+import type { IHostBrowser } from './browser-host-contract';
 import { Emitter } from '@moonshot-ai/agent-core-v2/_base/event';
 import type { BrowserSubagentRun } from '../../shared/browser-run';
 import {

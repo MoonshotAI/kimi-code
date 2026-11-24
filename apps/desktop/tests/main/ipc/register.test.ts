@@ -777,6 +777,8 @@ describe('native browser IPC', () => {
       core,
       { ISessionEventBus },
       { createDesktopBrowserHost },
+      { HostBrowserFeature },
+      { IHostBrowser },
       automation,
       { isBrowserUiRequest },
       { browserCommandTakesControl },
@@ -790,6 +792,8 @@ describe('native browser IPC', () => {
       import('@moonshot-ai/agent-core-v2'),
       import('@moonshot-ai/agent-core-v2/app/event/eventBus'),
       import('../../../src/main/browser/browser-host'),
+      import('../../../src/main/browser/browser-feature'),
+      import('../../../src/main/browser/browser-host-contract'),
       import('../../../src/main/browser/browser-automation'),
       import('../../../src/shared/browser-automation'),
       import('../../../src/renderer/lib/browserExecutionReadiness'),
@@ -830,7 +834,8 @@ describe('native browser IPC', () => {
         port: 0,
         logLevel: 'silent',
         env: { ...process.env, KIMI_CODE_EXPERIMENTAL_PERSISTENCE_MINIDB_READMODEL: 'false', KIMI_CODE_EXPERIMENTAL_SEARCH_WORKER: 'false' },
-        hostBrowser: access,
+        seeds: [[IHostBrowser, access]],
+        features: [HostBrowserFeature],
       });
       const sessions = server.core.accessor.get(core.ISessionManager);
       const session = await sessions.create({ workDir: home });

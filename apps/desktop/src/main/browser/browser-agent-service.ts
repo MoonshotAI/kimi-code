@@ -23,7 +23,7 @@ import { MAIN_AGENT_ID } from '@moonshot-ai/agent-core-v2/session/agentLifecycle
 import { ISessionContext } from '@moonshot-ai/agent-core-v2/session/sessionContext/sessionContext';
 import type { ExecutableTool } from '@moonshot-ai/agent-core-v2/tool/toolContract';
 
-import { ISessionHostBrowserService, type IAgentHostBrowserService, type IHostBrowser } from './hostBrowser';
+import { ISessionHostBrowserService, type IAgentHostBrowserService, type IHostBrowser } from './browser-host-contract';
 
 export const HOST_BROWSER_REMINDER_VARIANT = 'desktop_browser';
 export const HOST_BROWSER_DIALOGS_REMINDER_VARIANT = 'desktop-browser-dialogs';

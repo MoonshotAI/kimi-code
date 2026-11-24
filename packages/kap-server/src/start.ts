@@ -38,6 +38,7 @@ import {
   KIMI_CODE_PROVIDER_NAME,
   type KimiHostIdentity,
 } from '@moonshot-ai/kimi-code-oauth';
+import type { ServiceClassRecipe } from '@moonshot-ai/agent-core-v2/_base/di/fiber';
 import { RemoteEnvironmentProviderFactory } from '@moonshot-ai/agent-core-v2/remote';
 import { createAsyncApiDocument } from './protocol/asyncapi';
 import Fastify, { type FastifyInstance } from 'fastify';
@@ -84,8 +85,6 @@ import {
   type ServerTelemetry,
   shutdownServerTelemetry,
 } from './services/telemetry';
-import { HostBrowserFeature } from './services/hostBrowser/hostBrowserFeature';
-import { IHostBrowser } from './services/hostBrowser/hostBrowser';
 import { createServerSessionRating } from './services/sessionRating';
 import { ConversationService } from './services/conversation/conversationService';
 import { ModelCatalogRefreshScheduler } from './services/modelCatalog/modelCatalogRefreshScheduler';
@@ -135,7 +134,7 @@ export interface ServerStartOptions {
   readonly webTitle?: string;
   readonly rpcToken?: string;
   readonly seeds?: ScopeSeed;
-  readonly hostBrowser?: IHostBrowser;
+  readonly features?: readonly ServiceClassRecipe[];
   readonly hostIdentity: ServerHostIdentity;
   readonly skillDirs?: readonly string[];
   readonly webAssetsDir?: string;
@@ -242,13 +241,10 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
         uiCapabilities: [NOTIFY_USER_UI_CAPABILITY],
       },
     },
-    [
-      ...logSeed(logging),
-      ...(opts.hostBrowser === undefined ? [] : [[IHostBrowser, opts.hostBrowser] as const]),
-      ...(opts.seeds ?? []),
-    ],
+    [...logSeed(logging), ...(opts.seeds ?? [])],
   );
-  if (opts.hostBrowser !== undefined) core.accessor.get(IFeatureManager).provideUnit(HostBrowserFeature);
+  const featureManager = core.accessor.get(IFeatureManager);
+  for (const feature of opts.features ?? []) featureManager.provideUnit(feature);
   const environments = core.accessor.get(IEnvironmentService);
   const legacyAcpBindingSubscription = core.accessor.get(ISessionManager).onDidCreateSession?.((event) => {
     const main = event.handle.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID);

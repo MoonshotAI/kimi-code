@@ -34,6 +34,8 @@ import {
   DESKTOP_BROWSER_REMINDER_VARIANT,
   createDesktopBrowserHost,
 } from '../../../src/main/browser/browser-host';
+import { HostBrowserFeature } from '../../../src/main/browser/browser-feature';
+import { IHostBrowser } from '../../../src/main/browser/browser-host-contract';
 import { runBrowserAutomation } from '../../../src/main/browser/browser-automation';
 import {
   DESKTOP_BROWSER_BLOCKED_GUIDANCE,
@@ -84,7 +86,8 @@ async function startBrowserTestServer(prefix: string, control: Control, subagent
     port: 0,
     logLevel: 'silent',
     env: { ...process.env },
-    hostBrowser: access,
+    seeds: [[IHostBrowser, access]],
+    features: [HostBrowserFeature],
   });
   const sessions = server.core.accessor.get(ISessionManager);
   return {
