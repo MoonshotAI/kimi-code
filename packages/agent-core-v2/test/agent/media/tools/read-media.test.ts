@@ -788,7 +788,7 @@ describe('ReadMediaFileTool', () => {
     };
     const resolver = new AgentMediaResolverService(
       {} as IFileService,
-      { get: async () => undefined, put: async () => {} } as unknown as IBlobStore,
+      { get: async () => undefined, put: async () => {}, has: async () => false } as unknown as IBlobStore,
       telemetry,
       new AgentStateService(),
       store,

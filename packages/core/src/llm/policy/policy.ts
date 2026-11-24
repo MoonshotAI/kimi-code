@@ -280,11 +280,14 @@ async function runAttempts(
       toolArgumentCorrectionMessage = undefined;
     }
 
-    const proposal = proposeFirst(listOf(policy.recoveries), {
+    const proposal = await proposeFirst(listOf(policy.recoveries), {
       error: result.error,
       request: recoveryRequest,
+      resolvedRequest,
       appliedRecoveries: ledger.applied,
       endpoint: recoveryRequest.endpoint,
+      rawError: result.rawError,
+      signal,
     });
     if (proposal !== undefined) {
       proposal.beforeNextAttempt?.();

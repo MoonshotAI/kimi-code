@@ -219,6 +219,54 @@ describe('LLM retry policy', () => {
 });
 
 describe('LLM media recovery', () => {
+  it('awaits an asynchronous recovery proposal and retries with its context intact', async () => {
+    let attempts = 0;
+    const protocol = protocolWith({
+      sendStream: async () => {
+        attempts += 1;
+        if (attempts > 1) return { body: asyncChunks(successfulChunks()) };
+        throw new Error('bad request');
+      },
+      decodeError: (error): LlmRemoteErrorMessage => ({
+        kind: 'status',
+        message: error instanceof Error ? error.message : String(error),
+        statusCode: 400,
+        ...NULL_STATUS,
+        retryable: false,
+      }),
+    });
+    const proposed: string[] = [];
+    const pending = runGenerate(protocol, {
+      module: testModule(),
+      maxAttemptsPerStep: 1,
+      recoveries: [
+        {
+          propose: async (ctx) => {
+            await Promise.resolve();
+            proposed.push([
+              ctx.error.kind,
+              ctx.resolvedRequest === undefined ? 'no-resolved' : 'resolved',
+              ctx.rawError instanceof Error ? 'raw' : 'no-raw',
+              ctx.signal === undefined ? 'no-signal' : 'signal',
+            ].join(':'));
+            return { strategy: 'async-probe', action: 'retry' };
+          },
+        },
+      ],
+    });
+    await vi.advanceTimersByTimeAsync(1_000);
+    const { outcome, events } = await pending;
+
+    expect(doneOutcome(outcome).message.content).toEqual([{ type: 'text', text: 'recovered' }]);
+    expect(attempts).toBe(2);
+    expect(proposed).toEqual(['status:resolved:raw:signal']);
+    expect(events).toContainEqual(expect.objectContaining({
+      type: 'llm.retry',
+      reason: 'recovery',
+      strategy: 'async-probe',
+    }));
+  });
+
   it('degrades then strips media across request_too_large failures before failing', async () => {
     let attempts = 0;
     const protocol = protocolWith({

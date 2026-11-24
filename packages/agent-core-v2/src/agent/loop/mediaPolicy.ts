@@ -2,6 +2,7 @@ import { createMediaDegradeRecovery } from '@moonshot-ai/core/llm/builtin/policy
 import type { Message, ToolMessage, UserMessage } from '@moonshot-ai/core/llm/message';
 import type { LlmRecovery } from '@moonshot-ai/core/llm/policy/recovery';
 import type { LlmResolver } from '@moonshot-ai/core/llm/policy/resolver';
+import type { LlmErrorMessage } from '@moonshot-ai/core/llm/response';
 import type { Model } from '#/llm-adapter/model/catalog';
 import type { InitializedLlmRequester } from '@moonshot-ai/core/llm/requester';
 import { IAgentMediaResolverService } from '#/agent/media/mediaResolver';
@@ -76,11 +77,28 @@ export type AgentMediaPolicyFactory = (
   request: InitializedLlmRequester,
 ) => AgentMediaPolicy;
 
+const MEDIA_UPLOAD_FAILED = 'media-upload-failed';
+
+function isUploadedMediaRequestError(error: LlmErrorMessage, rawError: unknown): boolean {
+  if (error.kind !== 'status' || error.statusCode !== 400) return false;
+  if (/failed to validate image_url content:\s*blob ID \S+ does not exist\b/i.test(error.message)) {
+    return true;
+  }
+  if (error.message.trim() !== 'Invalid request Error') return false;
+  if (typeof rawError !== 'object' || rawError === null) return false;
+  const body = (rawError as { error?: unknown }).error;
+  if (typeof body !== 'object' || body === null) return false;
+  const { type, error: nested } = body as { type?: unknown; error?: { type?: unknown } };
+  return (nested?.type ?? type) === 'invalid_request_error';
+}
+
 export function createAgentMediaPolicy(
   service: IAgentMediaResolverService,
   model: Model,
   request: InitializedLlmRequester,
 ): AgentMediaPolicy {
+  let checkedUploads = false;
+  const degradeRecovery = createMediaDegradeRecovery();
   return {
     toolResolver: {
       id: 'agent-media-tools',
@@ -112,6 +130,21 @@ export function createAgentMediaPolicy(
           : { ...current, content: { ...current.content, messages } };
       },
     },
-    recovery: createMediaDegradeRecovery(),
+    recovery: {
+      propose: async (ctx) => {
+        if (
+          !checkedUploads &&
+          !ctx.appliedRecoveries.some(({ strategy }) => strategy === MEDIA_UPLOAD_FAILED) &&
+          ctx.resolvedRequest !== undefined &&
+          isUploadedMediaRequestError(ctx.error, ctx.rawError)
+        ) {
+          checkedUploads = true;
+          if (await service.recoverFailedUploads(ctx.resolvedRequest.content.messages, request, ctx.signal)) {
+            return { strategy: MEDIA_UPLOAD_FAILED, action: 'retry' };
+          }
+        }
+        return degradeRecovery.propose(ctx);
+      },
+    },
   };
 }
