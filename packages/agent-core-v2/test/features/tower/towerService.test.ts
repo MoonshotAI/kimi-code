@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { promisify } from 'node:util';
 
+import { say } from '@moonshot-ai/testkit/model';
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
@@ -80,6 +81,7 @@ import { stubLog } from '../../_base/log/stubs';
 import {
   appService,
   createTestAgent,
+  testkitAgentFixtures,
   type TestAgentContext,
 } from '../../harness';
 import {
@@ -4390,69 +4392,67 @@ describe('TowerModeInjection', () => {
 
 });
 
-function requestHistoryText(history: readonly ContextMessage[]): string {
-  return history
-    .flatMap((message) => message.content)
-    .map((part) => (part.type === 'text' ? part.text : ''))
-    .join('\n');
-}
-
 describe('tower deferred tools — dynamic loading', () => {
-  let ctx: TestAgentContext;
-  let cwd: string;
+  it('announces <tools_added> on enter and <tools_removed> on exit for a dynamically-loaded-tools model', async (context) => {
+    const cwd = await mkdtemp(join(tmpdir(), 'tower-dynamic-'));
+    try {
+      const fixtures = testkitAgentFixtures(
+        appService(IFlagService, stubFlag((id) => id === TOWER_FLAG_ID)),
+        { cwd },
+      );
+      await fixtures.model(context, async (model) => {
+        await fixtures.agent({ model }, async (agent) => {
+          agent.configure({
+            modelCapabilities: {
+              image_in: false,
+              video_in: false,
+              audio_in: false,
+              thinking: false,
+              tool_use: true,
+              dynamically_loaded_tools: true,
+              maxContextSize: 128_000,
+            },
+          });
+          await agent.restorePersisted();
+          await agent.rpc.setPermission({ mode: 'yolo' });
+          const viewText = (index: number): string =>
+            model.requests('main')[index]!.view.messages.map((message) => message.text).join('\n');
 
-  beforeEach(async () => {
-    cwd = await mkdtemp(join(tmpdir(), 'tower-dynamic-'));
-    ctx = createTestAgent(
-      { cwd },
-      appService(IFlagService, stubFlag((id) => id === TOWER_FLAG_ID)),
-    );
-    ctx.configure({
-      modelCapabilities: {
-        image_in: false,
-        video_in: false,
-        audio_in: false,
-        thinking: false,
-        tool_use: true,
-        dynamically_loaded_tools: true,
-        maxContextSize: 128_000,
-      },
-    });
-    await ctx.restorePersisted();
-  });
+          model.script(say('before tower'));
+          await agent.rpc.prompt({ input: [{ type: 'text', text: 'hello' }] });
+          await agent.untilTurnEnd();
+          expect(
+            model.requests('main')[0]!.view.tools.map((tool) => tool.name),
+          ).not.toContain('TowerSpawn');
 
-  afterEach(async () => {
-    await ctx.dispose();
-    await rm(cwd, { recursive: true, force: true });
-  });
+          const tower = agent.get(IAgentTowerService);
+          await tower.enter();
 
-  it('announces <tools_added> on enter and <tools_removed> on exit for a dynamically-loaded-tools model', async () => {
-    ctx.mockNextResponse({ type: 'text', text: 'before tower' });
-    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'hello' }] });
-    await ctx.untilTurnEnd();
-    expect(ctx.llmCalls[0]!.tools.map((tool) => tool.name)).not.toContain('TowerSpawn');
+          model.script(say('with tower'));
+          await agent.rpc.prompt({ input: [{ type: 'text', text: 'start the fleet' }] });
+          await agent.untilTurnEnd();
 
-    const tower = ctx.get(IAgentTowerService);
-    await tower.enter();
+          const addedText = viewText(1);
+          expect(addedText).toContain('<tools_added>');
+          expect(addedText).toContain('TowerSpawn');
+          expect(
+            model.requests('main')[1]!.view.tools.map((tool) => tool.name),
+          ).not.toContain('TowerSpawn');
 
-    ctx.mockNextResponse({ type: 'text', text: 'with tower' });
-    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'start the fleet' }] });
-    await ctx.untilTurnEnd();
+          await tower.exit();
 
-    const addedCall = ctx.llmCalls[1]!;
-    expect(addedCall.tools.map((tool) => tool.name)).not.toContain('TowerSpawn');
-    expect(requestHistoryText(addedCall.history)).toContain('<tools_added>');
-    expect(requestHistoryText(addedCall.history)).toContain('TowerSpawn');
+          model.script(say('after tower'));
+          await agent.rpc.prompt({ input: [{ type: 'text', text: 'back to normal' }] });
+          await agent.untilTurnEnd();
 
-    await tower.exit();
-
-    ctx.mockNextResponse({ type: 'text', text: 'after tower' });
-    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'back to normal' }] });
-    await ctx.untilTurnEnd();
-
-    const removedCall = ctx.llmCalls[2]!;
-    expect(requestHistoryText(removedCall.history)).toContain('<tools_removed>');
-    expect(requestHistoryText(removedCall.history)).toContain('TowerSpawn');
+          const removedText = viewText(2);
+          expect(removedText).toContain('<tools_removed>');
+          expect(removedText).toContain('TowerSpawn');
+        });
+      });
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
   });
 });
 
