@@ -155,6 +155,9 @@ export function lowerMessage(message: Message, lower: OpenAILowerContext): Nativ
               id: toolCall.id,
               type: 'function' as const,
               function: { name: toolCall.name, arguments: toolCall.arguments ?? '' },
+              ...(toolCall.extras?.['extra_content'] === undefined
+                ? {}
+                : { extra_content: toolCall.extras['extra_content'] as Record<string, unknown> }),
             }))
           : undefined,
     };

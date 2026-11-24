@@ -37,6 +37,7 @@ export type RawStreamToolCallDelta = {
   id?: string;
   function?: { name?: string; arguments?: string } | null;
   extras?: Record<string, unknown>;
+  extra_content?: Record<string, unknown>;
 };
 
 export type RawChunk = {
@@ -58,6 +59,7 @@ type RawToolCall = {
   type?: string;
   function?: { name?: string; arguments?: string } | null;
   extras?: Record<string, unknown>;
+  extra_content?: Record<string, unknown>;
 };
 
 export type RawResponse = {
@@ -215,7 +217,13 @@ export function replay(response: RawResponse): RawChunk[] {
                 tool_calls: message.tool_calls?.flatMap((toolCall, index) =>
                   toolCall.type !== undefined && toolCall.type !== 'function'
                     ? []
-                    : [{ index, id: toolCall.id, function: toolCall.function, extras: toolCall.extras }],
+                    : [{
+                        index,
+                        id: toolCall.id,
+                        function: toolCall.function,
+                        extras: toolCall.extras,
+                        extra_content: toolCall.extra_content,
+                      }],
                 ),
               },
       })),
@@ -250,6 +258,9 @@ export function createDecoder(
     const streamIndex = toolCall.index;
     const functionName = toolCall.function.name;
     const functionArguments = toolCall.function.arguments;
+    const extras = toolCall.extra_content === undefined
+      ? toolCall.extras
+      : { ...toolCall.extras, extra_content: toolCall.extra_content };
     const hasConcreteName = typeof functionName === 'string' && functionName.length > 0;
     const hasArguments = typeof functionArguments === 'string' && functionArguments.length > 0;
 
@@ -261,7 +272,7 @@ export function createDecoder(
             id: toolCall.id ?? randomUUID(),
             name: functionName,
             arguments: functionArguments ?? null,
-            extras: toolCall.extras,
+            extras,
           },
         ];
       }
@@ -275,8 +286,8 @@ export function createDecoder(
     if (toolCall.id !== undefined) {
       buffered.id = toolCall.id;
     }
-    if (toolCall.extras !== undefined) {
-      buffered.extras = toolCall.extras;
+    if (extras !== undefined) {
+      buffered.extras = extras;
     }
     if (!buffered.emitted) {
       if (!hasConcreteName) {
