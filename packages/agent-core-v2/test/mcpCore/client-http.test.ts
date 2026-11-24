@@ -149,6 +149,8 @@ describe('HttpMcpClient', () => {
     client.onToolsChanged(listener);
     try {
       await client.connect();
+      const initialTools = await client.listTools();
+      expect(initialTools.map((tool) => tool.name)).toEqual(['echo']);
       server.mcpServer.registerTool(
         'added',
         { description: 'Added later', inputSchema: {} },
