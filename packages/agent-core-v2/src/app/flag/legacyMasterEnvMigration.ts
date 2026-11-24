@@ -172,8 +172,9 @@ export function resolveBootstrapEnvWithLegacyTowerMigration(
     return input.env;
   }
   const baseEnv = input.env ?? process.env;
+  const existingTowerEnv = baseEnv[TOWER_FLAG_ENV];
   return {
     ...baseEnv,
-    [TOWER_FLAG_ENV]: baseEnv[TOWER_FLAG_ENV] ?? '1',
+    [TOWER_FLAG_ENV]: parseBooleanEnv(existingTowerEnv) === true ? existingTowerEnv : '1',
   };
 }

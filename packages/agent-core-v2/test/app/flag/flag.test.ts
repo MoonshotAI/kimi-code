@@ -471,5 +471,19 @@ describe('migrateLegacyMasterEnvTower', () => {
       env: { [MASTER_ENV]: '1' },
     });
     expect(resolvedEnv?.['KIMI_CODE_EXPERIMENTAL_TOWER']).toBe('1');
+
+    const emptyTowerEnv = resolveBootstrapEnvWithLegacyTowerMigration({
+      homeDir: tempDir,
+      configPath: unwritableConfigPath,
+      env: { [MASTER_ENV]: '1', KIMI_CODE_EXPERIMENTAL_TOWER: '' },
+    });
+    expect(emptyTowerEnv?.['KIMI_CODE_EXPERIMENTAL_TOWER']).toBe('1');
+
+    const unparsedTowerEnv = resolveBootstrapEnvWithLegacyTowerMigration({
+      homeDir: tempDir,
+      configPath: unwritableConfigPath,
+      env: { [MASTER_ENV]: '1', KIMI_CODE_EXPERIMENTAL_TOWER: 'placeholder' },
+    });
+    expect(unparsedTowerEnv?.['KIMI_CODE_EXPERIMENTAL_TOWER']).toBe('1');
   });
 });
