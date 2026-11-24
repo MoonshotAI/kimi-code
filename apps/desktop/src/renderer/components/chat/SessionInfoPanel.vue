@@ -98,32 +98,34 @@ watch(
 
 <template>
   <aside class="session-info" :class="`is-${mode}`" role="complementary" :aria-label="t('header.sessionInfo')">
-    <div v-if="showFolders" class="si-folders">
-      <SessionInfoFolder
-        v-for="row in rows"
-        :key="row.path"
-        :row="row"
-        :show-primary-badge="rows.length > 1"
-        @open-pr="(url) => emit('openPr', url)"
-        @open-diff="(root) => emit('openDiff', root)"
+    <div class="si-body">
+      <div v-if="showFolders" class="si-folders">
+        <SessionInfoFolder
+          v-for="row in rows"
+          :key="row.path"
+          :row="row"
+          :show-primary-badge="rows.length > 1"
+          @open-pr="(url) => emit('openPr', url)"
+          @open-diff="(root) => emit('openDiff', root)"
+        />
+      </div>
+      <SessionInfoContext
+        v-if="sessionId && contextInspectorEnabled"
+        :state="contextState"
+        :ctx-used="ctxUsed"
+        :ctx-max="ctxMax"
+        :can-compact="Boolean(sessionId) && hasMessages"
+        :compact-phase="compactPhase"
+        @compact="emit('compact')"
+      />
+      <SessionInfoTabs
+        :tabs="tabs"
+        :available="available"
+        @activate="(id) => emit('activate', id)"
+        @open="(type) => emit('open', type)"
+        @show-tabs="emit('showTabs')"
       />
     </div>
-    <SessionInfoContext
-      v-if="sessionId && contextInspectorEnabled"
-      :state="contextState"
-      :ctx-used="ctxUsed"
-      :ctx-max="ctxMax"
-      :can-compact="Boolean(sessionId) && hasMessages"
-      :compact-phase="compactPhase"
-      @compact="emit('compact')"
-    />
-    <SessionInfoTabs
-      :tabs="tabs"
-      :available="available"
-      @activate="(id) => emit('activate', id)"
-      @open="(type) => emit('open', type)"
-      @show-tabs="emit('showTabs')"
-    />
   </aside>
 </template>
 
@@ -131,10 +133,12 @@ watch(
 .session-info { box-sizing: border-box; flex: none; min-height: 0; color: var(--color-text); }
 .session-info.is-sidebar {
   width: 280px;
+  overflow-x: hidden;
   overflow-y: auto;
   border-left: var(--p-hairline) solid var(--color-line);
   background: var(--color-bg);
 }
+.session-info.is-sidebar > .si-body { width: calc(280px - var(--p-hairline)); }
 .session-info.is-floating {
   position: absolute;
   z-index: var(--z-sticky);
