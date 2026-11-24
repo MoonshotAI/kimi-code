@@ -99,6 +99,10 @@ function enabledFor(name: string): boolean {
   return isDefaultToolEnabled(draftConfig.value, name);
 }
 
+function displayLabel(name: string): string {
+  return name === 'Agent' ? t('tools.label.agent') : toolLabel(name);
+}
+
 function setEnabled(name: string, enabled: boolean): void {
   if (saving.value || !hasConfig.value) return;
   draftConfig.value = setDefaultToolEnabled(draftConfig.value, name, enabled);
@@ -173,14 +177,14 @@ defineExpose({ confirmDiscard });
               <span class="dt-label">
                 <Icon :name="toolIconName(tool.name)" size="md" />
                 <span class="settings-row-label dt-text">
-                  <span>{{ toolLabel(tool.name) }}</span>
+                  <span>{{ displayLabel(tool.name) }}</span>
                   <span class="dt-name">{{ tool.name }}</span>
                 </span>
               </span>
               <Switch
                 :model-value="enabledFor(tool.name)"
                 :disabled="saving"
-                :label="toolLabel(tool.name)"
+                :label="displayLabel(tool.name)"
                 @update:model-value="setEnabled(tool.name, $event)"
               />
             </div>

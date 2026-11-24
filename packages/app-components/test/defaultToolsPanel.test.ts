@@ -236,6 +236,23 @@ describe('DefaultToolsPanel', () => {
     expect(switchNamed('tools.label.bash').getAttribute('aria-checked')).toBe('true');
   });
 
+  it('labels Agent as subagent in settings while keeping the chat tool label as task', async () => {
+    fakes.listToolCatalog.mockResolvedValue([{ name: 'Agent', source: 'builtin' }]);
+    host = document.createElement('div');
+    document.body.append(host);
+    const i18n = createKimiI18n({ locale: 'zh' });
+    app = createApp({ setup: () => () => h(DefaultToolsPanel) });
+    app.provide(IconResolverKey, (name) => ({ render: () => h('svg', { 'data-icon': name }) }));
+    app.use(i18n);
+    app.mount(host);
+    await flush();
+
+    expect(host.textContent).toContain('子智能体');
+    const { toolLabel: chatToolLabel } = await import('@moonshot-ai/app-core/lib');
+    const translate = (key: string) => i18n.global.t(key);
+    expect(chatToolLabel(translate, 'Agent')).toBe('任务');
+  });
+
   it('refuses to discard while a save is in flight', async () => {
     let resolveSave!: (saved: boolean) => void;
     fakes.updateConfig.mockReturnValue(new Promise<boolean>((resolve) => {
