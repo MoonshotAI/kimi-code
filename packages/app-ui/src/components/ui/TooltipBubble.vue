@@ -125,13 +125,23 @@ function hide(): void {
 }
 
 function hoverBlocked(event: PointerEvent): boolean {
-  return event.pointerType === 'touch' || window.matchMedia?.('(hover: none)').matches === true;
+  if (event.pointerType === 'touch') return true;
+  if (event.pointerType === 'mouse') return false;
+  return window.matchMedia?.('(any-hover: none)').matches === true;
 }
 
 function onDirectPointerMove(event: PointerEvent): void {
-  if (hovering || hoverBlocked(event) || isSyntheticPointerMove(event)) return;
+  if (hoverBlocked(event)) {
+    hide();
+    return;
+  }
+  if (hovering || isSyntheticPointerMove(event)) return;
   hovering = true;
   show();
+}
+
+function onPointerDown(event: PointerEvent): void {
+  if (hoverBlocked(event)) hide();
 }
 
 function onFocus(event: FocusEvent): void {
@@ -151,11 +161,15 @@ function ownerOf(el: EventTarget | null): HTMLElement | null {
 function onDelegatePointerMove(event: PointerEvent): void {
   const shell = props.delegate;
   if (!shell) return;
+  if (hoverBlocked(event)) {
+    hide();
+    return;
+  }
   if (ownerOf(event.target) !== shell) {
     hide();
     return;
   }
-  if (hovering || hoverBlocked(event) || isSyntheticPointerMove(event)) return;
+  if (hovering || isSyntheticPointerMove(event)) return;
   hovering = true;
   show();
 }
@@ -175,6 +189,7 @@ function onDelegateBlur(): void {
 function detach(): void {
   if (!attachedTo) return;
   attachedTo.removeEventListener('focusin', onFocus);
+  attachedTo.removeEventListener('pointerdown', onPointerDown);
   if (props.delegate) {
     attachedTo.removeEventListener('pointermove', onDelegatePointerMove);
     attachedTo.removeEventListener('mouseout', onDelegateOut);
@@ -195,6 +210,7 @@ function attach(): void {
   if (!el) return;
   attachedTo = el;
   el.addEventListener('focusin', onFocus);
+  el.addEventListener('pointerdown', onPointerDown);
   if (props.delegate) {
     el.addEventListener('pointermove', onDelegatePointerMove, { passive: true });
     el.addEventListener('mouseout', onDelegateOut);

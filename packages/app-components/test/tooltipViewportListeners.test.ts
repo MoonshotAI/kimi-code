@@ -129,9 +129,9 @@ describe('tooltip hover input', () => {
     expect(document.body.querySelector('.ui-tip__bubble')).toBeNull();
   });
 
-  it('ignores pointer moves when the primary input cannot hover', async () => {
+  it('ignores non-mouse pointer moves when no input can hover', async () => {
     vi.stubGlobal('matchMedia', (query: string) => ({
-      matches: query === '(hover: none)',
+      matches: query === '(any-hover: none)',
       media: query,
       addEventListener() {},
       removeEventListener() {},
@@ -143,6 +143,64 @@ describe('tooltip hover input', () => {
     move(button, 5, 5, 'pen');
     move(button, 12, 9, 'pen');
     await vi.advanceTimersByTimeAsync(200);
+    await settle();
+
+    expect(document.body.querySelector('.ui-tip__bubble')).toBeNull();
+  });
+
+  it('preserves mouse hover when the primary pointer cannot hover', async () => {
+    vi.stubGlobal('matchMedia', (query: string) => ({
+      matches: query === '(hover: none)',
+      media: query,
+      addEventListener() {},
+      removeEventListener() {},
+    }));
+    mountButtons(1);
+    await settle();
+
+    const button = host.querySelector('button')!;
+    move(button, 5, 5);
+    move(button, 12, 9);
+    await vi.advanceTimersByTimeAsync(200);
+    await settle();
+
+    expect(document.body.querySelector('.ui-tip__bubble')?.textContent).toBe('tip 0');
+  });
+
+  it('cancels a pending mouse hover when a touch press lands without moving', async () => {
+    mountButtons(1);
+    await settle();
+
+    const button = host.querySelector('button')!;
+    move(button, 5, 5);
+    move(button, 12, 9);
+    await vi.advanceTimersByTimeAsync(100);
+
+    const down = new MoveEvent('pointerdown', { bubbles: true, clientX: 12, clientY: 9 });
+    Object.defineProperty(down, 'pointerType', { value: 'touch' });
+    button.dispatchEvent(down);
+
+    await vi.advanceTimersByTimeAsync(200);
+    await settle();
+
+    expect(document.body.querySelector('.ui-tip__bubble')).toBeNull();
+  });
+
+  it('closes an open delegated tooltip when touch takes over from a stationary mouse', async () => {
+    app = createApp({
+      render: () => h(Tooltip, { text: 'summary' }, () => h('button', 'summary')),
+    });
+    app.mount(host);
+    await settle();
+
+    const button = host.querySelector('button')!;
+    move(button, 5, 5);
+    move(button, 12, 9);
+    await vi.advanceTimersByTimeAsync(200);
+    await settle();
+    expect(document.body.querySelector('.ui-tip__bubble')).not.toBeNull();
+
+    move(button, 12, 9, 'touch');
     await settle();
 
     expect(document.body.querySelector('.ui-tip__bubble')).toBeNull();
