@@ -180,7 +180,7 @@ describe('host text editing', () => {
     const api = makeApi();
     const snapshot = await api.readHostTextFile(path);
     expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({ cache: 'no-store' });
-    expect(snapshot).toMatchObject({ path, content, revision: expect.stringMatching(/^[a-f0-9]{64}$/) });
+    expect(snapshot).toEqual({ path, content, revision: 'b056f91e144410f5490747592a93165ef51b5835d75aadb8c0c2f439ded8b210' });
     await expect(api.writeHostTextFile(path, content, snapshot.revision)).resolves.toEqual({ revision: 'new' });
     const [url, init] = fetchMock.mock.calls[1] as [string, RequestInit];
     expect(new URL(url).pathname).toBe('/api/v1/fs:content');

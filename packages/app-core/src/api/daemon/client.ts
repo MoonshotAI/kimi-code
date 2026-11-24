@@ -1,5 +1,6 @@
 
-import { sha256Hex } from '@moonshot-ai/core/utils/hash';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { bytesToHex } from '@noble/hashes/utils.js';
 import { buildRestUrl, buildWsUrl } from '../config';
 import { noopTracer } from '../../contracts';
 import type { ClientIdentity, CredentialStore, Tracer } from '../../contracts';
@@ -1901,7 +1902,7 @@ export class DaemonKimiWebApi implements KimiWebApi {
     const bytes = new Uint8Array(await blob.arrayBuffer());
     const content = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes);
     if (content.includes('\0')) throw new Error('Cannot edit a binary file as text');
-    return { path, content, revision: sha256Hex(bytes) };
+    return { path, content, revision: bytesToHex(sha256(bytes)) };
   }
 
   writeHostTextFile(path: string, content: string, revision: string | null): Promise<{ revision: string }> {
