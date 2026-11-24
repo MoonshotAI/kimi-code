@@ -11,11 +11,14 @@ Run `/plugins` in the TUI to open the plugin manager. It is a single panel with 
 - **Curated**: Third-party plugins from Kimi partners in the default marketplace
 - **Custom**: Install from a URL
 
+The panel keeps its dimensions while you scroll or switch tabs. Use `↑` / `↓` to move through long catalogs one plugin at a time. Marketplace entries show up to three lines of description and omit the ID, category, and keyword metadata row.
+
 Common keys:
 
 | Key | Action |
 | --- | --- |
 | `Tab` / `Shift-Tab` | Switch between the Installed / Official / Curated / Custom tabs |
+| `↑` / `↓` | Move through the list |
 | `Space` | Enable or disable the selected installed plugin (Installed tab) |
 | `D` | Remove the selected installed plugin (Installed tab) |
 | `M` | Manage MCP servers for the selected plugin (Installed tab) |
