@@ -2230,6 +2230,22 @@ describe('server-v2 /api/v1/sessions', () => {
     expect(incompatible.body.details).toEqual({ minReaderVersion: '9.9', readerVersion: '1.5' });
   });
 
+  it('forks a session from a request without a body', async () => {
+    const cwd = home as string;
+    const parent = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
+    const parentId = parent.body.data.id;
+    const session = getLiveSessionById((server as RunningServer).core.accessor, parentId);
+    expect(session).toBeDefined();
+    await session!.accessor.get(IAgentLifecycleService).create({ agentId: MAIN_AGENT_ID });
+    const main = session!.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID)!;
+    await main.accessor.get(IWireService).flush();
+
+    const forked = await postJson<SessionWire>(`/api/v1/sessions/${parentId}:fork`);
+
+    expect(forked.body.code).toBe(0);
+    expect(forked.body.data.id).not.toBe(parentId);
+  });
+
   it('fork clears inherited cron tasks while the source keeps them', async () => {
     const cwd = home as string;
     const parent = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });

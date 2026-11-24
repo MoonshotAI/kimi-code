@@ -118,7 +118,7 @@ interface SessionActionDoc {
 }
 
 const sessionActionDocs: Readonly<Record<SessionAction, SessionActionDoc>> = {
-  fork: { response: forkSessionResponseSchema, body: forkSessionRequestSchema, bodyRequired: true },
+  fork: { response: forkSessionResponseSchema, body: forkSessionRequestSchema },
   compact: { response: compactSessionResponseSchema, body: compactSessionBodySchema },
   undo: { response: undoSessionResponseSchema, body: undoSessionRequestSchema, bodyRequired: true },
   cancel: { response: sessionCancelResponseSchema, body: cancelSessionBodySchema },

@@ -67,10 +67,8 @@ describe('server-v2 OpenAPI', () => {
     const bodySchema = (action: string) =>
       asRecord(asRecord(asRecord(asRecord(requestBody(action))['content'])['application/json'])['schema']);
 
-    for (const action of ['fork', 'undo']) {
-      expect(requestBody(action)).toMatchObject({ required: true });
-    }
-    for (const action of ['compact', 'cancel', 'wait']) {
+    expect(requestBody('undo')).toMatchObject({ required: true });
+    for (const action of ['fork', 'compact', 'cancel', 'wait']) {
       expect(requestBody(action)).toMatchObject({ required: false });
     }
     for (const action of ['continue', 'btw', 'restore', 'archive', 'delete', 'reload', 'takeover']) {
@@ -82,6 +80,22 @@ describe('server-v2 OpenAPI', () => {
     const cancelProps = asRecord(bodySchema('cancel')['properties']);
     expect(cancelProps['agent_id']).toMatchObject({ type: 'string' });
     expect(cancelProps['include_background']).toMatchObject({ type: 'boolean' });
+  });
+
+  it('documents the data :undo returns when the requested turns cannot be undone', async () => {
+    const doc = await fetchOpenApi();
+    const op = operation(doc, '/api/v1/sessions/{session_id}:undo', 'post');
+    const content = asRecord(asRecord(asRecord(op['responses'])['200'])['content']);
+    const variants = asRecord(asRecord(content['application/json'])['schema'])['oneOf'] as Array<{
+      properties: { code: { enum: number[] }; data: unknown };
+    }>;
+    const unavailable = variants.find((variant) => variant.properties.code.enum.includes(40911));
+    expect(unavailable?.properties.data).toMatchObject({
+      type: 'object',
+      nullable: true,
+      required: ['reason', 'requestedCount', 'undoableCount'],
+      properties: { reason: { enum: ['empty', 'compaction_boundary', 'insufficient'] } },
+    });
   });
 
   it('describes the file upload as multipart/form-data', async () => {

@@ -31869,11 +31869,34 @@
                           "type": "number"
                         },
                         "data": {
-                          "enum": [
-                            null
-                          ],
+                          "additionalProperties": false,
                           "nullable": true,
-                          "type": "string"
+                          "properties": {
+                            "reason": {
+                              "enum": [
+                                "empty",
+                                "compaction_boundary",
+                                "insufficient"
+                              ],
+                              "type": "string"
+                            },
+                            "requestedCount": {
+                              "maximum": 9007199254740991,
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "undoableCount": {
+                              "maximum": 9007199254740991,
+                              "minimum": 0,
+                              "type": "integer"
+                            }
+                          },
+                          "required": [
+                            "reason",
+                            "requestedCount",
+                            "undoableCount"
+                          ],
+                          "type": "object"
                         },
                         "details": {},
                         "msg": {
@@ -32375,11 +32398,34 @@
                           "type": "number"
                         },
                         "data": {
-                          "enum": [
-                            null
-                          ],
+                          "additionalProperties": false,
                           "nullable": true,
-                          "type": "string"
+                          "properties": {
+                            "reason": {
+                              "enum": [
+                                "empty",
+                                "compaction_boundary",
+                                "insufficient"
+                              ],
+                              "type": "string"
+                            },
+                            "requestedCount": {
+                              "maximum": 9007199254740991,
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "undoableCount": {
+                              "maximum": 9007199254740991,
+                              "minimum": 0,
+                              "type": "integer"
+                            }
+                          },
+                          "required": [
+                            "reason",
+                            "requestedCount",
+                            "undoableCount"
+                          ],
+                          "type": "object"
                         },
                         "details": {},
                         "msg": {
@@ -32899,11 +32945,34 @@
                           "type": "number"
                         },
                         "data": {
-                          "enum": [
-                            null
-                          ],
+                          "additionalProperties": false,
                           "nullable": true,
-                          "type": "string"
+                          "properties": {
+                            "reason": {
+                              "enum": [
+                                "empty",
+                                "compaction_boundary",
+                                "insufficient"
+                              ],
+                              "type": "string"
+                            },
+                            "requestedCount": {
+                              "maximum": 9007199254740991,
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "undoableCount": {
+                              "maximum": 9007199254740991,
+                              "minimum": 0,
+                              "type": "integer"
+                            }
+                          },
+                          "required": [
+                            "reason",
+                            "requestedCount",
+                            "undoableCount"
+                          ],
+                          "type": "object"
                         },
                         "details": {},
                         "msg": {
@@ -33412,11 +33481,34 @@
                           "type": "number"
                         },
                         "data": {
-                          "enum": [
-                            null
-                          ],
+                          "additionalProperties": false,
                           "nullable": true,
-                          "type": "string"
+                          "properties": {
+                            "reason": {
+                              "enum": [
+                                "empty",
+                                "compaction_boundary",
+                                "insufficient"
+                              ],
+                              "type": "string"
+                            },
+                            "requestedCount": {
+                              "maximum": 9007199254740991,
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "undoableCount": {
+                              "maximum": 9007199254740991,
+                              "minimum": 0,
+                              "type": "integer"
+                            }
+                          },
+                          "required": [
+                            "reason",
+                            "requestedCount",
+                            "undoableCount"
+                          ],
+                          "type": "object"
                         },
                         "details": {},
                         "msg": {
@@ -33920,11 +34012,34 @@
                           "type": "number"
                         },
                         "data": {
-                          "enum": [
-                            null
-                          ],
+                          "additionalProperties": false,
                           "nullable": true,
-                          "type": "string"
+                          "properties": {
+                            "reason": {
+                              "enum": [
+                                "empty",
+                                "compaction_boundary",
+                                "insufficient"
+                              ],
+                              "type": "string"
+                            },
+                            "requestedCount": {
+                              "maximum": 9007199254740991,
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "undoableCount": {
+                              "maximum": 9007199254740991,
+                              "minimum": 0,
+                              "type": "integer"
+                            }
+                          },
+                          "required": [
+                            "reason",
+                            "requestedCount",
+                            "undoableCount"
+                          ],
+                          "type": "object"
                         },
                         "details": {},
                         "msg": {
@@ -34428,11 +34543,34 @@
                           "type": "number"
                         },
                         "data": {
-                          "enum": [
-                            null
-                          ],
+                          "additionalProperties": false,
                           "nullable": true,
-                          "type": "string"
+                          "properties": {
+                            "reason": {
+                              "enum": [
+                                "empty",
+                                "compaction_boundary",
+                                "insufficient"
+                              ],
+                              "type": "string"
+                            },
+                            "requestedCount": {
+                              "maximum": 9007199254740991,
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "undoableCount": {
+                              "maximum": 9007199254740991,
+                              "minimum": 0,
+                              "type": "integer"
+                            }
+                          },
+                          "required": [
+                            "reason",
+                            "requestedCount",
+                            "undoableCount"
+                          ],
+                          "type": "object"
                         },
                         "details": {},
                         "msg": {
@@ -34628,7 +34766,7 @@
               }
             }
           },
-          "required": true
+          "required": false
         },
         "responses": {
           "200": {
@@ -35061,11 +35199,34 @@
                           "type": "number"
                         },
                         "data": {
-                          "enum": [
-                            null
-                          ],
+                          "additionalProperties": false,
                           "nullable": true,
-                          "type": "string"
+                          "properties": {
+                            "reason": {
+                              "enum": [
+                                "empty",
+                                "compaction_boundary",
+                                "insufficient"
+                              ],
+                              "type": "string"
+                            },
+                            "requestedCount": {
+                              "maximum": 9007199254740991,
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "undoableCount": {
+                              "maximum": 9007199254740991,
+                              "minimum": 0,
+                              "type": "integer"
+                            }
+                          },
+                          "required": [
+                            "reason",
+                            "requestedCount",
+                            "undoableCount"
+                          ],
+                          "type": "object"
                         },
                         "details": {},
                         "msg": {
@@ -35669,11 +35830,34 @@
                           "type": "number"
                         },
                         "data": {
-                          "enum": [
-                            null
-                          ],
+                          "additionalProperties": false,
                           "nullable": true,
-                          "type": "string"
+                          "properties": {
+                            "reason": {
+                              "enum": [
+                                "empty",
+                                "compaction_boundary",
+                                "insufficient"
+                              ],
+                              "type": "string"
+                            },
+                            "requestedCount": {
+                              "maximum": 9007199254740991,
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "undoableCount": {
+                              "maximum": 9007199254740991,
+                              "minimum": 0,
+                              "type": "integer"
+                            }
+                          },
+                          "required": [
+                            "reason",
+                            "requestedCount",
+                            "undoableCount"
+                          ],
+                          "type": "object"
                         },
                         "details": {},
                         "msg": {
@@ -36277,11 +36461,34 @@
                           "type": "number"
                         },
                         "data": {
-                          "enum": [
-                            null
-                          ],
+                          "additionalProperties": false,
                           "nullable": true,
-                          "type": "string"
+                          "properties": {
+                            "reason": {
+                              "enum": [
+                                "empty",
+                                "compaction_boundary",
+                                "insufficient"
+                              ],
+                              "type": "string"
+                            },
+                            "requestedCount": {
+                              "maximum": 9007199254740991,
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "undoableCount": {
+                              "maximum": 9007199254740991,
+                              "minimum": 0,
+                              "type": "integer"
+                            }
+                          },
+                          "required": [
+                            "reason",
+                            "requestedCount",
+                            "undoableCount"
+                          ],
+                          "type": "object"
                         },
                         "details": {},
                         "msg": {
@@ -36785,11 +36992,34 @@
                           "type": "number"
                         },
                         "data": {
-                          "enum": [
-                            null
-                          ],
+                          "additionalProperties": false,
                           "nullable": true,
-                          "type": "string"
+                          "properties": {
+                            "reason": {
+                              "enum": [
+                                "empty",
+                                "compaction_boundary",
+                                "insufficient"
+                              ],
+                              "type": "string"
+                            },
+                            "requestedCount": {
+                              "maximum": 9007199254740991,
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "undoableCount": {
+                              "maximum": 9007199254740991,
+                              "minimum": 0,
+                              "type": "integer"
+                            }
+                          },
+                          "required": [
+                            "reason",
+                            "requestedCount",
+                            "undoableCount"
+                          ],
+                          "type": "object"
                         },
                         "details": {},
                         "msg": {
@@ -37317,11 +37547,34 @@
                           "type": "number"
                         },
                         "data": {
-                          "enum": [
-                            null
-                          ],
+                          "additionalProperties": false,
                           "nullable": true,
-                          "type": "string"
+                          "properties": {
+                            "reason": {
+                              "enum": [
+                                "empty",
+                                "compaction_boundary",
+                                "insufficient"
+                              ],
+                              "type": "string"
+                            },
+                            "requestedCount": {
+                              "maximum": 9007199254740991,
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "undoableCount": {
+                              "maximum": 9007199254740991,
+                              "minimum": 0,
+                              "type": "integer"
+                            }
+                          },
+                          "required": [
+                            "reason",
+                            "requestedCount",
+                            "undoableCount"
+                          ],
+                          "type": "object"
                         },
                         "details": {},
                         "msg": {
@@ -38134,11 +38387,34 @@
                           "type": "number"
                         },
                         "data": {
-                          "enum": [
-                            null
-                          ],
+                          "additionalProperties": false,
                           "nullable": true,
-                          "type": "string"
+                          "properties": {
+                            "reason": {
+                              "enum": [
+                                "empty",
+                                "compaction_boundary",
+                                "insufficient"
+                              ],
+                              "type": "string"
+                            },
+                            "requestedCount": {
+                              "maximum": 9007199254740991,
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "undoableCount": {
+                              "maximum": 9007199254740991,
+                              "minimum": 0,
+                              "type": "integer"
+                            }
+                          },
+                          "required": [
+                            "reason",
+                            "requestedCount",
+                            "undoableCount"
+                          ],
+                          "type": "object"
                         },
                         "details": {},
                         "msg": {
