@@ -1009,6 +1009,9 @@ importers:
       '@fontsource-variable/schibsted-grotesk':
         specifier: ^5.3.0
         version: 5.3.0
+      '@noble/hashes':
+        specifier: ^2.0.0
+        version: 2.4.0
       diff:
         specifier: 9.0.0
         version: 9.0.0
@@ -1215,6 +1218,9 @@ importers:
       pino:
         specifier: ^9.5.0
         version: 9.14.0
+      proper-lockfile:
+        specifier: ^4.1.2
+        version: 4.1.2
       semver:
         specifier: ^7.7.4
         version: 7.7.4
@@ -1237,6 +1243,9 @@ importers:
       '@types/bcryptjs':
         specifier: ^2.4.6
         version: 2.4.6
+      '@types/proper-lockfile':
+        specifier: ^4.1.4
+        version: 4.1.4
       '@types/semver':
         specifier: ^7.7.0
         version: 7.7.1
