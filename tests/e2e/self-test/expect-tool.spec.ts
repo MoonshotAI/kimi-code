@@ -58,6 +58,17 @@ selfTest('expectTool', {
         await product.expectReply('It did not start.');
       },
     },
+    'reports a command that the user stopped as failed': {
+      run: async ({ product, model }) => {
+        model.script(bash('sleep 20'));
+        await product.send('Run a slow command.');
+        await product.approve();
+        await product.stop();
+        await product.waitIdle();
+        await product.expectTool({ name: 'Bash', target: 'sleep 20', status: 'failed' });
+        expect(model.requests('main')).toHaveLength(1);
+      },
+    },
   },
   negative: {
     'fails when the shell command is a different one, or failed but the scenario expects it done': {
@@ -127,6 +138,51 @@ selfTest('expectTool', {
         await product.waitIdle();
         await expect(product.expectTool({ name: 'Read', target: 'a.txt', status: 'done' })).rejects.toThrow('did not find Read');
         await product.expectReply('But I did not read anything.');
+      },
+    },
+    'does not take a file of the same name in another directory': {
+      workspace: { 'src/a.txt': 'one\n', 'docs/a.txt': 'two\n' },
+      run: async ({ product, model }) => {
+        model.script(read('src/a.txt'), say('I read the one under src.'));
+        await product.send('Read src/a.txt.');
+        await product.waitIdle();
+        await expect(product.expectTool({ name: 'Read', target: 'docs/a.txt', status: 'done' })).rejects.toThrow('did not find Read');
+        await expect(product.expectTool({ name: 'Read', target: 'a.txt', status: 'done' })).rejects.toThrow('did not find Read');
+        await product.expectTool({ name: 'Read', target: 'src/a.txt', status: 'done' });
+        await product.expectReply('I read the one under src.');
+      },
+    },
+    'does not take a line of the output of a command for the command itself': {
+      run: async ({ product, model, workspace }) => {
+        model.script(bash('echo ls -la | tee out.txt'), say('I only printed the command.'));
+        await product.send('Print a command without running it.');
+        await product.approve();
+        await product.waitIdle();
+        await expect(product.expectTool({ name: 'Bash', target: 'ls -la', status: 'done' })).rejects.toThrow('did not find Bash');
+        await product.expectTool({ name: 'Bash', target: 'echo ls -la | tee out.txt', status: 'done' });
+        await product.expectReply('I only printed the command.');
+        await workspace.expectFile('out.txt', 'ls -la\n');
+      },
+    },
+    'does not take a reply that names a tool and its target for the tool': {
+      workspace: { 'package.json': '{}\n' },
+      run: async ({ product, model }) => {
+        model.script(say('Next step:\n\n**Run** `echo hi | tee out.txt`\n\nAfter that:\n\n- **Edit** package.json\n\nI did neither.'));
+        await product.send('Describe two steps without doing them.');
+        await product.waitIdle();
+        await expect(product.expectTool({ name: 'Bash', target: 'echo hi | tee out.txt', status: 'done' })).rejects.toThrow('did not find Bash');
+        await expect(product.expectTool({ name: 'Edit', target: 'package.json', status: 'done' })).rejects.toThrow('did not find Edit');
+        await product.expectReply('I did neither.');
+      },
+    },
+    'does not let a reply that repeats a failed command pass for a completed one': {
+      run: async ({ product, model }) => {
+        model.script(bash('exit 3'), say('**Run**\n\n`exit 3`'));
+        await product.send('Run a command that fails, then repeat it in bold.');
+        await product.approve();
+        await product.waitIdle();
+        await expect(product.expectTool({ name: 'Bash', target: 'exit 3', status: 'done' })).rejects.toThrow('did not find Bash');
+        await product.expectTool({ name: 'Bash', target: 'exit 3', status: 'failed' });
       },
     },
     'does not take a tool from an earlier turn': {

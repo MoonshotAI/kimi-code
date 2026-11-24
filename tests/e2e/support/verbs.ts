@@ -31,10 +31,7 @@ interface VerbSignatures {
 
 export type Product = { readonly [Name in Verb]: VerbSignatures[Name] };
 
-export interface Diagnostic {
-  readonly name: string;
-  readonly body: string;
-}
+export type Diagnostic = { readonly name: string; readonly body: string } | { readonly name: string; readonly path: string };
 
 export interface SurfaceDriver extends Product {
   close(): Promise<void>;
