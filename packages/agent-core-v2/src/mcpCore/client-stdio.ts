@@ -56,6 +56,7 @@ export class StdioMcpClient extends McpToolListChangeSource implements MCPClient
   static readonly stderrBufferCapacity = STDERR_BUFFER_CAPACITY;
 
   constructor(config: McpServerStdioConfig, options: StdioMcpClientOptions) {
+    super();
     this.transport = new EnvironmentStdioTransport(config, options, this.stderrBuffer);
     this.client = new Client({
       name: options.clientName ?? KIMI_MCP_CLIENT_NAME,

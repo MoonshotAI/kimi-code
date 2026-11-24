@@ -44,6 +44,7 @@ export class SseMcpClient extends McpToolListChangeSource implements MCPClient {
   private sessionEvidenceFired = false;
 
   constructor(private readonly config: McpServerSseConfig, options: SseMcpClientOptions = {}) {
+    super();
     const envLookup = options.envLookup ?? ((name) => process.env[name]);
     const headers = buildMcpRemoteHeaders(config, envLookup);
 

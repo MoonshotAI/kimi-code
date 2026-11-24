@@ -44,6 +44,7 @@ export class HttpMcpClient extends McpToolListChangeSource implements MCPClient 
   private hardEvidenceFired = false;
 
   constructor(private readonly config: McpServerHttpConfig, options: HttpMcpClientOptions = {}) {
+    super();
     const envLookup = options.envLookup ?? ((name) => process.env[name]);
     const headers = buildMcpHttpHeaders(config, envLookup);
 
