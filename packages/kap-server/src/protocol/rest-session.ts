@@ -331,6 +331,20 @@ export type UpdateSessionRequest = z.infer<typeof updateSessionRequestSchema>;
 export const updateSessionResponseSchema = updateSessionProfileResponseSchema;
 export type UpdateSessionResponse = z.infer<typeof updateSessionResponseSchema>;
 
+export type SessionAction =
+  | 'fork'
+  | 'compact'
+  | 'undo'
+  | 'cancel'
+  | 'wait'
+  | 'continue'
+  | 'btw'
+  | 'restore'
+  | 'archive'
+  | 'delete'
+  | 'reload'
+  | 'takeover';
+
 export const forkSessionRequestSchema = sessionForkSchema;
 export type ForkSessionRequest = z.infer<typeof forkSessionRequestSchema>;
 
@@ -342,11 +356,13 @@ export const startBtwSessionResponseSchema = z.object({
 });
 export type StartBtwSessionResponse = z.infer<typeof startBtwSessionResponseSchema>;
 
+export const compactSessionBodySchema = z.object({
+  instruction: z.string().optional(),
+});
+
 export const compactSessionRequestSchema = z.preprocess(
   (value) => value === undefined ? {} : value,
-  z.object({
-    instruction: z.string().optional(),
-  }),
+  compactSessionBodySchema,
 );
 export type CompactSessionRequest = z.infer<typeof compactSessionRequestSchema>;
 

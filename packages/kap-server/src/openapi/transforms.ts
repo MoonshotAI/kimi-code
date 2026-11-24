@@ -40,13 +40,22 @@ import {
 import {
   archiveSessionResponseSchema,
   cancelSessionBodySchema,
+  compactSessionBodySchema,
+  compactSessionResponseSchema,
   deleteSessionResponseSchema,
+  forkSessionRequestSchema,
+  forkSessionResponseSchema,
   getSessionResponseSchema,
+  restoreSessionResponseSchema,
   sessionCancelResponseSchema,
   sessionContinueResponseSchema,
+  startBtwSessionResponseSchema,
   takeoverSessionResponseSchema,
+  undoSessionRequestSchema,
+  undoSessionResponseSchema,
   waitSessionBodySchema,
   waitSessionResponseSchema,
+  type SessionAction,
 } from '../protocol/rest-session';
 
 const binarySchema = {
@@ -101,6 +110,27 @@ const fsActionResponseSchema = {
     openApiDocumentEnvelopeJsonSchema(fsRevealResponseSchema),
   ],
 } as const;
+
+interface SessionActionDoc {
+  readonly response: z.ZodTypeAny;
+  readonly body?: z.ZodTypeAny;
+  readonly bodyRequired?: boolean;
+}
+
+const sessionActionDocs: Readonly<Record<SessionAction, SessionActionDoc>> = {
+  fork: { response: forkSessionResponseSchema, body: forkSessionRequestSchema, bodyRequired: true },
+  compact: { response: compactSessionResponseSchema, body: compactSessionBodySchema },
+  undo: { response: undoSessionResponseSchema, body: undoSessionRequestSchema, bodyRequired: true },
+  cancel: { response: sessionCancelResponseSchema, body: cancelSessionBodySchema },
+  wait: { response: waitSessionResponseSchema, body: waitSessionBodySchema },
+  continue: { response: sessionContinueResponseSchema },
+  btw: { response: startBtwSessionResponseSchema },
+  restore: { response: restoreSessionResponseSchema },
+  archive: { response: archiveSessionResponseSchema },
+  delete: { response: deleteSessionResponseSchema },
+  reload: { response: getSessionResponseSchema },
+  takeover: { response: takeoverSessionResponseSchema },
+};
 
 export function transformOpenApiDocument(
   document: Record<string, unknown>,
@@ -206,57 +236,9 @@ function patchSessionAction(paths: Record<string, unknown>): void {
   const operation = asRecord(pathItem?.['post']);
   if (pathItem === undefined || operation === undefined) return;
 
-  projectSessionAction(
-    paths,
-    pathItem,
-    'cancel',
-    'runSessionCancelAction',
-    sessionCancelResponseSchema,
-    cancelSessionBodySchema,
-  );
-  projectSessionAction(
-    paths,
-    pathItem,
-    'wait',
-    'runSessionWaitAction',
-    waitSessionResponseSchema,
-    waitSessionBodySchema,
-  );
-  projectSessionAction(
-    paths,
-    pathItem,
-    'continue',
-    'runSessionContinueAction',
-    sessionContinueResponseSchema,
-  );
-  projectSessionAction(
-    paths,
-    pathItem,
-    'archive',
-    'runSessionArchiveAction',
-    archiveSessionResponseSchema,
-  );
-  projectSessionAction(
-    paths,
-    pathItem,
-    'delete',
-    'runSessionDeleteAction',
-    deleteSessionResponseSchema,
-  );
-  projectSessionAction(
-    paths,
-    pathItem,
-    'reload',
-    'runSessionReloadAction',
-    getSessionResponseSchema,
-  );
-  projectSessionAction(
-    paths,
-    pathItem,
-    'takeover',
-    'runSessionTakeoverAction',
-    takeoverSessionResponseSchema,
-  );
+  for (const [action, doc] of Object.entries(sessionActionDocs)) {
+    projectSessionAction(paths, pathItem, action, doc);
+  }
   delete paths[internalPath];
 }
 
@@ -264,19 +246,17 @@ function projectSessionAction(
   paths: Record<string, unknown>,
   pathItem: Record<string, unknown>,
   action: string,
-  operationId: string,
-  successDataSchema: z.ZodTypeAny,
-  bodySchema?: z.ZodTypeAny,
+  doc: SessionActionDoc,
 ): void {
   const cloned = cloneRecord(pathItem);
   replacePathParamName(cloned, 'tail', 'session_id');
   const clonedOperation = asRecord(cloned['post']);
   if (clonedOperation !== undefined) {
-    clonedOperation['operationId'] = operationId;
-    if (bodySchema !== undefined) {
+    clonedOperation['operationId'] = `runSession${action.charAt(0).toUpperCase()}${action.slice(1)}Action`;
+    if (doc.body !== undefined) {
       clonedOperation['requestBody'] = {
-        required: false,
-        content: jsonContent(openApiDocumentJsonSchema(bodySchema)),
+        required: doc.bodyRequired ?? false,
+        content: jsonContent(openApiDocumentJsonSchema(doc.body)),
       };
     } else {
       delete clonedOperation['requestBody'];
@@ -287,7 +267,7 @@ function projectSessionAction(
     const existingSchema = asRecord(asRecord(existingContent?.['application/json'])?.['schema']);
     const existingOneOf = existingSchema?.['oneOf'];
     const okVariant = openApiDocumentJsonSchema(
-      buildSuccessEnvelopeSchema(successDataSchema),
+      buildSuccessEnvelopeSchema(doc.response),
       'output',
     );
     const mergedSchema = Array.isArray(existingOneOf) && existingOneOf.length > 1
