@@ -342,7 +342,7 @@ export default {
     webSearch: '网页搜索',
     fetchUrl: '抓取网页内容',
     todoList: '待办清单',
-    exitPlanMode: '退出计划模式',
+    exitPlanMode: '审批计划',
     agent: '子智能体',
     agentSwarm: 'Swarm 并行子智能体',
     askUserQuestion: '向用户提问',

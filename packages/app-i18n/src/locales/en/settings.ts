@@ -342,7 +342,7 @@ export default {
     webSearch: 'Web search',
     fetchUrl: 'Fetch web pages',
     todoList: 'Todo list',
-    exitPlanMode: 'Exit Plan mode',
+    exitPlanMode: 'Approve plan',
     agent: 'Subagents',
     agentSwarm: 'Swarm parallel subagents',
     askUserQuestion: 'Ask user questions',

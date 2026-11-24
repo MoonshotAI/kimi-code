@@ -388,7 +388,7 @@ describe('defaultToolsCatalog', () => {
     expect(labelOf('Grep')).toBe('搜索文件内容');
     expect(labelOf('Agent')).toBe('子智能体');
     expect(labelOf('NotifyUser')).toBe('发送进展通知');
-    expect(labelOf('ExitPlanMode')).toBe('退出计划模式');
+    expect(labelOf('ExitPlanMode')).toBe('审批计划');
     expect(labelOf('TowerSpawn')).toBe('启动工作与评审智能体');
   });
 
