@@ -1076,8 +1076,10 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
         </button>
       </Transition>
       </div>
+      <Transition name="session-info-slide">
       <SessionInfoPanel
         v-if="sessionInfoPanelVisible"
+        :key="sessionInfoMode"
         :session-id="sessionInfoSessionId"
         :mode="sessionInfoMode"
         :ctx-used="status.ctxUsed"
@@ -1095,6 +1097,7 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
         @show-tabs="emit('showTabs')"
         @compact="handleComposerCommand({ cmd: '/compact', attachments: [], preserveDraft: true })"
       />
+      </Transition>
     </div>
 
     <WorkspaceTrustDialog
@@ -1189,6 +1192,15 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
   display: flex;
   flex-direction: column;
   position: relative;
+}
+.chat-layout > .session-info-slide-enter-active.is-sidebar,
+.chat-layout > .session-info-slide-leave-active.is-sidebar {
+  overflow: hidden;
+  transition: width var(--duration-slow) var(--ease-in-out);
+}
+.chat-layout > .session-info-slide-enter-from.is-sidebar,
+.chat-layout > .session-info-slide-leave-to.is-sidebar {
+  width: 0;
 }
 .chat-scroll {
   flex: 1;
