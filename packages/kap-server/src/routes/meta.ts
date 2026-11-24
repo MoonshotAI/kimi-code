@@ -38,6 +38,7 @@ export function registerMetaRoute(app: RouteHost, opts: MetaRouteOptions): void 
     capabilities: Object.freeze({
       websocket: true as const,
       file_upload: true as const,
+      feedback: true as const,
       fs_query: true as const,
       mcp: true as const,
       tasks: true as const,

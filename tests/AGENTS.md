@@ -1,5 +1,7 @@
 # 测试指南
 
+> 临时状态：Desktop E2E、E2E smoke 和 Layered QA 目前仅手动触发；主 CI 的 built CLI 子进程旅程和 L0 汇总暂停，普通分片暂时排除 `apps/kimi-code/test/e2e/tui/` 和 `packages/app-core/test/reconnect/`。`packages/kap-server/test/` 和 `tests/scenarios/` 仍在主 CI 自动运行。下文涉及这些自动触发与门禁的段落描述恢复后的配置。
+
 先写出用户或调用方依赖的行为，再选能复现故障、能直接观察结果的入口。「桌面用户看到了回答」要读真实窗口。「引擎重试后完成了原回合」可以从引擎会话验收。选定位置后，再读该目录最近的 AGENTS.md。
 
 ## 测试今天写在哪
@@ -17,7 +19,7 @@
 
 ## 计划迁入的目录
 
-以下是目标布局。尖括号代表业务或模块名。引擎会话集成和 TUI 读屏目录已接入 Vitest。Desktop 的新 E2E 目录也已接入 Playwright。其余目标目录仍在规划中。已登记的首轮 smoke 见[受保护清单](protected.yaml)。
+以下是目标布局。尖括号代表业务或模块名。引擎会话集成和 TUI 读屏目录已接入 Vitest。Desktop 的新 E2E 目录也已接入 Playwright。`tests/e2e` 有自己的 Playwright 配置，TUI、ACP、Desktop、Web 四个面都已接通，写法见[新 E2E 指南](e2e/AGENTS.md)。其余目标目录仍在规划中。已登记的首轮 smoke 见[受保护清单](protected.yaml)。
 
 ```text
 packages/<包>/test/unit/<模块>/                   模块单测
@@ -26,6 +28,7 @@ packages/core/test/integration/<领域>/            纯 core 运行时集成
 packages/agent-core-v2/test/integration/<领域>/   引擎会话集成
 packages/kap-server/test/contract/                KAP 公开契约
 tests/kap/<领域>/                                 从外部驱动的 KAP 场景
+tests/e2e/scenarios/<业务>/                       新 E2E：各个面共用的用户场景
 apps/desktop/test/e2e/<业务>/                     Electron 用户旅程
 apps/kimi-code/test/e2e/tui/<业务>/               终端键盘与读屏
 apps/kimi-code/test/e2e/tui/pty/                  通过真 PTY 验证宿主终端行为
@@ -34,7 +37,7 @@ packages/app-core/test/replay/                    KAP 客户端回放
 packages/app-client/test/replay/                  渲染端状态回放
 ```
 
-按用户行为逐条迁移。先列出旧用例的断言，在新入口确认 runner 能枚举并执行相应用例，再核对旧文件里其余行为仍有覆盖。接入一个目录时，在同一改动中更新本指南的现有入口、运行命令和对应 CI 的选测范围。尤其要核对 [Desktop 的 spec 发现配置](../apps/desktop/e2e/playwright.config.ts)和 [Vitest 的项目列表](../vitest.config.ts)。
+按用户行为逐条迁移。先列出旧用例的断言，在新入口确认 runner 能枚举并执行相应用例，再核对旧文件里其余行为仍有覆盖。接入一个目录时，在同一改动中更新本指南的现有入口、运行命令和对应 CI 的选测范围。尤其要核对 [Desktop 的 spec 发现配置](../apps/desktop/e2e/playwright.config.ts)、[新 E2E 的 Playwright 配置](e2e/playwright.config.ts)和 [Vitest 的项目列表](../vitest.config.ts)。
 
 ## 什么时候用 testkit
 

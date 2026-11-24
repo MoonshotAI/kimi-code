@@ -9,6 +9,8 @@ export default {
   loadFailed: '读取失败',
   noContext: '暂无上下文内容',
   compactContext: '压缩上下文',
+  compactingContext: '正在压缩…',
+  compactQueued: '等待压缩',
   viewDetails: '查看详情',
   usedLabel: '已用',
   usedPercent: '{pct}% 已用',

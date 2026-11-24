@@ -60,7 +60,7 @@ export { default as SideChatPanel } from './chat/SideChatPanel.vue';
 export { default as StatusGlyph } from './chat/StatusGlyph.vue';
 export { default as StatusPanel } from './chat/StatusPanel.vue';
 export { default as ThinkingBlock } from './chat/ThinkingBlock.vue';
-export { default as ThinkingPanel } from './chat/ThinkingPanel.vue';
+export { default as CompactionPanel } from './chat/CompactionPanel.vue';
 export { default as ToolCall } from './chat/ToolCall.vue';
 export { default as TurnDiffPanel } from './chat/TurnDiffPanel.vue';
 export { default as TurnFilesSummary } from './chat/TurnFilesSummary.vue';

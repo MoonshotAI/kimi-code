@@ -435,7 +435,14 @@ describe('model switch confirm gate', () => {
   it('tolerates choosing compact twice without a spurious failure', async () => {
     const gate = await freshGate();
     activateSession(gate);
-    clientApiMock.compactSession = vi.fn(async () => ({}));
+    const { promptStore } = await import('../src/stores/prompt');
+    const { warningsStore } = await import('../src/stores/warnings');
+    let calls = 0;
+    clientApiMock.compactSession = vi.fn(async () => {
+      calls += 1;
+      if (calls > 1) throw new Error('already compacting');
+      return {};
+    });
 
     const first = gate.client.selectModel('kimi-code/k3-256k');
     gate.msc.settle('compact');
@@ -443,11 +450,22 @@ describe('model switch confirm gate', () => {
 
     const second = gate.client.selectModel('kimi-code/k3-256k');
     gate.msc.settle('compact');
+    await Promise.resolve();
+    expect(clientApiMock.compactSession).toHaveBeenCalledTimes(1);
+
+    promptStore().settleCompactStart('sess-1');
+    const third = gate.client.selectModel('kimi-code/k3-256k');
+    gate.msc.settle('compact');
     await vi.waitFor(() => expect(clientApiMock.compactSession).toHaveBeenCalledTimes(2));
 
     gate.msc.noteCompactionSettled('sess-1', 'completed');
     await first;
     await second;
+    await third;
+    const modelSwitchFailures = warningsStore().warnings.filter(
+      (w) => typeof w === 'object' && w.details?.some((d) => d.value === 'modelSwitch'),
+    );
+    expect(modelSwitchFailures).toHaveLength(0);
     expect(gate.updateSession).toHaveBeenCalledWith(
       'sess-1',
       expect.objectContaining({ model: 'kimi-code/k3-256k' }),

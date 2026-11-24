@@ -16,6 +16,9 @@ import type {
   AppProvider,
   AppProviderDetail,
   AuthResult,
+  CreateFeedbackInput,
+  FeedbackAttachmentInput,
+  UpdateFeedbackInput,
   ImportCatalogProviderInput,
   ImportCatalogProviderResult,
   ImportCustomRegistryInput,
@@ -87,6 +90,7 @@ const HOST_READ_MAX_BYTES = 10_485_760;
 const OAUTH_REGION_PROBE_TIMEOUT_MS = 5_000;
 
 const AGENT_TURNS_TIMEOUT_MS = 2 * 60_000;
+const FEEDBACK_UPLOAD_TIMEOUT_MS = Infinity;
 
 const VALIDATION_FAILED_CODE = 40001;
 import {
@@ -141,6 +145,7 @@ import type {
   WireImportCustomRegistryResult,
   WireMcpAuthBeginResult,
   WireMcpAuthStatus,
+  WireMcpServerAuthInspection,
   WireModel,
   WireOAuthCancelResult,
   WireOAuthLoginPollResult,
@@ -687,6 +692,32 @@ export class DaemonKimiWebApi implements KimiWebApi {
     return this.http.post<WireBatchSessionResponse>('/sessions:restore', { ids });
   }
 
+  async createFeedback(input: CreateFeedbackInput): Promise<{ feedback_id: number }> {
+    return this.http.post('/feedback', input, { sensitive: true });
+  }
+
+  async updateFeedback(feedbackId: number, input: UpdateFeedbackInput): Promise<{ feedback_id: number }> {
+    return this.http.patch(`/feedback/${feedbackId}`, input, { sensitive: true });
+  }
+
+  async uploadFeedbackAttachment(feedbackId: number, input: FeedbackAttachmentInput, signal?: AbortSignal): Promise<{ upload_id: number }> {
+    const form = new FormData();
+    form.append('file', input.file, input.fileName);
+    return this.http.postForm(`/feedback/${feedbackId}/attachments?kind=${input.kind}`, form, {
+      sensitive: true,
+      timeoutMs: FEEDBACK_UPLOAD_TIMEOUT_MS,
+      signal,
+    });
+  }
+
+  async uploadFeedbackSession(feedbackId: number, sessionId: string, signal?: AbortSignal, globalFeedback?: { hostId?: string }): Promise<{ upload_id: number }> {
+    return this.http.post(`/feedback/${feedbackId}/attachments/session`, { session_id: sessionId, host_id: globalFeedback?.hostId }, {
+      timeoutMs: FEEDBACK_UPLOAD_TIMEOUT_MS,
+      signal,
+      sensitive: true,
+    });
+  }
+
   async getAgentTurns(
     sessionId: string,
     agentId: string,
@@ -1117,6 +1148,17 @@ export class DaemonKimiWebApi implements KimiWebApi {
       cwd: options?.cwd,
     });
     return data.map(toAppMcpAuthStatus);
+  }
+
+  async inspectMcpAuthStatuses(
+    locators: AppMcpServerLocator[],
+    options?: { cwd?: string },
+  ): Promise<AppMcpAuthStatus[]> {
+    const data = await this.http.post<WireMcpServerAuthInspection[]>('/mcp/servers:inspect', {
+      targets: locators.map(toWireMcpServerLocator),
+      cwd: options?.cwd,
+    });
+    return data.map((item) => ({ name: item.runtime_name, authStatus: item.auth_status }));
   }
 
   async beginMcpAuth(

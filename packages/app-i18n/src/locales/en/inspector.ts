@@ -9,6 +9,8 @@ export default {
   loadFailed: 'Couldn’t load context',
   noContext: 'No context items yet',
   compactContext: 'Compact context',
+  compactingContext: 'Compacting…',
+  compactQueued: 'Queued',
   viewDetails: 'View details',
   usedLabel: 'Used',
   usedPercent: '{pct}% used',

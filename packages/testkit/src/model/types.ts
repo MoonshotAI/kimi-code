@@ -58,6 +58,7 @@ interface StepBase {
 export interface ReplyStep extends StepBase {
   readonly kind: 'reply';
   readonly parts: readonly ReplyPart[];
+  readonly headers?: Readonly<Record<string, string>>;
   readonly finish?: FinishSpec;
   readonly usage?: UsageSpec | null;
   readonly ending: ReplyEnding;

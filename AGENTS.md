@@ -44,6 +44,7 @@
 - `packages/pi-tui`：终端 UI 库，从上游 `earendil-works/pi` 的 `packages/tui` 引入的 fork。
 - `packages/testkit`：假模型与 KAP 夹具。
 - `tests/scenarios`：真实 KAP 场景测试。
+- `tests/e2e`：新 E2E，同一个场景在 TUI、Web、Desktop、ACP 四个面上跑，只用 testkit 的假模型和夹具。
 
 ## 结束前的验证
 

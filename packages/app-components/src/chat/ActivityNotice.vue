@@ -1,26 +1,45 @@
 <script setup lang="ts">
-import { Spinner } from '@moonshot-ai/app-ui';
+import { computed, onMounted, onUnmounted, ref } from 'vue';
+import { useI18n } from 'vue-i18n';
+import { formatDuration } from '@moonshot-ai/app-core/lib';
 
-defineProps<{
-  label: string;
-}>();
+const { t } = useI18n();
+const startedAt = Date.now();
+const elapsedMs = ref(0);
+let timer: ReturnType<typeof setInterval> | undefined;
+
+onMounted(() => {
+  timer = setInterval(() => {
+    elapsedMs.value = Math.max(0, Date.now() - startedAt);
+  }, 1000);
+});
+
+onUnmounted(() => {
+  if (timer !== undefined) clearInterval(timer);
+});
+
+const elapsedLabel = computed(() => {
+  if (elapsedMs.value < 1000) return '';
+  return formatDuration(elapsedMs.value, {
+    h: t('status.timeUnitHour'),
+    m: t('status.timeUnitMinute'),
+    s: t('status.timeUnitSecond'),
+  });
+});
 </script>
 
 <template>
-  <div class="activity-notice" role="status">
-    <span aria-hidden="true"><Spinner size="sm" /></span>
-    <span class="an-label">{{ label }}</span>
-  </div>
+  <span v-if="elapsedLabel" class="activity-notice">{{ elapsedLabel }}</span>
 </template>
 
 <style scoped>
 .activity-notice {
-  display: inline-flex;
-  align-items: center;
-  gap: 9px;
-  align-self: flex-start;
-  margin: 0;
-  font: var(--text-sm)/var(--leading-normal) var(--font-ui);
-  color: var(--color-text-muted);
+  margin-left: calc(-1 * var(--space-1));
+  font-family: var(--font-ui);
+  font-size: var(--text-xs);
+  line-height: 1;
+  color: var(--color-text-faint);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 </style>

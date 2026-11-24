@@ -27,6 +27,8 @@ How to paste:
 
 After pasting, the input box shows a placeholder that you can edit like normal text; on submit, the placeholder is replaced with the actual content. A plain-text clipboard falls back to ordinary paste. Media support depends on the current model's multimodal capabilities (`image_in` / `video_in`); it is enabled by default when you are logged in to a Kimi Code account.
 
+When a pasted image or video is saved in the session, Kimi Code sends its filename to the configured model provider. In a local execution environment, it also sends the absolute path of the saved copy so the agent can use it in a tool call. In a remote execution environment, the attachment stays on the Kimi Code host.
+
 If a conversation accumulates more than 20 MB of media, the oldest images and videos are omitted from requests automatically, and a warning is shown when this happens.
 
 ## Slash commands
@@ -72,7 +74,7 @@ Approvals are not triggered for regular tool calls in Ask When Needed mode, nor 
 
 ### The three permission modes
 
-**Always Ask mode** (formerly Manual) is the default: read-only operations run automatically, while every other action — editing files, running commands — asks for your confirmation one by one. Use it when you want full control over every change.
+**Always Ask mode** (formerly Manual) is the default: read-only operations run automatically, including shell commands such as `ls`, `cat`, `rg`, `find`, or `git status` that can be statically proven to be read-only; every other action, such as editing files or running other commands, asks for your confirmation one by one. Use it when you want full control over every change. To keep confirming those read-only commands, add an `ask` rule for them in [Configuration files](../configuration/config-files.md#permission).
 
 **Ask When Needed mode** (formerly YOLO), enabled with `/yolo`, auto-approves regular tool calls, making it suitable for batch tasks you know are safe. It still asks before sensitive actions — accessing sensitive files such as `.env` or SSH keys, running dangerous commands such as `shutdown` or `rm -rf`, or exiting Plan mode — and the agent can still ask you questions.
 

@@ -8,11 +8,12 @@ import {
   notifySessionDestroyed,
   notifyWorkspaceDestroyed,
   openArchivedSettings,
+  openModelPicker,
   t,
   traceClientEvent,
   traceKeyEvent,
 } from './deps';
-import { dismissToastByKey, onToast, toast, toastReplaceRevision } from './toast';
+import { dismissToastByKey, nextToastKey, onToast, toast, toastReplaceRevision } from './toast';
 import { planAdminBatchToast, undoBatchDirectionOf, type AdminBatchToastPlan } from './adminBatchToast';
 import type { ToastOptions } from '@moonshot-ai/app-ui';
 import { consumeDraftPromotionOnSessionChange, getDraftPromotion } from './draftPromotion';
@@ -86,6 +87,7 @@ import { createSessionSelection } from './sessionSelection';
 import { sessionReadScope, workspaceReadScope } from './observationScope';
 import { createSessionActions } from './sessionActions';
 import { usePromptPipeline } from './usePromptPipeline';
+import { createChatMcpAutoOpen } from '../composables/chatMcpAuthorization';
 import { useConfirmDialog } from '../composables/useConfirmDialog';
 import { persistComposerDraftSnapshot } from '../lib/composerDraftLifecycle';
 import { configureWorkspaceHooks } from '../lib/workspaceHooks';
@@ -245,6 +247,7 @@ const rawState: ExtendedState = reactive({
     warningsStore().setWarnings(next);
   },
   sessionStatusSettledBySession: {},
+  unavailableModelBySession: {},
   get serverVersion() {
     return configStore().serverVersion;
   },
@@ -560,6 +563,11 @@ function whenSessionStatusSettled(sessionId: string): Promise<void> {
 }
 
 function applyMainAgentState(sessionId: string, state: AppAgentState): void {
+  if (state.model !== undefined && state.model !== '' && rawState.unavailableModelBySession?.[sessionId] !== undefined) {
+    const nextUnavailable = { ...rawState.unavailableModelBySession };
+    delete nextUnavailable[sessionId];
+    rawState.unavailableModelBySession = nextUnavailable;
+  }
   foldDaemonPlanMode(rawState, sessionId, state.planMode);
   foldDaemonSwarmMode(rawState, sessionId, state.swarmMode);
   foldDaemonTowerMode(rawState, sessionId, state.towerMode);
@@ -1354,9 +1362,22 @@ function createOnConnectionChangeHandler(): KimiEventHandlers['onConnectionChang
 }
 
 function createOnConversationHandler(): NonNullable<KimiEventHandlers['onConversation']> {
+  const autoOpen = createChatMcpAutoOpen();
   return (sessionId, agentId, frame) => {
-    if (agentId === MAIN_AGENT_ID) mainConversations.handleFrame(sessionId, agentId, frame);
-    else auxiliaryConversations.handleFrame(sessionId, agentId, frame);
+    if (agentId !== MAIN_AGENT_ID) {
+      auxiliaryConversations.handleFrame(sessionId, agentId, frame);
+      return;
+    }
+    mainConversations.handleFrame(sessionId, agentId, frame);
+    if (frame.type === 'turns') {
+      autoOpen(frame, undefined, false);
+      return;
+    }
+    if (frame.type !== 'item.updated' || frame.set.fields === undefined) return;
+    const entry = mainConversationOf(sessionId);
+    if (!entry?.loaded) return;
+    const turn = entry.view.turns.findLast(candidate => candidate.turn_id === frame.turn_id);
+    autoOpen(frame, turn, isUserWatching(sessionId) && rawState.sessions.some(row => row.id === sessionId) && chatHostId(sessionId) === undefined);
   };
 }
 
@@ -1874,6 +1895,17 @@ function settleMainTurnEnd(entry: ConversationEntry, turn: ConversationTurn): vo
 }
 
 function onMainNotice(sessionId: string, notice: ConversationNotice): void {
+  if (notice.code === 'model.not_configured') {
+    rawState.unavailableModelBySession = { ...rawState.unavailableModelBySession, [sessionId]: notice.title };
+    void confirm({
+      title: t('warnings.modelUnavailable.title'),
+      message: t('warnings.modelUnavailable.message', { model: notice.title }),
+      confirmLabel: t('warnings.modelUnavailable.change'),
+      variant: 'primary',
+      action: () => openModelPicker(sessionId),
+    });
+    return;
+  }
   if (notice.code === 'compaction.cancelled') settleCompaction(sessionId, 'cancelled', undefined);
   warningsStore().markSessionWarningShown(sessionId, `${notice.code ?? ''} ${notice.title}`);
   if (notice.level === 'error') {
@@ -1925,9 +1957,12 @@ const todos = computed<TodoView[]>(() => {
     .map((item) => ({ title: item.title, status: item.status }));
 });
 
+const isMainCompactingOrStarting = (sessionId: string): boolean =>
+  mainCompacting(sessionId) || promptStore().isCompactStarting(sessionId);
+
 const compaction = computed<CompactionStatus | null>(() => {
   const sid = rawState.activeSessionId;
-  return sid && mainCompacting(sid) ? { status: 'running' } : null;
+  return sid && isMainCompactingOrStarting(sid) ? { status: 'running' } : null;
 });
 
 const connection = computed<ConnectionState>(() => connectionStore().connection);
@@ -2079,7 +2114,8 @@ const status = computed<ConversationStatus>(() => {
   const branch =
     gitInfo.value?.branch ??
     (activeSession ? activeSession.cwd.split('/').pop() ?? activeSession.cwd : 'main');
-  const rawModel = modelsStore().resolveSendModel(activeSession?.model, { includeDraft: activeSession === undefined }) ?? '—';
+  const unavailable = activeSession !== undefined && rawState.unavailableModelBySession?.[activeSession.id] !== undefined;
+  const rawModel = unavailable ? '—' : modelsStore().resolveSendModel(activeSession?.model, { includeDraft: activeSession === undefined }) ?? '—';
 
   const matched =
     modelProvider.models.value.find((m) => m.id === rawModel) ??
@@ -2142,7 +2178,10 @@ function gateVerdictInput(): ChatGateInput {
     ? rawState.sessions.find((s) => s.id === rawState.activeSessionId)
     : undefined;
   return {
-    ...resolveGateChatModel(activeSession?.model, { includeDraft: activeSession === undefined }),
+    ...resolveGateChatModel(
+      activeSession !== undefined && rawState.unavailableModelBySession?.[activeSession.id] !== undefined ? null : activeSession?.model,
+      { includeDraft: activeSession === undefined },
+    ),
     modelsReady: modelsStore().modelsReady,
     hasModels: modelsStore().hasModels,
     signedIn: authStore().signedIn,
@@ -2850,7 +2889,7 @@ const promptPipeline = usePromptPipeline(rawState, {
   mapSendAuthFailure,
   isMainTurnRunning: mainTurnRunning,
   hasUnechoedPrompt: (sessionId) => unechoedOptimisticMessages(sessionId).length > 0,
-  isCompacting: mainCompacting,
+  isCompacting: isMainCompactingOrStarting,
   isMainWaitForWaiting: mainWaitForWaiting,
   promptIdToAbort: mainPromptIdToAbort,
   lastAgentTurnId: (sessionId) => mainTurnsOf(sessionId).findLast((turn) => turn.kind === 'agent')?.turn_id,
@@ -2865,7 +2904,7 @@ const sessionActions = createSessionActions({
   upsertSessionSorted,
   promptBacklog: promptPipeline.promptBacklog,
   isCompactionRunning: (sessionId) =>
-    promptStore().isCompactFlushHeld(sessionId) || mainCompacting(sessionId),
+    promptStore().isCompactFlushHeld(sessionId) || isMainCompactingOrStarting(sessionId),
   flushQueue: promptPipeline.flushQueueHead,
 });
 
@@ -3005,7 +3044,6 @@ type AppActionToastInput =
   | { kind: 'adminBatch'; plan: AdminBatchToastPlan }
   | { kind: 'attachmentOpen'; name: string };
 
-let actionToastKey = 0;
 let latestActionToastKey = 0;
 
 onToast((event) => {
@@ -3098,7 +3136,7 @@ function showActionToastWithKey(input: AppActionToastInput, key: number): void {
 }
 
 function showActionToast(input: AppActionToastInput): void {
-  showActionToastWithKey(input, ++actionToastKey);
+  showActionToastWithKey(input, nextToastKey());
 }
 
 async function archiveSessionWithToast(id: string): Promise<void> {
@@ -3140,7 +3178,7 @@ let exportToastInFlight = false;
 async function exportSessionWithToast(id?: string): Promise<void> {
   if (exportToastInFlight) return;
   exportToastInFlight = true;
-  const key = ++actionToastKey;
+  const key = nextToastKey();
   let runningRevision = toastReplaceRevision();
   let runningShown = false;
   const slowTimer = setTimeout(() => {
@@ -3304,6 +3342,7 @@ export function useKimiWebClient() {
     activationBadges,
     compaction,
     status,
+    unavailableModelBySession: computed(() => rawState.unavailableModelBySession),
     sessionCost,
     fileDiff,
     selectedDiffPath: computed(() => filesStore().selectedDiffPath),

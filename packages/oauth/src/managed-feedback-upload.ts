@@ -1,5 +1,4 @@
-import { readApiErrorMessage } from './api-error';
-import { kimiCodeBaseUrl } from './managed-usage';
+import { kimiCodeFeedbackUrl, postFeedbackJson, type FeedbackRequestOptions } from './managed-feedback';
 
 export interface CreateFeedbackUploadUrlBody {
   readonly file_hash: string;
@@ -49,28 +48,23 @@ export type FetchCompleteFeedbackUploadResult =
   | FetchFeedbackUploadError;
 
 export function kimiCodeFeedbackUploadUrl(baseUrl?: string): string {
-  return `${feedbackBaseUrl(baseUrl)}/feedback/upload_url`;
+  return `${kimiCodeFeedbackUrl(baseUrl)}/upload_url`;
 }
 
 export function kimiCodeFeedbackUploadCompleteUrl(baseUrl?: string): string {
-  return `${feedbackBaseUrl(baseUrl)}/feedback/upload_complete`;
+  return `${kimiCodeFeedbackUrl(baseUrl)}/upload_complete`;
 }
 
 export async function fetchCreateFeedbackUploadUrl(
   accessToken: string,
   body: CreateFeedbackUploadUrlBody,
-  opts: {
-    timeoutMs?: number;
-    baseUrl?: string;
-    feedbackUrl?: string;
-    headers?: Readonly<Record<string, string>>;
-  } = {},
+  opts: FeedbackRequestOptions & { baseUrl?: string; feedbackUrl?: string } = {},
 ): Promise<FetchCreateFeedbackUploadUrlResult> {
   const url =
     opts.feedbackUrl === undefined
       ? kimiCodeFeedbackUploadUrl(opts.baseUrl)
       : `${opts.feedbackUrl.replace(/\/+$/, '')}/upload_url`;
-  const result = await postJson(url, accessToken, body, opts);
+  const result = await postFeedbackJson(url, accessToken, body, opts, 'upload');
   if (result.kind === 'error') return result;
   const parsed = readUpload(result.payload);
   if (parsed === undefined) {
@@ -82,66 +76,15 @@ export async function fetchCreateFeedbackUploadUrl(
 export async function fetchCompleteFeedbackUpload(
   accessToken: string,
   body: CompleteFeedbackUploadBody,
-  opts: {
-    timeoutMs?: number;
-    baseUrl?: string;
-    feedbackUrl?: string;
-    headers?: Readonly<Record<string, string>>;
-  } = {},
+  opts: FeedbackRequestOptions & { baseUrl?: string; feedbackUrl?: string } = {},
 ): Promise<FetchCompleteFeedbackUploadResult> {
   const url =
     opts.feedbackUrl === undefined
       ? kimiCodeFeedbackUploadCompleteUrl(opts.baseUrl)
       : `${opts.feedbackUrl.replace(/\/+$/, '')}/upload_complete`;
-  const result = await postJson(url, accessToken, body, opts);
+  const result = await postFeedbackJson(url, accessToken, body, opts, 'upload');
   if (result.kind === 'error') return result;
   return { kind: 'ok' };
-}
-
-async function postJson(
-  url: string,
-  accessToken: string,
-  body: unknown,
-  opts: { timeoutMs?: number; headers?: Readonly<Record<string, string>> },
-): Promise<{ readonly kind: 'ok'; readonly payload: unknown } | FetchFeedbackUploadError> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => {
-    controller.abort();
-  }, opts.timeoutMs ?? 8000);
-  try {
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: {
-        ...opts.headers,
-        Authorization: `Bearer ${accessToken}`,
-        Accept: 'application/json',
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(body),
-      signal: controller.signal,
-    });
-    if (!res.ok) {
-      return {
-        kind: 'error',
-        status: res.status,
-        message: await readApiErrorMessage(res, `Feedback upload request failed: HTTP ${res.status}`),
-      };
-    }
-    const text = await res.text();
-    return { kind: 'ok', payload: text.length > 0 ? JSON.parse(text) : {} };
-  } catch (error) {
-    if (error instanceof Error && error.name === 'AbortError') {
-      return { kind: 'error', message: 'Feedback upload request timed out.' };
-    }
-    const msg = error instanceof Error ? error.message : String(error);
-    return { kind: 'error', message: `Feedback upload request failed: ${msg}` };
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-function feedbackBaseUrl(baseUrl?: string): string {
-  return (baseUrl ?? kimiCodeBaseUrl()).replace(/\/+$/, '');
 }
 
 function readUpload(

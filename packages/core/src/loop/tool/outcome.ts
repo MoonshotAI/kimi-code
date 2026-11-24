@@ -22,6 +22,7 @@ export function toolOutcomeMessage(
     isError: failed ? true : undefined,
     stopTurn: 'stopTurn' in result && result.stopTurn === true ? true : undefined,
     detached,
+    durationMs: 'durationMs' in result ? result.durationMs : undefined,
   });
 }
 

@@ -232,6 +232,29 @@ describe('DaemonKimiWebApi MCP OAuth', () => {
     expect(result).toEqual([{ name: 'plugin-vercel:vercel', authStatus: 'oauth-required' }]);
   });
 
+  it('inspects only targeted servers with active verification', async () => {
+    const wireInspections = [
+      { runtime_name: 'plugin-vercel:vercel', auth_status: 'oauth-required' },
+    ];
+    const fetchMock = vi.fn().mockResolvedValue(envelope(wireInspections));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await makeApi().inspectMcpAuthStatuses([
+      { source: 'plugin', pluginId: 'vercel', serverName: 'vercel' },
+    ], { cwd: '/workspace/demo' });
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('http://test.local/api/v1/mcp/servers:inspect');
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(init.body as string)).toEqual({
+      targets: [{ source: 'plugin', plugin_id: 'vercel', server_name: 'vercel' }],
+      cwd: '/workspace/demo',
+    });
+    expect(result).toEqual([
+      { name: 'plugin-vercel:vercel', authStatus: 'oauth-required' },
+    ]);
+  });
+
   it('begins a plugin authorization with the workspace in the query', async () => {
     const wireBeginResult = {
       status: 'authorization-required',

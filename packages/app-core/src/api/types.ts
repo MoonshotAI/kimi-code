@@ -1011,6 +1011,29 @@ export interface ReadRequestOptions {
   signal?: AbortSignal;
 }
 
+export type CreateFeedbackInput =
+  | {
+    kind: 'global';
+    source: 'sidebar' | 'command';
+    category: 'bug' | 'suggestion' | 'other';
+    content: string;
+    session_id?: string;
+    client?: 'desktop' | 'web';
+    upload_session?: boolean;
+    upload_logs?: boolean;
+  }
+  | { kind: 'turn'; session_id: string; turn_id: string; reply_id: string; rating: 'up' | 'down'; client?: 'desktop' | 'web' };
+
+export type UpdateFeedbackInput =
+  | { kind: 'details'; reasons: string[]; content?: string; upload_session?: boolean }
+  | { kind: 'cancel' };
+
+export interface FeedbackAttachmentInput {
+  kind: 'media' | 'diagnostics';
+  file: Blob;
+  fileName: string;
+}
+
 export interface RemoteControlStatus {
   enabled: boolean;
   state: 'off' | 'starting' | 'on' | 'stopping';
@@ -1045,6 +1068,10 @@ export interface KimiWebApi {
   updateSession(sessionId: string, input: { title?: string; cwd?: string; model?: string; permissionMode?: string; planMode?: boolean; swarmMode?: boolean; towerMode?: boolean; towerBase?: string; goalObjective?: string; goalControl?: 'pause' | 'resume' | 'cancel' | 'edit'; thinking?: string }): Promise<AppSession>;
   evaluateSessionRating(sessionId: string, turnId: string): Promise<AppSessionRatingOffer | null>;
   reportSessionRating(sessionId: string, report: AppSessionRatingReport): Promise<void>;
+  createFeedback(input: CreateFeedbackInput): Promise<{ feedback_id: number }>;
+  updateFeedback(feedbackId: number, input: UpdateFeedbackInput, sessionId?: string): Promise<{ feedback_id: number }>;
+  uploadFeedbackAttachment(feedbackId: number, input: FeedbackAttachmentInput, signal?: AbortSignal): Promise<{ upload_id: number }>;
+  uploadFeedbackSession(feedbackId: number, sessionId: string, signal?: AbortSignal, globalFeedback?: { hostId?: string }): Promise<{ upload_id: number }>;
   getTurnFileChanges(
     sessionId: string,
     turnNumber: number,
@@ -1107,6 +1134,7 @@ export interface KimiWebApi {
   setPluginEnabled(pluginId: string, enabled: boolean): Promise<{ ok: true }>;
   removePlugin(pluginId: string): Promise<{ ok: true }>;
   getMcpAuthStatuses(options?: { cwd?: string }): Promise<AppMcpAuthStatus[]>;
+  inspectMcpAuthStatuses(locators: AppMcpServerLocator[], options?: { cwd?: string }): Promise<AppMcpAuthStatus[]>;
   beginMcpAuth(locator: AppMcpServerLocator, options?: { cwd?: string }): Promise<AppMcpAuthBeginResult>;
   completeMcpAuth(input: { flowId: string; timeoutMs?: number; signal?: AbortSignal }): Promise<null>;
   cancelMcpAuth(flowId: string): Promise<null>;
