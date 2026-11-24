@@ -18,6 +18,7 @@ import { expect, test as base, type TestInfo } from '@playwright/test';
 import { startAcp } from '../surfaces/acp';
 import { startDesktop } from '../surfaces/desktop';
 import { startTui } from '../surfaces/tui';
+import { startWeb } from '../surfaces/web';
 import { SURFACES, VERBS, type Product, type Surface, type SurfaceDriver, type SurfaceLaunch, type Verb } from './verbs';
 
 export { expect };
@@ -70,7 +71,7 @@ function startSurface(surface: Surface, launch: SurfaceLaunch): Promise<SurfaceD
     case 'desktop':
       return startDesktop(launch);
     case 'web':
-      throw new Error(`The ${surface} surface has no driver yet.`);
+      return startWeb(launch);
   }
 }
 

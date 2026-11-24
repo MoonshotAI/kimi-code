@@ -5,49 +5,26 @@ import { fileURLToPath } from 'node:url';
 import { killProcessTree, kimiCliEnv, NETWORK_GUARD_PRELOAD, networkGuardEnv, readNetworkViolations, repoPath, TIMEOUTS, until } from '@moonshot-ai/testkit/fixtures';
 import { _electron, type ElectronApplication } from '@playwright/test';
 
-import type { Diagnostic, SurfaceDriver, SurfaceLaunch, ToolExpectation } from '../support/verbs';
+import type { Diagnostic, SurfaceDriver, SurfaceLaunch } from '../support/verbs';
 import { offlineStubs } from './offline';
-import { RendererSurface } from './renderer';
+import { OFFLINE_NAMES, PageDriver, reasonOf } from './page-driver';
 
 const MAIN_PAGE = 'app://renderer/';
 const AUXILIARY_PAGES = /^app:\/\/renderer\/(?:browser-overlay|browser-control|screenshot|pin|capture-host)\b/;
-const LOCAL_SCHEMES = new Set(['app:', 'file:', 'data:', 'blob:', 'about:', 'devtools:', 'chrome:']);
-const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '[::1]']);
-const OFFLINE_RENDERER = '--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE localhost, EXCLUDE 127.0.0.1';
 const OUTPUT_TAIL = 64 * 1024;
 
-function reasonOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
-function reachesBeyondThisMachine(url: string): boolean {
-  let target: URL;
-  try {
-    target = new URL(url);
-  } catch {
-    return true;
-  }
-  return !LOCAL_SCHEMES.has(target.protocol) && !LOOPBACK_HOSTS.has(target.hostname);
-}
-
-class DesktopDriver implements SurfaceDriver {
+class DesktopDriver extends PageDriver {
   private readonly app: ElectronApplication;
   private readonly workspace: string;
   private readonly networkLog: string;
-  private readonly trace: string;
-  private readonly beyond: string[] = [];
-  private readonly pageErrors: string[] = [];
   private output = '';
   private exit: { readonly code: number | null; readonly signal: string | null } | undefined;
-  private tracing = false;
-  private renderer: RendererSurface | undefined;
-  private lastPage = 'The main window never became ready.';
 
   constructor(app: ElectronApplication, root: string, workspace: string, networkLog: string) {
+    super(app.context(), root, 'desktop');
     this.app = app;
     this.workspace = workspace;
     this.networkLog = networkLog;
-    this.trace = join(root, 'desktop-trace.zip');
     const collect = (chunk: Buffer): void => {
       this.output = (this.output + chunk.toString()).slice(-OUTPUT_TAIL);
     };
@@ -56,22 +33,14 @@ class DesktopDriver implements SurfaceDriver {
     app.process().once('exit', (code, signal) => {
       this.exit = { code, signal };
     });
-    app.context().on('request', (request) => {
-      if (reachesBeyondThisMachine(request.url())) this.beyond.push(`${request.method()} ${request.url()}`);
-    });
-    app.context().on('weberror', (event) => {
-      const error = event.error();
-      this.pageErrors.push(error.stack ?? error.message);
-    });
   }
 
   async ready(): Promise<void> {
-    await this.app.context().tracing.start({ screenshots: true, snapshots: true });
-    this.tracing = true;
+    await this.startTrace();
     const page = await this.wait('the main window to open', () =>
       this.app.windows().find((candidate) => candidate.url().startsWith(MAIN_PAGE) && !AUXILIARY_PAGES.test(candidate.url())),
     );
-    this.renderer = new RendererSurface(page, this.workspace);
+    this.show(page, this.workspace);
     await page.waitForLoadState('domcontentloaded', { timeout: TIMEOUTS.server });
     const welcome = page.getByRole('dialog', { name: 'Welcome to Kimi Code' });
     await welcome.waitFor({ state: 'visible', timeout: TIMEOUTS.server });
@@ -83,55 +52,23 @@ class DesktopDriver implements SurfaceDriver {
   }
 
   async startupFailure(error: unknown): Promise<Error> {
-    const page = this.renderer === undefined ? this.lastPage : await this.renderer.describe();
-    const traced = await this.saveTrace();
+    const page = await this.readPage();
+    await this.saveTrace();
     await this.kill();
     return new Error(
       [
         `The Desktop app did not become ready: ${reasonOf(error)}`,
         page,
         this.describe(),
-        ...(traced ? [`A trace of the start-up is at ${this.trace}`] : []),
+        ...(existsSync(this.trace) ? [`A trace of the start-up is at ${this.trace}`] : []),
       ].join('\n'),
       { cause: error },
     );
   }
 
-  send(text: string): Promise<void> {
-    return this.window().send(text);
-  }
-
-  approve(): Promise<void> {
-    return this.window().approve();
-  }
-
-  reject(): Promise<void> {
-    return this.window().reject();
-  }
-
-  stop(): Promise<void> {
-    return this.window().stop();
-  }
-
-  waitIdle(): Promise<void> {
-    return this.window().waitIdle();
-  }
-
-  expectTool(expectation: ToolExpectation): Promise<void> {
-    return this.window().expectTool(expectation);
-  }
-
-  expectReply(text: string): Promise<void> {
-    return this.window().expectReply(text);
-  }
-
   async close(): Promise<void> {
     if (this.exit !== undefined) throw new Error(`The Desktop app exited before the scenario closed it.\n${this.describe()}`);
-    this.lastPage = await this.window().describe();
-    if (!(await this.window().idle())) {
-      throw new Error(`The scenario ended while a turn was running or an approval was pending; end it with waitIdle().\n${this.lastPage}`);
-    }
-    await this.saveTrace();
+    await this.leave();
     const closing = this.app.close().then(
       () => undefined,
       (error: unknown) => reasonOf(error),
@@ -146,7 +83,7 @@ class DesktopDriver implements SurfaceDriver {
     const problems = [
       ...(exit.code === 0 ? [] : [`The Desktop app exited with code ${String(exit.code)} and signal ${String(exit.signal)}.`]),
       ...(refused === undefined ? [] : [`Closing the Desktop app reported: ${refused}`]),
-      ...(this.pageErrors.length === 0 ? [] : [`The window reported ${this.pageErrors.length} uncaught error(s):\n${this.pageErrors.join('\n')}`]),
+      ...this.pageProblems(),
     ];
     if (problems.length > 0) throw new Error(`${problems.join('\n')}\n${this.describe()}`);
   }
@@ -167,30 +104,9 @@ class DesktopDriver implements SurfaceDriver {
   }
 
   async diagnostics(): Promise<readonly Diagnostic[]> {
-    if (this.renderer !== undefined && this.exit === undefined) this.lastPage = await this.renderer.describe();
+    if (this.exit === undefined) await this.readPage();
     await this.saveTrace();
-    return [
-      ...(existsSync(this.trace) ? [{ name: 'desktop-trace', path: this.trace }] : []),
-      { name: 'desktop-page', body: this.lastPage },
-      { name: 'desktop-session', body: this.describe() },
-    ];
-  }
-
-  private window(): RendererSurface {
-    if (this.renderer === undefined) throw new Error('The Desktop window is not ready.');
-    return this.renderer;
-  }
-
-  private async saveTrace(): Promise<boolean> {
-    if (!this.tracing) return existsSync(this.trace);
-    this.tracing = false;
-    try {
-      await this.app.context().tracing.stop({ path: this.trace });
-      return true;
-    } catch (error) {
-      this.output = `${this.output}\nThe trace could not be saved: ${reasonOf(error)}`;
-      return false;
-    }
+    return [...this.pageDiagnostics(), { name: 'desktop-session', body: this.describe() }];
   }
 
   private async wait<T>(label: string, check: () => T | undefined): Promise<Exclude<T, undefined>> {
@@ -216,8 +132,7 @@ class DesktopDriver implements SurfaceDriver {
     return [
       this.exit === undefined ? 'The Desktop app is still running.' : `The Desktop app exited with code ${String(this.exit.code)} and signal ${String(this.exit.signal)}.`,
       `Windows: ${this.exit === undefined ? this.app.windows().map((page) => page.url()).join(', ') : '(closed)'}`,
-      `Requests beyond this machine: ${JSON.stringify(this.beyond)}`,
-      `Uncaught errors in the window: ${JSON.stringify(this.pageErrors)}`,
+      this.describePage(),
       `Output:\n${this.output === '' ? '(empty)' : this.output}`,
     ].join('\n');
   }
@@ -230,15 +145,7 @@ export async function startDesktop({ home }: SurfaceLaunch): Promise<SurfaceDriv
   }
   const networkLog = join(home.root, 'desktop-network.log');
   const app = await _electron.launch({
-    args: [
-      '-r',
-      fileURLToPath(NETWORK_GUARD_PRELOAD),
-      desktop,
-      `--user-data-dir=${join(home.root, 'user-data')}`,
-      '--lang=en-US',
-      `--workspace=${home.workspace}`,
-      OFFLINE_RENDERER,
-    ],
+    args: ['-r', fileURLToPath(NETWORK_GUARD_PRELOAD), desktop, `--user-data-dir=${join(home.root, 'user-data')}`, '--lang=en-US', `--workspace=${home.workspace}`, OFFLINE_NAMES],
     cwd: home.workspace,
     env: {
       ...kimiCliEnv(home, {

@@ -19,7 +19,7 @@
 
 ## 计划迁入的目录
 
-以下是目标布局。尖括号代表业务或模块名。引擎会话集成和 TUI 读屏目录已接入 Vitest。Desktop 的新 E2E 目录也已接入 Playwright。`tests/e2e` 有自己的 Playwright 配置，目前接通了 TUI、ACP 和 Desktop 三个面，写法见[新 E2E 指南](e2e/AGENTS.md)。其余目标目录仍在规划中。已登记的首轮 smoke 见[受保护清单](protected.yaml)。
+以下是目标布局。尖括号代表业务或模块名。引擎会话集成和 TUI 读屏目录已接入 Vitest。Desktop 的新 E2E 目录也已接入 Playwright。`tests/e2e` 有自己的 Playwright 配置，TUI、ACP、Desktop、Web 四个面都已接通，写法见[新 E2E 指南](e2e/AGENTS.md)。其余目标目录仍在规划中。已登记的首轮 smoke 见[受保护清单](protected.yaml)。
 
 ```text
 packages/<包>/test/unit/<模块>/                   模块单测
