@@ -192,6 +192,20 @@ describe('session selection source', () => {
     expect(sessionsStore().sessions).toEqual([]);
   });
 
+  it('keeps a newer selection when a linked session finishes loading later', async () => {
+    const linkFetch = deferred<AppSession>();
+    const workspace = createWorkspaceState((id) => (id === 'linked' ? linkFetch.promise : Promise.resolve(session(id))));
+    sessionsStore().setSessions([session('other')]);
+
+    const opening = workspace.openSessionLink('linked', 'mention');
+    await workspace.selectSession('other', { urlMode: 'none' });
+    linkFetch.resolve(session('linked'));
+    await opening;
+
+    expect(sessionsStore().activeSessionId).toBe('other');
+    expect(warningsStore().warnings).toEqual([]);
+  });
+
   it('opens a linked session that is not loaded yet and records the link as its source', async () => {
     const getSession = vi.fn(async (id: string) => session(id));
     const workspace = createWorkspaceState(getSession);

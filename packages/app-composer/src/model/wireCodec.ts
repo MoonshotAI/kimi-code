@@ -27,10 +27,16 @@ export function mayContainSessionLink(text: string): boolean {
   return text.includes(SESSION_LINK_BASE) || text.includes(LEGACY_SESSION_LINK_BASE);
 }
 
+function legacySessionId(segments: readonly string[]): string | null {
+  return segments.length === 2 && segments.every((segment) => segment !== '' && !segment.includes('/')) ? segments[1]! : null;
+}
+
 function decodeLegacySessionMention(dest: string): string | null {
-  const segments = dest.slice(LEGACY_SESSION_LINK_BASE.length).split('/').map(decodeURIComponentOrRaw);
-  if (segments.length !== 2 || segments.some((segment) => segment === '' || segment.includes('/'))) return null;
-  return segments[1]!;
+  return legacySessionId(dest.slice(LEGACY_SESSION_LINK_BASE.length).split('/').map(decodeURIComponentOrRaw));
+}
+
+export function sessionIdFromMentionPath(path: string): string {
+  return legacySessionId(path.split('/')) ?? path;
 }
 
 export function decodeSessionMention(dest: string): string | null {

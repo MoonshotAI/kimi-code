@@ -154,7 +154,9 @@ export function createSessionSelection(deps: SessionSelectionDeps) {
 
   async function openSessionLink(sessionId: string, source: SessionCreatedSource): Promise<void> {
     if (!sessionsStore().sessions.some((s) => s.id === sessionId)) {
+      const attempt = ++navigationAttempt;
       const outcome = await fetchSessionIntoList(sessionId);
+      if (attempt !== navigationAttempt) return;
       if (outcome !== 'ok') {
         warningsStore().pushWarning({
           severity: 'warning',

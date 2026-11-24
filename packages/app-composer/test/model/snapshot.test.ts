@@ -3,6 +3,7 @@ import { EditorState } from 'prosemirror-state';
 import type { Node as PMNode } from 'prosemirror-model';
 import { composerSchema, attachmentNode, browserReferenceNode, mentionNode, quoteNode } from '../../src/model/schema';
 import { composerSnapshotDocument, createComposerSnapshot, mergeComposerSnapshots, parseComposerSnapshot, withoutComposerSnapshotAttachments } from '../../src/model/snapshot';
+import { docToText } from '../../src/model/documentCodec';
 import type { BrowserCapture } from '@moonshot-ai/app-core/browser-reference';
 import { composerPlugins } from '../../src/runtime/plugins';
 import { attachmentInventory } from '../../src/features/attachment/inventory';
@@ -90,6 +91,16 @@ describe('composer document snapshots', () => {
     expect(restored.firstChild!.child(3).attrs.kind).toBe('skill');
     expect(restored.firstChild!.child(4).attrs).toMatchObject({ kind: 'session', path: 'session_1' });
     expect(restored.firstChild!.lastChild!.attrs.comment).toBe('请调整 👩🏽‍💻');
+  });
+
+  it('restores session mentions saved with the earlier <workspaceId>/<sessionId> path as the session id', () => {
+    const doc = composerSchema.node('doc', null, [
+      paragraph(mentionNode({ kind: 'session', name: '修复登录跳转', path: 'wd_app_0123456789ab/session_1' })),
+    ]);
+    const parsed = parseComposerSnapshot(JSON.parse(JSON.stringify(createComposerSnapshot(doc, [], []))))!;
+    const restored = composerSnapshotDocument(parsed);
+    expect(restored.firstChild!.firstChild!.attrs).toMatchObject({ kind: 'session', path: 'session_1' });
+    expect(docToText(restored)).toBe('[修复登录跳转](kimi-code://sessions/session_1)');
   });
 
   it('restores media-only attachments and their order independently of inline reference order', () => {
