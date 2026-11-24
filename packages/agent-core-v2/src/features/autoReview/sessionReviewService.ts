@@ -4,6 +4,7 @@ import { Service } from '#/_base/di/service';
 import { type DeadlineAbortSignal } from '#/_base/utils/abort';
 import { sleepForRetry } from '#/_base/utils/retry';
 import { IConfigService } from '#/app/config/config';
+import { IFlagService } from '#/app/flag/flag';
 import { THINKING_SECTION } from '#/app/kosongConfig/configSection';
 import { Error2, ErrorCodes } from '#/errors';
 import { llmMessageFromError } from '#/llm-adapter/contract/errors';
@@ -25,6 +26,7 @@ import { resolveThinkingEffortForModel, resolveThinkingKeep } from '@moonshot-ai
 
 import REVIEW_POLICY from './auto-review-policy.md?raw';
 import { AUTO_REVIEW_SECTION, type AutoReviewConfig } from './configSection';
+import { AUTO_REVIEW_FLAG_ID } from './flag';
 import {
   ISessionAutoReviewService,
   type AutoReviewOutcome,
@@ -83,6 +85,7 @@ export class SessionAutoReviewService extends Service implements ISessionAutoRev
   private readonly reviewSlots: Array<() => void> = [];
 
   constructor(
+    @IFlagService private readonly flags: IFlagService,
     @IConfigService private readonly configService: IConfigService,
     @IModelCatalog private readonly models: IModelCatalog,
     @IProtocolAdapterRegistry private readonly protocols: IProtocolAdapterRegistry,
@@ -91,7 +94,9 @@ export class SessionAutoReviewService extends Service implements ISessionAutoRev
     @ISessionInstructionsProvider private readonly instructions: ISessionInstructionsProvider,
   ) {
     super();
-    this.assertConfiguredModelValid();
+    if (this.flags.enabled(AUTO_REVIEW_FLAG_ID)) {
+      this.assertConfiguredModelValid();
+    }
   }
 
   projectInstructions(): Promise<ProjectInstructions> {
@@ -108,6 +113,7 @@ export class SessionAutoReviewService extends Service implements ISessionAutoRev
   }
 
   async execute(input: SessionReviewInput): Promise<SessionReviewRun> {
+    this.assertConfiguredModelValid();
     const config = this.configService.get<AutoReviewConfig>(AUTO_REVIEW_SECTION);
     const modelAlias =
       config?.model ??
@@ -117,7 +123,7 @@ export class SessionAutoReviewService extends Service implements ISessionAutoRev
     return { modelAlias, outcome };
   }
 
-  private assertConfiguredModelValid(): void {
+  assertConfiguredModelValid(): void {
     const model = this.configService.get<AutoReviewConfig>(AUTO_REVIEW_SECTION)?.model;
     if (model === undefined) return;
     try {

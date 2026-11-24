@@ -28,7 +28,7 @@ export function createAutoReviewReviewer(
   flags: IFlagService,
   modes: IAgentPermissionModeService,
   policies: IAgentPermissionPolicyService,
-  reviewService: IAutoReviewService,
+  reviewService: Pick<IAutoReviewService, 'review'>,
 ): PermissionGateReviewer {
   return async (context, evaluation) => {
     if (

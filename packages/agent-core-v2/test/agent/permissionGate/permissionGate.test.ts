@@ -133,7 +133,7 @@ describe('AgentPermissionGate', () => {
           stubFlag(() => autoReviewEnabled),
           stubPermissionModeService(() => mode),
           ix.get(IAgentPermissionPolicyService),
-          { _serviceBrand: undefined, humanAuthorization: () => [], review },
+          { review },
         ),
       ),
     );
@@ -268,7 +268,7 @@ describe('AgentPermissionGate', () => {
       stubFlag(() => autoReviewEnabled),
       stubPermissionModeService(() => mode),
       ix.get(IAgentPermissionPolicyService),
-      { _serviceBrand: undefined, humanAuthorization: () => [], review },
+      { review },
     );
     const ctx = makeContext('Bash');
 
@@ -299,7 +299,7 @@ describe('AgentPermissionGate', () => {
       stubFlag(() => autoReviewEnabled),
       stubPermissionModeService(() => mode),
       ix.get(IAgentPermissionPolicyService),
-      { _serviceBrand: undefined, humanAuthorization: () => [], review },
+      { review },
     );
 
     for (const toolName of ['Bash', 'mcp__filesystem__write_file']) {

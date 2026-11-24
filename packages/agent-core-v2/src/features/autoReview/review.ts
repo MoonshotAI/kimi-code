@@ -31,13 +31,16 @@ export interface SessionReviewRun {
 
 export interface ISessionAutoReviewService {
   readonly _serviceBrand: undefined;
+  assertConfiguredModelValid(): void;
   projectInstructions(): Promise<ProjectInstructions>;
   execute(input: SessionReviewInput): Promise<SessionReviewRun>;
 }
 
 export interface IAutoReviewService {
   readonly _serviceBrand: undefined;
+  inheritedAuthorization(): readonly ReviewText[];
   humanAuthorization(): readonly ReviewText[];
+  approvedToolCallIds(): ReadonlySet<string>;
   review(
     context: ResolvedToolExecutionHookContext,
     trigger: string,

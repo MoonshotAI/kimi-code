@@ -44,6 +44,7 @@ import {
 
 const MAX_GIT_STATUS_ENTRIES = 50;
 const AUTHORIZATION_CHANGED_REASON = 'Authorization changed during review.';
+const EMPTY_APPROVED_CALL_IDS: ReadonlySet<string> = new Set();
 
 interface ReviewSnapshot {
   readonly history: readonly ContextMessage[];
@@ -52,9 +53,15 @@ interface ReviewSnapshot {
   readonly messages: readonly Message[];
 }
 
+interface AncestorReviewSnapshot {
+  readonly inherited: readonly ReviewText[];
+  readonly approvedCallIds: ReadonlySet<string>;
+}
+
 export class AutoReviewService extends Service implements IAutoReviewService {
   declare readonly _serviceBrand: undefined;
   private readonly inherited: readonly ReviewText[];
+  private readonly inheritedApprovedCallIds: ReadonlySet<string>;
 
   constructor(
     @IFlagService flags: IFlagService,
@@ -76,7 +83,9 @@ export class AutoReviewService extends Service implements IAutoReviewService {
     @ILogService private readonly log: ILogService,
   ) {
     super();
-    this.inherited = this.snapshotAncestorInstructions(agentLifecycle);
+    const ancestor = this.snapshotAncestorState(agentLifecycle);
+    this.inherited = ancestor.inherited;
+    this.inheritedApprovedCallIds = ancestor.approvedCallIds;
     this._register(this.states.contributeState(autoReviewApprovedCallsKey));
     this._register(
       permissionGate.registerReviewer(
@@ -85,16 +94,27 @@ export class AutoReviewService extends Service implements IAutoReviewService {
     );
   }
 
+  inheritedAuthorization(): readonly ReviewText[] {
+    return this.inherited;
+  }
+
   humanAuthorization(): readonly ReviewText[] {
     const own = extractAuthorization(this.loop.history())
       .filter((entry) => entry.role === 'human-instruction');
     return this.inherited.length === 0 ? own : [...this.inherited, ...own];
   }
 
+  approvedToolCallIds(): ReadonlySet<string> {
+    const own = this.states.get(autoReviewApprovedCallsKey);
+    if (this.inheritedApprovedCallIds.size === 0) return new Set(own);
+    return new Set([...this.inheritedApprovedCallIds, ...own]);
+  }
+
   async review(
     context: ResolvedToolExecutionHookContext,
     trigger: string,
   ): Promise<AutoReviewOutcome> {
+    this.sessionReview.assertConfiguredModelValid();
     const startedAt = Date.now();
     void this.dispatcher.dispatch(new AutoReviewStarted({
       agentId: this.scopeContext.agentId,
@@ -185,15 +205,28 @@ export class AutoReviewService extends Service implements IAutoReviewService {
     return this.inherited.length === 0 ? own : [...this.inherited, ...own];
   }
 
-  private snapshotAncestorInstructions(agentLifecycle: IAgentLifecycleService): readonly ReviewText[] {
+  private snapshotAncestorState(agentLifecycle: IAgentLifecycleService): AncestorReviewSnapshot {
     const { agentId, meta, forkedFrom } = this.scopeContext;
-    if (agentId === MAIN_AGENT_ID || (meta?.forkedFrom ?? forkedFrom) !== undefined) {
-      return [];
+    if (agentId === MAIN_AGENT_ID) {
+      return { inherited: [], approvedCallIds: EMPTY_APPROVED_CALL_IDS };
+    }
+    const forkSourceId = meta?.forkedFrom ?? forkedFrom;
+    if (forkSourceId !== undefined) {
+      const source = agentLifecycle.handleOf(forkSourceId);
+      if (source === undefined) return { inherited: [], approvedCallIds: EMPTY_APPROVED_CALL_IDS };
+      const sourceReviewer = source.accessor.get(IAutoReviewService);
+      return {
+        inherited: sourceReviewer.inheritedAuthorization(),
+        approvedCallIds: new Set(sourceReviewer.approvedToolCallIds()),
+      };
     }
     const parentId = subagentParentAgentId(meta) ?? meta?.parentAgentId ?? MAIN_AGENT_ID;
     const parent = agentLifecycle.handleOf(parentId);
-    if (parent === undefined) return [];
-    return parent.accessor.get(IAutoReviewService).humanAuthorization();
+    if (parent === undefined) return { inherited: [], approvedCallIds: EMPTY_APPROVED_CALL_IDS };
+    return {
+      inherited: parent.accessor.get(IAutoReviewService).humanAuthorization(),
+      approvedCallIds: EMPTY_APPROVED_CALL_IDS,
+    };
   }
 
   private async takeSnapshot(
@@ -212,7 +245,7 @@ export class AutoReviewService extends Service implements IAutoReviewService {
       projectInstructions.agentsMdPaths,
       cwd,
       context,
-      new Set(this.states.get(autoReviewApprovedCallsKey)),
+      this.approvedToolCallIds(),
       gitStatus,
     );
     return { history, authorization, cwd, messages };

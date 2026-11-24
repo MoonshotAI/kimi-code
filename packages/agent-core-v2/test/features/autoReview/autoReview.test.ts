@@ -28,6 +28,7 @@ import REVIEW_POLICY from '../../../src/features/autoReview/auto-review-policy.m
 import {
   autoReviewApprovedCallsKey,
   AutoReviewCompleted,
+  AutoReviewStarted,
 } from '#/features/autoReview/autoReviewEvents';
 import { AUTO_REVIEW_SECTION } from '#/features/autoReview/configSection';
 import { extractAuthorization } from '#/features/autoReview/context';
@@ -98,6 +99,7 @@ describe('AutoReviewService', () => {
       readonly getHistory: () => readonly ContextMessage[];
       readonly parentAgentId?: string;
       readonly forkedFrom?: string;
+      readonly approvedCallIds?: readonly string[];
     }) => AutoReviewService;
   }
 
@@ -134,7 +136,9 @@ describe('AutoReviewService', () => {
   let gitStatusAt: ((cwd: string) => Promise<FsGitStatusResponse>) | undefined;
   let workspaceDir: string;
   let agentsMd: string;
+  let flagEnabled: boolean;
   let telemetry: TelemetryRecord[];
+  let startedEvents: AutoReviewStarted[];
   let reviewEvents: AutoReviewCompleted[];
   let usage: Parameters<ISessionUsageService['record']>[];
   let compactions: Array<{ readonly source: string }>;
@@ -142,9 +146,11 @@ describe('AutoReviewService', () => {
   beforeEach(() => {
     disposables = new DisposableStore();
     requests = [];
+    startedEvents = [];
     reviewEvents = [];
     usage = [];
     compactions = [];
+    flagEnabled = true;
     mainHistory = undefined;
     agentId = 'main';
     parentAgentId = undefined;
@@ -192,7 +198,7 @@ describe('AutoReviewService', () => {
             return undefined;
           }) as IConfigService['get'],
         });
-        reg.defineInstance(IFlagService, stubFlag(true));
+        reg.defineInstance(IFlagService, stubFlag(() => flagEnabled));
         reg.defineInstance(IAgentPermissionModeService, stubPermissionModeService(() => 'yolo'));
         reg.defineInstance(IAgentPermissionPolicyService, stubPermissionPolicyService(() => undefined));
         reg.definePartialInstance(IAgentPermissionGate, {
@@ -259,8 +265,10 @@ describe('AutoReviewService', () => {
                   accessor: {
                     get: (serviceId: unknown) => serviceId === IAutoReviewService
                       ? {
+                          inheritedAuthorization: () => [],
                           humanAuthorization: () => extractAuthorization(mainHistory ?? [])
                             .filter((entry) => entry.role === 'human-instruction'),
+                          approvedToolCallIds: () => new Set<string>(),
                         }
                       : { history: () => mainHistory ?? [] },
                   },
@@ -271,6 +279,7 @@ describe('AutoReviewService', () => {
         });
         reg.definePartialInstance(IEventDispatcher, {
           dispatch: async (event) => {
+            if (event instanceof AutoReviewStarted) startedEvents.push(event);
             if (event instanceof AutoReviewCompleted) reviewEvents.push(event);
           },
         });
@@ -328,10 +337,11 @@ describe('AutoReviewService', () => {
         states.set(autoReviewApprovedCallsKey, next);
       },
       createAgentReviewer: (options) => {
+        const childState = disposables.add(new AgentStateService(sessionState));
         const childIx = disposables.add(
           ix.createChild(
             new ServiceCollection(
-              [IAgentStateService, disposables.add(new AgentStateService(sessionState))],
+              [IAgentStateService, childState],
               [
                 IAgentScopeContext,
                 makeAgentScopeContext({
@@ -347,6 +357,9 @@ describe('AutoReviewService', () => {
           ),
         );
         const childReviewer = childIx.get(IAutoReviewService) as AutoReviewService;
+        if (options.approvedCallIds !== undefined) {
+          childState.set(autoReviewApprovedCallsKey, options.approvedCallIds);
+        }
         agentReviewers.set(options.agentId, childReviewer);
         return childReviewer;
       },
@@ -417,8 +430,15 @@ describe('AutoReviewService', () => {
     expect(sentContent()).toContain('rm generated/file');
   });
 
-  it('validates an explicit [auto_review].model at session initialization', () => {
+  it('validates an explicit [auto_review].model only when auto review is enabled or executed', async () => {
     expect(() => createHarness(undefined, 'missing-model', true)).toThrow(/\[auto_review\]\.model/);
+
+    flagEnabled = false;
+    const harness = createHarness(undefined, 'missing-model', true);
+    flagEnabled = true;
+    await expect(review(harness.reviewer)).rejects.toThrow(/\[auto_review\]\.model/);
+    expect(startedEvents).toHaveLength(0);
+    expect(reviewEvents).toHaveLength(0);
   });
 
   it('omits tool metadata and results while folding durable user approvals and clearing on ContextClear', async () => {
@@ -680,6 +700,54 @@ describe('AutoReviewService', () => {
     expect(sentContent()).not.toContain('Main compacted.');
     expect(sentContent()).not.toContain('Child compacted.');
     expect(child.humanAuthorization()).toHaveLength(1);
+  });
+
+  it('preserves inherited authorization and approved calls across direct and subagent forks', async () => {
+    const harness = createHarness();
+    harness.applyStateEvent(new PermissionRecordApprovalResult({
+      agentId: 'main',
+      turnId: 0,
+      toolCallId: 'mkdir',
+      toolName: 'Bash',
+      action: 'run',
+      result: { decision: 'approved' },
+    }));
+
+    const mainForkHistory = [...history];
+    const mainFork = harness.createAgentReviewer({
+      agentId: 'fork-main',
+      parentAgentId: 'main',
+      forkedFrom: 'main',
+      getHistory: () => mainForkHistory,
+    });
+    await review(mainFork);
+    expect(sentContent().match(/Only remove generated files\./g)).toHaveLength(1);
+    expect(sentContent()).toContain('\\"id\\":\\"mkdir\\",\\"name\\":\\"Bash\\",\\"arguments\\":\\"{\\\\\\"command\\\\\\":\\\\\\"mkdir generated\\\\\\"}\\",\\"approved\\":true');
+
+    const childHistory: readonly ContextMessage[] = [
+      { role: 'user', content: [{ type: 'text', text: 'Delegate cleanup.' }], origin: { kind: 'system_trigger', name: 'subagent' } },
+      { role: 'user', content: [{ type: 'text', text: 'Also remove coverage.' }], origin: { kind: 'user' } },
+      { role: 'assistant', content: [], toolCalls: [toolCallFor('child-call', 'Bash', { command: 'rm -rf coverage' })] },
+    ];
+    harness.createAgentReviewer({
+      agentId: 'child-1',
+      parentAgentId: 'main',
+      approvedCallIds: ['child-call'],
+      getHistory: () => childHistory,
+    });
+    const subagentFork = harness.createAgentReviewer({
+      agentId: 'fork-child',
+      parentAgentId: 'main',
+      forkedFrom: 'child-1',
+      getHistory: () => childHistory,
+    });
+
+    history = [{ role: 'user', content: [{ type: 'text', text: 'Main compacted.' }], origin: { kind: 'compaction_summary' } }];
+    await review(subagentFork);
+
+    expect(sentContent().match(/Only remove generated files\./g)).toHaveLength(1);
+    expect(sentContent().match(/Also remove coverage\./g)).toHaveLength(1);
+    expect(sentContent()).toContain('\\"id\\":\\"child-call\\",\\"name\\":\\"Bash\\",\\"arguments\\":\\"{\\\\\\"command\\\\\\":\\\\\\"rm -rf coverage\\\\\\"}\\",\\"approved\\":true');
   });
 
   it('excludes UserPromptSubmit hook parts and omits non-text attachments', async () => {
