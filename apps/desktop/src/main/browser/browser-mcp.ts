@@ -105,16 +105,31 @@ export interface DesktopBrowserAccess {
 
 export const DESKTOP_BROWSER_UNAVAILABLE_NOTICE = 'tell the user (or your parent agent) that the built-in browser is unavailable and why.';
 
-export const DESKTOP_BROWSER_BLOCKED_GUIDANCE = `Use WebSearch, FetchURL, or other available tools if they fit the task. If the task specifically requires the built-in browser or no suitable tool is available, ${DESKTOP_BROWSER_UNAVAILABLE_NOTICE}`;
+export const DESKTOP_BROWSER_BLOCKED_GUIDANCE = `Do not load or call \`mcp__desktop_browser__run\`, and do not use shell or another path to bypass its unavailability. Follow the user's requested browser, profile, or tool; if it is unavailable, ask the user first.
+- For a one-off lookup of public information, prefer WebSearch or FetchURL. To view or operate a page, use WebBridge when its skill is available and both its daemon and browser extension are connected. If WebBridge is unavailable, verify that CU's browser extension and local service are connected, then tell the user and use CU.
+- Lightweight, low-risk tasks may proceed directly. For batch or high-frequency work, test-account activity, sign-out, account switching, or storage clearing, get user consent before using a real browser, or ask the user to re-enable the built-in browser.
+- If an operation's result is unclear, inspect the page and relevant tabs first; do not repeat the submission or switch tools. If no browser path is available, ${DESKTOP_BROWSER_UNAVAILABLE_NOTICE} Offer the options of re-enabling the built-in browser or configuring WebBridge.`;
+
+export const DESKTOP_BROWSER_RESTRICTED_GUIDANCE = `For public, one-off, read-only lookups, use WebSearch or FetchURL only when they are available and permitted by the active agent restrictions. Otherwise, ${DESKTOP_BROWSER_UNAVAILABLE_NOTICE} Do not switch to WebBridge, Computer Use, shell, or another browser-control path to bypass the active agent restrictions.`;
+
+export const DESKTOP_BROWSER_APPROVAL_REJECTED_GUIDANCE = 'The user rejected this built-in browser operation. Stop and ask how to proceed. Without the user\'s explicit consent, do not retry or switch to WebBridge, Computer Use, shell, or any other browser-control path.';
 
 export function describeBlockedDesktopBrowser(reason: string): string {
   return `${reason} ${DESKTOP_BROWSER_BLOCKED_GUIDANCE}`;
 }
 
+export function describeRestrictedDesktopBrowser(reason: string): string {
+  return `${reason} ${DESKTOP_BROWSER_RESTRICTED_GUIDANCE}`;
+}
+
+export function describeRejectedDesktopBrowserApproval(reason: string): string {
+  return `${reason} ${DESKTOP_BROWSER_APPROVAL_REJECTED_GUIDANCE}`;
+}
+
 export const DESKTOP_BROWSER_CONTROL_OFF_REASON = 'Agent control of the built-in browser is turned off in Kimi Code Settings > Browser, so `mcp__desktop_browser__run` is unavailable. The user can turn it back on there.';
 
 export const DESKTOP_BROWSER_DISABLED_ERROR = describeBlockedDesktopBrowser(DESKTOP_BROWSER_CONTROL_OFF_REASON);
-export const DESKTOP_BROWSER_SUBAGENT_RUN_ERROR = describeBlockedDesktopBrowser(DESKTOP_BROWSER_SUBAGENT_RUN_REASON);
+export const DESKTOP_BROWSER_SUBAGENT_RUN_ERROR = describeRestrictedDesktopBrowser(DESKTOP_BROWSER_SUBAGENT_RUN_REASON);
 
 const ALWAYS_ALLOWED: DesktopBrowserAccess = { allows: () => true };
 

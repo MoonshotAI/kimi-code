@@ -21,7 +21,7 @@ import { ISessionEventBus } from '@moonshot-ai/agent-core-v2/app/event/eventBus'
 import { ISessionMetadata, type AgentMeta } from '@moonshot-ai/agent-core-v2/session/sessionMetadata/sessionMetadata';
 import type { BrowserSubagentRun } from '../../shared/browser-run';
 import type { DesktopBrowserAccess, DesktopBrowserAgentControl, DesktopBrowserMcpHandle } from './browser-mcp';
-import { DESKTOP_BROWSER_CONTROL_OFF_REASON, DESKTOP_BROWSER_UNAVAILABLE_NOTICE, describeBlockedDesktopBrowser } from './browser-mcp';
+import { DESKTOP_BROWSER_CONTROL_OFF_REASON, DESKTOP_BROWSER_UNAVAILABLE_NOTICE, describeBlockedDesktopBrowser, describeRejectedDesktopBrowserApproval, describeRestrictedDesktopBrowser } from './browser-mcp';
 import { BrowserSubagentRunRegistry, DESKTOP_BROWSER_SUBAGENT_RUN, type DesktopBrowserSubagentRun } from './browser-subagent-control';
 import { restoreBrowserSubagentRuns, revokeBrowserSubagentRun } from './browser-control';
 import type { BrowserControlTrigger, BrowserMcpReconnectEvent } from '../diagnostics/telemetry-events';
@@ -32,9 +32,18 @@ export const DESKTOP_BROWSER_REMINDER_VARIANT = 'desktop_browser';
 const DESKTOP_BROWSER_TOOL_PREFIX = `mcp__${DESKTOP_BROWSER_MCP_SERVER}__`;
 const DESKTOP_BROWSER_RUN_TOOL = `${DESKTOP_BROWSER_TOOL_PREFIX}run`;
 
-export const DESKTOP_BROWSER_ENABLED_REMINDER = 'For web and browser tasks, use the built-in browser of Kimi Code Desktop: call select_tools with `mcp__desktop_browser__run` to load it. Use the kimi-webbridge skill only when the user explicitly asks to use their own Chrome or Edge browser, or sessions they are logged into there.';
-export const DESKTOP_BROWSER_DIRECT_REMINDER = 'For web and browser tasks, use the built-in browser of Kimi Code Desktop: call `mcp__desktop_browser__run`. Use the kimi-webbridge skill only when the user explicitly asks to use their own Chrome or Edge browser, or sessions they are logged into there.';
-export const DESKTOP_BROWSER_DISABLED_REMINDER = describeBlockedDesktopBrowser('The user turned off agent control of the built-in browser in Kimi Code Settings > Browser, so `mcp__desktop_browser__run` is unavailable. Do not try to load or call it.');
+const DESKTOP_BROWSER_ROUTING_GUIDANCE = `- Follow the user's requested browser, profile, or tool. If it is unavailable, explain why and wait for the user to choose. If the user rejects an approval or explicitly says not to operate a browser, stop and ask; do not switch to WebBridge, CU, shell, or another path.
+- For a one-off lookup of public information, prefer WebSearch or FetchURL. Use a browser when the task requires opening a page, inspecting the current tab, taking a screenshot, or verifying rendering. Use Computer Use (CU) for native macOS apps, system UI, and cross-app tasks.
+- For web tasks, keep using the browser already in use for the current task when it remains suitable. Default to the built-in browser when neither option has a clear advantage.
+- Use WebBridge when the task needs the user's real Chrome or Edge tabs, profile, extensions, password manager, or enterprise authentication, or when the built-in browser cannot perform the required network request and response inspection, PDF export, popup OAuth flow, or external protocol handling. WebBridge is ready only when its skill is available and both its daemon and browser extension are connected. If it is not ready, use the built-in browser for ordinary tasks; if a real browser is required or was requested by the user, explain the required configuration and wait.
+- If the built-in browser is already logged in, keep using it. Switch to WebBridge solely to reuse an existing login only when all of these are true: the built-in browser is not logged in, the target profile is known to be logged in, WebBridge is ready, and the task is lightweight and low-risk. Prefer the built-in browser for long-running, multi-step, high-frequency, or background tasks, and for guest or test accounts, sign-out, account switching, or storage clearing.
+- If locating an element fails, the page does not change, or a submission result is unclear, inspect the page and relevant tabs first; do not repeat the submission. Consider switching tools only when the current tool is unavailable or does not support the required operation.
+- When both the built-in browser and WebBridge are unavailable, verify that CU's browser path is available, then tell the user and use CU for lightweight, low-risk tasks. For batch or high-frequency work, test-account activity, or operations that could affect real accounts or stored data, get user consent before using CU. If none of the three paths is available, explain why and offer the options of re-enabling the built-in browser or configuring WebBridge.
+- Subagents must follow their own browser permissions and must not switch to WebBridge or CU on their own or open many real browser tabs concurrently.`;
+
+export const DESKTOP_BROWSER_ENABLED_REMINDER = `The Kimi Code Desktop built-in browser is available. With on-demand tool loading, call select_tools with \`mcp__desktop_browser__run\` to load it before use.\n\n${DESKTOP_BROWSER_ROUTING_GUIDANCE}`;
+export const DESKTOP_BROWSER_DIRECT_REMINDER = `The Kimi Code Desktop built-in browser is available. Call \`mcp__desktop_browser__run\` directly to use it.\n\n${DESKTOP_BROWSER_ROUTING_GUIDANCE}`;
+export const DESKTOP_BROWSER_DISABLED_REMINDER = describeBlockedDesktopBrowser(DESKTOP_BROWSER_CONTROL_OFF_REASON);
 
 const SUBAGENT_CONTROL_DISABLED: DesktopBrowserAgentControl = { enabled: () => false, onDidChange: () => () => {} };
 
@@ -78,23 +87,23 @@ function browserReminder(access: DesktopBrowserAccess, sessionId: string, loadsT
   };
 }
 
-function blockedBrowserReason(context: ToolDidExecuteContext, allowed: boolean): string | undefined {
+function blockedBrowserGuidance(context: ToolDidExecuteContext, allowed: boolean): string | undefined {
   const name = context.toolCall.name;
   const output = context.result.output;
   if (!name.startsWith(DESKTOP_BROWSER_TOOL_PREFIX) || typeof output !== 'string') return undefined;
   if (output.includes(DESKTOP_BROWSER_UNAVAILABLE_NOTICE)) return undefined;
-  if (!allowed && output.startsWith(`Tool "${name}" not found`)) return DESKTOP_BROWSER_CONTROL_OFF_REASON;
+  if (!allowed && output.startsWith(`Tool "${name}" not found`)) return describeBlockedDesktopBrowser(DESKTOP_BROWSER_CONTROL_OFF_REASON);
   if (output.startsWith(`Tool "${name}" is disabled by the active tool policy`)) {
-    return `The tool policy of this agent does not allow \`${name}\`, so the built-in browser is unavailable here.`;
+    return describeRestrictedDesktopBrowser(`The tool policy of this agent does not allow \`${name}\`, so the built-in browser is unavailable here.`);
   }
-  if (context.outcome === 'vetoed' && output.startsWith(`Tool "${name}" was not run because the`)) return output;
+  if (context.outcome === 'vetoed' && output.startsWith(`Tool "${name}" was not run because the`)) return describeRejectedDesktopBrowserApproval(output);
   return undefined;
 }
 
 function guideBlockedBrowserCalls(access: DesktopBrowserAccess, sessionId: string) {
   return (context: LegacyAfterContext) => {
-    const reason = blockedBrowserReason(legacyDidExecuteContext(context), access.allows(sessionId));
-    return reason === undefined ? undefined : legacyRejectedResult(context, describeBlockedDesktopBrowser(reason));
+    const guidance = blockedBrowserGuidance(legacyDidExecuteContext(context), access.allows(sessionId));
+    return guidance === undefined ? undefined : legacyRejectedResult(context, guidance);
   };
 }
 
