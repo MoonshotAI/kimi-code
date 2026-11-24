@@ -107,14 +107,15 @@ function createMirroredReasoningCollapser(): (strings: readonly ReasoningString[
   return (strings) => {
     if (!mirrored || strings.length === 0) return [...strings];
     const valueOf = (key: string): string => strings.find((entry) => entry.key === key)?.value ?? '';
-    const textOf = (key: string): string => (seenKeys.includes(key) ? shared : '') + valueOf(key);
     const keys = [...seenKeys, ...strings.map((entry) => entry.key).filter((key) => !seenKeys.includes(key))];
     const primary = keys[0]!;
-    const next = textOf(primary);
-    if (keys.every((key) => textOf(key) === next)) {
+    const delta = valueOf(primary);
+    const stillMirrored = keys.every((key) =>
+      seenKeys.includes(key) ? valueOf(key) === delta : valueOf(key) === shared + delta);
+    if (stillMirrored) {
       seenKeys.splice(0, seenKeys.length, ...keys);
-      shared = next;
-      return [{ key: primary, value: valueOf(primary) }];
+      shared += delta;
+      return [{ key: primary, value: delta }];
     }
     mirrored = false;
     const backlog = shared.length === 0 ? [] : seenKeys.slice(1).map((key) => ({ key, value: shared }));
