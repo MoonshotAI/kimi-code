@@ -35,6 +35,7 @@ export type MigrateLegacyMasterEnvTowerOutcome =
   | 'already-migrated'
   | 'stamped-fresh-install'
   | 'stamped-noop'
+  | 'pending-master-env'
   | 'migrated-tower'
   | 'skipped-error';
 
@@ -99,9 +100,9 @@ export function migrateLegacyMasterEnvTower(
     return stampMigrationMarker(markerPath, record) ? 'stamped-fresh-install' : 'skipped-error';
   }
 
-  const masterEnabled = parseBooleanEnv(env[MASTER_ENV]) === true;
+  const masterEnv = parseBooleanEnv(env[MASTER_ENV]);
   const towerEnvOverride = parseBooleanEnv(env[TOWER_FLAG_ENV]);
-  if (!masterEnabled || towerEnvOverride === false) {
+  if (masterEnv === false || towerEnvOverride === false) {
     return stampMigrationMarker(markerPath, record) ? 'stamped-noop' : 'skipped-error';
   }
 
@@ -124,6 +125,10 @@ export function migrateLegacyMasterEnvTower(
   }
   if (isPlainObject(rawExperimental) && Object.hasOwn(rawExperimental, TOWER_FLAG_ID)) {
     return stampMigrationMarker(markerPath, record) ? 'stamped-noop' : 'skipped-error';
+  }
+
+  if (masterEnv !== true) {
+    return 'pending-master-env';
   }
 
   const nextExperimental: Record<string, unknown> = {
