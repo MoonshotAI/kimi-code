@@ -5,8 +5,8 @@ interface DangerPattern {
 }
 
 const DANGER_PATTERNS: DangerPattern[] = [
-  { pattern: /\brm\b[^|;&\n]*?\s(?:-[a-zA-Z]*[rR][a-zA-Z]*|--recursive)(?=\s|$|[|;&])/, detail: 'recursive delete' },
-  { pattern: /\brm\b[^|;&\n]*?\s(?:-[a-zA-Z]*[fF][a-zA-Z]*|--force)(?=\s|$|[|;&])/, detail: 'force delete' },
+  { pattern: /\brm\s+(?:-[a-zA-Z]*[rf][a-zA-Z]*|--recursive|--force)\b/, detail: 'rm -rf' },
+  { pattern: /\bsudo\b/, detail: 'sudo' },
   { pattern: /\bmkfs(?:\.[a-z0-9]+)?\b/, detail: 'mkfs' },
   { pattern: /\bdd\b[^|;&]*\bof=/, detail: 'dd of=…' },
   { pattern: />\s*\/dev\/(?:sd|nvme|disk|hd)/, detail: '> /dev/…' },

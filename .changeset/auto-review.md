@@ -7,4 +7,4 @@
 "@moonshot-ai/klient": patch
 ---
 
-Add experimental Auto Review, which has a separate model review Bash and MCP tool calls in Ask When Needed and Never Ask modes and shows review progress and denial reasons in approval prompts. Enable it with `[experimental] auto_review = true` or `KIMI_CODE_EXPERIMENTAL_AUTO_REVIEW=1`. The approval dialog also labels forced single-file removals as "force delete" instead of "recursive delete" and drops the separate sudo label.
+Add experimental Auto Review, which has a separate model review Bash and MCP tool calls in Ask When Needed and Never Ask modes and shows review progress and denial reasons in approval prompts. Enable it with `[experimental] auto_review = true` or `KIMI_CODE_EXPERIMENTAL_AUTO_REVIEW=1`.

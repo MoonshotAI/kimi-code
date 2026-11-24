@@ -42,30 +42,6 @@ describe('approval adapter', () => {
     ]);
   });
 
-  it('does not cry recursive delete for plain forced removals', () => {
-    const dangerOf = (command: string) => {
-      const adapted = adaptApprovalRequest({
-        toolCallId: 'tc-rm',
-        toolName: 'Bash',
-        action: 'run',
-        display: { kind: 'generic', summary: 'run', detail: { command } },
-      });
-      const block = adapted.display[0];
-      return block?.type === 'shell' ? block.danger : undefined;
-    };
-
-    expect(dangerOf('rm -rf /tmp/cache')).toBe('recursive delete');
-    expect(dangerOf('rm -fr /tmp/cache')).toBe('recursive delete');
-    expect(dangerOf('rm -f -r /tmp/cache')).toBe('recursive delete');
-    expect(dangerOf('rm -f --recursive /tmp/cache')).toBe('recursive delete');
-    expect(dangerOf('rm --recursive /tmp/cache')).toBe('recursive delete');
-    expect(dangerOf('rm -f /tmp/cache/file.txt')).toBe('force delete');
-    expect(dangerOf('rm --force /tmp/cache/file.txt')).toBe('force delete');
-    expect(dangerOf('rm /tmp/cache/file.txt')).toBeUndefined();
-    expect(dangerOf('echo "rm -rf /tmp/cache"')).toBeUndefined();
-    expect(dangerOf('sudo rm -f /tmp/cache/file.txt')).toBe('force delete');
-  });
-
   it('emits only a diff block for Edit — no separate file_op title row', () => {
     const adapted = adaptApprovalRequest(
       {
