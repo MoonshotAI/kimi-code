@@ -15,6 +15,7 @@ const OUTPUT_TAIL = 64 * 1024;
 
 class DesktopDriver extends PageDriver {
   private readonly app: ElectronApplication;
+  private readonly child: ReturnType<ElectronApplication['process']>;
   private readonly workspace: string;
   private readonly networkLog: string;
   private output = '';
@@ -23,14 +24,15 @@ class DesktopDriver extends PageDriver {
   constructor(app: ElectronApplication, root: string, workspace: string, networkLog: string) {
     super(app.context(), root, 'desktop');
     this.app = app;
+    this.child = app.process();
     this.workspace = workspace;
     this.networkLog = networkLog;
     const collect = (chunk: Buffer): void => {
       this.output = (this.output + chunk.toString()).slice(-OUTPUT_TAIL);
     };
-    app.process().stdout?.on('data', collect);
-    app.process().stderr?.on('data', collect);
-    app.process().once('exit', (code, signal) => {
+    this.child.stdout?.on('data', collect);
+    this.child.stderr?.on('data', collect);
+    this.child.once('exit', (code, signal) => {
       this.exit = { code, signal };
     });
   }
@@ -95,14 +97,7 @@ class DesktopDriver extends PageDriver {
   }
 
   async kill(): Promise<void> {
-    if (this.exit !== undefined) return;
-    const pid = this.app.process().pid;
-    if (pid !== undefined) killProcessTree(pid);
-    try {
-      await until('the Desktop app to exit after it was killed', () => this.exit, { timeoutMs: TIMEOUTS.wait });
-    } catch {
-      this.output = `${this.output}\nThe Desktop app did not exit after it was killed.`;
-    }
+    if (this.exit === undefined) await this.forceExit();
     this.dropOutput();
   }
 
@@ -114,6 +109,16 @@ class DesktopDriver extends PageDriver {
     if (this.exit === undefined) await this.readPage();
     await this.saveTrace();
     return [...this.pageDiagnostics(), { name: 'desktop-session', body: this.describe() }];
+  }
+
+  private async forceExit(): Promise<void> {
+    const pid = this.child.pid;
+    if (pid !== undefined) killProcessTree(pid);
+    try {
+      await until('the Desktop app to exit after it was killed', () => this.exit, { timeoutMs: TIMEOUTS.wait });
+    } catch {
+      this.output = `${this.output}\nThe Desktop app did not exit after it was killed.`;
+    }
   }
 
   private async finishClosing(closed: () => object | undefined): Promise<string | undefined> {
@@ -136,7 +141,7 @@ class DesktopDriver extends PageDriver {
   }
 
   private ownProcessesAlive(): boolean {
-    const pid = this.app.process().pid;
+    const pid = this.child.pid;
     if (pid === undefined) return false;
     try {
       process.kill(-pid, 0);
@@ -147,8 +152,8 @@ class DesktopDriver extends PageDriver {
   }
 
   private dropOutput(): void {
-    this.app.process().stdout?.destroy();
-    this.app.process().stderr?.destroy();
+    this.child.stdout?.destroy();
+    this.child.stderr?.destroy();
   }
 
   private async wait<T>(label: string, check: () => T | undefined): Promise<Exclude<T, undefined>> {
