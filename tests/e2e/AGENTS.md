@@ -10,7 +10,7 @@
 scenarios/<业务>/<行为>.spec.ts   场景，各个面共用
 self-test/<动作>.spec.ts          驱动自测：每个动作的正例和反例
 surfaces/                          各个面的驱动
-support/                           scenario()、selfTest()、VERBS、收尾检查
+support/                           scenario()、selfTest()、VERBS、收尾检查、步骤标题、CI 运行页摘要
 playwright.config.ts               一个面一个 project
 ```
 
@@ -53,6 +53,7 @@ scenario('reads one file and edits another after approval', { workspace: { 'a.tx
 | 改场景断言就是改产品行为，PR 里要写明为什么改 | CODEOWNERS 评审 |
 | 提示词用英文 ASCII 单行，不以 `/`、`!`、`@` 开头，不以反斜杠结尾 | `send()` 运行时检查 |
 | 剧本里的思考文本不要包含要断言的回复文字：TUI 上思考和回复只有颜色不同，`expectReply` 分不开 | 评审 |
+| `expectTool` 的 `output` 只有 Bash 能带，写的是命令打印出来的文字，不能是命令本身的一部分。要查输出的命令写成 `printf 'rea%s\n' dy` 这样，让打印出来的 `ready` 不出现在命令里。`output` 要写成命令打印出来的完整一行。`running` 也只有 Bash 能用，而且必须带 `output`：它是「命令已经打印了这一行、还没结束」的同步点，等到它成立再去 `stop()` | 类型；`expectTool()` 的运行时检查 |
 | 场景里的命令不要留下长时间运行的后台进程。命令自己的进程一结束，回合就照常继续，四个面都一样；但留下的进程只有 ACP 上会被编辑器清掉，TUI、Web、Desktop 上会一直留到它自己结束。Desktop 上应用退出后，它的输出可能还被应用进程组之外的东西握着（macOS 上是崩溃上报的辅助进程，它要等留下的进程结束才退出）；驱动等到限时，确认应用自己的进程都退出了，才放手，所以这样的用例会慢十秒左右。应用自己的进程没退干净则算收尾失败 | 评审。「回合照常结束、产品照常收尾」由 `waitIdle` 的自测固定 |
 
 ## 写驱动
@@ -67,6 +68,12 @@ scenario('reads one file and edits another after approval', { workspace: { 'a.tx
 | 产品专门为测试加的开关和其他例外，只能登记在 `scripts/checks/e2e-boundary.json` 里并写明理由；不再用到的条目会被报出来 | `scripts/checks/e2e-boundary.mjs` |
 | 改变状态的动作等到界面上出现证据才返回。动作先等到确定的状态再下结论：审批出现了或回合结束了，期望成立了或回合结束了，不靠超时来判断 | 驱动自测 |
 | `expectTool` 和 `expectReply` 只看最近一条用户消息之后的内容，工具卡片不算回复，工具调用前后的两段话不拼在一起匹配；被用户停止而没跑完的工具算 `failed`；回合是否结束要看产品自己的信号（TUI 的活动指示，ACP 的 `session/prompt` 答复，Desktop 和 Web 上 `Interrupt` 按钮不在、没有审批卡、输入框可见，并且页面内容连续两次读到的都一样），不能凭转录里出现的某段文字 | 驱动自测 |
+| `expectTool` 的 `running` 指命令已经在跑、还没结束：TUI 上块头是 `Running a command`，Desktop 和 Web 上卡片的状态是 `running`，ACP 上是这次工具调用已经出现、还没报出 `completed` 或 `failed`。回合已经结束时，没有命令算运行中。它必须和 `output` 一起用，因为各面对「还在等审批」的命令判断不一致：TUI、Desktop、Web 上等审批时卡片就已经显示运行中，ACP 上审批之前编辑器还不知道这是哪条命令。找不到、而界面上正挂着审批时，驱动直接报错，不等到超时；挂着的是别的命令的审批也一样 | 类型；`expectTool()` 的运行时检查；驱动自测 |
+| `expectTool` 的 `output` 查的是这张卡片的输出区域里有没有完全相同的一行（去掉首尾空白后比较）。卡片头、命令本身、别的卡片和回复都不算。<br>TUI：块头之后、第一条转录记录（`Approved:`、`Rejected:`、`Interrupted by user`、`Error: [`）之前的那些行。命令自己打印了以这几个前缀开头的行时，这一行和它之后的内容不算输出。卡片折叠着的时候产品不显示全部输出：运行中只显示最后一行非空输出，前面还有别的行时这一行以 `… ` 开头，驱动比较前把它去掉；成功结束后超过三行也只显示最后一行；失败时超过四行只显示前三行。<br>Desktop 和 Web：卡片详情里标题为 `Output` 的面板的正文。驱动先点开卡片、读完再收回去，收不回去就报错，所以查完之后卡片一定是收起的。<br>ACP：这次工具调用最新一条带内容的更新里嵌着的终端，必须是编辑器为这条命令创建的，它的输出里有这一行 | 驱动自测 |
+| 要查的那一行写短一点，不要用回车覆盖（进度条那种写法）：TUI 上太长的行会被截断或折行，带回车的行在三种界面上显示得不一样 | 评审 |
+| 输出区域里除了命令打印的内容，还有两种不是命令打印的文字，不要拿它们当 `output`：产品追加在结果末尾的行（`Command executed successfully.`、`Interrupted by user`、`Command failed with exit code: 3.` 这一类），TUI、Desktop、Web 上有，ACP 的终端里没有；界面的占位和提示（Desktop 和 Web 的 `No output`，TUI 的 `Press Ctrl+B to run in background` 和 `cwd:` 行） | 评审 |
+| ACP 上的 `output` 能证明两件事：产品没有把嵌在工具调用里的终端换掉（内容是整体替换的，所以只看最新一条）；命令确实打印了这一行。它证明不了输出被显示出来了：在 ACP 里那是编辑器的事，而这里的编辑器就是驱动自己。模型有没有拿到输出，由场景里的模型断言来查 | 评审；改坏产品的破坏性检查 |
+| TUI 上 `stop()` 的证据是转录的最后一条变成了 `Interrupted by user`。只看到屏幕上多了一行不够：被停止的命令自己的卡片里也有同样的一行 | 驱动自测；改坏产品的破坏性检查 |
 | 每个动作在每个面上都要有正例和反例。自测写成 `selfTest('动作', { positive, negative })`，放在以动作命名的文件里；要加动作，先改 `VERBS` | `selfTest()` 登记时检查每个面都有正反例；`self-test/coverage.spec.ts` 检查每个动作都有自测文件 |
 | 动作的含义由自测固定，改自测就等于改含义 | CODEOWNERS 评审 |
 | 产品不连真网络：会去 CDN 下载的工具和 Desktop 启动时要取的模型目录，在 `surfaces/offline.ts` 里桩成 404，其余对外连接由 testkit 的网络守卫记下 | 收尾检查 |
@@ -78,17 +85,32 @@ scenario('reads one file and edits another after approval', { workspace: { 'a.tx
 | Web 结束时，页面里不能有未捕获的错误，页面不能有发往本机以外的请求或 socket；关掉浏览器之后给服务端所在的进程组发 Ctrl+C，它要在限时内以 0 退出。这一条查得出服务端卡住或崩溃，查不出「关闭过程出了错」：产品在关闭出错时也以 0 退出，默认也不打印日志 | 收尾检查 |
 | Desktop 和 Web 共用的记录和收尾在 `surfaces/page-driver.ts` 里：发往本机以外的请求和 socket、页面里的未捕获错误、trace、失败时的页面内容。这两个面的驱动只管各自的进程怎么启动、怎么退出 | 评审 |
 | Desktop 结束时，窗口里不能有未捕获的错误，应用要以 0 退出，渲染进程不能有发往本机以外的请求。退出用的是 Playwright 的 `close()`，它在主进程里调用应用的退出，不是用户点的退出；这是驱动里唯一一处在产品进程里执行代码的地方，查的是应用收到退出请求后能不能干净退出 | Desktop 驱动的收尾检查 |
+| 每个驱动实现 `frame()`，返回用户此刻看到的画面：Desktop 和 Web 是主页面的 1 倍截图，TUI 是终端当前的视口文本，ACP 没有界面，是编辑器这一侧本回合收到的内容加上上一帧之后新增的 JSON-RPC 消息。取画面只能用只看不改的手段：截图时不隐藏光标（`caret: 'initial'`），不在页面里执行代码，不往界面里画任何东西，不用会改页面的截图选项（`style`、`mask`、`animations: 'disabled'`） | 评审 |
 | Desktop 和 Web 的驱动按产品的默认设置和英文界面工作。「消息自动折叠」默认是关的，打开之后被折起来的卡片驱动找不到 | 评审 |
 | ACP 上工具的结果不能只看 agent 自己报的状态，还要核对编辑器这一侧：Read 完成，要在这次工具调用期间有一条同一路径、编辑器答复成功的 `fs/read_text_file`；Edit 和 Write 完成，要有同样条件的 `fs/write_text_file`；Bash 完成，它引用的终端必须是编辑器建的、跑的是这条命令、退出码是 0 | ACP 驱动的 `expectTool`。场景和自测只能证明它不误报；真实产品造不出反例，靠改坏驱动的破坏性检查和评审 |
 | ACP 的 stdout 上只能有 JSON-RPC 消息，agent 只能调用编辑器实现了的方法，编辑器只往测试目录里写文件，结束时没有还在跑的终端命令，进程在输入关闭后以 0 退出 | ACP 驱动的收尾检查 |
 | ACP 上每条 `session/update` 都要通过 SDK 的 schema | 没通过的通知到不了驱动，回合就永远不算结束：等待超时，报错里写明收到几条、通过几条 |
 | 编辑器的行为照真实编辑器来：命令一退出就报告退出状态，不等它留下的后台进程；`terminal/release` 之后这个终端就不存在了；命令起不来时 `terminal/create` 直接失败 | 评审 |
 
+## 看每一步的画面
+
+- 每个动作在报告里是一个中文命名的步骤，例如「用户发送「Read a.txt.」」「用户批准」「检查工具卡：Edit「b.txt」已完成」「检查回复里有「Done.」」。标题由 `support/steps.ts` 生成，加动作时 `STEP_TITLES` 不补上就过不了类型检查。
+- 启动产品和前置准备（引导向导、添加工作区）合成一个步骤「启动产品，等到可以输入」。产品就绪、拍完工作区快照之后，存一帧「00 启动完成」。
+- 场景的每一步完成后，support 调驱动的 `frame()` 存一帧，按步骤编号命名，例如「03 用户批准之后」。工作区的 `expectFile`、`expectMissing` 也是中文步骤（「检查磁盘：…」），不存帧，也不占编号。
+- 用例失败时（动作报错、断言不成立、超时），收尾前、关闭产品之前再存一帧。动作报错的，这一帧用那一步的编号和标题，例如「03 用户批准：失败时的画面」；其余的用下一个编号，叫「07 失败时的画面」。两种失败没有这一帧：启动失败（还没有画面，报错里有启动时的页面内容和输出），收尾检查失败（产品已经关了，看收尾检查的报错和诊断附件）。
+- 驱动自测不存每一步的帧，只在失败时存这最后一帧：反例本来就要动作报错，通过的自测不留画面。
+- 画面只当证据，不拿来做断言。取画面失败不会让用例变红，那一帧会写成「取不到这一刻的画面」和原因。
+- 帧的附件名以 `.png` 或 `.txt` 结尾。Playwright 拿附件名里最后一个点之后的部分当文件扩展名，名字里的「b.txt」会让截图存成打不开的文件。
+- 本地跑完用 `pnpm --filter @moonshot-ai/e2e exec playwright show-report` 打开报告。Desktop 和 Web 的帧在用例的「Screenshots」里，TUI 和 ACP 的帧在「Attachments」里。
+- CI 上每个面的报告不管红绿都上传成 artifact `e2e-<面>-report`，保留 7 天；失败时另传 `e2e-<面>-failure`（`test-results/`）。报告解压后双击 `index.html` 就能看步骤和画面。Desktop 和 Web 失败时的 trace 在附件 `desktop-trace`、`web-trace` 里，报告不会把它们显示成「View Trace」，下载后用 `pnpm --filter @moonshot-ai/e2e exec playwright show-trace <zip>` 打开。
+- 运行页的摘要由 `support/run-summary.ts` 在设置了 `GITHUB_STEP_SUMMARY` 时写出：整体结果，不属于任何用例的错误（例如加载场景文件时出错），每个面的场景结果表和自测的通过数。摘要里写的 artifact 名字和 `.github/workflows/e2e.yml` 里的要一致。
+- 报告会作为公开仓库的 artifact 上传，场景里的提示词、文件内容和剧本只能用假数据。
+
 ## 红了怎么办
 
 - **先分清是产品坏了还是驱动坏了。** 自测也红，多半是驱动或产品的界面变了；只有场景红，先看场景断言的那条产品行为。
 - **不许靠重试、加等待、跳过让它变绿。** flaky 用例照根 `AGENTS.md` 的规则处理：先找根因。实在找不到根因可以删，PR 里写明删掉的用例原来覆盖什么、现在由谁覆盖。
-- **看失败附件。** 每个失败的用例都附上假模型的请求摘要、网络守卫的记录和产品日志；TUI 另有完整的屏幕内容、最近的输入和退出码；ACP 另有按顺序记下的 JSON-RPC 消息（最近 4000 条）、不是 JSON-RPC 的 stdout 行和 stderr 末尾；Desktop 和 Web 另有 Playwright trace（用 `pnpm --filter @moonshot-ai/e2e exec playwright show-trace <trace.zip>` 打开）、页面内容的末尾、应用或服务端的输出和页面里的未捕获错误。隔离目录在失败时保留，路径记在用例的 `test home` 标注里。
+- **看失败附件。** 先看报告里这个用例的步骤：红在哪一步，最后一帧「失败时的画面」是什么样。每个失败的用例还附上假模型的请求摘要、网络守卫的记录和产品日志；TUI 另有完整的屏幕内容、最近的输入和退出码；ACP 另有按顺序记下的 JSON-RPC 消息（最近 4000 条）、不是 JSON-RPC 的 stdout 行和 stderr 末尾；Desktop 和 Web 另有 Playwright trace（用 `pnpm --filter @moonshot-ai/e2e exec playwright show-trace <trace.zip>` 打开）、页面内容的末尾、应用或服务端的输出和页面里的未捕获错误。隔离目录在失败时保留，路径记在用例的 `test home` 标注里。
 
 ## 不在这里做的事
 

@@ -2,6 +2,9 @@ import { bash, batch, edit, read, say, write } from '@moonshot-ai/testkit/model'
 
 import { expect, selfTest } from '../support/scenario';
 
+const PRINT_READY = "printf 'rea%s\\n' dy";
+const PRINT_TWO_LINES_THEN_WAIT = `printf 'st%s\\n' art; ${PRINT_READY}; sleep 30`;
+
 selfTest('expectTool', {
   positive: {
     'finds a completed edit by name, target and status': {
@@ -69,8 +72,118 @@ selfTest('expectTool', {
         expect(model.requests('main')).toHaveLength(1);
       },
     },
+    'finds what a finished command printed, and finds the command again without asking for its output': {
+      run: async ({ product, model }) => {
+        model.script(bash(PRINT_READY), say('It printed one word.'));
+        await product.send('Print one word with a shell command.');
+        await product.approve();
+        await product.waitIdle();
+        expect(model.requests('main')[1]?.texts('tool').join('\n')).toMatch(/(^|\n)ready\n/);
+        await product.expectTool({ name: 'Bash', target: PRINT_READY, status: 'done', output: 'ready' });
+        await product.expectTool({ name: 'Bash', target: PRINT_READY, status: 'done' });
+      },
+    },
+    'finds the latest line a running command has printed, and both lines after the user stopped the command': {
+      run: async ({ product, model }) => {
+        model.script(bash(PRINT_TWO_LINES_THEN_WAIT));
+        await product.send('Print two words, then wait.');
+        await product.approve();
+        await product.expectTool({ name: 'Bash', target: PRINT_TWO_LINES_THEN_WAIT, status: 'running', output: 'ready' });
+        await product.stop();
+        await product.waitIdle();
+        await product.expectTool({ name: 'Bash', target: PRINT_TWO_LINES_THEN_WAIT, status: 'failed', output: 'start' });
+        await product.expectTool({ name: 'Bash', target: PRINT_TWO_LINES_THEN_WAIT, status: 'failed', output: 'ready' });
+        expect(model.requests('main')).toHaveLength(1);
+      },
+    },
   },
   negative: {
+    'fails when the command printed something else, or the text was printed by another command': {
+      run: async ({ product, model }) => {
+        model.script(bash(PRINT_READY), bash('true'), say('Both commands ran.'));
+        await product.send('Print one word, then run a command that prints nothing.');
+        await product.approve();
+        await product.waitIdle();
+        await expect(product.expectTool({ name: 'Bash', target: PRINT_READY, status: 'done', output: 'steady' })).rejects.toThrow('did not find Bash');
+        await expect(product.expectTool({ name: 'Bash', target: PRINT_READY, status: 'done', output: 'read' })).rejects.toThrow('did not find Bash');
+        await expect(product.expectTool({ name: 'Bash', target: PRINT_READY, status: 'done', output: `Approved: Running: ${PRINT_READY}` })).rejects.toThrow('did not find Bash');
+        await expect(product.expectTool({ name: 'Bash', target: PRINT_READY, status: 'done', output: 'Output' })).rejects.toThrow('did not find Bash');
+        await expect(product.expectTool({ name: 'Bash', target: 'true', status: 'done', output: 'ready' })).rejects.toThrow('did not find Bash');
+        await product.expectTool({ name: 'Bash', target: PRINT_READY, status: 'done', output: 'ready' });
+        await product.expectTool({ name: 'Bash', target: 'true', status: 'done' });
+      },
+    },
+    'does not take a part of a command, or a line it printed, for another command after its output was looked at': {
+      run: async ({ product, model }) => {
+        const printsACommand = "printf 'echo h%s\\n' i";
+        model.script(bash(printsACommand), say('It printed a line that reads like a command.'));
+        await product.send('Print a line that reads like a command.');
+        await product.approve();
+        await product.waitIdle();
+        await product.expectTool({ name: 'Bash', target: printsACommand, status: 'done', output: 'echo hi' });
+        await expect(product.expectTool({ name: 'Bash', target: 'echo hi', status: 'done' })).rejects.toThrow('did not find Bash');
+        await expect(product.expectTool({ name: 'Bash', target: 'printf', status: 'done' })).rejects.toThrow('did not find Bash');
+        await product.expectTool({ name: 'Bash', target: printsACommand, status: 'done' });
+      },
+    },
+    'does not take text of the reply for the output of a command': {
+      run: async ({ product, model }) => {
+        model.script(bash('true'), say('ready'));
+        await product.send('Run a command that prints nothing, then say one word.');
+        await product.waitIdle();
+        await expect(product.expectTool({ name: 'Bash', target: 'true', status: 'done', output: 'ready' })).rejects.toThrow('did not find Bash');
+        await product.expectReply('ready');
+      },
+    },
+    'fails when the tool has finished but the scenario expects it running': {
+      run: async ({ product, model }) => {
+        model.script(bash(PRINT_READY), say('It printed one word.'));
+        await product.send('Print one word with a shell command.');
+        await product.approve();
+        await product.waitIdle();
+        await expect(product.expectTool({ name: 'Bash', target: PRINT_READY, status: 'running', output: 'ready' })).rejects.toThrow('did not find Bash');
+        await product.expectTool({ name: 'Bash', target: PRINT_READY, status: 'done', output: 'ready' });
+      },
+    },
+    'does not take a command that has finished for a running one while the turn goes on': {
+      run: async ({ product, model }) => {
+        const second = "printf 'ste%s\\n' ady";
+        model.script(bash(PRINT_READY), bash(second), say('Both commands ran.'));
+        await product.send('Print one word, then print another.');
+        await product.approve();
+        await product.expectTool({ name: 'Bash', target: PRINT_READY, status: 'done', output: 'ready' });
+        await expect(product.expectTool({ name: 'Bash', target: PRINT_READY, status: 'running', output: 'ready' })).rejects.toThrow('while an approval is pending');
+        await product.approve();
+        await product.waitIdle();
+        await product.expectTool({ name: 'Bash', target: second, status: 'done', output: 'steady' });
+      },
+    },
+    'refuses to look for a running command while its approval is still pending': {
+      run: async ({ product, model }) => {
+        model.script(bash(PRINT_READY), say('It printed one word.'));
+        await product.send('Print one word with a shell command.');
+        await expect(product.expectTool({ name: 'Bash', target: PRINT_READY, status: 'running', output: 'ready' })).rejects.toThrow('while an approval is pending');
+        await product.approve();
+        await product.waitIdle();
+        await product.expectTool({ name: 'Bash', target: PRINT_READY, status: 'done', output: 'ready' });
+      },
+    },
+    'refuses an output it could not tell from the command, and one that is not a line of text': {
+      run: async ({ product, model }) => {
+        model.script(bash(PRINT_READY), say('It printed one word.'));
+        await product.send('Print one word with a shell command.');
+        await product.approve();
+        await product.waitIdle();
+        await expect(product.expectTool({ name: 'Bash', target: PRINT_READY, status: 'done', output: 'printf' })).rejects.toThrow('part of the command');
+        await expect(product.expectTool({ name: 'Bash', target: PRINT_READY, status: 'done', output: '' })).rejects.toThrow('one line of printable ASCII');
+        await expect(product.expectTool({ name: 'Bash', target: PRINT_READY, status: 'done', output: 'rea\ndy' })).rejects.toThrow('one line of printable ASCII');
+        await expect(product.expectTool({ name: 'Bash', target: PRINT_READY, status: 'running' } as never)).rejects.toThrow('only together with output');
+        await expect(product.expectTool({ name: 'Edit', target: 'b.txt', status: 'running', output: 'ready' } as never)).rejects.toThrow('only for Bash');
+        await expect(product.expectTool({ name: 'Bash', target: PRINT_READY, status: 'rejected', output: 'ready' } as never)).rejects.toThrow('it never ran');
+        await expect(product.expectTool({ name: 'Edit', target: 'b.txt', status: 'done', output: 'ready' } as never)).rejects.toThrow('only for Bash');
+        await product.expectTool({ name: 'Bash', target: PRINT_READY, status: 'done', output: 'ready' });
+      },
+    },
     'fails when the shell command is a different one, or failed but the scenario expects it done': {
       run: async ({ product, model }) => {
         model.script(bash('exit 3'), say('The command failed.'));

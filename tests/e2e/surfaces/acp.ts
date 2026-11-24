@@ -1,4 +1,5 @@
 import { spawn, type ChildProcess } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { open, readFile, writeFile } from 'node:fs/promises';
 import { isAbsolute, join, normalize, relative, sep } from 'node:path';
 
@@ -22,12 +23,14 @@ import {
 } from '@agentclientprotocol/sdk';
 import { kimiCliCommand, kimiCliEnv, TestProcess, TIMEOUTS, until, type TestHome } from '@moonshot-ai/testkit/fixtures';
 
-import type { Diagnostic, SurfaceDriver, SurfaceLaunch, ToolExpectation, ToolStatus } from '../support/verbs';
+import { quote, TOOL_STATUS_WORDS } from '../support/steps';
+import { describeTool, wantedOutput, type Diagnostic, type Frame, type SurfaceDriver, type SurfaceLaunch, type ToolExpectation, type ToolStatus } from '../support/verbs';
 import { offlineStubs } from './offline';
 
 const EDITOR_NAME = 'e2e-editor';
 const WIRE_LOG_LINES = 4000;
 const RECENT_WIRE_LINES = 20;
+const LONGEST_FRAME_LINE = 300;
 const UTF8_CONTINUATION_MASK = 0xc0;
 const UTF8_CONTINUATION_BITS = 0x80;
 
@@ -55,6 +58,7 @@ const HANDLED_METHODS: ReadonlySet<string> = new Set([
 ]);
 
 interface Turn {
+  readonly prompt: string;
   readonly updates: number;
   stopReason: StopReason | undefined;
   rejection: unknown;
@@ -79,11 +83,14 @@ interface Terminal {
 interface ToolView {
   readonly id: string;
   readonly terminals: string[];
+  embedded: readonly string[];
   name: string;
   status: ToolStatus | undefined;
   path: string | undefined;
   command: string | undefined;
 }
+
+type Entry = { readonly kind: 'reply'; text: string } | { readonly kind: 'tool'; readonly id: string };
 
 interface WireEvent {
   readonly tool?: string;
@@ -109,8 +116,9 @@ function toolsOf(updates: readonly SessionUpdate[]): ToolView[] {
     const tool = tools.get(update.toolCallId) ?? {
       id: update.toolCallId,
       terminals: [],
+      embedded: [],
       name: update.sessionUpdate === 'tool_call' ? update.title : '',
-      status: undefined,
+      status: update.sessionUpdate === 'tool_call' ? 'running' : undefined,
       path: undefined,
       command: undefined,
     };
@@ -120,9 +128,11 @@ function toolsOf(updates: readonly SessionUpdate[]): ToolView[] {
     const command = property(update.rawInput, 'command');
     if (typeof command === 'string') tool.command = command;
     const parts = update.content ?? [];
-    for (const part of parts) {
-      if (part.type === 'terminal' && !tool.terminals.includes(part.terminalId)) tool.terminals.push(part.terminalId);
+    const terminals = parts.flatMap((part) => (part.type === 'terminal' ? [part.terminalId] : []));
+    for (const terminal of terminals) {
+      if (!tool.terminals.includes(terminal)) tool.terminals.push(terminal);
     }
+    if (update.content !== undefined && update.content !== null) tool.embedded = terminals;
     const text = parts.map((part) => (part.type === 'content' && part.content.type === 'text' ? part.content.text : '')).join('\n');
     if (update.status === 'completed') tool.status = 'done';
     if (update.status === 'failed') tool.status = text.includes(REJECTION_NOTICE) ? 'rejected' : 'failed';
@@ -130,19 +140,31 @@ function toolsOf(updates: readonly SessionUpdate[]): ToolView[] {
   return [...tools.values()];
 }
 
-function repliesOf(updates: readonly SessionUpdate[]): string[] {
-  const replies: string[] = [];
-  let open = false;
+function entriesOf(updates: readonly SessionUpdate[]): Entry[] {
+  const entries: Entry[] = [];
+  let reply: { readonly kind: 'reply'; text: string } | undefined;
   for (const update of updates) {
     if (update.sessionUpdate === 'agent_message_chunk') {
-      const text = update.content.type === 'text' ? update.content.text : '';
-      replies.push(`${open ? (replies.pop() ?? '') : ''}${text}`);
-      open = true;
+      if (reply === undefined) {
+        reply = { kind: 'reply', text: '' };
+        entries.push(reply);
+      }
+      reply.text += update.content.type === 'text' ? update.content.text : '';
     } else if (update.sessionUpdate === 'tool_call' || update.sessionUpdate === 'agent_thought_chunk') {
-      open = false;
+      reply = undefined;
+      const id = update.sessionUpdate === 'tool_call' ? update.toolCallId : undefined;
+      if (id !== undefined && !entries.some((entry) => entry.kind === 'tool' && entry.id === id)) entries.push({ kind: 'tool', id });
     }
   }
-  return replies;
+  return entries;
+}
+
+function repliesOf(updates: readonly SessionUpdate[]): string[] {
+  return entriesOf(updates).flatMap((entry) => (entry.kind === 'reply' ? [entry.text] : []));
+}
+
+function clipLine(line: string): string {
+  return line.length > LONGEST_FRAME_LINE ? `${line.slice(0, LONGEST_FRAME_LINE)}…` : line;
 }
 
 function tailOf(bytes: Buffer, limit: number | undefined): { text: string; truncated: boolean } {
@@ -168,6 +190,7 @@ class AcpDriver implements SurfaceDriver {
   private readonly answered = new Set<JsonRpcId>();
   private readonly served = new Set<JsonRpcId>();
   private droppedWireLines = 0;
+  private framedWireLines = 0;
   private receivedUpdates = 0;
   private sentPrompts = 0;
   private sessionId = '';
@@ -226,7 +249,7 @@ class AcpDriver implements SurfaceDriver {
     if (!this.turnOver() || this.permissions.length > 0) {
       throw new Error(`send() needs an idle product, but a turn is running or an approval is pending.\n${this.describe()}`);
     }
-    const turn: Turn = { updates: this.updates.length, stopReason: undefined, rejection: undefined, done: false };
+    const turn: Turn = { prompt: text, updates: this.updates.length, stopReason: undefined, rejection: undefined, done: false };
     this.turn = turn;
     const sent = this.sentPrompts;
     void this.connection.agent.request(methods.agent.session.prompt, { sessionId: this.sessionId, prompt: [{ type: 'text', text }] }).then(
@@ -279,11 +302,15 @@ class AcpDriver implements SurfaceDriver {
   }
 
   async expectTool(expectation: ToolExpectation): Promise<void> {
-    const wanted = `${expectation.name} on ${JSON.stringify(expectation.target)} with status ${expectation.status}`;
+    const wanted = describeTool(expectation);
     const state = await this.wait(`the tool ${wanted}`, () => {
+      if (this.turnOver()) return expectation.status !== 'running' && this.shownTools(expectation).length > 0 ? ('shown' as const) : ('over' as const);
       if (this.shownTools(expectation).length > 0) return 'shown' as const;
-      return this.turnOver() ? ('over' as const) : undefined;
+      return expectation.status === 'running' && this.permissions.length > 0 ? ('approval' as const) : undefined;
     });
+    if (state === 'approval') {
+      throw new Error(`expectTool() cannot find a running command while an approval is pending; answer it with approve() or reject() first.\n${this.describe()}`);
+    }
     if (state === 'over') {
       this.assertPromptValid();
       throw new Error(`expectTool() did not find ${wanted}. The turn ended and it shows:\n${this.describe()}`);
@@ -337,6 +364,17 @@ class AcpDriver implements SurfaceDriver {
 
   networkViolations(): Promise<readonly string[]> {
     return this.proc.networkViolations();
+  }
+
+  frame(): Promise<Frame> {
+    const recorded = this.droppedWireLines + this.wire.length;
+    const fresh = Math.min(recorded - this.framedWireLines, this.wire.length);
+    this.framedWireLines = recorded;
+    const messages = fresh === 0 ? ['（没有）'] : this.wire.slice(-fresh).map(clipLine);
+    return Promise.resolve({
+      kind: 'text',
+      text: [...this.editorView(), '', '上一帧之后，编辑器和 agent 之间新增的 JSON-RPC 消息（-> 编辑器发出，<- agent 发来）：', ...messages].join('\n'),
+    });
   }
 
   diagnostics(): Promise<readonly Diagnostic[]> {
@@ -466,40 +504,40 @@ class AcpDriver implements SurfaceDriver {
     const requested = Object.fromEntries((params.env ?? []).map(({ name, value }) => [name, value]));
     const output = await open(log, 'w');
     let child: ChildProcess;
+    let exited: Promise<TerminalExitStatus>;
     try {
-      child = await this.started(
-        spawn(params.command, params.args ?? [], {
-          cwd: params.cwd ?? this.home.workspace,
-          env: { ...kimiCliEnv(this.home), ...requested },
-          stdio: ['ignore', output.fd, output.fd],
-          detached: true,
-        }),
-      );
+      child = spawn(params.command, params.args ?? [], {
+        cwd: params.cwd ?? this.home.workspace,
+        env: { ...kimiCliEnv(this.home), ...requested },
+        stdio: ['ignore', output.fd, output.fd],
+        detached: true,
+      });
+      exited = new Promise((resolve) => {
+        child.once('exit', (exitCode, signal) => {
+          resolve({ exitCode, signal });
+        });
+      });
+      await this.started(child);
     } catch (error) {
       throw RequestError.internalError(undefined, `the editor could not start ${params.command}: ${reasonOf(error)}`);
     } finally {
       await output.close();
     }
     if (child.pid === undefined) throw RequestError.internalError(undefined, `the editor could not start ${params.command}: no process id`);
-    let settle: (status: TerminalExitStatus) => void = () => undefined;
-    const exited = new Promise<TerminalExitStatus>((resolve) => {
-      settle = resolve;
-    });
     const terminal: Terminal = { command: params.args?.[1], log, limit: params.outputByteLimit ?? undefined, pid: child.pid, exited, exit: undefined };
-    child.once('exit', (exitCode, signal) => {
-      terminal.exit = { exitCode, signal };
-      settle(terminal.exit);
+    void exited.then((status) => {
+      terminal.exit = status;
     });
     this.spawned.set(terminalId, terminal);
     this.terminals.set(terminalId, terminal);
     return { terminalId };
   }
 
-  private started(child: ChildProcess): Promise<ChildProcess> {
+  private started(child: ChildProcess): Promise<void> {
     return new Promise((resolve, reject) => {
       child.once('error', reject);
       child.once('spawn', () => {
-        resolve(child);
+        resolve();
       });
     });
   }
@@ -565,10 +603,21 @@ class AcpDriver implements SurfaceDriver {
   }
 
   private shownTools(expectation: ToolExpectation): ToolView[] {
+    const output = wantedOutput(expectation);
     return toolsOf(this.turnUpdates()).filter((tool) => {
       if (tool.name !== expectation.name || tool.status !== expectation.status) return false;
-      if (expectation.name === 'Bash') return tool.command === expectation.target;
-      return tool.path !== undefined && this.workspacePath(tool.path) === expectation.target;
+      if (expectation.name !== 'Bash') return tool.path !== undefined && this.workspacePath(tool.path) === expectation.target;
+      return tool.command === expectation.target && (output === undefined || this.embedsOutput(tool, output));
+    });
+  }
+
+  private embedsOutput(tool: ToolView, output: string): boolean {
+    return tool.embedded.some((id) => {
+      const terminal = this.spawned.get(id);
+      if (terminal?.command === undefined || tool.command === undefined || !terminal.command.endsWith(tool.command)) return false;
+      return readFileSync(terminal.log, 'utf8')
+        .split('\n')
+        .some((line) => line.trim() === output);
     });
   }
 
@@ -631,6 +680,29 @@ class AcpDriver implements SurfaceDriver {
     }
     if ('halted' in outcome) throw new Error(`kimi acp exited while the test waited for ${label}.\n${this.describe()}`);
     return outcome.value;
+  }
+
+  private editorView(): string[] {
+    const turn = this.turn;
+    if (turn === undefined) return ['ACP 没有界面。还没有开始回合：用户还没发过提示词。'];
+    const updates = this.turnUpdates();
+    const tools = new Map(toolsOf(updates).map((tool) => [tool.id, tool]));
+    const named = (tool: ToolView): string => {
+      const target = tool.command ?? (tool.path === undefined ? undefined : this.workspacePath(tool.path));
+      return target === undefined ? tool.name : `${tool.name}${quote(target)}`;
+    };
+    const describeEntry = (entry: Entry): string => {
+      if (entry.kind === 'reply') return `回复：${entry.text}`;
+      const tool = tools.get(entry.id);
+      if (tool === undefined) return `工具：${entry.id}`;
+      return `工具：${named(tool)}，${tool.status === undefined ? '状态未知' : TOOL_STATUS_WORDS[tool.status]}`;
+    };
+    const approvals = this.permissions.map(({ params }) => {
+      const tool = tools.get(params.toolCall.toolCallId);
+      return `等用户回答的审批：${tool === undefined ? (params.toolCall.title ?? params.toolCall.toolCallId) : named(tool)}`;
+    });
+    const state = !turn.done ? '进行中' : turn.rejection === undefined ? `已结束（stopReason: ${String(turn.stopReason)}）` : `失败：${reasonOf(turn.rejection)}`;
+    return ['ACP 没有界面。下面是编辑器这一侧在本回合收到的内容：', `用户：${turn.prompt}`, ...entriesOf(updates).map(describeEntry), ...approvals, `回合：${state}`];
   }
 
   private describe(): string {

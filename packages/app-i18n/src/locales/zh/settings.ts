@@ -28,7 +28,7 @@ export default {
     nameDuplicate: '名称已被使用',
     formHint: '连接可通过 SSH 访问的主机，主机上需已安装 Kimi Code CLI',
     targetLabel: 'SSH 地址',
-    targetHint: "user{'@'}host、ssh:// 地址或 ~/.ssh/config 中的别名",
+    targetHint: "user{'@'}host[:port]、ssh:// 地址或 ~/.ssh/config 中的别名",
     targetPlaceholder: "user{'@'}example.com",
     targetRequired: '请输入 SSH 地址',
     identityLabel: 'SSH 私钥',
