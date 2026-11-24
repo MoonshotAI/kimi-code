@@ -45,6 +45,8 @@ describe('server-v2 OpenAPI', () => {
       wait: 'runSessionWaitAction',
       continue: 'runSessionContinueAction',
       btw: 'runSessionBtwAction',
+      'predict-prompt': 'runSessionPredictPromptAction',
+      'cancel-prompt-prediction': 'runSessionCancelPromptPredictionAction',
       restore: 'runSessionRestoreAction',
       archive: 'runSessionArchiveAction',
       delete: 'runSessionDeleteAction',
@@ -67,7 +69,9 @@ describe('server-v2 OpenAPI', () => {
     const bodySchema = (action: string) =>
       asRecord(asRecord(asRecord(asRecord(requestBody(action))['content'])['application/json'])['schema']);
 
-    expect(requestBody('undo')).toMatchObject({ required: true });
+    for (const action of ['undo', 'predict-prompt', 'cancel-prompt-prediction']) {
+      expect(requestBody(action)).toMatchObject({ required: true });
+    }
     for (const action of ['fork', 'compact', 'cancel', 'wait']) {
       expect(requestBody(action)).toMatchObject({ required: false });
     }
@@ -76,6 +80,8 @@ describe('server-v2 OpenAPI', () => {
     }
 
     expect(bodySchema('undo')['required']).toEqual(['turn_id']);
+    expect(bodySchema('predict-prompt')['required']).toEqual(['prediction_id', 'expected_turn_id']);
+    expect(bodySchema('cancel-prompt-prediction')['required']).toEqual(['prediction_id']);
     expect(asRecord(bodySchema('compact')['properties'])['instruction']).toMatchObject({ type: 'string' });
     const cancelProps = asRecord(bodySchema('cancel')['properties']);
     expect(cancelProps['agent_id']).toMatchObject({ type: 'string' });

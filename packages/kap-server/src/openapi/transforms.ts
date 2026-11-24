@@ -39,6 +39,8 @@ import {
 } from '../protocol/rest-fs';
 import {
   archiveSessionResponseSchema,
+  cancelPromptPredictionRequestSchema,
+  cancelPromptPredictionResponseSchema,
   cancelSessionBodySchema,
   compactSessionBodySchema,
   compactSessionResponseSchema,
@@ -46,6 +48,8 @@ import {
   forkSessionRequestSchema,
   forkSessionResponseSchema,
   getSessionResponseSchema,
+  predictPromptRequestSchema,
+  predictPromptResponseSchema,
   restoreSessionResponseSchema,
   sessionCancelResponseSchema,
   sessionContinueResponseSchema,
@@ -125,6 +129,16 @@ const sessionActionDocs: Readonly<Record<SessionAction, SessionActionDoc>> = {
   wait: { response: waitSessionResponseSchema, body: waitSessionBodySchema },
   continue: { response: sessionContinueResponseSchema },
   btw: { response: startBtwSessionResponseSchema },
+  'predict-prompt': {
+    response: predictPromptResponseSchema,
+    body: predictPromptRequestSchema,
+    bodyRequired: true,
+  },
+  'cancel-prompt-prediction': {
+    response: cancelPromptPredictionResponseSchema,
+    body: cancelPromptPredictionRequestSchema,
+    bodyRequired: true,
+  },
   restore: { response: restoreSessionResponseSchema },
   archive: { response: archiveSessionResponseSchema },
   delete: { response: deleteSessionResponseSchema },
@@ -252,7 +266,11 @@ function projectSessionAction(
   replacePathParamName(cloned, 'tail', 'session_id');
   const clonedOperation = asRecord(cloned['post']);
   if (clonedOperation !== undefined) {
-    clonedOperation['operationId'] = `runSession${action.charAt(0).toUpperCase()}${action.slice(1)}Action`;
+    const actionName = action
+      .split('-')
+      .map((part) => `${part.charAt(0).toUpperCase()}${part.slice(1)}`)
+      .join('');
+    clonedOperation['operationId'] = `runSession${actionName}Action`;
     if (doc.body !== undefined) {
       clonedOperation['requestBody'] = {
         required: doc.bodyRequired ?? false,
