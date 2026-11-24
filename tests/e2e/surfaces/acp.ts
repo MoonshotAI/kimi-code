@@ -19,12 +19,31 @@ import {
   type StopReason,
   type TerminalExitStatus,
   type TerminalOutputResponse,
+  type ToolCallUpdate,
   type WriteTextFileRequest,
 } from '@agentclientprotocol/sdk';
 import { kimiCliCommand, kimiCliEnv, TestProcess, TIMEOUTS, until, type TestHome } from '@moonshot-ai/testkit/fixtures';
 
 import { quote, TOOL_STATUS_WORDS } from '../support/steps';
-import { describeTool, wantedOutput, type Diagnostic, type Frame, type SurfaceDriver, type SurfaceLaunch, type ToolExpectation, type ToolStatus } from '../support/verbs';
+import {
+  APPROVAL_PENDING,
+  describeApproval,
+  describeTool,
+  namesFile,
+  PERMISSION_MODE_NAMES,
+  QUESTION_PENDING,
+  wantedOutput,
+  type ApprovalExpectation,
+  type ApproveOptions,
+  type Diagnostic,
+  type Frame,
+  type PermissionMode,
+  type ReopenState,
+  type SurfaceDriver,
+  type SurfaceLaunch,
+  type ToolExpectation,
+  type ToolStatus,
+} from '../support/verbs';
 import { offlineStubs } from './offline';
 
 const EDITOR_NAME = 'e2e-editor';
@@ -35,12 +54,17 @@ const UTF8_CONTINUATION_MASK = 0xc0;
 const UTF8_CONTINUATION_BITS = 0x80;
 
 const APPROVE_ONCE = 'approve_once';
+const APPROVE_ALWAYS = 'approve_always';
 const REJECT = 'reject';
 const PERMISSION_OPTIONS: Readonly<Record<string, string>> = {
   [APPROVE_ONCE]: 'allow_once',
-  approve_always: 'allow_always',
+  [APPROVE_ALWAYS]: 'allow_always',
   [REJECT]: 'reject_once',
 };
+const SESSION_MODES: Readonly<Record<PermissionMode, string>> = { manual: 'default', yolo: 'yolo', auto: 'auto' };
+const QUESTION_TOOL = 'AskUserQuestion';
+const QUESTION_OPTION = /^q0_opt_\d+$/;
+const QUESTION_SKIP = { optionId: 'q0_skip', name: 'Skip', kind: 'reject_once' } as const;
 const REJECTION_NOTICE = 'was not run because the user rejected the approval request';
 const INVALID_REQUEST = -32600;
 const INVALID_PARAMS = -32602;
@@ -88,6 +112,7 @@ interface ToolView {
   status: ToolStatus | undefined;
   path: string | undefined;
   command: string | undefined;
+  questions: readonly string[];
 }
 
 type Entry = { readonly kind: 'reply'; text: string } | { readonly kind: 'tool'; readonly id: string };
@@ -121,12 +146,15 @@ function toolsOf(updates: readonly SessionUpdate[]): ToolView[] {
       status: update.sessionUpdate === 'tool_call' ? 'running' : undefined,
       path: undefined,
       command: undefined,
+      questions: [],
     };
     tools.set(update.toolCallId, tool);
     const location = update.locations?.[0]?.path;
     if (location !== undefined) tool.path = location;
     const command = property(update.rawInput, 'command');
     if (typeof command === 'string') tool.command = command;
+    const questions = questionsOf(update.rawInput);
+    if (questions.length > 0) tool.questions = questions;
     const parts = update.content ?? [];
     const terminals = parts.flatMap((part) => (part.type === 'terminal' ? [part.terminalId] : []));
     for (const terminal of terminals) {
@@ -140,6 +168,19 @@ function toolsOf(updates: readonly SessionUpdate[]): ToolView[] {
   return [...tools.values()];
 }
 
+function questionsOf(rawInput: unknown): string[] {
+  const questions = property(rawInput, 'questions');
+  if (!Array.isArray(questions)) return [];
+  return questions.flatMap((question: unknown) => {
+    const text = property(question, 'question');
+    return typeof text === 'string' ? [text] : [];
+  });
+}
+
+function asksQuestion(pending: PendingPermission): boolean {
+  return pending.params.toolCall.title === QUESTION_TOOL;
+}
+
 function entriesOf(updates: readonly SessionUpdate[]): Entry[] {
   const entries: Entry[] = [];
   let reply: { readonly kind: 'reply'; text: string } | undefined;
@@ -150,7 +191,7 @@ function entriesOf(updates: readonly SessionUpdate[]): Entry[] {
         entries.push(reply);
       }
       reply.text += update.content.type === 'text' ? update.content.text : '';
-    } else if (update.sessionUpdate === 'tool_call' || update.sessionUpdate === 'agent_thought_chunk') {
+    } else if (update.sessionUpdate === 'tool_call' || update.sessionUpdate === 'agent_thought_chunk' || update.sessionUpdate === 'user_message_chunk') {
       reply = undefined;
       const id = update.sessionUpdate === 'tool_call' ? update.toolCallId : undefined;
       if (id !== undefined && !entries.some((entry) => entry.kind === 'tool' && entry.id === id)) entries.push({ kind: 'tool', id });
@@ -161,6 +202,44 @@ function entriesOf(updates: readonly SessionUpdate[]): Entry[] {
 
 function repliesOf(updates: readonly SessionUpdate[]): string[] {
   return entriesOf(updates).flatMap((entry) => (entry.kind === 'reply' ? [entry.text] : []));
+}
+
+function userTextsOf(updates: readonly SessionUpdate[]): string[] {
+  const texts: string[] = [];
+  let open = false;
+  for (const update of updates) {
+    if (update.sessionUpdate === 'user_message_chunk') {
+      const text = update.content.type === 'text' ? update.content.text : '';
+      texts.push(`${open ? (texts.pop() ?? '') : ''}${text}`);
+      open = true;
+    } else {
+      open = false;
+    }
+  }
+  return texts;
+}
+
+function approvalTexts(toolCall: ToolCallUpdate): string[] {
+  const parts = toolCall.content ?? [];
+  const texts = [toolCall.title ?? '', ...parts.flatMap((part) => (part.type === 'content' && part.content.type === 'text' ? part.content.text.split('\n') : []))];
+  return texts.map((text) => text.trim()).filter((text) => text !== '');
+}
+
+function approvalPaths(toolCall: ToolCallUpdate): string[] {
+  const diffs = (toolCall.content ?? []).flatMap((part) => (part.type === 'diff' ? [part.path] : []));
+  const locations = (toolCall.locations ?? []).map((location) => location.path);
+  const inputs = ['path', 'file_path'].flatMap((key) => {
+    const value = property(toolCall.rawInput, key);
+    return typeof value === 'string' ? [value] : [];
+  });
+  return [...diffs, ...locations, ...inputs];
+}
+
+function approvalShows(toolCall: ToolCallUpdate, { name, target }: ApprovalExpectation, workspace: string): boolean {
+  if (toolCall.title !== name) return false;
+  const texts = approvalTexts(toolCall);
+  if (name !== 'Bash') return [...texts, ...approvalPaths(toolCall)].some((shown) => namesFile(shown, target, workspace));
+  return property(toolCall.rawInput, 'command') === target || texts.some((text) => text === target || text.endsWith(`: ${target}`));
 }
 
 function clipLine(line: string): string {
@@ -174,7 +253,7 @@ function tailOf(bytes: Buffer, limit: number | undefined): { text: string; trunc
   return { text: bytes.subarray(start).toString('utf8'), truncated: true };
 }
 
-class AcpDriver implements SurfaceDriver {
+class AcpDriver implements SurfaceDriver<'acp'> {
   private readonly proc: TestProcess;
   private readonly home: TestHome;
   private readonly connection: ClientConnection;
@@ -188,12 +267,15 @@ class AcpDriver implements SurfaceDriver {
   private readonly spawned = new Map<string, Terminal>();
   private readonly terminals = new Map<string, Terminal>();
   private readonly answered = new Set<JsonRpcId>();
+  private readonly questionReplies = new Map<string, JsonRpcId>();
   private readonly served = new Set<JsonRpcId>();
   private droppedWireLines = 0;
   private framedWireLines = 0;
   private receivedUpdates = 0;
   private sentPrompts = 0;
+  private readonly prompts: string[] = [];
   private sessionId = '';
+  private openedMode: string | undefined;
   private turn: Turn | undefined;
 
   constructor(proc: TestProcess, home: TestHome) {
@@ -227,7 +309,7 @@ class AcpDriver implements SurfaceDriver {
       .connect(this.stream());
   }
 
-  async open(): Promise<void> {
+  async open(resume: string | undefined): Promise<void> {
     const initialized = await this.response(
       'the agent to answer initialize',
       this.connection.agent.request(methods.agent.initialize, {
@@ -238,11 +320,51 @@ class AcpDriver implements SurfaceDriver {
     if (initialized.protocolVersion !== PROTOCOL_VERSION) {
       throw new Error(`kimi acp answered initialize with protocol version ${String(initialized.protocolVersion)}; the editor speaks ${String(PROTOCOL_VERSION)}.`);
     }
-    const session = await this.response(
-      'the agent to create a session',
-      this.connection.agent.request(methods.agent.session.new, { cwd: this.home.workspace, mcpServers: [] }),
+    if (resume === undefined) {
+      const session = await this.response(
+        'the agent to create a session',
+        this.connection.agent.request(methods.agent.session.new, { cwd: this.home.workspace, mcpServers: [] }),
+      );
+      this.sessionId = session.sessionId;
+      this.openedMode = session.modes?.currentModeId;
+      return;
+    }
+    if (initialized.agentCapabilities?.loadSession !== true) {
+      throw new Error(`kimi acp does not offer session/load, so an editor cannot reopen session ${resume}.\n${this.describe()}`);
+    }
+    const loaded = await this.response(
+      `the agent to load session ${resume}`,
+      this.connection.agent.request(methods.agent.session.load, { sessionId: resume, cwd: this.home.workspace, mcpServers: [] }),
     );
-    this.sessionId = session.sessionId;
+    this.sessionId = resume;
+    this.openedMode = loaded.modes?.currentModeId;
+  }
+
+  idle(): Promise<boolean> {
+    return Promise.resolve(this.turnOver() && this.permissions.length === 0);
+  }
+
+  reopenState(): ReopenState {
+    return { sessionId: this.sessionId };
+  }
+
+  async expectTranscript(text: string): Promise<void> {
+    const count = (): number => this.conversation().reduce((sum, entry) => sum + entry.split(text).length - 1, 0);
+    const state = await this.wait(`${JSON.stringify(text)} in the conversation`, () => {
+      if (count() > 0) return 'shown' as const;
+      return this.turnOver() ? ('over' as const) : undefined;
+    });
+    if (state === 'over') {
+      throw new Error(`expectTranscript() did not find ${JSON.stringify(text)} in the conversation the editor holds:\n${this.conversation().join('\n')}`);
+    }
+    const times = count();
+    if (times > 1) {
+      throw new Error(`expectTranscript() found ${JSON.stringify(text)} ${times} times in the conversation; it must appear exactly once.\n${this.conversation().join('\n')}`);
+    }
+  }
+
+  private conversation(): string[] {
+    return [...userTextsOf(this.updates).map((text) => `user: ${text}`), ...this.prompts.map((text) => `user: ${text}`), ...repliesOf(this.updates).map((text) => `assistant: ${text}`)];
   }
 
   async send(text: string): Promise<void> {
@@ -251,6 +373,7 @@ class AcpDriver implements SurfaceDriver {
     }
     const turn: Turn = { prompt: text, updates: this.updates.length, stopReason: undefined, rejection: undefined, done: false };
     this.turn = turn;
+    this.prompts.push(text);
     const sent = this.sentPrompts;
     void this.connection.agent.request(methods.agent.session.prompt, { sessionId: this.sessionId, prompt: [{ type: 'text', text }] }).then(
       (response) => {
@@ -265,25 +388,88 @@ class AcpDriver implements SurfaceDriver {
     await this.wait('session/prompt to be sent to the agent', () => (this.sentPrompts > sent ? true : undefined));
   }
 
-  approve(): Promise<void> {
-    return this.answerPermission('approve()', APPROVE_ONCE);
+  approve(options?: ApproveOptions): Promise<void> {
+    return this.answerPermission('approve()', options?.for === 'session' ? APPROVE_ALWAYS : APPROVE_ONCE);
   }
 
   reject(): Promise<void> {
     return this.answerPermission('reject()', REJECT);
   }
 
-  async stop(): Promise<void> {
-    if (this.permissions.length > 0) {
-      throw new Error(`stop() cannot stop a turn while an approval is pending; answer it first.\n${this.describe()}`);
+  async expectApproval(expectation: ApprovalExpectation): Promise<void> {
+    const wanted = describeApproval(expectation);
+    const pending = await this.wait(`an approval for ${wanted}`, () => this.permissions[0] ?? (this.turnOver() ? null : undefined));
+    if (pending === null) {
+      this.assertPromptValid();
+      throw new Error(`expectApproval() found no approval for ${wanted}: the turn ended without asking for one.\n${this.describe()}`);
     }
+    if (asksQuestion(pending)) throw new Error(`expectApproval() found no approval for ${wanted}: ${QUESTION_PENDING}.\n${this.describe()}`);
+    const { toolCall } = pending.params;
+    if (approvalShows(toolCall, expectation, this.home.workspace)) return;
+    const shown = { title: toolCall.title, content: toolCall.content, rawInput: toolCall.rawInput, locations: toolCall.locations };
+    throw new Error(`expectApproval() found an approval, but it does not show ${wanted}. The approval request shows:\n${JSON.stringify(shown, null, 2)}\n${this.describe()}`);
+  }
+
+  async answer(option: string): Promise<void> {
+    const pending = await this.pendingQuestion('answer()');
+    const asked = this.askedQuestions(pending);
+    if (asked.length > 1) {
+      throw new Error(`answer() answers one question at a time, but the model asked ${asked.length} at once; dismiss them with dismissQuestion().\n${this.describe()}`);
+    }
+    const offered = pending.params.options.filter((candidate) => candidate.optionId !== QUESTION_SKIP.optionId);
+    const choice = offered.find((candidate) => candidate.name === option);
+    if (choice === undefined) {
+      throw new Error(`answer() found no option ${JSON.stringify(option)}. The question offers: ${offered.map((candidate) => JSON.stringify(candidate.name)).join(', ')}.\n${this.describe()}`);
+    }
+    await this.answerQuestion(pending, choice.optionId);
+  }
+
+  async dismissQuestion(): Promise<void> {
+    await this.answerQuestion(await this.pendingQuestion('dismissQuestion()'), QUESTION_SKIP.optionId);
+  }
+
+  async setPermissionMode(mode: PermissionMode): Promise<void> {
+    const name = PERMISSION_MODE_NAMES[mode];
+    const modeId = SESSION_MODES[mode];
+    if (!this.turnOver() || this.permissions.length > 0) {
+      throw new Error(`setPermissionMode() needs an idle product, but a turn is running or an approval is pending.\n${this.describe()}`);
+    }
+    if (this.sessionMode() === modeId) {
+      throw new Error(`setPermissionMode() asked for ${name}, but that is already the permission mode: the session is in mode ${modeId}.\n${this.describe()}`);
+    }
+    const mark = this.updates.length;
+    await this.response(`the agent to switch the session to mode ${modeId}`, this.connection.agent.request(methods.agent.session.setMode, { sessionId: this.sessionId, modeId }));
+    await this.wait('the agent to send every session/update it announced', () => (this.updates.length >= this.receivedUpdates ? true : undefined));
+    const reported = this.updates.slice(mark).some((update) => update.sessionUpdate === 'current_mode_update' && update.currentModeId === modeId);
+    if (!reported) {
+      throw new Error(`setPermissionMode() switched the session to mode ${modeId}, but the agent never reported it with current_mode_update.\n${this.describe()}`);
+    }
+  }
+
+  async stop(): Promise<void> {
     const turn = this.turn;
     if (turn === undefined || turn.done) throw new Error(`stop() needs a running turn, but the product is idle.\n${this.describe()}`);
+    if (this.permissions.some(asksQuestion)) {
+      throw new Error(
+        `stop() cannot stop the turn: ${QUESTION_PENDING}. The terminal UI, Desktop and Web cannot stop a turn without answering its question, so the editor does not either.\n${this.describe()}`,
+      );
+    }
     await this.connection.agent.notify(methods.agent.session.cancel, { sessionId: this.sessionId });
+    const unanswered: PendingPermission[] = [];
+    const cancelPending = (): void => {
+      for (const pending of this.permissions.splice(0)) {
+        pending.answer({ outcome: { outcome: 'cancelled' } });
+        unanswered.push(pending);
+      }
+    };
+    cancelPending();
     await this.wait('the turn to stop', () => {
-      for (const pending of this.permissions.splice(0)) pending.answer({ outcome: { outcome: 'cancelled' } });
+      cancelPending();
       return this.turnOver() ? true : undefined;
     });
+    await this.wait('the editor to answer the approval requests of the stopped turn', () =>
+      unanswered.every((pending) => this.answered.has(pending.requestId)) ? true : undefined,
+    );
     this.assertPromptValid();
     if (turn.stopReason !== 'cancelled') {
       throw new Error(`stop() did not interrupt the turn: it ended with stop reason ${String(turn.stopReason)}.\n${this.describe()}`);
@@ -292,9 +478,11 @@ class AcpDriver implements SurfaceDriver {
 
   async waitIdle(): Promise<void> {
     const state = await this.wait('the turn to end', () => {
-      if (this.permissions.length > 0) return 'approval' as const;
+      const pending = this.permissions[0];
+      if (pending !== undefined) return asksQuestion(pending) ? ('question' as const) : ('approval' as const);
       return this.turnOver() ? ('idle' as const) : undefined;
     });
+    if (state === 'question') throw new Error(`waitIdle() found the turn waiting: ${QUESTION_PENDING}.\n${this.describe()}`);
     if (state === 'approval') {
       throw new Error(`waitIdle() found a pending approval; answer it with approve() or reject() first.\n${this.describe()}`);
     }
@@ -330,6 +518,34 @@ class AcpDriver implements SurfaceDriver {
       this.assertPromptValid();
       throw new Error(`expectReply() did not find ${JSON.stringify(text)} in an assistant reply. The turn ended and it shows:\n${this.describe()}`);
     }
+    const times = repliesOf(this.turnUpdates()).reduce((sum, reply) => sum + reply.split(text).length - 1, 0);
+    if (times > 1) {
+      throw new Error(`expectReply() found ${JSON.stringify(text)} ${times} times in the replies of this turn; it must appear exactly once.\n${this.describe()}`);
+    }
+  }
+
+  async expectError(text: string): Promise<void> {
+    await this.wait(`the turn to fail with ${JSON.stringify(text)}`, () => (this.turnOver() ? true : undefined));
+    this.assertPromptValid();
+    const turn = this.turn;
+    if (turn?.rejection === undefined) {
+      const ended = turn === undefined ? 'no turn has started' : `the latest turn ended with stop reason ${String(turn.stopReason)}`;
+      throw new Error(`expectError() found no failure: ${ended}, and session/prompt did not fail.\n${this.describe()}`);
+    }
+    const message = property(turn.rejection, 'message');
+    if (typeof message === 'string' && message.includes(text)) return;
+    throw new Error(`expectError() found the latest turn failed, but not with ${JSON.stringify(text)}; session/prompt failed with: ${reasonOf(turn.rejection)}\n${this.describe()}`);
+  }
+
+  expectAbsent(text: string): Promise<void> {
+    if (!this.turnOver() || this.permissions.length > 0) {
+      throw new Error(
+        `expectAbsent() needs an idle product, but a turn is running or an approval is pending: until the turn ends, text that has not appeared may still appear. Call waitIdle() first.\n${this.describe()}`,
+      );
+    }
+    const times = repliesOf(this.turnUpdates()).reduce((sum, reply) => sum + reply.split(text).length - 1, 0);
+    if (times > 0) throw new Error(`expectAbsent() found ${JSON.stringify(text)} ${times} time(s) in the replies of the latest turn.\n${this.describe()}`);
+    return Promise.resolve();
   }
 
   async close(): Promise<void> {
@@ -568,6 +784,7 @@ class AcpDriver implements SurfaceDriver {
       this.assertPromptValid();
       throw new Error(`${verb} found no approval: the turn ended without asking for one.\n${this.describe()}`);
     }
+    if (asksQuestion(pending)) throw new Error(`${verb} found no approval: ${QUESTION_PENDING}.\n${this.describe()}`);
     const offered = Object.fromEntries(pending.params.options.map((option) => [option.optionId, option.kind]));
     const expected = Object.entries(PERMISSION_OPTIONS);
     if (Object.keys(offered).length !== expected.length || expected.some(([id, kind]) => offered[id] !== kind)) {
@@ -578,8 +795,43 @@ class AcpDriver implements SurfaceDriver {
     await this.wait('the answer to the approval request to be sent', () => (this.answered.has(pending.requestId) ? true : undefined));
   }
 
+  private async pendingQuestion(verb: string): Promise<PendingPermission> {
+    const pending = await this.wait('a question', () => this.permissions[0] ?? (this.turnOver() ? null : undefined));
+    if (pending === null) {
+      this.assertPromptValid();
+      throw new Error(`${verb} found no question: the turn ended without asking one.\n${this.describe()}`);
+    }
+    if (!asksQuestion(pending)) throw new Error(`${verb} found no question: ${APPROVAL_PENDING}.\n${this.describe()}`);
+    const { options } = pending.params;
+    const answers = options.slice(0, -1);
+    const skip = options.at(-1);
+    const shaped =
+      answers.length > 0 &&
+      answers.every((option) => QUESTION_OPTION.test(option.optionId) && option.kind === 'allow_once') &&
+      skip?.optionId === QUESTION_SKIP.optionId &&
+      skip.name === QUESTION_SKIP.name &&
+      skip.kind === QUESTION_SKIP.kind;
+    if (!shaped) throw new Error(`${verb} got a question with unexpected options: ${JSON.stringify(options)}\n${this.describe()}`);
+    return pending;
+  }
+
+  private askedQuestions(pending: PendingPermission): readonly string[] {
+    return toolsOf(this.turnUpdates()).find((tool) => tool.id === pending.params.toolCall.toolCallId)?.questions ?? [];
+  }
+
+  private async answerQuestion(pending: PendingPermission, optionId: string): Promise<void> {
+    this.permissions.shift();
+    this.questionReplies.set(pending.params.toolCall.toolCallId, pending.requestId);
+    pending.answer({ outcome: { outcome: 'selected', optionId } });
+    await this.wait('the answer to the question to be sent', () => (this.answered.has(pending.requestId) ? true : undefined));
+  }
+
   private missingEditorEvidence(tool: ToolView, expectation: ToolExpectation): string | undefined {
     if (expectation.status === 'rejected') return undefined;
+    if (expectation.name === 'AskUserQuestion') {
+      const reply = this.questionReplies.get(tool.id);
+      return reply !== undefined && this.served.has(reply) ? undefined : 'the editor never answered a question for it';
+    }
     if (expectation.name === 'Bash') return this.missingTerminalEvidence(tool, expectation);
     if (expectation.status !== 'done') return undefined;
     const path = normalize(join(this.home.workspace, expectation.target));
@@ -606,6 +858,7 @@ class AcpDriver implements SurfaceDriver {
     const output = wantedOutput(expectation);
     return toolsOf(this.turnUpdates()).filter((tool) => {
       if (tool.name !== expectation.name || tool.status !== expectation.status) return false;
+      if (expectation.name === 'AskUserQuestion') return tool.questions.includes(expectation.target);
       if (expectation.name !== 'Bash') return tool.path !== undefined && this.workspacePath(tool.path) === expectation.target;
       return tool.command === expectation.target && (output === undefined || this.embedsOutput(tool, output));
     });
@@ -623,6 +876,11 @@ class AcpDriver implements SurfaceDriver {
 
   private workspacePath(path: string): string {
     return relative(this.home.workspace, normalize(path)).split(sep).join('/');
+  }
+
+  private sessionMode(): string | undefined {
+    const reported = this.updates.findLast((update) => update.sessionUpdate === 'current_mode_update');
+    return reported?.sessionUpdate === 'current_mode_update' ? reported.currentModeId : this.openedMode;
   }
 
   private turnUpdates(): readonly SessionUpdate[] {
@@ -688,7 +946,7 @@ class AcpDriver implements SurfaceDriver {
     const updates = this.turnUpdates();
     const tools = new Map(toolsOf(updates).map((tool) => [tool.id, tool]));
     const named = (tool: ToolView): string => {
-      const target = tool.command ?? (tool.path === undefined ? undefined : this.workspacePath(tool.path));
+      const target = tool.command ?? (tool.path === undefined ? tool.questions[0] : this.workspacePath(tool.path));
       return target === undefined ? tool.name : `${tool.name}${quote(target)}`;
     };
     const describeEntry = (entry: Entry): string => {
@@ -697,9 +955,9 @@ class AcpDriver implements SurfaceDriver {
       if (tool === undefined) return `工具：${entry.id}`;
       return `工具：${named(tool)}，${tool.status === undefined ? '状态未知' : TOOL_STATUS_WORDS[tool.status]}`;
     };
-    const approvals = this.permissions.map(({ params }) => {
-      const tool = tools.get(params.toolCall.toolCallId);
-      return `等用户回答的审批：${tool === undefined ? (params.toolCall.title ?? params.toolCall.toolCallId) : named(tool)}`;
+    const approvals = this.permissions.map((pending) => {
+      const tool = tools.get(pending.params.toolCall.toolCallId);
+      return `等用户回答的${asksQuestion(pending) ? '问题' : '审批'}：${tool === undefined ? (pending.params.toolCall.title ?? pending.params.toolCall.toolCallId) : named(tool)}`;
     });
     const state = !turn.done ? '进行中' : turn.rejection === undefined ? `已结束（stopReason: ${String(turn.stopReason)}）` : `失败：${reasonOf(turn.rejection)}`;
     return ['ACP 没有界面。下面是编辑器这一侧在本回合收到的内容：', `用户：${turn.prompt}`, ...entriesOf(updates).map(describeEntry), ...approvals, `回合：${state}`];
@@ -708,7 +966,7 @@ class AcpDriver implements SurfaceDriver {
   private describe(): string {
     const updates = this.turnUpdates();
     const tools = toolsOf(updates).map((tool) => {
-      const target = tool.command ?? (tool.path === undefined ? '(no target yet)' : this.workspacePath(tool.path));
+      const target = tool.command ?? (tool.path === undefined ? (tool.questions[0] ?? '(no target yet)') : this.workspacePath(tool.path));
       return `- ${tool.name} on ${JSON.stringify(target)}: ${tool.status ?? 'not finished'}`;
     });
     const rejection = this.turn?.rejection;
@@ -716,7 +974,7 @@ class AcpDriver implements SurfaceDriver {
       `Tools in this turn:\n${tools.length === 0 ? '(none)' : tools.join('\n')}`,
       `Replies in this turn: ${JSON.stringify(repliesOf(updates))}`,
       ...(rejection === undefined ? [] : [`session/prompt failed: ${reasonOf(rejection)}`]),
-      `Pending approvals: ${this.permissions.length}`,
+      `Pending approvals and questions: ${this.permissions.length}`,
       `session/update notifications: ${this.receivedUpdates} received, ${this.updates.length} passed the SDK's schema`,
       `Last messages:\n${this.wire.slice(-RECENT_WIRE_LINES).join('\n')}`,
       `stderr:\n${this.proc.stderrTail() === '' ? '(empty)' : this.proc.stderrTail()}`,
@@ -724,7 +982,7 @@ class AcpDriver implements SurfaceDriver {
   }
 }
 
-export async function startAcp({ home }: SurfaceLaunch): Promise<SurfaceDriver> {
+export async function startAcp({ home, reopen }: SurfaceLaunch): Promise<SurfaceDriver<'acp'>> {
   if (process.platform === 'win32') throw new Error('The ACP surface runs terminal commands in process groups; Windows is not supported yet.');
   const proc = TestProcess.start({
     label: 'kimi acp',
@@ -738,7 +996,7 @@ export async function startAcp({ home }: SurfaceLaunch): Promise<SurfaceDriver> 
   });
   const driver = new AcpDriver(proc, home);
   try {
-    await driver.open();
+    await driver.open(reopen?.state.sessionId);
   } catch (error) {
     await driver.kill();
     throw error;

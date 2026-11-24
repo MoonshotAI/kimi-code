@@ -55,13 +55,6 @@ quarantine:
     owner: '@RealKai42'
     since: '2026-11-19'
     expires: '2027-01-18'
-  - file: apps/desktop/e2e/turn-stop-during-approval.spec.ts
-    test: stopping a turn while a command waits for approval drops the command and the next prompt works
-    runner: playwright
-    reason: 在基线 0ee6dff5f 上用同一 Electron 构建复现失败：审批中停止。
-    owner: '@RealKai42'
-    since: '2026-11-19'
-    expires: '2027-01-18'
   - file: apps/desktop/e2e/lifecycle-restore.spec.ts
     test: panel tabs, sidebar layout, pins and window size survive a relaunch and a renderer reload
     runner: playwright

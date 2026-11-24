@@ -1,9 +1,13 @@
-import { bash, batch, edit, read, say, write } from '@moonshot-ai/testkit/model';
+import { askUserQuestion, bash, batch, edit, read, say, write } from '@moonshot-ai/testkit/model';
 
 import { expect, selfTest } from '../support/scenario';
 
 const PRINT_READY = "printf 'rea%s\\n' dy";
 const PRINT_TWO_LINES_THEN_WAIT = `printf 'st%s\\n' art; ${PRINT_READY}; sleep 30`;
+
+const QUESTION = 'Which database should we use?';
+const ASK = askUserQuestion({ questions: [{ question: QUESTION, header: 'Database', options: [{ label: 'Postgres' }, { label: 'SQLite' }], multi_select: false }] });
+const DISMISSED_WITHOUT_QUESTION_ON_TUI = 'The terminal UI shows a dismissed question only as dismissed, without the question it asked.';
 
 selfTest('expectTool', {
   positive: {
@@ -96,8 +100,52 @@ selfTest('expectTool', {
         expect(model.requests('main')).toHaveLength(1);
       },
     },
+    'finds an answered question by the question it asked': {
+      run: async ({ product, model }) => {
+        model.script(ASK, say('Noted the choice.'));
+        await product.send('Help me choose a database.');
+        await product.answer('SQLite');
+        await product.waitIdle();
+        await product.expectTool({ name: 'AskUserQuestion', target: QUESTION, status: 'done' });
+        await product.expectReply('Noted the choice.');
+      },
+    },
+    'finds a dismissed question by the question it asked': {
+      except: { tui: DISMISSED_WITHOUT_QUESTION_ON_TUI },
+      run: async ({ product, model }) => {
+        model.script(ASK, say('I will pick one myself.'));
+        await product.send('Help me choose a database.');
+        await product.dismissQuestion();
+        await product.waitIdle();
+        await product.expectTool({ name: 'AskUserQuestion', target: QUESTION, status: 'done' });
+        await product.expectReply('I will pick one myself.');
+      },
+    },
   },
   negative: {
+    'fails when the question asked was a different one': {
+      run: async ({ product, model }) => {
+        model.script(ASK, say('Noted the choice.'));
+        await product.send('Help me choose a database.');
+        await product.answer('SQLite');
+        await product.waitIdle();
+        await expect(product.expectTool({ name: 'AskUserQuestion', target: 'Which cache should we use?', status: 'done' })).rejects.toThrow('did not find AskUserQuestion');
+        await expect(product.expectTool({ name: 'AskUserQuestion', target: 'SQLite', status: 'done' })).rejects.toThrow('did not find AskUserQuestion');
+        await product.expectReply('Noted the choice.');
+      },
+    },
+    'fails on the terminal UI for a dismissed question, whose card does not show the question': {
+      onlyOn: ['tui'],
+      reason: DISMISSED_WITHOUT_QUESTION_ON_TUI,
+      run: async ({ product, model }) => {
+        model.script(ASK, say('I will pick one myself.'));
+        await product.send('Help me choose a database.');
+        await product.dismissQuestion();
+        await product.waitIdle();
+        await expect(product.expectTool({ name: 'AskUserQuestion', target: QUESTION, status: 'done' })).rejects.toThrow('only as dismissed, without the question');
+        await product.expectReply('I will pick one myself.');
+      },
+    },
     'fails when the command printed something else, or the text was printed by another command': {
       run: async ({ product, model }) => {
         model.script(bash(PRINT_READY), bash('true'), say('Both commands ran.'));
