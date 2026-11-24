@@ -22,15 +22,17 @@ export type SessionEvidence =
 
 export type SessionEvidenceListener = (evidence: SessionEvidence) => void;
 
-export function onMcpToolsChanged(
-  client: Client,
-  isActive: () => boolean,
-  listener: () => void,
-): void {
-  client.setNotificationHandler(ToolListChangedNotificationSchema, () => {
-    if (!isActive()) return;
-    listener();
-  });
+export abstract class McpToolListChangeSource {
+  protected abstract readonly client: Client;
+  protected abstract readonly closed: boolean;
+  protected abstract readonly ready: boolean;
+
+  onToolsChanged(listener: () => void): void {
+    this.client.setNotificationHandler(ToolListChangedNotificationSchema, () => {
+      if (this.closed || !this.ready) return;
+      listener();
+    });
+  }
 }
 
 export type McpFailureKind = 'config' | 'protocol' | 'auth-static' | 'auth-oauth' | 'transport';
