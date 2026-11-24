@@ -13,6 +13,7 @@ const mcpServerCommonFields = {
   disabledTools: z.array(z.string()).optional(),
 } as const;
 
+// jscpd:ignore-start -- deliberate hand mirror of the engine stdio wire shape (klient contracts stay hand-mirrored; kap-server declares the same fields in snake_case wire dialect)
 export const mcpServerStdioConfigSchema = z.object({
   transport: z.literal('stdio'),
   command: z.string().min(1),
@@ -21,6 +22,7 @@ export const mcpServerStdioConfigSchema = z.object({
   cwd: z.string().optional(),
   ...mcpServerCommonFields,
 });
+// jscpd:ignore-end
 
 export const mcpServerHttpConfigSchema = z.object({
   transport: z.literal('http'),

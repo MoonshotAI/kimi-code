@@ -195,6 +195,34 @@ async function resolveWorkspaceFs(
   return acquireLocalRootedFs(core, ws.id, { workDir: ws.root, additionalDirs: ws.additionalDirs });
 }
 
+async function withWorkspaceFs(
+  core: Scope,
+  req: { id: string },
+  reply: Reply,
+  workspace: string,
+  work: (scope: FsScope) => Promise<void>,
+): Promise<void> {
+  let scope: FsScope | undefined;
+  try {
+    scope = await resolveWorkspaceFs(core, workspace);
+    if (scope === undefined) {
+      reply.send(
+        errEnvelope(
+          ErrorCode.WORKSPACE_NOT_FOUND,
+          `workspace ${workspace} does not exist`,
+          req.id,
+        ),
+      );
+      return;
+    }
+    await work(scope);
+  } catch (error) {
+    sendMappedError(reply, req, error);
+  } finally {
+    scope?.lease.dispose();
+  }
+}
+
 async function sendSuggestStream(
   scope: FsScope,
   request: FsSuggestRequest,
@@ -398,26 +426,10 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
     },
     async (req, reply) => {
       const { workspace, ...listRequest } = req.body;
-      let environmentFs: FsScope | undefined;
-      try {
-        environmentFs = await resolveWorkspaceFs(core, workspace);
-        if (environmentFs === undefined) {
-          reply.send(
-            errEnvelope(
-              ErrorCode.WORKSPACE_NOT_FOUND,
-              `workspace ${workspace} does not exist`,
-              req.id,
-            ),
-          );
-          return;
-        }
-        const data = await environmentFs.fs.list({ ...listRequest, include_git_status: false });
+      await withWorkspaceFs(core, req, reply, workspace, async (scope) => {
+        const data = await scope.fs.list({ ...listRequest, include_git_status: false });
         reply.send(okEnvelope(data, req.id));
-      } catch (error) {
-        sendMappedError(reply, req, error);
-      } finally {
-        environmentFs?.lease.dispose();
-      }
+      });
     },
   );
   app.post(
@@ -446,26 +458,10 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
     },
     async (req, reply) => {
       const { workspace, ...searchRequest } = req.body;
-      let environmentFs: FsScope | undefined;
-      try {
-        environmentFs = await resolveWorkspaceFs(core, workspace);
-        if (environmentFs === undefined) {
-          reply.send(
-            errEnvelope(
-              ErrorCode.WORKSPACE_NOT_FOUND,
-              `workspace ${workspace} does not exist`,
-              req.id,
-            ),
-          );
-          return;
-        }
-        const data = await environmentFs.fs.search(searchRequest);
+      await withWorkspaceFs(core, req, reply, workspace, async (scope) => {
+        const data = await scope.fs.search(searchRequest);
         reply.send(okEnvelope(data, req.id));
-      } catch (error) {
-        sendMappedError(reply, req, error);
-      } finally {
-        environmentFs?.lease.dispose();
-      }
+      });
     },
   );
   app.post(
@@ -493,30 +489,14 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
     },
     async (req, reply) => {
       const { workspace, stream, ...suggestRequest } = req.body;
-      let environmentFs: FsScope | undefined;
-      try {
-        environmentFs = await resolveWorkspaceFs(core, workspace);
-        if (environmentFs === undefined) {
-          reply.send(
-            errEnvelope(
-              ErrorCode.WORKSPACE_NOT_FOUND,
-              `workspace ${workspace} does not exist`,
-              req.id,
-            ),
-          );
-          return;
-        }
+      await withWorkspaceFs(core, req, reply, workspace, async (scope) => {
         if (stream) {
-          await sendSuggestStream(environmentFs, suggestRequest, reply, req.id);
+          await sendSuggestStream(scope, suggestRequest, reply, req.id);
         } else {
-          const data = await environmentFs.fs.suggest(suggestRequest);
+          const data = await scope.fs.suggest(suggestRequest);
           reply.send(okEnvelope(data, req.id));
         }
-      } catch (error) {
-        sendMappedError(reply, req, error);
-      } finally {
-        environmentFs?.lease.dispose();
-      }
+      });
     },
   );
   app.post(

@@ -204,6 +204,7 @@ export const ExperimentalConfigSchema = z.record(z.string(), z.boolean());
 
 export type ExperimentalConfig = z.infer<typeof ExperimentalConfigSchema>;
 
+// jscpd:ignore-start -- the SDK ships its own standalone copy of the engine config schemas (hooks, services, MCP servers): public config contract, deliberately independent of engine modules and intentionally narrower (e.g. no executor field)
 export const HookDefSchema = z
   .object({
     event: z.enum(HOOK_EVENT_TYPES),
@@ -290,6 +291,7 @@ export const McpServerConfigSchema = z.preprocess((raw) => {
 }, McpServerConfigDiscriminatedSchema);
 
 export type McpServerConfig = z.infer<typeof McpServerConfigSchema>;
+// jscpd:ignore-end
 
 export const KimiConfigSchema = z.object({
   providers: z.record(z.string(), ProviderConfigSchema).default({}),

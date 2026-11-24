@@ -29,20 +29,7 @@ export const sessionMetaSchema = z.object({
   lastTurnReason: z.enum(['completed', 'cancelled', 'failed']).optional(),
 });
 
-export const sessionMetaPatchSchema = z.object({
-  version: z.number().optional(),
-  title: z.string().optional(),
-  titleKind: z.enum(['replaceable', 'generated', 'custom']).optional(),
-  lastPrompt: z.string().optional(),
-  updatedAt: z.number().optional(),
-  archived: z.boolean().optional(),
-  archivedAt: z.number().optional(),
-  cwd: z.string().optional(),
-  forkedFrom: z.string().optional(),
-  agents: z.record(z.string(), agentMetaSchema).optional(),
-  custom: z.record(z.string(), z.unknown()).optional(),
-  lastTurnReason: z.enum(['completed', 'cancelled', 'failed']).optional(),
-});
+export const sessionMetaPatchSchema = sessionMetaSchema.omit({ id: true, createdAt: true }).partial();
 
 export const sessionMetaKeySchema = z.enum([
   'id',

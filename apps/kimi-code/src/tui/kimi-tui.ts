@@ -3157,6 +3157,15 @@ export class KimiTUI {
       return undefined;
     }
     this.resetSessionRuntime({ keepQueuedMessages: true });
+    if (!(await this.activateCreatedSession(session))) return undefined;
+    void this.showSessionWarnings(session);
+    if (this.state.appState.lazySessionThinking !== undefined) {
+      this.setAppState({ lazySessionThinking: undefined });
+    }
+    return session;
+  }
+
+  private async activateCreatedSession(session: Session): Promise<boolean> {
     await this.setSession(session, 0);
     this.setAppState({ sessionId: session.id });
     try {
@@ -3166,18 +3175,14 @@ export class KimiTUI {
       this.sessionEventHandler.startSubscription();
       const msg = formatErrorMessage(error);
       this.showError(`Post-create setup failed: ${msg}`);
-      return undefined;
+      return false;
     }
     try {
       await this.refreshSkillCommands(session);
       await this.refreshPluginCommands(session);
     } catch {}
     this.sessionEventHandler.startSubscription();
-    void this.showSessionWarnings(session);
-    if (this.state.appState.lazySessionThinking !== undefined) {
-      this.setAppState({ lazySessionThinking: undefined });
-    }
-    return session;
+    return true;
   }
 
   async setSession(
@@ -3562,22 +3567,7 @@ export class KimiTUI {
       }
 
       this.resetSessionRuntime();
-      await this.setSession(session, 0);
-      this.setAppState({ sessionId: session.id });
-      try {
-        await this.activateRuntime();
-        await this.syncRuntimeState(session);
-      } catch (error) {
-        this.sessionEventHandler.startSubscription();
-        const msg = formatErrorMessage(error);
-        this.showError(`Post-create setup failed: ${msg}`);
-        return;
-      }
-      try {
-        await this.refreshSkillCommands(this.session);
-        await this.refreshPluginCommands(this.session);
-      } catch {}
-      this.sessionEventHandler.startSubscription();
+      if (!(await this.activateCreatedSession(session))) return;
       this.clearTranscriptAndRedraw();
       this.showStatus(`Started a new session (${session.id}).`);
       void this.showSessionWarnings(session);
