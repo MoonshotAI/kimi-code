@@ -15,6 +15,7 @@ import {
   ISessionContext,
   ISessionIndex,
   ISessionMetadata,
+  ISessionPromptPredictionService,
   type SessionMeta,
   ISessionTitleService,
   IEventService,
@@ -62,6 +63,8 @@ import { findOnHosts, hostGet, HostSourceError, type HostSources } from '../serv
 import { workspaceRootOf } from '../services/workspaceVisibility';
 import {
   archiveSessionResponseSchema,
+  cancelPromptPredictionRequestSchema,
+  cancelPromptPredictionResponseSchema,
   cancelSessionRequestSchema,
   compactSessionRequestSchema,
   compactSessionResponseSchema,
@@ -70,6 +73,8 @@ import {
   deleteSessionResponseSchema,
   forkSessionRequestSchema,
   MAX_SESSION_WAIT_TIMEOUT_MS,
+  predictPromptRequestSchema,
+  predictPromptResponseSchema,
   sessionCancelResponseSchema,
   sessionContinueResponseSchema,
   sessionWarningsResponseSchema,
@@ -167,6 +172,9 @@ const sessionActionRequestSchema = z.preprocess(
     timeout_ms: z.number().int().min(0).max(MAX_SESSION_WAIT_TIMEOUT_MS).optional(),
     count: z.number().int().positive().optional(),
     page_size: z.number().int().min(1).max(100).optional(),
+    prediction_id: z.string().min(1).optional(),
+    expected_turn_id: z.number().int().nonnegative().optional(),
+    reason: cancelPromptPredictionRequestSchema.shape.reason,
   }),
 );
 
@@ -500,6 +508,8 @@ export function registerSessionsRoutes(
           sessionCancelResponseSchema,
           sessionContinueResponseSchema,
           startBtwSessionResponseSchema,
+          predictPromptResponseSchema,
+          cancelPromptPredictionResponseSchema,
           archiveSessionResponseSchema,
           deleteSessionResponseSchema,
           takeoverSessionResponseSchema,
@@ -600,6 +610,11 @@ interface SessionActionExtra {
   readonly conversations: ConversationService;
   readonly req: {
     readonly id: string;
+    readonly raw?: {
+      readonly aborted: boolean;
+      once(event: 'aborted', listener: () => void): unknown;
+      off(event: 'aborted', listener: () => void): unknown;
+    };
   };
   readonly reply: {
     readonly raw?: ServerResponse;
@@ -620,6 +635,14 @@ const sessionActions: ActionTable<SessionAction, SessionActionExtra> = {
   wait: { body: waitSessionRequestSchema, handle: waitSessionAction },
   continue: { handle: continueSessionAction },
   btw: { handle: btwSessionAction },
+  'predict-prompt': {
+    body: predictPromptRequestSchema,
+    handle: predictPromptAction,
+  },
+  'cancel-prompt-prediction': {
+    body: cancelPromptPredictionRequestSchema,
+    handle: cancelPromptPredictionAction,
+  },
   restore: { handle: restoreSessionAction },
   archive: { handle: archiveSessionAction },
   delete: { handle: deleteSessionAction },
@@ -1075,6 +1098,49 @@ async function btwSessionAction(ctx: SessionActionCtx): Promise<void> {
   await core.accessor.get(IAuthSummaryService).ensureReady(sessionModel || undefined);
   const agentId = await session.accessor.get(ISessionBtwService).start();
   reply.send(okEnvelope({ agent_id: agentId }, req.id));
+}
+
+async function resumePromptPredictionService(core: Scope, id: string): Promise<ISessionPromptPredictionService> {
+  const session = await resumeSessionById(core.accessor, id);
+  if (session === undefined) {
+    throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${id} does not exist`);
+  }
+  return session.accessor.get(ISessionPromptPredictionService);
+}
+
+async function predictPromptAction(
+  ctx: SessionActionCtx<z.infer<typeof predictPromptRequestSchema>>,
+): Promise<void> {
+  const { core, req, reply, id, body } = ctx;
+  const service = await resumePromptPredictionService(core, id);
+  const disconnected = (): boolean => req.raw?.aborted === true || reply.raw?.destroyed === true;
+  const onAborted = (): void => {
+    service.cancel(body.prediction_id, 'disconnect');
+  };
+  req.raw?.once('aborted', onAborted);
+  reply.raw?.once('close', onAborted);
+  try {
+    if (disconnected()) return;
+    const prediction = await service.predict({
+      predictionId: body.prediction_id,
+      expectedTurnId: body.expected_turn_id,
+    });
+    if (!disconnected()) {
+      reply.send(okEnvelope(predictPromptResponseSchema.parse({ prediction }), req.id));
+    }
+  } finally {
+    req.raw?.off('aborted', onAborted);
+    reply.raw?.off('close', onAborted);
+  }
+}
+
+async function cancelPromptPredictionAction(
+  ctx: SessionActionCtx<z.infer<typeof cancelPromptPredictionRequestSchema>>,
+): Promise<void> {
+  const { core, req, reply, id, body } = ctx;
+  const service = await resumePromptPredictionService(core, id);
+  const cancelled = service.cancel(body.prediction_id, body.reason);
+  reply.send(okEnvelope(cancelPromptPredictionResponseSchema.parse({ cancelled }), req.id));
 }
 
 async function restoreSessionAction(ctx: SessionActionCtx): Promise<void> {

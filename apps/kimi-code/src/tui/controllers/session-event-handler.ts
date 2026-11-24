@@ -140,6 +140,7 @@ export interface SessionEventHost {
   handleTurnStarted?(event: TurnStartedEvent): void;
   handleTurnEnded?(event: TurnEndedEvent): void;
   handlePromptPredictionTurnEnded?(event: TurnEndedEvent): void;
+  handlePromptPredictionIdle?(): void;
   readonly btwPanelController: BtwPanelController;
   readonly tasksBrowserController: TasksBrowserController;
   readonly surveyController: SurveyController;
@@ -470,6 +471,7 @@ export class SessionEventHandler {
     this.scheduleQueuedGoalPromotion();
     if (event.loopEnd !== undefined) {
       this.host.streamingUI.finalizeLoopEnd(sendQueued, event.loopEnd.outcome, event.turnId);
+      this.host.handlePromptPredictionIdle?.();
     }
   }
 
@@ -1209,6 +1211,7 @@ export class SessionEventHandler {
     if (!hasActiveTurn && this.host.state.appState.loopLifecycleEvents === true) {
       this.host.setAppState({ isCompacting: false });
       this.host.streamingUI.resumeLoopEnd(sendQueued);
+      this.host.handlePromptPredictionIdle?.();
       return;
     }
     if (!hasActiveTurn && !this.host.state.queuedMessageDispatchPending) {
