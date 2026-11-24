@@ -2107,9 +2107,61 @@ describe('FullCompaction', () => {
       }),
     });
     await ctx.expectResumeMatches();
+
+    const compactionRequested = deferred<void>();
+    const releaseCompaction = deferred<void>();
+    let llmCallCount = 0;
+    const generate: GenerateFn = createMockProvider(async () => {
+      llmCallCount += 1;
+      if (llmCallCount === 1) {
+        compactionRequested.resolve();
+        await releaseCompaction.promise;
+        return textResult('Lower-ratio compacted summary.');
+      }
+      if (llmCallCount === 2) {
+        return textResult('I can answer after lower-ratio compaction.');
+      }
+      throw new Error(`Unexpected generate call ${String(llmCallCount)}`);
+    });
+    const lowRatioCtx = testAgent({
+      generate,
+      initialConfig: {
+        providers: {},
+        loopControl: {
+          compactionTriggerRatio: 0.6,
+          reservedContextSize: 0,
+        },
+      },
+    });
+    lowRatioCtx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: {
+        ...CATALOGUED_MODEL_CAPABILITIES,
+        maxContextSize: 1_000_000,
+      },
+      tools: SNAPSHOT_VISIBLE_TOOLS,
+    });
+    lowRatioCtx.appendExchange(1, 'old user one', 'old assistant one', 610_000);
+
+    await lowRatioCtx.rpc.prompt({ input: [{ type: 'text', text: 'Answer after compacting' }] });
+    await compactionRequested.promise;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(llmCallCount).toBe(1);
+
+    releaseCompaction.resolve();
+    const lowRatioEvents = await lowRatioCtx.untilTurnEnd();
+
+    expect(llmCallCount).toBe(2);
+    expect(countEvents(lowRatioEvents, 'full_compaction.cancel')).toBe(0);
+    expect(countEvents(lowRatioEvents, 'compaction.blocked')).toBe(1);
+    expect(eventIndex(lowRatioEvents, 'compaction.blocked')).toBeLessThan(
+      eventIndex(lowRatioEvents, 'full_compaction.complete'),
+    );
+    await lowRatioCtx.expectResumeMatches();
   });
 
-  it('attributes background auto compaction to the turn that started it', async () => {
+  it('attributes auto compaction to its turn and lets tool continuations consume fresh results', async () => {
     const compactionRequested = deferred<void>();
     const releaseCompaction = deferred<void>();
     const followUpRequested = deferred<void>();
@@ -2164,11 +2216,14 @@ describe('FullCompaction', () => {
 
     const followUpEnded = ctx.untilTurnEnd();
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Follow up while compacting' }] });
-    await followUpRequested.promise;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(llmCallCount).toBe(2);
+
     ctx.newEvents();
     const compactionCompleted = ctx.once('compaction.completed');
     releaseCompaction.resolve();
     await compactionCompleted;
+    await followUpRequested.promise;
     releaseFollowUp.resolve();
     const events = await followUpEnded;
 
@@ -2188,6 +2243,90 @@ describe('FullCompaction', () => {
     expect(applyCompactionIndex).toBeGreaterThanOrEqual(0);
     expect(splicedIndex).toBeGreaterThan(applyCompactionIndex);
     await ctx.expectResumeMatches();
+
+    const largeResult = 'important-tool-result';
+    const phases: string[] = [];
+    const toolRecords: TelemetryRecord[] = [];
+    let continuationHistory: readonly Message[] = [];
+    let agentCallCount = 0;
+    const toolGenerate: GenerateFn = createMockProvider(async (request) => {
+      const history = request.content.messages;
+      const isCompaction = messageText(history.at(-1)) === renderCompactionInstruction({});
+      if (isCompaction) {
+        phases.push('compaction');
+        return textResult('Compacted after consuming the tool result.');
+      }
+      agentCallCount += 1;
+      if (agentCallCount === 2) {
+        phases.push('continuation');
+        continuationHistory = history;
+        return {
+          ...textResult('Consumed the fresh tool result.'),
+          usage: { inputOther: 13_000, output: 1, inputCacheRead: 0, inputCacheCreation: 0 },
+        };
+      }
+      phases.push('agent');
+      return {
+        ...textResult(''),
+        message: {
+          role: 'assistant',
+          content: [],
+          toolCalls: [
+            {
+              type: 'function',
+              id: 'call_large_result',
+              name: 'mcp__srv__large_result',
+              arguments: '{}',
+            },
+          ],
+        },
+        usage: { inputOther: 13_000, output: 1, inputCacheRead: 0, inputCacheCreation: 0 },
+        finishReason: 'tool_calls',
+        rawFinishReason: 'tool_calls',
+      };
+    });
+    const toolCtx = testAgent({
+      generate: toolGenerate,
+      telemetry: recordingTelemetry(toolRecords),
+      initialConfig: {
+        providers: {},
+        loopControl: {
+          compactionTriggerRatio: 0.6,
+          reservedContextSize: 0,
+        },
+      },
+    });
+    toolCtx
+      .get(IAgentToolRegistryService)
+      .register(mcpTool('mcp__srv__large_result', {}, largeResult), { source: 'mcp' });
+    toolCtx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: {
+        ...CATALOGUED_MODEL_CAPABILITIES,
+        maxContextSize: 20_000,
+      },
+      tools: ['mcp__srv__large_result'],
+    });
+    const compacted = toolCtx.once('compaction.completed');
+
+    await toolCtx.rpc.prompt({ input: [{ type: 'text', text: 'Inspect the large result' }] });
+    await toolCtx.untilApproval(true);
+    await toolCtx.untilTurnEnd();
+    await compacted;
+
+    expect(phases).toEqual(['agent', 'continuation', 'compaction']);
+    expect(continuationHistory.some((message) => messageText(message).includes(largeResult))).toBe(
+      true,
+    );
+    expect(toolRecords).toContainEqual({
+      event: 'compaction_finished',
+      properties: expect.objectContaining({
+        agent_id: 'main',
+        turn_id: 0,
+        source: 'auto',
+      }),
+    });
+    await toolCtx.expectResumeMatches();
   });
 
   it('keeps a deferred system reminder behind an unresolved tool exchange across compaction', async () => {
@@ -4001,6 +4140,7 @@ function textMessage(role: 'user' | 'assistant', text: string): Message {
 function mcpTool(
   name: string,
   parameters: Record<string, unknown>,
+  output: string = 'mcp ok',
 ): ExecutableTool<Record<string, unknown>> {
   return {
     name,
@@ -4009,7 +4149,7 @@ function mcpTool(
     resolveExecution(): ToolExecution {
       return {
         approvalRule: name,
-        execute: async () => ({ output: 'mcp ok' }),
+        execute: async () => ({ output }),
       };
     },
   };
