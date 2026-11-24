@@ -35,10 +35,12 @@ import {
   setSessionArchived,
   toDisposable,
   Error2,
+  LOCAL_ENVIRONMENT_ID,
   type IAgentScopeHandle,
   type IDisposable,
   type ISessionScopeHandle,
   type Scope,
+  type SessionSummary,
 } from '@moonshot-ai/agent-core-v2';
 import type { ServerResponse } from 'node:http';
 import { ISessionLockService } from '@moonshot-ai/agent-core-v2/persistence/interface/sessionLock';
@@ -57,6 +59,7 @@ import { listPendingInteractions } from '../protocol/interaction-wire';
 import type { PendingInteraction } from '../protocol/interaction';
 import type { ConversationService } from '../services/conversation/conversationService';
 import { findOnHosts, hostGet, HostSourceError, type HostSources } from '../services/hosts/hostFanout';
+import { workspaceRootOf } from '../services/workspaceVisibility';
 import {
   archiveSessionResponseSchema,
   cancelSessionRequestSchema,
@@ -82,6 +85,7 @@ import {
 import {
   sessionSchema,
   type Session,
+  type SessionCreate,
   type SessionGit,
   type SessionPendingInteraction,
 } from '../protocol/session';
@@ -191,29 +195,25 @@ export function registerSessionsRoutes(
     },
     async (req, reply) => {
       const body = req.body;
-      const topCwd = body.cwd;
-      const metaCwd = typeof body.metadata?.cwd === 'string' ? body.metadata.cwd : undefined;
-      if (topCwd !== undefined && metaCwd !== undefined && topCwd !== metaCwd) {
+      const requestedRoots = requestedWorkspaceRoots(body);
+      const requestedRoot = requestedRoots.at(-1);
+      const conflictingRoot = requestedRoots.find((root) => root.value !== requestedRoot?.value);
+      if (requestedRoot !== undefined && conflictingRoot !== undefined) {
         reply.send(
           buildValidationEnvelope(
-            [{ path: 'cwd', message: `cwd (${topCwd}) must equal metadata.cwd (${metaCwd})` }],
+            [
+              {
+                path: conflictingRoot.path,
+                message: `${conflictingRoot.path} (${conflictingRoot.value}) must equal ${requestedRoot.path} (${requestedRoot.value})`,
+              },
+            ],
             req.id,
           ),
         );
         return;
       }
-      const callerCwd = topCwd ?? metaCwd;
-      const cwdPath = topCwd !== undefined ? 'cwd' : 'metadata.cwd';
+      const rootPath = requestedRoots[0]?.path ?? 'workspace_root';
       const workspaceId = body.workspace_id;
-      if (workspaceId === undefined && callerCwd === undefined) {
-        reply.send(
-          buildValidationEnvelope(
-            [{ path: cwdPath, message: 'either workspace_id or cwd is required' }],
-            req.id,
-          ),
-        );
-        return;
-      }
 
       const registry = core.accessor.get(IWorkspaceService);
       let workDir: string;
@@ -230,13 +230,13 @@ export function registerSessionsRoutes(
           );
           return;
         }
-        if (callerCwd !== undefined && callerCwd !== workspace.root) {
+        if (requestedRoot !== undefined && requestedRoot.value !== workspace.root) {
           reply.send(
             buildValidationEnvelope(
               [
                 {
-                  path: cwdPath,
-                  message: `${cwdPath} (${callerCwd}) must equal workspace root (${workspace.root})`,
+                  path: rootPath,
+                  message: `${rootPath} (${requestedRoot.value}) must equal workspace root (${workspace.root})`,
                 },
               ],
               req.id,
@@ -246,8 +246,16 @@ export function registerSessionsRoutes(
         }
         workDir = workspace.root;
         bucket = workspace;
+      } else if (requestedRoot !== undefined) {
+        workDir = requestedRoot.value;
       } else {
-        workDir = callerCwd as string;
+        reply.send(
+          buildValidationEnvelope(
+            [{ path: rootPath, message: 'either workspace_id or workspace_root is required' }],
+            req.id,
+          ),
+        );
+        return;
       }
 
       try {
@@ -274,15 +282,10 @@ export function registerSessionsRoutes(
             if (appliesSettings) await applyAgentConfigToSession(session, settings);
           },
         });
-        const metadata = handle.accessor.get(ISessionMetadata);
-        if (typeof body.title === 'string') await metadata.setTitle(body.title);
-        const meta = await metadata.read();
-        const sessionId = meta.id;
-        const session = toWireSession(
-          { ...meta, workspaceId: resolved.id },
-          resolved.root,
-          resolveSessionFacts(core, sessionId),
-        );
+        if (typeof body.title === 'string') {
+          await handle.accessor.get(ISessionMetadata).setTitle(body.title);
+        }
+        const session = await toLiveWireSession(core, handle);
         core.accessor.get(IEventService).publish(
           new SessionCreated({ payload: { agentId: 'main', sessionId: session.id, session } }),
         );
@@ -352,8 +355,12 @@ export function registerSessionsRoutes(
         );
         return;
       }
+      const workspaceRoot = await workspaceRootOf(core, summary.workspaceId);
       reply.send(
-        okEnvelope(toWireSession(summary, cwd, resolveSessionFacts(core, session_id)), req.id),
+        okEnvelope(
+          toWireSession({ ...summary, workspaceRoot }, cwd, resolveSessionFacts(core, session_id)),
+          req.id,
+        ),
       );
     },
   );
@@ -645,13 +652,7 @@ async function readWaitSnapshot(
   const pendingInteractions = listPendingInteractions(id);
   let baseSession: Session;
   if (live !== undefined) {
-    const meta = await live.accessor.get(ISessionMetadata).read();
-    const ctx = live.accessor.get(ISessionContext);
-    baseSession = toWireSession(
-      { ...meta, workspaceId: ctx.workspaceId },
-      ctx.cwd,
-      resolveSessionFacts(core, id),
-    );
+    baseSession = await toLiveWireSession(core, live);
   } else {
     const summary = await core.accessor.get(ISessionIndex).get(id);
     if (summary === undefined) {
@@ -662,7 +663,11 @@ async function readWaitSnapshot(
     if (cwd === undefined) {
       throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${id} has no recoverable cwd`);
     }
-    baseSession = toWireSession(summary, cwd, resolveSessionFacts(core, id));
+    baseSession = toWireSession(
+      { ...summary, workspaceRoot: await workspaceRootOf(core, summary.workspaceId) },
+      cwd,
+      resolveSessionFacts(core, id),
+    );
   }
   const session =
     pendingInteractions.length > 0 && baseSession.pending_interaction === 'none'
@@ -828,8 +833,9 @@ async function forkSessionAction(
       metadata: body.metadata,
       turnIndex: body.turn_index,
     });
+    const workspaceId = lease.instance.program.workspaceId;
     const session = toWireSession(
-      { ...meta, workspaceId: lease.instance.program.workspaceId },
+      { ...meta, workspaceId, workspaceRoot: await workspaceRootOf(core, workspaceId) },
       meta.cwd ?? '',
       resolveSessionFacts(core, meta.id),
     );
@@ -1089,13 +1095,7 @@ async function restoreSessionAction(ctx: SessionActionCtx): Promise<void> {
   if (restored === undefined) {
     throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${id} does not exist`);
   }
-  const meta = await restored.accessor.get(ISessionMetadata).read();
-  const sessionCtx = restored.accessor.get(ISessionContext);
-  const session = toWireSession(
-    { ...meta, workspaceId: sessionCtx.workspaceId },
-    sessionCtx.cwd,
-    resolveSessionFacts(core, meta.id),
-  );
+  const session = await toLiveWireSession(core, restored);
   requestLog(req)?.info({ session_id: id, action: 'restore' }, 'session action completed');
   reply.send(okEnvelope(session, req.id));
 }
@@ -1187,13 +1187,7 @@ async function reloadSessionAction(ctx: SessionActionCtx): Promise<void> {
       .notifyAllChanges({ previousSubagentNames: reloadGuard?.previousSubagentNames });
     main.accessor.get(IAgentLoopService).flushReminders();
   }
-  const meta = await handle.accessor.get(ISessionMetadata).read();
-  const sessionCtx = handle.accessor.get(ISessionContext);
-  const session = toWireSession(
-    { ...meta, workspaceId: sessionCtx.workspaceId },
-    sessionCtx.cwd,
-    resolveSessionFacts(core, meta.id),
-  );
+  const session = await toLiveWireSession(core, handle);
   requestLog(req)?.info({ session_id: id, action: 'reload' }, 'session action completed');
   reply.send(okEnvelope(session, req.id));
 }
@@ -1220,17 +1214,8 @@ async function refreshWorkspaceCatalogs(
   );
 }
 
-export interface SessionWireFields {
-  readonly id: string;
-  readonly workspaceId: string;
-  readonly title?: string;
-  readonly lastPrompt?: string;
-  readonly createdAt: number;
-  readonly updatedAt: number;
-  readonly archived: boolean;
-  readonly archivedAt?: number;
-  readonly custom?: Record<string, unknown>;
-  readonly lastTurnReason?: 'completed' | 'cancelled' | 'failed';
+export interface SessionWireFields extends Omit<SessionSummary, 'cwd'> {
+  readonly workspaceRoot?: string;
 }
 
 export function toWireSession(
@@ -1247,7 +1232,10 @@ export function toWireSession(
   return {
     id: fields.id,
     workspace_id: fields.workspaceId,
+    workspace_root: fields.workspaceRoot,
     cwd,
+    environment_id: fields.environmentId ?? LOCAL_ENVIRONMENT_ID,
+    environment_cwd: fields.environmentCwd,
     title: fields.title ?? '',
     created_at: new Date(fields.createdAt).toISOString(),
     updated_at: new Date(fields.updatedAt).toISOString(),
@@ -1261,6 +1249,17 @@ export function toWireSession(
     metadata: buildWireMetadata(fields.custom),
     git,
   };
+}
+
+async function toLiveWireSession(core: Scope, session: ISessionScopeHandle): Promise<Session> {
+  const meta = await session.accessor.get(ISessionMetadata).read();
+  const ctx = session.accessor.get(ISessionContext);
+  const workspaceRoot = await workspaceRootOf(core, ctx.workspaceId);
+  return toWireSession(
+    { ...meta, workspaceId: ctx.workspaceId, workspaceRoot },
+    ctx.cwd,
+    resolveSessionFacts(core, meta.id),
+  );
 }
 
 export interface SessionFacts {
@@ -1310,6 +1309,20 @@ function normalizeOptional(value: string | undefined): string | undefined {
   if (value === undefined) return undefined;
   const trimmed = value.trim();
   return trimmed.length === 0 ? undefined : trimmed;
+}
+
+interface RequestedWorkspaceRoot {
+  readonly path: string;
+  readonly value: string;
+}
+
+function requestedWorkspaceRoots(body: SessionCreate): RequestedWorkspaceRoot[] {
+  const metadataCwd = body.metadata?.cwd;
+  return [
+    { path: 'cwd', value: body.cwd },
+    { path: 'metadata.cwd', value: typeof metadataCwd === 'string' ? metadataCwd : undefined },
+    { path: 'workspace_root', value: body.workspace_root },
+  ].filter((root): root is RequestedWorkspaceRoot => root.value !== undefined);
 }
 
 function buildWireMetadata(

@@ -33,7 +33,10 @@ export type SessionLastTurnOutcome = z.infer<typeof sessionLastTurnOutcomeSchema
 export const sessionSchema = z.object({
   id: z.string().min(1),
   workspace_id: workspaceIdSchema,
-  cwd: z.string(),
+  workspace_root: z.string().optional(),
+  cwd: z.string().meta({ deprecated: true }),
+  environment_id: z.string().optional(),
+  environment_cwd: z.string().optional(),
   title: z.string(),
   created_at: isoDateTimeSchema,
   updated_at: isoDateTimeSchema,
@@ -57,12 +60,13 @@ export const creationOnlyProfileSchema = z
 export const sessionCreateSchema = z
   .object({
     title: z.string().min(1).optional(),
-    cwd: z.string().min(1).optional(),
+    cwd: z.string().min(1).optional().meta({ deprecated: true }),
     metadata: sessionMetadataSchema.partial().optional(),
     agent_config: sessionAgentConfigPartialSchema
       .extend({ profile: z.string().min(1).optional() })
       .optional(),
     workspace_id: workspaceIdSchema.optional(),
+    workspace_root: z.string().min(1).optional(),
     environment_id: z.string().min(1).optional(),
     environment_cwd: z.string().min(1).optional(),
   })

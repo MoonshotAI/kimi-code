@@ -728,7 +728,7 @@ GET /api/v1/sessions response 200<code=0>.data: anyOf
 GET /api/v1/sessions response 200<code=0>.data<#0>.has_more: boolean
 GET /api/v1/sessions response 200<code=0>.data<#0>.items: array
 GET /api/v1/sessions response 200<code=0>.data<#0>.items[]: anyOf
-GET /api/v1/sessions response 200<code=0>.data<#0>.items[]<#0>: shape 84077bce
+GET /api/v1/sessions response 200<code=0>.data<#0>.items[]<#0>: shape 9bf1012b
 GET /api/v1/sessions response 200<code=0>.data<#0>.items[]<#1>.archived: boolean
 GET /api/v1/sessions response 200<code=0>.data<#0>.items[]<#1>.host_id: string optional
 GET /api/v1/sessions response 200<code=0>.data<#0>.items[]<#1>.id: string minLength=1
@@ -742,7 +742,7 @@ GET /api/v1/sessions response 200<code=0>.data<#1>.groups: array
 GET /api/v1/sessions response 200<code=0>.data<#1>.groups[].host_id: string optional
 GET /api/v1/sessions response 200<code=0>.data<#1>.groups[].sessions: array
 GET /api/v1/sessions response 200<code=0>.data<#1>.groups[].sessions[]: anyOf
-GET /api/v1/sessions response 200<code=0>.data<#1>.groups[].sessions[]<#0>: shape 84077bce
+GET /api/v1/sessions response 200<code=0>.data<#1>.groups[].sessions[]<#0>: shape 9bf1012b
 GET /api/v1/sessions response 200<code=0>.data<#1>.groups[].sessions[]<#1>.archived: boolean
 GET /api/v1/sessions response 200<code=0>.data<#1>.groups[].sessions[]<#1>.host_id: string optional
 GET /api/v1/sessions response 200<code=0>.data<#1>.groups[].sessions[]<#1>.id: string minLength=1
@@ -776,7 +776,7 @@ GET /api/v1/sessions response 200<code=50005>: object closed
 GET /api/v1/sessions/{session_id} param path:session_id: string minLength=1
 GET /api/v1/sessions/{session_id} param query:hosts: enum "include" optional
 GET /api/v1/sessions/{session_id} response 200: oneOf
-GET /api/v1/sessions/{session_id} response 200<code=0>: shape b3ba90e0
+GET /api/v1/sessions/{session_id} response 200<code=0>: shape 333d10e0
 GET /api/v1/sessions/{session_id} response 200<code=40001>: shape d4845858
 GET /api/v1/sessions/{session_id} response 200<code=40401>: shape 2bda561c
 GET /api/v1/sessions/{session_id} response 200<code=50005>.code: enum 50005
@@ -1133,6 +1133,7 @@ GET /api/v1/sessions/{session_id}/environment param path:session_id: string minL
 GET /api/v1/sessions/{session_id}/environment response 200: oneOf
 GET /api/v1/sessions/{session_id}/environment response 200<code=0>.code: enum 0
 GET /api/v1/sessions/{session_id}/environment response 200<code=0>.data.cwd: string optional
+GET /api/v1/sessions/{session_id}/environment response 200<code=0>.data.environment_cwd: string optional
 GET /api/v1/sessions/{session_id}/environment response 200<code=0>.data.environment_id: string
 GET /api/v1/sessions/{session_id}/environment response 200<code=0>.data.workspace_id: string
 GET /api/v1/sessions/{session_id}/environment response 200<code=0>.data: object closed
@@ -2400,9 +2401,10 @@ POST /api/v1/sessions request.metadata: object optional
 POST /api/v1/sessions request.metadata{*}: any optional
 POST /api/v1/sessions request.title: string minLength=1 optional
 POST /api/v1/sessions request.workspace_id: string pattern="^wd_[a-z0-9._-]+_[0-9a-f]{12}$|^wm_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$" optional
+POST /api/v1/sessions request.workspace_root: string minLength=1 optional
 POST /api/v1/sessions request: object
 POST /api/v1/sessions response 200: oneOf
-POST /api/v1/sessions response 200<code=0>: shape b3ba90e0
+POST /api/v1/sessions response 200<code=0>: shape 333d10e0
 POST /api/v1/sessions response 200<code=40001>: shape d4845858
 POST /api/v1/sessions response 200<code=40113>: shape ffc7e294
 POST /api/v1/sessions response 200<code=40409>: shape 197643f0
@@ -2564,7 +2566,7 @@ POST /api/v1/sessions/{session_id}/profile response 200<code=0>.data.agent.swarm
 POST /api/v1/sessions/{session_id}/profile response 200<code=0>.data.agent.thinking: string optional
 POST /api/v1/sessions/{session_id}/profile response 200<code=0>.data.agent.tower_mode: boolean
 POST /api/v1/sessions/{session_id}/profile response 200<code=0>.data.agent: object closed
-POST /api/v1/sessions/{session_id}/profile response 200<code=0>.data.session: shape 84077bce
+POST /api/v1/sessions/{session_id}/profile response 200<code=0>.data.session: shape 9bf1012b
 POST /api/v1/sessions/{session_id}/profile response 200<code=0>.data: object closed
 POST /api/v1/sessions/{session_id}/profile response 200<code=0>.details: any optional
 POST /api/v1/sessions/{session_id}/profile response 200<code=0>.msg: string
@@ -3195,7 +3197,7 @@ POST /api/v1/sessions/{session_id}:delete response 200<code=40940>: shape b0ef3a
 POST /api/v1/sessions/{session_id}:delete: operation
 POST /api/v1/sessions/{session_id}:reload param path:session_id: string minLength=1
 POST /api/v1/sessions/{session_id}:reload response 200: oneOf
-POST /api/v1/sessions/{session_id}:reload response 200<code=0>: shape b3ba90e0
+POST /api/v1/sessions/{session_id}:reload response 200<code=0>: shape 333d10e0
 POST /api/v1/sessions/{session_id}:reload response 200<code=40001>: shape d4845858
 POST /api/v1/sessions/{session_id}:reload response 200<code=40110>: shape bf00a2c5
 POST /api/v1/sessions/{session_id}:reload response 200<code=40111>: shape 00776ba9
@@ -3275,7 +3277,7 @@ POST /api/v1/sessions/{session_id}:wait response 200<code=0>.data.pending_intera
 POST /api/v1/sessions/{session_id}:wait response 200<code=0>.data.pending_interactions[]<#1>.session_id: string minLength=1
 POST /api/v1/sessions/{session_id}:wait response 200<code=0>.data.pending_interactions[]<#1>.tool_call_id: string minLength=1 optional
 POST /api/v1/sessions/{session_id}:wait response 200<code=0>.data.pending_interactions[]<#1>: object closed
-POST /api/v1/sessions/{session_id}:wait response 200<code=0>.data.session: shape 84077bce
+POST /api/v1/sessions/{session_id}:wait response 200<code=0>.data.session: shape 9bf1012b
 POST /api/v1/sessions/{session_id}:wait response 200<code=0>.data.timed_out: boolean
 POST /api/v1/sessions/{session_id}:wait response 200<code=0>.data: object closed
 POST /api/v1/sessions/{session_id}:wait response 200<code=0>.details: any optional
@@ -4039,6 +4041,8 @@ ws server message session_event<session>.session.archived: boolean optional
 ws server message session_event<session>.session.archived_at: string optional
 ws server message session_event<session>.session.created_at: string
 ws server message session_event<session>.session.cwd: string
+ws server message session_event<session>.session.environment_cwd: string optional
+ws server message session_event<session>.session.environment_id: string optional
 ws server message session_event<session>.session.git.branch: string optional
 ws server message session_event<session>.session.git.pull_request.number: integer minimum=-9007199254740991 maximum=9007199254740991
 ws server message session_event<session>.session.git.pull_request.state: enum "closed"|"merged"|"open"
@@ -4055,6 +4059,7 @@ ws server message session_event<session>.session.pending_interaction: enum "appr
 ws server message session_event<session>.session.title: string
 ws server message session_event<session>.session.updated_at: string
 ws server message session_event<session>.session.workspace_id: string pattern="^wd_[a-z0-9._-]+_[0-9a-f]{12}$|^wm_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+ws server message session_event<session>.session.workspace_root: string optional
 ws server message session_event<session>.session: object
 ws server message session_event<session>.type: const "session"
 ws server message session_event<session>: object
@@ -4459,6 +4464,11 @@ shape 2bda561c.data: enum null nullable
 shape 2bda561c.details: any optional
 shape 2bda561c.msg: string
 shape 2bda561c.request_id: string
+shape 333d10e0.code: enum 0
+shape 333d10e0.data: shape 9bf1012b
+shape 333d10e0.details: any optional
+shape 333d10e0.msg: string
+shape 333d10e0.request_id: string
 shape 334778dd.content: array
 shape 334778dd.content[]: oneOf
 shape 334778dd.content[]<file>: shape 89bafe20
@@ -4588,24 +4598,6 @@ shape 83adad86.data: enum null nullable
 shape 83adad86.details: any optional
 shape 83adad86.msg: string
 shape 83adad86.request_id: string
-shape 84077bce.activity: enum "background"|"idle"|"turn"
-shape 84077bce.archived: boolean optional
-shape 84077bce.archived_at: any optional
-shape 84077bce.created_at: any
-shape 84077bce.cwd: string
-shape 84077bce.git.branch: string optional
-shape 84077bce.git.pull_request: shape 1b0e86ef optional
-shape 84077bce.git: object closed optional
-shape 84077bce.host_id: string optional
-shape 84077bce.id: string minLength=1
-shape 84077bce.last_prompt: string optional
-shape 84077bce.last_turn_outcome: enum "completed"|"failed"|"interrupted" optional
-shape 84077bce.metadata: object optional
-shape 84077bce.metadata{*}: any optional
-shape 84077bce.pending_interaction: enum "approval"|"none"|"question" optional
-shape 84077bce.title: string
-shape 84077bce.updated_at: any
-shape 84077bce.workspace_id: string pattern="^wd_[a-z0-9._-]+_[0-9a-f]{12}$|^wm_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
 shape 84d07548.installed_sha: string optional
 shape 84d07548.owner: string
 shape 84d07548.ref.kind: enum "branch"|"sha"|"tag"
@@ -4659,6 +4651,27 @@ shape 9bd41b04.data: enum null nullable
 shape 9bd41b04.details: any optional
 shape 9bd41b04.msg: string
 shape 9bd41b04.request_id: string
+shape 9bf1012b.activity: enum "background"|"idle"|"turn"
+shape 9bf1012b.archived: boolean optional
+shape 9bf1012b.archived_at: any optional
+shape 9bf1012b.created_at: any
+shape 9bf1012b.cwd: string
+shape 9bf1012b.environment_cwd: string optional
+shape 9bf1012b.environment_id: string optional
+shape 9bf1012b.git.branch: string optional
+shape 9bf1012b.git.pull_request: shape 1b0e86ef optional
+shape 9bf1012b.git: object closed optional
+shape 9bf1012b.host_id: string optional
+shape 9bf1012b.id: string minLength=1
+shape 9bf1012b.last_prompt: string optional
+shape 9bf1012b.last_turn_outcome: enum "completed"|"failed"|"interrupted" optional
+shape 9bf1012b.metadata: object optional
+shape 9bf1012b.metadata{*}: any optional
+shape 9bf1012b.pending_interaction: enum "approval"|"none"|"question" optional
+shape 9bf1012b.title: string
+shape 9bf1012b.updated_at: any
+shape 9bf1012b.workspace_id: string pattern="^wd_[a-z0-9._-]+_[0-9a-f]{12}$|^wm_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+shape 9bf1012b.workspace_root: string optional
 shape 9d70335c.code: enum 40930
 shape 9d70335c.data: enum null nullable
 shape 9d70335c.details: any optional
@@ -4763,11 +4776,6 @@ shape b2ce4116.data: enum null nullable
 shape b2ce4116.details: any optional
 shape b2ce4116.msg: string
 shape b2ce4116.request_id: string
-shape b3ba90e0.code: enum 0
-shape b3ba90e0.data: shape 84077bce
-shape b3ba90e0.details: any optional
-shape b3ba90e0.msg: string
-shape b3ba90e0.request_id: string
 shape b64f394d.code: enum 40420
 shape b64f394d.data: enum null nullable
 shape b64f394d.details: any optional
