@@ -326,6 +326,27 @@ describe('mainView ↔ URL binding (session admin page)', () => {
     expect(rawState.mainView).toBe('chat');
   });
 
+  it('popstate ignores a session fetch that finishes after the user navigated elsewhere', async () => {
+    const { rawState, win, ws } = createState({
+      initialPath: '/sessions/s1',
+      sessions: [pooledSession('s1')],
+      activeSessionId: 's1',
+    });
+    let resolveFetch!: (session: ReturnType<typeof pooledSession>) => void;
+    getKimiWebApiMock().getSession.mockReturnValueOnce(new Promise((resolve) => (resolveFetch = resolve)));
+
+    win.land('/sessions/s9');
+    ws.onSessionRoutePopState();
+    win.land('/sessions/s1');
+    ws.onSessionRoutePopState();
+    resolveFetch(pooledSession('s9'));
+    await vi.waitFor(() => expect(rawState.sessions.some((s) => s.id === 's9')).toBe(true));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(rawState.activeSessionId).toBe('s1');
+    expect(win.path()).toBe('/sessions/s1');
+  });
+
   it("popstate out of the admin page to '/' clears the active session", () => {
     const { rawState, win, ws } = createState({
       sessions: [pooledSession('s1')],

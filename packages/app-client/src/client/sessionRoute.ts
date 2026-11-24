@@ -69,7 +69,9 @@ export function createSessionRoute(rawState: ExtendedState, deps: SessionRouteDe
       return;
     }
     void (async () => {
-      if ((await deps.fetchSessionIntoList(id)) === 'ok') {
+      const outcome = await deps.fetchSessionIntoList(id);
+      if (readSessionIdFromLocation(routeLocation()) !== id) return;
+      if (outcome === 'ok') {
         await deps.selectSession(id, { urlMode: 'none', skipTrack: true });
         return;
       }
