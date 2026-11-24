@@ -759,6 +759,22 @@ export const WIRE_RENDERERS: RendererMap = {
     },
   },
 
+  'auto_review.ancestry_recorded': {
+    tone: 'meta',
+    label: 'review',
+    headline: (r) => ({
+      main: (
+        <span className="flex items-center gap-2 min-w-0">
+          <Dim>inherited</Dim>
+          <Mono>{r.authorization.length}</Mono>
+          <Dim>instructions ·</Dim>
+          <Mono>{r.approvedToolCallIds.length}</Mono>
+          <Dim>approved calls</Dim>
+        </span>
+      ),
+    }),
+  },
+
   'auto_review.decision': {
     tone: 'approval',
     label: 'review',

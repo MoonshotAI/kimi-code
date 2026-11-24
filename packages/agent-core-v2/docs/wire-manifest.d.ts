@@ -26,7 +26,8 @@
 // cross-reducers), blobs (the folding states whose blob codec offloads inline
 // media to blob storage), owner (the source file declaring the class).
 
-// Index (68 record types)
+// Index (69 record types)
+//   auto_review.ancestry_recorded      autoReview.ancestry                                                                        src/features/autoReview/autoReviewEvents.ts
 //   auto_review.decision               (none)                                                                                     src/features/autoReview/autoReviewEvents.ts
 //   changeNotifier.snapshot            changeNotifier.snapshot                                                                    src/agent/changeNotifier/changeNotifierOps.ts
 //   config.update                      (none)                                                                                     src/agent/profile/profileOps.ts
@@ -95,6 +96,17 @@
 //   turn.prompt                        autoReview.approvedToolCallIds, changeNotifier.snapshot, interruptionReminder, plan, turn  src/agent/loop/turnOps.ts
 //   turn.steer                         autoReview.approvedToolCallIds, changeNotifier.snapshot, interruptionReminder, plan, turn  src/agent/loop/turnOps.ts
 //   usage.record                       (none)                                                                                     src/agent/usage/usageOps.ts
+
+/**
+ * states: autoReview.ancestry
+ * owner: src/features/autoReview/autoReviewEvents.ts
+ */
+interface AutoReviewAncestryRecordedPayload {
+  _name: 'auto_review.ancestry_recorded';
+  agentId: string;
+  authorization: readonly ReviewText[];
+  approvedToolCallIds: string[];
+}
 
 /**
  * states: (none)
@@ -1029,6 +1041,7 @@ interface UsageRecordPayload {
 
 /** Record type → payload sketch. */
 interface WirePayloadMap {
+  "auto_review.ancestry_recorded": AutoReviewAncestryRecordedPayload;
   "auto_review.decision": AutoReviewDecisionPayload;
   "changeNotifier.snapshot": ChangeNotifierSnapshotPayload;
   "config.update": ConfigUpdatePayload;

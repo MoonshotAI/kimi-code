@@ -22,9 +22,12 @@ import { IEventDispatcher } from '#/state/eventDispatcher';
 import type { Message } from '@moonshot-ai/core/llm/message';
 
 import {
+  AutoReviewAncestryRecorded,
   AutoReviewCompleted,
   AutoReviewStarted,
+  autoReviewAncestryKey,
   autoReviewApprovedCallsKey,
+  type AutoReviewAncestry,
 } from './autoReviewEvents';
 import { createAutoReviewReviewer } from './autoReviewGate';
 import { AUTO_REVIEW_SECTION, type AutoReviewConfig } from './configSection';
@@ -43,7 +46,7 @@ import {
 
 const MAX_GIT_STATUS_ENTRIES = 50;
 const AUTHORIZATION_CHANGED_REASON = 'Authorization changed during review.';
-const EMPTY_APPROVED_CALL_IDS: ReadonlySet<string> = new Set();
+const EMPTY_ANCESTRY: AutoReviewAncestry = { authorization: [], approvedToolCallIds: [] };
 
 interface ReviewSnapshot {
   readonly history: readonly ContextMessage[];
@@ -52,15 +55,8 @@ interface ReviewSnapshot {
   readonly messages: readonly Message[];
 }
 
-interface AncestorReviewSnapshot {
-  readonly inherited: readonly ReviewText[];
-  readonly approvedCallIds: ReadonlySet<string>;
-}
-
 export class AutoReviewService extends Service implements IAutoReviewService {
   declare readonly _serviceBrand: undefined;
-  private readonly inherited: readonly ReviewText[];
-  private readonly inheritedApprovedCallIds: ReadonlySet<string>;
 
   constructor(
     @IFlagService flags: IFlagService,
@@ -81,10 +77,17 @@ export class AutoReviewService extends Service implements IAutoReviewService {
     @ILogService private readonly log: ILogService,
   ) {
     super();
-    const ancestor = this.snapshotAncestorState(agentLifecycle);
-    this.inherited = ancestor.inherited;
-    this.inheritedApprovedCallIds = ancestor.approvedCallIds;
     this._register(this.states.contributeState(autoReviewApprovedCallsKey));
+    this._register(this.states.contributeState(autoReviewAncestryKey));
+    this._register(dispatcher.hooks.onDidRestore.register('autoReview', async (_ctx, next) => {
+      if (this.scopeContext.agentId !== MAIN_AGENT_ID && this.states.get(autoReviewAncestryKey) === undefined) {
+        await this.dispatcher.dispatch(new AutoReviewAncestryRecorded({
+          agentId: this.scopeContext.agentId,
+          ...this.snapshotAncestry(agentLifecycle),
+        }));
+      }
+      await next();
+    }));
     this._register(
       permissionGate.registerReviewer(
         createAutoReviewReviewer(flags, modeService, policyService, this),
@@ -93,19 +96,18 @@ export class AutoReviewService extends Service implements IAutoReviewService {
   }
 
   inheritedAuthorization(): readonly ReviewText[] {
-    return this.inherited;
+    return this.ancestry().authorization;
   }
 
   humanAuthorization(): readonly ReviewText[] {
     const own = extractAuthorization(this.loop.history())
       .filter((entry) => entry.role === 'human-instruction');
-    return this.inherited.length === 0 ? own : [...this.inherited, ...own];
+    const inherited = this.inheritedAuthorization();
+    return inherited.length === 0 ? own : [...inherited, ...own];
   }
 
   approvedToolCallIds(): ReadonlySet<string> {
-    const own = this.states.get(autoReviewApprovedCallsKey);
-    if (this.inheritedApprovedCallIds.size === 0) return new Set(own);
-    return new Set([...this.inheritedApprovedCallIds, ...own]);
+    return new Set([...this.ancestry().approvedToolCallIds, ...this.states.get(autoReviewApprovedCallsKey)]);
   }
 
   async review(
@@ -195,33 +197,31 @@ export class AutoReviewService extends Service implements IAutoReviewService {
     return outcome;
   }
 
-  private authorizationOf(history: readonly ContextMessage[]): readonly ReviewText[] {
-    const own = extractAuthorization(history);
-    return this.inherited.length === 0 ? own : [...this.inherited, ...own];
+  private ancestry(): AutoReviewAncestry {
+    return this.states.get(autoReviewAncestryKey) ?? EMPTY_ANCESTRY;
   }
 
-  private snapshotAncestorState(agentLifecycle: IAgentLifecycleService): AncestorReviewSnapshot {
-    const { agentId, meta, forkedFrom } = this.scopeContext;
-    if (agentId === MAIN_AGENT_ID) {
-      return { inherited: [], approvedCallIds: EMPTY_APPROVED_CALL_IDS };
-    }
+  private authorizationOf(history: readonly ContextMessage[]): readonly ReviewText[] {
+    const own = extractAuthorization(history);
+    const inherited = this.inheritedAuthorization();
+    return inherited.length === 0 ? own : [...inherited, ...own];
+  }
+
+  private snapshotAncestry(agentLifecycle: IAgentLifecycleService): AutoReviewAncestry {
+    const { meta, forkedFrom } = this.scopeContext;
     const forkSourceId = meta?.forkedFrom ?? forkedFrom;
     if (forkSourceId !== undefined) {
-      const source = agentLifecycle.handleOf(forkSourceId);
-      if (source === undefined) return { inherited: [], approvedCallIds: EMPTY_APPROVED_CALL_IDS };
-      const sourceReviewer = source.accessor.get(IAutoReviewService);
+      const source = agentLifecycle.handleOf(forkSourceId)?.accessor.get(IAutoReviewService);
+      if (source === undefined) return EMPTY_ANCESTRY;
       return {
-        inherited: sourceReviewer.inheritedAuthorization(),
-        approvedCallIds: new Set(sourceReviewer.approvedToolCallIds()),
+        authorization: source.inheritedAuthorization(),
+        approvedToolCallIds: [...source.approvedToolCallIds()],
       };
     }
     const parentId = subagentParentAgentId(meta) ?? meta?.parentAgentId ?? MAIN_AGENT_ID;
-    const parent = agentLifecycle.handleOf(parentId);
-    if (parent === undefined) return { inherited: [], approvedCallIds: EMPTY_APPROVED_CALL_IDS };
-    return {
-      inherited: parent.accessor.get(IAutoReviewService).humanAuthorization(),
-      approvedCallIds: EMPTY_APPROVED_CALL_IDS,
-    };
+    const parent = agentLifecycle.handleOf(parentId)?.accessor.get(IAutoReviewService);
+    if (parent === undefined) return EMPTY_ANCESTRY;
+    return { authorization: parent.humanAuthorization(), approvedToolCallIds: [] };
   }
 
   private async takeSnapshot(
@@ -235,7 +235,7 @@ export class AutoReviewService extends Service implements IAutoReviewService {
     const gitStatus = await abortable(this.readGitStatus(cwd, context), signal);
     const messages = buildReviewMessages(
       history,
-      this.inherited,
+      this.inheritedAuthorization(),
       projectInstructions.agentsMd,
       projectInstructions.agentsMdPaths,
       cwd,

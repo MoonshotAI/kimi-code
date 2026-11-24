@@ -1,4 +1,4 @@
-import { createUserMessage, type ContentPart } from '@moonshot-ai/core/llm/message';
+import { createUserMessage, type ContentPart, type TextPart } from '@moonshot-ai/core/llm/message';
 import { isUserPromptSubmitHookPart } from '#/agent/contextMemory/hookParts';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
@@ -10,7 +10,7 @@ const SECTION_TAG = /<(\/?(?:environment|project_instructions|history|pending_ac
 
 export interface ReviewText {
   readonly role: 'human-instruction' | 'direct-parent-instruction' | 'constraint' | 'fact';
-  readonly content: readonly ContentPart[];
+  readonly content: readonly TextPart[];
 }
 
 export interface ReviewGitStatus {
@@ -70,10 +70,7 @@ export function sameAuthorization(
     const other = right[index]!;
     return entry.role === other.role
       && entry.content.length === other.content.length
-      && entry.content.every((part, partIndex) => {
-        const otherPart = other.content[partIndex]!;
-        return part.type === 'text' && otherPart.type === 'text' && part.text === otherPart.text;
-      });
+      && entry.content.every((part, partIndex) => part.text === other.content[partIndex]!.text);
   });
 }
 
@@ -114,7 +111,7 @@ function actionEntries(
     }));
 }
 
-function reviewPart(part: ContentPart): ContentPart[] {
+function reviewPart(part: ContentPart): TextPart[] {
   if (isUserPromptSubmitHookPart(part)) return [];
   if (part.type === 'text') return [part];
   return [{ type: 'text', text: `[${part.type} attachment omitted]` }];

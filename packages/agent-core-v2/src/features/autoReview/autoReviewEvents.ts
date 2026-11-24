@@ -6,6 +6,8 @@ import { PermissionRecordApprovalResult } from '#/agent/permissionRules/permissi
 import { AgentEvent2, registerEvent2Class } from '#/app/event/event2';
 import { defineState } from '#/state/state';
 
+import type { ReviewText } from './context';
+
 export interface AutoReviewStartedPayload {
   readonly agentId: string;
   readonly turnId: number;
@@ -59,8 +61,29 @@ export interface AutoReviewCompletedEvent extends Omit<z.infer<typeof autoReview
   readonly type: 'auto_review.decision';
 }
 
+export interface AutoReviewAncestry {
+  readonly authorization: readonly ReviewText[];
+  readonly approvedToolCallIds: readonly string[];
+}
+
+const autoReviewAncestryRecordedSchema = z.object({
+  agentId: z.string(),
+  authorization: z.custom<readonly ReviewText[]>(),
+  approvedToolCallIds: z.array(z.string()).readonly(),
+});
+
+export class AutoReviewAncestryRecorded extends AgentEvent2<z.infer<typeof autoReviewAncestryRecordedSchema>> {
+  static override readonly type = 'auto_review.ancestry_recorded';
+  static override readonly durable = true;
+  static override readonly schema = autoReviewAncestryRecordedSchema;
+}
+export interface AutoReviewAncestryRecorded extends AutoReviewAncestry {
+  readonly agentId: string;
+}
+
 registerEvent2Class(AutoReviewStarted);
 registerEvent2Class(AutoReviewCompleted);
+registerEvent2Class(AutoReviewAncestryRecorded);
 
 export const autoReviewApprovedCallsKey = defineState(
   'autoReview.approvedToolCallIds',
@@ -74,3 +97,13 @@ export const autoReviewApprovedCallsKey = defineState(
       s.push(e.toolCallId);
     }
   });
+
+export const autoReviewAncestryKey = defineState(
+  'autoReview.ancestry',
+  (): AutoReviewAncestry | undefined => undefined,
+)
+  .replayable({ schema: z.custom<AutoReviewAncestry | undefined>() })
+  .on(AutoReviewAncestryRecorded, (_s, e) => ({
+    authorization: e.authorization,
+    approvedToolCallIds: e.approvedToolCallIds,
+  }));

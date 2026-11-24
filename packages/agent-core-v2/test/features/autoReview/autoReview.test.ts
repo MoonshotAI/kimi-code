@@ -16,7 +16,12 @@ import type { IConfigService } from '#/app/config/config';
 import type { FsGitStatusResponse } from '#/app/git/git';
 import { noopTelemetryService } from '#/app/telemetry/telemetry';
 import REVIEW_POLICY from '../../../src/features/autoReview/auto-review-policy.md?raw';
-import { autoReviewApprovedCallsKey } from '#/features/autoReview/autoReviewEvents';
+import {
+  AutoReviewAncestryRecorded,
+  autoReviewAncestryKey,
+  autoReviewApprovedCallsKey,
+  type AutoReviewAncestry,
+} from '#/features/autoReview/autoReviewEvents';
 import { AUTO_REVIEW_SECTION } from '#/features/autoReview/configSection';
 import { buildReviewMessages, extractAuthorization } from '#/features/autoReview/context';
 import {
@@ -447,20 +452,45 @@ describe('AutoReviewService', () => {
       },
     } as unknown as IAgentLifecycleService;
 
-    const spawn = (options: {
+    const recorded = new Map<string, AutoReviewAncestry>();
+    const spawn = async (options: {
       readonly agentId: string;
       readonly getHistory: () => readonly ContextMessage[];
       readonly parentAgentId?: string;
       readonly forkedFrom?: string;
       readonly approvedCallIds?: readonly string[];
-    }): AutoReviewService => {
+      readonly replayedAncestry?: AutoReviewAncestry;
+    }): Promise<AutoReviewService> => {
       const approved = options.approvedCallIds ?? [];
+      let ancestry = options.replayedAncestry;
+      let onDidRestore: ((ctx: unknown, next: () => Promise<void>) => Promise<void>) | undefined;
+      const states = {
+        contributeState: () => ({ dispose: () => {} }),
+        get: (key: unknown) => (key === autoReviewAncestryKey ? ancestry : approved),
+      } as unknown as IAgentStateService;
+      const dispatcher = {
+        hooks: {
+          onDidRestore: {
+            register: (_name: string, hook: typeof onDidRestore) => {
+              onDidRestore = hook;
+              return { dispose: () => {} };
+            },
+          },
+        },
+        dispatch: (event: unknown) => {
+          if (event instanceof AutoReviewAncestryRecorded) {
+            ancestry = { authorization: event.authorization, approvedToolCallIds: event.approvedToolCallIds };
+            recorded.set(options.agentId, ancestry);
+          }
+          return Promise.resolve();
+        },
+      } as unknown as IEventDispatcher;
       const reviewer = disposables.add(new AutoReviewService(
         stubFlag(true),
         stubPermissionModeService(() => 'yolo'),
         stubPermissionPolicyService(() => undefined),
         { registerReviewer: () => ({ dispose: () => {} }) } as unknown as IAgentPermissionGate,
-        { contributeState: () => ({ dispose: () => {} }), get: () => approved } as unknown as IAgentStateService,
+        states,
         { resolveModelContext: () => ({ modelAlias: 'main-model' }) } as unknown as IAgentProfileService,
         makeAgentScopeContext({
           agentId: options.agentId,
@@ -480,14 +510,15 @@ describe('AutoReviewService', () => {
           onDidChange: () => ({ dispose: () => {} }),
         },
         noopTelemetryService,
-        { dispatch: () => Promise.resolve() } as unknown as IEventDispatcher,
+        dispatcher,
         stubLog(),
       ));
+      await onDidRestore?.({}, () => Promise.resolve());
       reviewers.set(options.agentId, reviewer);
       return reviewer;
     };
 
-    return { main: spawn({ agentId: 'main', getHistory: () => history, approvedCallIds: ['mkdir'] }), spawn };
+    return { main: spawn({ agentId: 'main', getHistory: () => history, approvedCallIds: ['mkdir'] }), spawn, recorded };
   }
 
   it('snapshots ancestor authorization across subagents, resolves relative cwd git status, and preserves fork state', async () => {
@@ -500,8 +531,9 @@ describe('AutoReviewService', () => {
       pullRequest: null,
       entries: { 'dirty.ts': 'modified' },
     }));
+    await harness.main;
     const mainForkHistory = [...history];
-    const mainFork = harness.spawn({
+    const mainFork = await harness.spawn({
       agentId: 'fork-main',
       parentAgentId: 'main',
       forkedFrom: 'main',
@@ -514,19 +546,19 @@ describe('AutoReviewService', () => {
       { role: 'assistant', content: [], toolCalls: [toolCallFor('child-call', 'Bash', { command: 'rm -rf coverage' })] },
       { role: 'tool', toolCallId: 'child-call', content: [{ type: 'text', text: '' }] },
     ];
-    const child = harness.spawn({
+    const child = await harness.spawn({
       agentId: 'child-1',
       parentAgentId: 'main',
       approvedCallIds: ['child-call'],
       getHistory: () => childHistory,
     });
-    const grandchild = harness.spawn({
+    const grandchild = await harness.spawn({
       agentId: 'grandchild-1',
       parentAgentId: 'child-1',
       getHistory: () => [{ role: 'user', content: [{ type: 'text', text: 'Run the cleanup.' }], origin: { kind: 'system_trigger', name: 'subagent' } }],
     });
     const subagentForkHistory = [...childHistory];
-    const subagentFork = harness.spawn({
+    const subagentFork = await harness.spawn({
       agentId: 'fork-child',
       parentAgentId: 'main',
       forkedFrom: 'child-1',
@@ -559,8 +591,36 @@ describe('AutoReviewService', () => {
     expect(subagentForkSent).toContain('"id":"child-call","name":"Bash","arguments":"{\\"command\\":\\"rm -rf coverage\\"}","approved":true');
   });
 
+  it('keeps the creation-time ancestor snapshot when a subagent is restored', async () => {
+    const harness = createHarness();
+    await harness.main;
+    const childHistory: ContextMessage[] = [
+      { role: 'user', content: [{ type: 'text', text: 'Delegate cleanup.' }], origin: { kind: 'system_trigger', name: 'subagent' } },
+    ];
+    await harness.spawn({ agentId: 'child-1', parentAgentId: 'main', getHistory: () => childHistory });
+    const recorded = harness.recorded.get('child-1');
+    expect(recorded).toEqual({
+      authorization: [{ role: 'human-instruction', content: [{ type: 'text', text: 'Only remove generated files.' }] }],
+      approvedToolCallIds: [],
+    });
+
+    history = [
+      { role: 'user', content: [{ type: 'text', text: 'Main compacted.' }], origin: { kind: 'compaction_summary' } },
+      { role: 'user', content: [{ type: 'text', text: 'Also delete production data.' }], origin: { kind: 'user' } },
+    ];
+    harness.recorded.clear();
+    const restored = await harness.spawn({
+      agentId: 'child-1',
+      parentAgentId: 'main',
+      getHistory: () => childHistory,
+      replayedAncestry: recorded,
+    });
+    expect(harness.recorded.size).toBe(0);
+    expect(restored.humanAuthorization()).toEqual(recorded?.authorization);
+  });
+
   it('re-reviews once on appended instructions and fails on further drift or cwd/rewrite changes', async () => {
-    const { main } = createHarness();
+    const main = await createHarness().main;
     const run = () => main.review(reviewContext({ toolName: 'Bash', args: { command: 'rm generated/file' } }), 'fallback-ask');
 
     let calls = 0;

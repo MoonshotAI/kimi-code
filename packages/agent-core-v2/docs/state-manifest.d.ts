@@ -27,7 +27,7 @@
 // references become '(circular)', and class instances collapse to a '(ClassName)'
 // marker — the wire shape of an entry is the JSON projection of the type here.
 //
-// Index (App: 0 keys · Workspace: 8 keys · Session: 9 keys · Agent: 63 keys)
+// Index (App: 0 keys · Workspace: 8 keys · Session: 9 keys · Agent: 64 keys)
 //   App
 //   Workspace
 //     workspaceDirs.ephemeralDirs          src/workspace/workspaceDirs/workspaceDirsService.ts
@@ -53,6 +53,7 @@
 //     agentsMdReminder.cwd                            src/agent/agentsMdReminder/agentsMdReminderService.ts
 //     agentsMdReminder.known                          src/agent/agentsMdReminder/agentsMdReminderService.ts
 //     agentsMdReminder.seeded                         src/agent/agentsMdReminder/agentsMdReminderService.ts
+//     autoReview.ancestry                             src/features/autoReview/autoReviewEvents.ts
 //     autoReview.approvedToolCallIds                  src/features/autoReview/autoReviewEvents.ts
 //     changeNotifier.snapshot                         src/agent/changeNotifier/changeNotifierOps.ts
 //     contextProjector.lastRepairSignature            src/agent/loop/requestObservation.ts
@@ -1212,6 +1213,22 @@ export interface AgentStateSnapshot {
     readonly disclosure?: 'inline' | 'deferred';
   }>;
   // src/features/autoReview/autoReviewEvents.ts
+  // replayable · durable — folds: AutoReviewAncestryRecorded
+  'autoReview.ancestry': /* AutoReviewAncestry — packages/agent-core-v2/src/features/autoReview/autoReviewEvents.ts */ {
+    readonly authorization: readonly /* ReviewText — packages/agent-core-v2/src/features/autoReview/context.ts */ {
+      readonly role: 'human-instruction' | 'direct-parent-instruction' | 'constraint' | 'fact';
+      readonly content: readonly /* TextPart — packages/core/src/llm/message.ts */ {
+        type: 'text';
+        text: string;
+        contentType?: string;
+        meta?: /* ContentPartMeta — packages/core/src/llm/message.ts */ {
+          readonly kind?: string;
+          [key: string]: unknown;
+        };
+      }[];
+    }[];
+    readonly approvedToolCallIds: readonly string[];
+  } | undefined;
   // replayable · durable · undoable — folds: ContextClear, PermissionRecordApprovalResult
   'autoReview.approvedToolCallIds': readonly string[];
   // src/features/externalHooks/agent/agentExternalHooksService.ts
