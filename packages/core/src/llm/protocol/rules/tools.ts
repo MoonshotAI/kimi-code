@@ -1,4 +1,4 @@
-import type { ToolDescription } from '#/llm/message';
+import { readToolLifecycleMeta, type ToolDescription } from '#/llm/message';
 import { log } from '#/utils/log';
 
 import type { PassContext } from '../pipeline';
@@ -37,6 +37,11 @@ export function legalizeTools<TOptions>(
   const messages = [...module.content.messages];
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index]!;
+    for (const part of message.content) {
+      const lifecycle = readToolLifecycleMeta(part);
+      if (lifecycle === undefined) continue;
+      for (const name of lifecycle.removed) seen.delete(name);
+    }
     if (message.role !== 'system' || message.tools === undefined) continue;
     const kept: ToolDescription[] = [];
     let messageChanged = false;

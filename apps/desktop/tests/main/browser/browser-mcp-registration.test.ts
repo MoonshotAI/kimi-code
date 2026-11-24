@@ -133,7 +133,9 @@ it('loads the browser through upstream MCP selection and restores it with sessio
     expect(registry.resolve(name)).toBeDefined();
     await selection.prepareForRequest();
     expect(selection.shapeTools(registry.list()).map((tool) => tool.name)).not.toContain(name);
-    expect(selection.loadableToolsAnnouncement()?.content).toContain(name);
+    expect(selection.loadableToolsAnnouncement()?.content[0]).toMatchObject({
+      text: expect.stringContaining(name),
+    });
     const loaded = selection.load([name]);
     expect(loaded.toLoad).toEqual([name]);
     expect(loaded.schemas.map((tool) => tool.name)).toEqual([name]);
