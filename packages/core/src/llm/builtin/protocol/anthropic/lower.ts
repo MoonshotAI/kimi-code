@@ -124,12 +124,19 @@ function videoUrlPartToAnthropic(url: string): AnthropicWireVideoBlock {
   };
 }
 
-function parseToolArguments(args: string | null): unknown {
-  if (args === null || args.trim() === '') {
+function parseToolArguments(args: string | null): Record<string, unknown> {
+  if (args !== null && typeof args === 'object' && !Array.isArray(args)) {
+    return args as Record<string, unknown>;
+  }
+  if (typeof args !== 'string' || args.trim() === '') {
     return {};
   }
   try {
-    return JSON.parse(args);
+    const parsed: unknown = JSON.parse(args);
+    if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+    return {};
   } catch {
     return {};
   }
