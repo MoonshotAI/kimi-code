@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { createApp, h, nextTick, reactive, type App } from 'vue';
+import { createApp, h, nextTick, type App } from 'vue';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createKimiI18n } from '@moonshot-ai/app-i18n';
 import { IconResolverKey } from '@moonshot-ai/app-ui';
@@ -7,12 +7,13 @@ import type { AppToolsConfig } from '@moonshot-ai/app-core/api';
 
 const fakes = vi.hoisted(() => ({
   listToolCatalog: vi.fn(),
+  loadConfig: vi.fn(),
   updateConfig: vi.fn(),
   confirm: vi.fn(),
   toast: vi.fn(),
   back: vi.fn(),
   open: vi.fn(),
-  config: null as unknown as { tools?: AppToolsConfig },
+  config: null as null | { value: { tools?: AppToolsConfig } | null },
 }));
 
 vi.mock('@moonshot-ai/app-client/client', () => ({
@@ -21,9 +22,17 @@ vi.mock('@moonshot-ai/app-client/client', () => ({
   t: (key: string) => key,
 }));
 
-vi.mock('@moonshot-ai/app-client/stores', () => ({
-  configStore: () => ({ config: fakes.config, updateConfig: fakes.updateConfig }),
-}));
+vi.mock('@moonshot-ai/app-client/stores', async () => {
+  const vue = await import('vue');
+  fakes.config = vue.ref<{ tools?: AppToolsConfig } | null>(null);
+  return {
+    configStore: () => ({
+      config: fakes.config!.value,
+      updateConfig: fakes.updateConfig,
+      loadConfig: fakes.loadConfig,
+    }),
+  };
+});
 
 vi.mock('@moonshot-ai/app-client/composables', () => ({
   useConfirmDialog: () => ({ confirm: fakes.confirm }),
@@ -36,13 +45,14 @@ let app: App | null = null;
 let host: HTMLDivElement | null = null;
 
 beforeEach(() => {
-  fakes.config = reactive({
+  fakes.config!.value = {
     tools: { enabled: ['Read'], disabled: ['Bash', 'mcp__example__*'] },
-  });
+  };
   fakes.listToolCatalog.mockReset().mockResolvedValue([
     { name: 'Bash', source: 'builtin' },
     { name: 'Read', source: 'builtin' },
   ]);
+  fakes.loadConfig.mockReset().mockResolvedValue('committed');
   fakes.updateConfig.mockReset().mockResolvedValue(true);
   fakes.confirm.mockReset().mockResolvedValue(true);
   fakes.toast.mockReset();
@@ -63,15 +73,22 @@ async function flush(): Promise<void> {
   await nextTick();
 }
 
-async function mountPanel(): Promise<void> {
+async function mountPanel(): Promise<{ confirmDiscard: () => Promise<boolean> }> {
   host = document.createElement('div');
   host.className = 'settings-dialog';
   document.body.append(host);
-  app = createApp({ setup: () => () => h(DefaultToolsPanel, { onBack: fakes.back }) });
+  let panel!: { confirmDiscard: () => Promise<boolean> };
+  app = createApp({
+    setup: () => () => h(DefaultToolsPanel, {
+      ref: (value) => { panel = value as { confirmDiscard: () => Promise<boolean> }; },
+      onBack: fakes.back,
+    }),
+  });
   app.provide(IconResolverKey, (name) => ({ render: () => h('svg', { 'data-icon': name }) }));
   app.use(createKimiI18n({ locale: 'en' }));
   app.mount(host);
   await flush();
+  return panel;
 }
 
 function switches(): HTMLButtonElement[] {
@@ -175,6 +192,69 @@ describe('DefaultToolsPanel', () => {
     await flush();
     expect(fakes.listToolCatalog).toHaveBeenCalledTimes(2);
     expect(switches()).toHaveLength(1);
+  });
+
+  it('blocks editing while config is unavailable and preserves existing denials after retry', async () => {
+    fakes.config!.value = null;
+    fakes.loadConfig
+      .mockResolvedValueOnce('failed')
+      .mockImplementationOnce(async () => {
+        fakes.config!.value = { tools: { disabled: ['Bash'] } };
+        return 'committed';
+      });
+    await mountPanel();
+
+    expect(fakes.loadConfig).toHaveBeenCalledOnce();
+    expect(switches()).toHaveLength(0);
+    expect(host?.textContent).toContain('Could not load the tool list');
+    expect(button('Save')?.disabled).toBe(true);
+
+    button('Retry')?.click();
+    await flush();
+    expect(fakes.loadConfig).toHaveBeenCalledTimes(2);
+    expect(switchNamed('tools.label.bash').getAttribute('aria-checked')).toBe('false');
+
+    switchNamed('tools.label.read').click();
+    await flush();
+    button('Save')?.click();
+    await flush();
+    expect(fakes.updateConfig).toHaveBeenCalledWith({
+      tools: { enabled: undefined, disabled: ['Bash', 'Read'] },
+    });
+  });
+
+  it('initializes the draft when a config without a tools section loads after mount', async () => {
+    fakes.config!.value = null;
+    fakes.loadConfig.mockImplementationOnce(async () => {
+      fakes.config!.value = {};
+      return 'committed';
+    });
+    await mountPanel();
+
+    expect(switches()).toHaveLength(2);
+    expect(switchNamed('tools.label.bash').getAttribute('aria-checked')).toBe('true');
+  });
+
+  it('refuses to discard while a save is in flight', async () => {
+    let resolveSave!: (saved: boolean) => void;
+    fakes.updateConfig.mockReturnValue(new Promise<boolean>((resolve) => {
+      resolveSave = resolve;
+    }));
+    const panel = await mountPanel();
+    switchNamed('tools.label.bash').click();
+    await flush();
+    button('Save')?.click();
+    await flush();
+
+    await expect(panel.confirmDiscard()).resolves.toBe(false);
+    host?.querySelector<HTMLButtonElement>('.settings-subpage-back')?.click();
+    await flush();
+    expect(fakes.confirm).not.toHaveBeenCalled();
+    expect(fakes.back).not.toHaveBeenCalled();
+
+    resolveSave(true);
+    await flush();
+    await expect(panel.confirmDiscard()).resolves.toBe(true);
   });
 });
 

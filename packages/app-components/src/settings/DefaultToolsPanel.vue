@@ -59,6 +59,7 @@ function configKey(config: AppToolsConfig): string {
 }
 
 const dirty = computed(() => configKey(savedConfig.value) !== configKey(draftConfig.value));
+const hasConfig = computed(() => configStore().config !== null && configStore().config !== undefined);
 
 function resetDraft(config: AppToolsConfig | undefined): void {
   savedConfig.value = cloneConfig(config);
@@ -66,9 +67,10 @@ function resetDraft(config: AppToolsConfig | undefined): void {
 }
 
 watch(
-  () => configStore().config?.tools,
+  () => configStore().config,
   (config) => {
-    if (!dirty.value && !saving.value) resetDraft(config);
+    if (config === null || config === undefined) return;
+    if (!dirty.value && !saving.value) resetDraft(config.tools);
   },
   { immediate: true },
 );
@@ -77,7 +79,15 @@ async function load(): Promise<void> {
   loading.value = true;
   loadFailed.value = false;
   try {
-    tools.value = await getKimiWebApi().listToolCatalog();
+    const [catalog] = await Promise.all([
+      getKimiWebApi().listToolCatalog(),
+      configStore().loadConfig(),
+    ]);
+    if (!hasConfig.value) {
+      loadFailed.value = true;
+      return;
+    }
+    tools.value = catalog;
   } catch {
     loadFailed.value = true;
   } finally {
@@ -90,13 +100,13 @@ function enabledFor(name: string): boolean {
 }
 
 function setEnabled(name: string, enabled: boolean): void {
-  if (saving.value) return;
+  if (saving.value || !hasConfig.value) return;
   draftConfig.value = setDefaultToolEnabled(draftConfig.value, name, enabled);
   saveFailed.value = false;
 }
 
 async function save(): Promise<void> {
-  if (!dirty.value || saving.value) return;
+  if (!dirty.value || saving.value || !hasConfig.value) return;
   saving.value = true;
   saveFailed.value = false;
   const next = cloneConfig(draftConfig.value);
@@ -111,6 +121,7 @@ async function save(): Promise<void> {
 }
 
 async function confirmDiscard(): Promise<boolean> {
+  if (saving.value) return false;
   if (!dirty.value) return true;
   return await confirm({
     title: t('settings.defaultToolsDiscardTitle'),
@@ -122,7 +133,7 @@ async function confirmDiscard(): Promise<boolean> {
 }
 
 async function requestBack(): Promise<void> {
-  if (saving.value || !(await confirmDiscard())) return;
+  if (!(await confirmDiscard())) return;
   draftConfig.value = cloneConfig(savedConfig.value);
   emit('back');
 }
@@ -145,7 +156,7 @@ defineExpose({ confirmDiscard });
       <Spinner size="sm" />
       <span>{{ t('settings.defaultToolsLoading') }}</span>
     </div>
-    <div v-else-if="loadFailed" class="dt-status" role="alert">
+    <div v-else-if="loadFailed || !hasConfig" class="dt-status" role="alert">
       <span>{{ t('settings.defaultToolsLoadFailed') }}</span>
       <Button variant="secondary" size="sm" @click="load">{{ t('settings.defaultToolsRetry') }}</Button>
     </div>
@@ -180,7 +191,7 @@ defineExpose({ confirmDiscard });
 
     <div class="dt-footer">
       <span class="dt-dirty" role="status">{{ dirty ? t('settings.defaultToolsUnsaved') : '' }}</span>
-      <Button variant="primary" size="sm" :disabled="!dirty || saving" :loading="saving" @click="save">
+      <Button variant="primary" size="sm" :disabled="!hasConfig || !dirty || saving" :loading="saving" @click="save">
         {{ saving ? t('settings.defaultToolsSaving') : t('settings.defaultToolsSave') }}
       </Button>
     </div>

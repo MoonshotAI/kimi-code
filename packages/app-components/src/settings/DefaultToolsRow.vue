@@ -37,7 +37,7 @@ function open(): void {
         <span class="dt-entry-hint">{{ t('settings.defaultToolsEntryHint') }}</span>
       </span>
       <span class="dt-entry-meta">
-        <span v-if="tools.length > 0" class="dt-entry-count">{{ enabledCount }} / {{ tools.length }} {{ t('settings.defaultToolsEnabled') }}</span>
+        <span v-if="tools.length > 0 && configStore().config !== null && configStore().config !== undefined" class="dt-entry-count">{{ enabledCount }} / {{ tools.length }} {{ t('settings.defaultToolsEnabled') }}</span>
         <span class="dt-entry-chevron"><Icon name="chevron-right" size="sm" /></span>
       </span>
     </button>
