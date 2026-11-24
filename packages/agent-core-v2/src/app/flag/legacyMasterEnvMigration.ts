@@ -1,9 +1,15 @@
 import { randomUUID } from 'node:crypto';
 import {
+  accessSync,
+  constants,
   existsSync,
+  lstatSync,
   mkdirSync,
   readFileSync,
+  realpathSync,
   renameSync,
+  type Stats,
+  statSync,
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
@@ -42,13 +48,33 @@ export type MigrateLegacyMasterEnvTowerOutcome =
 
 const EXISTING_INSTALL_MARKERS = ['sessions', 'credentials', 'user-history'] as const;
 
-function writeFileAtomically(filePath: string, content: string): void {
-  const dir = dirname(filePath);
-  mkdirSync(dir, { recursive: true, mode: 0o700 });
-  const tempPath = `${filePath}.${process.pid}.${randomUUID()}.tmp`;
+function safeLstat(filePath: string): Stats | undefined {
   try {
-    writeFileSync(tempPath, content, { encoding: 'utf8', mode: 0o600 });
-    renameSync(tempPath, filePath);
+    return lstatSync(filePath, { throwIfNoEntry: false });
+  } catch {
+    return undefined;
+  }
+}
+
+function writeFileAtomically(filePath: string, content: string): void {
+  const linkStat = safeLstat(filePath);
+  const targetPath = linkStat !== undefined ? realpathSync(filePath) : filePath;
+  const targetStat = linkStat !== undefined ? statSync(targetPath) : undefined;
+  if (targetStat !== undefined) {
+    if (process.platform !== 'win32' && (targetStat.mode & 0o222) === 0) {
+      const error = new Error(`Target file is read-only: ${targetPath}`) as NodeJS.ErrnoException;
+      error.code = 'EACCES';
+      throw error;
+    }
+    accessSync(targetPath, constants.W_OK);
+  }
+  const fileMode = targetStat !== undefined ? targetStat.mode & 0o777 || 0o600 : 0o600;
+  const dir = dirname(targetPath);
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const tempPath = `${targetPath}.${process.pid}.${randomUUID()}.tmp`;
+  try {
+    writeFileSync(tempPath, content, { encoding: 'utf8', mode: fileMode });
+    renameSync(tempPath, targetPath);
   } catch (error) {
     try {
       unlinkSync(tempPath);
@@ -58,7 +84,7 @@ function writeFileAtomically(filePath: string, content: string): void {
 }
 
 function readMigrationsRecord(markerPath: string): ExperimentalMigrationsRecord | undefined {
-  if (!existsSync(markerPath)) return {};
+  if (safeLstat(markerPath) === undefined) return {};
   try {
     const raw = JSON.parse(readFileSync(markerPath, 'utf8')) as unknown;
     return isPlainObject(raw) ? (raw as ExperimentalMigrationsRecord) : undefined;
@@ -81,7 +107,7 @@ function stampMigrationMarker(markerPath: string, existing: ExperimentalMigratio
 }
 
 function isExistingInstallation(homeDir: string, configPath: string): boolean {
-  if (existsSync(configPath)) return true;
+  if (safeLstat(configPath) !== undefined) return true;
   return EXISTING_INSTALL_MARKERS.some((entry) => existsSync(join(homeDir, entry)));
 }
 
@@ -109,13 +135,18 @@ export function migrateLegacyMasterEnvTower(
 
   let onDiskText: string | undefined;
   let parsedDoc: Record<string, unknown> = {};
-  if (existsSync(configPath)) {
+  const configLinkStat = safeLstat(configPath);
+  if (configLinkStat !== undefined) {
     try {
       onDiskText = readFileSync(configPath, 'utf8');
       const parsed = parseToml(onDiskText);
       if (!isPlainObject(parsed)) return 'skipped-error';
       parsedDoc = parsed;
-    } catch {
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (configLinkStat.isSymbolicLink() && (code === 'ENOENT' || code === 'ELOOP') && masterEnv === true) {
+        return 'fallback-env';
+      }
       return 'skipped-error';
     }
   }

@@ -1,4 +1,13 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -485,5 +494,86 @@ describe('migrateLegacyMasterEnvTower', () => {
       env: { [MASTER_ENV]: '1', KIMI_CODE_EXPERIMENTAL_TOWER: 'placeholder' },
     });
     expect(unparsedTowerEnv?.['KIMI_CODE_EXPERIMENTAL_TOWER']).toBe('1');
+  });
+
+  it('updates the symlink target and preserves symlinked config.toml during migration', () => {
+    const dotfilesDir = mkdtempSync(join(tmpdir(), 'kimi-legacy-dotfiles-'));
+    try {
+      const targetConfigPath = join(dotfilesDir, 'config.toml');
+      writeFileSync(targetConfigPath, 'default_model = "kimi-k2"\n', 'utf8');
+      const linkConfigPath = join(tempDir, 'config.toml');
+      symlinkSync(targetConfigPath, linkConfigPath);
+
+      expect(
+        migrateLegacyMasterEnvTower({
+          homeDir: tempDir,
+          env: { [MASTER_ENV]: '1' },
+        }),
+      ).toBe('migrated-tower');
+
+      expect(lstatSync(linkConfigPath).isSymbolicLink()).toBe(true);
+      const targetText = readFileSync(targetConfigPath, 'utf8');
+      expect(targetText).toContain('default_model = "kimi-k2"');
+      expect(targetText).toContain('tower = true');
+
+      writeFileSync(
+        targetConfigPath,
+        'default_model = "kimi-k2.5"\n[experimental]\ntower = true\n',
+        'utf8',
+      );
+      expect(readFileSync(linkConfigPath, 'utf8')).toContain('default_model = "kimi-k2.5"');
+    } finally {
+      rmSync(dotfilesDir, { recursive: true, force: true });
+    }
+  });
+
+  it('preserves read-only and dangling config.toml symlinks and falls back to env override', () => {
+    const readonlyStoreDir = mkdtempSync(join(tmpdir(), 'kimi-legacy-readonly-link-'));
+    const danglingHomeDir = mkdtempSync(join(tmpdir(), 'kimi-legacy-dangling-link-'));
+    const readonlyTarget = join(readonlyStoreDir, 'config.toml');
+    try {
+      writeFileSync(readonlyTarget, 'default_model = "kimi-k2"\n', 'utf8');
+      chmodSync(readonlyTarget, 0o444);
+      const readonlyLink = join(tempDir, 'config.toml');
+      symlinkSync(readonlyTarget, readonlyLink);
+
+      const readonlyResolvedEnv = resolveBootstrapEnvWithLegacyTowerMigration({
+        homeDir: tempDir,
+        env: { [MASTER_ENV]: '1' },
+      });
+      expect(readonlyResolvedEnv?.['KIMI_CODE_EXPERIMENTAL_TOWER']).toBe('1');
+      expect(lstatSync(readonlyLink).isSymbolicLink()).toBe(true);
+      expect(readFileSync(readonlyTarget, 'utf8')).not.toContain('tower');
+
+      const missingTarget = join(readonlyStoreDir, 'missing-config.toml');
+      const danglingLink = join(danglingHomeDir, 'config.toml');
+      symlinkSync(missingTarget, danglingLink);
+
+      const danglingResolvedEnv = resolveBootstrapEnvWithLegacyTowerMigration({
+        homeDir: danglingHomeDir,
+        env: { [MASTER_ENV]: '1' },
+      });
+      expect(danglingResolvedEnv?.['KIMI_CODE_EXPERIMENTAL_TOWER']).toBe('1');
+      expect(lstatSync(danglingLink).isSymbolicLink()).toBe(true);
+      expect(() =>
+        readFileSync(join(danglingHomeDir, EXPERIMENTAL_MIGRATIONS_FILENAME), 'utf8'),
+      ).toThrow();
+
+      writeFileSync(missingTarget, 'default_model = "kimi-k2"\n', 'utf8');
+      expect(
+        migrateLegacyMasterEnvTower({
+          homeDir: danglingHomeDir,
+          env: { [MASTER_ENV]: '1' },
+        }),
+      ).toBe('migrated-tower');
+      expect(lstatSync(danglingLink).isSymbolicLink()).toBe(true);
+      expect(readFileSync(missingTarget, 'utf8')).toContain('tower = true');
+    } finally {
+      try {
+        chmodSync(readonlyTarget, 0o644);
+      } catch {}
+      rmSync(readonlyStoreDir, { recursive: true, force: true });
+      rmSync(danglingHomeDir, { recursive: true, force: true });
+    }
   });
 });
