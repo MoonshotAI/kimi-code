@@ -3216,7 +3216,7 @@ export class KimiTUI {
 
   async applyWorkLocation(
     location: WorkLocation,
-    options: { readonly resolveEnvironment?: boolean } = {},
+    options: { readonly resolveEnvironment?: boolean; readonly environmentId?: string } = {},
   ): Promise<void> {
     const workDirChanged = !sameDir(location.cwd, this.state.appState.workDir);
     this.setAppState({
@@ -3226,7 +3226,7 @@ export class KimiTUI {
       worktree: location.worktree,
     });
     if (options.resolveEnvironment !== false) {
-      await this.resolveCreationEnvironment();
+      await this.resolveCreationEnvironment(options.environmentId);
     }
     this.setupAutocomplete();
     await this.refreshSkillCommands(this.session);
@@ -3249,7 +3249,7 @@ export class KimiTUI {
 
   private async applyWorkLocationOrRollback(
     location: WorkLocation,
-    options?: { readonly resolveEnvironment?: boolean },
+    options?: { readonly resolveEnvironment?: boolean; readonly environmentId?: string },
   ): Promise<boolean> {
     const previous = this.currentWorkLocation();
     try {
@@ -3258,6 +3258,7 @@ export class KimiTUI {
     } catch (error) {
       await this.applyWorkLocation(previous, {
         resolveEnvironment: isDirectory(previous.cwd),
+        environmentId: options?.environmentId,
       }).catch(() => {});
       this.showError(formatErrorMessage(error));
       return false;
@@ -3270,11 +3271,14 @@ export class KimiTUI {
     if (replaced === undefined && !sameDir(previous.cwd, location.cwd)) {
       this.resolveStartupPathsForLocationChange(previous.cwd);
     }
-    if (!(await this.applyWorkLocationOrRollback(location))) return false;
+    if (!(await this.applyWorkLocationOrRollback(location, { environmentId: 'local' }))) return false;
     if (replaced === undefined) return true;
     await this.createNewSession({ environmentId: 'local' });
     if (this.session !== replaced) return true;
-    await this.applyWorkLocation(previous, { resolveEnvironment: isDirectory(previous.cwd) }).catch(() => {});
+    await this.applyWorkLocation(previous, {
+      resolveEnvironment: isDirectory(previous.cwd),
+      environmentId: 'local',
+    }).catch(() => {});
     return false;
   }
 
@@ -3328,12 +3332,13 @@ export class KimiTUI {
 
   private creationEnvironment?: { readonly environmentId: string; readonly cwd?: string };
 
-  private async resolveCreationEnvironment(): Promise<void> {
+  private async resolveCreationEnvironment(environmentId?: string): Promise<void> {
     const { startup } = this.options;
+    const resolvedEnvironmentId = environmentId ?? startup.environment;
     this.creationEnvironment = await this.harness.resolveSessionEnvironment({
       workDir: this.state.appState.workDir,
-      environmentId: startup.environment,
-      environmentCwd: startup.environmentCwd,
+      environmentId: resolvedEnvironmentId,
+      environmentCwd: resolvedEnvironmentId === 'local' ? undefined : startup.environmentCwd,
     });
   }
 

@@ -1744,5 +1744,38 @@ describe('runV2Print', () => {
         await rm(worktreeDir, { recursive: true, force: true });
       }
     });
+
+    it('reports the retained worktree path when the trust lookup throws before running setup', async () => {
+      const { app, appServices } = makeFakeHarness();
+      (appServices.get(IFlagService) as { enabled: ReturnType<typeof vi.fn> }).enabled.mockReturnValue(true);
+      (appServices.get(IProjectInstanceManager) as { acquire: ReturnType<typeof vi.fn> }).acquire.mockRejectedValueOnce(
+        new Error('trust store unreadable'),
+      );
+      const created = sampleCreated({
+        setupScript: '/tmp/repo/.kimi-code/worktree-setup.sh',
+        copiedFiles: [],
+        sourceDirty: false,
+      });
+      const createWt = vi.spyOn(SDKRpcClientV2.prototype, 'createWorktree').mockResolvedValueOnce(created);
+      const listWt = vi.spyOn(SDKRpcClientV2.prototype, 'listWorktrees').mockResolvedValueOnce({
+        repoRoot: '/tmp/repo',
+        currentCheckoutRoot: '/tmp/repo',
+        bare: false,
+        worktrees: [created.worktree],
+      });
+      mocks.bootstrap.mockReturnValue({ app });
+      const stderr = writer();
+      const previousExitCode = process.exitCode;
+      try {
+        await runV2Print(opts({ worktree: 'fix-login' }) as never, '1.2.3-test', { stdout: writer(), stderr });
+        expect(process.exitCode).toBe(1);
+        expect(stderr.text()).toContain('error: trust store unreadable');
+        expect(stderr.text()).toContain('Worktree: /tmp/home/worktrees/wd_repo/fix-login');
+      } finally {
+        process.exitCode = previousExitCode;
+        createWt.mockRestore();
+        listWt.mockRestore();
+      }
+    });
   });
 });

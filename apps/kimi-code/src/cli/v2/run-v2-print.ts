@@ -365,7 +365,14 @@ async function preparePrintWorktree(
   }
   if (created.setupScript === undefined) return { created, ready: true };
   const script = relative(created.sourceRoot, created.setupScript);
-  if (!(await isProjectTrusted(services, cwd))) {
+  let trusted: boolean;
+  try {
+    trusted = await isProjectTrusted(services, cwd);
+  } catch (error) {
+    stderr.write(`error: ${error instanceof Error ? error.message : String(error)}\n`);
+    return { created, ready: false };
+  }
+  if (!trusted) {
     stderr.write(
       `Warning: this project is not trusted; skipped the worktree setup script ${script}.\n` +
         '  Run `kimi` here and choose "Trust and continue", or set KIMI_CODE_TRUST_WORKSPACE=1, to run it.\n',

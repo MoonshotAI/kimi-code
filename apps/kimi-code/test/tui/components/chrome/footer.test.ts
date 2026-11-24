@@ -595,10 +595,15 @@ describe('FooterComponent worktree location', () => {
     expect(stripVTControlCharacters(rendered)).not.toContain('/tmp/wt');
   });
 
-  it('appends the path below the worktree root', () => {
+  it('appends the path below the worktree root including dot-prefixed subdirectories', () => {
     const footer = footerAt({ workDir: `${worktree.root}/packages/foo`, worktree }, 'feat/login');
     expect(stripVTControlCharacters(footer.render(160)[0] ?? '')).toContain(
       'worktree fix-login/packages/foo  feat/login [+3 -1]',
+    );
+
+    const dotdot = footerAt({ workDir: `${worktree.root}/..cache`, worktree }, 'feat/login');
+    expect(stripVTControlCharacters(dotdot.render(160)[0] ?? '')).toContain(
+      'worktree fix-login/..cache  feat/login [+3 -1]',
     );
   });
 

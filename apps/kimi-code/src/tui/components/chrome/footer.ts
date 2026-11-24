@@ -165,7 +165,8 @@ function formatContextStatus(usage: number, tokens?: number, maxTokens?: number)
 function formatWorktreeCwd(worktree: NonNullable<AppState['worktree']>, cwd: string, colors: ColorPalette): string {
   const subdir = relative(worktree.root, cwd);
   const label = `${chalk.hex(colors.textDim)('worktree')} ${chalk.hex(colors.accent)(worktree.name)}`;
-  return subdir === '' || subdir.startsWith('..') ? label : `${label}${chalk.hex(colors.textDim)(`/${subdir}`)}`;
+  const outside = subdir === '' || subdir === '..' || subdir.startsWith('../') || subdir.startsWith('..\\');
+  return outside ? label : `${label}${chalk.hex(colors.textDim)(`/${subdir}`)}`;
 }
 
 export function formatFooterGitBadge(status: GitStatus, colors: ColorPalette): string {

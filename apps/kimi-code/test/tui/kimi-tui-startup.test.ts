@@ -5357,6 +5357,34 @@ describe('KimiTUI work location', () => {
       );
     });
 
+    it('switches to a local worktree without probing a broken remote default environment', async () => {
+      const project = tempDir('kimi-location-project-');
+      const worktree = tempDir('kimi-location-worktree-');
+      const { harness } = worktreeHarness(project, worktree);
+      const driver = await startAt(project, harness);
+      await driver.ensureSession();
+
+      harness.resolveSessionEnvironment.mockImplementation(
+        async (input: { workDir?: string; environmentId?: string }) => {
+          if (input.environmentId !== 'local') {
+            throw new Error('Remote environment dev-box has no defaultCwd');
+          }
+          return { environmentId: 'local', cwd: input.workDir };
+        },
+      );
+
+      const panel = await openPanel(driver);
+      panel.handleInput(DOWN);
+      panel.handleInput(ENTER);
+
+      await vi.waitFor(() => {
+        expect(driver.state.appState.workDir).toBe(worktree);
+      });
+      expect(harness.createSession).toHaveBeenLastCalledWith(
+        expect.objectContaining({ workDir: worktree, environmentId: 'local' }),
+      );
+    });
+
     it('refuses to delete a worktree that another window has open', async () => {
       const project = tempDir('kimi-location-project-');
       const worktree = tempDir('kimi-location-worktree-');
