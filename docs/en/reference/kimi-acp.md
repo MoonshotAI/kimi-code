@@ -57,7 +57,7 @@ With `@agentclientprotocol/sdk@1.x`, the ACP method set is organized by namespac
 | `session/fork` | Yes | Branches a source session; `cwd` / `additionalDirectories` / `mcpServers` on the request are ignored with a warning |
 | `session/close` | Yes | Best-effort teardown: cancels any in-flight turn, disposes per-session resources, and closes the live session; an unknown id is not an error |
 | `session/delete` | Yes | Permanently removes a session and its persisted data; an unknown id returns `invalidParams (-32602)` |
-| `session/prompt` | Yes | Accepts `text` / `image` / `resource` / `resource_link` content blocks; streams `agent_message_chunk` |
+| `session/prompt` | Yes | Accepts `text` / `image` / `resource` / `resource_link` content blocks; streams `agent_message_chunk`. A turn that fails after it has started returns a JSON-RPC error: `authRequired (-32000)` for an authentication failure, otherwise `-32603` with the error message as `message` and its error code in `data.code`. A response blocked by the provider's content filter ends with the `refusal` stop reason, and a turn that fails after `session/cancel` still ends with `cancelled` |
 | `session/cancel` | Yes | Interrupts the current turn (a JSON-RPC `$/cancel_request` for a prompt lands in the same cancel path) |
 | `session/set_mode` | Yes | Validates `modeId`; the same underlying mode switch as `set_config_option({configId:'mode'})` |
 | `session/set_config_option` | Yes | Unified model / thinking / mode picker dispatcher |

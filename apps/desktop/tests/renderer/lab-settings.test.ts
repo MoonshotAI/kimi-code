@@ -69,6 +69,17 @@ describe('SettingsDialog General sidebarTabs and Lab two-tier layout', () => {
         configValue: false,
       },
       {
+        id: 'prompt_prediction',
+        title: 'Prompt prediction',
+        description: 'Next prompt placeholder',
+        env: 'KIMI_CODE_EXPERIMENTAL_PROMPT_PREDICTION',
+        stage: 'experimental',
+        effectTiming: 'immediate',
+        enabled: false,
+        active: false,
+        source: 'default',
+      },
+      {
         id: 'tower',
         title: 'Tower mode',
         description: 'Multi-agent mode',
@@ -81,7 +92,11 @@ describe('SettingsDialog General sidebarTabs and Lab two-tier layout', () => {
         configValue: true,
       },
     ];
-    configStore().experimentalFlags = { notify_user: false, tower: false };
+    configStore().experimentalFlags = {
+      notify_user: false,
+      prompt_prediction: false,
+      tower: false,
+    };
 
     const host = document.createElement('div');
     document.body.append(host);
@@ -132,12 +147,16 @@ describe('SettingsDialog General sidebarTabs and Lab two-tier layout', () => {
     const notifySwitch = document.querySelector<HTMLButtonElement>(
       'button[role="switch"][aria-label="进展更新"]',
     )!;
+    const promptPredictionSwitch = document.querySelector<HTMLButtonElement>(
+      'button[role="switch"][aria-label="提示词预测"]',
+    )!;
     const towerSwitch = document.querySelector<HTMLButtonElement>(
       'button[role="switch"][aria-label="Tower 多 Agent 协作模式"]',
     )!;
 
     expect(contextSwitch.getAttribute('aria-checked')).toBe('false');
     expect(notifySwitch.getAttribute('aria-checked')).toBe('false');
+    expect(promptPredictionSwitch.getAttribute('aria-checked')).toBe('false');
     expect(towerSwitch.getAttribute('aria-checked')).toBe('true');
 
     betaMasterSwitch.click();
@@ -148,6 +167,8 @@ describe('SettingsDialog General sidebarTabs and Lab two-tier layout', () => {
     expect(contextSwitch.disabled).toBe(true);
     expect(notifySwitch.getAttribute('aria-checked')).toBe('true');
     expect(notifySwitch.disabled).toBe(true);
+    expect(promptPredictionSwitch.getAttribute('aria-checked')).toBe('false');
+    expect(promptPredictionSwitch.disabled).toBe(false);
     expect(localStorage.getItem(STORAGE_KEYS.contextInspector)).toBe('false');
 
     betaMasterSwitch.click();
@@ -157,5 +178,21 @@ describe('SettingsDialog General sidebarTabs and Lab two-tier layout', () => {
     expect(contextSwitch.disabled).toBe(false);
     expect(notifySwitch.getAttribute('aria-checked')).toBe('false');
     expect(notifySwitch.disabled).toBe(false);
+
+    promptPredictionSwitch.click();
+    await flush();
+
+    expect(setConfig).toHaveBeenCalledWith({ experimental: { prompt_prediction: true } });
+    expect(promptPredictionSwitch.getAttribute('aria-checked')).toBe('true');
+
+    configStore().experimentalFeatures = configStore().experimentalFeatures.map((feature) =>
+      feature.id === 'prompt_prediction'
+        ? { ...feature, enabled: true, active: true, source: 'env' }
+        : feature,
+    );
+    await flush();
+
+    expect(promptPredictionSwitch.disabled).toBe(true);
+    expect(document.body.textContent).toContain('KIMI_CODE_EXPERIMENTAL_PROMPT_PREDICTION');
   }, 60_000);
 });

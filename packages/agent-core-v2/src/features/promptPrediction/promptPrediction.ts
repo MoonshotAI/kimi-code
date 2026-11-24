@@ -1,11 +1,29 @@
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import { type FlagDefinitionInput, registerFlagDefinition } from '#/app/flag/flagRegistry';
+import type { ResponseFormat } from '@moonshot-ai/core/llm/request';
 
 export const PROMPT_PREDICTION_FLAG_ID = 'prompt_prediction';
 export const PROMPT_PREDICTION_FLAG_ENV = 'KIMI_CODE_EXPERIMENTAL_PROMPT_PREDICTION';
 export const PROMPT_PREDICTION_TIMEOUT_MS = 20_000;
 export const PROMPT_PREDICTION_MAX_OUTPUT_TOKENS = 512;
 export const PROMPT_PREDICTION_MAX_CHARS = 2_000;
+
+export const PROMPT_PREDICTION_RESPONSE_FORMAT = {
+  type: 'json_schema',
+  jsonSchema: {
+    name: 'next_prompt_prediction',
+    strict: true,
+    schema: {
+      type: 'object',
+      properties: {
+        show: { type: 'string', enum: ['yes', 'no'] },
+        message: { type: 'string' },
+      },
+      required: ['show', 'message'],
+      additionalProperties: false,
+    },
+  },
+} as const satisfies ResponseFormat;
 
 export const PROMPT_PREDICTION_INSTRUCTION = `[SUGGESTION MODE: Suggest what the user might naturally type next to the main agent.]
 
@@ -32,13 +50,13 @@ NEVER SUGGEST:
 - New ideas they didn't ask about
 - Multiple sentences
 
-Stay silent if the next step isn't obvious from what the user said.
+Use "show":"no" if the next step isn't obvious from what the user said.
 
-Stay silent if a suggestion could be unsafe or inappropriate, including sensitive topics such as security incidents, credentials, harm, or private data. Even when the user is doing legitimate security work, do not predict potentially unsafe actions.
+Use "show":"no" if a suggestion could be unsafe or inappropriate, including sensitive topics such as security incidents, credentials, harm, or private data. Even when the user is doing legitimate security work, do not predict potentially unsafe actions.
 
-Format: 2-12 words, match the user's style and language. Or nothing.
+Format: 2-12 words, match the user's style and language.
 
-Reply with ONLY one suggestion as plain text, no quotes or explanation. Do not call any tools.`;
+Return JSON matching the provided schema. When suggesting, use {"show":"yes","message":"your suggestion"}. Otherwise use {"show":"no","message":""}. Do not call any tools.`;
 
 export const promptPredictionFlag: FlagDefinitionInput = {
   id: PROMPT_PREDICTION_FLAG_ID,
@@ -47,6 +65,8 @@ export const promptPredictionFlag: FlagDefinitionInput = {
   env: PROMPT_PREDICTION_FLAG_ENV,
   stages: {
     tui: 'experimental',
+    desktop: 'experimental',
+    web: 'experimental',
   },
   effectTiming: 'immediate',
 };

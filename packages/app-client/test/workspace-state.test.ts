@@ -6089,3 +6089,24 @@ describe('setNotifyUserEnabled', () => {
     expect(useContextInspector().contextInspectorEnabled.value).toBe(false);
   });
 });
+
+describe('setPromptPredictionEnabled', () => {
+  beforeEach(() => {
+    apiMock.setConfig.mockReset();
+    apiMock.getMeta.mockReset();
+    configStore().resetConfig();
+  });
+
+  it('does not update prompt_prediction flag when the config write fails', async () => {
+    apiMock.setConfig.mockRejectedValueOnce(new Error('write conflict'));
+    expect(await configStore().setPromptPredictionEnabled(true)).toBe(false);
+    expect(configStore().experimentalFlags['prompt_prediction']).toBeUndefined();
+  });
+
+  it('updates prompt_prediction flag only after a successful write', async () => {
+    apiMock.setConfig.mockResolvedValue({ providers: {}, defaultModel: 'model-new' });
+    apiMock.getMeta.mockResolvedValue(null);
+    expect(await configStore().setPromptPredictionEnabled(true)).toBe(true);
+    expect(configStore().experimentalFlags['prompt_prediction']).toBe(true);
+  });
+});

@@ -74,6 +74,10 @@ vi.mock('@moonshot-ai/app-client/client', async (importOriginal) => {
       skillsLoaded: vue.ref(true),
       chatGateVerdict: vue.ref('ok'),
       experimentalFlags: vue.ref({}),
+      promptPrediction: vue.ref(null),
+      acceptPromptPrediction: vi.fn(() => null),
+      handlePromptPredictionInput: vi.fn(),
+      handlePromptPredictionSubmit: vi.fn(),
       notify: vi.fn(),
       toggleGoalMode: vi.fn(),
       togglePlanMode: vi.fn(),
@@ -319,7 +323,7 @@ describe('Composer toolbar popup viewport clamping', () => {
     window.dispatchEvent(new Event('resize'));
     await nextTick();
     expect(permPill.classList.contains('open')).toBe(false);
-    expect(menu.classList.contains('composer-menu-pop-leave-active')).toBe(true);
+    expect(menu.classList.contains('ui-menu-pop-leave-active')).toBe(true);
   });
 
   it('respects narrowed visualViewport bounds when clamping horizontally', async () => {

@@ -1066,11 +1066,11 @@ defineExpose({
       @mouseenter="cancelWorkspaceHoverClose"
       @mouseleave="scheduleWorkspaceHoverClose"
     />
-    <Transition name="menu-pop">
+    <Transition name="ui-menu-pop">
       <Menu
         v-if="viewMenuOpen"
         ref="viewMenuRef"
-        class="view-menu anchored-menu"
+        class="view-menu ui-menu-floating"
         :style="viewMenuStyle"
         @click.stop
       >
@@ -1148,7 +1148,7 @@ defineExpose({
   transition-duration: var(--duration-slow);
 }
 .sessions-head--scrolled {
-  border-bottom-color: var(--line);
+  border-bottom-color: var(--color-line);
 }
 .sessions-head--scrolled::after { opacity: 1; }
 
@@ -1156,10 +1156,10 @@ defineExpose({
   margin-top: var(--space-1);
 }
 .side-section-toggle {
-  color: var(--faint);
+  color: var(--color-text-quaternary);
 }
 .side-section-toggle:hover {
-  color: var(--dim);
+  color: var(--color-text-muted);
 }
 .side-section-toggle svg {
   width: 13px;
@@ -1234,33 +1234,6 @@ defineExpose({
 .ws-drop-target.drop-before { box-shadow: inset 0 2px 0 var(--color-accent); }
 .ws-drop-target.drop-after { box-shadow: inset 0 -2px 0 var(--color-accent); }
 
-.se-locate-flash,
-.ws-drop-target.ws-locate-flash :deep(.gh),
-.pin-workspace.ws-locate-flash :deep(.gh) {
-  isolation: isolate;
-}
-.se-locate-flash::before,
-.ws-drop-target.ws-locate-flash :deep(.gh)::before,
-.pin-workspace.ws-locate-flash :deep(.gh)::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  z-index: -1;
-  border-radius: var(--radius-sm);
-  background: var(--color-accent-soft);
-  pointer-events: none;
-  animation: ws-locate-fade var(--duration-flash) var(--ease-out) forwards;
-}
-@keyframes ws-locate-fade {
-  from { opacity: 1; }
-  to { opacity: 0; }
-}
-@media (prefers-reduced-motion: reduce) {
-  .se-locate-flash::before,
-  .ws-drop-target.ws-locate-flash :deep(.gh)::before,
-  .pin-workspace.ws-locate-flash :deep(.gh)::before { animation: none; }
-}
-
 .done-gh {
   display: flex;
   align-items: center;
@@ -1284,7 +1257,7 @@ defineExpose({
 .done-gh-name {
   flex: 1;
   min-width: 0;
-  font-size: var(--ui-font-size-sm);
+  font-size: var(--text-sm);
   font-weight: var(--weight-medium);
   line-height: var(--leading-tight);
   color: var(--color-text-muted);
@@ -1360,14 +1333,10 @@ defineExpose({
   white-space: nowrap;
 }
 
-.empty {
-  padding: var(--space-6) var(--space-3);
-  text-align: center;
-  color: var(--faint);
-  font-size: calc(var(--ui-font-size) - 3px);
-  line-height: 1.6;
-}
-
 </style>
 
 <style src="../lib/anchored-menu.css"></style>
+
+<style scoped src="../lib/locate-flash.css"></style>
+
+<style scoped src="./sidebar-empty.css"></style>

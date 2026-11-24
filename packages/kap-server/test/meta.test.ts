@@ -144,8 +144,8 @@ describe('/api/v1/meta experimental_flags', () => {
     });
     const initialIds = (initialBody.data.experimental_features ?? []).map((f) => f.id);
     expect(initialIds).toContain('notify_user');
+    expect(initialIds).toContain('prompt_prediction');
     expect(initialIds).toContain('tower');
-    expect(initialIds).not.toContain('prompt_prediction');
     expect(initialIds).not.toContain('wait_for');
 
     const enableBetaRes = await authedFetch(server as RunningServer, base, '/api/v1/config', {

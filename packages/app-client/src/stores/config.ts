@@ -221,6 +221,10 @@ export const useConfigStore = defineStore('kimi.config', () => {
     return setExperimentalFlag('notify_user', on);
   }
 
+  async function setPromptPredictionEnabled(on: boolean): Promise<boolean> {
+    return setExperimentalFlag('prompt_prediction', on);
+  }
+
   function resetConfig(): void {
     config.value = null;
     serverVersion.value = '';
@@ -257,6 +261,7 @@ export const useConfigStore = defineStore('kimi.config', () => {
     setExperimentalFlag,
     setBetaFeaturesEnabled,
     setNotifyUserEnabled,
+    setPromptPredictionEnabled,
     refreshServerMeta,
     resetConfig,
   };

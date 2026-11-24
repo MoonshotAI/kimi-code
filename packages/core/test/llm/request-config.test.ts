@@ -212,12 +212,19 @@ describe('non-streaming protocol replay', () => {
         },
       };
       const modelConfig = { ...TEST_MODEL, spec: { ...TEST_MODEL.spec, name: model } };
+      const profile = {
+        tools: [{
+          name: 'Bash',
+          description: 'Run a command',
+          parameters: { type: 'object', properties: {} },
+        }],
+      };
       const nonStream = await runGenerate(patched, {
-        module: testModule({ model: modelConfig }),
+        module: testModule({ model: modelConfig, profile }),
         stream: false,
       });
       const streamed = await runGenerate(patched, {
-        module: testModule({ model: modelConfig }),
+        module: testModule({ model: modelConfig, profile }),
         stream: true,
       });
       const semantic = (events: typeof nonStream.events) => events

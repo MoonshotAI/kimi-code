@@ -247,7 +247,7 @@ onUnmounted(() => {
 
 <template>
   <div class="sc-panel">
-    <h3 class="sc-title">{{ t('settings.tabs.shortcuts') }}</h3>
+    <h3 class="sec-title">{{ t('settings.tabs.shortcuts') }}</h3>
 
     <label class="sc-search">
       <Icon name="search" size="md" />
@@ -270,9 +270,9 @@ onUnmounted(() => {
                 <Kbd v-if="liveKeys.length > 0" :keys="liveKeys" />
                 <span v-else>{{ t('shortcuts.recording') }}</span>
               </span>
-              <button type="button" class="sc-cancel" @click="stopRecording">
+              <Button variant="ghost" size="xs" @click="stopRecording">
                 {{ t('common.cancel') }}
-              </button>
+              </Button>
             </template>
             <template v-else>
               <Kbd v-if="bindingKeys(action.id).length > 0" :keys="bindingKeys(action.id)" />
@@ -315,20 +315,13 @@ onUnmounted(() => {
   </div>
 </template>
 
-<style scoped src="./settings-common.css"></style>
+<style scoped src="@moonshot-ai/app-components/settings-common.css"></style>
 
 <style scoped>
 .sc-panel {
   display: flex;
   flex-direction: column;
   padding: 0 0 var(--space-4);
-}
-.sc-title {
-  margin: 0 0 var(--space-3);
-  font-family: var(--font-ui);
-  font-size: var(--text-base);
-  font-weight: var(--weight-medium);
-  color: var(--color-text);
 }
 .sc-search {
   display: flex;
@@ -404,25 +397,6 @@ onUnmounted(() => {
   background: var(--color-surface-overlay);
   color: var(--color-text);
   font-size: var(--text-sm);
-}
-.sc-cancel {
-  border: none;
-  border-radius: var(--radius-md);
-  background: transparent;
-  padding: var(--space-1) var(--space-2);
-  color: var(--color-text-muted);
-  font-family: var(--font-ui);
-  font-size: var(--text-sm);
-  cursor: pointer;
-  transition: background var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out);
-}
-.sc-cancel:hover {
-  background: var(--color-hover);
-  color: var(--color-text);
-}
-.sc-cancel:focus-visible {
-  outline: none;
-  box-shadow: var(--p-focus-ring);
 }
 .sc-unassigned {
   font-size: var(--text-sm);

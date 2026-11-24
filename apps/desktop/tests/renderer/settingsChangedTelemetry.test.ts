@@ -26,6 +26,7 @@ const ACCEPTED: Record<string, readonly string[]> = {
   'context-inspector': ['on', 'off'],
   'beta-features': ['on', 'off'],
   'notify-user': ['on', 'off'],
+  'prompt-prediction': ['on', 'off'],
   tower: ['on', 'off'],
   'browser-tab-title': [
     'workspace-session',
@@ -50,6 +51,7 @@ const REJECTED: Record<string, readonly unknown[]> = {
   'context-inspector': ['true', true],
   'beta-features': ['1', ''],
   'notify-user': ['enabled', false],
+  'prompt-prediction': ['true', 0],
   tower: ['yes', 1],
   'browser-tab-title': ['custom', ''],
 };

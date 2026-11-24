@@ -128,8 +128,9 @@ describe('loop journal restore', () => {
     journal.append({ type: 'turn.ended', turnId: 1, outcome: { type: 'done' } });
     journal.append({ type: 'turn.started', turnId: 2, trigger: 'notify', message: second });
     journal.append({ type: 'message.appended', turnId: 2, step: 0, source: 'notify', message: second });
-    journal.append({ type: 'turn.ended', turnId: 2, outcome: { type: 'done' } });
+    journal.append({ type: 'turn.ended', turnId: 2, outcome: { type: 'done' }, loopEnd: { outcome: 'idle' } });
 
+    expect(records.at(-1)).toMatchObject({ type: 'turn.ended', turnId: 2, loopEnd: { outcome: 'idle' } });
     expect(records.filter((record) => record.type === 'turn.steer')).toHaveLength(0);
     expect(records.filter((record) => record.type === 'turn.prompt')).toMatchObject([
       { turnId: 0, promptId: 'active' },

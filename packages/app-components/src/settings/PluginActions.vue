@@ -196,11 +196,11 @@ async function removePlugin(): Promise<void> {
       >
         <Icon name="dots-horizontal" size="md" />
       </IconButton>
-      <Transition name="menu-pop">
+      <Transition name="ui-menu-pop">
         <Menu
           v-if="open"
           ref="menuRef"
-          class="plugin-actions__menu"
+          class="ui-menu-floating plugin-actions__menu"
           :style="menuStyle"
           @click.stop
           @keydown="onMenuKeydown"
@@ -247,29 +247,4 @@ async function removePlugin(): Promise<void> {
   padding: var(--space-4);
 }
 
-.plugin-actions__menu {
-  position: fixed;
-  top: 0;
-  left: 0;
-  z-index: var(--z-dropdown);
-}
-
-.menu-pop-enter-active {
-  transition:
-    opacity var(--duration-base) var(--ease-out),
-    transform var(--duration-base) var(--ease-out);
-}
-
-.menu-pop-leave-active {
-  transition:
-    opacity var(--duration-fast) var(--ease-out),
-    transform var(--duration-fast) var(--ease-out);
-  pointer-events: none;
-}
-
-.menu-pop-enter-from,
-.menu-pop-leave-to {
-  opacity: 0;
-  transform: scale(0.97) translateY(var(--menu-pop-shift, -2px));
-}
 </style>
