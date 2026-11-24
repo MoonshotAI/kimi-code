@@ -307,6 +307,8 @@ export default {
   defaultThinkingHint: 'Whether new sessions start with thinking enabled',
   defaultPlanMode: 'Plan mode by default',
   defaultPlanModeHint: 'Whether new sessions start in plan mode',
+  defaultSwarmMode: 'Swarm mode by default',
+  defaultSwarmModeHint: 'Whether new sessions start in swarm mode',
   secondaryModelSection: 'Subagents',
   secondaryModel: 'Subagent model',
   secondaryModelHint: 'Model and thinking effort that subagents use by default',

@@ -3121,6 +3121,7 @@ export class KimiTUI {
     if (!startup.plan) {
       patch.planMode = config.defaultPlanMode === true;
     }
+    patch.swarmMode = config.defaultSwarmMode === true;
     if (startup.agentProfile !== undefined || startup.agentFiles !== undefined) {
       patch.agentProfile = startup.agentProfile;
       patch.agentFiles = startup.agentFiles?.length ? [...startup.agentFiles] : undefined;

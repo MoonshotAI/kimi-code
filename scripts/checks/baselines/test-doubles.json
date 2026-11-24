@@ -98,7 +98,6 @@
     "packages/agent-core-v2/test/features/skill/activateSkill.test.ts": 16,
     "packages/agent-core-v2/test/features/skill/catalog/skill-tool-manager.test.ts": 19,
     "packages/agent-core-v2/test/features/skill/skill.test.ts": 2,
-    "packages/agent-core-v2/test/features/swarm/swarm.test.ts": 3,
     "packages/agent-core-v2/test/features/tower/towerService.test.ts": 3,
     "packages/agent-core-v2/test/integration/conversation/first-turn.test.ts": 2,
     "packages/agent-core-v2/test/integration/conversation/testkit-model.test.ts": 1,

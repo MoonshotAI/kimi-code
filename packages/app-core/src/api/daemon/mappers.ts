@@ -723,6 +723,7 @@ export function toAppConfig(wire: WireConfig): AppConfig {
     yolo: wire.yolo,
     defaultPermissionMode: wire.default_permission_mode,
     defaultPlanMode: wire.default_plan_mode,
+    defaultSwarmMode: wire.default_swarm_mode,
     autoSessionTitle: wire.auto_session_title,
     permission: wire.permission,
     hooks: wire.hooks,

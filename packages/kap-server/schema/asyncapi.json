@@ -2647,6 +2647,9 @@
                     "default_provider": {
                       "type": "string"
                     },
+                    "default_swarm_mode": {
+                      "type": "boolean"
+                    },
                     "disable_feedback_survey": {
                       "type": "boolean"
                     },
