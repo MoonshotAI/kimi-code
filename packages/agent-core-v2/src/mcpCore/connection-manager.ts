@@ -547,7 +547,6 @@ export class McpConnectionManager implements McpConnectionView {
           entry.connectedAt = this.oauthService?.now() ?? Date.now();
           entry.failureStreak = 0;
           this.attachSessionEvidence(entry, plan.client, entry.attemptId);
-          this.attachToolsChanged(entry, plan.client, entry.attemptId);
         }
         break;
       }
@@ -726,6 +725,7 @@ export class McpConnectionManager implements McpConnectionView {
         return;
       }
       entry.attemptClient = startupClient;
+      this.attachToolsChanged(entry, startupClient);
       const discovered = await withTimeout(
         this.connectAndDiscoverTools(startupClient, entry.config),
         timeoutMs,
@@ -759,20 +759,16 @@ export class McpConnectionManager implements McpConnectionView {
     });
   }
 
-  private attachToolsChanged(
-    entry: InternalEntry,
-    client: RuntimeMcpClient,
-    attemptId: number,
-  ): void {
+  private attachToolsChanged(entry: InternalEntry, client: RuntimeMcpClient): void {
     client.onToolsChanged(() => {
-      if (!this.isCurrent(entry, attemptId)) return;
-      if (entry.client !== client) return;
+      if (this.entries.get(entry.name) !== entry) return;
+      if (entry.client !== client && entry.attemptClient !== client) return;
       void this.enqueueOperation(entry.name, async () => {
-        if (!this.isCurrent(entry, attemptId)) return;
+        if (this.entries.get(entry.name) !== entry) return;
         if (entry.client !== client) return;
         try {
           const discovered = await this.discoverTools(client, entry.config);
-          if (!this.isCurrent(entry, attemptId)) return;
+          if (this.entries.get(entry.name) !== entry) return;
           if (entry.client !== client) return;
           this.transition(entry, {
             type: 'toolsChanged',

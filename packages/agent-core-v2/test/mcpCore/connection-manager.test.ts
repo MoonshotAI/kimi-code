@@ -26,7 +26,8 @@ import { z } from 'zod';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { Error2 } from '#/errors';
-import { KIMI_MCP_CLIENT_NAME } from '#/mcpCore/client-shared';
+import { HttpMcpClient } from '#/mcpCore/client-http';
+import { KIMI_MCP_CLIENT_NAME, McpToolListChangeSource } from '#/mcpCore/client-shared';
 import { McpConnectionManager, type McpConnectionManagerOptions, type McpServerEntry } from '#/mcpCore/connection-manager';
 import { McpOAuthService } from '#/mcpCore/oauth/service';
 import type { StoredMcpOAuthTokens } from '#/mcpCore/oauth/provider';
@@ -174,6 +175,40 @@ describe('McpConnectionManager', () => {
       await server.close();
     }
   }, 15000);
+
+  it('refreshes tools when a notification arrives during initial discovery', async () => {
+    let notify: (() => void) | undefined;
+    const subscribe = vi
+      .spyOn(McpToolListChangeSource.prototype, 'onToolsChanged')
+      .mockImplementation((listener) => {
+        notify = listener;
+      });
+    const connect = vi.spyOn(HttpMcpClient.prototype, 'connect').mockResolvedValue();
+    const echo = { name: 'echo', description: 'Echo', inputSchema: { type: 'object' as const } };
+    const added = { name: 'added', description: 'Added', inputSchema: { type: 'object' as const } };
+    let currentTools = [echo];
+    const listTools = vi.spyOn(HttpMcpClient.prototype, 'listTools').mockImplementation(async () => {
+      const discovered = currentTools;
+      if (discovered.length > 1) return discovered;
+      currentTools = [...discovered, added];
+      notify?.();
+      return discovered;
+    });
+    const cm = createManager();
+    try {
+      await cm.connect('remote', { transport: 'http', url: 'https://example.test/mcp' });
+      await vi.waitFor(() => {
+        expect(cm.resolved('remote')?.tools.map((tool) => tool.name)).toEqual(['echo', 'added']);
+      });
+      expect(subscribe).toHaveBeenCalledTimes(1);
+      expect(listTools).toHaveBeenCalledTimes(2);
+    } finally {
+      await cm.shutdown();
+      connect.mockRestore();
+      listTools.mockRestore();
+      subscribe.mockRestore();
+    }
+  });
 
   it('isolates permanent startup and discovery failures without retry or blocking the rest', async () => {
     const statuses: string[] = [];
