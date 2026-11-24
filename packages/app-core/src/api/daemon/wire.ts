@@ -497,6 +497,7 @@ export interface WireConfig {
   yolo?: boolean;
   default_permission_mode?: string;
   default_plan_mode?: boolean;
+  default_swarm_mode?: boolean;
   auto_session_title?: boolean;
   permission?: unknown;
   hooks?: unknown[];

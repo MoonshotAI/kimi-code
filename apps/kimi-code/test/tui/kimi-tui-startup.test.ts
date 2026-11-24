@@ -639,6 +639,7 @@ describe('KimiTUI startup', () => {
         defaultModel: 'k2',
         defaultPermissionMode: 'auto',
         defaultPlanMode: true,
+        defaultSwarmMode: true,
         thinking: { enabled: true, effort: 'high' },
       })),
     });
@@ -653,6 +654,7 @@ describe('KimiTUI startup', () => {
       maxContextTokens: 200,
       permissionMode: 'auto',
       planMode: true,
+      swarmMode: true,
       thinkingEffort: 'high',
     });
   });
@@ -712,6 +714,7 @@ describe('KimiTUI startup', () => {
               defaultModel: 'k2',
               defaultPermissionMode: 'auto',
               defaultPlanMode: true,
+              defaultSwarmMode: true,
             }
           : { models: {} },
       ),
@@ -744,6 +747,7 @@ describe('KimiTUI startup', () => {
       permissionMode: 'auto',
       planMode: true,
       configDefaultPlanMode: true,
+      swarmMode: true,
     });
   });
 

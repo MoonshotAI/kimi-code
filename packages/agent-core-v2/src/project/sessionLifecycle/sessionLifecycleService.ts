@@ -18,6 +18,7 @@ import { AsyncEmitter, Emitter, type Event, type IWaitUntil } from '#/_base/even
 import { ILogService } from '#/_base/log/log';
 import { drainLogCloses } from '#/_base/log/logService';
 import { DEFAULT_PLAN_MODE_SECTION } from '#/features/plan/configSection';
+import { DEFAULT_SWARM_MODE_SECTION } from '#/features/swarm/configSection';
 import { IAgentFileHistoryService } from '#/features/fileHistory/fileHistory';
 import { FILE_HISTORY_BLOB_PREFIX } from '#/features/fileHistory/fileHistoryService';
 import {
@@ -29,6 +30,7 @@ import { readUserPermissionRules } from '#/agent/permissionRules/configSection';
 import { IProjectPermissionRulesService } from '#/agent/permissionRules/projectPermissionRules';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { IAgentPlanService } from '#/features/plan/plan';
+import { IAgentSwarmService } from '#/features/swarm/agent/swarm';
 import { LifecycleScope } from '#/app/scopes';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
@@ -265,6 +267,14 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
         if (planHandle.accessor.get(IAgentToolPolicyService).isToolActive('ExitPlanMode')) {
           await planHandle.accessor.get(IAgentPlanService).enter();
         }
+      }
+      if (this.config.get<boolean>(DEFAULT_SWARM_MODE_SECTION)) {
+        const swarmAgent = main ?? (await ensureMainAgent(handle));
+        const swarmHandle = agents.handleOf(swarmAgent.agentId);
+        if (swarmHandle === undefined) {
+          throw new Error2(ErrorCodes.AGENT_NOT_FOUND, 'Main agent was not found');
+        }
+        swarmHandle.accessor.get(IAgentSwarmService).enter('manual');
       }
       await opts.prepare?.(handle);
       await this.appendSessionIndexEntry(sessionId, workDir);
