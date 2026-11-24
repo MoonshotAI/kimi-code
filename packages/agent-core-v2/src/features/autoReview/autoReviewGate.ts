@@ -1,6 +1,9 @@
 import type { PermissionGateReviewer } from '#/agent/permissionGate/permissionGate';
 import type { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
-import type { PermissionPolicyEvaluation } from '#/agent/permissionPolicy/permissionPolicy';
+import type {
+  IAgentPermissionPolicyService,
+  PermissionPolicyEvaluation,
+} from '#/agent/permissionPolicy/permissionPolicy';
 import type {
   PermissionDecisionReason,
   PermissionMode,
@@ -10,61 +13,54 @@ import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/tool
 import type { IFlagService } from '#/app/flag/flag';
 
 import { AUTO_REVIEW_FLAG_ID } from './flag';
-import type { AutoReviewResult, IAutoReviewService } from './review';
+import type { AutoReviewOutcome, IAutoReviewService } from './review';
 
 const AUTO_REVIEW_ORIGIN = 'auto-review';
+const MODE_APPROVAL_POLICIES: ReadonlySet<string> = new Set([
+  'auto-mode-approve',
+  'yolo-mode-approve',
+]);
+
+type AskPolicyResult = Extract<PermissionPolicyResult, { readonly kind: 'ask' }>;
 
 export function createAutoReviewReviewer(
   flags: IFlagService,
   modes: IAgentPermissionModeService,
+  policies: IAgentPermissionPolicyService,
   reviewService: IAutoReviewService,
 ): PermissionGateReviewer {
-  return {
-    evaluateOptions: () => ({
-      includeUnderlying: flags.enabled(AUTO_REVIEW_FLAG_ID) && modes.mode !== 'manual',
-    }),
-    review: (context, evaluation) => {
-      const trigger = autoReviewTrigger(flags.enabled(AUTO_REVIEW_FLAG_ID), modes.mode, evaluation);
-      if (trigger === undefined) return undefined;
-      return async () => resolveAutoReview(
-        context,
-        evaluation,
-        await reviewService.review(context, trigger),
-        flags.enabled(AUTO_REVIEW_FLAG_ID) ? modes.mode : 'manual',
-      );
-    },
+  return async (context, evaluation) => {
+    if (!flags.enabled(AUTO_REVIEW_FLAG_ID) || modes.mode === 'manual') return undefined;
+    const askEval = evaluation.result.kind === 'ask'
+      ? evaluation
+      : MODE_APPROVAL_POLICIES.has(evaluation.policyName)
+        ? await policies.evaluate(context, { skipModeApprovals: true })
+        : undefined;
+    if (askEval?.result.kind !== 'ask') return undefined;
+    const baseAsk = askEval.result;
+    return async () => resolveAutoReview(
+      context,
+      evaluation,
+      baseAsk,
+      await reviewService.review(context, askEval.policyName),
+      flags.enabled(AUTO_REVIEW_FLAG_ID) ? modes.mode : 'manual',
+    );
   };
-}
-
-export function autoReviewTrigger(
-  enabled: boolean,
-  mode: PermissionMode,
-  evaluation: PermissionPolicyEvaluation,
-): string | undefined {
-  if (!enabled || mode === 'manual') return undefined;
-  if (evaluation.result.kind === 'ask') return evaluation.policyName;
-  const underlying = evaluation.underlying;
-  return underlying?.result.kind === 'ask' ? underlying.policyName : undefined;
 }
 
 export function resolveAutoReview(
   context: ResolvedToolExecutionHookContext,
   evaluation: PermissionPolicyEvaluation,
-  review: AutoReviewResult,
+  baseAsk: AskPolicyResult | undefined,
+  review: AutoReviewOutcome,
   mode: PermissionMode,
 ): PermissionPolicyEvaluation {
-  const baseAsk = evaluation.result.kind === 'ask'
-    ? evaluation.result
-    : evaluation.underlying?.result.kind === 'ask'
-      ? evaluation.underlying.result
-      : undefined;
-  const allowed = review.kind === 'decision' && review.decision.decision === 'allow';
-  if (allowed && mode !== 'manual') {
+  if (review.decision === 'allow' && mode !== 'manual') {
     return {
       policyName: AUTO_REVIEW_ORIGIN,
       result: {
         kind: 'approve',
-        reason: withReason(baseAsk?.reason, { review_risk: review.decision.risk }),
+        reason: withReason(baseAsk?.reason, { review_risk: review.risk }),
         executionMetadata: evaluation.result.kind === 'approve' ? evaluation.result.executionMetadata : undefined,
       },
     };
@@ -77,34 +73,42 @@ export function resolveAutoReview(
 
 function denial(
   context: ResolvedToolExecutionHookContext,
-  review: AutoReviewResult,
+  review: AutoReviewOutcome,
   baseReason?: PermissionDecisionReason,
 ): Extract<PermissionPolicyResult, { kind: 'deny' }> {
-  if (review.kind === 'failed') {
+  if (review.decision === 'failed') {
     return {
       kind: 'deny',
       message: `Auto Review could not complete; the tool was not executed: ${review.reason} Resolve the review error or ask the user for guidance.`,
       reason: withReason(baseReason, { review_error: true }),
     };
   }
+  const suffix = review.decision === 'deny' && review.reason !== undefined ? ` ${review.reason}` : '';
   return {
     kind: 'deny',
-    message: `Auto Review denied tool "${context.toolCall.name}"; it was not executed.${reasonSuffix(review)} Do not retry the same action or bypass the review.`,
-    reason: withReason(baseReason, { review_risk: review.decision.risk }),
+    message: `Auto Review denied tool "${context.toolCall.name}"; it was not executed.${suffix} Do not retry the same action or bypass the review.`,
+    reason: withReason(baseReason, { review_risk: review.risk }),
   };
 }
 
 function fallbackAsk(
   context: ResolvedToolExecutionHookContext,
-  review: AutoReviewResult,
-  baseAsk?: Extract<PermissionPolicyResult, { kind: 'ask' }>,
-): PermissionPolicyResult {
-  if (review.kind === 'failed') {
+  review: AutoReviewOutcome,
+  baseAsk?: AskPolicyResult,
+): AskPolicyResult {
+  if (review.decision === 'allow') {
+    return {
+      ...baseAsk,
+      kind: 'ask',
+      reason: withReason(baseAsk?.reason, { review_risk: review.risk, review_mode_changed: true }),
+    };
+  }
+  if (review.decision === 'failed') {
     return {
       ...baseAsk,
       kind: 'ask',
       reason: withReason(baseAsk?.reason, { review_error: true }),
-      approvalDetail: { title: 'Auto Review failed', detail: review.reason },
+      approvalDetail: { outcome: 'failed', reason: review.reason },
       resolveNonInteractive: () => denial(context, review, baseAsk?.reason),
       resolveError: (error) =>
         baseAsk?.resolveError?.(error) ?? {
@@ -114,28 +118,22 @@ function fallbackAsk(
         },
     };
   }
-  const { decision } = review;
-  if (decision.decision === 'allow') {
-    return {
-      ...baseAsk,
-      kind: 'ask',
-      reason: withReason(baseAsk?.reason, { review_risk: decision.risk, review_mode_changed: true }),
-    };
-  }
+  const suffix = review.reason !== undefined ? ` ${review.reason}` : '';
   return {
     ...baseAsk,
     kind: 'ask',
-    reason: withReason(baseAsk?.reason, { review_risk: decision.risk }),
+    reason: withReason(baseAsk?.reason, { review_risk: review.risk }),
     approvalDetail: {
-      title: `Auto Review: denied (${decision.risk} risk)`,
-      detail: decision.reason ?? 'The reviewer did not provide a reason.',
+      outcome: 'denied',
+      risk: review.risk,
+      reason: review.reason ?? 'The reviewer did not provide a reason.',
     },
     resolveNonInteractive: () => denial(context, review, baseAsk?.reason),
     resolveApproval: (response) => response.decision === 'approved'
       ? baseAsk?.resolveApproval?.(response)
       : {
           kind: 'deny',
-          message: `Tool "${context.toolCall.name}" was not run after Auto Review denial.${reasonSuffix(review)}${feedbackSuffix(response.feedback)}`,
+          message: `Tool "${context.toolCall.name}" was not run after Auto Review denial.${suffix}${feedbackSuffix(response.feedback)}`,
         },
   };
 }
@@ -145,12 +143,6 @@ function withReason(
   extra: PermissionDecisionReason,
 ): PermissionDecisionReason {
   return base === undefined ? extra : { ...base, ...extra };
-}
-
-function reasonSuffix(review: Extract<AutoReviewResult, { kind: 'decision' }>): string {
-  return review.decision.decision === 'deny' && review.decision.reason !== undefined
-    ? ` ${review.decision.reason}`
-    : '';
 }
 
 function feedbackSuffix(feedback: string | undefined): string {

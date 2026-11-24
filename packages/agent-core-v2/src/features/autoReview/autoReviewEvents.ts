@@ -1,7 +1,10 @@
 /* oxlint-disable typescript-eslint/no-unsafe-declaration-merging -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
 import { z } from 'zod';
 
+import { ContextClear } from '#/agent/contextMemory/contextEvents';
+import { PermissionRecordApprovalResult } from '#/agent/permissionRules/permissionRulesOps';
 import { AgentEvent2, registerEvent2Class } from '#/app/event/event2';
+import { defineState } from '#/state/state';
 
 export interface AutoReviewStartedPayload {
   readonly agentId: string;
@@ -49,7 +52,7 @@ export interface AutoReviewCompleted {
   readonly decision: 'allow' | 'deny' | 'failed';
   readonly risk?: 'low' | 'medium' | 'high';
   readonly reason?: string;
-  readonly durationMs: number;
+  durationMs: number;
 }
 
 export interface AutoReviewCompletedEvent extends Omit<z.infer<typeof autoReviewCompletedSchema>, 'agentId'> {
@@ -58,3 +61,16 @@ export interface AutoReviewCompletedEvent extends Omit<z.infer<typeof autoReview
 
 registerEvent2Class(AutoReviewStarted);
 registerEvent2Class(AutoReviewCompleted);
+
+export const autoReviewApprovedCallsKey = defineState(
+  'autoReview.approvedToolCallIds',
+  (): readonly string[] => [],
+)
+  .replayable({ schema: z.custom<readonly string[]>() })
+  .undoable()
+  .on(ContextClear, () => [])
+  .on(PermissionRecordApprovalResult, (s, e) => {
+    if (e.result.decision === 'approved' && !s.includes(e.toolCallId)) {
+      s.push(e.toolCallId);
+    }
+  });

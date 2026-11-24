@@ -2,6 +2,12 @@ import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 
 export type ApprovalDecision = 'approved' | 'rejected' | 'cancelled';
 
+export interface ApprovalReviewDetail {
+  readonly outcome: 'denied' | 'failed';
+  readonly risk?: 'medium' | 'high';
+  readonly reason: string;
+}
+
 export interface ApprovalRequest {
   readonly id?: string;
   readonly sessionId?: string;
@@ -11,10 +17,7 @@ export interface ApprovalRequest {
   readonly toolName: string;
   readonly action: string;
   readonly display: ToolInputDisplay;
-  readonly approvalDetail?: {
-    readonly title: string;
-    readonly detail: string;
-  };
+  readonly approvalDetail?: ApprovalReviewDetail;
 }
 
 export interface ApprovalResponse {

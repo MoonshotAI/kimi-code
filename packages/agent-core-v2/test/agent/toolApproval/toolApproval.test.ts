@@ -355,8 +355,9 @@ describe('AgentToolApprovalService', () => {
       const request = useBroker(async () => ({ decision: 'approved' }));
       const svc = make();
       const approvalDetail = {
-        title: 'Auto Review: denied (medium risk)',
-        detail: 'Creating remote resources was not explicitly authorized.',
+        outcome: 'denied' as const,
+        risk: 'medium' as const,
+        reason: 'Creating remote resources was not explicitly authorized.',
       };
 
       await svc.requestToolApproval(

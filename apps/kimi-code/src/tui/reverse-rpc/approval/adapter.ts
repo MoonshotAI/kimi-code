@@ -29,8 +29,10 @@ export function adaptApprovalRequest(event: ApprovalRequest): ApprovalPanelData 
       : [
           {
             type: 'review',
-            title: event.approvalDetail.title,
-            detail: event.approvalDetail.detail,
+            title: event.approvalDetail.outcome === 'failed'
+              ? 'Auto Review failed'
+              : `Auto Review: denied (${event.approvalDetail.risk ?? 'medium'} risk)`,
+            detail: event.approvalDetail.reason,
           },
           ...resolved.blocks,
         ],

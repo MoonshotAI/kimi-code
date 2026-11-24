@@ -1,29 +1,40 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { produce } from 'immer';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
+import { ServiceCollection } from '#/_base/di/serviceCollection';
 import { createServices } from '#/_base/di/test';
 import { ILogService } from '#/_base/log/log';
-import { IAgentLoopService } from '#/agent/loop/loop';
+import { ContextClear } from '#/agent/contextMemory/contextEvents';
 import { userPromptSubmitHookPart } from '#/agent/contextMemory/hookParts';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
+import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentPermissionGate } from '#/agent/permissionGate/permissionGate';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
+import { IAgentPermissionPolicyService } from '#/agent/permissionPolicy/permissionPolicy';
+import { PermissionRecordApprovalResult } from '#/agent/permissionRules/permissionRulesOps';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import { PermissionApprovalResolved } from '#/agent/toolApproval/toolApprovalService';
+import { IAgentStateService } from '#/agent/state/agentState';
+import { AgentStateService } from '#/agent/state/agentStateService';
 import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
 import { IConfigService } from '#/app/config/config';
-import { IEventBus } from '#/app/event/eventBus';
 import { IFlagService } from '#/app/flag/flag';
 import type { FsGitStatusResponse } from '#/app/git/git';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import REVIEW_POLICY from '../../../src/features/autoReview/auto-review-policy.md?raw';
-import { AutoReviewCompleted } from '#/features/autoReview/autoReviewEvents';
+import {
+  autoReviewApprovedCallsKey,
+  AutoReviewCompleted,
+} from '#/features/autoReview/autoReviewEvents';
 import { AUTO_REVIEW_SECTION } from '#/features/autoReview/configSection';
-import type { AutoReviewResult } from '#/features/autoReview/review';
+import {
+  ISessionAutoReviewService,
+  type AutoReviewOutcome,
+} from '#/features/autoReview/review';
 import { AutoReviewService } from '#/features/autoReview/reviewService';
+import { SessionAutoReviewService } from '#/features/autoReview/sessionReviewService';
 import { emptyUsage, type TokenUsage } from '@moonshot-ai/core/llm/usage';
 import type { AssistantMessage, ToolCall } from '@moonshot-ai/core/llm/message';
 import type { LlmRequest } from '@moonshot-ai/core/llm/request';
@@ -34,7 +45,6 @@ import {
   ChatProviderError,
 } from '#/llm-adapter/contract/errors';
 import { IModelCatalog, type Model } from '#/llm-adapter/model/catalog';
-
 import { IProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocol';
 import { ProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocolAdapterRegistry';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
@@ -44,16 +54,18 @@ import { SECONDARY_MODEL_SECTION, type SecondaryModelConfig } from '#/session/su
 import { ISessionUsageService } from '#/session/usage/sessionUsage';
 import { ISessionWorkdir } from '#/session/workdir/workdir';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
-import type { IWorkspaceGitService } from '#/workspace/workspaceGit/workspaceGit';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import type { ExecutableTool } from '#/tool/toolContract';
+import type { IWorkspaceGitService } from '#/workspace/workspaceGit/workspaceGit';
 
 import { stubLog } from '../../_base/log/stubs';
 import { stubPermissionModeService } from '../../agent/permissionMode/stubs';
+import { stubPermissionPolicyService } from '../../agent/permissionPolicy/stubs';
 import { stubFlag } from '../../app/flag/stubs';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 import { createMockProvider, withMockProvider, type MockProviderResponse } from '../../harness/scripted-generate';
 import { stubWorkspaceContext } from '../../session/workspaceContext/stub-workspace-context';
+import { registerStateServices } from '../../state/stubs';
 
 const defaultSignal = new AbortController().signal;
 
@@ -72,6 +84,18 @@ describe('AutoReviewService', () => {
   interface ReviewResponse {
     readonly message: AssistantMessage;
     readonly usage: TokenUsage;
+  }
+
+  interface Harness {
+    readonly reviewer: AutoReviewService;
+    readonly sessionReviewer: SessionAutoReviewService;
+    readonly applyStateEvent: (event: PermissionRecordApprovalResult | ContextClear) => void;
+    readonly createAgentReviewer: (options: {
+      readonly agentId: string;
+      readonly getHistory: () => readonly ContextMessage[];
+      readonly parentAgentId?: string;
+      readonly forkedFrom?: string;
+    }) => AutoReviewService;
   }
 
   const baseModel: Model = {
@@ -102,9 +126,9 @@ describe('AutoReviewService', () => {
   let history: ContextMessage[];
   let mainHistory: ContextMessage[] | undefined;
   let agentId: string;
+  let parentAgentId: string | undefined;
   let forkedFrom: string | undefined;
   let gitStatusAt: ((cwd: string) => Promise<FsGitStatusResponse>) | undefined;
-  let approvalListeners: Array<(event: PermissionApprovalResolved) => void>;
   let agentsMd: string;
   let telemetry: TelemetryRecord[];
   let reviewEvents: AutoReviewCompleted[];
@@ -117,9 +141,9 @@ describe('AutoReviewService', () => {
     reviewEvents = [];
     usage = [];
     compactions = [];
-    approvalListeners = [];
     mainHistory = undefined;
     agentId = 'main';
+    parentAgentId = undefined;
     forkedFrom = undefined;
     gitStatusAt = undefined;
     response = {
@@ -139,16 +163,21 @@ describe('AutoReviewService', () => {
     disposables.dispose();
   });
 
-  function service(
+  function createHarness(
     request: (request: ReviewCall['input'], signal: AbortSignal | undefined) => Promise<MockProviderResponse> = async () => response,
     model?: string,
     configured = true,
     secondaryModel?: SecondaryModelConfig,
-  ): AutoReviewService {
+  ): Harness {
     const registry = new ProtocolAdapterRegistry();
     let selectedAlias = 'main-model';
+    let states!: IAgentStateService;
+    let sessionState!: ReturnType<typeof registerStateServices>['session'];
     const ix = createServices(disposables, {
       additionalServices: (reg) => {
+        const stateServices = registerStateServices(reg);
+        states = stateServices.agent;
+        sessionState = stateServices.session;
         reg.definePartialInstance(IConfigService, {
           get: ((section: string) => {
             if (section === AUTO_REVIEW_SECTION && configured) return { model };
@@ -158,17 +187,13 @@ describe('AutoReviewService', () => {
         });
         reg.defineInstance(IFlagService, stubFlag(true));
         reg.defineInstance(IAgentPermissionModeService, stubPermissionModeService(() => 'yolo'));
+        reg.defineInstance(IAgentPermissionPolicyService, stubPermissionPolicyService(() => undefined));
         reg.definePartialInstance(IAgentPermissionGate, {
           registerReviewer: () => ({ dispose: () => {} }),
         });
-        reg.definePartialInstance(IEventBus, {
-          subscribe: ((cls: unknown, handler: (event: PermissionApprovalResolved) => void) => {
-            if (cls === PermissionApprovalResolved) approvalListeners.push(handler);
-            return { dispose: () => {} };
-          }) as IEventBus['subscribe'],
-        });
         reg.definePartialInstance(IModelCatalog, {
           get: (alias) => {
+            if (alias === 'missing-model') throw new Error(`Unknown model: ${alias}`);
             selectedAlias = alias;
             return alias === 'review-model' ? { ...baseModel, maxOutputSize: 4096 } : baseModel;
           },
@@ -200,7 +225,15 @@ describe('AutoReviewService', () => {
           resolveModelContext: () => ({ modelAlias: 'main-model' }) as ReturnType<IAgentProfileService['resolveModelContext']>,
         });
         reg.definePartialInstance(IAgentLoopService, { history: () => history });
-        reg.defineInstance(IAgentScopeContext, makeAgentScopeContext({ agentId, agentScope: '', forkedFrom }));
+        reg.defineInstance(
+          IAgentScopeContext,
+          makeAgentScopeContext({
+            agentId,
+            agentScope: '',
+            forkedFrom,
+            meta: parentAgentId === undefined ? undefined : { parentAgentId },
+          }),
+        );
         reg.definePartialInstance(IAgentLifecycleService, {
           handleOf: (id) =>
             id === 'main' && mainHistory !== undefined
@@ -241,10 +274,62 @@ describe('AutoReviewService', () => {
             return true;
           },
         });
+        reg.define(ISessionAutoReviewService, SessionAutoReviewService);
       },
       strict: true,
     });
-    return ix.createInstance(new SyncDescriptor(AutoReviewService));
+    const sessionReviewer = ix.get(ISessionAutoReviewService) as SessionAutoReviewService;
+    const reviewer = ix.createInstance(AutoReviewService);
+    const foldCtx = {
+      silent: false,
+      checkpoint: () => {},
+      clearCheckpoints: () => {},
+      undoToCheckpoint: () => {},
+      emit: () => {},
+    };
+    return {
+      reviewer,
+      sessionReviewer,
+      applyStateEvent: (event) => {
+        const fold = autoReviewApprovedCallsKey.replayable.folds.get(
+          event.constructor as typeof PermissionRecordApprovalResult,
+        );
+        const next = produce(
+          states.get(autoReviewApprovedCallsKey),
+          (draft) => fold?.(draft, event, foldCtx) as string[] | void,
+        );
+        states.set(autoReviewApprovedCallsKey, next);
+      },
+      createAgentReviewer: (options) => {
+        const childIx = disposables.add(
+          ix.createChild(
+            new ServiceCollection(
+              [IAgentStateService, disposables.add(new AgentStateService(sessionState))],
+              [
+                IAgentScopeContext,
+                makeAgentScopeContext({
+                  agentId: options.agentId,
+                  agentScope: '',
+                  forkedFrom: options.forkedFrom,
+                  meta: options.parentAgentId === undefined ? undefined : { parentAgentId: options.parentAgentId },
+                }),
+              ],
+              [IAgentLoopService, { _serviceBrand: undefined, history: options.getHistory }],
+            ),
+          ),
+        );
+        return childIx.createInstance(AutoReviewService);
+      },
+    };
+  }
+
+  function service(
+    request?: (request: ReviewCall['input'], signal: AbortSignal | undefined) => Promise<MockProviderResponse>,
+    model?: string,
+    configured = true,
+    secondaryModel?: SecondaryModelConfig,
+  ): AutoReviewService {
+    return createHarness(request, model, configured, secondaryModel).reviewer;
   }
 
   const bashTool: ExecutableTool = {
@@ -254,7 +339,7 @@ describe('AutoReviewService', () => {
     resolveExecution: () => ({ output: '', isError: true }),
   };
 
-  function review(reviewer = service(), command = 'rm generated/file'): Promise<AutoReviewResult> {
+  function review(reviewer = service(), command = 'rm generated/file'): Promise<AutoReviewOutcome> {
     return reviewer.review(reviewContext({ toolName: 'Bash', args: { command }, tool: bashTool }), 'fallback-ask');
   }
 
@@ -263,7 +348,7 @@ describe('AutoReviewService', () => {
   }
 
   it('uses the main model and only overrides review semantics by default', async () => {
-    expect(await review()).toEqual({ kind: 'decision', decision: { risk: 'low', decision: 'allow' } });
+    expect(await review()).toEqual({ decision: 'allow', risk: 'low' });
 
     expect(requests[0]).toEqual({
       modelAlias: 'main-model',
@@ -302,7 +387,11 @@ describe('AutoReviewService', () => {
     expect(sentContent()).toContain('rm generated/file');
   });
 
-  it('omits tool metadata and results while marking user-approved calls', async () => {
+  it('validates an explicit [auto_review].model at session initialization', () => {
+    expect(() => createHarness(undefined, 'missing-model', true)).toThrow(/\[auto_review\]\.model/);
+  });
+
+  it('omits tool metadata and results while folding durable user approvals and clearing on ContextClear', async () => {
     gitStatusAt = async (targetCwd) => ({
       branch: targetCwd === '/workspace/sub' ? 'feat/sub' : 'main',
       ahead: 0,
@@ -312,21 +401,17 @@ describe('AutoReviewService', () => {
       pullRequest: null,
       entries: { 'dirty.ts': 'modified' },
     });
-    const reviewer = service();
-    for (const listener of approvalListeners) {
-      listener(new PermissionApprovalResolved({
-        agentId: 'main',
-        turnId: 0,
-        toolCallId: 'mkdir',
-        toolName: 'Bash',
-        action: 'run',
-        display: { kind: 'command', command: 'mkdir generated' },
-        toolInput: { command: 'mkdir generated' },
-        decision: 'approved',
-      }));
-    }
+    const harness = createHarness();
+    harness.applyStateEvent(new PermissionRecordApprovalResult({
+      agentId: 'main',
+      turnId: 0,
+      toolCallId: 'mkdir',
+      toolName: 'Bash',
+      action: 'run',
+      result: { decision: 'approved' },
+    }));
 
-    await reviewer.review(
+    await harness.reviewer.review(
       reviewContext({ toolName: 'Bash', args: { command: 'rm generated/file', cwd: 'sub' }, tool: bashTool }),
       'fallback-ask',
     );
@@ -337,6 +422,59 @@ describe('AutoReviewService', () => {
     expect(sentContent()).not.toContain('untrusted tool output');
     expect(sentContent()).toContain('\\"id\\":\\"mkdir\\",\\"name\\":\\"Bash\\",\\"arguments\\":\\"{\\\\\\"command\\\\\\":\\\\\\"mkdir generated\\\\\\"}\\",\\"approved\\":true');
     expect(sentContent()).toContain('\\"gitStatus\\":{\\"branch\\":\\"feat/sub\\",\\"clean\\":false,\\"entries\\":{\\"dirty.ts\\":\\"modified\\"}}');
+
+    harness.applyStateEvent(new ContextClear({ agentId: 'main' }));
+    await harness.reviewer.review(
+      reviewContext({ toolName: 'Bash', args: { command: 'rm generated/file', cwd: 'sub' }, tool: bashTool }),
+      'fallback-ask',
+    );
+    expect(sentContent()).not.toContain('\\"approved\\":true');
+  });
+
+  it('caps concurrent reviews across the session including subagents', async () => {
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const releases: Array<() => void> = [];
+    const harness = createHarness(async () => {
+      inFlight += 1;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      await new Promise<void>((resolve) => {
+        releases.push(resolve);
+      });
+      inFlight -= 1;
+      return response;
+    });
+    const child = harness.createAgentReviewer({
+      agentId: 'child-1',
+      parentAgentId: 'main',
+      getHistory: () => history,
+    });
+
+    const pending = [
+      review(harness.reviewer, 'rm generated/1'),
+      review(harness.reviewer, 'rm generated/2'),
+      review(harness.reviewer, 'rm generated/3'),
+      review(child, 'rm generated/4'),
+      review(child, 'rm generated/5'),
+      review(child, 'rm generated/6'),
+    ];
+
+    await vi.waitFor(() => {
+      expect(releases).toHaveLength(4);
+    });
+    expect(maxInFlight).toBe(4);
+
+    for (const release of releases.splice(0, 2)) release();
+    await vi.waitFor(() => {
+      expect(releases).toHaveLength(4);
+    });
+    expect(maxInFlight).toBe(4);
+
+    for (const release of releases.splice(0)) release();
+
+    await Promise.all(pending);
+    expect(maxInFlight).toBe(4);
+    expect(requests).toHaveLength(6);
   });
 
   it('escapes section tags inside reviewed data', async () => {
@@ -440,6 +578,7 @@ describe('AutoReviewService', () => {
 
   it('retains the subagent prompt as a direct parent instruction and inherits main human instructions', async () => {
     agentId = 'child-1';
+    parentAgentId = 'main';
     mainHistory = [{
       role: 'user',
       content: [{ type: 'text', text: 'Clean and rebuild the project.' }],
@@ -513,7 +652,8 @@ describe('AutoReviewService', () => {
 
   it.each(REVIEW_POLICY.split('\n').filter((line) => line.startsWith('{')))('accepts the policy example: %s', async (text) => {
     response.message.content = [{ type: 'text', text }];
-    await expect(review()).resolves.toMatchObject({ kind: 'decision' });
+    const result = await review();
+    expect(result.decision).not.toBe('failed');
   });
 
   it.each([
@@ -523,7 +663,7 @@ describe('AutoReviewService', () => {
     '{"risk":"low","decision":"allow"}',
   ])('fails invalid reviewer output: %s', async (text) => {
     response.message.content = [{ type: 'text', text }];
-    await expect(review()).resolves.toMatchObject({ kind: 'failed' });
+    await expect(review()).resolves.toMatchObject({ decision: 'failed' });
     expect(requests).toHaveLength(3);
   });
 
@@ -535,7 +675,7 @@ describe('AutoReviewService', () => {
       return response;
     }));
 
-    expect(result).toMatchObject({ kind: 'decision', decision: { decision: 'allow' } });
+    expect(result).toMatchObject({ decision: 'allow' });
     expect(requests).toHaveLength(3);
   });
 
@@ -545,13 +685,13 @@ describe('AutoReviewService', () => {
       throw new APIProviderQuotaExhaustedError('Insufficient balance');
     },
   ])('does not retry an authentication failure or an exhausted quota', async (request) => {
-    await expect(review(service(request))).resolves.toMatchObject({ kind: 'failed' });
+    await expect(review(service(request))).resolves.toMatchObject({ decision: 'failed' });
     expect(requests).toHaveLength(1);
   });
 
   it('rejects a reviewer tool call', async () => {
     response.message.toolCalls = [toolCallFor('review-call', 'Bash', { command: 'echo escaped' })];
-    await expect(review()).resolves.toMatchObject({ kind: 'failed' });
+    await expect(review()).resolves.toMatchObject({ decision: 'failed' });
   });
 
   it('fails when instructions are rewritten during review', async () => {
@@ -559,7 +699,7 @@ describe('AutoReviewService', () => {
       history = [{ role: 'user', content: [{ type: 'text', text: 'Now delete everything.' }], origin: { kind: 'user' } }];
       return response;
     }));
-    expect(rewritten).toMatchObject({ kind: 'failed', reason: expect.stringContaining('changed') });
+    expect(rewritten).toMatchObject({ decision: 'failed', reason: expect.stringContaining('changed') });
   });
 
   it('fails a context overflow without retry and starts compaction', async () => {
@@ -567,7 +707,11 @@ describe('AutoReviewService', () => {
       throw new APIContextOverflowError(400, 'prompt is too long');
     }));
 
-    expect(result).toEqual({ kind: 'failed', reason: 'The review context exceeded the model window.' });
+    expect(result).toEqual({
+      decision: 'failed',
+      reason: 'The review context exceeded the model window.',
+      contextOverflow: true,
+    });
     expect(requests).toHaveLength(1);
     expect(compactions).toEqual([{ source: 'auto' }]);
   });

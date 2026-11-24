@@ -88,7 +88,7 @@ export function toWireApproval(interaction: Interaction, sessionId: string): {
   tool_name: string;
   action: string;
   tool_input_display: unknown;
-  approval_detail?: { title: string; detail: string };
+  approval_detail?: ApprovalRequest['approvalDetail'];
   created_at: string;
   expires_at: string;
 } {

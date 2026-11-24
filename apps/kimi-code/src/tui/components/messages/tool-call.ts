@@ -1094,10 +1094,6 @@ export class ToolCallComponent extends Container {
     this.ui?.requestRender();
   }
 
-  get isAutoReviewing(): boolean {
-    return this.autoReviewing;
-  }
-
   setAutoReviewing(reviewing: boolean): void {
     if (this.autoReviewing === reviewing) return;
     this.autoReviewing = reviewing;

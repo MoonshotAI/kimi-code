@@ -9,8 +9,9 @@ export const approvalScopeSchema = z.enum(['session']);
 export type ApprovalScope = z.infer<typeof approvalScopeSchema>;
 
 export const approvalDetailSchema = z.object({
-  title: z.string(),
-  detail: z.string(),
+  outcome: z.enum(['denied', 'failed']),
+  risk: z.enum(['medium', 'high']).optional(),
+  reason: z.string(),
 });
 export type ApprovalDetail = z.infer<typeof approvalDetailSchema>;
 

@@ -140,6 +140,30 @@ describe('toAppInteractionEvent', () => {
     });
   });
 
+  it('maps structured approval_detail onto the app approval request', () => {
+    const event = toAppInteractionEvent({
+      ...approval,
+      request: {
+        ...approval.request,
+        approval_detail: {
+          outcome: 'denied',
+          risk: 'high',
+          reason: 'Force push was not authorized.',
+        },
+      },
+    });
+    expect(event).toMatchObject({
+      type: 'approvalRequested',
+      approval: {
+        approvalDetail: {
+          outcome: 'denied',
+          risk: 'high',
+          reason: 'Force push was not authorized.',
+        },
+      },
+    });
+  });
+
   it('falls back to the interaction id when an approval has no tool call id', () => {
     const event = toAppInteractionEvent({ ...approval, tool_call_id: undefined });
     expect(event.type === 'approvalRequested' && event.approval.toolCallId).toBe('a1');

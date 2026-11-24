@@ -348,6 +348,12 @@ export interface ApprovalResponse {
   selectedLabel?: string;
 }
 
+export interface ApprovalReviewDetail {
+  outcome: 'denied' | 'failed';
+  risk?: 'medium' | 'high';
+  reason: string;
+}
+
 export interface AppApprovalRequest {
   approvalId: string;
   sessionId: string;
@@ -357,7 +363,7 @@ export interface AppApprovalRequest {
   toolName: string;
   action: string;
   display: unknown;
-  approvalDetail?: { title: string; detail: string };
+  approvalDetail?: ApprovalReviewDetail;
 }
 
 export interface QuestionOption {

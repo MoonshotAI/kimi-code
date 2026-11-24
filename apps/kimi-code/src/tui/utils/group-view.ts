@@ -130,7 +130,6 @@ export function deriveGroupView(input: GroupViewInput, now: Instant): GroupView 
   const owned = input.last && ownsLiveTurn(input, members, now);
   let tail = input.last ? BLANK : undefined;
   if (owned) tail = deriveTail(input, members, now);
-  else if (input.last) tail = reviewTail(input, members, now) ?? BLANK;
   if (tail !== undefined && tailBody(tail) === titleText(title)) tail = BLANK;
   const working = owned || members.some((member) => phaseAt(member.facts, now).kind === 'executing');
   const calls = [...members.map((member) => member.facts), ...input.pending.map((item) => factsOf(item, timeline))];
@@ -293,61 +292,43 @@ function ownsLiveTurn(input: GroupViewInput, members: readonly MemberState[], no
   return hasThinking(members) && timeline.latestThinking(now) !== undefined;
 }
 
-function reviewTail(input: GroupViewInput, members: readonly MemberState[], now: Instant): TailView | undefined {
-  if (input.expanded === true && members.some((member) => member.item.autoReviewing === true)) return undefined;
-  const items = reviewingItems(input, members);
-  const kind = reviewingKind(items);
-  if (kind === undefined) return undefined;
-  return { kind: 'running', kinds: [kind], since: reviewingSince(items, input.timeline, now) };
-}
-
-function reviewingItems(input: GroupViewInput, members: readonly MemberState[]): LogicalTranscriptItem[] {
+function reviewingTail(
+  input: GroupViewInput,
+  members: readonly MemberState[],
+  now: Instant,
+): { readonly kind: RunningKind; readonly since: Instant } | undefined {
+  if (input.expanded === true && members.some((member) => phaseAt(member.facts, now).kind === 'reviewing')) {
+    return undefined;
+  }
   const seen = new Set<string>();
-  const items: LogicalTranscriptItem[] = [];
-  for (const item of [...members.map((member) => member.item), ...input.pending]) {
-    if (item.autoReviewing !== true) continue;
-    const key = item.callId ?? `${item.label.rowVerb}\0${item.label.subject ?? ''}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    items.push(item);
-  }
-  return items;
-}
-
-function reviewingKind(items: readonly LogicalTranscriptItem[]): RunningKind | undefined {
-  const names = items.map(reviewName);
-  const [first, ...rest] = names;
-  if (first === undefined) return undefined;
-  return { verb: 'reviewing', names: [first, ...rest] };
-}
-
-function reviewName(item: LogicalTranscriptItem): string {
-  const kind = kindOf(item.event);
-  return kind === undefined ? item.label.subject ?? item.label.rowVerb : nameOf(kind, item);
-}
-
-function reviewingSince(items: readonly LogicalTranscriptItem[], timeline: TimelineReader, now: Instant): Instant {
+  const names: string[] = [];
   let since = now;
-  for (const item of items) {
-    const start = item.callId === undefined ? undefined : timeline.call(item.callId)?.start;
-    if (start !== undefined && start < since) since = start;
+  for (const item of [...members.map((member) => member.item), ...input.pending]) {
+    if (item.callId === undefined || seen.has(item.callId)) continue;
+    const facts = input.timeline.call(item.callId);
+    if (facts === undefined || phaseAt(facts, now).kind !== 'reviewing') continue;
+    seen.add(item.callId);
+    if (facts.start < since) since = facts.start;
+    const kind = kindOf(item.event);
+    names.push(kind === undefined ? item.label.subject ?? item.label.rowVerb : nameOf(kind, item));
   }
-  return since;
+  const [first, ...rest] = names;
+  return first === undefined ? undefined : { kind: { verb: 'reviewing', names: [first, ...rest] }, since };
 }
 
 function deriveTail(input: GroupViewInput, members: readonly MemberState[], now: Instant): TailView {
   const { timeline } = input;
-  const review = reviewTail(input, members, now);
-  const slowMembers = members.filter((member) => member.item.autoReviewing !== true && slowAt(member.facts, now));
+  const review = reviewingTail(input, members, now);
+  const slowMembers = members.filter((member) => phaseAt(member.facts, now).kind !== 'reviewing' && slowAt(member.facts, now));
   const [firstSlow, ...otherSlow] = bucketsOf(slowMembers);
   const slowKinds = firstSlow === undefined ? [] : [runningKind(firstSlow), ...otherSlow.map(runningKind)];
-  const kinds = [...(review?.kind === 'running' ? review.kinds : []), ...slowKinds];
+  const kinds = [...(review === undefined ? [] : [review.kind]), ...slowKinds];
   const [first, ...rest] = kinds;
   if (first !== undefined) {
     return {
       kind: 'running',
       kinds: [first, ...rest],
-      since: review?.kind === 'running' ? review.since : slowSince(slowMembers.map((member) => member.facts), now) ?? now,
+      since: review !== undefined ? review.since : slowSince(slowMembers.map((member) => member.facts), now) ?? now,
     };
   }
   const thinking = hasThinking(members) ? timeline.latestThinking(now) : undefined;

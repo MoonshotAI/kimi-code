@@ -352,6 +352,12 @@ onActivated(() => {
     if (document.activeElement === document.body) feedbackRef.value?.el?.focus({ preventScroll: true });
   });
 });
+function reviewTitle(review: NonNullable<ApprovalBlock['review']>): string {
+  if (review.outcome === 'failed') return t('approval.reviewFailed');
+  const risk = review.risk === 'high' ? t('approval.reviewRisk.high') : t('approval.reviewRisk.medium');
+  return t('approval.reviewDenied', { risk });
+}
+
 onUpdated(updateScrollSeams);
 </script>
 
@@ -389,8 +395,8 @@ onUpdated(updateScrollSeams);
     <div v-if="paneMounted" ref="paneEl" class="apane" :inert="minimized">
       <div class="ab">
         <div v-if="block.review" class="review-detail">
-          <div class="review-title">{{ block.review.title }}</div>
-          <div class="review-body">{{ block.review.detail }}</div>
+          <div class="review-title">{{ reviewTitle(block.review) }}</div>
+          <div class="review-body">{{ block.review.reason }}</div>
         </div>
 
         <button

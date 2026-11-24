@@ -261,7 +261,7 @@ export type WireInteraction =
         tool_name: string;
         action: string;
         tool_input_display?: unknown;
-        approval_detail?: { title: string; detail: string };
+        approval_detail?: { outcome: 'denied' | 'failed'; risk?: 'medium' | 'high'; reason: string };
         expires_at: string;
       },
       WireApprovalResponse

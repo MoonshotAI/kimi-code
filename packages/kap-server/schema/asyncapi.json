@@ -327,16 +327,27 @@
                     },
                     "approval_detail": {
                       "properties": {
-                        "detail": {
+                        "outcome": {
+                          "enum": [
+                            "denied",
+                            "failed"
+                          ],
                           "type": "string"
                         },
-                        "title": {
+                        "reason": {
+                          "type": "string"
+                        },
+                        "risk": {
+                          "enum": [
+                            "medium",
+                            "high"
+                          ],
                           "type": "string"
                         }
                       },
                       "required": [
-                        "title",
-                        "detail"
+                        "outcome",
+                        "reason"
                       ],
                       "type": "object"
                     },

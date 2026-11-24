@@ -116,6 +116,25 @@ function summary(components: readonly Component[], presentation = options()) {
 }
 
 describe('transcript projection', () => {
+  it('derives reviewing phase on TurnTimeline and shows Reviewing tail in group view', () => {
+    const bash = tool('Bash', { command: 'rm -rf dist' }, null);
+    const callId = bash.toolCallView.id as ToolCallId;
+    const group = onlyGroup([thought(100), bash], options({ toolCallDensity: 'compact' }));
+    let now = 0;
+    const timeline = new TurnTimeline(() => instant(now));
+    timeline.turnStarted();
+    now = 100;
+    timeline.reviewStarted(callId, 'Bash');
+
+    const reviewing = groupView(group, timeline, 250, true);
+    expect(reviewing.tail && tailText(reviewing.tail, 80, instant(250))).toContain('Reviewing');
+
+    now = 400;
+    timeline.reviewEnded(callId);
+    const afterReview = groupView(group, timeline, 450, true);
+    expect(afterReview.tail && tailText(afterReview.tail, 80, instant(450))).not.toContain('Reviewing');
+  });
+
   it('returns the original source list when every grouping option is off or not fullscreen', () => {
     const read = tool('Read', { path: '/work/a.ts' });
     const group = new ReadGroupComponent(undefined);

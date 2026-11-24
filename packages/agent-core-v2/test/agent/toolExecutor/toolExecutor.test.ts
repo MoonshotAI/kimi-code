@@ -179,7 +179,7 @@ afterEach(() => {
 
 describe('AgentToolExecutorService auto review', () => {
   it('does not execute a tool denied by the reviewer', async () => {
-    installAutoReview({ kind: 'decision', decision: { risk: 'high', decision: 'deny' } });
+    installAutoReview({ decision: 'deny', risk: 'high' });
     const tool = new TestTool('Write');
     registry.register(tool);
 
@@ -190,7 +190,7 @@ describe('AgentToolExecutorService auto review', () => {
   });
 
   it('executes a tool allowed by the reviewer', async () => {
-    installAutoReview({ kind: 'decision', decision: { risk: 'low', decision: 'allow' } });
+    installAutoReview({ decision: 'allow', risk: 'low' });
     const tool = new TestTool('Write');
     registry.register(tool);
 
@@ -203,7 +203,7 @@ describe('AgentToolExecutorService auto review', () => {
   it('starts every review in a batch before waiting for the first decision', async () => {
     let inFlight = 0;
     let maxInFlight = 0;
-    const release = deferred<import('#/features/autoReview/review').AutoReviewResult>();
+    const release = deferred<import('#/features/autoReview/review').AutoReviewOutcome>();
     installAutoReview(async () => {
       inFlight += 1;
       maxInFlight = Math.max(maxInFlight, inFlight);
@@ -223,7 +223,7 @@ describe('AgentToolExecutorService auto review', () => {
     await vi.waitFor(() => {
       expect(maxInFlight).toBe(2);
     });
-    release.resolve({ kind: 'decision', decision: { risk: 'high', decision: 'deny' } });
+    release.resolve({ decision: 'deny', risk: 'high' });
 
     const results = await pending;
     expect(results).toHaveLength(2);
@@ -234,8 +234,8 @@ describe('AgentToolExecutorService auto review', () => {
 
 function installAutoReview(
   result:
-    | import('#/features/autoReview/review').AutoReviewResult
-    | (() => Promise<import('#/features/autoReview/review').AutoReviewResult>),
+    | import('#/features/autoReview/review').AutoReviewOutcome
+    | (() => Promise<import('#/features/autoReview/review').AutoReviewOutcome>),
 ): void {
   const permissions = disposables.add(new TestInstantiationService(undefined, false, ix));
   permissions.stub(IAgentPermissionModeService, stubPermissionModeService(() => 'auto'));
@@ -279,6 +279,7 @@ function installAutoReview(
       createAutoReviewReviewer(
         permissions.get(IFlagService),
         permissions.get(IAgentPermissionModeService),
+        permissions.get(IAgentPermissionPolicyService),
         permissions.get(IAutoReviewService),
       ),
     ),

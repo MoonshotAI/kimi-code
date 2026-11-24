@@ -155,7 +155,13 @@ export type ApprovalBlock = (
     }
   | { kind: 'browser'; input: Record<string, unknown> }
   | { kind: 'generic'; summary: string }
-) & { review?: { title: string; detail: string } };
+) & {
+  review?: {
+    outcome: 'denied' | 'failed';
+    risk?: 'medium' | 'high';
+    reason: string;
+  };
+};
 
 export type TurnRole = 'user' | 'assistant' | 'compaction' | 'cron' | 'goal';
 

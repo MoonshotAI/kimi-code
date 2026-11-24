@@ -30,6 +30,12 @@ export default {
   },
   subagentBadge: 'sub agent · {name}',
   danger: 'Danger: {detail}',
+  reviewFailed: 'Auto Review failed',
+  reviewDenied: 'Auto Review: denied ({risk} risk)',
+  reviewRisk: {
+    medium: 'medium',
+    high: 'high',
+  },
   searchQueryLabel: 'query',
   searchScope: 'scope: {scope}',
   feedbackPlaceholder: 'Explain why you are rejecting…',

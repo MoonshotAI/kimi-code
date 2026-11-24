@@ -30,6 +30,12 @@ export default {
   },
   subagentBadge: '子 agent · {name}',
   danger: '危险: {detail}',
+  reviewFailed: '自动复核失败',
+  reviewDenied: '自动复核已拒绝（{risk}风险）',
+  reviewRisk: {
+    medium: '中等',
+    high: '高',
+  },
   searchQueryLabel: '查询',
   searchScope: '范围：{scope}',
   feedbackPlaceholder: '说明拒绝原因…',

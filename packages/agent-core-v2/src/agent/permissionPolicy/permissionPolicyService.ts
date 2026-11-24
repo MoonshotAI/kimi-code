@@ -62,18 +62,12 @@ export class AgentPermissionPolicyService
     context: ResolvedToolExecutionHookContext,
     options?: PermissionPolicyEvaluateOptions,
   ): Promise<PermissionPolicyEvaluation | undefined> {
-    let modeHit: PermissionPolicyEvaluation | undefined;
     for (const policy of this.policies) {
+      if (options?.skipModeApprovals === true && policy.modeApproval === true) continue;
       const result = await policy.evaluate(context);
-      if (result === undefined) continue;
-      const evaluation = { policyName: policy.name, result };
-      if (options?.includeUnderlying === true && policy.modeApproval === true) {
-        modeHit = evaluation;
-        continue;
-      }
-      return modeHit === undefined ? evaluation : { ...modeHit, underlying: evaluation };
+      if (result !== undefined) return { policyName: policy.name, result };
     }
-    return modeHit;
+    return undefined;
   }
 }
 

@@ -53,9 +53,9 @@ export class AgentPermissionGate extends Service implements IAgentPermissionGate
   }
 
   private async adjudicate(event: BeforeToolExecuteEvent): Promise<void> {
-    const evaluation = await this.policyService.evaluate(event, this.reviewer?.evaluateOptions?.());
+    const evaluation = await this.policyService.evaluate(event);
     if (evaluation === undefined) return;
-    const deferredReview = this.reviewer?.review(event, evaluation);
+    const deferredReview = await this.reviewer?.(event, evaluation);
     if (deferredReview !== undefined) {
       event.waitUntil(async () => {
         const resolved = await deferredReview();

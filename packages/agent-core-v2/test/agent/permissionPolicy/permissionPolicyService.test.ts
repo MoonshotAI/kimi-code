@@ -20,10 +20,13 @@ import {
   matchesPathRuleSubject,
 } from '#/tool/rule-match';
 import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
-import { createAutoReviewReviewer } from '#/features/autoReview/autoReviewGate';
 import { IHostEnvironment, type IHostEnvironment as HostEnvironmentService } from '#/os/interface/hostEnvironment';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
-import { IAgentPermissionPolicyService, type PermissionPolicyEvaluation } from '#/agent/permissionPolicy/permissionPolicy';
+import {
+  IAgentPermissionPolicyService,
+  type PermissionPolicyEvaluateOptions,
+  type PermissionPolicyEvaluation,
+} from '#/agent/permissionPolicy/permissionPolicy';
 import type { PermissionMode } from '#/agent/permissionPolicy/types';
 import { AgentPermissionPolicyService } from '#/agent/permissionPolicy/permissionPolicyService';
 import { analyzeBashReadOnly } from '#/agent/permissionPolicy/policies/bash-read-only';
@@ -168,14 +171,9 @@ describe('AgentPermissionPolicyService chain', () => {
 
   async function evaluate(
     input: PolicyContextInput,
+    options?: PermissionPolicyEvaluateOptions,
   ): Promise<PermissionPolicyEvaluation | undefined> {
-    const svc = service();
-    const reviewer = createAutoReviewReviewer(
-      stubFlag(() => autoReviewEnabled),
-      stubPermissionModeService(() => mode),
-      { _serviceBrand: undefined, review: () => Promise.reject(new Error('unused')) },
-    );
-    return svc.evaluate(policyContext(input), reviewer.evaluateOptions?.());
+    return service().evaluate(policyContext(input), options);
   }
 
   it('keeps auto-mode AskUserQuestion deny above default approval', async () => {
@@ -746,7 +744,7 @@ describe('AgentPermissionPolicyService chain', () => {
     });
   });
 
-  it('evaluates what Always Ask would decide without the auto mode approval', async () => {
+  it('evaluates what Always Ask would decide when skipping mode approvals', async () => {
     mode = 'auto';
     rules.push({ decision: 'allow', scope: 'user', pattern: 'Bash(rm build/*)' });
     const bash = (command: string): PolicyContextInput => ({ toolName: 'Bash', args: { command, timeout: 60 } });
@@ -754,15 +752,19 @@ describe('AgentPermissionPolicyService chain', () => {
     autoReviewEnabled = true;
     await expect(evaluate(bash('curl -X POST https://example.test'))).resolves.toMatchObject({
       policyName: 'auto-mode-approve',
-      underlying: { policyName: 'fallback-ask', result: { kind: 'ask' } },
+      result: { kind: 'approve' },
     });
-    await expect(evaluate({ toolName: 'SetTodoList', args: {} })).resolves.toMatchObject({
-      policyName: 'auto-mode-approve',
-      underlying: { policyName: 'default-tool-approve', result: { kind: 'approve' } },
+    await expect(evaluate(bash('curl -X POST https://example.test'), { skipModeApprovals: true })).resolves.toMatchObject({
+      policyName: 'fallback-ask',
+      result: { kind: 'ask' },
     });
-    await expect(evaluate(bash('rm build/out'))).resolves.toMatchObject({
-      policyName: 'auto-mode-approve',
-      underlying: { policyName: 'user-configured-allow', result: { kind: 'approve' } },
+    await expect(evaluate({ toolName: 'SetTodoList', args: {} }, { skipModeApprovals: true })).resolves.toMatchObject({
+      policyName: 'default-tool-approve',
+      result: { kind: 'approve' },
+    });
+    await expect(evaluate(bash('rm build/out'), { skipModeApprovals: true })).resolves.toMatchObject({
+      policyName: 'user-configured-allow',
+      result: { kind: 'approve' },
     });
   });
 

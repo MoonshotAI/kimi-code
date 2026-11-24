@@ -118,7 +118,7 @@ curl -sf "${ORIGIN}/api/v1/sessions/${SID}/agents/main/turns?page_size=5" \
 - **`Session`**: `{ id, workspace_id, cwd, title, created_at, updated_at, archived, archived_at?, activity: "idle" | "turn" | "background", pending_interaction?: "none" | "approval" | "question", last_turn_outcome?: "completed" | "interrupted" | "failed", last_prompt?, metadata?, git? }`.
 - **`Turn`**: `{ turn_id, ordinal, turn_number?, kind: "agent" | "system", status: "running" | "ended", outcome?: "completed" | "interrupted" | "failed", started_at, ended_at?, duration_ms?, usage?, steps: Step[], items: Item[] }` (0-based `ordinal`; pass `before_ordinal` to page backward).
 - **`Item` union** (`type`): `user_message` (`{ prompt_ids, placement, text, ... }`), `assistant_message` (`{ text }`), `reasoning` (`{ text }`), `tool_call` (`{ name, stage?: "input" | "auto_review" | "awaiting_approval" | "executing", input?, output?, error?, fields?, display?, interaction_id?, agent_refs? }`), `notification`, `system`.
-- **Approval requests**: read `tool_name`, `action`, and `tool_input_display` to present the pending operation; optional `approval_detail` adds a review `{ title, detail }`. The approval response schema is unchanged.
+- **Approval requests**: read `tool_name`, `action`, and `tool_input_display` to present the pending operation; optional `approval_detail` adds a review `{ outcome, risk?, reason }`. The approval response schema is unchanged.
 - **Attachments & skills**: Upload via `POST /api/v1/files` (`multipart/form-data` field `file`) and reference `id` in `/prompts` `content`; list/invoke skills via `GET /api/v1/sessions/{session_id}/skills` and `POST .../skills/{name}:activate`.
 
 | Method & Path | Gate | Summary |

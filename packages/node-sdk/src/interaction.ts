@@ -25,8 +25,9 @@ export interface ApprovalRequest {
   readonly action: string;
   readonly display: ToolInputDisplay;
   readonly approvalDetail?: {
-    readonly title: string;
-    readonly detail: string;
+    readonly outcome: 'denied' | 'failed';
+    readonly risk?: 'medium' | 'high';
+    readonly reason: string;
   };
 }
 

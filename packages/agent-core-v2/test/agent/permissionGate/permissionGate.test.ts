@@ -10,7 +10,10 @@ import type {
 import { IAgentPermissionGate } from '#/agent/permissionGate/permissionGate';
 import { AgentPermissionGate } from '#/agent/permissionGate/permissionGateService';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
-import type { PermissionPolicyEvaluation } from '#/agent/permissionPolicy/permissionPolicy';
+import type {
+  PermissionPolicyEvaluateOptions,
+  PermissionPolicyEvaluation,
+} from '#/agent/permissionPolicy/permissionPolicy';
 import type { PermissionMode, PermissionPolicyResolution } from '#/agent/permissionPolicy/types';
 import { IAgentPermissionPolicyService } from '#/agent/permissionPolicy/permissionPolicy';
 import {
@@ -21,12 +24,11 @@ import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import {
-  autoReviewTrigger,
   createAutoReviewReviewer,
   resolveAutoReview,
 } from '#/features/autoReview/autoReviewGate';
 import {
-  type AutoReviewResult,
+  type AutoReviewOutcome,
   type IAutoReviewService,
 } from '#/features/autoReview/review';
 import type { ToolCall } from '#human/message';
@@ -34,7 +36,6 @@ import type { ToolCall } from '#human/message';
 import { stubFlag } from '../../app/flag/stubs';
 
 import { stubPermissionModeService } from '../permissionMode/stubs';
-import { stubPermissionPolicyService } from '../permissionPolicy/stubs';
 import { stubPermissionRulesService } from '../permissionRules/stubs';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 import { stubToolExecutorEvents, type ToolExecutorEventStubs } from '../toolExecutor/stubs';
@@ -69,8 +70,9 @@ describe('AgentPermissionGate', () => {
   let mode: PermissionMode;
   let rules: readonly PermissionRule[];
   let policyResult: PermissionPolicyEvaluation | undefined;
+  let nonModePolicyResult: PermissionPolicyEvaluation | undefined;
   let autoReviewEnabled: boolean;
-  let autoReviewResult: AutoReviewResult;
+  let autoReviewOutcome: AutoReviewOutcome;
   let review: ReturnType<typeof vi.fn<IAutoReviewService['review']>>;
   let records: TelemetryRecord[];
   let executorEvents: ToolExecutorEventStubs;
@@ -86,9 +88,10 @@ describe('AgentPermissionGate', () => {
     mode = 'auto';
     rules = [];
     policyResult = undefined;
+    nonModePolicyResult = undefined;
     autoReviewEnabled = false;
-    autoReviewResult = { kind: 'decision', decision: { risk: 'low', decision: 'allow' } };
-    review = vi.fn(async () => autoReviewResult);
+    autoReviewOutcome = { decision: 'allow', risk: 'low' };
+    review = vi.fn(async () => autoReviewOutcome);
     records = [];
     executorEvents = stubToolExecutorEvents();
     resolvePermissionResolution = vi.fn(async () => undefined);
@@ -100,14 +103,16 @@ describe('AgentPermissionGate', () => {
       formatDenyMessage: (message) => message,
       formatApprovalRejectionMessage: () => '',
     };
+    const policyService: IAgentPermissionPolicyService = {
+      _serviceBrand: undefined,
+      evaluate: async (_ctx, options?: PermissionPolicyEvaluateOptions) =>
+        options?.skipModeApprovals === true ? nonModePolicyResult : policyResult,
+    };
     ix = createServices(disposables, {
       additionalServices: (reg) => {
         reg.defineInstance(IAgentPermissionModeService, stubPermissionModeService(() => mode));
         reg.defineInstance(IAgentPermissionRulesService, stubPermissionRulesService(() => rules));
-        reg.defineInstance(
-          IAgentPermissionPolicyService,
-          stubPermissionPolicyService(() => policyResult),
-        );
+        reg.defineInstance(IAgentPermissionPolicyService, policyService);
         reg.defineInstance(IAgentToolApprovalService, toolApproval);
         reg.defineInstance(ITelemetryService, recordingTelemetry(records));
         reg.defineInstance(IAgentToolExecutorService, executorEvents.executor);
@@ -127,6 +132,7 @@ describe('AgentPermissionGate', () => {
         createAutoReviewReviewer(
           stubFlag(() => autoReviewEnabled),
           stubPermissionModeService(() => mode),
+          ix.get(IAgentPermissionPolicyService),
           { _serviceBrand: undefined, review },
         ),
       ),
@@ -249,29 +255,41 @@ describe('AgentPermissionGate', () => {
   const modeApproval: PermissionPolicyEvaluation = {
     policyName: 'auto-mode-approve',
     result: { kind: 'approve' },
-    underlying: fallbackAsk,
   };
 
   function reviewModeApprovals(): void {
     autoReviewEnabled = true;
     policyResult = modeApproval;
+    nonModePolicyResult = fallbackAsk;
   }
 
-  it('reviews only mode approvals that Always Ask would ask about', () => {
-    expect(autoReviewTrigger(false, mode, modeApproval)).toBeUndefined();
-    expect(autoReviewTrigger(true, mode, modeApproval)).toBe('fallback-ask');
+  it('reviews only mode approvals that Always Ask would ask about', async () => {
+    const reviewer = createAutoReviewReviewer(
+      stubFlag(() => autoReviewEnabled),
+      stubPermissionModeService(() => mode),
+      ix.get(IAgentPermissionPolicyService),
+      { _serviceBrand: undefined, review },
+    );
+    const ctx = makeContext('Bash');
+
+    policyResult = modeApproval;
+    nonModePolicyResult = fallbackAsk;
+    expect(await reviewer(ctx, modeApproval)).toBeUndefined();
+
+    autoReviewEnabled = true;
+    expect(await reviewer(ctx, modeApproval)).toBeDefined();
+
     for (const evaluation of [
       { policyName: 'user-configured-allow', result: { kind: 'approve' } },
       { policyName: 'session-approval-history', result: { kind: 'approve' } },
       { policyName: 'user-configured-deny', result: { kind: 'deny' } },
     ] satisfies PermissionPolicyEvaluation[]) {
-      expect(autoReviewTrigger(true, mode, evaluation)).toBeUndefined();
+      expect(await reviewer(ctx, evaluation)).toBeUndefined();
     }
+
     for (const policyName of ['default-tool-approve', 'git-cwd-write-approve', 'user-configured-allow']) {
-      expect(autoReviewTrigger(true, mode, {
-        ...modeApproval,
-        underlying: { policyName, result: { kind: 'approve' } },
-      })).toBeUndefined();
+      nonModePolicyResult = { policyName, result: { kind: 'approve' } };
+      expect(await reviewer(ctx, modeApproval)).toBeUndefined();
     }
   });
 
@@ -279,7 +297,7 @@ describe('AgentPermissionGate', () => {
     autoReviewEnabled = true;
     mode = 'yolo';
     policyResult = { policyName: 'sensitive-file-access-ask', result: { kind: 'ask' } };
-    autoReviewResult = { kind: 'decision', decision: { risk: 'high', decision: 'deny' } };
+    autoReviewOutcome = { decision: 'deny', risk: 'high' };
     make();
 
     await executorEvents.fireBeforeExecute(makeContext('Bash'));
@@ -342,9 +360,10 @@ describe('AgentPermissionGate', () => {
     mode = from;
     review.mockImplementation(async () => {
       mode = to;
-      return outcome === 'failed'
-        ? { kind: 'failed', reason: 'invalid JSON' }
-        : { kind: 'decision', decision: outcome === 'allow' ? { risk: 'low', decision: 'allow' } : { risk: 'high', decision: 'deny' } };
+      if (outcome === 'failed') return { decision: 'failed', reason: 'invalid JSON' };
+      return outcome === 'allow'
+        ? { decision: 'allow', risk: 'low' }
+        : { decision: 'deny', risk: 'high' };
     });
     make();
 
@@ -361,23 +380,19 @@ describe('AgentPermissionGate', () => {
     const onUnderlyingApproved = vi.fn(() => undefined);
     const { result } = resolveAutoReview(
       makeContext('Bash'),
+      modeApproval,
       {
-        ...modeApproval,
-        underlying: {
-          policyName: 'bash-read-only-approve',
-          result: {
-            kind: 'ask',
-            reason: { executable_name: 'ssh' },
-            resolveApproval: onUnderlyingApproved,
-          },
-        },
+        kind: 'ask',
+        reason: { executable_name: 'ssh' },
+        resolveApproval: onUnderlyingApproved,
       },
-      { kind: 'decision', decision: { risk: 'high', decision: 'deny', reason: 'Too broad.' } },
+      { decision: 'deny', risk: 'high', reason: 'Too broad.' },
       'yolo',
     );
 
     expect(result).toMatchObject({
       kind: 'ask',
+      approvalDetail: { outcome: 'denied', risk: 'high', reason: 'Too broad.' },
       reason: { executable_name: 'ssh', review_risk: 'high' },
     });
     if (result.kind !== 'ask') return;

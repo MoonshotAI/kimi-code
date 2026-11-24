@@ -34,6 +34,8 @@ export interface CallFacts {
   readonly start: Instant;
   readonly name?: string;
   readonly argsEnd?: Instant;
+  readonly reviewStart?: Instant;
+  readonly reviewEnd?: Instant;
   readonly exec?: Instant;
   readonly settle?: CallSettle;
 }
@@ -66,6 +68,7 @@ export type CallPhase =
   | { readonly kind: 'history' }
   | { readonly kind: 'writing'; readonly since: Instant }
   | { readonly kind: 'queued'; readonly since: Instant }
+  | { readonly kind: 'reviewing'; readonly since: Instant }
   | { readonly kind: 'executing'; readonly since: Instant }
   | { readonly kind: 'settled'; readonly settle: CallSettle };
 
@@ -83,6 +86,9 @@ export function phaseAt(facts: CallFacts | undefined, now: Instant): CallPhase {
   if (facts === undefined) return { kind: 'history' };
   if (facts.settle !== undefined && facts.settle.at <= now) return { kind: 'settled', settle: facts.settle };
   if (happened(facts.exec, now)) return { kind: 'executing', since: facts.exec };
+  if (happened(facts.reviewStart, now) && !happened(facts.reviewEnd, now)) {
+    return { kind: 'reviewing', since: facts.reviewStart };
+  }
   if (happened(facts.argsEnd, now)) return { kind: 'queued', since: facts.argsEnd };
   return { kind: 'writing', since: facts.start };
 }
@@ -167,6 +173,8 @@ interface MutableCall {
   readonly start: Instant;
   name?: string;
   argsEnd?: Instant;
+  reviewStart?: Instant;
+  reviewEnd?: Instant;
   exec?: Instant;
   settle?: CallSettle;
 }
@@ -242,12 +250,33 @@ export class TurnTimeline implements TimelineReader {
 
   callStarted(id: ToolCallId, name: string): void {
     const at = this.clock();
+    const call = this.prepareCall(id, name, at);
+    if (call === undefined) return;
+    if (call.reviewStart !== undefined) call.reviewEnd ??= at;
+    call.exec ??= at;
+  }
+
+  reviewStarted(id: ToolCallId, name: string): void {
+    const at = this.clock();
+    const call = this.prepareCall(id, name, at);
+    if (call === undefined) return;
+    call.reviewStart ??= at;
+    call.reviewEnd = undefined;
+  }
+
+  private prepareCall(id: ToolCallId, name: string, at: Instant): MutableCall | undefined {
     const call = this.calls.get(id) ?? this.register(id, { start: at });
-    if (call.settle !== undefined) return;
+    if (call.settle !== undefined) return undefined;
     this.closeOpen(at);
     call.name ??= name;
     call.argsEnd ??= at;
-    call.exec ??= at;
+    return call;
+  }
+
+  reviewEnded(id: ToolCallId): void {
+    const call = this.calls.get(id);
+    if (call === undefined || call.reviewStart === undefined || call.reviewEnd !== undefined) return;
+    call.reviewEnd = this.clock();
   }
 
   callResult(id: ToolCallId): void {
