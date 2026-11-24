@@ -395,7 +395,6 @@ export class SshDeviceBridge extends DeviceBridgeState implements DeviceBridge {
   private async identify(active: ActiveDeviceSession): Promise<void> {
     try {
       const meta = await readRemoteMeta(active.session);
-      if (meta.identity === undefined) throw outdatedError(meta.serverVersion);
       this.identityValue = meta.identity;
       this.remoteVersionValue = meta.serverVersion;
     } catch (error) {

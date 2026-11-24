@@ -295,7 +295,7 @@ describe('ssh bootstrap', () => {
     expect(classifySshFailure(stderr, code)).toBe(failure);
   });
 
-  it.skipIf(process.platform === 'win32')('reports a device whose server metadata predates device identity as outdated', () =>
+  it.skipIf(process.platform === 'win32')('connects to a device whose released server predates device identity and leaves its identity unknown', () =>
     withFakeSsh(
       `#!/bin/sh
 echo '__KIMI_ENSURE_DAEMON__{"protocol":${String(DEVICE_PROTOCOL_VERSION)},"api_level":${String(DEVICE_API_LEVEL)},"version":"1.2.3"}'
@@ -306,11 +306,12 @@ while IFS= read -r line; do :; done
       async (ssh) => {
         const bridge = new SshDeviceBridge({ host: 'dev' }, { sshProgram: ssh });
         try {
-          await expect(bridge.connect()).rejects.toMatchObject({ failure: 'outdated', remoteVersion: '1.2.3' });
-          expect(bridge.status).toBe('disconnected');
+          await expect(bridge.connect()).resolves.toBeDefined();
+          expect(bridge.status).toBe('ready');
+          expect(bridge.failure).toBeUndefined();
           expect(bridge.remoteVersion).toBe('1.2.3');
-          expect(bridge.session).toBeUndefined();
           expect(bridge.identity).toBeUndefined();
+          expect(toDeviceSnapshot({ id: 'dev', entry: { host: 'dev' }, bridge })).toMatchObject({ status: 'ready', device_id: undefined });
         } finally {
           bridge.dispose();
         }
