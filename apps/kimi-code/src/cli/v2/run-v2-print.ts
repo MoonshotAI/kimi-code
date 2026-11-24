@@ -244,15 +244,17 @@ export async function runV2Print(
     }
 
     const sessionWorkDir = worktree?.cwd ?? workDir;
+    const sessionOpts =
+      worktree === undefined ? opts : { ...opts, environment: 'local', environmentCwd: undefined };
     try {
-      const gated = await listTrustGatedMcpServers(client, opts, sessionWorkDir);
+      const gated = await listTrustGatedMcpServers(client, sessionOpts, sessionWorkDir);
       if (gated.length > 0) stderr.write(formatTrustGatedMcpWarning(gated));
     } catch {}
 
     let resolved = await resolveNativeSession(
       services,
       {
-        ...opts,
+        ...sessionOpts,
         agentFiles: launchPaths.agentFiles,
         addDirs:
           worktree === undefined ? opts.addDirs : resolveAdditionalDirs(opts.addDirs, workDir),

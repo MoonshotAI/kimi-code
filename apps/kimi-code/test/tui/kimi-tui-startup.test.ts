@@ -4671,6 +4671,7 @@ describe('KimiTUI work location', () => {
     refreshWorkLocation(): Promise<void>;
     ensureSession(): Promise<unknown>;
     createNewSession(): Promise<void>;
+    fetchSessions(scope?: 'cwd' | 'project' | 'all'): Promise<boolean>;
     persistInputHistory(text: string): Promise<void>;
   }
 
@@ -5326,19 +5327,20 @@ describe('KimiTUI work location', () => {
       const project = tempDir('kimi-missing-resume-project-');
       const missingDir = join(project, 'deleted-worktree');
       const resumed = makeSession({ id: 'ses-missing' });
+      const listSessionsPage = vi.fn(async () => ({
+        items: [
+          {
+            id: 'ses-missing',
+            title: 'Deleted worktree session',
+            workDir: missingDir,
+            projectWorkDir: project,
+            updatedAt: Date.now(),
+          },
+        ],
+        nextCursor: undefined,
+      }));
       const harness = makeHarness(makeSession({ id: 'ses-current' }), {
-        listSessionsPage: vi.fn(async () => ({
-          items: [
-            {
-              id: 'ses-missing',
-              title: 'Deleted worktree session',
-              workDir: missingDir,
-              projectWorkDir: project,
-              updatedAt: Date.now(),
-            },
-          ],
-          nextCursor: undefined,
-        })),
+        listSessionsPage,
         resumeSession: vi.fn(async () => resumed),
         resolveSessionEnvironment: vi.fn(async (input: { workDir: string }) => {
           if (input.workDir === missingDir) {
@@ -5363,6 +5365,38 @@ describe('KimiTUI work location', () => {
       });
       expect(driver.state.appState.workDir).toBe(missingDir);
       expect(transcriptText(driver)).toContain('no longer exists');
+
+      await driver.fetchSessions('project');
+      expect(listSessionsPage).toHaveBeenLastCalledWith(
+        expect.objectContaining({ workDir: project, scope: 'project' }),
+      );
+    });
+
+    it('forces -w startup onto the local environment even when config defaults to a remote environment', async () => {
+      const project = tempDir('kimi-wt-local-env-');
+      const harness = makeHarness(makeSession({ id: 'ses-local' }), {
+        getExperimentalFeatures: vi.fn(async () => [{ id: 'worktree', enabled: true }]),
+        resolveSessionEnvironment: vi.fn(async (input: { environmentId?: string }) => ({
+          environmentId: input.environmentId ?? 'dev-box',
+          cwd: input.environmentId === 'local' ? project : '/remote/work',
+        })),
+      });
+      const driver = await startAt(
+        project,
+        harness,
+        { worktree: 'fix-login' },
+        { projectRoot: project, isGitRepo: true },
+      );
+
+      expect(harness.resolveSessionEnvironment).toHaveBeenCalledWith(
+        expect.objectContaining({ environmentId: 'local' }),
+      );
+      expect(harness.createSession).not.toHaveBeenCalled();
+
+      await driver.ensureSession();
+      expect(harness.createSession).toHaveBeenCalledWith(
+        expect.objectContaining({ environmentId: 'local' }),
+      );
     });
 
     it('keeps the latest tab sessions when an earlier slower tab query resolves later', async () => {

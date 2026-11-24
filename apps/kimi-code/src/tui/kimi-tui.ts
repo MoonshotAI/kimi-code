@@ -539,8 +539,10 @@ export class KimiTUI {
         additionalDirs: startupInput.additionalDirs,
         agentProfile: startupInput.agentProfile,
         agentFiles: startupInput.cliOptions.agentFiles,
-        environment: startupInput.cliOptions.environment,
-        environmentCwd: startupInput.cliOptions.environmentCwd,
+        environment:
+          startupInput.cliOptions.worktree !== undefined ? 'local' : startupInput.cliOptions.environment,
+        environmentCwd:
+          startupInput.cliOptions.worktree !== undefined ? undefined : startupInput.cliOptions.environmentCwd,
         worktree:
           startupInput.cliOptions.worktree === undefined
             ? undefined
@@ -3605,10 +3607,14 @@ export class KimiTUI {
     requestToken: number,
     before?: string,
   ): Promise<{ readonly rows: SessionRow[]; readonly nextCursor?: string } | undefined> {
+    const projectQueryDir =
+      isDirectory(this.state.appState.workDir) || this.state.appState.projectRoot === undefined
+        ? this.state.appState.workDir
+        : this.state.appState.projectRoot;
     const query =
       scope === 'project'
         ? {
-            workDir: this.state.appState.workDir,
+            workDir: projectQueryDir,
             scope: 'project' as const,
             limit: SESSION_LIST_PAGE_SIZE,
             ...(before === undefined ? {} : { before }),

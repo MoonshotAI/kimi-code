@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { mkdir, mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -439,6 +439,34 @@ describe('runShell', () => {
     mocks.harnessGetExperimentalFeatures.mockClear();
     await runShell(minimalCliOptions, '1.2.3-test');
     expect(mocks.harnessGetExperimentalFeatures).not.toHaveBeenCalled();
+  });
+
+  it('resolves relative --agent-file against the launch directory when -w is set', async () => {
+    stubTuiStartup();
+    const launchDir = await mkdtemp(join(tmpdir(), 'kimi-shell-agent-launch-'));
+    await writeFile(
+      join(launchDir, 'local.md'),
+      '---\nname: local-agent\ndescription: Local.\n---\n\nPrompt.\n',
+    );
+    const cwdSpy = vi.spyOn(process, 'cwd').mockReturnValue(launchDir);
+    mocks.harnessGetExperimentalFeatures.mockResolvedValueOnce([{ id: 'worktree', enabled: true }]);
+    try {
+      await runShell(
+        { ...minimalCliOptions, worktree: 'fix-login', agentFiles: ['./local.md'] },
+        '1.2.3-test',
+      );
+      const [, , startupInput] = mocks.kimiTuiConstructor.mock.calls[0]!;
+      expect(startupInput).toMatchObject({
+        agentProfile: 'local-agent',
+        cliOptions: {
+          worktree: 'fix-login',
+          agentFiles: [normalize(join(launchDir, 'local.md'))],
+        },
+      });
+    } finally {
+      cwdSpy.mockRestore();
+      await rm(launchDir, { recursive: true, force: true });
+    }
   });
 
   it('prints the TUI exit error instead of Bye', async () => {

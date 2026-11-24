@@ -1731,6 +1731,7 @@ describe('runV2Print', () => {
         expect(sessions.create).toHaveBeenCalledWith(
           expect.objectContaining({
             workDir: worktreeDir,
+            environmentId: 'local',
             additionalDirs: [normalize(join(launchDir, '..', 'shared')), '~/team-dir'],
             mainAgentBinding: { profile: 'local-reviewer', model: 'k2' },
           }),

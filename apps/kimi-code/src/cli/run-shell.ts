@@ -59,6 +59,7 @@ export async function runShell(
   currentTheme.setPalette(palette);
 
   const workDir = process.cwd();
+  const launchPaths = resolveLaunchPaths(opts, workDir);
   const telemetryBootstrap = createCliTelemetryBootstrap();
   const telemetryClient: TelemetryClient = {
     track,
@@ -69,7 +70,7 @@ export async function runShell(
   const harnessOptions: KimiHarnessOptions = {
     homeDir: telemetryBootstrap.homeDir,
     identity: createKimiCodeHostIdentity(version),
-    skillDirs: resolveLaunchPaths(opts, workDir).skillDirs,
+    skillDirs: launchPaths.skillDirs,
     uiCapabilities: TUI_HOST_UI_CAPABILITIES,
     telemetry: telemetryClient,
     onOAuthRefresh: (outcome) => {
@@ -138,7 +139,8 @@ export async function runShell(
   const tuiModeResolution = resolveTuiMode(tuiConfig.tuiMode);
   const animationFrameRateResolution = resolveAnimationFrameRate();
   tui = new KimiTUI(harness, {
-    cliOptions: opts,
+    cliOptions:
+      opts.worktree !== undefined ? { ...opts, agentFiles: launchPaths.agentFiles } : opts,
     agentProfile,
     additionalDirs:
       opts.worktree !== undefined
