@@ -598,7 +598,7 @@ onUnmounted(() => {
   </div>
 </template>
 
-<style scoped src="../settings/settings-common.css"></style>
+<style scoped src="@moonshot-ai/app-components/settings-common.css"></style>
 
 <style scoped>
 .browser-settings-panel {

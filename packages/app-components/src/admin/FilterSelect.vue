@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
-import { Icon, Menu, MenuItem } from '@moonshot-ai/app-ui';
+import { Icon, Menu, MenuItem, StatusDot } from '@moonshot-ai/app-ui';
 import { useAnchoredMenu } from '@moonshot-ai/app-components';
 
 export interface FilterSelectOption {
@@ -49,7 +49,7 @@ function pick(value: string): void {
         <span class="sa-check">
           <Icon v-if="opt.value === modelValue" name="check" size="sm" />
         </span>
-        <span v-if="opt.dot" class="sa-dot" :class="`sa-dot--${opt.dot}`" />
+        <StatusDot v-if="opt.dot" :status="opt.dot === 'done' ? 'archived' : 'ok'" size="lg" />
         {{ opt.label }}
       </MenuItem>
     </Menu>
@@ -86,16 +86,6 @@ function pick(value: string): void {
   flex: none;
   width: 14px;
 }
-.sa-dot {
-  flex: none;
-  width: 8px;
-  height: 8px;
-  border-radius: var(--radius-full);
-}
-.sa-dot--open {
-  background: var(--color-success);
-}
-.sa-dot--done {
-  background: var(--color-done);
-}
 </style>
+
+<style src="../lib/anchored-menu.css"></style>

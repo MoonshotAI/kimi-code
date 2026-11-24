@@ -170,7 +170,7 @@ function taskEffort(task: TaskItem): string | undefined {
 }
 .tp-chevron {
   flex: none;
-  color: var(--muted);
+  color: var(--color-text-faint);
 }
 
 .tp-name {
@@ -208,7 +208,7 @@ function taskEffort(task: TaskItem): string | undefined {
 .tp-time {
   flex: none;
   font-size: var(--text-base);
-  color: var(--muted);
+  color: var(--color-text-faint);
   font-variant-numeric: tabular-nums;
   text-autospace: normal;
 }
@@ -217,7 +217,7 @@ function taskEffort(task: TaskItem): string | undefined {
   flex: 0 1 auto;
   min-width: 0;
   font-size: var(--text-base);
-  color: var(--muted);
+  color: var(--color-text-faint);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -244,19 +244,19 @@ function taskEffort(task: TaskItem): string | undefined {
   display: flex;
   align-items: center;
   justify-content: center;
-  color: var(--faint);
-  font-size: var(--ui-font-size-sm);
+  color: var(--color-text-quaternary);
+  font-size: var(--text-sm);
   user-select: none;
 }
 
 @media (max-width: 640px) {
   .tp-main { flex-wrap: wrap; row-gap: var(--space-1); }
-  .tp-name { font-size: var(--ui-font-size-sm); }
+  .tp-name { font-size: var(--text-sm); }
   .tp-meta {
     order: 10;
     flex: 1 1 100%;
     padding-left: calc(var(--p-ic-md) + var(--space-2));
-    font-size: var(--ui-font-size-xs);
+    font-size: var(--text-xs);
   }
 }
 </style>

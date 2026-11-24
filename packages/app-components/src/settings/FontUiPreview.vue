@@ -7,7 +7,7 @@ import {
   isMacosDesktop,
   isWindowsDesktop,
 } from '@moonshot-ai/app-core/lib';
-import { Badge, Icon, IconButton } from '@moonshot-ai/app-ui';
+import { Avatar, Badge, Icon, IconButton } from '@moonshot-ai/app-ui';
 import KimiCodeWordmark from '../KimiCodeWordmark.vue';
 import KimiMascotPeek from '../KimiMascotPeek.vue';
 import { FontPreviewBrandKey, fontPreviewChrome, type FontPreviewChrome } from './fontPreviewChrome';
@@ -140,7 +140,7 @@ onBeforeUnmount(() => observer?.disconnect());
           </div>
           <div class="fup-footer">
             <span class="fup-account">
-              <span class="fup-avatar"><Icon name="user" size="sm" /></span>
+              <Avatar size="sm" shape="circle" />
               <span class="fup-account-name">Neil</span>
               <Badge variant="neutral" size="sm">Allegretto</Badge>
             </span>
@@ -203,7 +203,7 @@ onBeforeUnmount(() => observer?.disconnect());
   --sb-pad-x: var(--space-4);
   --sb-gutter: 16px;
   --sb-gap: var(--space-2);
-  --sb-action-inset: calc((max(var(--ui-font-size-sm) * var(--leading-tight), var(--p-ic-md)) + 2 * var(--space-2) - var(--icon-button-sm)) / 2);
+  --sb-action-inset: calc((max(var(--text-sm) * var(--leading-tight), var(--p-ic-md)) + 2 * var(--space-2) - var(--icon-button-sm)) / 2);
   position: absolute;
   top: 0;
   left: 0;
@@ -216,7 +216,7 @@ onBeforeUnmount(() => observer?.disconnect());
   background: var(--color-bg);
   color: var(--color-text);
   font-family: var(--font-ui);
-  font-size: var(--ui-font-size);
+  font-size: var(--text-base);
   line-height: var(--leading-normal);
   transform-origin: top left;
   user-select: none;
@@ -319,7 +319,7 @@ onBeforeUnmount(() => observer?.disconnect());
   width: 240px;
   box-sizing: border-box;
   background: var(--color-sidebar-bg);
-  border-right: var(--p-hairline) solid var(--line);
+  border-right: var(--p-hairline) solid var(--color-line);
 }
 .fup-window--windows .fup-side,
 .fup-window--linux .fup-side {
@@ -360,7 +360,7 @@ onBeforeUnmount(() => observer?.disconnect());
 }
 .fup-ch-name {
   color: var(--color-text);
-  font-size: var(--ui-font-size);
+  font-size: var(--text-base);
   font-weight: var(--weight-medium);
   line-height: 22px;
 }
@@ -369,13 +369,14 @@ onBeforeUnmount(() => observer?.disconnect());
   flex-direction: column;
   padding: 0 var(--sb-inset) var(--space-1);
 }
-.fup-action {
+.fup-action,
+.fup-account {
   display: flex;
   align-items: center;
   gap: var(--sb-gap);
   padding: 8px calc(var(--sb-pad-x) - var(--sb-inset));
   color: var(--color-text);
-  font-size: var(--ui-font-size-sm);
+  font-size: var(--text-sm);
   font-weight: var(--weight-medium);
   line-height: var(--leading-tight);
 }
@@ -389,7 +390,7 @@ onBeforeUnmount(() => observer?.disconnect());
   justify-content: space-between;
   gap: var(--space-2);
   padding: 0 var(--sb-action-inset) var(--space-1) var(--space-2);
-  color: var(--faint);
+  color: var(--color-text-quaternary);
   font-size: var(--text-xs);
   font-weight: var(--weight-section-label);
   text-transform: uppercase;
@@ -399,7 +400,7 @@ onBeforeUnmount(() => observer?.disconnect());
   align-items: center;
   gap: 2px;
 }
-.fup-window .fup-section-toggle { color: var(--faint); }
+.fup-window .fup-section-toggle { color: var(--color-text-quaternary); }
 .fup-section-toggle :deep(svg) {
   width: 13px;
   height: 13px;
@@ -424,7 +425,7 @@ onBeforeUnmount(() => observer?.disconnect());
   min-width: 0;
   overflow: hidden;
   color: var(--color-text-muted);
-  font-size: var(--ui-font-size-sm);
+  font-size: var(--text-sm);
   font-weight: var(--weight-medium);
   line-height: var(--leading-tight);
   text-overflow: ellipsis;
@@ -444,7 +445,7 @@ onBeforeUnmount(() => observer?.disconnect());
   flex: 1;
   min-width: 0;
   overflow: hidden;
-  font-size: var(--ui-font-size-sm);
+  font-size: var(--text-sm);
   font-weight: var(--weight-caption);
   line-height: var(--leading-tight);
   text-overflow: ellipsis;
@@ -477,30 +478,11 @@ onBeforeUnmount(() => observer?.disconnect());
   align-items: center;
   gap: var(--space-1);
   padding: var(--space-2) calc(var(--sb-inset) + var(--sb-action-inset)) var(--space-2) var(--sb-inset);
-  border-top: var(--p-hairline) solid var(--line);
+  border-top: var(--p-hairline) solid var(--color-line);
 }
 .fup-account {
-  display: flex;
   flex: 1;
-  align-items: center;
-  gap: var(--sb-gap);
   min-width: 0;
-  padding: 8px calc(var(--sb-pad-x) - var(--sb-inset));
-  color: var(--color-text);
-  font-size: var(--ui-font-size-sm);
-  font-weight: var(--weight-medium);
-  line-height: var(--leading-tight);
-}
-.fup-avatar {
-  display: flex;
-  flex: none;
-  align-items: center;
-  justify-content: center;
-  width: 24px;
-  height: 24px;
-  border-radius: var(--radius-full);
-  background: var(--color-surface-sunken);
-  color: var(--color-text-muted);
 }
 .fup-account-name {
   min-width: 0;
@@ -568,7 +550,7 @@ onBeforeUnmount(() => observer?.disconnect());
   border-radius: 10px;
   background: var(--color-selected);
   color: var(--color-text);
-  font-size: var(--ui-font-size-sm);
+  font-size: var(--text-sm);
 }
 .fup-chip-name { font-weight: var(--weight-option-label); }
 .fup-mascot {
@@ -595,7 +577,7 @@ onBeforeUnmount(() => observer?.disconnect());
 .fup-ph {
   flex: 1;
   min-height: 4.5em;
-  color: var(--faint);
+  color: var(--color-text-quaternary);
   font-size: var(--content-font-size);
   line-height: 1.5;
 }
@@ -605,7 +587,7 @@ onBeforeUnmount(() => observer?.disconnect());
   justify-content: center;
   width: 22px;
   height: 22px;
-  color: var(--dim);
+  color: var(--color-text-muted);
 }
 .fup-toolbar {
   display: flex;
@@ -640,13 +622,13 @@ onBeforeUnmount(() => observer?.disconnect());
 }
 .fup-perm {
   padding-left: var(--space-2);
-  color: var(--dim);
-  font-size: var(--ui-font-size-sm);
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
 }
-.fup-model { font-size: var(--ui-font-size); }
+.fup-model { font-size: var(--text-base); }
 .fup-model-name { color: var(--color-text); }
 .fup-think { color: var(--color-accent); }
-.fup-model-chev { color: var(--faint); }
+.fup-model-chev { color: var(--color-text-quaternary); }
 .fup-send {
   display: flex;
   align-items: center;
