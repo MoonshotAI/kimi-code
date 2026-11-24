@@ -11,11 +11,14 @@ Plugins 把可复用的 Kimi Code CLI 能力打包成可安装单元：可以添
 - **Curated**：默认 marketplace 中来自 Kimi 合作伙伴的第三方 plugin
 - **Custom**：从 URL 安装
 
+滚动列表或切换 tab 时，面板宽高保持不变。使用 `↑` / `↓` 逐项浏览较长的 plugin 目录。Official 和 Curated 中的简介最多显示三行，不再显示 ID、分类和 keywords 元数据行。
+
 面板内按键：
 
 | 按键 | 操作 |
 | --- | --- |
 | `Tab` / `Shift-Tab` | 在 Installed / Official / Curated / Custom 四个 tab 间切换 |
+| `↑` / `↓` | 在列表中逐项移动 |
 | `Space` | 启用或禁用选中的已安装 plugin（Installed tab） |
 | `D` | 移除选中的已安装 plugin（Installed tab） |
 | `M` | 管理选中 plugin 的 MCP servers（Installed tab） |

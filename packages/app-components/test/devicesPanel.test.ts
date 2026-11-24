@@ -459,10 +459,10 @@ describe('DevicesPanel SSH config hosts', () => {
 
   it('keeps every configured host out of the list after navigating away and back', async () => {
     await mountHosts();
-    host.querySelector<HTMLButtonElement>('.re-back')!.click();
+    host.querySelector<HTMLButtonElement>('.re-nav')!.click();
     await nextTick();
     await openRowEditor(0);
-    host.querySelector<HTMLButtonElement>('.re-back')!.click();
+    host.querySelector<HTMLButtonElement>('.re-nav')!.click();
     await nextTick();
     addButton().click();
     await nextTick();
@@ -481,7 +481,7 @@ describe('DevicesPanel SSH config hosts', () => {
     tabs()[1]!.click();
     await nextTick();
     expect(host.querySelector<HTMLInputElement>('.re-page .ui-input')?.value).toBe('draft');
-    host.querySelector<HTMLButtonElement>('.re-back')!.click();
+    host.querySelector<HTMLButtonElement>('.re-nav')!.click();
     await nextTick();
     expect(host.querySelector('.re-page')).toBeNull();
     expect(host.querySelector('.re-hosts')).toBeNull();
@@ -498,7 +498,7 @@ describe('DevicesPanel SSH config hosts', () => {
     expect(test).not.toHaveBeenCalled();
     expect(connect).toHaveBeenCalledExactlyOnceWith(NEW_ID);
     expect(host.querySelector('.re-hosts')).toBeNull();
-    expect([...host.querySelectorAll('.re-group .re-row-name')].map((node) => node.textContent)).toEqual(['devbox', 'gpu']);
+    expect([...host.querySelectorAll('.settings-group .re-row-name')].map((node) => node.textContent)).toEqual(['devbox', 'gpu']);
     expect(host.querySelector('.re-page')).toBeNull();
     addButton().click();
     await nextTick();
@@ -580,7 +580,7 @@ describe('DevicesPanel SSH config hosts', () => {
 
     addButton().click();
     await nextTick();
-    expect(host.querySelector('.re-back')).not.toBeNull();
+    expect(host.querySelector('.re-nav')).not.toBeNull();
     expect(hostNames()).toEqual(['devbox', 'gpu', 'staging']);
     const tabs = () => host.querySelectorAll<HTMLButtonElement>('.re-hosts-head [role="tab"]');
     expect(tabs()).toHaveLength(2);
@@ -639,7 +639,7 @@ describe('DevicesPanel navigation and row actions', () => {
     expect(host.querySelector('.re-page .ui-input')).toBeNull();
     expect(store.addIfEmpty).toBe(false);
 
-    host.querySelector<HTMLButtonElement>('.re-back')!.click();
+    host.querySelector<HTMLButtonElement>('.re-nav')!.click();
     store.requestFocus(null, { addIfEmpty: true });
     expect(store.addIfEmpty).toBe(true);
     store.requestFocus(null);
@@ -965,7 +965,7 @@ describe('DevicesPanel connection test steps', () => {
   });
 
   it.each([
-    ['leaving the form', () => { host.querySelector<HTMLButtonElement>('.re-back')!.click(); }],
+    ['leaving the form', () => { host.querySelector<HTMLButtonElement>('.re-nav')!.click(); }],
     ['the panel going away', () => { app!.unmount(); app = undefined; }],
   ])('aborts a running test when %s', async (_label, leave) => {
     const { test, signals } = pendingTest();
@@ -1070,7 +1070,7 @@ describe('DevicesPanel layout', () => {
     await openRowEditor();
     expect(host.querySelector<HTMLElement>('.dp-this-device')!.style.display).toBe('none');
     expect(host.querySelector('section.re-page')).not.toBeNull();
-    host.querySelector<HTMLButtonElement>('.re-back')!.click();
+    host.querySelector<HTMLButtonElement>('.re-nav')!.click();
     await nextTick();
     expect(host.querySelector<HTMLElement>('.dp-this-device')!.style.display).toBe('');
     expect(sshSection().style.display).toBe('');
@@ -1237,7 +1237,7 @@ describe('DevicesPanel my devices', () => {
     });
     await flush();
 
-    expect(host.querySelector('.ad-card .ad-empty')?.textContent).toContain('or run kimi rc --background on a server');
+    expect(host.querySelector('.settings-group .ad-empty')?.textContent).toContain('or run kimi rc --background on a server');
     expect(host.querySelector('.ad-fold')?.textContent).toContain('1 devices offline for more than 7 days');
     expect(host.querySelector('section.ad [role="tab"]')?.textContent?.trim()).toBe('My devices');
   });

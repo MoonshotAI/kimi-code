@@ -6,7 +6,7 @@ Kimi Code CLI and the Kimi Code desktop app include a built-in **Kimi Agent Prot
 
 | What you want to do | Protocol & usage | Characteristics |
 | --- | --- | --- |
-| Run one-shot tasks such as benchmarks or fire-and-collect prompts | `kimi -p` — see [Kimi Code CLI](./print.md) | Executes a single unattended prompt and exits once finished. |
+| Run one-shot tasks such as benchmarks or fire-and-collect prompts | `kimi -p` — see [Print mode](../reference/kimi-command.md#print-mode) | Executes a single unattended prompt and exits once finished. |
 | Embed Kimi Code into another client such as an IDE or custom client | ACP via `kimi acp` — see [Kimi Code ACP](../reference/kimi-acp.md) | Connects to ACP-capable editors (Zed, JetBrains, etc.), bound to the host window with editor-delegated file and terminal operations. |
 | Collaborate across agents or manage sessions | Kimi Agent Protocol (this guide) | Connects to your local Kimi Code for richer multi-turn workflows: bidirectional session handoff, cross-workspace session cleanup, and Agent-to-Agent discussions. |
 
@@ -55,5 +55,5 @@ A minimal example — combine and adapt freely for your workflow:
 
 ## Related docs
 
-- [Using in Scripts and CI](./print.md) — one-shot non-interactive execution and `stream-json` output
+- [Print mode](../reference/kimi-command.md#print-mode) — one-shot runs, structured JSONL output, and exit codes
 - [Using in IDEs](./ides.md) — connect Zed and JetBrains IDEs via `kimi acp`

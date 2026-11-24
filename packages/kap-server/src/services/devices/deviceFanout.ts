@@ -2,9 +2,11 @@ import type { DeviceSession } from './deviceSession';
 
 export type DeviceQuery = Readonly<Record<string, string | number | boolean | readonly string[] | undefined>>;
 
+const DEVICE_PROJECTS_TIMEOUT_MS = 5_000;
+
 export interface DeviceSource {
   readonly id: string;
-  readonly session: DeviceSession | undefined;
+  getSession(): Promise<DeviceSession | undefined>;
 }
 
 export interface DeviceSources {
@@ -35,12 +37,22 @@ function queryString(query: DeviceQuery): string {
   return text === '' ? '' : `?${text}`;
 }
 
-export function deviceGet<T>(session: DeviceSession, path: string, query: DeviceQuery = {}): Promise<T> {
-  return deviceRequest<T>(session, 'GET', `${path}${queryString(query)}`);
+export function deviceGet<T>(
+  session: DeviceSession,
+  path: string,
+  query: DeviceQuery = {},
+  timeoutMs?: number,
+): Promise<T> {
+  return deviceRequest<T>(session, 'GET', `${path}${queryString(query)}`, timeoutMs);
 }
 
-export async function deviceRequest<T>(session: DeviceSession, method: string, path: string): Promise<T> {
-  const response = await session.request({ method, path, headers: { accept: 'application/json' } });
+export async function deviceRequest<T>(
+  session: DeviceSession,
+  method: string,
+  path: string,
+  timeoutMs?: number,
+): Promise<T> {
+  const response = await session.request({ method, path, headers: { accept: 'application/json' }, timeoutMs });
   let body: { code?: number; msg?: string; data?: T };
   try {
     body = JSON.parse(response.body.toString('utf8')) as typeof body;
@@ -54,7 +66,7 @@ export async function deviceRequest<T>(session: DeviceSession, method: string, p
 }
 
 export async function deviceProjects<T extends { readonly kind: string }>(session: DeviceSession): Promise<T[]> {
-  const data = await deviceGet<{ items: T[] }>(session, '/api/v1/workspaces');
+  const data = await deviceGet<{ items: T[] }>(session, '/api/v1/workspaces', {}, DEVICE_PROJECTS_TIMEOUT_MS);
   return data.items.filter((workspace) => workspace.kind === 'managed');
 }
 
@@ -69,9 +81,10 @@ export async function collectFromDevices<T extends object>(
 ): Promise<DeviceCollection<T>> {
   const results = await Promise.all(
     devices.sources().map(async (source) => {
-      if (source.session === undefined) return { id: source.id, items: undefined };
+      const session = await source.getSession();
+      if (session === undefined) return { id: source.id, items: undefined };
       try {
-        const items = await fetch(source.session);
+        const items = await fetch(session);
         return { id: source.id, items: items.map((item) => ({ ...item, device_id: source.id })) };
       } catch {
         return { id: source.id, items: undefined };
@@ -94,9 +107,10 @@ export async function findOnDevices<T extends object>(
 ): Promise<DeviceLookup<T>> {
   const results = await Promise.all(
     devices.sources().map(async (source) => {
-      if (source.session === undefined) return { id: source.id, reachable: false, item: undefined };
+      const session = await source.getSession();
+      if (session === undefined) return { id: source.id, reachable: false, item: undefined };
       try {
-        return { id: source.id, reachable: true, item: await fetch(source.session) };
+        return { id: source.id, reachable: true, item: await fetch(session) };
       } catch {
         return { id: source.id, reachable: false, item: undefined };
       }

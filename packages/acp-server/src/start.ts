@@ -112,6 +112,7 @@ export async function runAcpServerWithStream(
       await drainSessionMetadataWrites();
       await core.accessor.get(ISessionIndexMirror).drain();
       core.dispose();
+      await core.instantiation.disposeAsync();
       await appendLogStore.drainRetirements();
       await drainSessionIndexMirror();
       await drainQueryStoreDisposals();

@@ -46,6 +46,7 @@ export interface PanelAdapterClient {
   sideChatRunningOf: (agentId: string) => boolean;
   sideChatTurnErrorOf: (agentId: string) => SideChatTurnError | null;
   sendSideChatPromptOn: (parent: string, agentId: string, text: string | { text: string; attachments?: PromptAttachment[]; snapshot?: ComposerDocumentSnapshot }, opts?: { attachments?: PromptAttachment[] }) => Promise<boolean>;
+  cancelSideChatOn?: (parent: string, agentId: string) => Promise<boolean>;
 }
 
 export interface PanelAdapterCtx {
@@ -189,7 +190,12 @@ export function panelTabProps(tab: PanelTab, ctx: PanelAdapterCtx): Record<strin
     case 'compaction': {
       const payload = tab.payload as CompactionTabPayload;
       const text = panel.compactionPanelTextOf(payload.turnId);
-      return { text };
+      return {
+        turnId: payload.turnId,
+        text,
+        cwd: client.status.value.cwd,
+        openFile: ctx.openFile,
+      };
     }
     case 'agent': {
       const payload = tab.payload as AgentTabPayload;
@@ -225,6 +231,7 @@ export function panelTabProps(tab: PanelTab, ctx: PanelAdapterCtx): Record<strin
           if (!useWorkspaceTrust().gateSubmitForTrust()) return Promise.resolve(false);
           return client.sendSideChatPromptOn(payload.parentId, payload.agentId, { text, attachments, snapshot });
         },
+        onInterrupt: () => client.cancelSideChatOn?.(payload.parentId, payload.agentId),
         onOpenMedia: ctx.onOpenMedia,
       };
     }

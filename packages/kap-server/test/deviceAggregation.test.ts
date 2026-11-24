@@ -1,6 +1,7 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { PassThrough } from 'node:stream';
 
 import { describe, expect, it, vi } from 'vitest';
 
@@ -9,8 +10,14 @@ import { ErrorCode } from '../src/protocol/error-codes';
 import { listAllSessionsAcrossDevices, listSessionsAcrossDevices, type SessionsListOutcome } from '../src/routes/sessionsAcrossDevices';
 import type { ListSessionsQuery } from '../src/protocol/rest-session';
 import { DeviceManager } from '../src/services/devices/deviceManager';
-import { DeviceSourceError, type DeviceSources } from '../src/services/devices/deviceFanout';
+import {
+  collectFromDevices,
+  deviceProjects,
+  DeviceSourceError,
+  type DeviceSources,
+} from '../src/services/devices/deviceFanout';
 import type { DeviceHttpRequest, DeviceSession } from '../src/services/devices/deviceSession';
+import { StdioDeviceSession } from '../src/services/devices/stdioDeviceSession';
 import { startServer } from '../src/start';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 
@@ -124,7 +131,7 @@ function localList(sessions: FakeSession[]): (query: Omit<ListSessionsQuery, 'de
 }
 
 function sourcesOf(devices: Array<{ id: string; session: DeviceSession | undefined }>): DeviceSources {
-  return { sources: () => devices };
+  return { sources: () => devices.map(({ id, session }) => ({ id, getSession: async () => session })) };
 }
 
 function ids(data: unknown): string[] {
@@ -234,8 +241,8 @@ describe('sessions across devices', () => {
   });
 
   it('reports devices that are offline or failing and still answers with the rest', async () => {
-    const failing = { ...devices.sources()[0]!.session!, request: async () => { throw new Error('tunnel closed'); } };
-    const unavailableDevices = sourcesOf([{ id: 'off', session: undefined }, { id: 'broken', session: failing }, ...devices.sources()]);
+    const failing = { ...session, request: async () => { throw new Error('tunnel closed'); } };
+    const unavailableDevices = sourcesOf([{ id: 'off', session: undefined }, { id: 'broken', session: failing }, { id: 'dev', session }]);
 
     const page = await list({ page_size: 50 }, unavailableDevices, local);
 
@@ -354,6 +361,38 @@ describe('sessions across devices', () => {
 });
 
 describe('projects across devices', () => {
+  it('returns projects and session groups within five seconds even if a device stops answering', async () => {
+    vi.useFakeTimers();
+    const transport = new PassThrough();
+    const stalled = new StdioDeviceSession(transport);
+    const project = { id: 'wm_healthy', kind: 'managed' } as const;
+    const devices = sourcesOf([
+      { id: 'healthy', session: fakeDevice([project], [{ id: 'remote', workspace: project.id, updated: 10 }]) },
+      { id: 'stalled', session: stalled },
+    ]);
+    const onProjects = vi.fn();
+    const onGroups = vi.fn();
+    try {
+      void collectFromDevices(devices, deviceProjects).then(onProjects);
+      void list({ view: 'by_workspace' }, devices, [{ id: 'local', workspace: 'wm_local', updated: 20 }]).then(onGroups);
+
+      await vi.advanceTimersByTimeAsync(5_000);
+
+      expect(onProjects).toHaveBeenCalledWith({
+        items: [{ ...project, device_id: 'healthy' }],
+        unavailable: ['stalled'],
+      });
+      expect(onGroups).toHaveBeenCalledWith(expect.objectContaining({
+        groups: [expect.objectContaining({ workspace_id: 'wm_local' }), expect.objectContaining({ workspace_id: project.id })],
+        unavailable_devices: ['stalled'],
+      }));
+    } finally {
+      stalled.close();
+      transport.destroy();
+      vi.useRealTimers();
+    }
+  });
+
   it('adds each device\'s app-created projects and names the devices that cannot answer', async () => {
     const home = await mkdtemp(join(tmpdir(), 'kimi-device-projects-'));
     const project = {

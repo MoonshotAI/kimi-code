@@ -53,6 +53,9 @@ export class StreamingUIController {
   readonly pendingToolCallFlushIds = new Set<string>();
 
   private _currentTurnId: string | undefined = undefined;
+  private lastCompletedTurnKey: string | undefined;
+  private endedTurnId: number | undefined;
+  private heldLoopEnd: 'drained' | 'idle' | undefined;
   private _currentStep = 0;
   private _assistantDraft = '';
   private _thinkingDraft = '';
@@ -500,10 +503,16 @@ export class StreamingUIController {
     this.host.deferUserMessages = false;
     const completedTurnKey =
       this._currentTurnId ?? `local:${String(state.appState.streamingStartTime)}`;
-    this.finalizeLiveTextBuffers('idle');
+    this.lastCompletedTurnKey = completedTurnKey;
+    this.finalizeLiveTextBuffers(state.appState.loopLifecycleEvents === true ? 'waiting' : 'idle');
     this.host.mergeCompletedTurnAssistants();
     this.resetToolCallState();
     this._currentTurnId = undefined;
+
+    if (state.appState.loopLifecycleEvents === true) {
+      this.host.setAppState({ streamingPhase: 'waiting' });
+      return;
+    }
 
     const next = this.host.shiftQueuedMessage();
     if (next !== undefined) {
@@ -523,6 +532,88 @@ export class StreamingUIController {
       title: 'Kimi Code task complete',
       body: state.appState.sessionTitle ?? undefined,
     });
+  }
+
+  resetLoopLifecycle(): void {
+    this.endedTurnId = undefined;
+    this.heldLoopEnd = undefined;
+  }
+
+  finalizeLoopEnd(
+    sendQueued: (item: QueuedMessage) => void,
+    outcome: 'drained' | 'idle',
+    turnId: number,
+  ): void {
+    const { state } = this.host;
+    if (state.appState.loopLifecycleEvents !== true) return;
+    if (this.endedTurnId !== undefined && turnId <= this.endedTurnId) return;
+    this.endedTurnId = turnId;
+    if (state.appState.isCompacting) {
+      this.heldLoopEnd = outcome;
+      return;
+    }
+    this.settleLoopEnd(sendQueued, outcome);
+  }
+
+  resumeLoopEnd(sendQueued: (item: QueuedMessage) => void): void {
+    const { state } = this.host;
+    if (state.appState.loopLifecycleEvents !== true) return;
+    const held = this.heldLoopEnd;
+    this.heldLoopEnd = undefined;
+    if (state.queuedMessageDispatchPending) return;
+    if (held !== undefined) {
+      this.settleLoopEnd(sendQueued, held);
+      return;
+    }
+    const next = this.host.shiftQueuedMessage();
+    if (next === undefined) return;
+    this.dispatchQueuedAfterLoopEnd(sendQueued, next);
+  }
+
+  private settleLoopEnd(
+    sendQueued: (item: QueuedMessage) => void,
+    outcome: 'drained' | 'idle',
+  ): void {
+    const { state } = this.host;
+    const next = this.host.shiftQueuedMessage();
+    if (next !== undefined) {
+      this.dispatchQueuedAfterLoopEnd(sendQueued, next);
+      return;
+    }
+    this.host.setAppState({ streamingPhase: 'idle' });
+    this.host.resetLivePane();
+    const completedTurnKey =
+      this.lastCompletedTurnKey ?? `local:${String(state.appState.streamingStartTime)}`;
+    notifyTerminalOnce(
+      state,
+      `turn-complete:${completedTurnKey}`,
+      outcome === 'drained'
+        ? {
+            title: 'Kimi Code background tasks still running',
+            body: state.appState.sessionTitle ?? undefined,
+          }
+        : {
+            title: 'Kimi Code task complete',
+            body: state.appState.sessionTitle ?? undefined,
+          },
+    );
+  }
+
+  private dispatchQueuedAfterLoopEnd(sendQueued: (item: QueuedMessage) => void, next: QueuedMessage): void {
+    const { state } = this.host;
+    state.queuedMessageDispatchPending = true;
+    this.host.setAppState({ streamingPhase: 'idle' });
+    this.host.resetLivePane();
+    setTimeout(() => {
+      state.queuedMessageDispatchPending = false;
+      if (state.appState.isCompacting) {
+        state.queuedMessages.unshift(next);
+        this.host.setAppState({ streamingPhase: 'waiting' });
+        this.host.updateQueueDisplay();
+        return;
+      }
+      sendQueued(next);
+    }, 0);
   }
 
   onStreamingTextStart(): void {

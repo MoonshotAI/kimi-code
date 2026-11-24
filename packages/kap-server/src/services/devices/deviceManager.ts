@@ -1,3 +1,5 @@
+import { setTimeout as sleep } from 'node:timers/promises';
+
 import {
   DEVICES_SECTION,
   IConfigService,
@@ -17,6 +19,8 @@ import {
 } from './deviceProviders';
 import type { DeviceSession } from './deviceSession';
 import { SshDeviceBridge } from './sshDeviceBridge';
+
+const DEVICE_RESUME_TIMEOUT_MS = 2_000;
 
 interface BridgeRecord {
   readonly fingerprint: string;
@@ -97,10 +101,28 @@ export function deviceSources(manager: DeviceManager): DeviceSources {
         .filter((info) => info.conflict === undefined)
         .map((info) => ({
           id: info.id,
-          session: info.entry.enabled === false ? undefined : info.bridge?.session,
+          getSession: async () => (info.entry.enabled === false ? undefined : currentSession(info.bridge)),
         }));
     },
   };
+}
+
+async function currentSession(bridge: DeviceBridge | undefined): Promise<DeviceSession | undefined> {
+  const session = bridge?.session;
+  if (session !== undefined) return session;
+  const resuming = bridge?.resumeIfIdle?.();
+  if (resuming === undefined) return undefined;
+  const deadline = new AbortController();
+  try {
+    return await Promise.race([
+      resuming,
+      sleep(DEVICE_RESUME_TIMEOUT_MS, undefined, { signal: deadline.signal, ref: false }),
+    ]);
+  } catch {
+    return undefined;
+  } finally {
+    deadline.abort();
+  }
 }
 
 export class DeviceManager {

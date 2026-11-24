@@ -1,11 +1,15 @@
 const UUID = /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi;
+const WHOLE_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const ULID = /\b[0-9A-HJKMNP-TV-Z]{26}\b/g;
 const ISO_TIME = /\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})\b/g;
+
+export const FIXED_TIME = '2000-01-01T00:00:00.000Z';
 
 export interface NormalizeOptions {
   readonly paths?: Readonly<Record<string, string>>;
   readonly idKeys?: readonly string[];
   readonly timeKeys?: readonly string[];
+  readonly timePlaceholder?: 'token' | 'fixed';
   readonly uuid?: boolean;
   readonly ulid?: boolean;
   readonly isoTime?: boolean;
@@ -14,19 +18,22 @@ export interface NormalizeOptions {
 export type Normalizer = <T>(value: T) => T;
 
 export function createNormalizer(options: NormalizeOptions = {}): Normalizer {
-  const tokens = new Map<string, Map<string, string>>();
+  const tokenByValue = new Map<string, string>();
+  const countByKind = new Map<string, number>();
   const tokenFor = (kind: string, raw: string): string => {
-    let byValue = tokens.get(kind);
-    if (byValue === undefined) {
-      byValue = new Map();
-      tokens.set(kind, byValue);
-    }
-    let token = byValue.get(raw);
-    if (token === undefined) {
-      token = `<${kind}:${byValue.size + 1}>`;
-      byValue.set(raw, token);
-    }
+    const identity = WHOLE_UUID.test(raw) ? raw.toLowerCase() : raw;
+    const existing = tokenByValue.get(identity);
+    if (existing !== undefined) return existing;
+    const count = (countByKind.get(kind) ?? 0) + 1;
+    countByKind.set(kind, count);
+    const token = `<${kind}:${count}>`;
+    tokenByValue.set(identity, token);
     return token;
+  };
+  const fixedTime = options.timePlaceholder === 'fixed';
+  const timeFor = (value: string | number): string | number => {
+    if (!fixedTime) return '<time>';
+    return typeof value === 'number' ? 0 : FIXED_TIME;
   };
   const pathReplacements = pathVariants(options.paths ?? {});
   const idKeys = new Set(options.idKeys);
@@ -35,15 +42,18 @@ export function createNormalizer(options: NormalizeOptions = {}): Normalizer {
   const normalizeString = (text: string): string => {
     let result = text.replaceAll('\r\n', '\n');
     for (const [raw, token] of pathReplacements) result = result.replaceAll(raw, token);
-    if (options.uuid !== false) result = result.replace(UUID, (match) => tokenFor('uuid', match.toLowerCase()));
+    if (options.uuid !== false) result = result.replace(UUID, (match) => tokenFor('uuid', match));
     if (options.ulid !== false) result = result.replace(ULID, (match) => tokenFor('ulid', match));
-    if (options.isoTime !== false) result = result.replace(ISO_TIME, '<time>');
+    if (options.isoTime !== false) result = result.replace(ISO_TIME, fixedTime ? FIXED_TIME : '<time>');
     return result;
   };
 
   const visit = (value: unknown, key: string | undefined): unknown => {
-    if (key !== undefined && timeKeys.has(key) && (typeof value === 'string' || typeof value === 'number')) return '<time>';
-    if (key !== undefined && idKeys.has(key) && typeof value === 'string') return tokenFor(key, value);
+    if (key !== undefined && timeKeys.has(key) && (typeof value === 'string' || typeof value === 'number')) return timeFor(value);
+    if (key !== undefined && idKeys.has(key)) {
+      if (typeof value === 'string') return tokenFor(key, value);
+      if (Array.isArray(value)) return value.map((item: unknown) => (typeof item === 'string' ? tokenFor(key, item) : visit(item, undefined)));
+    }
     if (typeof value === 'string') return normalizeString(value);
     if (Array.isArray(value)) return value.map((item) => visit(item, undefined));
     if (typeof value === 'object' && value !== null) {

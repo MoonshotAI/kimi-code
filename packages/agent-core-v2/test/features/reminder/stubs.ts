@@ -17,13 +17,11 @@ import type {
 export function createReminderStub(input: {
   register?<D>(variant: string, provider: ContextInjectionProvider<D>): { dispose(): void };
   notify?(content: string, notification: ReminderNotification): void;
-  reconcileWhenIdle?(variant: string): Promise<void>;
 } = {}): IAgentReminderService {
   return {
     _serviceBrand: undefined,
     register: input.register ?? (() => toDisposable(() => {})),
     notify: input.notify ?? (() => {}),
-    reconcileWhenIdle: input.reconcileWhenIdle ?? (async () => {}),
   } as IAgentReminderService;
 }
 

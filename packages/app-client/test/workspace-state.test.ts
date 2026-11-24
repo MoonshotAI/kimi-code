@@ -1250,6 +1250,7 @@ describe('useWorkspaceState — startSessionAndActivateSkill', () => {
     expect(persistSessionProfile).toHaveBeenCalledWith(
       expect.objectContaining({ thinking: 'max', permissionMode: 'auto', swarmMode: true }),
       'sess_new',
+      true,
     );
     expect(persistSessionProfile.mock.calls[0]![0]).not.toHaveProperty('planMode', true);
     expect(state.planArmedBySession['sess_new']).toBe(true);
@@ -5926,5 +5927,24 @@ describe('setNotifyUserEnabled', () => {
     apiMock.setConfig.mockResolvedValue({ providers: {}, defaultModel: 'model-new' });
     expect(await configStore().setNotifyUserEnabled(true)).toBe(true);
     expect(configStore().experimentalFlags['notify_user']).toBe(true);
+  });
+});
+
+describe('setPromptPredictionEnabled', () => {
+  beforeEach(() => {
+    apiMock.setConfig.mockReset();
+    configStore().experimentalFlags = {};
+  });
+
+  it('does not update prompt_prediction flag when the config write fails', async () => {
+    apiMock.setConfig.mockRejectedValueOnce(new Error('write conflict'));
+    expect(await configStore().setPromptPredictionEnabled(true)).toBe(false);
+    expect(configStore().experimentalFlags['prompt_prediction']).toBeUndefined();
+  });
+
+  it('updates prompt_prediction flag only after a successful write', async () => {
+    apiMock.setConfig.mockResolvedValue({ providers: {}, defaultModel: 'model-new' });
+    expect(await configStore().setPromptPredictionEnabled(true)).toBe(true);
+    expect(configStore().experimentalFlags['prompt_prediction']).toBe(true);
   });
 });

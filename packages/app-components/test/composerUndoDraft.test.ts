@@ -36,6 +36,10 @@ vi.mock('@moonshot-ai/app-client/client', async (importOriginal) => {
       skillsLoaded: vue.ref(true),
       chatGateVerdict: vue.ref(null),
       experimentalFlags: vue.ref({}),
+      promptPrediction: vue.ref(null),
+      acceptPromptPrediction: vi.fn(() => null),
+      handlePromptPredictionInput: vi.fn(),
+      handlePromptPredictionSubmit: vi.fn(),
       notify: vi.fn(),
       toggleGoalMode: vi.fn(),
       togglePlanMode: vi.fn(),
@@ -49,7 +53,7 @@ vi.mock('@moonshot-ai/app-client/client', async (importOriginal) => {
 });
 
 import { createKimiI18n } from '@moonshot-ai/app-i18n';
-import { createComposerSnapshot, textToDoc, type ComposerDocumentSnapshot } from '@moonshot-ai/app-composer/model';
+import { composerSchema, createComposerSnapshot, textToDoc, type ComposerDocumentSnapshot } from '@moonshot-ai/app-composer/model';
 import { createComposerEditor } from '@moonshot-ai/app-composer/runtime';
 import Composer from '../src/composer/Composer.vue';
 
@@ -58,10 +62,11 @@ let app: App | undefined;
 let host: HTMLDivElement;
 let composer: InstanceType<typeof Composer>;
 
-function mountComposer(): void {
+function mountComposer(deferSubmitReset = false): void {
   app = createApp({
     render: () => h(Composer, {
       ref: (value) => { composer = value as InstanceType<typeof Composer>; },
+      deferSubmitReset,
     }),
   });
   app.use(createKimiI18n({ locale: 'zh' }));
@@ -111,6 +116,55 @@ afterEach(() => {
 });
 
 describe('undo draft across session switches', () => {
+  it('clears a deferred composer only when dispatch is confirmed', async () => {
+    app?.unmount();
+    mountComposer(true);
+    const submitted = createComposerSnapshot(textToDoc('保留到真正发送'), [], []);
+    composer.loadForEdit('保留到真正发送', submitted);
+    await nextTick();
+
+    const input = host.querySelector('[aria-label="消息输入框"]')!;
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await nextTick();
+    expect(inputText()).toBe('保留到真正发送');
+
+    composer.clearAfterDispatch(submitted);
+    await nextTick();
+    expect(inputText()).toBe('');
+  });
+
+  it('keeps newer input when a deferred dispatch finishes', async () => {
+    app?.unmount();
+    mountComposer(true);
+    const submitted = createComposerSnapshot(textToDoc('第一条'), [], []);
+    composer.loadForEdit('第一条', submitted);
+    await nextTick();
+    host.querySelector('[aria-label="消息输入框"]')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await nextTick();
+
+    composer.loadForEdit('下一条', createComposerSnapshot(textToDoc('下一条'), [], []));
+    await nextTick();
+    composer.clearAfterDispatch(submitted);
+    await nextTick();
+
+    expect(inputText()).toBe('下一条');
+  });
+
+  it('keeps browser reference edits made while a deferred dispatch finishes', async () => {
+    app?.unmount();
+    mountComposer(true);
+    const doc = composerSchema.nodes.doc.create(null, composerSchema.nodes.paragraph.create(null, composerSchema.nodes.browser_reference.create({ refId: 'ref-1', label: 'Page' })));
+    const current = createComposerSnapshot(doc, [], [], { references: [{ id: 'ref-1', captureId: 'cap-1', comment: 'new comment', includeScreenshot: false }], captures: [] });
+    const submitted = { ...current, browserReferences: [{ id: 'ref-1', captureId: 'cap-1', comment: 'old comment', includeScreenshot: true }] };
+    composer.loadForEdit('', current);
+    await nextTick();
+
+    composer.clearAfterDispatch(submitted);
+    await nextTick();
+
+    expect(inputText()).toContain('Page');
+  });
+
   it.each([null, 'created-session'])('keeps the recalled snapshot when the first session scope is %s', async (firstScope) => {
     clientState.activeSessionId!.value = firstScope;
     await nextTick();

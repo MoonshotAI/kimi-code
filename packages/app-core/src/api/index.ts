@@ -4,7 +4,7 @@ export type { DaemonKimiWebApiOptions } from './daemon/client';
 export { createKimiWebApi } from './createKimiWebApi';
 export type { DeviceRoutingControls } from './deviceRouting';
 export type { CreateKimiWebApiDeps } from './createKimiWebApi';
-export { DaemonHttpClient, SERVER_AUTH_UNAUTHORIZED_CODE } from './daemon/http';
+export { DaemonHttpClient, KIMI_AUTH_REQUIRED_CODE, KIMI_AUTH_REJECTED_CODE, SERVER_AUTH_UNAUTHORIZED_CODE } from './daemon/http';
 export type { DaemonHttpClientOptions } from './daemon/http';
 export { DaemonEventSocket } from './daemon/ws';
 export type { DaemonEventSocketHandlers, DaemonEventSocketOptions } from './daemon/ws';
@@ -40,6 +40,7 @@ export {
   PAGE_TOKEN_MISMATCH_CODE,
   SESSION_BUSY_CODE,
   SESSION_EXPORT_TOO_LARGE_CODE,
+  SESSION_NOT_FOUND_CODE,
   SESSION_OCCUPIED_CODE,
   SESSION_STALE_CODE,
   sessionOccupiedHolderClient,

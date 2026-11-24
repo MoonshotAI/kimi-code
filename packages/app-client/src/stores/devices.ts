@@ -1,4 +1,4 @@
-import { computed, ref, shallowRef, watch } from 'vue';
+import { computed, ref, shallowReactive, shallowRef, watch } from 'vue';
 import { defineStore } from 'pinia';
 import { isDaemonApiError, type AppDevice, type AppDeviceConnectFailure, type AppDeviceDefinition, type AppDeviceTestResult, type AppDeviceUpgradeStatus, type AppProviderCopyResult, type AppSshConfigHosts, type AppSshDeviceDefinition, type AppWarning, type KimiWebApi, type OAuthLoginStartResult, type OAuthRegion } from '@moonshot-ai/app-core/api';
 import { deviceDisplayName, deviceDisplayState, deviceInstall, isDeviceBlocked, logWarn, type DeviceDisplayState, type DeviceInstall, type RcDevice } from '@moonshot-ai/app-core/lib';
@@ -44,6 +44,7 @@ export interface MyDevice {
 
 const DEVICE_NOT_FOUND_CODE = 40420;
 const DEVICE_UNAVAILABLE_CODE = 40926;
+const DEVICE_META_RETRY_DELAY_MS = 1_000;
 
 const UPGRADABLE_STATES: ReadonlySet<DeviceDisplayState> = new Set(['ready', 'connecting', 'idle', 'outdated', 'failed']);
 
@@ -79,6 +80,7 @@ export const useDevicesStore = defineStore('kimi.devices', () => {
   const registrationsLoading = ref(false);
   const registrationsError = ref<string | null>(null);
   const upgradeRequests = ref<Record<string, boolean>>({});
+  const capabilities = shallowReactive(new Map<string, Readonly<Record<string, boolean>> | symbol>());
   const accountLoads = new Map<string, number>();
   let registrationsGeneration = 0;
 
@@ -140,6 +142,11 @@ export const useDevicesStore = defineStore('kimi.devices', () => {
       if (byId.value[deviceId]?.status !== 'ready') setAccount(deviceId, undefined);
     }
     if (loginDeviceId.value !== null && byId.value[loginDeviceId.value]?.status !== 'ready') loginDeviceId.value = null;
+    for (const deviceId of removed) capabilities.delete(deviceId);
+    for (const { id } of list) {
+      if (displayState(id) !== 'ready') capabilities.delete(id);
+      else if (!capabilities.has(id)) void loadCapabilities(id);
+    }
     for (const deviceId of becameReady) void loadAccount(deviceId);
     for (const deviceId of Object.keys(providerCopies.value)) {
       if (byId.value[deviceId] === undefined) setProviderCopy(deviceId, undefined);
@@ -338,6 +345,34 @@ export const useDevicesStore = defineStore('kimi.devices', () => {
     await load().catch(() => undefined);
   }
 
+  async function loadCapabilities(deviceId: string, retry = true): Promise<void> {
+    const pending = Symbol();
+    capabilities.set(deviceId, pending);
+    try {
+      const meta = await getDeviceApi(deviceId).getMeta();
+      if (capabilities.get(deviceId) === pending) capabilities.set(deviceId, meta.capabilities ?? {});
+    } catch (err) {
+      if (capabilities.get(deviceId) !== pending) return;
+      if (retry) {
+        setTimeout(() => {
+          if (capabilities.get(deviceId) === pending) void loadCapabilities(deviceId, false);
+        }, DEVICE_META_RETRY_DELAY_MS);
+      } else {
+        capabilities.delete(deviceId);
+        logWarn('[kimi-code] loading device metadata failed', deviceId, err);
+      }
+    }
+  }
+
+  function supports(deviceId: string, capability: string): boolean {
+    const known = capabilities.get(deviceId);
+    return typeof known === 'object' && known[capability] === true;
+  }
+
+  function supportsFeedback(deviceId: string | undefined): boolean {
+    return deviceId === undefined || supports(deviceId, 'feedback');
+  }
+
   function setAccount(deviceId: string, account: DeviceAccount | undefined): void {
     const next = { ...accounts.value };
     if (account === undefined) delete next[deviceId];
@@ -509,6 +544,8 @@ export const useDevicesStore = defineStore('kimi.devices', () => {
     loginRegion,
     finishLogin,
     needsLogin,
+    supports,
+    supportsFeedback,
     applySnapshot,
     load,
     connect,

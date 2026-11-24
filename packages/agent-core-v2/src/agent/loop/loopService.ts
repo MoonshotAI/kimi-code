@@ -10,7 +10,7 @@ import { abortError, isUserCancellation, userCancellationReason } from '#/_base/
 import { toErrorMessage } from '#/_base/errors/errorMessage';
 import { parseBooleanEnv } from '#/_base/utils/env';
 import { AgentLoopRequestObserver } from './requestObservation';
-import { createAgentMediaPolicy, hideReadMediaFile, type AgentMediaPolicy, type AgentMediaPolicyFactory } from './mediaPolicy';
+import { createAgentMediaPolicy, type AgentMediaPolicy, type AgentMediaPolicyFactory } from './mediaPolicy';
 import {
   agentLLMRequestLogFields,
   type CoreLoopRequester,
@@ -21,14 +21,12 @@ import {
   type ResolvedRequestContext,
 } from './requesterContract';
 import { AgentLoopProjector } from './projector';
-import { project } from './projection';
 import { createStructureRecovery, createStructureResolver } from './projectionPolicy';
 import { createToolSelectResolver } from './toolSelectPolicy';
 import { RequestMetadataTracker, requestMetadataHeaders } from './requestMetadata';
 import { IAgentMediaResolverService } from '#/agent/media/mediaResolver';
 import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
 import { IAgentToolSelectService } from '#/agent/toolSelect/toolSelect';
-import { READ_MEDIA_FILE_TOOL_NAME } from '#/agent/tools/read-media-file/read-media-file';
 import { IModelCatalog } from '#/llm-adapter/model/catalog';
 import type { ModelOverrides } from '#/llm-adapter/model/model.types';
 import { resolveCompletionBudget } from '#/llm-adapter/model/completion-budget';
@@ -79,7 +77,6 @@ import {
 import type {
   LlmRequest as CoreLlmRequest,
   LlmRequestModel,
-  ModelCapability as LlmModelCapability,
   ThinkingEffort,
 } from '@moonshot-ai/core/llm/request';
 import type { ModelCapability } from '#/llm-adapter/contract/capability';
@@ -103,6 +100,7 @@ import { IEventService } from '#/app/event/event';
 import { IPluginService } from '#/app/plugin/plugin';
 import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionRunGate } from '#/session/sessionActivity/sessionRunGate';
+import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import { applyPromptMetadataUpdate } from '#/session/sessionMetadata/promptMetadata';
@@ -136,7 +134,6 @@ import { EMPTY_LOOP_PROMPT, historyEntryFromContext } from './history';
 import {
   createLoop,
   createMaxStepsHook,
-  type HookRegistration,
   type Loop,
   type LoopEmitted,
   type LoopLlmRequester,
@@ -144,6 +141,7 @@ import {
   type MessageAppendingEvent,
   type TurnStartingEvent,
 } from '@moonshot-ai/core/loop/index';
+import { createLoopHookRegistry } from '@moonshot-ai/core/hook/loop/registry';
 import { LoopJournal, type LoopJournalSnapshot } from './journal';
 import { AgentPromptProjection } from './promptProjection';
 import { AgentTurnProjection, loopLastRequestIdKey } from './turnProjection';
@@ -194,7 +192,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   private initialized = false;
   private startPromise: Promise<void> | undefined;
   private closePromise: Promise<void> | undefined;
-  private readonly batchStartingHooks = new Map<string, HookRegistration>();
+  private readonly loopHooks = createLoopHookRegistry();
   private readonly journal: LoopJournal;
   private readonly prompts: AgentPromptProjection;
   private readonly turns: AgentTurnProjection;
@@ -238,15 +236,12 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     this.mediaPolicyFactory = (model, request) => createAgentMediaPolicy(mediaResolver, model, request);
     this.requester = {
       coreRequester: (options) => this.coreRequester(options),
-      prepareOperation: async (options, signal) => {
-        if (this.loop === undefined) throw new BugIndicatingError('Agent loop is not started');
+      prepareOperation: async (options, _signal) => {
+        await this.start();
+        const loop = this.loop!;
         const config = this.requestConfigSnapshot();
-        const baseline = options.tools ?? this.loop.state.profile.tools;
-        const visible = options.tools === undefined && baseline !== undefined
-          ? this.operationTools(baseline, config.resolved.model.capability)
-          : baseline;
-        const tools = await this.prepareTools(signal, config.resolved.model.capability, visible);
-        return this.loop.operation((runtime) => {
+        const tools = options.tools ?? this.baselineTools();
+        return loop.operation((runtime) => {
           const requester = this.coreRequester({ ...options, runtime, tools, config });
           return requester.snapshot?.() ?? requester;
         });
@@ -259,6 +254,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       (includeCurrent) => this.snapshot().queue.length + (includeCurrent ? 1 : 0),
     );
     this.turns = new AgentTurnProjection({
+      attribution,
       dispatcher,
       events,
       scopeContext,
@@ -272,6 +268,26 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       maxSteps: () => this.config.get<LoopControl>(LOOP_CONTROL_SECTION)?.maxStepsPerTurn,
       cancel: (turnId, reason) => this.cancelActiveTurn(turnId, reason),
       recordStreamPart: (turnId, step, block) => this.journal.recordStreamPart(turnId, step, block),
+    });
+    this.loopHooks.addLoopHook(createMaxStepsHook(
+      () => this.config.get<LoopControl>(LOOP_CONTROL_SECTION)?.maxStepsPerTurn,
+      (event) => this.loop?.state.turn?.bypassMaxSteps === true && event.step === 1,
+    ));
+    this.loopHooks.addLoopHook({
+      point: 'turn.starting',
+      hook: (event, signal) => this.turnStarting(event, signal),
+    });
+    this.loopHooks.addLoopHook({
+      point: 'message.appending',
+      hook: (event, signal) => this.messageAppending(event, signal),
+    });
+    this.loopHooks.addLoopHook({
+      point: 'step.starting',
+      hook: (event) => this.turns.stepStarting(event),
+    });
+    this.loopHooks.addLoopHook({
+      point: 'step.stopping',
+      hook: (event) => this.turns.stepStopping(event),
     });
     this.profileAdapter = new AgentLoopProfileAdapter(
       profile,
@@ -305,6 +321,24 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
 
   private set disposing(value: boolean) {
     this.states.set(loopDisposingKey, value);
+  }
+
+  get started(): boolean {
+    return this.loop !== undefined || this.startPromise !== undefined;
+  }
+
+  get hasPersistedState(): boolean {
+    const snapshot = this.journal.snapshot();
+    const inbox = snapshot.input.inbox;
+    return (
+      snapshot.profileBound ||
+      (snapshot.input.messages?.length ?? 0) > 0 ||
+      (inbox?.normal?.length ?? 0) > 0 ||
+      (inbox?.notify?.length ?? 0) > 0 ||
+      (inbox?.remind?.length ?? 0) > 0 ||
+      (snapshot.input.nextTurnId ?? 0) > 0 ||
+      snapshot.input.unfinished !== undefined
+    );
   }
 
   async start(tools?: readonly Tool[]): Promise<void> {
@@ -428,21 +462,18 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   }
 
   history(): readonly ContextMessage[] {
-    const source = this.loop?.state.messages ?? this.journal.snapshot().input.messages ?? [];
-    return this.turns.history(source);
+    return this.turns.history(this.rawHistory());
+  }
+
+  rawHistory(): readonly Message[] {
+    return this.loop?.state.messages ?? this.journal.snapshot().input.messages ?? [];
   }
 
   previewRequestContent(): LoopRequestContent {
-    const capabilities = this.data().modelCapabilities;
-    const disclosure = this.toolSelect.enabled(capabilities);
-    const source = this.loop?.state.messages ?? this.journal.snapshot().input.messages ?? [];
-    const tools = this.toolSelect.requestTools(this.baselineTools(), disclosure, true, source);
-    const messages = this.toolSelect.shapeHistory(source, disclosure, tools);
-    const mediaInput = capabilities.image_in || capabilities.video_in;
     return {
       systemPrompt: this.loop?.state.profile.systemPrompt || this.getSystemPrompt(),
-      tools: mediaInput ? tools : tools.filter((tool) => tool.name !== READ_MEDIA_FILE_TOOL_NAME),
-      messages: project(mediaInput ? messages : hideReadMediaFile(messages)),
+      tools: this.baselineTools(),
+      messages: this.rawHistory(),
     };
   }
 
@@ -474,7 +505,13 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       await this.wire.drainPersisted().catch(() => undefined);
       const snapshot = this.journal.snapshot();
       this.profileAdapter.restore(snapshot);
-      const tools = initialTools === undefined ? this.toolSelect.initialTools() : [...initialTools];
+      let tools: readonly Tool[];
+      if (initialTools === undefined) {
+        await this.instantiation.invokeFunction((accessor) => accessor.get(ISessionMcpHandle).ready);
+        tools = this.toolSelect.initialTools();
+      } else {
+        tools = [...initialTools];
+      }
       const taskHistory = this.instantiation.invokeFunction((accessor) => accessor.get(IAgentTaskHistoryService));
       await taskHistory.reconcile();
       const completions = await restoreTaskCompletions({
@@ -536,17 +573,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         nextTurnId: Math.max(snapshot.input.nextTurnId ?? 0, minimumNextTurnId),
         historyRevision,
       },
-      hooks: [
-        ...this.batchStartingHooks.values(),
-        createMaxStepsHook(
-          () => this.config.get<LoopControl>(LOOP_CONTROL_SECTION)?.maxStepsPerTurn,
-          (event) => loop.state.turn?.bypassMaxSteps === true && event.step === 1,
-        ),
-        { point: 'turn.starting', hook: (event, signal) => this.turnStarting(event, signal) },
-        { point: 'message.appending', hook: (event, signal) => this.messageAppending(event, signal) },
-        { point: 'step.starting', hook: (event) => this.turns.stepStarting(event) },
-        { point: 'step.stopping', hook: (event) => this.turns.stepStopping(event) },
-      ],
+      hook: this.loopHooks.hook,
     });
     loop.setRequester(this.createLoopRequester(loop));
     this.loop = loop;
@@ -620,7 +647,6 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         return { type: 'turn', turnId: turn.id, step: turn.step };
       },
       runtime,
-      dynamicTools: true,
       onSnapshot: (config) => {
         this.turns.thinkingEffort = config.resolved.thinkingLevel;
       },
@@ -638,34 +664,6 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       systemPrompt: this.getSystemPrompt(),
       maxCompletionTokensCap: this.config.get<ModelOverrides>('modelOverrides')?.maxCompletionTokens,
     };
-  }
-
-  private operationTools(
-    baseline: readonly Tool[],
-    capabilities: LlmModelCapability | undefined,
-  ): readonly Tool[] {
-    const disclosure = this.toolSelect.enabled(capabilities);
-    const active = new Set(this.toolSelect.defaultTools(disclosure).map((tool) => tool.name));
-    return baseline.filter((tool) => active.has(tool.name));
-  }
-
-  private async prepareTools(
-    signal: AbortSignal,
-    capabilities: LlmModelCapability | undefined,
-    base?: readonly Tool[],
-  ): Promise<readonly Tool[]> {
-    await this.toolSelect.prepareForRequest(signal);
-    return this.toolsForCapabilities(capabilities, base);
-  }
-
-  private toolsForCapabilities(
-    capabilities: LlmModelCapability | undefined,
-    base?: readonly Tool[],
-  ): readonly Tool[] {
-    const disclosure = this.toolSelect.enabled(capabilities);
-    const tools = base ?? this.toolSelect.defaultTools(disclosure);
-    if (capabilities?.image_in === true || capabilities?.video_in === true) return tools;
-    return tools.filter((tool) => tool.name !== READ_MEDIA_FILE_TOOL_NAME);
   }
 
   private coreRequester(options: CoreLoopRequesterOptions): CoreLoopRequester {
@@ -719,7 +717,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         mediaPolicy.recovery,
       ],
       resolvers: [
-        createToolSelectResolver(this.toolSelect, request.dynamicTools),
+        createToolSelectResolver(this.toolSelect),
         mediaPolicy.toolResolver,
         createStructureResolver(this.projector),
         mediaPolicy.resolver,
@@ -824,7 +822,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       (rest.content?.messages === undefined
         ? this.tokenCounting.get(this.scopeContext.agentContext).size
         : undefined);
-    const messages = rest.content?.messages ?? this.history().map(historyEntryFromContext);
+    const messages = rest.content?.messages ?? this.rawHistory();
     const tools = rest.profile?.tools ?? options.tools;
     return {
       request: binding.requestMetadata
@@ -843,7 +841,6 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       promptCacheProbe: options.promptCacheProbe,
       source,
       logFields: agentLLMRequestLogFields(source),
-      dynamicTools: options.dynamicTools ?? false,
       runtime: options.runtime,
     };
   }
@@ -896,7 +893,10 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     const loop = this.loop;
     if (loop === undefined) {
       this.initialized = false;
-      await this.initializeLoop(seededMessages);
+      this.startPromise ??= this.initializeLoop(seededMessages).finally(() => {
+        this.startPromise = undefined;
+      });
+      await this.startPromise;
       this.requesterExecution.recoveries.clear();
       return;
     }
@@ -1033,6 +1033,9 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
 
   private admit(input: UserMessage): { readonly id: string; readonly entry: UserMessage } {
     if (this.disposing) throw abortError('Agent loop disposed');
+    if (this.dispatcher.restorePhase === 'ready') {
+      void this.start().catch(() => this.close().catch(() => undefined));
+    }
     this.runGate.begin();
     const snapshot = this.snapshot();
     return this.prompts.admit(input, snapshot.state === 'running' || snapshot.paused || snapshot.queue.length > 0);
@@ -1125,7 +1128,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     if (loop.state.turn?.id !== activeTurnId || ![...ids].every((id) => pendingNormal.has(id) || pendingNotify.has(id))) {
       throw new Error2(ErrorCodes.PROMPT_NOT_FOUND, 'one or more prompts are no longer pending');
     }
-    loop.sendNow(promptIds);
+    loop.sendNowQueued(promptIds);
   }
 
   remind(...messages: readonly Message[]): void {
@@ -1179,11 +1182,14 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     return this.turns.snapshot(loop, queue, notificationCount, this.quiescenceDepth > 0, this.hasPendingRequests());
   }
 
-  private async materializeDaemonRefs(message: { readonly content: readonly ContentPart[] }): Promise<void> {
+  private async materializeDaemonRefs(
+    message: { readonly content: readonly ContentPart[] },
+    signal?: AbortSignal,
+  ): Promise<void> {
     if (!message.content.some((part) => daemonFileRefFromPart(part) !== undefined)) return;
     const files = this.instantiation.invokeFunction((accessor) => accessor.get(IFileService));
     const mediaStore = this.instantiation.invokeFunction((accessor) => accessor.get(ISessionMediaStore));
-    await materializePromptDaemonRefs(message.content, { files, mediaStore });
+    await materializePromptDaemonRefs(message.content, { files, mediaStore, signal });
   }
 
   private async turnStarting(event: TurnStartingEvent, signal: AbortSignal) {
@@ -1199,7 +1205,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     try {
       await this.hooks.onBeforeSubmitPrompt.run(ctx);
       if (ctx.block) return { type: 'blocked' as const, cause: { by: 'prompt', reason: 'blocked' } };
-      await this.materializeDaemonRefs(promptMessage);
+      await this.materializeDaemonRefs(promptMessage, signal);
       pending.message = {
         ...pending.entry,
         content: [
@@ -1214,13 +1220,14 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     }
   }
 
-  private messageAppending(event: MessageAppendingEvent, _signal: AbortSignal) {
+  private async messageAppending(event: MessageAppendingEvent, signal: AbortSignal) {
     if (event.item.kind === 'normal') {
       const pending = this.prompts.pending(event.turnId);
       if (pending !== undefined) return { message: { ...event.item.message, content: pending.message.content } };
       return undefined;
     }
     if (event.item.kind === 'notify') {
+      await this.materializeDaemonRefs(event.item.message, signal);
       return {
         message: {
           ...event.item.message,
@@ -1284,12 +1291,10 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   }
 
   registerToolBatchStarting(hook: LoopHooks['tool.batch-starting']): IDisposable {
-    const registration = { point: 'tool.batch-starting' as const, id: randomUUID(), hook };
-    this.batchStartingHooks.set(registration.id, registration);
-    this.loop?.hooks.add(registration);
+    const id = randomUUID();
+    this.loopHooks.addLoopHook({ point: 'tool.batch-starting', hook, id });
     return toDisposable(() => {
-      this.batchStartingHooks.delete(registration.id);
-      this.loop?.hooks.remove(registration.id);
+      this.loopHooks.remove(id);
     });
   }
 
@@ -1382,8 +1387,10 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     return (
       this.pendingSubmissions.length > 0 ||
       this.pendingNotifications.length > 0 ||
+      this.pendingReminders.length > 0 ||
       (this.loop?.state.inbox.normal.length ?? 0) > 0 ||
       (this.loop?.state.inbox.notify.length ?? 0) > 0 ||
+      (this.loop?.state.inbox.remind.length ?? 0) > 0 ||
       (this.loop?.state.completionPending ?? false) ||
       (this.loop?.state.resetting ?? false) ||
       (this.loop !== undefined && this.loop.state.status !== 'idle')
@@ -1403,6 +1410,30 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     await this.turns.drain();
     await this.wire.flush();
     return this.turns.lastResult;
+  }
+
+  continueTurn(reminders: readonly Message[] = []): void {
+    if (this.disposing) throw abortError('Agent loop disposed');
+    if (
+      this.quiescenceDepth > 0 ||
+      this.historySnapshotDepth > 0 ||
+      this.hasPendingRequests() ||
+      this.snapshot().paused
+    ) {
+      throw new Error2(ErrorCodes.SESSION_BUSY, 'Agent loop is currently busy');
+    }
+    this.runGate.begin();
+    const loop = this.loop;
+    if (loop === undefined) return;
+    const allReminders =
+      this.pendingReminders.length > 0
+        ? [...this.pendingReminders.splice(0), ...reminders]
+        : reminders;
+    if (allReminders.length > 0) {
+      loop.remind(...allReminders);
+    }
+    loop.continue({ force: true });
+    this.maybeSettle();
   }
 
   async retry(): Promise<TurnResult | undefined> {

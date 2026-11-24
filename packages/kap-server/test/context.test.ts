@@ -108,8 +108,6 @@ describe('context routes on restored sessions and dynamic tools', () => {
   let home: string | undefined;
   let base: string;
 
-  const TOOL_SELECT_ENV = 'KIMI_CODE_EXPERIMENTAL_TOOL_SELECT';
-
   beforeAll(async () => {
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-context-'));
     const modelCatalog: IModelCatalog = {
@@ -141,7 +139,6 @@ describe('context routes on restored sessions and dynamic tools', () => {
       },
     };
     const seeds: ScopeSeed = [[IModelCatalog, modelCatalog]];
-    process.env[TOOL_SELECT_ENV] = '1';
     server = await startServer({
       hostIdentity: TEST_HOST_IDENTITY,
       host: '127.0.0.1',
@@ -154,7 +151,6 @@ describe('context routes on restored sessions and dynamic tools', () => {
   });
 
   afterAll(async () => {
-    delete process.env[TOOL_SELECT_ENV];
     if (server !== undefined) {
       await server.close();
       server = undefined;
@@ -200,17 +196,14 @@ describe('context routes on restored sessions and dynamic tools', () => {
       thinkingLevel: 'high',
       systemPrompt: 'You are Kimi Code.',
     });
-    loop.replaceHistory(
-      [
-        { role: 'user', content: [{ type: 'text', text: 'summarize the repository layout' }] },
-        {
-          role: 'assistant',
-          content: [{ type: 'text', text: 'It is a TypeScript monorepo with apps and packages.' }],
-          toolCalls: [],
-        },
-      ],
-      'fork',
-    );
+    await loop.initializeHistory([
+      { role: 'user', content: [{ type: 'text', text: 'summarize the repository layout' }] },
+      {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'It is a TypeScript monorepo with apps and packages.' }],
+        toolCalls: [],
+      },
+    ]);
     await main.accessor.get(IEventDispatcher).flush();
     return main;
   }
@@ -260,13 +253,10 @@ describe('context routes on restored sessions and dynamic tools', () => {
       ],
       origin: { kind: 'injection', variant: DYNAMIC_TOOL_SCHEMA_VARIANT },
     };
-    loop.replaceHistory(
-      [
-        { role: 'user', content: [{ type: 'text', text: 'hello' }] },
-        historyEntryFromContext(dynamicSchema),
-      ],
-      'fork',
-    );
+    await loop.initializeHistory([
+      { role: 'user', content: [{ type: 'text', text: 'hello' }] },
+      historyEntryFromContext(dynamicSchema),
+    ]);
     await main.accessor.get(IEventDispatcher).flush();
     await main.accessor.get(IWireService).flush();
 
@@ -344,18 +334,15 @@ describe('context routes on restored sessions and dynamic tools', () => {
       Object.fromEntries(Array.from({ length: 80 }, (_, index) => [`key${index}`, index])),
     );
     const imageData = `data:image/png;base64,${'A'.repeat(800)}`;
-    main.accessor.get(IAgentLoopService).replaceHistory(
-      [
-        {
-          role: 'user',
-          content: [
-            { type: 'text', text: minified },
-            { type: 'image_url', imageUrl: { url: imageData } },
-          ],
-        },
-      ],
-      'fork',
-    );
+    await main.accessor.get(IAgentLoopService).initializeHistory([
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: minified },
+          { type: 'image_url', imageUrl: { url: imageData } },
+        ],
+      },
+    ]);
     await main.accessor.get(IEventDispatcher).flush();
     await main.accessor.get(IWireService).flush();
 
@@ -381,7 +368,7 @@ describe('context routes on restored sessions and dynamic tools', () => {
       thinkingLevel: 'high',
       systemPrompt: 'You are a subagent.',
     });
-    loop.replaceHistory([{ role: 'user', content: [{ type: 'text', text: 'inspect me' }] }], 'fork');
+    await loop.initializeHistory([{ role: 'user', content: [{ type: 'text', text: 'inspect me' }] }]);
     await sub.accessor.get(IEventDispatcher).flush();
     await sub.accessor.get(IWireService).flush();
 
@@ -397,7 +384,7 @@ describe('context routes on restored sessions and dynamic tools', () => {
     expect(page.items.some((entry) => entry.preview.includes('inspect me'))).toBe(true);
   });
 
-  it('shows messages the way the model receives them', async () => {
+  it('shows messages as stored in the session context', async () => {
     const sid = await createSession();
 
     const live = getLiveSessionById(server!.core.accessor, sid)!;
@@ -411,34 +398,31 @@ describe('context routes on restored sessions and dynamic tools', () => {
       systemPrompt: 'You are Kimi Code.',
     });
     const call = (id: string, name: string): ToolCall => ({ type: 'function', id, name, arguments: '{}' });
-    loop.replaceHistory(
-      [
-        { role: 'user', content: [{ type: 'text', text: 'run it' }] },
-        { role: 'assistant', content: [], toolCalls: [call('call_1', 'Bash')] },
-        { role: 'user', content: [{ type: 'text', text: 'reminder sent while the tool ran' }] },
-        {
-          role: 'tool',
-          toolCallId: 'call_1',
-          content: [{ type: 'text', text: 'ok' }],
-          attributes: { durationMs: 1500, note: 'Output truncated.' },
-        },
-        { role: 'assistant', content: [], toolCalls: [call('call_2', 'Read')] },
-        {
-          role: 'tool',
-          toolCallId: 'call_2',
-          content: [{ type: 'text', text: 'missing file' }],
-          attributes: { isError: true },
-        },
-        { role: 'assistant', content: [], toolCalls: [call('call_3', 'Bash')] },
-        { role: 'user', content: [{ type: 'text', text: 'continue' }] },
-      ],
-      'fork',
-    );
+    await loop.initializeHistory([
+      { role: 'user', content: [{ type: 'text', text: 'run it' }] },
+      { role: 'assistant', content: [], toolCalls: [call('call_1', 'Bash')] },
+      { role: 'user', content: [{ type: 'text', text: 'reminder sent while the tool ran' }] },
+      {
+        role: 'tool',
+        toolCallId: 'call_1',
+        content: [{ type: 'text', text: 'ok' }],
+        attributes: { durationMs: 1500, note: 'Output truncated.' },
+      },
+      { role: 'assistant', content: [], toolCalls: [call('call_2', 'Read')] },
+      {
+        role: 'tool',
+        toolCallId: 'call_2',
+        content: [{ type: 'text', text: 'missing file' }],
+        attributes: { isError: true },
+      },
+      { role: 'assistant', content: [], toolCalls: [call('call_3', 'Bash')] },
+      { role: 'user', content: [{ type: 'text', text: 'continue' }] },
+    ]);
     await main.accessor.get(IEventDispatcher).flush();
 
     const page = await getJson<ContextItemsResponse>(`/api/v1/sessions/${sid}/context/items`);
     expect(page.items.map((entry) => entry.role)).toEqual([
-      'system', 'user', 'assistant', 'tool', 'user', 'assistant', 'tool', 'assistant', 'tool', 'user',
+      'system', 'user', 'assistant', 'user', 'tool', 'assistant', 'tool', 'assistant', 'user',
     ]);
     const toolTexts = await Promise.all(
       page.items
@@ -448,11 +432,111 @@ describe('context routes on restored sessions and dynamic tools', () => {
           return detail.parts.map((part) => part.text).join('\n');
         }),
     );
-    expect(toolTexts).toEqual([
-      'Wall time: 1.500 seconds\nok\nOutput truncated.',
-      '<system>ERROR: Tool execution failed.</system>\nmissing file',
-      'Tool result is not available in the current context. Do not assume the tool completed successfully.',
+    expect(toolTexts).toEqual(['ok', 'missing file']);
+  });
+
+  it('groups user-role messages by where they came from, in context order', async () => {
+    const sid = await createSession();
+    const main = await seedMainAgent(sid);
+    const userMessage = (text: string, origin?: ContextMessage['origin']): ContextMessage => ({
+      role: 'user',
+      content: [{ type: 'text', text }],
+      origin,
+    });
+    main.accessor.get(IAgentLoopService).replaceHistory(
+      [
+        userMessage('hello', { kind: 'user' }),
+        userMessage('<system-reminder>todo</system-reminder>', { kind: 'injection', variant: 'todo_list_reminder' }),
+        userMessage('Skill tool loaded instructions', {
+          kind: 'skill_activation',
+          activationId: 'activation-1',
+          skillName: 'demo-skill',
+          trigger: 'model-tool',
+        }),
+        userMessage('deploy staging', {
+          kind: 'plugin_command',
+          activationId: 'activation-2',
+          pluginId: 'demo-plugin',
+          commandName: 'deploy',
+          trigger: 'user-slash',
+        }),
+        userMessage('<notification>done</notification>', {
+          kind: 'task',
+          taskId: 'task-1',
+          status: 'completed',
+          notificationId: 'notification-1',
+        }),
+        userMessage('Summary of earlier work', { kind: 'compaction_summary' }),
+        userMessage('imported transcript'),
+      ].map(historyEntryFromContext),
+      'fork',
+    );
+    await main.accessor.get(IEventDispatcher).flush();
+
+    const page = await getJson<ContextItemsResponse>(`/api/v1/sessions/${sid}/context/items`);
+    expect(page.items.map((entry) => [entry.role, entry.name])).toEqual([
+      ['system', undefined],
+      ['user', undefined],
+      ['reminder', 'todo_list_reminder'],
+      ['skill', 'demo-skill'],
+      ['user', '/deploy'],
+      ['reminder', 'task'],
+      ['compaction', undefined],
+      ['user', undefined],
     ]);
+    expect(page.summary.groups.map((group) => [group.role, group.count])).toEqual([
+      ['system', 1],
+      ['definition', page.tools.length],
+      ['user', 3],
+      ['reminder', 2],
+      ['skill', 1],
+      ['compaction', 1],
+    ]);
+  });
+
+  it('lists a model reply as one row per thinking, reply, and tool call part', async () => {
+    const sid = await createSession();
+    const main = await seedMainAgent(sid);
+    main.accessor.get(IAgentLoopService).replaceHistory(
+      [
+        { role: 'user', content: [{ type: 'text', text: 'read the readme' }] },
+        {
+          role: 'assistant',
+          content: [
+            { type: 'think', think: 'I should open the readme first.' },
+            { type: 'text', text: 'Reading it now.' },
+          ],
+          toolCalls: [{ type: 'function', id: 'call_1', name: 'Read', arguments: '{"path":"README.md"}' }],
+        },
+        { role: 'tool', toolCallId: 'call_1', content: [{ type: 'text', text: '# Demo' }] },
+      ],
+      'fork',
+    );
+    await main.accessor.get(IEventDispatcher).flush();
+
+    const page = await getJson<ContextItemsResponse>(`/api/v1/sessions/${sid}/context/items`);
+    expect(page.items.map((entry) => [entry.id, entry.role, entry.segment, entry.name, entry.sequence])).toEqual([
+      ['system', 'system', undefined, undefined, undefined],
+      ['message-0', 'user', undefined, undefined, 1],
+      ['message-1-part-0', 'assistant', 'thinking', undefined, 2],
+      ['message-1-part-1', 'assistant', 'reply', undefined, 2],
+      ['message-1-call-0', 'assistant', 'tool_call', 'Read', 2],
+      ['message-2', 'tool', undefined, 'Read', 3],
+    ]);
+    const assistantGroup = page.summary.groups.find((group) => group.role === 'assistant');
+    expect(assistantGroup?.count).toBe(1);
+    expect(sumTokens(page.items.filter((entry) => entry.role === 'assistant'))).toBe(assistantGroup?.tokens);
+
+    const call = await getJson<ContextItemDetail>(`/api/v1/sessions/${sid}/context/items/message-1-call-0`);
+    expect(call).toMatchObject({ role: 'assistant', segment: 'tool_call', name: 'Read', sequence: 2 });
+    expect(call.parts).toEqual([{ kind: 'function', name: 'Read', data: { path: 'README.md' } }]);
+    const thinking = await getJson<ContextItemDetail>(`/api/v1/sessions/${sid}/context/items/message-1-part-0`);
+    expect(thinking.parts).toEqual([{ kind: 'think', text: 'I should open the readme first.' }]);
+
+    for (const id of ['message-1', 'message-0-part-0', 'message-1-part-2', 'message-1-call-1', 'message-1-call-0x']) {
+      const body = await getEnvelope<null>(`/api/v1/sessions/${sid}/context/items/${id}`);
+      expect(body.code, id).toBe(ErrorCode.MESSAGE_NOT_FOUND);
+    }
   });
 
   it('reports the estimated total before any model call is measured', async () => {

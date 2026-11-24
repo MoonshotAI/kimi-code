@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { v4 as randomUUID } from 'uuid';
 import { computed, inject, nextTick, onUnmounted, ref, watch } from 'vue';
 import { registerBrowserOverlayMenu } from '../../lib/browserOverlayMenu';
 import type { BrowserOverlayMenuItem } from '../../../shared/browser-overlay';
@@ -62,9 +63,9 @@ function copyItem(action: CopyAction, idleLabel: string, idleIcon: string): { la
     : { label: idleLabel, icon: idleIcon };
 }
 
-let menuContext = crypto.randomUUID();
+let menuContext = randomUUID();
 const nativeMenu = registerBrowserOverlayMenu({
-  id: `session.header.${crypto.randomUUID()}`, autoWidth: true, placement: 'bottom-start',
+  id: `session.header.${randomUUID()}`, autoWidth: true, placement: 'bottom-start',
   items: (): BrowserOverlayMenuItem[] => {
     const items: BrowserOverlayMenuItem[] = [
     ...(sessionId.value ? [
@@ -103,7 +104,7 @@ watch(nativeMenu.open, value => {
   menuOpen.value = value;
   if (!value) resetCopyFeedback();
 });
-watch([sessionId, workspaceRoot], () => { menuContext = crypto.randomUUID(); closeMenu(); }, { flush: 'sync' });
+watch([sessionId, workspaceRoot], () => { menuContext = randomUUID(); closeMenu(); }, { flush: 'sync' });
 
 function onDocClick(e: MouseEvent): void {
   const target = e.target as Node;
@@ -337,11 +338,11 @@ const isDev = import.meta.env.DEV;
       <Icon name="dots-horizontal" size="sm" />
     </IconButton>
 
-    <Transition name="menu-pop">
+    <Transition name="ui-menu-pop">
       <Menu
         v-if="menuOpen && !nativeMenu.available"
         ref="menuRef"
-        class="ch-menu"
+        class="ui-menu-floating ch-menu"
         :style="menuStyle"
         @click.stop
         @keydown.esc.stop="closeMenu"
@@ -507,29 +508,6 @@ const isDev = import.meta.env.DEV;
   color: var(--color-warning);
   font-size: var(--text-xs);
   font-weight: 500;
-}
-
-.ch-menu {
-  position: fixed;
-  top: 0;
-  left: 0;
-  z-index: var(--z-dropdown);
-}
-.menu-pop-enter-active {
-  transition:
-    opacity var(--duration-base) var(--ease-out),
-    transform var(--duration-base) var(--ease-out);
-}
-.menu-pop-leave-active {
-  transition:
-    opacity var(--duration-fast) var(--ease-out),
-    transform var(--duration-fast) var(--ease-out);
-  pointer-events: none;
-}
-.menu-pop-enter-from,
-.menu-pop-leave-to {
-  opacity: 0;
-  transform: scale(0.97) translateY(var(--menu-pop-shift, -2px));
 }
 
 @media (max-width: 980px) {

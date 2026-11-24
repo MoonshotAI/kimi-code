@@ -18,6 +18,7 @@ import { dataUrl, errorHtml, updateTimeoutHtml, waitingHtml } from '../app/scree
 import { diagnosticRoots, log, logStartup, redactUrlForLog } from '../diagnostics/log';
 import { trackDesktopEvent } from '../diagnostics/track';
 import { restoreRemoteControlOnStartup } from './remote-control-restore';
+import { continueSessionsAfterRestart } from './session-continue';
 import { IPC } from '../ipc/ipc-channels';
 import type { StartupConnectResultEvent } from '../diagnostics/telemetry-events';
 
@@ -220,6 +221,7 @@ async function connectOnce(win: MainWindow): Promise<void> {
         }
         failureStage = 'load_url';
         log.info(`[kimi-desktop] connected to ${activeHandle.origin}`);
+        void continueSessionsAfterRestart(activeHandle.origin, desktopServerSecret());
       } else {
         log.info(`[kimi-desktop] reusing embedded server ${activeHandle.origin}`);
       }

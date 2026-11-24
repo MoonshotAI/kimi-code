@@ -1,4 +1,13 @@
-import { mediaKeyOf, type ContentPart, type MediaPart, type Message } from '#/llm/message';
+import {
+  isMediaPart,
+  mediaKeyOf,
+  mediaOmissionOf,
+  mediaPlaceholderText,
+  omitMediaPart,
+  type ContentPart,
+  type MediaPart,
+  type Message,
+} from '#/llm/message';
 import type {
   LlmRecovery,
   LlmRecoveryEntry,
@@ -9,36 +18,27 @@ import { sha256Hex } from '#/utils/hash';
 export const MEDIA_DEGRADE_KEEP_RECENT = 2;
 
 export const MEDIA_DEGRADED_PLACEHOLDERS = {
-  image_url:
-    '[image omitted: dropped to fit the provider request size limit; re-read the file to view it]',
-  audio_url:
-    '[audio omitted: dropped to fit the provider request size limit; re-read the file to hear it]',
-  video_url:
-    '[video omitted: dropped to fit the provider request size limit; re-read the file to view it]',
+  image_url: mediaPlaceholderText('image', 'degraded'),
+  audio_url: mediaPlaceholderText('audio', 'degraded'),
+  video_url: mediaPlaceholderText('video', 'degraded'),
 } as const;
 
 export const MEDIA_STRIPPED_PLACEHOLDERS = {
-  image_url: '[image omitted for provider compatibility; re-read the file to view it or get conversion guidance]',
-  audio_url: '[audio omitted for provider compatibility; re-read the file to hear it]',
-  video_url: '[video omitted for provider compatibility; re-read the file to view it]',
+  image_url: mediaPlaceholderText('image', 'stripped'),
+  audio_url: mediaPlaceholderText('audio', 'stripped'),
+  video_url: mediaPlaceholderText('video', 'stripped'),
 } as const;
-
-type DegradableMediaPart = Extract<
-  ContentPart,
-  { readonly type: keyof typeof MEDIA_DEGRADED_PLACEHOLDERS }
->;
 
 export type MediaReplacement = (part: MediaPart) => ContentPart | undefined;
 
-function isDegradableMediaPart(part: ContentPart): part is DegradableMediaPart {
-  return part.type in MEDIA_DEGRADED_PLACEHOLDERS;
+function isDegradableMediaPart(part: ContentPart): part is MediaPart {
+  return isMediaPart(part) && mediaOmissionOf(part) === undefined;
 }
 
-function replaceMediaParts(
+function mapMediaParts(
   messages: readonly Message[],
-  placeholders: Record<DegradableMediaPart['type'], string>,
-  shouldReplace: (part: DegradableMediaPart) => boolean,
-  replacement?: MediaReplacement,
+  shouldReplace: (part: MediaPart) => boolean,
+  replace: (part: MediaPart) => ContentPart,
 ): readonly Message[] {
   let changed = false;
   const result = messages.map((message) => {
@@ -47,11 +47,24 @@ function replaceMediaParts(
       if (!isDegradableMediaPart(part) || !shouldReplace(part)) return part;
       changed = true;
       messageChanged = true;
-      return replacement?.(part) ?? { type: 'text' as const, text: placeholders[part.type] };
+      return replace(part);
     });
     return messageChanged ? { ...message, content } : message;
   });
   return changed ? result : messages;
+}
+
+function replaceMediaParts(
+  messages: readonly Message[],
+  placeholders: Record<MediaPart['type'], string>,
+  shouldReplace: (part: MediaPart) => boolean,
+  replacement?: MediaReplacement,
+): readonly Message[] {
+  return mapMediaParts(
+    messages,
+    shouldReplace,
+    (part) => replacement?.(part) ?? { type: 'text', text: placeholders[part.type] },
+  );
 }
 
 export function countMediaParts(messages: readonly Message[]): number {
@@ -131,7 +144,7 @@ function rewriteMessages(
   };
 }
 
-function mediaParts(messages: readonly Message[]): readonly DegradableMediaPart[] {
+function mediaParts(messages: readonly Message[]): readonly MediaPart[] {
   return messages.flatMap((message) => message.content.filter(isDegradableMediaPart));
 }
 
@@ -141,72 +154,51 @@ function recoveryMediaKey(part: MediaPart): string {
 
 function recoveryEntry(
   action: 'degraded' | 'stripped',
-  parts: readonly DegradableMediaPart[],
-  placeholders: Record<DegradableMediaPart['type'], string>,
-  replacement?: MediaReplacement,
+  parts: readonly MediaPart[],
 ): LlmRecoveryEntry | undefined {
   if (parts.length === 0) return undefined;
   const occurrences = new Map<string, number>();
-  const replacements = new Map<string, ContentPart>();
+  const selected = new Set<string>();
   for (const part of parts) {
     const mediaKey = recoveryMediaKey(part);
     const occurrence = occurrences.get(mediaKey) ?? 0;
     occurrences.set(mediaKey, occurrence + 1);
-    const key = action === 'degraded' ? `${mediaKey}:${String(occurrence)}` : mediaKey;
-    replacements.set(key, replacement?.(part) ?? { type: 'text', text: placeholders[part.type] });
+    selected.add(action === 'degraded' ? `${mediaKey}:${String(occurrence)}` : mediaKey);
   }
   const reuseKey = sha256Hex(new TextEncoder().encode(JSON.stringify([
     action,
-    [...replacements.keys()].toSorted(),
+    [...selected].toSorted(),
   ])));
   return {
     strategy: MEDIA_RECOVERY_ID,
     action,
     rewrite: rewriteMessages((current) => {
       const currentOccurrences = new Map<string, number>();
-      return replaceMediaParts(
+      return mapMediaParts(
         current,
-        placeholders,
         (part) => {
           const mediaKey = recoveryMediaKey(part);
           const occurrence = currentOccurrences.get(mediaKey) ?? 0;
           currentOccurrences.set(mediaKey, occurrence + 1);
-          const key = action === 'degraded' ? `${mediaKey}:${String(occurrence)}` : mediaKey;
-          return replacements.has(key);
+          return selected.has(action === 'degraded' ? `${mediaKey}:${String(occurrence)}` : mediaKey);
         },
-        (part) => {
-          const mediaKey = recoveryMediaKey(part);
-          const occurrence = (currentOccurrences.get(mediaKey) ?? 1) - 1;
-          const key = action === 'degraded' ? `${mediaKey}:${String(occurrence)}` : mediaKey;
-          return replacements.get(key);
-        },
+        (part) => omitMediaPart(part, action),
       );
     }),
     reuse: { key: reuseKey },
   };
 }
 
-function degradeEntry(
-  messages: readonly Message[],
-  replacement?: MediaReplacement,
-): LlmRecoveryEntry | undefined {
+function degradeEntry(messages: readonly Message[]): LlmRecoveryEntry | undefined {
   const count = Math.max(0, countMediaParts(messages) - MEDIA_DEGRADE_KEEP_RECENT);
-  return recoveryEntry(
-    'degraded',
-    mediaParts(messages).slice(0, count),
-    MEDIA_DEGRADED_PLACEHOLDERS,
-    replacement,
-  );
+  return recoveryEntry('degraded', mediaParts(messages).slice(0, count));
 }
 
-function stripEntry(
-  messages: readonly Message[],
-  replacement?: MediaReplacement,
-): LlmRecoveryEntry | undefined {
-  return recoveryEntry('stripped', mediaParts(messages), MEDIA_STRIPPED_PLACEHOLDERS, replacement);
+function stripEntry(messages: readonly Message[]): LlmRecoveryEntry | undefined {
+  return recoveryEntry('stripped', mediaParts(messages));
 }
 
-export function createMediaDegradeRecovery(replacement?: MediaReplacement): LlmRecovery {
+export function createMediaDegradeRecovery(): LlmRecovery {
   return {
     propose: ({ error, request, appliedRecoveries }) => {
       const imageFormat =
@@ -219,10 +211,10 @@ export function createMediaDegradeRecovery(replacement?: MediaReplacement): LlmR
         (recovery) => recovery.strategy === MEDIA_RECOVERY_ID && recovery.action === 'stripped',
       );
       if (error.kind === 'request_too_large' && !stripped) {
-        const degraded = degradeEntry(messages, replacement);
+        const degraded = degradeEntry(messages);
         if (degraded !== undefined) return degraded;
       }
-      return stripEntry(messages, replacement);
+      return stripEntry(messages);
     },
   };
 }

@@ -126,7 +126,7 @@ class FakeWebSocket extends EventEmitter {
 
 export function attachRpcStream(stream: Duplex, opts: RpcStreamOptions): void {
   const sockets = new Map<string, FakeWebSocket>();
-  const requests = new Map<string, () => void>();
+  const requests = new Map<string, (() => void) | undefined>();
   const aborted = new Set<string>();
   const respondError = (id: string, status: number, code: number, message: string): void => {
     rpc.write({
@@ -151,7 +151,7 @@ export function attachRpcStream(stream: Duplex, opts: RpcStreamOptions): void {
     (frame) => {
       if (frame.type === 'http.req') {
         if (aborted.has(frame.id)) return;
-        requests.set(frame.id, () => {});
+        requests.set(frame.id, undefined);
         const finish = (): void => {
           requests.delete(frame.id);
           aborted.delete(frame.id);
@@ -161,7 +161,16 @@ export function attachRpcStream(stream: Duplex, opts: RpcStreamOptions): void {
           if (contentLength > DEVICE_RPC_MAX_BODY_BYTES) throw new RpcBodyTooLargeError();
           const body = frame.body === undefined ? Buffer.alloc(0) : Buffer.from(frame.body, 'base64');
           if (body.length > DEVICE_RPC_MAX_BODY_BYTES) throw new RpcBodyTooLargeError();
-          const res = await opts.app.inject({
+          await opts.app.ready();
+          const { default: inject } = await import('light-my-request');
+          const res = await inject((request, reply) => {
+            if (aborted.has(frame.id)) {
+              reply.destroy();
+              return;
+            }
+            requests.set(frame.id, () => reply.destroy());
+            opts.app.routing(request, reply);
+          }, {
             method: frame.method as 'GET' | 'HEAD' | 'POST' | 'PUT' | 'PATCH' | 'DELETE',
             url: frame.path,
             headers: { ...frame.headers, host: '127.0.0.1' },
@@ -169,15 +178,17 @@ export function attachRpcStream(stream: Duplex, opts: RpcStreamOptions): void {
             payloadAsStream: true,
           });
           const responseStream = res.stream();
-          requests.set(frame.id, () => responseStream.destroy());
-          responseStream.once('close', finish);
-          if (aborted.has(frame.id)) {
+          const closeResponse = (): void => {
+            res.raw.res.destroy();
             responseStream.destroy();
+          };
+          requests.set(frame.id, closeResponse);
+          if (aborted.has(frame.id)) {
+            closeResponse();
             return;
           }
           const declaredLength = Number(res.headers['content-length'] ?? 0);
           if (declaredLength > DEVICE_RPC_MAX_BODY_BYTES) {
-            responseStream.destroy();
             throw new RpcBodyTooLargeError();
           }
           const chunks: Buffer[] = [];
@@ -196,19 +207,14 @@ export function attachRpcStream(stream: Duplex, opts: RpcStreamOptions): void {
             body: chunks.length > 0 ? Buffer.concat(chunks).toString('base64') : undefined,
           });
         })().catch((error: unknown) => {
-          if (aborted.has(frame.id)) {
-            finish();
-            return;
-          }
+          if (aborted.has(frame.id)) return;
+          requests.get(frame.id)?.();
           if (error instanceof RpcBodyTooLargeError) {
             respondError(frame.id, 413, 41301, error.message);
-            finish();
             return;
           }
           respondError(frame.id, 500, 50000, error instanceof Error ? error.message : String(error));
-          requests.get(frame.id)?.();
-          finish();
-        });
+        }).finally(finish);
         return;
       }
       if (frame.type === 'http.cancel') {

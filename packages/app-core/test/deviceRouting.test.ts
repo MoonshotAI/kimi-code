@@ -41,6 +41,10 @@ function client(workspaces: AppWorkspace[], overrides: Record<string, unknown> =
       listModels: vi.fn(async () => [{ id: 'model' }]),
       readHostFileContent: vi.fn(async () => ({ content: 'file' })),
       uploadFile: vi.fn(async () => ({ id: 'file' })),
+      createFeedback: vi.fn(async () => ({ feedback_id: 1 })),
+      updateFeedback: vi.fn(async () => ({ feedback_id: 1 })),
+      uploadFeedbackAttachment: vi.fn(async () => ({ upload_id: 2 })),
+      uploadFeedbackSession: vi.fn(async () => ({ upload_id: 3 })),
       getFileUrl: vi.fn(() => 'url'),
       putDevice: vi.fn(async () => undefined),
       testDevice: vi.fn(async () => ({ connected: true })),
@@ -86,6 +90,29 @@ async function setup(records: AppDevice[] = [device('dev')], remoteWorkspaces = 
 }
 
 describe('DeviceRouter', () => {
+  it('sends reply feedback and session archives to the owning device while keeping desktop media local', async () => {
+    const { api, local, remote } = await setup();
+    local.api.findSession.mockResolvedValue({ id: 'remote-session', deviceId: 'dev' });
+    const global = { kind: 'global', source: 'sidebar', category: 'bug', content: 'Issue', session_id: 'remote-session' } as const;
+    const turn = { kind: 'turn', session_id: 'remote-session', turn_id: 'turn', reply_id: 'reply', rating: 'down' } as const;
+    const media = { kind: 'media', file: new Blob(['image']), fileName: 'image.png' } as const;
+    const signal = new AbortController().signal;
+
+    await api.createFeedback(global);
+    await api.createFeedback(turn);
+    await api.updateFeedback(1, { kind: 'cancel' }, 'remote-session');
+    await api.uploadFeedbackAttachment(1, media);
+    await api.uploadFeedbackSession(1, 'remote-session', signal);
+    await api.uploadFeedbackSession(1, 'remote-session', signal, { deviceId: 'dev' });
+
+    expect(local.api.createFeedback).toHaveBeenCalledExactlyOnceWith(global);
+    expect(local.api.uploadFeedbackAttachment).toHaveBeenCalledExactlyOnceWith(1, media);
+    expect(local.api.uploadFeedbackSession).toHaveBeenCalledExactlyOnceWith(1, 'remote-session', signal, { deviceId: 'dev' });
+    expect(remote.api.createFeedback).toHaveBeenCalledExactlyOnceWith(turn);
+    expect(remote.api.updateFeedback).toHaveBeenCalledExactlyOnceWith(1, { kind: 'cancel' });
+    expect(remote.api.uploadFeedbackSession).toHaveBeenCalledExactlyOnceWith(1, 'remote-session', signal);
+  });
+
   it('sends plain calls to this machine without waiting for device discovery', async () => {
     const { api, local } = await setup();
     local.api.listDevices.mockReturnValue(new Promise(() => undefined) as never);
@@ -265,15 +292,17 @@ describe('DeviceRouter', () => {
     expect(local.api.restoreSessions).not.toHaveBeenCalled();
   });
 
-  it('looks up an unknown session before producing its media URL', async () => {
+  it('returns session URLs synchronously and uses the owning host once it is known', async () => {
     const { api, local, remote } = await setup();
     local.api.findSession.mockResolvedValue({ id: 'remote-session', deviceId: 'dev' });
     remote.api.getSessionMediaUrl.mockReturnValue('remote-media-url');
+    Object.assign(local.api, { getFileDownloadUrl: vi.fn(() => 'local-download-url') });
 
-    await expect(api.getSessionMediaUrl('remote-session', 'image.png')).resolves.toBe('remote-media-url');
-    expect(local.api.findSession).toHaveBeenCalledWith('remote-session');
+    expect(api.getSessionMediaUrl('remote-session', 'image.png')).toBe('local-media-url');
+    expect(api.getFileDownloadUrl('unknown-session', 'a.md')).toBe('local-download-url');
+
+    await vi.waitFor(() => expect(api.getSessionMediaUrl('remote-session', 'image.png')).toBe('remote-media-url'));
     expect(remote.api.getSessionMediaUrl).toHaveBeenCalledWith('remote-session', 'image.png');
-    expect(local.api.getSessionMediaUrl).not.toHaveBeenCalled();
   });
 
   it('asks this machine which device owns a session it has not seen yet', async () => {

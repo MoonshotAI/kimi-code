@@ -624,9 +624,10 @@ describe('server-v2 /api/v1/workspaces', () => {
         const lease = await manager.acquire({ workspaceId: id, root });
         release = () => lease.dispose();
         const workspace = lease.instance;
-        await workspace.program.mcpConfig.ready;
+        const mcp = (await workspace.program.acquireMcp()).service;
+        await mcp.ready;
         expect(failed).toBe(true);
-        expect(workspace.program.mcpConfig.servers()).toEqual({});
+        expect(mcp.connectionManager().list()).toEqual([]);
         const recovered: boolean[] = [];
         workspace.program.trust.onDidChange((change) => recovered.push(change.trusted));
 
@@ -636,7 +637,7 @@ describe('server-v2 /api/v1/workspaces', () => {
         expect(workspace.program.trust.isTrusted()).toBe(true);
 
         await vi.waitFor(() => {
-          expect(workspace.program.mcpConfig.servers()).toHaveProperty('projectOnly');
+          expect(mcp.connectionManager().get('projectOnly')).toBeDefined();
         });
         expect(recovered).toEqual([true]);
       } finally {
@@ -678,16 +679,17 @@ describe('server-v2 /api/v1/workspaces', () => {
         const lease = await manager.acquire({ workspaceId: id, root });
         release = () => lease.dispose();
         const workspace = lease.instance;
-        await workspace.program.mcpConfig.ready;
+        const mcp = (await workspace.program.acquireMcp()).service;
+        await mcp.ready;
         expect(failed).toBe(true);
-        expect(workspace.program.mcpConfig.servers()).toEqual({});
+        expect(mcp.connectionManager().list()).toEqual([]);
 
         const revoked = await postJson<{ trusted: boolean }>(`/api/v1/workspaces/${id}/untrust`);
         expect(revoked.body.code).toBe(0);
         expect(revoked.body.data.trusted).toBe(true);
 
         await vi.waitFor(() => {
-          expect(workspace.program.mcpConfig.servers()).toHaveProperty('projectOnly');
+          expect(mcp.connectionManager().get('projectOnly')).toBeDefined();
         });
       } finally {
         get.mockRestore();

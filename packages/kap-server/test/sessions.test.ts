@@ -1,14 +1,17 @@
 import { randomBytes } from 'node:crypto';
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { setTimeout as slowDisk } from 'node:timers/promises';
 import { inflateRawSync } from 'node:zlib';
 import { ISessionMediaStore } from '@moonshot-ai/agent-core-v2/agent/media/sessionMediaStore';
 import { mcpResultToExecutableOutput } from '@moonshot-ai/agent-core-v2/agent/mcp/output';
 import { renderToolResultForModel } from '@moonshot-ai/agent-core-v2/agent/contextMemory/toolResultRender';
 import { IReadTool, ReadInputSchema, type ReadInput } from '@moonshot-ai/agent-core-v2/agent/tools/os/read/read';
 
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { agent, createFakeModel, fakeModelConfig, say } from '@moonshot-ai/testkit/model';
+import { kapFixtures, type KapFixtures } from '@moonshot-ai/testkit/vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, test as base, vi } from 'vitest';
 
 import {
   Error2,
@@ -29,12 +32,15 @@ import {
   IEventDispatcher,
   IEventService,
   IEnvironmentService,
+  IConfigService,
+  IFileSystemStorageService,
   IModelCatalog,
   IModelService,
   ISessionActivityView,
   ISessionContext,
   ISessionIndexMirror,
   ISessionManager,
+  ISessionMcpHandle,
   ISessionMetadata,
   ISessionPromptPredictionService,
   ISessionTitleService,
@@ -52,8 +58,11 @@ import {
 import { ISessionLockService } from '@moonshot-ai/agent-core-v2/persistence/interface/sessionLock';
 import { IHostProcessService, type IHostProcess } from '@moonshot-ai/agent-core-v2/os/interface/hostProcess';
 import { FakeEnvironment } from '@moonshot-ai/agent-core-v2/environment/fakeEnvironment';
+import { HostFileSystem } from '@moonshot-ai/agent-core-v2/os/backends/node-local/hostFsService';
+import { HostProcessService } from '@moonshot-ai/agent-core-v2/os/backends/node-local/hostProcessService';
 import { TurnEnded, TurnPrompt, TurnSteer } from '@moonshot-ai/agent-core-v2/agent/loop/turnOps';
 import { ContextAppendMessage } from '@moonshot-ai/agent-core-v2/agent/contextMemory/contextEvents';
+import type { PromptOrigin } from '@moonshot-ai/agent-core-v2/agent/contextMemory/types';
 import { historyEntryFromContext } from '@moonshot-ai/agent-core-v2/agent/loop/history';
 import type { ConversationItem, ConversationTurnsPage } from '../src/protocol/conversation';
 import { TurnStarted } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
@@ -84,7 +93,10 @@ interface Envelope<T> {
 interface SessionWire {
   id: string;
   workspace_id: string;
+  workspace_root?: string;
   cwd: string;
+  environment_id: string;
+  environment_cwd?: string;
   title: string;
   created_at: string;
   updated_at: string;
@@ -462,6 +474,9 @@ describe('server-v2 /api/v1/sessions', () => {
     expect(typeof body.data.workspace_id).toBe('string');
     expect(body.data.title).toBe('hello');
     expect(body.data.cwd).toBe(cwd);
+    expect(body.data.workspace_root).toBe(cwd);
+    expect(body.data.environment_id).toBe('local');
+    expect(body.data).not.toHaveProperty('environment_cwd');
     expect(body.data.activity).toBe('idle');
     expect(body.data.pending_interaction).toBe('none');
     expect(body.data).not.toHaveProperty('agent_config');
@@ -472,10 +487,102 @@ describe('server-v2 /api/v1/sessions', () => {
     expect(Number.isNaN(Date.parse(body.data.created_at))).toBe(false);
   });
 
-  it('rejects create without cwd or workspace_id (40001)', async () => {
-    const { body } = await postJson<null>('/api/v1/sessions', { title: 'no cwd' });
+  it('creates a session from workspace_root', async () => {
+    const cwd = home as string;
+    const legacy = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
+    const { body } = await postJson<SessionWire>('/api/v1/sessions', { workspace_root: cwd });
+    expect(body.code).toBe(0);
+    expect(body.data).toMatchObject({
+      workspace_id: legacy.body.data.workspace_id,
+      workspace_root: cwd,
+      cwd,
+      environment_id: 'local',
+    });
+    expect(body.data).not.toHaveProperty('environment_cwd');
+  });
+
+  it.each([
+    [
+      'cwd',
+      { workspace_root: '/projects/a', cwd: '/projects/b' },
+      'cwd (/projects/b) must equal workspace_root (/projects/a)',
+    ],
+    [
+      'metadata.cwd',
+      { workspace_root: '/projects/a', metadata: { cwd: '/projects/b' } },
+      'metadata.cwd (/projects/b) must equal workspace_root (/projects/a)',
+    ],
+    [
+      'cwd',
+      { cwd: '/projects/b', metadata: { cwd: '/projects/a' } },
+      'cwd (/projects/b) must equal metadata.cwd (/projects/a)',
+    ],
+  ])('rejects create when %s disagrees with the other workspace root field (40001)', async (path, request, message) => {
+    const { body } = await postJson<null>('/api/v1/sessions', request);
     expect(body.code).toBe(40001);
-    expect(body.details?.[0]?.path).toBe('metadata.cwd');
+    expect(body.details?.[0]).toEqual({ path, message });
+  });
+
+  it('reports the environment_cwd of a local session in the create response', async () => {
+    const cwd = home as string;
+    const nested = join(cwd, 'nested');
+    await mkdir(nested, { recursive: true });
+    const created = await postJson<SessionWire>('/api/v1/sessions', {
+      metadata: { cwd },
+      environment_id: 'local',
+      environment_cwd: nested,
+    });
+    expect(created.body.code).toBe(0);
+
+    const got = await getJson<SessionWire>(`/api/v1/sessions/${created.body.data.id}`);
+    expect(got.body.data.cwd).toBe(nested);
+    expect(created.body.data.cwd).toBe(nested);
+  });
+
+  it('reports the requested cwd of a remote session in the create response', async () => {
+    const cwd = home as string;
+    const remote = await realpath(await mkdtemp(join(tmpdir(), 'kimi-server-v2-sessions-remote-')));
+    const environment = Object.assign(
+      new FakeEnvironment(
+        { environmentId: 'remote-create', generation: 'remote-create-generation' },
+        { capabilities: ['fs', 'process'] },
+      ),
+      { fs: new HostFileSystem(), process: new HostProcessService() },
+    );
+    const registration = (server as RunningServer).core.accessor.get(IEnvironmentService).register(environment);
+    try {
+      const local = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
+      const created = await postJson<SessionWire>('/api/v1/sessions', {
+        metadata: { cwd: `${cwd}/` },
+        environment_id: 'remote-create',
+        environment_cwd: remote,
+      });
+      expect(created.body.code).toBe(0);
+      expect(created.body.data.workspace_id).toBe(local.body.data.workspace_id);
+
+      const got = await getJson<SessionWire>(`/api/v1/sessions/${created.body.data.id}`);
+      expect(created.body.data.cwd).toBe(got.body.data.cwd);
+      const location = {
+        workspace_root: cwd,
+        cwd: `${cwd}/`,
+        environment_id: 'remote-create',
+        environment_cwd: remote,
+      };
+      expect(created.body.data).toMatchObject(location);
+      expect(got.body.data).toMatchObject(location);
+    } finally {
+      await registration.remove();
+      await rm(remote, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects create without workspace_root or workspace_id (40001)', async () => {
+    const { body } = await postJson<null>('/api/v1/sessions', { title: 'no root' });
+    expect(body.code).toBe(40001);
+    expect(body.details?.[0]).toEqual({
+      path: 'workspace_root',
+      message: 'either workspace_id or workspace_root is required',
+    });
   });
 
   it('rejects create with unknown workspace_id (40410)', async () => {
@@ -1419,8 +1526,9 @@ describe('server-v2 /api/v1/sessions', () => {
       const manager = (server as RunningServer).core.accessor.get(IWorkspaceInstanceManager);
       const workspace = manager.get(workspaceId);
       expect(workspace).toBeDefined();
-      await workspace!.program.mcp.ready;
-      const connections = workspace!.program.mcp.connectionManager();
+      const mcp = getLiveSessionById((server as RunningServer).core.accessor, id)!.accessor.get(ISessionMcpHandle);
+      await mcp.ready;
+      const connections = mcp.connectionManager;
       await vi.waitFor(() => {
         expect(connections.list().some((entry) => entry.name === 'fixture' && entry.status === 'connected')).toBe(true);
       });
@@ -1459,8 +1567,9 @@ describe('server-v2 /api/v1/sessions', () => {
       };
       const replacement = replacementLease.instance;
       expect(replacement).not.toBe(workspace);
-      await replacement.program.mcp.ready;
-      const replacementConnections = replacement.program.mcp.connectionManager();
+      const replacementMcp = (await replacement.program.acquireMcp()).service;
+      await replacementMcp.ready;
+      const replacementConnections = replacementMcp.connectionManager();
       await vi.waitFor(() => {
         expect(replacementConnections.list().some((entry) => entry.name === 'fixture' && entry.status === 'connected')).toBe(true);
       });
@@ -1491,6 +1600,104 @@ describe('server-v2 /api/v1/sessions', () => {
       await rm(cwd, { recursive: true, force: true });
     }
   }, 30_000);
+
+  describe('MCP servers of a workspace', () => {
+    const fixture = new URL('../../agent-core-v2/test/mcpCore/fixtures/mock-stdio-server.mjs', import.meta.url).pathname;
+    let root: string;
+    let opened: string[];
+    let spawned: IHostProcess[];
+
+    async function writeServer(dir: string, name: string): Promise<void> {
+      await mkdir(join(dir, '.kimi-code'), { recursive: true });
+      await writeFile(
+        join(dir, '.kimi-code', 'mcp.json'),
+        JSON.stringify({ mcpServers: { [name]: { command: process.execPath, args: [fixture] } } }),
+      );
+    }
+
+    async function openSession(pinned?: string): Promise<{ id: string; statuses: () => Record<string, string> }> {
+      const created = await postJson<SessionWire>('/api/v1/sessions', {
+        metadata: { cwd: root },
+        ...(pinned === undefined ? {} : { environment_id: 'local', environment_cwd: pinned }),
+      });
+      expect(created.body.code).toBe(0);
+      const { id } = created.body.data;
+      opened.push(id);
+      const mcp = getLiveSessionById((server as RunningServer).core.accessor, id)!.accessor.get(ISessionMcpHandle);
+      await mcp.ready;
+      return {
+        id,
+        statuses: () => Object.fromEntries(mcp.connectionManager.list().map((entry) => [entry.name, entry.status])),
+      };
+    }
+
+    beforeEach(async () => {
+      vi.stubEnv('KIMI_CODE_TRUST_WORKSPACE', '1');
+      root = await realpath(await mkdtemp(join(tmpdir(), 'kimi-server-v2-session-mcp-')));
+      await writeServer(root, 'home');
+      opened = [];
+      spawned = [];
+      const hostProcesses = (server as RunningServer).core.accessor.get(IHostProcessService);
+      const spawn = hostProcesses.spawn.bind(hostProcesses);
+      vi.spyOn(hostProcesses, 'spawn').mockImplementation(async (command, args, options) => {
+        const child = await spawn(command, args, options);
+        if (command === process.execPath && args?.[0] === fixture) spawned.push(child);
+        return child;
+      });
+    });
+
+    afterEach(async () => {
+      for (const id of opened) await closeSessionById((server as RunningServer).core.accessor, id);
+      await rm(root, { recursive: true, force: true });
+    });
+
+    it('start with its first session, serve every session, and stop with the last while the workspace stays open', async () => {
+      const src = join(root, 'src');
+      const elsewhere = await realpath(await mkdtemp(join(tmpdir(), 'kimi-server-v2-session-mcp-other-')));
+      const lease = await (server as RunningServer).core.accessor.get(IWorkspaceInstanceManager).acquire({ root });
+      try {
+        await writeServer(src, 'own');
+        await writeServer(elsewhere, 'elsewhere');
+        await lease.instance.program.ready;
+        expect(spawned).toHaveLength(0);
+
+        const sessions = [await openSession(), await openSession(src), await openSession(elsewhere)];
+        expect(sessions.map((session) => session.statuses())).toEqual([
+          { home: 'connected' },
+          { home: 'connected' },
+          { home: 'connected' },
+        ]);
+        expect(spawned).toHaveLength(1);
+
+        const last = sessions.pop()!;
+        for (const { id } of sessions) {
+          expect((await postJson(`/api/v1/sessions/${id}:archive`)).body.code).toBe(0);
+        }
+        expect(last.statuses()).toEqual({ home: 'connected' });
+
+        expect((await postJson(`/api/v1/sessions/${last.id}:archive`)).body.code).toBe(0);
+        await vi.waitFor(() => {
+          expect(spawned[0]!.exitCode).not.toBeNull();
+        }, 20_000);
+        expect(last.statuses()).toEqual({});
+      } finally {
+        lease.dispose();
+        await rm(elsewhere, { recursive: true, force: true });
+      }
+    }, 30_000);
+
+    it('do not start to fork or archive a session that is not open', async () => {
+      const closed = await openSession();
+      await closeSessionById((server as RunningServer).core.accessor, closed.id);
+      expect(spawned).toHaveLength(1);
+
+      expect((await postJson(`/api/v1/sessions/${closed.id}:fork`, {})).body.code).toBe(0);
+      expect((await postJson(`/api/v1/sessions/${closed.id}:archive`)).body.code).toBe(0);
+
+      await openSession();
+      expect(spawned).toHaveLength(2);
+    }, 30_000);
+  });
 
   it('resumes a session whose workspace root is gone (root validity deferred to binding) and still archives it', async () => {
     const cwd = join(home as string, 'gone-ws');
@@ -1687,7 +1894,7 @@ describe('server-v2 /api/v1/sessions', () => {
     }
   });
 
-  it('delivers a single subagents reminder when profiles and the model pool change together', async () => {
+  it('delivers a subagents reminder when profiles change on reload', async () => {
     await server?.close();
     server = undefined;
     const configToml = [
@@ -1734,11 +1941,6 @@ describe('server-v2 /api/v1/sessions', () => {
         '---\nname: deploy\ndescription: Deploys things.\n---\nYou deploy things.\n',
         'utf-8',
       );
-      await writeFile(
-        join(home as string, 'config.toml'),
-        `${configToml}[secondary_model.models]\n"stub" = "fast stub"\n`,
-        'utf-8',
-      );
 
       const reloaded = await postJson<SessionWire>(`/api/v1/sessions/${id}:reload`);
       expect(reloaded.body.code).toBe(0);
@@ -1751,8 +1953,8 @@ describe('server-v2 /api/v1/sessions', () => {
       );
       expect(subagentReminders).toHaveLength(1);
       const text = JSON.stringify(subagentReminders[0]);
+      expect(text).toContain('The available subagent profiles changed:');
       expect(text).toContain('Profiles added: deploy');
-      expect(text).toContain('Models added: stub');
     } finally {
       await rm(cwd, { recursive: true, force: true });
       await rm(join(home as string, 'agents'), { recursive: true, force: true });
@@ -1793,7 +1995,7 @@ describe('server-v2 /api/v1/sessions', () => {
     }
   });
 
-  it('rejects unsupported actions including removed abort and prediction actions', async () => {
+  it('rejects unsupported actions and serves prediction actions with disconnect cancellation', async () => {
     const { body } = await postJson<null>('/api/v1/sessions/sess_missing:delete');
     expect(body.code).toBe(40401);
 
@@ -1802,12 +2004,62 @@ describe('server-v2 /api/v1/sessions', () => {
     const id = created.body.data.id;
     expect((await postJson<null>(`/api/v1/sessions/${id}:restart`)).body.code).toBe(40001);
     expect((await postJson<null>(`/api/v1/sessions/${id}:abort`)).body.code).toBe(40001);
-    expect(
-      (await postJson<null>(`/api/v1/sessions/${id}:predict-prompt`, { prediction_id: 'p1', expected_turn_id: 0 })).body.code,
-    ).toBe(40001);
-    expect(
-      (await postJson<null>(`/api/v1/sessions/${id}:cancel-prompt-prediction`, { prediction_id: 'p1' })).body.code,
-    ).toBe(40001);
+
+    const predicted = await postJson<{ prediction: string | null }>(`/api/v1/sessions/${id}:predict-prompt`, {
+      prediction_id: 'prediction-1',
+      expected_turn_id: 0,
+    });
+    expect(predicted.body.data).toEqual({ prediction: null });
+    const cancelled = await postJson<{ cancelled: boolean }>(`/api/v1/sessions/${id}:cancel-prompt-prediction`, {
+      prediction_id: 'prediction-1',
+    });
+    expect(cancelled.body.data).toEqual({ cancelled: false });
+
+    const session = getLiveSessionById((server as RunningServer).core.accessor, id);
+    if (session === undefined) throw new Error('expected live session');
+    const service = session.accessor.get(ISessionPromptPredictionService);
+    let releasePrediction!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      releasePrediction = resolve;
+    });
+    let markPredictionSettled!: () => void;
+    const predictionSettled = new Promise<void>((resolve) => {
+      markPredictionSettled = resolve;
+    });
+    const predict = vi.spyOn(service, 'predict').mockImplementation(async () => {
+      await gate;
+      markPredictionSettled();
+      return null;
+    });
+    const cancel = vi.spyOn(service, 'cancel');
+    const cancelledWithReason = await postJson<{ cancelled: boolean }>(`/api/v1/sessions/${id}:cancel-prompt-prediction`, {
+      prediction_id: 'visibility-check',
+      reason: 'visibility',
+    });
+    expect(cancelledWithReason.body.data).toEqual({ cancelled: false });
+    expect(cancel).toHaveBeenCalledWith('visibility-check', 'visibility');
+    const cancelledForPlan = await postJson<{ cancelled: boolean }>(`/api/v1/sessions/${id}:cancel-prompt-prediction`, {
+      prediction_id: 'plan-check',
+      reason: 'plan',
+    });
+    expect(cancelledForPlan.body.data).toEqual({ cancelled: false });
+    expect(cancel).toHaveBeenCalledWith('plan-check', 'plan');
+    const abortController = new AbortController();
+    const request = fetch(`${base}/api/v1/sessions/${id}:predict-prompt`, {
+      method: 'POST',
+      headers: authHeaders(server as RunningServer, { 'content-type': 'application/json' }),
+      body: JSON.stringify({ prediction_id: 'disconnect-me', expected_turn_id: 0 }),
+      signal: abortController.signal,
+    } as never).catch(() => undefined);
+    await vi.waitFor(() => expect(predict).toHaveBeenCalledOnce());
+    abortController.abort();
+    await vi.waitFor(() => expect(cancel).toHaveBeenCalledWith('disconnect-me', 'disconnect'));
+    releasePrediction();
+    await request;
+    await predictionSettled;
+    await new Promise<void>((resolve) => {
+      setImmediate(resolve);
+    });
   });
 
   it('cold-loads a persisted session on :undo and reports an unknown turn instead of 40401', async () => {
@@ -1906,7 +2158,81 @@ describe('server-v2 /api/v1/sessions', () => {
     }
   });
 
-  it('forks a session and rejects an incompatible source', async () => {
+  it('forks using restored live turn ids and rejects an incompatible source', async () => {
+    const steeredParent = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd: home } });
+    const steeredParentId = steeredParent.body.data.id;
+    const steeredSession = getLiveSessionById((server as RunningServer).core.accessor, steeredParentId)!;
+    await steeredSession.accessor.get(IAgentLifecycleService).create({ agentId: MAIN_AGENT_ID });
+    const steeredMain = steeredSession.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID)!;
+    const dispatcher = steeredMain.accessor.get(IEventDispatcher);
+    const userSteerOrigin = { kind: 'user', inTurn: true } as PromptOrigin;
+    const skillSteerOrigin = {
+      kind: 'skill_activation',
+      activationId: 'activation-fork-steer',
+      skillName: 'review',
+      trigger: 'model-tool',
+      inTurn: true,
+    } as PromptOrigin;
+    await dispatcher.dispatch(new TurnPrompt({
+      agentId: MAIN_AGENT_ID,
+      input: [{ type: 'text', text: 'first prompt' }],
+      origin: { kind: 'user' },
+      turnId: 0,
+    }));
+    await dispatcher.dispatch(new ContextAppendMessage({
+      agentId: MAIN_AGENT_ID,
+      message: { role: 'user', content: [{ type: 'text', text: 'first prompt' }], origin: { kind: 'user' } },
+    }));
+    await dispatcher.dispatch(new TurnSteer({
+      agentId: MAIN_AGENT_ID,
+      input: [{ type: 'text', text: 'user steer' }],
+      origin: userSteerOrigin,
+      turnId: 0,
+    }));
+    await dispatcher.dispatch(new ContextAppendMessage({
+      agentId: MAIN_AGENT_ID,
+      message: { role: 'user', content: [{ type: 'text', text: 'user steer' }], origin: userSteerOrigin },
+    }));
+    await dispatcher.dispatch(new TurnSteer({
+      agentId: MAIN_AGENT_ID,
+      input: [{ type: 'text', text: 'skill steer' }],
+      origin: skillSteerOrigin,
+      turnId: 0,
+    }));
+    await dispatcher.dispatch(new ContextAppendMessage({
+      agentId: MAIN_AGENT_ID,
+      message: { role: 'user', content: [{ type: 'text', text: 'skill steer' }], origin: skillSteerOrigin },
+    }));
+    await dispatcher.dispatch(new TurnEnded({ agentId: MAIN_AGENT_ID, turnId: 0, reason: 'completed' }));
+    await dispatcher.dispatch(new TurnPrompt({
+      agentId: MAIN_AGENT_ID,
+      input: [{ type: 'text', text: 'second prompt' }],
+      origin: { kind: 'user' },
+      turnId: 1,
+    }));
+    await dispatcher.dispatch(new ContextAppendMessage({
+      agentId: MAIN_AGENT_ID,
+      message: { role: 'user', content: [{ type: 'text', text: 'second prompt' }], origin: { kind: 'user' } },
+    }));
+    await dispatcher.dispatch(new TurnEnded({ agentId: MAIN_AGENT_ID, turnId: 1, reason: 'completed' }));
+    await steeredMain.accessor.get(IWireService).flush();
+    await closeSessionById((server as RunningServer).core.accessor, steeredParentId);
+    expect(await resumeSessionById((server as RunningServer).core.accessor, steeredParentId)).toBeDefined();
+
+    const sourceTurns = await getJson<ConversationTurnsPage>(`/api/v1/sessions/${steeredParentId}/agents/main/turns`);
+    expect(sourceTurns.body.code).toBe(0);
+    const liveTurnNumber = sourceTurns.body.data.turns.at(-1)?.turn_number;
+    expect(liveTurnNumber).toBe(3);
+    const steeredFork = await postJson<SessionWire>(`/api/v1/sessions/${steeredParentId}:fork`, {
+      turn_index: liveTurnNumber,
+    });
+    expect(steeredFork.body.code).toBe(0);
+    expect(await resumeSessionById((server as RunningServer).core.accessor, steeredFork.body.data.id)).toBeDefined();
+    const forkedTurns = await getJson<ConversationTurnsPage>(
+      `/api/v1/sessions/${steeredFork.body.data.id}/agents/main/turns`,
+    );
+    expect(forkedTurns.body.data.turns.at(-1)?.turn_number).toBe(3);
+
     const cwd = home as string;
     const parent = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
     const parentId = parent.body.data.id;
@@ -1964,14 +2290,14 @@ describe('server-v2 /api/v1/sessions', () => {
     await session!.accessor.get(IAgentLifecycleService).create({ agentId: MAIN_AGENT_ID });
     const main = session!.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID)!;
     const loop = main.accessor.get(IAgentLoopService);
-    loop.replaceHistory(historyEntries([
+    await loop.initializeHistory(historyEntries([
       ...loop.history(),
       {
         role: 'user',
         content: [{ type: 'text', text: 'selected through REST' }],
         origin: { kind: 'user' },
       },
-    ]), 'fork');
+    ]));
     await main.accessor.get(IWireService).flush();
     const cron = main.accessor.get(IAgentCronService);
     const task = cron.addTask({ cron: '0 9 * * *', prompt: 'fork me', recurring: true });
@@ -3141,6 +3467,33 @@ describe('server-v2 /api/v1/sessions status context window', () => {
     expect(context?.max_context_tokens).toBe(131072);
     expect(context?.context_tokens).toBe(0);
   });
+
+  it('keeps rejecting model configuration errors other than a removed alias', async () => {
+    const cwd = home as string;
+    const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
+    const session = getLiveSessionById((server as RunningServer).core.accessor, created.body.data.id)!;
+    const agent = await ensureMainAgent(session);
+    const loop = agent.accessor.get(IAgentLoopService);
+    vi.spyOn(loop, 'resolveModelContext').mockImplementation(() => {
+      throw new Error2(ErrorCodes.CONFIG_INVALID, 'provider settings are invalid', { details: { model: 'stub' } });
+    });
+    expect(() => readContextState(agent)).toThrow('provider settings are invalid');
+  });
+
+  it('keeps rejecting a removed model alias for a subagent', async () => {
+    const cwd = home as string;
+    const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
+    const session = getLiveSessionById((server as RunningServer).core.accessor, created.body.data.id)!;
+    const lifecycle = session.accessor.get(IAgentLifecycleService);
+    const child = await lifecycle.create({ agentId: 'agent-removed-model' });
+    const handle = lifecycle.handleOf(child.agentId)!;
+    const loop = handle.accessor.get(IAgentLoopService);
+    vi.spyOn(loop, 'getModel').mockReturnValue('removed');
+    vi.spyOn(loop, 'resolveModelContext').mockImplementation(() => {
+      throw new Error2(ErrorCodes.CONFIG_INVALID, 'Model "removed" is not configured in config.toml.', { details: { model: 'removed' } });
+    });
+    expect(() => readContextState(handle)).toThrow('Model "removed" is not configured in config.toml.');
+  });
 });
 
 describe('server-v2 /api/v1/sessions (minidb read model)', () => {
@@ -3452,7 +3805,7 @@ describe('server-v2 /api/v1/sessions:btw', () => {
 });
 
 describe('server-v2 session client identity', () => {
-  const modelBase = 'https://identity-model.example.test/v1';
+  const model = createFakeModel();
   const deskIdentity = {
     product_name: 'desk-product',
     version: '7.6.5',
@@ -3475,27 +3828,9 @@ describe('server-v2 session client identity', () => {
   let home: string;
   let base: string;
   let deviceId: string;
-  const modelRequests: { readonly headers: Headers; readonly body: ModelRequestBody }[] = [];
-
-  interface ModelRequestBody {
-    readonly messages: readonly { readonly role: string; readonly content: unknown }[];
-    readonly tools?: readonly { readonly function: { readonly name: string } }[];
-  }
 
   function identityHeader(wire: unknown): string {
     return Buffer.from(JSON.stringify(wire), 'utf8').toString('base64url');
-  }
-
-  function sseBody(text: string): string {
-    const chunk = (delta: Record<string, unknown>, finishReason: string | null) =>
-      `data: ${JSON.stringify({
-        id: 'chatcmpl-identity',
-        object: 'chat.completion.chunk',
-        created: 0,
-        model: 'fake-model',
-        choices: [{ index: 0, delta, finish_reason: finishReason }],
-      })}\n\n`;
-    return `${chunk({ role: 'assistant', content: text }, null)}${chunk({}, 'stop')}data: [DONE]\n\n`;
   }
 
   async function start(): Promise<void> {
@@ -3510,6 +3845,9 @@ describe('server-v2 session client identity', () => {
   }
 
   beforeAll(async () => {
+    await model.listen();
+    model.lane('main').unscripted({ reply: say('ok') });
+    model.lane('subagent').unscripted({ reply: say('ok') });
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-client-identity-'));
     await writeFile(
       join(home, 'config.toml'),
@@ -3522,37 +3860,24 @@ describe('server-v2 session client identity', () => {
         '[providers.fake]',
         'type = "kimi"',
         'api_key = "sk-test"',
-        `base_url = "${modelBase}"`,
+        `base_url = "${model.baseUrl}"`,
         '',
         '[models.fake]',
         'provider = "fake"',
-        'model = "fake-model"',
+        'model = "testkit-model"',
         'max_context_size = 131072',
         '',
       ].join('\n'),
       'utf-8',
     );
-    const realFetch = globalThis.fetch;
-    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
-      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
-      if (!url.startsWith(modelBase)) return realFetch(input, init);
-      modelRequests.push({
-        headers: new Headers(init?.headers),
-        body: JSON.parse(typeof init?.body === 'string' ? init.body : '{}') as ModelRequestBody,
-      });
-      return new Response(sseBody('ok'), {
-        status: 200,
-        headers: { 'Content-Type': 'text/event-stream' },
-      });
-    });
     await start();
     deviceId = (await readFile(join(home, 'device_id'), 'utf-8')).trim();
   });
 
   afterAll(async () => {
-    vi.restoreAllMocks();
     await server?.close();
     server = undefined;
+    await model.close();
     await rm(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 } as never);
   });
 
@@ -3593,22 +3918,20 @@ describe('server-v2 session client identity', () => {
     readonly systemPrompt: string;
     readonly tools: readonly string[];
   }> {
-    const before = modelRequests.length;
+    const before = model.requests().length;
     const submitted = await postJson(`/api/v1/sessions/${sessionId}/prompts`, {
       content: [{ type: 'text', text: 'hello' }],
       agent_id: agentId,
     });
     expect(submitted.code).toBe(0);
-    await vi.waitFor(() => expect(modelRequests.length).toBeGreaterThan(before), { timeout: 10_000 });
+    const request = await model.waitForRequest(before, { timeoutMs: 10_000 });
     await vi.waitFor(async () => expect(await agentTurnsEnded(sessionId, agentId)).toBe(true), {
       timeout: 10_000,
     });
-    const request = modelRequests[before]!;
-    const system = request.body.messages.find((message) => message.role === 'system');
     return {
-      headers: request.headers,
-      systemPrompt: typeof system?.content === 'string' ? system.content : JSON.stringify(system?.content),
-      tools: (request.body.tools ?? []).map((tool) => tool.function.name),
+      headers: new Headers(request.headers),
+      systemPrompt: request.view.system,
+      tools: request.tools,
     };
   }
 
@@ -3935,4 +4258,174 @@ describe('POST /api/v1/sessions/{id}:wait and live turns buffer flush', () => {
     expect(finalWait.data.session.activity).toBe('idle');
     expect(finalWait.data.pending_interactions).toEqual([]);
   });
+});
+
+const modelFrames: Array<Record<string, unknown>> = [];
+const kapTest = base.extend<KapFixtures<RunningServer>>(kapFixtures({
+  startServer,
+  onFrame(frame) {
+    modelFrames.push(frame);
+  },
+}));
+const SLOW_WRITE_MS = 1_000;
+
+kapTest(':wait reports a finished turn only after the session wrote it to disk, even when the disk is slow', { timeout: 30_000 }, async ({ kap, model }) => {
+  const storage = kap.server.core.accessor.get(IFileSystemStorageService);
+  const append = storage.append.bind(storage);
+  storage.append = async (scope, key, data, options) => {
+    if (new TextDecoder().decode(data).includes('"type":"turn.ended"')) await slowDisk(SLOW_WRITE_MS);
+    return append(scope, key, data, options);
+  };
+  model.script(say('Saved answer.'));
+  const session = await kap.createSession();
+  await kap.prompt(session.id, 'Save this turn.');
+  expect((await kap.waitIdle(session.id)).activity).toBe('idle');
+  const sessionDir = sessionDirOf(kap.server.core.accessor.get(IBootstrapService).homeDir, `sessions/${session.workspace_id}`, session.id);
+  const wire = await readFile(join(sessionDir, 'agents', MAIN_AGENT_ID, 'wire.jsonl'), 'utf8');
+  expect(wire.split('\n').filter((line) => line !== '').map((line) => (JSON.parse(line) as { type: string }).type)).toContain('turn.ended');
+});
+
+kapTest('loads a persisted subagent only when the Agent tool resumes it after a restart', { timeout: 30_000 }, async ({ kap, model }) => {
+  model.script(agent({ prompt: 'remember the token', description: 'child' }), say('noted'));
+  model.lane('subagent').script(say('remembered'));
+  const session = await kap.createSession();
+  await kap.prompt(session.id, 'spawn the child');
+  await kap.waitIdle(session.id);
+  const spawn = (await kap.turns(session.id)).flatMap((turn) => turn.items).find((item) => item.type === 'tool_call' && item['name'] === 'Agent');
+  expect(spawn?.['agent_refs']).toEqual([expect.objectContaining({ agent_id: expect.any(String), role: 'child' })]);
+  const childId = String((spawn?.['agent_refs'] as readonly { readonly agent_id: string }[] | undefined)?.[0]?.agent_id);
+
+  await kap.restart();
+  const resumed = await resumeSessionById(kap.server.core.accessor, session.id);
+  expect(resumed).toBeDefined();
+  const agents = resumed!.accessor.get(IAgentLifecycleService);
+  expect(agents.handleOf(childId)).toBeUndefined();
+
+  model.script(agent({ prompt: 'recall the token', description: 'child again', resume: childId }), say('done'));
+  model.lane('subagent').script(say('the token'));
+  await kap.prompt(session.id, 'resume the child');
+  await kap.waitIdle(session.id);
+  expect(agents.handleOf(childId)).toBeDefined();
+});
+
+kapTest('reports the project root and where the agent works on every view of a session', { timeout: 30_000 }, async ({ kap }) => {
+  const root = kap.home.workspace;
+  const packageDir = join(root, 'packages', 'app');
+  await mkdir(packageDir, { recursive: true });
+  const socket = await kap.connect();
+  const created = await kap.rest.post<SessionWire>('/api/v1/sessions', {
+    workspace_root: root,
+    environment_id: 'local',
+    environment_cwd: packageDir,
+  });
+  const location = { workspace_root: root, cwd: packageDir, environment_id: 'local', environment_cwd: packageDir };
+
+  expect(created).toMatchObject(location);
+  expect(await kap.rest.get<SessionWire>(`/api/v1/sessions/${created.id}`)).toMatchObject(location);
+  const page = await kap.rest.get<PageWire>('/api/v1/sessions');
+  expect(page.items.find((item) => item.id === created.id)).toMatchObject(location);
+  expect((await kap.wait(created.id, 0)).session).toMatchObject(location);
+  const profile = await kap.rest.post<{ session: SessionWire }>(`/api/v1/sessions/${created.id}/profile`, { title: 'renamed' });
+  expect(profile.session).toMatchObject(location);
+  const forked = await kap.rest.post<SessionWire>(`/api/v1/sessions/${created.id}:fork`, {});
+  expect(forked).toMatchObject({ workspace_root: root, environment_id: 'local', environment_cwd: packageDir });
+  await kap.rest.post(`/api/v1/sessions/${created.id}:archive`, {});
+  expect(await kap.rest.post<SessionWire>(`/api/v1/sessions/${created.id}:restore`, {})).toMatchObject(location);
+  expect(await kap.rest.post<SessionWire>(`/api/v1/sessions/${created.id}:reload`, {})).toMatchObject(location);
+
+  const sessionFrame = (change: string) => socket.waitFor(
+    (frame) => frame.type === 'session' && frame['change'] === change && (frame['session'] as SessionWire).id === created.id,
+  );
+  expect((await sessionFrame('created'))['session']).toMatchObject(location);
+  expect((await sessionFrame('updated'))['session']).toMatchObject(location);
+});
+
+kapTest('a session whose saved model was removed opens with history and a model error notice', { timeout: 30_000 }, async ({ kap, model }) => {
+  model.script(say('history from removed model'));
+  const baseConfig = fakeModelConfig(model);
+  await kap.writeConfig({
+    ...baseConfig,
+    defaultModel: 'old',
+    models: {
+      ...baseConfig.models,
+      old: { provider: 'testkit', model: 'old-model', maxContextSize: 100000 },
+    },
+  });
+  await kap.server.core.accessor.get(IConfigService).reload();
+  const session = await kap.createSession({ agentConfig: { model: 'old' } });
+  await kap.prompt(session.id, 'history from removed model', { model: 'old' });
+  await kap.waitIdle(session.id);
+
+  await kap.writeConfig(baseConfig);
+  modelFrames.length = 0;
+  await kap.restart();
+  expect(JSON.stringify(await kap.turns(session.id))).toContain('history from removed model');
+  const resumed = await resumeSessionById(kap.server.core.accessor, session.id);
+  const main = await ensureMainAgent(resumed!);
+  expect(readAgentState(main, false).model).toBeUndefined();
+  expect(main.accessor.get(IAgentLoopService).getModel()).toBe('old');
+
+  const first = await kap.connect();
+  await first.subscribe(session.id);
+  await vi.waitFor(() => {
+    expect(modelFrames.filter((frame) => frame['type'] === 'notice')).toHaveLength(1);
+  });
+  expect(modelFrames.filter((frame) => frame['type'] === 'notice')).toContainEqual(
+    expect.objectContaining({ level: 'warning', code: 'model.not_configured', title: 'old' }),
+  );
+  expect(modelFrames.findIndex((frame) => frame['type'] === 'turns')).toBeLessThan(
+    modelFrames.findIndex((frame) => frame['type'] === 'notice'),
+  );
+  const second = await kap.connect();
+  await second.subscribe(session.id);
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  expect(first.frames.filter((frame) => frame['type'] === 'notice')).toHaveLength(1);
+  expect(second.frames.filter((frame) => frame['type'] === 'notice')).toHaveLength(1);
+  await first.close();
+  await second.close();
+
+  model.script(say('after fallback'));
+  await kap.prompt(session.id, 'after fallback', { model: 'testkit' });
+  await kap.waitIdle(session.id);
+  expect(JSON.parse(model.requests().at(-1)!.rawBody).model).toBe('testkit-model');
+});
+
+kapTest('a session with no default model opens with no displayed model and a model error notice', { timeout: 30_000 }, async ({ kap, model }) => {
+  model.script(say('history without a default model'));
+  const baseConfig = fakeModelConfig(model);
+  await kap.writeConfig({
+    ...baseConfig,
+    defaultModel: 'old',
+    models: {
+      ...baseConfig.models,
+      old: { provider: 'testkit', model: 'old-model', maxContextSize: 100000 },
+    },
+  });
+  await kap.server.core.accessor.get(IConfigService).reload();
+  const session = await kap.createSession({ agentConfig: { model: 'old' } });
+  await kap.prompt(session.id, 'history without a default model', { model: 'old' });
+  await kap.waitIdle(session.id);
+
+  await kap.writeConfig({ ...baseConfig, defaultModel: undefined });
+  modelFrames.length = 0;
+  await kap.restart();
+  expect(JSON.stringify(await kap.turns(session.id))).toContain('history without a default model');
+  const resumed = await resumeSessionById(kap.server.core.accessor, session.id);
+  const main = await ensureMainAgent(resumed!);
+  expect(readAgentState(main, false).model).toBeUndefined();
+  expect(readAgentState(main, false).thinking).toBeUndefined();
+  expect(main.accessor.get(IAgentLoopService).getModel()).toBe('old');
+
+  const channel = await kap.connect();
+  await channel.subscribe(session.id);
+  await vi.waitFor(() => {
+    expect(modelFrames.filter((frame) => frame['type'] === 'notice')).toHaveLength(1);
+  });
+  expect(modelFrames.filter((frame) => frame['type'] === 'notice')).toContainEqual(
+    expect.objectContaining({ level: 'warning', code: 'model.not_configured', title: 'old' }),
+  );
+  expect(modelFrames.findIndex((frame) => frame['type'] === 'turns')).toBeLessThan(
+    modelFrames.findIndex((frame) => frame['type'] === 'notice'),
+  );
+  await channel.close();
 });

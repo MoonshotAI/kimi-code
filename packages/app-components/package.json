@@ -1,11 +1,15 @@
 {
   "name": "@moonshot-ai/app-components",
-  "version": "0.0.0",
+  "version": "0.0.1",
   "private": true,
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./support": "./src/support.ts"
+    "./support": "./src/support.ts",
+    "./settings-common.css": "./src/settings/settings-common.css",
+    "./plan-usage.css": "./src/settings/plan-usage.css",
+    "./sidebar-row-button.css": "./src/sidebar/sidebar-row-button.css",
+    "./drop-card.css": "./src/lib/drop-card.css"
   },
   "dependencies": {
     "@chenglou/pretext": "0.0.8",
@@ -20,6 +24,7 @@
     "@toon-format/toon": "4.1.1",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",
+    "uuid": "14.0.1",
     "vue-i18n": "^11.4.5"
   },
   "peerDependencies": {

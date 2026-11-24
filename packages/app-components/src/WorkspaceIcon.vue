@@ -39,7 +39,7 @@ const label = computed(() => {
   <Icon v-if="state === 'local'" name="folder-closed" :size="size" />
   <span v-else class="ws-icon" :class="`ws-icon--${state}`" :title="label" :aria-label="label" role="img">
     <Icon :name="icon" :size="size" />
-    <StatusDot v-if="dot" class="ws-icon-dot" :status="dot" />
+    <StatusDot v-if="dot" class="ws-icon-dot" :status="dot" size="sm" ring="surface" />
   </span>
 </template>
 
@@ -61,8 +61,5 @@ const label = computed(() => {
   position: absolute;
   right: -2px;
   bottom: -1px;
-  width: 6px;
-  height: 6px;
-  box-shadow: 0 0 0 1.5px var(--color-surface, var(--color-bg));
 }
 </style>

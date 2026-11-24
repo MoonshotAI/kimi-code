@@ -1,0 +1,516 @@
+import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
+import { existsSync } from 'node:fs';
+import { writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+
+import { VirtualTerminal } from '@moonshot-ai/pi-tui/testing';
+import {
+  killProcessTree,
+  kimiCliCommand,
+  kimiCliEnv,
+  NETWORK_GUARD_PRELOAD,
+  networkGuardEnv,
+  readNetworkViolations,
+  TIMEOUTS,
+  until,
+} from '@moonshot-ai/testkit/fixtures';
+import { FAKE_PROVIDER_DEFAULTS } from '@moonshot-ai/testkit/model';
+
+import { describeTool, wantedOutput, type Diagnostic, type Frame, type SurfaceDriver, type SurfaceLaunch, type ToolExpectation, type ToolStatus } from '../support/verbs';
+import { offlineStubs } from './offline';
+
+const COLUMNS = 120;
+const ROWS = 40;
+const SCROLLBACK_LINES = 1000;
+const OUTPUT_TAIL = 64 * 1024;
+const RECENT_INPUTS = 12;
+
+const KEYS = { enter: '\r', escape: '\x1b', interrupt: '\x03', approveOnce: '1', reject: '3', toggleDetails: '\x0f' } as const;
+
+const USER_MARK = '❯';
+const DONE_MARK = '●';
+const FAILED_MARK = '✗';
+const TRANSCRIPT_MARKS = [USER_MARK, DONE_MARK, FAILED_MARK] as const;
+const ENTRY_INDENT = ' ';
+
+const APPROVAL_HINT = '↵ confirm';
+const APPROVAL_RULE = /^─+$/;
+const EDITOR_TOP = /^╭─+╮$/;
+const EDITOR_PROMPT = '│ >';
+const ACTIVITY = /^[\u{1F311}-\u{1F318}\u2800-\u28FF]/u;
+const READ_GROUP = /^Read(?:ing)? \d+ files?…?(?: · .*)?$/;
+const TOOL_CARD = /^(?:(?:Used|Using|Truncated) [A-Za-z][\w.-]*(?: \(.*\))?|Ran a command|Running a command|Read(?:ing)? \d+ files?…?)(?: · .*)?$/;
+const READ_GROUP_FILE = /^[├└]─ (.+?)(?: · (.+))?$/;
+const READ_GROUP_PENDING = 'reading…';
+const READ_GROUP_FAILED = 'failed';
+const TURN_COMPLETED = 'Worked for ';
+const TURN_STOPPED = 'Interrupted by user';
+const TURN_FAILED = 'Error: [';
+const APPROVED = 'Approved: ';
+const REJECTED = 'Rejected: ';
+const REJECTION_NOTICE = 'was not run because the user rejected the approval request';
+const UNFINISHED_TOOL = /^(?:Running a command|Using [A-Za-z])/;
+const TRANSCRIPT_NOTES = [APPROVED, REJECTED, TURN_STOPPED, TURN_FAILED] as const;
+const EARLIER_LINES_HIDDEN = '… ';
+
+interface Screen {
+  readonly text: string;
+  readonly height: number;
+  readonly viewport: readonly string[];
+  readonly input: 'editor' | 'approval' | 'none';
+  readonly transcript: readonly string[];
+  readonly status: readonly string[];
+}
+
+interface Block {
+  readonly mark: (typeof TRANSCRIPT_MARKS)[number];
+  readonly head: string;
+  readonly text: string;
+}
+
+interface GroupedRead {
+  readonly path: string;
+  readonly status: ToolStatus | undefined;
+}
+
+interface Turn {
+  readonly stopped: number;
+  readonly failed: number;
+}
+
+type Settled<T> = { readonly found: T } | { readonly over: Screen };
+
+function quote(value: string): string {
+  return `'${value.replaceAll("'", `'\\''`)}'`;
+}
+
+function insidePseudoTerminal(launcher: string): string {
+  return process.platform === 'darwin'
+    ? `script -q /dev/null /bin/sh ${quote(launcher)}`
+    : `script -q -e -c ${quote(`/bin/sh ${quote(launcher)}`)} /dev/null`;
+}
+
+function paste(text: string): string {
+  return `\x1b[200~${text}\x1b[201~`;
+}
+
+function squash(text: string): string {
+  return text.replaceAll(/\s+/g, '');
+}
+
+function screenOf(rows: readonly string[], viewport: readonly string[]): Screen {
+  const lines = rows.map((row) => row.trim());
+  const frame = { text: rows.join('\n'), height: rows.length, viewport };
+  const editor = lines.findLastIndex((line, index) => EDITOR_TOP.test(line) && lines[index + 1]?.startsWith(EDITOR_PROMPT) === true);
+  const hint = lines.findLastIndex((line) => line.includes(APPROVAL_HINT));
+  if (hint > editor) {
+    const rule = lines.findLastIndex((line, index) => index < hint && APPROVAL_RULE.test(line));
+    return { ...frame, input: 'approval', transcript: rows.slice(0, rule < 0 ? hint : rule), status: [] };
+  }
+  if (editor < 0) return { ...frame, input: 'none', transcript: rows, status: [] };
+  const gap = lines.findLastIndex((line, index) => index < editor && line === '');
+  return { ...frame, input: 'editor', transcript: rows.slice(0, gap + 1), status: lines.slice(gap + 1, editor) };
+}
+
+function blocksOf(screen: Screen): Block[] {
+  const blocks: { mark: Block['mark']; head: string; text: string }[] = [];
+  let open: (typeof blocks)[number] | undefined;
+  for (const row of screen.transcript) {
+    const mark = TRANSCRIPT_MARKS.find((candidate) => row.startsWith(`${ENTRY_INDENT}${candidate} `));
+    const line = row.trim();
+    if (mark !== undefined) {
+      const head = line.slice(mark.length).trim();
+      open = { mark, head, text: head };
+      blocks.push(open);
+    } else if (line !== '' && open !== undefined) {
+      open.text = `${open.text}\n${line}`;
+    }
+  }
+  return blocks;
+}
+
+function statusLines(screen: Screen, prefix: string): number {
+  return screen.transcript.filter((row) => row.trimStart().startsWith(prefix)).length;
+}
+
+function latestTurn(screen: Screen): Block[] {
+  const blocks = blocksOf(screen);
+  return blocks.slice(blocks.findLastIndex((block) => block.mark === USER_MARK) + 1);
+}
+
+function userMessages(screen: Screen, text: string): number {
+  return blocksOf(screen).filter((block) => block.mark === USER_MARK && squash(block.text).startsWith(squash(text))).length;
+}
+
+function showsApproval(screen: Screen): boolean {
+  return screen.input === 'approval';
+}
+
+function showsActivity(screen: Screen): boolean {
+  return screen.status.some((line) => ACTIVITY.test(line));
+}
+
+function toolHead({ name, target, status }: ToolExpectation): string {
+  if (name === 'Bash') return `${status === 'running' ? 'Running' : 'Ran'} a command · $ ${target}`;
+  return `Used ${name} (${target})`;
+}
+
+function toolStatus(block: Block): ToolStatus | undefined {
+  if (block.mark === USER_MARK) return undefined;
+  if (block.mark === DONE_MARK) return UNFINISHED_TOOL.test(block.head) ? 'running' : 'done';
+  return squash(block.text).includes(squash(REJECTION_NOTICE)) ? 'rejected' : 'failed';
+}
+
+function printedLines(block: Block): string[] {
+  const lines = block.text.split('\n').slice(1);
+  const note = lines.findIndex((line) => TRANSCRIPT_NOTES.some((prefix) => line.startsWith(prefix)));
+  return (note < 0 ? lines : lines.slice(0, note)).map((line) => (line.startsWith(EARLIER_LINES_HIDDEN) ? line.slice(EARLIER_LINES_HIDDEN.length) : line));
+}
+
+function showsTool(screen: Screen, expectation: ToolExpectation): boolean {
+  const head = toolHead(expectation);
+  const output = wantedOutput(expectation);
+  return latestTurn(screen).some(
+    (block) =>
+      (block.head === head || block.head.startsWith(`${head} · `)) &&
+      toolStatus(block) === expectation.status &&
+      (output === undefined || printedLines(block).includes(output)),
+  );
+}
+
+function endsWithStopNotice(screen: Screen): boolean {
+  return screen.transcript.findLast((row) => row.trim() !== '')?.trimStart().startsWith(TURN_STOPPED) === true;
+}
+
+function groupedReads(screen: Screen): GroupedRead[] {
+  return latestTurn(screen)
+    .filter((block) => READ_GROUP.test(block.head))
+    .flatMap((block) => block.text.split('\n'))
+    .flatMap((line): GroupedRead[] => {
+      const file = READ_GROUP_FILE.exec(line);
+      if (file?.[1] === undefined) return [];
+      if (file[2] === READ_GROUP_PENDING) return [{ path: file[1], status: undefined }];
+      return [{ path: file[1], status: file[2] === READ_GROUP_FAILED ? 'failed' : 'done' }];
+    });
+}
+
+function showsReadGroup(screen: Screen): boolean {
+  return latestTurn(screen).some((block) => READ_GROUP.test(block.head));
+}
+
+function showsGroupedRead(screen: Screen, expectation: ToolExpectation): boolean {
+  return groupedReads(screen).some((file) => file.path === expectation.target && file.status === expectation.status);
+}
+
+function showsReply(screen: Screen, text: string): boolean {
+  return latestTurn(screen).some(
+    (block) => block.mark === DONE_MARK && !TOOL_CARD.test(block.head) && squash(block.text).includes(squash(text)),
+  );
+}
+
+function latestTurnEntries(screen: Screen): string {
+  const entries = latestTurn(screen).map((block) => `${block.mark} ${block.text.replaceAll('\n', '\n  ')}`);
+  return entries.length === 0 ? '(nothing after the last user message)' : entries.join('\n');
+}
+
+class TuiDriver implements SurfaceDriver {
+  private readonly child: ChildProcessWithoutNullStreams;
+  private readonly networkLog: string;
+  private readonly exitStatus: RegExp;
+  private readonly terminal = new VirtualTerminal(COLUMNS, ROWS);
+  private readonly inputs: string[] = [];
+  private output = '';
+  private stderr = '';
+  private released = false;
+  private turn: Turn | undefined;
+
+  constructor(child: ChildProcessWithoutNullStreams, networkLog: string, exitMarker: string) {
+    this.child = child;
+    this.networkLog = networkLog;
+    this.exitStatus = new RegExp(`${exitMarker}(\\d+)`);
+    child.stdout.setEncoding('utf8').on('data', (text: string) => {
+      this.output = (this.output + text).slice(-OUTPUT_TAIL);
+      this.terminal.write(text);
+    });
+    child.stderr.setEncoding('utf8').on('data', (text: string) => {
+      this.stderr = (this.stderr + text).slice(-OUTPUT_TAIL);
+    });
+    child.stdin.on('error', (error) => {
+      this.stderr = `${this.stderr}stdin: ${error.message}\n`;
+    });
+    child.once('close', () => {
+      this.released = true;
+    });
+    this.terminal.onReply((reply) => {
+      if (this.exitCode() === undefined && child.stdin.writable) child.stdin.write(reply);
+    });
+  }
+
+  async ready(): Promise<void> {
+    await this.wait('the TUI to show its editor and the configured model', (screen) =>
+      screen.input === 'editor' && screen.viewport.some((line) => line.includes(FAKE_PROVIDER_DEFAULTS.modelName)) ? true : undefined,
+    );
+  }
+
+  async send(text: string): Promise<void> {
+    const screen = await this.read();
+    if (!this.turnOver(screen)) {
+      throw this.failure('send() needs an idle product, but a turn is running or an approval is pending.', screen);
+    }
+    const shown = userMessages(screen, text);
+    this.turn = { stopped: statusLines(screen, TURN_STOPPED), failed: statusLines(screen, TURN_FAILED) };
+    this.write(paste(text));
+    this.write(KEYS.enter);
+    await this.wait(`the user message ${JSON.stringify(text)} to appear in the transcript`, (current) =>
+      userMessages(current, text) > shown ? true : undefined,
+    );
+  }
+
+  approve(): Promise<void> {
+    return this.answerApproval('approve()', KEYS.approveOnce, APPROVED);
+  }
+
+  reject(): Promise<void> {
+    return this.answerApproval('reject()', KEYS.reject, REJECTED);
+  }
+
+  async stop(): Promise<void> {
+    const screen = await this.read();
+    if (showsApproval(screen)) {
+      throw this.failure('stop() cannot stop a turn while an approval is pending; answer it first.', screen);
+    }
+    if (this.turnOver(screen)) throw this.failure('stop() needs a running turn, but the product is idle.', screen);
+    const stopped = statusLines(screen, TURN_STOPPED);
+    this.write(KEYS.escape);
+    const settled = await this.settle('the turn to stop', (current) =>
+      statusLines(current, TURN_STOPPED) > stopped && !showsActivity(current) && endsWithStopNotice(current) ? true : undefined,
+    );
+    if ('over' in settled) {
+      throw this.failure('stop() did not interrupt the turn: it ended on its own before the stop took effect.', settled.over);
+    }
+  }
+
+  async waitIdle(): Promise<void> {
+    const settled = await this.settle('the turn to end', (screen) => (showsApproval(screen) ? screen : undefined));
+    if ('found' in settled) {
+      throw this.failure('waitIdle() found a pending approval; answer it with approve() or reject() first.', settled.found);
+    }
+  }
+
+  async expectTool(expectation: ToolExpectation): Promise<void> {
+    const wanted = describeTool(expectation);
+    const settled = await this.settle(`the tool ${wanted}`, (screen) => {
+      if (expectation.status === 'running' && this.turnOver(screen)) return undefined;
+      if (showsTool(screen, expectation)) return 'card' as const;
+      if (showsApproval(screen)) return expectation.status === 'running' ? ('approval' as const) : undefined;
+      return expectation.name === 'Read' && showsReadGroup(screen) ? ('group' as const) : undefined;
+    });
+    if ('found' in settled && settled.found === 'approval') {
+      throw this.failure(`expectTool() cannot find a running command while an approval is pending; answer it with approve() or reject() first.`, await this.read());
+    }
+    const missing = 'over' in settled ? settled.over : settled.found === 'group' ? await this.missingGroupedRead(expectation, wanted) : undefined;
+    if (missing !== undefined) {
+      throw this.failure(`expectTool() did not find ${wanted}. The turn ended and it shows:\n${latestTurnEntries(missing)}`, missing);
+    }
+  }
+
+  async expectReply(text: string): Promise<void> {
+    const settled = await this.settle(`the reply ${JSON.stringify(text)}`, (screen) => (showsReply(screen, text) ? true : undefined));
+    if ('over' in settled) {
+      throw this.failure(
+        `expectReply() did not find ${JSON.stringify(text)} in an assistant reply. The turn ended and it shows:\n${latestTurnEntries(settled.over)}`,
+        settled.over,
+      );
+    }
+  }
+
+  async close(): Promise<void> {
+    if (this.exitCode() !== undefined) {
+      throw new Error(`The CLI exited before the scenario closed it.\n${await this.describe()}`);
+    }
+    const screen = await this.read();
+    if (!this.turnOver(screen)) {
+      throw this.failure('The scenario ended while a turn was running or an approval was pending; end it with waitIdle().', screen);
+    }
+    this.write(KEYS.interrupt);
+    this.write(paste('/exit'));
+    this.write(KEYS.enter);
+    try {
+      await until('the CLI to exit after /exit', () => this.exitCode() !== undefined, { timeoutMs: TIMEOUTS.wait });
+      this.child.stdin.end();
+      await until('the pseudo-terminal to close', () => this.released, { timeoutMs: TIMEOUTS.wait });
+    } catch (cause) {
+      throw new Error(`The CLI did not exit cleanly after /exit.\n${await this.describe()}`, { cause });
+    }
+    if (this.exitCode() !== 0) throw new Error(`The CLI exited with status ${String(this.exitCode())}.\n${await this.describe()}`);
+  }
+
+  async kill(): Promise<void> {
+    if (this.released) return;
+    if (this.child.exitCode === null && this.child.signalCode === null && this.child.pid !== undefined) killProcessTree(this.child.pid);
+    this.child.stdin.destroy();
+    try {
+      await until('the pseudo-terminal to close', () => this.released, { timeoutMs: TIMEOUTS.wait });
+    } catch {
+      this.stderr = `${this.stderr}The pseudo-terminal did not close after it was killed.\n`;
+    }
+  }
+
+  networkViolations(): Promise<readonly string[]> {
+    return readNetworkViolations(this.networkLog, 'The CLI in a pseudo-terminal');
+  }
+
+  async frame(): Promise<Frame> {
+    const { viewport } = await this.read();
+    const rows = viewport.map((row) => row.trimEnd());
+    return { kind: 'text', text: rows.slice(0, rows.findLastIndex((row) => row !== '') + 1).join('\n') };
+  }
+
+  async diagnostics(): Promise<readonly Diagnostic[]> {
+    const screen = await this.read();
+    return [
+      { name: 'tui-screen', body: screen.text },
+      {
+        name: 'tui-session',
+        body: [
+          `exit status: ${String(this.exitCode() ?? 'still running')}`,
+          `recent input: ${JSON.stringify(this.inputs)}`,
+          `stderr:\n${this.stderr === '' ? '(empty)' : this.stderr}`,
+        ].join('\n'),
+      },
+    ];
+  }
+
+  private async missingGroupedRead(expectation: ToolExpectation, wanted: string): Promise<Screen | undefined> {
+    this.write(KEYS.toggleDetails);
+    try {
+      await this.wait('the grouped reads to list their files', (screen) => (groupedReads(screen).length > 0 ? true : undefined));
+      const settled = await this.settle(`the tool ${wanted} among the grouped reads`, (screen) =>
+        showsGroupedRead(screen, expectation) ? true : undefined,
+      );
+      return 'over' in settled ? settled.over : undefined;
+    } finally {
+      this.write(KEYS.toggleDetails);
+      await this.wait('the grouped reads to fold again', (screen) => (groupedReads(screen).length === 0 ? true : undefined));
+    }
+  }
+
+  private async answerApproval(verb: string, key: string, recorded: string): Promise<void> {
+    const settled = await this.settle('an approval request', (screen) => (showsApproval(screen) ? screen : undefined));
+    if ('over' in settled) {
+      throw this.failure(`${verb} found no approval: the turn ended without asking for one.`, settled.over);
+    }
+    const answered = statusLines(settled.found, recorded);
+    this.write(key);
+    await this.wait(`the transcript to record "${recorded.trim()}"`, (screen) =>
+      statusLines(screen, recorded) > answered ? true : undefined,
+    );
+  }
+
+  private turnOver(screen: Screen): boolean {
+    if (screen.input !== 'editor' || showsActivity(screen)) return false;
+    if (this.turn === undefined) return true;
+    return (
+      screen.status.some((line) => line.startsWith(TURN_COMPLETED)) ||
+      statusLines(screen, TURN_STOPPED) > this.turn.stopped ||
+      statusLines(screen, TURN_FAILED) > this.turn.failed
+    );
+  }
+
+  private settle<T>(label: string, evidence: (screen: Screen) => T | undefined): Promise<Settled<T>> {
+    let quiet: string | undefined;
+    return this.wait<Settled<T>>(label, (screen) => {
+      const found = evidence(screen);
+      if (found !== undefined) return { found };
+      if (!this.turnOver(screen)) {
+        quiet = undefined;
+        return undefined;
+      }
+      if (quiet === screen.text) return { over: screen };
+      quiet = screen.text;
+      return undefined;
+    });
+  }
+
+  private async wait<T>(label: string, check: (screen: Screen) => T | undefined): Promise<T> {
+    let outcome: { readonly value: T } | { readonly halted: string };
+    try {
+      outcome = await until(
+        label,
+        async () => {
+          const screen = await this.read();
+          const value = check(screen);
+          if (value !== undefined) return { value };
+          if (screen.height >= SCROLLBACK_LINES + ROWS) {
+            return { halted: `The transcript outgrew the ${SCROLLBACK_LINES} lines the virtual terminal keeps, so evidence counted from the screen is no longer reliable.` };
+          }
+          return this.exitCode() === undefined ? undefined : { halted: 'The CLI exited.' };
+        },
+        { timeoutMs: TIMEOUTS.server },
+      );
+    } catch (cause) {
+      const reason = cause instanceof Error ? cause.message : String(cause);
+      throw new Error(`${reason}\n${await this.describe()}`, { cause });
+    }
+    if ('halted' in outcome) throw new Error(`${outcome.halted} The test was waiting for ${label}.\n${await this.describe()}`);
+    return outcome.value;
+  }
+
+  private async read(): Promise<Screen> {
+    await this.terminal.flush();
+    return screenOf(this.terminal.getScrollBuffer(), this.terminal.getViewport());
+  }
+
+  private write(input: string): void {
+    this.inputs.push(input.slice(-200));
+    if (this.inputs.length > RECENT_INPUTS) this.inputs.shift();
+    this.child.stdin.write(input);
+  }
+
+  private exitCode(): number | undefined {
+    const match = this.exitStatus.exec(this.output);
+    return match?.[1] === undefined ? undefined : Number(match[1]);
+  }
+
+  private failure(message: string, screen: Screen): Error {
+    return new Error(`${message}\nScreen:\n${screen.viewport.join('\n').trimEnd()}`);
+  }
+
+  private async describe(): Promise<string> {
+    const screen = await this.read();
+    return [
+      `Screen:\n${screen.viewport.join('\n').trimEnd()}`,
+      `Recent input: ${JSON.stringify(this.inputs)}`,
+      `Exit status: ${String(this.exitCode() ?? 'still running')}`,
+    ].join('\n');
+  }
+}
+
+export async function startTui({ home }: SurfaceLaunch): Promise<SurfaceDriver> {
+  if (process.platform === 'win32') throw new Error('The TUI surface needs the script command; Windows is not supported yet.');
+  const command = kimiCliCommand();
+  if (!existsSync(command.entry)) {
+    throw new Error(`The CLI entry ${command.entry} does not exist; build the CLI before running against its bundle.`);
+  }
+  const networkLog = join(home.root, 'tui-network.log');
+  const launcher = join(home.root, 'tui-launch.sh');
+  const preloads = [...(command.imports ?? []), NETWORK_GUARD_PRELOAD.href].flatMap((specifier) => ['--import', specifier]);
+  const cli = [process.execPath, ...preloads, command.entry].map(quote).join(' ');
+  const exitMarker = `E2E_CLI_EXIT_${randomUUID()}=`;
+  await writeFile(launcher, [`stty cols ${COLUMNS} rows ${ROWS}`, cli, `printf '\\n${exitMarker}%s\\n' "$?"`, ''].join('\n'));
+  const child = spawn('/bin/sh', ['-c', `cat | ${insidePseudoTerminal(launcher)}`], {
+    cwd: home.workspace,
+    detached: true,
+    stdio: ['pipe', 'pipe', 'pipe'],
+    env: { ...kimiCliEnv(home, { TERM: 'xterm-256color' }), ...command.env, ...networkGuardEnv(networkLog, offlineStubs()) },
+  });
+  const driver = new TuiDriver(child, networkLog, exitMarker);
+  try {
+    await driver.ready();
+  } catch (error) {
+    await driver.kill();
+    throw error;
+  }
+  return driver;
+}

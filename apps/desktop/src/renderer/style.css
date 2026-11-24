@@ -227,7 +227,7 @@ body,
   margin: 0;
   /* Explicit light background on the root: a transparent <html> gets sampled as
      "dark" by some extensions, which then repaint it. Keep it solid white. */
-  background: var(--bg);
+  background: var(--color-bg);
 }
 
 /* Pin the app to the viewport so it always fills the screen even if a dark-mode
@@ -319,10 +319,10 @@ html.browser-see-through #app {
 }
 
 body {
-  font-family: var(--sans);
+  font-family: var(--font-ui);
   color: var(--color-text);
-  background: var(--bg);
-  font-size: var(--ui-font-size);
+  background: var(--color-bg);
+  font-size: var(--text-base);
   font-weight: 400;
   line-height: 1.6;
   font-optical-sizing: auto;
@@ -418,7 +418,7 @@ body {
    surfaces; these shared chat/input/tool selectors keep readable content and
    code in lockstep with the setting. */
 .app {
-  font-size: var(--ui-font-size);
+  font-size: var(--text-base);
 }
 
 .u-bub,
@@ -457,17 +457,17 @@ body {
 .qbtn,
 .srow,
 .srow-val {
-  font-size: var(--ui-font-size);
+  font-size: var(--text-base);
 }
 .qopt-desc,
 .srow-label {
-  font-size: var(--ui-font-size-sm);
+  font-size: var(--text-sm);
 }
 .queue-label,
 .qopt-key,
 .qstep,
 .srow-sub {
-  font-size: var(--ui-font-size-xs);
+  font-size: var(--text-xs);
 }
 
 @media (max-width: 640px) {

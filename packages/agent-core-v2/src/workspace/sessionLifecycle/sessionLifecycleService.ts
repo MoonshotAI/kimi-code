@@ -8,6 +8,7 @@ import { LOCAL_ENVIRONMENT_ID, type EnvironmentBinding, type EnvironmentLease } 
 import { EnvironmentError } from '#/environment/environmentRegistry';
 import type { IEnvironmentService } from '#/app/environment/environment';
 import type { ProgramWorkdir } from '#/program/program';
+import type { ProgramMcpLease } from '#/program/programMcp';
 import {
   createScopedChildHandle,
   type ISessionScopeHandle,
@@ -93,6 +94,7 @@ import {
   createWireMetadataRecord,
   type WireRecord,
 } from '#/wire/record';
+import { normalizeLegacyTurnSteerRecords } from '#/wire/human';
 import { repairWireJournal } from '#/wire/repair';
 import { flattenChain } from '#/wire/tree/index';
 import { IModelService } from '#/llm-adapter/model/model';
@@ -107,7 +109,7 @@ import {
 import {
   IExtraAgentProfileLoader,
 } from '#/workspace/workspaceAgentProfileLoader/extraAgentProfileLoader';
-import { IWorkspaceMcpService } from '#/workspace/workspaceMcp/workspaceMcp';
+import type { IWorkspaceMcpService } from '#/workspace/workspaceMcp/workspaceMcp';
 import { PLUGIN_SKILL_SOURCE_ID } from '#/features/skill/catalog/skillSource';
 
 import { agentScopeOf, sessionDirOf, sessionScopeOf } from './internal/addressing';
@@ -138,6 +140,8 @@ import {
 type MaterializeSessionOptions = Omit<CreateSessionOptions, 'sessionId'> & {
   readonly sessionId: string;
 };
+
+type WorkdirWithMcp = ProgramWorkdir & { readonly mcp: IWorkspaceMcpService };
 
 const NO_ABORT = new AbortController().signal;
 
@@ -212,7 +216,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     private readonly userAgentProfileLoader: IUserAgentProfileLoader,
     @IPluginAgentProfileLoader
     private readonly pluginAgentProfileLoader: IPluginAgentProfileLoader,
-    @IWorkspaceMcpService private readonly workspaceMcp: IWorkspaceMcpService,
+    private readonly acquireMcp: () => Promise<ProgramMcpLease>,
     @IModelService private readonly models: IModelService,
     @IProviderService private readonly providers: IProviderService,
     private readonly environments: IEnvironmentService,
@@ -291,7 +295,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
   private async materializeSession(
     opts: MaterializeSessionOptions,
     environment: EnvironmentBinding & { readonly cwd: string } | undefined,
-    workdir: ProgramWorkdir,
+    workdir: WorkdirWithMcp,
   ): Promise<ISessionScopeHandle> {
     const workspaceId = this.workspaceId;
     const sessionScope = sessionScopeOf(this.handlerScope, opts.sessionId);
@@ -341,7 +345,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
             }),
             [ISessionSkillCatalogData, workdir.skills.sessionData()],
             [ISessionInstructionsProvider, workdir.instructions.sessionProvider()],
-            [ISessionMcpHandle, this.workspaceMcp.sessionHandle()],
+            [ISessionMcpHandle, workdir.mcp.sessionHandle()],
             [ISessionWorkspaceInfo, dirs.sessionInfo()],
             [ISessionWorkdir, {
               _serviceBrand: undefined,
@@ -413,6 +417,27 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
   }
 
   private async openWorkdir(
+    environment: (EnvironmentBinding & { readonly cwd: string }) | undefined,
+    workDir: string,
+  ): Promise<WorkdirWithMcp> {
+    const mcp = await this.acquireMcp();
+    try {
+      const workdir = await this.connectWorkdir(environment, workDir);
+      return {
+        ...workdir,
+        mcp: mcp.service,
+        dispose: () => {
+          mcp.dispose();
+          workdir.dispose();
+        },
+      };
+    } catch (error) {
+      mcp.dispose();
+      throw error;
+    }
+  }
+
+  private async connectWorkdir(
     environment: (EnvironmentBinding & { readonly cwd: string }) | undefined,
     workDir: string,
   ): Promise<ProgramWorkdir> {
@@ -749,7 +774,9 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       const mainRecords =
         opts.turnIndex === undefined && !runningFork
           ? undefined
-          : flattenChain(await this.readSourceWireRecords(sourceHandle, sourceId, MAIN_AGENT_ID));
+          : normalizeLegacyTurnSteerRecords(
+              flattenChain(await this.readSourceWireRecords(sourceHandle, sourceId, MAIN_AGENT_ID)),
+            );
       const completedMainRecords =
         mainRecords === undefined || !runningFork
           ? mainRecords

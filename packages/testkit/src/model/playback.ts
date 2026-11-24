@@ -1,3 +1,4 @@
+import type { Splitter } from '#/model/chunking';
 import type { HoldRegistry } from '#/model/holds';
 import type { EncodeContext, ProtocolCodec } from '#/model/protocols/codec';
 import type { RecordedRequest } from '#/model/record';
@@ -9,7 +10,7 @@ export interface PlaybackSink {
   readonly gone: boolean;
   readonly goneSignal: AbortSignal;
   head(status: number, headers: Readonly<Record<string, string>>): void;
-  write(data: string): void;
+  write(data: string | Uint8Array): void;
   end(): void;
   disconnect(): void;
   resetConnection(): void;
@@ -22,6 +23,7 @@ export interface Playback {
   readonly context: EncodeContext;
   readonly defaultIntervalMs: number;
   readonly sink: PlaybackSink;
+  readonly split: Splitter | undefined;
   problem(message: string): void;
 }
 
@@ -67,6 +69,13 @@ export function respondError(error: ErrorSpec, playback: Playback): void {
   request.transition('failed');
 }
 
+function replyHeaders(defaults: Readonly<Record<string, string>>, step: ReplyStep): Readonly<Record<string, string>> {
+  if (step.headers === undefined) return defaults;
+  const headers = new Headers(defaults);
+  for (const [name, value] of Object.entries(step.headers)) headers.set(name, value);
+  return Object.fromEntries(headers);
+}
+
 async function streamReply(step: ReplyStep, playback: Playback): Promise<void> {
   const { sink, request } = playback;
   const encoding = playback.codec.encodeStream(step, playback.context);
@@ -75,7 +84,7 @@ async function streamReply(step: ReplyStep, playback: Playback): Promise<void> {
   for (const segment of encoding.segments) byUnit[segment.unit]?.push(segment.data);
   const ensureHead = (): void => {
     if (sink.headSent) return;
-    sink.head(200, encoding.headers);
+    sink.head(200, replyHeaders(encoding.headers, step));
     request.transition('streaming');
   };
   for (let unit = 0; unit <= units; unit += 1) {
@@ -84,7 +93,7 @@ async function streamReply(step: ReplyStep, playback: Playback): Promise<void> {
     for (const data of byUnit[unit] ?? []) {
       if (sink.gone) return;
       ensureHead();
-      sink.write(data);
+      await writeData(data, playback);
     }
     if (unit < units - 1) await pace(step, playback);
     if (sink.gone) return;
@@ -92,7 +101,8 @@ async function streamReply(step: ReplyStep, playback: Playback): Promise<void> {
   switch (step.ending.type) {
     case 'complete':
       ensureHead();
-      for (const data of encoding.trailer) sink.write(data);
+      for (const data of encoding.trailer) await writeData(data, playback);
+      if (sink.gone) return;
       sink.end();
       request.transition('finished');
       return;
@@ -112,6 +122,19 @@ async function streamReply(step: ReplyStep, playback: Playback): Promise<void> {
   }
 }
 
+async function writeData(data: string, playback: Playback): Promise<void> {
+  const pieces = playback.split?.(data);
+  if (pieces === undefined) {
+    playback.sink.write(data);
+    return;
+  }
+  for (const [index, piece] of pieces.entries()) {
+    if (playback.sink.gone) return;
+    playback.sink.write(piece);
+    if (index < pieces.length - 1) await new Promise<void>((resolve) => setImmediate(resolve));
+  }
+}
+
 async function letPeerDrain(): Promise<void> {
   for (let turn = 0; turn < 2; turn += 1) await new Promise<void>((resolve) => setImmediate(resolve));
 }
@@ -122,8 +145,9 @@ async function jsonReply(step: ReplyStep, playback: Playback): Promise<void> {
   switch (step.ending.type) {
     case 'complete': {
       const response = playback.codec.encodeJson(step, playback.context);
-      sink.head(response.status, response.headers);
-      sink.write(response.body);
+      sink.head(response.status, replyHeaders(response.headers, step));
+      await writeData(response.body, playback);
+      if (sink.gone) return;
       sink.end();
       request.transition('finished');
       return;

@@ -52,6 +52,7 @@ import {
   IMcpManagementService,
   IMcpOAuthService,
   ISessionManager,
+  ISessionMcpHandle,
   ISessionLockService,
   IWorkspaceInstanceManager,
   IEnvironmentService,
@@ -202,7 +203,10 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
         workDir,
         mainAgentBinding: { profile: 'print-reviewer' },
       });
-      expect(await client.getStatus({ sessionId: session.id })).toMatchObject({ model: 'stub' });
+      expect(await client.getStatus({ sessionId: session.id })).toMatchObject({
+        model: 'stub',
+        loopLifecycleEvents: true,
+      });
     } finally {
       await client.close();
     }
@@ -3093,6 +3097,157 @@ describe('SDKRpcClientV2 workspace trust', () => {
   });
 });
 
+describe('SDKRpcClientV2 workspace MCP servers', () => {
+  const server = {
+    command: process.execPath,
+    args: [new URL('../../agent-core-v2/test/mcpCore/fixtures/mock-stdio-server.mjs', import.meta.url).pathname],
+  };
+
+  async function setup() {
+    vi.stubEnv('KIMI_CODE_TRUST_WORKSPACE', '1');
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+    tempDirs.push(homeDir, workDir);
+    await writeFile(join(workDir, '.mcp.json'), JSON.stringify({ mcpServers: { project: server } }), 'utf-8');
+    const spawn = vi.spyOn(HostProcessService.prototype, 'spawn');
+    return {
+      workDir,
+      client: new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY }),
+      started: () => Promise.all(spawn.mock.results.flatMap((result, call) =>
+        spawn.mock.calls[call]![0] === server.command ? [result.value as ReturnType<HostProcessService['spawn']>] : [],
+      )),
+    };
+  }
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllEnvs();
+  });
+
+  it('stop once listed while the project stays open', async () => {
+    const { client, workDir, started } = await setup();
+    const lease = await client.engineAccessor.get(IWorkspaceInstanceManager).acquire({ root: workDir });
+    try {
+      const listed = await client.listWorkspaceMcpServers(workDir);
+
+      expect(listed.map((entry) => [entry.name, entry.status])).toEqual([['project', 'connected']]);
+      const children = await started();
+      expect(children).toHaveLength(1);
+      await vi.waitFor(() => {
+        expect(children[0]!.exitCode).not.toBeNull();
+      }, 10_000);
+    } finally {
+      lease.dispose();
+      await client.close();
+    }
+  }, 30_000);
+
+  it.each([
+    {
+      session: 'pinned to a directory that does not exist',
+      open: (sessions: ISessionManager, workDir: string) =>
+        sessions.create({ workDir, environmentId: 'local', environmentCwd: join(workDir, 'missing') }),
+    },
+    {
+      session: 'with an additional directory that does not exist',
+      open: (sessions: ISessionManager, workDir: string) =>
+        sessions.create({ workDir, additionalDirs: [join(workDir, 'missing')] }),
+    },
+    {
+      session: 'in a project with invalid permission rules',
+      open: async (sessions: ISessionManager, workDir: string) => {
+        await mkdir(join(workDir, '.kimi-code'));
+        await writeFile(join(workDir, '.kimi-code', 'local.toml'), '[permission]\nrules = "all"\n', 'utf-8');
+        return sessions.create({ workDir });
+      },
+    },
+    {
+      session: 'whose preparation fails',
+      open: (sessions: ISessionManager, workDir: string) =>
+        sessions.create({ workDir, prepare: async () => { throw new Error('prepare failed'); } }),
+    },
+    {
+      session: 'resumed in a directory that is gone',
+      open: async (sessions: ISessionManager, workDir: string) => {
+        const pinned = join(workDir, 'pinned');
+        await mkdir(pinned);
+        const session = await sessions.create({ workDir, environmentId: 'local', environmentCwd: pinned });
+        await sessions.close(session.id);
+        await rm(pinned, { recursive: true });
+        return sessions.resume(session.id);
+      },
+    },
+    {
+      session: 'resumed without a main agent',
+      open: async (sessions: ISessionManager, workDir: string) => {
+        const session = await sessions.create({ workDir });
+        await sessions.close(session.id);
+        const failing = sessions.onWillCreateSession!((event) => event.onDidCreateScope((handle) => {
+          vi.spyOn(handle.accessor.get(IAgentLifecycleService), 'create').mockRejectedValue(new Error('agent create failed'));
+        }));
+        try {
+          return await sessions.resume(session.id);
+        } finally {
+          failing.dispose();
+        }
+      },
+    },
+  ])('stop after a session $session fails to open while the project stays open', async ({ open }) => {
+    const { client, workDir, started } = await setup();
+    const lease = await client.engineAccessor.get(IWorkspaceInstanceManager).acquire({ root: workDir });
+    try {
+      await expect(open(client.engineAccessor.get(ISessionManager), workDir)).rejects.toThrow();
+
+      const listed = await client.listWorkspaceMcpServers(workDir);
+      expect(listed.map((entry) => [entry.name, entry.status])).toEqual([['project', 'connected']]);
+      const children = await started();
+      await vi.waitFor(() => {
+        expect(children.filter((child) => child.exitCode === null)).toEqual([]);
+      }, 10_000);
+    } finally {
+      lease.dispose();
+      await client.close();
+    }
+  }, 30_000);
+
+  it('start with the first session, not with queries that do not list them', async () => {
+    const { client, workDir, started } = await setup();
+    try {
+      await client.getWorkspaceTrustInfo(workDir);
+      await client.trustWorkspace(workDir);
+      await client.getWorkspaceAdditionalDirs(workDir);
+      await client.listWorkspaceSkills(workDir);
+      await client.suggestFiles(workDir, { query: 'mcp' });
+
+      const session = await client.createSession({ workDir });
+      await getLiveSessionById(client.engineAccessor, session.id)!.accessor.get(ISessionMcpHandle).ready;
+
+      expect(await started()).toHaveLength(1);
+    } finally {
+      await client.close();
+    }
+  }, 30_000);
+
+  it('are joined by the servers the first session brings along', async () => {
+    const { client, workDir } = await setup();
+    try {
+      const session = await client.engineAccessor.get(ISessionManager).create({
+        workDir,
+        mcpServers: { own: { transport: 'stdio', ...server, environment_id: 'local' } },
+      });
+      const mcp = session.accessor.get(ISessionMcpHandle);
+      await mcp.ready;
+
+      expect(Object.fromEntries(mcp.connectionManager.list().map((entry) => [entry.name, entry.status]))).toEqual({
+        own: 'connected',
+        project: 'connected',
+      });
+    } finally {
+      await client.close();
+    }
+  }, 30_000);
+});
+
 describe('foldAgentWireReplay', () => {
   it('folds a journal into v1 replay records and the tool store', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-fold-'));
@@ -4007,7 +4162,7 @@ describe('SDKRpcClientV2 engine telemetry', () => {
     tempDirs.push(homeDir);
     const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-tel-flags-work-'));
     tempDirs.push(workDir);
-    await writeFile(join(homeDir, 'config.toml'), '[experimental]\nsubagent_fork = true\n', 'utf-8');
+    await writeFile(join(homeDir, 'config.toml'), '[experimental]\nnotify_user = true\n', 'utf-8');
     const records: TelemetryRecord[] = [];
     const harness = createKimiHarness({
       homeDir,
@@ -4030,7 +4185,7 @@ describe('SDKRpcClientV2 engine telemetry', () => {
       });
       for (const record of started) {
         const flags = String(record.properties?.['experimental_flags'] ?? '').split(',');
-        expect(flags).toContain('subagent_fork');
+        expect(flags).toContain('notify_user');
         expect(flags).toContain('wait_for');
       }
       await session.close();

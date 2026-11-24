@@ -948,6 +948,21 @@ interface TurnEndedPayload {
   durationMs?: number;
   stopReason?: string;
   requestId?: string;
+  replyModel?: {
+    provider: string;
+    model: string;
+  };
+  modelSteps?: {
+    step: number;
+    role: 'step' | 'subagent';
+    model: string;
+    provider: string;
+    isKfc: boolean;
+    requestId?: string;
+  }[];
+  loopEnd?: {
+    outcome: 'drained' | 'idle';
+  };
 }
 
 /**

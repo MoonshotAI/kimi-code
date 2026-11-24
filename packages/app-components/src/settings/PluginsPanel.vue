@@ -241,8 +241,8 @@ async function closeDetails(): Promise<void> {
           :key="section.key"
           class="pp-section"
         >
-          <h3 class="pp-sec-title">{{ section.title }}</h3>
-          <div class="pp-group">
+          <h3 class="sec-title">{{ section.title }}</h3>
+          <div class="settings-group settings-group-divided">
             <PluginRow
               v-for="row in section.rows"
               :key="row.id"
@@ -265,8 +265,8 @@ async function closeDetails(): Promise<void> {
           class="pp-section pp-installed-section"
           :data-origin="section.key"
         >
-          <h3 class="pp-sec-title">{{ section.title }}</h3>
-          <div class="pp-group">
+          <h3 class="sec-title">{{ section.title }}</h3>
+          <div class="settings-group settings-group-divided">
             <PluginRow
               v-for="row in section.rows"
               :key="row.id"
@@ -285,6 +285,8 @@ async function closeDetails(): Promise<void> {
   </section>
 </template>
 
+<style scoped src="./settings-common.css"></style>
+
 <style scoped>
 .plugins-panel {
   display: flex;
@@ -293,7 +295,7 @@ async function closeDetails(): Promise<void> {
 }
 
 .pp-panel-title,
-.pp-sec-title {
+.sec-title {
   margin: 0;
   color: var(--color-text);
   font-family: var(--font-ui);
@@ -410,14 +412,5 @@ async function closeDetails(): Promise<void> {
   gap: var(--space-4);
 }
 
-.pp-group {
-  overflow: hidden;
-  border-radius: var(--radius-xl);
-  background: var(--color-surface);
-}
-
-.pp-group > * + * {
-  border-top: var(--p-hairline) solid var(--color-line);
-}
 
 </style>

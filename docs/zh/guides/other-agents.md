@@ -6,7 +6,7 @@ Kimi Code CLI 与桌面端内置了 **Kimi Agent Protocol (KAP)** 本地服务�
 
 | 你想做什么                | 协议和使用方式                              | 特点                                                                                                                          |
 | -------------------- | ------------------------------------ | --------------------------------------------------------------------------------------------------------------------------- |
-| 执行一次性任务，如 benchmark 测试，仅需结果的任务派发等             | `kimi -p`，详见 [Kimi Code CLI](./print.md)| 执行一次性无交互任务，跑完即退出。                                                                                 |
+| 执行一次性任务，如 benchmark 测试，仅需结果的任务派发等             | `kimi -p`，详见 [print 模式](../reference/kimi-command.md#print-模式) | 执行一次性无交互任务，跑完即退出。                                                                                 |
 | 在其他客户端中集成 Kimi Code，如 IDE、自己开发的客户端等  | ACP 协议，命令为 `kimi acp`，详见 [Kimi Code ACP](../reference/kimi-acp.md) | 接入 Zed、JetBrains 等支持 ACP 的编辑器，与当前窗口绑定并由编辑器执行文件与终端操作。                                                                        |
 | 在其他 Agent 中协同开发或管理会话 | Kimi Agent 协议（本页教程）                  | 连接本机 Kimi Code 进行更复杂的会话交互，如双向交接任务、整理本机历史会话、进行 Agent-to-Agent 讨论等。|
 
@@ -53,5 +53,5 @@ npx skills add https://code.kimi.com/kimi-code/skills/use-kimi-code.md -g
 
 ## 相关文档
 
-- [在脚本与 CI 中使用](./print.md) — 单次非交互执行与 `stream-json` 输出格式
+- [print 模式](../reference/kimi-command.md#print-模式) — 单次执行、结构化输出与退出码
 - [在 IDE 中使用](./ides.md) — 通过 `kimi acp` 接入 Zed 与 JetBrains IDE

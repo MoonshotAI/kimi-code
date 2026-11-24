@@ -140,6 +140,7 @@ export interface SessionEventHost {
   handleTurnStarted?(event: TurnStartedEvent): void;
   handleTurnEnded?(event: TurnEndedEvent): void;
   handlePromptPredictionTurnEnded?(event: TurnEndedEvent): void;
+  handlePromptPredictionIdle?(): void;
   readonly btwPanelController: BtwPanelController;
   readonly tasksBrowserController: TasksBrowserController;
   readonly surveyController: SurveyController;
@@ -468,6 +469,10 @@ export class SessionEventHandler {
     }
     this.pluginMcpToolsUsedInTurn.clear();
     this.scheduleQueuedGoalPromotion();
+    if (event.loopEnd !== undefined) {
+      this.host.streamingUI.finalizeLoopEnd(sendQueued, event.loopEnd.outcome, event.turnId);
+      this.host.handlePromptPredictionIdle?.();
+    }
   }
 
   private handleStepBegin(event: TurnStepStartedEvent): void {
@@ -1203,6 +1208,12 @@ export class SessionEventHandler {
 
   private finishCompaction(sendQueued: (item: QueuedMessage) => void): void {
     const hasActiveTurn = this.host.streamingUI.hasActiveTurn();
+    if (!hasActiveTurn && this.host.state.appState.loopLifecycleEvents === true) {
+      this.host.setAppState({ isCompacting: false });
+      this.host.streamingUI.resumeLoopEnd(sendQueued);
+      this.host.handlePromptPredictionIdle?.();
+      return;
+    }
     if (!hasActiveTurn && !this.host.state.queuedMessageDispatchPending) {
       const next = this.host.shiftQueuedMessage();
       if (next !== undefined) {

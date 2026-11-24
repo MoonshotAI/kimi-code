@@ -149,6 +149,9 @@ describe('AgentPluginService plugin session-start wiring', () => {
       { replace: true },
     );
     await plugins.refreshSessionStart();
+    expect(findPluginSessionStartEventMessages(ctx)).toHaveLength(1);
+
+    await runInjectionBoundary(ctx);
 
     const messages = findPluginSessionStartEventMessages(ctx);
     expect(messages).toHaveLength(2);

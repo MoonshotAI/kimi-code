@@ -195,6 +195,10 @@ class EnvironmentStdioTransport implements Transport {
     };
     const required = ['process'] as const;
     const lease = await this.options.environmentResolver.acquireWhenReady(binding, required);
+    if (this.closed) {
+      lease.dispose();
+      throw new Error('Environment stdio transport is closed');
+    }
     this.lease = lease;
     try {
       const host = lease.environment.host;
@@ -215,10 +219,12 @@ class EnvironmentStdioTransport implements Transport {
         this.options.environmentId === LOCAL_ENVIRONMENT_ID
           ? mergeStdioEnv(this.config.env)
           : (this.config.env ?? {});
-      const process = lease.track(
-        await lease.environment.process!.spawn(this.config.command, this.config.args, { cwd, env }),
-        this.options.sessionId,
-      );
+      const spawned = await lease.environment.process!.spawn(this.config.command, this.config.args, { cwd, env });
+      if (this.closed) {
+        await terminate(spawned);
+        throw new Error('Environment stdio transport is closed');
+      }
+      const process = lease.track(spawned, this.options.sessionId);
       this.process = process;
       this.tracked = lease.track(this, this.options.sessionId);
       process.stdin.on('error', (error: Error) => this.onerror?.(error));
@@ -238,8 +244,10 @@ class EnvironmentStdioTransport implements Transport {
         this.finish();
       });
     } catch (error) {
-      this.lease = undefined;
-      lease.dispose();
+      if (this.lease === lease) {
+        this.lease = undefined;
+        lease.dispose();
+      }
       throw error;
     }
   }
@@ -281,30 +289,7 @@ class EnvironmentStdioTransport implements Transport {
     this.closed = true;
     const process = this.process;
     this.process = undefined;
-    if (process !== undefined) {
-      try {
-        await process.kill();
-        let graceTimer: ReturnType<typeof setTimeout> | undefined;
-        const exited = await Promise.race([
-          process.wait().then(
-            () => true,
-            () => true,
-          ),
-          new Promise<false>((resolve) => {
-            graceTimer = setTimeout(() => {
-              resolve(false);
-            }, STDIO_TERMINATION_GRACE_MS);
-            graceTimer.unref?.();
-          }),
-        ]);
-        if (graceTimer !== undefined) clearTimeout(graceTimer);
-        if (!exited && process.exitCode === null) {
-          await process.kill('SIGKILL');
-          await process.wait();
-        }
-      } catch {}
-      void process.dispose();
-    }
+    if (process !== undefined) await terminate(process);
     this.readBuffer.clear();
     const tracked = this.tracked;
     this.tracked = undefined;
@@ -343,6 +328,31 @@ class EnvironmentStdioTransport implements Transport {
     lease?.dispose();
     this.onclose?.();
   }
+}
+
+async function terminate(process: IHostProcess): Promise<void> {
+  try {
+    await process.kill();
+    let graceTimer: ReturnType<typeof setTimeout> | undefined;
+    const exited = await Promise.race([
+      process.wait().then(
+        () => true,
+        () => true,
+      ),
+      new Promise<false>((resolve) => {
+        graceTimer = setTimeout(() => {
+          resolve(false);
+        }, STDIO_TERMINATION_GRACE_MS);
+        graceTimer.unref?.();
+      }),
+    ]);
+    if (graceTimer !== undefined) clearTimeout(graceTimer);
+    if (!exited && process.exitCode === null) {
+      await process.kill('SIGKILL');
+      await process.wait();
+    }
+  } catch {}
+  void process.dispose();
 }
 
 class BoundedTail {

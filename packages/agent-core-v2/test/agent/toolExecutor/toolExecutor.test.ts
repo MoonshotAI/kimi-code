@@ -45,10 +45,10 @@ import {
   runLegacyStarting,
   runLegacyBeforeExecute,
 } from '#/agent/toolExecutor/legacyHooks';
+import { toolExecutorHook } from '../../harness/toolHooks';
 import {
   LegacyExecutableToolAdapter,
   ToolExecutor as HandlerToolExecutor,
-  composeToolExecutorHooks,
   fileOutputStore,
   isToolDetachAck,
   legacyToolDurationMs,
@@ -2246,7 +2246,7 @@ describe('ToolExecutor handler kernel', () => {
         events.push('execute');
         return { content: textToolContent('raw') };
       },
-    }], { hook: composeToolExecutorHooks([first, second]) });
+    }], { hook: toolExecutorHook([first, second]) });
 
     const handler = executor.execute(toolCall('hooked-1', 'hooked', {}), undefined);
     const response = Promise.resolve(handler);
@@ -2534,6 +2534,8 @@ describe('ToolExecutor handler kernel', () => {
       ],
       outcome: { type: 'success' },
     });
+    expect(final.durationMs).toBeTypeOf('number');
+    expect(final.durationMs).toBe(legacyToolDurationMs(handler.snapshot()));
     expect(final).not.toHaveProperty('stopTurn');
     expect(final).not.toHaveProperty('note');
     expect(final).not.toHaveProperty('spill');
@@ -2548,6 +2550,7 @@ describe('ToolExecutor handler kernel', () => {
         ...textToolContent('finalized note'),
       ],
       outcome: { type: 'failed', error: { type: 'error' } },
+      durationMs: 0,
     });
     const successfulSynthetic = executor.execute(
       toolCall('legacy-3', 'legacy', { synthetic: 'success' }),
@@ -2559,6 +2562,7 @@ describe('ToolExecutor handler kernel', () => {
         ...textToolContent('success note'),
       ],
       outcome: { type: 'success' },
+      durationMs: 0,
     });
     expect(startingCalls).toBe(1);
     expect(permittingCalls).toBe(1);
@@ -2697,14 +2701,18 @@ describe('ToolExecutor handler kernel', () => {
       await expect(stopping).resolves.toMatchObject({
         content: textToolContent('finalized cooperative output'),
         outcome: { type: 'aborted', error: { type: 'stopped', reason: 'stop cooperative' } },
+        durationMs: 0,
       });
       expect(finalizerCalls).toEqual(['cooperative-1']);
       expect(legacyToolDurationMs(cooperative.snapshot())).toBe(0);
 
       await advance(1);
-      await expect(hangingStop).resolves.toMatchObject({
+      const hangingResult = await hangingStop;
+      expect(hangingResult).toMatchObject({
         outcome: { type: 'aborted', error: { type: 'abandoned', reason: 'stop hanging' } },
+        durationMs: 2_000,
       });
+      expect(hangingResult.durationMs).toBe(legacyToolDurationMs(hanging.snapshot()));
       expect(cooperative.snapshot().error).toMatchObject({ type: 'stopped' });
       expect(hanging.snapshot().error).toMatchObject({ type: 'abandoned' });
       expect(legacyToolDurationMs(hanging.snapshot())).toBe(2_000);
@@ -2736,6 +2744,7 @@ describe('ToolExecutor handler kernel', () => {
       await advance(1);
       await expect(slowSettled).resolves.toMatchObject({
         outcome: { type: 'aborted', error: { type: 'abandoned', reason: 'stop slow finalizer' } },
+        durationMs: 100,
       });
       await expect(slowStopping).resolves.toMatchObject({
         outcome: { type: 'aborted', error: { type: 'abandoned' } },
@@ -2754,5 +2763,53 @@ describe('ToolExecutor handler kernel', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('fills returned durations from the injected preparation clock', async () => {
+    let now = 0;
+    const timed: ExecutableTool<Record<string, unknown>> = {
+      name: 'timed',
+      description: 'timed',
+      parameters: { type: 'object', additionalProperties: true },
+      resolveExecution: (args) => {
+        if (args['synthetic'] === true) {
+          return { output: 'synthetic output' } as unknown as ToolExecution;
+        }
+        return {
+          approvalRule: 'timed',
+          execute: async () => {
+            now = 40;
+            if (args['fail'] === true) return { output: 'timed failure', isError: true };
+            return { output: 'timed output' };
+          },
+        };
+      },
+    };
+    const executor = new HandlerToolExecutor([
+      new LegacyExecutableToolAdapter(timed, undefined, () => now),
+    ]);
+    const agentContext = {
+      origin: 'loop' as const,
+      turnId: 3,
+      trace: { requestId: 'trace-timed' },
+      metadata: { source: 'test' },
+      steerSignal: new AbortController().signal,
+      remind: vi.fn(),
+    };
+
+    const ran = executor.execute(toolCall('timed-1', 'timed', {}), agentContext);
+    expect(await ran.wait()).toMatchObject({ outcome: { type: 'success' }, durationMs: 40 });
+    expect(ran.snapshot().prepared?.durationMs).toBe(40);
+
+    now = 0;
+    const failed = executor.execute(toolCall('timed-2', 'timed', { fail: true }), agentContext);
+    expect(await failed.wait()).toMatchObject({
+      outcome: { type: 'failed', error: { type: 'error' } },
+      durationMs: 40,
+    });
+
+    const synthetic = executor.execute(toolCall('timed-3', 'timed', { synthetic: true }), agentContext);
+    expect(await synthetic.wait()).toMatchObject({ outcome: { type: 'success' }, durationMs: 0 });
+    expect(legacyToolDurationMs(synthetic.snapshot())).toBe(0);
   });
 });

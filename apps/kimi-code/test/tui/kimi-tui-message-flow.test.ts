@@ -6316,6 +6316,31 @@ command = "vim"
       expect(session.prompt).toHaveBeenCalledWith('second', { promptId: undefined });
     });
     expect(driver.state.queuedMessages).toEqual([]);
+
+    const compacting = await makeDriver();
+    compacting.driver.state.appState.loopLifecycleEvents = true;
+    compacting.driver.state.appState.streamingPhase = 'waiting';
+    compacting.driver.state.appState.isCompacting = true;
+    const compactingSend = vi.fn();
+    compacting.driver.handleUserInput('held for compaction');
+    compacting.driver.sessionEventHandler.handleEvent(
+      { type: 'turn.ended', agentId: 'main', sessionId: 'ses-1', turnId: 4, reason: 'completed', loopEnd: { outcome: 'idle' } } as Event,
+      compactingSend,
+    );
+    expect(compactingSend).not.toHaveBeenCalled();
+    expect(compacting.driver.state.queuedMessages.map((item) => item.text)).toEqual(['held for compaction']);
+
+    compacting.driver.sessionEventHandler.handleEvent(
+      {
+        type: 'compaction.completed',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        result: { summary: 's', compactedCount: 1, tokensBefore: 10, tokensAfter: 5 },
+      } as Event,
+      compactingSend,
+    );
+    await vi.waitFor(() => expect(compactingSend).toHaveBeenCalledOnce());
+    expect(compacting.driver.state.queuedMessages).toEqual([]);
   });
 
   it('compacts and switches before sending the next queued prompt', async () => {
@@ -8730,7 +8755,7 @@ capabilities = ["image_in", "video_in"]
   it('dispatches the next queued message after the active turn ends', async () => {
     vi.useFakeTimers();
     try {
-      const { driver } = await makeDriver();
+      const { driver, session } = await makeDriver();
       const sendQueued = vi.fn();
       driver.state.appState.streamingPhase = 'waiting';
       driver.state.appState.streamingStartTime = 1;
@@ -8752,6 +8777,146 @@ capabilities = ["image_in", "video_in"]
       expect(sendQueued).toHaveBeenCalledWith({ text: 'next' });
       expect(driver.state.queuedMessages).toEqual([]);
       expect(driver.state.appState.streamingPhase).toBe('idle');
+
+      const main = { agentId: 'main', sessionId: 'ses-1' };
+      const handoffQueued = vi.fn();
+      driver.state.appState.streamingPhase = 'waiting';
+      driver.state.appState.loopLifecycleEvents = true;
+      driver.state.appState.notifications = { enabled: true, condition: 'always' };
+      driver.handleUserInput('first');
+
+      driver.sessionEventHandler.handleEvent(
+        { ...main, type: 'turn.ended', turnId: 2, reason: 'completed' } as Event,
+        handoffQueued,
+      );
+      await vi.advanceTimersByTimeAsync(100);
+      driver.handleUserInput('second');
+
+      expect(driver.state.queuedMessages.map((item) => item.text)).toEqual(['first', 'second']);
+      expect(session.prompt).not.toHaveBeenCalled();
+      expect(session.steer).not.toHaveBeenCalled();
+      expect(handoffQueued).not.toHaveBeenCalled();
+      expect(driver.state.terminalState.notificationKeys.has('turn-complete:2')).toBe(false);
+
+      driver.sessionEventHandler.handleEvent(
+        {
+          ...main, type: 'turn.started', turnId: 3,
+          origin: { kind: 'task', taskId: 'bash-demo', status: 'killed', notificationId: 'task:bash-demo:killed' },
+        } as Event,
+        handoffQueued,
+      );
+      driver.sessionEventHandler.handleEvent(
+        { ...main, type: 'turn.ended', turnId: 3, reason: 'completed', stopReason: 'notify', loopEnd: { outcome: 'idle' } } as Event,
+        handoffQueued,
+      );
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(handoffQueued).toHaveBeenCalledOnce();
+      expect(handoffQueued).toHaveBeenCalledWith(expect.objectContaining({ text: 'first' }));
+      expect(driver.state.queuedMessages.map((item) => item.text)).toEqual(['second']);
+      expect(driver.state.terminalState.notificationKeys.has('turn-complete:3')).toBe(false);
+
+      driver.sessionEventHandler.handleEvent(
+        { ...main, type: 'turn.started', turnId: 4, origin: { kind: 'user' } } as Event,
+        handoffQueued,
+      );
+      driver.sessionEventHandler.handleEvent(
+        { ...main, type: 'turn.ended', turnId: 4, reason: 'completed', loopEnd: { outcome: 'idle' } } as Event,
+        handoffQueued,
+      );
+      await vi.advanceTimersByTimeAsync(0);
+      expect(handoffQueued).toHaveBeenCalledTimes(2);
+      expect(handoffQueued).toHaveBeenLastCalledWith(expect.objectContaining({ text: 'second' }));
+      expect(driver.state.terminalState.notificationKeys.has('turn-complete:4')).toBe(false);
+
+      driver.sessionEventHandler.handleEvent(
+        { ...main, type: 'turn.started', turnId: 5, origin: { kind: 'user' } } as Event,
+        handoffQueued,
+      );
+      driver.sessionEventHandler.handleEvent(
+        { ...main, type: 'turn.ended', turnId: 5, reason: 'completed', loopEnd: { outcome: 'idle' } } as Event,
+        handoffQueued,
+      );
+      await vi.advanceTimersByTimeAsync(0);
+      expect(handoffQueued).toHaveBeenCalledTimes(2);
+      expect(driver.state.terminalState.notificationKeys.has('turn-complete:5')).toBe(true);
+
+      const raced = await makeDriver();
+      raced.driver.state.appState.loopLifecycleEvents = true;
+      raced.driver.state.appState.streamingPhase = 'waiting';
+      const racedSend = vi.fn();
+      raced.driver.handleUserInput('requeue for compaction');
+      raced.driver.sessionEventHandler.handleEvent(
+        { ...main, type: 'turn.ended', turnId: 1, reason: 'completed', loopEnd: { outcome: 'idle' } } as Event,
+        racedSend,
+      );
+      raced.driver.state.appState.isCompacting = true;
+      await vi.advanceTimersByTimeAsync(0);
+      expect(racedSend).not.toHaveBeenCalled();
+      expect(raced.driver.state.queuedMessages.map((item) => item.text)).toEqual(['requeue for compaction']);
+      raced.driver.sessionEventHandler.handleEvent(
+        { ...main, type: 'compaction.cancelled' } as Event,
+        racedSend,
+      );
+      await vi.advanceTimersByTimeAsync(0);
+      expect(racedSend).toHaveBeenCalledWith(expect.objectContaining({ text: 'requeue for compaction' }));
+
+      const stale = await makeDriver();
+      stale.driver.state.appState.loopLifecycleEvents = true;
+      stale.driver.state.appState.streamingPhase = 'waiting';
+      const staleSend = vi.fn();
+      stale.driver.handleUserInput('new work');
+      stale.driver.sessionEventHandler.handleEvent(
+        { ...main, type: 'turn.ended', turnId: 1, reason: 'completed', loopEnd: { outcome: 'idle' } } as Event,
+        staleSend,
+      );
+      await vi.advanceTimersByTimeAsync(0);
+      expect(staleSend).toHaveBeenCalledOnce();
+      stale.driver.state.appState.streamingPhase = 'waiting';
+      stale.driver.sessionEventHandler.handleEvent(
+        { ...main, type: 'turn.ended', turnId: 1, reason: 'completed', loopEnd: { outcome: 'idle' } } as Event,
+        staleSend,
+      );
+      await vi.advanceTimersByTimeAsync(0);
+      expect(staleSend).toHaveBeenCalledOnce();
+      expect(stale.driver.state.appState.streamingPhase).toBe('waiting');
+
+      const versioned = await makeDriver();
+      versioned.driver.state.appState.loopLifecycleEvents = true;
+      versioned.driver.state.appState.streamingPhase = 'waiting';
+      versioned.driver.sessionEventHandler.handleEvent(
+        { ...main, type: 'turn.ended', turnId: 7, reason: 'completed', loopEnd: { outcome: 'drained' } } as Event,
+        vi.fn(),
+      );
+      expect(versioned.driver.state.appState.streamingPhase).toBe('idle');
+      versioned.driver.state.appState.streamingPhase = 'waiting';
+      versioned.driver.sessionEventHandler.handleEvent(
+        { ...main, type: 'turn.ended', turnId: 6, reason: 'completed', loopEnd: { outcome: 'idle' } } as Event,
+        vi.fn(),
+      );
+      expect(versioned.driver.state.appState.streamingPhase).toBe('waiting');
+      versioned.driver.sessionEventHandler.handleEvent(
+        { ...main, type: 'turn.ended', turnId: 8, reason: 'completed', loopEnd: { outcome: 'idle' } } as Event,
+        vi.fn(),
+      );
+      expect(versioned.driver.state.appState.streamingPhase).toBe('idle');
+
+      const switched = await makeDriver();
+      switched.driver.state.appState.loopLifecycleEvents = true;
+      switched.driver.state.appState.streamingPhase = 'waiting';
+      switched.driver.sessionEventHandler.handleEvent(
+        { ...main, type: 'turn.ended', turnId: 7, reason: 'completed', loopEnd: { outcome: 'idle' } } as Event,
+        vi.fn(),
+      );
+      expect(switched.driver.state.appState.streamingPhase).toBe('idle');
+      (switched.driver as unknown as { resetSessionRuntime(): void }).resetSessionRuntime();
+      switched.driver.state.appState.loopLifecycleEvents = true;
+      switched.driver.state.appState.streamingPhase = 'waiting';
+      switched.driver.sessionEventHandler.handleEvent(
+        { ...main, type: 'turn.ended', turnId: 1, reason: 'completed', loopEnd: { outcome: 'idle' } } as Event,
+        vi.fn(),
+      );
+      expect(switched.driver.state.appState.streamingPhase).toBe('idle');
     } finally {
       vi.useRealTimers();
     }

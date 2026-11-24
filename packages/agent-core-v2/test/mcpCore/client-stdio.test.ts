@@ -657,6 +657,109 @@ describe('StdioMcpClient', () => {
     );
     await expect(client.connect()).rejects.toThrow(/Connection closed/);
   }, 10000);
+
+  function stubServerProcess(): { readonly process: IHostProcess; readonly signals: (NodeJS.Signals | undefined)[] } {
+    const signals: (NodeJS.Signals | undefined)[] = [];
+    let exit!: (code: number) => void;
+    const exited = new Promise<number>((resolve) => {
+      exit = resolve;
+    });
+    return {
+      signals,
+      process: {
+        _serviceBrand: undefined,
+        pid: 4242,
+        exitCode: null,
+        stdin: new PassThrough(),
+        stdout: new PassThrough(),
+        stderr: new PassThrough(),
+        wait: () => exited,
+        kill: async (signal) => {
+          signals.push(signal);
+          exit(143);
+        },
+        dispose: () => {},
+      },
+    };
+  }
+
+  function gatedEnvironmentClient(spawn: IHostProcessService['spawn']): {
+    readonly client: StdioMcpClient;
+    readonly connectEnvironment: () => void;
+    readonly leaseReleases: () => number;
+  } {
+    let connectEnvironment!: () => void;
+    const connected = new Promise<void>((resolve) => {
+      connectEnvironment = resolve;
+    });
+    let releases = 0;
+    const environment = Object.assign(
+      new FakeEnvironment({ environmentId: 'dev-box', generation: 'test' }, { capabilities: ['process'] }),
+      { process: { _serviceBrand: undefined, spawn } satisfies IHostProcessService },
+    );
+    const lease = (): EnvironmentLease => ({
+      environment,
+      track: (resource) => resource,
+      dispose: () => {
+        releases += 1;
+      },
+    });
+    const client = new StdioMcpClient(
+      { transport: 'stdio', command: 'server', args: [] },
+      {
+        environmentResolver: {
+          _serviceBrand: undefined,
+          inspect: () => environment,
+          acquire: lease,
+          acquireWhenReady: async () => {
+            await connected;
+            return lease();
+          },
+        },
+        environmentId: 'dev-box',
+      },
+    );
+    return { client, connectEnvironment, leaseReleases: () => releases };
+  }
+
+  it('starts no server when it is closed while its environment is still connecting', async () => {
+    const spawns: string[] = [];
+    const harness = gatedEnvironmentClient(async (command) => {
+      spawns.push(command);
+      return stubServerProcess().process;
+    });
+    const connecting = harness.client.connect();
+    await harness.client.close();
+    harness.connectEnvironment();
+
+    await expect(connecting).rejects.toThrow();
+    expect(spawns).toEqual([]);
+    expect(harness.leaseReleases()).toBe(1);
+  });
+
+  it('stops the server it was starting when it is closed meanwhile', async () => {
+    const server = stubServerProcess();
+    let spawnStarted!: () => void;
+    const spawning = new Promise<void>((resolve) => {
+      spawnStarted = resolve;
+    });
+    let finishSpawn!: () => void;
+    const harness = gatedEnvironmentClient(() => {
+      spawnStarted();
+      return new Promise((resolve) => {
+        finishSpawn = () => resolve(server.process);
+      });
+    });
+    harness.connectEnvironment();
+    const connecting = harness.client.connect();
+    await spawning;
+    await harness.client.close();
+    finishSpawn();
+
+    await expect(connecting).rejects.toThrow();
+    expect(server.signals).toEqual([undefined]);
+    expect(harness.leaseReleases()).toBe(1);
+  });
 });
 
 describe('mergeStdioEnv', () => {

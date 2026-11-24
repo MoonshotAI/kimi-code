@@ -93,6 +93,7 @@
         ./apps/vis/web
         ./docs
         ./tests/scenarios
+        ./tests/e2e
       ];
 
       workspaceNames = [
@@ -128,6 +129,7 @@
         "@moonshot-ai/vis-web"
         "kimi-code-docs"
         "@moonshot-ai/scenarios"
+        "@moonshot-ai/e2e"
       ];
     in
     {
@@ -179,7 +181,7 @@
               inherit (finalAttrs) pname version src pnpmWorkspaces;
               inherit pnpm;
               fetcherVersion = 5;
-              hash = "sha256-AFS+3QIuvVPuEHmSIi6m9oEdjlW/6+tAJAndDDXWVrM=";
+              hash = "sha256-NJ2AG6AYYAdtxTrshOxEQ3qaxAmHRkX44vkwWSeOHAI=";
             };
 
             nativeBuildInputs = [

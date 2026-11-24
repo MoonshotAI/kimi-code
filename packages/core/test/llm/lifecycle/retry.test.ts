@@ -257,4 +257,57 @@ describe('LLM retry boundaries', () => {
     expect(recoveredBody).not.toContain('data:image/png;base64,AAAA');
     expect(recoveredBody).toContain('[image omitted for provider compatibility');
   });
+
+  it('as a user, I want oversized requests to drop only older media and send the degraded placeholder text', async () => {
+    const replies = [
+      rawMockResponse('openai-chat', {
+        status: 413,
+        json: { error: { message: 'request too large', type: 'invalid_request_error' } },
+      }),
+      rawMockResponse('openai-chat', {
+        headers: { 'x-request-id': 'req-success' },
+        sse: { events: [openAIChunk({ content: 'recovered' }, { finishReason: 'stop' })] },
+      }),
+    ];
+    let sends = 0;
+    server().llm.on(
+      { predicate: () => true },
+      () => replies[Math.min(sends++, replies.length - 1)]!,
+    );
+
+    const result = await runGenerate(openAIProtocol, {
+      module: testModule({
+        messages: [{
+          role: 'user',
+          content: [
+            { type: 'image_url', imageUrl: { url: 'data:image/png;base64,OLDER' } },
+            { type: 'image_url', imageUrl: { url: 'data:image/png;base64,RECENT1' } },
+            { type: 'image_url', imageUrl: { url: 'data:image/png;base64,RECENT2' } },
+          ],
+        }],
+      }),
+      endpoint: aimockEndpoint(server().url),
+      policy: {
+        retry: { maxAttemptsPerStep: 1 },
+        recoveries: [createMediaDegradeRecovery()],
+      },
+    });
+
+    expect(doneOutcome(result.outcome).message.content).toEqual([{ type: 'text', text: 'recovered' }]);
+    expect(result.events.find((event) => event.type === 'llm.retry')).toMatchObject({
+      reason: 'recovery',
+      strategy: 'media-degrade',
+      action: 'degraded',
+    });
+    const requests = server().llm.getRequests();
+    expect(requests).toHaveLength(2);
+    const recoveredBody = JSON.stringify(requests[1]?.body);
+    expect(recoveredBody).not.toContain('data:image/png;base64,OLDER');
+    expect(recoveredBody).toContain('data:image/png;base64,RECENT1');
+    expect(recoveredBody).toContain('data:image/png;base64,RECENT2');
+    expect(recoveredBody).toContain(
+      '[image omitted: dropped to fit the provider request size limit; re-read the file to view it]',
+    );
+    expect(recoveredBody).not.toContain('omitted":');
+  });
 });

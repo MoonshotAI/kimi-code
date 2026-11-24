@@ -46,7 +46,7 @@ test('approval decisions under Always Ask: approve, approve for session, reject 
     const result = model.request(1).messages.find(message => message.role === 'tool');
     expect(textOf(result?.content)).toContain('first-approved');
     await transcript.getByText(FIRST).first().click();
-    await expect(transcript.getByText('first-approved', { exact: true })).toBeVisible();
+    await expect(transcript.locator('.op').getByText('first-approved', { exact: true })).toBeVisible();
     await app.snapshot('command-output-after-approve');
   });
 

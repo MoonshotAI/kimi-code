@@ -103,8 +103,8 @@ function select(option: ScopeOption): void {
       <Icon name="chevron-down" size="sm" />
       <span v-if="attentionElsewhere" class="dss-dot" aria-hidden="true" />
     </button>
-    <Transition name="menu-pop">
-      <Menu v-if="open" ref="menuRef" class="dss-menu" :style="menuStyle" @click.stop>
+    <Transition name="ui-menu-pop">
+      <Menu v-if="open" ref="menuRef" class="ui-menu-floating dss-menu" :style="menuStyle" @click.stop>
         <MenuItem
           v-for="option in options"
           :key="option.key"
@@ -130,7 +130,7 @@ function select(option: ScopeOption): void {
 .dss:focus-visible { outline: none; box-shadow: var(--p-focus-ring); }
 .dss-name { overflow: hidden; min-width: 0; text-overflow: ellipsis; white-space: nowrap; }
 .dss-dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--color-warning); }
-.dss-menu { position: fixed; top: 0; left: 0; z-index: var(--z-dropdown); min-width: 220px; font-weight: normal; text-transform: none; }
+.dss-menu { min-width: 220px; font-weight: normal; text-transform: none; }
 .dss-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dss-hint { flex: none; color: var(--color-text-faint); font-size: var(--text-xs); }
 .dss-hint--waiting { color: var(--color-warning); }

@@ -163,6 +163,12 @@ export interface QuitConfirmationEvent {
   action: 'shown' | 'quit' | 'cancel';
 }
 
+export interface UpdateSessionContinueEvent {
+  outcome: 'armed' | 'not_updated' | 'expired' | 'attempted';
+  session_count: number;
+  continued_count?: number;
+}
+
 export interface GlobalShortcutRegisterFailedEvent {
   action: 'summonApp' | 'captureScreenshot';
   reason: 'invalid' | 'conflicted';
@@ -263,6 +269,7 @@ export interface DesktopEventPayloads {
   menu_action: MenuActionEvent;
   tray_action: TrayActionEvent;
   quit_confirmation: QuitConfirmationEvent;
+  update_session_continue: UpdateSessionContinueEvent;
   global_shortcut_invoked: GlobalShortcutInvokedEvent;
   global_shortcut_register_failed: GlobalShortcutRegisterFailedEvent;
   window_lifecycle: WindowLifecycleEvent;
@@ -302,6 +309,9 @@ export interface DesktopEventPayloads {
   remote_control_action: RemoteControlActionEvent;
   session_busy_longtasks: SessionBusyLongtasksEvent;
   session_open_timing: SessionOpenTimingEvent;
+  prediction_shown: RendererEventPayloads['prediction_shown'];
+  prediction_accepted: RendererEventPayloads['prediction_accepted'];
+  prediction_submitted: RendererEventPayloads['prediction_submitted'];
   browser_operation_result: BrowserOperationResultEvent;
   browser_control_changed: BrowserControlChangedEvent;
   browser_mcp_reconnect: BrowserMcpReconnectEvent;

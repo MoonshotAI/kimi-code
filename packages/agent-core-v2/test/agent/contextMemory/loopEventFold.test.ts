@@ -113,6 +113,57 @@ describe('loop-event fold parity', () => {
     expect(folded).toEqual(baseline);
   });
 
+  it('rebuilds tool call arguments byte-for-byte from argsRaw', () => {
+    const raw = '{ "q":  "moon", "limit": 1e3, "big": 9007199254740993, "esc": "\\u0041", "q": "dup" }';
+    const folded = foldAll([], [
+      { type: 'step.begin', uuid: 's1' },
+      {
+        type: 'tool.call',
+        stepUuid: 's1',
+        toolCallId: 'c1',
+        name: 'Bash',
+        args: { q: 'dup', limit: 1000, big: 9007199254740992, esc: 'A' },
+        argsRaw: raw,
+      },
+      { type: 'tool.result', toolCallId: 'c1', result: { output: 'ok' } },
+      { type: 'step.end', uuid: 's1' },
+    ]);
+    const assistant = folded[0];
+    if (assistant?.role !== 'assistant') throw new Error('expected assistant message');
+    expect(assistant.toolCalls[0]?.arguments).toBe(raw);
+  });
+
+  it('keeps invalid or empty raw arguments unencoded instead of double-encoding them', () => {
+    const folded = foldAll([], [
+      { type: 'step.begin', uuid: 's1' },
+      {
+        type: 'tool.call',
+        stepUuid: 's1',
+        toolCallId: 'c1',
+        name: 'Bash',
+        args: '{"command": "ls"',
+        argsRaw: '{"command": "ls"',
+      },
+      { type: 'tool.call', stepUuid: 's1', toolCallId: 'c2', name: 'Bash', args: '', argsRaw: '' },
+      { type: 'step.end', uuid: 's1' },
+    ]);
+    const assistant = folded[0];
+    if (assistant?.role !== 'assistant') throw new Error('expected assistant message');
+    expect(assistant.toolCalls.map((call) => call.arguments)).toEqual(['{"command": "ls"', '']);
+  });
+
+  it('rebuilds arguments from parsed args for legacy records without argsRaw', () => {
+    const folded = foldAll([], [
+      { type: 'step.begin', uuid: 's1' },
+      { type: 'tool.call', stepUuid: 's1', toolCallId: 'c1', name: 'Bash', args: { q: 'moon' } },
+      { type: 'tool.call', stepUuid: 's1', toolCallId: 'c2', name: 'Bash' },
+      { type: 'step.end', uuid: 's1' },
+    ]);
+    const assistant = folded[0];
+    if (assistant?.role !== 'assistant') throw new Error('expected assistant message');
+    expect(assistant.toolCalls.map((call) => call.arguments)).toEqual(['{"q":"moon"}', null]);
+  });
+
   it('folds an errored tool result into the append_message shape', () => {
     const baseline = comparable(
       appendAll([], [

@@ -87,8 +87,8 @@ defineExpose({ toggle, openContext, close });
 </script>
 
 <template>
-  <Transition name="menu-pop">
-    <Menu v-if="open && target" ref="menuRef" class="workspace-menu" :style="menuStyle" @click.stop>
+  <Transition name="ui-menu-pop">
+    <Menu v-if="open && target" ref="menuRef" class="ui-menu-floating workspace-menu" :style="menuStyle" @click.stop>
       <MenuItem @click="act('pin')">
         <Icon :name="targetPinned ? 'unpin' : 'pin'" size="sm" />
         {{ targetPinned ? t('sidebar.unpin') : t('sidebar.pin') }}
@@ -118,26 +118,4 @@ defineExpose({ toggle, openContext, close });
 </template>
 
 <style scoped>
-.workspace-menu {
-  position: fixed;
-  top: 0;
-  left: 0;
-  z-index: var(--z-dropdown);
-}
-.menu-pop-enter-active {
-  transition:
-    opacity var(--duration-base) var(--ease-out),
-    transform var(--duration-base) var(--ease-out);
-}
-.menu-pop-leave-active {
-  transition:
-    opacity var(--duration-fast) var(--ease-out),
-    transform var(--duration-fast) var(--ease-out);
-  pointer-events: none;
-}
-.menu-pop-enter-from,
-.menu-pop-leave-to {
-  opacity: 0;
-  transform: scale(0.97) translateY(var(--menu-pop-shift, -2px));
-}
 </style>

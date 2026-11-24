@@ -252,8 +252,13 @@ export class SshDeviceBridge extends DeviceBridgeState implements DeviceBridge {
     return this.establishOnce();
   }
 
+  resumeIfIdle(): Promise<DeviceSession> | undefined {
+    if (this.disposed || this.statusValue !== 'ready' || this.sessionValue !== undefined) return undefined;
+    return this.establishOnce();
+  }
+
   upgrade(): Promise<DeviceUpgradeResult> {
-    if (this.disposed) return Promise.reject(new DeviceConnectError('unknown', 'device bridge disposed'));
+    if (this.disposed) return this.rejectDisposed();
     if (isUpgrading(this.upgradeValue)) return Promise.reject(new DeviceUpgradeInProgressError());
     this.upgradeFrom = this.remoteVersionValue;
     this.setUpgrade({ status: 'installing' });

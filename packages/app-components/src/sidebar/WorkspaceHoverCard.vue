@@ -3,7 +3,7 @@ import { computed } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { WorkspaceView } from '@moonshot-ai/app-core/client/types';
 import { workspaceFolders } from '@moonshot-ai/app-core/client';
-import { Icon } from '@moonshot-ai/app-ui';
+import { Icon, Menu } from '@moonshot-ai/app-ui';
 import { devicesStore } from '@moonshot-ai/app-client/stores';
 import WorkspaceIcon from '../WorkspaceIcon.vue';
 import { useDeviceFailureText } from '../composables/useDeviceFailureText';
@@ -30,7 +30,7 @@ const deviceFailure = computed(() => {
 </script>
 
 <template>
-  <div class="workspace-hover-card" data-workspace-hover-card role="dialog" :aria-label="workspace.name">
+  <Menu class="workspace-hover-card" data-workspace-hover-card role="dialog" :register="false" :aria-label="workspace.name">
     <div class="whc-head">
       <span class="whc-title">{{ workspace.name }}</span>
     </div>
@@ -64,7 +64,7 @@ const deviceFailure = computed(() => {
         </button>
       </template>
     </div>
-  </div>
+  </Menu>
 </template>
 
 <style scoped>
@@ -74,12 +74,6 @@ const deviceFailure = computed(() => {
   z-index: var(--z-dropdown);
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding: var(--space-1);
-  border: var(--p-hairline) solid var(--color-line);
-  border-radius: var(--radius-lg);
-  background: var(--color-menu-bg, var(--color-surface-raised));
-  box-shadow: var(--shadow-menu, var(--shadow-sm));
-  backdrop-filter: var(--p-menu-backdrop, blur(20px));
   color: var(--color-text);
   font-family: var(--font-ui);
   user-select: none;

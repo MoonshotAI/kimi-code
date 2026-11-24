@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { v4 as randomUUID } from 'uuid';
 import { computed, nextTick, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { AppDevice, AppDeviceConnectFailure, AppDeviceUpgradeStatus, AppSshConfigHost, AppSshConfigHosts, AppSshDeviceDefinition } from '@moonshot-ai/app-core/api';
@@ -42,7 +43,7 @@ const testing = ref(false);
 const error = ref('');
 const testFailure = ref<{ failure?: AppDeviceConnectFailure; reason: string; hint: string; detail: string }>();
 const pendingIds = ref<Record<string, boolean>>({});
-const backButton = ref<HTMLButtonElement>();
+const backButton = ref<InstanceType<typeof IconButton>>();
 const nameInput = ref<InstanceType<typeof Input>>();
 const loadFailed = ref(false);
 const sshHosts = ref<AppSshConfigHosts | null>(null);
@@ -327,7 +328,7 @@ function fillForm(row: AppDevice | undefined): void {
 function openAddPage(): void {
   if (detectedHosts.value.length > 0) {
     addTab.value = 'config';
-    void nextTick(() => backButton.value?.focus({ preventScroll: true }));
+    void nextTick(() => backButton.value?.el?.focus({ preventScroll: true }));
     return;
   }
   addTab.value = 'manual';
@@ -425,7 +426,7 @@ async function test(): Promise<boolean> {
 
 function newDeviceId(): string {
   let deviceId: string;
-  do deviceId = `device-${crypto.randomUUID().slice(0, 8)}`;
+  do deviceId = `device-${randomUUID().slice(0, 8)}`;
   while (store.devices.some((row) => row.id === deviceId));
   return deviceId;
 }
@@ -580,14 +581,14 @@ void loadHosts();
 <template>
   <section ref="rootEl" :class="subpage ? 're-page' : 're'" @keydown="onKeydown">
     <div v-if="subpage" class="re-page-head">
-      <button ref="backButton" type="button" class="re-back" :aria-label="t('settings.devices.back')" @click="back">
+      <IconButton ref="backButton" class="re-nav" size="sm" :label="t('settings.devices.back')" @click="back">
         <Icon name="arrow-left" size="sm" />
-      </button>
+      </IconButton>
       <span class="re-page-title">{{ pageMode === 'edit' && original ? deviceDisplayName(original) : t('settings.devices.add') }}</span>
     </div>
     <div v-else class="re-head">
       <slot name="title">
-        <h3 class="re-title">{{ t('settings.devices.sshTitle') }}</h3>
+        <h3 class="sec-title">{{ t('settings.devices.sshTitle') }}</h3>
       </slot>
       <Button variant="secondary" size="sm" :disabled="busy" @click="startAdd">
         <Icon name="plus" size="sm" />{{ t('settings.devices.addHost') }}
@@ -662,7 +663,7 @@ void loadHosts();
 
     <section v-else-if="showHostPicker" class="re-hosts" :aria-label="t('settings.devices.sshHostsTitle')">
       <p v-if="sshHostsFailed" class="re-hosts-note">{{ t('settings.devices.sshHostsFailed') }}</p>
-      <div v-else-if="detectedHosts.length > 0" class="re-group re-hosts-list" role="list">
+      <div v-else-if="detectedHosts.length > 0" class="settings-group re-hosts-list" role="list">
         <div v-for="entry in detectedHosts" :key="entry.alias" class="re-row re-host" role="listitem">
           <span class="re-row-copy">
             <span class="re-row-name">{{ entry.alias }}</span>
@@ -678,7 +679,7 @@ void loadHosts();
     </section>
 
     <template v-else>
-      <div v-if="showDeviceList" class="re-group" role="list" :aria-label="t('settings.devices.sshTitle')">
+      <div v-if="showDeviceList" class="settings-group" role="list" :aria-label="t('settings.devices.sshTitle')">
         <div v-if="sshDevices.length === 0" class="re-empty">
           {{ detectedHosts.length > 0 ? t('settings.devices.emptyDetectedHint', { count: detectedHosts.length }) : t('settings.devices.emptyHint') }}
         </div>
@@ -691,17 +692,17 @@ void loadHosts();
                   <StatusDot :status="dotFor(row)" />
                   <span class="re-row-state">{{ stateLabel(row) }}</span>
                   <span v-if="upgradeOf(row) === 'failed' && row.upgradeError" class="re-row-detail" :title="row.upgradeError">{{ row.upgradeError.split('\n', 1)[0] }}</span>
-                  <button
-                    v-else-if="showsFailure(row)"
-                    type="button"
-                    class="re-row-detail re-row-error re-row-details"
-                    :title="row.connectError ?? ''"
-                    :aria-expanded="failureOpen(row)"
-                    @click.stop="toggleDetail(row.id)"
-                  >
-                    <span class="re-row-details-text">{{ rowFailureSummary(row) }}</span>
-                    <Icon :name="failureOpen(row) ? 'chevron-down' : 'chevron-right'" size="sm" />
-                  </button>
+                  <Tooltip v-else-if="showsFailure(row)" :text="row.connectError">
+                    <button
+                      type="button"
+                      class="re-row-detail re-row-error re-row-details"
+                      :aria-expanded="failureOpen(row)"
+                      @click.stop="toggleDetail(row.id)"
+                    >
+                      <span class="re-row-details-text">{{ rowFailureSummary(row) }}</span>
+                      <Icon :name="failureOpen(row) ? 'chevron-down' : 'chevron-right'" size="sm" />
+                    </button>
+                  </Tooltip>
                   <button
                     v-else-if="rowNotice(row) === 'needsModels' || rowNotice(row) === 'copyFailed'"
                     type="button"
@@ -781,8 +782,8 @@ void loadHosts();
       <Banner v-if="error" variant="danger" role="alert">{{ error }}</Banner>
       <Banner v-if="loadFailed" variant="warning">{{ t('settings.devices.statusFailed') }}</Banner>
 
-      <Transition name="menu-pop">
-        <Menu v-if="rowMenuOpen && menuRow" ref="rowMenuRef" class="re-row-menu" :style="rowMenuStyle" @click.stop>
+      <Transition name="ui-menu-pop">
+        <Menu v-if="rowMenuOpen && menuRow" ref="rowMenuRef" class="ui-menu-floating re-row-menu" :style="rowMenuStyle" @click.stop>
           <MenuItem v-if="createProject && connectionState(menuRow) === 'ready'" @click="closeRowMenu(); createProject(menuRow.id)">
             <Icon name="folder-plus" size="sm" />{{ t('workspace.dialog.createTitle') }}
           </MenuItem>
@@ -817,22 +818,19 @@ void loadHosts();
   </section>
 </template>
 
+<style scoped src="./settings-common.css"></style>
+
 <style scoped>
 .re, .re-page { display: flex; flex-direction: column; }
 .re { gap: var(--space-3); }
 .re-page { gap: var(--space-4); }
 .re-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); min-height: 28px; }
-.re-title { margin: 0; color: var(--color-text); font-family: var(--font-ui); font-size: var(--text-base); font-weight: var(--weight-medium); }
-.re-group { overflow: hidden; border-radius: var(--radius-xl); background: var(--color-surface); }
+.re-head .sec-title { margin: 0; }
 .re-row { display: flex; align-items: center; gap: var(--space-3); min-height: 56px; padding: 0 var(--space-3) 0 var(--space-4); transition: background var(--duration-fast) var(--ease-out); }
 .re-row + .re-row, .re-item + .re-item { border-top: var(--p-hairline) solid var(--color-line); }
 .re-row:hover { background: var(--color-hover); }
 .re-item:has(> .re-row-setup, > .re-row-failure) > .re-row:hover { background: transparent; }
-.re-row.flash { animation: re-flash 1.2s var(--ease-out); }
-@keyframes re-flash {
-  0% { background: var(--color-accent-soft); }
-  100% { background: transparent; }
-}
+.re-row.flash { animation: ui-row-flash var(--duration-flash) var(--ease-out); }
 .re-row-lead { display: flex; flex: 1; align-items: center; gap: var(--space-2); min-width: 0; align-self: stretch; }
 .re-row-lead.expandable { cursor: pointer; }
 .re-row-copy { display: flex; flex: 1; flex-direction: column; gap: 3px; min-width: 0; }
@@ -860,7 +858,6 @@ void loadHosts();
 .re-row-failure :deep(.etr) { max-height: none; padding: 0; overflow: visible; background: none; border-radius: 0; }
 .re-row-failure-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
 .re-row-more.open { background: var(--color-hover); color: var(--color-text); }
-.re-row-menu { position: fixed; top: 0; left: 0; z-index: var(--z-dropdown); }
 .re-row-setup { display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-2); padding: 0 var(--space-3) var(--space-3) var(--space-4); font-family: var(--font-ui); }
 .re-row-setup-text { margin: 0; color: var(--color-text-muted); font-size: var(--text-xs); }
 .re-row-setup-text--danger { color: var(--color-danger); }
@@ -878,9 +875,7 @@ void loadHosts();
   border-bottom: var(--p-hairline) solid var(--color-line);
   background: var(--color-bg);
 }
-.re-back { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; margin-left: calc(-1 * var(--space-2)); border: none; border-radius: var(--radius-sm); background: transparent; color: var(--color-text-muted); cursor: pointer; }
-.re-back:hover { background: var(--color-hover); color: var(--color-text-strong); }
-.re-back:focus-visible { outline: none; box-shadow: var(--p-focus-ring); }
+.re-nav { margin-left: calc(-1 * var(--space-2)); }
 .re-page-title { flex: 1; min-width: 0; overflow: hidden; color: var(--color-text); font-family: var(--font-ui); font-size: var(--text-base); font-weight: var(--weight-medium); text-overflow: ellipsis; white-space: nowrap; }
 .re-input-row { display: flex; align-items: center; gap: var(--space-2); }
 .re-input-row > :first-child { flex: 1; min-width: 0; }

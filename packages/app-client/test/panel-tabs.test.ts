@@ -2,6 +2,7 @@ import { notifySessionDestroyed, notifyWorkspaceDestroyed } from '../src/client/
 import { effectScope, nextTick, ref } from 'vue';
 import { describe, expect, it, vi } from 'vitest';
 
+import { destroyPanelBtwTab } from '../src/panel/panelPersistence';
 import { destroyPanelSessionSnapshot, panelDraftContextKey, forkPanelBrowserTabs, usePanelTabs } from '../src/composables';
 import { sideChatDrafts } from '../src/client/sideChatDrafts';
 import type {
@@ -205,7 +206,7 @@ describe('usePanelTabs close / hide', () => {
     const panel = createPanel(client);
     const tab = panel.openTab('btw', { parentId: 'session-1', agentId: 'btw-1', seq: 1 });
     panel.closeTab(tab.id);
-    expect(client.closeSideChat).toHaveBeenCalledWith('btw-1');
+    expect(client.closeSideChat).toHaveBeenCalledWith('btw-1', 'session-1');
   });
 
   it('addTabInBackground appends without activating or revealing the panel', () => {
@@ -1866,6 +1867,36 @@ describe('panel tab persistence', () => {
     expect(panel.activeTab.value?.payload).toEqual({ path: '/valid' });
     expect(panel.panelVisible.value).toBe(true);
   });
+
+  it('purges persisted btw tab when closed before its session is hydrated', async () => {
+    const storage = memoryStorage();
+    storage.setItem('kimi-web.panel-tabs.v1:session-2', JSON.stringify({
+      tabs: [{ type: 'btw', payload: { parentId: 'session-2', agentId: 'btw-closed', seq: 1 } }],
+      activeIndex: 0,
+      visible: true,
+      expanded: false,
+    }));
+    const client = createClient();
+    const restore = vi.fn();
+    const scope = effectScope();
+    const panel = scope.run(() => usePanelTabs({
+      client: { ...client, restoreSideChatTarget: restore },
+      sideWidth: ref(280),
+      t,
+      storage,
+    }))!;
+
+    expect(destroyPanelBtwTab('session-2', 'btw-closed')).toBe(true);
+    expect(destroyPanelBtwTab('session-2', 'ordinary-subagent')).toBe(false);
+
+    client.activeSessionId.value = 'session-2';
+    await nextTick();
+
+    expect(restore).not.toHaveBeenCalled();
+    expect(panel.panelTabs.value).toEqual([]);
+    expect(panel.panelVisible.value).toBe(false);
+    scope.stop();
+  });
 });
 
 
@@ -1939,6 +1970,35 @@ it('keeps a missing summary empty in storage until its history is loaded', () =>
   expect((panel.activeTab.value?.payload as { text?: string }).text).toBeUndefined();
   client.turns.value = [{ id: 'summary', role: 'compaction', text: 'Loaded summary' } as ChatTurn];
   expect(panel.compactionPanelTextOf('summary')).toBe('Loaded summary');
+});
+
+it('toggles the sidebar closed when clicking an already active compaction summary and switches otherwise', () => {
+  const client = createClient();
+  client.turns.value = [
+    { id: 'c1', role: 'compaction', text: 'Summary 1' } as ChatTurn,
+    { id: 'c2', role: 'compaction', text: 'Summary 2' } as ChatTurn,
+  ];
+  const panel = createPanel(client);
+
+  expect(panel.isCompactionPanelOpen('c1')).toBe(false);
+  panel.openCompactionPanel({ turnId: 'c1' });
+  expect(panel.panelVisible.value).toBe(true);
+  expect(panel.isCompactionPanelOpen('c1')).toBe(true);
+
+  panel.openCompactionPanel({ turnId: 'c2' });
+  expect(panel.panelVisible.value).toBe(true);
+  expect(panel.isCompactionPanelOpen('c1')).toBe(false);
+  expect(panel.isCompactionPanelOpen('c2')).toBe(true);
+
+  panel.openTab('file', { path: '/a.ts' });
+  expect(panel.isCompactionPanelOpen('c2')).toBe(false);
+  panel.openCompactionPanel({ turnId: 'c2' });
+  expect(panel.panelVisible.value).toBe(true);
+  expect(panel.isCompactionPanelOpen('c2')).toBe(true);
+
+  panel.openCompactionPanel({ turnId: 'c2' });
+  expect(panel.panelVisible.value).toBe(false);
+  expect(panel.isCompactionPanelOpen('c2')).toBe(false);
 });
 
 it('releases active and background context resources once on destruction', async () => {

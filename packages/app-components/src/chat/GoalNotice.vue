@@ -109,7 +109,7 @@ function toggle(): void {
 }
 .gn-text {
   font-weight: var(--weight-section-label);
-  color: var(--muted);
+  color: var(--color-text-faint);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
@@ -127,7 +127,7 @@ function toggle(): void {
   display: block;
   font-size: var(--text-sm);
   font-weight: var(--weight-medium);
-  color: var(--muted);
+  color: var(--color-text-faint);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }

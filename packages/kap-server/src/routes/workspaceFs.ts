@@ -6,6 +6,7 @@ import {
   HostFolderNotAbsoluteError,
   HostFolderNotFoundError,
   HostFolderPermissionError,
+  IBootstrapService,
   IHostFileSystem,
   IHostFolderBrowser,
   IEnvironmentService,
@@ -30,10 +31,12 @@ import { errEnvelope, okEnvelope } from '../envelope';
 import { parseRangeHeader, pickHeader } from '../lib/httpRange';
 import { sendRawError } from '../lib/rawError';
 import { requestLog } from '../lib/requestLog';
-import { defineRoute } from '../middleware/defineRoute';
+import { defineRoute, httpErrorSchema } from '../middleware/defineRoute';
 import { ErrorCode } from '../protocol/error-codes';
 import { createEnvironmentReadStream, type EnvironmentReadStreamSource } from './fs';
 import { sendEnvironmentError } from './environment';
+import { EDITABLE_FILE_MAX_BYTES, FileWriteError, WritableHostFiles } from '../services/writableHostFiles';
+import type { FastifyInstance } from 'fastify';
 
 interface FsContentReply {
   type(mime: string): FsContentReply;
@@ -42,7 +45,7 @@ interface FsContentReply {
   send(payload: unknown): unknown;
 }
 
-interface WorkspaceFsRouteHost {
+interface WorkspaceFsRouteHost extends Pick<FastifyInstance, 'register'> {
   get(
     path: string,
     options: { preHandler: unknown[]; schema?: Record<string, unknown> } | undefined,
@@ -147,6 +150,54 @@ export function registerWorkspaceFsRoutes(app: WorkspaceFsRouteHost, core: Scope
     contentRoute.options,
     contentRoute.handler as unknown as Parameters<WorkspaceFsRouteHost['get']>[2],
   );
+
+  const writable = new WritableHostFiles(core.accessor.get(IBootstrapService).homeDir);
+  app.register(async (scope) => {
+    scope.setErrorHandler((error, req, reply) => {
+      if (error instanceof FileWriteError) return sendRawError(reply, errEnvelope(error.code, error.message, req.id));
+      if (error instanceof Error && 'code' in error) {
+        if (error.code === 'FST_ERR_CTP_BODY_TOO_LARGE') return sendRawError(reply, errEnvelope(ErrorCode.FS_TOO_LARGE, 'File exceeds the edit size limit', req.id));
+        if (error.code === 'FST_ERR_CTP_INVALID_MEDIA_TYPE') return sendRawError(reply, errEnvelope(ErrorCode.VALIDATION_FAILED, 'Expected a text/plain UTF-8 file', req.id));
+      }
+      throw error;
+    });
+    scope.removeAllContentTypeParsers();
+    scope.addContentTypeParser('text/plain', { parseAs: 'buffer' }, (_req, bytes: Buffer, done) => {
+      try {
+        done(null, new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes));
+      } catch {
+        done(new FileWriteError(ErrorCode.VALIDATION_FAILED, 'Expected valid UTF-8 text'));
+      }
+    });
+    const route = defineRoute({
+      method: 'PUT', path: '/fs::content', consumes: ['text/plain'], body: z.string(),
+      querystring: fsContentQuerySchema.extend({ revision: z.union([z.literal('missing'), z.string().regex(/^[0-9a-f]{64}$/)]) }).strict(),
+      success: { data: z.object({ revision: z.string() }) },
+      errors: { [ErrorCode.VALIDATION_FAILED]: {}, [ErrorCode.INTERNAL_ERROR]: {} },
+      rawResponse: {
+        400: httpErrorSchema(ErrorCode.VALIDATION_FAILED),
+        403: { oneOf: [httpErrorSchema(ErrorCode.HOST_NOT_ALLOWED), httpErrorSchema(ErrorCode.FS_WRITE_NOT_ALLOWED)] },
+        412: httpErrorSchema(ErrorCode.FS_CONTENT_CHANGED),
+        413: httpErrorSchema(ErrorCode.FS_TOO_LARGE),
+      },
+      description: 'Create or replace an allowlisted UTF-8 host file. Supply the SHA-256 of the bytes read, or missing to create only.',
+      tags: ['workspaces'], operationId: 'writeFsContent',
+    }, async (req, reply) => {
+      const fail = (code: ErrorCode, message: string) => sendRawError(reply as FsContentReply, errEnvelope(code, message, req.id));
+      const mediaType = pickHeader(req.headers, 'content-type')?.split(';')[0]?.trim().toLowerCase();
+      if (mediaType !== 'text/plain' || req.body.includes('\0')) return void fail(ErrorCode.VALIDATION_FAILED, 'Expected a text/plain UTF-8 file');
+      if (req.query.environment_id !== undefined && req.query.environment_id !== 'local') return void fail(ErrorCode.FS_WRITE_NOT_ALLOWED, 'Remote environment writes are not allowed');
+      try {
+        reply.send(okEnvelope(await writable.replace(req.query.path, req.body, req.query.revision), req.id));
+      } catch (err) {
+        const code = (err as NodeJS.ErrnoException).code;
+        if (code === 'ENOENT') return void fail(ErrorCode.FS_CONTENT_CHANGED, 'File is no longer present');
+        if (code === 'EACCES' || code === 'EPERM' || code === 'ELOOP') return void fail(ErrorCode.FS_WRITE_NOT_ALLOWED, 'Writing this file is not allowed');
+        throw err;
+      }
+    });
+    scope.put(route.path, { ...route.options, preHandler: route.options.preHandler as never, bodyLimit: EDITABLE_FILE_MAX_BYTES }, route.handler as never);
+  });
 
   const mkdirRoute = defineRoute(
     {

@@ -257,6 +257,10 @@ export interface IAgentLoopService extends EffectiveProfileReader {
 
   start(tools?: readonly Tool[]): Promise<void>;
 
+  readonly started: boolean;
+
+  readonly hasPersistedState: boolean;
+
   baselineTools(): readonly Tool[];
 
   bindingSnapshot(): ProfileBindingSnapshot;
@@ -282,6 +286,8 @@ export interface IAgentLoopService extends EffectiveProfileReader {
   removeActiveTool(name: string): void;
 
   history(): readonly ContextMessage[];
+
+  rawHistory(): readonly Message[];
 
   previewRequestContent(): LoopRequestContent;
 
@@ -309,6 +315,8 @@ export interface IAgentLoopService extends EffectiveProfileReader {
   snapshot(): LoopSnapshot;
 
   settled(): Promise<TurnResult | undefined>;
+
+  continueTurn(reminders?: readonly Message[]): void;
 
   retry(): Promise<TurnResult | undefined>;
 

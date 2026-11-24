@@ -1,6 +1,11 @@
 {
   "invocations": [
     {
+      "run": "node scripts/checks/cli-dependencies.mjs",
+      "in": "package.json#scripts.lint",
+      "why": "The npm CLI bundles its required packages; declaring dependencies would make users install them separately."
+    },
+    {
       "run": "node scripts/check-comments.mjs",
       "in": "package.json#scripts.lint",
       "why": "AGENTS.md forbids comments in JS/TS code, and this check is what enforces it."
@@ -26,9 +31,29 @@
       "why": "It freezes rules that already have findings at their current count per file and reports suppressions that no longer suppress anything; without it new code could add to that debt unnoticed."
     },
     {
+      "run": "node scripts/checks/test-doubles.mjs",
+      "in": "package.json#scripts.lint",
+      "why": "New tests must script models through the shared testkit; this check freezes the legacy model doubles at their current use per file so new cases cannot add to them."
+    },
+    {
+      "run": "node scripts/checks/quarantine.mjs",
+      "in": "package.json#scripts.lint",
+      "why": "A quarantined Desktop journey must name an owner, a reason and an expiry date, and a protected or smoke journey can never be quarantined; without it a quarantine quietly becomes permanent."
+    },
+    {
       "run": "node scripts/checks/instructions.mjs",
       "in": "package.json#scripts.lint",
       "why": "Agents follow the paths and links in AGENTS.md files, and every session loads the root one; this check fails on a dead reference and keeps the root file within its byte budget."
+    },
+    {
+      "run": "node scripts/checks/e2e-boundary.mjs",
+      "in": "package.json#scripts.lint",
+      "why": "The scenarios in tests/e2e are only worth trusting while their drivers reach the product the way a user does; this check keeps product internals, page and network backdoors, skips, retries, fixed waits and undocumented KIMI_* switches out of that directory."
+    },
+    {
+      "run": "node scripts/vitest-l0-gate.mjs .vitest-reports",
+      "in": ".github/workflows/ci.yml#jobs.l0-gate",
+      "why": "This is where every L0 test in tests/protected.yaml must pass on its first attempt across the test shards; without it regression and contract IDs are listed but never enforced."
     },
     {
       "run": "pnpm run lint",
@@ -61,7 +86,7 @@
       "why": "The pre-commit hook rejects comments in staged files before CI does."
     },
     {
-      "run": "oxlint --type-aware --deny-warnings",
+      "run": "oxlint --type-aware --deny-warnings --no-error-on-unmatched-pattern",
       "in": "package.json#lint-staged",
       "why": "The pre-commit hook lints staged files with the same rules CI enforces."
     },
@@ -77,6 +102,22 @@
       "flags": ["--fix", "--fix-suggestions", "--fix-dangerously"],
       "in": "package.json#lint-staged",
       "why": "lint-staged commits whatever its commands change. Some oxlint fixes change behavior (for example `unicorn/no-unnecessary-await` removes an `await`, which changes when the code after it runs), so the hook would rewrite code without telling anyone."
+    }
+  ],
+  "fanIn": [
+    {
+      "workflow": ".github/workflows/ci.yml",
+      "job": "l0-gate",
+      "needs": ["test"],
+      "why": "It turns the L0 results of every test shard into one check. If it stopped waiting for the shards, or stopped running after a shard failed, a missing or failing L0 test would never be reported."
+    },
+    {
+      "workflow": ".github/workflows/desktop-e2e.yml",
+      "job": "result",
+      "needs": ["plan", "journeys"],
+      "checksResults": true,
+      "coversJobsExcept": ["quarantine", "alert"],
+      "why": "It reports every Desktop E2E shard under one check name. A job it does not wait for, or whose result it does not read, could fail while the check stays green. The nightly quarantine job is informational, and the alert job runs after it on main to keep the tracking issue, so both stay outside it."
     }
   ]
 }

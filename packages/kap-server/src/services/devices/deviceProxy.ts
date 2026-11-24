@@ -18,6 +18,8 @@ import {
 } from './deviceSession';
 import { rawDataToString } from './rawData';
 
+type DeviceConnections = Pick<DeviceManager, 'session' | 'connect'>;
+
 const PROXY_PATH = /^\/api\/v1\/devices\/([^/?]+)\/proxy(\/[^?]*)?(\?.*)?$/;
 const SESSION_CREATE_PATH = /^\/api\/v1\/sessions(?:\?|$)/;
 
@@ -65,15 +67,20 @@ function stampSessionCreation(
   return { ...headers, [CLIENT_IDENTITY_HEADER]: clientIdentityHeader };
 }
 
+function proxyRequestTimeout(method: string, path: string): number | undefined {
+  if (method === 'POST' && /^\/api\/v1\/feedback\/\d+\/attachments(?:\/session)?(?:\?|$)/.test(path)) return Infinity;
+  return /^\/api\/v1\/sessions\/[^/]+\/export(?:\?|$)/.test(path) ? 5 * 60_000 : undefined;
+}
+
 async function resolveSession(
-  manager: DeviceManager,
+  manager: DeviceConnections,
   deviceId: string,
 ): Promise<DeviceSession> {
   return manager.session(deviceId) ?? manager.connect(deviceId);
 }
 
 async function proxyHttp(
-  manager: DeviceManager,
+  manager: DeviceConnections,
   clientIdentityHeader: string,
   req: FastifyRequest,
   reply: FastifyReply,
@@ -123,7 +130,7 @@ async function proxyHttp(
       headers: stampSessionCreation(req.method, target.path, upstreamHeaders(req.headers), clientIdentityHeader),
       body,
       signal: cancellation.signal,
-      timeoutMs: /^\/api\/v1\/sessions\/[^/]+\/export(?:\?|$)/.test(target.path) ? 5 * 60_000 : undefined,
+      timeoutMs: proxyRequestTimeout(req.method, target.path),
     });
     for (const [name, value] of Object.entries(response.headers)) {
       if (value !== undefined && !HOP_BY_HOP_HEADERS.has(name.toLowerCase())) {
@@ -151,7 +158,7 @@ async function proxyHttp(
 
 export function registerDeviceProxyRoutes(
   app: FastifyInstance,
-  manager: DeviceManager,
+  manager: DeviceConnections,
   clientIdentityHeader: string,
 ): void {
   void app.register(async (scope) => {
@@ -178,7 +185,7 @@ const proxyWss = new WebSocketServer({
 });
 
 export async function proxyDeviceWebSocket(
-  manager: DeviceManager,
+  manager: DeviceConnections,
   target: DeviceProxyTarget,
   req: IncomingMessage,
   socket: Duplex,

@@ -84,8 +84,10 @@ export class RelayDeviceSession implements DeviceSession {
   async request(req: DeviceHttpRequest): Promise<DeviceHttpResponse> {
     if (this.closed) throw new DeviceRequestError('unavailable', 'device session is closed');
     if (req.signal?.aborted === true) throw new DeviceRequestError('cancelled', 'device request cancelled');
-    const timeout = AbortSignal.timeout(req.timeoutMs ?? DEVICE_HTTP_TIMEOUT_MS);
-    const signals = [this.lifetime.signal, timeout];
+    const timeoutMs = req.timeoutMs ?? DEVICE_HTTP_TIMEOUT_MS;
+    const timeout = timeoutMs === Infinity ? undefined : AbortSignal.timeout(timeoutMs);
+    const signals = [this.lifetime.signal];
+    if (timeout !== undefined) signals.push(timeout);
     if (req.signal !== undefined) signals.push(req.signal);
     const signal = AbortSignal.any(signals);
     try {
@@ -162,11 +164,15 @@ export class RelayDeviceSession implements DeviceSession {
     return current.cookie === stale.cookie ? this.relay.relayAccess(true) : current;
   }
 
-  private requestError(error: unknown, callerSignal: AbortSignal | undefined, timeout: AbortSignal): DeviceRequestError {
+  private requestError(
+    error: unknown,
+    callerSignal: AbortSignal | undefined,
+    timeout: AbortSignal | undefined,
+  ): DeviceRequestError {
     if (error instanceof DeviceRequestError) return error;
     if (this.closed) return new DeviceRequestError('unavailable', 'device session is closed');
     if (callerSignal?.aborted === true) return new DeviceRequestError('cancelled', 'device request cancelled');
-    if (timeout.aborted) return new DeviceRequestError('timeout', 'device request timed out');
+    if (timeout?.aborted === true) return new DeviceRequestError('timeout', 'device request timed out');
     return this.transportFailure(
       new DeviceRequestError('unavailable', `Remote Control relay request failed: ${describeError(error)}`),
     );

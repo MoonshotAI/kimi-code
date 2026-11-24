@@ -21,6 +21,7 @@
     "@fontsource-variable/jetbrains-mono": "^5.3.0",
     "@fontsource-variable/noto-sans-sc": "^5.3.1",
     "@fontsource-variable/schibsted-grotesk": "^5.3.0",
+    "@noble/hashes": "^2.0.0",
     "diff": "9.0.0",
     "fuse.js": "^7.5.0",
     "partial-json": "0.1.7",
@@ -32,6 +33,7 @@
   },
   "devDependencies": {
     "@moonshot-ai/app-i18n": "workspace:^",
+    "@moonshot-ai/testkit": "workspace:^",
     "shiki": "^4.3.0",
     "typescript": "6.0.2",
     "vitest": "4.1.4",

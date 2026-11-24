@@ -1,6 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import type { QuitBlockReason, QuitConfirmDetails } from '../../src/shared/quit-confirm';
 import { createQuitConfirmHandler, useQuitConfirm } from '../../src/renderer/composables/useQuitConfirm';
+
+const QUIT_DETAILS: QuitConfirmDetails = { purpose: 'quit', sessionTitles: [] };
+
+function update(sessionTitles: string[]): QuitConfirmDetails {
+  return { purpose: 'update', sessionTitles };
+}
 
 async function flush(): Promise<void> {
   await Promise.resolve();
@@ -9,25 +16,27 @@ async function flush(): Promise<void> {
 
 function makeHandler(overrides: Partial<Parameters<typeof createQuitConfirmHandler>[0]> = {}) {
   const confirm = vi.fn().mockResolvedValue(true);
+  const confirmWithCheckbox = vi.fn().mockResolvedValue({ confirmed: true, checked: true });
   const cancelCurrent = vi.fn();
   const isBusy = vi.fn(() => false);
   const isOverlayOpen = vi.fn(() => false);
   const respond = vi.fn();
   const handler = createQuitConfirmHandler({
     confirm,
+    confirmWithCheckbox,
     cancelCurrent,
     isBusy,
     isOverlayOpen,
     respond,
-    t: (key) => key,
+    t: (key, params) => (params === undefined ? key : `${key}:${String(params['count'])}`),
     ...overrides,
   });
-  return { handler, confirm, cancelCurrent, isBusy, isOverlayOpen, respond };
+  return { handler, confirm, confirmWithCheckbox, cancelCurrent, isBusy, isOverlayOpen, respond };
 }
 
 describe('createQuitConfirmHandler', () => {
   it('confirms with the quit copy and responds quit with the request id', async () => {
-    const { handler, confirm, respond } = makeHandler();
+    const { handler, confirm, confirmWithCheckbox, respond } = makeHandler();
     await handler.prompt(7, ['busy']);
     expect(confirm).toHaveBeenCalledWith({
       title: 'app.quitConfirmTitle',
@@ -37,7 +46,8 @@ describe('createQuitConfirmHandler', () => {
       variant: 'danger',
       initialFocus: 'cancel',
     });
-    expect(respond).toHaveBeenCalledWith('quit', 7);
+    expect(confirmWithCheckbox).not.toHaveBeenCalled();
+    expect(respond).toHaveBeenCalledWith('quit', 7, false);
   });
 
   it('uses the remote control copy when that is the only reason', async () => {
@@ -65,23 +75,23 @@ describe('createQuitConfirmHandler', () => {
   });
 
   it('responds cancel when the dialog is dismissed', async () => {
-    const { handler, confirm, respond } = makeHandler({ confirm: vi.fn().mockResolvedValue(false) });
+    const { handler, respond } = makeHandler({ confirm: vi.fn().mockResolvedValue(false) });
     await handler.prompt(3, ['busy']);
-    expect(respond).toHaveBeenCalledWith('cancel', 3);
+    expect(respond).toHaveBeenCalledWith('cancel', 3, false);
   });
 
   it('responds unavailable without prompting while another confirm action is running', async () => {
     const { handler, confirm, respond } = makeHandler({ isBusy: vi.fn(() => true) });
     await handler.prompt(9, ['busy']);
     expect(confirm).not.toHaveBeenCalled();
-    expect(respond).toHaveBeenCalledWith('unavailable', 9);
+    expect(respond).toHaveBeenCalledWith('unavailable', 9, false);
   });
 
   it('responds unavailable without prompting while an interruptive overlay is open', async () => {
     const { handler, confirm, respond } = makeHandler({ isOverlayOpen: vi.fn(() => true) });
     await handler.prompt(10, ['busy']);
     expect(confirm).not.toHaveBeenCalled();
-    expect(respond).toHaveBeenCalledWith('unavailable', 10);
+    expect(respond).toHaveBeenCalledWith('unavailable', 10, false);
   });
 
   it('prompts normally once the interruptive overlay is gone', async () => {
@@ -89,11 +99,11 @@ describe('createQuitConfirmHandler', () => {
     const { handler, confirm, respond } = makeHandler({ isOverlayOpen: vi.fn(() => overlayOpen) });
     await handler.prompt(11, ['busy']);
     expect(confirm).not.toHaveBeenCalled();
-    expect(respond).toHaveBeenCalledWith('unavailable', 11);
+    expect(respond).toHaveBeenCalledWith('unavailable', 11, false);
     overlayOpen = false;
     await handler.prompt(12, ['busy']);
     expect(confirm).toHaveBeenCalledOnce();
-    expect(respond).toHaveBeenCalledWith('quit', 12);
+    expect(respond).toHaveBeenCalledWith('quit', 12, false);
   });
 
   it('ignores a second prompt while the dialog is open', async () => {
@@ -111,8 +121,8 @@ describe('createQuitConfirmHandler', () => {
     expect(confirm).toHaveBeenCalledOnce();
     release(true);
     await first;
-    expect(respond).toHaveBeenCalledWith('quit', 1);
-    expect(respond).not.toHaveBeenCalledWith(expect.anything(), 2);
+    expect(respond).toHaveBeenCalledWith('quit', 1, false);
+    expect(respond).not.toHaveBeenCalledWith(expect.anything(), 2, expect.anything());
   });
 
   it('cancel closes the stale dialog without responding', async () => {
@@ -161,7 +171,66 @@ describe('createQuitConfirmHandler', () => {
     expect(confirm).toHaveBeenCalledTimes(2);
     release(true);
     await second;
-    expect(respond).toHaveBeenCalledWith('quit', 6);
+    expect(respond).toHaveBeenCalledWith('quit', 6, false);
+  });
+
+  describe('update restart', () => {
+    it('lists the running sessions and offers to continue them, checked by default', async () => {
+      const { handler, confirm, confirmWithCheckbox, respond } = makeHandler();
+      await handler.prompt(8, ['busy'], update(['Fix login bug', 'Write tests']));
+      expect(confirm).not.toHaveBeenCalled();
+      expect(confirmWithCheckbox).toHaveBeenCalledWith({
+        title: 'app.updateRestartTitle',
+        message: 'app.updateRestartMessageSessions\n• Fix login bug\n• Write tests',
+        confirmLabel: 'app.updateRestartConfirm',
+        cancelLabel: 'app.quitConfirmCancel',
+        variant: 'primary',
+        initialFocus: 'cancel',
+        checkbox: { label: 'app.updateRestartContinueSessions', checked: true },
+      });
+      expect(respond).toHaveBeenCalledWith('quit', 8, true);
+    });
+
+    it('restarts without continuing when the option is cleared', async () => {
+      const { handler, respond } = makeHandler({
+        confirmWithCheckbox: vi.fn().mockResolvedValue({ confirmed: true, checked: false }),
+      });
+      await handler.prompt(8, ['busy'], update(['Fix login bug']));
+      expect(respond).toHaveBeenCalledWith('quit', 8, false);
+    });
+
+    it('never continues sessions when the restart is cancelled', async () => {
+      const { handler, respond } = makeHandler({
+        confirmWithCheckbox: vi.fn().mockResolvedValue({ confirmed: false, checked: true }),
+      });
+      await handler.prompt(8, ['busy'], update(['Fix login bug']));
+      expect(respond).toHaveBeenCalledWith('cancel', 8, false);
+    });
+
+    it('shows the first three titles and counts the rest', async () => {
+      const { handler, confirmWithCheckbox } = makeHandler();
+      await handler.prompt(8, ['busy', 'remote-control'], update(['A', 'B', 'C', 'D', 'E']));
+      expect(confirmWithCheckbox).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message:
+            'app.updateRestartMessageSessions\n• A\n• B\n• C\napp.updateRestartMoreSessions:2\n\napp.updateRestartMessageRemoteControl',
+        }),
+      );
+    });
+
+    it('asks without the option when no session turn is running', async () => {
+      const { handler, confirm, confirmWithCheckbox, respond } = makeHandler();
+      await handler.prompt(8, ['busy', 'remote-control'], update([]));
+      expect(confirmWithCheckbox).not.toHaveBeenCalled();
+      expect(confirm).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: 'app.updateRestartTitle',
+          message: 'app.updateRestartMessage\n\napp.updateRestartMessageRemoteControl',
+          variant: 'primary',
+        }),
+      );
+      expect(respond).toHaveBeenCalledWith('quit', 8, false);
+    });
   });
 });
 
@@ -169,6 +238,7 @@ describe('useQuitConfirm', () => {
   it('returns a no-op cleanup without the desktop bridge', () => {
     const off = useQuitConfirm({
       confirm: vi.fn(),
+      confirmWithCheckbox: vi.fn(),
       cancelCurrent: vi.fn(),
       isBusy: () => false,
       isOverlayOpen: () => false,
@@ -178,12 +248,13 @@ describe('useQuitConfirm', () => {
   });
 
   it('subscribes to prompt and cancel events and unsubscribes on cleanup', async () => {
-    const promptListeners = new Set<(requestId: number, reasons: Array<'busy' | 'remote-control'>) => void>();
+    type PromptListener = (requestId: number, reasons: QuitBlockReason[], details: QuitConfirmDetails) => void;
+    const promptListeners = new Set<PromptListener>();
     const cancelListeners = new Set<(requestId: number) => void>();
     const respondQuitConfirm = vi.fn().mockResolvedValue(undefined);
     vi.stubGlobal('window', {
       kimiDesktop: {
-        onQuitConfirm: (cb: (requestId: number) => void) => {
+        onQuitConfirm: (cb: PromptListener) => {
           promptListeners.add(cb);
           return () => promptListeners.delete(cb);
         },
@@ -196,8 +267,10 @@ describe('useQuitConfirm', () => {
     });
     try {
       const confirm = vi.fn().mockResolvedValue(true);
+      const confirmWithCheckbox = vi.fn().mockResolvedValue({ confirmed: true, checked: true });
       const off = useQuitConfirm({
         confirm,
+        confirmWithCheckbox,
         cancelCurrent: vi.fn(),
         isBusy: () => false,
         isOverlayOpen: () => false,
@@ -205,10 +278,16 @@ describe('useQuitConfirm', () => {
       });
       expect(promptListeners.size).toBe(1);
       expect(cancelListeners.size).toBe(1);
-      for (const cb of promptListeners) cb(11, ['busy']);
+      for (const cb of promptListeners) cb(11, ['busy'], QUIT_DETAILS);
       await flush();
       expect(confirm).toHaveBeenCalledOnce();
-      expect(respondQuitConfirm).toHaveBeenCalledWith('quit', 11);
+      expect(respondQuitConfirm).toHaveBeenCalledWith('quit', 11, false);
+
+      for (const cb of promptListeners) cb(12, ['busy'], update(['Fix login bug']));
+      await flush();
+      expect(confirmWithCheckbox).toHaveBeenCalledOnce();
+      expect(respondQuitConfirm).toHaveBeenCalledWith('quit', 12, true);
+
       off();
       expect(promptListeners.size).toBe(0);
       expect(cancelListeners.size).toBe(0);

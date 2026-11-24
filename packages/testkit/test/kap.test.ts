@@ -1,11 +1,17 @@
+import { writeFile } from 'node:fs/promises';
 import type { AddressInfo } from 'node:net';
+import { join } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 import { WebSocketServer, type WebSocket as ServerSocket } from 'ws';
 
 import { WaitTimeoutError } from '#/errors';
+import { createTestHome, type TestHome } from '#/fixtures/home';
+import { FIXED_TIME } from '#/fixtures/normalize';
 import { isConversationFrame, turnsFromFrames, type KapFrame } from '#/kap/frames';
 import { startKap, type KapRunningServer } from '#/kap/harness';
+import { KapProcess } from '#/kap/process';
+import { dropFrames, duplicateFrames, insertUnknownFrame, KapRecorder, mutateKapRecording, readKapRecording, replayKapRecording, UNKNOWN_FRAME_TYPE, type KapRecording } from '#/kap/recording';
 import { KapEnvelopeError, KapRest } from '#/kap/rest';
 import { KapCommandError, KapSocket, WS_BEARER_PROTOCOL_PREFIX } from '#/kap/socket';
 
@@ -303,5 +309,203 @@ describe('KapHarness', () => {
     expect(process.env['HOME']).toBe(second.home.home);
     await second.close();
     expect(process.env['HOME']).toBe(before);
+  });
+});
+
+const STUB_KAP_SERVER = `import { createServer } from 'node:http';
+import { connect } from 'node:net';
+
+const mode = process.env.STUB_MODE;
+const token = 'stub-token';
+if (mode === 'remote-ready') {
+  console.log(JSON.stringify({ origin: 'http://192.0.2.1:80', ws_url: 'ws://192.0.2.1:80/api/v1/ws', token }));
+  setInterval(() => {}, 60_000);
+} else {
+  const server = createServer((request, response) => {
+    if (request.headers.authorization !== 'Bearer ' + token) return response.writeHead(401).end();
+    if (request.method !== 'POST' || request.url !== '/api/v1/shutdown') return response.writeHead(404).end();
+    response.writeHead(200, { 'content-type': 'application/json' });
+    response.end(JSON.stringify({ code: 0, msg: 'ok', data: {} }), () => process.exit(0));
+  });
+  server.listen(Number(process.argv[process.argv.indexOf('--port') + 1]), '127.0.0.1', async () => {
+    if (mode === 'leaky') {
+      await new Promise((resolve) => {
+        connect({ host: 'blocked.example.test', port: 443, lookup: (_host, _options, callback) => callback(new Error('lookup disabled')) }).once('error', resolve);
+      });
+    }
+    const { port } = server.address();
+    console.log(JSON.stringify({ origin: 'http://127.0.0.1:' + port, ws_url: 'ws://127.0.0.1:' + port + '/api/v1/ws', token }));
+  });
+}
+`;
+
+describe('KapProcess', () => {
+  const homes: TestHome[] = [];
+
+  afterEach(async () => {
+    await Promise.all(homes.splice(0).map((home) => home.remove()));
+  });
+
+  async function startStub(mode: string): Promise<KapProcess> {
+    const home = await createTestHome('testkit-kap-process');
+    homes.push(home);
+    const entry = join(home.root, 'stub-kap-server.mjs');
+    await writeFile(entry, STUB_KAP_SERVER);
+    return KapProcess.start({ home, command: { entry }, env: { STUB_MODE: mode } });
+  }
+
+  it('connects from the ready line and shuts the server down through the authenticated API', async () => {
+    const server = await startStub('normal');
+    expect(server.origin).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
+    expect(server.wsUrl).toBe(`${server.origin.replace('http', 'ws')}/api/v1/ws`);
+    expect(server.token).toBe('stub-token');
+    await server.close();
+    await expect(server.close()).resolves.toBeUndefined();
+  }, 20_000);
+
+  it('kills the process tree when a test simulates a crash', async () => {
+    const server = await startStub('normal');
+    await expect(server.crash()).resolves.toBeUndefined();
+  }, 20_000);
+
+  it('restarts on the same port, after a clean exit or a crash, until the test closes it', async () => {
+    const server = await startStub('normal');
+    const origin = server.origin;
+    const pids = [server.pid];
+    await server.restart();
+    pids.push(server.pid);
+    await server.restart('crash');
+    pids.push(server.pid);
+    expect(server.origin).toBe(origin);
+    expect(new Set(pids).size).toBe(3);
+    await server.close();
+    await expect(server.restart()).rejects.toThrow('The KAP server was already stopped');
+  }, 30_000);
+
+  it('fails the shutdown when the server reached a non-loopback address', async () => {
+    const server = await startStub('leaky');
+    await expect(server.close()).rejects.toMatchObject({
+      message: expect.stringContaining('Could not close the KAP server'),
+      cause: expect.objectContaining({ message: expect.stringContaining('non-loopback addresses: blocked.example.test:443') }),
+    });
+  }, 20_000);
+
+  it('refuses a ready line that points away from loopback and stops the child', async () => {
+    await expect(startStub('remote-ready')).rejects.toMatchObject({
+      message: expect.stringMatching(/^The KAP server failed to start\nKAP server pid=\d+ exit=null signal=SIGKILL|^The KAP server failed to start\nKAP server pid=\d+ exit=1/),
+      cause: expect.objectContaining({ message: expect.stringContaining('does not describe a loopback server') }),
+    });
+  }, 20_000);
+});
+
+describe('KAP recordings', () => {
+  const fakeSocket = (frames: KapFrame[]): KapSocket => ({ get frames() { return frames; }, mark: () => frames.length }) as unknown as KapSocket;
+  const emptyPage = { turns: [], has_more: false };
+
+  it('keeps one session and agent per stream and gives the same token to an ID in every stream', () => {
+    const first: KapFrame[] = [{ type: 'turns', session_id: 's-1', agent_id: 'main', turns: [], has_more: false }];
+    const second: KapFrame[] = [];
+    const recorder = new KapRecorder('s-1');
+    recorder.watch('primary', fakeSocket(first));
+    recorder.watch('child', fakeSocket(first), 'subagent-1');
+    expect(() => recorder.watch('primary', fakeSocket(second))).toThrow('already has a stream named primary');
+    first.push(
+      { type: 'turns', session_id: 's-1', agent_id: 'main', turns: [], has_more: false, event_created_at: '2026-11-19T08:00:00.000Z' },
+      { type: 'turns', session_id: 's-2', agent_id: 'main', turns: [], has_more: false },
+    );
+    expect(recorder.checkpoint('subscribed')).toEqual({ primary: [expect.objectContaining({ type: 'turns' })], child: [] });
+    recorder.watch('late', fakeSocket(second));
+    first.push(
+      { type: 'turn.started', session_id: 's-1', agent_id: 'main', turn: { turn_id: 't-9', ordinal: 0, items: [] } },
+      { type: 'turn.started', session_id: 's-1', agent_id: 'subagent-1', turn: { turn_id: 't-10', ordinal: 0, items: [] } },
+      { type: 'session.updated', session_id: 's-1', agent_id: 'main' },
+    );
+    second.push({ type: 'turns', session_id: 's-1', agent_id: 'main', turns: [{ turn_id: 't-9', ordinal: 0, items: [] }], has_more: false });
+    recorder.checkpoint('started');
+    const final = { turns: [{ turn_id: 't-9', ordinal: 0, items: [] }], has_more: false };
+    expect(() => recorder.recording({ serverVersion: '1.0.0', kapVersion: '1', pages: { primary: { initial: emptyPage, final } } })).toThrow('no REST pages for stream child');
+    const recording = recorder.recording({
+      serverVersion: '1.0.0',
+      kapVersion: '1',
+      pages: { primary: { initial: emptyPage, final }, child: { initial: emptyPage, final: emptyPage }, late: { initial: emptyPage, final } },
+    });
+    const shape = Object.fromEntries(Object.entries(recording.streams).map(([name, stream]) => [name, stream.checkpoints.map(({ name: at, frames }) => [at, frames.map((frame) => frame.type)])]));
+    expect(shape).toEqual({
+      primary: [['subscribed', ['turns']], ['started', ['turn.started']]],
+      child: [['subscribed', []], ['started', ['turn.started']]],
+      late: [['started', ['turns']]],
+    });
+    expect(recording.streams['primary']?.checkpoints[0]?.frames[0]).toMatchObject({ session_id: '<session_id:1>', event_created_at: FIXED_TIME });
+    expect(recording.streams['primary']?.checkpoints[1]?.frames[0]?.['turn']).toMatchObject({ turn_id: '<turn_id:1>' });
+    expect(recording.streams['child']?.checkpoints[1]?.frames[0]?.['turn']).toMatchObject({ turn_id: '<turn_id:2>' });
+    expect(recording.streams['late']?.checkpoints[0]?.frames[0]?.['turns']).toEqual([expect.objectContaining({ turn_id: '<turn_id:1>' })]);
+    expect(recording.streams['late']?.final.turns[0]).toMatchObject({ turn_id: '<turn_id:1>' });
+    expect(recording.streams['child']?.agentId).toBe('subagent-1');
+    expect(() => new KapRecorder('s-1').checkpoint('empty')).toThrow('Watch at least one socket');
+  });
+
+  it('replays each stream in order and refuses recordings it cannot read', async () => {
+    const home = await createTestHome('testkit-recording');
+    try {
+      const recording: KapRecording = {
+        format: 2,
+        serverVersion: '1.0.0',
+        kapVersion: '1',
+        streams: {
+          primary: {
+            agentId: 'main',
+            initial: emptyPage,
+            checkpoints: [
+              { name: 'first', frames: [{ type: 'turn.started' }] },
+              { name: 'second', frames: [{ type: 'item.started' }, { type: 'turn.ended' }] },
+            ],
+            final: emptyPage,
+          },
+        },
+      };
+      const path = join(home.root, 'trace.json');
+      await writeFile(path, JSON.stringify(recording));
+      const typesSeen = { start: (page: { turns: readonly unknown[] }) => [`start:${page.turns.length}`], apply: (seen: string[], frame: KapFrame) => [...seen, frame.type] };
+      expect(replayKapRecording(await readKapRecording(path), 'primary', typesSeen)).toEqual([
+        { name: 'first', view: ['start:0', 'turn.started'] },
+        { name: 'second', view: ['start:0', 'turn.started', 'item.started', 'turn.ended'] },
+      ]);
+      expect(() => replayKapRecording(recording, 'late', typesSeen)).toThrow('has no stream named late; it has primary');
+      await writeFile(path, JSON.stringify({ ...recording, format: 1 }));
+      await expect(readKapRecording(path)).rejects.toThrow(/uses KAP recording format 1; this testkit reads format 2/);
+      await writeFile(path, JSON.stringify({ ...recording, streams: { primary: { ...recording.streams['primary'], checkpoints: [{ name: 'broken' }] } } }));
+      await expect(readKapRecording(path)).rejects.toThrow(/is not a complete KAP recording/);
+      await writeFile(path, JSON.stringify({ ...recording, streams: {} }));
+      await expect(readKapRecording(path)).rejects.toThrow(/is not a complete KAP recording/);
+    } finally {
+      await home.remove();
+    }
+  });
+
+  it('drops, duplicates and adds frames in one checkpoint of one stream', () => {
+    const frames: KapFrame[] = [
+      { type: 'item.started', session_id: '<session_id:1>', agent_id: 'main' },
+      { type: 'item.delta', session_id: '<session_id:1>', agent_id: 'main' },
+      { type: 'turn.ended', session_id: '<session_id:1>', agent_id: 'main' },
+    ];
+    const recording: KapRecording = {
+      format: 2,
+      serverVersion: '1.0.0',
+      kapVersion: '1',
+      streams: { primary: { agentId: 'main', initial: emptyPage, checkpoints: [{ name: 'partial', frames }, { name: 'completed', frames }], final: emptyPage } },
+    };
+    const at = { stream: 'primary', checkpoint: 'partial' };
+    const typesAt = (changed: KapRecording, checkpoint: number) => changed.streams['primary']!.checkpoints[checkpoint]!.frames.map((frame) => frame.type);
+    expect(typesAt(mutateKapRecording(recording, at, dropFrames((frame) => frame.type === 'item.delta')), 0)).toEqual(['item.started', 'turn.ended']);
+    expect(typesAt(mutateKapRecording(recording, at, duplicateFrames((frame) => frame.type === 'item.delta')), 0)).toEqual(['item.started', 'item.delta', 'item.delta', 'turn.ended']);
+    const withUnknown = mutateKapRecording(recording, at, insertUnknownFrame(1));
+    expect(typesAt(withUnknown, 0)).toEqual(['item.started', UNKNOWN_FRAME_TYPE, 'item.delta', 'turn.ended']);
+    expect(withUnknown.streams['primary']!.checkpoints[0]!.frames[1]).toEqual({ type: UNKNOWN_FRAME_TYPE, session_id: '<session_id:1>', agent_id: 'main' });
+    expect(typesAt(withUnknown, 1)).toEqual(['item.started', 'item.delta', 'turn.ended']);
+    expect(recording.streams['primary']!.checkpoints[0]!.frames).toHaveLength(3);
+    expect(() => mutateKapRecording(recording, at, dropFrames((frame) => frame.type === 'notice'))).toThrow('dropFrames matched no frame');
+    expect(() => mutateKapRecording(recording, at, duplicateFrames(() => false))).toThrow('duplicateFrames matched no frame');
+    expect(() => mutateKapRecording(recording, at, insertUnknownFrame(4))).toThrow('outside 0..3');
+    expect(() => mutateKapRecording(recording, { stream: 'primary', checkpoint: 'later' }, insertUnknownFrame(0))).toThrow('no checkpoint named later');
   });
 });

@@ -30,6 +30,8 @@ import { FileContextMenuHost } from '@moonshot-ai/app-components';
 import { ModelPicker } from '@moonshot-ai/app-components';
 import { ModelSwitchConfirmDialog } from '@moonshot-ai/app-components';
 import LoginDialog from './components/dialogs/LoginDialog.vue';
+import GlobalFeedbackDialog from './components/feedback/GlobalFeedbackDialog.vue';
+import { DesktopFeedbackKey, useDesktopFeedback, type GlobalFeedbackTarget } from './composables/useDesktopFeedback';
 import ScreenshotGuidanceDialog from './components/dialogs/ScreenshotGuidanceDialog.vue';
 import ForcedUpgradeDialog from './components/ForcedUpgradeDialog.vue';
 import { ErrorBoundary } from '@moonshot-ai/app-components';
@@ -43,8 +45,8 @@ import MobileSwitcherSheet from './components/mobile/MobileSwitcherSheet.vue';
 import MobileSettingsSheet from './components/mobile/MobileSettingsSheet.vue';
 import OnboardingWizard from './components/onboarding/OnboardingWizard.vue';
 import { GlobalLoading } from '@moonshot-ai/app-components';
-import { useKimiWebClient, promptAttachmentToTurnAttachment, turnFileContentFetcher } from '@moonshot-ai/app-client/client';
-import { sessionViewsStore, workspacesStore, modelsStore, notificationsStore, authStore, sessionsStore, warningsStore, filesStore, permissionsStore, enableSessionRating, modelSwitchConfirmStore, devicesStore } from '@moonshot-ai/app-client/stores';
+import { getDeviceApi, useKimiWebClient, promptAttachmentToTurnAttachment, turnFileContentFetcher } from '@moonshot-ai/app-client/client';
+import { sessionViewsStore, workspacesStore, modelsStore, notificationsStore, authStore, sessionsStore, warningsStore, filesStore, permissionsStore, enableSessionRating, modelSwitchConfirmStore, effortSwitchStore, devicesStore } from '@moonshot-ai/app-client/stores';
 import { FetchTurnFileContentKey, InsertPathMentionKey, ModelDisplayKey, OpenWithDefaultAppKey, ResolveSwarmMembersKey, RevealInFolderKey, SelectionContextMenuKey, SessionRatingKey, SubagentEffortKey } from '@moonshot-ai/app-client/contracts';
 import { OpenFileLinkKey, OpenHtmlFileInPanelKey, OpenLocalHtmlFileKey, OpenMarkdownImageKey, OpenSidebarBrowserUrlKey, ResolveImageKey } from '@moonshot-ai/app-core/contracts';
 import { getKimiWebApi } from './api';
@@ -202,7 +204,7 @@ provide(FetchTurnFileContentKey, turnFileContentFetcher(() => client.activeSessi
 provide(SubagentEffortKey, (effort: string | undefined): string | undefined =>
   subagentEffortSuffix(effort),
 );
-const { confirm, isConfirmOpen, settle: settleConfirm, busy: confirmBusy } = useConfirmDialog();
+const { confirm, confirmWithCheckbox, isConfirmOpen, settle: settleConfirm, busy: confirmBusy } = useConfirmDialog();
 
 const workspaces = workspacesStore();
 const { visibleWorkspace, activeWorkspaceId } = storeToRefs(workspaces);
@@ -210,6 +212,7 @@ const { mobileWorkspaceGroups, pinnedSessions, attentionBySession, attentionByWo
   storeToRefs(sessionViews);
 const { models, activeModels, starredModelIds, defaultModel } = storeToRefs(modelsStore());
 const { pending: modelSwitchConfirmPending } = storeToRefs(modelSwitchConfirmStore());
+const { pending: effortSwitchConfirmPending } = storeToRefs(effortSwitchStore());
 const { notifyEnabled, notifySound, notifyPermission } = storeToRefs(notificationsStore());
 const { setNotifyEnabled, setNotifySound } = notificationsStore();
 const { signedIn, managedProviderStatus, managedUserInfo } = storeToRefs(authStore());
@@ -376,7 +379,10 @@ onMounted(() => {
       .kimiDesktop?.onMenuAction?.((menuId) => {
       if (menuId === 'close-panel-tab') {
         if (anyOverlayOpen.value) return;
-        if (panel.panelVisible.value && panel.activeTabId.value) panel.closeTab(panel.activeTabId.value);
+        if (panel.panelVisible.value && panel.activeTabId.value) {
+          if (panelTabsRef.value?.requestClose) void panelTabsRef.value.requestClose('close', panel.activeTabId.value);
+          else panel.closeTab(panel.activeTabId.value);
+        }
         else window.close();
         return;
       }
@@ -558,7 +564,8 @@ function runShortcutAction(id: AppActionId, source: 'shortcut' | 'menu' | 'butto
       break;
     case 'closeSessionView':
       if (!anyOverlayOpen.value && panel.panelVisible.value && panel.activeTabId.value) {
-        panel.closeTab(panel.activeTabId.value);
+        if (panelTabsRef.value?.requestClose) void panelTabsRef.value.requestClose('close', panel.activeTabId.value);
+        else panel.closeTab(panel.activeTabId.value);
         break;
       }
       if (
@@ -1164,6 +1171,7 @@ provide(panelApiKey, {
     closeDockWorkPanel();
     panel.openCompactionPanel(target);
   },
+  isCompactionOpen: (turnId) => panel.isCompactionPanelOpen(turnId),
   openDiff: () => {
     closeDockWorkPanel();
     panel.openDiffDetail();
@@ -1391,6 +1399,9 @@ const {
       pending.prompt.snapshot,
     );
   },
+  beforePendingPromptSend: (pending) => {
+    conversationPaneRef.value?.clearComposerAfterDispatch(pending.prompt.snapshot);
+  },
   onWorkspaceAdded: () => {
     track('workspace_added', { workspace_count: client.workspacesView.value.length });
     terminalStore.destroySession(terminalBucketKey('', null));
@@ -1399,6 +1410,7 @@ const {
 
 const offQuitConfirm = useQuitConfirm({
   confirm,
+  confirmWithCheckbox,
   cancelCurrent: () => settleConfirm(false),
   isBusy: () => confirmBusy.value,
   isOverlayOpen: () => interruptiveOverlayOpen.value,
@@ -1431,9 +1443,50 @@ type SubmitPayload = {
   forceQueue?: boolean;
 };
 const forcedUpgradeVisible = ref(false);
+const globalFeedbackTarget = ref<GlobalFeedbackTarget | null>(null);
+function feedbackSessionDevice(sessionId: string): string | undefined {
+  const session = sessionsStore().sessions.find(entry => entry.id === sessionId);
+  if (session !== undefined) return session.deviceId;
+  return sessionId === activeSessionId.value ? client.visibleWorkspace.value?.deviceId : undefined;
+}
+
+function supportsSessionFeedback(sessionId: string | null | undefined): boolean {
+  if (!sessionId) return false;
+  return devicesStore().supportsFeedback(feedbackSessionDevice(sessionId));
+}
+
+const supportsReplyFeedback = computed(() => supportsSessionFeedback(activeSessionId.value));
+const supportsSessionUpload = computed(() => supportsSessionFeedback(globalFeedbackTarget.value?.sessionId));
+
+const desktopFeedback = useDesktopFeedback({
+  signedIn: () => signedIn.value,
+  accountId: () => managedUserInfo.value?.userId,
+  openLogin,
+  sessionDevice: feedbackSessionDevice,
+  deviceAccounts: () => devicesStore().accounts,
+  deviceUserId: async (deviceId) => {
+    const account = await getDeviceApi(deviceId).getUserInfo();
+    return account.kind === 'ok' ? account.userInfo.userId : undefined;
+  },
+  openDeviceLogin: (deviceId) => devicesStore().openLogin(deviceId),
+});
+provide(DesktopFeedbackKey, desktopFeedback);
+watch(desktopFeedback.accountEpoch, () => { globalFeedbackTarget.value = null; }, { flush: 'sync' });
+
+function openGlobalFeedback(source: GlobalFeedbackTarget['source']): void {
+  if (globalFeedbackTarget.value !== null || !desktopFeedback.requireLogin()) return;
+  desktopFeedback.closePopover();
+  const hasConversation = mainView.value === 'chat' && client.turns.value.some((turn) => turn.role === 'user');
+  globalFeedbackTarget.value = {
+    source,
+    sessionId: hasConversation ? activeSessionId.value ?? undefined : undefined,
+  };
+}
+
 const anyOverlayOpen = computed<boolean>(
-  () => interruptiveOverlayOpen.value || isConfirmOpen.value || forcedUpgradeVisible.value,
+  () => interruptiveOverlayOpen.value || isConfirmOpen.value || forcedUpgradeVisible.value || globalFeedbackTarget.value !== null,
 );
+watch([activeSessionId, mainView, signedIn, anyOverlayOpen], () => desktopFeedback.closePopover());
 const selectionContextMenuBridge = (window as { kimiDesktop?: { showSelectionContextMenu?: (selectionText: string) => void } }).kimiDesktop;
 if (selectionContextMenuBridge?.showSelectionContextMenu !== undefined) {
   provide(SelectionContextMenuKey, (selectionText) => selectionContextMenuBridge.showSelectionContextMenu?.(selectionText));
@@ -1454,7 +1507,7 @@ const browserConfirmUsesNativeSurface = computed(
     panel.panelVisible.value &&
     panel.activeTab.value?.type === 'browser',
 );
-const browserOccluded = computed(() => interruptiveOverlayOpen.value);
+const browserOccluded = computed(() => interruptiveOverlayOpen.value || globalFeedbackTarget.value !== null);
 
 
 async function confirmLogout(): Promise<void> {
@@ -1598,6 +1651,10 @@ async function handleGetOAuthRegion() {
 }
 
 const deviceLoginId = computed(() => devicesStore().loginDeviceId);
+function finishDeviceLogin(deviceId: string): void {
+  desktopFeedback.clearDeviceAccount(deviceId);
+  devicesStore().finishLogin();
+}
 const deviceLoginTitle = computed(() => {
   const deviceId = deviceLoginId.value;
   return deviceId === null ? undefined : t('login.deviceTitle', { name: devicesStore().deviceLabel(deviceId, t) });
@@ -1625,6 +1682,19 @@ async function handleEditMessage(payload: {
 
 async function handleInterrupt(): Promise<void> {
   await client.abortCurrentPrompt();
+}
+
+async function handleContinue(): Promise<void> {
+  const gateSid = client.activeSessionId.value;
+  if (!gateSid) return;
+  const verdict = await client.ensureChatReady();
+  if (verdict !== 'ok') {
+    if (verdict !== 'server-auth-required') await actOnGateVerdict(verdict);
+    return;
+  }
+  if (client.activeSessionId.value !== gateSid) return;
+  ++sendGeneration;
+  await client.continueSession(gateSid);
 }
 
 const pendingQuoteInserts = ref<Array<{ quote: string; comment?: string; source?: string; sessionId: string | undefined }>>([]);
@@ -1804,21 +1874,22 @@ watch([client.sendFailureVerdict, isConfirmOpen], ([payload, confirmOpen]) => {
   void actOnGateVerdict(payload.verdict, undefined, payload.sessionId);
 });
 
-async function passAuthGate(text: string, attachments: PromptAttachment[], restoreText?: string, restoreEntries?: AttachmentEntry[], snapshot?: ComposerDocumentSnapshot): Promise<boolean> {
+async function passAuthGate(text: string, attachments: PromptAttachment[], restoreText?: string, restoreEntries?: AttachmentEntry[], snapshot?: ComposerDocumentSnapshot, preserveDraft = false): Promise<boolean> {
   const originSid = client.activeSessionId.value ?? undefined;
   const verdict = await client.ensureChatReady();
   if (verdict === 'ok') return true;
   if (verdict === 'server-auth-required') {
-    restoreDraftAtOrigin(originSid, text, attachments, restoreText, restoreEntries, snapshot);
+    if (!preserveDraft) restoreDraftAtOrigin(originSid, text, attachments, restoreText, restoreEntries, snapshot);
     return false;
   }
-  await actOnGateVerdict(verdict, () =>
-    restoreDraftAtOrigin(originSid, text, attachments, restoreText, restoreEntries, snapshot),
+  await actOnGateVerdict(
+    verdict,
+    preserveDraft ? undefined : () => restoreDraftAtOrigin(originSid, text, attachments, restoreText, restoreEntries, snapshot),
   );
   return false;
 }
 
-async function passWorkspaceGateForCommand(text: string, attachments: PromptAttachment[] = [], restoreText?: string, restoreEntries?: AttachmentEntry[], snapshot?: ComposerDocumentSnapshot): Promise<boolean> {
+async function passWorkspaceGateForCommand(text: string, attachments: PromptAttachment[] = [], restoreText?: string, restoreEntries?: AttachmentEntry[], snapshot?: ComposerDocumentSnapshot, preserveDraft = false): Promise<boolean> {
   if (client.activeSessionId.value || client.activeWorkspaceId.value) return true;
   const pick = await confirm({
     title: t('workspace.requiredTitle'),
@@ -1826,22 +1897,24 @@ async function passWorkspaceGateForCommand(text: string, attachments: PromptAtta
     confirmLabel: t('conversation.addWorkspace'),
     variant: 'primary',
   });
-  conversationPaneRef.value?.loadComposerForEdit(restoreText ?? text, toEditableAttachments(attachments), restoreEntries, snapshot);
+  if (!preserveDraft) {
+    conversationPaneRef.value?.loadComposerForEdit(restoreText ?? text, toEditableAttachments(attachments), restoreEntries, snapshot);
+  }
   if (pick) requestWorkspaceDialog();
   return false;
 }
 
-async function passCommandGates(text: string, attachments: PromptAttachment[] = [], restoreText?: string, restoreEntries?: AttachmentEntry[], snapshot?: ComposerDocumentSnapshot): Promise<boolean> {
+async function passCommandGates(text: string, attachments: PromptAttachment[] = [], restoreText?: string, restoreEntries?: AttachmentEntry[], snapshot?: ComposerDocumentSnapshot, preserveDraft = false): Promise<boolean> {
   const originSid = client.activeSessionId.value;
   const originWsId = client.activeWorkspaceId.value;
-  if (!(await passAuthGate(text, attachments, restoreText, restoreEntries, snapshot))) return false;
-  if (!(await passWorkspaceGateForCommand(text, attachments, restoreText, restoreEntries, snapshot))) return false;
+  if (!(await passAuthGate(text, attachments, restoreText, restoreEntries, snapshot, preserveDraft))) return false;
+  if (!(await passWorkspaceGateForCommand(text, attachments, restoreText, restoreEntries, snapshot, preserveDraft))) return false;
   if (client.activeSessionId.value !== originSid || client.activeWorkspaceId.value !== originWsId) {
-    restoreDraftAtOrigin(originSid ?? undefined, text, attachments, restoreText, restoreEntries, snapshot);
+    if (!preserveDraft) restoreDraftAtOrigin(originSid ?? undefined, text, attachments, restoreText, restoreEntries, snapshot);
     return false;
   }
   if (!useWorkspaceTrust().gateSubmitForTrust()) {
-    restoreDraftAtOrigin(originSid ?? undefined, text, attachments, restoreText, restoreEntries, snapshot);
+    if (!preserveDraft) restoreDraftAtOrigin(originSid ?? undefined, text, attachments, restoreText, restoreEntries, snapshot);
     return false;
   }
   return true;
@@ -1862,20 +1935,30 @@ function onToggleTower(): void {
   void client.toggleTowerMode();
 }
 
-async function handleCommand(payload: { cmd: string; attachments: PromptAttachment[]; restoreText?: string; skillName?: string; skillPath?: string; restoreEntries?: AttachmentEntry[]; snapshot?: ComposerDocumentSnapshot; editText?: string; delivery?: 'steer' | 'queue' }): Promise<void> {
-  const { cmd, attachments, restoreText, restoreEntries, snapshot } = payload;
+function enableSwarmMode(): void {
+  if (!client.swarmMode.value) client.toggleSwarmMode();
+}
+
+async function handleCommand(payload: { cmd: string; attachments: PromptAttachment[]; restoreText?: string; skillName?: string; skillPath?: string; restoreEntries?: AttachmentEntry[]; snapshot?: ComposerDocumentSnapshot; editText?: string; delivery?: 'steer' | 'queue'; preserveDraft?: boolean }): Promise<void> {
+  const { cmd, attachments, restoreText, restoreEntries, snapshot, preserveDraft } = payload;
+  if (cmd === '/feedback' && payload.skillName === undefined) {
+    openGlobalFeedback('command');
+    return;
+  }
   if (cmd === '/compact' || cmd.startsWith('/compact ')) {
-    if (!(await passCommandGates(cmd, [], restoreText, restoreEntries, snapshot))) return;
+    if (!(await passCommandGates(cmd, [], restoreText, restoreEntries, snapshot, preserveDraft))) return;
     const result = client.compact(commandArgumentText(cmd, snapshot) || undefined);
     if (result === undefined) {
-      conversationPaneRef.value?.loadComposerForEdit(restoreText ?? cmd, toEditableAttachments(attachments), restoreEntries, snapshot);
+      if (!preserveDraft) {
+        conversationPaneRef.value?.loadComposerForEdit(restoreText ?? cmd, toEditableAttachments(attachments), restoreEntries, snapshot);
+      }
       client.notify({ severity: 'warning', title: t('commands.compact.requiresSession') });
       return;
     }
-    if (result === 'queued') {
-      client.notify({ severity: 'info', title: t('commands.compactQueue.queued') });
-    } else if (result === 'duplicate' || result === 'compacting') {
-      conversationPaneRef.value?.loadComposerForEdit(restoreText ?? cmd, toEditableAttachments(attachments), restoreEntries, snapshot);
+    if (result === 'duplicate' || result === 'compacting') {
+      if (!preserveDraft) {
+        conversationPaneRef.value?.loadComposerForEdit(restoreText ?? cmd, toEditableAttachments(attachments), restoreEntries, snapshot);
+      }
       client.notify({
         severity: 'warning',
         title: t(result === 'duplicate' ? 'commands.compactQueue.alreadyQueued' : 'commands.compactQueue.compacting'),
@@ -1885,12 +1968,12 @@ async function handleCommand(payload: { cmd: string; attachments: PromptAttachme
   }
   if (cmd === '/swarm' || cmd.startsWith('/swarm ')) {
     const arg = cmd.slice('/swarm'.length).trim();
-    if (arg === 'on') client.setSwarmMode(true);
+    if (arg === 'on') enableSwarmMode();
     else if (arg === 'off') client.setSwarmMode(false);
     else if (arg) {
       const originSid = client.activeSessionId.value;
       if (!(await passCommandGates(cmd, attachments, restoreText, restoreEntries, snapshot))) return;
-      client.setSwarmMode(true);
+      enableSwarmMode();
       const prompt = client.createPromptEnvelope(commandPromptContent(cmd, attachments, snapshot));
       if (payload.delivery === 'steer') {
         const generation = ++sendGeneration;
@@ -2042,7 +2125,29 @@ async function handleCommand(payload: { cmd: string; attachments: PromptAttachme
   }
 }
 
+let promptDispatchInFlight = 0;
+let promptDispatchSequence = 0;
+
+function beginPromptDispatch(): number {
+  promptDispatchInFlight = ++promptDispatchSequence;
+  return promptDispatchInFlight;
+}
+
+function releasePromptDispatch(owner: number): void {
+  if (promptDispatchInFlight === owner) promptDispatchInFlight = 0;
+}
+
 async function handleSteer(payload: { text: string; attachments: PromptAttachment[]; restoreText?: string; restoreEntries?: AttachmentEntry[]; snapshot?: ComposerDocumentSnapshot; skills?: { name: string; path?: string }[] }): Promise<void> {
+  if (promptDispatchInFlight !== 0) return;
+  const owner = beginPromptDispatch();
+  try {
+    await handleSteerDispatch(payload, owner);
+  } finally {
+    releasePromptDispatch(owner);
+  }
+}
+
+async function handleSteerDispatch(payload: { text: string; attachments: PromptAttachment[]; restoreText?: string; restoreEntries?: AttachmentEntry[]; snapshot?: ComposerDocumentSnapshot; skills?: { name: string; path?: string }[] }, owner: number): Promise<void> {
   const generation = ++sendGeneration;
   const gateSid = client.activeSessionId.value;
   const restore = () => {
@@ -2056,6 +2161,8 @@ async function handleSteer(payload: { text: string; attachments: PromptAttachmen
   }
   if ((client.activeSessionId.value ?? undefined) !== gateSid) { restore(); return; }
   const prompt = client.createPromptEnvelope({ text: payload.text, attachments: payload.attachments, skills: payload.skills, snapshot: payload.snapshot });
+  releasePromptDispatch(owner);
+  conversationPaneRef.value?.clearComposerAfterDispatch(payload.snapshot);
   const outcome = await client.steerPromptDirect(prompt);
   if (outcome === 'rejected') restoreDraftAfterFailedSend(generation, gateSid ?? undefined, payload.text, payload.attachments, payload.restoreText, payload.restoreEntries, payload.snapshot);
 }
@@ -2073,8 +2180,8 @@ async function handleSteerQueued(index: number): Promise<void> {
 }
 
 function restoreDraftAtOrigin(originSid: string | undefined, text: string, attachments: PromptAttachment[], restoreText?: string, restoreEntries?: AttachmentEntry[], snapshot?: ComposerDocumentSnapshot): void {
-  restoreSendDraftAtOrigin(originSid, { text: restoreText ?? text, attachments, restoreEntries, snapshot }, {
-    activeSessionId: () => client.activeSessionId.value ?? undefined,
+  restoreSendDraftAtOrigin(originSid || undefined, { text: restoreText ?? text, attachments, restoreEntries, snapshot }, {
+    activeSessionId: () => client.activeSessionId.value || undefined,
     composer: () => {
       const pane = conversationPaneRef.value;
       if (!pane) return null;
@@ -2092,6 +2199,16 @@ function restoreDraftAfterFailedSend(generation: number, originSid: string | und
 }
 
 async function handleSubmit(payload: SubmitPayload): Promise<void> {
+  if (promptDispatchInFlight !== 0) return;
+  const owner = beginPromptDispatch();
+  try {
+    await handleSubmitDispatch(payload, owner);
+  } finally {
+    releasePromptDispatch(owner);
+  }
+}
+
+async function handleSubmitDispatch(payload: SubmitPayload, owner: number): Promise<void> {
   const gateSid = client.activeSessionId.value;
   const gateWsId = client.activeWorkspaceId.value;
   if (!(await passAuthGate(payload.text, payload.attachments, payload.restoreText, payload.restoreEntries, payload.snapshot))) return;
@@ -2111,6 +2228,8 @@ async function handleSubmit(payload: SubmitPayload): Promise<void> {
       : ++sendGeneration;
   const wsId = client.activeWorkspaceId.value;
   if (!client.activeSessionId.value && wsId) {
+    releasePromptDispatch(owner);
+    conversationPaneRef.value?.clearComposerAfterDispatch(payload.snapshot);
     const started = await client.startSessionAndSendPrompt(wsId, prompt);
     if (started.promptRejected || (started.sessionId === null && started.concurrent !== true)) {
       restoreDraftAfterFailedSend(generation, started.sessionId ?? undefined, payload.text, payload.attachments, payload.restoreText, payload.restoreEntries, payload.snapshot);
@@ -2138,6 +2257,8 @@ async function handleSubmit(payload: SubmitPayload): Promise<void> {
     return;
   }
   const sid = client.activeSessionId.value;
+  releasePromptDispatch(owner);
+  conversationPaneRef.value?.clearComposerAfterDispatch(payload.snapshot);
   const outcome = await client.sendPrompt(
     prompt,
     payload.editText ?? payload.restoreText,
@@ -2359,6 +2480,7 @@ function openPr(url: string): void {
         @generate-title="(id, done) => void regenerateSessionTitle(id).then(done)"
         @delete-workspace="confirmDeleteWorkspace($event)"
         @open-settings="openSettingsFromButton"
+        @open-feedback="openGlobalFeedback('sidebar')"
         @login="openLogin"
         @collapse="runShortcutAction('toggleSidebar', 'button')"
       />
@@ -2391,6 +2513,7 @@ function openPr(url: string): void {
       :right-panel-open="panel.panelVisible.value"
       :main-view="mainView"
       :session-id="activeSessionId"
+      :supports-reply-feedback="supportsReplyFeedback"
       :status="status"
       :plan-mode="planMode"
       :pending-question-actions="pendingQuestionActions"
@@ -2412,6 +2535,7 @@ function openPr(url: string): void {
       @login="openLogin()"
       @command="handleCommand"
       @interrupt="handleInterrupt"
+      @continue="handleContinue"
       @steer-queued="handleSteerQueued"
       @toggle-pin="togglePinFromHeader"
       @pick-model="openModelPicker()"
@@ -2554,8 +2678,21 @@ function openPr(url: string): void {
     <ModelSwitchConfirmDialog
       v-if="modelSwitchConfirmPending !== null"
       :open="true"
+      :session-type="modelSwitchConfirmPending.sessionType"
       :hint="modelSwitchConfirmPending.hint"
+      :warning="modelSwitchConfirmPending.warning"
       @select="modelSwitchConfirmStore().settle($event)"
+    />
+    <ModelSwitchConfirmDialog
+      v-if="effortSwitchConfirmPending !== null"
+      :open="true"
+      kind="effort"
+      :session-type="effortSwitchConfirmPending.sessionType"
+      :from-effort="effortSwitchConfirmPending.fromEffort"
+      :to-effort="effortSwitchConfirmPending.toEffort"
+      :hint="effortSwitchConfirmPending.hint"
+      :warning="effortSwitchConfirmPending.warning"
+      @select="action => { if (action !== 'compact') effortSwitchStore().settle(action) }"
     />
 
     <!-- Settings page (modal) -->
@@ -2741,6 +2878,12 @@ function openPr(url: string): void {
     />
     <!-- Login Dialog overlay. It is outside `.app` so `/login` can open it too. -->
     <ScreenshotGuidanceDialog />
+    <GlobalFeedbackDialog
+      :key="desktopFeedback.accountEpoch.value"
+      :target="globalFeedbackTarget"
+      :supports-session-upload="supportsSessionUpload"
+      @close="globalFeedbackTarget = null"
+    />
     <LoginDialog
       v-if="showLogin || deviceLoginId !== null"
       :key="deviceLoginId ?? 'local'"
@@ -2750,7 +2893,7 @@ function openPr(url: string): void {
       :on-poll-o-auth-login="deviceLoginId !== null ? () => devicesStore().pollLogin() : handlePollOAuthLogin"
       :on-cancel-o-auth-login="deviceLoginId !== null ? () => devicesStore().cancelLogin() : handleCancelOAuthLogin"
       :on-get-o-auth-region="deviceLoginId !== null ? () => devicesStore().loginRegion() : handleGetOAuthRegion"
-      @success="deviceLoginId !== null ? devicesStore().finishLogin() : handleLoginSuccess()"
+      @success="deviceLoginId !== null ? finishDeviceLogin(deviceLoginId) : handleLoginSuccess()"
       @close="deviceLoginId !== null ? devicesStore().closeLogin() : (showLogin = false)"
     />
     <!-- Floating preview for tool-card media (image/video). The component
@@ -2797,7 +2940,7 @@ function openPr(url: string): void {
   display: grid;
   grid-template-columns: auto 0 minmax(0, 1fr) auto;
   grid-template-rows: minmax(0, 1fr) auto;
-  background: var(--bg);
+  background: var(--color-bg);
   color: var(--color-text);
   overflow: clip;
   box-sizing: border-box;

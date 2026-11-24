@@ -74,6 +74,12 @@ describe('Event public types', () => {
     expectTypeOf<QuestionRequest['questions'][number]['question']>().toEqualTypeOf<string>();
   });
 
+  it('exposes optional loop end info on turn.ended', () => {
+    expectTypeOf<EventByType<'turn.ended'>['loopEnd']>().toEqualTypeOf<
+      { readonly outcome: 'drained' | 'idle' } | undefined
+    >();
+  });
+
   it('exposes optional session scope on approval responses', () => {
     expectTypeOf<ApprovalResponse['scope']>().toEqualTypeOf<'session' | undefined>();
   });

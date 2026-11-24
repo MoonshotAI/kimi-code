@@ -31,6 +31,10 @@ export const usePromptStore = defineStore('kimi.prompt', () => {
   const autoCompactedAtBySession = new Map<string, number>();
   const steerInFlightCounts = new Map<string, number>();
   const startingFirstPromptWorkspaces = reactive(new Set<string>());
+  const continueStartingSessions = reactive(new Set<string>());
+  const continueStartingTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  const compactStartingSessions = reactive(new Set<string>());
+  const compactStartingTimers = new Map<string, ReturnType<typeof setTimeout>>();
   let queueEntryCounter = 0;
 
   const isStartingFirstPrompt = computed(() => startingFirstPromptWorkspaces.size > 0);
@@ -146,10 +150,12 @@ export const usePromptStore = defineStore('kimi.prompt', () => {
   }
 
   function noteCompactionStarted(sid: string): void {
+    settleCompactStart(sid);
     unsettledCompactionSessions.add(sid);
   }
 
   function noteCompactionSettled(sid: string): void {
+    settleCompactStart(sid);
     unsettledCompactionSessions.delete(sid);
   }
 
@@ -231,6 +237,67 @@ export const usePromptStore = defineStore('kimi.prompt', () => {
     startingFirstPromptWorkspaces.delete(workspaceId);
   }
 
+  function clearTimedSession(
+    sessions: Set<string>,
+    timers: Map<string, ReturnType<typeof setTimeout>>,
+    sid: string,
+  ): void {
+    const existing = timers.get(sid);
+    if (existing !== undefined) {
+      clearTimeout(existing);
+      timers.delete(sid);
+    }
+    sessions.delete(sid);
+  }
+
+  function armTimedSession(
+    sessions: Set<string>,
+    timers: Map<string, ReturnType<typeof setTimeout>>,
+    sid: string,
+    ms: number,
+  ): void {
+    const existing = timers.get(sid);
+    if (existing !== undefined) clearTimeout(existing);
+    sessions.add(sid);
+    timers.set(
+      sid,
+      setTimeout(() => {
+        timers.delete(sid);
+        sessions.delete(sid);
+      }, ms),
+    );
+  }
+
+  function beginContinueTurnStart(sid: string): void {
+    armTimedSession(continueStartingSessions, continueStartingTimers, sid, 2000);
+  }
+
+  function settleContinueTurnStart(sid: string): void {
+    clearTimedSession(continueStartingSessions, continueStartingTimers, sid);
+  }
+
+  function isContinueTurnStarting(sid: string): boolean {
+    return continueStartingSessions.has(sid);
+  }
+
+  function beginCompactStart(sid: string): void {
+    clearTimedSession(compactStartingSessions, compactStartingTimers, sid);
+    compactStartingSessions.add(sid);
+  }
+
+  function holdCompactStartGrace(sid: string): void {
+    if (!compactStartingSessions.has(sid)) return;
+    armTimedSession(compactStartingSessions, compactStartingTimers, sid, 500);
+  }
+
+  function settleCompactStart(sid: string): void {
+    clearTimedSession(compactStartingSessions, compactStartingTimers, sid);
+  }
+
+  function isCompactStarting(sid: string): boolean {
+    return compactStartingSessions.has(sid);
+  }
+
   function setDraftEntry(entry: 'newChat' | 'workspace'): void {
     draftEntry.value = entry;
     draftEntryNonce.value += 1;
@@ -243,6 +310,8 @@ export const usePromptStore = defineStore('kimi.prompt', () => {
     autoCompactedAtBySession.delete(sid);
     steerInFlightCounts.delete(sid);
     steerChainBySession.delete(sid);
+    settleContinueTurnStart(sid);
+    settleCompactStart(sid);
   }
 
   function forgetLocalTurnState(sid: string): void {
@@ -301,6 +370,13 @@ export const usePromptStore = defineStore('kimi.prompt', () => {
     clearOptimisticMessages,
     tryBeginStartingFirstPrompt,
     endStartingFirstPrompt,
+    beginContinueTurnStart,
+    settleContinueTurnStart,
+    isContinueTurnStarting,
+    beginCompactStart,
+    holdCompactStartGrace,
+    settleCompactStart,
+    isCompactStarting,
     setDraftEntry,
     forgetPromptState,
     forgetLocalTurnState,

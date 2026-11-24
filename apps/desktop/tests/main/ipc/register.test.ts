@@ -846,7 +846,7 @@ describe('native browser IPC', () => {
         homeDir: home,
         port: 0,
         logLevel: 'silent',
-        env: { ...process.env, KIMI_CODE_EXPERIMENTAL_TOOL_SELECT: '1', KIMI_CODE_EXPERIMENTAL_PERSISTENCE_MINIDB_READMODEL: 'false', KIMI_CODE_EXPERIMENTAL_SEARCH_WORKER: 'false' },
+        env: { ...process.env, KIMI_CODE_EXPERIMENTAL_PERSISTENCE_MINIDB_READMODEL: 'false', KIMI_CODE_EXPERIMENTAL_SEARCH_WORKER: 'false' },
       });
       registration = registerDesktopBrowserMcp(server.core, browser.config, access);
       const sessions = server.core.accessor.get(core.ISessionManager);
@@ -1687,11 +1687,20 @@ describe('quitConfirmResponse', () => {
     const mainWebContents = {};
     mocks.getMainWindow.mockReturnValue({ isDestroyed: () => false, webContents: mainWebContents });
     handler(IPC.quitConfirmResponse)({ sender: mainWebContents }, { choice: 'quit', requestId: 1 });
-    expect(mocks.resolveQuitConfirmResponse).toHaveBeenCalledWith('quit', 1);
+    expect(mocks.resolveQuitConfirmResponse).toHaveBeenCalledWith('quit', 1, false);
     handler(IPC.quitConfirmResponse)({ sender: mainWebContents }, { choice: 'cancel', requestId: 2 });
-    expect(mocks.resolveQuitConfirmResponse).toHaveBeenCalledWith('cancel', 2);
+    expect(mocks.resolveQuitConfirmResponse).toHaveBeenCalledWith('cancel', 2, false);
     handler(IPC.quitConfirmResponse)({ sender: mainWebContents }, { choice: 'unavailable', requestId: 3 });
-    expect(mocks.resolveQuitConfirmResponse).toHaveBeenCalledWith('unavailable', 3);
+    expect(mocks.resolveQuitConfirmResponse).toHaveBeenCalledWith('unavailable', 3, false);
+  });
+
+  it('forwards the continue choice only when it is exactly true', () => {
+    const mainWebContents = {};
+    mocks.getMainWindow.mockReturnValue({ isDestroyed: () => false, webContents: mainWebContents });
+    handler(IPC.quitConfirmResponse)({ sender: mainWebContents }, { choice: 'quit', requestId: 4, continueSessions: true });
+    expect(mocks.resolveQuitConfirmResponse).toHaveBeenLastCalledWith('quit', 4, true);
+    handler(IPC.quitConfirmResponse)({ sender: mainWebContents }, { choice: 'quit', requestId: 5, continueSessions: 'yes' });
+    expect(mocks.resolveQuitConfirmResponse).toHaveBeenLastCalledWith('quit', 5, false);
   });
 
   it('ignores invalid payloads and foreign senders', () => {

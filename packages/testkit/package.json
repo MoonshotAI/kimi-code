@@ -17,6 +17,10 @@
       "types": "./src/kap/index.ts",
       "default": "./src/kap/index.ts"
     },
+    "./contract": {
+      "types": "./src/contract/index.ts",
+      "default": "./src/contract/index.ts"
+    },
     "./fixtures": {
       "types": "./src/fixtures/index.ts",
       "default": "./src/fixtures/index.ts"

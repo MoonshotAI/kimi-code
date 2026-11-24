@@ -85,6 +85,7 @@ const emit = defineEmits<{
   generateTitle: [id: string, done: (title: string | null) => void];
   deleteWorkspace: [id: string];
   openSettings: [];
+  openFeedback: [];
   login: [];
   collapse: [];
 }>();
@@ -208,11 +209,12 @@ function selectSibling(delta: 1 | -1): void {
   const id = ids[nextIdx];
   if (id === undefined) return;
   if (statusTab.value === 'workspaces') {
+    panel.expandGroupIfCollapsed(null);
     emit('createInWorkspace', id);
     return;
   }
   const wsId = panel.groupOfSession(id);
-  if (wsId !== null) panel.expandGroupIfCollapsed(wsId);
+  panel.expandGroupIfCollapsed(wsId, id);
   emit('select', { sessionId: id, source: 'sidebar' });
 }
 
@@ -448,7 +450,11 @@ function onLogoClick(): void {
            the settings entry pinned at its right edge. -->
       <div class="side-footer" :class="{ 'side-footer--shadowed': panelRef?.sessionsCanScrollDown }">
         <div class="side-footer-account">
-          <UserMenu @login="emit('login')" @open-settings="emit('openSettings')" />
+          <UserMenu
+            @login="emit('login')"
+            @open-settings="emit('openSettings')"
+            @open-feedback="emit('openFeedback')"
+          />
         </div>
         <IconButton
           class="side-footer-settings"
@@ -476,11 +482,11 @@ function onLogoClick(): void {
     </div>
 
     <!-- Dev backend switcher menu (position:fixed, anchored to the brand pill) -->
-    <Transition name="menu-pop">
+    <Transition name="ui-menu-pop">
       <Menu
         v-if="backendMenuOpen"
         ref="backendMenuRef"
-        class="backend-menu"
+        class="ui-menu-floating backend-menu"
         :style="backendMenuStyle"
         @click.stop
       >
@@ -522,7 +528,7 @@ function onLogoClick(): void {
   --sb-pad-x: var(--space-4);
   --sb-gutter: 16px;
   --sb-gap: var(--space-2);
-  --sb-action-inset: calc((max(var(--ui-font-size-sm) * var(--leading-tight), var(--p-ic-md)) + 2 * var(--space-2) - var(--icon-button-sm)) / 2);
+  --sb-action-inset: calc((max(var(--text-sm) * var(--leading-tight), var(--p-ic-md)) + 2 * var(--space-2) - var(--icon-button-sm)) / 2);
   --sb-hover: var(--color-hover);
   --sb-selected: color-mix(in srgb, var(--color-selected) 75%, transparent);
   user-select: none;
@@ -552,7 +558,7 @@ function onLogoClick(): void {
   min-height: 0;
   width: 100%;
   box-sizing: border-box;
-  border-right: var(--p-hairline) solid var(--line);
+  border-right: var(--p-hairline) solid var(--color-line);
   container-type: inline-size;
   container-name: sidebar-col;
   position: relative;
@@ -609,7 +615,7 @@ function onLogoClick(): void {
   margin-left: auto;
 }
 .ch-name {
-  font-size: var(--ui-font-size);
+  font-size: var(--text-base);
   font-weight: 500;
   line-height: 22px;
   color: var(--color-text);
@@ -660,25 +666,11 @@ function onLogoClick(): void {
 
 .btn-new-chat {
   grid-column: 1 / -1;
-  display: flex;
-  align-items: center;
-  gap: var(--sb-gap);
-  width: 100%;
-  min-width: 0;
   padding: 8px calc(var(--sb-pad-x) - var(--sb-inset));
   border: none;
   border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--color-text);
-  font-family: var(--font-ui);
-  font-size: var(--ui-font-size-sm);
-  font-weight: var(--weight-medium);
-  line-height: var(--leading-tight);
-  cursor: pointer;
-  text-align: left;
 }
 .btn-new-chat:hover { background: var(--sb-hover); }
-.btn-new-chat:focus-visible { outline: none; box-shadow: var(--p-focus-ring); }
 .btn-new-chat svg { flex: none; }
 .btn-new-chat span {
   overflow: hidden;
@@ -731,7 +723,7 @@ function onLogoClick(): void {
   min-width: 0;
   color: var(--color-text);
   font-family: var(--font-ui);
-  font-size: var(--ui-font-size-sm);
+  font-size: var(--text-sm);
   font-weight: var(--weight-medium);
   line-height: var(--leading-tight);
   overflow: hidden;
@@ -768,7 +760,7 @@ function onLogoClick(): void {
   align-items: center;
   gap: var(--space-1);
   padding: var(--space-2) calc(var(--sb-inset) + var(--sb-action-inset)) var(--space-2) var(--sb-inset);
-  border-top: var(--p-hairline) solid var(--line);
+  border-top: var(--p-hairline) solid var(--color-line);
   background: var(--color-sidebar-bg);
 }
 .side-footer-account {
@@ -818,19 +810,9 @@ function onLogoClick(): void {
   visibility: visible;
 }
 .folder-drop-card {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
   max-width: 100%;
   box-sizing: border-box;
   padding: var(--space-4);
-  border-radius: var(--radius-lg);
-  border: var(--p-hairline) dashed var(--color-accent);
-  background: var(--color-bg);
-  color: var(--color-accent);
-  font-size: var(--ui-font-size-lg);
-  font-weight: var(--weight-medium);
-  box-shadow: var(--shadow-md);
 }
 .folder-drop-card svg {
   flex: none;
@@ -841,40 +823,22 @@ function onLogoClick(): void {
   white-space: nowrap;
 }
 
-.backend-menu {
-  position: fixed;
-  top: 0;
-  left: 0;
-  z-index: var(--z-dropdown);
-}
 .section-menu-check {
   display: inline-flex;
   flex: none;
   width: 14px;
 }
 .backend-menu-name {
-  font-family: var(--mono);
+  font-family: var(--font-mono);
   font-weight: 500;
 }
 .backend-menu-url {
   margin-left: 8px;
-  font-family: var(--mono);
+  font-family: var(--font-mono);
   color: var(--color-text-muted);
 }
-.menu-pop-enter-active {
-  transition:
-    opacity var(--duration-base) var(--ease-out),
-    transform var(--duration-base) var(--ease-out);
-}
-.menu-pop-leave-active {
-  transition:
-    opacity var(--duration-fast) var(--ease-out),
-    transform var(--duration-fast) var(--ease-out);
-  pointer-events: none;
-}
-.menu-pop-enter-from,
-.menu-pop-leave-to {
-  opacity: 0;
-  transform: scale(0.97) translateY(var(--menu-pop-shift, -2px));
-}
 </style>
+
+<style scoped src="@moonshot-ai/app-components/sidebar-row-button.css"></style>
+
+<style scoped src="@moonshot-ai/app-components/drop-card.css"></style>

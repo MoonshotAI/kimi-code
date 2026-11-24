@@ -19,7 +19,7 @@ import {
 interface PendingHttp {
   resolve(res: DeviceHttpResponse): void;
   reject(err: Error): void;
-  timeout: ReturnType<typeof setTimeout>;
+  timeout?: ReturnType<typeof setTimeout>;
   signal?: AbortSignal;
   onCancel?: () => void;
 }
@@ -78,13 +78,11 @@ export class StdioDeviceSession implements DeviceSession {
         : () => {
             settle('cancelled', 'device request cancelled');
           };
-      const timeout = setTimeout(
-        () => {
-          settle('timeout', 'device request timed out');
-        },
-        req.timeoutMs ?? DEVICE_HTTP_TIMEOUT_MS,
-      );
-      timeout.unref?.();
+      const timeoutMs = req.timeoutMs ?? DEVICE_HTTP_TIMEOUT_MS;
+      const timeout = timeoutMs === Infinity
+        ? undefined
+        : setTimeout(() => settle('timeout', 'device request timed out'), timeoutMs);
+      timeout?.unref?.();
       this.pendingHttp.set(id, { resolve, reject, timeout, signal: req.signal, onCancel });
       req.signal?.addEventListener('abort', onCancel!, { once: true });
       this.rpc.write({

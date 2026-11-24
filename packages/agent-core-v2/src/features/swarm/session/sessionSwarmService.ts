@@ -188,7 +188,6 @@ export class SessionSwarmService implements ISessionSwarmService {
       description: options.description,
       swarmIndex: options.swarmIndex,
       runInBackground: options.runInBackground,
-      fork: plan.fork,
       model: plan.model,
       modelSource: plan.modelSource,
     });

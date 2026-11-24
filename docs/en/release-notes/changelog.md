@@ -6,6 +6,27 @@ outline: 2
 
 This page documents the changes in each Kimi Code CLI release.
 
+## 2.7.3 (2026-11-24)
+
+### Bug Fixes
+
+- Fix sessions that could not open after their model became unavailable.
+
+## 2.7.2 (2026-11-20)
+
+### Bug Fixes
+
+- Web: Fix the draft thinking effort inherited from the global thinking setting reverting to the model default after sending.
+
+## 2.7.1 (2026-11-20)
+
+### Bug Fixes
+
+- Fix turn-specific fork failures after restoring sessions with in-turn steering.
+- Keep queued prompts pending until background notification turns finish.
+- Web: Fix draft thinking effort selections reverting to the model default after sending.
+- Web: Fix the input composer disappearing when accessed over insecure HTTP.
+
 ## 2.7.0 (2026-11-19)
 
 ### Features

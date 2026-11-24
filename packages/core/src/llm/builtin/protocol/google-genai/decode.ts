@@ -1,4 +1,5 @@
 import { ApiError as RawGoogleGenAISDKApiError } from '@google/genai';
+import { v4 as randomUUID } from 'uuid';
 
 import {
   isTransientHttpStatus,
@@ -82,8 +83,8 @@ function extractChunkParts(response: Record<string, unknown>): StreamedMessagePa
         const name = fc['name'] as string;
         if (!name) continue;
         const rawId = typeof fc['id'] === 'string' && fc['id'].length > 0 ? fc['id'] : undefined;
-        const id_ = rawId ?? crypto.randomUUID();
-        const toolCallId = `${name}_${id_}_${crypto.randomUUID().replaceAll('-', '').slice(0, 8)}`;
+        const id_ = rawId ?? randomUUID();
+        const toolCallId = `${name}_${id_}_${randomUUID().replaceAll('-', '').slice(0, 8)}`;
         const toolCall: ToolCall = {
           type: 'function',
           id: toolCallId,
@@ -149,9 +150,13 @@ function parseUsage(response: Record<string, unknown>): Partial<TokenUsage> | un
     typeof usageMetadata['candidatesTokenCount'] === 'number'
       ? usageMetadata['candidatesTokenCount']
       : 0;
+  const thoughtsTokenCount =
+    typeof usageMetadata['thoughtsTokenCount'] === 'number'
+      ? usageMetadata['thoughtsTokenCount']
+      : 0;
   return {
     inputOther: Math.max(promptTokenCount - (cachedContentTokenCount ?? 0), 0),
-    output: candidatesTokenCount,
+    output: candidatesTokenCount + thoughtsTokenCount,
     inputCacheRead: cachedContentTokenCount,
     inputCacheCreation: 0,
     raw: usageMetadata,

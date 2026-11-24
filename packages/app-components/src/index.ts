@@ -57,10 +57,11 @@ export { default as WorkspaceRecentSessions } from './chat/WorkspaceRecentSessio
 export { default as SelectionActionBubble } from './chat/SelectionActionBubble.vue';
 export { default as TableSelectionContextMenu } from './chat/TableSelectionContextMenu.vue';
 export { default as SideChatPanel } from './chat/SideChatPanel.vue';
+export { default as JumpToBottomPill } from './chat/JumpToBottomPill.vue';
 export { default as StatusGlyph } from './chat/StatusGlyph.vue';
 export { default as StatusPanel } from './chat/StatusPanel.vue';
 export { default as ThinkingBlock } from './chat/ThinkingBlock.vue';
-export { default as ThinkingPanel } from './chat/ThinkingPanel.vue';
+export { default as CompactionPanel } from './chat/CompactionPanel.vue';
 export { default as ToolCall } from './chat/ToolCall.vue';
 export { default as TurnDiffPanel } from './chat/TurnDiffPanel.vue';
 export { default as TurnFilesSummary } from './chat/TurnFilesSummary.vue';
@@ -93,7 +94,14 @@ export { default as TodoTool } from './chat/tool-calls/TodoTool.vue';
 export { default as ToolDisclosure } from './chat/tool-calls/ToolDisclosure.vue';
 export { default as WaitForTool } from './chat/tool-calls/WaitForTool.vue';
 export { default as WebFetchTool } from './chat/tool-calls/WebFetchTool.vue';
-export { default as Composer } from './composer/Composer.vue';
+export {
+  default as Composer,
+  type ComposerCommandPayload,
+  type ComposerEmits,
+  type ComposerSteerPayload,
+  type ComposerSubmitPayload,
+} from './composer/Composer.vue';
+export { default as ContextComposition } from './composer/ContextComposition.vue';
 export { default as ContextSummaryBody } from './composer/ContextSummaryBody.vue';
 export { default as MentionMenu } from './composer/MentionMenu.vue';
 export { default as SlashMenu } from './composer/SlashMenu.vue';
@@ -111,6 +119,7 @@ export { default as AddProviderPage } from './settings/AddProviderPage.vue';
 export { default as BrowserTabTitleSetting } from './settings/BrowserTabTitleSetting.vue';
 export { default as FontSettingsPage } from './settings/FontSettingsPage.vue';
 export { default as FontSettingsRow } from './settings/FontSettingsRow.vue';
+export { default as GlobalAgentsMdSetting } from './settings/GlobalAgentsMdSetting.vue';
 export { default as SettingsSubpage } from './settings/SettingsSubpage.vue';
 export {
   SettingsSubpageHostKey,

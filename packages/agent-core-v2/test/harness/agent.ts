@@ -251,8 +251,10 @@ import { guardPromptCachePrefix, PromptCacheGuardedLoopRequester } from './promp
 import {
   createScriptedGenerate,
   createMockProvider,
+  fetchBackedProvider,
   withMockProvider,
   type MockProvider,
+  type MockProviderResponse,
 } from './scripted-generate';
 import { project as projectContext } from '#/agent/loop/projection';
 import {
@@ -474,8 +476,13 @@ interface ConfigureOptions {
 
 export type TestAgentContext = AgentTestContext;
 
+export interface TestModelEndpoint {
+  readonly fetch: typeof fetch;
+}
+
 export interface TestAgentOptions {
   readonly generate?: MockProvider | undefined;
+  readonly model?: TestModelEndpoint;
   readonly telemetry?: ITelemetryService | undefined;
   readonly persistence?: WireRecordPersistence | undefined;
   readonly hookEngine?:
@@ -511,7 +518,7 @@ export type TestAgentServiceOverride =
   | TestAgentScopedServiceOverride
   | readonly TestAgentServiceOverride[];
 
-type TestAgentInput = TestAgentServiceOverride | TestAgentOptions;
+export type TestAgentInput = TestAgentServiceOverride | TestAgentOptions;
 
 export function appServices(group: TestAgentServiceGroup): TestAgentServiceOverride {
   return scopedServices('app', group);
@@ -1138,11 +1145,28 @@ export class AgentTestContext {
   readonly emitter = new EventEmitter();
   readonly allEvents: EventSnapshotEntry[] = this.snapshots.entries;
   readonly rpc: PromiseAgentAPI;
-  readonly llmCalls = this.scriptedGenerate.calls;
-  readonly lastLlmInput = this.scriptedGenerate.lastInput;
-  readonly llmInputs = this.scriptedGenerate.inputs;
-  readonly mockNextResponse = this.scriptedGenerate.mockNextResponse;
-  readonly mockNextProviderResponse = this.scriptedGenerate.mockNextProviderResponse;
+  get llmCalls(): ReturnType<typeof createScriptedGenerate>['calls'] {
+    this.requireScriptedModel('llmCalls');
+    return this.scriptedGenerate.calls;
+  }
+
+  readonly lastLlmInput = (): ReturnType<ReturnType<typeof createScriptedGenerate>['lastInput']> => {
+    this.requireScriptedModel('lastLlmInput');
+    return this.scriptedGenerate.lastInput();
+  };
+
+  readonly llmInputs = (): ReturnType<ReturnType<typeof createScriptedGenerate>['inputs']> => {
+    this.requireScriptedModel('llmInputs');
+    return this.scriptedGenerate.inputs();
+  };
+  readonly mockNextResponse = (...response: StreamedMessagePart[]): void => {
+    this.requireScriptedModel('mockNextResponse');
+    this.scriptedGenerate.mockNextResponse(...response);
+  };
+  readonly mockNextProviderResponse = (input: MockProviderResponse): void => {
+    this.requireScriptedModel('mockNextProviderResponse');
+    this.scriptedGenerate.mockNextProviderResponse(input);
+  };
 
   constructor(overrides: readonly TestAgentServiceOverride[] = [], options: TestAgentOptions = {}) {
     this.options = options;
@@ -1202,7 +1226,9 @@ export class AgentTestContext {
           reg.defineInstance(
             IProtocolAdapterRegistry,
             createGenerateBackedGateway(
-              guardPromptCachePrefix(options.generate ?? this.scriptedGenerate.provider),
+              guardPromptCachePrefix(
+                options.generate ?? (options.model === undefined ? this.scriptedGenerate.provider : fetchBackedProvider(options.model.fetch)),
+              ),
             ),
           );
           reg.defineInstance(
@@ -2242,6 +2268,11 @@ export class AgentTestContext {
 
   async dispose(): Promise<void> {
     await this.close();
+  }
+
+  private requireScriptedModel(api: string): void {
+    if (this.options.model === undefined) return;
+    throw new Error(`${api} belongs to the built-in harness model, but this agent uses the testkit model; script replies with model.script(...) and read requests with model.requests()`);
   }
 
   private takeUntilRpc(method: string): Promise<{

@@ -84,6 +84,7 @@ export interface DeviceBridge {
   readonly identity: RemoteDeviceIdentity | undefined;
   readonly upgradeState: DeviceUpgradeState | undefined;
   connect(): Promise<DeviceSession>;
+  resumeIfIdle?(): Promise<DeviceSession> | undefined;
   upgrade(): Promise<DeviceUpgradeResult>;
   start(): void;
   dispose(): void;

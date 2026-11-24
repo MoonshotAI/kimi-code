@@ -12,7 +12,7 @@ The input box accepts free-form text. Press `Enter` to send, or `Shift-Enter` / 
 
 After a main agent turn completes normally, Kimi Code CLI can suggest the next prompt in an empty input box. The suggestion is generated in a side request and never submitted automatically.
 
-Set `KIMI_CODE_EXPERIMENTAL_PROMPT_PREDICTION=1` before launching to enable it, or run `/experiments` and enable `Prompt prediction`. Press `Tab` or `→` to insert the full suggestion, edit it if needed, and press `Enter` to submit. Typing, pressing `Esc`, starting a new turn, or switching sessions cancels or clears the suggestion. Cancelled, failed, or blocked turns do not produce suggestions.
+Set `KIMI_CODE_EXPERIMENTAL_PROMPT_PREDICTION=1` before launching to enable it, or run `/experiments` and enable `Prompt prediction`. Press `Tab` or `→` to insert the full suggestion, edit it if needed, and press `Enter` to submit. The suggestion hides while you type and reappears once the input is cleared, ready to be inserted again; starting a new turn or switching sessions clears it. Cancelled, failed, or blocked turns do not produce suggestions.
 
 ## Pasting images and video
 
@@ -26,6 +26,8 @@ How to paste:
 - **Windows**: `Alt-V`
 
 After pasting, the input box shows a placeholder that you can edit like normal text; on submit, the placeholder is replaced with the actual content. A plain-text clipboard falls back to ordinary paste. Media support depends on the current model's multimodal capabilities (`image_in` / `video_in`); it is enabled by default when you are logged in to a Kimi Code account.
+
+When a pasted image or video is saved in the session, Kimi Code sends its filename to the configured model provider. In a local execution environment, it also sends the absolute path of the saved copy so the agent can use it in a tool call. In a remote execution environment, the attachment stays on the Kimi Code host.
 
 If a conversation accumulates more than 20 MB of media, the oldest images and videos are omitted from requests automatically, and a warning is shown when this happens.
 
@@ -72,7 +74,7 @@ Approvals are not triggered for regular tool calls in Ask When Needed mode, nor 
 
 ### The three permission modes
 
-**Always Ask mode** (formerly Manual) is the default: read-only operations run automatically, while every other action — editing files, running commands — asks for your confirmation one by one. Use it when you want full control over every change.
+**Always Ask mode** (formerly Manual) is the default: read-only operations run automatically, including shell commands such as `ls`, `cat`, `rg`, `find`, or `git status` that can be statically proven to be read-only; every other action, such as editing files or running other commands, asks for your confirmation one by one. Use it when you want full control over every change. To keep confirming those read-only commands, add an `ask` rule for them in [Configuration files](../configuration/config-files.md#permission).
 
 **Ask When Needed mode** (formerly YOLO), enabled with `/yolo`, auto-approves regular tool calls, making it suitable for batch tasks you know are safe. It still asks before sensitive actions — accessing sensitive files such as `.env` or SSH keys, running dangerous commands such as `shutdown` or `rm -rf`, or exiting Plan mode — and the agent can still ask you questions.
 
@@ -140,6 +142,8 @@ The input box remains usable while the agent is thinking or calling tools, and s
 - **`Ctrl-S`**: inject the content in the input box into the running turn immediately, without waiting for it to finish
 - **`Esc` / `Ctrl-C`**: interrupt the current turn
 - **`Ctrl-O`**: globally toggle the collapsed/expanded state of tool output and compaction summaries
+
+Queued messages stay in the queue through follow-up turns triggered by background-task notifications, and are sent in order only after the engine has drained all pending turns.
 
 When the agent is waiting for background tasks through `WaitFor`, sending a message with `Enter` steers it in and ends that wait early; messages already queued when the wait starts are steered in automatically as well. If the queue holds a shell command or a skill, automatic steering is skipped and the queue and new input stay queued until the turn ends. Press `Ctrl-S` to manually steer non-shell inputs from the editor and the queue. Background tasks keep running and existing tool results are preserved. If other foreground tools remain in the same batch, the agent processes your message after they return.
 

@@ -32,21 +32,17 @@ import { IAgentUserToolService, type UserToolRegistration } from '#/agent/userTo
 import { IAgentSwarmService } from '#/features/swarm/agent/swarm';
 import {
   AgentSwarmToolInputSchema,
+  SWARM_RESUME_ONLY_WITH_MODEL_UNAVAILABLE,
   type AgentSwarmToolInput,
 } from '#/features/swarm/tools/agent-swarm/agent-swarm';
 import {
   ISubagentTool,
+  RESUME_WITH_MODEL_UNAVAILABLE,
   SubagentToolInputSchema,
   type SubagentToolInput,
 } from '#/agent/tools/agent/agent';
-import {
-  FORK_WITH_MODEL_UNAVAILABLE,
-  FORK_WITH_RESUME_UNAVAILABLE,
-  FORK_WITH_TYPE_UNAVAILABLE,
-} from '#/session/subagent/spawn';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
 import { DEFAULT_SUBAGENT_TIMEOUT_MS, SECONDARY_MODEL_SECTION, SUBAGENT_SECTION } from '#/session/subagent/configSection';
-import { SUBAGENT_FORK_FLAG_ID } from '#/session/subagent/flag';
 import { Error2, ErrorCodes } from '#/errors';
 import { SUBAGENT_SCOPE_EVICT_TIMEOUT_ENV } from '#/session/subagent/subagentScopeCache';
 import {
@@ -76,7 +72,6 @@ import { IConfigService } from '#/app/config/config';
 import { IFlagService } from '#/app/flag/flag';
 import { IWebSearchProviderService } from '#/app/auth/webSearch/webSearch';
 import { IAgentToolActivationService } from '#/agent/toolActivation/toolActivation';
-import { TOOL_SELECT_FLAG_ID } from '#/agent/toolSelect/flag';
 import { ISessionNotify } from '#/features/notify/sessionNotify';
 import { normalizeAgentProfile, type AgentProfile } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemetry';
@@ -116,13 +111,6 @@ import { stubAgentContext } from '../agent/agentContext/stubs';
 import { TOWER_WORKER_PROFILE } from '#/features/tower/tower';
 
 const signal = new AbortController().signal;
-
-function forkFlags(enabled = true): TestAgentServiceOverride {
-  return appService(
-    IFlagService,
-    stubFlag((id) => enabled && id === SUBAGENT_FORK_FLAG_ID),
-  );
-}
 
 function agentSchemaProperties<T = unknown>(): Record<string, T> {
   return (
@@ -330,7 +318,6 @@ function createAgentLifecycleStub(options: AgentLifecycleStubOptions = {}): Agen
             _serviceBrand: undefined,
             register: () => noopDisposable(),
             notify: () => {},
-            reconcileWhenIdle: () => Promise.resolve(),
           } as never;
         }
         if (serviceId === IEventBus) {
@@ -563,6 +550,7 @@ function sessionMetadataStub(agents: Readonly<Record<string, AgentMeta>>): ISess
     setGeneratedTitleIfUncustomized: async () => false,
     setArchived: async () => {},
     registerAgent: async () => {},
+    unregisterAgent: async () => {},
   };
 }
 
@@ -648,7 +636,7 @@ describe('SubagentToolInputSchema', () => {
 
     expect(properties['model']?.type).toBe('string');
     expect(properties['model']?.enum).toBeUndefined();
-    expect(properties['model']?.description).toContain('Available models');
+    expect(properties['model']?.description).toContain('<system-reminder>');
   });
 
   it('normalizes the default subagent type into tool args', () => {
@@ -674,21 +662,8 @@ describe('SubagentToolInputSchema', () => {
     ).toBeUndefined();
   });
 
-  it('exposes the fork parameter in the JSON schema', () => {
-    const properties = agentSchemaProperties<{ type?: string }>();
-
-    expect(properties).toHaveProperty('fork');
-    expect(properties['fork']?.type).toBe('boolean');
-  });
-
-  it('does not default subagent_type when forking', () => {
-    expect(
-      SubagentToolInputSchema.parse({
-        prompt: 'Continue',
-        description: 'Continue work',
-        fork: true,
-      }).subagent_type,
-    ).toBeUndefined();
+  it('does not expose the removed fork parameter in the JSON schema', () => {
+    expect(agentSchemaProperties()).not.toHaveProperty('fork');
   });
 });
 
@@ -784,13 +759,12 @@ describe('Agent tool description', () => {
   });
 
   it.each([
-    { enabled: false, primary: true, secondary: true, fork: false, expected: false },
-    { enabled: true, primary: false, secondary: false, fork: false, expected: false },
-    { enabled: true, primary: true, secondary: false, fork: false, expected: false },
-    { enabled: true, primary: true, secondary: false, fork: true, expected: false },
-    { enabled: true, primary: false, secondary: true, fork: false, expected: true },
-  ])('describes select_tools for eligible subagent models: $enabled/$primary/$secondary/$fork', async ({
-    enabled, primary, secondary, fork, expected,
+    { primary: true, secondary: true, expected: true },
+    { primary: false, secondary: false, expected: false },
+    { primary: true, secondary: false, expected: false },
+    { primary: false, secondary: true, expected: true },
+  ])('describes select_tools for eligible subagent models: $primary/$secondary', async ({
+    primary, secondary, expected,
   }) => {
     ctx = createTestAgent(
       {
@@ -806,12 +780,6 @@ describe('Agent tool description', () => {
           },
         },
       },
-      appService(
-        IFlagService,
-        stubFlag((id) =>
-          id === TOOL_SELECT_FLAG_ID ? enabled : id === SUBAGENT_FORK_FLAG_ID ? fork : true,
-        ),
-      ),
       sessionService(ISessionAgentProfileCatalog, discoveredCatalog()),
     );
     ctx.configure({
@@ -874,8 +842,8 @@ describe('Agent tool description', () => {
     expect(ctx.get(IAgentToolRegistryService).resolve('NotifyUser') !== undefined).toBe(enabled);
   });
 
-  it.each([false, true])('renders caller model tools without a pool when fork=%s', async (fork) => {
-    ctx = createTestAgent(forkFlags(fork));
+  it('renders caller model tools without a pool', async () => {
+    ctx = createTestAgent();
     ctx.configure({
       modelCapabilities: {
         image_in: true,
@@ -951,7 +919,7 @@ describe('Agent tool description', () => {
     expect(description).not.toContain('ReadMediaFile');
   });
 
-  it.each([false, true])('omits caller-only ReadMediaFile from subagent types when fork=%s', async (fork) => {
+  it('omits caller-only ReadMediaFile from subagent types', async () => {
     ctx = createTestAgent({
       initialConfig: {
         secondaryModel: { defaultModel: 'provider/text' },
@@ -963,7 +931,7 @@ describe('Agent tool description', () => {
           },
         },
       },
-    }, forkFlags(fork));
+    });
     ctx.configure({
       modelCapabilities: {
         image_in: true,
@@ -1043,31 +1011,6 @@ describe('Agent tool description', () => {
 
     expect(description).toContain('- globber: Globber');
     expect(description).toContain('mcp__server__@(read|write)');
-  });
-
-  it('omits the fork parameter and guidance while the subagent_fork flag is off', () => {
-    ctx = createTestAgent(forkFlags(false));
-
-    const tool = ctx.toolsData().find((entry) => entry.name === 'Agent');
-    expect(tool).toBeDefined();
-    expect(tool!.description).not.toContain('Context forking');
-    const properties = (tool!.parameters as { properties?: Record<string, unknown> } | undefined)
-      ?.properties;
-    expect(properties).toBeDefined();
-    expect(properties).not.toHaveProperty('fork');
-  });
-
-  it('exposes the fork parameter and guidance when the subagent_fork flag is on', () => {
-    ctx = createTestAgent(forkFlags());
-
-    const tool = ctx.toolsData().find((entry) => entry.name === 'Agent');
-    expect(tool).toBeDefined();
-    expect(tool!.description).toContain('inheriting your current agent type, model, and tool set.');
-    const properties = (tool!.parameters as { properties?: Record<string, unknown> } | undefined)
-      ?.properties;
-    expect(properties?.['fork']).toMatchObject({
-      description: 'Start with a snapshot of your completed conversation history, inheriting your current agent type, model, and tool set.',
-    });
   });
 
   it('does not offer the default agent type to the builtin default caller', () => {
@@ -1351,99 +1294,170 @@ describe('Agent tool description', () => {
     expect(agentDescription()).toContain('Available agent types');
   });
 
-  it('omits the models section when no [secondary_model.models] pool is configured', () => {
-    ctx = createTestAgent();
-
-    expect(agentDescription()).not.toContain('Available models');
-  });
-
-  it('renders the pool in config order with the default first and no primary choice', () => {
-    ctx = createTestAgent({
-      initialConfig: {
-        secondaryModel: {
-          defaultModel: 'provider/fast',
-          models: {
-            'provider/fast': 'fast and cheap',
-            'provider/smart': 'hard tasks',
-          },
-        },
-        models: POOL_MODEL_ENTRIES,
-      },
-    });
-
-    const description = agentDescription();
-
-    expect(description).toContain('Available models');
-    const defaultIndex = description.indexOf('- provider/fast [default]: fast and cheap');
-    const smartIndex = description.indexOf('- provider/smart: hard tasks');
-    expect(defaultIndex).toBeGreaterThanOrEqual(0);
-    expect(smartIndex).toBeGreaterThan(defaultIndex);
-    expect(description).not.toContain('- primary');
-  });
-
-  it('renders the caller-in-pool alias as a plain entry and renders empty descriptions bare', () => {
-    ctx = createTestAgent({
-      initialConfig: {
-        secondaryModel: {
-          defaultModel: 'provider/fast',
-          models: {
-            'provider/fast': 'fast and cheap',
-            'mock-model': 'the main model, great at hard things',
-            'provider/smart': '',
-          },
-        },
-        models: POOL_MODEL_ENTRIES,
-      },
-    });
-
-    const description = agentDescription();
-
-    expect(description).toContain('- provider/fast [default]: fast and cheap');
-    expect(description).toContain('- mock-model: the main model, great at hard things');
-    expect(description).toMatch(/^- provider\/smart$/m);
-    expect(description).not.toContain('- primary');
-  });
-
-  it('marks the default alias with [default]', () => {
-    ctx = createTestAgent({
-      initialConfig: {
-        secondaryModel: {
-          defaultModel: 'mock-model',
-          models: {
-            'mock-model': 'the main model, great at hard things',
-            'provider/fast': 'fast and cheap',
-          },
-        },
-        models: POOL_MODEL_ENTRIES,
-      },
-    });
-
-    const description = agentDescription();
-
-    const defaultIndex = description.indexOf(
-      '- mock-model [default]: the main model, great at hard things',
-    );
-    const fastIndex = description.indexOf('- provider/fast: fast and cheap');
-    expect(defaultIndex).toBeGreaterThanOrEqual(0);
-    expect(fastIndex).toBeGreaterThan(defaultIndex);
-  });
-
   function agentParameters(): Record<string, unknown> {
     const tool = ctx.toolsData().find((entry) => entry.name === 'Agent');
     expect(tool?.parameters).toBeDefined();
     return tool!.parameters!;
   }
 
-  it('strips the model parameter from the advertised schema when no pool is configured', () => {
-    ctx = createTestAgent();
+  it.each([
+    { name: 'no secondary_model section', secondaryModel: undefined },
+    { name: 'a pool-less default_model', secondaryModel: { defaultModel: 'provider/fast' } },
+    {
+      name: 'a single-entry pool table',
+      secondaryModel: { defaultModel: 'provider/fast', models: { 'provider/fast': 'fast' } },
+    },
+    {
+      name: 'a multi-entry pool table',
+      secondaryModel: {
+        defaultModel: 'provider/fast',
+        models: { 'provider/fast': 'fast and cheap', 'provider/smart': 'hard tasks' },
+      },
+    },
+  ])('keeps model in parameters and omits Available models from description for $name', ({ secondaryModel }) => {
+    ctx = createTestAgent({
+      initialConfig: {
+        secondaryModel,
+        models: POOL_MODEL_ENTRIES,
+      },
+    });
 
-    const properties = agentParameters()['properties'] as Record<string, unknown>;
+    const properties = agentParameters()['properties'] as Record<
+      string,
+      { type?: string; enum?: unknown }
+    >;
+    expect(properties['model']?.type).toBe('string');
+    expect(properties['model']?.enum).toBeUndefined();
+    expect(agentDescription()).not.toContain('Available models');
+  });
+});
 
-    expect(properties).not.toHaveProperty('model');
-    expect(properties).toHaveProperty('prompt');
+describe('subagent models reminder', () => {
+  let ctx: TestAgentContext;
+
+  afterEach(async () => {
+    await ctx.dispose();
   });
 
-  it('advertises the model parameter when the pool offers more than one model', () => {
+  function subagentModelReminders(): string[] {
+    return ctx
+      .get(IAgentLoopService)
+      .history()
+      .filter(
+        (message) =>
+          message.origin?.kind === 'injection' && message.origin.variant === 'subagent_models',
+      )
+      .flatMap((message) =>
+        message.content.flatMap((part) => (part.type === 'text' ? [part.text] : [])),
+      );
+  }
+
+  async function runTurn(prompt: string): Promise<void> {
+    ctx.mockNextResponse({ type: 'text', text: 'ok' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: prompt }] });
+    await ctx.untilTurnEnd();
+  }
+
+  it('stays silent without a pool, including across main model switches', async () => {
+    ctx = createTestAgent(
+      modelProviderServices(modelCatalogResolving('mock-model', 'provider/smart')),
+      { initialConfig: { models: POOL_MODEL_ENTRIES } },
+    );
+    await ctx.get(IAgentLoopService).bindProfile({ profile: 'agent', model: 'mock-model' });
+
+    await runTurn('turn 1');
+    await ctx.get(IAgentLoopService).setModel('provider/smart');
+    await runTurn('turn 2');
+    expect(subagentModelReminders()).toEqual([]);
+  });
+
+  it('announces a pool added mid-session and dedups unchanged turns', async () => {
+    ctx = createTestAgent(
+      modelProviderServices(modelCatalogResolving('mock-model', 'provider/fast')),
+      { initialConfig: { models: POOL_MODEL_ENTRIES } },
+    );
+    await ctx.get(IAgentLoopService).bindProfile({ profile: 'agent', model: 'mock-model' });
+
+    await runTurn('turn 1');
+    await (ctx.get(IConfigService) as StubConfigService).replace(SECONDARY_MODEL_SECTION, {
+      defaultModel: 'provider/fast',
+      models: { 'provider/fast': 'fast and cheap' },
+    });
+    await runTurn('turn 2');
+    await runTurn('turn 3');
+    expect(subagentModelReminders()).toEqual([
+      '<system-reminder>\nAvailable subagent models (pass via model):\n- provider/fast [default]: fast and cheap\n</system-reminder>',
+    ]);
+  });
+
+  it('renders the pool with default first and descriptions, and updates live when secondary_model changes without mutating tool definitions', async () => {
+    ctx = createTestAgent(
+      modelProviderServices(modelCatalogResolving('mock-model', 'provider/fast', 'provider/smart')),
+      {
+        initialConfig: {
+          secondaryModel: {
+            defaultModel: 'provider/smart',
+            models: {
+              'provider/fast': 'fast and cheap',
+              'mock-model': 'the main model, great at hard things',
+              'provider/smart': '',
+            },
+          },
+          models: POOL_MODEL_ENTRIES,
+        },
+      },
+    );
+    await ctx.get(IAgentLoopService).bindProfile({ profile: 'agent', model: 'mock-model' });
+
+    await runTurn('turn 1');
+    const initialTools = JSON.stringify(ctx.toolsData());
+    expect(subagentModelReminders()).toEqual([
+      [
+        '<system-reminder>',
+        'Available subagent models (pass via model):',
+        '- provider/smart [default]',
+        '- provider/fast: fast and cheap',
+        '- mock-model: the main model, great at hard things',
+        '</system-reminder>',
+      ].join('\n'),
+    ]);
+
+    await (ctx.get(IConfigService) as StubConfigService).replace(SECONDARY_MODEL_SECTION, {
+      defaultModel: 'provider/fast',
+      models: {
+        'provider/fast': 'updated fast description',
+      },
+    });
+    await runTurn('turn 2');
+    expect(JSON.stringify(ctx.toolsData())).toBe(initialTools);
+    expect(subagentModelReminders()).toHaveLength(2);
+    expect(subagentModelReminders()[1]).toBe(
+      [
+        '<system-reminder>',
+        'The available subagent models changed; the list below replaces any earlier subagent model list.',
+        '',
+        'Available subagent models (pass via model):',
+        '- provider/fast [default]: updated fast description',
+        '</system-reminder>',
+      ].join('\n'),
+    );
+
+    await (ctx.get(IConfigService) as StubConfigService).replace(SECONDARY_MODEL_SECTION, null);
+    await runTurn('turn 3');
+    expect(subagentModelReminders()).toHaveLength(3);
+    expect(subagentModelReminders()[2]).toBe(
+      [
+        '<system-reminder>',
+        'The subagent model list was withdrawn: no [secondary_model] pool is configured now. Omit the model parameter; subagents inherit your model.',
+        '</system-reminder>',
+      ].join('\n'),
+    );
+
+    await runTurn('turn 4');
+    expect(subagentModelReminders()).toHaveLength(3);
+  });
+
+  it('skips leaf profiles that have no active subagent-spawning tools', async () => {
     ctx = createTestAgent({
       initialConfig: {
         secondaryModel: {
@@ -1453,45 +1467,10 @@ describe('Agent tool description', () => {
         models: POOL_MODEL_ENTRIES,
       },
     });
+    await ctx.get(IAgentLoopService).bindProfile({ profile: 'explore', model: 'mock-model' });
 
-    const properties = agentParameters()['properties'] as Record<
-      string,
-      { type?: string; enum?: unknown }
-    >;
-
-    expect(properties['model']?.type).toBe('string');
-    expect(properties['model']?.enum).toBeUndefined();
-  });
-
-  it('strips the model parameter and pool description when no pool is configured', () => {
-    ctx = createTestAgent({
-      initialConfig: {
-        models: POOL_MODEL_ENTRIES,
-      },
-    });
-
-    const properties = agentParameters()['properties'] as Record<string, unknown>;
-    expect(properties).not.toHaveProperty('model');
-    expect(agentDescription()).not.toContain('Available models');
-  });
-
-  it.each([
-    { name: 'a pool-less default_model', secondaryModel: { defaultModel: 'provider/fast' } },
-    {
-      name: 'a single-entry pool table',
-      secondaryModel: { defaultModel: 'provider/fast', models: { 'provider/fast': 'fast' } },
-    },
-  ])('hides the model parameter and the pool description for $name', ({ secondaryModel }) => {
-    ctx = createTestAgent({
-      initialConfig: {
-        secondaryModel,
-        models: POOL_MODEL_ENTRIES,
-      },
-    });
-
-    const properties = agentParameters()['properties'] as Record<string, unknown>;
-    expect(properties).not.toHaveProperty('model');
-    expect(agentDescription()).not.toContain('Available models');
+    await runTurn('explore turn');
+    expect(subagentModelReminders()).toEqual([]);
   });
 });
 
@@ -2015,23 +1994,6 @@ describe('Agent tool execution contract', () => {
     expect(execution.description).toBe('Launching subagent agent: Continue work');
   });
 
-  it('labels fork launches with the caller profile for display and approval rules', async () => {
-    const lifecycle = createAgentLifecycleStub();
-    const context = createAgentToolContext(lifecycle, forkFlags());
-    context.get(IAgentLoopService).update({ profileName: 'orchestrator' });
-
-    const execution = await agentTool(context).resolveExecution({
-      prompt: 'Continue',
-      description: 'Continue work',
-      fork: true,
-    });
-
-    if (execution.isError === true) throw new Error('expected runnable execution');
-    expect(execution.description).toBe('Launching orchestrator agent: Continue work');
-    expect(execution.matchesRule?.('orchestrator')).toBe(true);
-    expect(execution.matchesRule?.('coder')).toBe(false);
-  });
-
   it('returns an error when resuming with a subagent type', async () => {
     const lifecycle = createAgentLifecycleStub();
     const context = createAgentToolContext(lifecycle);
@@ -2049,204 +2011,6 @@ describe('Agent tool execution contract', () => {
       output: 'Cannot set subagent_type when resuming an existing agent. Resume by agent id only.',
     });
     expect(lifecycle.run).not.toHaveBeenCalled();
-  });
-
-  it('rejects fork combined with resume', async () => {
-    const lifecycle = createAgentLifecycleStub();
-    const context = createAgentToolContext(lifecycle, forkFlags());
-    lifecycle.addHandle('agent-existing', 'explore');
-
-    const result = await executeAgentTool(context, {
-      prompt: 'Continue',
-      description: 'Continue work',
-      resume: 'agent-existing',
-      fork: true,
-    });
-
-    expect(result).toMatchObject({ isError: true, output: FORK_WITH_RESUME_UNAVAILABLE });
-    expect(lifecycle.create).not.toHaveBeenCalled();
-    expect(lifecycle.run).not.toHaveBeenCalled();
-  });
-
-  it('rejects fork with a different subagent type', async () => {
-    const lifecycle = createAgentLifecycleStub();
-    const context = createAgentToolContext(lifecycle, forkFlags());
-    context.get(IAgentLoopService).update({ profileName: 'coder' });
-
-    const result = await executeAgentTool(context, {
-      prompt: 'Investigate',
-      description: 'Find cause',
-      subagent_type: 'explore',
-      fork: true,
-    });
-
-    expect(result).toMatchObject({ isError: true, output: FORK_WITH_TYPE_UNAVAILABLE });
-    expect(lifecycle.create).not.toHaveBeenCalled();
-    expect(lifecycle.run).not.toHaveBeenCalled();
-  });
-
-  it('rejects fork with a model override', async () => {
-    const lifecycle = createAgentLifecycleStub();
-    const context = createAgentToolContext(lifecycle, forkFlags(), {
-      initialConfig: {
-        secondaryModel: {
-          defaultModel: 'provider/fast',
-          models: { 'provider/fast': 'fast and cheap', 'provider/smart': 'hard tasks' },
-        },
-      },
-    });
-
-    const result = await executeAgentTool(context, {
-      prompt: 'Investigate',
-      description: 'Find cause',
-      model: 'provider/smart',
-      fork: true,
-    });
-
-    expect(result).toMatchObject({ isError: true, output: FORK_WITH_MODEL_UNAVAILABLE });
-    expect(lifecycle.create).not.toHaveBeenCalled();
-    expect(lifecycle.run).not.toHaveBeenCalled();
-  });
-
-  it('accepts fork with its own model alias but rejects the removed primary choice', async () => {
-    const lifecycle = createAgentLifecycleStub({
-      createAgentIds: ['agent-child'],
-      runCompletion: async () => ({ summary: 'child result' }),
-    });
-    const context = createAgentToolContext(lifecycle, forkFlags(), {
-      initialConfig: {
-        secondaryModel: {
-          defaultModel: 'provider/fast',
-          models: { 'provider/fast': 'fast and cheap', 'mock-model': 'the main model' },
-        },
-      },
-    });
-
-    const rejected = await executeAgentTool(context, {
-      prompt: 'Continue the analysis',
-      description: 'Fork context',
-      model: 'primary',
-      fork: true,
-    });
-    expect(rejected).toMatchObject({ isError: true, output: FORK_WITH_MODEL_UNAVAILABLE });
-    expect(lifecycle.fork).not.toHaveBeenCalled();
-
-    const result = await executeAgentTool(context, {
-      prompt: 'Continue the analysis',
-      description: 'Fork context',
-      model: 'mock-model',
-      fork: true,
-    });
-
-    expect(result.isError).not.toBe(true);
-    expect(result.output).toContain('child result');
-    expect(lifecycle.fork).toHaveBeenCalledWith(expect.objectContaining({ agentId: 'main' }), {
-      labels: expect.objectContaining({ parentAgentId: 'main' }),
-    });
-  });
-
-  it('launches a fork through the agent lifecycle with subagent labels', async () => {
-    const lifecycle = createAgentLifecycleStub({
-      createAgentIds: ['agent-child'],
-      runCompletion: async () => ({ summary: 'child result' }),
-    });
-    const context = createAgentToolContext(lifecycle, forkFlags());
-    context.get(IAgentLoopService).update({ profileName: 'coder' });
-
-    const result = await executeAgentTool(context, {
-      prompt: 'Continue the analysis',
-      description: 'Fork context',
-      fork: true,
-    });
-
-    expect(result.output).toContain('child result');
-    expect(lifecycle.create).not.toHaveBeenCalled();
-    expect(lifecycle.fork).toHaveBeenCalledWith(expect.objectContaining({ agentId: 'main' }), {
-      labels: expect.objectContaining({ parentAgentId: 'main' }),
-    });
-    expect(lifecycle.run).toHaveBeenCalledOnce();
-    const [runAgent, runRequest] = lifecycle.run.mock.calls[0]!;
-    expect(runAgent).toMatchObject({ agentId: 'agent-child' });
-    const runPrompt = runRequest.kind === 'prompt' ? runRequest.prompt : '';
-    expect(runPrompt).toBe('Continue the analysis');
-  });
-
-  it('forks without requiring the caller profile in the catalog', async () => {
-    const lifecycle = createAgentLifecycleStub({
-      createAgentIds: ['agent-child'],
-      runCompletion: async () => ({ summary: 'child result' }),
-    });
-    const context = createAgentToolContext(lifecycle, forkFlags());
-    context.get(IAgentLoopService).update({ profileName: 'withdrawn-profile' });
-
-    const result = await executeAgentTool(context, {
-      prompt: 'Continue the analysis',
-      description: 'Fork context',
-      fork: true,
-    });
-
-    expect(result.isError).not.toBe(true);
-    expect(result.output).toContain('child result');
-    expect(lifecycle.create).not.toHaveBeenCalled();
-    expect(lifecycle.fork).toHaveBeenCalledWith(expect.objectContaining({ agentId: 'main' }), {
-      labels: expect.objectContaining({ parentAgentId: 'main' }),
-    });
-  });
-
-  it('rejects fork while the subagent_fork experimental flag is off', async () => {
-    const lifecycle = createAgentLifecycleStub();
-    const context = createAgentToolContext(lifecycle, forkFlags(false));
-
-    const result = await executeAgentTool(context, {
-      prompt: 'Continue the analysis',
-      description: 'Fork context',
-      fork: true,
-    });
-
-    expect(result).toMatchObject({
-      isError: true,
-      output: 'Invalid args for tool "Agent": must NOT have additional property \'fork\'',
-    });
-    expect(lifecycle.create).not.toHaveBeenCalled();
-    expect(lifecycle.fork).not.toHaveBeenCalled();
-    expect(lifecycle.run).not.toHaveBeenCalled();
-  });
-
-  it('marks fork consistently in every subagent_created telemetry emission', async () => {
-    const lifecycle = createAgentLifecycleStub({
-      createAgentIds: ['agent-child'],
-      runCompletion: async () => ({ summary: 'child result' }),
-    });
-    const telemetryRecords: { event: string; properties: unknown }[] = [];
-    const context = createAgentToolContext(lifecycle, forkFlags());
-    lifecycle.addHandle(
-      'main',
-      'agent',
-      new Map<unknown, unknown>([
-        [
-          ITelemetryService,
-          {
-            ...noopTelemetryService,
-            track2: (event: string, properties: unknown) => {
-              telemetryRecords.push({ event, properties });
-            },
-          },
-        ],
-      ]),
-    );
-
-    const result = await executeAgentTool(context, {
-      prompt: 'Continue the analysis',
-      description: 'Fork context',
-      fork: true,
-    });
-
-    expect(result.isError).not.toBe(true);
-    const created = telemetryRecords.filter((record) => record.event === 'subagent_created');
-    expect(created.length).toBeGreaterThan(0);
-    for (const record of created) {
-      expect(record.properties).toMatchObject({ fork: true, model_source: 'inherited' });
-    }
   });
 
   it('spawns a foreground subagent and returns its summary', async () => {
@@ -2433,7 +2197,7 @@ describe('Agent tool execution contract', () => {
     expect(lifecycle.create).not.toHaveBeenCalled();
   });
 
-  it('inherits the caller model when no pool is configured', async () => {
+  it('inherits the caller model when no pool is configured and rejects any explicit model', async () => {
     const lifecycle = createAgentLifecycleStub({ createAgentIds: ['agent-child'] });
     const context = createAgentToolContext(lifecycle);
 
@@ -2441,7 +2205,6 @@ describe('Agent tool execution contract', () => {
       prompt: 'Investigate',
       description: 'Find cause',
     });
-
     expect(lifecycle.create).toHaveBeenCalledWith(
       expect.objectContaining({
         binding: expect.objectContaining({
@@ -2450,6 +2213,19 @@ describe('Agent tool execution contract', () => {
         }),
       }),
     );
+
+    for (const model of ['mock-model', 'provider/fast']) {
+      const rejected = await executeAgentTool(context, {
+        prompt: 'Investigate with model',
+        description: 'Find cause',
+        model,
+      });
+      expect(rejected.isError).toBe(true);
+      expect(rejected.output).toContain(
+        `Invalid model "${model}": no [secondary_model] pool is configured`,
+      );
+    }
+    expect(lifecycle.create).toHaveBeenCalledTimes(1);
   });
 
   it('accepts a pool that gained a "primary" key through a runtime config edit', async () => {
@@ -2624,7 +2400,6 @@ describe('Agent tool execution contract', () => {
       properties: {
         subagent_name: 'explore',
         run_in_background: false,
-        fork: false,
         agent_id: 'agent-child',
         model: 'provider/secondary',
         model_source: 'secondary_pool',
@@ -3078,6 +2853,18 @@ describe('Agent tool execution contract', () => {
       'explore',
       new Map([[IAgentLoopService, targetProfile]]),
     );
+
+    const rejected = await executeAgentTool(context, {
+      prompt: 'Continue',
+      description: 'Continue work',
+      resume: 'agent-existing',
+      model: 'mock-model',
+    });
+    expect(rejected).toEqual({
+      isError: true,
+      output: RESUME_WITH_MODEL_UNAVAILABLE,
+    });
+    expect(lifecycle.run).not.toHaveBeenCalled();
 
     await executeAgentTool(context, {
       prompt: 'Continue',
@@ -4035,12 +3822,13 @@ describe('AgentSwarmToolInputSchema', () => {
     ).toBe(true);
   });
 
-  it('references the models section and omits background and timeout parameters', () => {
+  it('references the system-reminder model list and omits removed parameters', () => {
     const properties = agentSwarmSchemaProperties<{ description?: string }>();
 
-    expect(properties['model']?.description).toContain('Available models');
+    expect(properties['model']?.description).toContain('<system-reminder>');
     expect(properties).not.toHaveProperty('run_in_background');
     expect(properties).not.toHaveProperty('timeout');
+    expect(properties).not.toHaveProperty('fork');
   });
 });
 
@@ -4057,81 +3845,32 @@ describe('AgentSwarm tool description', () => {
     return tool!.description;
   }
 
-  it('documents the {{item}} placeholder', () => {
-    ctx = createTestAgent();
-
-    expect(agentSwarmDescription()).toContain('{{item}}');
-  });
-
-  it('describes fork as inheriting the current type, model, and tools', () => {
-    ctx = createTestAgent(forkFlags());
-
-    expect(agentSwarmDescription()).toContain(
-      'inheriting your current agent type, model, and tool set.',
-    );
-    const properties = agentSwarmParameters()['properties'] as Record<string, unknown>;
-    expect(properties['fork']).toMatchObject({
-      description: 'Start every item-spawned subagent with a snapshot of your completed conversation history, inheriting your current agent type, model, and tool set.',
-    });
-  });
-
-  it('omits the models section when no [secondary_model.models] pool is configured', () => {
-    ctx = createTestAgent();
-
-    expect(agentSwarmDescription()).not.toContain('Available models');
-  });
-
-  it('renders the configured pool as a compact one-line summary', () => {
-    ctx = createTestAgent({
-      initialConfig: {
-        secondaryModel: {
-          defaultModel: 'provider/fast',
-          models: { 'provider/fast': 'fast and cheap', 'provider/smart': 'hard tasks' },
-        },
-        models: POOL_MODEL_ENTRIES,
-      },
-    });
-
-    const description = agentSwarmDescription();
-
-    expect(description).toContain(
-      'Available models (pass via model): provider/fast [default], provider/smart.',
-    );
-    expect(description).not.toContain('primary');
-  });
-
   function agentSwarmParameters(): Record<string, unknown> {
     const tool = ctx.toolsData().find((entry) => entry.name === 'AgentSwarm');
     expect(tool?.parameters).toBeDefined();
     return tool!.parameters!;
   }
 
-  it('strips the model parameter from the advertised schema when no pool is configured', () => {
+  it('documents the {{item}} placeholder', () => {
     ctx = createTestAgent();
 
-    const properties = agentSwarmParameters()['properties'] as Record<string, unknown>;
-
-    expect(properties).not.toHaveProperty('model');
-    expect(properties).toHaveProperty('prompt_template');
+    expect(agentSwarmDescription()).toContain('{{item}}');
   });
 
-  it('advertises the model parameter only when the pool offers more than one model', async () => {
-    ctx = createTestAgent({
-      initialConfig: {
-        secondaryModel: { defaultModel: 'provider/fast' },
-        models: POOL_MODEL_ENTRIES,
+  it.each([
+    { name: 'no secondary_model section', secondaryModel: undefined },
+    { name: 'a single-model pool', secondaryModel: { defaultModel: 'provider/fast' } },
+    {
+      name: 'a multi-model pool',
+      secondaryModel: {
+        defaultModel: 'provider/fast',
+        models: { 'provider/fast': 'fast and cheap', 'provider/smart': 'hard tasks' },
       },
-    });
-    expect(agentSwarmParameters()['properties']).not.toHaveProperty('model');
-    expect(agentSwarmDescription()).not.toContain('Available models');
-    await ctx.dispose();
-
+    },
+  ])('keeps model in parameters and omits Available models from description for $name', ({ secondaryModel }) => {
     ctx = createTestAgent({
       initialConfig: {
-        secondaryModel: {
-          defaultModel: 'provider/fast',
-          models: { 'provider/fast': 'fast and cheap', 'provider/smart': 'hard tasks' },
-        },
+        secondaryModel,
         models: POOL_MODEL_ENTRIES,
       },
     });
@@ -4140,9 +3879,9 @@ describe('AgentSwarm tool description', () => {
       string,
       { type?: string; enum?: unknown }
     >;
-
     expect(properties['model']?.type).toBe('string');
     expect(properties['model']?.enum).toBeUndefined();
+    expect(agentSwarmDescription()).not.toContain('Available models');
   });
 });
 
@@ -4201,7 +3940,7 @@ describe('AgentSwarm tool execution contract', () => {
           runInBackground: false,
           signal,
           timeout: DEFAULT_SUBAGENT_TIMEOUT_MS,
-          plan: { profileName: 'explore', model: 'mock-model', modelSource: 'inherited', thinking: 'off', fork: false },
+          plan: { profileName: 'explore', model: 'mock-model', modelSource: 'inherited', thinking: 'off' },
         },
         {
           kind: 'spawn',
@@ -4215,7 +3954,7 @@ describe('AgentSwarm tool execution contract', () => {
           runInBackground: false,
           signal,
           timeout: DEFAULT_SUBAGENT_TIMEOUT_MS,
-          plan: { profileName: 'explore', model: 'mock-model', modelSource: 'inherited', thinking: 'off', fork: false },
+          plan: { profileName: 'explore', model: 'mock-model', modelSource: 'inherited', thinking: 'off' },
         },
       ],
     });
@@ -4278,11 +4017,11 @@ describe('AgentSwarm tool execution contract', () => {
         tasks: [
           expect.objectContaining({
             kind: 'spawn',
-            plan: { profileName: 'explore', model: 'provider/fast', modelSource: 'secondary_pool', thinking: undefined, fork: false },
+            plan: { profileName: 'explore', model: 'provider/fast', modelSource: 'secondary_pool', thinking: undefined },
           }),
           expect.objectContaining({
             kind: 'spawn',
-            plan: { profileName: 'explore', model: 'provider/fast', modelSource: 'secondary_pool', thinking: undefined, fork: false },
+            plan: { profileName: 'explore', model: 'provider/fast', modelSource: 'secondary_pool', thinking: undefined },
           }),
         ],
       }),
@@ -4336,6 +4075,36 @@ describe('AgentSwarm tool execution contract', () => {
 
     expect(result.isError).toBe(true);
     expect(result.output).toContain('Invalid model "primary". Available models: provider/fast.');
+    expect(runSwarm).not.toHaveBeenCalled();
+  });
+
+  it('rejects model when AgentSwarm resumes existing agents without items', async () => {
+    const runSwarm = vi.fn(async (): Promise<readonly SessionSwarmRunResult[]> => []);
+    const swarmService: ISessionSwarmService = {
+      _serviceBrand: undefined,
+      getSwarmItem: async () => undefined,
+      run: runSwarm as ISessionSwarmService['run'],
+      cancel: () => {},
+    };
+    ctx = createTestAgent(swarmServices(swarmService));
+
+    const result = await executeTool(agentSwarmToolInSwarmMode(ctx), {
+      turnId: 0,
+      toolCallId: 'call_swarm',
+      args: {
+        description: 'Resume review',
+        resume_agent_ids: {
+          'agent-old-1': 'Continue previous review A',
+        },
+        model: 'mock-model',
+      },
+      signal,
+    });
+
+    expect(result).toEqual({
+      isError: true,
+      output: SWARM_RESUME_ONLY_WITH_MODEL_UNAVAILABLE,
+    });
     expect(runSwarm).not.toHaveBeenCalled();
   });
 
@@ -4451,7 +4220,7 @@ describe('AgentSwarm tool execution contract', () => {
           runInBackground: false,
           signal,
           timeout: DEFAULT_SUBAGENT_TIMEOUT_MS,
-          plan: { profileName: 'explore', model: 'mock-model', modelSource: 'inherited', thinking: 'off', fork: false },
+          plan: { profileName: 'explore', model: 'mock-model', modelSource: 'inherited', thinking: 'off' },
         },
       ],
     });
@@ -5263,7 +5032,7 @@ describe('Agent tools', () => {
 
       ctx.mockNextResponse({ type: 'text', text: 'The lookup result is moon-result.' });
       expect(await ctx.untilTurnEnd()).toMatchInlineSnapshot(`
-        [wire] context.append_loop_event   { "agentId": "main", "event": { "type": "tool.call", "uuid": "<uuid-4>", "turnId": "0", "step": 1, "stepUuid": "<uuid-2>", "toolCallId": "call_lookup", "name": "Lookup", "args": { "query": "moon" } }, "time": "<time>" }
+        [wire] context.append_loop_event   { "agentId": "main", "event": { "type": "tool.call", "uuid": "<uuid-4>", "turnId": "0", "step": 1, "stepUuid": "<uuid-2>", "toolCallId": "call_lookup", "name": "Lookup", "args": { "query": "moon" }, "argsRaw": "{\\"query\\":\\"moon\\"}" }, "time": "<time>" }
         [wire] interaction.request         { "agentId": "main", "id": "<user_tool-1>", "kind": "user_tool", "toolCallId": "call_lookup", "request": { "turnId": 0, "toolCallId": "call_lookup", "name": "Lookup", "args": { "query": "moon" } }, "time": "<time>" }
         [wire] interaction.resolved        { "agentId": "main", "id": "<user_tool-1>", "response": { "content": "moon-result", "output": "moon-result" }, "time": "<time>" }
         [emit] tool.updated                { "time": "<time>", "agentId": "main", "origin": "loop", "turnId": 0, "toolCallId": "call_lookup", "taskId": "<taskId>", "status": "running", "detached": false, "fields": {} }
@@ -5283,7 +5052,9 @@ describe('Agent tools', () => {
         [wire] context.append_loop_event   { "agentId": "main", "event": { "type": "content.part", "uuid": "<uuid-7>", "turnId": "0", "step": 2, "stepUuid": "<uuid-6>", "block": 0, "part": { "type": "text", "text": "The lookup result is moon-result." }, "startedAt": "<time>" }, "time": "<time>" }
         [wire] usage.record                { "agentId": "main", "model": "mock-model", "usage": { "inputOther": 138, "output": 12, "inputCacheRead": 0, "inputCacheCreation": 0 }, "usageScope": "turn", "time": "<time>" }
         [wire] token_counting.measured     { "agentId": "main", "length": 5, "tokens": 150, "time": "<time>" }
-        [emit] turn.ended                  { "time": "<time>", "agentId": "main", "turnId": 0, "reason": "completed" }
+        [wire] context.append_loop_event   { "agentId": "main", "event": { "type": "step.end", "uuid": "<uuid-6>", "turnId": "0", "step": 2, "finishReason": "end_turn", "usage": { "inputOther": 138, "output": 12, "inputCacheRead": 0, "inputCacheCreation": 0 }, "messageId": "mock-2", "providerFinishReason": "completed", "rawFinishReason": "stop" }, "time": "<time>" }
+        [wire] turn.ended                  { "agentId": "main", "turnId": 0, "reason": "completed", "replyModel": { "provider": "openai", "model": "mock-model" }, "modelSteps": [ { "model": "mock-model", "provider": "openai", "isKfc": false, "step": 1, "role": "step" }, { "model": "mock-model", "provider": "openai", "isKfc": false, "step": 2, "role": "step" } ], "loopEnd": { "outcome": "idle" }, "time": "<time>" }
+        [emit] turn.ended                  { "time": "<time>", "agentId": "main", "turnId": 0, "reason": "completed", "replyModel": { "provider": "openai", "model": "mock-model" }, "modelSteps": [ { "model": "mock-model", "provider": "openai", "isKfc": false, "step": 1, "role": "step" }, { "model": "mock-model", "provider": "openai", "isKfc": false, "step": 2, "role": "step" } ], "loopEnd": { "outcome": "idle" } }
       `);
       expect(ctx.lastLlmInput()).toMatchInlineSnapshot(`
         messages:
@@ -5296,12 +5067,10 @@ describe('Agent tools', () => {
       await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Can you still use Lookup?' }] });
 
       expect(await ctx.untilTurnEnd()).toMatchInlineSnapshot(`
-        [emit] agent.status.updated           { "time": "<time>", "agentId": "main", "contextTokens": 150 }
-        [emit] prompt.completed               { "time": "<time>", "agentId": "main", "promptId": "<msg-1>", "finishedAt": "<time>", "reason": "completed" }
-        [wire] context.append_loop_event      { "agentId": "main", "event": { "type": "step.end", "uuid": "<uuid-6>", "turnId": "0", "step": 2, "finishReason": "end_turn", "usage": { "inputOther": 138, "output": 12, "inputCacheRead": 0, "inputCacheCreation": 0 }, "messageId": "mock-2", "providerFinishReason": "completed", "rawFinishReason": "stop" }, "time": "<time>" }
-        [wire] turn.ended                     { "agentId": "main", "turnId": 0, "reason": "completed", "time": "<time>" }
         [wire] token_counting.turn_recorded   { "agentId": "main", "turnId": 0, "length": 5, "tokens": 150, "time": "<time>" }
+        [emit] agent.status.updated           { "time": "<time>", "agentId": "main", "contextTokens": 150 }
         [wire] prompt.completed               { "agentId": "main", "promptId": "<msg-1>", "finishedAt": "<time>", "reason": "completed", "time": "<time>" }
+        [emit] prompt.completed               { "time": "<time>", "agentId": "main", "promptId": "<msg-1>", "finishedAt": "<time>", "reason": "completed" }
         [wire] tools.unregister_user_tool     { "agentId": "main", "name": "Lookup", "time": "<time>" }
         [emit] prompt.submitted               { "time": "<time>", "agentId": "main", "promptId": "<msg-2>", "userMessageId": "<msg-2>", "status": "running", "content": [ { "type": "text", "text": "Can you still use Lookup?" } ], "origin": { "kind": "user" }, "createdAt": "<time>" }
         [wire] turn.prompt                    { "agentId": "main", "input": [ { "type": "text", "text": "Can you still use Lookup?" } ], "origin": { "kind": "user" }, "promptId": "<msg-2>", "turnId": 1, "trigger": "normal", "time": "<time>" }
@@ -5312,22 +5081,27 @@ describe('Agent tools', () => {
         [emit] prompt.started                 { "time": "<time>", "agentId": "main", "promptId": "<msg-2>" }
         [emit] turn.step.started              { "time": "<time>", "agentId": "main", "turnId": 1, "step": 1, "stepId": "<uuid-8>" }
         [wire] tool_select.tools_changed      { "agentId": "main", "added": [], "removed": [ { "name": "Lookup", "description": "Look up a short test value.", "parameters": { "type": "object", "properties": { "query": { "type": "string" } }, "required": [ "query" ], "additionalProperties": false }, "source": "user", "origin": "initial" } ], "time": "<time>" }
+        [emit] context.spliced                { "time": "<time>", "agentId": "main", "start": 6, "deleteCount": 0, "messages": [ { "role": "user", "content": [ { "type": "text", "text": "<system-reminder>\\n<tools_removed>\\nLookup\\n</tools_removed>\\n\\nNo tools are currently available for dynamic loading in this session. Do not call select_tools or guess tool names; use the tools you already have. Only a later <tools_added> announcement can make new tools loadable.\\n</system-reminder>", "meta": { "kind": "tool_lifecycle", "added": [], "removed": [ "Lookup" ] } } ], "origin": { "kind": "injection", "variant": "loadable-tools", "disclosure": { "kind": "delta", "revision": 1, "added": [], "removed": [ { "name": "Lookup", "description": "Look up a short test value.", "parameters": { "type": "object", "properties": { "query": { "type": "string" } }, "required": [ "query" ], "additionalProperties": false }, "source": "user", "origin": "initial" } ] } } } ] }
+        [wire] context.append_message         { "agentId": "main", "message": { "role": "user", "content": [ { "type": "text", "text": "<system-reminder>\\n<tools_removed>\\nLookup\\n</tools_removed>\\n\\nNo tools are currently available for dynamic loading in this session. Do not call select_tools or guess tool names; use the tools you already have. Only a later <tools_added> announcement can make new tools loadable.\\n</system-reminder>", "meta": { "kind": "tool_lifecycle", "added": [], "removed": [ "Lookup" ] } } ], "toolCalls": [], "origin": { "kind": "injection", "variant": "loadable-tools", "disclosure": { "kind": "delta", "revision": 1, "added": [], "removed": [ { "name": "Lookup", "description": "Look up a short test value.", "parameters": { "type": "object", "properties": { "query": { "type": "string" } }, "required": [ "query" ], "additionalProperties": false }, "source": "user", "origin": "initial" } ] } } }, "time": "<time>" }
         [wire] context.append_loop_event      { "agentId": "main", "event": { "type": "step.begin", "uuid": "<uuid-9>", "turnId": "1", "step": 1 }, "time": "<time>" }
         [emit] assistant.delta                { "time": "<time>", "agentId": "main", "turnId": 1, "delta": "No lookup tool is available.", "block": 0 }
-        [emit] context.spliced                { "time": "<time>", "agentId": "main", "start": 6, "deleteCount": 0, "messages": [ { "role": "assistant", "content": [ { "type": "text", "text": "No lookup tool is available." } ], "toolCalls": [], "providerMessageId": "mock-3", "usage": { "inputOther": 158, "output": 10, "inputCacheRead": 0, "inputCacheCreation": 0 } } ] }
-        [emit] turn.step.completed            { "time": "<time>", "agentId": "main", "turnId": 1, "step": 1, "stepId": "<uuid-8>", "usage": { "inputOther": 158, "output": 10, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "end_turn", "providerFinishReason": "completed", "rawFinishReason": "stop" }
-        [emit] agent.status.updated           { "time": "<time>", "agentId": "main", "usage": { "byModel": { "mock-model": { "inputOther": 414, "output": 38, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 414, "output": 38, "inputCacheRead": 0, "inputCacheCreation": 0 }, "currentTurn": { "inputOther": 158, "output": 10, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
-        [emit] agent.status.updated           { "time": "<time>", "agentId": "main", "contextTokens": 168 }
+        [emit] context.spliced                { "time": "<time>", "agentId": "main", "start": 7, "deleteCount": 0, "messages": [ { "role": "assistant", "content": [ { "type": "text", "text": "No lookup tool is available." } ], "toolCalls": [], "providerMessageId": "mock-3", "usage": { "inputOther": 242, "output": 10, "inputCacheRead": 0, "inputCacheCreation": 0 } } ] }
+        [emit] turn.step.completed            { "time": "<time>", "agentId": "main", "turnId": 1, "step": 1, "stepId": "<uuid-8>", "usage": { "inputOther": 242, "output": 10, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "end_turn", "providerFinishReason": "completed", "rawFinishReason": "stop" }
+        [emit] agent.status.updated           { "time": "<time>", "agentId": "main", "usage": { "byModel": { "mock-model": { "inputOther": 498, "output": 38, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 498, "output": 38, "inputCacheRead": 0, "inputCacheCreation": 0 }, "currentTurn": { "inputOther": 242, "output": 10, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
+        [emit] agent.status.updated           { "time": "<time>", "agentId": "main", "contextTokens": 252 }
         [wire] context.append_loop_event      { "agentId": "main", "event": { "type": "content.part", "uuid": "<uuid-10>", "turnId": "1", "step": 1, "stepUuid": "<uuid-9>", "block": 0, "part": { "type": "text", "text": "No lookup tool is available." }, "startedAt": "<time>" }, "time": "<time>" }
-        [wire] usage.record                   { "agentId": "main", "model": "mock-model", "usage": { "inputOther": 158, "output": 10, "inputCacheRead": 0, "inputCacheCreation": 0 }, "usageScope": "turn", "time": "<time>" }
-        [wire] token_counting.measured        { "agentId": "main", "length": 7, "tokens": 168, "time": "<time>" }
-        [emit] turn.ended                     { "time": "<time>", "agentId": "main", "turnId": 1, "reason": "completed" }
+        [wire] usage.record                   { "agentId": "main", "model": "mock-model", "usage": { "inputOther": 242, "output": 10, "inputCacheRead": 0, "inputCacheCreation": 0 }, "usageScope": "turn", "time": "<time>" }
+        [wire] token_counting.measured        { "agentId": "main", "length": 8, "tokens": 252, "time": "<time>" }
+        [wire] context.append_loop_event      { "agentId": "main", "event": { "type": "step.end", "uuid": "<uuid-9>", "turnId": "1", "step": 1, "finishReason": "end_turn", "usage": { "inputOther": 242, "output": 10, "inputCacheRead": 0, "inputCacheCreation": 0 }, "messageId": "mock-3", "providerFinishReason": "completed", "rawFinishReason": "stop" }, "time": "<time>" }
+        [wire] turn.ended                     { "agentId": "main", "turnId": 1, "reason": "completed", "replyModel": { "provider": "openai", "model": "mock-model" }, "modelSteps": [ { "model": "mock-model", "provider": "openai", "isKfc": false, "step": 1, "role": "step" } ], "loopEnd": { "outcome": "idle" }, "time": "<time>" }
+        [emit] turn.ended                     { "time": "<time>", "agentId": "main", "turnId": 1, "reason": "completed", "replyModel": { "provider": "openai", "model": "mock-model" }, "modelSteps": [ { "model": "mock-model", "provider": "openai", "isKfc": false, "step": 1, "role": "step" } ], "loopEnd": { "outcome": "idle" } }
       `);
       expect(ctx.lastLlmInput()).toMatchInlineSnapshot(`
         messages:
           <last>
           assistant: text "The lookup result is moon-result."
           user: text "Can you still use Lookup?"
+          user: text "<system-reminder>\\n<tools_removed>\\nLookup\\n</tools_removed>\\n\\nThe available tools changed during this session. The current model cannot load runtime tool additions with select_tools. Do not call select_tools. Use the tool definitions provided in this request. Removed tools may be unavailable or fail when called.\\n</system-reminder>"
       `);
     });
 

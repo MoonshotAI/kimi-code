@@ -18,8 +18,7 @@ export const SubagentToolInputSchema = z.preprocess(
       typeof normalized['resume'] === 'string' && normalized['resume'].trim().length > 0;
     const hasSubagentType =
       typeof normalized['subagent_type'] === 'string' && normalized['subagent_type'].length > 0;
-    const hasFork = normalized['fork'] === true;
-    if (!hasSubagentType && !hasResumeId && !hasFork) {
+    if (!hasSubagentType && !hasResumeId) {
       normalized['subagent_type'] = DEFAULT_PROFILE_NAME;
     } else if (!hasSubagentType) {
       delete normalized['subagent_type'];
@@ -47,17 +46,11 @@ export const SubagentToolInputSchema = z.preprocess(
       .describe(
         'If true, return immediately without waiting for completion. Prefer false unless the task can run independently and there is a clear benefit to not waiting.',
       ),
-    fork: z
-      .boolean()
-      .optional()
-      .describe(
-        'Start with a snapshot of your completed conversation history, inheriting your current agent type, model, and tool set.',
-      ),
     model: z
       .string()
       .optional()
       .describe(
-        'Which model to run the subagent on: one of the aliases listed under "Available models" in this tool description. When omitted, the configured default model is used. Ignored when resuming — resumed subagents keep their own model.',
+        'Model alias to run the subagent on, chosen from the available subagent models announced in <system-reminder>. When omitted, the default subagent model is used. Cannot be set when resuming — resumed subagents keep their own model.',
       ),
   }),
 );
@@ -82,6 +75,8 @@ export const BACKGROUND_AGENT_UNAVAILABLE =
   'Background agent execution is not available for this agent because TaskList, TaskOutput, and TaskStop are not enabled.';
 export const RESUME_WITH_TYPE_UNAVAILABLE =
   'Cannot set subagent_type when resuming an existing agent. Resume by agent id only.';
+export const RESUME_WITH_MODEL_UNAVAILABLE =
+  'Cannot set model when resuming an existing agent. Resumed subagents keep their existing model.';
 export const USER_INTERRUPTED_SUBAGENT_MESSAGE =
   'The subagent was stopped before it finished by user.';
 export const SUBAGENT_STOPPED_MESSAGE = 'The subagent was stopped before it finished.';

@@ -3,6 +3,7 @@ import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { Emitter, type Event } from '#/_base/event';
 import { ILogService } from '#/_base/log/log';
+import { Error2, ErrorCodes } from '#/errors';
 import { defineState } from '#/state/state';
 import { ISessionIndexMirror } from '#/app/sessionIndex/sessionIndex';
 import { buildSessionSummary } from '#/app/sessionIndex/sessionIndexSource';
@@ -189,6 +190,25 @@ export class SessionMetadata extends Service implements ISessionMetadata {
       if (!(await this.prepareWrite())) return;
       await this.applyUpdate(
         { agents: { ...this.data.agents, [agentId]: meta } },
+        { touchUpdatedAt: false },
+      );
+    });
+  }
+
+  async unregisterAgent(agentId: string): Promise<void> {
+    return this.enqueueUpdate(async () => {
+      await this.ready;
+      if (this.disposed) {
+        throw new Error2(ErrorCodes.SESSION_STALE, `session ${this.ctx.sessionId} metadata is disposed`);
+      }
+      if (this.data.agents?.[agentId] === undefined) return;
+      if (!(await this.prepareWrite())) {
+        throw new Error2(ErrorCodes.SESSION_STALE, `session ${this.ctx.sessionId} metadata is disposed`);
+      }
+      if (this.data.agents?.[agentId] === undefined) return;
+      const { [agentId]: _removed, ...rest } = this.data.agents;
+      await this.applyUpdate(
+        { agents: Object.keys(rest).length === 0 ? undefined : rest },
         { touchUpdatedAt: false },
       );
     });

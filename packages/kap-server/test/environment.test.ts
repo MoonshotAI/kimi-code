@@ -8,7 +8,9 @@ import {
   ISessionIndex,
   IWorkspaceInstanceManager,
 } from '@moonshot-ai/agent-core-v2';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { say } from '@moonshot-ai/testkit/model';
+import { kapFixtures, type KapFixtures } from '@moonshot-ai/testkit/vitest';
+import { afterAll, beforeAll, describe, expect, it, test as base } from 'vitest';
 
 import { type RunningServer, startServer } from '../src/start';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
@@ -26,6 +28,7 @@ interface Envelope<T> {
 interface EnvironmentBindingWire {
   workspace_id: string;
   environment_id: string;
+  environment_cwd?: string;
   cwd?: string;
 }
 
@@ -43,6 +46,9 @@ interface EnvironmentsWire {
 interface SessionWire {
   id: string;
   workspace_id: string;
+  workspace_root?: string;
+  environment_id: string;
+  environment_cwd?: string;
 }
 
 function resolveTsxCli(): string {
@@ -53,6 +59,11 @@ function resolveTsxCli(): string {
 function resolveExecServerFixture(): string {
   const packageJson = require.resolve('@moonshot-ai/agent-core-v2/package.json');
   return join(dirname(packageJson), 'test', 'remote', 'fixtures', 'exec-server-child.ts');
+}
+
+function resolveMcpServerFixture(): string {
+  const packageJson = require.resolve('@moonshot-ai/agent-core-v2/package.json');
+  return join(dirname(packageJson), 'test', 'mcpCore', 'fixtures', 'mock-stdio-server.mjs');
 }
 
 function configToml(): string {
@@ -123,6 +134,7 @@ describe('server-v2 /api/v1 environment routes', () => {
       const binding = await call<EnvironmentBindingWire>('GET', `/api/v1/sessions/${id}/environment`);
       expect(binding.body.code).toBe(0);
       expect(binding.body.data.environment_id).toBe('local');
+      expect(binding.body.data.environment_cwd).toBeUndefined();
       expect(binding.body.data.cwd).toBeUndefined();
 
       const summary = await server!.core.accessor.get(ISessionIndex).get(id);
@@ -151,11 +163,16 @@ describe('server-v2 /api/v1 environment routes', () => {
         environment_id: 'loop',
       });
       expect(created.body.code).toBe(0);
+      expect(created.body.data).toMatchObject({
+        workspace_root: home,
+        environment_id: 'loop',
+        environment_cwd: '/tmp',
+      });
       const id = created.body.data.id;
 
       const binding = await call<EnvironmentBindingWire>('GET', `/api/v1/sessions/${id}/environment`);
       expect(binding.body.code).toBe(0);
-      expect(binding.body.data).toMatchObject({ environment_id: 'loop', cwd: '/tmp' });
+      expect(binding.body.data).toMatchObject({ environment_id: 'loop', environment_cwd: '/tmp', cwd: '/tmp' });
 
       const withCwd = await call<SessionWire>('POST', '/api/v1/sessions', {
         metadata: { cwd: home as string },
@@ -186,4 +203,35 @@ describe('server-v2 /api/v1 environment routes', () => {
       expect(cwdOnly.body.msg).toContain('environment_cwd');
     });
   });
+});
+
+const kapTest = base.extend<KapFixtures<RunningServer>>(kapFixtures({
+  startServer,
+  config: {
+    extra: {
+      environments: {
+        slow: {
+          command: '/bin/sh',
+          args: ['-c', 'sleep 1; exec "$@"', 'sh', process.execPath, resolveTsxCli(), resolveExecServerFixture()],
+          env: { EXEC_SERVER_VERSION: '9.9.9-test' },
+        },
+      },
+    },
+  },
+}));
+
+kapTest('offers the MCP tools of the project in the first request of a session whose environment connects slower than the servers start', { timeout: 60_000 }, async ({ kap, model }) => {
+  await writeFile(join(kap.home.dataDir, 'mcp.json'), JSON.stringify({
+    mcpServers: { slow: { command: process.execPath, args: [resolveMcpServerFixture()], env: { KIMI_TEST_MCP_START_DELAY_MS: '300' } } },
+  }));
+  model.script(say('done'));
+  const session = await kap.rest.post<SessionWire>('/api/v1/sessions', {
+    cwd: kap.home.workspace,
+    environment_id: 'slow',
+    environment_cwd: kap.home.workspace,
+  });
+  await kap.prompt(session.id, 'hi');
+  await kap.waitIdle(session.id);
+
+  expect(model.requests()[0]!.tools).toContain('mcp__slow__echo');
 });

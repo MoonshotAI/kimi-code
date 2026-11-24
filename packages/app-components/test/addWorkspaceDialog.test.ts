@@ -94,7 +94,7 @@ function primaryAction(): HTMLButtonElement {
 }
 
 describe('AddWorkspaceDialog multi-select mode', () => {
-  it('shows checkboxes and emits addMany with the toggled paths', async () => {
+  it('shows checkboxes, omits the secondary select-this-folder button, and emits addMany with toggled paths', async () => {
     const { addMany } = mountDialog({ multiple: true });
     await settled();
 
@@ -102,17 +102,24 @@ describe('AddWorkspaceDialog multi-select mode', () => {
     expect(rows()).toHaveLength(2);
     expect(document.querySelectorAll('.pathbar input')).toHaveLength(1);
     expect(document.querySelector('.filter-input')).toBeNull();
-    expect(primaryAction().disabled).toBe(true);
+    expect(document.querySelectorAll('.actions .ui-button')).toHaveLength(2);
+    expect(document.querySelector('.actions .ui-button--secondary')).toBeNull();
+    expect(primaryAction().disabled).toBe(false);
+    expect(primaryAction().textContent).toBe('Add current folder');
     const input = document.querySelector<HTMLInputElement>('.pathbar input')!;
     input.dispatchEvent(new FocusEvent('focus'));
     expect(input.selectionStart).toBe(0);
     expect(input.selectionEnd).toBe(input.value.length);
 
     checkboxes()[0]!.click();
+    await nextTick();
+    expect(primaryAction().disabled).toBe(false);
+    expect(primaryAction().textContent).toBe('Add folder (1)');
+
     checkboxes()[1]!.click();
     await nextTick();
     expect(primaryAction().disabled).toBe(false);
-    expect(primaryAction().textContent).toContain('2');
+    expect(primaryAction().textContent).toBe('Add folders (2)');
 
     primaryAction().click();
     await nextTick();
@@ -128,9 +135,34 @@ describe('AddWorkspaceDialog multi-select mode', () => {
     checkboxes()[0]!.click();
     await nextTick();
 
+    expect(primaryAction().textContent).toBe('Add folder (1)');
     primaryAction().click();
     await nextTick();
     expect(addMany).toHaveBeenCalledWith(['/home/beta']);
+  });
+
+  it('uses folder labels in zh and falls back to adding the current folder when selection is cleared', async () => {
+    const { addMany } = mountDialog({ multiple: true, locale: 'zh' });
+    await settled();
+
+    expect(primaryAction().textContent).toBe('添加当前文件夹');
+
+    checkboxes()[0]!.click();
+    checkboxes()[1]!.click();
+    await nextTick();
+    expect(primaryAction().textContent).toBe('添加文件夹（2）');
+
+    checkboxes()[0]!.click();
+    await nextTick();
+    expect(primaryAction().textContent).toBe('添加文件夹（1）');
+
+    checkboxes()[1]!.click();
+    await nextTick();
+    expect(primaryAction().textContent).toBe('添加当前文件夹');
+
+    primaryAction().click();
+    await nextTick();
+    expect(addMany).toHaveBeenCalledWith(['/home']);
   });
 
   it('collects a typed absolute path without expanding another input', async () => {
@@ -142,11 +174,12 @@ describe('AddWorkspaceDialog multi-select mode', () => {
     input.value = '/tmp/pasted';
     input.dispatchEvent(new Event('input'));
     await nextTick();
+    expect(primaryAction().disabled).toBe(true);
     document.querySelector<HTMLButtonElement>('.path-add')!.click();
     await nextTick();
 
     expect(primaryAction().disabled).toBe(false);
-    expect(primaryAction().textContent).toContain('1');
+    expect(primaryAction().textContent).toBe('Add folder (1)');
   });
 
   it('filters sibling folders while typing and opens the active suggestion with the keyboard', async () => {
@@ -198,17 +231,15 @@ describe('AddWorkspaceDialog multi-select mode', () => {
     expect(add).toHaveBeenCalledWith('/tmp/pasted');
   });
 
-  it('allows selecting the current empty folder in multi mode', async () => {
+  it('adds the current empty folder directly via the primary button in multi mode', async () => {
     const { addMany } = mountDialog({ multiple: true, defaultPath: '/home/alpha' });
     await settled();
 
     expect(document.querySelector('.fl-empty')).not.toBeNull();
-    const selectCurrent = document.querySelector<HTMLButtonElement>('.actions .ui-button--secondary:last-child')!;
-    expect(selectCurrent.textContent).toContain('Select this folder');
-    selectCurrent.click();
-    await nextTick();
-
+    expect(document.querySelector('.actions .ui-button--secondary')).toBeNull();
     expect(primaryAction().disabled).toBe(false);
+    expect(primaryAction().textContent).toBe('Add current folder');
+
     primaryAction().click();
     await nextTick();
     expect(addMany).toHaveBeenCalledWith(['/home/alpha']);
@@ -471,9 +502,8 @@ describe('AddWorkspaceDialog new folder creation', () => {
     expect(document.querySelector('.createbar')).toBeNull();
     expect(document.querySelector<HTMLInputElement>('.pathbar input')?.value).toBe('/home/gamma');
 
-    const selectCurrent = document.querySelector<HTMLButtonElement>('.actions .ui-button--secondary:last-child')!;
-    selectCurrent.click();
-    await nextTick();
+    expect(primaryAction().disabled).toBe(false);
+    expect(primaryAction().textContent).toBe('Add current folder');
     primaryAction().click();
     await nextTick();
     expect(addMany).toHaveBeenCalledWith(['/home/gamma']);

@@ -20,6 +20,7 @@ export class AgentToolSelectAnnouncementsService extends Service implements IAge
         await toolSelect.prepareCatalog(signal);
         return toolSelect.loadableToolsAnnouncement(
           isToolSelectAnnouncementDisclosure(lastDisclosure) ? lastDisclosure : undefined,
+          false,
         );
       }),
     );

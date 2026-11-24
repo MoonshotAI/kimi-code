@@ -12,6 +12,7 @@ import type {
   LoopRequester,
   OperationLoopRequesterOptions,
 } from '#/agent/loop/requesterContract';
+import { TOOL_ARGUMENT_CORRECTION_ORIGIN } from '@moonshot-ai/core/llm/message';
 import type { LlmRequest } from '@moonshot-ai/core/llm/request';
 import type { MockProvider } from './scripted-generate';
 
@@ -32,6 +33,7 @@ interface RecordedRequest {
   readonly model: string;
   readonly profile: Readonly<Record<(typeof PROFILE_FIELDS)[number], unknown>>;
   readonly call: GenerateCall;
+  readonly correctionTail: boolean;
 }
 
 const PROFILE_FIELDS = [
@@ -49,6 +51,10 @@ let comparisons = 0;
 
 export function promptCacheComparisons(): number {
   return comparisons;
+}
+
+export function drainPromptCacheViolations(): readonly string[] {
+  return violations.splice(0);
 }
 
 export class PromptCacheGuardedLoopRequester implements LoopRequester {
@@ -120,6 +126,7 @@ export function guardPromptCachePrefix(provider: MockProvider): MockProvider {
         model: modelIdentity(input),
         profile: Object.fromEntries(PROFILE_FIELDS.map((field) => [field, profile[field]])) as RecordedRequest['profile'],
         call: generateCallOf(input),
+        correctionTail: input.content.messages.at(-1)?.attributes?.origin?.kind === TOOL_ARGUMENT_CORRECTION_ORIGIN,
       };
       scope.attempts += 1;
       checkPrefixExtension(scope, request);
@@ -181,11 +188,18 @@ function findStableBreak(previous: RecordedRequest, next: RecordedRequest): unkn
 }
 
 function findHistoryBreak(previous: RecordedRequest, next: RecordedRequest): unknown {
+  // Special case: an invalid-tool-arguments correction is a deliberate one-shot
+  // cache sacrifice. The retry policy appends it temporarily and never persists
+  // it, so the next request legitimately drops it; strip it from the recorded
+  // baseline instead of reporting a prefix break.
+  const history = previous.correctionTail
+    ? previous.call.history.slice(0, -1)
+    : previous.call.history;
   return findGenerateCallPrefixBreak(
     {
       systemPrompt: next.call.systemPrompt,
       tools: next.call.tools,
-      history: previous.call.history,
+      history,
     },
     next.call,
   );

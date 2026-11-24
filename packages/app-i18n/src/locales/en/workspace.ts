@@ -11,8 +11,9 @@ export default {
   removeWorkspaceConfirmDeviceOffline:
     'Remove "{name}" from the sidebar\n{device} isn\'t reachable right now, so this only hides the project in this app. Folders and files on the device are not deleted.',
   removeAction: 'Remove',
-  swarmEnableTitle: 'Enable swarm mode?',
-  swarmEnableConfirm: 'The agent will run multiple sub-agents in parallel.',
+  swarmEnabledMessage:
+    "High usage: Swarm is built for large parallel jobs and can use many times the tokens of a normal task. Start small, and turn swarm off when you're done.",
+  swarmEnabledTitle: 'Swarm mode is on',
   goalStartTitle: 'Start goal?',
   goalStartConfirm: '"{objective}" — the agent will run autonomously toward it.',
   newInGroup: 'New session in this project',
@@ -30,8 +31,8 @@ export default {
   requiredTitle: 'Choose a workspace first',
   requiredMessage: 'Pick a folder to use as your workspace before sending a message.',
   openThisFolder: 'Open this folder',
-  selectThisFolder: 'Select this folder',
-  addSelected: 'Add selected ({n})',
+  addCurrentFolder: 'Add current folder',
+  addFolders: 'Add folder ({n}) | Add folders ({n})',
   deletedDevice: 'Removed device',
   deviceState: {
     ready: 'Connected',

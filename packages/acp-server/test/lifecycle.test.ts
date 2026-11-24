@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
+  createDecorator,
   IOAuthToolkit,
   IAgentEnvironmentBindingService,
   IAgentLifecycleService,
@@ -11,8 +12,9 @@ import {
   ISessionManager,
   ISessionMcpHandle,
   IWorkspaceInstanceManager,
+  SyncDescriptor,
 } from '@moonshot-ai/agent-core-v2';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { SessionSummary } from '@moonshot-ai/klient';
 
@@ -95,6 +97,46 @@ describe('acp-server session lifecycle', () => {
       lease.dispose();
     }
   }
+
+  it(
+    'resolves close only after the engine has finished disposing its services',
+    async () => {
+      homeDir = await mkdtemp(join(tmpdir(), 'acp-lifecycle-'));
+      const events: string[] = [];
+      let releaseDispose!: () => void;
+      const disposeGate = new Promise<void>((resolve) => {
+        releaseDispose = resolve;
+      });
+      class SlowToDispose {
+        declare readonly _serviceBrand: undefined;
+        async dispose(): Promise<void> {
+          events.push('dispose started');
+          await disposeGate;
+          events.push('dispose finished');
+        }
+      }
+      const ISlowToDispose = createDecorator<SlowToDispose>('slowToDisposeAcpTestService');
+      client = await createTestClient({
+        homeDir,
+        extraSeeds: [[ISlowToDispose, new SyncDescriptor(SlowToDispose)]],
+      });
+      client.server.core.accessor.get(ISlowToDispose);
+
+      const closing = client.server.close().then(() => {
+        events.push('close resolved');
+      });
+      try {
+        await vi.waitFor(() => expect(events).toContain('dispose started'));
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        expect(events).toEqual(['dispose started']);
+      } finally {
+        releaseDispose();
+      }
+      await closing;
+      expect(events).toEqual(['dispose started', 'dispose finished', 'close resolved']);
+    },
+    30_000,
+  );
 
   it(
     'session/new creates a live session and session/list returns it',

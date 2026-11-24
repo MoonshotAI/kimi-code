@@ -7,11 +7,14 @@ import { fsOpenInAppIdSchema } from './rest-fs';
 export const metaCapabilitiesSchema = z.object({
   websocket: z.literal(true),
   file_upload: z.literal(true),
+  feedback: z.literal(true).optional(),
   fs_query: z.literal(true),
   mcp: z.literal(true),
   tasks: z.literal(true),
   interactions_list: z.literal(true),
   session_wait: z.literal(true),
+  agent_close: z.literal(true),
+  session_continue: z.literal(true),
   system_upgrade: z.literal(true).optional(),
 });
 

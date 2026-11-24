@@ -131,3 +131,13 @@ export function registerArchivedSettingsOpener(opener: () => void): void {
 export function openArchivedSettings(): void {
   archivedSettingsOpener?.();
 }
+
+let modelPickerOpener: ((sessionId?: string) => Promise<void>) | null = null;
+
+export function registerModelPickerOpener(opener: (sessionId?: string) => Promise<void>): void {
+  modelPickerOpener = opener;
+}
+
+export async function openModelPicker(sessionId?: string): Promise<void> {
+  await modelPickerOpener?.(sessionId);
+}

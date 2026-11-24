@@ -10,7 +10,7 @@ import type {
 } from './types';
 import type { DaemonKimiWebApi } from './daemon/client';
 
-type Route = 'local' | 'session' | 'localSession' | 'workspace' | 'file' | 'custom';
+type Route = 'local' | 'session' | 'sessionSync' | 'localSession' | 'workspace' | 'file' | 'custom';
 
 const ROUTES = {
   dispose: 'custom',
@@ -30,6 +30,10 @@ const ROUTES = {
   updateSession: 'session',
   evaluateSessionRating: 'session',
   reportSessionRating: 'session',
+  createFeedback: 'custom',
+  updateFeedback: 'custom',
+  uploadFeedbackAttachment: 'local',
+  uploadFeedbackSession: 'custom',
   getTurnFileChanges: 'session',
   getTurnFileContent: 'session',
   getSessionWarnings: 'session',
@@ -50,11 +54,15 @@ const ROUTES = {
   steerPrompts: 'session',
   abortPrompt: 'session',
   cancelSession: 'session',
+  continueSession: 'session',
   compactSession: 'session',
   undoSession: 'session',
   generateSessionTitle: 'session',
   forkSession: 'session',
   startBtw: 'session',
+  closeAgent: 'session',
+  predictNextPrompt: 'session',
+  cancelPromptPrediction: 'session',
   respondApproval: 'session',
   respondQuestion: 'session',
   dismissQuestion: 'session',
@@ -72,6 +80,7 @@ const ROUTES = {
   setPluginEnabled: 'local',
   removePlugin: 'local',
   getMcpAuthStatuses: 'local',
+  inspectMcpAuthStatuses: 'local',
   beginMcpAuth: 'local',
   completeMcpAuth: 'local',
   cancelMcpAuth: 'local',
@@ -88,7 +97,7 @@ const ROUTES = {
   getGitStatusBatch: 'session',
   getPullRequestBatch: 'session',
   getFileDiff: 'session',
-  getFileDownloadUrl: 'session',
+  getFileDownloadUrl: 'sessionSync',
   downloadSessionFile: 'session',
   openFile: 'localSession',
   revealFile: 'localSession',
@@ -129,12 +138,14 @@ const ROUTES = {
   uploadFile: 'custom',
   getFileUrl: 'file',
   getFileBlob: 'file',
-  getSessionMediaUrl: 'session',
+  getSessionMediaUrl: 'sessionSync',
   getSessionMediaBlob: 'session',
   readHostFileContent: 'local',
   downloadHostFile: 'local',
   getConfig: 'local',
   setConfig: 'local',
+  readHostTextFile: 'local',
+  writeHostTextFile: 'local',
   getAuth: 'local',
   startOAuthLogin: 'local',
   pollOAuthLogin: 'local',
@@ -146,7 +157,9 @@ const ROUTES = {
   getClientConfig: 'local',
 } as const satisfies Record<keyof KimiWebApi, Route>;
 
-const IMMEDIATE_CUSTOM: ReadonlySet<string> = new Set(['dispose', 'connectEvents']);
+const IMMEDIATE_CUSTOM: ReadonlySet<string> = new Set([
+  'dispose', 'connectEvents', 'createFeedback', 'updateFeedback', 'uploadFeedbackSession',
+]);
 
 type AnyApi = Record<string, (...args: unknown[]) => unknown>;
 
@@ -284,6 +297,12 @@ export class DeviceRouter implements DeviceRoutingControls {
       const owner = this.sessionDevice.get(key);
       if (owner === undefined) return this.dispatchUnknownSession(method, route, args);
       return this.dispatchSession(method, route, args, owner ?? undefined);
+    }
+    if (route === 'sessionSync') {
+      const owner = this.sessionDevice.get(key);
+      if (owner === undefined) void this.ownerOf(key).catch(() => undefined);
+      const api = this.apiFor(owner ?? undefined);
+      return api[method]!(...args);
     }
     const deviceId = route === 'workspace' ? this.workspaceDevice.get(key) : route === 'file' ? this.fileDevice.get(key) : undefined;
     const api = this.apiFor(deviceId);
@@ -557,6 +576,21 @@ export class DeviceRouter implements DeviceRoutingControls {
   protected async route_createSession(input: Parameters<KimiWebApi['createSession']>[0]): Promise<AppSession> {
     const deviceId = input.workspaceId === undefined ? undefined : this.workspaceDevice.get(input.workspaceId);
     return this.rememberSessions(deviceId, [await this.deviceApi(deviceId).createSession(input)])[0]!;
+  }
+
+  protected async route_createFeedback(input: Parameters<KimiWebApi['createFeedback']>[0]): ReturnType<KimiWebApi['createFeedback']> {
+    const api = input.kind === 'turn' ? this.deviceApi(await this.ownerOf(input.session_id)) : this.local;
+    return api.createFeedback(input);
+  }
+
+  protected async route_updateFeedback(...[feedbackId, input, sessionId]: Parameters<KimiWebApi['updateFeedback']>): ReturnType<KimiWebApi['updateFeedback']> {
+    const api = sessionId === undefined ? this.local : this.deviceApi(await this.ownerOf(sessionId));
+    return api.updateFeedback(feedbackId, input);
+  }
+
+  protected async route_uploadFeedbackSession(...[feedbackId, sessionId, signal, globalFeedback]: Parameters<KimiWebApi['uploadFeedbackSession']>): ReturnType<KimiWebApi['uploadFeedbackSession']> {
+    if (globalFeedback !== undefined) return this.local.uploadFeedbackSession(feedbackId, sessionId, signal, globalFeedback);
+    return this.deviceApi(await this.ownerOf(sessionId)).uploadFeedbackSession(feedbackId, sessionId, signal);
   }
 
   protected async route_uploadFile({ deviceId, ...rest }: Parameters<KimiWebApi['uploadFile']>[0]): ReturnType<KimiWebApi['uploadFile']> {

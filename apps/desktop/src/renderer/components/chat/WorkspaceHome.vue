@@ -135,9 +135,9 @@ function toggleTerminalPanel(): void {
   padding: 0 var(--space-3);
   border: var(--p-hairline) solid var(--color-line);
   border-radius: var(--radius-md);
+  color: var(--color-text-muted);
   background: var(--color-surface-raised);
   box-shadow: var(--shadow-xs);
-  color: var(--color-text-muted);
   font-family: var(--font-ui);
   font-size: var(--text-sm);
   font-weight: var(--weight-medium);

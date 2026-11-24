@@ -1,12 +1,13 @@
 // @vitest-environment jsdom
-import { createApp, h, nextTick, type App } from 'vue';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createApp, h, nextTick, ref, type App } from 'vue';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const clientState = vi.hoisted(() => ({
   activeSessionId: null as null | { value: string | null },
   activity: null as null | { value: string },
   working: null as null | { value: boolean },
   visibleWorkspace: null as null | { value: { deviceId?: string } | null },
+  searchFiles: null as null | ((query: string) => Promise<unknown[]>),
 }));
 
 vi.mock('@moonshot-ai/app-client/client', async (importOriginal) => {
@@ -26,7 +27,9 @@ vi.mock('@moonshot-ai/app-client/client', async (importOriginal) => {
       working: clientState.working!,
       isStartingFirstPrompt: vue.ref(false),
       queued: vue.ref([]),
-      searchFiles: vi.fn(async () => []),
+      searchFiles: async (query: string) => clientState.searchFiles?.(query) ?? [],
+      sessionMentionCandidates: vue.ref([]),
+      searchSessionMentions: vi.fn(async () => []),
       uploadImage: vi.fn(),
       status: vue.ref({}),
       thinking: vue.ref('high'),
@@ -43,6 +46,10 @@ vi.mock('@moonshot-ai/app-client/client', async (importOriginal) => {
       skillsLoaded: vue.ref(true),
       chatGateVerdict: vue.ref(null),
       experimentalFlags: vue.ref({}),
+      promptPrediction: vue.ref(null),
+      acceptPromptPrediction: vi.fn(() => null),
+      handlePromptPredictionInput: vi.fn(),
+      handlePromptPredictionSubmit: vi.fn(),
       notify: vi.fn(),
       toggleGoalMode: vi.fn(),
       togglePlanMode: vi.fn(),
@@ -61,6 +68,11 @@ import { createComposerSnapshot, textToDoc } from '@moonshot-ai/app-composer/mod
 let app: App | undefined;
 let host: HTMLDivElement;
 let storage: Map<string, string>;
+
+beforeAll(async () => {
+  await import('../src/composer/Composer.vue');
+  vi.resetModules();
+});
 
 beforeEach(() => {
   storage = new Map<string, string>();
@@ -110,12 +122,14 @@ async function mountFreshComposer(locale: 'zh' | 'en' = 'zh') {
   const submits: Array<Record<string, unknown>> = [];
   const steers: Array<Record<string, unknown>> = [];
   const commands: Array<Record<string, unknown>> = [];
+  const interruptArmed = ref(false);
   app = createApp({
     setup() {
       dialogs = useAppDialogs();
       runningMode = useRunningSendMode();
       return () => h(Composer, {
         ref: (value) => { composerRef = value as InstanceType<typeof Composer>; },
+        interruptArmed: interruptArmed.value,
         onSubmit: (payload: Record<string, unknown>) => submits.push(payload),
         onSteer: (payload: Record<string, unknown>) => steers.push(payload),
         onCommand: (payload: Record<string, unknown>) => commands.push(payload),
@@ -129,6 +143,7 @@ async function mountFreshComposer(locale: 'zh' | 'en' = 'zh') {
     setDraft: (value: string) => {
       composerRef.loadForEdit(value, createComposerSnapshot(textToDoc(value), [], []));
     },
+    interruptArmed,
     submits,
     steers,
     commands,
@@ -359,5 +374,54 @@ describe('Composer running send mode and first-time steer tip', () => {
     expect(dialogs.showSettings.value).toBe(true);
     expect(dialogs.settingsInitialTab.value).toBe('devices');
     expect(devicesStore().focusDeviceId).toBe('devbox');
+  });
+
+  it('shows the compact ESC stop label when interruptArmed is active', async () => {
+    const { interruptArmed } = await mountFreshComposer('zh');
+    clientState.activity!.value = 'running';
+    clientState.working!.value = true;
+    await nextTick();
+
+    expect(host.querySelector('.stop-esc')).toBeNull();
+
+    interruptArmed.value = true;
+    await nextTick();
+
+    const stopEsc = host.querySelector('.stop-esc');
+    expect(stopEsc?.textContent).toBe('ESC');
+  });
+});
+
+describe('Composer mention menu while file results are pending', () => {
+  afterEach(() => {
+    clientState.searchFiles = null;
+  });
+
+  it('keeps Enter from sending the unfinished token until results arrive', async () => {
+    let resolveSearch!: (files: unknown[]) => void;
+    clientState.searchFiles = () => new Promise((resolve) => {
+      resolveSearch = resolve;
+    });
+    const { setDraft, steers } = await mountFreshComposer('en');
+    clientState.activity!.value = 'running';
+    clientState.working!.value = true;
+    await nextTick();
+    const input = host.querySelector('[aria-label="Message input"]')!;
+
+    setDraft('@read');
+    await nextTick();
+    await nextTick();
+    expect(host.querySelector('.mention-searching')).not.toBeNull();
+    expect(host.querySelectorAll('.mention-item')).toHaveLength(0);
+
+    pressKey(input, { key: 'Enter' });
+    await nextTick();
+    expect(steers).toHaveLength(0);
+
+    resolveSearch([]);
+    await vi.waitFor(() => expect(host.querySelector('.mention-searching')).toBeNull());
+    pressKey(input, { key: 'Enter' });
+    await nextTick();
+    expect(steers).toHaveLength(1);
   });
 });

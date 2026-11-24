@@ -281,7 +281,7 @@ async function removeFromAccount(row: MyDevice): Promise<void> {
   <section ref="rootEl" class="ad" :aria-label="t('settings.devices.myDevices')">
     <div class="ad-head">
       <slot name="title">
-        <h3 class="ad-title">{{ t('settings.devices.myDevices') }}</h3>
+        <h3 class="sec-title">{{ t('settings.devices.myDevices') }}</h3>
       </slot>
       <div v-if="signedIn" class="ad-head-actions">
         <span v-if="usage" class="ad-usage">{{ usage }}</span>
@@ -293,25 +293,26 @@ async function removeFromAccount(row: MyDevice): Promise<void> {
           :disabled="store.registrationsLoading"
           @click="refresh"
         >
-          <Icon name="refresh" :class="{ 'ad-refreshing': store.registrationsLoading }" />
+          <Spinner v-if="store.registrationsLoading" size="xs" />
+          <Icon v-else name="refresh" />
         </IconButton>
       </div>
     </div>
 
-    <div v-if="!signedIn" class="ad-card ad-center">
+    <div v-if="!signedIn" class="settings-group ad-center">
       <span class="ad-center-title">{{ t('settings.devices.myDevicesSignedOut') }}</span>
       <Button class="ad-log-in" variant="secondary" size="sm" @click="emit('login')">{{ t('settings.devices.logIn') }}</Button>
     </div>
     <template v-else-if="rows.length === 0">
-      <div v-if="loadFailed" class="ad-card ad-center">
+      <div v-if="loadFailed" class="settings-group ad-center">
         <span class="ad-center-title">{{ t('remoteControl.devicesLoadFailed') }}</span>
         <span class="ad-center-detail">{{ store.registrationsError }}</span>
         <Button variant="secondary" size="sm" @click="refresh">{{ t('remoteControl.retry') }}</Button>
       </div>
-      <div v-else-if="store.registrations === null" class="ad-card ad-center" role="status">
+      <div v-else-if="store.registrations === null" class="settings-group ad-center" role="status">
         <Spinner size="md" />
       </div>
-      <div v-else class="ad-card ad-empty">{{ t('settings.devices.myDevicesEmpty', { command: 'kimi rc --background' }) }}</div>
+      <div v-else class="settings-group ad-empty">{{ t('settings.devices.myDevicesEmpty', { command: 'kimi rc --background' }) }}</div>
     </template>
 
     <template v-if="rows.length > 0">
@@ -319,7 +320,7 @@ async function removeFromAccount(row: MyDevice): Promise<void> {
         <span>{{ t('remoteControl.devicesLoadFailed') }}</span>
         <Button variant="text" @click="refresh">{{ t('remoteControl.retry') }}</Button>
       </div>
-      <div class="ad-card" role="list" :aria-label="t('settings.devices.myDevices')">
+      <div class="settings-group" role="list" :aria-label="t('settings.devices.myDevices')">
         <div v-if="shown.length === 0" class="ad-empty">{{ t('settings.devices.myDevicesEmpty', { command: 'kimi rc --background' }) }}</div>
         <div
           v-for="row in listed"
@@ -391,8 +392,8 @@ async function removeFromAccount(row: MyDevice): Promise<void> {
     <p v-if="renameFailed" class="ad-error" role="alert">{{ t('remoteControl.renameFailed') }}</p>
     <p v-if="actionError" class="ad-error" role="alert">{{ actionError }}</p>
 
-    <Transition name="menu-pop">
-      <Menu v-if="menuOpen && menuRow" ref="menuRef" class="ad-menu" :style="menuStyle" @click.stop>
+    <Transition name="ui-menu-pop">
+      <Menu v-if="menuOpen && menuRow" ref="menuRef" class="ui-menu-floating ad-menu" :style="menuStyle" @click.stop>
         <MenuItem v-if="createProject && added(menuRow) && rowState(menuRow) === 'ready'" @click="startProject(menuRow)">
           <Icon name="folder-plus" size="sm" />{{ t('workspace.dialog.createTitle') }}
         </MenuItem>
@@ -416,17 +417,14 @@ async function removeFromAccount(row: MyDevice): Promise<void> {
   </section>
 </template>
 
+<style scoped src="./settings-common.css"></style>
+
 <style scoped>
 .ad { display: flex; flex-direction: column; gap: var(--space-3); }
 .ad-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); min-height: 28px; }
-.ad-title { margin: 0; color: var(--color-text); font-family: var(--font-ui); font-size: var(--text-base); font-weight: var(--weight-medium); }
+.ad-head .sec-title { margin: 0; }
 .ad-head-actions { display: flex; flex: none; align-items: center; gap: var(--space-2); }
 .ad-usage { color: var(--color-text-faint); font-family: var(--font-ui); font-size: var(--text-xs); }
-.ad-refreshing { animation: ad-refresh-spin 700ms linear infinite; }
-@keyframes ad-refresh-spin {
-  to { transform: rotate(360deg); }
-}
-.ad-card { overflow: hidden; border-radius: var(--radius-xl); background: var(--color-surface); }
 .ad-center { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--space-2); min-height: 120px; padding: var(--space-4); color: var(--color-text-faint); font-family: var(--font-ui); text-align: center; }
 .ad-center-title { color: var(--color-text-muted); font-size: var(--text-sm); font-weight: var(--weight-medium); }
 .ad-center-detail { overflow: hidden; max-width: 100%; font-size: var(--text-xs); text-overflow: ellipsis; white-space: nowrap; }
@@ -434,11 +432,7 @@ async function removeFromAccount(row: MyDevice): Promise<void> {
 .ad-row { display: flex; align-items: center; gap: var(--space-3); min-height: 56px; padding: 0 var(--space-3) 0 var(--space-4); transition: background var(--duration-fast) var(--ease-out); }
 .ad-row + .ad-row, .ad-row + .ad-fold, .ad-empty + .ad-row, .ad-empty + .ad-fold { border-top: var(--p-hairline) solid var(--color-line); }
 .ad-row:hover { background: var(--color-hover); }
-.ad-row--flash { animation: ad-flash 1.2s var(--ease-out); }
-@keyframes ad-flash {
-  0% { background: var(--color-accent-soft); }
-  100% { background: transparent; }
-}
+.ad-row--flash { animation: ui-row-flash var(--duration-flash) var(--ease-out); }
 .ad-action { flex: none; }
 .ad-copy { display: flex; flex: 1; flex-direction: column; gap: 3px; min-width: 0; font-family: var(--font-ui); }
 .ad-name { overflow: hidden; color: var(--color-text); font-size: var(--text-sm); font-weight: var(--weight-option-label); text-overflow: ellipsis; white-space: nowrap; }
@@ -460,8 +454,4 @@ async function removeFromAccount(row: MyDevice): Promise<void> {
 .ad-fold:focus-visible { outline: none; box-shadow: var(--p-focus-ring); }
 .ad-inline-error { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); color: var(--color-danger); font-family: var(--font-ui); font-size: var(--text-xs); }
 .ad-error { margin: 0; color: var(--color-danger); font-family: var(--font-ui); font-size: var(--text-xs); }
-.ad-menu { position: fixed; top: 0; left: 0; z-index: var(--z-dropdown); }
-@media (prefers-reduced-motion: reduce) {
-  .ad-refreshing { animation: none; }
-}
 </style>
