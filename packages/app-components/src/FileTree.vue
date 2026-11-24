@@ -293,7 +293,7 @@ onBeforeUnmount(() => {
   background: none;
   text-align: left;
   font-family: inherit;
-  font-size: var(--ui-font-size);
+  font-size: var(--text-base);
   color: var(--color-text);
   cursor: pointer;
 }
@@ -329,7 +329,7 @@ onBeforeUnmount(() => {
 
 .tree-lead {
   flex: none;
-  color: var(--muted);
+  color: var(--color-text-faint);
 }
 
 .tree-spinner {
@@ -346,7 +346,7 @@ onBeforeUnmount(() => {
 
 .tree-symlink {
   flex: none;
-  color: var(--muted);
+  color: var(--color-text-faint);
 }
 
 .tree-more {
@@ -360,7 +360,7 @@ onBeforeUnmount(() => {
 }
 
 .tree-row.is-empty {
-  color: var(--muted);
+  color: var(--color-text-faint);
   cursor: default;
 }
 

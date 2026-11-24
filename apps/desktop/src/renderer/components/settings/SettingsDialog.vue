@@ -1552,7 +1552,7 @@ function archiveTime(iso: string): string {
   </Dialog>
 </template>
 
-<style scoped src="./settings-common.css"></style>
+<style scoped src="@moonshot-ai/app-components/settings-common.css"></style>
 
 <style scoped>
 .sd {

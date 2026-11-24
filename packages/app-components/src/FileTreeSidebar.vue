@@ -263,7 +263,7 @@ onBeforeUnmount(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--muted);
+  color: var(--color-text-faint);
 }
 
 .fts-hint {
@@ -271,7 +271,7 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: center;
   padding: var(--space-4) var(--space-2);
-  color: var(--muted);
+  color: var(--color-text-faint);
   font-size: var(--text-xs);
 }
 </style>

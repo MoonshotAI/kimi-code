@@ -158,16 +158,7 @@ function onHeadClick(): void {
 }
 
 .think.streaming .think-title {
-  animation: think-breathe 1.6s var(--ease-in-out) infinite;
-}
-@keyframes think-breathe {
-  0%,
-  100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.45;
-  }
+  animation: ui-breathe 1.6s var(--ease-in-out) infinite;
 }
 @media (prefers-reduced-motion: reduce) {
   .think {

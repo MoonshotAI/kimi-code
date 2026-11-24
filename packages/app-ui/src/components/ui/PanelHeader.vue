@@ -56,7 +56,7 @@ const { t } = useKimiI18n();
   box-sizing: border-box;
   min-width: 0;
   border-bottom: var(--p-hairline) solid var(--color-line);
-  background: var(--bg);
+  background: var(--color-bg);
 }
 .ui-panel-header__title {
   flex: 0 1 auto;

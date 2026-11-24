@@ -549,17 +549,7 @@ function toggleAutoSessionTitle(): void {
   z-index: 1;
   background-color: var(--color-accent-soft);
   box-shadow: inset 0 0 0 1.5px var(--color-accent-bd);
-  animation: mobile-settings-row-highlight var(--duration-flash) var(--ease-out);
-}
-@keyframes mobile-settings-row-highlight {
-  0% {
-    background-color: color-mix(in srgb, var(--color-accent) 18%, var(--color-surface));
-    box-shadow: inset 0 0 0 1.5px var(--color-accent);
-  }
-  100% {
-    background-color: var(--color-accent-soft);
-    box-shadow: inset 0 0 0 1.5px var(--color-accent-bd);
-  }
+  animation: ui-row-highlight var(--duration-flash) var(--ease-out);
 }
 @media (prefers-reduced-motion: reduce) {
   .card > .srow {
@@ -619,13 +609,13 @@ function toggleAutoSessionTitle(): void {
 .providers-page {
   margin: 0 max(var(--space-4), var(--safe-right)) 0 max(var(--space-4), var(--safe-left));
 }
-.providers-page :deep(.pp-title) {
+.providers-page :deep(.pp-head .sec-title) {
   display: none;
 }
 .srow-val {
   flex: none;
   font-family: var(--font-mono);
-  font-size: var(--ui-font-size);
+  font-size: var(--text-base);
   font-weight: 500;
   color: var(--color-accent-hover);
 }
@@ -701,5 +691,5 @@ function toggleAutoSessionTitle(): void {
 .srow,
 .srow-sub,
 .srow-val,
-.cache-note { font-family: var(--sans); }
+.cache-note { font-family: var(--font-ui); }
 </style>

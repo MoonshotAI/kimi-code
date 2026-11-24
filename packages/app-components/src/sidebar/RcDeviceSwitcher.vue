@@ -239,30 +239,13 @@ function onPick(device: RcDevice): void {
   min-height: 44px;
 }
 .rc-dev-trigger {
-  display: flex;
-  align-items: center;
-  gap: var(--sb-gap);
-  width: 100%;
-  min-width: 0;
   padding: 6px calc(var(--sb-pad-x) - var(--sb-inset));
   border: var(--p-hairline) solid var(--color-line);
   border-radius: var(--radius-md);
-  background: transparent;
-  color: var(--color-text);
-  font-family: var(--font-ui);
-  font-size: var(--ui-font-size-sm);
-  font-weight: var(--weight-medium);
-  line-height: var(--leading-tight);
-  cursor: pointer;
-  text-align: left;
 }
 .rc-dev-trigger:hover,
 .rc-dev-trigger[aria-expanded='true'] {
   background: var(--sb-hover);
-}
-.rc-dev-trigger:focus-visible {
-  outline: none;
-  box-shadow: var(--p-focus-ring);
 }
 .rc-dev-trigger svg {
   flex: none;
@@ -365,3 +348,5 @@ function onPick(device: RcDevice): void {
   flex: none;
 }
 </style>
+
+<style scoped src="./sidebar-row-button.css"></style>
