@@ -150,9 +150,13 @@ function parseUsage(response: Record<string, unknown>): Partial<TokenUsage> | un
     typeof usageMetadata['candidatesTokenCount'] === 'number'
       ? usageMetadata['candidatesTokenCount']
       : 0;
+  const thoughtsTokenCount =
+    typeof usageMetadata['thoughtsTokenCount'] === 'number'
+      ? usageMetadata['thoughtsTokenCount']
+      : 0;
   return {
     inputOther: Math.max(promptTokenCount - (cachedContentTokenCount ?? 0), 0),
-    output: candidatesTokenCount,
+    output: candidatesTokenCount + thoughtsTokenCount,
     inputCacheRead: cachedContentTokenCount,
     inputCacheCreation: 0,
     raw: usageMetadata,
