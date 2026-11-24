@@ -52,6 +52,7 @@ export function registerMetaRoute(app: RouteHost, opts: MetaRouteOptions): void 
       agent_close: true as const,
       session_continue: true as const,
       system_upgrade: opts.systemUpgrade === true ? (true as const) : undefined,
+      system_stats: true as const,
     }),
     server_id: opts.serverId,
     started_at: opts.startedAt,

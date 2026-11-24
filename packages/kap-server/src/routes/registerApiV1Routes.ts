@@ -38,9 +38,11 @@ import { registerSessionsRoutes } from './sessions';
 import { deviceSources, type DeviceManager } from '../services/devices/deviceManager';
 import { registerImportProvidersRoute } from '../services/devices/deviceProviders';
 import { registerSystemUpgradeRoutes, type SystemUpgrade } from '../services/devices/deviceUpgrade';
+import { SystemStatsCollector } from '../services/systemStats/systemStats';
 import { registerDevicesRoutes } from './devices';
 import { registerShutdownRoutes } from './shutdown';
 import { registerSkillsRoutes } from './skills';
+import { registerSystemStatsRoutes } from './systemStats';
 import { registerToolsRoutes } from './tools';
 import { registerConversationRoutes } from './conversation';
 import { registerWorkspaceFsRoutes } from './workspaceFs';
@@ -161,6 +163,10 @@ export async function registerApiV1Routes(
           opts.systemUpgrade,
         );
       }
+      registerSystemStatsRoutes(
+        apiV1 as unknown as Parameters<typeof registerSystemStatsRoutes>[0],
+        new SystemStatsCollector(),
+      );
       registerSessionRatingRoutes(
         apiV1 as unknown as Parameters<typeof registerSessionRatingRoutes>[0],
         opts.sessionRating,

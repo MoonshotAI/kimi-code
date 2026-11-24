@@ -16,6 +16,7 @@ export const metaCapabilitiesSchema = z.object({
   agent_close: z.literal(true),
   session_continue: z.literal(true),
   system_upgrade: z.literal(true).optional(),
+  system_stats: z.literal(true),
 });
 
 export type MetaCapabilities = z.infer<typeof metaCapabilitiesSchema>;

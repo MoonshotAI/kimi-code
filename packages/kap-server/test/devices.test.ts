@@ -1292,6 +1292,20 @@ describe('device HTTP proxy', () => {
       LOCAL_HOST_IDENTITY,
     );
   }, 30_000);
+
+  it.skipIf(process.platform === 'win32')('reads the usage of an SSH device through the proxy', async () => {
+    const loopbackFetch = globalThis.fetch;
+    await withManagedDevicePair(
+      (input, init) => loopbackFetch(input as Parameters<typeof fetch>[0], init),
+      async ({ local, remoteHome, paths }) => {
+        const meta = await call(local, 'GET', '/api/v1/devices/dev/proxy/api/v1/meta');
+        expect(meta.data['capabilities']).toMatchObject({ system_stats: true });
+        const stats = await call(local, 'GET', `/api/v1/devices/dev/proxy/api/v1/system/stats?path=${encodeURIComponent(remoteHome)}`);
+        expect(stats).toMatchObject({ code: 0, data: { cpu: { cores: expect.any(Number) }, disk: { path: remoteHome } } });
+        expect(paths).toContain(`/api/v1/system/stats?path=${encodeURIComponent(remoteHome)}`);
+      },
+    );
+  }, 30_000);
 });
 
 interface ManagedDevicePair {

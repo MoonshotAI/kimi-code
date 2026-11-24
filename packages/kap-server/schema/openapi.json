@@ -10657,6 +10657,12 @@
                               ],
                               "type": "boolean"
                             },
+                            "system_stats": {
+                              "enum": [
+                                true
+                              ],
+                              "type": "boolean"
+                            },
                             "system_upgrade": {
                               "enum": [
                                 true
@@ -10685,7 +10691,8 @@
                             "interactions_list",
                             "session_wait",
                             "agent_close",
-                            "session_continue"
+                            "session_continue",
+                            "system_stats"
                           ],
                           "type": "object"
                         },
@@ -36234,6 +36241,183 @@
                       },
                       "required": [
                         "ok"
+                      ],
+                      "type": "object"
+                    },
+                    "details": {},
+                    "msg": {
+                      "type": "string"
+                    },
+                    "request_id": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "msg",
+                    "data",
+                    "request_id"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Default Response"
+          }
+        },
+        "tags": [
+          "meta"
+        ]
+      }
+    },
+    "/api/v1/system/stats": {
+      "get": {
+        "description": "Report CPU, memory, disk and NVIDIA GPU usage of the computer running this server, within the limits of its container or job. CPU usage covers the time since the previous request; after a pause the request measures for a quarter second first",
+        "parameters": [
+          {
+            "description": "Report the file system that holds this absolute path; defaults to the home directory",
+            "in": "query",
+            "name": "path",
+            "required": false,
+            "schema": {
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "code": {
+                      "enum": [
+                        0
+                      ],
+                      "type": "number"
+                    },
+                    "data": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "cpu": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "cores": {
+                              "description": "CPU cores this server may use, after container and job limits",
+                              "exclusiveMinimum": true,
+                              "minimum": 0,
+                              "type": "number"
+                            },
+                            "limited": {
+                              "description": "True when a container or job limit sets the cores below the machine",
+                              "type": "boolean"
+                            },
+                            "usage": {
+                              "description": "Share of the available CPU time used since the previous request",
+                              "maximum": 1,
+                              "minimum": 0,
+                              "type": "number"
+                            }
+                          },
+                          "required": [
+                            "cores",
+                            "limited"
+                          ],
+                          "type": "object"
+                        },
+                        "disk": {
+                          "additionalProperties": false,
+                          "description": "Omitted when the file system does not answer in time",
+                          "properties": {
+                            "available": {
+                              "minimum": 0,
+                              "type": "number"
+                            },
+                            "path": {
+                              "type": "string"
+                            },
+                            "total": {
+                              "minimum": 0,
+                              "type": "number"
+                            },
+                            "used": {
+                              "minimum": 0,
+                              "type": "number"
+                            }
+                          },
+                          "required": [
+                            "path",
+                            "total",
+                            "used",
+                            "available"
+                          ],
+                          "type": "object"
+                        },
+                        "gpus": {
+                          "description": "NVIDIA GPUs visible to this server; empty without nvidia-smi",
+                          "items": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "index": {
+                                "maximum": 9007199254740991,
+                                "minimum": 0,
+                                "type": "integer"
+                              },
+                              "memory_total": {
+                                "minimum": 0,
+                                "type": "number"
+                              },
+                              "memory_used": {
+                                "minimum": 0,
+                                "type": "number"
+                              },
+                              "name": {
+                                "type": "string"
+                              },
+                              "utilization": {
+                                "maximum": 1,
+                                "minimum": 0,
+                                "type": "number"
+                              }
+                            },
+                            "required": [
+                              "index",
+                              "name"
+                            ],
+                            "type": "object"
+                          },
+                          "type": "array"
+                        },
+                        "memory": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "limited": {
+                              "description": "True when a container or job memory limit replaces the machine total",
+                              "type": "boolean"
+                            },
+                            "total": {
+                              "minimum": 0,
+                              "type": "number"
+                            },
+                            "used": {
+                              "minimum": 0,
+                              "type": "number"
+                            }
+                          },
+                          "required": [
+                            "total",
+                            "used",
+                            "limited"
+                          ],
+                          "type": "object"
+                        }
+                      },
+                      "required": [
+                        "cpu",
+                        "memory",
+                        "gpus"
                       ],
                       "type": "object"
                     },
