@@ -1455,6 +1455,21 @@ importers:
         specifier: 4.1.4
         version: 4.1.4(@types/node@24.19.2)(@vitest/coverage-v8@4.1.4)(jsdom@30.0.1(@noble/hashes@2.4.0))(msw@2.15.0(@types/node@24.19.2)(typescript@6.0.2))(vite@6.4.2(@types/node@24.19.2)(jiti@2.6.1)(lightningcss@1.32.0)(tsx@4.21.0)(yaml@2.9.1))
 
+  tests/e2e:
+    devDependencies:
+      '@agentclientprotocol/sdk':
+        specifier: ^1.3.0
+        version: 1.3.0(zod@4.3.6)
+      '@moonshot-ai/pi-tui':
+        specifier: workspace:^
+        version: link:../../packages/pi-tui
+      '@moonshot-ai/testkit':
+        specifier: workspace:^
+        version: link:../../packages/testkit
+      '@playwright/test':
+        specifier: 1.63.0
+        version: 1.63.0
+
   tests/scenarios:
     devDependencies:
       '@moonshot-ai/kap-server':

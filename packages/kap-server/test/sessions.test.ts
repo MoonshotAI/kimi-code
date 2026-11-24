@@ -9,7 +9,7 @@ import { mcpResultToExecutableOutput } from '@moonshot-ai/agent-core-v2/agent/mc
 import { renderToolResultForModel } from '@moonshot-ai/agent-core-v2/agent/contextMemory/toolResultRender';
 import { IReadTool, ReadInputSchema, type ReadInput } from '@moonshot-ai/agent-core-v2/agent/tools/os/read/read';
 
-import { agent, say } from '@moonshot-ai/testkit/model';
+import { agent, fakeModelConfig, say } from '@moonshot-ai/testkit/model';
 import { kapFixtures, type KapFixtures } from '@moonshot-ai/testkit/vitest';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, test as base, vi } from 'vitest';
 
@@ -32,6 +32,7 @@ import {
   IEventDispatcher,
   IEventService,
   IEnvironmentService,
+  IConfigService,
   IFileSystemStorageService,
   IModelCatalog,
   IModelService,
@@ -3415,6 +3416,33 @@ describe('server-v2 /api/v1/sessions status context window', () => {
     expect(context?.max_context_tokens).toBe(131072);
     expect(context?.context_tokens).toBe(0);
   });
+
+  it('keeps rejecting model configuration errors other than a removed alias', async () => {
+    const cwd = home as string;
+    const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
+    const session = getLiveSessionById((server as RunningServer).core.accessor, created.body.data.id)!;
+    const agent = await ensureMainAgent(session);
+    const loop = agent.accessor.get(IAgentLoopService);
+    vi.spyOn(loop, 'resolveModelContext').mockImplementation(() => {
+      throw new Error2(ErrorCodes.CONFIG_INVALID, 'provider settings are invalid', { details: { model: 'stub' } });
+    });
+    expect(() => readContextState(agent)).toThrow('provider settings are invalid');
+  });
+
+  it('keeps rejecting a removed model alias for a subagent', async () => {
+    const cwd = home as string;
+    const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
+    const session = getLiveSessionById((server as RunningServer).core.accessor, created.body.data.id)!;
+    const lifecycle = session.accessor.get(IAgentLifecycleService);
+    const child = await lifecycle.create({ agentId: 'agent-removed-model' });
+    const handle = lifecycle.handleOf(child.agentId)!;
+    const loop = handle.accessor.get(IAgentLoopService);
+    vi.spyOn(loop, 'getModel').mockReturnValue('removed');
+    vi.spyOn(loop, 'resolveModelContext').mockImplementation(() => {
+      throw new Error2(ErrorCodes.CONFIG_INVALID, 'Model "removed" is not configured in config.toml.', { details: { model: 'removed' } });
+    });
+    expect(() => readContextState(handle)).toThrow('Model "removed" is not configured in config.toml.');
+  });
 });
 
 describe('server-v2 /api/v1/sessions (minidb read model)', () => {
@@ -3935,7 +3963,13 @@ describe('POST /api/v1/sessions/{id}:wait and live turns buffer flush', () => {
   });
 });
 
-const kapTest = base.extend<KapFixtures<RunningServer>>(kapFixtures({ startServer }));
+const modelFrames: Array<Record<string, unknown>> = [];
+const kapTest = base.extend<KapFixtures<RunningServer>>(kapFixtures({
+  startServer,
+  onFrame(frame) {
+    modelFrames.push(frame);
+  },
+}));
 const SLOW_WRITE_MS = 1_000;
 
 kapTest(':wait reports a finished turn only after the session wrote it to disk, even when the disk is slow', { timeout: 30_000 }, async ({ kap, model }) => {
@@ -4007,4 +4041,94 @@ kapTest('reports the project root and where the agent works on every view of a s
   );
   expect((await sessionFrame('created'))['session']).toMatchObject(location);
   expect((await sessionFrame('updated'))['session']).toMatchObject(location);
+});
+
+kapTest('a session whose saved model was removed opens with history and a model error notice', { timeout: 30_000 }, async ({ kap, model }) => {
+  model.script(say('history from removed model'));
+  const baseConfig = fakeModelConfig(model);
+  await kap.writeConfig({
+    ...baseConfig,
+    defaultModel: 'old',
+    models: {
+      ...baseConfig.models,
+      old: { provider: 'testkit', model: 'old-model', maxContextSize: 100000 },
+    },
+  });
+  await kap.server.core.accessor.get(IConfigService).reload();
+  const session = await kap.createSession({ agentConfig: { model: 'old' } });
+  await kap.prompt(session.id, 'history from removed model', { model: 'old' });
+  await kap.waitIdle(session.id);
+
+  await kap.writeConfig(baseConfig);
+  modelFrames.length = 0;
+  await kap.restart();
+  expect(JSON.stringify(await kap.turns(session.id))).toContain('history from removed model');
+  const resumed = await resumeSessionById(kap.server.core.accessor, session.id);
+  const main = await ensureMainAgent(resumed!);
+  expect(readAgentState(main, false).model).toBeUndefined();
+  expect(main.accessor.get(IAgentLoopService).getModel()).toBe('old');
+
+  const first = await kap.connect();
+  await first.subscribe(session.id);
+  await vi.waitFor(() => {
+    expect(modelFrames.filter((frame) => frame['type'] === 'notice')).toHaveLength(1);
+  });
+  expect(modelFrames.filter((frame) => frame['type'] === 'notice')).toContainEqual(
+    expect.objectContaining({ level: 'warning', code: 'model.not_configured', title: 'old' }),
+  );
+  expect(modelFrames.findIndex((frame) => frame['type'] === 'turns')).toBeLessThan(
+    modelFrames.findIndex((frame) => frame['type'] === 'notice'),
+  );
+  const second = await kap.connect();
+  await second.subscribe(session.id);
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  expect(first.frames.filter((frame) => frame['type'] === 'notice')).toHaveLength(1);
+  expect(second.frames.filter((frame) => frame['type'] === 'notice')).toHaveLength(1);
+  await first.close();
+  await second.close();
+
+  model.script(say('after fallback'));
+  await kap.prompt(session.id, 'after fallback', { model: 'testkit' });
+  await kap.waitIdle(session.id);
+  expect(JSON.parse(model.requests().at(-1)!.rawBody).model).toBe('testkit-model');
+});
+
+kapTest('a session with no default model opens with no displayed model and a model error notice', { timeout: 30_000 }, async ({ kap, model }) => {
+  model.script(say('history without a default model'));
+  const baseConfig = fakeModelConfig(model);
+  await kap.writeConfig({
+    ...baseConfig,
+    defaultModel: 'old',
+    models: {
+      ...baseConfig.models,
+      old: { provider: 'testkit', model: 'old-model', maxContextSize: 100000 },
+    },
+  });
+  await kap.server.core.accessor.get(IConfigService).reload();
+  const session = await kap.createSession({ agentConfig: { model: 'old' } });
+  await kap.prompt(session.id, 'history without a default model', { model: 'old' });
+  await kap.waitIdle(session.id);
+
+  await kap.writeConfig({ ...baseConfig, defaultModel: undefined });
+  modelFrames.length = 0;
+  await kap.restart();
+  expect(JSON.stringify(await kap.turns(session.id))).toContain('history without a default model');
+  const resumed = await resumeSessionById(kap.server.core.accessor, session.id);
+  const main = await ensureMainAgent(resumed!);
+  expect(readAgentState(main, false).model).toBeUndefined();
+  expect(readAgentState(main, false).thinking).toBeUndefined();
+  expect(main.accessor.get(IAgentLoopService).getModel()).toBe('old');
+
+  const channel = await kap.connect();
+  await channel.subscribe(session.id);
+  await vi.waitFor(() => {
+    expect(modelFrames.filter((frame) => frame['type'] === 'notice')).toHaveLength(1);
+  });
+  expect(modelFrames.filter((frame) => frame['type'] === 'notice')).toContainEqual(
+    expect.objectContaining({ level: 'warning', code: 'model.not_configured', title: 'old' }),
+  );
+  expect(modelFrames.findIndex((frame) => frame['type'] === 'turns')).toBeLessThan(
+    modelFrames.findIndex((frame) => frame['type'] === 'notice'),
+  );
+  await channel.close();
 });

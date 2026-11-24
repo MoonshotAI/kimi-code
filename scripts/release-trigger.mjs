@@ -30,4 +30,4 @@ for (let attempt = 0; attempt < 18; attempt++) {
 }
 if (!run) throw new Error('No push CI run found for the merged version commit');
 execFileSync('gh', ['run', 'watch', String(run.id), '--repo', repo, '--exit-status', '--interval', '10'], { stdio: 'inherit' });
-appendFileSync(process.env.GITHUB_OUTPUT, 'publish=true\n');
+appendFileSync(process.env.GITHUB_OUTPUT, `publish=true\nci-run-id=${run.id}\n`);

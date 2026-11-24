@@ -3,6 +3,11 @@ import { existsSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
+if (process.env.KIMI_SKIP_DESKTOP_PTY_REBUILD === '1') {
+  console.log('[rebuild-native] Skipping Electron node-pty rebuild for the standalone CLI');
+  process.exit(0);
+}
+
 const desktopDir = fileURLToPath(new URL('..', import.meta.url));
 const prebuild = `${desktopDir}/node_modules/node-pty/prebuilds/${process.platform}-${process.arch}/pty.node`;
 

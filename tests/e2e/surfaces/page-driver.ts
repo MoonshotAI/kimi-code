@@ -1,0 +1,150 @@
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
+
+import type { BrowserContext, Page } from '@playwright/test';
+
+import type { Diagnostic, SurfaceDriver, ToolExpectation } from '../support/verbs';
+import { RendererSurface } from './renderer';
+
+export const OFFLINE_NAMES = '--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE localhost, EXCLUDE 127.0.0.1';
+
+const LOCAL_SCHEMES = new Set(['app:', 'file:', 'data:', 'blob:', 'about:', 'devtools:', 'chrome:']);
+const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '[::1]']);
+
+export function reasonOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function reachesBeyondThisMachine(url: string): boolean {
+  let target: URL;
+  try {
+    target = new URL(url);
+  } catch {
+    return true;
+  }
+  return !LOCAL_SCHEMES.has(target.protocol) && !LOOPBACK_HOSTS.has(target.hostname);
+}
+
+export abstract class PageDriver implements SurfaceDriver {
+  protected readonly beyond: string[] = [];
+  protected readonly trace: string;
+  protected readonly context: BrowserContext;
+  private readonly pageErrors: string[] = [];
+  private readonly name: string;
+  private tracing = false;
+  private traceProblem: string | undefined;
+  private renderer: RendererSurface | undefined;
+  private lastPage = 'The page never became ready.';
+
+  protected constructor(context: BrowserContext, root: string, name: string) {
+    this.context = context;
+    this.name = name;
+    this.trace = join(root, `${name}-trace.zip`);
+    context.on('request', (request) => {
+      if (reachesBeyondThisMachine(request.url())) this.beyond.push(`${request.method()} ${request.url()}`);
+    });
+    context.on('weberror', (event) => {
+      const error = event.error();
+      this.pageErrors.push(error.stack ?? error.message);
+    });
+    context.on('page', (page) => {
+      this.watchSockets(page);
+    });
+    for (const page of context.pages()) this.watchSockets(page);
+  }
+
+  abstract close(): Promise<void>;
+
+  abstract kill(): Promise<void>;
+
+  abstract networkViolations(): Promise<readonly string[]>;
+
+  abstract diagnostics(): Promise<readonly Diagnostic[]>;
+
+  send(text: string): Promise<void> {
+    return this.window().send(text);
+  }
+
+  approve(): Promise<void> {
+    return this.window().approve();
+  }
+
+  reject(): Promise<void> {
+    return this.window().reject();
+  }
+
+  stop(): Promise<void> {
+    return this.window().stop();
+  }
+
+  waitIdle(): Promise<void> {
+    return this.window().waitIdle();
+  }
+
+  expectTool(expectation: ToolExpectation): Promise<void> {
+    return this.window().expectTool(expectation);
+  }
+
+  expectReply(text: string): Promise<void> {
+    return this.window().expectReply(text);
+  }
+
+  protected async startTrace(): Promise<void> {
+    await this.context.tracing.start({ screenshots: true, snapshots: true });
+    this.tracing = true;
+  }
+
+  protected show(page: Page, workspace: string): void {
+    this.renderer = new RendererSurface(page, workspace);
+  }
+
+  protected async leave(): Promise<void> {
+    this.lastPage = await this.window().describe();
+    if (!(await this.window().idle())) {
+      throw new Error(`The scenario ended while a turn was running or an approval was pending; end it with waitIdle().\n${this.lastPage}`);
+    }
+    await this.saveTrace();
+  }
+
+  protected async readPage(): Promise<string> {
+    if (this.renderer !== undefined) this.lastPage = await this.renderer.describe();
+    return this.lastPage;
+  }
+
+  protected async saveTrace(): Promise<void> {
+    if (!this.tracing) return;
+    this.tracing = false;
+    try {
+      await this.context.tracing.stop({ path: this.trace });
+    } catch (error) {
+      this.traceProblem = `The trace could not be saved: ${reasonOf(error)}`;
+    }
+  }
+
+  protected pageDiagnostics(): readonly Diagnostic[] {
+    return [...(existsSync(this.trace) ? [{ name: `${this.name}-trace`, path: this.trace }] : []), { name: `${this.name}-page`, body: this.lastPage }];
+  }
+
+  protected pageProblems(): readonly string[] {
+    return this.pageErrors.length === 0 ? [] : [`The page reported ${this.pageErrors.length} uncaught error(s):\n${this.pageErrors.join('\n')}`];
+  }
+
+  protected describePage(): string {
+    return [
+      `Requests beyond this machine: ${JSON.stringify(this.beyond)}`,
+      `Uncaught errors in the page: ${JSON.stringify(this.pageErrors)}`,
+      ...(this.traceProblem === undefined ? [] : [this.traceProblem]),
+    ].join('\n');
+  }
+
+  private window(): RendererSurface {
+    if (this.renderer === undefined) throw new Error(`The ${this.name} page is not ready.`);
+    return this.renderer;
+  }
+
+  private watchSockets(page: Page): void {
+    page.on('websocket', (socket) => {
+      if (reachesBeyondThisMachine(socket.url())) this.beyond.push(`socket ${socket.url()}`);
+    });
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "exceptions": [
+    {
+      "file": "tests/e2e/support/scenario.ts",
+      "rule": "no-flake-masking",
+      "pattern": ".skip(",
+      "reason": "scenario() reports a surface that a scenario declares as not applicable (except / onlyOn, each with a mandatory reason) as skipped with that reason. Scenarios, self-tests and drivers still cannot skip."
+    }
+  ],
+  "testSwitches": [
+    {
+      "name": "KIMI_DESKTOP_E2E",
+      "files": [
+        "tests/e2e/surfaces/desktop.ts"
+      ],
+      "reason": "Only takes effect in an unpackaged build. With any value it keeps DevTools from opening, skips the quit confirmation and registers no deep-link handler or jump list. With the value quiet, which is what the driver uses unless E2E_HEADED=1, it also keeps the window invisible, off the screen and out of the taskbar, turns off background throttling so that the hidden page keeps rendering, creates no tray icon and, on macOS, keeps the app out of the Dock. These change what the app does to the machine running the test; the conversation behaviour under test is unchanged."
+    },
+    {
+      "name": "KIMI_DESKTOP_NO_SHELL_ENV",
+      "files": [
+        "tests/e2e/surfaces/desktop.ts"
+      ],
+      "reason": "Stops the app from running the login shell at start-up to import its environment variables. The test home has no shell profile of its own, so the import would only add what the machine's system-wide profile files set, which would make a run depend on the host and start more slowly. It changes where the environment comes from, not how the app behaves in a conversation."
+    }
+  ]
+}
