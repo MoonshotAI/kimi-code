@@ -1,9 +1,10 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 
+import { TIMEOUTS } from '@moonshot-ai/testkit/fixtures';
 import type { BrowserContext, Page } from '@playwright/test';
 
-import type { Diagnostic, SurfaceDriver, ToolExpectation } from '../support/verbs';
+import type { Diagnostic, Frame, SurfaceDriver, ToolExpectation } from '../support/verbs';
 import { RendererSurface } from './renderer';
 
 export const OFFLINE_NAMES = '--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE localhost, EXCLUDE 127.0.0.1';
@@ -34,6 +35,7 @@ export abstract class PageDriver implements SurfaceDriver {
   private tracing = false;
   private traceProblem: string | undefined;
   private renderer: RendererSurface | undefined;
+  private page: Page | undefined;
   private lastPage = 'The page never became ready.';
 
   protected constructor(context: BrowserContext, root: string, name: string) {
@@ -94,7 +96,13 @@ export abstract class PageDriver implements SurfaceDriver {
     this.tracing = true;
   }
 
+  async frame(): Promise<Frame> {
+    if (this.page === undefined) throw new Error(`The ${this.name} page is not ready.`);
+    return { kind: 'image', png: await this.page.screenshot({ scale: 'css', caret: 'initial', timeout: TIMEOUTS.wait }) };
+  }
+
   protected show(page: Page, workspace: string): void {
+    this.page = page;
     this.renderer = new RendererSurface(page, workspace);
   }
 

@@ -10,7 +10,7 @@
 scenarios/<业务>/<行为>.spec.ts   场景，各个面共用
 self-test/<动作>.spec.ts          驱动自测：每个动作的正例和反例
 surfaces/                          各个面的驱动
-support/                           scenario()、selfTest()、VERBS、收尾检查
+support/                           scenario()、selfTest()、VERBS、收尾检查、步骤标题、CI 运行页摘要
 playwright.config.ts               一个面一个 project
 ```
 
@@ -85,17 +85,32 @@ scenario('reads one file and edits another after approval', { workspace: { 'a.tx
 | Web 结束时，页面里不能有未捕获的错误，页面不能有发往本机以外的请求或 socket；关掉浏览器之后给服务端所在的进程组发 Ctrl+C，它要在限时内以 0 退出。这一条查得出服务端卡住或崩溃，查不出「关闭过程出了错」：产品在关闭出错时也以 0 退出，默认也不打印日志 | 收尾检查 |
 | Desktop 和 Web 共用的记录和收尾在 `surfaces/page-driver.ts` 里：发往本机以外的请求和 socket、页面里的未捕获错误、trace、失败时的页面内容。这两个面的驱动只管各自的进程怎么启动、怎么退出 | 评审 |
 | Desktop 结束时，窗口里不能有未捕获的错误，应用要以 0 退出，渲染进程不能有发往本机以外的请求。退出用的是 Playwright 的 `close()`，它在主进程里调用应用的退出，不是用户点的退出；这是驱动里唯一一处在产品进程里执行代码的地方，查的是应用收到退出请求后能不能干净退出 | Desktop 驱动的收尾检查 |
+| 每个驱动实现 `frame()`，返回用户此刻看到的画面：Desktop 和 Web 是主页面的 1 倍截图，TUI 是终端当前的视口文本，ACP 没有界面，是编辑器这一侧本回合收到的内容加上上一帧之后新增的 JSON-RPC 消息。取画面只能用只看不改的手段：截图时不隐藏光标（`caret: 'initial'`），不在页面里执行代码，不往界面里画任何东西，不用会改页面的截图选项（`style`、`mask`、`animations: 'disabled'`） | 评审 |
 | Desktop 和 Web 的驱动按产品的默认设置和英文界面工作。「消息自动折叠」默认是关的，打开之后被折起来的卡片驱动找不到 | 评审 |
 | ACP 上工具的结果不能只看 agent 自己报的状态，还要核对编辑器这一侧：Read 完成，要在这次工具调用期间有一条同一路径、编辑器答复成功的 `fs/read_text_file`；Edit 和 Write 完成，要有同样条件的 `fs/write_text_file`；Bash 完成，它引用的终端必须是编辑器建的、跑的是这条命令、退出码是 0 | ACP 驱动的 `expectTool`。场景和自测只能证明它不误报；真实产品造不出反例，靠改坏驱动的破坏性检查和评审 |
 | ACP 的 stdout 上只能有 JSON-RPC 消息，agent 只能调用编辑器实现了的方法，编辑器只往测试目录里写文件，结束时没有还在跑的终端命令，进程在输入关闭后以 0 退出 | ACP 驱动的收尾检查 |
 | ACP 上每条 `session/update` 都要通过 SDK 的 schema | 没通过的通知到不了驱动，回合就永远不算结束：等待超时，报错里写明收到几条、通过几条 |
 | 编辑器的行为照真实编辑器来：命令一退出就报告退出状态，不等它留下的后台进程；`terminal/release` 之后这个终端就不存在了；命令起不来时 `terminal/create` 直接失败 | 评审 |
 
+## 看每一步的画面
+
+- 每个动作在报告里是一个中文命名的步骤，例如「用户发送「Read a.txt.」」「用户批准」「检查工具卡：Edit「b.txt」已完成」「检查回复里有「Done.」」。标题由 `support/steps.ts` 生成，加动作时 `STEP_TITLES` 不补上就过不了类型检查。
+- 启动产品和前置准备（引导向导、添加工作区）合成一个步骤「启动产品，等到可以输入」。产品就绪、拍完工作区快照之后，存一帧「00 启动完成」。
+- 场景的每一步完成后，support 调驱动的 `frame()` 存一帧，按步骤编号命名，例如「03 用户批准之后」。工作区的 `expectFile`、`expectMissing` 也是中文步骤（「检查磁盘：…」），不存帧，也不占编号。
+- 用例失败时（动作报错、断言不成立、超时），收尾前、关闭产品之前再存一帧。动作报错的，这一帧用那一步的编号和标题，例如「03 用户批准：失败时的画面」；其余的用下一个编号，叫「07 失败时的画面」。两种失败没有这一帧：启动失败（还没有画面，报错里有启动时的页面内容和输出），收尾检查失败（产品已经关了，看收尾检查的报错和诊断附件）。
+- 驱动自测不存每一步的帧，只在失败时存这最后一帧：反例本来就要动作报错，通过的自测不留画面。
+- 画面只当证据，不拿来做断言。取画面失败不会让用例变红，那一帧会写成「取不到这一刻的画面」和原因。
+- 帧的附件名以 `.png` 或 `.txt` 结尾。Playwright 拿附件名里最后一个点之后的部分当文件扩展名，名字里的「b.txt」会让截图存成打不开的文件。
+- 本地跑完用 `pnpm --filter @moonshot-ai/e2e exec playwright show-report` 打开报告。Desktop 和 Web 的帧在用例的「Screenshots」里，TUI 和 ACP 的帧在「Attachments」里。
+- CI 上每个面的报告不管红绿都上传成 artifact `e2e-<面>-report`，保留 7 天；失败时另传 `e2e-<面>-failure`（`test-results/`）。报告解压后双击 `index.html` 就能看步骤和画面。Desktop 和 Web 失败时的 trace 在附件 `desktop-trace`、`web-trace` 里，报告不会把它们显示成「View Trace」，下载后用 `pnpm --filter @moonshot-ai/e2e exec playwright show-trace <zip>` 打开。
+- 运行页的摘要由 `support/run-summary.ts` 在设置了 `GITHUB_STEP_SUMMARY` 时写出：整体结果，不属于任何用例的错误（例如加载场景文件时出错），每个面的场景结果表和自测的通过数。摘要里写的 artifact 名字和 `.github/workflows/e2e.yml` 里的要一致。
+- 报告会作为公开仓库的 artifact 上传，场景里的提示词、文件内容和剧本只能用假数据。
+
 ## 红了怎么办
 
 - **先分清是产品坏了还是驱动坏了。** 自测也红，多半是驱动或产品的界面变了；只有场景红，先看场景断言的那条产品行为。
 - **不许靠重试、加等待、跳过让它变绿。** flaky 用例照根 `AGENTS.md` 的规则处理：先找根因。实在找不到根因可以删，PR 里写明删掉的用例原来覆盖什么、现在由谁覆盖。
-- **看失败附件。** 每个失败的用例都附上假模型的请求摘要、网络守卫的记录和产品日志；TUI 另有完整的屏幕内容、最近的输入和退出码；ACP 另有按顺序记下的 JSON-RPC 消息（最近 4000 条）、不是 JSON-RPC 的 stdout 行和 stderr 末尾；Desktop 和 Web 另有 Playwright trace（用 `pnpm --filter @moonshot-ai/e2e exec playwright show-trace <trace.zip>` 打开）、页面内容的末尾、应用或服务端的输出和页面里的未捕获错误。隔离目录在失败时保留，路径记在用例的 `test home` 标注里。
+- **看失败附件。** 先看报告里这个用例的步骤：红在哪一步，最后一帧「失败时的画面」是什么样。每个失败的用例还附上假模型的请求摘要、网络守卫的记录和产品日志；TUI 另有完整的屏幕内容、最近的输入和退出码；ACP 另有按顺序记下的 JSON-RPC 消息（最近 4000 条）、不是 JSON-RPC 的 stdout 行和 stderr 末尾；Desktop 和 Web 另有 Playwright trace（用 `pnpm --filter @moonshot-ai/e2e exec playwright show-trace <trace.zip>` 打开）、页面内容的末尾、应用或服务端的输出和页面里的未捕获错误。隔离目录在失败时保留，路径记在用例的 `test home` 标注里。
 
 ## 不在这里做的事
 

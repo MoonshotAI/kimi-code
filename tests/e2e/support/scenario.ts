@@ -19,7 +19,19 @@ import { startAcp } from '../surfaces/acp';
 import { startDesktop } from '../surfaces/desktop';
 import { startTui } from '../surfaces/tui';
 import { startWeb } from '../surfaces/web';
-import { SURFACES, VERBS, wantedOutput, type Product, type Surface, type SurfaceDriver, type SurfaceLaunch, type ToolExpectation, type Verb } from './verbs';
+import { DISK_TITLES, STEP_TITLES } from './steps';
+import {
+  SURFACES,
+  VERBS,
+  wantedOutput,
+  type Frame,
+  type Product,
+  type Surface,
+  type SurfaceDriver,
+  type SurfaceLaunch,
+  type ToolExpectation,
+  type Verb,
+} from './verbs';
 
 export { expect };
 
@@ -58,6 +70,8 @@ export interface SelfTestSuite {
   readonly positive: SelfTestCases;
   readonly negative: SelfTestCases;
 }
+
+type FramePolicy = 'every-step' | 'on-failure';
 
 const SELF_TEST_KINDS = ['positive', 'negative'] as const;
 const SELF_TEST_DIRECTORY = fileURLToPath(new URL('../self-test/', import.meta.url));
@@ -164,12 +178,18 @@ class ScenarioSession {
   private driver: SurfaceDriver | undefined;
   private baseline: DirectorySnapshot | undefined;
   private interfaceChecks = 0;
+  private frames: FramePolicy = 'on-failure';
+  private testInfo: TestInfo | undefined;
+  private steps = 0;
+  private failedStep: string | undefined;
 
   constructor(surface: Surface) {
     this.surface = surface;
   }
 
-  async start(options: ScenarioOptions): Promise<ScenarioContext> {
+  async start(options: ScenarioOptions, frames: FramePolicy, testInfo: TestInfo): Promise<ScenarioContext> {
+    this.frames = frames;
+    this.testInfo = testInfo;
     const home = await createTestHome(`e2e-${this.surface}`);
     this.home = home;
     assertOutsideGitWorkTree(home.workspace);
@@ -177,9 +197,13 @@ class ScenarioSession {
     const model = await startFakeModel();
     this.model = model;
     await writeKimiConfig(home.dataDir, fakeModelConfig(model));
-    const driver = await startSurface(this.surface, { home, model });
-    this.driver = driver;
-    this.baseline = await snapshotDirectory(home.workspace);
+    const driver = await base.step('启动产品，等到可以输入', async () => {
+      const started = await startSurface(this.surface, { home, model });
+      this.driver = started;
+      this.baseline = await snapshotDirectory(home.workspace);
+      if (frames === 'every-step') await this.show('00 启动完成');
+      return started;
+    });
     return { product: this.userActions(driver), model, workspace: this.workspace(home.workspace) };
   }
 
@@ -189,6 +213,7 @@ class ScenarioSession {
     let clean = false;
     try {
       const passed = testInfo.status === testInfo.expectedStatus;
+      if (!passed) await this.show(this.failedStep === undefined ? `${this.nextStep()} 失败时的画面` : `${this.failedStep}：失败时的画面`);
       const problems = passed ? await this.closingProblems() : [];
       if (!passed || problems.length > 0) await this.attachDiagnostics(testInfo);
       if (problems.length > 0) throw new Error(`The scenario body passed, but the closing checks failed:\n\n${problems.join('\n\n')}`);
@@ -203,39 +228,86 @@ class ScenarioSession {
 
   private userActions(driver: SurfaceDriver): Product {
     return {
-      send: async (text) => {
-        assertPrompt(text);
-        await driver.send(text);
-      },
-      approve: () => driver.approve(),
-      reject: () => driver.reject(),
-      stop: () => driver.stop(),
-      waitIdle: () => driver.waitIdle(),
-      expectTool: async (expectation) => {
-        assertToolExpectation(expectation);
-        await driver.expectTool(expectation);
-        this.interfaceChecks += 1;
-      },
-      expectReply: async (text) => {
-        await driver.expectReply(text);
-        this.interfaceChecks += 1;
-      },
+      send: (text) =>
+        this.step(
+          () => STEP_TITLES.send(text),
+          async () => {
+            assertPrompt(text);
+            await driver.send(text);
+          },
+        ),
+      approve: () => this.step(STEP_TITLES.approve, () => driver.approve()),
+      reject: () => this.step(STEP_TITLES.reject, () => driver.reject()),
+      stop: () => this.step(STEP_TITLES.stop, () => driver.stop()),
+      waitIdle: () => this.step(STEP_TITLES.waitIdle, () => driver.waitIdle()),
+      expectTool: (expectation) =>
+        this.step(
+          () => STEP_TITLES.expectTool(expectation),
+          async () => {
+            assertToolExpectation(expectation);
+            await driver.expectTool(expectation);
+            this.interfaceChecks += 1;
+          },
+        ),
+      expectReply: (text) =>
+        this.step(
+          () => STEP_TITLES.expectReply(text),
+          async () => {
+            await driver.expectReply(text);
+            this.interfaceChecks += 1;
+          },
+        ),
     };
+  }
+
+  private async step(titleOf: () => string, action: () => Promise<void>): Promise<void> {
+    const number = this.nextStep();
+    const title = titleOf();
+    this.failedStep = undefined;
+    await base.step(title, async () => {
+      try {
+        await action();
+      } catch (error) {
+        this.failedStep = `${number} ${title}`;
+        throw error;
+      }
+      if (this.frames === 'every-step') await this.show(`${number} ${title}之后`);
+    });
+  }
+
+  private nextStep(): string {
+    this.steps += 1;
+    return String(this.steps).padStart(2, '0');
+  }
+
+  private async show(name: string): Promise<void> {
+    const { driver, testInfo } = this;
+    if (driver === undefined || testInfo === undefined) return;
+    let frame: Frame;
+    try {
+      frame = await driver.frame();
+    } catch (error) {
+      frame = { kind: 'text', text: `取不到这一刻的画面：${problemOf(error)}` };
+    }
+    if (frame.kind === 'image') await testInfo.attach(`${name}.png`, { body: frame.png, contentType: 'image/png' });
+    else await testInfo.attach(`${name}.txt`, { body: frame.text, contentType: 'text/plain' });
   }
 
   private workspace(root: string): Workspace {
     return {
       read: (path) => readFile(join(root, workspaceKey(path)), 'utf8'),
-      expectFile: async (path, content) => {
-        const key = workspaceKey(path);
-        this.declared.set(key, contentDigest(content));
-        expect(await readIfPresent(join(root, key)), `workspace file ${key}`).toBe(content);
-      },
-      expectMissing: async (path) => {
-        const key = workspaceKey(path);
-        this.declared.set(key, undefined);
-        expect(await readIfPresent(join(root, key)), `workspace file ${key} should not exist`).toBeUndefined();
-      },
+      expectFile: (path, content) =>
+        base.step(DISK_TITLES.file(path, content), async () => {
+          const key = workspaceKey(path);
+          this.declared.set(key, contentDigest(content));
+          expect(await readIfPresent(join(root, key)), `workspace file ${key}`).toBe(content);
+        }),
+      expectMissing: (path) =>
+        base.step(DISK_TITLES.missing(path), async () => {
+          const key = workspaceKey(path);
+          this.declared.set(key, undefined);
+          expect(await readIfPresent(join(root, key)), `workspace file ${key} should not exist`).toBeUndefined();
+        }),
     };
   }
 
@@ -338,13 +410,17 @@ function notApplicableReason(options: ScenarioOptions, surface: Surface): string
   return options.onlyOn === undefined || options.onlyOn.includes(surface) ? undefined : options.reason;
 }
 
-export function scenario(title: string, options: ScenarioOptions, body: ScenarioBody): void {
+function register(title: string, options: ScenarioOptions, body: ScenarioBody, frames: FramePolicy): void {
   assertReasons(title, options);
   test(title, async ({ surface, session }, testInfo) => {
     const reason = surface === undefined ? undefined : notApplicableReason(options, surface);
     testInfo.skip(reason !== undefined, `not applicable on ${String(surface)}: ${String(reason)}`);
-    await body(await session.start(options));
+    await body(await session.start(options, frames, testInfo));
   });
+}
+
+export function scenario(title: string, options: ScenarioOptions, body: ScenarioBody): void {
+  register(title, options, body, 'every-step');
 }
 
 function selfTestFile(verb: Verb): string {
@@ -359,7 +435,7 @@ export function selfTest(verb: Verb, suite: SelfTestSuite): void {
     if (uncovered.length > 0) {
       throw new Error(`The ${verb} self-test has no ${kind} case on: ${uncovered.join(', ')}. Every user action needs both kinds on every surface.`);
     }
-    for (const [title, { run, ...options }] of cases) scenario(`${verb} ${kind}: ${title}`, options, run);
+    for (const [title, { run, ...options }] of cases) register(`${verb} ${kind}: ${title}`, options, run, 'on-failure');
   }
 }
 
