@@ -428,7 +428,7 @@ Name matching follows the same rules as the same-named fields in an agent file: 
 disabled = ["WebSearch", "FetchURL", "mcp__github__*"]
 ```
 
-Changes to `[tools]` apply immediately to current and new sessions. In Kimi Code Desktop and the Web UI, you can also toggle built-in tools under **Settings → Agent & Sessions → Built-in tools**; saving writes this global section.
+Changes to `[tools]` apply immediately to current and new sessions. In Kimi Code Desktop and the Web UI, you can also toggle built-in tools under **Settings → Agent & Sessions → Built-in tools**; saving writes this global section on the local machine. For projects on remote SSH hosts, configure `[tools]` in the remote host's `config.toml`.
 
 Some modes require specific tools before you can enter them:
 

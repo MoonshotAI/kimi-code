@@ -482,7 +482,7 @@ export class SessionEventBroadcaster {
         const subscriptions = [
           sessionPolicy?.onDidChange(() => listener()),
           config?.onDidSectionChange?.((event) => {
-            if (event.domain === 'tools') listener();
+            if (event.domain === 'tools' || event.domain === 'experimental') listener();
           }),
         ];
         return toDisposable(() => {

@@ -43,3 +43,25 @@ export function setDefaultToolEnabled(
       : sortedUnique([...(config?.disabled ?? []), name]),
   };
 }
+
+export function rebaseDefaultToolsConfig(
+  base: AppToolsConfig | undefined,
+  draft: AppToolsConfig,
+  next: AppToolsConfig | undefined,
+): AppToolsConfig {
+  const candidates = new Set([
+    ...(base?.enabled ?? []),
+    ...(base?.disabled ?? []),
+    ...(draft.enabled ?? []),
+    ...(draft.disabled ?? []),
+  ]);
+  let rebased: AppToolsConfig = {
+    enabled: next?.enabled === undefined ? undefined : [...next.enabled],
+    disabled: next?.disabled === undefined ? undefined : [...next.disabled],
+  };
+  for (const name of candidates) {
+    if (isDefaultToolEnabled(base, name) === isDefaultToolEnabled(draft, name)) continue;
+    rebased = setDefaultToolEnabled(rebased, name, isDefaultToolEnabled(draft, name));
+  }
+  return rebased;
+}

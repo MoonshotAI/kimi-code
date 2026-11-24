@@ -2346,6 +2346,46 @@ describe('SessionEventBroadcaster', () => {
       expect(agentFrames[1]).toMatchObject({ goal_mode_available: false });
     });
 
+    it('pushes updated Tower availability when the experimental config domain changes', async () => {
+      const lc = new FakeLifecycle();
+      const main = lc.addAgent('main');
+      let towerAvailable = true;
+      main.set(IAgentToolPolicyService, { isToolActive: () => true });
+      main.set(IAgentTowerService, {
+        isActive: false,
+        get toolsAvailable() { return towerAvailable; },
+      });
+      let onSectionChange: ((event: { domain: string }) => void) | undefined;
+      sessions.set('s1', lc);
+      bc = new SessionEventBroadcaster({
+        core: makeCore(sessions, eventBus, {}, undefined, {
+          config: {
+            onDidSectionChange: (listener: (event: { domain: string }) => void) => {
+              onSectionChange = listener;
+              return { dispose: () => {} };
+            },
+          },
+        }),
+        conversations: conversationService(),
+      });
+
+      const view = collectingTarget();
+      await bc.subscribe('s1', view.target, ['main']);
+      expect(stateFramesOf(view)).toContainEqual(expect.objectContaining({ type: 'agent', tower_mode_available: true }));
+
+      towerAvailable = false;
+      onSectionChange?.({ domain: 'other' });
+      await settle();
+      expect(stateFramesOf(view).filter((frame) => frame.type === 'agent')).toHaveLength(1);
+
+      onSectionChange?.({ domain: 'experimental' });
+      await settle();
+
+      const agentFrames = stateFramesOf(view).filter((frame) => frame.type === 'agent');
+      expect(agentFrames).toHaveLength(2);
+      expect(agentFrames[1]).toMatchObject({ tower_mode_available: false });
+    });
+
     it('pushes todo, goal and permission changes and stays quiet when nothing changed', async () => {
       const lc = new FakeLifecycle();
       const main = lc.addAgent('main');

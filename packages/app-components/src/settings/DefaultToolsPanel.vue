@@ -4,9 +4,9 @@ import { computed, onMounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { getKimiWebApi, toast } from '@moonshot-ai/app-client/client';
 import { useConfirmDialog } from '@moonshot-ai/app-client/composables';
-import { configStore } from '@moonshot-ai/app-client/stores';
+import { configStore, hostsStore } from '@moonshot-ai/app-client/stores';
 import type { AppToolCatalogEntry, AppToolsConfig } from '@moonshot-ai/app-core/api';
-import { isDefaultToolEnabled, setDefaultToolEnabled } from '@moonshot-ai/app-core/lib';
+import { isDefaultToolEnabled, rebaseDefaultToolsConfig, setDefaultToolEnabled } from '@moonshot-ai/app-core/lib';
 import { Button, Icon, Spinner, Switch } from '@moonshot-ai/app-ui';
 import SettingsSubpage from './SettingsSubpage.vue';
 import { defaultToolLabelKey, groupDefaultTools } from './defaultToolsCatalog';
@@ -40,6 +40,7 @@ function configKey(config: AppToolsConfig): string {
 
 const dirty = computed(() => configKey(savedConfig.value) !== configKey(draftConfig.value));
 const hasConfig = computed(() => configStore().config !== null && configStore().config !== undefined);
+const hasRemoteHosts = computed(() => hostsStore().hosts.length > 0);
 
 function resetDraft(config: AppToolsConfig | undefined): void {
   savedConfig.value = cloneConfig(config);
@@ -49,8 +50,14 @@ function resetDraft(config: AppToolsConfig | undefined): void {
 watch(
   () => configStore().config,
   (config) => {
-    if (config === null || config === undefined) return;
-    if (!dirty.value && !saving.value) resetDraft(config.tools);
+    if (config === null || config === undefined || saving.value) return;
+    if (!dirty.value) {
+      resetDraft(config.tools);
+      return;
+    }
+    draftConfig.value = rebaseDefaultToolsConfig(savedConfig.value, draftConfig.value, config.tools);
+    savedConfig.value = cloneConfig(config.tools);
+    saveFailed.value = false;
   },
   { immediate: true },
 );
@@ -135,7 +142,7 @@ defineExpose({ confirmDiscard });
     class="dt-subpage"
     :parent-title="t('settings.tabs.agent')"
     :title="t('settings.defaultTools')"
-    :description="t('settings.defaultToolsHint')"
+    :description="t(hasRemoteHosts ? 'settings.defaultToolsHintLocalOnly' : 'settings.defaultToolsHint')"
     @back="requestBack"
   >
     <div v-if="loading" class="dt-status" role="status">

@@ -14,6 +14,7 @@ const fakes = vi.hoisted(() => ({
   back: vi.fn(),
   open: vi.fn(),
   config: null as null | { value: { tools?: AppToolsConfig } | null },
+  hosts: null as null | { value: readonly { id: string }[] },
 }));
 
 vi.mock('@moonshot-ai/app-client/client', () => ({
@@ -25,12 +26,14 @@ vi.mock('@moonshot-ai/app-client/client', () => ({
 vi.mock('@moonshot-ai/app-client/stores', async () => {
   const vue = await import('vue');
   fakes.config = vue.ref<{ tools?: AppToolsConfig } | null>(null);
+  fakes.hosts = vue.ref<readonly { id: string }[]>([]);
   return {
     configStore: () => ({
       config: fakes.config!.value,
       updateConfig: fakes.updateConfig,
       loadConfig: fakes.loadConfig,
     }),
+    hostsStore: () => ({ hosts: fakes.hosts!.value }),
   };
 });
 
@@ -50,6 +53,7 @@ beforeEach(() => {
   fakes.config!.value = {
     tools: { enabled: ['Read'], disabled: ['Bash', 'mcp__example__*'] },
   };
+  fakes.hosts!.value = [];
   fakes.listToolCatalog.mockReset().mockResolvedValue([
     { name: 'Bash', source: 'builtin' },
     { name: 'Read', source: 'builtin' },
@@ -254,6 +258,31 @@ describe('DefaultToolsPanel', () => {
     expect(chatToolLabel(translate, 'Agent')).toBe('任务');
   });
 
+  it('rebases unsaved draft toggles onto concurrent updates from another client before saving', async () => {
+    fakes.config!.value = { tools: { disabled: [] } };
+    fakes.listToolCatalog.mockResolvedValue([
+      { name: 'Bash', source: 'builtin' },
+      { name: 'Write', source: 'builtin' },
+    ]);
+    await mountPanel();
+    switchNamed('Write files').click();
+    await flush();
+    expect(host?.textContent).toContain('Unsaved changes');
+
+    fakes.config!.value = { tools: { disabled: ['Bash'] } };
+    await flush();
+
+    expect(switchNamed('Run terminal commands').getAttribute('aria-checked')).toBe('false');
+    expect(switchNamed('Write files').getAttribute('aria-checked')).toBe('false');
+    expect(host?.textContent).toContain('Unsaved changes');
+
+    button('Save')?.click();
+    await flush();
+    expect(fakes.updateConfig).toHaveBeenCalledWith({
+      tools: { enabled: undefined, disabled: ['Bash', 'Write'] },
+    });
+  });
+
   it('refuses to discard while a save is in flight', async () => {
     let resolveSave!: (saved: boolean) => void;
     fakes.updateConfig.mockReturnValue(new Promise<boolean>((resolve) => {
@@ -294,6 +323,20 @@ describe('DefaultToolsRow', () => {
     expect(entry.querySelector('svg')?.getAttribute('data-icon')).toBe('chevron-right');
     entry.click();
     expect(fakes.open).toHaveBeenCalledWith(entry);
+  });
+
+  it('makes the local-only scope explicit when SSH hosts are configured', async () => {
+    fakes.hosts!.value = [{ id: 'ssh-1' }];
+    host = document.createElement('div');
+    document.body.append(host);
+    app = createApp({ setup: () => () => h('div', [h(DefaultToolsRow), h(DefaultToolsPanel)]) });
+    app.provide(IconResolverKey, (name) => ({ render: () => h('svg', { 'data-icon': name }) }));
+    app.use(createKimiI18n({ locale: 'zh' }));
+    app.mount(host);
+    await flush();
+
+    expect(host.querySelector('.dt-entry-hint')?.textContent).toContain('仅对本机项目生效');
+    expect(host.querySelector('.settings-subpage-desc')?.textContent).toContain('仅对本机项目生效');
   });
 });
 
