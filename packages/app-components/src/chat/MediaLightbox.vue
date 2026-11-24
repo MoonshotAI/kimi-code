@@ -355,7 +355,7 @@ onBeforeUnmount(() => {
     <div
       v-if="isImage && menuPos"
       ref="menuBoxRef"
-      class="media-preview-menu"
+      class="ui-menu-floating media-preview-menu"
       :style="menuStyle"
       @keydown="onMenuKeydown"
     >
@@ -407,7 +407,7 @@ onBeforeUnmount(() => {
 .media-lightbox-name {
   max-width: 100%;
   color: var(--color-text-on-scrim);
-  font-size: var(--ui-font-size-xs);
+  font-size: var(--text-xs);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -441,7 +441,6 @@ onBeforeUnmount(() => {
   background: var(--color-surface-sunken);
 }
 .media-preview-menu {
-  position: fixed;
   z-index: var(--z-modal-dropdown);
   -webkit-app-region: no-drag;
 }

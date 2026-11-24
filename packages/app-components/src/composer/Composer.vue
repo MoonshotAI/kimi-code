@@ -247,12 +247,64 @@ const browserCaptures = ref<BrowserCapture[]>([]);
 
 const towerEnabled = computed(() => client.experimentalFlags.value['tower'] === true);
 
+const attachmentEntries = ref<AttachmentEntry[]>([]);
+const attachmentInventoryState = shallowRef<AttachmentInventoryState>({
+  orderedIds: [],
+  activeIds: new Set(),
+  refCounts: new Map(),
+  resourceRevision: 0,
+});
+const activeAttachmentEntries = computed(() => {
+  const byAttId = new Map(attachmentEntries.value.map((entry) => [entry.attId, entry] as const));
+  return attachmentInventoryState.value.orderedIds
+    .map((attId) => byAttId.get(attId))
+    .filter((entry): entry is AttachmentEntry => entry !== undefined);
+});
+
+const promptPredictionIdle = computed(() =>
+  client.experimentalFlags.value['prompt_prediction'] === true &&
+  client.promptPredictionHasTurn?.value === true &&
+  props.placeholderText === undefined &&
+  !starting.value &&
+  !isSideChat.value &&
+  !running.value &&
+  !goalMode.value &&
+  !planArmed.value &&
+  !planMode.value &&
+  text.value.trim().length === 0 &&
+  activeAttachmentEntries.value.length === 0
+);
+const promptPredictionSuggestion = computed(() => {
+  const suggestion = client.promptPrediction?.value ?? null;
+  if (!promptPredictionIdle.value || suggestion === null || suggestion.sessionId !== sessionId.value) return undefined;
+  return suggestion;
+});
+const promptPredictionText = computed(() => promptPredictionSuggestion.value?.text);
+const promptPredictionPlaceholderActive = computed(() => promptPredictionIdle.value || promptPredictionText.value !== undefined);
+const promptPredictionPlaceholder = computed(() => promptPredictionText.value ?? placeholder.value);
+const promptPredictionActionAvailable = computed(() => promptPredictionIdle.value);
+const promptPredictionA11yId = useId();
+const promptPredictionA11yText = computed(() => {
+  const prediction = promptPredictionText.value;
+  return prediction === undefined ? '' : t('composer.promptPredictionHint', { prediction });
+});
+
 const { text, editorRef, loadForEdit: loadTextForEdit, clearDraft, loadDraftAttachments, saveDraftAttachments, saveDraft, loadRestorableDraftSnapshot, saveDraftSnapshot } = useComposerDraft({
   sessionId: () => scopeId.value,
   onBeforeSessionSave: (sid) => {
     restoreBrowsingDraftForDeparture(sid);
     if (editor !== null && editorSessionScope === composerSessionScope(sid)) saveDraftSnapshot(sid, editor.getSnapshot());
   },
+});
+
+let insertedPromptPredictionRevision: string | undefined;
+watch(promptPredictionSuggestion, (suggestion) => {
+  if (suggestion?.accepted !== true) return;
+  const revision = `${suggestion.predictionId}:${String(suggestion.acceptedRevision)}`;
+  if (insertedPromptPredictionRevision === revision) return;
+  insertedPromptPredictionRevision = revision;
+  loadTextForEdit(suggestion.text);
+  handleInput();
 });
 
 const highlightCommands = computed(() => buildSlashItems([], { towerEnabled: towerEnabled.value, extraBuiltins: props.extraBuiltinCommands }));
@@ -274,13 +326,6 @@ const commandArgumentDescription = computed(() => {
 
 const commandArgumentDescriptionId = useId();
 
-const attachmentEntries = ref<AttachmentEntry[]>([]);
-const attachmentInventoryState = shallowRef<AttachmentInventoryState>({
-  orderedIds: [],
-  activeIds: new Set(),
-  refCounts: new Map(),
-  resourceRevision: 0,
-});
 let releaseAttachmentStore: (() => void) | null = null;
 let inventoryReady = false;
 
@@ -288,12 +333,6 @@ function attachmentScope(sid = scopeId.value): string {
   return composerSessionScope(sid);
 }
 
-const activeAttachmentEntries = computed(() => {
-  const byAttId = new Map(attachmentEntries.value.map((entry) => [entry.attId, entry] as const));
-  return attachmentInventoryState.value.orderedIds
-    .map((attId) => byAttId.get(attId))
-    .filter((entry): entry is AttachmentEntry => entry !== undefined);
-});
 const activeMediaEntries = computed(() =>
   activeAttachmentEntries.value.filter(
     (entry): entry is AttachmentEntry & { kind: 'image' | 'video' } =>
@@ -658,7 +697,9 @@ onMounted(() => {
     );
   });
   watchEffect(() => {
-    editor?.setPlaceholder(commandArgumentPlaceholder.value || placeholder.value);
+    editor?.setPlaceholder(commandArgumentPlaceholder.value || promptPredictionPlaceholder.value, {
+      allowWhitespace: commandArgumentPlaceholder.value === '' && promptPredictionPlaceholderActive.value,
+    });
   });
 
   function restoreSessionState(sid: string | undefined): void {
@@ -742,8 +783,12 @@ onMounted(() => {
     const dom = editor?.dom;
     if (!dom) return;
     dom.setAttribute('aria-label', t('composer.inputLabel'));
-    dom.setAttribute('aria-placeholder', placeholderText(placeholder.value));
-    if (commandArgumentDescription.value) dom.setAttribute('aria-describedby', commandArgumentDescriptionId);
+    dom.setAttribute('aria-placeholder', placeholderText(commandArgumentPlaceholder.value || promptPredictionPlaceholder.value));
+    const descriptionIds = [
+      commandArgumentDescription.value ? commandArgumentDescriptionId : '',
+      promptPredictionA11yText.value ? promptPredictionA11yId : '',
+    ].filter((id) => id !== '').join(' ');
+    if (descriptionIds) dom.setAttribute('aria-describedby', descriptionIds);
     else dom.removeAttribute('aria-describedby');
     dom.setAttribute('aria-expanded', String(!!menuAriaControls.value));
     const controls = menuAriaControls.value;
@@ -1068,6 +1113,7 @@ function handleEditorBlur(): void {
 function handleInput(): void {
   resetHistoryBrowse();
   if (!isSideChat.value) {
+    client.handlePromptPredictionInput();
     updateSlashMenu();
     updateMentionMenu();
   }
@@ -1869,6 +1915,7 @@ function handleSubmit(): void {
     decision.kind === 'prompt-command' ||
     (decision.kind === 'builtin-command' && decision.leave === true);
   if (sessionBound && !passSubmitGate()) return;
+  if (!isSideChat.value) client.handlePromptPredictionSubmit(text.value);
   const snapshot = editor?.getSnapshot();
   const restoreEntries = snapshotAttachmentEntries(activeAttachmentEntries.value);
   history.push(decision.historyText, snapshot);
@@ -1994,6 +2041,12 @@ function handleCompositionEnd(): void {
 
 function isComposingKeyEvent(e: KeyboardEvent): boolean {
   return isComposingText || e.isComposing || e.keyCode === 229;
+}
+
+function acceptPromptPrediction(key: 'tab' | 'right'): boolean {
+  if (!promptPredictionActionAvailable.value) return false;
+  const prediction = client.acceptPromptPrediction(key);
+  return prediction !== null || (client.promptPredictionPending?.value ?? null) !== null;
 }
 
 function handleKeydown(e: KeyboardEvent): boolean {
@@ -2122,6 +2175,18 @@ function handleKeydown(e: KeyboardEvent): boolean {
         return true;
       }
     }
+  }
+
+  if (
+    (e.key === 'Tab' || e.key === 'ArrowRight') &&
+    !e.shiftKey &&
+    !e.altKey &&
+    !e.metaKey &&
+    !e.ctrlKey &&
+    acceptPromptPrediction(e.key === 'Tab' ? 'tab' : 'right')
+  ) {
+    e.preventDefault();
+    return true;
   }
 
   if (e.key === 's' && (e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey) {
@@ -3415,7 +3480,7 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
           @back="leaveMentionSessionMenu"
         />
 
-        <Transition name="composer-menu-pop">
+        <Transition name="ui-menu-pop">
           <div v-if="addMenuOpen && !isMobile" ref="addMenuRef" class="add-menu" @click.stop @keydown="onAddMenuKeydown">
             <div ref="addScrollRef" class="am-scroll" role="menu" @scroll="onAddMenuScroll">
               <div v-for="item in addItems" :key="item.id" class="am-entry">
@@ -3453,6 +3518,7 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
             :data-wm="workMode ? 'true' : 'false'"
           ></div>
           <span :id="commandArgumentDescriptionId" class="composer-sr-only" role="status">{{ commandArgumentDescription }}</span>
+          <span :id="promptPredictionA11yId" class="composer-sr-only" role="status">{{ promptPredictionA11yText }}</span>
           <Tooltip :text="expanded ? t('composer.collapseTitle') : t('composer.expandTitle')">
           <button
             v-if="expanded || isGrown"
@@ -3525,7 +3591,7 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
             </span>
           </Tooltip>
 
-          <Transition name="composer-menu-pop">
+          <Transition name="ui-menu-pop">
             <Menu
               v-if="permDropdownOpen && status && (!nativePermissionMenu?.available || isMobile)"
               ref="permDropdownRef"
@@ -3731,7 +3797,7 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
         </div>
 
         <!-- Model dropdown — current provider models + controls + more -->
-        <Transition name="composer-menu-pop">
+        <Transition name="ui-menu-pop">
         <Menu
           v-if="dropdownOpen && status && (!nativeModelMenu?.available || isMobile)"
           ref="modelDropdownRef"
@@ -3789,14 +3855,14 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
 
           <!-- More models → open full picker -->
           <MenuItem class="md-row md-row-more" @click="closeDropdown(); emit('pickModel');">
-            <span class="md-check md-more-icon"><Icon name="list" size="sm" style="color: var(--dim)" /></span>
+            <span class="md-check md-more-icon"><Icon name="list" size="sm" style="color: var(--color-text-muted)" /></span>
             <span class="md-name">{{ t('status.moreModels') }}</span>
             <Icon class="md-more-arrow" name="chevron-right" size="sm" style="color: var(--md-more-arrow-color)" />
           </MenuItem>
         </Menu>
         </Transition>
 
-        <Transition name="composer-menu-pop">
+        <Transition name="ui-menu-pop">
           <Menu
             v-if="ctxCardOpen && status && !isSideChat"
             ref="ctxCardRef"
@@ -3988,17 +4054,7 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
   visibility: visible;
 }
 .drop-card {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
   padding: var(--space-4) var(--space-6);
-  border-radius: var(--radius-lg);
-  border: var(--p-hairline) dashed var(--color-accent);
-  background: var(--color-bg);
-  color: var(--color-accent);
-  font-size: var(--ui-font-size-lg);
-  font-weight: var(--weight-medium);
-  box-shadow: var(--shadow-md);
 }
 
 .composer-tip {
@@ -4013,7 +4069,7 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
   box-shadow: var(--shadow-xs);
   color: var(--color-text-muted);
   font-family: var(--font-ui);
-  font-size: var(--ui-font-size-sm);
+  font-size: var(--text-sm);
   line-height: var(--leading-normal);
   animation: composer-tip-in var(--duration-base) var(--ease-out);
 }
@@ -4121,7 +4177,7 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
   border: none;
   border-radius: 6px;
   background: transparent;
-  color: var(--dim);
+  color: var(--color-text-muted);
   cursor: pointer;
   padding: 0;
   transition: background 0.12s, color 0.12s;
@@ -4140,7 +4196,7 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
 .ph {
   --ph-leading: 1.5;
   --ph-line-height: calc(var(--content-font-size) * var(--ph-leading));
-  color: var(--faint);
+  color: var(--color-text-quaternary);
   caret-color: var(--color-text);
   position: relative;
   flex: 1;
@@ -4247,7 +4303,7 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
   background: var(--color-selected);
   color: var(--color-text);
   font-family: var(--font-ui);
-  font-size: var(--ui-font-size-sm);
+  font-size: var(--text-sm);
   font-weight: var(--weight-medium);
   line-height: var(--ph-line-height);
   white-space: nowrap;
@@ -4305,7 +4361,7 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
-  color: var(--muted);
+  color: var(--color-text-faint);
   pointer-events: none;
   user-select: none;
 }
@@ -4415,7 +4471,7 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
   border-radius: var(--radius-menu-row);
   background: none;
   cursor: pointer;
-  font-size: var(--ui-font-size);
+  font-size: var(--text-base);
   color: var(--color-text);
   text-align: left;
   transition: background var(--duration-base) var(--ease-out);
@@ -4445,7 +4501,7 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
   min-width: 0;
   margin-left: var(--space-1);
   color: var(--color-text-muted);
-  font-size: var(--ui-font-size-sm);
+  font-size: var(--text-sm);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -4609,7 +4665,7 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
   background: transparent;
   color: var(--color-text);
   font-family: var(--font-ui);
-  font-size: var(--ui-font-size);
+  font-size: var(--text-base);
   font-weight: var(--weight-medium);
   line-height: 1;
   white-space: nowrap;
@@ -4619,7 +4675,7 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
     color var(--duration-base) var(--ease-out);
 }
 .perm-pill {
-  font-size: var(--ui-font-size-sm);
+  font-size: var(--text-sm);
 }
 .perm-pill::after,
 .swarm-chip::after,
@@ -4687,7 +4743,7 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
 }
 
 .perm-pill.perm-manual {
-  color: var(--dim);
+  color: var(--color-text-muted);
 }
 .perm-pill.perm-yolo {
   color: var(--color-warning);
@@ -4841,7 +4897,7 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
   gap: var(--space-2);
 }
 .ctx-card-title {
-  font-size: var(--ui-font-size);
+  font-size: var(--text-base);
   font-weight: var(--weight-medium);
   color: var(--color-text);
 }
@@ -4880,7 +4936,7 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
   flex: none;
 }
 .model-pill .cv {
-  color: var(--faint);
+  color: var(--color-text-quaternary);
   flex: none;
   transition:
     transform var(--duration-base) var(--ease-out),
@@ -4888,7 +4944,7 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
 }
 .model-pill:hover .cv,
 .model-pill.open .cv {
-  color: var(--dim);
+  color: var(--color-text-muted);
 }
 .model-pill.open .cv {
   transform: rotate(180deg);
@@ -4931,29 +4987,16 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
   transform-origin: top right;
 }
 
-.composer-menu-pop-enter-active {
-  transition:
-    opacity var(--duration-base) var(--ease-out),
-    transform var(--duration-base) var(--ease-out);
+.add-menu,
+.model-dropdown,
+.perm-dropdown,
+.ctx-card {
+  --menu-pop-shift: 2px;
 }
-.composer-menu-pop-leave-active {
-  transition:
-    opacity var(--duration-fast) var(--ease-out),
-    transform var(--duration-fast) var(--ease-out);
-  pointer-events: none;
-}
-.composer-menu-pop-enter-from,
-.composer-menu-pop-leave-to {
-  opacity: 0;
-  transform: scale(0.97) translateY(2px);
-}
-.model-dropdown.flip-down.composer-menu-pop-enter-from,
-.model-dropdown.flip-down.composer-menu-pop-leave-to,
-.perm-dropdown.flip-down.composer-menu-pop-enter-from,
-.perm-dropdown.flip-down.composer-menu-pop-leave-to,
-.ctx-card.flip-down.composer-menu-pop-enter-from,
-.ctx-card.flip-down.composer-menu-pop-leave-to {
-  transform: scale(0.97) translateY(-2px);
+.model-dropdown.flip-down,
+.perm-dropdown.flip-down,
+.ctx-card.flip-down {
+  --menu-pop-shift: -2px;
 }
 
 .md-list {
@@ -4968,7 +5011,7 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
 .md-section {
   padding: 4px 9px 2px;
   font-size: var(--text-xs);
-  color: var(--muted);
+  color: var(--color-text-faint);
   text-transform: uppercase;
   letter-spacing: 0.04em;
   font-weight: var(--weight-semibold);
@@ -4976,7 +5019,7 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
 
 .md-row {
   gap: 7px;
-  font-size: var(--ui-font-size);
+  font-size: var(--text-base);
   padding: 5px 9px;
   border-radius: var(--radius-dropdown-row);
 }
@@ -4988,12 +5031,12 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
 .md-row.is-current { background: var(--color-selected); }
 .md-note {
   margin-left: auto;
-  color: var(--muted);
-  font-size: var(--ui-font-size-xs);
+  color: var(--color-text-faint);
+  font-size: var(--text-xs);
 }
 
-.md-row-more { --md-more-arrow-color: var(--faint); }
-.md-row-more:hover { --md-more-arrow-color: var(--dim); }
+.md-row-more { --md-more-arrow-color: var(--color-text-quaternary); }
+.md-row-more:hover { --md-more-arrow-color: var(--color-text-muted); }
 .md-row-more .md-more-arrow {
   width: var(--p-ic-sm);
   height: var(--p-ic-sm);
@@ -5024,8 +5067,8 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
   transition: color var(--duration-base) var(--ease-out);
 }
 .md-provider {
-  color: var(--muted);
-  font-size: var(--ui-font-size-xs);
+  color: var(--color-text-faint);
+  font-size: var(--text-xs);
   flex: none;
 }
 .md-star {
@@ -5041,7 +5084,7 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
 
 .md-divider {
   height: 1px;
-  background: var(--line);
+  background: var(--color-line);
   margin: 3px 0;
 }
 
@@ -5056,7 +5099,7 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
 }
 .md-thinking .md-name {
   font-family: var(--font-ui);
-  font-size: var(--ui-font-size);
+  font-size: var(--text-base);
   color: var(--color-text);
   flex: none;
 }
@@ -5068,7 +5111,7 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
   width: 0;
   min-width: 100%;
   padding: 2px 7px 4px;
-  color: var(--muted);
+  color: var(--color-text-faint);
   font-size: var(--text-2xs);
   line-height: 1.4;
 }
@@ -5129,7 +5172,7 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
   width: var(--p-ic-sm);
   min-height: 1lh;
   color: var(--color-accent);
-  font-size: var(--ui-font-size);
+  font-size: var(--text-base);
   font-weight: var(--weight-medium);
   display: flex;
   align-items: center;
@@ -5150,7 +5193,7 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
   grid-column: 2;
   grid-row: 1;
   font-family: var(--font-ui);
-  font-size: var(--ui-font-size-sm);
+  font-size: var(--text-sm);
   font-weight: var(--weight-medium);
   line-height: var(--leading-tight);
 }
@@ -5164,7 +5207,7 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
   font-family: var(--font-ui);
   font-size: var(--text-xs);
   font-weight: var(--weight-caption);
-  color: var(--muted);
+  color: var(--color-text-faint);
   line-height: var(--leading-tight);
 }
 
@@ -5224,7 +5267,7 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
   }
   .model-pill,
   .attach-btn {
-    font-size: var(--ui-font-size);
+    font-size: var(--text-base);
   }
   .toolbar {
     gap: 6px;
@@ -5241,16 +5284,16 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
     max-width: min(40vw, 170px);
   }
   .md-row {
-    font-size: var(--ui-font-size);
+    font-size: var(--text-base);
   }
   .md-section {
-    font-size: var(--ui-font-size);
+    font-size: var(--text-base);
   }
   .md-thinking :deep(.ui-seg--xs .ui-seg__item) {
     padding: 0 var(--space-1-5);
   }
   .pd-name {
-    font-size: var(--ui-font-size);
+    font-size: var(--text-base);
   }
   .pd-desc {
     font-size: var(--text-xs);
@@ -5305,5 +5348,6 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
     height: var(--touch-target-min);
   }
 }
-
 </style>
+
+<style scoped src="../lib/drop-card.css"></style>

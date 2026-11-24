@@ -377,8 +377,8 @@ function treeRowStyle(depth: number): Record<string, string> {
   display: flex;
   flex-direction: column;
   height: 100%;
-  background: var(--bg);
-  font-family: var(--mono);
+  background: var(--color-bg);
+  font-family: var(--font-mono);
 }
 
 .dv-change-count {
@@ -387,8 +387,8 @@ function treeRowStyle(depth: number): Record<string, string> {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: var(--ui-font-size-xs);
-  color: var(--muted);
+  font-size: var(--text-xs);
+  color: var(--color-text-faint);
   font-family: var(--font-ui);
 }
 
@@ -414,7 +414,7 @@ function treeRowStyle(depth: number): Record<string, string> {
 
 .br-icon {
   flex: none;
-  color: var(--muted);
+  color: var(--color-text-faint);
 }
 
 .br-name {
@@ -563,7 +563,7 @@ function treeRowStyle(depth: number): Record<string, string> {
 }
 .tree-icon {
   flex: none;
-  color: var(--muted);
+  color: var(--color-text-faint);
 }
 .tree-name {
   min-width: 0;
@@ -579,7 +579,7 @@ function treeRowStyle(depth: number): Record<string, string> {
   width: 16px;
   height: 16px;
   border-radius: var(--radius-xs);
-  font-size: max(9px, calc(var(--ui-font-size) - 4px));
+  font-size: max(9px, calc(var(--text-base) - 4px));
   font-weight: 500;
   flex: none;
   user-select: none;
@@ -590,10 +590,10 @@ function treeRowStyle(depth: number): Record<string, string> {
 .badge.deleted   { background: var(--color-danger-soft); color: var(--color-danger); }
 .badge.renamed   { background: var(--color-done-soft); color: var(--color-done); }
 .badge.untracked { background: var(--color-success-soft); color: var(--color-success); }
-.badge.conflicted{ background: color-mix(in srgb, var(--color-danger) 10%, var(--bg)); color: var(--color-danger); font-size: max(9px, calc(var(--ui-font-size) - 5px)); }
-.badge.ignored   { background: var(--color-well); color: var(--faint); }
-.badge.clean     { background: transparent; color: var(--faint); }
-.badge.unknown   { background: var(--color-well); color: var(--muted); }
+.badge.conflicted{ background: color-mix(in srgb, var(--color-danger) 10%, var(--color-bg)); color: var(--color-danger); font-size: max(9px, calc(var(--text-base) - 5px)); }
+.badge.ignored   { background: var(--color-well); color: var(--color-text-quaternary); }
+.badge.clean     { background: transparent; color: var(--color-text-quaternary); }
+.badge.unknown   { background: var(--color-well); color: var(--color-text-faint); }
 
 .fpath {
   color: var(--color-text);
@@ -620,8 +620,8 @@ function treeRowStyle(depth: number): Record<string, string> {
   justify-content: center;
   gap: var(--space-2);
   padding: 32px 20px;
-  color: var(--muted);
-  font-size: var(--ui-font-size);
+  color: var(--color-text-faint);
+  font-size: var(--text-base);
   text-align: center;
   user-select: none;
 }
@@ -677,7 +677,7 @@ function treeRowStyle(depth: number): Record<string, string> {
   }
 }
 
-.changes-pane .empty-state { font-family: var(--sans); }
+.changes-pane .empty-state { font-family: var(--font-ui); }
 .ch-row,
 .ct-row {
   margin: 1px 6px;
@@ -686,5 +686,5 @@ function treeRowStyle(depth: number): Record<string, string> {
 }
 .changes-pane .badge,
 .changed-tree .badge { border-radius: var(--radius-sm); }
-.change-count { font-family: var(--sans); border-radius: 999px; }
+.change-count { font-family: var(--font-ui); border-radius: 999px; }
 </style>

@@ -239,6 +239,8 @@ export type Message = SystemMessage | UserMessage | AssistantMessage | ToolMessa
 
 export const TOOL_LIFECYCLE_PART_KIND = 'tool_lifecycle';
 
+export const TOOL_ARGUMENT_CORRECTION_ORIGIN = 'tool_argument_correction';
+
 export interface ToolLifecycleContentPartMeta extends ContentPartMeta {
   readonly kind: typeof TOOL_LIFECYCLE_PART_KIND;
   readonly added: readonly string[];
@@ -256,6 +258,73 @@ export function readToolLifecycleMeta(part: ContentPart): ToolLifecycleContentPa
     return undefined;
   }
   return meta as ToolLifecycleContentPartMeta;
+}
+
+export interface ToolDeclarationScan {
+  readonly visible: ReadonlyMap<string, ToolDescription>;
+  readonly droppedProfileIndexes: ReadonlySet<number>;
+  readonly droppedMessageToolIndexes: ReadonlyMap<number, ReadonlySet<number>>;
+  readonly duplicates: ReadonlyMap<string, { readonly kept: string; readonly dropped: number }>;
+}
+
+export function scanToolDeclarations(
+  profileTools: readonly ToolDescription[],
+  messages: readonly Message[],
+): ToolDeclarationScan {
+  const visible = new Map<string, ToolDescription>();
+  const unloaded = new Set<string>();
+  const seen = new Map<string, string>();
+  const duplicates = new Map<string, { kept: string; dropped: number }>();
+  const droppedProfileIndexes = new Set<number>();
+  const droppedMessageToolIndexes = new Map<number, Set<number>>();
+  const drop = (name: string): void => {
+    const kept = seen.get(name)!;
+    duplicates.set(name, { kept, dropped: (duplicates.get(name)?.dropped ?? 0) + 1 });
+  };
+  for (let index = profileTools.length - 1; index >= 0; index -= 1) {
+    const tool = profileTools[index]!;
+    if (seen.has(tool.name)) {
+      droppedProfileIndexes.add(index);
+      drop(tool.name);
+      continue;
+    }
+    seen.set(tool.name, `profile.tools[${index}]`);
+    visible.set(tool.name, tool);
+  }
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index]!;
+    if (message.role === 'system' && message.tools !== undefined) {
+      for (let toolIndex = message.tools.length - 1; toolIndex >= 0; toolIndex -= 1) {
+        const tool = message.tools[toolIndex]!;
+        if (visible.has(tool.name) || unloaded.has(tool.name)) continue;
+        visible.set(tool.name, tool);
+      }
+    }
+    for (const part of message.content) {
+      const lifecycle = readToolLifecycleMeta(part);
+      if (lifecycle === undefined) continue;
+      for (const name of lifecycle.removed) {
+        seen.delete(name);
+        if (!visible.has(name)) unloaded.add(name);
+      }
+    }
+    if (message.role !== 'system' || message.tools === undefined) continue;
+    for (let toolIndex = message.tools.length - 1; toolIndex >= 0; toolIndex -= 1) {
+      const tool = message.tools[toolIndex]!;
+      if (seen.has(tool.name)) {
+        let dropped = droppedMessageToolIndexes.get(index);
+        if (dropped === undefined) {
+          dropped = new Set();
+          droppedMessageToolIndexes.set(index, dropped);
+        }
+        dropped.add(toolIndex);
+        drop(tool.name);
+        continue;
+      }
+      seen.set(tool.name, `messages[${index}].tools[${toolIndex}]`);
+    }
+  }
+  return { visible, droppedProfileIndexes, droppedMessageToolIndexes, duplicates };
 }
 
 export function isVacuousContentPart(part: ContentPart): boolean {

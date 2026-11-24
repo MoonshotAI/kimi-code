@@ -102,7 +102,7 @@ const landing = [
   background: var(--color-surface-raised);
   color: var(--color-text);
   font-family: var(--font-ui);
-  font-size: var(--ui-font-size);
+  font-size: var(--text-base);
   font-weight: var(--weight-regular);
   line-height: var(--leading-prose);
   user-select: text;

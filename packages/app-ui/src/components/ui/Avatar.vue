@@ -1,9 +1,33 @@
 <script setup lang="ts">
-withDefaults(defineProps<{ size?: 'sm' | 'md' }>(), { size: 'md' });
+import { ref, watch } from 'vue';
+import Icon from './Icon.vue';
+
+const props = withDefaults(
+  defineProps<{
+    src?: string;
+    size?: 'sm' | 'md' | 'lg';
+    shape?: 'square' | 'circle';
+    fallbackIcon?: string;
+  }>(),
+  { size: 'md', shape: 'square', fallbackIcon: 'user' },
+);
+
+const loadFailed = ref(false);
+watch(
+  () => props.src,
+  () => {
+    loadFailed.value = false;
+  },
+);
 </script>
 
 <template>
-  <span class="ui-avatar" :class="`ui-avatar--${size}`"><slot /></span>
+  <span class="ui-avatar" :class="[`ui-avatar--${size}`, `ui-avatar--${shape}`]">
+    <slot>
+      <img v-if="src && !loadFailed" class="ui-avatar__img" :src="src" alt="" @error="loadFailed = true" />
+      <Icon v-else :name="fallbackIcon" :size="size === 'sm' ? 'sm' : 'md'" />
+    </slot>
+  </span>
 </template>
 
 <style scoped>
@@ -20,8 +44,9 @@ withDefaults(defineProps<{ size?: 'sm' | 'md' }>(), { size: 'md' });
   font-weight: var(--weight-medium);
   overflow: hidden;
 }
+.ui-avatar--lg { width: 40px; height: 40px; font-size: var(--text-base); }
 .ui-avatar--md { width: 32px; height: 32px; font-size: var(--text-sm); }
 .ui-avatar--sm { width: 24px; height: 24px; font-size: var(--text-xs); border-radius: var(--radius-sm); }
-.ui-avatar :deep(svg) { width: var(--p-ic-md); height: var(--p-ic-md); }
-.ui-avatar--sm :deep(svg) { width: 13px; height: 13px; }
+.ui-avatar--circle { border: none; border-radius: var(--radius-full); }
+.ui-avatar__img { width: 100%; height: 100%; object-fit: cover; }
 </style>

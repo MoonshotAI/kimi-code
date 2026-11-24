@@ -219,7 +219,7 @@ onUnmounted(() => {
   color: var(--color-accent);
   cursor: pointer;
   font: inherit;
-  font-size: var(--ui-font-size-xs);
+  font-size: var(--text-xs);
 }
 .ui-toast__link:hover {
   color: var(--color-accent-hover);

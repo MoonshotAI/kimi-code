@@ -306,8 +306,8 @@ describe('linkTooltip singleton (ensureLinkTooltip)', () => {
     expect(head.appended).toHaveLength(1);
     expect(head.appended[0]!.id).toBe('md-link-tip-style');
     const css = head.appended[0]!.textContent;
-    expect(css).toContain('var(--color-text)');
-    expect(css).toContain('var(--z-tooltip)');
+    expect(css).not.toContain('var(--color-text)');
+    expect(css).not.toContain('var(--z-tooltip)');
     expect(css).toContain('max-width: var(--p-tip-max-w);');
     expect(css).toContain('-webkit-line-clamp: 3;');
     expect(css).toContain('font-weight: var(--weight-semibold);');
@@ -317,6 +317,7 @@ describe('linkTooltip singleton (ensureLinkTooltip)', () => {
     expect(css).not.toContain('280px');
     expect(body.appended).toHaveLength(1);
     expect(bubble().getAttribute('role')).toBeNull();
+    expect(bubble().className.split(' ')).toContain('ui-tip-surface');
     expect(docListeners.get('mouseover')).toBeUndefined();
     expect(docListeners.get('pointermove')).toHaveLength(2);
   });

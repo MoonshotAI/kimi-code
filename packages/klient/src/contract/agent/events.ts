@@ -31,18 +31,7 @@ export const turnEndedEventSchema = z.object({
     .enum(['user_cancelled', 'aborted', 'max_steps', 'error', 'filtered', 'blocked'])
     .optional(),
   requestId: z.string().optional(),
-});
-
-export const loopDrainedEventSchema = z.object({
-  type: z.literal('loop.drained'),
-  generation: z.number(),
-  time: z.number().optional(),
-});
-
-export const loopIdleEventSchema = z.object({
-  type: z.literal('loop.idle'),
-  generation: z.number(),
-  time: z.number().optional(),
+  loopEnd: z.object({ outcome: z.enum(['drained', 'idle']) }).optional(),
 });
 
 export const assistantDeltaEventSchema = z.object({
@@ -185,8 +174,6 @@ export const agentStatusUpdatedEventSchema = z.looseObject({
 export interface AgentEventPayloads {
   'turn.started': z.infer<typeof turnStartedEventSchema>;
   'turn.ended': z.infer<typeof turnEndedEventSchema>;
-  'loop.drained': z.infer<typeof loopDrainedEventSchema>;
-  'loop.idle': z.infer<typeof loopIdleEventSchema>;
   'assistant.delta': z.infer<typeof assistantDeltaEventSchema>;
   'thinking.delta': z.infer<typeof thinkingDeltaEventSchema>;
   'tool.call.started': z.infer<typeof toolCallStartedEventSchema>;
@@ -211,8 +198,6 @@ export type AgentEventName = keyof AgentEventPayloads;
 export const agentEvents = {
   'turn.started': { kind: 'stream', name: 'events', type: 'turn.started', schema: turnStartedEventSchema },
   'turn.ended': { kind: 'stream', name: 'events', type: 'turn.ended', schema: turnEndedEventSchema },
-  'loop.drained': { kind: 'stream', name: 'events', type: 'loop.drained', schema: loopDrainedEventSchema },
-  'loop.idle': { kind: 'stream', name: 'events', type: 'loop.idle', schema: loopIdleEventSchema },
   'assistant.delta': { kind: 'stream', name: 'events', type: 'assistant.delta', schema: assistantDeltaEventSchema },
   'thinking.delta': { kind: 'stream', name: 'events', type: 'thinking.delta', schema: thinkingDeltaEventSchema },
   'tool.call.started': { kind: 'stream', name: 'events', type: 'tool.call.started', schema: toolCallStartedEventSchema },

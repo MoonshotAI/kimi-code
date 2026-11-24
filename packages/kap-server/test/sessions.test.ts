@@ -1994,7 +1994,7 @@ describe('server-v2 /api/v1/sessions', () => {
     }
   });
 
-  it('rejects unsupported actions including removed abort and prediction actions', async () => {
+  it('rejects unsupported actions and serves prediction actions with disconnect cancellation', async () => {
     const { body } = await postJson<null>('/api/v1/sessions/sess_missing:delete');
     expect(body.code).toBe(40401);
 
@@ -2003,12 +2003,62 @@ describe('server-v2 /api/v1/sessions', () => {
     const id = created.body.data.id;
     expect((await postJson<null>(`/api/v1/sessions/${id}:restart`)).body.code).toBe(40001);
     expect((await postJson<null>(`/api/v1/sessions/${id}:abort`)).body.code).toBe(40001);
-    expect(
-      (await postJson<null>(`/api/v1/sessions/${id}:predict-prompt`, { prediction_id: 'p1', expected_turn_id: 0 })).body.code,
-    ).toBe(40001);
-    expect(
-      (await postJson<null>(`/api/v1/sessions/${id}:cancel-prompt-prediction`, { prediction_id: 'p1' })).body.code,
-    ).toBe(40001);
+
+    const predicted = await postJson<{ prediction: string | null }>(`/api/v1/sessions/${id}:predict-prompt`, {
+      prediction_id: 'prediction-1',
+      expected_turn_id: 0,
+    });
+    expect(predicted.body.data).toEqual({ prediction: null });
+    const cancelled = await postJson<{ cancelled: boolean }>(`/api/v1/sessions/${id}:cancel-prompt-prediction`, {
+      prediction_id: 'prediction-1',
+    });
+    expect(cancelled.body.data).toEqual({ cancelled: false });
+
+    const session = getLiveSessionById((server as RunningServer).core.accessor, id);
+    if (session === undefined) throw new Error('expected live session');
+    const service = session.accessor.get(ISessionPromptPredictionService);
+    let releasePrediction!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      releasePrediction = resolve;
+    });
+    let markPredictionSettled!: () => void;
+    const predictionSettled = new Promise<void>((resolve) => {
+      markPredictionSettled = resolve;
+    });
+    const predict = vi.spyOn(service, 'predict').mockImplementation(async () => {
+      await gate;
+      markPredictionSettled();
+      return null;
+    });
+    const cancel = vi.spyOn(service, 'cancel');
+    const cancelledWithReason = await postJson<{ cancelled: boolean }>(`/api/v1/sessions/${id}:cancel-prompt-prediction`, {
+      prediction_id: 'visibility-check',
+      reason: 'visibility',
+    });
+    expect(cancelledWithReason.body.data).toEqual({ cancelled: false });
+    expect(cancel).toHaveBeenCalledWith('visibility-check', 'visibility');
+    const cancelledForPlan = await postJson<{ cancelled: boolean }>(`/api/v1/sessions/${id}:cancel-prompt-prediction`, {
+      prediction_id: 'plan-check',
+      reason: 'plan',
+    });
+    expect(cancelledForPlan.body.data).toEqual({ cancelled: false });
+    expect(cancel).toHaveBeenCalledWith('plan-check', 'plan');
+    const abortController = new AbortController();
+    const request = fetch(`${base}/api/v1/sessions/${id}:predict-prompt`, {
+      method: 'POST',
+      headers: authHeaders(server as RunningServer, { 'content-type': 'application/json' }),
+      body: JSON.stringify({ prediction_id: 'disconnect-me', expected_turn_id: 0 }),
+      signal: abortController.signal,
+    } as never).catch(() => undefined);
+    await vi.waitFor(() => expect(predict).toHaveBeenCalledOnce());
+    abortController.abort();
+    await vi.waitFor(() => expect(cancel).toHaveBeenCalledWith('disconnect-me', 'disconnect'));
+    releasePrediction();
+    await request;
+    await predictionSettled;
+    await new Promise<void>((resolve) => {
+      setImmediate(resolve);
+    });
   });
 
   it('cold-loads a persisted session on :undo and reports an unknown turn instead of 40401', async () => {
@@ -2239,14 +2289,14 @@ describe('server-v2 /api/v1/sessions', () => {
     await session!.accessor.get(IAgentLifecycleService).create({ agentId: MAIN_AGENT_ID });
     const main = session!.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID)!;
     const loop = main.accessor.get(IAgentLoopService);
-    loop.replaceHistory(historyEntries([
+    await loop.initializeHistory(historyEntries([
       ...loop.history(),
       {
         role: 'user',
         content: [{ type: 'text', text: 'selected through REST' }],
         origin: { kind: 'user' },
       },
-    ]), 'fork');
+    ]));
     await main.accessor.get(IWireService).flush();
     const cron = main.accessor.get(IAgentCronService);
     const task = cron.addTask({ cron: '0 9 * * *', prompt: 'fork me', recurring: true });

@@ -142,7 +142,7 @@ defineExpose({ show, close: menu.close });
     <Menu
       v-if="menu.open.value"
       ref="menuRef"
-      class="table-selection-context-menu"
+      class="ui-menu-floating table-selection-context-menu"
       :style="menu.menuStyle.value"
       @click.stop
       @contextmenu.prevent
@@ -176,7 +176,7 @@ defineExpose({ show, close: menu.close });
     <Menu
       v-if="menu.open.value && formatsOpen"
       ref="subMenuRef"
-      class="table-selection-copy-submenu"
+      class="ui-menu-floating table-selection-copy-submenu"
       :style="subMenuStyle"
       @click.stop
       @contextmenu.prevent
@@ -192,10 +192,6 @@ defineExpose({ show, close: menu.close });
 <style scoped>
 .table-selection-context-menu,
 .table-selection-copy-submenu {
-  position: fixed;
-  top: 0;
-  left: 0;
-  z-index: var(--z-dropdown);
   user-select: none;
   max-height: calc(100vh - var(--space-4));
   overflow-y: auto;

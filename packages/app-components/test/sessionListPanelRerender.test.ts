@@ -560,7 +560,7 @@ describe('SessionListPanel re-render scope', () => {
 
     const pinnedRoot = host.querySelector('.pinned')!;
     const pinnedRow = () => host.querySelector(`.pinned [data-session-id="${pinnedSingle.id}"]`)!;
-    const openPinnedMenu = () => document.body.querySelector('.pinned-menu:not(.menu-pop-leave-active)');
+    const openPinnedMenu = () => document.body.querySelector('.pinned-menu:not(.ui-menu-pop-leave-active)');
 
     const pinnedHeading = pinnedRoot.querySelector<HTMLElement>('.pinned-heading')!;
     expect(pinnedHeading.firstElementChild?.classList.contains('pinned-title')).toBe(true);

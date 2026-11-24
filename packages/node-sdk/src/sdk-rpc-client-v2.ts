@@ -2327,6 +2327,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       capability.max_input_tokens ?? capability.max_context_tokens,
     );
     const loop = agent.accessor.get(IAgentLoopService);
+    await loop.start();
     loop.remind(historyEntryFromContext(message));
     loop.flushReminders();
   }

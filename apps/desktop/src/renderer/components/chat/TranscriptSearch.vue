@@ -393,7 +393,7 @@ onUnmounted(() => {
   border: none;
   background: transparent;
   font-family: var(--font-ui);
-  font-size: var(--ui-font-size);
+  font-size: var(--text-base);
   color: var(--color-text);
 }
 .tsearch-input:focus-visible {
@@ -439,7 +439,7 @@ onUnmounted(() => {
 .tsearch-count {
   margin-left: auto;
   padding-right: var(--space-1);
-  font-size: var(--ui-font-size-sm);
+  font-size: var(--text-sm);
   color: var(--color-text-muted);
   white-space: nowrap;
   user-select: none;
