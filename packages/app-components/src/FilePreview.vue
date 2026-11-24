@@ -37,7 +37,7 @@ provide(ResolveImageKey, resolveMarkdownImage);
 provide(OpenFileLinkKey, undefined);
 
 function resolveMarkdownLinkDir(href: string): string {
-  if (href.startsWith('/') || /^[a-zA-Z]:[\\/]/.test(href) || href.startsWith('\\\\')) {
+  if (href === '~' || href.startsWith('~/') || href.startsWith('/') || /^[a-zA-Z]:[\\/]/.test(href) || href.startsWith('\\\\')) {
     return href;
   }
   return resolveRelativePath(href, markdownBaseDir.value);

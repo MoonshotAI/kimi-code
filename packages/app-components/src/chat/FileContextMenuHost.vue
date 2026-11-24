@@ -188,7 +188,7 @@ function detach(): void {
 }
 
 watch(
-  () => [state.open, state.x, state.y, state.path] as const,
+  () => [state.open, state.x, state.y, state.path, targetPath.value] as const,
   async ([open]) => {
     detach();
     closeOpenWithMenu();

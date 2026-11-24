@@ -162,7 +162,10 @@ test('Copy path copies the native absolute path of the previewed file', async ({
 test('tilde links preview and open files from the OS home', async ({ app, model, scratch }) => {
   const home = join(scratch, 'os-home');
   const common = join(home, 'agent-workspace', 'rules', 'common.md');
-  writeTree(home, { 'agent-workspace/rules/common.md': lines('# Shared rules') });
+  writeTree(home, {
+    'agent-workspace/rules/common.md': lines('# Shared rules', '', '[Nested](~/agent-workspace/rules/nested.md)'),
+    'agent-workspace/rules/nested.md': lines('# Nested rules'),
+  });
   const panel = app.window.getByRole('complementary', { name: 'Detail panel' });
   model.script(say('Read [common.md](~/agent-workspace/rules/common.md).'));
   await app.startTurn(PROMPT);
@@ -173,6 +176,8 @@ test('tilde links preview and open files from the OS home', async ({ app, model,
   await expect(sharedRules.or(panel.getByText('Only files inside the current project can be previewed'))).toBeVisible();
   await app.snapshot('tilde-file-preview');
   await expect(sharedRules).toBeVisible();
+  await panel.locator('[data-mention-path="~/agent-workspace/rules/nested.md"]').click();
+  await expect(panel.getByRole('heading', { name: 'Nested rules', level: 1 })).toBeVisible();
 
   const openedPaths = await recordOpenPath(app);
   await answerNativeDialog(app, 'openPath', '');

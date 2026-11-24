@@ -439,6 +439,27 @@ it('hides Copy path until the home directory resolves', async () => {
   expect(lib.copy).toHaveBeenCalledWith('/Users/test/agent-workspace/rules/common.md');
 });
 
+it('repositions the menu after the home directory resolves', async () => {
+  let resolveHome!: (value: { home: string; recentRoots: string[] }) => void;
+  workspaceLocation.getFsHome.mockImplementation(() => new Promise((resolve) => { resolveHome = resolve; }));
+  mountHost();
+  let menuHeight = 30;
+  vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockImplementation(() => menuHeight);
+  window.innerHeight = 768;
+  const host = document.createElement('div');
+  host.innerHTML = '<button data-file-path="~/agent-workspace/rules/common.md">common.md</button>';
+  document.body.append(host);
+
+  rightClickOn(host.querySelector('button')!, '/repo', 40, 740);
+  await flush();
+  expect(menuEl()!.style.top).toBe('710px');
+
+  menuHeight = 200;
+  resolveHome({ home: '/Users/test', recentRoots: [] });
+  await flush();
+  expect(menuEl()!.style.top).toBe('540px');
+});
+
 it('does not offer open-with for unsupported, deleted, or symlinked files', async () => {
   const openWithDefaultApp = vi.fn<(path: string) => Promise<boolean>>().mockResolvedValue(true);
   mountHost(undefined, openWithDefaultApp, openInServiceStub().service);
