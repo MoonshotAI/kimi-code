@@ -176,6 +176,43 @@ describe('device configuration', () => {
     expect(deviceIdSchema.safeParse('a/b').success).toBe(false);
     expect(deviceIdSchema.safeParse('').success).toBe(false);
   });
+
+  it('moves SSH hosts saved by earlier releases into devices and keeps an existing device on an id clash', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'kimi-legacy-hosts-'));
+    const configPath = join(home, 'config.toml');
+    writeFileSync(configPath, [
+      'default_model = ""',
+      '',
+      '[hosts.gpu_box]',
+      'host = "gpu.example.test"',
+      'identity_file = "~/.ssh/id_gpu"',
+      'enabled = false',
+      '',
+      '[hosts.shared]',
+      'host = "old.example.test"',
+      '',
+      '[devices.shared]',
+      'host = "new.example.test"',
+      '',
+    ].join('\n'));
+    const server = await startServer({ hostIdentity: TEST_HOST_IDENTITY, host: '127.0.0.1', port: 0, homeDir: home, logLevel: 'silent' });
+    try {
+      await vi.waitFor(() => expect(readFileSync(configPath, 'utf8')).not.toContain('[hosts'));
+      const devices = (await call(server, 'GET', '/api/v1/devices')).data['devices'] as Array<Record<string, unknown>>;
+      expect(devices).toHaveLength(2);
+      expect(devices).toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: 'shared', host: 'new.example.test' }),
+        expect.objectContaining({ id: 'gpu_box', host: 'gpu.example.test', identity_file: '~/.ssh/id_gpu', enabled: false }),
+      ]));
+      const text = readFileSync(configPath, 'utf8');
+      expect(text).toContain('[devices.gpu_box]');
+      expect(text).toContain('identity_file = "~/.ssh/id_gpu"');
+      expect(text).not.toContain('old.example.test');
+    } finally {
+      await server.close();
+      await rm(home, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('ssh bootstrap', () => {

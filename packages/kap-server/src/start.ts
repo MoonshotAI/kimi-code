@@ -27,6 +27,7 @@ import {
   NOTIFY_USER_UI_CAPABILITY,
   PluginChanged,
   logSeed,
+  migrateLegacyHosts,
   resolveConfigPath,
   resolveKimiHome,
   resolveLoggingConfig,
@@ -442,6 +443,9 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     localDeviceId,
     upgradeTimeoutMs: opts.deviceUpgradeTimeoutMs,
     onChange: () => notifyDevices(),
+  });
+  void migrateLegacyHosts(core.accessor.get(IConfigService)).catch((error: unknown) => {
+    logger.warn({ err: error }, 'moving [hosts] into [devices] in the config file failed; SSH devices stay hidden until it succeeds');
   });
   const requestClose = (): void => {
     void close().catch((error: unknown) => logger.error({ err: error }, 'server close failed'));

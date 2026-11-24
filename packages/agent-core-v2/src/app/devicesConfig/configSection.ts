@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { registerConfigSection } from '#/app/config/configSectionContributions';
 
 export const DEVICES_SECTION = 'devices';
+export const LEGACY_HOSTS_SECTION = 'hosts';
 
 const DEVICE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 
@@ -71,6 +72,11 @@ function mapEntries(section: unknown, fromToml: boolean): unknown {
 }
 
 registerConfigSection(DEVICES_SECTION, devicesSectionSchema, {
+  fromToml: (raw) => mapEntries(raw, true),
+  toToml: (value) => mapEntries(value, false),
+});
+
+registerConfigSection(LEGACY_HOSTS_SECTION, z.record(deviceIdSchema, sshDeviceEntrySchema), {
   fromToml: (raw) => mapEntries(raw, true),
   toToml: (value) => mapEntries(value, false),
 });
