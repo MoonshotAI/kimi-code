@@ -1,29 +1,30 @@
 name: Layered QA
 
+# Automatic triggers are temporarily disabled while the E2E suite is replaced.
 on:
   workflow_dispatch:
-  schedule:
-    - cron: '21 7 * * *'
-  pull_request:
-    paths:
-      - 'packages/acp-server/test/kap-parity.test.ts'
-      - 'packages/app-core/test/replay/**'
-      - 'packages/app-core/test/reconnect/**'
-      - 'packages/app-client/test/conversation-events.test.ts'
-      - 'packages/kap-server/schema/**'
-      - 'packages/kap-server/test/apiSurface.test.ts'
-      - 'packages/testkit/**'
-      - 'apps/desktop/tests/perf/history-window/**'
-      - 'apps/desktop/src/renderer/components/chat/**'
-      - 'packages/app-components/src/chat/**'
-      - 'packages/app-client/src/composables/**'
-      - 'tests/scenarios/**'
-      - 'scripts/measure-history.mjs'
-      - 'scripts/refresh-qa-fixtures.mjs'
-      - '.github/workflows/layered-qa.yml'
-      - 'package.json'
-      - 'pnpm-lock.yaml'
-      - '.nvmrc'
+  # schedule:
+  #   - cron: '21 7 * * *'
+  # pull_request:
+  #   paths:
+  #     - 'packages/acp-server/test/kap-parity.test.ts'
+  #     - 'packages/app-core/test/replay/**'
+  #     - 'packages/app-core/test/reconnect/**'
+  #     - 'packages/app-client/test/conversation-events.test.ts'
+  #     - 'packages/kap-server/schema/**'
+  #     - 'packages/kap-server/test/apiSurface.test.ts'
+  #     - 'packages/testkit/**'
+  #     - 'apps/desktop/tests/perf/history-window/**'
+  #     - 'apps/desktop/src/renderer/components/chat/**'
+  #     - 'packages/app-components/src/chat/**'
+  #     - 'packages/app-client/src/composables/**'
+  #     - 'tests/scenarios/**'
+  #     - 'scripts/measure-history.mjs'
+  #     - 'scripts/refresh-qa-fixtures.mjs'
+  #     - '.github/workflows/layered-qa.yml'
+  #     - 'package.json'
+  #     - 'pnpm-lock.yaml'
+  #     - '.nvmrc'
 
 permissions:
   contents: read

@@ -44,7 +44,15 @@ function deltaAnnouncement(
   );
   return {
     role: 'user',
-    content: [{ type: 'text', text }],
+    content: [{
+      type: 'text',
+      text,
+      meta: {
+        kind: 'tool_lifecycle',
+        added: added.map((entry) => entry.name),
+        removed: removed.map((entry) => entry.name),
+      },
+    }],
     origin: {
       kind: 'injection',
       variant: LOADABLE_TOOLS_VARIANT,
@@ -177,6 +185,7 @@ describe('shapeUnsupportedDynamicToolContext', () => {
     expect(reminder).toContain('Removed tools may be unavailable or fail when called.');
     expect(reminder).toContain('<tools_removed>\nremoved\n</tools_removed>');
     expect(reminder).not.toContain('replaced definitions');
+    expect(shaped[1]?.content[0]).not.toHaveProperty('meta');
     expect(delta.content).toBe(original);
   });
 

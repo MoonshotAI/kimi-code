@@ -47,8 +47,8 @@ function pickRoot(root: string): void {
         <Icon class="files-root-select-chev" name="chevron-down" size="sm" />
       </button>
     </Tooltip>
-    <Transition name="menu-pop">
-      <Menu v-if="rootMenuOpen" ref="rootMenuRef" class="files-root-menu" :style="rootMenuStyle" @click.stop>
+    <Transition name="ui-menu-pop">
+      <Menu v-if="rootMenuOpen" ref="rootMenuRef" class="ui-menu-floating files-root-menu" :style="rootMenuStyle" @click.stop>
         <MenuItem
           v-for="item in roots"
           :key="item"
@@ -115,13 +115,6 @@ function pickRoot(root: string): void {
   color: var(--color-text-faint);
 }
 
-.files-root-menu {
-  position: fixed;
-  top: 0;
-  left: 0;
-  z-index: var(--z-dropdown);
-}
-
 .files-root-menu-name {
   flex: 1;
   min-width: 0;
@@ -133,22 +126,5 @@ function pickRoot(root: string): void {
 
 .files-root-menu-check {
   flex: none;
-}
-
-.menu-pop-enter-active {
-  transition:
-    opacity var(--duration-base) var(--ease-out),
-    transform var(--duration-base) var(--ease-out);
-}
-.menu-pop-leave-active {
-  transition:
-    opacity var(--duration-fast) var(--ease-out),
-    transform var(--duration-fast) var(--ease-out);
-  pointer-events: none;
-}
-.menu-pop-enter-from,
-.menu-pop-leave-to {
-  opacity: 0;
-  transform: scale(0.97) translateY(var(--menu-pop-shift, -2px));
 }
 </style>

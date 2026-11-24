@@ -513,7 +513,7 @@ function onSize(value: number | null): void {
                   ref="menuRef"
                   :id="listboxId"
                   role="listbox"
-                  class="fs-menu"
+                  class="ui-menu-floating fs-menu"
                   :style="menuStyle"
                   :aria-busy="fontsLoading"
                   @scroll="onMenuScroll"
@@ -752,7 +752,6 @@ function onSize(value: number | null): void {
 .fs-token-input::placeholder { color: var(--color-text-faint); }
 
 .fs-menu {
-  position: fixed;
   z-index: var(--z-modal-dropdown);
   max-height: 240px;
   overflow-y: auto;

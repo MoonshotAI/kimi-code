@@ -845,6 +845,12 @@ export interface AppConfig {
   raw?: Record<string, unknown>;
 }
 
+export interface EditableTextFile {
+  path: string;
+  content: string;
+  revision: string | null;
+}
+
 export interface AppSkill {
   name: string;
   description: string;
@@ -1004,6 +1010,7 @@ export interface AppSessionWarning {
 export interface MediaBlobOptions {
   prefixBytes?: number;
   signal?: AbortSignal;
+  cache?: RequestCache;
 }
 
 export interface ReadRequestOptions {
@@ -1049,6 +1056,17 @@ export interface RemoteControlStatus {
     started_at: number;
   };
 }
+
+export type PromptPredictionCancelReason =
+  | 'input'
+  | 'escape'
+  | 'new_turn'
+  | 'session'
+  | 'dialog'
+  | 'queue'
+  | 'submit'
+  | 'visibility'
+  | 'shutdown';
 
 export interface KimiWebApi {
   dispose(): void;
@@ -1117,6 +1135,8 @@ export interface KimiWebApi {
   forkSession(sessionId: string, input?: { title?: string; turnIndex?: number }): Promise<AppSession>;
   startBtw(sessionId: string): Promise<{ agentId: string }>;
   closeAgent(sessionId: string, agentId: string): Promise<{ closed: true }>;
+  predictNextPrompt(sessionId: string, input: { predictionId: string; expectedTurnId: number }): Promise<string | null>;
+  cancelPromptPrediction(sessionId: string, predictionId: string, reason?: PromptPredictionCancelReason): Promise<boolean>;
   respondApproval(sessionId: string, approvalId: string, response: ApprovalResponse): Promise<InteractionRespondResult>;
   respondQuestion(sessionId: string, questionId: string, response: QuestionResponse): Promise<InteractionRespondResult>;
   dismissQuestion(sessionId: string, questionId: string): Promise<InteractionRespondResult>;
@@ -1134,6 +1154,7 @@ export interface KimiWebApi {
   setPluginEnabled(pluginId: string, enabled: boolean): Promise<{ ok: true }>;
   removePlugin(pluginId: string): Promise<{ ok: true }>;
   getMcpAuthStatuses(options?: { cwd?: string }): Promise<AppMcpAuthStatus[]>;
+  inspectMcpAuthStatuses(locators: AppMcpServerLocator[], options?: { cwd?: string }): Promise<AppMcpAuthStatus[]>;
   beginMcpAuth(locator: AppMcpServerLocator, options?: { cwd?: string }): Promise<AppMcpAuthBeginResult>;
   completeMcpAuth(input: { flowId: string; timeoutMs?: number; signal?: AbortSignal }): Promise<null>;
   cancelMcpAuth(flowId: string): Promise<null>;
@@ -1201,6 +1222,8 @@ export interface KimiWebApi {
 
   getConfig(): Promise<AppConfig>;
   setConfig(patch: Partial<AppConfig>): Promise<AppConfig>;
+  readHostTextFile(path: string): Promise<EditableTextFile>;
+  writeHostTextFile(path: string, content: string, revision: string | null): Promise<{ revision: string }>;
 
   getAuth(): Promise<AuthResult>;
   startOAuthLogin(region?: OAuthRegion): Promise<OAuthLoginStartResult>;

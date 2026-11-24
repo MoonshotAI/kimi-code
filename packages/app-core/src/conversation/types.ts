@@ -161,6 +161,7 @@ export interface ToolCallItem extends ConversationItemBase {
   readonly stage?: 'input' | 'auto_review' | 'awaiting_approval' | 'executing';
   readonly input?: unknown;
   readonly input_text?: string;
+  readonly fields?: Readonly<Record<string, unknown>>;
   readonly display?: unknown;
   readonly output?: string;
   readonly media?: readonly ConversationMedia[];

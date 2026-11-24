@@ -154,6 +154,112 @@ test('prepares a draft and retries an interrupted release from the same SHA', ()
   assert.match(readFileSync(join(f.dir, 'output'), 'utf8'), /build=false/);
 });
 
+function addCliToPlan(f) {
+  const cli = { name: '@moonshot-ai/kimi-code', path: 'apps/kimi-code', version: '2.0.0', private: false };
+  mkdirSync(join(f.dir, cli.path), { recursive: true });
+  writeFileSync(join(f.dir, cli.path, 'package.json'), JSON.stringify(cli));
+  const planFile = join(f.dir, '.changeset/release-plan.json');
+  const plan = JSON.parse(readFileSync(planFile, 'utf8'));
+  plan.packages.push(cli);
+  writeFileSync(planFile, JSON.stringify(plan));
+  return { cli, plan, planFile };
+}
+
+void test('native asset reruns require the exact npm version and remote tag, and leave complete downloads alone', () => {
+  const f = fixture();
+  const { cli, planFile } = addCliToPlan(f);
+  writeFileSync(planFile, JSON.stringify({ branch, packages: [cli] }));
+  const releaseTag = `${cli.name}@${cli.version}`;
+  const files = ['kimi-code-linux-x64.zip', 'manifest.json'];
+  const dist = join(f.dir, 'dist-native-release');
+  mkdirSync(dist);
+  for (const file of [...files, 'manifest-linux-x64.json']) writeFileSync(join(dist, file), file);
+  const assets = files.map(name => ({ name, state: 'uploaded', size: 100 }));
+  const state = f.state();
+  state.tags[releaseTag] = sha;
+  state.releases[releaseTag] = { assets };
+  writeFileSync(join(f.dir, 'bin/npm'), `#!/usr/bin/env node
+const args = process.argv.slice(2);
+if (args[0] !== 'view' || args[1] !== process.env.RELEASE_TAG || args[2] !== 'version' || !args.includes('--json')) process.exit(2);
+if (!process.env.TEST_NPM_VERSION) process.exit(1);
+console.log(JSON.stringify(process.env.TEST_NPM_VERSION));
+`, { mode: 0o755 });
+  const check = (extra = {}) => {
+    writeFileSync(f.env.RELEASE_TEST_STATE, JSON.stringify(state));
+    writeFileSync(f.env.GITHUB_OUTPUT, '');
+    return run(f, 'check-cli-retry', { RELEASE_TAG: releaseTag, GITHUB_RUN_ATTEMPT: '2', TEST_NPM_VERSION: cli.version, ...extra });
+  };
+  for (const { remote, complete } of [
+    { remote: [], complete: false },
+    { remote: assets.slice(0, 1), complete: false },
+    { remote: [assets[0], { ...assets[1], state: 'starter' }], complete: false },
+    { remote: assets, complete: true },
+  ]) {
+    state.releases[releaseTag].assets = remote;
+    const result = check();
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(readFileSync(f.env.GITHUB_OUTPUT, 'utf8'), `complete=${complete}\n`);
+  }
+  for (const [extra, reason] of [
+    [{ TEST_NPM_VERSION: '2.0.1' }, /npm did not confirm/],
+    [{ TEST_NPM_VERSION: '' }, /npm view/],
+    [{ RELEASE_TAG: `${cli.name}@2.0.1` }, /does not match the release plan/],
+    [{ GITHUB_RUN_ATTEMPT: '1' }, /requires a rerun/],
+  ]) {
+    const result = check(extra);
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, reason);
+    assert.equal(readFileSync(f.env.GITHUB_OUTPUT, 'utf8'), '');
+  }
+  state.tags[releaseTag] = otherSha;
+  assert.match(check().stderr, /another commit/);
+  delete state.tags[releaseTag];
+  assert.match(check().stderr, /Missing tag/);
+});
+
+void test('desktop only defers pnpm cache writes for a new CLI release, not a previously tagged version', () => {
+  const f = fixture();
+  const git = (...args) => {
+    const result = spawnSync('git', args, { cwd: f.dir, encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+    return result.stdout.trim();
+  };
+  git('init', '--quiet');
+  const outputFor = (tag) => `tag=${tag}\ntargets=["darwin-arm64","darwin-x64","linux-arm64","linux-x64","win32-arm64","win32-x64"]\n`;
+  assert.equal(run(f, 'plan-cli').status, 0);
+  assert.equal(readFileSync(f.env.GITHUB_OUTPUT, 'utf8'), outputFor(''));
+
+  const { cli, plan, planFile } = addCliToPlan(f);
+  writeFileSync(f.env.GITHUB_OUTPUT, '');
+  assert.equal(run(f, 'plan-cli').status, 0);
+  assert.equal(readFileSync(f.env.GITHUB_OUTPUT, 'utf8'), outputFor(`${cli.name}@${cli.version}`));
+
+  git('-c', 'user.name=Test', '-c', 'user.email=test@example.com', '-c', 'commit.gpgSign=false', 'commit', '--allow-empty', '--quiet', '-m', 'prior release');
+  git('-c', 'tag.gpgSign=false', 'tag', `${cli.name}@${cli.version}`);
+  writeFileSync(f.env.GITHUB_OUTPUT, '');
+  assert.equal(run(f, 'plan-cli').status, 0);
+  assert.equal(readFileSync(f.env.GITHUB_OUTPUT, 'utf8'), outputFor(''));
+
+  writeFileSync(planFile, JSON.stringify({ ...plan, packages: [cli] }));
+  writeFileSync(f.env.GITHUB_OUTPUT, '');
+  assert.equal(run(f, 'plan-cli', { GITHUB_SHA: git('rev-parse', 'HEAD') }).status, 0);
+  assert.equal(readFileSync(f.env.GITHUB_OUTPUT, 'utf8'), outputFor(`${cli.name}@${cli.version}`));
+});
+
+void test('only CLI-only installs opt out of the Electron rebuild', () => {
+  const f = fixture();
+  const marker = join(f.dir, 'electron-rebuilt');
+  const bin = join(f.dir, 'bin', process.platform === 'win32' ? 'electron-rebuild.cmd' : 'electron-rebuild');
+  writeFileSync(bin, process.platform === 'win32' ? '@echo off\r\ntype nul > "%REBUILD_MARKER%"\r\n' : '#!/bin/sh\ntouch "$REBUILD_MARKER"\n', { mode: 0o755 });
+  const script = fileURLToPath(new URL('../apps/desktop/scripts/rebuild-native.mjs', import.meta.url));
+  for (const skip of ['1', '']) {
+    const result = spawnSync(process.execPath, [script], { env: { ...f.env, REBUILD_MARKER: marker, KIMI_SKIP_DESKTOP_PTY_REBUILD: skip } });
+    assert.equal(result.status, 0, result.stderr.toString());
+    if (skip === '1') assert.throws(() => readFileSync(marker), { code: 'ENOENT' });
+    else assert.equal(readFileSync(marker).length, 0);
+  }
+});
+
 void test('workflow release titles use product names and full versions', () => {
   const workflow = (name) => readFileSync(fileURLToPath(new URL(`../.github/workflows/${name}`, import.meta.url)), 'utf8');
   const stable = workflow('release.yml');

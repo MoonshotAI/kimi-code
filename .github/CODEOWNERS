@@ -15,3 +15,5 @@
 /tests/scenarios/replay.test.ts @RealKai42 @wbxl2000 @liruifengv
 /packages/app-core/test/replay/first-turn.test.ts @RealKai42 @wbxl2000 @liruifengv
 /tests/scenarios/cold-recovery.test.ts @RealKai42 @wbxl2000 @liruifengv
+/tests/e2e/ @RealKai42 @wbxl2000 @liruifengv
+/scripts/checks/e2e-boundary.* @RealKai42 @wbxl2000 @liruifengv

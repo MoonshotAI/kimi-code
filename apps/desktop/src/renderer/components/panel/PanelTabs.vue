@@ -575,7 +575,7 @@ watch(
   min-width: 0;
   min-height: 0;
   width: 0;
-  background: var(--bg);
+  background: var(--color-bg);
   overflow: hidden;
   position: relative;
 }
@@ -633,7 +633,7 @@ watch(
 }
 .global-preview:not(.mobile) .pt-shell {
   width: var(--preview-w);
-  border-left: var(--p-hairline) solid var(--line);
+  border-left: var(--p-hairline) solid var(--color-line);
 }
 .global-preview:not(.mobile).expanded .pt-shell {
   width: auto;

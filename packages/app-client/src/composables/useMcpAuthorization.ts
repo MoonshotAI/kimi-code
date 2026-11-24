@@ -1,5 +1,9 @@
 import { reactive } from 'vue';
-import type { AppMcpAuthState } from '@moonshot-ai/app-core/api';
+import type {
+  AppMcpAuthState,
+  AppMcpAuthStatus,
+  AppPluginCapabilities,
+} from '@moonshot-ai/app-core/api';
 import { getKimiWebApi } from '../client/deps';
 
 export interface McpAuthorizationTarget {
@@ -66,10 +70,53 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-async function refresh(): Promise<void> {
+interface PluginAuthorizationSnapshot {
+  capabilities: AppPluginCapabilities;
+  statuses: AppMcpAuthStatus[];
+}
+
+async function inspectPluginAuthorization(pluginId: string): Promise<PluginAuthorizationSnapshot> {
+  const [capabilities, offlineStatuses] = await Promise.all([
+    getKimiWebApi().getPluginInfo(pluginId),
+    getKimiWebApi().getMcpAuthStatuses(),
+  ]);
+  const remoteServers = capabilities.mcpServers.filter(
+    (item) => item.enabled && item.transport !== 'stdio',
+  );
+  if (remoteServers.length === 0) return { capabilities, statuses: offlineStatuses };
+  const inspections = await getKimiWebApi().inspectMcpAuthStatuses(
+    remoteServers.map((item) => ({
+      source: 'plugin',
+      pluginId,
+      serverName: item.name,
+    })),
+  );
+  const inspectedByName = new Map(
+    inspections.map((item) => [item.name, item.authStatus]),
+  );
+  const offlineByName = new Map(
+    offlineStatuses.map((item) => [item.name, item.authStatus]),
+  );
+  const statuses = capabilities.mcpServers.map((item) => {
+    const inspected = inspectedByName.get(item.runtimeName);
+    const offline = offlineByName.get(item.runtimeName);
+    if (inspected === 'not-applicable' && offline === 'oauth-required') {
+      return { name: item.runtimeName, authStatus: offline };
+    }
+    const authStatus = inspected === undefined || inspected === 'unavailable'
+      ? offline ?? 'unavailable'
+      : inspected;
+    return { name: item.runtimeName, authStatus };
+  });
+  return { capabilities, statuses };
+}
+
+async function refresh(pluginId?: string): Promise<void> {
   const generation = ++refreshGeneration;
   try {
-    const statuses = await getKimiWebApi().getMcpAuthStatuses();
+    const statuses = pluginId === undefined
+      ? await getKimiWebApi().getMcpAuthStatuses()
+      : (await inspectPluginAuthorization(pluginId)).statuses;
     if (generation !== refreshGeneration) return;
     for (const key of Object.keys(states)) states[key]!.discoveryError = undefined;
     for (const item of statuses) {
@@ -386,7 +433,7 @@ export function useMcpAuthorization() {
           openBlocked: undefined,
           cancelled: true,
         };
-        await refresh().catch(() => undefined);
+        await refresh(target.pluginId).catch(() => undefined);
       } catch (error) {
         states[target.runtimeName] = {
           ...states[target.runtimeName],
@@ -406,10 +453,7 @@ export function useMcpAuthorization() {
   async function authorizePlugin(pluginId: string): Promise<void> {
     states[pluginId] = { ...states[pluginId], phase: 'idle', discoveryError: undefined };
     try {
-      const [capabilities, statuses] = await Promise.all([
-        getKimiWebApi().getPluginInfo(pluginId),
-        getKimiWebApi().getMcpAuthStatuses(),
-      ]);
+      const { capabilities, statuses } = await inspectPluginAuthorization(pluginId);
       const required = new Set(
         statuses
           .filter((item) => item.authStatus === 'oauth-required' || item.authStatus === 'oauth-expired')

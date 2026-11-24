@@ -6,7 +6,7 @@ import type { ToolExecutionResponse, ToolResult } from '#/tool/types';
 import type { WaitOpts } from '#/utils/wait';
 import type { CreateLoopOptions, Loop, LoopToolExecutor } from './create-loop';
 import type { LoopInput, UnfinishedTurn } from './contract/command';
-import type { LoopAck, LoopEmitted } from './contract/emitted';
+import type { LoopAck, LoopEmitted, LoopEndOutcome } from './contract/emitted';
 import type { HookPoint, LoopHooks } from './contract/hook';
 import type { Inbox, QueuedItem, RemindMessage } from './contract/inbox';
 import {
@@ -305,9 +305,6 @@ class LoopActor implements Loop {
   private readonly detachedCloseWaiters = new Set<() => void>();
   private closeFailure: { readonly error: unknown } | undefined;
   private completionHandoff = false;
-  private lifecycleGeneration = 0;
-  private lifecycleDrained = false;
-  private lifecycleIdle = false;
 
   constructor(options: CreateLoopOptions) {
     const input = options.input ?? {};
@@ -364,7 +361,6 @@ class LoopActor implements Loop {
         }
         this.schedule(ctrl);
       },
-      onIdle: () => this.settleLifecycle(),
       onClose: (ctrl) => this.closeRuntime(ctrl),
       isIdle: (state) => state.status === 'idle' && !this.hasPendingCompletions && !this.canSchedule(state),
     });
@@ -384,10 +380,13 @@ class LoopActor implements Loop {
       extensions: this.hook,
       read: () => ({ messages: this.durable.messages, profile: this.durable.profile }),
       emit: (event) => {
-        this.record(event);
         if (event.type === 'turn.ended' && this.turn?.machine.id === event.turnId) {
+          const loopEnd = this.postTurnLoopEnd(this.turn, event.outcome);
+          this.record(loopEnd === undefined ? event : { ...event, loopEnd });
           this.finishTurn(this.turn, event.outcome);
+          return;
         }
+        this.record(event);
       },
       transition: (run) => this.transition(run),
       report: (point, event, reports, notify) => {
@@ -468,18 +467,6 @@ class LoopActor implements Loop {
   }
 
   private record<E extends LoopEmitted>(event: E): E {
-    if (
-      event.type === 'prompt.submitted' ||
-      event.type === 'prompt.notified' ||
-      event.type === 'prompt.reminded' ||
-      event.type === 'turn.started' ||
-      event.type === 'turn.resumed' ||
-      (event.type === 'tool.ended' && event.detached)
-    ) {
-      if (this.lifecycleDrained) this.lifecycleGeneration += 1;
-      this.lifecycleDrained = false;
-      this.lifecycleIdle = false;
-    }
     if (this.actor.closed) return event;
     return this.actor.act((ctrl) => ctrl.emit(event));
   }
@@ -488,19 +475,15 @@ class LoopActor implements Loop {
     return this.actor.act(() => run());
   }
 
-  private settleLifecycle(): void {
-    const idle = !this.hasActiveBackgroundTasks;
-    if (!idle) this.lifecycleIdle = false;
-    const publishDrained = this.open() && !this.lifecycleDrained;
-    const publishIdle = this.open() && idle && this.lifecycleDrained && !this.lifecycleIdle;
-    if (publishDrained) {
-      this.lifecycleDrained = true;
-      this.record({ type: 'loop.drained', generation: this.lifecycleGeneration });
-    }
-    if (publishIdle) {
-      this.lifecycleIdle = true;
-      this.record({ type: 'loop.idle', generation: this.lifecycleGeneration });
-    }
+  private postTurnLoopEnd(turn: RunningTurn, outcome: TurnOutcome): { outcome: LoopEndOutcome } | undefined {
+    const held = outcome.type === 'aborted' && turn.continueAfterAbort === true ? false : this.held;
+    return this.settleLoopEnd(held);
+  }
+
+  private settleLoopEnd(held: boolean): { outcome: LoopEndOutcome } | undefined {
+    if (!this.open() || this.hasPendingCompletions) return undefined;
+    if (!held && this.mailbox.hasTrigger) return undefined;
+    return { outcome: this.hasActiveBackgroundTasks ? 'drained' : 'idle' };
   }
 
   private get hasPendingCompletions(): boolean {
@@ -536,13 +519,12 @@ class LoopActor implements Loop {
 
   private schedule(ctrl: LoopControl): boolean {
     if (!this.canSchedule(ctrl.state)) return false;
-    this.closeUnfinished();
-    if (!this.mailbox.hasTrigger) {
+    const next = this.mailbox.hasTrigger ? this.mailbox.take(this.durable.nextTurnId) : undefined;
+    this.closeUnfinished(next !== undefined);
+    if (next === undefined) {
       this.flushReminders();
       return true;
     }
-    const next = this.mailbox.take(this.durable.nextTurnId);
-    if (next === undefined) return false;
     this.activate(ctrl, next);
     return true;
   }
@@ -874,7 +856,7 @@ class LoopActor implements Loop {
       }
       return this.actor.act((ctrl) => {
         const completion = deferred<TurnOutcome>();
-        this.closeUnfinished();
+        this.closeUnfinished(true);
         const turn = this.activate(ctrl, {
           id: this.durable.nextTurnId,
           kind: 'prompt',
@@ -976,7 +958,9 @@ class LoopActor implements Loop {
 
   private requestAbort(turn: RunningTurn | undefined, reason: unknown, continueAfterAbort: boolean): void {
     if (turn === undefined) {
-      if (this.phase === 'idle') this.closeUnfinished();
+      if (this.phase === 'idle') {
+        this.closeUnfinished(this.settleLoopEnd(this.held) === undefined);
+      }
       return;
     }
     if (!this.isCurrent(turn)) return;
@@ -1131,12 +1115,20 @@ class LoopActor implements Loop {
     if (unfinished.stepUnfinished) this.record({ type: 'step.ended', turnId, step, outcome });
   }
 
-  private closeUnfinished(): void {
+  private closeUnfinished(followedByWork: boolean): void {
     const unfinished = this.durable.unfinished;
     if (unfinished === undefined) return;
     const outcome = { type: 'aborted' as const, reason: CRASHED };
     this.settleUnfinished(outcome);
-    this.record({ type: 'turn.ended', turnId: unfinished.turnId, outcome });
+    const loopEnd = followedByWork
+      ? undefined
+      : { outcome: this.hasActiveBackgroundTasks ? 'drained' as const : 'idle' as const };
+    this.record({
+      type: 'turn.ended',
+      turnId: unfinished.turnId,
+      outcome,
+      ...(loopEnd === undefined ? {} : { loopEnd }),
+    });
   }
 
   private continueTurn(ctrl: LoopControl, force: boolean): void {
@@ -1155,8 +1147,9 @@ class LoopActor implements Loop {
       });
       return;
     }
-    this.closeUnfinished();
-    if (!this.mailbox.hasTrigger && (force || canContinue(this.durable.messages))) {
+    const continues = !this.mailbox.hasTrigger && (force || canContinue(this.durable.messages));
+    this.closeUnfinished(this.mailbox.hasTrigger || continues);
+    if (continues) {
       this.activate(ctrl, {
         id: this.durable.nextTurnId,
         kind: 'continue',

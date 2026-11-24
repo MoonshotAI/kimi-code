@@ -19,6 +19,14 @@ export function sessionInfoPanelVisible(input: {
   return input.enabled && input.eligible && input.activeSessionId !== undefined;
 }
 
+function trailingSpace(element: HTMLElement): number {
+  const parent = element.parentElement;
+  if (!parent) return 0;
+  const rect = element.getBoundingClientRect();
+  if (rect.width === 0) return 0;
+  return Math.max(0, parent.getBoundingClientRect().right - rect.right);
+}
+
 export function useSessionInfoLayout(input: {
   host: Ref<HTMLElement | null>;
   activeSessionId: Ref<string | undefined>;
@@ -29,15 +37,24 @@ export function useSessionInfoLayout(input: {
   const rightPanelCollapsed = ref(false);
   const floatingExpanded = ref(false);
   const hostWidth = ref(0);
+  const unobstructedWidth = ref(0);
   let observer: ResizeObserver | null = null;
+
+  function measure(element: HTMLElement, width: number): void {
+    hostWidth.value = width;
+    unobstructedWidth.value = width + trailingSpace(element);
+  }
 
   watch(input.host, (element) => {
     observer?.disconnect();
     observer = null;
-    hostWidth.value = element?.clientWidth ?? 0;
-    if (element && typeof ResizeObserver === 'function') {
+    hostWidth.value = 0;
+    unobstructedWidth.value = 0;
+    if (!element) return;
+    measure(element, element.clientWidth);
+    if (typeof ResizeObserver === 'function') {
       observer = new ResizeObserver((entries) => {
-        hostWidth.value = entries[0]?.contentRect.width ?? element.clientWidth;
+        measure(element, entries[0]?.contentRect.width ?? element.clientWidth);
       });
       observer.observe(element);
     }
@@ -52,7 +69,9 @@ export function useSessionInfoLayout(input: {
     observer = null;
   });
 
-  const mode = computed<SessionInfoMode>(() => sessionInfoModeForWidth(hostWidth.value));
+  const mode = computed<SessionInfoMode>(() => sessionInfoModeForWidth(
+    input.rightPanelOpen.value ? hostWidth.value : unobstructedWidth.value,
+  ));
   watch(mode, () => {
     floatingExpanded.value = false;
   }, { flush: 'sync' });

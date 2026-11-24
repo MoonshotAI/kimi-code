@@ -195,6 +195,7 @@ export function createScrollController(adapter: ScrollAdapter, overrides: Partia
   let touchActive = false;
   let touching = false;
   let touchScrolled = false;
+  let touchSettled = false;
   let scrollInput = false;
   let restoring = false;
   let animation: Animation | null = null;
@@ -364,7 +365,7 @@ export function createScrollController(adapter: ScrollAdapter, overrides: Partia
   }
 
   function adoptClamp(): boolean {
-    if ((!restoring && state.mode.kind !== 'navigating') || scrollInput || dragging || touching) return false;
+    if ((!restoring && state.mode.kind !== 'navigating' && !animation) || scrollInput || dragging || touching) return false;
     expectedTop = scroller.scrollTop;
     return true;
   }
@@ -384,7 +385,10 @@ export function createScrollController(adapter: ScrollAdapter, overrides: Partia
   function handleScroll(layout = false): void {
     const top = scroller.scrollTop;
     if (!isUnexpectedScroll(top, expectedTop) || adoptClamp()) return;
-    if (touching) touchScrolled = true;
+    if (touching) {
+      touchScrolled = true;
+      touchSettled = false;
+    }
     const max = maxTop();
     if (top < expectedTop && !dragging && (top >= max - 1 || (layout && followClamp(top)))) {
       expectedTop = top;
@@ -440,20 +444,24 @@ export function createScrollController(adapter: ScrollAdapter, overrides: Partia
         return;
       case 'touch-start':
         touching = touchActive = true;
-        touchScrolled = false;
+        touchScrolled = touchSettled = false;
         if (animation || state.mode.kind === 'navigating') interrupt();
         break;
       case 'touch-end':
         if (!touchActive) return;
         touchActive = false;
-        if (!touchScrolled || !options.supportsScrollEnd) {
+        if (!touchScrolled || touchSettled || !options.supportsScrollEnd) {
           touching = false;
           correct('touch-end');
           return;
         }
         break;
       case 'scroll-end':
-        if (!touching || touchActive) return;
+        if (!touching) return;
+        if (touchActive) {
+          touchSettled = true;
+          return;
+        }
         touching = false;
         correct('scroll-end');
         return;
@@ -550,8 +558,13 @@ export function createScrollController(adapter: ScrollAdapter, overrides: Partia
     }
   }
 
+  function abandonTouch(): void {
+    touching = touchActive = false;
+  }
+
   function follow(opts: { smooth?: boolean } = {}): void {
     if (disposed) return;
+    abandonTouch();
     cancelAnimation();
     finishNavigation();
     held = null;
@@ -566,6 +579,7 @@ export function createScrollController(adapter: ScrollAdapter, overrides: Partia
 
   function navigate(path: AnchorPath, opts: NavigateOptions = {}): Promise<void> {
     if (disposed) return Promise.resolve();
+    abandonTouch();
     cancelAnimation();
     finishNavigation();
     held = null;

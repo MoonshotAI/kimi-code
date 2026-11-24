@@ -57,6 +57,7 @@ export { default as WorkspaceRecentSessions } from './chat/WorkspaceRecentSessio
 export { default as SelectionActionBubble } from './chat/SelectionActionBubble.vue';
 export { default as TableSelectionContextMenu } from './chat/TableSelectionContextMenu.vue';
 export { default as SideChatPanel } from './chat/SideChatPanel.vue';
+export { default as JumpToBottomPill } from './chat/JumpToBottomPill.vue';
 export { default as StatusGlyph } from './chat/StatusGlyph.vue';
 export { default as StatusPanel } from './chat/StatusPanel.vue';
 export { default as ThinkingBlock } from './chat/ThinkingBlock.vue';
@@ -118,6 +119,7 @@ export { default as AddProviderPage } from './settings/AddProviderPage.vue';
 export { default as BrowserTabTitleSetting } from './settings/BrowserTabTitleSetting.vue';
 export { default as FontSettingsPage } from './settings/FontSettingsPage.vue';
 export { default as FontSettingsRow } from './settings/FontSettingsRow.vue';
+export { default as GlobalAgentsMdSetting } from './settings/GlobalAgentsMdSetting.vue';
 export { default as SettingsSubpage } from './settings/SettingsSubpage.vue';
 export {
   SettingsSubpageHostKey,

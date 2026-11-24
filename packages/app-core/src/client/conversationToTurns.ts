@@ -25,6 +25,7 @@ import {
   withReadMediaDetails,
 } from './toolCalls';
 import type { ChatTurn, TaskNotification, ToolCall, ToolMedia, TurnAttachment, TurnBlock } from './types';
+import { mcpAuthCardOf } from './mcpAuthCard';
 import { inlineReferencedIndexes } from './userMessageText';
 
 export interface ConversationProjectionOptions {
@@ -549,6 +550,7 @@ function toolCallOf(item: ToolCallItem, options: ConversationProjectionOptions):
     id: item.item_id,
     name: item.name,
     arg: typeof input === 'string' ? input : JSON.stringify(input),
+    mcpAuth: mcpAuthCardOf(item),
     status: !ended ? 'running' : item.outcome === 'failed' ? 'error' : item.outcome === 'interrupted' ? 'cancelled' : 'ok',
     autoReviewing: !ended && item.stage === 'auto_review' ? true : undefined,
     agentId:

@@ -1262,6 +1262,11 @@ export const WIRE_RENDERERS: RendererMap = {
             {r.reason}
           </Pill>
           {r.durationMs !== undefined ? <Dim>{r.durationMs}ms</Dim> : null}
+          {r.loopEnd !== undefined ? (
+            <Pill tone={r.loopEnd.outcome === 'idle' ? 'success' : 'warning'} variant="soft">
+              loop {r.loopEnd.outcome}
+            </Pill>
+          ) : null}
           {r.stopReason !== undefined ? (
             <span className="truncate text-fg-3" title={r.stopReason}>
               {truncate(r.stopReason, 80)}

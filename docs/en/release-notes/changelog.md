@@ -6,6 +6,12 @@ outline: 2
 
 This page documents the changes in each Kimi Code CLI release.
 
+## 2.7.3 (2026-11-24)
+
+### Bug Fixes
+
+- Fix sessions that could not open after their model became unavailable.
+
 ## 2.7.2 (2026-11-20)
 
 ### Bug Fixes

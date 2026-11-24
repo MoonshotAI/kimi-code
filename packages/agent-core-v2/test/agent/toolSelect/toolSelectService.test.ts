@@ -44,7 +44,11 @@ import { memoryOutputStore } from '#/tool/executor';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { AgentToolRegistryService } from '#/agent/toolRegistry/toolRegistryService';
 import { DYNAMIC_TOOL_SCHEMA_VARIANT, LOADABLE_TOOLS_VARIANT } from '#/agent/toolSelect/dynamicTools';
-import { IAgentToolSelectService, SELECT_TOOLS_TOOL_NAME } from '#/agent/toolSelect/toolSelect';
+import {
+  IAgentToolSelectService,
+  SELECT_TOOLS_TOOL_NAME,
+  type ToolSelectAnnouncement,
+} from '#/agent/toolSelect/toolSelect';
 import { IAgentToolSelectAnnouncementsService } from '#/agent/toolSelect/toolSelectAnnouncements';
 import { AgentToolSelectAnnouncementsService } from '#/agent/toolSelect/toolSelectAnnouncementsService';
 import { AgentToolSelectService } from '#/agent/toolSelect/toolSelectService';
@@ -220,6 +224,8 @@ class RecordingEventBus implements IEventBus {
 class FakeLoopService extends StubEffectiveProfileReader implements IAgentLoopService {
   readonly _serviceBrand = undefined;
   readonly requester = {} as IAgentLoopService['requester'];
+  readonly started = false;
+  readonly hasPersistedState = false;
 
   async start(): Promise<void> {}
 
@@ -586,6 +592,10 @@ function announcementText(message: ContextMessage): string {
   return message.content.map((part) => (part.type === 'text' ? part.text : '')).join('');
 }
 
+function renderedAnnouncementText(announcement: ToolSelectAnnouncement | undefined): string {
+  return announcement?.content.map((part) => part.type === 'text' ? part.text : '').join('') ?? '';
+}
+
 function isNewAnnouncement(message: ContextMessage): boolean {
   return message.origin?.kind === 'injection' && message.origin.variant === LOADABLE_TOOLS_VARIANT;
 }
@@ -919,8 +929,8 @@ describe('AgentToolSelectService view shaping (gate open)', () => {
       expect(top.some((tool) => tool.name === MCP_ALPHA)).toBe(false);
       expect(current.sut.load([name])).toMatchObject({ alreadyCallable: [name], toLoad: [], schemas: [] });
       const announcement = current.sut.loadableToolsAnnouncement(firstAnnouncement?.disclosure);
-      expect(announcement?.content).toContain('LateTool');
-      expect(announcement?.content).not.toContain(name);
+      expect(renderedAnnouncementText(announcement)).toContain('LateTool');
+      expect(renderedAnnouncementText(announcement)).not.toContain(name);
       const legacy = current.sut.loadableToolsAnnouncement()?.disclosure;
       expect(legacy?.kind).toBe('delta');
       if (legacy?.kind !== 'delta') throw new Error('expected a legacy loading correction');
@@ -954,32 +964,57 @@ describe('AgentToolSelectService view shaping (gate open)', () => {
     registration.dispose();
     await h.sut.prepareForRequest();
     const next = h.sut.loadableToolsAnnouncement(initial?.disclosure);
-    expect(next?.content).toContain(`<tools_removed>\n${USER_INLINE}\n</tools_removed>`);
+    expect(renderedAnnouncementText(next)).toContain(`<tools_removed>\n${USER_INLINE}\n</tools_removed>`);
   });
 
-  it('keeps the first schema and converts changed duplicates to reminders', async () => {
+  it('announces unload/load replacements and gates execution until reselection', async () => {
     const h = createExecutorHarness();
     const original = new StubMcpTool(MCP_ALPHA);
-    const registration = registerMcp(h, original);
-    await h.sut.prepareForRequest();
+    registerMcp(h, original);
+    expect(await announce(h)).toContain(`<tools_added>\n${MCP_ALPHA}\n</tools_added>`);
     const originalSchemaMessage = schemaMessage(MCP_ALPHA);
     h.contextMemory.messages.push(originalSchemaMessage);
-    h.contextMemory.messages.push({
-      role: 'system',
-      content: [{ type: 'text', text: 'keep body' }],
-      tools: [{ name: MCP_ALPHA, description: original.description, parameters: original.parameters }],
-      origin: { kind: 'injection', variant: DYNAMIC_TOOL_SCHEMA_VARIANT },
+
+    const updated = new StubMcpTool(MCP_ALPHA, 'updated ok', REQUIRED_PAYLOAD_PARAMETERS);
+    registerMcp(h, updated);
+    const deltaText = await announce(h, 2);
+    expect(deltaText).toContain(`<tools_removed>\n${MCP_ALPHA}\n</tools_removed>`);
+    expect(deltaText).toContain(`<tools_added>\n${MCP_ALPHA}\n</tools_added>`);
+    const delta = h.contextMemory.history().at(-1)!;
+    expect(delta.content[0]).toMatchObject({
+      type: 'text',
+      text: deltaText,
+      meta: { kind: 'tool_lifecycle', added: [MCP_ALPHA], removed: [MCP_ALPHA] },
     });
-    registration.dispose();
-    const updated = new StubMcpTool(MCP_ALPHA, 'ok', REQUIRED_PAYLOAD_PARAMETERS);
-    const updatedRegistration = registerMcp(h, updated);
-    await h.sut.prepareForRequest();
-    h.contextMemory.landAnnouncement(`<tools_removed>\n${MCP_ALPHA}\n</tools_removed>`);
-    expect(h.sut.shapeHistory(h.contextMemory.history())).toHaveLength(3);
+    expect(h.ix.get(IAgentStateService).get(toolSelectKey).changes.at(-1)).toMatchObject({
+      added: [{ name: MCP_ALPHA, parameters: updated.parameters }],
+      removed: [{ name: MCP_ALPHA, parameters: original.parameters }],
+    });
+
+    const rejected = await execute(h, toolCall('call-before-reload', MCP_ALPHA));
+    expect(rejected[0]?.result).toMatchObject({
+      isError: true,
+      output: `Tool "${MCP_ALPHA}" has a schema update. Use select_tools to load the updated schema before calling it again.`,
+    });
+    expect(updated.calls).toBe(0);
+
+    capabilities = makeCapabilities({ tool_use: true, dynamically_loaded_tools: false });
+    const nonDynamic = await execute(h, toolCall('call-non-dynamic', MCP_ALPHA, { payload: 'value' }));
+    expect(nonDynamic[0]?.result).toMatchObject({ output: 'updated ok' });
+    expect(updated.calls).toBe(1);
+    capabilities = makeCapabilities({ tool_use: true, dynamically_loaded_tools: true });
+
+    const selection = h.sut.load([MCP_ALPHA]);
+    expect(selection.toLoad).toEqual([MCP_ALPHA]);
+    expect(selection.schemas).toEqual([{
+      name: MCP_ALPHA,
+      description: updated.description,
+      parameters: updated.parameters,
+    }]);
     h.contextMemory.messages.push({
       role: 'system',
       content: [],
-      tools: [{ name: MCP_ALPHA, description: updated.description, parameters: updated.parameters }],
+      tools: [...selection.schemas],
       origin: { kind: 'injection', variant: DYNAMIC_TOOL_SCHEMA_VARIANT },
     });
     const resolved = await resolveWith(h, {
@@ -987,55 +1022,120 @@ describe('AgentToolSelectService view shaping (gate open)', () => {
       tools: [],
       capabilities,
     });
-    expect(resolved.profile?.tools).toEqual([]);
-    expect(resolved.content.messages).toHaveLength(4);
-    expect(resolved.content.messages[0]).toBe(originalSchemaMessage);
     expect(resolved.content.messages.flatMap((message) => toolsOf(message) ?? []).map((tool) => tool.parameters))
-      .toEqual([original.parameters]);
-    expect(resolved.content.messages).toContainEqual({
-      role: 'system',
-      content: [{ type: 'text', text: 'keep body' }],
-      origin: { kind: 'injection', variant: DYNAMIC_TOOL_SCHEMA_VARIANT },
-    });
-    expect(resolved.content.messages).toContainEqual({
-      role: 'system',
-      content: [{
-        type: 'text',
-        text: `<system-reminder>\nTool "${MCP_ALPHA}" has a schema update, but applying schema updates is not supported in this session. Start a new session to use the updated schema.\n</system-reminder>`,
-      }],
-      origin: { kind: 'injection', variant: DYNAMIC_TOOL_SCHEMA_VARIANT },
-    });
+      .toEqual([original.parameters, updated.parameters]);
     expect(h.contextMemory.history()).toHaveLength(4);
 
-    capabilities = makeCapabilities({ tool_use: true, dynamically_loaded_tools: false });
-    const nonDynamic = await execute(h, toolCall('call-non-dynamic', MCP_ALPHA, { payload: 'value' }));
-    expect(nonDynamic).toHaveLength(1);
-    expect(nonDynamic[0]?.result.isError).not.toBe(true);
-    capabilities = makeCapabilities({ tool_use: true, dynamically_loaded_tools: true });
-
-    const rejected = await execute(h, toolCall('call-updated', MCP_ALPHA));
-    expect(rejected).toHaveLength(1);
-    expect(rejected[0]?.result).toMatchObject({
-      isError: true,
-      output: `Tool "${MCP_ALPHA}" has a schema update, but applying schema updates is not supported in this session. Start a new session to use the updated schema.`,
+    const encoded = kimiOpenAIProtocol.encode({
+      model: { spec: { provider: 'kimi', name: 'test-model', capability: capabilities } },
+      profile: resolved.profile ?? {},
+      content: resolved.content,
+      options: undefined,
+    });
+    const deltaIndex = encoded.params.messages.findIndex((message) => message.content === deltaText);
+    expect(deltaIndex).toBeGreaterThan(0);
+    expect(encoded.params.messages[deltaIndex - 1]).toMatchObject({
+      role: 'system',
+      tools: [{ function: { name: MCP_ALPHA, description: original.description } }],
+    });
+    expect(encoded.params.messages[deltaIndex + 1]).toEqual({ role: 'system', unload_tools: [MCP_ALPHA] });
+    expect(encoded.params.messages[deltaIndex + 2]).toMatchObject({
+      role: 'system',
+      tools: [{ function: { name: MCP_ALPHA, description: updated.description } }],
     });
 
-    updatedRegistration.dispose();
+    const accepted = await execute(h, toolCall('call-after-reload', MCP_ALPHA, { payload: 'value' }));
+    expect(accepted[0]?.result).toMatchObject({ output: 'updated ok' });
+    expect(updated.calls).toBe(2);
+    expect(original.calls).toBe(0);
+
+    const third = new StubMcpTool(MCP_ALPHA, 'third ok', {
+      type: 'object',
+      properties: { payload: { type: 'string' }, extra: { type: 'string' } },
+      required: ['payload', 'extra'],
+      additionalProperties: false,
+    });
+    registerMcp(h, third);
+    expect(await announce(h, 3)).toContain(`<tools_removed>\n${MCP_ALPHA}\n</tools_removed>`);
+    h.contextMemory.messages.push({
+      role: 'system',
+      content: [],
+      tools: [...h.sut.load([MCP_ALPHA]).schemas],
+      origin: { kind: 'injection', variant: DYNAMIC_TOOL_SCHEMA_VARIANT },
+    });
+    const thirdAccepted = await execute(
+      h,
+      toolCall('call-third', MCP_ALPHA, { payload: 'value', extra: 'next' }),
+    );
+    expect(thirdAccepted[0]?.result).toMatchObject({ output: 'third ok' });
+    expect(third.calls).toBe(1);
+
     registerMcp(h, original);
-    await h.sut.prepareForRequest();
-    h.contextMemory.messages.push(schemaMessage(MCP_ALPHA));
+    expect(await announce(h, 4)).toContain(`<tools_added>\n${MCP_ALPHA}\n</tools_added>`);
+    h.contextMemory.messages.push({
+      role: 'system',
+      content: [],
+      tools: [...h.sut.load([MCP_ALPHA]).schemas],
+      origin: { kind: 'injection', variant: DYNAMIC_TOOL_SCHEMA_VARIANT },
+    });
     const reverted = await resolveWith(h, {
       messages: h.contextMemory.history(),
       tools: [],
       capabilities,
     });
-    expect(reverted.content.messages[0]).toBe(originalSchemaMessage);
     expect(reverted.content.messages.flatMap((message) => toolsOf(message) ?? []).map((tool) => tool.parameters))
+      .toEqual([original.parameters, updated.parameters, third.parameters, original.parameters]);
+    const revertedWire = kimiOpenAIProtocol.encode({
+      model: { spec: { provider: 'kimi', name: 'test-model', capability: capabilities } },
+      profile: reverted.profile ?? {},
+      content: reverted.content,
+      options: undefined,
+    });
+    expect(revertedWire.params.messages.filter((message) => 'unload_tools' in message)).toEqual([
+      { role: 'system', unload_tools: [MCP_ALPHA] },
+      { role: 'system', unload_tools: [MCP_ALPHA] },
+      { role: 'system', unload_tools: [MCP_ALPHA] },
+    ]);
+    expect(JSON.stringify(reverted.content.messages)).not.toContain('not supported in this session');
+    const revertedAccepted = await execute(h, toolCall('call-reverted', MCP_ALPHA));
+    expect(revertedAccepted[0]?.result).toMatchObject({ output: 'mcp ok' });
+    expect(original.calls).toBe(1);
+
+    h.registry.unregister(MCP_ALPHA);
+    const removedText = await announce(h, 5);
+    expect(removedText).toContain(`<tools_removed>\n${MCP_ALPHA}\n</tools_removed>`);
+    expect(removedText).not.toContain('<tools_added>\n');
+    expect(h.contextMemory.history().at(-1)?.content[0]).toMatchObject({
+      meta: { kind: 'tool_lifecycle', added: [], removed: [MCP_ALPHA] },
+    });
+
+    const neverLoaded = createHarness();
+    registerMcp(neverLoaded, original);
+    await neverLoaded.sut.prepareForRequest();
+    registerMcp(neverLoaded, new StubMcpTool(MCP_ALPHA));
+    expect(await announce(neverLoaded, 2)).toBeUndefined();
+    registerMcp(neverLoaded, updated);
+    const neverLoadedDelta = await announce(neverLoaded, 3);
+    expect(neverLoadedDelta).toContain(`<tools_removed>\n${MCP_ALPHA}\n</tools_removed>`);
+    expect(neverLoadedDelta).toContain(`<tools_added>\n${MCP_ALPHA}\n</tools_added>`);
+    expect(neverLoaded.contextMemory.history().every((message) => toolsOf(message) === undefined)).toBe(true);
+
+    const legacy = h.sut.shapeHistory([
+      originalSchemaMessage,
+      {
+        role: 'system',
+        content: [{ type: 'text', text: 'keep body' }],
+        tools: [{ name: MCP_ALPHA, description: original.description, parameters: original.parameters }],
+      },
+      {
+        role: 'system',
+        content: [],
+        tools: [{ name: MCP_ALPHA, description: updated.description, parameters: updated.parameters }],
+      },
+    ]);
+    expect(legacy.flatMap((message) => toolsOf(message) ?? []).map((tool) => tool.parameters))
       .toEqual([original.parameters]);
-    expect(JSON.stringify(reverted.content.messages)).not.toContain('has a schema update');
-    const accepted = await execute(h, toolCall('call-reverted', MCP_ALPHA));
-    expect(accepted).toHaveLength(1);
-    expect(accepted[0]?.result.isError).not.toBe(true);
+    expect(legacy).toContainEqual({ role: 'system', content: [{ type: 'text', text: 'keep body' }] });
   });
 
   it.each(['inline', 'deferred', 'empty'] as const)('uses actual explicit %s tools when shaping historical definitions', async (mode) => {
@@ -1140,8 +1240,8 @@ describe('AgentToolSelectService view shaping (gate open)', () => {
     expect(byName.has(MCP_BETA)).toBe(false);
 
     const announcement = h.sut.loadableToolsAnnouncement();
-    expect(announcement?.content).toContain(MCP_BETA);
-    expect(announcement?.content).not.toContain(MCP_ALPHA);
+    expect(renderedAnnouncementText(announcement)).toContain(MCP_BETA);
+    expect(renderedAnnouncementText(announcement)).not.toContain(MCP_ALPHA);
   });
 
   it('defers only opted-in user tools and restores them after selection', () => {

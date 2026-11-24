@@ -1,5 +1,5 @@
 
-import { computed, h, reactive, ref, watch, type Component } from 'vue';
+import { computed, h, reactive, ref, watch, watchEffect, type Component } from 'vue';
 import { formatDuration as formatTaskDuration } from '@moonshot-ai/app-core/lib';
 import {
   getKimiWebApi,
@@ -8,6 +8,7 @@ import {
   notifySessionDestroyed,
   notifyWorkspaceDestroyed,
   openArchivedSettings,
+  openModelPicker,
   t,
   traceClientEvent,
   traceKeyEvent,
@@ -47,11 +48,17 @@ import { modelSwitchConfirmStore } from '../stores/modelSwitchConfirm';
 import { effortSwitchStore } from '../stores/effortSwitch';
 import { ackPlanPending, foldDaemonPlanMode } from '@moonshot-ai/app-core/lib';
 import {
+  composerSessionScope,
+  draftSnapshotStorageKey,
+  draftStorageKey,
+  safeGetJson,
   safeGetString,
   safeRemove,
   safeSetString,
   STORAGE_KEYS,
 } from '@moonshot-ai/app-core/lib';
+import { liveComposerEditorFor } from '@moonshot-ai/app-composer/runtime';
+import { createPromptPrediction } from './promptPrediction';
 import { sessionTasksToAppTasks, subagentDisplayName } from '@moonshot-ai/app-core/client';
 import {
   conversationTurnError,
@@ -86,6 +93,7 @@ import { createSessionSelection } from './sessionSelection';
 import { sessionReadScope, workspaceReadScope } from './observationScope';
 import { createSessionActions } from './sessionActions';
 import { usePromptPipeline } from './usePromptPipeline';
+import { createChatMcpAutoOpen } from '../composables/chatMcpAuthorization';
 import { useConfirmDialog } from '../composables/useConfirmDialog';
 import { persistComposerDraftSnapshot } from '../lib/composerDraftLifecycle';
 import { configureWorkspaceHooks } from '../lib/workspaceHooks';
@@ -245,6 +253,7 @@ const rawState: ExtendedState = reactive({
     warningsStore().setWarnings(next);
   },
   sessionStatusSettledBySession: {},
+  unavailableModelBySession: {},
   get serverVersion() {
     return configStore().serverVersion;
   },
@@ -476,10 +485,9 @@ function recoverStaleConnection(): void {
 
 if (typeof document !== 'undefined') {
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible') {
-      clearActiveUnread();
-      recoverStaleConnection();
-    }
+    if (document.visibilityState !== 'visible') return;
+    clearActiveUnread();
+    recoverStaleConnection();
   });
 }
 if (typeof window !== 'undefined') {
@@ -560,6 +568,11 @@ function whenSessionStatusSettled(sessionId: string): Promise<void> {
 }
 
 function applyMainAgentState(sessionId: string, state: AppAgentState): void {
+  if (state.model !== undefined && state.model !== '' && rawState.unavailableModelBySession?.[sessionId] !== undefined) {
+    const nextUnavailable = { ...rawState.unavailableModelBySession };
+    delete nextUnavailable[sessionId];
+    rawState.unavailableModelBySession = nextUnavailable;
+  }
   foldDaemonPlanMode(rawState, sessionId, state.planMode);
   foldDaemonSwarmMode(rawState, sessionId, state.swarmMode);
   foldDaemonTowerMode(rawState, sessionId, state.towerMode);
@@ -706,6 +719,44 @@ function hasPendingLocalWork(sessionId: string): boolean {
     (promptStore().optimisticMessagesBySession[sessionId] ?? []).length > 0
   );
 }
+
+function hasEmptyPromptPredictionInput(sessionId: string): boolean {
+  const editor = liveComposerEditorFor(composerSessionScope(sessionId));
+  if (editor !== undefined) {
+    return editor.getText().trim().length === 0 && editor.getAttachmentInventory().activeIds.size === 0;
+  }
+  if ((safeGetString(draftStorageKey(sessionId)) ?? '').trim().length > 0) return false;
+  const snapshot = safeGetJson<{ attachmentOrder?: unknown }>(draftSnapshotStorageKey(sessionId));
+  return !Array.isArray(snapshot?.attachmentOrder) || snapshot.attachmentOrder.length === 0;
+}
+
+function canUsePromptPrediction(sessionId: string): boolean {
+  return (
+    rawState.experimentalFlags?.['prompt_prediction'] === true &&
+    sessionId === rawState.activeSessionId &&
+    rawState.mainView === 'chat' &&
+    !rawState.sessionLoading &&
+    typeof document !== 'undefined' &&
+    document.visibilityState === 'visible' &&
+    !modeStore().planMode &&
+    !modeStore().planArmed &&
+    !modeStore().goalMode &&
+    !hasPendingLocalWork(sessionId) &&
+    (rawState.approvalsBySession[sessionId] ?? []).length === 0 &&
+    (rawState.questionsBySession[sessionId] ?? []).length === 0
+  );
+}
+
+const promptPredictionController = createPromptPrediction({
+  api: getKimiWebApi,
+  isActiveSession: (sessionId) => sessionId === rawState.activeSessionId,
+  canPredict: canUsePromptPrediction,
+  hasEmptyInput: hasEmptyPromptPredictionInput,
+});
+
+watchEffect(() => {
+  promptPredictionController.refresh();
+});
 
 function conversationConnection(): ReturnType<typeof getEventConn> {
   connectEventsIfNeeded();
@@ -1354,9 +1405,22 @@ function createOnConnectionChangeHandler(): KimiEventHandlers['onConnectionChang
 }
 
 function createOnConversationHandler(): NonNullable<KimiEventHandlers['onConversation']> {
+  const autoOpen = createChatMcpAutoOpen();
   return (sessionId, agentId, frame) => {
-    if (agentId === MAIN_AGENT_ID) mainConversations.handleFrame(sessionId, agentId, frame);
-    else auxiliaryConversations.handleFrame(sessionId, agentId, frame);
+    if (agentId !== MAIN_AGENT_ID) {
+      auxiliaryConversations.handleFrame(sessionId, agentId, frame);
+      return;
+    }
+    mainConversations.handleFrame(sessionId, agentId, frame);
+    if (frame.type === 'turns') {
+      autoOpen(frame, undefined, false);
+      return;
+    }
+    if (frame.type !== 'item.updated' || frame.set.fields === undefined) return;
+    const entry = mainConversationOf(sessionId);
+    if (!entry?.loaded) return;
+    const turn = entry.view.turns.findLast(candidate => candidate.turn_id === frame.turn_id);
+    autoOpen(frame, turn, isUserWatching(sessionId) && rawState.sessions.some(row => row.id === sessionId) && chatHostId(sessionId) === undefined);
   };
 }
 
@@ -1850,6 +1914,7 @@ function onMainTurnsRemoved(entry: ConversationEntry, turnIds: readonly string[]
 }
 
 function onMainTurnStarted(entry: ConversationEntry, turn: ConversationTurn): void {
+  promptPredictionController.handleTurnStarted(entry.sessionId);
   turnPhasesOf(entry).set(turn.turn_id, 'running');
   scheduleSessionRowRefresh(entry.sessionId);
 }
@@ -1870,10 +1935,23 @@ function settleMainTurnEnd(entry: ConversationEntry, turn: ConversationTurn): vo
     firstTurn: turn.ordinal === 0,
     promptId: openerPromptId(turn),
     ratingTurnId: turn.turn_id,
+    predictionSourceId: turn.turn_id,
+    predictionTurnId: turn.ordinal,
   });
 }
 
 function onMainNotice(sessionId: string, notice: ConversationNotice): void {
+  if (notice.code === 'model.not_configured') {
+    rawState.unavailableModelBySession = { ...rawState.unavailableModelBySession, [sessionId]: notice.title };
+    void confirm({
+      title: t('warnings.modelUnavailable.title'),
+      message: t('warnings.modelUnavailable.message', { model: notice.title }),
+      confirmLabel: t('warnings.modelUnavailable.change'),
+      variant: 'primary',
+      action: () => openModelPicker(sessionId),
+    });
+    return;
+  }
   if (notice.code === 'compaction.cancelled') settleCompaction(sessionId, 'cancelled', undefined);
   warningsStore().markSessionWarningShown(sessionId, `${notice.code ?? ''} ${notice.title}`);
   if (notice.level === 'error') {
@@ -2082,7 +2160,8 @@ const status = computed<ConversationStatus>(() => {
   const branch =
     gitInfo.value?.branch ??
     (activeSession ? activeSession.cwd.split('/').pop() ?? activeSession.cwd : 'main');
-  const rawModel = modelsStore().resolveSendModel(activeSession?.model, { includeDraft: activeSession === undefined }) ?? '—';
+  const unavailable = activeSession !== undefined && rawState.unavailableModelBySession?.[activeSession.id] !== undefined;
+  const rawModel = unavailable ? '—' : modelsStore().resolveSendModel(activeSession?.model, { includeDraft: activeSession === undefined }) ?? '—';
 
   const matched =
     modelProvider.models.value.find((m) => m.id === rawModel) ??
@@ -2145,7 +2224,10 @@ function gateVerdictInput(): ChatGateInput {
     ? rawState.sessions.find((s) => s.id === rawState.activeSessionId)
     : undefined;
   return {
-    ...resolveGateChatModel(activeSession?.model, { includeDraft: activeSession === undefined }),
+    ...resolveGateChatModel(
+      activeSession !== undefined && rawState.unavailableModelBySession?.[activeSession.id] !== undefined ? null : activeSession?.model,
+      { includeDraft: activeSession === undefined },
+    ),
     modelsReady: modelsStore().modelsReady,
     hasModels: modelsStore().hasModels,
     signedIn: authStore().signedIn,
@@ -3183,7 +3265,7 @@ function isWindowHidden(): boolean {
 function onMainTurnEnd(
   sid: string,
   status: 'idle' | 'aborted',
-  opts: { firstTurn: boolean; promptId?: string; ratingTurnId?: string },
+  opts: { firstTurn: boolean; promptId?: string; ratingTurnId?: string; predictionSourceId?: string; predictionTurnId?: number },
 ): void {
   const goalActive = rawState.goalBySession[sid]?.status === 'active';
 
@@ -3222,6 +3304,10 @@ function onMainTurnEnd(
         void sessionSelection.selectSession(sid, { source: 'notification' });
       },
     });
+  }
+
+  if (opts.predictionSourceId !== undefined && opts.predictionTurnId !== undefined && Number.isSafeInteger(opts.predictionTurnId)) {
+    promptPredictionController.handleTurnEnded(sid, opts.predictionSourceId, opts.predictionTurnId, status === 'idle');
   }
 }
 
@@ -3306,6 +3392,7 @@ export function useKimiWebClient() {
     activationBadges,
     compaction,
     status,
+    unavailableModelBySession: computed(() => rawState.unavailableModelBySession),
     sessionCost,
     fileDiff,
     selectedDiffPath: computed(() => filesStore().selectedDiffPath),
@@ -3369,6 +3456,25 @@ export function useKimiWebClient() {
     towerMode,
     goalMode,
     queued,
+    promptPrediction: computed(() => {
+      const current = promptPredictionController.suggestion.value;
+      return current !== null && canUsePromptPrediction(current.sessionId) ? current : null;
+    }),
+    promptPredictionHasTurn: computed(() => {
+      const target = promptPredictionController.predictionTarget.value;
+      if (target === undefined || target.sessionId !== rawState.activeSessionId) return false;
+      if (promptPredictionController.active.value !== undefined || promptPredictionController.suggestion.value !== null) return true;
+      return promptPredictionController.canAttemptPrediction();
+    }),
+    promptPredictionPending: computed(() => {
+      const current = promptPredictionController.active.value;
+      return current !== undefined && canUsePromptPrediction(current.sessionId) && hasEmptyPromptPredictionInput(current.sessionId)
+        ? { sessionId: current.sessionId, parked: current.parked }
+        : null;
+    }),
+    acceptPromptPrediction: (key: 'tab' | 'right') => promptPredictionController.accept(key),
+    handlePromptPredictionInput: () => promptPredictionController.handleInput(),
+    handlePromptPredictionSubmit: (text: string) => promptPredictionController.handleSubmit(text),
     warnings,
     questions,
     activity,
@@ -3607,6 +3713,9 @@ export function useKimiWebClient() {
     config,
     loadConfig: configStore().loadConfig,
     updateConfig: configStore().updateConfig,
+    loadServerHome: async () => (await getKimiWebApi().getMeta()).homeDir,
+    readHostTextFile: (path: string) => getKimiWebApi().readHostTextFile(path),
+    writeHostTextFile: (path: string, content: string, revision: string | null) => getKimiWebApi().writeHostTextFile(path, content, revision),
 
     checkAuth: () => authStore().checkAuth(),
     probeManagedMembership: () => authStore().probeMembership(),

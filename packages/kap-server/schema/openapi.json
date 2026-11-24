@@ -3795,6 +3795,368 @@
         "tags": [
           "workspaces"
         ]
+      },
+      "put": {
+        "description": "Create or replace an allowlisted UTF-8 host file. Supply the SHA-256 of the bytes read, or missing to create only.",
+        "operationId": "writeFsContent",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "path",
+            "required": true,
+            "schema": {
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "environment_id",
+            "required": false,
+            "schema": {
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "revision",
+            "required": true,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "missing"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "pattern": "^[0-9a-f]{64}$",
+                  "type": "string"
+                }
+              ]
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "text/plain": {
+              "schema": {
+                "type": "string"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "code": {
+                          "enum": [
+                            0
+                          ],
+                          "type": "number"
+                        },
+                        "data": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "revision": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "revision"
+                          ],
+                          "type": "object"
+                        },
+                        "details": {},
+                        "msg": {
+                          "type": "string"
+                        },
+                        "request_id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "msg",
+                        "data",
+                        "request_id"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "code": {
+                          "enum": [
+                            40001
+                          ],
+                          "type": "number"
+                        },
+                        "data": {
+                          "enum": [
+                            null
+                          ],
+                          "nullable": true,
+                          "type": "string"
+                        },
+                        "details": {},
+                        "msg": {
+                          "type": "string"
+                        },
+                        "request_id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "msg",
+                        "data",
+                        "request_id"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "code": {
+                          "enum": [
+                            50001
+                          ],
+                          "type": "number"
+                        },
+                        "data": {
+                          "enum": [
+                            null
+                          ],
+                          "nullable": true,
+                          "type": "string"
+                        },
+                        "details": {},
+                        "msg": {
+                          "type": "string"
+                        },
+                        "request_id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "msg",
+                        "data",
+                        "request_id"
+                      ],
+                      "type": "object"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": "Default Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "code": {
+                      "enum": [
+                        40001
+                      ],
+                      "type": "number"
+                    },
+                    "data": {
+                      "enum": [
+                        null
+                      ],
+                      "nullable": true,
+                      "type": "string"
+                    },
+                    "details": {},
+                    "msg": {
+                      "type": "string"
+                    },
+                    "request_id": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "msg",
+                    "data",
+                    "request_id"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Default Response"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "code": {
+                          "enum": [
+                            40301
+                          ],
+                          "type": "number"
+                        },
+                        "data": {
+                          "enum": [
+                            null
+                          ],
+                          "nullable": true,
+                          "type": "string"
+                        },
+                        "details": {},
+                        "msg": {
+                          "type": "string"
+                        },
+                        "request_id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "msg",
+                        "data",
+                        "request_id"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "code": {
+                          "enum": [
+                            40302
+                          ],
+                          "type": "number"
+                        },
+                        "data": {
+                          "enum": [
+                            null
+                          ],
+                          "nullable": true,
+                          "type": "string"
+                        },
+                        "details": {},
+                        "msg": {
+                          "type": "string"
+                        },
+                        "request_id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "msg",
+                        "data",
+                        "request_id"
+                      ],
+                      "type": "object"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": "Default Response"
+          },
+          "412": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "code": {
+                      "enum": [
+                        41201
+                      ],
+                      "type": "number"
+                    },
+                    "data": {
+                      "enum": [
+                        null
+                      ],
+                      "nullable": true,
+                      "type": "string"
+                    },
+                    "details": {},
+                    "msg": {
+                      "type": "string"
+                    },
+                    "request_id": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "msg",
+                    "data",
+                    "request_id"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Default Response"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "code": {
+                      "enum": [
+                        41302
+                      ],
+                      "type": "number"
+                    },
+                    "data": {
+                      "enum": [
+                        null
+                      ],
+                      "nullable": true,
+                      "type": "string"
+                    },
+                    "details": {},
+                    "msg": {
+                      "type": "string"
+                    },
+                    "request_id": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "msg",
+                    "data",
+                    "request_id"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Default Response"
+          }
+        },
+        "tags": [
+          "workspaces"
+        ]
       }
     },
     "/api/v1/fs:home": {
@@ -16178,6 +16540,13 @@
                                           "archived_at": {},
                                           "created_at": {},
                                           "cwd": {
+                                            "deprecated": true,
+                                            "type": "string"
+                                          },
+                                          "environment_cwd": {
+                                            "type": "string"
+                                          },
+                                          "environment_id": {
                                             "type": "string"
                                           },
                                           "git": {
@@ -16252,6 +16621,9 @@
                                           "updated_at": {},
                                           "workspace_id": {
                                             "pattern": "^wd_[a-z0-9._-]+_[0-9a-f]{12}$|^wm_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                                            "type": "string"
+                                          },
+                                          "workspace_root": {
                                             "type": "string"
                                           }
                                         },
@@ -16343,6 +16715,13 @@
                                                 "archived_at": {},
                                                 "created_at": {},
                                                 "cwd": {
+                                                  "deprecated": true,
+                                                  "type": "string"
+                                                },
+                                                "environment_cwd": {
+                                                  "type": "string"
+                                                },
+                                                "environment_id": {
                                                   "type": "string"
                                                 },
                                                 "git": {
@@ -16417,6 +16796,9 @@
                                                 "updated_at": {},
                                                 "workspace_id": {
                                                   "pattern": "^wd_[a-z0-9._-]+_[0-9a-f]{12}$|^wm_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                                                  "type": "string"
+                                                },
+                                                "workspace_root": {
                                                   "type": "string"
                                                 }
                                               },
@@ -16701,6 +17083,7 @@
                     "type": "object"
                   },
                   "cwd": {
+                    "deprecated": true,
                     "minLength": 1,
                     "type": "string"
                   },
@@ -16716,6 +17099,7 @@
                     "additionalProperties": {},
                     "properties": {
                       "cwd": {
+                        "deprecated": true,
                         "minLength": 1,
                         "type": "string"
                       }
@@ -16728,6 +17112,10 @@
                   },
                   "workspace_id": {
                     "pattern": "^wd_[a-z0-9._-]+_[0-9a-f]{12}$|^wm_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                    "type": "string"
+                  },
+                  "workspace_root": {
+                    "minLength": 1,
                     "type": "string"
                   }
                 },
@@ -16769,6 +17157,13 @@
                             "archived_at": {},
                             "created_at": {},
                             "cwd": {
+                              "deprecated": true,
+                              "type": "string"
+                            },
+                            "environment_cwd": {
+                              "type": "string"
+                            },
+                            "environment_id": {
                               "type": "string"
                             },
                             "git": {
@@ -16843,6 +17238,9 @@
                             "updated_at": {},
                             "workspace_id": {
                               "pattern": "^wd_[a-z0-9._-]+_[0-9a-f]{12}$|^wm_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                              "type": "string"
+                            },
+                            "workspace_root": {
                               "type": "string"
                             }
                           },
@@ -17377,6 +17775,13 @@
                             "archived_at": {},
                             "created_at": {},
                             "cwd": {
+                              "deprecated": true,
+                              "type": "string"
+                            },
+                            "environment_cwd": {
+                              "type": "string"
+                            },
+                            "environment_id": {
                               "type": "string"
                             },
                             "git": {
@@ -17451,6 +17856,9 @@
                             "updated_at": {},
                             "workspace_id": {
                               "pattern": "^wd_[a-z0-9._-]+_[0-9a-f]{12}$|^wm_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                              "type": "string"
+                            },
+                            "workspace_root": {
                               "type": "string"
                             }
                           },
@@ -20922,6 +21330,10 @@
                           "additionalProperties": false,
                           "properties": {
                             "cwd": {
+                              "deprecated": true,
+                              "type": "string"
+                            },
+                            "environment_cwd": {
                               "type": "string"
                             },
                             "environment_id": {
@@ -22935,6 +23347,7 @@
                     "additionalProperties": {},
                     "properties": {
                       "cwd": {
+                        "deprecated": true,
                         "minLength": 1,
                         "type": "string"
                       }
@@ -23034,6 +23447,13 @@
                                 "archived_at": {},
                                 "created_at": {},
                                 "cwd": {
+                                  "deprecated": true,
+                                  "type": "string"
+                                },
+                                "environment_cwd": {
+                                  "type": "string"
+                                },
+                                "environment_id": {
                                   "type": "string"
                                 },
                                 "git": {
@@ -23108,6 +23528,9 @@
                                 "updated_at": {},
                                 "workspace_id": {
                                   "pattern": "^wd_[a-z0-9._-]+_[0-9a-f]{12}$|^wm_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                                  "type": "string"
+                                },
+                                "workspace_root": {
                                   "type": "string"
                                 }
                               },
@@ -33196,6 +33619,13 @@
                             "archived_at": {},
                             "created_at": {},
                             "cwd": {
+                              "deprecated": true,
+                              "type": "string"
+                            },
+                            "environment_cwd": {
+                              "type": "string"
+                            },
+                            "environment_id": {
                               "type": "string"
                             },
                             "git": {
@@ -33270,6 +33700,9 @@
                             "updated_at": {},
                             "workspace_id": {
                               "pattern": "^wd_[a-z0-9._-]+_[0-9a-f]{12}$|^wm_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                              "type": "string"
+                            },
+                            "workspace_root": {
                               "type": "string"
                             }
                           },
@@ -34500,6 +34933,13 @@
                                 "archived_at": {},
                                 "created_at": {},
                                 "cwd": {
+                                  "deprecated": true,
+                                  "type": "string"
+                                },
+                                "environment_cwd": {
+                                  "type": "string"
+                                },
+                                "environment_id": {
                                   "type": "string"
                                 },
                                 "git": {
@@ -34574,6 +35014,9 @@
                                 "updated_at": {},
                                 "workspace_id": {
                                   "pattern": "^wd_[a-z0-9._-]+_[0-9a-f]{12}$|^wm_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                                  "type": "string"
+                                },
+                                "workspace_root": {
                                   "type": "string"
                                 }
                               },

@@ -61,7 +61,7 @@ function openSessionAdmin(): void {
   font-size: var(--text-xs);
   font-weight: var(--weight-section-label);
   text-transform: uppercase;
-  color: var(--faint);
+  color: var(--color-text-quaternary);
   user-select: none;
 }
 .wrs-row {
@@ -99,7 +99,7 @@ function openSessionAdmin(): void {
 .wrs-title {
   flex: 1;
   min-width: 0;
-  font-size: var(--ui-font-size-sm);
+  font-size: var(--text-sm);
   font-weight: var(--weight-caption);
   line-height: var(--leading-tight);
   overflow: hidden;
