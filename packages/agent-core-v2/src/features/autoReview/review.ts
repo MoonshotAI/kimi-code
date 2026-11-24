@@ -9,7 +9,7 @@ import type { ReviewText } from './context';
 export type AutoReviewOutcome =
   | { readonly decision: 'allow'; readonly risk: 'low' | 'medium' }
   | { readonly decision: 'deny'; readonly risk: 'medium' | 'high'; readonly reason?: string }
-  | { readonly decision: 'failed'; readonly reason: string; readonly contextOverflow?: boolean };
+  | { readonly decision: 'failed'; readonly reason: string };
 
 export interface ProjectInstructions {
   readonly agentsMd?: string;

@@ -5,7 +5,6 @@ import { createDeadlineAbortSignal } from '#/_base/utils/abort';
 import { ContextClear } from '#/agent/contextMemory/contextEvents';
 import { userPromptSubmitHookPart } from '#/agent/contextMemory/hookParts';
 import type { ContextMessage } from '#/agent/contextMemory/types';
-import type { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
 import type { IAgentLoopService } from '#/agent/loop/loop';
 import type { IAgentPermissionGate } from '#/agent/permissionGate/permissionGate';
 import { PermissionRecordApprovalResult } from '#/agent/permissionRules/permissionRulesOps';
@@ -410,7 +409,6 @@ describe('AutoReviewService', () => {
   let disposables: DisposableStore;
   let history: ContextMessage[];
   let workspaceDir: string;
-  let compactions: Array<{ readonly source: string }>;
   let sentInputs: SessionReviewInput[];
   let runSessionReview: (input: SessionReviewInput) => Promise<AutoReviewOutcome>;
 
@@ -422,7 +420,6 @@ describe('AutoReviewService', () => {
       { role: 'tool', toolCallId: 'mkdir', content: [{ type: 'text', text: '' }] },
     ];
     workspaceDir = '/workspace';
-    compactions = [];
     sentInputs = [];
     runSessionReview = () => Promise.resolve({ decision: 'allow', risk: 'low' });
   });
@@ -472,12 +469,6 @@ describe('AutoReviewService', () => {
           meta: options.parentAgentId === undefined ? undefined : { parentAgentId: options.parentAgentId },
         }),
         { _serviceBrand: undefined, history: options.getHistory } as unknown as IAgentLoopService,
-        {
-          begin: (input: { readonly source: string }) => {
-            compactions.push(input);
-            return true;
-          },
-        } as unknown as IAgentFullCompactionService,
         sessionReview,
         { get: (() => undefined) as IConfigService['get'] } as IConfigService,
         { ...baseWorkspace, get workDir() { return workspaceDir; } },
@@ -568,7 +559,7 @@ describe('AutoReviewService', () => {
     expect(subagentForkSent).toContain('"id":"child-call","name":"Bash","arguments":"{\\"command\\":\\"rm -rf coverage\\"}","approved":true');
   });
 
-  it('re-reviews once on appended instructions, fails on further drift or cwd/rewrite changes, and compacts on overflow', async () => {
+  it('re-reviews once on appended instructions and fails on further drift or cwd/rewrite changes', async () => {
     const { main } = createHarness();
     const run = () => main.review(reviewContext({ toolName: 'Bash', args: { command: 'rm generated/file' } }), 'fallback-ask');
 
@@ -602,11 +593,6 @@ describe('AutoReviewService', () => {
       return Promise.resolve({ decision: 'allow', risk: 'low' });
     };
     await expect(run()).resolves.toEqual({ decision: 'failed', reason: 'Authorization changed during review.' });
-
-    workspaceDir = '/workspace';
-    runSessionReview = () => Promise.resolve({ decision: 'failed', reason: 'Context overflow.', contextOverflow: true });
-    await run();
-    expect(compactions).toEqual([{ source: 'auto' }]);
   });
 });
 

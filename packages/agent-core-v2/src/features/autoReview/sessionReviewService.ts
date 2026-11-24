@@ -281,7 +281,7 @@ function classifyLlmError(
   error: Extract<LlmOutcome, { readonly type: 'failed' }>['error'],
 ): AttemptResult {
   if (error.kind === 'context_overflow') {
-    return { decision: 'failed', reason: 'The review context exceeded the model window.', contextOverflow: true };
+    return { decision: 'failed', reason: 'The review context exceeded the model window.' };
   }
   if (error.kind !== 'syntax' && error.kind !== 'abort' && error.retryable) {
     return { decision: 'retry', reason: error.message, retryAfterMs: readRetryAfterMs(error) };

@@ -3,7 +3,6 @@ import { Service } from '#/_base/di/service';
 import { ILogService } from '#/_base/log/log';
 import { abortable, createDeadlineAbortSignal } from '#/_base/utils/abort';
 import type { ContextMessage } from '#/agent/contextMemory/types';
-import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentPermissionGate } from '#/agent/permissionGate/permissionGate';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
@@ -72,7 +71,6 @@ export class AutoReviewService extends Service implements IAutoReviewService {
     @IAgentProfileService private readonly profile: IAgentProfileService,
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @IAgentLoopService private readonly loop: IAgentLoopService,
-    @IAgentFullCompactionService private readonly compaction: IAgentFullCompactionService,
     @ISessionAutoReviewService private readonly sessionReview: ISessionAutoReviewService,
     @IConfigService private readonly configService: IConfigService,
     @ISessionWorkspaceContext private readonly workspace: ISessionWorkspaceContext,
@@ -165,9 +163,6 @@ export class AutoReviewService extends Service implements IAutoReviewService {
         : { decision: 'failed', reason: error instanceof Error ? error.message : String(error) };
     } finally {
       deadline.clear();
-    }
-    if (outcome.decision === 'failed' && outcome.contextOverflow === true) {
-      this.compaction.begin({ source: 'auto' });
     }
     const durationMs = Date.now() - startedAt;
     const risk = 'risk' in outcome ? outcome.risk : undefined;
