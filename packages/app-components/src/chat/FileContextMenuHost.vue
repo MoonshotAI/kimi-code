@@ -241,7 +241,7 @@ async function copyPath(): Promise<void> {
     <Menu
       v-if="state.open"
       ref="menuRef"
-      class="file-context-menu"
+      class="ui-menu-floating file-context-menu"
       :style="menuStyle"
       @click.stop
       @contextmenu.prevent
@@ -280,7 +280,7 @@ async function copyPath(): Promise<void> {
     <Menu
       v-if="state.open && openWithMenuOpen"
       ref="subMenuRef"
-      class="file-context-submenu"
+      class="ui-menu-floating file-context-submenu"
       :style="subMenuStyle"
       @click.stop
       @contextmenu.prevent
@@ -301,13 +301,6 @@ async function copyPath(): Promise<void> {
 </template>
 
 <style scoped>
-.file-context-menu,
-.file-context-submenu {
-  position: fixed;
-  top: 0;
-  left: 0;
-  z-index: var(--z-dropdown);
-}
 .file-context-submenu {
   z-index: calc(var(--z-dropdown) + 1);
 }

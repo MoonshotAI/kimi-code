@@ -5,7 +5,7 @@ import { useConfirmDialog, usePanelTabDrag } from '@moonshot-ai/app-client/compo
 import { panelCloseTargets } from '@moonshot-ai/app-client/panel';
 import { PanelContextMenu } from '@moonshot-ai/app-components';
 import { createTerminalCloseGuard } from '../../lib/terminalCloseGuard';
-import { Icon, Tooltip } from '@moonshot-ai/app-ui';
+import { Icon, IconButton, Tooltip } from '@moonshot-ai/app-ui';
 import type { SelectionActionPayload } from '@moonshot-ai/app-client/lib';
 import { useNativeTerminal, type NativeTerminalTab } from '../../composables/useNativeTerminal';
 import { bottomPanelDropTargets, rightPanelDropTargets, useTabBarDropTarget } from '../../lib/terminalTabDropTarget';
@@ -198,22 +198,23 @@ function onTabKeydown(event: KeyboardEvent, index: number): void {
           :style="drag.styleFor(tab.id)"
           @contextmenu.prevent.stop="openContextMenu(tab.id, $event.clientX, $event.clientY)"
         >
-          <button
-            :ref="setTabRef(tab.id)"
-            type="button"
-            class="tp-tab-main"
-            role="tab"
-            :aria-selected="tab.id === store.activeTabId.value"
-            :tabindex="tab.id === store.activeTabId.value ? 0 : -1"
-            :title="tab.cwd"
-            @click="activateFromClick(tab.id)"
-            @pointerdown="drag.onPointerDown($event, tab.id)"
-            @dragstart.prevent
-            @keydown="onTabKeydown($event, index)"
-          >
-            <Icon name="terminal" size="sm" class="tp-tab-icon" />
-            <span class="tp-tab-label">{{ tab.binary ?? tab.shell }}</span>
-          </button>
+          <Tooltip :text="tab.cwd">
+            <button
+              :ref="setTabRef(tab.id)"
+              type="button"
+              class="tp-tab-main"
+              role="tab"
+              :aria-selected="tab.id === store.activeTabId.value"
+              :tabindex="tab.id === store.activeTabId.value ? 0 : -1"
+              @click="activateFromClick(tab.id)"
+              @pointerdown="drag.onPointerDown($event, tab.id)"
+              @dragstart.prevent
+              @keydown="onTabKeydown($event, index)"
+            >
+              <Icon name="terminal" size="sm" class="tp-tab-icon" />
+              <span class="tp-tab-label">{{ tab.binary ?? tab.shell }}</span>
+            </button>
+          </Tooltip>
           <Tooltip :text="t('terminal.closeTab')">
             <button
               type="button"
@@ -225,37 +226,36 @@ function onTabKeydown(event: KeyboardEvent, index: number): void {
             </button>
           </Tooltip>
         </div>
-        <button
-          type="button"
-          class="tp-action"
-          :title="t('terminal.newTab')"
-          :aria-label="t('terminal.newTab')"
-          @click="newTab"
-        >
-          <Icon name="plus" size="sm" />
-        </button>
+        <Tooltip :text="t('terminal.newTab')">
+          <IconButton
+            size="sm"
+            :label="t('terminal.newTab')"
+            @click="newTab"
+          >
+            <Icon name="plus" size="sm" />
+          </IconButton>
+        </Tooltip>
       </div>
       <span v-if="store.error.value" class="tp-error">{{ store.error.value }}</span>
       <div class="tp-tail">
-        <button
-          v-if="activeTab?.status === 'exited'"
-          type="button"
-          class="tp-action"
-          :title="t('terminal.restartTab')"
-          :aria-label="t('terminal.restartTab')"
-          @click="restartActive"
-        >
-          <Icon name="undo" size="sm" />
-        </button>
-        <button
-          type="button"
-          class="tp-action"
-          :title="t('terminal.collapse')"
-          :aria-label="t('terminal.collapse')"
-          @click="store.closePanel()"
-        >
-          <Icon name="chevron-down" size="sm" />
-        </button>
+        <Tooltip v-if="activeTab?.status === 'exited'" :text="t('terminal.restartTab')">
+          <IconButton
+            size="sm"
+            :label="t('terminal.restartTab')"
+            @click="restartActive"
+          >
+            <Icon name="undo" size="sm" />
+          </IconButton>
+        </Tooltip>
+        <Tooltip :text="t('terminal.collapse')">
+          <IconButton
+            size="sm"
+            :label="t('terminal.collapse')"
+            @click="store.closePanel()"
+          >
+            <Icon name="chevron-down" size="sm" />
+          </IconButton>
+        </Tooltip>
       </div>
     </div>
     <div class="tp-body">
@@ -349,7 +349,7 @@ function onTabKeydown(event: KeyboardEvent, index: number): void {
   padding: 0 var(--space-1) 0 var(--space-2);
   border-radius: var(--radius-sm);
   color: var(--color-text-muted);
-  font-size: var(--ui-font-size-sm);
+  font-size: var(--text-sm);
 }
 .tp-tab:hover {
   background: var(--color-hover);
@@ -414,30 +414,13 @@ function onTabKeydown(event: KeyboardEvent, index: number): void {
   background: var(--color-hover);
   color: var(--color-text);
 }
-.tp-action {
-  flex: none;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: var(--space-6);
-  height: var(--space-6);
-  border: none;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--color-text-muted);
-  cursor: pointer;
-}
-.tp-action:hover {
-  background: var(--color-hover);
-  color: var(--color-text);
-}
 .tp-error {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--color-danger);
-  font-size: var(--ui-font-size-xs);
+  font-size: var(--text-xs);
 }
 .tp-tail {
   margin-left: auto;
@@ -460,7 +443,7 @@ function onTabKeydown(event: KeyboardEvent, index: number): void {
   background: transparent;
   color: var(--color-text-faint);
   font-family: var(--font-ui);
-  font-size: var(--ui-font-size-sm);
+  font-size: var(--text-sm);
   cursor: pointer;
 }
 .tp-empty:hover {

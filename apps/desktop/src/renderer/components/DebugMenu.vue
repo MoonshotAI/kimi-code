@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { nextTick, onUnmounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { Icon, Menu, MenuItem, Spinner } from '@moonshot-ai/app-ui';
+import { Icon, Menu, MenuItem, Spinner, Tooltip } from '@moonshot-ai/app-ui';
 import { useCanaryChannel, useUpdateStatus, useConfirmDialog } from '@moonshot-ai/app-client/composables';
 
 const { t } = useI18n();
@@ -142,14 +142,16 @@ const branchLabel =
 
 <template>
   <span v-if="canary.enabled.value" class="dbg">
-    <button class="dbg-pill" type="button" :aria-label="branchLabel" :title="branchLabel" @click="toggleMenu">
-      <Spinner v-if="checking" size="xs" />
-      <Icon v-else class="dbg-pill-icon" name="flask" size="sm" />
-      <span class="dbg-pill-text">{{ branchLabel }}</span>
-    </button>
+    <Tooltip :text="branchLabel">
+      <button class="dbg-pill" type="button" :aria-label="branchLabel" @click="toggleMenu">
+        <Spinner v-if="checking" size="xs" />
+        <Icon v-else class="dbg-pill-icon" name="flask" size="sm" />
+        <span class="dbg-pill-text">{{ branchLabel }}</span>
+      </button>
+    </Tooltip>
 
     <Teleport to="body">
-      <Menu v-if="menuOpen" ref="menuRef" class="dbg-menu" :style="menuStyle">
+      <Menu v-if="menuOpen" ref="menuRef" class="ui-menu-floating dbg-menu" :style="menuStyle">
         <button class="dbg-build" type="button" :disabled="commitUrl === ''" @click="openCommit">
           <span v-if="buildInfo.version.includes('-canary.')" class="dbg-build-line">{{ t('settings.canaryTargetVersion', { version: buildInfo.version.split('-canary.')[0] }) }}</span>
           <span class="dbg-build-line">v{{ buildInfo.version }}<template v-if="buildInfo.short !== ''"> · {{ buildInfo.short }}</template></span>
@@ -227,7 +229,6 @@ const branchLabel =
 }
 
 .dbg-menu {
-  position: fixed;
   z-index: var(--z-modal-dropdown);
 }
 

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
-import { Icon, Menu, MenuItem } from '@moonshot-ai/app-ui';
+import { Icon, Menu, MenuItem, StatusDot } from '@moonshot-ai/app-ui';
 import { useAnchoredMenu } from '@moonshot-ai/app-components';
 
 export interface FilterSelectOption {
@@ -43,13 +43,13 @@ function pick(value: string): void {
     <span class="sa-select-label">{{ displayLabel }}</span>
     <Icon class="sa-select-chev" name="chevron-down" size="sm" />
   </button>
-  <Transition name="menu-pop">
-    <Menu v-if="open" ref="menuRef" class="sa-menu" :style="menuStyle" @click.stop>
+  <Transition name="ui-menu-pop">
+    <Menu v-if="open" ref="menuRef" class="ui-menu-floating sa-menu" :style="menuStyle" @click.stop>
       <MenuItem v-for="opt in options" :key="opt.value" @click="pick(opt.value)">
         <span class="sa-check">
           <Icon v-if="opt.value === modelValue" name="check" size="sm" />
         </span>
-        <span v-if="opt.dot" class="sa-dot" :class="`sa-dot--${opt.dot}`" />
+        <StatusDot v-if="opt.dot" :status="opt.dot === 'done' ? 'archived' : 'ok'" size="lg" />
         {{ opt.label }}
       </MenuItem>
     </Menu>
@@ -81,44 +81,11 @@ function pick(value: string): void {
   color: var(--color-text-faint);
 }
 
-.sa-menu {
-  position: fixed;
-  top: 0;
-  left: 0;
-  z-index: var(--z-dropdown);
-}
 .sa-check {
   display: inline-flex;
   flex: none;
   width: 14px;
 }
-.sa-dot {
-  flex: none;
-  width: 8px;
-  height: 8px;
-  border-radius: var(--radius-full);
-}
-.sa-dot--open {
-  background: var(--color-success);
-}
-.sa-dot--done {
-  background: var(--color-done);
-}
-
-.menu-pop-enter-active {
-  transition:
-    opacity var(--duration-base) var(--ease-out),
-    transform var(--duration-base) var(--ease-out);
-}
-.menu-pop-leave-active {
-  transition:
-    opacity var(--duration-fast) var(--ease-out),
-    transform var(--duration-fast) var(--ease-out);
-  pointer-events: none;
-}
-.menu-pop-enter-from,
-.menu-pop-leave-to {
-  opacity: 0;
-  transform: scale(0.97) translateY(var(--menu-pop-shift, -2px));
-}
 </style>
+
+<style src="../lib/anchored-menu.css"></style>

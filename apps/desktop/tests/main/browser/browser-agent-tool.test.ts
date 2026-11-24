@@ -113,6 +113,7 @@ async function agentOf(session: Session, agentId = 'main', dynamic = true): Prom
 
 async function runReminderStep(agent: Agent): Promise<void> {
   const loop = agent.accessor.get(IAgentLoopService);
+  await loop.start();
   const entries = Reflect.get(loop.hooks.onWillBeginStep, 'entries') as readonly {
     readonly id: string;
     readonly handler: (
@@ -277,8 +278,9 @@ it('reminds agents about the built-in browser and follows the agent control swit
 it('keeps the built-in browser for chats that already used it when agent control turns off', async () => {
   const control = createControl();
   const harness = await startBrowserTestServer('desktop-browser-tool-keep-', control);
-  const useTool = (agent: Agent, toolName: string, args: string) => {
+  const useTool = async (agent: Agent, toolName: string, args: string) => {
     const loop = agent.accessor.get(IAgentLoopService);
+    await loop.start();
     loop.remind(historyEntryFromContext(
       { role: 'assistant', content: [], toolCalls: [{ type: 'function', id: `call-${toolName}`, name: toolName, arguments: args }] },
     ));
@@ -295,9 +297,10 @@ it('keeps the built-in browser for chats that already used it when agent control
       agent.accessor.get(IAgentPermissionModeService).setMode('yolo');
       await runReminderStep(agent);
     }
-    useTool(used!, NAME, '{}');
-    useTool(past!, 'select_tools', JSON.stringify({ names: [NAME] }));
+    await useTool(used!, NAME, '{}');
+    await useTool(past!, 'select_tools', JSON.stringify({ names: [NAME] }));
     const schemaLoop = schema!.accessor.get(IAgentLoopService);
+    await schemaLoop.start();
     schemaLoop.remind(historyEntryFromContext({
       role: 'system',
       content: [],
@@ -349,8 +352,9 @@ it('keeps the built-in browser for chats that already used it when agent control
 it('does not keep the built-in browser for chats whose only browser attempts were refused', async () => {
   const control = createControl();
   const harness = await startBrowserTestServer('desktop-browser-tool-refused-', control);
-  const settle = (agent: Agent, toolName: string, args: string, output: string) => {
+  const settle = async (agent: Agent, toolName: string, args: string, output: string) => {
     const loop = agent.accessor.get(IAgentLoopService);
+    await loop.start();
     const id = `call-${toolName}`;
     loop.remind(
       historyEntryFromContext({ role: 'assistant', content: [], toolCalls: [{ type: 'function', id, name: toolName, arguments: args }] }),
@@ -359,7 +363,7 @@ it('does not keep the built-in browser for chats whose only browser attempts wer
     loop.flushReminders();
   };
   type Kind = 'call' | 'rewritten' | 'select' | 'erred';
-  const histories: Record<Kind, (agent: Agent) => void> = {
+  const histories: Record<Kind, (agent: Agent) => Promise<void>> = {
     call: (agent) => settle(agent, NAME, '{}', `Tool "${NAME}" not found`),
     rewritten: (agent) => settle(
       agent,
@@ -385,7 +389,7 @@ it('does not keep the built-in browser for chats whose only browser attempts wer
         await mkdir(workDir);
         const session = await harness.sessions.create({ workDir });
         const agent = await agentOf(session);
-        histories[kind](agent);
+        await histories[kind](agent);
         if (phase === 'live') {
           live[kind] = agent;
           queued[kind] = await resolveRun(agent);
