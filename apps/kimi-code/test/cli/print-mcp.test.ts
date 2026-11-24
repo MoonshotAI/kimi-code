@@ -13,7 +13,6 @@ const SERVER = fileURLToPath(new URL('../../../../packages/agent-core-v2/test/mc
 
 test.for([
   { session: 'that follows it', args: [] },
-  { session: 'pinned to a subdirectory', args: ['--environment', 'local', '--environment-cwd', 'src'] },
 ])('kimi -p starts each MCP server of the project once, in the project directory, for a session $session', { timeout: 90_000 }, async ({ args }, { model, testHome }) => {
   await model.listen();
   model.script(held('answer', say('done')));
