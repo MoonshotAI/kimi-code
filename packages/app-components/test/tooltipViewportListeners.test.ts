@@ -1,15 +1,17 @@
 // @vitest-environment jsdom
 import { createApp, h, nextTick, type App } from 'vue';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { IconButton } from '@moonshot-ai/app-ui';
+import { IconButton, Tooltip } from '@moonshot-ai/app-ui';
 
 let app: App | null = null;
 let host: HTMLDivElement;
 
 const MoveEvent: typeof MouseEvent = typeof PointerEvent === 'function' ? PointerEvent : MouseEvent;
 
-function move(target: Element, x: number, y: number): void {
-  target.dispatchEvent(new MoveEvent('pointermove', { bubbles: true, clientX: x, clientY: y }));
+function move(target: Element, x: number, y: number, pointerType = 'mouse'): void {
+  const event = new MoveEvent('pointermove', { bubbles: true, clientX: x, clientY: y });
+  Object.defineProperty(event, 'pointerType', { value: pointerType });
+  target.dispatchEvent(event);
 }
 
 function mountButtons(count: number): void {
@@ -44,6 +46,7 @@ afterEach(() => {
   app?.unmount();
   app = null;
   host.remove();
+  vi.unstubAllGlobals();
   vi.restoreAllMocks();
   vi.useRealTimers();
 });
@@ -87,5 +90,61 @@ describe('tooltip viewport listeners', () => {
     expect(document.body.querySelector('.ui-tip__bubble')).toBeNull();
     expect(typeCalls(remove, 'scroll')).toBe(0);
     expect(typeCalls(remove, 'resize')).toBe(1);
+  });
+});
+
+describe('tooltip hover input', () => {
+  it('ignores touch pointer moves on direct targets and still responds to mouse hover', async () => {
+    mountButtons(1);
+    await settle();
+
+    const button = host.querySelector('button')!;
+    move(button, 5, 5, 'touch');
+    move(button, 12, 9, 'touch');
+    await vi.advanceTimersByTimeAsync(200);
+    await settle();
+
+    expect(document.body.querySelector('.ui-tip__bubble')).toBeNull();
+
+    move(button, 20, 12);
+    await vi.advanceTimersByTimeAsync(200);
+    await settle();
+
+    expect(document.body.querySelector('.ui-tip__bubble')?.textContent).toBe('tip 0');
+  });
+
+  it('ignores touch pointer moves on delegated triggers', async () => {
+    app = createApp({
+      render: () => h(Tooltip, { text: 'summary' }, () => h('button', 'summary')),
+    });
+    app.mount(host);
+    await settle();
+
+    const button = host.querySelector('button')!;
+    move(button, 5, 5, 'touch');
+    move(button, 12, 9, 'touch');
+    await vi.advanceTimersByTimeAsync(200);
+    await settle();
+
+    expect(document.body.querySelector('.ui-tip__bubble')).toBeNull();
+  });
+
+  it('ignores pointer moves when the primary input cannot hover', async () => {
+    vi.stubGlobal('matchMedia', (query: string) => ({
+      matches: query === '(hover: none)',
+      media: query,
+      addEventListener() {},
+      removeEventListener() {},
+    }));
+    mountButtons(1);
+    await settle();
+
+    const button = host.querySelector('button')!;
+    move(button, 5, 5, 'pen');
+    move(button, 12, 9, 'pen');
+    await vi.advanceTimersByTimeAsync(200);
+    await settle();
+
+    expect(document.body.querySelector('.ui-tip__bubble')).toBeNull();
   });
 });

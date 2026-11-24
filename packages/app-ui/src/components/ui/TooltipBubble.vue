@@ -124,8 +124,12 @@ function hide(): void {
   positioned.value = false;
 }
 
+function hoverBlocked(event: PointerEvent): boolean {
+  return event.pointerType === 'touch' || window.matchMedia?.('(hover: none)').matches === true;
+}
+
 function onDirectPointerMove(event: PointerEvent): void {
-  if (hovering || isSyntheticPointerMove(event)) return;
+  if (hovering || hoverBlocked(event) || isSyntheticPointerMove(event)) return;
   hovering = true;
   show();
 }
@@ -151,7 +155,7 @@ function onDelegatePointerMove(event: PointerEvent): void {
     hide();
     return;
   }
-  if (hovering || isSyntheticPointerMove(event)) return;
+  if (hovering || hoverBlocked(event) || isSyntheticPointerMove(event)) return;
   hovering = true;
   show();
 }
