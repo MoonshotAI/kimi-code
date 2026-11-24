@@ -5203,10 +5203,11 @@ export class KimiTUI {
     const requestToken = ++this.sessionPickerScopeRequestToken;
     const loaded = await this.fetchSessions('cwd', requestToken);
     if (!loaded && requestToken !== this.sessionPickerScopeRequestToken) return;
-    if (!loaded && this.state.sessionsScope !== 'cwd') {
+    if (!loaded) {
       this.state.sessionsScope = 'cwd';
       this.state.sessionsNextCursor = undefined;
       this.state.sessions = [];
+      this.showError('Failed to load sessions.');
     }
     this.remountSessionPicker();
   }

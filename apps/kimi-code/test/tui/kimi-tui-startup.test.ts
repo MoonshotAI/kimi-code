@@ -5784,6 +5784,42 @@ describe('KimiTUI work location', () => {
       expect(driver.state.appState.worktree).toBeUndefined();
     });
 
+    it('clears cached Cwd sessions when reopening /sessions fails after switching checkouts', async () => {
+      const project = tempDir('kimi-stale-cwd-project-');
+      const otherWt = tempDir('kimi-stale-cwd-wt-');
+      const listSessionsPage = vi.fn(async (input: { workDir?: string }) => {
+        if (input.workDir === otherWt) {
+          throw new Error('Session index unreadable');
+        }
+        return {
+          items: [{ id: 'ses-from-a', title: 'Checkout A session', workDir: project, updatedAt: Date.now() }],
+          nextCursor: 'cursor-a',
+        };
+      });
+      const harness = makeHarness(makeSession({ id: 'ses-current' }), { listSessionsPage });
+      const driver = await startAt(project, harness, {}, { projectRoot: project, isGitRepo: true });
+      await (driver as unknown as { showSessionPicker(): Promise<void> }).showSessionPicker();
+      expect(driver.state.sessionsScope).toBe('cwd');
+      expect(driver.state.sessions.map((row) => row.id)).toEqual(['ses-from-a']);
+
+      await (
+        driver as unknown as {
+          startSessionAt(location: { cwd: string; projectRoot: string; isGitRepo: boolean; worktree: { root: string; name: string; repoRoot: string } }): Promise<boolean>;
+        }
+      ).startSessionAt({
+        cwd: otherWt,
+        projectRoot: project,
+        isGitRepo: true,
+        worktree: { root: otherWt, name: 'wt-b', repoRoot: project },
+      });
+
+      await (driver as unknown as { showSessionPicker(): Promise<void> }).showSessionPicker();
+      expect(driver.state.sessionsScope).toBe('cwd');
+      expect(driver.state.sessions).toEqual([]);
+      expect(driver.state.sessionsNextCursor).toBeUndefined();
+      expect(transcriptText(driver)).toContain('Failed to load sessions.');
+    });
+
     it('falls back to the worktree root instead of following an escaping directory symlink', async () => {
       const project = tempDir('kimi-symlink-project-');
       const worktree = tempDir('kimi-symlink-worktree-');
