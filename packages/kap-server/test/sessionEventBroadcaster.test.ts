@@ -1639,6 +1639,210 @@ describe('SessionEventBroadcaster', () => {
     expect(interactionMessages).toHaveLength(0);
   });
 
+  describe('the pending interaction a session frame reports', () => {
+    const approval = {
+      toolCallId: 'call_1',
+      toolName: 'Bash',
+      action: 'run',
+      display: { kind: 'command', command: 'ls' },
+    };
+    const question = { questions: [{ question: 'Pick', options: [{ label: 'A' }] }] };
+
+    function framesAbout(sessionId: string): { target: BroadcastTarget; sent: string[] } {
+      const sent: string[] = [];
+      return {
+        sent,
+        target: {
+          send: (frame) => {
+            if (frame.type === 'session' && frame.change === 'updated' && frame.session.id === sessionId) {
+              sent.push(`session ${frame.session.activity} ${String(frame.session.pending_interaction)}`);
+            } else if (frame.type === 'interaction' && !('payload' in frame) && frame.session_id === sessionId) {
+              sent.push(`${frame.interaction_id} ${frame.status}`);
+            }
+          },
+        },
+      };
+    }
+
+    async function subscribedTo(sessionId: string): Promise<{ target: BroadcastTarget; sent: string[] }> {
+      const view = framesAbout(sessionId);
+      bc.addGlobalTarget(view.target);
+      await bc.subscribe(sessionId, view.target, ['main']);
+      await settle();
+      view.sent.length = 0;
+      return view;
+    }
+
+    function sessionStatesAfter(sent: readonly string[], frame: string): string[] {
+      const at = sent.lastIndexOf(frame);
+      if (at < 0) return [`${frame} was never sent`];
+      return [...new Set(sent.slice(at + 1).filter((later) => later.startsWith('session ')))];
+    }
+
+    function titleChanged(sessionId: string): void {
+      eventBus.emit({
+        type: 'session.meta.updated',
+        payload: { agentId: 'main', sessionId, title: 'Title', patch: { title: 'Title', lastPrompt: 'Prompt' } },
+      });
+    }
+
+    async function statesAfterARequestAtEveryPointOf(change: (sessionId: string, main: FakeAgentHandle) => void): Promise<string[][]> {
+      const states: string[][] = [];
+      let sentBeforeTheRequest = 0;
+      for (let ticks = 0; sentBeforeTheRequest < 3; ticks += 1) {
+        expect(ticks).toBeLessThan(200);
+        const sessionId = `s${ticks}`;
+        const main = openSession(sessionId).addAgent('main');
+        const view = await subscribedTo(sessionId);
+
+        change(sessionId, main);
+        for (let tick = 0; tick < ticks; tick += 1) await Promise.resolve();
+        interactions.enqueue({ id: `a${ticks}`, kind: 'approval', payload: approval, tags: { sessionId } });
+        await settle();
+
+        if (view.sent.indexOf(`a${ticks} pending`) > 0) sentBeforeTheRequest += 1;
+        states.push(sessionStatesAfter(view.sent, `a${ticks} pending`));
+      }
+      return states;
+    }
+
+    it('reports an approval requested right after a turn started in the session frames sent after the request', async () => {
+      const main = openSession('s1').addAgent('main');
+      const view = await subscribedTo('s1');
+
+      main.bus.emit(agentEvent('turn.started', { turnId: 1 }));
+      interactions.enqueue({ id: 'a1', kind: 'approval', payload: approval, tags: { sessionId: 's1' } });
+      await settle();
+
+      expect(sessionStatesAfter(view.sent, 'a1 pending')).toEqual(['session turn approval']);
+    });
+
+    it('reports the next approval when the previous one was answered just before it', async () => {
+      openSession('s1').addAgent('main');
+      const view = await subscribedTo('s1');
+      interactions.enqueue({ id: 'a1', kind: 'approval', payload: approval, tags: { sessionId: 's1' } });
+      await settle();
+      view.sent.length = 0;
+
+      interactions.respond('a1', { decision: 'approved' });
+      interactions.enqueue({ id: 'a2', kind: 'approval', payload: approval, tags: { sessionId: 's1' } });
+      await settle();
+
+      expect(sessionStatesAfter(view.sent, 'a2 pending')).toEqual(['session idle approval']);
+    });
+
+    it('reports a question asked right after a turn started in the session frames sent after it', async () => {
+      const main = openSession('s1').addAgent('main');
+      const view = await subscribedTo('s1');
+
+      main.bus.emit(agentEvent('turn.started', { turnId: 1 }));
+      interactions.enqueue({ id: 'q1', kind: 'question', payload: question, tags: { sessionId: 's1' } });
+      await settle();
+
+      expect(sessionStatesAfter(view.sent, 'q1 pending')).toEqual(['session turn question']);
+    });
+
+    it('reports an approval requested right after a turn ended in the session frames sent after the request', async () => {
+      const main = openSession('s1').addAgent('main');
+      const view = await subscribedTo('s1');
+      main.bus.emit(agentEvent('turn.started', { turnId: 1 }));
+      await settle();
+      view.sent.length = 0;
+
+      main.bus.emit(agentEvent('turn.ended', { turnId: 1, reason: 'completed' }));
+      interactions.enqueue({ id: 'a1', kind: 'approval', payload: approval, tags: { sessionId: 's1' } });
+      await settle();
+
+      expect(sessionStatesAfter(view.sent, 'a1 pending')).toEqual(['session idle approval']);
+    });
+
+    it('reports the pending approval in the session frames sent after an accepted subscription got it again', async () => {
+      const main = openSession('s1').addAgent('main');
+      const view = await subscribedTo('s1');
+
+      main.bus.emit(agentEvent('turn.started', { turnId: 1 }));
+      interactions.enqueue({ id: 'a1', kind: 'approval', payload: approval, tags: { sessionId: 's1' } });
+      bc.sendPendingInteractions('s1', view.target);
+      await settle();
+
+      expect(view.sent.filter((frame) => frame === 'a1 pending')).toHaveLength(2);
+      expect(sessionStatesAfter(view.sent, 'a1 pending')).toEqual(['session turn approval']);
+    });
+
+    it('no longer reports an approval that was answered before the session frame was sent', async () => {
+      openSession('s1').addAgent('main');
+      const view = await subscribedTo('s1');
+
+      interactions.enqueue({ id: 'a1', kind: 'approval', payload: approval, tags: { sessionId: 's1' } });
+      interactions.respond('a1', { decision: 'approved' });
+      await settle();
+
+      expect(sessionStatesAfter(view.sent, 'a1 ended')).toEqual(['session idle none']);
+    });
+
+    it('reports an approval in the frames of a started turn, at whichever point of preparing them the request arrives', async () => {
+      const states = await statesAfterARequestAtEveryPointOf((_sessionId, main) => {
+        main.bus.emit(agentEvent('turn.started', { turnId: 1 }));
+      });
+
+      expect(states).toEqual(states.map(() => ['session turn approval']));
+    });
+
+    it('reports an approval in the frame of a title change, at whichever point of preparing it the request arrives', async () => {
+      const states = await statesAfterARequestAtEveryPointOf((sessionId) => {
+        titleChanged(sessionId);
+      });
+
+      expect(states).toEqual(states.map(() => ['session idle approval']));
+    });
+
+    it('still reports every other part of the session state as it was when it changed', async () => {
+      const main = openSession('s1').addAgent('main');
+      const view = await subscribedTo('s1');
+
+      main.bus.emit(agentEvent('turn.started', { turnId: 1 }));
+      main.bus.emit(agentEvent('turn.ended', { turnId: 1, reason: 'completed' }));
+      await settle();
+
+      expect(view.sent).toEqual(['session turn none', 'session idle none']);
+    });
+
+    it('still sends the session frames of a session whose current state can no longer be read', async () => {
+      const lifecycle = openSession('s1');
+      const main = lifecycle.addAgent('main');
+      const view = await subscribedTo('s1');
+
+      main.bus.emit(agentEvent('turn.started', { turnId: 1 }));
+      main.bus.emit(agentEvent('turn.ended', { turnId: 1, reason: 'cancelled' }));
+      Object.defineProperty(lifecycle, 'workView', {
+        get: () => {
+          throw new Error('the session scope was disposed');
+        },
+      });
+      await settle();
+
+      expect(view.sent).toEqual(['session turn none', 'session idle none']);
+    });
+
+    it('leaves the frame of an archived session without a pending interaction', async () => {
+      openSession('s1').addAgent('main');
+      const archived = collectingTarget();
+      bc.addGlobalTarget(archived.target);
+      interactions.enqueue({ id: 'a1', kind: 'approval', payload: approval, tags: { sessionId: 's1' } });
+      await settle();
+      archived.envelopes.length = 0;
+
+      eventBus.emit({
+        type: 'event.session.archived',
+        payload: { sessionId: 's1', workspaceId: 'wd_aaa_000000000000', session: sessionInfo('s1') },
+      });
+      await settle();
+
+      expect(archived.envelopes).toMatchObject([{ type: 'session', change: 'archived' }]);
+      expect(archived.envelopes[0]).not.toHaveProperty('session.pending_interaction', 'approval');
+    });
+  });
+
   describe('conversation subscriptions', () => {
     function openMainAgent(): void {
       const lc = new FakeLifecycle();

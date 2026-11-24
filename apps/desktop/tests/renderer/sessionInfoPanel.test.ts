@@ -140,7 +140,7 @@ describe('SessionInfoFolder', () => {
       await nextTick();
       const branch = host!.querySelector<HTMLElement>('.sif-branch')!;
       expect(branch.getAttribute('title')).toBeNull();
-      expect(host!.querySelector('.ui-tip')).toBeNull();
+      expect(host!.querySelector('.sif-branch-line .ui-tip')).toBeNull();
 
       Object.defineProperties(branch, {
         scrollWidth: { value: 240, configurable: true },
@@ -148,7 +148,7 @@ describe('SessionInfoFolder', () => {
       });
       callback([], {} as ResizeObserver);
       await nextTick();
-      expect(host!.querySelector('.ui-tip')).not.toBeNull();
+      expect(host!.querySelector('.sif-branch-line .ui-tip')).not.toBeNull();
     } finally {
       vi.unstubAllGlobals();
     }
@@ -167,10 +167,10 @@ describe('SessionInfoFolder', () => {
 
     row.state.value.branch = 'feat/a-very-long-branch-name-that-needs-a-tooltip';
     await nextTick();
-    expect(host!.querySelector('.ui-tip')).not.toBeNull();
+    expect(host!.querySelector('.sif-branch-line .ui-tip')).not.toBeNull();
     row.state.value.branch = 'main';
     await nextTick();
-    expect(host!.querySelector('.ui-tip')).toBeNull();
+    expect(host!.querySelector('.sif-branch-line .ui-tip')).toBeNull();
   });
 
   it('collapses additional folders by default and toggles their content', async () => {

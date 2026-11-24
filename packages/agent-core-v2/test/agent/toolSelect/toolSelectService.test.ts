@@ -224,6 +224,8 @@ class RecordingEventBus implements IEventBus {
 class FakeLoopService extends StubEffectiveProfileReader implements IAgentLoopService {
   readonly _serviceBrand = undefined;
   readonly requester = {} as IAgentLoopService['requester'];
+  readonly started = false;
+  readonly hasPersistedState = false;
 
   async start(): Promise<void> {}
 

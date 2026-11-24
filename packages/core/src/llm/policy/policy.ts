@@ -1,5 +1,10 @@
 import { estimateUsedContextTokens } from '#/llm/context-usage';
-import { createSystemMessage, type SystemMessage, type ToolDescription } from '#/llm/message';
+import {
+  createSystemMessage,
+  TOOL_ARGUMENT_CORRECTION_ORIGIN,
+  type SystemMessage,
+  type ToolDescription,
+} from '#/llm/message';
 import { isAbortError, toLlmErrorMessage } from '#/llm/protocol/errors';
 import type { LlmRequest } from '#/llm/request';
 import type { LlmOutcome, LlmRunEvent, LlmRunRequested, LlmRunStarted } from '#/llm/response';
@@ -275,7 +280,9 @@ async function runAttempts(
     // Invalid arguments set a temporary correction. It survives transient failures
     // without a salvaged message and is cleared when another failure has output.
     if (result.error.kind === 'invalid_tool_arguments') {
-      toolArgumentCorrectionMessage = createSystemMessage(result.error.message);
+      toolArgumentCorrectionMessage = createSystemMessage(result.error.message, {
+        origin: { kind: TOOL_ARGUMENT_CORRECTION_ORIGIN },
+      });
     } else if (result.message !== undefined) {
       toolArgumentCorrectionMessage = undefined;
     }

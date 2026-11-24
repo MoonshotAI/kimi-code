@@ -1,0 +1,13 @@
+.drop-card,
+.folder-drop-card {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  border-radius: var(--radius-lg);
+  border: var(--p-hairline) dashed var(--color-accent);
+  background: var(--color-bg);
+  color: var(--color-accent);
+  font-size: var(--ui-b1);
+  font-weight: var(--weight-medium);
+  box-shadow: var(--shadow-md);
+}

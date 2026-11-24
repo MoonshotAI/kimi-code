@@ -41,8 +41,8 @@ defineExpose({ show, close: menu.close });
 </script>
 <template>
   <Teleport to="body">
-    <Transition name="menu-pop">
-      <Menu v-if="menu.open.value" ref="menuRef" class="panel-context-menu" :style="menu.menuStyle.value" @keydown="onKeydown">
+    <Transition name="ui-menu-pop">
+      <Menu v-if="menu.open.value" ref="menuRef" class="ui-menu-floating panel-context-menu" :style="menu.menuStyle.value" @keydown="onKeydown">
         <MenuItem v-for="item in items" :key="item.id" :disabled="item.disabled" @click="select(item.id)">
           <Icon v-if="item.icon" :name="item.icon" />
           <span v-else-if="hasIcons" class="panel-menu-icon-space" aria-hidden="true" />
@@ -60,8 +60,6 @@ defineExpose({ show, close: menu.close });
 }
 .panel-context-menu {
   user-select: none;
-  position: fixed;
-  z-index: var(--z-dropdown);
   max-height: calc(100vh - var(--space-4));
   overflow-y: auto;
 }
