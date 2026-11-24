@@ -55,7 +55,7 @@ export class StreamingUIController {
   private _currentTurnId: string | undefined = undefined;
   private lastCompletedTurnKey: string | undefined;
   private endedTurnId: number | undefined;
-  private heldLoopEnd: 'drained' | 'idle' | undefined;
+  private heldContinuation: 'background' | 'none' | undefined;
   private _currentStep = 0;
   private _assistantDraft = '';
   private _thinkingDraft = '';
@@ -534,14 +534,14 @@ export class StreamingUIController {
     });
   }
 
-  resetLoopLifecycle(): void {
+  resetContinuation(): void {
     this.endedTurnId = undefined;
-    this.heldLoopEnd = undefined;
+    this.heldContinuation = undefined;
   }
 
-  finalizeLoopEnd(
+  finalizeContinuation(
     sendQueued: (item: QueuedMessage) => void,
-    outcome: 'drained' | 'idle',
+    continuation: 'background' | 'none',
     turnId: number,
   ): void {
     const { state } = this.host;
@@ -549,35 +549,35 @@ export class StreamingUIController {
     if (this.endedTurnId !== undefined && turnId <= this.endedTurnId) return;
     this.endedTurnId = turnId;
     if (state.appState.isCompacting) {
-      this.heldLoopEnd = outcome;
+      this.heldContinuation = continuation;
       return;
     }
-    this.settleLoopEnd(sendQueued, outcome);
+    this.settleContinuation(sendQueued, continuation);
   }
 
-  resumeLoopEnd(sendQueued: (item: QueuedMessage) => void): void {
+  resumeContinuation(sendQueued: (item: QueuedMessage) => void): void {
     const { state } = this.host;
     if (state.appState.loopLifecycleEvents !== true) return;
-    const held = this.heldLoopEnd;
-    this.heldLoopEnd = undefined;
+    const held = this.heldContinuation;
+    this.heldContinuation = undefined;
     if (state.queuedMessageDispatchPending) return;
     if (held !== undefined) {
-      this.settleLoopEnd(sendQueued, held);
+      this.settleContinuation(sendQueued, held);
       return;
     }
     const next = this.host.shiftQueuedMessage();
     if (next === undefined) return;
-    this.dispatchQueuedAfterLoopEnd(sendQueued, next);
+    this.dispatchQueuedAfterContinuation(sendQueued, next);
   }
 
-  private settleLoopEnd(
+  private settleContinuation(
     sendQueued: (item: QueuedMessage) => void,
-    outcome: 'drained' | 'idle',
+    continuation: 'background' | 'none',
   ): void {
     const { state } = this.host;
     const next = this.host.shiftQueuedMessage();
     if (next !== undefined) {
-      this.dispatchQueuedAfterLoopEnd(sendQueued, next);
+      this.dispatchQueuedAfterContinuation(sendQueued, next);
       return;
     }
     this.host.setAppState({ streamingPhase: 'idle' });
@@ -587,7 +587,7 @@ export class StreamingUIController {
     notifyTerminalOnce(
       state,
       `turn-complete:${completedTurnKey}`,
-      outcome === 'drained'
+      continuation === 'background'
         ? {
             title: 'Kimi Code background tasks still running',
             body: state.appState.sessionTitle ?? undefined,
@@ -599,7 +599,7 @@ export class StreamingUIController {
     );
   }
 
-  private dispatchQueuedAfterLoopEnd(sendQueued: (item: QueuedMessage) => void, next: QueuedMessage): void {
+  private dispatchQueuedAfterContinuation(sendQueued: (item: QueuedMessage) => void, next: QueuedMessage): void {
     const { state } = this.host;
     state.queuedMessageDispatchPending = true;
     this.host.setAppState({ streamingPhase: 'idle' });
