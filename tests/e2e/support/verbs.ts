@@ -65,7 +65,10 @@ export type Product = { readonly [Name in Verb]: VerbSignatures[Name] };
 
 export type Diagnostic = { readonly name: string; readonly body: string } | { readonly name: string; readonly path: string };
 
+export type Frame = { readonly kind: 'image'; readonly png: Buffer } | { readonly kind: 'text'; readonly text: string };
+
 export interface SurfaceDriver extends Product {
+  frame(): Promise<Frame>;
   close(): Promise<void>;
   kill(): Promise<void>;
   networkViolations(): Promise<readonly string[]>;

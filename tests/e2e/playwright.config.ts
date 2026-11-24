@@ -10,7 +10,7 @@ export default defineConfig<SurfaceOptions>({
   retries: 0,
   forbidOnly: true,
   timeout: 120_000,
-  reporter: [['list'], ['html', { outputFolder: 'playwright-report', open: 'never' }]],
+  reporter: [['list'], ['html', { outputFolder: 'playwright-report', open: 'never' }], ['./support/run-summary.ts']],
   projects: [
     { name: 'tui', use: { surface: 'tui' } },
     { name: 'acp', use: { surface: 'acp' } },

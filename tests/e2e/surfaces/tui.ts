@@ -17,7 +17,7 @@ import {
 } from '@moonshot-ai/testkit/fixtures';
 import { FAKE_PROVIDER_DEFAULTS } from '@moonshot-ai/testkit/model';
 
-import { describeTool, wantedOutput, type Diagnostic, type SurfaceDriver, type SurfaceLaunch, type ToolExpectation, type ToolStatus } from '../support/verbs';
+import { describeTool, wantedOutput, type Diagnostic, type Frame, type SurfaceDriver, type SurfaceLaunch, type ToolExpectation, type ToolStatus } from '../support/verbs';
 import { offlineStubs } from './offline';
 
 const COLUMNS = 120;
@@ -359,6 +359,12 @@ class TuiDriver implements SurfaceDriver {
 
   networkViolations(): Promise<readonly string[]> {
     return readNetworkViolations(this.networkLog, 'The CLI in a pseudo-terminal');
+  }
+
+  async frame(): Promise<Frame> {
+    const { viewport } = await this.read();
+    const rows = viewport.map((row) => row.trimEnd());
+    return { kind: 'text', text: rows.slice(0, rows.findLastIndex((row) => row !== '') + 1).join('\n') };
   }
 
   async diagnostics(): Promise<readonly Diagnostic[]> {
