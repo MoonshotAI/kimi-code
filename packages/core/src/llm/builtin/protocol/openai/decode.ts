@@ -287,7 +287,7 @@ export function createDecoder(
       buffered.id = toolCall.id;
     }
     if (extras !== undefined) {
-      buffered.extras = extras;
+      buffered.extras = { ...buffered.extras, ...extras };
     }
     if (!buffered.emitted) {
       if (!hasConcreteName) {

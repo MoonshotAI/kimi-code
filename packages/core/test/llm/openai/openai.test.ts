@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { openAIProtocol } from '#/llm/builtin/protocol/openai/index';
+import { openAIProtocol, type OpenAIRawChunk } from '#/llm/builtin/protocol/openai/index';
 import type { StreamedMessagePart } from '#/llm/message';
 import type { DecodeSink } from '#/llm/protocol/protocol';
 
@@ -28,6 +28,45 @@ describe('OpenAI transport fixtures', () => {
 });
 
 describe('OpenAI Gemini tool-call context', () => {
+  function expectThoughtSignatureRoundTrip(chunks: Iterable<OpenAIRawChunk>): void {
+    const parts: StreamedMessagePart[] = [];
+    const sink: DecodeSink = {
+      onDelta: (part) => parts.push(part),
+      onFinish: () => {},
+      onMessageId: () => {},
+      onUsage: () => {},
+      onError: () => {},
+      onToolCallEnd: () => {},
+    };
+    const decoder = openAIProtocol.decoder(testModule(), sink);
+    for (const chunk of chunks) decoder.push(chunk);
+    decoder.end();
+    const assistant = accumulatedMessage(parts);
+    expect(assistant.toolCalls[0]?.extras).toEqual({
+      existing: 'preserved',
+      extra_content: { google: { thought_signature: 'sig-tool' } },
+    });
+
+    const nextRequest = openAIProtocol.encode(testModule({
+      messages: [
+        { role: 'user', content: [{ type: 'text', text: 'weather?' }] },
+        assistant,
+        {
+          role: 'tool',
+          toolCallId: 'call_1',
+          content: [{ type: 'text', text: 'sunny' }],
+        },
+      ],
+    }));
+    expect(nextRequest.params.messages[1]).toMatchObject({
+      role: 'assistant',
+      tool_calls: [{
+        id: 'call_1',
+        extra_content: { google: { thought_signature: 'sig-tool' } },
+      }],
+    });
+  }
+
   it.each(['stream', 'non-stream'] as const)(
     'keeps thought_signature on the request after a %s tool call',
     (mode) => {
@@ -38,7 +77,7 @@ describe('OpenAI Gemini tool-call context', () => {
         extras: { existing: 'preserved' },
         extra_content: { google: { thought_signature: 'sig-tool' } },
       };
-      const chunks = mode === 'stream'
+      const chunks: Iterable<OpenAIRawChunk> = mode === 'stream'
         ? [
             { choices: [{ delta: { tool_calls: [{ index: 0, ...toolCall }] } }] },
             { choices: [{ delta: {}, finish_reason: 'tool_calls' }] },
@@ -46,42 +85,47 @@ describe('OpenAI Gemini tool-call context', () => {
         : openAIProtocol.replay({
             choices: [{ message: { tool_calls: [toolCall] }, finish_reason: 'tool_calls' }],
           });
-      const parts: StreamedMessagePart[] = [];
-      const sink: DecodeSink = {
-        onDelta: (part) => parts.push(part),
-        onFinish: () => {},
-        onMessageId: () => {},
-        onUsage: () => {},
-        onError: () => {},
-        onToolCallEnd: () => {},
-      };
-      const decoder = openAIProtocol.decoder(testModule(), sink);
-      for (const chunk of chunks) decoder.push(chunk);
-      decoder.end();
-      const assistant = accumulatedMessage(parts);
-      expect(assistant.toolCalls[0]?.extras).toEqual({
-        existing: 'preserved',
-        extra_content: { google: { thought_signature: 'sig-tool' } },
-      });
-
-      const nextRequest = openAIProtocol.encode(testModule({
-        messages: [
-          { role: 'user', content: [{ type: 'text', text: 'weather?' }] },
-          assistant,
-          {
-            role: 'tool',
-            toolCallId: 'call_1',
-            content: [{ type: 'text', text: 'sunny' }],
-          },
-        ],
-      }));
-      expect(nextRequest.params.messages[1]).toMatchObject({
-        role: 'assistant',
-        tool_calls: [{
-          id: 'call_1',
-          extra_content: { google: { thought_signature: 'sig-tool' } },
-        }],
-      });
+      expectThoughtSignatureRoundTrip(chunks);
     },
   );
+
+  it.each([
+    {
+      name: 'extras before extra_content',
+      first: { extras: { existing: 'preserved' } },
+      second: { extra_content: { google: { thought_signature: 'sig-tool' } } },
+    },
+    {
+      name: 'extra_content before extras',
+      first: { extra_content: { google: { thought_signature: 'sig-tool' } } },
+      second: { extras: { existing: 'preserved' } },
+    },
+  ])('merges $name across stream deltas', ({ first, second }) => {
+    expectThoughtSignatureRoundTrip([
+      {
+        choices: [{
+          delta: {
+            tool_calls: [{
+              index: 0,
+              id: 'call_1',
+              function: { arguments: '{"city":' },
+              ...first,
+            }],
+          },
+        }],
+      },
+      {
+        choices: [{
+          delta: {
+            tool_calls: [{
+              index: 0,
+              function: { name: 'weather', arguments: '"sf"}' },
+              ...second,
+            }],
+          },
+        }],
+      },
+      { choices: [{ delta: {}, finish_reason: 'tool_calls' }] },
+    ]);
+  });
 });
