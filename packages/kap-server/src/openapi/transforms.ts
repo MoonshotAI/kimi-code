@@ -24,11 +24,12 @@ import {
 } from '@moonshot-ai/agent-core-v2/workspace/workspaceFs/fs';
 import { z } from 'zod';
 
-import { buildSuccessEnvelopeSchema } from '../middleware/defineRoute';
+import { buildErrorEnvelopeSchema, buildSuccessEnvelopeSchema } from '../middleware/defineRoute';
 import {
   openApiDocumentEnvelopeJsonSchema,
   openApiDocumentJsonSchema,
 } from '../middleware/schema';
+import { ErrorCode } from '../protocol/error-codes';
 import {
   fsOpenInRequestSchema,
   fsOpenInResponseSchema,
@@ -39,8 +40,6 @@ import {
 } from '../protocol/rest-fs';
 import {
   archiveSessionResponseSchema,
-  cancelPromptPredictionRequestSchema,
-  cancelPromptPredictionResponseSchema,
   cancelSessionBodySchema,
   compactSessionBodySchema,
   compactSessionResponseSchema,
@@ -48,8 +47,6 @@ import {
   forkSessionRequestSchema,
   forkSessionResponseSchema,
   getSessionResponseSchema,
-  predictPromptRequestSchema,
-  predictPromptResponseSchema,
   restoreSessionResponseSchema,
   sessionCancelResponseSchema,
   sessionContinueResponseSchema,
@@ -57,6 +54,7 @@ import {
   takeoverSessionResponseSchema,
   undoSessionRequestSchema,
   undoSessionResponseSchema,
+  undoUnavailableDataSchema,
   waitSessionBodySchema,
   waitSessionResponseSchema,
   type SessionAction,
@@ -116,29 +114,29 @@ const fsActionResponseSchema = {
 } as const;
 
 interface SessionActionDoc {
-  readonly response: z.ZodTypeAny;
-  readonly body?: z.ZodTypeAny;
+  readonly response: z.ZodType;
+  readonly body?: z.ZodType;
   readonly bodyRequired?: boolean;
+  readonly errorData?: Readonly<Record<number, z.ZodType>>;
 }
 
-const sessionActionDocs: Readonly<Record<SessionAction, SessionActionDoc>> = {
+type ExperimentalSessionAction = 'predict-prompt' | 'cancel-prompt-prediction';
+
+const sessionActionDocs: Readonly<
+  Record<Exclude<SessionAction, ExperimentalSessionAction>, SessionActionDoc>
+> = {
   fork: { response: forkSessionResponseSchema, body: forkSessionRequestSchema },
   compact: { response: compactSessionResponseSchema, body: compactSessionBodySchema },
-  undo: { response: undoSessionResponseSchema, body: undoSessionRequestSchema, bodyRequired: true },
+  undo: {
+    response: undoSessionResponseSchema,
+    body: undoSessionRequestSchema,
+    bodyRequired: true,
+    errorData: { [ErrorCode.SESSION_UNDO_UNAVAILABLE]: undoUnavailableDataSchema.nullable() },
+  },
   cancel: { response: sessionCancelResponseSchema, body: cancelSessionBodySchema },
   wait: { response: waitSessionResponseSchema, body: waitSessionBodySchema },
   continue: { response: sessionContinueResponseSchema },
   btw: { response: startBtwSessionResponseSchema },
-  'predict-prompt': {
-    response: predictPromptResponseSchema,
-    body: predictPromptRequestSchema,
-    bodyRequired: true,
-  },
-  'cancel-prompt-prediction': {
-    response: cancelPromptPredictionResponseSchema,
-    body: cancelPromptPredictionRequestSchema,
-    bodyRequired: true,
-  },
   restore: { response: restoreSessionResponseSchema },
   archive: { response: archiveSessionResponseSchema },
   delete: { response: deleteSessionResponseSchema },
@@ -266,11 +264,7 @@ function projectSessionAction(
   replacePathParamName(cloned, 'tail', 'session_id');
   const clonedOperation = asRecord(cloned['post']);
   if (clonedOperation !== undefined) {
-    const actionName = action
-      .split('-')
-      .map((part) => `${part.charAt(0).toUpperCase()}${part.slice(1)}`)
-      .join('');
-    clonedOperation['operationId'] = `runSession${actionName}Action`;
+    clonedOperation['operationId'] = `runSession${action.charAt(0).toUpperCase()}${action.slice(1)}Action`;
     if (doc.body !== undefined) {
       clonedOperation['requestBody'] = {
         required: doc.bodyRequired ?? false,
@@ -289,7 +283,7 @@ function projectSessionAction(
       'output',
     );
     const mergedSchema = Array.isArray(existingOneOf) && existingOneOf.length > 1
-      ? { oneOf: [okVariant, ...existingOneOf.slice(1)] }
+      ? { oneOf: [okVariant, ...existingOneOf.slice(1).map((variant) => withErrorData(variant, doc.errorData))] }
       : okVariant;
     setResponse(clonedOperation, '200', {
       description: `Session ${action} response`,
@@ -297,6 +291,15 @@ function projectSessionAction(
     });
   }
   paths[`/api/v1/sessions/{session_id}:${action}`] = cloned;
+}
+
+function withErrorData(variant: unknown, errorData: SessionActionDoc['errorData']): unknown {
+  const codeEnum = asRecord(asRecord(asRecord(variant)?.['properties'])?.['code'])?.['enum'];
+  const code: unknown = Array.isArray(codeEnum) ? codeEnum[0] : undefined;
+  if (typeof code !== 'number') return variant;
+  const dataSchema = errorData?.[code];
+  if (dataSchema === undefined) return variant;
+  return openApiDocumentJsonSchema(buildErrorEnvelopeSchema(code, dataSchema), 'output');
 }
 
 function patchAgentAction(paths: Record<string, unknown>): void {

@@ -428,9 +428,10 @@ export type UndoSessionResponse = z.infer<typeof undoSessionResponseSchema>;
 
 export const undoUnavailableDataSchema = z.object({
   reason: z.enum(['empty', 'compaction_boundary', 'insufficient']),
-  requestedCount: z.number().int().nonnegative(),
-  undoableCount: z.number().int().nonnegative(),
+  requested_count: z.number().int().nonnegative(),
+  undoable_count: z.number().int().nonnegative(),
 });
+export type UndoUnavailableData = z.infer<typeof undoUnavailableDataSchema>;
 
 export const archiveSessionResponseSchema = z.object({
   archived: z.literal(true),

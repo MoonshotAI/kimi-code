@@ -2110,6 +2110,33 @@ describe('server-v2 /api/v1/sessions', () => {
     }
   });
 
+  it('returns snake_case data when :undo cannot remove the requested turns', async () => {
+    const created = await postJson<SessionWire>('/api/v1/sessions', {
+      metadata: { cwd: home as string },
+    });
+    const session = getLiveSessionById((server as RunningServer).core.accessor, created.body.data.id);
+    if (session === undefined) throw new Error('expected live session');
+    await session.accessor.get(IAgentLifecycleService).create({ agentId: MAIN_AGENT_ID });
+    const undo = vi
+      .spyOn(ConversationFeed.prototype, 'undo')
+      .mockRejectedValueOnce(new Error2(ErrorCodes.SESSION_UNDO_UNAVAILABLE, 'only 1 turn can be undone', {
+        details: { reason: 'insufficient', requestedCount: 2, undoableCount: 1 },
+      }))
+      .mockRejectedValueOnce(new Error2(ErrorCodes.SESSION_UNDO_UNAVAILABLE, 'turn t_1 does not open with user input'));
+
+    try {
+      const limited = await postJson<unknown>(`/api/v1/sessions/${created.body.data.id}:undo`, { turn_id: 't_1' });
+      const unexplained = await postJson<unknown>(`/api/v1/sessions/${created.body.data.id}:undo`, { turn_id: 't_1' });
+
+      expect(limited.body.code).toBe(40911);
+      expect(limited.body.data).toEqual({ reason: 'insufficient', requested_count: 2, undoable_count: 1 });
+      expect(unexplained.body.code).toBe(40911);
+      expect(unexplained.body.data).toBeNull();
+    } finally {
+      undo.mockRestore();
+    }
+  });
+
   it('returns 40901 when :reload is requested during an active compaction', async () => {
     const created = await postJson<SessionWire>('/api/v1/sessions', {
       metadata: { cwd: home as string },

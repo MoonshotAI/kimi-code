@@ -2,6 +2,7 @@ import { ErrorCodes, isError2 } from '@moonshot-ai/agent-core-v2';
 
 import { requestLog } from '../lib/requestLog';
 import { ErrorCode } from '../protocol/error-codes';
+import { undoUnavailableDataSchema, type UndoUnavailableData } from '../protocol/rest-session';
 import { mapError } from '../transport/errors';
 
 export const sessionConflictErrors = {
@@ -19,7 +20,7 @@ export function sendMappedError(
     reply.send({
       code: ErrorCode.SESSION_UNDO_UNAVAILABLE,
       msg: error.message,
-      data: error.details ?? null,
+      data: undoUnavailableData(error.details),
       request_id: req.id,
     });
     return;
@@ -29,4 +30,15 @@ export function sendMappedError(
     requestLog(req)?.error({ err: error }, 'session request failed');
   }
   reply.send(envelope);
+}
+
+function undoUnavailableData(
+  details: Readonly<Record<string, unknown>> | undefined,
+): UndoUnavailableData | null {
+  if (details === undefined) return null;
+  return undoUnavailableDataSchema.parse({
+    reason: details['reason'],
+    requested_count: details['requestedCount'],
+    undoable_count: details['undoableCount'],
+  });
 }

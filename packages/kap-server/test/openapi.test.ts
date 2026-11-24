@@ -45,8 +45,6 @@ describe('server-v2 OpenAPI', () => {
       wait: 'runSessionWaitAction',
       continue: 'runSessionContinueAction',
       btw: 'runSessionBtwAction',
-      'predict-prompt': 'runSessionPredictPromptAction',
-      'cancel-prompt-prediction': 'runSessionCancelPromptPredictionAction',
       restore: 'runSessionRestoreAction',
       archive: 'runSessionArchiveAction',
       delete: 'runSessionDeleteAction',
@@ -62,6 +60,13 @@ describe('server-v2 OpenAPI', () => {
     }
   });
 
+  it('keeps the experimental session actions out of the document', async () => {
+    const paths = asRecord((await fetchOpenApi())['paths']);
+
+    expect(paths['/api/v1/sessions/{session_id}:predict-prompt']).toBeUndefined();
+    expect(paths['/api/v1/sessions/{session_id}:cancel-prompt-prediction']).toBeUndefined();
+  });
+
   it('documents the request body each session action accepts', async () => {
     const doc = await fetchOpenApi();
     const requestBody = (action: string) =>
@@ -69,9 +74,7 @@ describe('server-v2 OpenAPI', () => {
     const bodySchema = (action: string) =>
       asRecord(asRecord(asRecord(asRecord(requestBody(action))['content'])['application/json'])['schema']);
 
-    for (const action of ['undo', 'predict-prompt', 'cancel-prompt-prediction']) {
-      expect(requestBody(action)).toMatchObject({ required: true });
-    }
+    expect(requestBody('undo')).toMatchObject({ required: true });
     for (const action of ['fork', 'compact', 'cancel', 'wait']) {
       expect(requestBody(action)).toMatchObject({ required: false });
     }
@@ -80,8 +83,6 @@ describe('server-v2 OpenAPI', () => {
     }
 
     expect(bodySchema('undo')['required']).toEqual(['turn_id']);
-    expect(bodySchema('predict-prompt')['required']).toEqual(['prediction_id', 'expected_turn_id']);
-    expect(bodySchema('cancel-prompt-prediction')['required']).toEqual(['prediction_id']);
     expect(asRecord(bodySchema('compact')['properties'])['instruction']).toMatchObject({ type: 'string' });
     const cancelProps = asRecord(bodySchema('cancel')['properties']);
     expect(cancelProps['agent_id']).toMatchObject({ type: 'string' });
@@ -90,18 +91,22 @@ describe('server-v2 OpenAPI', () => {
 
   it('documents the data :undo returns when the requested turns cannot be undone', async () => {
     const doc = await fetchOpenApi();
-    const op = operation(doc, '/api/v1/sessions/{session_id}:undo', 'post');
-    const content = asRecord(asRecord(asRecord(op['responses'])['200'])['content']);
-    const variants = asRecord(asRecord(content['application/json'])['schema'])['oneOf'] as Array<{
-      properties: { code: { enum: number[] }; data: unknown };
-    }>;
-    const unavailable = variants.find((variant) => variant.properties.code.enum.includes(40911));
-    expect(unavailable?.properties.data).toMatchObject({
+    const errorData = (action: string, code: number) => {
+      const op = operation(doc, `/api/v1/sessions/{session_id}:${action}`, 'post');
+      const content = asRecord(asRecord(asRecord(op['responses'])['200'])['content']);
+      const variants = asRecord(asRecord(content['application/json'])['schema'])['oneOf'] as Array<{
+        properties: { code: { enum: number[] }; data: unknown };
+      }>;
+      return variants.find((variant) => variant.properties.code.enum.includes(code))?.properties.data;
+    };
+
+    expect(errorData('undo', 40911)).toMatchObject({
       type: 'object',
       nullable: true,
-      required: ['reason', 'requestedCount', 'undoableCount'],
+      required: ['reason', 'requested_count', 'undoable_count'],
       properties: { reason: { enum: ['empty', 'compaction_boundary', 'insufficient'] } },
     });
+    expect(errorData('fork', 40911)).toMatchObject({ enum: [null] });
   });
 
   it('describes the file upload as multipart/form-data', async () => {
