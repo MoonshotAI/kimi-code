@@ -475,6 +475,32 @@ describe('AgentEnvironmentBindingService missing workdir reminder', () => {
     expect(midTurn).toBeUndefined();
   });
 
+  it('re-arms the missing-workdir reminder after the directory reappears and is deleted again', async () => {
+    const dirs: string[] = [];
+    const { reminderProviders } = await setupLocalFs(dirs);
+    const provider = reminderProviders.get(MISSING_WORKDIR_REMINDER_VARIANT)!;
+
+    const firstMissing = await provider(injectionContext());
+    expect(firstMissing).toEqual({
+      content: 'The working directory `/workspace/gone` no longer exists.',
+      disclosure: { missingCwd: '/workspace/gone' },
+    });
+
+    dirs.push('/workspace/gone');
+    const recovered = await provider(injectionContext({ lastDisclosure: { missingCwd: '/workspace/gone' } }));
+    expect(recovered).toEqual({
+      content: 'The working directory `/workspace/gone` is available again.',
+      disclosure: {},
+    });
+
+    dirs.length = 0;
+    const secondMissing = await provider(injectionContext({ lastDisclosure: {} }));
+    expect(secondMissing).toEqual({
+      content: 'The working directory `/workspace/gone` no longer exists.',
+      disclosure: { missingCwd: '/workspace/gone' },
+    });
+  });
+
   it('stays silent when the directory exists or the agent is bound to a remote environment', async () => {
     const existing = await setupLocalFs(['/workspace/gone']);
     const existingProvider = existing.reminderProviders.get(MISSING_WORKDIR_REMINDER_VARIANT);

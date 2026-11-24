@@ -145,6 +145,7 @@ describe('WorktreeService', () => {
   let service: IWorktreeService;
   let presence: ISessionPresence;
   let indexed: SessionSummary[];
+  let peekImplicitError: Error | undefined;
 
   beforeEach(() => {
     root = mkdtempSync(join(tmpdir(), 'worktree-service-'));
@@ -155,6 +156,7 @@ describe('WorktreeService', () => {
     realRepo = realpathSync(repo);
     flagEnabled = true;
     indexed = [];
+    peekImplicitError = undefined;
 
     disposables = new DisposableStore();
     const environment = { process: new HostProcessService() } as unknown as Environment;
@@ -165,6 +167,7 @@ describe('WorktreeService', () => {
         reg.defineInstance(IHostFileSystem, hostFs);
         reg.definePartialInstance(IProjectService, {
           peekImplicit: async (dir: string) => {
+            if (peekImplicitError !== undefined) throw peekImplicitError;
             const abs = toAbsoluteDir(dir);
             const located = abs === undefined ? undefined : await locateCheckout(hostFs, abs);
             const projectRoot = located?.kind === 'grouped' ? located.canonicalMainDir : dir;
@@ -782,6 +785,11 @@ describe('WorktreeService', () => {
         projectRoot: realRepo,
         isGitRepo: true,
       });
+    });
+
+    it('propagates project catalog lookup failures instead of falling back to cwd', async () => {
+      peekImplicitError = new Error('catalog corrupted');
+      await expect(service.locate(repo)).rejects.toThrow('catalog corrupted');
     });
   });
 

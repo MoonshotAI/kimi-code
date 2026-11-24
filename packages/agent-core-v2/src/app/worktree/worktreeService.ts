@@ -82,6 +82,7 @@ interface RunOptions {
   readonly timeoutMs?: number;
   readonly signal?: AbortSignal;
   readonly onOutput?: (text: string) => void;
+  readonly captureOutput?: boolean;
 }
 
 interface GitOptions {
@@ -114,10 +115,11 @@ export class WorktreeService implements IWorktreeService {
   }
 
   async locate(cwd: string): Promise<WorktreeLocation> {
-    const [checkout, projectRoot] = await Promise.all([
+    const [checkout, project] = await Promise.all([
       this.resolveCheckout(cwd),
-      this.projects.peekImplicit(cwd).then((project) => project.root, () => cwd),
+      this.projects.peekImplicit(cwd),
     ]);
+    const projectRoot = project.root;
     if (!this.flags.enabled(WORKTREE_FLAG_ID) || checkout?.kind !== 'managed') {
       return { cwd, projectRoot, isGitRepo: checkout !== undefined };
     }
@@ -218,6 +220,7 @@ export class WorktreeService implements IWorktreeService {
       },
       signal: options.signal,
       onOutput: options.onOutput,
+      captureOutput: false,
     });
     return { exitCode: result.exitCode };
   }
@@ -314,6 +317,14 @@ export class WorktreeService implements IWorktreeService {
     if (await taken(name)) throw alreadyExists(path);
 
     const branch = nonEmpty(input.branch);
+    if (branch !== undefined) {
+      const valid = await this.git(['check-ref-format', '--branch', branch], sourceRoot, { signal });
+      if (valid.exitCode !== 0) throw gitFailed(`Invalid branch name ${branch}.`, valid);
+      const exists = await this.git(['show-ref', '--verify', '--quiet', `refs/heads/${branch}`], sourceRoot, {
+        signal,
+      });
+      if (exists.exitCode === 0) throw gitFailed(`Branch ${branch} already exists.`, exists);
+    }
     const status = await this.git(['status', '--porcelain=v1', '-z'], sourceRoot, { signal });
     if (status.exitCode !== 0) throw gitFailed(`Could not read the status of ${sourceRoot}.`, status);
     return {
@@ -538,9 +549,8 @@ export class WorktreeService implements IWorktreeService {
     const linked = repo.entries.slice(1);
     let matched = linked.find((entry) => sameDir(entry.path, wanted) || sameDir(entry.path, normalized));
     if (matched === undefined) {
-      const nonPrunable = linked.filter((entry) => !entry.prunable);
       const canonicalized = await Promise.all(
-        nonPrunable.map(async (entry) => ({
+        linked.map(async (entry) => ({
           entry,
           canonical: await canonicalPath(this.fs, entry.path),
         })),
@@ -753,13 +763,14 @@ async function waitForProcess(proc: IHostProcess, options: RunOptions): Promise<
       options.onOutput?.(text);
     } catch {}
   };
+  const capture = options.captureOutput !== false;
   const output = Promise.all([
     drain(proc.stdout, (text) => {
-      stdout += text;
+      if (capture) stdout += text;
       emitOutput(text);
     }),
     drain(proc.stderr, (text) => {
-      stderr += text;
+      if (capture) stderr += text;
       emitOutput(text);
     }),
   ]).catch(() => {});

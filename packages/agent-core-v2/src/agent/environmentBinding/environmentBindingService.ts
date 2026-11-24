@@ -211,7 +211,6 @@ export class AgentEnvironmentBindingService implements IAgentEnvironmentBindingS
     const binding = this.current;
     if (binding.environmentId !== LOCAL_ENVIRONMENT_ID) return undefined;
     const cwd = this.effectiveRoots(binding).workDir;
-    if (context.lastDisclosure?.missingCwd === cwd) return undefined;
     let lease: EnvironmentLease;
     try {
       lease = this.resolver.acquire(binding, ['fs']);
@@ -226,7 +225,14 @@ export class AgentEnvironmentBindingService implements IAgentEnvironmentBindingS
         (stat) => !stat.isDirectory,
         (error: unknown) => isHostFsNotFound(error) || isHostFsNotDirectory(error),
       );
-      if (!missing) return undefined;
+      if (!missing) {
+        if (context.lastDisclosure?.missingCwd !== cwd) return undefined;
+        return {
+          content: `The working directory \`${cwd}\` is available again.`,
+          disclosure: {},
+        };
+      }
+      if (context.lastDisclosure?.missingCwd === cwd) return undefined;
       return {
         content: `The working directory \`${cwd}\` no longer exists.`,
         disclosure: { missingCwd: cwd },
