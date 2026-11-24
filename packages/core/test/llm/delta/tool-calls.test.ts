@@ -44,7 +44,22 @@ describe('LLM streamed tool-call boundaries', () => {
       },
     }));
     const result = await runGenerate(openAIProtocol, {
-      module: testModule(),
+      module: testModule({
+        profile: {
+          tools: [
+            {
+              name: 'weather',
+              description: 'Get weather',
+              parameters: { type: 'object', properties: { city: { type: 'string' } } },
+            },
+            {
+              name: 'search',
+              description: 'Search',
+              parameters: { type: 'object', properties: { query: { type: 'string' } } },
+            },
+          ],
+        },
+      }),
       endpoint: aimockEndpoint(server().url),
     });
 

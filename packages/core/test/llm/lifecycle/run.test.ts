@@ -22,6 +22,14 @@ import {
   useAimockServer,
 } from '../harness';
 
+const WEATHER_PROFILE = {
+  tools: [{
+    name: 'weather',
+    description: 'Get weather',
+    parameters: { type: 'object', properties: { city: { type: 'string' } } },
+  }],
+} as const;
+
 describe('LLM run boundaries', () => {
   const server = useAimockServer();
 
@@ -61,7 +69,7 @@ describe('LLM run boundaries', () => {
     ));
 
     const streamed = await runGenerate(openAIProtocol, {
-      module: testModule(),
+      module: testModule({ profile: WEATHER_PROFILE }),
       endpoint: aimockEndpoint(server().url),
     });
     const done = doneOutcome(streamed.outcome);
@@ -115,7 +123,7 @@ describe('LLM run boundaries', () => {
     expect(streamed.events.at(-1)).toMatchObject({ type: 'llm.ended', outcome: done });
 
     const replayed = doneOutcome((await runGenerate(openAIProtocol, {
-      module: testModule(),
+      module: testModule({ profile: WEATHER_PROFILE }),
       endpoint: aimockEndpoint(server().url),
       stream: false,
     })).outcome);
