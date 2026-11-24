@@ -19,7 +19,7 @@ import { startAcp } from '../surfaces/acp';
 import { startDesktop } from '../surfaces/desktop';
 import { startTui } from '../surfaces/tui';
 import { startWeb } from '../surfaces/web';
-import { SURFACES, VERBS, type Product, type Surface, type SurfaceDriver, type SurfaceLaunch, type Verb } from './verbs';
+import { SURFACES, VERBS, wantedOutput, type Product, type Surface, type SurfaceDriver, type SurfaceLaunch, type ToolExpectation, type Verb } from './verbs';
 
 export { expect };
 
@@ -127,6 +127,31 @@ function assertPrompt(text: string): void {
   }
 }
 
+function assertToolExpectation(expectation: ToolExpectation): void {
+  const asked: { readonly name: string; readonly status: string; readonly output?: unknown } = expectation;
+  if (asked.name !== 'Bash' && (asked.status === 'running' || asked.output !== undefined)) {
+    throw new Error(`expectTool() can expect a running tool, or the output of a tool, only for Bash, not for ${asked.name}.`);
+  }
+  if (asked.status === 'rejected' && asked.output !== undefined) {
+    throw new Error('expectTool() cannot expect output of a rejected command: it never ran.');
+  }
+  if (asked.status === 'running' && asked.output === undefined) {
+    throw new Error(
+      'expectTool() can expect a running command only together with output it has printed: until a command prints, the surfaces do not agree on whether it is running or still waiting for approval.',
+    );
+  }
+  const output = wantedOutput(expectation);
+  if (output === undefined) return;
+  if (!/^[ -~]+$/.test(output) || output !== output.trim()) {
+    throw new Error(`expectTool() takes the output as one line of printable ASCII without surrounding spaces, got ${JSON.stringify(output)}`);
+  }
+  if (expectation.target.includes(output)) {
+    throw new Error(
+      `expectTool() cannot tell the output ${JSON.stringify(output)} from the command ${JSON.stringify(expectation.target)}: it is part of the command, and the interface shows the command next to its output. Make the command print text that it does not contain.`,
+    );
+  }
+}
+
 function problemOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -187,6 +212,7 @@ class ScenarioSession {
       stop: () => driver.stop(),
       waitIdle: () => driver.waitIdle(),
       expectTool: async (expectation) => {
+        assertToolExpectation(expectation);
         await driver.expectTool(expectation);
         this.interfaceChecks += 1;
       },

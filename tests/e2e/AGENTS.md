@@ -53,6 +53,7 @@ scenario('reads one file and edits another after approval', { workspace: { 'a.tx
 | 改场景断言就是改产品行为，PR 里要写明为什么改 | CODEOWNERS 评审 |
 | 提示词用英文 ASCII 单行，不以 `/`、`!`、`@` 开头，不以反斜杠结尾 | `send()` 运行时检查 |
 | 剧本里的思考文本不要包含要断言的回复文字：TUI 上思考和回复只有颜色不同，`expectReply` 分不开 | 评审 |
+| `expectTool` 的 `output` 只有 Bash 能带，写的是命令打印出来的文字，不能是命令本身的一部分。要查输出的命令写成 `printf 'rea%s\n' dy` 这样，让打印出来的 `ready` 不出现在命令里。`output` 要写成命令打印出来的完整一行。`running` 也只有 Bash 能用，而且必须带 `output`：它是「命令已经打印了这一行、还没结束」的同步点，等到它成立再去 `stop()` | 类型；`expectTool()` 的运行时检查 |
 | 场景里的命令不要留下长时间运行的后台进程。命令自己的进程一结束，回合就照常继续，四个面都一样；但留下的进程只有 ACP 上会被编辑器清掉，TUI、Web、Desktop 上会一直留到它自己结束。Desktop 上应用退出后，它的输出可能还被应用进程组之外的东西握着（macOS 上是崩溃上报的辅助进程，它要等留下的进程结束才退出）；驱动等到限时，确认应用自己的进程都退出了，才放手，所以这样的用例会慢十秒左右。应用自己的进程没退干净则算收尾失败 | 评审。「回合照常结束、产品照常收尾」由 `waitIdle` 的自测固定 |
 
 ## 写驱动
@@ -67,6 +68,12 @@ scenario('reads one file and edits another after approval', { workspace: { 'a.tx
 | 产品专门为测试加的开关和其他例外，只能登记在 `scripts/checks/e2e-boundary.json` 里并写明理由；不再用到的条目会被报出来 | `scripts/checks/e2e-boundary.mjs` |
 | 改变状态的动作等到界面上出现证据才返回。动作先等到确定的状态再下结论：审批出现了或回合结束了，期望成立了或回合结束了，不靠超时来判断 | 驱动自测 |
 | `expectTool` 和 `expectReply` 只看最近一条用户消息之后的内容，工具卡片不算回复，工具调用前后的两段话不拼在一起匹配；被用户停止而没跑完的工具算 `failed`；回合是否结束要看产品自己的信号（TUI 的活动指示，ACP 的 `session/prompt` 答复，Desktop 和 Web 上 `Interrupt` 按钮不在、没有审批卡、输入框可见，并且页面内容连续两次读到的都一样），不能凭转录里出现的某段文字 | 驱动自测 |
+| `expectTool` 的 `running` 指命令已经在跑、还没结束：TUI 上块头是 `Running a command`，Desktop 和 Web 上卡片的状态是 `running`，ACP 上是这次工具调用已经出现、还没报出 `completed` 或 `failed`。回合已经结束时，没有命令算运行中。它必须和 `output` 一起用，因为各面对「还在等审批」的命令判断不一致：TUI、Desktop、Web 上等审批时卡片就已经显示运行中，ACP 上审批之前编辑器还不知道这是哪条命令。找不到、而界面上正挂着审批时，驱动直接报错，不等到超时；挂着的是别的命令的审批也一样 | 类型；`expectTool()` 的运行时检查；驱动自测 |
+| `expectTool` 的 `output` 查的是这张卡片的输出区域里有没有完全相同的一行（去掉首尾空白后比较）。卡片头、命令本身、别的卡片和回复都不算。<br>TUI：块头之后、第一条转录记录（`Approved:`、`Rejected:`、`Interrupted by user`、`Error: [`）之前的那些行。命令自己打印了以这几个前缀开头的行时，这一行和它之后的内容不算输出。卡片折叠着的时候产品不显示全部输出：运行中只显示最后一行非空输出，前面还有别的行时这一行以 `… ` 开头，驱动比较前把它去掉；成功结束后超过三行也只显示最后一行；失败时超过四行只显示前三行。<br>Desktop 和 Web：卡片详情里标题为 `Output` 的面板的正文。驱动先点开卡片、读完再收回去，收不回去就报错，所以查完之后卡片一定是收起的。<br>ACP：这次工具调用最新一条带内容的更新里嵌着的终端，必须是编辑器为这条命令创建的，它的输出里有这一行 | 驱动自测 |
+| 要查的那一行写短一点，不要用回车覆盖（进度条那种写法）：TUI 上太长的行会被截断或折行，带回车的行在三种界面上显示得不一样 | 评审 |
+| 输出区域里除了命令打印的内容，还有两种不是命令打印的文字，不要拿它们当 `output`：产品追加在结果末尾的行（`Command executed successfully.`、`Interrupted by user`、`Command failed with exit code: 3.` 这一类），TUI、Desktop、Web 上有，ACP 的终端里没有；界面的占位和提示（Desktop 和 Web 的 `No output`，TUI 的 `Press Ctrl+B to run in background` 和 `cwd:` 行） | 评审 |
+| ACP 上的 `output` 能证明两件事：产品没有把嵌在工具调用里的终端换掉（内容是整体替换的，所以只看最新一条）；命令确实打印了这一行。它证明不了输出被显示出来了：在 ACP 里那是编辑器的事，而这里的编辑器就是驱动自己。模型有没有拿到输出，由场景里的模型断言来查 | 评审；改坏产品的破坏性检查 |
+| TUI 上 `stop()` 的证据是转录的最后一条变成了 `Interrupted by user`。只看到屏幕上多了一行不够：被停止的命令自己的卡片里也有同样的一行 | 驱动自测；改坏产品的破坏性检查 |
 | 每个动作在每个面上都要有正例和反例。自测写成 `selfTest('动作', { positive, negative })`，放在以动作命名的文件里；要加动作，先改 `VERBS` | `selfTest()` 登记时检查每个面都有正反例；`self-test/coverage.spec.ts` 检查每个动作都有自测文件 |
 | 动作的含义由自测固定，改自测就等于改含义 | CODEOWNERS 评审 |
 | 产品不连真网络：会去 CDN 下载的工具和 Desktop 启动时要取的模型目录，在 `surfaces/offline.ts` 里桩成 404，其余对外连接由 testkit 的网络守卫记下 | 收尾检查 |

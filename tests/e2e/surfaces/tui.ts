@@ -17,7 +17,7 @@ import {
 } from '@moonshot-ai/testkit/fixtures';
 import { FAKE_PROVIDER_DEFAULTS } from '@moonshot-ai/testkit/model';
 
-import type { Diagnostic, SurfaceDriver, SurfaceLaunch, ToolExpectation, ToolStatus } from '../support/verbs';
+import { describeTool, wantedOutput, type Diagnostic, type SurfaceDriver, type SurfaceLaunch, type ToolExpectation, type ToolStatus } from '../support/verbs';
 import { offlineStubs } from './offline';
 
 const COLUMNS = 120;
@@ -50,6 +50,9 @@ const TURN_FAILED = 'Error: [';
 const APPROVED = 'Approved: ';
 const REJECTED = 'Rejected: ';
 const REJECTION_NOTICE = 'was not run because the user rejected the approval request';
+const UNFINISHED_TOOL = /^(?:Running a command|Using [A-Za-z])/;
+const TRANSCRIPT_NOTES = [APPROVED, REJECTED, TURN_STOPPED, TURN_FAILED] as const;
+const EARLIER_LINES_HIDDEN = '… ';
 
 interface Screen {
   readonly text: string;
@@ -148,21 +151,36 @@ function showsActivity(screen: Screen): boolean {
   return screen.status.some((line) => ACTIVITY.test(line));
 }
 
-function toolHead({ name, target }: ToolExpectation): string {
-  return name === 'Bash' ? `Ran a command · $ ${target}` : `Used ${name} (${target})`;
+function toolHead({ name, target, status }: ToolExpectation): string {
+  if (name === 'Bash') return `${status === 'running' ? 'Running' : 'Ran'} a command · $ ${target}`;
+  return `Used ${name} (${target})`;
 }
 
 function toolStatus(block: Block): ToolStatus | undefined {
   if (block.mark === USER_MARK) return undefined;
-  if (block.mark === DONE_MARK) return 'done';
+  if (block.mark === DONE_MARK) return UNFINISHED_TOOL.test(block.head) ? 'running' : 'done';
   return squash(block.text).includes(squash(REJECTION_NOTICE)) ? 'rejected' : 'failed';
+}
+
+function printedLines(block: Block): string[] {
+  const lines = block.text.split('\n').slice(1);
+  const note = lines.findIndex((line) => TRANSCRIPT_NOTES.some((prefix) => line.startsWith(prefix)));
+  return (note < 0 ? lines : lines.slice(0, note)).map((line) => (line.startsWith(EARLIER_LINES_HIDDEN) ? line.slice(EARLIER_LINES_HIDDEN.length) : line));
 }
 
 function showsTool(screen: Screen, expectation: ToolExpectation): boolean {
   const head = toolHead(expectation);
+  const output = wantedOutput(expectation);
   return latestTurn(screen).some(
-    (block) => (block.head === head || block.head.startsWith(`${head} · `)) && toolStatus(block) === expectation.status,
+    (block) =>
+      (block.head === head || block.head.startsWith(`${head} · `)) &&
+      toolStatus(block) === expectation.status &&
+      (output === undefined || printedLines(block).includes(output)),
   );
+}
+
+function endsWithStopNotice(screen: Screen): boolean {
+  return screen.transcript.findLast((row) => row.trim() !== '')?.trimStart().startsWith(TURN_STOPPED) === true;
 }
 
 function groupedReads(screen: Screen): GroupedRead[] {
@@ -266,7 +284,7 @@ class TuiDriver implements SurfaceDriver {
     const stopped = statusLines(screen, TURN_STOPPED);
     this.write(KEYS.escape);
     const settled = await this.settle('the turn to stop', (current) =>
-      statusLines(current, TURN_STOPPED) > stopped && !showsActivity(current) ? true : undefined,
+      statusLines(current, TURN_STOPPED) > stopped && !showsActivity(current) && endsWithStopNotice(current) ? true : undefined,
     );
     if ('over' in settled) {
       throw this.failure('stop() did not interrupt the turn: it ended on its own before the stop took effect.', settled.over);
@@ -281,11 +299,16 @@ class TuiDriver implements SurfaceDriver {
   }
 
   async expectTool(expectation: ToolExpectation): Promise<void> {
-    const wanted = `${expectation.name} on ${JSON.stringify(expectation.target)} with status ${expectation.status}`;
+    const wanted = describeTool(expectation);
     const settled = await this.settle(`the tool ${wanted}`, (screen) => {
+      if (expectation.status === 'running' && this.turnOver(screen)) return undefined;
       if (showsTool(screen, expectation)) return 'card' as const;
-      return expectation.name === 'Read' && showsReadGroup(screen) && !showsApproval(screen) ? ('group' as const) : undefined;
+      if (showsApproval(screen)) return expectation.status === 'running' ? ('approval' as const) : undefined;
+      return expectation.name === 'Read' && showsReadGroup(screen) ? ('group' as const) : undefined;
     });
+    if ('found' in settled && settled.found === 'approval') {
+      throw this.failure(`expectTool() cannot find a running command while an approval is pending; answer it with approve() or reject() first.`, await this.read());
+    }
     const missing = 'over' in settled ? settled.over : settled.found === 'group' ? await this.missingGroupedRead(expectation, wanted) : undefined;
     if (missing !== undefined) {
       throw this.failure(`expectTool() did not find ${wanted}. The turn ended and it shows:\n${latestTurnEntries(missing)}`, missing);

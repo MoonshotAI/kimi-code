@@ -1,10 +1,12 @@
 import { TIMEOUTS, until } from '@moonshot-ai/testkit/fixtures';
 import type { Locator, Page } from '@playwright/test';
 
-import type { Product, ToolExpectation, ToolName, ToolStatus } from '../support/verbs';
+import { describeTool, wantedOutput, type Product, type ToolExpectation, type ToolName, type ToolStatus } from '../support/verbs';
 
 const REJECTION_NOTICE = 'was not run because the user rejected the approval request';
 const TOOL_LABELS: Readonly<Record<ToolName, string>> = { Read: 'Read', Edit: 'Edit', Write: 'Write', Bash: 'Run' };
+const OUTPUT_PANEL = 'Output';
+const PANEL_BODY = 'xpath=ancestor::*[2]/following-sibling::*[1]';
 const INTERRUPT = /^(?:Interrupt|Press Esc again to interrupt)$/;
 const SHOWN = ':not([inert], [inert] *)';
 const LIST = '[role="list"]';
@@ -17,6 +19,8 @@ const BLOCK = `${ROW}${SHOWN}:not(:has(${LIST}))`;
 const REPLY = `:not(:has(${DISCLOSURE})):not(:has(${STATE})):has(${MARKDOWN})`;
 const ON_A_CARD = `${SHOWN}:not(:is(${MARKDOWN}), :is(${MARKDOWN}) *)`;
 const DESCRIBED_LINES = 80;
+
+type CardHandle = NonNullable<Awaited<ReturnType<Locator['elementHandle']>>>;
 
 function reasonOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -81,14 +85,21 @@ export class RendererSurface implements Product {
   }
 
   async expectTool(expectation: ToolExpectation): Promise<void> {
-    const wanted = `${expectation.name} on ${JSON.stringify(expectation.target)} with status ${expectation.status}`;
+    const wanted = describeTool(expectation);
     const stuck: string[] = [];
+    let waitingForApproval = false;
     const settled = await this.settle(`the tool ${wanted}`, async () => {
+      if (expectation.status === 'running' && (await this.idle()) && !(await this.approvalShown())) return false;
       stuck.push(...(await this.unfoldGroups()));
-      return this.showsTool(expectation);
+      if (await this.showsTool(expectation, stuck)) return true;
+      waitingForApproval = expectation.status === 'running' && (await this.approvalShown());
+      return waitingForApproval;
     });
+    if (waitingForApproval) {
+      throw new Error(`expectTool() cannot find a running command while an approval is pending; answer it with approve() or reject() first.\n${await this.describe()}`);
+    }
     if (settled === 'over') {
-      const folded = stuck.length === 0 ? '' : `A folded group of tools could not be opened: ${stuck.join('; ')}\n`;
+      const folded = stuck.length === 0 ? '' : `Folded tools or tool details could not be opened: ${stuck.join('; ')}\n`;
       throw new Error(`expectTool() did not find ${wanted}. ${folded}The turn ended and it shows:\n${await this.describe()}`);
     }
   }
@@ -190,18 +201,59 @@ export class RendererSurface implements Product {
 
   private async toolStatus(card: Locator): Promise<ToolStatus | undefined> {
     if ((await card.locator(`${STATE}${SHOWN}`).count()) === 0) return 'done';
+    if ((await card.locator(`${STATE}[aria-label="running"]${SHOWN}`).count()) > 0) return 'running';
     if ((await card.locator(`${STATE}[aria-label="cancelled"]${SHOWN}`).count()) > 0) return 'failed';
     if ((await card.locator(`${STATE}[aria-label="error"]${SHOWN}`).count()) === 0) return undefined;
     return (await card.getByText(REJECTION_NOTICE).count()) > 0 ? 'rejected' : 'failed';
   }
 
-  private async showsTool(expectation: ToolExpectation): Promise<boolean> {
+  private async showsTool(expectation: ToolExpectation, stuck: string[]): Promise<boolean> {
     const cards = this.toolCards(expectation);
+    const output = wantedOutput(expectation);
     const count = await cards.count();
     for (let index = 0; index < count; index += 1) {
-      if ((await this.toolStatus(cards.nth(index))) === expectation.status) return true;
+      const card = cards.nth(index);
+      if ((await this.toolStatus(card)) !== expectation.status) continue;
+      if (output === undefined || (await this.showsOutput(card, output, stuck))) return true;
     }
     return false;
+  }
+
+  private async showsOutput(card: Locator, output: string, stuck: string[]): Promise<boolean> {
+    const shown = await card.elementHandle({ timeout: TIMEOUTS.wait });
+    const details = await shown?.$(`${DISCLOSURE}${SHOWN}`);
+    if (shown === null || details === null || details === undefined) return false;
+    let printed: string[] = [];
+    try {
+      await this.setDetails(details, true);
+      printed = await this.outputPanelLines(shown);
+    } catch (error) {
+      stuck.push(reasonOf(error));
+    }
+    try {
+      await this.setDetails(details, false);
+    } catch (cause) {
+      throw new Error(`expectTool() opened the details of a command to read its output and could not close them again: ${reasonOf(cause)}`, { cause });
+    }
+    return printed.includes(output);
+  }
+
+  private async setDetails(details: CardHandle, open: boolean): Promise<void> {
+    const wanted = String(open);
+    if ((await details.getAttribute('aria-expanded')) === wanted) return;
+    await details.click({ timeout: TIMEOUTS.wait });
+    await until(`the details of a command to ${open ? 'open' : 'close'}`, async () => ((await details.getAttribute('aria-expanded')) === wanted ? true : undefined), {
+      timeoutMs: TIMEOUTS.wait,
+    });
+  }
+
+  private async outputPanelLines(card: CardHandle): Promise<string[]> {
+    const titles = await card.$$(`:text-is("${OUTPUT_PANEL}")${SHOWN}`);
+    for (const title of titles.toReversed()) {
+      const body = await title.$(PANEL_BODY);
+      if (body !== null) return (await body.innerText()).split('\n').map((line) => line.trim());
+    }
+    return [];
   }
 
   private async unfoldGroups(): Promise<string[]> {
