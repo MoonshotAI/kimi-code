@@ -2,12 +2,13 @@
 import { computed, getCurrentScope, onScopeDispose, ref, type Ref } from 'vue';
 import { isDaemonApiError, isFileTooLargeError } from '@moonshot-ai/app-core/api';
 import type { Translator } from '@moonshot-ai/app-core/contracts';
-import { isAbsoluteLocalPath, normalizeRelativePath, pathRelativeTo, resolveLocalPath } from '@moonshot-ai/app-core/lib';
+import { expandWorkspacePathTilde, isAbsoluteLocalPath, normalizeRelativePath, pathRelativeTo, resolveLocalPath } from '@moonshot-ai/app-core/lib';
 import { FILE_PREVIEW_MAX_BYTES, type FileData, type FilePreviewRequest } from '@moonshot-ai/app-core/client';
 
 export interface FilePreviewClient {
   status: Ref<{ cwd: string }>;
   getFileDownloadUrl(path: string): string | null;
+  getFsHome(): Promise<{ home: string; recentRoots: string[] }>;
   readHostFileContent(path: string): Promise<FileData>;
   readFileContent(path: string): Promise<FileData | null>;
   readWorkspaceFileBlob(path: string, opts?: { prefixBytes?: number }): Promise<Blob | null>;
@@ -215,6 +216,12 @@ export function useFilePreview({ client, t, root }: UseFilePreviewOptions) {
     }
 
     previewLoadStartedSeq.value += 1;
+
+    if (target.path === '~' || target.path.startsWith('~/')) {
+      const { home } = await client.getFsHome();
+      if (requestSeq !== previewRequestSeq) return;
+      if (home) target = { ...target, path: expandWorkspacePathTilde(target.path, home) };
+    }
 
     if (!isAbsoluteLocalPath(target.path) && target.path.split(/[\\/]+/).includes('..')) {
       const cwd = trimTrailingSlash(currentRoot());

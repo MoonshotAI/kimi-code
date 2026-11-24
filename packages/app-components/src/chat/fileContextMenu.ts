@@ -1,4 +1,5 @@
 import { reactive } from 'vue';
+import { expandWorkspacePathTilde } from '@moonshot-ai/app-core/lib';
 import { absoluteFilePath } from '../lib/displayPath';
 
 export interface FileContextMenuState {
@@ -26,8 +27,9 @@ export function isAbsoluteFilePath(path: string): boolean {
   return path.startsWith('/') || path.startsWith('\\\\') || /^[A-Za-z]:[\\/]/.test(path);
 }
 
-export function resolveFileMenuPath(path: string, cwd?: string): string {
-  return absoluteFilePath({ path, cwd });
+export function resolveFileMenuPath(path: string, cwd?: string, homePath = ''): string {
+  if ((path === '~' || path.startsWith('~/')) && !homePath) return path;
+  return absoluteFilePath({ path: expandWorkspacePathTilde(path, homePath), cwd });
 }
 
 function fileMenuTarget(el: Element): { path: string; kind: 'file' | 'folder'; symlink: boolean } | null {

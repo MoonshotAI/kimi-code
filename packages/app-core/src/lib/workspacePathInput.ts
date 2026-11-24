@@ -15,7 +15,7 @@ export function isWorkspacePathInput(raw: string): boolean {
   return PATH_LIKE.test(raw.trim());
 }
 
-function expandTilde(raw: string, homePath: string): string {
+export function expandWorkspacePathTilde(raw: string, homePath: string): string {
   if (raw === '~') return homePath || raw;
   if (raw.startsWith('~/')) return (homePath || '~') + raw.slice(1);
   return raw;
@@ -43,7 +43,7 @@ export function parseWorkspacePathInput(
   raw: string,
   homePath: string,
 ): ParsedWorkspacePathInput {
-  let target = normalizeForwardSlashes(expandTilde(raw.trim(), homePath));
+  let target = normalizeForwardSlashes(expandWorkspacePathTilde(raw.trim(), homePath));
   const windowsPath = isWindowsPath(target);
   const isRoot =
     target === '/' ||

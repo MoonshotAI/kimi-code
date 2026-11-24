@@ -27,8 +27,22 @@ const insertPathMention = inject(InsertPathMentionKey, undefined);
 const localWorkspace = computed(() => workspacesStore().isLocalWorkspace);
 
 const state = useFileContextMenuState();
+const homePath = ref('');
+let homeSeq = 0;
 
-const targetPath = computed(() => resolveFileMenuPath(state.path, state.cwd));
+watch(
+  () => [state.open, state.path] as const,
+  async ([open, path]) => {
+    const seq = ++homeSeq;
+    homePath.value = '';
+    if (!open || (path !== '~' && !path.startsWith('~/'))) return;
+    const { home } = await workspacesStore().getFsHome();
+    if (seq === homeSeq) homePath.value = home;
+  },
+  { immediate: true },
+);
+
+const targetPath = computed(() => resolveFileMenuPath(state.path, state.cwd, homePath.value));
 const canReveal = computed(
   () => revealInFolder !== undefined && localWorkspace.value && !state.deleted && isAbsoluteFilePath(targetPath.value),
 );

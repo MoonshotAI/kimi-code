@@ -3,7 +3,7 @@ import { join } from 'node:path';
 
 import { captureClipboardWrites } from './fixtures/clipboard';
 import { answerNativeDialog } from './fixtures/native-dialog';
-import { chooseTabMenuItem, expect, lines, solidPng, test } from './fixtures/files';
+import { chooseTabMenuItem, expect, lines, solidPng, test, writeTree } from './fixtures/files';
 import { call, say } from './fixtures/model';
 import { sidebarOf } from './fixtures/sessions';
 import { recordOpenPath } from './fixtures/transcript';
@@ -157,6 +157,29 @@ test('Copy path copies the native absolute path of the previewed file', async ({
   await panel.getByRole('button', { name: 'Choose application' }).click();
   await app.window.getByRole('menuitem', { name: 'Copy path' }).click();
   await expect.poll(clipboardWrites).toEqual([join(app.workspace, 'a.ts')]);
+});
+
+test('tilde links preview and open files from the OS home', async ({ app, model, scratch }) => {
+  const home = join(scratch, 'os-home');
+  const common = join(home, 'agent-workspace', 'rules', 'common.md');
+  writeTree(home, { 'agent-workspace/rules/common.md': lines('# Shared rules') });
+  const panel = app.window.getByRole('complementary', { name: 'Detail panel' });
+  model.script(say('Read [common.md](~/agent-workspace/rules/common.md).'));
+  await app.startTurn(PROMPT);
+  const link = app.window.locator('[data-mention-path="~/agent-workspace/rules/common.md"], [data-file-path="~/agent-workspace/rules/common.md"]');
+
+  await link.click();
+  const sharedRules = panel.getByRole('heading', { name: 'Shared rules', level: 1 });
+  await expect(sharedRules.or(panel.getByText('Only files inside the current project can be previewed'))).toBeVisible();
+  await app.snapshot('tilde-file-preview');
+  await expect(sharedRules).toBeVisible();
+
+  const openedPaths = await recordOpenPath(app);
+  await answerNativeDialog(app, 'openPath', '');
+  await link.click({ button: 'right' });
+  await app.window.getByRole('menuitem', { name: 'Open with', exact: true }).click();
+  await app.window.getByRole('menuitem', { name: 'Open in default app', exact: true }).click();
+  await expect.poll(openedPaths).toEqual([common]);
 });
 
 test('Open in default app passes the native absolute path to the system opener', async ({ app, model }) => {
