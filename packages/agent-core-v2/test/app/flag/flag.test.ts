@@ -436,7 +436,7 @@ describe('migrateLegacyMasterEnvTower', () => {
     expect(readFileSync(configPath, 'utf8')).toContain('tower = true');
   });
 
-  it('keeps migration pending when master env is absent so a later master-enabled launch still migrates tower', () => {
+  it('keeps migration pending when master env is absent or false so a later master-enabled launch still migrates tower', () => {
     const configPath = join(tempDir, 'config.toml');
     writeFileSync(configPath, 'default_model = "kimi-k2"\n', 'utf8');
 
@@ -444,6 +444,12 @@ describe('migrateLegacyMasterEnvTower', () => {
       migrateLegacyMasterEnvTower({
         homeDir: tempDir,
         env: {},
+      }),
+    ).toBe('pending-master-env');
+    expect(
+      migrateLegacyMasterEnvTower({
+        homeDir: tempDir,
+        env: { [MASTER_ENV]: '0' },
       }),
     ).toBe('pending-master-env');
     expect(() =>

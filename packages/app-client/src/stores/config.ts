@@ -142,10 +142,12 @@ export const useConfigStore = defineStore('kimi.config', () => {
     const api = getKimiWebApi();
     if (typeof api.getMeta !== 'function') return;
     const generation = ++metaRequestGeneration;
-    const m = await api.getMeta().catch((error) => {
-      onError?.(error);
-      return null;
-    });
+    const m = await Promise.resolve()
+      .then(() => api.getMeta())
+      .catch((error) => {
+        onError?.(error);
+        return null;
+      });
     if (!m || generation <= metaCommittedGeneration) return;
     metaCommittedGeneration = generation;
     serverVersion.value = m.serverVersion;

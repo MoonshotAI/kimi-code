@@ -129,7 +129,7 @@ export function migrateLegacyMasterEnvTower(
 
   const masterEnv = parseBooleanEnv(env[MASTER_ENV]);
   const towerEnvOverride = parseBooleanEnv(env[TOWER_FLAG_ENV]);
-  if (masterEnv === false || towerEnvOverride === false) {
+  if (towerEnvOverride === false) {
     return stampMigrationMarker(markerPath, record) ? 'stamped-noop' : 'skipped-error';
   }
 

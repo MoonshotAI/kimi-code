@@ -972,6 +972,9 @@ function applyEvent(event: ReturnType<typeof toAppEvent>, sessionId: string): vo
         message: warning.message,
       });
     }
+    if (event.changedFields.length === 0 || event.changedFields.includes('experimental')) {
+      void configStore().refreshServerMeta();
+    }
     void authStore().checkAuth();
   }
 
