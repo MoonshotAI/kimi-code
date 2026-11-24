@@ -4,7 +4,7 @@ import { useI18n } from 'vue-i18n';
 import type { AppProvider } from '@moonshot-ai/app-core/api';
 import { providerModelRows } from '@moonshot-ai/app-core/lib';
 import { useKimiWebClient } from '@moonshot-ai/app-client/client';
-import { Badge, Button, Icon } from '@moonshot-ai/app-ui';
+import { Badge, Button, Icon, IconButton } from '@moonshot-ai/app-ui';
 import ProviderBrandIcon from './ProviderBrandIcon.vue';
 
 const props = defineProps<{
@@ -59,9 +59,9 @@ function formatContext(size: string): string {
 <template>
   <div class="mpv">
     <div class="mpv-head">
-      <button type="button" class="mpv-back" @click="emit('cancel')">
+      <IconButton class="mpv-nav" size="sm" :label="t('settings.plugins.back')" @click="emit('cancel')">
         <Icon name="arrow-left" size="sm" />
-      </button>
+      </IconButton>
       <ProviderBrandIcon v-if="props.provider" :id="props.provider.id" size="sm" />
       <span class="mpv-title">{{ t('providers.kimiSubscription') }}</span>
       <Badge variant="neutral" size="sm">{{ t('providers.managedBuiltin') }}</Badge>
@@ -69,7 +69,7 @@ function formatContext(size: string): string {
     </div>
 
     <div v-if="signedIn" class="mpv-body">
-      <div class="mpv-group">
+      <div class="settings-group settings-group-divided">
         <div class="mpv-row">
           <span class="mpv-label">{{ t('providers.managedAccount') }}</span>
           <span class="mpv-value">{{ accountName }}</span>
@@ -101,7 +101,7 @@ function formatContext(size: string): string {
     </div>
 
     <div v-else class="mpv-body">
-      <div class="mpv-group">
+      <div class="settings-group settings-group-divided">
         <div class="mpv-row mpv-row-login">
           <span class="mpv-label">
             {{ t('providers.managedLoginTitle') }}
@@ -120,6 +120,8 @@ function formatContext(size: string): string {
   </div>
 </template>
 
+<style scoped src="./settings-common.css"></style>
+
 <style scoped>
 .mpv { display: flex; flex-direction: column; }
 .mpv-head {
@@ -128,20 +130,7 @@ function formatContext(size: string): string {
   gap: var(--space-2);
   margin-bottom: var(--space-4);
 }
-.mpv-back {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 26px;
-  height: 26px;
-  margin-left: calc(-1 * var(--space-2));
-  border: none;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--color-text-muted);
-  cursor: pointer;
-}
-.mpv-back:hover { background: var(--color-hover); color: var(--color-text-strong); }
+.mpv-nav { margin-left: calc(-1 * var(--space-2)); }
 .mpv-title {
   font-family: var(--font-ui);
   font-size: var(--text-lg);
@@ -150,12 +139,6 @@ function formatContext(size: string): string {
 }
 .mpv-body { display: flex; flex-direction: column; }
 
-.mpv-group {
-  overflow: hidden;
-  border-radius: var(--radius-xl);
-  background: var(--color-surface);
-}
-.mpv-group > * + * { border-top: var(--p-hairline) solid var(--color-line); }
 .mpv-row {
   display: flex;
   align-items: center;

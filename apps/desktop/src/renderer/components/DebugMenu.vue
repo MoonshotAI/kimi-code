@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { nextTick, onUnmounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { Icon, Menu, MenuItem, Spinner } from '@moonshot-ai/app-ui';
+import { Icon, Menu, MenuItem, Spinner, Tooltip } from '@moonshot-ai/app-ui';
 import { useCanaryChannel, useUpdateStatus, useConfirmDialog } from '@moonshot-ai/app-client/composables';
 
 const { t } = useI18n();
@@ -142,11 +142,13 @@ const branchLabel =
 
 <template>
   <span v-if="canary.enabled.value" class="dbg">
-    <button class="dbg-pill" type="button" :aria-label="branchLabel" :title="branchLabel" @click="toggleMenu">
-      <Spinner v-if="checking" size="xs" />
-      <Icon v-else class="dbg-pill-icon" name="flask" size="sm" />
-      <span class="dbg-pill-text">{{ branchLabel }}</span>
-    </button>
+    <Tooltip :text="branchLabel">
+      <button class="dbg-pill" type="button" :aria-label="branchLabel" @click="toggleMenu">
+        <Spinner v-if="checking" size="xs" />
+        <Icon v-else class="dbg-pill-icon" name="flask" size="sm" />
+        <span class="dbg-pill-text">{{ branchLabel }}</span>
+      </button>
+    </Tooltip>
 
     <Teleport to="body">
       <Menu v-if="menuOpen" ref="menuRef" class="ui-menu-floating dbg-menu" :style="menuStyle">

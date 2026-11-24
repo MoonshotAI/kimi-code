@@ -14,10 +14,23 @@
   min-height: 38px;
   padding: var(--space-1) 0;
 }
+.settings-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  padding: var(--space-4) 0;
+  color: var(--color-text-muted);
+  font-family: var(--font-ui);
+  font-size: var(--text-base);
+}
 .settings-group {
   overflow: hidden;
   border-radius: var(--radius-xl);
   background: var(--color-surface);
+}
+.settings-group.settings-group-divided > * + * {
+  border-top: var(--p-hairline) solid var(--color-line);
 }
 .settings-group > .row {
   min-height: 52px;
@@ -41,17 +54,7 @@
   z-index: 1;
   background-color: var(--color-accent-soft);
   box-shadow: inset 0 0 0 1.5px var(--color-accent-bd);
-  animation: settings-row-highlight var(--duration-flash) var(--ease-out);
-}
-@keyframes settings-row-highlight {
-  0% {
-    background-color: color-mix(in srgb, var(--color-accent) 18%, var(--color-surface));
-    box-shadow: inset 0 0 0 1.5px var(--color-accent);
-  }
-  100% {
-    background-color: var(--color-accent-soft);
-    box-shadow: inset 0 0 0 1.5px var(--color-accent-bd);
-  }
+  animation: ui-row-highlight var(--duration-flash) var(--ease-out);
 }
 @media (prefers-reduced-motion: reduce) {
   .settings-group > .row {

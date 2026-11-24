@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { Icon } from '@moonshot-ai/app-ui';
+import { Icon, Tooltip } from '@moonshot-ai/app-ui';
 import { cronScheduleText } from '@moonshot-ai/app-core/lib';
 import MessageTime from './MessageTime.vue';
 import type { CronTurnData } from '@moonshot-ai/app-core/client/types';
@@ -67,10 +67,12 @@ const text = computed(() => props.text ?? '');
     :data-turn-id="turnId"
     role="status"
   >
-    <div class="cn-head" :class="statusKind" :title="headTooltip">
-      <Icon name="clock" size="sm" class="cn-head-ico" aria-hidden="true" />
-      <span class="cn-head-text">{{ headLabel }}</span>
-    </div>
+    <Tooltip :text="headTooltip">
+      <div class="cn-head" :class="statusKind">
+        <Icon name="clock" size="sm" class="cn-head-ico" aria-hidden="true" />
+        <span class="cn-head-text">{{ headLabel }}</span>
+      </div>
+    </Tooltip>
     <div v-if="text" class="cn-bubble">
       <span class="cn-prompt">{{ text }}</span>
     </div>

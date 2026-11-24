@@ -18,7 +18,7 @@ import {
 } from '@moonshot-ai/app-core/lib';
 import { track } from '@moonshot-ai/app-client/contracts';
 import { openUpgrade } from '@moonshot-ai/app-core/lib';
-import { Badge, Button, Icon, Kbd, Menu, MenuItem, Spinner } from '@moonshot-ai/app-ui';
+import { Avatar, Badge, Button, Icon, Kbd, Menu, MenuItem, Spinner } from '@moonshot-ai/app-ui';
 
 const emit = defineEmits<{
   login: [];
@@ -38,15 +38,6 @@ const nickname = computed(() => userInfo.value?.nickname || t('sidebar.defaultUs
 const showUpgrade = computed(() => membership.value === 'free' || shouldShowUpgrade(userInfo.value?.userLevel));
 const showUsageRow = computed(() => membership.value !== 'free');
 const accountLevel = computed(() => userInfo.value?.userLevelName?.trim() ?? '');
-
-const avatarLoadFailed = ref(false);
-watch(
-  () => userInfo.value?.avatar,
-  () => {
-    avatarLoadFailed.value = false;
-  },
-);
-const showAvatar = computed(() => Boolean(userInfo.value?.avatar) && !avatarLoadFailed.value);
 
 const colorScheme = client.colorScheme;
 const themeLabel = computed(() => t(`theme.${colorScheme.value}`));
@@ -310,10 +301,7 @@ async function onLogout(): Promise<void> {
     @click.stop="toggleMenu"
   >
     <template v-if="signedIn">
-      <span class="user-menu-avatar" aria-hidden="true">
-        <img v-if="showAvatar" :src="userInfo?.avatar" alt="" @error="avatarLoadFailed = true" />
-        <Icon v-else name="user" size="sm" />
-      </span>
+      <Avatar :src="userInfo?.avatar" size="sm" shape="circle" aria-hidden="true" />
       <span class="user-menu-name">{{ nickname }}</span>
       <Badge v-if="accountLevel" variant="neutral" size="sm">{{ accountLevel }}</Badge>
     </template>
@@ -467,30 +455,13 @@ async function onLogout(): Promise<void> {
 
 <style scoped>
 .user-menu-trigger {
-  display: flex;
-  align-items: center;
-  gap: var(--sb-gap);
-  width: 100%;
-  min-width: 0;
   padding: 8px calc(var(--sb-pad-x) - var(--sb-inset));
   border: none;
   border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--color-text);
-  font-family: var(--font-ui);
-  font-size: var(--ui-font-size-sm);
-  font-weight: var(--weight-medium);
-  line-height: var(--leading-tight);
-  cursor: pointer;
-  text-align: left;
 }
 .user-menu-trigger:hover,
 .user-menu-trigger[aria-expanded='true'] {
   background: var(--sb-hover);
-}
-.user-menu-trigger:focus-visible {
-  outline: none;
-  box-shadow: var(--p-focus-ring);
 }
 html.macos-desktop .user-menu-trigger {
   border-bottom-left-radius: var(--radius-window-chip);
@@ -501,24 +472,7 @@ html.macos-desktop.vibrancy .user-menu-trigger :deep(.ui-badge--neutral) {
 .user-menu-trigger svg {
   flex: none;
 }
-.user-menu-avatar {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 24px;
-  height: 24px;
-  flex: none;
-  border-radius: var(--radius-full);
-  background: var(--color-surface-sunken);
-  color: var(--color-text-muted);
-  overflow: hidden;
-}
-.user-menu-avatar img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-html.macos-desktop.vibrancy .user-menu-avatar {
+html.macos-desktop.vibrancy .user-menu-trigger :deep(.ui-avatar) {
   background: var(--color-selected);
 }
 .user-menu-name {
@@ -624,3 +578,5 @@ html.macos-desktop.vibrancy .user-menu-avatar {
   color: var(--color-text-faint);
 }
 </style>
+
+<style scoped src="@moonshot-ai/app-components/sidebar-row-button.css"></style>

@@ -301,24 +301,6 @@ function onHeaderDragStart(event: DragEvent): void {
   cursor: no-drop;
 }
 
-.se-locate-flash { isolation: isolate; }
-.se-locate-flash::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  z-index: -1;
-  border-radius: var(--radius-sm);
-  background: var(--color-accent-soft);
-  pointer-events: none;
-  animation: se-locate-fade var(--duration-flash) var(--ease-out) forwards;
-}
-@keyframes se-locate-fade {
-  from { opacity: 1; }
-  to { opacity: 0; }
-}
-@media (prefers-reduced-motion: reduce) {
-  .se-locate-flash::before { animation: none; }
-}
 
 .group-sessions {
   height: auto;
@@ -359,7 +341,7 @@ function onHeaderDragStart(event: DragEvent): void {
 }
 
 .gh-name {
-  font-size: var(--ui-font-size-sm);
+  font-size: var(--text-sm);
   font-weight: var(--weight-medium);
   line-height: var(--leading-tight);
   color: var(--color-text-muted);
@@ -476,7 +458,9 @@ function onHeaderDragStart(event: DragEvent): void {
   outline: none;
 }
 
-.gh-rename { border-radius: var(--radius-sm); font-family: var(--sans); }
-.gh-add { color: var(--faint); }
-.gh-add:hover { color: var(--dim); }
+.gh-rename { border-radius: var(--radius-sm); font-family: var(--font-ui); }
+.gh-add { color: var(--color-text-quaternary); }
+.gh-add:hover { color: var(--color-text-muted); }
 </style>
+
+<style scoped src="./lib/locate-flash.css"></style>

@@ -46,7 +46,7 @@ import type { AppConfig, AppModel, ManagedQuotaResult, ManagedUserInfo, Thinking
 import PlanUsageCard from './PlanUsageCard.vue';
 import { SecondaryModelPicker } from '@moonshot-ai/app-components';
 import { PlanUpgradeCard } from '@moonshot-ai/app-components';
-import { Badge, Button, Dialog, Icon, IconButton, SegmentedControl, Select, Switch } from '@moonshot-ai/app-ui';
+import { Avatar, Badge, Button, Dialog, Icon, IconButton, SegmentedControl, Select, Switch } from '@moonshot-ai/app-ui';
 import type { BrowserSettingsSection } from '../../../shared/browser-data';
 import {
   visibleSettingsTabs,
@@ -236,15 +236,6 @@ const accountName = computed(() => {
 });
 
 const accountLevel = computed(() => props.managedUserInfo?.userLevelName?.trim() ?? '');
-
-const avatarLoadFailed = ref(false);
-watch(
-  () => props.managedUserInfo?.avatar,
-  () => {
-    avatarLoadFailed.value = false;
-  },
-);
-const showAvatar = computed(() => Boolean(props.managedUserInfo?.avatar) && !avatarLoadFailed.value);
 
 const accountSubtitle = computed(() =>
   signedIn.value ? t('settings.signedIn') : t('settings.signedOutHint'),
@@ -1051,10 +1042,7 @@ function archiveTime(iso: string): string {
             <h3 class="sec-title">{{ t('settings.account') }}</h3>
             <div class="settings-group">
             <div class="account-row">
-              <span class="account-avatar" aria-hidden="true">
-                <img v-if="showAvatar" :src="props.managedUserInfo?.avatar" alt="" @error="avatarLoadFailed = true" />
-                <Icon v-else name="user" size="md" />
-              </span>
+              <Avatar :src="props.managedUserInfo?.avatar" size="lg" shape="circle" aria-hidden="true" />
               <span class="account-meta">
                 <span class="account-name-row">
                   <span class="account-name">{{ accountName }}</span>
@@ -1564,7 +1552,7 @@ function archiveTime(iso: string): string {
   </Dialog>
 </template>
 
-<style scoped src="./settings-common.css"></style>
+<style scoped src="@moonshot-ai/app-components/settings-common.css"></style>
 
 <style scoped>
 .sd {
@@ -1670,23 +1658,6 @@ function archiveTime(iso: string): string {
   align-items: center;
   gap: var(--space-3);
   padding: var(--space-4);
-}
-.account-avatar {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 40px;
-  height: 40px;
-  flex: none;
-  border-radius: 50%;
-  background: var(--color-surface-sunken);
-  color: var(--color-text-muted);
-}
-.account-avatar img {
-  width: 100%;
-  height: 100%;
-  border-radius: 50%;
-  object-fit: cover;
 }
 .account-name-row {
   display: flex;
