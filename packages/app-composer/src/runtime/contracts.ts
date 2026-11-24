@@ -50,7 +50,7 @@ export interface ComposerEditorApi extends TextFieldLike {
   discardSelectionBookmark(id: string): void;
   setText(text: string, opts?: { entries?: AttachmentEntry[] }): void;
   setWorkMode(spec: WorkModePillSpec | null): void;
-  setPlaceholder(text: string): void;
+  setPlaceholder(text: string, opts?: { allowWhitespace?: boolean }): void;
   setSlashCommands(commands: ReadonlyArray<SlashCommand>): void;
   insertNewlineAtCaret(): void;
   insertMention(attrs: MentionAttrs, range: { start: number; end: number }): void;
