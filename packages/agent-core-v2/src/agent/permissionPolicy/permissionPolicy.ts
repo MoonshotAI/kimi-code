@@ -2,7 +2,7 @@ import { createDecorator } from "#/_base/di/instantiation";
 import type {
   ResolvedToolExecutionHookContext
 } from '#/agent/toolExecutor/toolHooks';
-import type { PermissionPolicyResult } from './types';
+import type { PermissionMode, PermissionPolicyResult } from './types';
 
 
 export interface PermissionPolicyEvaluation {
@@ -11,7 +11,7 @@ export interface PermissionPolicyEvaluation {
 }
 
 export interface PermissionPolicyEvaluateOptions {
-  readonly skipModeApprovals?: boolean;
+  readonly mode?: PermissionMode;
 }
 
 export interface IAgentPermissionPolicyService {

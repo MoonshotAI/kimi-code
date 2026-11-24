@@ -744,7 +744,7 @@ describe('AgentPermissionPolicyService chain', () => {
     });
   });
 
-  it('evaluates what Always Ask would decide when skipping mode approvals', async () => {
+  it('evaluates what Always Ask would decide when asked for manual mode', async () => {
     mode = 'auto';
     rules.push({ decision: 'allow', scope: 'user', pattern: 'Bash(rm build/*)' });
     const bash = (command: string): PolicyContextInput => ({ toolName: 'Bash', args: { command, timeout: 60 } });
@@ -754,17 +754,26 @@ describe('AgentPermissionPolicyService chain', () => {
       policyName: 'auto-mode-approve',
       result: { kind: 'approve' },
     });
-    await expect(evaluate(bash('curl -X POST https://example.test'), { skipModeApprovals: true })).resolves.toMatchObject({
+    await expect(evaluate(bash('curl -X POST https://example.test'), { mode: 'manual' })).resolves.toMatchObject({
       policyName: 'fallback-ask',
       result: { kind: 'ask' },
     });
-    await expect(evaluate({ toolName: 'SetTodoList', args: {} }, { skipModeApprovals: true })).resolves.toMatchObject({
+    await expect(evaluate({ toolName: 'SetTodoList', args: {} }, { mode: 'manual' })).resolves.toMatchObject({
       policyName: 'default-tool-approve',
       result: { kind: 'approve' },
     });
-    await expect(evaluate(bash('rm build/out'), { skipModeApprovals: true })).resolves.toMatchObject({
+    await expect(evaluate(bash('rm build/out'), { mode: 'manual' })).resolves.toMatchObject({
       policyName: 'user-configured-allow',
       result: { kind: 'approve' },
+    });
+    rules.push({ decision: 'allow', scope: 'user', pattern: 'Bash(rm *)' });
+    await expect(evaluate(bash('rm -rf build'))).resolves.toMatchObject({
+      policyName: 'auto-mode-approve',
+      result: { kind: 'approve' },
+    });
+    await expect(evaluate(bash('rm -rf build'), { mode: 'manual' })).resolves.toMatchObject({
+      policyName: 'dangerous-command-ask',
+      result: { kind: 'ask' },
     });
   });
 

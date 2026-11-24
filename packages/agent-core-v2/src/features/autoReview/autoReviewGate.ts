@@ -17,10 +17,6 @@ import { AUTO_REVIEW_FLAG_ID } from './flag';
 import type { AutoReviewOutcome, IAutoReviewService } from './review';
 
 const AUTO_REVIEW_ORIGIN = 'auto-review';
-const MODE_APPROVAL_POLICIES: ReadonlySet<string> = new Set([
-  'auto-mode-approve',
-  'yolo-mode-approve',
-]);
 
 type AskPolicyResult = Extract<PermissionPolicyResult, { readonly kind: 'ask' }>;
 
@@ -40,8 +36,8 @@ export function createAutoReviewReviewer(
     }
     const askEval = evaluation.result.kind === 'ask'
       ? evaluation
-      : MODE_APPROVAL_POLICIES.has(evaluation.policyName)
-        ? await policies.evaluate(context, { skipModeApprovals: true })
+      : evaluation.result.kind === 'approve'
+        ? await policies.evaluate(context, { mode: 'manual' })
         : undefined;
     if (askEval?.result.kind !== 'ask') return undefined;
     const baseAsk = askEval.result;

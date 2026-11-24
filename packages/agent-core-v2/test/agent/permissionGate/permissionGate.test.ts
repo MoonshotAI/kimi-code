@@ -70,7 +70,7 @@ describe('AgentPermissionGate', () => {
   let mode: PermissionMode;
   let rules: readonly PermissionRule[];
   let policyResult: PermissionPolicyEvaluation | undefined;
-  let nonModePolicyResult: PermissionPolicyEvaluation | undefined;
+  let manualPolicyResult: PermissionPolicyEvaluation | undefined;
   let autoReviewEnabled: boolean;
   let autoReviewOutcome: AutoReviewOutcome;
   let review: ReturnType<typeof vi.fn<IAutoReviewService['review']>>;
@@ -88,7 +88,7 @@ describe('AgentPermissionGate', () => {
     mode = 'auto';
     rules = [];
     policyResult = undefined;
-    nonModePolicyResult = undefined;
+    manualPolicyResult = undefined;
     autoReviewEnabled = false;
     autoReviewOutcome = { decision: 'allow', risk: 'low' };
     review = vi.fn(async () => autoReviewOutcome);
@@ -106,7 +106,7 @@ describe('AgentPermissionGate', () => {
     const policyService: IAgentPermissionPolicyService = {
       _serviceBrand: undefined,
       evaluate: async (_ctx, options?: PermissionPolicyEvaluateOptions) =>
-        options?.skipModeApprovals === true ? nonModePolicyResult : policyResult,
+        options?.mode === 'manual' ? manualPolicyResult : policyResult,
     };
     ix = createServices(disposables, {
       additionalServices: (reg) => {
@@ -260,7 +260,7 @@ describe('AgentPermissionGate', () => {
   function reviewModeApprovals(): void {
     autoReviewEnabled = true;
     policyResult = modeApproval;
-    nonModePolicyResult = fallbackAsk;
+    manualPolicyResult = fallbackAsk;
   }
 
   it('reviews only Bash and MCP calls that Always Ask would ask about', async () => {
@@ -272,7 +272,7 @@ describe('AgentPermissionGate', () => {
     );
 
     policyResult = modeApproval;
-    nonModePolicyResult = fallbackAsk;
+    manualPolicyResult = fallbackAsk;
     expect(await reviewer(makeContext('Bash'), modeApproval)).toBeUndefined();
 
     autoReviewEnabled = true;
@@ -284,16 +284,13 @@ describe('AgentPermissionGate', () => {
       expect(await reviewer(makeContext(toolName), modeApproval)).toBeUndefined();
       expect(await reviewer(makeContext(toolName), fallbackAsk)).toBeUndefined();
     }
-    for (const evaluation of [
-      { policyName: 'user-configured-allow', result: { kind: 'approve' } },
-      { policyName: 'session-approval-history', result: { kind: 'approve' } },
-      { policyName: 'user-configured-deny', result: { kind: 'deny' } },
-    ] satisfies PermissionPolicyEvaluation[]) {
-      expect(await reviewer(makeContext('Bash'), evaluation)).toBeUndefined();
-    }
-    for (const policyName of ['default-tool-approve', 'git-cwd-write-approve', 'user-configured-allow']) {
-      nonModePolicyResult = { policyName, result: { kind: 'approve' } };
+    const userAllow: PermissionPolicyEvaluation = { policyName: 'user-configured-allow', result: { kind: 'approve' } };
+    expect(await reviewer(makeContext('Bash'), userAllow)).toBeDefined();
+    expect(await reviewer(makeContext('Bash'), { policyName: 'user-configured-deny', result: { kind: 'deny' } })).toBeUndefined();
+    for (const policyName of ['default-tool-approve', 'session-approval-history', 'user-configured-allow']) {
+      manualPolicyResult = { policyName, result: { kind: 'approve' } };
       expect(await reviewer(makeContext('Bash'), modeApproval)).toBeUndefined();
+      expect(await reviewer(makeContext('Bash'), userAllow)).toBeUndefined();
     }
     expect(review).not.toHaveBeenCalled();
   });

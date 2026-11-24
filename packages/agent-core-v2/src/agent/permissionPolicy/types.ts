@@ -68,8 +68,8 @@ export type PermissionPolicyResult =
 
 export interface PermissionPolicy {
   readonly name: string;
-  readonly modeApproval?: boolean;
   evaluate(
     context: PermissionPolicyContext,
+    mode: PermissionMode,
   ): PermissionPolicyResult | undefined | Promise<PermissionPolicyResult | undefined>;
 }
