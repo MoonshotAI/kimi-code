@@ -328,14 +328,14 @@ Retries only apply to transient failures: connection errors, timeouts, HTTP 429 
 
 ## `auto_review`
 
-`auto_review` configures the experimental LLM reviewer for tool calls in Ask When Needed and Never Ask modes. It is disabled by default. Set `KIMI_CODE_EXPERIMENTAL_AUTO_REVIEW=1` or `[experimental] auto_review = true` to enable it.
+`auto_review` configures the experimental LLM reviewer for `Bash` and MCP tool calls in Ask When Needed and Never Ask modes. It is disabled by default. Set `KIMI_CODE_EXPERIMENTAL_AUTO_REVIEW=1` or `[experimental] auto_review = true` to enable it.
 
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
 | `model` | `string` | `[secondary_model]` default model, or main model | Model alias used for independent review requests |
 | `timeout_ms` | `integer` | `30000` | Review deadline in milliseconds, from `1000` to `120000` |
 
-Only calls that Always Ask mode would ask you to approve are reviewed. Calls that a more specific rule already approves — default-approved tools, writes inside a Git working tree, your `allow` rules, and calls approved for this session — skip review. Dangerous commands detected in Ask When Needed mode are still reviewed even when an `allow` rule or a session approval matches them. A reviewer `allow` lets the call run. A `deny` or a review failure asks for your approval in Ask When Needed mode; in Never Ask mode the tool returns an error without running and the main agent can continue.
+Only `Bash` and MCP tool calls that Always Ask mode would ask you to approve are reviewed; other built-in tools such as `Edit` and `Write` skip review and keep the current permission mode's static result. Among `Bash` and MCP calls, those that a more specific rule already approves — statically read-only `Bash` commands, your `allow` rules, and calls approved for this session — skip review. Dangerous commands detected in Ask When Needed mode are still reviewed even when an `allow` rule or a session approval matches them. A reviewer `allow` lets the call run. A `deny` or a review failure asks for your approval in Ask When Needed mode; in Never Ask mode the tool returns an error without running and the main agent can continue.
 
 The reviewer receives the current working directory, the AGENTS.md snapshot frozen at agent initialization, the user and parent instructions still in context after compaction, prior tool calls (including whether you approved them), and the pending tool's complete arguments and target Git working-tree status. Tool output text and media are not sent. A request that exceeds the model window fails that review and starts a context compaction. Review requests turn thinking off, or use the model's own default effort when thinking cannot be disabled. They do not use the main loop's effort. If retained authorization instructions or the working directory change during review, the result is not used to execute the action.
 

@@ -82,8 +82,7 @@ function openFile(): void {
       </template>
     </template>
     <template #trailing>
-      <span v-if="tool.autoReviewing" class="tl-chip">{{ t('tools.activity.autoReviewing') }}</span>
-      <span v-else-if="!hasStats && isWrite && status === 'ok'" class="tl-chip">{{ t('tools.chip.created') }}</span>
+      <span v-if="!hasStats && isWrite && status === 'ok'" class="tl-chip">{{ t('tools.chip.created') }}</span>
     </template>
     <template #body>
       <ToolPanel flush scroll :copy-text="copyText">
@@ -105,7 +104,7 @@ function openFile(): void {
           :path="writeContent?.path"
           :framed="false"
         />
-        <OutputPanel v-else :lines="tool.output" :empty-text="tool.autoReviewing ? t('tools.activity.autoReviewing') : t('tools.output.waiting')" />
+        <OutputPanel v-else :lines="tool.output" :empty-text="t('tools.output.waiting')" />
       </ToolPanel>
     </template>
   </ToolDisclosure>

@@ -11,6 +11,7 @@ import type {
 } from '#/agent/permissionPolicy/types';
 import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
 import type { IFlagService } from '#/app/flag/flag';
+import { isMcpToolName } from '#/tool/toolContract';
 
 import { AUTO_REVIEW_FLAG_ID } from './flag';
 import type { AutoReviewOutcome, IAutoReviewService } from './review';
@@ -30,7 +31,13 @@ export function createAutoReviewReviewer(
   reviewService: IAutoReviewService,
 ): PermissionGateReviewer {
   return async (context, evaluation) => {
-    if (!flags.enabled(AUTO_REVIEW_FLAG_ID) || modes.mode === 'manual') return undefined;
+    if (
+      !flags.enabled(AUTO_REVIEW_FLAG_ID) ||
+      modes.mode === 'manual' ||
+      (context.toolCall.name !== 'Bash' && !isMcpToolName(context.toolCall.name))
+    ) {
+      return undefined;
+    }
     const askEval = evaluation.result.kind === 'ask'
       ? evaluation
       : MODE_APPROVAL_POLICIES.has(evaluation.policyName)

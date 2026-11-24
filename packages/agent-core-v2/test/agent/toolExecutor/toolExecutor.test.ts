@@ -96,6 +96,8 @@ import type { LLMRequestTrace } from '#/llm-adapter/contract/request-trace';
 import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemetry';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IFlagService } from '#/app/flag/flag';
+import { IBashParserService } from '#/app/bashParser/bashParser';
+import { BashParserService } from '#/app/bashParser/bashParserService';
 import { IGitService } from '#/app/git/git';
 import { IHostEnvironment as HostEnvironmentService } from '#/os/interface/hostEnvironment';
 import { createAutoReviewReviewer } from '#/features/autoReview/autoReviewGate';
@@ -178,26 +180,39 @@ afterEach(() => {
 });
 
 describe('AgentToolExecutorService auto review', () => {
-  it('does not execute a tool denied by the reviewer', async () => {
+  it('does not execute a Bash call denied by the reviewer', async () => {
     installAutoReview({ decision: 'deny', risk: 'high' });
-    const tool = new TestTool('Write');
+    const tool = new TestTool('Bash');
     registry.register(tool);
 
-    const [result] = await execute([toolCall('call_review', 'Write', { path: 'outside.txt' })]);
+    const [result] = await execute([toolCall('call_review', 'Bash', { command: 'rm -rf build' })]);
 
     expect(result).toMatchObject({ isError: true, output: expect.stringContaining('not executed') });
     expect(tool.calls).toHaveLength(0);
   });
 
-  it('executes a tool allowed by the reviewer', async () => {
+  it('executes a Bash call allowed by the reviewer', async () => {
     installAutoReview({ decision: 'allow', risk: 'low' });
-    const tool = new TestTool('Write');
+    const tool = new TestTool('Bash');
     registry.register(tool);
 
-    const [result] = await execute([toolCall('call_review', 'Write', { path: 'src/a.ts' })]);
+    const [result] = await execute([toolCall('call_review', 'Bash', { command: 'pnpm build' })]);
 
     expect(result).not.toMatchObject({ isError: true });
     expect(tool.calls).toHaveLength(1);
+  });
+
+  it('executes Write without sending it to the reviewer', async () => {
+    const review = vi.fn(async () => ({ decision: 'deny', risk: 'high' }) as const);
+    installAutoReview(review);
+    const tool = new TestTool('Write');
+    registry.register(tool);
+
+    const [result] = await execute([toolCall('call_write', 'Write', { path: 'outside.txt' })]);
+
+    expect(result).not.toMatchObject({ isError: true });
+    expect(tool.calls).toHaveLength(1);
+    expect(review).not.toHaveBeenCalled();
   });
 
   it('starts every review in a batch before waiting for the first decision', async () => {
@@ -213,12 +228,12 @@ describe('AgentToolExecutorService auto review', () => {
         inFlight -= 1;
       }
     });
-    const tool = new TestTool('Write');
+    const tool = new TestTool('Bash');
     registry.register(tool);
 
     const pending = execute([
-      toolCall('call_a', 'Write', { path: 'outside-a.txt' }),
-      toolCall('call_b', 'Write', { path: 'outside-b.txt' }),
+      toolCall('call_a', 'Bash', { command: 'rm -rf dist-a' }),
+      toolCall('call_b', 'Bash', { command: 'rm -rf dist-b' }),
     ]);
     await vi.waitFor(() => {
       expect(maxInFlight).toBe(2);
@@ -244,6 +259,7 @@ function installAutoReview(
     review: typeof result === 'function' ? result : async () => result,
   });
   permissions.stub(IBootstrapService, stubBootstrap('/tmp', {}, { nonInteractive: true }));
+  permissions.stub(IBashParserService, new BashParserService());
   permissions.stub(IConfigService, { get: (() => undefined) as IConfigService['get'] });
   permissions.stub(IAgentPermissionRulesService, { rules: [], sessionApprovalRulePatterns: [] });
   permissions.stub(ISessionWorkspaceContext, stubWorkspaceContext('/workspace'));

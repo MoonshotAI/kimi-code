@@ -293,6 +293,38 @@ describe('AgentPermissionGate', () => {
     }
   });
 
+  it('reviews only Bash and MCP tools', async () => {
+    reviewModeApprovals();
+    const reviewer = createAutoReviewReviewer(
+      stubFlag(() => autoReviewEnabled),
+      stubPermissionModeService(() => mode),
+      ix.get(IAgentPermissionPolicyService),
+      { _serviceBrand: undefined, humanAuthorization: () => [], review },
+    );
+
+    for (const toolName of ['Bash', 'mcp__filesystem__write_file']) {
+      expect(await reviewer(makeContext(toolName), modeApproval)).toBeDefined();
+      expect(await reviewer(makeContext(toolName), fallbackAsk)).toBeDefined();
+    }
+    for (const toolName of ['Write', 'Edit', 'CronCreate']) {
+      expect(await reviewer(makeContext(toolName), modeApproval)).toBeUndefined();
+      expect(await reviewer(makeContext(toolName), fallbackAsk)).toBeUndefined();
+    }
+    expect(review).not.toHaveBeenCalled();
+  });
+
+  it('keeps static asks for tools outside the review scope on the user path', async () => {
+    autoReviewEnabled = true;
+    mode = 'yolo';
+    policyResult = { policyName: 'sensitive-file-access-ask', result: { kind: 'ask' } };
+    make();
+
+    await executorEvents.fireBeforeExecute(makeContext('Write', { path: '.env' }));
+
+    expect(review).not.toHaveBeenCalled();
+    expect(requestToolApproval).toHaveBeenCalledTimes(1);
+  });
+
   it('reviews a static ask before falling back to the user in Ask When Needed', async () => {
     autoReviewEnabled = true;
     mode = 'yolo';

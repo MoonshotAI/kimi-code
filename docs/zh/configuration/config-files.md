@@ -327,14 +327,14 @@ k3-max = "同一模型的 max Thinking 档位。适合最难的子任务。"
 
 ## `auto_review`
 
-`auto_review` 配置 "Ask When Needed" 和 "Never Ask" 模式下实验性的 LLM 工具调用复核，默认关闭。设置 `KIMI_CODE_EXPERIMENTAL_AUTO_REVIEW=1` 或 `[experimental] auto_review = true` 开启。
+`auto_review` 配置 "Ask When Needed" 和 "Never Ask" 模式下对 `Bash` 和 MCP 工具调用的实验性 LLM 复核，默认关闭。设置 `KIMI_CODE_EXPERIMENTAL_AUTO_REVIEW=1` 或 `[experimental] auto_review = true` 开启。
 
 | 字段 | 类型 | 默认值 | 说明 |
 | --- | --- | --- | --- |
 | `model` | `string` | `[secondary_model]` 默认模型，未配置时为主模型 | 独立复核请求使用的模型别名 |
 | `timeout_ms` | `integer` | `30000` | 复核截止时间（毫秒），范围 `1000` 到 `120000` |
 
-只有 "Always Ask" 模式下会请你审批的调用才会复核。已被更具体的规则放行的调用——默认放行的工具、Git 工作区内的写入、你配置的 `allow` 规则、本会话已批准过的调用——不复核。"Ask When Needed" 模式下识别出的危险命令，即使命中 `allow` 规则或本会话已批准，也仍会复核。复核结果为 `allow` 时直接执行；为 `deny` 或复核失败时，"Ask When Needed" 模式转人工审批，"Never Ask" 模式不执行工具并返回错误，主 Agent 可继续处理。
+只复核 `Bash` 和 MCP 工具调用中、"Always Ask" 模式下会请你审批的调用；`Edit`、`Write` 等其他内置工具不参与复核，沿用当前权限模式的静态结果。`Bash` 和 MCP 调用中，已被更具体的规则放行的调用——静态可确认只读的 `Bash` 命令、你配置的 `allow` 规则、本会话已批准过的调用——不复核。"Ask When Needed" 模式下识别出的危险命令，即使命中 `allow` 规则或本会话已批准，也仍会复核。复核结果为 `allow` 时直接执行；为 `deny` 或复核失败时，"Ask When Needed" 模式转人工审批，"Never Ask" 模式不执行工具并返回错误，主 Agent 可继续处理。
 
 复核模型会收到当前工作目录、Agent 初始化时冻结的 AGENTS.md 快照、压缩后仍在上下文里的用户和父级指令、已发出的历史工具调用（含用户人工批准标记），以及待审工具的完整参数与目标目录的 Git 工作树状态。工具输出文本和媒体不会发送。请求超出模型窗口时，这次复核失败，并触发一次上下文压缩。复核请求关闭 thinking；模型不能关闭时使用它自己的默认档位，不沿用主循环的档位。复核期间若保留的授权指令或工作目录发生变化，不会使用旧结果执行动作。
 
