@@ -1,5 +1,8 @@
 <script setup lang="ts">
-withDefaults(defineProps<{
+import { computed } from 'vue';
+import Icon from './Icon.vue';
+
+const props = withDefaults(defineProps<{
   active?: boolean;
   danger?: boolean;
   disabled?: boolean;
@@ -8,13 +11,27 @@ withDefaults(defineProps<{
   role?: 'menuitem' | 'menuitemradio' | 'button' | 'option';
   hasPopup?: 'menu' | 'dialog';
   expanded?: boolean;
-}>(), { size: 'md', role: 'menuitem' });
+  selected?: boolean;
+  description?: string;
+}>(), { size: 'md', role: 'menuitem', selected: undefined });
 
 defineEmits<{ click: [event: MouseEvent] }>();
 const slots = defineSlots<{
   default?: () => unknown;
+  icon?: () => unknown;
   action?: () => unknown;
 }>();
+
+const buttonAttrs = computed(() => ({
+  class: ['ui-menu-item', `ui-menu-item--${props.size}`, { 'is-active': props.active, 'is-danger': props.danger, 'is-selected': props.selected }],
+  type: 'button' as const,
+  role: props.role,
+  disabled: props.disabled,
+  'aria-haspopup': props.hasPopup,
+  'aria-expanded': props.expanded,
+  'aria-selected': props.role === 'option' ? props.selected : undefined,
+  'aria-checked': props.role === 'menuitemradio' ? props.selected : undefined,
+}));
 </script>
 
 <template>
@@ -26,13 +43,7 @@ const slots = defineSlots<{
     role="none"
   >
     <button
-      class="ui-menu-item"
-      :class="[`ui-menu-item--${size}`, { 'is-active': active, 'is-danger': danger }]"
-      type="button"
-      :role="role"
-      :disabled="disabled"
-      :aria-haspopup="hasPopup"
-      :aria-expanded="expanded"
+      v-bind="buttonAttrs"
       @click="$emit('click', $event)"
     >
       <slot />
@@ -43,16 +54,16 @@ const slots = defineSlots<{
   </div>
   <button
     v-else
-    class="ui-menu-item"
-    :class="[`ui-menu-item--${size}`, { 'is-active': active, 'is-danger': danger }]"
-    type="button"
-    :role="role"
-    :disabled="disabled"
-    :aria-haspopup="hasPopup"
-    :aria-expanded="expanded"
+    v-bind="buttonAttrs"
     @click="$emit('click', $event)"
   >
-    <slot />
+    <slot name="icon" />
+    <span v-if="description" class="ui-menu-item__body">
+      <span class="ui-menu-item__label"><slot /></span>
+      <span class="ui-menu-item__description">{{ description }}</span>
+    </span>
+    <slot v-else />
+    <Icon v-if="selected" class="ui-menu-item__check" name="check" size="sm" />
   </button>
 </template>
 
@@ -75,16 +86,22 @@ const slots = defineSlots<{
   cursor: pointer;
   transition: background var(--duration-base), color var(--duration-base);
 }
-.ui-menu-item:hover:not(:disabled):not(.is-active):not(.is-danger) { background: var(--color-hover); color: var(--color-text-strong); }
+.ui-menu-item:hover:not(:disabled):not(.is-active):not(.is-danger):not(.is-selected) { background: var(--color-hover); color: var(--color-text-strong); }
 .ui-menu-item:focus-visible { outline: none; box-shadow: var(--p-focus-ring); }
 .ui-menu-item:disabled { opacity: 0.5; cursor: not-allowed; }
 .ui-menu-item.is-active { background: var(--color-hover); color: var(--color-text); }
+.ui-menu-item.is-selected:not(:disabled) { background: var(--color-selected); color: var(--color-text); }
 .ui-menu-item.is-danger { color: var(--color-danger); }
 .ui-menu-item.is-danger:hover:not(:disabled) { background: var(--color-hover); }
 .ui-menu-item :deep(svg) { display: block; width: 16px; height: 16px; flex: none; color: var(--color-text-faint); transition: color var(--duration-base); }
 .ui-menu-item:hover:not(:disabled):not(.is-active):not(.is-danger) :deep(svg) { color: var(--color-text-strong); }
 .ui-menu-item.is-active :deep(svg) { color: var(--color-text); }
 .ui-menu-item.is-danger :deep(svg) { color: var(--color-danger); }
+.ui-menu-item.is-selected :deep(.ui-menu-item__check) { margin-left: auto; color: var(--color-text); }
+.ui-menu-item__body { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.ui-menu-item__label,
+.ui-menu-item__description { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ui-menu-item__description { color: var(--color-text-muted); font-size: var(--text-xs); }
 .ui-menu-item--lg { min-height: 44px; padding: 12px 14px; font-size: var(--text-sm); }
 .ui-menu-item-row {
   display: flex;
