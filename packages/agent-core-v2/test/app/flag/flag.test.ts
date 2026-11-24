@@ -165,13 +165,24 @@ describe('FlagService', () => {
     expect(state?.source).toBe('default');
   });
 
-  it('refreshes overrides when the experimental config section changes', async () => {
+  it('refreshes overrides and notifies listeners when the experimental config section changes', async () => {
     const { config, flags } = makeFlags();
+    let changes = 0;
+    const sub = flags.onDidChange(() => {
+      changes += 1;
+    });
     expect(flags.enabled('example_flag')).toBe(true);
     await config.set(EXPERIMENTAL_SECTION, { example_flag: false });
     expect(flags.enabled('example_flag')).toBe(false);
+    expect(changes).toBe(1);
+    await config.set('agent', { modelAlias: 'k2' });
+    expect(changes).toBe(1);
     await config.set(EXPERIMENTAL_SECTION, { example_flag: true });
     expect(flags.enabled('example_flag')).toBe(true);
+    expect(changes).toBe(2);
+    flags.setConfigOverrides({ example_flag: false });
+    expect(changes).toBe(3);
+    sub.dispose();
   });
 
   it('ignores unrelated config section changes', async () => {

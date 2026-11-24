@@ -1,3 +1,4 @@
+import type { Event } from '#/_base/event';
 import { IFlagService } from '#/app/flag/flag';
 import type {
   ExperimentalFeatureState,
@@ -6,7 +7,10 @@ import type {
 } from '#/app/flag/flag';
 import type { IFlagRegistry } from '#/app/flag/flagRegistry';
 
-export function stubFlag(enabled: boolean | ((id: string) => boolean) = false): IFlagService {
+export function stubFlag(
+  enabled: boolean | ((id: string) => boolean) = false,
+  onDidChange: Event<void> = () => ({ dispose: () => {} }),
+): IFlagService {
   const isEnabled = typeof enabled === 'function' ? enabled : (): boolean => enabled;
   const registry: IFlagRegistry = {
     _serviceBrand: undefined,
@@ -17,6 +21,7 @@ export function stubFlag(enabled: boolean | ((id: string) => boolean) = false): 
   return {
     _serviceBrand: undefined,
     registry,
+    onDidChange,
     enabled: isEnabled,
     snapshot: (): ExperimentalFlagMap => ({}),
     enabledIds: () => [],

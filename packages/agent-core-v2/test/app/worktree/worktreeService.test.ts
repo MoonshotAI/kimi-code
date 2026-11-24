@@ -20,6 +20,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices } from '#/_base/di/test';
 import { Error2 } from '#/_base/errors/errors';
+import { Emitter } from '#/_base/event';
 import { encodeWorkDirKey, toAbsoluteDir } from '#/_base/utils/workdir-slug';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IEnvironmentService } from '#/app/environment/environment';
@@ -141,6 +142,7 @@ describe('WorktreeService', () => {
   let repo: string;
   let realRepo: string;
   let flagEnabled: boolean;
+  let flagChanged: Emitter<void>;
   let disposables: DisposableStore;
   let service: IWorktreeService;
   let presence: ISessionPresence;
@@ -159,6 +161,7 @@ describe('WorktreeService', () => {
     peekImplicitError = undefined;
 
     disposables = new DisposableStore();
+    flagChanged = disposables.add(new Emitter<void>());
     const environment = { process: new HostProcessService() } as unknown as Environment;
     const lease = { environment, track: <T>(resource: T): T => resource, dispose: () => {} };
     const hostFs = new HostFileSystem();
@@ -185,7 +188,7 @@ describe('WorktreeService', () => {
         reg.definePartialInstance(ISessionIndex, { listRecent: async () => ({ items: indexed }) });
         reg.definePartialInstance(ILogService, { warn: () => {} });
         reg.define(ISessionPresence, SessionPresenceService);
-        reg.defineInstance(IFlagService, stubFlag((id) => id === 'worktree' && flagEnabled));
+        reg.defineInstance(IFlagService, stubFlag((id) => id === 'worktree' && flagEnabled, flagChanged.event));
         reg.define(IWorktreeService, WorktreeService);
       },
     });
@@ -1387,6 +1390,39 @@ describe('WorktreeService', () => {
       presence.markOpen(sessionDir).dispose();
 
       expect(existsSync(join(sessionDir, SESSION_PRESENCE_DIR))).toBe(false);
+    });
+
+    it('backfills markers and protects sessions opened before the worktree flag is enabled', async () => {
+      const created = await create({ name: 'early-open' });
+      const wt = created.worktree.path;
+      const sessionDir = indexSession('early', wt);
+      const markers = join(sessionDir, SESSION_PRESENCE_DIR);
+
+      flagEnabled = false;
+      flagChanged.fire();
+      const open = presence.markOpen(sessionDir);
+      expect(existsSync(markers)).toBe(false);
+
+      flagEnabled = true;
+      flagChanged.fire();
+      expect(readdirSync(markers)).toHaveLength(1);
+
+      flagEnabled = false;
+      flagChanged.fire();
+      flagEnabled = true;
+      flagChanged.fire();
+      expect(readdirSync(markers)).toHaveLength(1);
+
+      expect(await service.inspectRemoval({ repoRoot: realRepo, path: wt, deleteBranch: false })).toMatchObject({
+        openSessionIds: ['early'],
+        closedSessionCount: 0,
+      });
+      expect((await failure(service.remove(removal(wt)))).code).toBe('worktree.in_use');
+
+      open.dispose();
+      expect(readdirSync(markers)).toEqual([]);
+      await service.remove(removal(wt));
+      expect(existsSync(wt)).toBe(false);
     });
   });
 });

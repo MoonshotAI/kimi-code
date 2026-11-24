@@ -4,7 +4,7 @@ import os from 'node:os';
 
 import { join, resolve } from 'pathe';
 
-import type { IDisposable } from '#/_base/di/lifecycle';
+import { Disposable, type IDisposable } from '#/_base/di/lifecycle';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { ILogService } from '#/_base/log/log';
 import { workspaceRootKey } from '#/_base/utils/workdir-slug';
@@ -34,13 +34,21 @@ interface PresenceMarker extends ProcessStamp {
 
 const NOOP: IDisposable = { dispose: () => {} };
 
-export class SessionPresenceService implements ISessionPresence {
+interface OpenSessionEntry {
+  readonly sessionDir: string;
+  markerPath?: string;
+  disposed: boolean;
+}
+
+export class SessionPresenceService extends Disposable implements ISessionPresence {
   declare readonly _serviceBrand: undefined;
 
   private readonly hostname = os.hostname();
   private readonly startedAt = Math.round(performance.timeOrigin);
   private readonly markers = new Set<string>();
   private readonly openDirs = new Map<string, number>();
+  private readonly openEntries = new Set<OpenSessionEntry>();
+  private disposed = false;
   private readonly exitListener = (): void => {
     for (const marker of this.markers) unlinkSilent(marker);
   };
@@ -51,12 +59,57 @@ export class SessionPresenceService implements ISessionPresence {
     @IHostFileSystem private readonly hostFs: IHostFileSystem,
     @IFlagService private readonly flags: IFlagService,
     @ILogService private readonly log: ILogService,
-  ) {}
+  ) {
+    super();
+    this._register(this.flags.onDidChange(() => this.syncMarkers()));
+  }
 
   markOpen(sessionDir: string): IDisposable {
-    if (!this.flags.enabled(WORKTREE_FLAG_ID)) return NOOP;
+    if (this.disposed) return NOOP;
     const release = this.holdOpen(sessionDir);
-    const dir = join(sessionDir, SESSION_PRESENCE_DIR);
+    const entry: OpenSessionEntry = { sessionDir, disposed: false };
+    this.openEntries.add(entry);
+    if (this.flags.enabled(WORKTREE_FLAG_ID)) {
+      this.writeMarker(entry);
+    }
+    return {
+      dispose: () => {
+        if (entry.disposed) return;
+        entry.disposed = true;
+        this.openEntries.delete(entry);
+        release();
+        this.removeMarker(entry);
+      },
+    };
+  }
+
+  override dispose(): void {
+    if (this.disposed) return;
+    this.disposed = true;
+    for (const entry of this.openEntries) {
+      entry.disposed = true;
+      this.removeMarker(entry);
+    }
+    this.openEntries.clear();
+    this.openDirs.clear();
+    if (this.markers.size > 0) {
+      for (const marker of this.markers) unlinkSilent(marker);
+      this.markers.clear();
+      process.off('exit', this.exitListener);
+    }
+    super.dispose();
+  }
+
+  private syncMarkers(): void {
+    if (this.disposed || !this.flags.enabled(WORKTREE_FLAG_ID)) return;
+    for (const entry of this.openEntries) {
+      this.writeMarker(entry);
+    }
+  }
+
+  private writeMarker(entry: OpenSessionEntry): void {
+    if (entry.disposed || entry.markerPath !== undefined) return;
+    const dir = join(entry.sessionDir, SESSION_PRESENCE_DIR);
     const marker = join(dir, `${process.pid}-${randomUUID()}.json`);
     const body: PresenceMarker = {
       version: PRESENCE_MARKER_VERSION,
@@ -70,19 +123,21 @@ export class SessionPresenceService implements ISessionPresence {
       fs.writeFileSync(staged, JSON.stringify(body));
       fs.renameSync(staged, marker);
     } catch (error) {
-      this.log.warn(`cannot mark session ${sessionDir} as open: ${String(error)}`);
-      return { dispose: release };
+      this.log.warn(`cannot mark session ${entry.sessionDir} as open: ${String(error)}`);
+      return;
     }
     if (this.markers.size === 0) process.on('exit', this.exitListener);
     this.markers.add(marker);
-    return {
-      dispose: () => {
-        if (!this.markers.delete(marker)) return;
-        release();
-        unlinkSilent(marker);
-        if (this.markers.size === 0) process.off('exit', this.exitListener);
-      },
-    };
+    entry.markerPath = marker;
+  }
+
+  private removeMarker(entry: OpenSessionEntry): void {
+    const marker = entry.markerPath;
+    if (marker === undefined) return;
+    entry.markerPath = undefined;
+    if (!this.markers.delete(marker)) return;
+    unlinkSilent(marker);
+    if (this.markers.size === 0) process.off('exit', this.exitListener);
   }
 
   async sessionsUnder(dir: string, options: SessionsUnderOptions = {}): Promise<SessionsUnder> {

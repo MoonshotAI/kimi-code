@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
+import type { Event } from '#/_base/event';
 import { registerConfigSection } from '#/app/config/configSectionContributions';
 import { cloneRecord, isPlainObject, setDefined } from '#/app/config/toml';
 
@@ -51,6 +52,7 @@ export interface IFlagService {
   readonly _serviceBrand: undefined;
 
   readonly registry: IFlagRegistry;
+  readonly onDidChange: Event<void>;
   enabled(id: FlagId): boolean;
   snapshot(): ExperimentalFlagMap;
   enabledIds(): readonly FlagId[];

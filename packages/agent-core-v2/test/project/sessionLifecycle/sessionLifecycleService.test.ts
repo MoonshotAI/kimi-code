@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import { ISessionPresence } from '#/app/sessionPresence/sessionPresence';
 import { noopTelemetryService } from '#/app/telemetry/telemetry';
 import { SessionLifecycleService } from '#/project/sessionLifecycle/sessionLifecycleService';
 
@@ -120,5 +121,95 @@ describe('SessionLifecycleService', () => {
     expect(service.sessionWorkDir('/local-anchor', { environmentId: 'ssh-dev', cwd: '/srv/app' })).toBe('/local-anchor');
     expect(service.sessionWorkDir('/old', undefined)).toBe('/new-primary');
     expect(service.sessionWorkDir('/old', { environmentId: 'local', cwd: '/explicit' })).toBe('/explicit');
+  });
+
+  it('registers session presence even when the worktree flag starts disabled', async () => {
+    const ready = Promise.resolve();
+    const disposePresence = vi.fn();
+    const markOpen = vi.fn(() => ({ dispose: disposePresence }));
+    const anchored: { readonly name: string; readonly fn: () => void }[] = [];
+    const workdir = {
+      dirs: {
+        ready,
+        mergeAdditionalDirs: vi.fn(async () => {}),
+        sessionInfo: () => ({}),
+      },
+      skills: { sessionData: () => ({}) },
+      contextKey: 'local:/workspace',
+      fs: {},
+      instructions: { sessionProvider: () => ({}) },
+      agentProfiles: { ready },
+      configuredSources: {
+        contextKey: 'local:/workspace:configured',
+        explicitAgentProfiles: { ready },
+        extraAgentProfiles: { ready },
+      },
+      mcp: { sessionHandle: () => ({}) },
+      dispose: vi.fn(),
+    };
+    const handle = {
+      accessor: { get: () => ({ ready }) },
+      dispose: vi.fn(),
+    };
+    createScopedChildHandleMock.mockReset();
+    createScopedChildHandleMock.mockImplementation((_ix, _kind, _id, opts) => {
+      opts.configureContainer({
+        anchorKernelEntry: (fn: () => void, name: string) => {
+          anchored.push({ name, fn });
+        },
+        invokeFunction: (cb: (accessor: { get: (id: unknown) => unknown }) => unknown) =>
+          cb({
+            get: (id: unknown) => (id === ISessionPresence ? { markOpen } : undefined),
+          }),
+        provide: () => {},
+      });
+      return handle;
+    });
+    const service = new SessionLifecycleService(
+      ...([
+        undefined,
+        { workspaceId: 'wm_test', persistenceScope: 'sessions/wm_test' },
+        { homeDir: '/home' },
+        { ready, assertValid: () => {}, get: () => undefined },
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        noopTelemetryService,
+        { enabled: () => false },
+        { ready },
+        { ready },
+        undefined,
+        { ready },
+        { ready },
+        undefined,
+        async () => workdir,
+      ] as unknown as ConstructorParameters<typeof SessionLifecycleService>),
+    );
+    try {
+      await (
+        service as unknown as {
+          materializeSession(
+            options: { sessionId: string; workDir: string },
+            environment: undefined,
+            workdir: unknown,
+          ): Promise<unknown>;
+        }
+      ).materializeSession({ sessionId: 'session_flag_off', workDir: '/workspace' }, undefined, workdir);
+
+      expect(markOpen).toHaveBeenCalledWith('/home/sessions/wm_test/session_flag_off');
+      const presenceAnchor = anchored.find((entry) => entry.name === 'sessionLifecycle:presence');
+      expect(presenceAnchor).toBeDefined();
+      presenceAnchor?.fn();
+      expect(disposePresence).toHaveBeenCalledTimes(1);
+    } finally {
+      service.dispose();
+      createScopedChildHandleMock.mockReset();
+    }
   });
 });
