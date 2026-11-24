@@ -1,0 +1,58 @@
+      0s    0.0+ Opened /workspaces/kimi-code/Kimi-GeometryLab/results/tube-generator.log
+      0s    0.0+
+      0s    0.0+ ----------------------------------------
+      0s    0.0+
+      0s    0.0+ Current time (UTC): 2026-11-20 15:46:41 (UTC)
+      0s    0.0+ Current local time: 2026-11-20 15:46:41 (+00:00)
+      0s    0.0+
+      0s    0.0+ ----------------------------------------
+      0s    0.0+
+      0s    0.0+ System Info:
+      0s    0.0+
+      0s    0.0+ Machine Name:         codespaces-e3a99e
+      0s    0.0+ Operating System      Ubuntu 24.04.5 LTS
+      0s    0.0+ Version:              Unix 6.8.0.1070
+      0s    0.0+ OS Architecture:      X64
+      0s    0.0+ Proc Architecture:    X64
+      0s    0.0+ 64 Bit OS:            Yes
+      0s    0.0+ 64 Bit Process:       Yes
+      0s    0.0+ Processor Count:      4
+      0s    0.0+ Working Set:          31MB
+      0s    0.0+ C# Framework:         .NET 9.0.22
+      0s    0.0+ C# CLR Version:       9.0.22
+      0s    0.0+ PicoGK Path:          picogk.26
+      0s    0.0+ Command Line:         /workspaces/kimi-code/Kimi-GeometryLab/engineering/ParametricModels/TubeGenerator/bin/Release/net9.0/TubeGenerator.dll
+      0s    0.0+
+      0s    0.0+ ----------------------------------------
+      0s    0.0+
+      0s    0.0+ PicoGK:    PicoGK Core Library
+      0s    0.0+            26
+      0s    0.0+            PicoGK.Legacy picogk.26
+      0s    0.0+
+      0s    0.0+ VoxelSize: 0.5 (mm)
+      0s    0.0+ Happy Computational Engineering!
+      0s    0.0+
+      0s    0.0+
+      0s    0.0+ GL Callback Error: The GLFW library is not initialized
+      0s    0.0+ GL Callback Error: The GLFW library is not initialized
+      0s    0.0+ GL Callback Error: The GLFW library is not initialized
+      0s    0.0+ GL Callback Error: The GLFW library is not initialized
+      0s    0.0+ GL Callback Error: The GLFW library is not initialized
+      0s    0.0+ GL Callback Error: The GLFW library is not initialized
+      0s    0.0+ GL Callback Error: The GLFW library is not initialized
+      0s    0.0+ GL Callback Error: The GLFW library is not initialized
+      0s    0.0+ GL Callback Error: The GLFW library is not initialized
+      0s    0.0+ Failed to create OpenGL 4.1 context, trying OpenGL 3.3
+      0s    0.0+ GL Callback Error: The GLFW library is not initialized
+      0s    0.0+ GL Callback Error: The GLFW library is not initialized
+      0s    0.0+ GL Callback Error: The GLFW library is not initialized
+      0s    0.0+ GL Callback Error: The GLFW library is not initialized
+      0s    0.0+ GL Callback Error: The GLFW library is not initialized
+      0s    0.0+ GL Callback Error: The GLFW library is not initialized
+      0s    0.0+ GL Callback Error: The GLFW library is not initialized
+      0s    0.0+ GL Callback Error: The GLFW library is not initialized
+      0s    0.0+ GL Callback Error: The GLFW library is not initialized
+      0s    0.0+ Failed to get OpenGL window
+      0s    0.0+ Loading lights embedded environment
+      0s    0.1+ Starting tasks.
+      0s    0.1+
