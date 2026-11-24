@@ -290,15 +290,17 @@ describe('HostRouter', () => {
     expect(local.api.restoreSessions).not.toHaveBeenCalled();
   });
 
-  it('looks up an unknown session before producing its media URL', async () => {
+  it('returns session URLs synchronously and uses the owning host once it is known', async () => {
     const { api, local, remote } = await setup();
     local.api.findSession.mockResolvedValue({ id: 'remote-session', hostId: 'dev' });
     remote.api.getSessionMediaUrl.mockReturnValue('remote-media-url');
+    Object.assign(local.api, { getFileDownloadUrl: vi.fn(() => 'local-download-url') });
 
-    await expect(api.getSessionMediaUrl('remote-session', 'image.png')).resolves.toBe('remote-media-url');
-    expect(local.api.findSession).toHaveBeenCalledWith('remote-session');
+    expect(api.getSessionMediaUrl('remote-session', 'image.png')).toBe('local-media-url');
+    expect(api.getFileDownloadUrl('unknown-session', 'a.md')).toBe('local-download-url');
+
+    await vi.waitFor(() => expect(api.getSessionMediaUrl('remote-session', 'image.png')).toBe('remote-media-url'));
     expect(remote.api.getSessionMediaUrl).toHaveBeenCalledWith('remote-session', 'image.png');
-    expect(local.api.getSessionMediaUrl).not.toHaveBeenCalled();
   });
 
   it('asks this machine which host owns a session it has not seen yet', async () => {
