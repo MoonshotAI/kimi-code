@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { Badge, Button, Icon, Link, Spinner } from '@moonshot-ai/app-ui';
+import { Badge, Button, Icon, Link, Spinner, Tooltip } from '@moonshot-ai/app-ui';
 import type { AppPluginCapabilities } from '@moonshot-ai/app-core/api';
 import type {
   McpAuthorizationTarget,
@@ -200,14 +200,14 @@ function confirmReset(): void {
                 </template>
               </div>
             </template>
-            <p
-              v-if="authState(server)?.error !== undefined"
-              class="plugin-capabilities__error plugin-capabilities__authorization-error"
-              role="alert"
-              :title="authState(server)?.error"
-            >
-              {{ t('settings.plugins.authorizationFailed') }}
-            </p>
+            <Tooltip v-if="authState(server)?.error !== undefined" :text="authState(server)?.error">
+              <p
+                class="plugin-capabilities__error plugin-capabilities__authorization-error"
+                role="alert"
+              >
+                {{ t('settings.plugins.authorizationFailed') }}
+              </p>
+            </Tooltip>
           </li>
         </ul>
       </section>

@@ -763,7 +763,7 @@ function openPullRequest(): void {
   --sb-fade-len: 16px;
   --sb-fade-l: 0px;
   color: inherit;
-  font-size: var(--ui-font-size-sm);
+  font-size: var(--text-sm);
   font-weight: 450;
   line-height: var(--leading-tight);
   user-select: none;
@@ -1029,7 +1029,7 @@ function openPullRequest(): void {
 .sessions .se.flat + .se.flat {
   margin-top: var(--space-05);
 }
-.sessions .se .rename-input { border-radius: var(--radius-sm); font-family: var(--sans); }
+.sessions .se .rename-input { border-radius: var(--radius-sm); font-family: var(--font-ui); }
 </style>
 
 <style src="./lib/anchored-menu.css"></style>

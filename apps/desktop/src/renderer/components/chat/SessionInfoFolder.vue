@@ -111,17 +111,17 @@ function prStateLabel(state: string): string {
             <span class="sif-del">-{{ git.deletions }}</span>
           </span>
         </button>
-        <button
-          v-if="pr"
-          type="button"
-          class="sif-line sif-action sif-pr"
-          :title="t('header.openPr')"
-          @click="emit('openPr', pr.url)"
-        >
-          <Icon :name="pr.state === 'merged' ? 'git-merge' : 'git-pull-request'" size="md" />
-          <span class="sif-pr-number">PR #{{ pr.number }}</span>
-          <span class="sif-pr-state" :class="prStateClass(pr.state)">{{ prStateLabel(pr.state) }}</span>
-        </button>
+        <Tooltip v-if="pr" :text="t('header.openPr')">
+          <button
+            type="button"
+            class="sif-line sif-action sif-pr"
+            @click="emit('openPr', pr.url)"
+          >
+            <Icon :name="pr.state === 'merged' ? 'git-merge' : 'git-pull-request'" size="md" />
+            <span class="sif-pr-number">PR #{{ pr.number }}</span>
+            <span class="sif-pr-state" :class="prStateClass(pr.state)">{{ prStateLabel(pr.state) }}</span>
+          </button>
+        </Tooltip>
       </div>
     </template>
   </section>

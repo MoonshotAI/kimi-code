@@ -6,7 +6,7 @@ import type { ApprovalDecision } from '../../api/types';
 import { useAppearance } from '@moonshot-ai/app-core';
 import { Markdown } from '@moonshot-ai/app-markdown';
 import { panelApiKey } from '@moonshot-ai/app-client/panel';
-import { Badge, Button, Icon, IconButton, Spinner, Textarea, openDialogCount, useImeComposition } from '@moonshot-ai/app-ui';
+import { Badge, Button, Icon, IconButton, Spinner, Textarea, Tooltip, openDialogCount, useImeComposition } from '@moonshot-ai/app-ui';
 import { browserApprovalPresentation, HighlightedCode, createCwdAssumedResolver } from '@moonshot-ai/app-components';
 import { useKimiWebClient } from '@moonshot-ai/app-client/client';
 import { basename, isApplePlatform } from '@moonshot-ai/app-core/lib';
@@ -388,13 +388,13 @@ onUpdated(updateScrollSeams);
 
     <div v-if="paneMounted" ref="paneEl" class="apane" :inert="minimized">
       <div class="ab">
-        <button
-          v-if="block.kind === 'plan_review' && block.path"
-          type="button"
-          class="plan-path"
-          :title="block.path"
-          @click="panelApi?.openFile({ path: block.path!, content: block.plan })"
-        >{{ block.path }}</button>
+        <Tooltip v-if="block.kind === 'plan_review' && block.path" :text="block.path">
+          <button
+            type="button"
+            class="plan-path"
+            @click="panelApi?.openFile({ path: block.path!, content: block.plan })"
+          >{{ block.path }}</button>
+        </Tooltip>
 
         <div v-if="block.kind === 'diff'" class="body-code" :class="{ expanded }">
           <div class="code-path">{{ block.path }}</div>

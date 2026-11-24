@@ -841,7 +841,7 @@ export function startMentionTooltip(host: MentionTooltipHost): () => void {
   function show(pill: HTMLElement): void {
     if (!bubble) {
       bubble = document.createElement('div');
-      bubble.className = 'mention-tip';
+      bubble.classList.add('ui-tip-surface', 'mention-tip');
       bubble.id = 'mention-tip';
       bubble.setAttribute('role', 'tooltip');
       bubble.addEventListener('mouseenter', clearHideTimer);

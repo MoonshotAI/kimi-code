@@ -1,7 +1,7 @@
 .anchored-menu-label {
   padding: var(--space-1) var(--space-2) var(--space-05);
   font-size: var(--text-xs);
-  color: var(--faint);
+  color: var(--color-text-quaternary);
   user-select: none;
 }
 

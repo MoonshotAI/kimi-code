@@ -103,7 +103,7 @@ const issueMessage = computed(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--bg);
+  background: var(--color-bg);
 }
 .gload-box {
   display: flex;
@@ -119,9 +119,9 @@ const issueMessage = computed(() => {
   animation: gload-pop 0.55s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 .gload-text {
-  font-family: var(--mono);
+  font-family: var(--font-mono);
   font-size: var(--text-base);
-  color: var(--muted);
+  color: var(--color-text-faint);
   letter-spacing: 0.04em;
 }
 .gload-textbox {
@@ -132,7 +132,7 @@ const issueMessage = computed(() => {
 }
 .gload-stage {
   font-size: var(--text-sm);
-  color: var(--muted);
+  color: var(--color-text-faint);
 }
 .gload-issue {
   max-width: 420px;
@@ -145,7 +145,7 @@ const issueMessage = computed(() => {
   max-width: 420px;
   text-align: center;
   font-size: var(--text-xs);
-  color: var(--muted);
+  color: var(--color-text-faint);
   overflow-wrap: anywhere;
 }
 @keyframes gload-pop {
@@ -156,5 +156,5 @@ const issueMessage = computed(() => {
   .gload-logo { animation: none; }
 }
 
-.gload-text { font-family: var(--sans); }
+.gload-text { font-family: var(--font-ui); }
 </style>

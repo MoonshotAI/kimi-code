@@ -2941,7 +2941,7 @@ function openPr(url: string): void {
   display: grid;
   grid-template-columns: auto 0 minmax(0, 1fr) auto;
   grid-template-rows: minmax(0, 1fr) auto;
-  background: var(--bg);
+  background: var(--color-bg);
   color: var(--color-text);
   overflow: clip;
   box-sizing: border-box;

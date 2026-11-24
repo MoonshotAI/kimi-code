@@ -248,7 +248,7 @@ onBeforeUnmount(() => {
   <Teleport v-if="open" to="body">
     <div
       ref="bubble"
-      class="ui-tip__bubble"
+      class="ui-tip-surface ui-tip__bubble"
       :class="{ positioned, 'ui-tip__bubble--keys': keys.length > 0, 'ui-tip__bubble--arrow': arrow }"
       :data-side="arrow ? side : undefined"
       :style="[bubbleStyle, { '--tip-lines': maxLines }]"
@@ -265,21 +265,12 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .ui-tip__bubble {
-  position: fixed;
-  z-index: var(--z-tooltip);
   display: -webkit-box;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: var(--tip-lines);
   max-width: 280px;
-  padding: 4px 8px;
-  border-radius: var(--radius-sm);
-  background: var(--color-text);
-  color: var(--color-bg);
-  font-family: var(--font-ui);
-  font-size: var(--text-xs);
   line-height: 1.35;
   overflow: hidden;
-  overflow-wrap: anywhere;
   pointer-events: none;
   opacity: 0;
   transition: opacity var(--duration-fast) var(--ease-out);
