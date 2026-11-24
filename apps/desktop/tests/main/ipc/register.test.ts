@@ -830,7 +830,7 @@ describe('native browser IPC', () => {
         port: 0,
         logLevel: 'silent',
         env: { ...process.env, KIMI_CODE_EXPERIMENTAL_PERSISTENCE_MINIDB_READMODEL: 'false', KIMI_CODE_EXPERIMENTAL_SEARCH_WORKER: 'false' },
-        seeds: [[core.IHostBrowser, access]],
+        hostBrowser: access,
       });
       const sessions = server.core.accessor.get(core.ISessionManager);
       const session = await sessions.create({ workDir: home });

@@ -3,16 +3,14 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import {
-  HOST_BROWSER_DIALOGS_REMINDER_VARIANT,
   IAgentFullCompactionService,
   IAgentLifecycleService,
   IAgentLoopService,
-  IHostBrowser,
   ISessionManager,
   type IAgentScopeHandle,
   type ISessionScopeHandle,
 } from '@moonshot-ai/agent-core-v2';
-import { startServer } from '@moonshot-ai/kap-server';
+import { HOST_BROWSER_DIALOGS_REMINDER_VARIANT, startServer } from '@moonshot-ai/kap-server';
 import {
   formatBrowserDialogReminder,
   registerBrowserDialogCleanup,
@@ -127,7 +125,7 @@ it('injects undelivered dialogs once at the start of a main agent turn, per sess
     homeDir: home,
     port: 0,
     logLevel: 'silent',
-    seeds: [[IHostBrowser, host]],
+    hostBrowser: host,
   });
   let controlled = true;
   configureBrowserDialogs({ isAgentControlled: () => controlled });

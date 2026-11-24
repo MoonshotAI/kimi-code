@@ -350,8 +350,8 @@ export class AgentMcpService extends Service implements IAgentMcpService {
       if (collision !== undefined) {
         collision.disposable.dispose();
         this.mcpTools.delete(qualified);
-      } else if (this.registry.resolve(qualified) !== undefined) {
-        onUnexpectedError(new Error(`MCP tool "${qualified}" from server "${serverName}" was skipped because a host tool already uses that name`));
+      } else if (this.registry.resolve(qualified) !== undefined || this.registry.isReserved(qualified)) {
+        onUnexpectedError(new Error(`MCP tool "${qualified}" from server "${serverName}" was skipped because a host tool owns that name`));
         continue;
       }
       seenInThisCall.set(qualified, tool.name);

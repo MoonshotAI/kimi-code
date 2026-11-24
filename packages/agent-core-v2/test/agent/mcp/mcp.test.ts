@@ -559,7 +559,7 @@ describe('AgentMcpService', () => {
     createService(manager);
     const registry = ix.get(IAgentToolRegistryService);
     registry.register(
-      { name: 'mcp__desktop_browser__run', description: 'host tool', parameters: {}, resolveExecution: () => ({ execute: async () => ({ output: 'host' }) }) },
+      { name: 'mcp__desktop_browser__run', description: 'host tool', parameters: {}, resolveExecution: () => ({ approvalRule: 'mcp__desktop_browser__run', execute: async () => ({ output: 'host' }) }) },
       { source: 'mcp', disclosure: 'deferred' },
     );
 
@@ -567,6 +567,23 @@ describe('AgentMcpService', () => {
 
     expect(registry.resolve('mcp__desktop_browser__run')?.description).toBe('host tool');
     expect(registry.resolve('mcp__desktop_browser__other')?.description).toBe('other');
+  });
+
+  it('skips an MCP tool whose qualified name a host reserved before registering it', async () => {
+    const manager = new FakeMcpManager();
+    const client = fakeMcpClient([
+      { name: 'run', description: 'user server', inputSchema: { type: 'object', properties: {} } },
+    ]);
+    manager.setResolved('desktop_browser', client, await discoverTools(client));
+    createService(manager);
+    const registry = ix.get(IAgentToolRegistryService);
+    const reservation = registry.reserve('mcp__desktop_browser__run');
+
+    manager.connect('desktop_browser');
+    expect(registry.resolve('mcp__desktop_browser__run')).toBeUndefined();
+
+    reservation.dispose();
+    expect(registry.isReserved('mcp__desktop_browser__run')).toBe(false);
   });
 
   it('re-registering the same server applies additions, removals and same-name replacements', async () => {

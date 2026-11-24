@@ -32,6 +32,8 @@ export interface IAgentToolRegistryService {
   list(): readonly ToolInfo[];
   listReferences(): readonly ToolReference[];
   resolve(name: string): ExecutableTool | undefined;
+  reserve(name: string): IDisposable;
+  isReserved(name: string): boolean;
   onDidChange(listener: (change: ToolRegistryChange) => void): IDisposable;
 }
 

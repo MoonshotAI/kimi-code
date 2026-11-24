@@ -1,30 +1,53 @@
-import { IInstantiationService } from '#/_base/di/instantiation';
-import type { IDisposable } from '#/_base/di/lifecycle';
-import { Service } from '#/_base/di/service';
-import { environmentTempTarget, IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
-import { IAgentLoopService } from '#/agent/loop/loop';
-import { TurnEnded } from '#/agent/loop/turnOps';
-import { ISessionMediaStore } from '#/agent/media/sessionMediaStore';
-import { mcpResultToExecutableOutput } from '#/agent/mcp/output';
-import { IAgentProfileService } from '#/agent/profile/profile';
-import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
-import { legacyDidExecuteContext, legacyRejectedResult, type LegacyAfterContext } from '#/agent/toolExecutor/legacyHooks';
-import type { ToolDidExecuteContext } from '#/agent/toolExecutor/toolHooks';
-import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
-import { IAgentToolSelectService } from '#/agent/toolSelect/toolSelect';
-import { IEventBus } from '#/app/event/eventBus';
-import { ITelemetryService } from '#/app/telemetry/telemetry';
-import { IAgentReminderService } from '#/features/reminder/reminderService';
-import type { ContextInjectionContext } from '#/features/reminder/types';
-import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
-import { ISessionContext } from '#/session/sessionContext/sessionContext';
-import type { ExecutableTool } from '#/tool/toolContract';
+import { IInstantiationService } from '@moonshot-ai/agent-core-v2/_base/di/instantiation';
+import type { IDisposable } from '@moonshot-ai/agent-core-v2/_base/di/lifecycle';
+import { Service } from '@moonshot-ai/agent-core-v2/_base/di/service';
+import { environmentTempTarget, IAgentEnvironmentService } from '@moonshot-ai/agent-core-v2/agent/environmentBinding/agentEnvironment';
+import { IAgentLoopService } from '@moonshot-ai/agent-core-v2/agent/loop/loop';
+import { TurnEnded } from '@moonshot-ai/agent-core-v2/agent/loop/turnOps';
+import { ISessionMediaStore } from '@moonshot-ai/agent-core-v2/agent/media/sessionMediaStore';
+import { mcpResultToExecutableOutput } from '@moonshot-ai/agent-core-v2/agent/mcp/output';
+import { IAgentProfileService } from '@moonshot-ai/agent-core-v2/agent/profile/profile';
+import { IAgentScopeContext } from '@moonshot-ai/agent-core-v2/agent/scopeContext/scopeContext';
+import { IAgentToolExecutorService } from '@moonshot-ai/agent-core-v2/agent/toolExecutor/toolExecutor';
+import { legacyDidExecuteContext, legacyRejectedResult, type LegacyAfterContext } from '@moonshot-ai/agent-core-v2/agent/toolExecutor/legacyHooks';
+import type { ToolDidExecuteContext } from '@moonshot-ai/agent-core-v2/agent/toolExecutor/toolHooks';
+import { IAgentToolRegistryService } from '@moonshot-ai/agent-core-v2/agent/toolRegistry/toolRegistry';
+import { IAgentToolSelectService } from '@moonshot-ai/agent-core-v2/agent/toolSelect/toolSelect';
+import { IConfigService } from '@moonshot-ai/agent-core-v2/app/config/config';
+import { IEventBus } from '@moonshot-ai/agent-core-v2/app/event/eventBus';
+import { MCP_SECTION, type McpSection } from '@moonshot-ai/agent-core-v2/app/mcpConfig/configSection';
+import { ITelemetryService } from '@moonshot-ai/agent-core-v2/app/telemetry/telemetry';
+import { IAgentReminderService } from '@moonshot-ai/agent-core-v2/features/reminder/reminderService';
+import type { ContextInjectionContext } from '@moonshot-ai/agent-core-v2/features/reminder/types';
+import { MAIN_AGENT_ID } from '@moonshot-ai/agent-core-v2/session/agentLifecycle/agentLifecycle';
+import { ISessionContext } from '@moonshot-ai/agent-core-v2/session/sessionContext/sessionContext';
+import type { ExecutableTool } from '@moonshot-ai/agent-core-v2/tool/toolContract';
 
 import { ISessionHostBrowserService, type IAgentHostBrowserService, type IHostBrowser } from './hostBrowser';
 
 export const HOST_BROWSER_REMINDER_VARIANT = 'desktop_browser';
 export const HOST_BROWSER_DIALOGS_REMINDER_VARIANT = 'desktop-browser-dialogs';
+
+export const HOST_BROWSER_DEFAULT_TIMEOUT_MS = 60_000;
+
+async function withDeadline<T>(timeoutMs: number, parent: AbortSignal, run: (signal: AbortSignal) => Promise<T>): Promise<T> {
+  const deadline = new AbortController();
+  const signal = AbortSignal.any([parent, deadline.signal]);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let onAbort: (() => void) | undefined;
+  const stopped = new Promise<never>((_, reject) => {
+    onAbort = () => reject(signal.reason instanceof Error ? signal.reason : new Error(String(signal.reason)));
+    signal.addEventListener('abort', onAbort, { once: true });
+    timer = setTimeout(() => deadline.abort(new Error('MCP error -32001: Request timed out')), timeoutMs);
+  });
+  try {
+    signal.throwIfAborted();
+    return await Promise.race([run(signal), stopped]);
+  } finally {
+    clearTimeout(timer);
+    if (onAbort !== undefined) signal.removeEventListener('abort', onAbort);
+  }
+}
 
 interface HostBrowserDisclosure {
   readonly enabled: boolean;
@@ -65,11 +88,12 @@ export class AgentHostBrowserService extends Service implements IAgentHostBrowse
     @ISessionMediaStore private readonly attachmentStore: ISessionMediaStore,
     @IAgentEnvironmentService private readonly environment: IAgentEnvironmentService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
+    @IConfigService private readonly configService: IConfigService,
   ) {
     super();
     const host = session.host;
-    if (host === undefined) return;
     const sessionId = sessionContext.sessionId;
+    this._register(registry.reserve(host.tool.name));
     this._register(reminders.register(HOST_BROWSER_REMINDER_VARIANT, (context: ContextInjectionContext<HostBrowserDisclosure>) => {
       const enabled = session.available();
       if (context.lastInjection !== undefined && context.lastDisclosure?.enabled === enabled) return undefined;
@@ -136,6 +160,10 @@ export class AgentHostBrowserService extends Service implements IAgentHostBrowse
     this.registration = this.registry.register(this.createTool(host), { source: 'mcp', disclosure: 'deferred' });
   }
 
+  private toolTimeoutMs(): number {
+    return this.configService.get<McpSection | undefined>(MCP_SECTION)?.toolTimeoutMs ?? HOST_BROWSER_DEFAULT_TIMEOUT_MS;
+  }
+
   private createTool(host: IHostBrowser): ExecutableTool {
     const { name, description, parameters } = host.tool;
     const sessionId = this.sessionContext.sessionId;
@@ -148,12 +176,12 @@ export class AgentHostBrowserService extends Service implements IAgentHostBrowse
       resolveExecution: (args) => ({
         approvalRule: name,
         execute: async (context) => {
-          const result = await host.run({
+          const result = await withDeadline(this.toolTimeoutMs(), context.signal, (signal) => host.run({
             sessionId,
             args,
-            signal: context.signal,
+            signal,
             ...(subagent ? { run: { agentId, generation, turnId: context.turnId } } : {}),
-          });
+          }));
           return mcpResultToExecutableOutput(result, name, {
             signal: context.signal,
             attachmentStore: this.attachmentStore,

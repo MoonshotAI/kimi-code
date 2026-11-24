@@ -73,7 +73,6 @@ vi.mock('../../../src/main/browser/browser-agent-control', () => ({
   browserSubagentControl: { enabled: () => false, onDidChange: () => () => undefined },
 }));
 
-import { IHostBrowser } from '@moonshot-ai/agent-core-v2/features/hostBrowser/hostBrowser';
 import { startDesktopServer } from '../../../src/main/server/embedded-server';
 import { browserAgentControl, browserSubagentControl } from '../../../src/main/browser/browser-agent-control';
 import { desktopServerSecret } from '../../../src/main/server/server-auth';
@@ -145,7 +144,7 @@ describe('startDesktopServer', () => {
       displayName: 'Kimi Code',
       replyStyleGuide: expect.stringContaining('desktop app'),
     });
-    expect(args.seeds).toEqual([[IHostBrowser, browserHost]]);
+    expect(args.hostBrowser).toBe(browserHost);
     expect(registerDialogCleanupMock).toHaveBeenCalledWith(appCore, forgetSessionBrowserDialogsMock);
     expect(startBrowserTestEndpointMock).not.toHaveBeenCalled();
 

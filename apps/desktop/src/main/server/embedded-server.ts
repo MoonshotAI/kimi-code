@@ -18,7 +18,6 @@ import { log } from '../diagnostics/log';
 import { createDesktopServerLogger } from './server-log';
 import { createDesktopAuthTokenService } from './server-auth';
 import { wireDesktopTelemetry } from '../diagnostics/telemetry';
-import { IHostBrowser } from '@moonshot-ai/agent-core-v2/features/hostBrowser/hostBrowser';
 import { createDesktopBrowserHost } from '../browser/browser-host';
 import { startBrowserTestEndpoint, type BrowserTestEndpoint } from '../browser/browser-test-endpoint';
 import { browserAgentControl, browserSubagentControl } from '../browser/browser-agent-control';
@@ -69,7 +68,7 @@ export async function startDesktopServer(
       corsOrigins: ['app://renderer', ...(opts.extraCorsOrigins ?? [])],
       authTokenService: createDesktopAuthTokenService(homeDir),
       debugEndpoints: opts.debugEndpoints === true,
-      seeds: [[IHostBrowser, browserHost]],
+      hostBrowser: browserHost,
     });
   } catch (error) {
     browserHost.dispose();

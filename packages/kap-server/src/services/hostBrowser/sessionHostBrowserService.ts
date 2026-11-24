@@ -1,14 +1,14 @@
-import { IInstantiationService } from '#/_base/di/instantiation';
-import { Service } from '#/_base/di/service';
-import { Emitter, type Event } from '#/_base/event';
-import type { ContextMessage } from '#/agent/contextMemory/types';
-import { IAgentLoopService } from '#/agent/loop/loop';
-import { SELECT_TOOLS_TOOL_NAME } from '#/agent/toolSelect/toolSelect';
-import { ISessionEventBus } from '#/app/event/eventBus';
-import { ISessionManager } from '#/app/sessionManager/sessionManager';
-import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
-import { ISessionContext } from '#/session/sessionContext/sessionContext';
-import { SubagentSpawned } from '#/session/subagent/mirrorAgentRun';
+import { IInstantiationService } from '@moonshot-ai/agent-core-v2/_base/di/instantiation';
+import { Service } from '@moonshot-ai/agent-core-v2/_base/di/service';
+import { Emitter, type Event } from '@moonshot-ai/agent-core-v2/_base/event';
+import type { ContextMessage } from '@moonshot-ai/agent-core-v2/agent/contextMemory/types';
+import { IAgentLoopService } from '@moonshot-ai/agent-core-v2/agent/loop/loop';
+import { SELECT_TOOLS_TOOL_NAME } from '@moonshot-ai/agent-core-v2/agent/toolSelect/toolSelect';
+import { ISessionEventBus } from '@moonshot-ai/agent-core-v2/app/event/eventBus';
+import { ISessionManager } from '@moonshot-ai/agent-core-v2/app/sessionManager/sessionManager';
+import { IAgentLifecycleService } from '@moonshot-ai/agent-core-v2/session/agentLifecycle/agentLifecycle';
+import { ISessionContext } from '@moonshot-ai/agent-core-v2/session/sessionContext/sessionContext';
+import { SubagentSpawned } from '@moonshot-ai/agent-core-v2/session/subagent/mirrorAgentRun';
 
 import { IHostBrowser, type ISessionHostBrowserService } from './hostBrowser';
 
@@ -54,12 +54,12 @@ export function historyUsedHostBrowser(
 export class SessionHostBrowserService extends Service implements ISessionHostBrowserService {
   declare readonly _serviceBrand: undefined;
 
-  readonly host: IHostBrowser | undefined;
   private readonly sessionId: string;
   private readonly availabilityEmitter = this._register(new Emitter<void>());
   readonly onDidChangeAvailability: Event<void> = this.availabilityEmitter.event;
 
   constructor(
+    @IHostBrowser readonly host: IHostBrowser,
     @IInstantiationService instantiation: IInstantiationService,
     @ISessionContext context: ISessionContext,
     @IAgentLifecycleService private readonly lifecycle: IAgentLifecycleService,
@@ -67,9 +67,6 @@ export class SessionHostBrowserService extends Service implements ISessionHostBr
   ) {
     super();
     this.sessionId = context.sessionId;
-    this.host = instantiation.invokeFunction((accessor) => accessor.get(IHostBrowser) as IHostBrowser | undefined);
-    const host = this.host;
-    if (host === undefined) return;
     const sessions = instantiation.invokeFunction((accessor) => accessor.get(ISessionManager));
     if (sessions.onDidCreateSession !== undefined) {
       this._register(sessions.onDidCreateSession((event) => {
@@ -90,7 +87,7 @@ export class SessionHostBrowserService extends Service implements ISessionHostBr
   }
 
   available(): boolean {
-    return this.host?.allows(this.sessionId) ?? false;
+    return this.host.allows(this.sessionId);
   }
 
   private keepIfUsed(host: IHostBrowser): void {

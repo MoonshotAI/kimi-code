@@ -1,7 +1,6 @@
-import { ScopeActivation } from '#/_base/di/instantiation';
-import { LifecycleScope } from '#/app/scopes';
-import { Feature } from '#/features/feature';
-import { registerFeature } from '#/features/featureRegistry';
+import { ScopeActivation } from '@moonshot-ai/agent-core-v2/_base/di/instantiation';
+import { LifecycleScope } from '@moonshot-ai/agent-core-v2/app/scopes';
+import { Feature } from '@moonshot-ai/agent-core-v2/features/feature';
 
 import { IAgentHostBrowserService, ISessionHostBrowserService } from './hostBrowser';
 import { AgentHostBrowserService } from './agentHostBrowserService';
@@ -20,5 +19,3 @@ export class HostBrowserFeature extends Feature {
     });
   }
 }
-
-registerFeature(HostBrowserFeature);

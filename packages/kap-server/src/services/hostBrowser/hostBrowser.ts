@@ -1,7 +1,7 @@
-import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
-import type { IDisposable } from '#/_base/di/lifecycle';
-import type { Event } from '#/_base/event';
-import type { MCPContentBlock } from '#/mcpCore/types';
+import { createDecorator, type ServiceIdentifier } from '@moonshot-ai/agent-core-v2/_base/di/instantiation';
+import type { IDisposable } from '@moonshot-ai/agent-core-v2/_base/di/lifecycle';
+import type { Event } from '@moonshot-ai/agent-core-v2/_base/event';
+import type { MCPContentBlock } from '@moonshot-ai/agent-core-v2/mcpCore/types';
 
 export interface HostBrowserToolDefinition {
   readonly name: string;
@@ -69,7 +69,7 @@ export const IHostBrowser: ServiceIdentifier<IHostBrowser> = createDecorator<IHo
 
 export interface ISessionHostBrowserService {
   readonly _serviceBrand: undefined;
-  readonly host: IHostBrowser | undefined;
+  readonly host: IHostBrowser;
   readonly onDidChangeAvailability: Event<void>;
   available(): boolean;
 }

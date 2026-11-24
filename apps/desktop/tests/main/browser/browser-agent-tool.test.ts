@@ -1,4 +1,8 @@
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
@@ -15,7 +19,7 @@ import {
   IAgentProfileService,
   IAgentToolRegistryService,
   IAgentToolSelectService,
-  IHostBrowser,
+  IFeatureManager,
   ISessionManager,
   ISessionMcpHandle,
 } from '@moonshot-ai/agent-core-v2';
@@ -80,7 +84,7 @@ async function startBrowserTestServer(prefix: string, control: Control, subagent
     port: 0,
     logLevel: 'silent',
     env: { ...process.env },
-    seeds: [[IHostBrowser, access]],
+    hostBrowser: access,
   });
   const sessions = server.core.accessor.get(ISessionManager);
   return {
@@ -611,6 +615,93 @@ it('passes trusted subagent runs through dynamic and direct tools without weaken
     const explorer = await prepare('explorer', false, 11, 'explore');
     expect((await call(explorer.agent, 11)).isError).toBe(true);
     expect(runBrowserAutomation).toHaveBeenCalledTimes(5);
+  } finally {
+    await harness.dispose();
+  }
+}, 30000);
+
+it('creates sessions and agents without the browser tool when no host browser is given', async () => {
+  vi.stubEnv('KIMI_CODE_PERSISTENCE_MINIDB_READMODEL', 'false');
+  vi.stubEnv('KIMI_CODE_SEARCH_WORKER', 'false');
+  const home = await mkdtemp(join(tmpdir(), 'desktop-browser-tool-absent-'));
+  const server = await startServer({
+    hostIdentity: { productName: 'test-host', platform: 'test_platform', version: '0.0.0' },
+    homeDir: home,
+    port: 0,
+    logLevel: 'silent',
+    env: { ...process.env },
+  });
+  try {
+    const session = await server.core.accessor.get(ISessionManager).create({ workDir: home });
+    expect(server.core.accessor.get(IFeatureManager).units().map((unit) => unit.name)).not.toContain('hostBrowser');
+    const agent = await agentOf(session);
+    await runReminderStep(agent);
+    expect(tool(agent)).toBeUndefined();
+    expect(reminders(agent)).toEqual([]);
+  } finally {
+    await server.close();
+    await rm(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  }
+}, 30000);
+
+async function startUserMcpServer(toolNames: readonly string[]) {
+  const http = createServer((request, response) => {
+    const server = new McpServer({ name: 'user-server', version: '1.0.0' });
+    for (const name of toolNames) {
+      server.registerTool(name, { description: `user ${name}` }, () => ({ content: [{ type: 'text' as const, text: `user server ${name}` }] }));
+    }
+    const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
+    response.once('close', () => { void server.close(); });
+    void server.connect(transport).then(() => transport.handleRequest(request, response));
+  });
+  await new Promise<void>((resolve) => http.listen(0, '127.0.0.1', resolve));
+  const { port } = http.address() as AddressInfo;
+  return {
+    config: { transport: 'http' as const, url: `http://127.0.0.1:${port}/mcp` },
+    close: () => new Promise<void>((resolve) => { http.close(() => resolve()); http.closeAllConnections(); }),
+  };
+}
+
+it('keeps the browser tool name for the host when a user MCP server also exposes desktop_browser run', async () => {
+  const control = createControl(false);
+  const harness = await startBrowserTestServer('desktop-browser-tool-user-server-', control);
+  const userServer = await startUserMcpServer(['run', 'other']);
+  try {
+    const session = await harness.sessions.create({ workDir: harness.home, mcpServers: { desktop_browser: userServer.config } });
+    const agent = await agentOf(session, 'main', false);
+    agent.accessor.get(IAgentPermissionModeService).setMode('yolo');
+    await vi.waitFor(() => expect(agent.accessor.get(IAgentToolRegistryService).resolve('mcp__desktop_browser__other')).toBeDefined());
+    expect(tool(agent)).toBeUndefined();
+
+    control.set(true);
+    await vi.waitFor(() => expect(tool(agent)).toBeDefined());
+    expect(tool(agent)?.description).toBe(DESKTOP_BROWSER_TOOL.description);
+    const result = await call(agent);
+    expect(result.isError).not.toBe(true);
+    expect(result.output).not.toContain('user server');
+    expect(runBrowserAutomation).toHaveBeenCalledOnce();
+  } finally {
+    await harness.dispose();
+    await userServer.close();
+  }
+}, 30000);
+
+it('applies the configured MCP tool timeout to browser calls and aborts the operation', async () => {
+  vi.stubEnv('KIMI_MCP_TOOL_TIMEOUT_MS', '200');
+  const harness = await startBrowserTestServer('desktop-browser-tool-timeout-', createControl());
+  try {
+    const session = await harness.sessions.create({ workDir: harness.home });
+    const agent = await agentOf(session, 'main', false);
+    agent.accessor.get(IAgentPermissionModeService).setMode('yolo');
+    let operationSignal: AbortSignal | undefined;
+    vi.mocked(runBrowserAutomation).mockImplementationOnce((_request, signal) => {
+      operationSignal = signal;
+      return new Promise(() => {});
+    });
+    const result = await call(agent, 1, 'browser.get_state');
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain('Request timed out');
+    expect(operationSignal?.aborted).toBe(true);
   } finally {
     await harness.dispose();
   }
