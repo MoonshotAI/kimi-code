@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { Icon, trackMenuSurface } from '@moonshot-ai/app-ui';
+import { Icon, Menu } from '@moonshot-ai/app-ui';
 import { effortLabel, providerDisplayName, segmentsFor, type ModelThinkingInfo } from '@moonshot-ai/app-core/lib';
 
 export type SecondaryModelGroup = { provider: string; options: Array<{ id: string; label: string }> };
@@ -24,11 +24,12 @@ const VIEWPORT_MARGIN = 8;
 
 const rootRef = ref<HTMLElement | null>(null);
 const triggerRef = ref<HTMLButtonElement | null>(null);
-const menuRef = ref<HTMLElement | null>(null);
-const flyoutRef = ref<HTMLElement | null>(null);
+const menuSurfaceRef = ref<InstanceType<typeof Menu> | null>(null);
+const flyoutSurfaceRef = ref<InstanceType<typeof Menu> | null>(null);
+const menuRef = computed(() => menuSurfaceRef.value?.el ?? null);
+const flyoutRef = computed(() => flyoutSurfaceRef.value?.el ?? null);
 const modelRowRefs = new Map<string, HTMLElement>();
 const open = ref(false);
-trackMenuSurface(open, menuRef);
 const flipUp = ref(false);
 const menuStyle = ref<Record<string, string>>({});
 const menuId = `sm-picker-${Math.random().toString(36).slice(2, 9)}`;
@@ -334,10 +335,10 @@ onUnmounted(() => {
     </button>
 
     <Teleport to="body">
-      <div
+      <Menu
         v-if="open"
         :id="menuId"
-        ref="menuRef"
+        ref="menuSurfaceRef"
         class="sm-picker__menu"
         :class="{ 'sm-picker__menu--up': flipUp }"
         :style="menuStyle"
@@ -388,13 +389,14 @@ onUnmounted(() => {
           </template>
         </div>
 
-        <div
+        <Menu
           v-if="flyoutFor !== null"
-          ref="flyoutRef"
+          ref="flyoutSurfaceRef"
           class="sm-picker__flyout"
           :class="`sm-picker__flyout--${flyoutDir}`"
           :style="{ top: `${flyoutTop}px` }"
           role="listbox"
+          :register="false"
           :aria-label="t('settings.secondaryModelEffort')"
           @mouseenter="cancelHoverClose"
           @mouseleave="scheduleHoverClose"
@@ -419,8 +421,8 @@ onUnmounted(() => {
             <Icon class="sm-picker__check" name="check" size="sm" />
             <span class="sm-picker__option-label">{{ effort === null ? t('settings.secondaryModelEffortAuto') : effortLabel(effort) }}</span>
           </button>
-        </div>
-      </div>
+        </Menu>
+      </Menu>
     </Teleport>
   </div>
 </template>
@@ -484,31 +486,19 @@ onUnmounted(() => {
   z-index: var(--z-modal-dropdown);
   width: 252px;
   max-width: calc(100vw - 64px);
-  border: var(--p-hairline) solid var(--color-line-strong);
-  border-radius: var(--radius-md);
-  background: var(--color-menu-bg);
-  -webkit-backdrop-filter: var(--p-menu-backdrop);
-  backdrop-filter: var(--p-menu-backdrop);
-  box-shadow: var(--shadow-lg);
 }
+.sm-picker__menu.ui-menu { padding: 0; }
 .sm-picker__models {
   max-height: 280px;
   overflow-y: auto;
-  padding: var(--space-1);
-  border-radius: var(--radius-md);
+  padding: var(--menu-pad);
+  border-radius: inherit;
 }
 .sm-picker__flyout {
   position: absolute;
   width: 180px;
   max-height: 280px;
   overflow-y: auto;
-  padding: var(--space-1);
-  border: var(--p-hairline) solid var(--color-line-strong);
-  border-radius: var(--radius-md);
-  background: var(--color-menu-bg);
-  -webkit-backdrop-filter: var(--p-menu-backdrop);
-  backdrop-filter: var(--p-menu-backdrop);
-  box-shadow: var(--shadow-lg);
 }
 .sm-picker__flyout--right { left: calc(100% + var(--space-1)); }
 .sm-picker__flyout--left { right: calc(100% + var(--space-1)); }

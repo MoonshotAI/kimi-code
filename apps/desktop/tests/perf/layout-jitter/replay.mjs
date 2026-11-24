@@ -279,7 +279,7 @@ async function toggleBash(where) {
       openGeometry = { panelTop: panel.top, panelBottom: panel.bottom, pillTop: pill.top, gap: pill.top - panel.bottom, dockTop: dock().getBoundingClientRect().top };
     }
   }, () => {
-    const jump = document.querySelector('.newmsg-pill');
+    const jump = document.querySelector('.con .jump-pill');
     return { content: (where === 'bottom' ? ref.getBoundingClientRect().bottom : ref.getBoundingClientRect().top) - paneTop(), dock: dock().offsetHeight, jump: jump ? jump.getBoundingClientRect().top : null, open: !!document.querySelector('.dock-work-panel') };
   });
   tasks.value = [];

@@ -341,7 +341,7 @@ function onHeaderDragStart(event: DragEvent): void {
 }
 
 .gh-name {
-  font-size: var(--ui-font-size-sm);
+  font-size: var(--text-sm);
   font-weight: var(--weight-medium);
   line-height: var(--leading-tight);
   color: var(--color-text-muted);
@@ -458,9 +458,9 @@ function onHeaderDragStart(event: DragEvent): void {
   outline: none;
 }
 
-.gh-rename { border-radius: var(--radius-sm); font-family: var(--sans); }
-.gh-add { color: var(--faint); }
-.gh-add:hover { color: var(--dim); }
+.gh-rename { border-radius: var(--radius-sm); font-family: var(--font-ui); }
+.gh-add { color: var(--color-text-quaternary); }
+.gh-add:hover { color: var(--color-text-muted); }
 </style>
 
 <style scoped src="./lib/locate-flash.css"></style>

@@ -615,7 +615,7 @@ function toggleAutoSessionTitle(): void {
 .srow-val {
   flex: none;
   font-family: var(--font-mono);
-  font-size: var(--ui-font-size);
+  font-size: var(--text-base);
   font-weight: 500;
   color: var(--color-accent-hover);
 }
@@ -691,5 +691,5 @@ function toggleAutoSessionTitle(): void {
 .srow,
 .srow-sub,
 .srow-val,
-.cache-note { font-family: var(--sans); }
+.cache-note { font-family: var(--font-ui); }
 </style>

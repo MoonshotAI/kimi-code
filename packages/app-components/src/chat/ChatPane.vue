@@ -42,7 +42,7 @@ import MediaRail from './MediaRail.vue';
 import WorkingIndicator from './WorkingIndicator.vue';
 import SelectionActionBubble from './SelectionActionBubble.vue';
 import TableSelectionContextMenu from './TableSelectionContextMenu.vue';
-import { Icon, Spinner, Button, Tooltip } from '@moonshot-ai/app-ui';
+import { Icon, IconButton, Spinner, Button, Tooltip } from '@moonshot-ai/app-ui';
 import { useActivityRunFolding, useConfirmDialog, useIsMobile, useTurnFolding } from '@moonshot-ai/app-client/composables';
 import { panelApiKey } from '@moonshot-ai/app-client/panel';
 import { copyTextToClipboard, formatMessageTime } from '@moonshot-ai/app-core/lib';
@@ -1368,14 +1368,15 @@ function streamingTailIndex(turn: ChatTurn): number | null {
       class="top-sentinel"
       :class="{ 'top-sentinel-loading': loadingMore }"
     >
-      <button
+      <Button
         v-if="!loadingMore"
-        type="button"
         class="top-sentinel-btn"
+        variant="secondary"
+        size="xs"
         @click="emit('loadOlderMessages', { manual: true })"
       >
         {{ t('conversation.loadOlder') }}
-      </button>
+      </Button>
       <span v-else class="top-sentinel-text">
         <Spinner size="sm" />
         {{ t('conversation.loadingOlder') }}
@@ -1473,27 +1474,27 @@ function streamingTailIndex(turn: ChatTurn): number | null {
               </span>
             </Tooltip>
             <Tooltip :text="t('filePreview.copy')">
-            <button
+            <IconButton
               v-if="canCopyUserTurn(turn)"
-              type="button"
               class="u-copy"
-              :aria-label="t('filePreview.copy')"
+              size="xs"
+              :label="t('filePreview.copy')"
               @click.stop="copyUserMessage(turn)"
             >
               <Icon v-if="copiedTurn !== turn.id" name="copy" size="sm" />
               <Icon v-else name="check" size="sm" />
-            </button>
+            </IconButton>
             </Tooltip>
             <div v-if="canEditTurn(turn)" class="u-edit-wrap" :class="{ undoing: undoingTurnId === turn.id }">
               <Tooltip :text="t('conversation.undoTooltip')">
-              <button
-                type="button"
+              <IconButton
                 class="u-edit"
-                :aria-label="t('conversation.undoTooltip')"
+                size="xs"
+                :label="t('conversation.undoTooltip')"
                 @click="onUndo(turn)"
               >
                 <Icon name="undo" size="sm" />
-              </button>
+              </IconButton>
               </Tooltip>
             </div>
             <MessageTime v-if="turn.createdAt" :time="turn.createdAt" />
@@ -1784,23 +1785,24 @@ function streamingTailIndex(turn: ChatTurn): number | null {
           </div>
           <!-- Touch-only explicit edit: on hover devices the body itself is
                tap-to-edit; on touch a stray tap must not dequeue the draft. -->
-          <button
-            type="button"
+          <IconButton
             class="q-edit"
-            :aria-label="t('composer.editQueued')"
+            size="xs"
+            :label="t('composer.editQueued')"
             @click.stop="onQueueEdit(qi)"
           >
             <Icon name="pencil" size="sm" />
-          </button>
+          </IconButton>
           <Tooltip :text="t('composer.remove')">
-          <button
-            type="button"
+          <IconButton
             class="q-rm"
-            :aria-label="t('composer.remove')"
+            size="xs"
+            tone="danger"
+            :label="t('composer.remove')"
             @click.stop="void client.unqueue(qi)"
           >
             <Icon name="close" size="sm" />
-          </button>
+          </IconButton>
           </Tooltip>
         </div>
       </div>
@@ -1853,10 +1855,10 @@ function streamingTailIndex(turn: ChatTurn): number | null {
   justify-content: center;
   gap: 10px;
   padding: 24px 16px;
-  color: var(--faint);
+  color: var(--color-text-quaternary);
   text-align: center;
 }
-.chat-empty-text { font-size: var(--ui-font-size-sm); }
+.chat-empty-text { font-size: var(--text-sm); }
 
 .chat-loading {
   flex: 1;
@@ -1865,9 +1867,9 @@ function streamingTailIndex(turn: ChatTurn): number | null {
   justify-content: center;
   gap: 8px;
   padding: 24px 16px;
-  color: var(--muted);
+  color: var(--color-text-faint);
 }
-.chat-loading-text { font-size: var(--ui-font-size-sm); }
+.chat-loading-text { font-size: var(--text-sm); }
 
 .chat {
   text-autospace: normal;
@@ -2006,30 +2008,8 @@ function streamingTailIndex(turn: ChatTurn): number | null {
   -webkit-mask-image: linear-gradient(to bottom, black calc(100% - 1.2lh), transparent calc(100% - 0.2lh));
 }
 .u-text-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1);
-  align-self: center;
   margin-top: var(--space-2);
   padding: var(--space-2) var(--space-4);
-  border: none;
-  border-radius: var(--radius-full);
-  background: var(--color-surface-raised);
-  box-shadow: var(--shadow-sm);
-  color: var(--color-text);
-  font-family: var(--font-ui);
-  font-size: var(--ui-font-size-sm);
-  line-height: 1;
-  cursor: pointer;
-  user-select: none;
-  transition: box-shadow var(--duration-base) var(--ease-out);
-}
-.u-text-toggle:hover {
-  box-shadow: var(--shadow-md);
-}
-.u-text-toggle:focus-visible {
-  outline: 2px solid var(--color-accent);
-  outline-offset: 1px;
 }
 .u-text-wrap.is-clamped .u-text-toggle {
   position: absolute;
@@ -2045,27 +2025,9 @@ function streamingTailIndex(turn: ChatTurn): number | null {
   transform: rotate(180deg);
 }
 
-.u-edit {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 3px;
-  background: none;
-  border: none;
-  border-radius: var(--radius-xs);
-  color: var(--color-text-muted);
-  font: inherit;
-  font-size: var(--text-base);
-  line-height: 1;
-  cursor: pointer;
-  transition: opacity 0.12s, color 0.12s, background-color 0.12s;
-}
-.u-edit svg {
-  display: block;
-  flex: none;
-}
-.u-edit:hover { opacity: 1; color: var(--color-accent); background: var(--hover); }
-.u-copy {
+.u-meta .u-edit:hover:not(:disabled),
+.u-meta .u-copy:hover:not(:disabled) { color: var(--color-accent); }
+.a-cpbtn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -2082,8 +2044,7 @@ function streamingTailIndex(turn: ChatTurn): number | null {
   min-height: 20px;
   box-sizing: border-box;
 }
-.u-copy svg { display: block; flex: none; }
-.u-copy:hover { opacity: 1; color: var(--color-accent); background: var(--hover); }
+.a-cpbtn:hover { opacity: 1; color: var(--color-accent); background: var(--color-hover); }
 .u-edit-wrap { display: flex; justify-content: flex-end; }
 
 .compact-divider {
@@ -2100,7 +2061,7 @@ function streamingTailIndex(turn: ChatTurn): number | null {
 .cd-line {
   flex: 1;
   height: 1px;
-  background: var(--line);
+  background: var(--color-line);
 }
 .cd-label {
   flex: none;
@@ -2109,7 +2070,7 @@ function streamingTailIndex(turn: ChatTurn): number | null {
   gap: 8px;
   max-width: 80%;
   font-size: var(--text-base);
-  color: var(--muted);
+  color: var(--color-text-faint);
   white-space: nowrap;
 }
 .cd-card {
@@ -2281,28 +2242,6 @@ function streamingTailIndex(turn: ChatTurn): number | null {
   line-height: 20px;
 }
 
-.a-cpbtn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 3px;
-  background: none;
-  border: none;
-  border-radius: var(--radius-xs);
-  color: var(--color-text-muted);
-  font: inherit;
-  font-size: var(--text-base);
-  line-height: 1;
-  cursor: pointer;
-  transition: opacity 0.12s, color 0.12s, background-color 0.12s;
-  min-height: 20px;
-  box-sizing: border-box;
-}
-.a-cpbtn:hover {
-  opacity: 1;
-  color: var(--color-accent);
-  background: var(--hover);
-}
 .a-cpbtn svg {
   display: block;
   flex: none;
@@ -2313,13 +2252,13 @@ function streamingTailIndex(turn: ChatTurn): number | null {
     margin-top: 6px;
   }
   .a-cpbtn {
-    font-size: var(--ui-font-size-sm);
+    font-size: var(--text-sm);
     padding: 8px 10px;
     margin: -4px -6px;
   }
 }
 .a-msg .msg {
-  font-size: var(--ui-font-size);
+  font-size: var(--text-base);
   line-height: var(--leading-prose);
   color: var(--color-text);
   font-weight: 500;
@@ -2488,7 +2427,7 @@ function streamingTailIndex(turn: ChatTurn): number | null {
   gap: 2px;
 }
 .skill-act-head {
-  font-size: var(--ui-font-size-sm);
+  font-size: var(--text-sm);
   font-weight: 500;
   color: var(--color-accent-hover);
   display: flex;
@@ -2501,7 +2440,7 @@ function streamingTailIndex(turn: ChatTurn): number | null {
 }
 .skill-act-args {
   font-size: var(--text-base);
-  color: var(--muted);
+  color: var(--color-text-faint);
   padding-left: 17px;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -2552,14 +2491,14 @@ function streamingTailIndex(turn: ChatTurn): number | null {
     max-width: calc(100vw - 28px);
   }
   .ts {
-    font-size: var(--ui-font-size-sm);
+    font-size: var(--text-sm);
   }
   .chat-empty-text,
   .chat-loading-text {
-    font-size: var(--ui-font-size-lg);
+    font-size: var(--ui-b1);
   }
   .cd-label {
-    font-size: var(--ui-font-size);
+    font-size: var(--text-base);
   }
 }
 
@@ -2574,27 +2513,12 @@ function streamingTailIndex(turn: ChatTurn): number | null {
 .top-sentinel-loading {
   opacity: 0.8;
 }
-.top-sentinel-btn {
-  appearance: none;
-  border: var(--p-hairline) solid var(--color-line);
-  background: transparent;
-  color: var(--muted);
-  font-size: var(--ui-font-size-sm);
-  padding: 4px 12px;
-  border-radius: 999px;
-  cursor: pointer;
-  transition: color 0.15s ease, border-color 0.15s ease;
-}
-.top-sentinel-btn:hover {
-  color: var(--color-text);
-  border-color: var(--color-text);
-}
 .top-sentinel-text {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  color: var(--muted);
-  font-size: var(--ui-font-size-sm);
+  color: var(--color-text-faint);
+  font-size: var(--text-sm);
 }
 
 .chat { background: transparent; }
@@ -2632,7 +2556,7 @@ function streamingTailIndex(turn: ChatTurn): number | null {
   gap: 8px;
   padding: 0 6px;
   color: var(--color-text-faint);
-  font-size: var(--ui-font-size-xs);
+  font-size: var(--text-xs);
 }
 .q-title {
   display: inline-flex;
@@ -2690,7 +2614,7 @@ function streamingTailIndex(turn: ChatTurn): number | null {
   transition: background var(--duration-fast) var(--ease-out);
 }
 .q-bub:hover {
-  background: var(--hover);
+  background: var(--color-hover);
 }
 .q-content {
   display: flex;
@@ -2768,59 +2692,36 @@ function streamingTailIndex(turn: ChatTurn): number | null {
   border-radius: var(--radius-sm);
   border: var(--p-hairline) solid var(--color-line);
   color: var(--color-text-muted);
-  font-size: calc(var(--ui-font-size) - 3px);
+  font-size: calc(var(--text-base) - 3px);
   max-width: 160px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.q-rm {
-  flex: none;
+.q-bub .q-rm,
+.q-bub .q-edit {
   width: 22px;
   height: 22px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  background: none;
-  border: none;
-  border-radius: var(--radius-sm);
   color: var(--color-text-faint);
-  cursor: pointer;
+}
+.q-bub .q-rm {
   opacity: 0;
   transition: opacity 0.12s ease, background 0.12s ease, color 0.12s ease;
 }
 .q-bub:hover .q-rm,
 .q-bub:focus-within .q-rm,
-.q-rm:focus-visible {
+.q-bub .q-rm:focus-visible {
   opacity: 1;
 }
-.q-rm:hover {
-  background: var(--color-danger-soft);
-  color: var(--color-danger);
+.q-bub .q-edit {
+  display: none;
 }
 
-.q-edit {
-  display: none;
-  flex: none;
-  width: 22px;
-  height: 22px;
-  align-items: center;
-  justify-content: center;
-  background: none;
-  border: none;
-  border-radius: var(--radius-sm);
-  color: var(--color-text-faint);
-  cursor: pointer;
-}
-.q-edit:hover {
-  background: var(--color-hover);
-  color: var(--color-text);
-}
 @media (hover: none) {
   .q-grip { display: none; }
-  .q-edit { display: inline-flex; }
-  .q-rm,
-  .q-edit {
+  .q-bub .q-edit { display: inline-flex; }
+  .q-bub .q-rm,
+  .q-bub .q-edit {
     opacity: 1;
     position: relative;
   }
@@ -2853,3 +2754,5 @@ function streamingTailIndex(turn: ChatTurn): number | null {
 }
 
 </style>
+
+<style scoped src="./clamp-toggle.css"></style>

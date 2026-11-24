@@ -225,7 +225,7 @@ defineExpose({ focusInput });
   display: flex;
   flex-direction: column;
   min-height: 0;
-  background: var(--bg);
+  background: var(--color-bg);
   position: relative;
 }
 .sc-body {
