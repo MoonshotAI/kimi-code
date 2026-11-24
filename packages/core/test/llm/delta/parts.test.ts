@@ -87,4 +87,39 @@ describe('LLM streamed message parts', () => {
       { type: 'text', text: 'answer' },
     ]);
   });
+
+  it.each([
+    {
+      name: 'distinct streams that briefly emit the same delta',
+      chunks: [['A', 'B'], [' ', ' '], ['C', 'D']],
+      expected: { reasoning_content: 'A C', reasoning: 'B D' },
+    },
+    {
+      name: 'streams that mirror before they diverge',
+      chunks: [['plan', 'plan'], [' it', ' it'], ['!', '?']],
+      expected: { reasoning_content: 'plan it!', reasoning: 'plan it?' },
+    },
+  ])('as a user, I want every reasoning key to keep its full text for $name', async ({ chunks, expected }) => {
+    server().llm.on({ predicate: () => true }, rawMockResponse('openai-chat', {
+      sse: {
+        events: [
+          ...chunks.map(([reasoningContent, reasoning]) =>
+            openAIChunk({ reasoning_content: reasoningContent, reasoning })),
+          openAIChunk({ content: 'answer' }),
+          openAIChunk({}, { finishReason: 'stop' }),
+        ],
+      },
+    }));
+    const result = await runGenerate(openAIProtocol, {
+      module: testModule(),
+      endpoint: aimockEndpoint(server().url),
+    });
+
+    const byKey: Record<string, string> = {};
+    for (const part of doneOutcome(result.outcome).message.content) {
+      if (part.type !== 'think' || part.reasoningKey === undefined) continue;
+      byKey[part.reasoningKey] = (byKey[part.reasoningKey] ?? '') + part.think;
+    }
+    expect(byKey).toEqual(expected);
+  });
 });

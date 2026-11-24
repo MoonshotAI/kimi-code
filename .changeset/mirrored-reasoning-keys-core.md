@@ -2,4 +2,4 @@
 '@moonshot-ai/core': patch
 ---
 
-Emit reasoning once when an OpenAI-compatible stream mirrors the same text under several reasoning keys in one delta, so the deltas merge into a single think part instead of one part per token per key; distinct reasoning under different keys is still kept separately.
+Emit reasoning under a single key while an OpenAI-compatible stream mirrors identical text under several reasoning keys, so the deltas merge into one think part instead of one part per token per key; once the keys diverge, the text each key already carried is emitted under that key and all keys are kept separately from then on.
