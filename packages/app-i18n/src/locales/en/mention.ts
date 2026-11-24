@@ -4,6 +4,8 @@ export default {
   noMatch: 'No matches',
   skills: 'Skills',
   sessions: 'Sessions',
+  sessionNotFound: 'This session no longer exists',
+  sessionOpenFailed: 'Couldn’t open this session',
   backToMentions: 'Back',
   global: 'Global',
   builtin: 'Built-in',

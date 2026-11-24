@@ -6,6 +6,7 @@ import { resetKimiClientDeps, setKimiClientDeps } from '../src/client/deps';
 import { createSessionSelection } from '../src/client/sessionSelection';
 import { noopProductTracker, setProductTracker } from '../src/contracts';
 import { sessionsStore } from '../src/stores/sessions';
+import { warningsStore } from '../src/stores/warnings';
 
 const getKimiWebApiMock = vi.fn();
 const trackMock = vi.fn();
@@ -81,6 +82,7 @@ describe('session selection source', () => {
     trackMock.mockReset();
     sessionsStore().setSessions([]);
     sessionsStore().setActiveSessionId(undefined);
+    warningsStore().resetWarnings();
     setKimiClientDeps({ api: () => getKimiWebApiMock(), t: (key) => key });
     setProductTracker({ track: trackMock });
   });
@@ -188,6 +190,34 @@ describe('session selection source', () => {
     })).toBe('error');
     expect(getSession).not.toHaveBeenCalled();
     expect(sessionsStore().sessions).toEqual([]);
+  });
+
+  it('opens a linked session that is not loaded yet and records the link as its source', async () => {
+    const getSession = vi.fn(async (id: string) => session(id));
+    const workspace = createWorkspaceState(getSession);
+
+    await workspace.openSessionLink('linked', 'mention');
+
+    expect(getSession).toHaveBeenCalledWith('linked', undefined);
+    expect(sessionsStore().sessions.map((s) => s.id)).toEqual(['linked']);
+    expect(sessionsStore().activeSessionId).toBe('linked');
+    expect(trackMock).toHaveBeenCalledWith('session_created', { kind: 'resumed', source: 'mention' });
+    expect(warningsStore().warnings).toEqual([]);
+  });
+
+  it.each([
+    ['no longer exists', new DaemonApiError({ code: 40401, msg: 'Session not found', requestId: 'test' }), 'mention.sessionNotFound'],
+    ['cannot be fetched', new Error('Network unavailable'), 'mention.sessionOpenFailed'],
+  ])('tells the user when a linked session %s', async (_case, failure, title) => {
+    const workspace = createWorkspaceState(async () => {
+      throw failure;
+    });
+
+    await workspace.openSessionLink('missing', 'deep_link');
+
+    expect(sessionsStore().activeSessionId).toBeUndefined();
+    expect(trackMock).not.toHaveBeenCalled();
+    expect(warningsStore().warnings).toEqual([expect.objectContaining({ severity: 'warning', title })]);
   });
 
   it('forwards options and ignores a delayed session response after cancellation', async () => {

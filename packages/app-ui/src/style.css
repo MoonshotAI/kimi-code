@@ -1059,12 +1059,14 @@ html[data-color-scheme="dark"] {
 }
 .mention-pill.mention-file,
 .mention-pill.mention-skill,
+.mention-pill.mention-session[role="button"],
 .attachment-pill[role="button"],
 button.attachment-pill[data-attachment-url] {
   cursor: pointer;
 }
 .mention-pill.mention-file:hover,
 .mention-pill.mention-skill:hover,
+.mention-pill.mention-session[role="button"]:hover,
 .attachment-pill[role="button"]:hover,
 button.attachment-pill[data-attachment-url]:hover {
   text-decoration: underline;

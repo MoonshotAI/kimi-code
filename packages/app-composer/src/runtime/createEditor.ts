@@ -6,7 +6,7 @@ import { closeHistory } from 'prosemirror-history';
 import { splitBlock } from 'prosemirror-commands';
 import { analyzeLeadingSlashCommand, type SlashCommand } from '@moonshot-ai/app-core/lib';
 import { buildAttachmentWithTextInsertion, buildMentionInsertion, buildQuoteInsertion, buildTextRangeReplacement, collectSkillMentions, composerSchema, degradeForeignAttachmentLinks, docText, docToText, inlineRunStartOffset, mayStartWithSlashCommand, normalizedDocText, parseClipboardText, posToTextOffset, serializeClipboardSlice, textOffsetToPos, textToDoc, type AttachmentAttrs, type MentionAttrs, type PastedTextAttrs, type QuoteAttrs, type SkillMentionRef } from '../model';
-import { isLongPastedText, pastedTextNode } from '../model';
+import { isLongPastedText, linkBareSessionUrls, pastedTextNode } from '../model';
 import { buildPastedTextPill, type PastedTextMeta } from '../features/pasted-text/pill';
 import { orderedDocAttachments } from '../features/attachment/registry';
 import {
@@ -226,6 +226,35 @@ export function createComposerEditor(host: HTMLElement, options: ComposerEditorO
   const clearWorkModeReserves = (): void => {
     view.dom.style.removeProperty('--wm-pill-inline-reserve');
     view.dom.style.removeProperty('--wm-pill-block-reserve');
+  };
+
+  const renameUntitledSessionPills = (sessionId: string, title: string): void => {
+    if (destroyed) return;
+    const tr = view.state.tr;
+    view.state.doc.descendants((node, pos) => {
+      const attrs = node.attrs as MentionAttrs;
+      if (node.type.name === 'mention' && attrs.kind === 'session' && attrs.path === sessionId && attrs.name === sessionId) {
+        tr.setNodeMarkup(pos, undefined, { ...attrs, name: title });
+      }
+    });
+    if (tr.docChanged) view.dispatch(tr.setMeta('addToHistory', false));
+  };
+
+  const linkPastedSessionUrls = (text: string): string => {
+    const sessionLinks = options.sessionLinks;
+    if (sessionLinks === undefined || sessionLinks.enabled?.() === false) return text;
+    const untitled = new Set<string>();
+    const linked = linkBareSessionUrls(text, (sessionId) => {
+      const title = sessionLinks.title(sessionId);
+      if (title === undefined) untitled.add(sessionId);
+      return title ?? sessionId;
+    });
+    for (const sessionId of untitled) {
+      void sessionLinks.loadTitle?.(sessionId).then((title) => {
+        if (title !== undefined) renameUntitledSessionPills(sessionId, title);
+      }, () => {});
+    }
+    return linked;
   };
 
   const updateComposerChrome = (): void => {
@@ -471,7 +500,7 @@ export function createComposerEditor(host: HTMLElement, options: ComposerEditorO
           return true;
         }
         const knownAttIds = new Set(attachmentInventory(view.state).activeIds);
-        const filtered = degradeForeignAttachmentLinks(plain, knownAttIds);
+        const filtered = linkPastedSessionUrls(degradeForeignAttachmentLinks(plain, knownAttIds));
         view.dispatch(view.state.tr.replaceSelection(parseClipboardText(filtered, { reviveMentions: true })).scrollIntoView());
         return true;
       }
@@ -490,7 +519,7 @@ export function createComposerEditor(host: HTMLElement, options: ComposerEditorO
         const tr = view.state.tr;
         if (dropPos) tr.setSelection(TextSelection.create(tr.doc, dropPos.pos));
         const knownAttIds = new Set(attachmentInventory(view.state).activeIds);
-        const filtered = degradeForeignAttachmentLinks(text, knownAttIds);
+        const filtered = linkPastedSessionUrls(degradeForeignAttachmentLinks(text, knownAttIds));
         view.dispatch(tr.replaceSelection(parseClipboardText(filtered, { reviveMentions: true })).scrollIntoView());
         return true;
       }

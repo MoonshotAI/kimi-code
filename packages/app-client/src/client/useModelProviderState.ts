@@ -1,6 +1,6 @@
 import { stripAttachmentLinks, type ComposerDocumentSnapshot } from '@moonshot-ai/app-composer/model';
 import { browserReferenceText, buildPromptContent, buildPromptMetadata } from '../lib/browserReferenceSubmission';
-import { withSessionReferences } from '../lib/sessionReferences';
+import { hasUnresolvedSessionReferences, resolveSessionReferences, withSessionReferences } from '../lib/sessionReferences';
 
 import { computed, watch, type ComputedRef } from 'vue';
 import { DaemonApiError, isSessionOccupiedError } from '@moonshot-ai/app-core/api';
@@ -282,6 +282,7 @@ export function useModelProviderState(
   ): Promise<boolean> {
     const sid = sessionId ?? rawState.activeSessionId;
     if (!sid) return false;
+    if (args !== undefined && hasUnresolvedSessionReferences(args)) await resolveSessionReferences(args);
     const snapshot = opts?.snapshot === undefined ? undefined : structuredClone(opts.snapshot);
     const activationArgs = snapshot === undefined
       ? (args === undefined ? undefined : withSessionReferences(stripAttachmentLinks(args)))

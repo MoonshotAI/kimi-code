@@ -75,7 +75,7 @@ describe('composer document snapshots', () => {
         mentionNode({ kind: 'file', name: '稿件 [最终].md', path: 'docs/稿件 [最终].md' }),
         mentionNode({ kind: 'folder', name: 'src', path: 'src/' }),
         mentionNode({ kind: 'skill', name: 'review', path: '' }),
-        mentionNode({ kind: 'session', name: '修复登录跳转', path: 'wd_app_0123456789ab/session_1' }),
+        mentionNode({ kind: 'session', name: '修复登录跳转', path: 'session_1' }),
         attachmentNode({ attId: 'image1', name: '图片 1', kind: 'image' }),
         quoteNode({ text: '原文\n带换行与 <tag>', source: 'a.ts:10', comment: '请调整 👩🏽‍💻' }),
       ),
@@ -88,7 +88,7 @@ describe('composer document snapshots', () => {
     expect(restored.eq(doc)).toBe(true);
     expect(restored.firstChild!.firstChild!.isText).toBe(true);
     expect(restored.firstChild!.child(3).attrs.kind).toBe('skill');
-    expect(restored.firstChild!.child(4).attrs).toMatchObject({ kind: 'session', path: 'wd_app_0123456789ab/session_1' });
+    expect(restored.firstChild!.child(4).attrs).toMatchObject({ kind: 'session', path: 'session_1' });
     expect(restored.firstChild!.lastChild!.attrs.comment).toBe('请调整 👩🏽‍💻');
   });
 

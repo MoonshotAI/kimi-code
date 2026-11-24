@@ -20,6 +20,8 @@ export const APP_ACTION_IDS = [
   'sidebarTabWorkspaces',
   'selectPrevSibling',
   'selectNextSibling',
+  'navigateBack',
+  'navigateForward',
   'captureScreenshot',
 ] as const;
 
@@ -47,6 +49,8 @@ export const SHORTCUT_ACTION_IDS = [
   'sidebarTabWorkspaces',
   'selectPrevSibling',
   'selectNextSibling',
+  'navigateBack',
+  'navigateForward',
   'captureScreenshot',
   'composer.send',
   'composer.newline',

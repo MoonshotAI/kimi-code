@@ -43,14 +43,14 @@ const SHORTCUT_ACTION_DEFINITIONS: Record<
   sidebarTabWorkspaces: { scope: 'global', labelKey: 'shortcuts.actions.sidebarTabWorkspaces.label', descKey: 'shortcuts.actions.sidebarTabWorkspaces.desc', defaultBinding: 'shift+mod+w' },
   selectPrevSibling: { scope: 'global', labelKey: 'shortcuts.actions.selectPrevSibling.label', descKey: 'shortcuts.actions.selectPrevSibling.desc', defaultBinding: 'shift+mod+[' },
   selectNextSibling: { scope: 'global', labelKey: 'shortcuts.actions.selectNextSibling.label', descKey: 'shortcuts.actions.selectNextSibling.desc', defaultBinding: 'shift+mod+]' },
+  navigateBack: { scope: 'global', labelKey: 'shortcuts.actions.navigateBack.label', descKey: 'shortcuts.actions.navigateBack.desc', get defaultBinding() { return isApplePlatform() ? 'mod+[' : 'alt+arrowleft'; } },
+  navigateForward: { scope: 'global', labelKey: 'shortcuts.actions.navigateForward.label', descKey: 'shortcuts.actions.navigateForward.desc', get defaultBinding() { return isApplePlatform() ? 'mod+]' : 'alt+arrowright'; } },
   'composer.send': { scope: 'composer', labelKey: 'shortcuts.actions.send.label', descKey: 'shortcuts.actions.send.desc', defaultBinding: 'enter', extraBindings: ['mod+enter', 'ctrl+enter'] },
   'composer.newline': { scope: 'composer', labelKey: 'shortcuts.actions.newline.label', descKey: 'shortcuts.actions.newline.desc', defaultBinding: 'shift+enter' },
 };
 
-export const SHORTCUT_ACTIONS: readonly ShortcutAction[] = SHORTCUT_ACTION_IDS.map((id) => ({
-  id,
-  ...SHORTCUT_ACTION_DEFINITIONS[id],
-}));
+export const SHORTCUT_ACTIONS: readonly ShortcutAction[] = SHORTCUT_ACTION_IDS.map((id) =>
+  Object.defineProperties({ id }, Object.getOwnPropertyDescriptors(SHORTCUT_ACTION_DEFINITIONS[id])) as ShortcutAction);
 
 export function shortcutActionById(id: string): ShortcutAction | undefined {
   return SHORTCUT_ACTIONS.find((action) => action.id === id);

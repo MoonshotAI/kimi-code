@@ -20,6 +20,7 @@ import type { PermissionMode } from '@moonshot-ai/app-core/client/types';
 import { permissionsStore } from '../stores/permissions';
 import { agentStatesStore } from '../stores/agentStates';
 import { buildPromptContent, buildPromptMetadata } from '../lib/browserReferenceSubmission';
+import { hasUnresolvedSessionReferences, resolveSessionReferences } from '../lib/sessionReferences';
 import type { ExtendedState, PromptEnvelopeContent, SideChatTurnError } from './types';
 import type { ChatGateVerdict } from '../lib/chatGate';
 import { sideChatDrafts } from './sideChatDrafts';
@@ -369,6 +370,7 @@ export function useSideChat(rawState: ExtendedState, deps: UseSideChatDeps) {
     const source = typeof input === 'string' ? { text: input } : structuredClone(input);
     const prompt = { ...source, text: source.text.trim(), attachments: source.attachments ?? opts?.attachments ?? [] };
     if (!prompt.text && prompt.attachments.length === 0) return false;
+    if (hasUnresolvedSessionReferences(prompt.text)) await resolveSessionReferences(prompt.text);
     let content: AppMessageContent[];
     let metadata: Record<string, unknown> | undefined;
     try {

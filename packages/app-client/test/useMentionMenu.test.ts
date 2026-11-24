@@ -1224,7 +1224,7 @@ describe('useMentionMenu — sessions', () => {
     target.mention.select(target.mention.items.value[0]!);
 
     expect(calls).toEqual([{
-      entry: { kind: 'session', name: 'Fix login redirect', path: 'wd_app_0123456789ab/session_1' },
+      entry: { kind: 'session', name: 'Fix login redirect', path: 'session_1' },
       range: { start: 4, end: 8 },
     }]);
     expect(target.mention.open.value).toBe(false);

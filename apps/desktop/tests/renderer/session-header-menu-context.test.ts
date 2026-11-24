@@ -1,12 +1,13 @@
 import { createRenderer, defineComponent, h, nextTick, ref, ssrContextKey } from 'vue';
 import { afterEach, expect, it, vi } from 'vitest';
+import { copyTextToClipboard } from '@moonshot-ai/app-core/lib';
 import ChatHeader from '../../src/renderer/components/chat/ChatHeader.vue';
 import type { BrowserOverlayMenuRegistration } from '../../src/renderer/lib/browserOverlayMenu';
-const mocks = vi.hoisted(() => ({ client: null as unknown, archive: vi.fn(), reload: vi.fn(), registration: null as BrowserOverlayMenuRegistration | null }));
+const mocks = vi.hoisted(() => ({ client: null as unknown, archive: vi.fn(), reload: vi.fn(), registration: null as BrowserOverlayMenuRegistration | null, sessionMentions: { value: true } }));
 vi.mock('vue-i18n',()=>({useI18n:()=>({t:(k:string)=>k})}));
 vi.mock('../../src/renderer/lib/browserOverlayMenu',()=>({registerBrowserOverlayMenu:(r: BrowserOverlayMenuRegistration)=>{mocks.registration=r;return {available:true,open:ref(false),close(){},refresh(){}}}}));
-vi.mock('@moonshot-ai/app-core/lib',()=>({copyTextToClipboard:vi.fn(),isMacosDesktop:true,safeGetJson:vi.fn(()=>null),safeSetJson:vi.fn(),STORAGE_KEYS:{shortcutOverrides:'kimi.shortcutOverrides'}}));
-vi.mock('@moonshot-ai/app-core',()=>({useSidebarTabs:()=>({sidebarTabs:ref(false)})}));
+vi.mock('@moonshot-ai/app-core/lib',()=>({copyTextToClipboard:vi.fn(),hasDesktopBridge:()=>true,isMacosDesktop:true,safeGetJson:vi.fn(()=>null),safeSetJson:vi.fn(),STORAGE_KEYS:{shortcutOverrides:'kimi.shortcutOverrides'}}));
+vi.mock('@moonshot-ai/app-core',()=>({useSidebarTabs:()=>({sidebarTabs:ref(false)}),useSessionMentions:()=>({sessionMentions:mocks.sessionMentions})}));
 vi.mock('@moonshot-ai/app-components',()=>({OpenInMenu:{}}));
 vi.mock('@moonshot-ai/app-client/contracts',()=>({track(){}}));
 vi.mock('@moonshot-ai/app-client/client',()=>({useKimiWebClient:()=>mocks.client}));
@@ -87,18 +88,40 @@ it('groups session actions and keeps copy items open', () => {
     if (item.kind !== 'item') throw new Error('expected item');
     return item.id.slice(item.id.indexOf(':') + 1);
   });
-  expect(itemIds).toEqual(['rename', 'pin', 'fork', 'copy-all', 'copy-summary', 'copy-id', 'export', 'reload', 'archive']);
+  expect(itemIds).toEqual(['rename', 'pin', 'fork', 'copy-all', 'copy-summary', 'copy-id', 'copy-link', 'export', 'reload', 'archive']);
   expect(items.filter(item => item.kind === 'separator')).toHaveLength(2);
   for (const item of items) {
     if (item.kind !== 'item') continue;
     const action = item.id.slice(item.id.indexOf(':') + 1);
-    if (action === 'copy-all' || action === 'copy-summary' || action === 'copy-id') {
+    if (action === 'copy-all' || action === 'copy-summary' || action === 'copy-id' || action === 'copy-link') {
       expect(item.keepOpen).toBe(true);
     } else {
       expect(item.keepOpen).toBeUndefined();
     }
   }
   app.unmount();
+});
+
+it('copies the session deep link from the menu', () => {
+  vi.mocked(copyTextToClipboard).mockResolvedValue(true);
+  const { app, menu } = mountHeader();
+  const item = menu.items().find(item => item.kind === 'item' && item.label === 'header.copySessionLink');
+  if (item?.kind !== 'item') throw new Error('Missing copy link action');
+  menu.onSelect(item.id);
+  expect(copyTextToClipboard).toHaveBeenCalledExactlyOnceWith('kimi-code://sessions/A');
+  app.unmount();
+});
+
+it('leaves the session link out of the menu while session mentions are switched off', () => {
+  mocks.sessionMentions.value = false;
+  try {
+    const { app, menu } = mountHeader();
+    expect(menu.items().some(item => item.kind === 'item' && item.label === 'header.copySessionLink')).toBe(false);
+    expect(menu.items().some(item => item.kind === 'item' && item.label === 'header.copySessionId')).toBe(true);
+    app.unmount();
+  } finally {
+    mocks.sessionMentions.value = true;
+  }
 });
 
 it('reloads the session from the menu and hides the item when archived', async () => {

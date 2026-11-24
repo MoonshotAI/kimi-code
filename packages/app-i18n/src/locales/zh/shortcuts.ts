@@ -22,6 +22,8 @@ export default {
     sidebarTabWorkspaces: { label: '项目标签页', desc: '切换到侧栏的项目目录' },
     selectPrevSibling: { label: '上一条', desc: '在当前标签页中选中上一条会话 / 上一个项目' },
     selectNextSibling: { label: '下一条', desc: '在当前标签页中选中下一条会话 / 下一个项目' },
+    navigateBack: { label: '后退', desc: '回到上一个查看的会话' },
+    navigateForward: { label: '前进', desc: '前往浏览历史中的下一个会话' },
     send: { label: '发送消息', desc: '发送输入框中的内容' },
     newline: { label: '换行', desc: '在输入框中插入换行' },
   },

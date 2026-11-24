@@ -21,11 +21,12 @@ import { SearchSessionsDialog } from '@moonshot-ai/app-components';
 import UpdateIndicator from './UpdateIndicator.vue';
 import DebugMenu from './DebugMenu.vue';
 import UserMenu from './UserMenu.vue';
+import HistoryNavButtons from './window/HistoryNavButtons.vue';
 import { RcDeviceSwitcher, SessionListPanel, useAnchoredMenu } from '@moonshot-ai/app-components';
-import { hasCustomTitleBar, hasDesktopBridge, isMacosDesktop } from '@moonshot-ai/app-core/lib';
+import { hasCustomTitleBar, hasDesktopBridge, isLinuxDesktop, isMacosDesktop } from '@moonshot-ai/app-core/lib';
 import type { WorkspaceView } from '../types';
 import { useVibrancy } from '../composables/useVibrancy';
-import { useSidebarTabs } from '@moonshot-ai/app-core';
+import { useSessionMentions, useSidebarTabs } from '@moonshot-ai/app-core';
 import { resolvedBindingKeys, shortcutTooltip } from '../composables/useShortcuts';
 import { canOpenDirectoryInNative, openDirectoryInNative } from '../lib/nativeOpenIn';
 import { useKimiWebClient } from '@moonshot-ai/app-client/client';
@@ -88,6 +89,7 @@ const emit = defineEmits<{
   openFeedback: [];
   login: [];
   collapse: [];
+  navigate: [direction: 'back' | 'forward'];
 }>();
 
 const client = useKimiWebClient();
@@ -145,6 +147,7 @@ function onSearchSelectWorkspace(workspaceId: string): void {
 const statusTab = ref<'open' | 'done' | 'workspaces'>('open');
 
 const { sidebarTabs } = useSidebarTabs();
+const { sessionMentions } = useSessionMentions();
 watch(sidebarTabs, (on) => {
   if (!on && statusTab.value !== 'open') statusTab.value = 'open';
 });
@@ -325,6 +328,7 @@ function onLogoClick(): void {
     :class="{
       'macos-desktop': isMacosDesktop,
       'custom-titlebar': hasCustomTitleBar,
+      'history-nav': sessionMentions,
       vibrancy,
       collapsed,
       'no-anim': dragging,
@@ -383,6 +387,7 @@ function onLogoClick(): void {
                统一的 debug 入口（原 Canary 徽章），
                dev / canary 构建才渲染。 -->
           <DebugMenu />
+          <HistoryNavButtons v-if="isLinuxDesktop && sessionMentions" @navigate="emit('navigate', $event)" />
           <IconButton
             v-if="!isMacosDesktop"
             class="ch-collapse"
@@ -580,6 +585,9 @@ function onLogoClick(): void {
 .side.macos-desktop .ch {
   padding-left: 80px;
   -webkit-app-region: drag;
+}
+.side.macos-desktop.history-nav .ch {
+  padding-left: 168px;
 }
 .side.macos-desktop .ch-brand {
   display: none;

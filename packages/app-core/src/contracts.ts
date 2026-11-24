@@ -131,6 +131,12 @@ export type OpenFileLink = (target: FileLinkTarget, open: (target: FileLinkTarge
 
 export const OpenFileLinkKey: InjectionKey<OpenFileLink | undefined> = Symbol('openFileLink');
 
+export type OpenSessionLink = (sessionId: string) => void;
+
+export type ResolveOpenSessionLink = () => OpenSessionLink | undefined;
+
+export const OpenSessionLinkKey: InjectionKey<ResolveOpenSessionLink> = Symbol('openSessionLink');
+
 export type OpenHtmlFileInPanel = (target: FileLinkTarget) => void;
 
 export type ResolveOpenHtmlFileInPanel = () => OpenHtmlFileInPanel | undefined;

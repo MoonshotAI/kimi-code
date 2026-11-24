@@ -973,6 +973,11 @@ describe('kimiDesktop preload bridge', () => {
     expect(launchCb).toHaveBeenLastCalledWith({ action: 'open-workspace', root: '/work/project', newChat: true });
     listeners.get('kimi:launch-action')?.({}, { action: 'open-workspace', root: '/work/project', newChat: 'yes' });
     expect(launchCb).toHaveBeenCalledTimes(3);
+    listeners.get('kimi:launch-action')?.({}, { action: 'open-session', sessionId: 'session_1', extra: true });
+    expect(launchCb).toHaveBeenLastCalledWith({ action: 'open-session', sessionId: 'session_1' });
+    listeners.get('kimi:launch-action')?.({}, { action: 'open-session', sessionId: '' });
+    listeners.get('kimi:launch-action')?.({}, { action: 'open-session', sessionId: 42 });
+    expect(launchCb).toHaveBeenCalledTimes(4);
 
     const deepLinkAuthCb = vi.fn();
     exposed.onDeepLinkAuth(deepLinkAuthCb);

@@ -14,12 +14,19 @@ import { serializeMention } from '@moonshot-ai/app-composer/model';
 import { resetKimiClientDeps, setKimiClientDeps } from '../src/client/deps';
 import { useKimiWebClient } from '../src/client/useKimiWebClient';
 import { buildPromptContent } from '../src/lib/browserReferenceSubmission';
-import { sessionLogPath, sessionMentionCandidates, withSessionReferences } from '../src/lib/sessionReferences';
+import {
+  hasUnresolvedSessionReferences,
+  resolveSessionReferences,
+  sessionLogPath,
+  sessionMentionCandidates,
+  withSessionReferences,
+} from '../src/lib/sessionReferences';
 import { configStore } from '../src/stores/config';
 import { sessionsStore } from '../src/stores/sessions';
 
 const APP_WORKSPACE = 'wd_app_0123456789ab';
 const API_WORKSPACE = 'wd_api_0123456789ab';
+const HOME = '/home/me/.kimi-code';
 
 function session(id: string, overrides: Partial<AppSession> = {}): AppSession {
   return {
@@ -47,8 +54,12 @@ function session(id: string, overrides: Partial<AppSession> = {}): AppSession {
   };
 }
 
-function mention(sessionId: string, title: string, workspaceId = APP_WORKSPACE): string {
-  return serializeMention({ kind: 'session', name: title, path: `${workspaceId}/${sessionId}` });
+function mention(sessionId: string, title: string): string {
+  return serializeMention({ kind: 'session', name: title, path: sessionId });
+}
+
+function logPath(workspaceId: string, sessionId: string): string {
+  return `${HOME}/sessions/${workspaceId}/${sessionId}/agents/main/wire.jsonl`;
 }
 
 describe('sessionMentionCandidates', () => {
@@ -118,37 +129,49 @@ describe('session mentions lab switch', () => {
 
 describe('sessionLogPath', () => {
   it('points at the main agent event log under the Kimi Code home', () => {
-    const ref = { workspaceId: APP_WORKSPACE, sessionId: 'session_1' };
-    expect(sessionLogPath('/home/me/.kimi-code/', ref)).toBe(`/home/me/.kimi-code/sessions/${APP_WORKSPACE}/session_1/agents/main/wire.jsonl`);
-    expect(sessionLogPath('C:\\Users\\me\\.kimi-code', ref)).toBe(`C:/Users/me/.kimi-code/sessions/${APP_WORKSPACE}/session_1/agents/main/wire.jsonl`);
+    expect(sessionLogPath('/home/me/.kimi-code/', APP_WORKSPACE, 'session_1')).toBe(logPath(APP_WORKSPACE, 'session_1'));
+    expect(sessionLogPath('C:\\Users\\me\\.kimi-code', APP_WORKSPACE, 'session_1')).toBe(`C:/Users/me/.kimi-code/sessions/${APP_WORKSPACE}/session_1/agents/main/wire.jsonl`);
   });
 });
 
 describe('withSessionReferences', () => {
+  const getSession = vi.fn<(sessionId: string, options?: unknown) => Promise<AppSession>>();
+
   beforeEach(() => {
-    configStore().homeDir = '/home/me/.kimi-code';
+    configStore().homeDir = HOME;
+    sessionsStore().setSessions([
+      session('session_1'),
+      session('session_9', { workspaceId: API_WORKSPACE }),
+      session('remote_loaded', { hostId: 'devbox' }),
+    ]);
+    setKimiClientDeps({ api: () => ({ getSession }) as unknown as KimiWebApi, t: (key) => key });
   });
 
   afterEach(() => {
     configStore().homeDir = '';
+    sessionsStore().setSessions([]);
+    getSession.mockReset();
+    resetKimiClientDeps();
   });
 
   it('leaves prompts without session mentions untouched', () => {
     const text = 'see [a.ts](src/a.ts) and [deploy](kimi-code://skill/deploy)';
+    expect(hasUnresolvedSessionReferences(text)).toBe(false);
     expect(withSessionReferences(text)).toBe(text);
   });
 
   it('appends one escaped log reference per mentioned session under the server data directory', () => {
     const link = mention('session_1', 'Fix "login" <redirect>');
-    const other = mention('session_9', 'Elsewhere', API_WORKSPACE);
+    const other = mention('session_9', 'Elsewhere');
     const text = `compare ${link} with ${link} and ${other}`;
 
+    expect(hasUnresolvedSessionReferences(text)).toBe(false);
     expect(withSessionReferences(text)).toBe([
       text,
       '',
       '<referenced_sessions>',
-      `<session id="session_1" title="Fix &quot;login&quot; &lt;redirect&gt;" log="/home/me/.kimi-code/sessions/${APP_WORKSPACE}/session_1/agents/main/wire.jsonl" />`,
-      `<session id="session_9" title="Elsewhere" log="/home/me/.kimi-code/sessions/${API_WORKSPACE}/session_9/agents/main/wire.jsonl" />`,
+      `<session id="session_1" title="Fix &quot;login&quot; &lt;redirect&gt;" log="${logPath(APP_WORKSPACE, 'session_1')}" />`,
+      `<session id="session_9" title="Elsewhere" log="${logPath(API_WORKSPACE, 'session_9')}" />`,
       '</referenced_sessions>',
     ].join('\n'));
   });
@@ -159,12 +182,51 @@ describe('withSessionReferences', () => {
     expect(withSessionReferences(text)).toBe(text);
   });
 
+  it('looks up a session that is not loaded before listing it', async () => {
+    getSession.mockResolvedValue(session('session_old', { workspaceId: API_WORKSPACE }));
+    const text = `continue ${mention('session_old', 'Old work')}`;
+    expect(hasUnresolvedSessionReferences(text)).toBe(true);
+    expect(withSessionReferences(text)).toBe(text);
+
+    await resolveSessionReferences(text);
+
+    expect(getSession).toHaveBeenCalledExactlyOnceWith('session_old', { background: true });
+    expect(hasUnresolvedSessionReferences(text)).toBe(false);
+    expect(withSessionReferences(text)).toContain(`<session id="session_old" title="Old work" log="${logPath(API_WORKSPACE, 'session_old')}" />`);
+  });
+
+  it('leaves out sessions on a remote host and retries sessions it could not fetch', async () => {
+    getSession.mockImplementation(async (id) => {
+      if (id === 'remote_fetched') return session('remote_fetched', { hostId: 'devbox' });
+      throw new Error('session not found');
+    });
+    const text = [
+      mention('remote_loaded', 'Loaded remote'),
+      mention('remote_fetched', 'Fetched remote'),
+      mention('gone', 'Deleted'),
+      mention('session_1', 'Here'),
+    ].join(' ');
+
+    await resolveSessionReferences(text);
+
+    expect(getSession.mock.calls.map(([id]) => id).toSorted()).toEqual(['gone', 'remote_fetched']);
+    const block = withSessionReferences(text).slice(text.length);
+    expect(block).toContain('id="session_1"');
+    expect(block).not.toMatch(/remote_loaded|remote_fetched|gone/);
+    expect(hasUnresolvedSessionReferences(text)).toBe(true);
+    expect(hasUnresolvedSessionReferences(mention('remote_fetched', 'Fetched remote'))).toBe(false);
+  });
+
+  it('lists sessions referenced with the earlier <workspaceId>/<sessionId> links', () => {
+    const text = 'continue [Old](kimi-code://session/wd_app_0123456789ab/session_1)';
+    expect(hasUnresolvedSessionReferences(text)).toBe(false);
+    expect(withSessionReferences(text)).toContain(`<session id="session_1" title="Old" log="${logPath(APP_WORKSPACE, 'session_1')}" />`);
+  });
+
   it('adds the references to the text part submitted to the server', () => {
     const parts = buildPromptContent({ text: `continue ${mention('session_1', 'Fix login')}`, attachments: [] });
     expect(parts).toHaveLength(1);
     expect(parts[0]?.type).toBe('text');
-    expect(parts[0]?.type === 'text' && parts[0].text).toContain(
-      `log="/home/me/.kimi-code/sessions/${APP_WORKSPACE}/session_1/agents/main/wire.jsonl"`,
-    );
+    expect(parts[0]?.type === 'text' && parts[0].text).toContain(`log="${logPath(APP_WORKSPACE, 'session_1')}"`);
   });
 });

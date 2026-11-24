@@ -5,8 +5,9 @@ import { registerBrowserOverlayMenu } from '../../lib/browserOverlayMenu';
 import type { BrowserOverlayMenuItem } from '../../../shared/browser-overlay';
 import { useI18n } from 'vue-i18n';
 import { copyTextToClipboard } from '@moonshot-ai/app-core/lib';
-import { useSidebarTabs } from '@moonshot-ai/app-core';
-import { isMacosDesktop } from '@moonshot-ai/app-core/lib';
+import { sessionLink } from '@moonshot-ai/app-composer/model';
+import { useSessionMentions, useSidebarTabs } from '@moonshot-ai/app-core';
+import { hasDesktopBridge, isMacosDesktop } from '@moonshot-ai/app-core/lib';
 import { OpenInMenu } from '@moonshot-ai/app-components';
 import { track } from '@moonshot-ai/app-client/contracts';
 import { useKimiWebClient } from '@moonshot-ai/app-client/client';
@@ -17,6 +18,8 @@ import ViewToggles from './ViewToggles.vue';
 const { t } = useI18n();
 
 const { sidebarTabs } = useSidebarTabs();
+const { sessionMentions } = useSessionMentions();
+const sessionLinkCopyable = computed(() => hasDesktopBridge() && sessionMentions.value);
 
 const client = useKimiWebClient();
 const sessionViews = sessionViewsStore();
@@ -52,7 +55,7 @@ const kebabRef = ref<InstanceType<typeof IconButton> | null>(null);
 const menuRef = ref<InstanceType<typeof Menu> | null>(null);
 const menuStyle = ref<Record<string, string>>({});
 
-type CopyAction = 'all' | 'summary' | 'id';
+type CopyAction = 'all' | 'summary' | 'id' | 'link';
 const copiedAction = ref<CopyAction | null>(null);
 let copyRequest = 0;
 let copiedTimer: ReturnType<typeof setTimeout> | undefined;
@@ -78,6 +81,7 @@ const nativeMenu = registerBrowserOverlayMenu({
     { kind: 'item', id: 'copy-summary', ...copyItem('summary', t('header.copyFinalSummary'), 'file-text'), keepOpen: true },
     ...(sessionId.value ? [
       { kind: 'item' as const, id: 'copy-id', ...copyItem('id', t('header.copySessionId'), 'copy'), keepOpen: true },
+      ...(sessionLinkCopyable.value ? [{ kind: 'item' as const, id: 'copy-link', ...copyItem('link', t('header.copySessionLink'), 'link'), keepOpen: true }] : []),
       { kind: 'item' as const, id: 'export', label: t('header.exportSession'), icon: 'download' },
       ...(!archived.value ? [{ kind: 'item' as const, id: 'reload', label: t('header.reloadSession'), icon: 'refresh' }] : []),
       ...(!archived.value || sidebarTabs.value ? [{ kind: 'separator' as const }] : []),
@@ -92,7 +96,7 @@ const nativeMenu = registerBrowserOverlayMenu({
     if (id.slice(0, separator) !== menuContext) return;
     const action = id.slice(separator + 1);
     const actions: Record<string, () => void> = {
-      'copy-all': onCopyAll, 'copy-summary': onCopyFinalSummary, 'copy-id': copySessionId,
+      'copy-all': onCopyAll, 'copy-summary': onCopyFinalSummary, 'copy-id': copySessionId, 'copy-link': copySessionLink,
       pin: togglePin, rename: () => { void startRename(); }, fork: forkSession,
       export: exportSession, reload: reloadSession, restore: startRestore, archive: startArchive,
     };
@@ -218,6 +222,12 @@ function copySessionId(): void {
   if (!sessionId.value) return;
   track('session_menu_action', { action: 'copySessionId' });
   void copyTextToClipboard(sessionId.value).then(copyFeedback('id'));
+}
+
+function copySessionLink(): void {
+  if (!sessionId.value) return;
+  track('session_menu_action', { action: 'copySessionLink' });
+  void copyTextToClipboard(sessionLink(sessionId.value)).then(copyFeedback('link'));
 }
 
 const renaming = ref(false);
@@ -375,6 +385,10 @@ const isDev = import.meta.env.DEV;
             <Icon :name="copiedAction === 'id' ? 'check' : 'copy'" size="sm" />
             {{ copiedAction === 'id' ? t('header.copied') : t('header.copySessionId') }}
           </MenuItem>
+          <MenuItem v-if="sessionLinkCopyable" @click="copySessionLink">
+            <Icon :name="copiedAction === 'link' ? 'check' : 'link'" size="sm" />
+            {{ copiedAction === 'link' ? t('header.copied') : t('header.copySessionLink') }}
+          </MenuItem>
           <MenuItem @click="exportSession">
             <Icon name="download" size="sm" />
             {{ t('header.exportSession') }}
@@ -445,16 +459,16 @@ const isDev = import.meta.env.DEV;
   transition: padding-left 0.28s cubic-bezier(0.4, 0, 0.2, 1);
 }
 :global(.app.sidebar-collapsed .chat-header) {
-  padding-left: 78px;
+  padding-left: var(--header-collapsed-clearance);
 }
 :global(.app.sidebar-collapsed.custom-titlebar .chat-header) {
   padding-left: var(--space-4);
 }
 :global(.app.sidebar-collapsed.macos-desktop .chat-header) {
-  padding-left: 146px;
+  padding-left: var(--header-collapsed-clearance-macos);
 }
 :global(.app.fullscreen.sidebar-collapsed.macos-desktop .chat-header) {
-  padding-left: 78px;
+  padding-left: var(--header-collapsed-clearance);
 }
 .ch-id { display: flex; align-items: center; gap: 6px; min-width: 0; flex: none; max-width: 46%; }
 .ch-ws { color: var(--color-text-muted); font-size: var(--text-base); font-weight: var(--weight-medium); flex: none; }

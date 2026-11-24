@@ -199,7 +199,10 @@ export interface WindowsMenuPopupRequest {
   y: number;
 }
 
-export type LaunchActionPayload = { action: 'new-chat' } | { action: 'open-workspace'; root: string; newChat?: boolean };
+export type LaunchActionPayload =
+  | { action: 'new-chat' }
+  | { action: 'open-workspace'; root: string; newChat?: boolean }
+  | { action: 'open-session'; sessionId: string };
 
 export type RendererEventChannel =
   | typeof IPC.failureToast

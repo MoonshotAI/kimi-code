@@ -15,31 +15,31 @@ export interface MentionAttrs {
 
 export const SKILL_LINK_BASE = 'kimi-code://skill/';
 
-export const SESSION_LINK_BASE = 'kimi-code://session/';
+export const SESSION_LINK_BASE = 'kimi-code://sessions/';
 
-export interface SessionMentionRef {
-  workspaceId: string;
-  sessionId: string;
+const LEGACY_SESSION_LINK_BASE = 'kimi-code://session/';
+
+export function sessionLink(sessionId: string): string {
+  return `${SESSION_LINK_BASE}${encodeWireComponent(sessionId)}`;
 }
 
-export function sessionMentionPath(ref: SessionMentionRef): string {
-  return `${ref.workspaceId}/${ref.sessionId}`;
+export function mayContainSessionLink(text: string): boolean {
+  return text.includes(SESSION_LINK_BASE) || text.includes(LEGACY_SESSION_LINK_BASE);
 }
 
-export function parseSessionMentionPath(path: string): SessionMentionRef | null {
-  const segments = path.split('/');
-  if (segments.length !== 2) return null;
-  const [workspaceId, sessionId] = segments as [string, string];
-  if (workspaceId === '' || sessionId === '') return null;
-  return { workspaceId, sessionId };
-}
-
-export function decodeSessionMention(dest: string): SessionMentionRef | null {
-  if (!dest.startsWith(SESSION_LINK_BASE)) return null;
-  const segments = dest.slice(SESSION_LINK_BASE.length).split('/').map(decodeURIComponentOrRaw);
+function decodeLegacySessionMention(dest: string): string | null {
+  const segments = dest.slice(LEGACY_SESSION_LINK_BASE.length).split('/').map(decodeURIComponentOrRaw);
   if (segments.length !== 2 || segments.some((segment) => segment === '' || segment.includes('/'))) return null;
-  const [workspaceId, sessionId] = segments as [string, string];
-  return { workspaceId, sessionId };
+  return segments[1]!;
+}
+
+export function decodeSessionMention(dest: string): string | null {
+  if (dest.startsWith(LEGACY_SESSION_LINK_BASE)) return decodeLegacySessionMention(dest);
+  if (!dest.startsWith(SESSION_LINK_BASE)) return null;
+  const tail = dest.slice(SESSION_LINK_BASE.length);
+  if (tail === '' || /[/?#]/.test(tail)) return null;
+  const sessionId = decodeURIComponentOrRaw(tail);
+  return sessionId === '' || sessionId.includes('/') ? null : sessionId;
 }
 
 export function classifyMentionHref(href: string): MentionKind | null {
@@ -101,7 +101,7 @@ export function serializeMention(attrs: MentionAttrs): string {
     return `[${text}](${SKILL_LINK_BASE}${encodeWireComponent(attrs.name)}${suffix})`;
   }
   if (attrs.kind === 'session') {
-    return `[${text}](${SESSION_LINK_BASE}${attrs.path.split('/').map(encodeWireComponent).join('/')})`;
+    return `[${text}](${sessionLink(attrs.path)})`;
   }
   if (attrs.rawDest !== undefined) return `[${text}](${/\s/.test(attrs.rawDest) ? `<${attrs.rawDest}>` : attrs.rawDest})`;
   const path = attrs.kind === 'folder' && !attrs.path.endsWith('/') && !attrs.path.endsWith('\\') ? `${attrs.path}/` : attrs.path;

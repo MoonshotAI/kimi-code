@@ -8,9 +8,19 @@ import { isCanaryVersion, isPreviewVersion } from '../release/release-channel';
 
 export const DEEP_LINK_SCHEME = 'kimi-code';
 
+const SESSION_PATH = /^\/([A-Za-z0-9_-]{1,128})$/;
+
+function deepLinkSessionId(parsed: URL): string | null {
+  if (parsed.search !== '' || parsed.hash !== '' || parsed.username !== '' || parsed.password !== '') return null;
+  return SESSION_PATH.exec(parsed.pathname)?.[1] ?? null;
+}
+
 export function isKnownDeepLink(url: string): boolean {
   try {
     const parsed = new URL(url);
+    if (parsed.protocol === `${DEEP_LINK_SCHEME}:` && parsed.host.toLowerCase() === 'sessions') {
+      return deepLinkSessionId(parsed) !== null;
+    }
     if (parsed.protocol === `${DEEP_LINK_SCHEME}:` && parsed.host.toLowerCase() === 'open') {
       const root = parsed.searchParams.get('root');
       return (
@@ -67,6 +77,7 @@ export function handleDeepLink(
   showMainWindow: () => void,
   notifyAuth?: () => void,
   openWorkspace?: (root: string) => void,
+  openSession?: (sessionId: string) => void,
 ): void {
   if (!isKnownDeepLink(url)) {
     log.warn(`[kimi-desktop] ignoring unknown deep link: ${redactUrlForLog(url)}`);
@@ -74,7 +85,10 @@ export function handleDeepLink(
   }
   showMainWindow();
   const parsed = new URL(url);
-  if (parsed.host.toLowerCase() === 'open') {
+  const host = parsed.host.toLowerCase();
+  if (host === 'sessions') {
+    openSession?.(deepLinkSessionId(parsed)!);
+  } else if (host === 'open') {
     openWorkspace?.(parsed.searchParams.get('root')!);
   } else {
     notifyAuth?.();

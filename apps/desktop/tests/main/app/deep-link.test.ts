@@ -247,3 +247,43 @@ describe('workspace deep links', () => {
     expect(open).not.toHaveBeenCalled();
   });
 });
+
+describe('session deep links', () => {
+  it.each([
+    ['kimi-code://sessions/session_00000000-0000-4000-8000-000000000003', 'session_00000000-0000-4000-8000-000000000003'],
+    ['KIMI-CODE://SESSIONS/Session_1', 'Session_1'],
+  ])('opens the session in %s after showing the window', (url, sessionId) => {
+    const show = vi.fn();
+    const auth = vi.fn();
+    const openWorkspace = vi.fn();
+    const openSession = vi.fn();
+    handleDeepLink(url, show, auth, openWorkspace, openSession);
+    expect(show).toHaveBeenCalledOnce();
+    expect(openSession).toHaveBeenCalledExactlyOnceWith(sessionId);
+    expect(show.mock.invocationCallOrder[0]).toBeLessThan(openSession.mock.invocationCallOrder[0]!);
+    expect(auth).not.toHaveBeenCalled();
+    expect(openWorkspace).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    'kimi-code://sessions',
+    'kimi-code://sessions/',
+    'kimi-code://sessions/session_1/',
+    'kimi-code://sessions/wd_app/session_1',
+    'kimi-code://sessions/session_1?prompt=hi',
+    'kimi-code://sessions/session_1#turn',
+    'kimi-code://sessions/session%2F1',
+    'kimi-code://sessions/..',
+    'kimi-code://user@sessions/session_1',
+    `kimi-code://sessions/${'a'.repeat(129)}`,
+    'kimi-code://session/session_1',
+    'https://sessions/session_1',
+  ])('ignores malformed session links: %s', (url) => {
+    const show = vi.fn();
+    const openSession = vi.fn();
+    expect(isKnownDeepLink(url)).toBe(false);
+    handleDeepLink(url, show, vi.fn(), vi.fn(), openSession);
+    expect(show).not.toHaveBeenCalled();
+    expect(openSession).not.toHaveBeenCalled();
+  });
+});

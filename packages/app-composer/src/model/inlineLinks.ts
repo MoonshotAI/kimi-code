@@ -1,6 +1,6 @@
 import { parse, postprocess, preprocess } from 'micromark';
 import { decodeURIComponentOrRaw, unescapeLinkDest, unescapeLinkText } from './linkCodec';
-import { ATTACHMENT_LINK_BASE, COMPOSER_LINK_SCHEME, QUOTE_LINK_BASE, classifyMentionHref, decodeQuoteAttrs, decodeSessionMention, decodeSkillMention, serializeAttachment, serializeMention, sessionMentionPath, type AttachmentAttrs, type AttachmentKind, type MentionAttrs, type QuoteAttrs } from './wireCodec';
+import { ATTACHMENT_LINK_BASE, COMPOSER_LINK_SCHEME, QUOTE_LINK_BASE, SESSION_LINK_BASE, classifyMentionHref, decodeQuoteAttrs, decodeSessionMention, decodeSkillMention, serializeAttachment, serializeMention, type AttachmentAttrs, type AttachmentKind, type MentionAttrs, type QuoteAttrs } from './wireCodec';
 import { BROWSER_REFERENCE_LINK_BASE, PASTED_TEXT_LINK_BASE, type BrowserReferenceAttrs, type PastedTextAttrs } from './wireCodec';
 import { isBrowserReferenceId } from '@moonshot-ai/app-core/browser-reference';
 import { replaceWithSourceMap, trimSpans, type SourceMappedText, type TextReplacement } from '@moonshot-ai/app-core/lib';
@@ -180,8 +180,7 @@ function classifyLinkCandidate(candidate: LinkCandidate, attachmentKindFor?: Att
     return { type: 'mention', start, end, attrs: { kind, ...decodeSkillMention(rawDest) }, rawDest };
   }
   if (kind === 'session') {
-    const path = sessionMentionPath(decodeSessionMention(rawDest)!);
-    return { type: 'mention', start, end, attrs: { kind, name: unescapeLinkText(rawText), path }, rawDest };
+    return { type: 'mention', start, end, attrs: { kind, name: unescapeLinkText(rawText), path: decodeSessionMention(rawDest)! }, rawDest };
   }
   return {
     type: 'mention',
@@ -253,6 +252,17 @@ function collectInlineLinkMatches(text: string, attachmentKindFor?: AttachmentKi
   matches.push(...scanEscapedBlockLinks(text));
   matches.sort((a, b) => a.start - b.start);
   return matches;
+}
+
+const BARE_SESSION_LINK = /(?<!\w)kimi-code:\/\/sessions\/([A-Za-z0-9_-]+)(?![\w/%?#-])/g;
+
+export function linkBareSessionUrls(text: string, sessionTitle: (sessionId: string) => string): string {
+  if (!text.includes(SESSION_LINK_BASE)) return text;
+  const links = walkLinkCandidates(text);
+  return text.replace(BARE_SESSION_LINK, (url: string, sessionId: string, offset: number) =>
+    links.some((link) => offset < link.end && offset + url.length > link.start)
+      ? url
+      : serializeMention({ kind: 'session', name: sessionTitle(sessionId), path: sessionId }));
 }
 
 export function parseMentionLinks(text: string): MentionLinkMatch[] {
