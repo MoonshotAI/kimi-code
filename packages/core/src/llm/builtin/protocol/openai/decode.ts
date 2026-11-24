@@ -84,43 +84,15 @@ export const DEFAULT_REASONING_KEY = KNOWN_REASONING_KEYS[0]!;
 
 export const REASONING_DETAILS_KEY = 'reasoning_details';
 
-interface ReasoningString {
-  readonly key: string;
-  readonly value: string;
-}
-
-export function extractReasoningStrings(source: unknown): ReasoningString[] {
+export function extractReasoningStrings(source: unknown): { key: string; value: string }[] {
   if (typeof source !== 'object' || source === null) return [];
   const record = source as Record<string, unknown>;
-  const found: ReasoningString[] = [];
+  const found: { key: string; value: string }[] = [];
   for (const key of KNOWN_REASONING_KEYS) {
     const value = record[key];
     if (typeof value === 'string') found.push({ key, value });
   }
   return found;
-}
-
-function createMirroredReasoningCollapser(): (strings: readonly ReasoningString[]) => ReasoningString[] {
-  const seenKeys: string[] = [];
-  let shared = '';
-  let mirrored = true;
-  return (strings) => {
-    if (!mirrored || strings.length === 0) return [...strings];
-    const valueOf = (key: string): string => strings.find((entry) => entry.key === key)?.value ?? '';
-    const keys = [...seenKeys, ...strings.map((entry) => entry.key).filter((key) => !seenKeys.includes(key))];
-    const primary = keys[0]!;
-    const delta = valueOf(primary);
-    const stillMirrored = keys.every((key) =>
-      seenKeys.includes(key) ? valueOf(key) === delta : valueOf(key) === shared + delta);
-    if (stillMirrored) {
-      seenKeys.splice(0, seenKeys.length, ...keys);
-      shared += delta;
-      return [{ key: primary, value: delta }];
-    }
-    mirrored = false;
-    const backlog = shared.length === 0 ? [] : seenKeys.slice(1).map((key) => ({ key, value: shared }));
-    return [...backlog, ...strings];
-  };
 }
 
 export interface ReasoningDetailsElement {
@@ -260,7 +232,6 @@ export function createDecoder(
   const seenIndexes = new Set<number | string>();
   let lastActiveIndex: number | string | undefined;
   let seenReasoningContent = false;
-  const collapseMirroredReasoning = createMirroredReasoningCollapser();
 
   const closeActiveToolCall = (): void => {
     if (lastActiveIndex === undefined) return;
@@ -357,10 +328,10 @@ export function createDecoder(
         if (reasoningKey === undefined && detected !== undefined) {
           onReasoningKey?.(detected.key);
         }
-        if (reasoningStrings.some((reasoning) => reasoning.key === 'reasoning_content')) {
-          seenReasoningContent = true;
-        }
-        for (const reasoning of collapseMirroredReasoning(reasoningStrings)) {
+        for (const reasoning of reasoningStrings) {
+          if (reasoning.key === 'reasoning_content') {
+            seenReasoningContent = true;
+          }
           sink.onDelta({
             type: 'think',
             think: reasoning.value,
