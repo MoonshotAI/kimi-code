@@ -1,4 +1,5 @@
 import { spawn, type ChildProcess } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { open, readFile, writeFile } from 'node:fs/promises';
 import { isAbsolute, join, normalize, relative, sep } from 'node:path';
 
@@ -22,7 +23,7 @@ import {
 } from '@agentclientprotocol/sdk';
 import { kimiCliCommand, kimiCliEnv, TestProcess, TIMEOUTS, until, type TestHome } from '@moonshot-ai/testkit/fixtures';
 
-import type { Diagnostic, SurfaceDriver, SurfaceLaunch, ToolExpectation, ToolStatus } from '../support/verbs';
+import { describeTool, wantedOutput, type Diagnostic, type SurfaceDriver, type SurfaceLaunch, type ToolExpectation, type ToolStatus } from '../support/verbs';
 import { offlineStubs } from './offline';
 
 const EDITOR_NAME = 'e2e-editor';
@@ -79,6 +80,7 @@ interface Terminal {
 interface ToolView {
   readonly id: string;
   readonly terminals: string[];
+  embedded: readonly string[];
   name: string;
   status: ToolStatus | undefined;
   path: string | undefined;
@@ -109,8 +111,9 @@ function toolsOf(updates: readonly SessionUpdate[]): ToolView[] {
     const tool = tools.get(update.toolCallId) ?? {
       id: update.toolCallId,
       terminals: [],
+      embedded: [],
       name: update.sessionUpdate === 'tool_call' ? update.title : '',
-      status: undefined,
+      status: update.sessionUpdate === 'tool_call' ? 'running' : undefined,
       path: undefined,
       command: undefined,
     };
@@ -120,9 +123,11 @@ function toolsOf(updates: readonly SessionUpdate[]): ToolView[] {
     const command = property(update.rawInput, 'command');
     if (typeof command === 'string') tool.command = command;
     const parts = update.content ?? [];
-    for (const part of parts) {
-      if (part.type === 'terminal' && !tool.terminals.includes(part.terminalId)) tool.terminals.push(part.terminalId);
+    const terminals = parts.flatMap((part) => (part.type === 'terminal' ? [part.terminalId] : []));
+    for (const terminal of terminals) {
+      if (!tool.terminals.includes(terminal)) tool.terminals.push(terminal);
     }
+    if (update.content !== undefined && update.content !== null) tool.embedded = terminals;
     const text = parts.map((part) => (part.type === 'content' && part.content.type === 'text' ? part.content.text : '')).join('\n');
     if (update.status === 'completed') tool.status = 'done';
     if (update.status === 'failed') tool.status = text.includes(REJECTION_NOTICE) ? 'rejected' : 'failed';
@@ -279,11 +284,15 @@ class AcpDriver implements SurfaceDriver {
   }
 
   async expectTool(expectation: ToolExpectation): Promise<void> {
-    const wanted = `${expectation.name} on ${JSON.stringify(expectation.target)} with status ${expectation.status}`;
+    const wanted = describeTool(expectation);
     const state = await this.wait(`the tool ${wanted}`, () => {
+      if (this.turnOver()) return expectation.status !== 'running' && this.shownTools(expectation).length > 0 ? ('shown' as const) : ('over' as const);
       if (this.shownTools(expectation).length > 0) return 'shown' as const;
-      return this.turnOver() ? ('over' as const) : undefined;
+      return expectation.status === 'running' && this.permissions.length > 0 ? ('approval' as const) : undefined;
     });
+    if (state === 'approval') {
+      throw new Error(`expectTool() cannot find a running command while an approval is pending; answer it with approve() or reject() first.\n${this.describe()}`);
+    }
     if (state === 'over') {
       this.assertPromptValid();
       throw new Error(`expectTool() did not find ${wanted}. The turn ended and it shows:\n${this.describe()}`);
@@ -466,40 +475,40 @@ class AcpDriver implements SurfaceDriver {
     const requested = Object.fromEntries((params.env ?? []).map(({ name, value }) => [name, value]));
     const output = await open(log, 'w');
     let child: ChildProcess;
+    let exited: Promise<TerminalExitStatus>;
     try {
-      child = await this.started(
-        spawn(params.command, params.args ?? [], {
-          cwd: params.cwd ?? this.home.workspace,
-          env: { ...kimiCliEnv(this.home), ...requested },
-          stdio: ['ignore', output.fd, output.fd],
-          detached: true,
-        }),
-      );
+      child = spawn(params.command, params.args ?? [], {
+        cwd: params.cwd ?? this.home.workspace,
+        env: { ...kimiCliEnv(this.home), ...requested },
+        stdio: ['ignore', output.fd, output.fd],
+        detached: true,
+      });
+      exited = new Promise((resolve) => {
+        child.once('exit', (exitCode, signal) => {
+          resolve({ exitCode, signal });
+        });
+      });
+      await this.started(child);
     } catch (error) {
       throw RequestError.internalError(undefined, `the editor could not start ${params.command}: ${reasonOf(error)}`);
     } finally {
       await output.close();
     }
     if (child.pid === undefined) throw RequestError.internalError(undefined, `the editor could not start ${params.command}: no process id`);
-    let settle: (status: TerminalExitStatus) => void = () => undefined;
-    const exited = new Promise<TerminalExitStatus>((resolve) => {
-      settle = resolve;
-    });
     const terminal: Terminal = { command: params.args?.[1], log, limit: params.outputByteLimit ?? undefined, pid: child.pid, exited, exit: undefined };
-    child.once('exit', (exitCode, signal) => {
-      terminal.exit = { exitCode, signal };
-      settle(terminal.exit);
+    void exited.then((status) => {
+      terminal.exit = status;
     });
     this.spawned.set(terminalId, terminal);
     this.terminals.set(terminalId, terminal);
     return { terminalId };
   }
 
-  private started(child: ChildProcess): Promise<ChildProcess> {
+  private started(child: ChildProcess): Promise<void> {
     return new Promise((resolve, reject) => {
       child.once('error', reject);
       child.once('spawn', () => {
-        resolve(child);
+        resolve();
       });
     });
   }
@@ -565,10 +574,21 @@ class AcpDriver implements SurfaceDriver {
   }
 
   private shownTools(expectation: ToolExpectation): ToolView[] {
+    const output = wantedOutput(expectation);
     return toolsOf(this.turnUpdates()).filter((tool) => {
       if (tool.name !== expectation.name || tool.status !== expectation.status) return false;
-      if (expectation.name === 'Bash') return tool.command === expectation.target;
-      return tool.path !== undefined && this.workspacePath(tool.path) === expectation.target;
+      if (expectation.name !== 'Bash') return tool.path !== undefined && this.workspacePath(tool.path) === expectation.target;
+      return tool.command === expectation.target && (output === undefined || this.embedsOutput(tool, output));
+    });
+  }
+
+  private embedsOutput(tool: ToolView, output: string): boolean {
+    return tool.embedded.some((id) => {
+      const terminal = this.spawned.get(id);
+      if (terminal?.command === undefined || tool.command === undefined || !terminal.command.endsWith(tool.command)) return false;
+      return readFileSync(terminal.log, 'utf8')
+        .split('\n')
+        .some((line) => line.trim() === output);
     });
   }
 

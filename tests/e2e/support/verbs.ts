@@ -11,12 +11,44 @@ export type Surface = (typeof SURFACES)[number];
 
 export type ToolName = 'Read' | 'Edit' | 'Write' | 'Bash';
 
-export type ToolStatus = 'done' | 'failed' | 'rejected';
+export type ToolStatus = 'done' | 'failed' | 'rejected' | 'running';
 
-export interface ToolExpectation {
-  readonly name: ToolName;
+interface FileToolExpectation {
+  readonly name: Exclude<ToolName, 'Bash'>;
   readonly target: string;
-  readonly status: ToolStatus;
+  readonly status: Exclude<ToolStatus, 'running'>;
+}
+
+interface RejectedCommandExpectation {
+  readonly name: 'Bash';
+  readonly target: string;
+  readonly status: 'rejected';
+}
+
+interface EndedCommandExpectation {
+  readonly name: 'Bash';
+  readonly target: string;
+  readonly status: 'done' | 'failed';
+  readonly output?: string;
+}
+
+interface RunningCommandExpectation {
+  readonly name: 'Bash';
+  readonly target: string;
+  readonly status: 'running';
+  readonly output: string;
+}
+
+export type ToolExpectation = FileToolExpectation | RejectedCommandExpectation | EndedCommandExpectation | RunningCommandExpectation;
+
+export function wantedOutput(expectation: ToolExpectation): string | undefined {
+  return 'output' in expectation ? expectation.output : undefined;
+}
+
+export function describeTool(expectation: ToolExpectation): string {
+  const output = wantedOutput(expectation);
+  const printed = output === undefined ? '' : ` and output ${JSON.stringify(output)}`;
+  return `${expectation.name} on ${JSON.stringify(expectation.target)} with status ${expectation.status}${printed}`;
 }
 
 interface VerbSignatures {

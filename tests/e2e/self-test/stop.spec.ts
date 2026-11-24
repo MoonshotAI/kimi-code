@@ -1,4 +1,4 @@
-import { edit, held, say } from '@moonshot-ai/testkit/model';
+import { bash, edit, held, say } from '@moonshot-ai/testkit/model';
 
 import { expect, selfTest } from '../support/scenario';
 
@@ -15,6 +15,21 @@ selfTest('stop', {
         await product.waitIdle();
         model.hold('mid-reply').release();
         expect(model.requests('main').map((request) => request.state)).toEqual(['aborted']);
+      },
+    },
+    'stops a command that is running and has already printed, and takes the next message': {
+      run: async ({ product, model }) => {
+        const command = "printf 'rea%s\\n' dy; sleep 30";
+        model.script(bash(command), say('The command was stopped.'));
+        await product.send('Print one word, then wait.');
+        await product.approve();
+        await product.expectTool({ name: 'Bash', target: command, status: 'running', output: 'ready' });
+        await product.stop();
+        await product.waitIdle();
+        expect(model.requests('main')).toHaveLength(1);
+        await product.send('What happened to the command?');
+        await product.waitIdle();
+        await product.expectReply('The command was stopped.');
       },
     },
   },
