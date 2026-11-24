@@ -3,8 +3,7 @@ import net from 'node:net';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 
 import { errEnvelope } from '../envelope';
-
-const HOST_ERROR_CODE = 40301;
+import { ErrorCode } from '../protocol/error-codes';
 
 export interface HostCheckOptions {
   readonly boundHost?: string;
@@ -101,7 +100,7 @@ export function createHostCheck(opts: HostCheckOptions): HostCheck {
     reply: FastifyReply,
   ): Promise<FastifyReply | void> => {
     if (!isAllowed(req.headers.host)) {
-      return reply.code(403).send(errEnvelope(HOST_ERROR_CODE, formatHostErrorMessage(req.headers.host), req.id));
+      return reply.code(403).send(errEnvelope(ErrorCode.HOST_NOT_ALLOWED, formatHostErrorMessage(req.headers.host), req.id));
     }
   };
   return { onRequest, isAllowed };
