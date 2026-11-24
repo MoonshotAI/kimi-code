@@ -19,7 +19,7 @@ import type { CollectionView } from '@moonshot-ai/agent-core-v2/_base/di/collect
 import { SyncDescriptor } from '@moonshot-ai/agent-core-v2/_base/di/descriptors';
 
 import { okEnvelope } from '../envelope';
-import { defineRoute } from '../middleware/defineRoute';
+import { defineRoute, type GetRouteHost } from '../middleware/defineRoute';
 import { ensureMainAgent } from '../transport/mainAgent';
 import {
   listToolCatalogResponseSchema,
@@ -31,24 +31,13 @@ import type { ToolDescriptor } from '../protocol/tool';
 const MCP_NAME_PREFIX = 'mcp__';
 const MCP_NAME_SEPARATOR = '__';
 
-interface ToolsRouteHost {
-  get(
-    path: string,
-    options: { preHandler: unknown[]; schema?: Record<string, unknown> } | undefined,
-    handler: (
-      req: { id: string; query: unknown; params: unknown },
-      reply: { send(payload: unknown): unknown },
-    ) => Promise<void> | void,
-  ): unknown;
-}
-
 class ToolCatalog {
   constructor(
     @AgentToolContribution readonly contributions: CollectionView<AgentToolContribution>,
   ) {}
 }
 
-export function registerToolsRoutes(app: ToolsRouteHost, core: Scope): void {
+export function registerToolsRoutes(app: GetRouteHost, core: Scope): void {
   const listToolCatalogRoute = defineRoute(
     {
       method: 'GET',
@@ -77,7 +66,7 @@ export function registerToolsRoutes(app: ToolsRouteHost, core: Scope): void {
   app.get(
     listToolCatalogRoute.path,
     listToolCatalogRoute.options,
-    listToolCatalogRoute.handler as Parameters<ToolsRouteHost['get']>[2],
+    listToolCatalogRoute.handler as Parameters<GetRouteHost['get']>[2],
   );
 
   const listToolsRoute = defineRoute(
@@ -106,7 +95,7 @@ export function registerToolsRoutes(app: ToolsRouteHost, core: Scope): void {
   app.get(
     listToolsRoute.path,
     listToolsRoute.options,
-    listToolsRoute.handler as Parameters<ToolsRouteHost['get']>[2],
+    listToolsRoute.handler as Parameters<GetRouteHost['get']>[2],
   );
 }
 

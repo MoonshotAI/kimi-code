@@ -139,8 +139,14 @@ describe('decideComposerSubmit — bare work-mode commands', () => {
   it.each([
     { text: '/plan', planEnabled: false },
     { text: '/swarm', swarmEnabled: false },
+    { text: '/swarm on', swarmEnabled: false, cmd: '/swarm' },
+    { text: '/swarm investigate', swarmEnabled: false, cmd: '/swarm' },
     { text: '/goal', goalEnabled: false },
     { text: '/goal resume', goalEnabled: false, cmd: '/goal' },
+    { text: '/tower', towerAvailable: false, cmd: '/tower' },
+    { text: '/tower on', towerAvailable: false, cmd: '/tower' },
+    { text: '/tower main', towerAvailable: false, cmd: '/tower' },
+    { text: '/tower status', towerAvailable: false, cmd: '/tower' },
   ])('does not consume $text locally when its required tool is disabled', (disabled) => {
     expect(decideComposerSubmit(input({ text: disabled.text, rewritten: disabled.text, ...disabled })))
       .toMatchObject({ kind: 'disabled-command', cmd: 'cmd' in disabled ? disabled.cmd : disabled.text });
@@ -149,6 +155,21 @@ describe('decideComposerSubmit — bare work-mode commands', () => {
   it.each(['/goal pause', '/goal cancel'])('keeps %s available when UpdateGoal is disabled', (text) => {
     expect(decideComposerSubmit(input({ text, rewritten: text, goalEnabled: false })))
       .toMatchObject({ kind: 'builtin-command', cmd: text });
+  });
+
+  it('keeps /swarm off available when AgentSwarm is disabled', () => {
+    expect(decideComposerSubmit(input({ text: '/swarm off', rewritten: '/swarm off', swarmEnabled: false })))
+      .toMatchObject({ kind: 'builtin-command', cmd: '/swarm off' });
+  });
+
+  it('keeps /tower off available when Tower tools are disabled', () => {
+    expect(decideComposerSubmit(input({ text: '/tower off', rewritten: '/tower off', towerAvailable: false })))
+      .toMatchObject({ kind: 'builtin-command', cmd: '/tower off' });
+  });
+
+  it('leaves /tower off as a prompt when the Tower experiment is off', () => {
+    expect(decideComposerSubmit(input({ text: '/tower off', rewritten: '/tower off', towerEnabled: false, towerAvailable: false })))
+      .toMatchObject({ kind: 'submit', text: '/tower off' });
   });
 
   it('still matches the bare command when attachment pills ride along (wholesale removal, no fake args)', () => {

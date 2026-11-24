@@ -69,7 +69,7 @@ import { v4 as randomUUID } from 'uuid';
 import { computed, inject, nextTick, onMounted, onUnmounted, ref, shallowRef, useId, watch, watchEffect } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { MANAGED_KIMI_CODE_PROVIDER_ID, type ReadRequestOptions, type SessionContextSummary } from '@moonshot-ai/app-core/api';
-import { analyzeLeadingSlashCommand, basename, buildSlashItems, formatShortcutText, formatTokens, isDesktop, providerDisplayName, type SlashCommand } from '@moonshot-ai/app-core/lib';
+import { analyzeLeadingSlashCommand, basename, buildSlashItems, formatShortcutText, formatTokens, providerDisplayName, type SlashCommand } from '@moonshot-ai/app-core/lib';
 import { placeholderText } from '@moonshot-ai/app-core/lib';
 import { useAppearance, useContextInspector } from '@moonshot-ai/app-core';
 import type { IconName } from '@moonshot-ai/app-client/icons';
@@ -246,10 +246,11 @@ const browserReferences = ref<BrowserReference[]>([]);
 const browserCaptures = ref<BrowserCapture[]>([]);
 
 const towerExperimentEnabled = computed(() => client.experimentalFlags.value['tower'] === true);
-const towerEnabled = computed(() => towerExperimentEnabled.value && (!isDesktop || client.towerModeAvailable.value));
-const planEnabled = computed(() => !isDesktop || client.planModeAvailable.value);
-const swarmEnabled = computed(() => !isDesktop || client.swarmModeAvailable.value);
-const goalEnabled = computed(() => !isDesktop || client.goalModeAvailable.value);
+const towerAvailable = computed(() => client.towerModeAvailable.value);
+const towerEntryEnabled = computed(() => towerExperimentEnabled.value && towerAvailable.value);
+const planEnabled = computed(() => client.planModeAvailable.value);
+const swarmEnabled = computed(() => client.swarmModeAvailable.value);
+const goalEnabled = computed(() => client.goalModeAvailable.value);
 
 const { text, editorRef, loadForEdit: loadTextForEdit, clearDraft, loadDraftAttachments, saveDraftAttachments, saveDraft, loadRestorableDraftSnapshot, saveDraftSnapshot } = useComposerDraft({
   sessionId: () => scopeId.value,
@@ -260,7 +261,7 @@ const { text, editorRef, loadForEdit: loadTextForEdit, clearDraft, loadDraftAtta
 });
 
 const highlightCommands = computed(() => buildSlashItems([], {
-  towerEnabled: towerEnabled.value,
+  towerEnabled: towerExperimentEnabled.value,
   planEnabled: planEnabled.value,
   swarmEnabled: swarmEnabled.value,
   goalEnabled: goalEnabled.value,
@@ -921,7 +922,7 @@ const {
   },
   historyPush: (entry) => history.push(entry),
   clearDraft,
-  towerEnabled: () => towerEnabled.value,
+  towerEnabled: () => towerEntryEnabled.value,
   extraBuiltins: () => props.extraBuiltinCommands,
   planEnabled: () => planEnabled.value,
   swarmEnabled: () => swarmEnabled.value,
@@ -1744,7 +1745,8 @@ function submitCommandContext() {
     running: running.value,
     queueLength: queued.value.length,
     goalMode: goalMode.value,
-    towerEnabled: towerEnabled.value,
+    towerEnabled: towerExperimentEnabled.value,
+    towerAvailable: towerAvailable.value,
     extraBuiltins: props.extraBuiltinCommands,
     planEnabled: planEnabled.value,
     swarmEnabled: swarmEnabled.value,
@@ -2473,7 +2475,7 @@ const addItems = computed(() => {
   if (swarmEnabled.value) {
     items.push({ id: 'swarm', icon: 'sparkles', nameKey: 'status.swarmLabel', descKey: 'composer.addSwarmDesc', action: onAddSwarmMode });
   }
-  if (towerEnabled.value) {
+  if (towerEntryEnabled.value) {
     items.push({ id: 'tower', icon: 'tower', nameKey: 'status.towerLabel', descKey: 'composer.addTowerDesc', action: onAddTowerMode });
   }
   if (isSideChat.value) {
