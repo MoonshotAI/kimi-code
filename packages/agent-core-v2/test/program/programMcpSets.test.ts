@@ -449,6 +449,21 @@ describe('ProgramMcpSets', () => {
     await expect(sets.effectiveWorkDir(gone)).resolves.toBe(gone);
   });
 
+  it('leaves a working directory under what is now a file without the servers of the primary directory', async () => {
+    mainCheckout(checkout);
+    const file = join(tempDir('kimi-mcp-sets-gone-'), 'worktrees');
+    await writeFile(file, '', 'utf8');
+    const gone = join(file, 'feature');
+    await writeMcpJson(workDirFile(checkout), { home: stdioServer('home') });
+    const sets = createSets();
+
+    const view = await settled(await sets.acquire(gone));
+
+    expect(names(view)).toEqual([]);
+    expect(startedTags()).toEqual([]);
+    await expect(sets.effectiveWorkDir(gone)).resolves.toBe(gone);
+  });
+
   it('serves every directory outside a repository from the set of the primary directory', async () => {
     const inside = await subdir('inside');
     await writeMcpJson(workDirFile(inside), { own: disabledServer() });

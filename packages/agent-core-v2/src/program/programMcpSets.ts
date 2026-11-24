@@ -3,7 +3,7 @@ import { workspaceRootKey } from '#/_base/utils/workdir-slug';
 import type { IEnvironmentService } from '#/app/environment/environment';
 import type { McpServerConfig } from '#/mcpCore/config-schema';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
-import { isHostFsNotFound } from '#/os/interface/hostFsErrors';
+import { isHostFsNotDirectory, isHostFsNotFound } from '#/os/interface/hostFsErrors';
 import type { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
 import type { McpDirs } from '#/workspace/workspaceMcpConfig/workspaceMcpConfig';
 import type { IWorkspaceTrust } from '#/workspace/workspaceTrust/workspaceTrust';
@@ -52,7 +52,7 @@ export class ProgramMcpSets {
     try {
       dir = await this.hostFs.realpath(workDir);
     } catch (error) {
-      return isHostFsNotFound(error) ? workDir : undefined;
+      return isHostFsNotFound(error) || isHostFsNotDirectory(error) ? workDir : undefined;
     }
     const root = this.dirs.primary;
     const projectDir = await this.dependencies.workspaces.projectDirAt({ root }, dir);
