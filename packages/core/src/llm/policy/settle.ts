@@ -3,8 +3,10 @@ import {
   createAssistantMessage,
   createMessageAccumulator,
   isVacuousContentPart,
+  scanToolDeclarations,
   type AssistantMessage,
   type ToolCall,
+  type ToolDescription,
 } from '#/llm/message';
 import { isAbortError, toLlmErrorMessage } from '#/llm/protocol/errors';
 import { parseRetryAfterMs } from '#/llm/protocol/kit/http';
@@ -117,6 +119,12 @@ export async function runAttempt(
   let failure: { error: LlmErrorMessage; rawError?: unknown } | undefined;
   const toolCallIndexes = new Map<string, number | string>();
   const emittedToolCallIds = new Set<string>();
+  let visibleTools: ReadonlyMap<string, ToolDescription> | undefined;
+  const visibleToolMap = (): ReadonlyMap<string, ToolDescription> =>
+    (visibleTools ??= scanToolDeclarations(
+      request.profile?.tools ?? [],
+      request.content.messages,
+    ).visible);
   const emitToolCallEnd = (toolCall: ToolCall, index = toolCallIndexes.get(toolCall.id) ?? toolCall._streamIndex): void => {
     if (emittedToolCallIds.has(toolCall.id)) return;
     emittedToolCallIds.add(toolCall.id);
@@ -250,7 +258,7 @@ export async function runAttempt(
         const toolCall = inner.toolCallEnd(index);
         if (toolCall !== undefined) {
           if (index !== undefined) toolCallIndexes.set(toolCall.id, index);
-          const error = invalidToolArgumentsError(toolCall, request.profile?.tools ?? []);
+          const error = invalidToolArgumentsError(toolCall, visibleToolMap());
           if (error === null) {
             emitToolCallEnd(toolCall, index);
           }
@@ -277,7 +285,7 @@ export async function runAttempt(
 
   const message = finishMessage();
   for (const toolCall of message.toolCalls) {
-    const error = invalidToolArgumentsError(toolCall, request.profile?.tools ?? []);
+    const error = invalidToolArgumentsError(toolCall, visibleToolMap());
     if (error !== null) return failed({ error }, message);
     emitToolCallEnd(toolCall);
   }

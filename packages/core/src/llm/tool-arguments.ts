@@ -107,10 +107,9 @@ export function invalidToolCallText(name: string, issue: string): string {
 
 export function invalidToolArgumentsError(
   call: ToolCall,
-  tools: readonly ToolDescription[],
+  tools: ReadonlyMap<string, ToolDescription>,
 ): LlmErrorMessage | null {
-  const tool = tools.find((entry) => entry.name === call.name);
-  const result = parseLlmToolArguments(call.arguments, tool);
+  const result = parseLlmToolArguments(call.arguments, tools.get(call.name));
   if (result.issue === undefined) return null;
   if (result.issue.reason === 'schema_config') {
     return {
