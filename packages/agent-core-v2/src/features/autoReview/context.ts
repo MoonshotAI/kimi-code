@@ -21,7 +21,7 @@ export interface ReviewGitStatus {
 
 export function buildReviewMessages(
   messages: readonly ContextMessage[],
-  authorizationEntries: readonly ReviewText[],
+  inherited: readonly ReviewText[],
   instructions: string | undefined,
   instructionPaths: readonly string[] | undefined,
   cwd: string,
@@ -35,8 +35,6 @@ export function buildReviewMessages(
       ? [context.toolCall.id]
       : context.toolCalls.slice(pendingIndex).map((call) => call.id),
   );
-  const actions = messages.flatMap((message) =>
-    actionEntries(message, pendingIds, approvedToolCallIds));
   return [createUserMessage(renderPrompt(REVIEW_REQUEST, {
     environment: sectionJson({ cwd }),
     project_instructions: sectionJson({
@@ -44,7 +42,13 @@ export function buildReviewMessages(
       paths: instructionPaths ?? [],
       content: instructions ?? '',
     }),
-    history: sectionJson({ authorization: authorizationEntries, recentActions: actions }),
+    history: sectionJson([
+      ...inherited.map((entry) => ({ kind: 'instruction', ...entry })),
+      ...messages.flatMap((message) => [
+        ...authorizationEntry(message).map((entry) => ({ kind: 'instruction', ...entry })),
+        ...actionEntries(message, pendingIds, approvedToolCallIds),
+      ]),
+    ]),
     pending_action: sectionJson({
       name: context.toolCall.name,
       arguments: context.args,

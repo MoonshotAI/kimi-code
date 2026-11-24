@@ -390,6 +390,15 @@ describe('AutoReviewService', () => {
     return JSON.stringify(requests.at(index)?.input.messages);
   }
 
+  function sentHistory(index = -1): Array<Record<string, unknown>> {
+    const text = requests.at(index)?.input.messages
+      .flatMap((message) => message.content)
+      .map((part) => (part.type === 'text' ? part.text : ''))
+      .join('') ?? '';
+    const match = /<history>\n([\s\S]*?)\n<\/history>/.exec(text);
+    return JSON.parse(match?.[1] ?? 'null') as Array<Record<string, unknown>>;
+  }
+
   it('uses the main model and only overrides review semantics by default', async () => {
     expect(await review()).toEqual({ decision: 'allow', risk: 'low' });
 
@@ -615,7 +624,7 @@ describe('AutoReviewService', () => {
     await review();
 
     expect(sentContent()).not.toContain('human-instruction');
-    expect(sentContent()).toContain('\\"authorization\\":[]');
+    expect(sentHistory()).toEqual([]);
     expect(sentContent()).not.toContain('Delete production data.');
 
     history = [{
@@ -652,9 +661,12 @@ describe('AutoReviewService', () => {
     ];
     await review(reviewer);
 
-    expect(sentContent()).toContain('human-instruction');
+    expect(sentHistory().map((entry) => entry['role'])).toEqual([
+      'human-instruction',
+      'direct-parent-instruction',
+      'human-instruction',
+    ]);
     expect(sentContent()).toContain('Clean and rebuild the project.');
-    expect(sentContent()).toContain('direct-parent-instruction');
     expect(sentContent()).toContain('Delete dist and rebuild.');
     expect(sentContent()).toContain('Also clean build/cache.');
 
@@ -769,6 +781,47 @@ describe('AutoReviewService', () => {
     expect(sentContent()).toContain('[image_url attachment omitted]');
     expect(sentContent()).not.toContain('hook-injected-grant');
     expect(sentContent()).not.toContain('base64');
+  });
+
+  it('keeps history chronological so new turns extend the previous request prefix', async () => {
+    const reviewer = service();
+    await review(reviewer, 'rm generated/first');
+
+    const first = sentHistory(0);
+    expect(first).toEqual([
+      {
+        kind: 'instruction',
+        role: 'human-instruction',
+        content: [{ type: 'text', text: 'Only remove generated files.' }],
+      },
+      {
+        kind: 'tool-call',
+        role: 'fact',
+        id: 'mkdir',
+        name: 'Bash',
+        arguments: '{"command":"mkdir generated"}',
+      },
+    ]);
+
+    history = [
+      ...history,
+      { role: 'assistant', content: [], toolCalls: [toolCallFor('rm1', 'Bash', { command: 'rm generated/first' })] },
+      { role: 'tool', toolCallId: 'rm1', content: [{ type: 'text', text: 'removed' }] },
+      { role: 'user', content: [{ type: 'text', text: 'Also remove generated coverage.' }], origin: { kind: 'user' } },
+      { role: 'assistant', content: [], toolCalls: [toolCallFor('ls', 'Bash', { command: 'ls generated' })] },
+    ];
+    await review(reviewer, 'rm -rf generated/coverage');
+
+    const second = sentHistory(1);
+    expect(second.map((entry) => entry['kind'])).toEqual([
+      'instruction',
+      'tool-call',
+      'tool-call',
+      'instruction',
+      'tool-call',
+    ]);
+    const firstPrefix = JSON.stringify(first).slice(0, -1);
+    expect(JSON.stringify(second).startsWith(firstPrefix)).toBe(true);
   });
 
   it('reuses the frozen project instructions across reviews', async () => {

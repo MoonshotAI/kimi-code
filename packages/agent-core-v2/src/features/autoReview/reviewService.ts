@@ -240,7 +240,7 @@ export class AutoReviewService extends Service implements IAutoReviewService {
     const gitStatus = await abortable(this.readGitStatus(cwd, context), signal);
     const messages = buildReviewMessages(
       history,
-      authorization,
+      this.inherited,
       projectInstructions.agentsMd,
       projectInstructions.agentsMdPaths,
       cwd,
