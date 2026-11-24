@@ -1,21 +1,16 @@
-# External repositories: restored by bootstrap scripts
-/engines/
+/engines/*
+!/engines/README.md
 
-# .NET build outputs
 **/bin/
 **/obj/
-
-# Native build outputs
 **/build/
 **/build-legacy/
 **/CMakeFiles/
 **/CMakeCache.txt
 
-# Python environments and caches
 **/.venv/
 **/__pycache__/
 **/*.pyc
 
-# Temporary files
 *.tmp
 *.log.tmp
