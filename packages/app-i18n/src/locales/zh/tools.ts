@@ -488,7 +488,6 @@ export default {
     search: '搜索',
     todo: '待办',
     task: '任务',
-    agent: '子智能体',
     swarm: 'Swarm',
     ask_user: '提问',
     plan: '计划',

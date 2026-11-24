@@ -489,7 +489,6 @@ export default {
     search: 'Search',
     todo: 'Todo',
     task: 'Task',
-    agent: 'Subagent',
     swarm: 'Swarm',
     ask_user: 'Question',
     plan: 'Plan',

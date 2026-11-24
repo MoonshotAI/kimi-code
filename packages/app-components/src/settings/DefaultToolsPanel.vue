@@ -9,6 +9,7 @@ import type { AppToolCatalogEntry, AppToolsConfig } from '@moonshot-ai/app-core/
 import { isDefaultToolEnabled, setDefaultToolEnabled } from '@moonshot-ai/app-core/lib';
 import { Button, Icon, Spinner, Switch } from '@moonshot-ai/app-ui';
 import SettingsSubpage from './SettingsSubpage.vue';
+import { defaultToolLabelKey, groupDefaultTools } from './defaultToolsCatalog';
 import { toolIconName, toolLabel } from '../lib/toolMeta';
 
 const emit = defineEmits<{ back: [] }>();
@@ -21,28 +22,7 @@ const saving = ref(false);
 const saveFailed = ref(false);
 const savedConfig = ref<AppToolsConfig>({});
 const draftConfig = ref<AppToolsConfig>({});
-
-const groups: ReadonlyArray<{ id: string; labelKey: string; names: readonly string[] }> = [
-  { id: 'file', labelKey: 'settings.defaultToolsGroupFile', names: ['Read', 'ReadMediaFile', 'Write', 'Edit', 'Glob', 'Grep'] },
-  { id: 'system', labelKey: 'settings.defaultToolsGroupSystem', names: ['Bash'] },
-  { id: 'agent', labelKey: 'settings.defaultToolsGroupAgent', names: ['Agent', 'AgentSwarm', 'AskUserQuestion'] },
-  { id: 'web', labelKey: 'settings.defaultToolsGroupWeb', names: ['FetchURL', 'WebSearch'] },
-  { id: 'goal', labelKey: 'settings.defaultToolsGroupGoal', names: ['CreateGoal', 'GetGoal', 'SetGoalBudget', 'UpdateGoal'] },
-  { id: 'tower', labelKey: 'settings.defaultToolsGroupTower', names: ['TowerInit', 'TowerPlan', 'TowerSpawn', 'TowerMerge', 'TowerRebase', 'TowerTeardown', 'TowerComplete', 'TowerSend', 'TowerInbox', 'TowerFinding', 'TowerReview', 'TowerMission', 'TowerStatus'] },
-  { id: 'task', labelKey: 'settings.defaultToolsGroupTask', names: [] },
-];
-
-const groupedTools = computed(() => {
-  const grouped = new Map<string, AppToolCatalogEntry[]>();
-  for (const group of groups) grouped.set(group.id, []);
-  for (const tool of tools.value) {
-    const group = groups.find((candidate) => candidate.id !== 'task' && candidate.names.includes(tool.name)) ?? groups.at(-1)!;
-    grouped.get(group.id)!.push(tool);
-  }
-  return groups
-    .map((group) => ({ ...group, tools: grouped.get(group.id) ?? [] }))
-    .filter((group) => group.tools.length > 0);
-});
+const groupedTools = computed(() => groupDefaultTools(tools.value));
 
 function cloneConfig(config: AppToolsConfig | undefined): AppToolsConfig {
   return {
@@ -100,7 +80,8 @@ function enabledFor(name: string): boolean {
 }
 
 function displayLabel(name: string): string {
-  return name === 'Agent' ? t('tools.label.agent') : toolLabel(name);
+  const key = defaultToolLabelKey(name);
+  return key === undefined ? toolLabel(name) : t(key);
 }
 
 function setEnabled(name: string, enabled: boolean): void {

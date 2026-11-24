@@ -41,6 +41,7 @@ vi.mock('@moonshot-ai/app-client/composables', () => ({
 import DefaultToolsPanel from '../src/settings/DefaultToolsPanel.vue';
 import DefaultToolsRow from '../src/settings/DefaultToolsRow.vue';
 import DefaultToolsSetting from '../src/settings/DefaultToolsSetting.vue';
+import { defaultToolLabelKey, groupDefaultTools } from '../src/settings/defaultToolsCatalog';
 
 let app: App | null = null;
 let host: HTMLDivElement | null = null;
@@ -123,7 +124,7 @@ describe('DefaultToolsPanel', () => {
 
   it('edits a draft and only writes config when Save is clicked', async () => {
     await mountPanel();
-    switchNamed('tools.label.bash').click();
+    switchNamed('Run terminal commands').click();
     await flush();
 
     expect(fakes.updateConfig).not.toHaveBeenCalled();
@@ -143,20 +144,20 @@ describe('DefaultToolsPanel', () => {
   it('keeps the draft and shows feedback when saving fails', async () => {
     fakes.updateConfig.mockResolvedValue(false);
     await mountPanel();
-    switchNamed('tools.label.bash').click();
+    switchNamed('Run terminal commands').click();
     await flush();
     button('Save')?.click();
     await flush();
 
     expect(host?.textContent).toContain('Couldn\'t save. Try again');
     expect(host?.textContent).toContain('Unsaved changes');
-    expect(switchNamed('tools.label.bash').getAttribute('aria-checked')).toBe('true');
+    expect(switchNamed('Run terminal commands').getAttribute('aria-checked')).toBe('true');
     expect(button('Save')?.disabled).toBe(false);
   });
 
   it('confirms before discarding changes on back', async () => {
     await mountPanel();
-    switchNamed('tools.label.bash').click();
+    switchNamed('Run terminal commands').click();
     await flush();
     host?.querySelector<HTMLButtonElement>('.settings-subpage-back')?.click();
     await flush();
@@ -172,14 +173,14 @@ describe('DefaultToolsPanel', () => {
   it('stays on the page when discarding is cancelled', async () => {
     fakes.confirm.mockResolvedValue(false);
     await mountPanel();
-    switchNamed('tools.label.bash').click();
+    switchNamed('Run terminal commands').click();
     await flush();
     host?.querySelector<HTMLButtonElement>('.settings-subpage-back')?.click();
     await flush();
 
     expect(fakes.back).not.toHaveBeenCalled();
     expect(host?.textContent).toContain('Unsaved changes');
-    expect(switchNamed('tools.label.bash').getAttribute('aria-checked')).toBe('true');
+    expect(switchNamed('Run terminal commands').getAttribute('aria-checked')).toBe('true');
   });
 
   it('retries a failed catalog load', async () => {
@@ -213,9 +214,9 @@ describe('DefaultToolsPanel', () => {
     button('Retry')?.click();
     await flush();
     expect(fakes.loadConfig).toHaveBeenCalledTimes(2);
-    expect(switchNamed('tools.label.bash').getAttribute('aria-checked')).toBe('false');
+    expect(switchNamed('Run terminal commands').getAttribute('aria-checked')).toBe('false');
 
-    switchNamed('tools.label.read').click();
+    switchNamed('Read files').click();
     await flush();
     button('Save')?.click();
     await flush();
@@ -233,7 +234,7 @@ describe('DefaultToolsPanel', () => {
     await mountPanel();
 
     expect(switches()).toHaveLength(2);
-    expect(switchNamed('tools.label.bash').getAttribute('aria-checked')).toBe('true');
+    expect(switchNamed('Run terminal commands').getAttribute('aria-checked')).toBe('true');
   });
 
   it('labels Agent as subagent in settings while keeping the chat tool label as task', async () => {
@@ -259,7 +260,7 @@ describe('DefaultToolsPanel', () => {
       resolveSave = resolve;
     }));
     const panel = await mountPanel();
-    switchNamed('tools.label.bash').click();
+    switchNamed('Run terminal commands').click();
     await flush();
     button('Save')?.click();
     await flush();
@@ -322,7 +323,7 @@ describe('DefaultToolsSetting', () => {
     const back = host.querySelector<HTMLButtonElement>('.settings-subpage-back')!;
     expect(host.querySelector('.settings-subpage')?.contains(back)).toBe(true);
 
-    switchNamed('tools.label.bash').click();
+    switchNamed('Run terminal commands').click();
     await flush();
     back.click();
     await flush();
@@ -332,7 +333,7 @@ describe('DefaultToolsSetting', () => {
 
     host.querySelector<HTMLButtonElement>('.dt-entry')!.click();
     await flush();
-    switchNamed('tools.label.bash').click();
+    switchNamed('Run terminal commands').click();
     await flush();
     fakes.confirm.mockResolvedValueOnce(false);
     await expect(setting.confirmDiscard()).resolves.toBe(false);
@@ -341,5 +342,60 @@ describe('DefaultToolsSetting', () => {
     setting.reset();
     await flush();
     expect(openChanges).toEqual([false, true, false, true, false]);
+  });
+});
+
+
+describe('defaultToolsCatalog', () => {
+  const ALL_CONFIGURABLE_TOOLS = [
+    'Read', 'ReadMediaFile', 'Write', 'Edit', 'Glob', 'Grep',
+    'Bash', 'TaskList', 'TaskOutput', 'TaskStop', 'WaitFor',
+    'WebSearch', 'FetchURL',
+    'TodoList', 'ExitPlanMode', 'Agent', 'AgentSwarm', 'AskUserQuestion', 'Skill', 'NotifyUser',
+    'CreateGoal', 'GetGoal', 'SetGoalBudget', 'UpdateGoal',
+    'CronCreate', 'CronList', 'CronDelete',
+    'TowerInit', 'TowerPlan', 'TowerSpawn', 'TowerMerge', 'TowerRebase', 'TowerTeardown',
+    'TowerComplete', 'TowerSend', 'TowerInbox', 'TowerFinding', 'TowerReview', 'TowerMission', 'TowerStatus',
+  ];
+
+  it('groups all 40 configurable built-in tools into dedicated groups without an orphan catch-all', () => {
+    const entries = ALL_CONFIGURABLE_TOOLS.map((name) => ({ name, source: 'builtin' as const }));
+    const groups = groupDefaultTools(entries);
+
+    expect(groups.map((group) => group.id)).toEqual(['file', 'shell', 'web', 'agent', 'goal', 'cron', 'tower']);
+    expect(groups.flatMap((group) => group.tools.map((tool) => tool.name)).toSorted()).toEqual(
+      [...ALL_CONFIGURABLE_TOOLS].toSorted(),
+    );
+    expect(groups.find((group) => group.id === 'shell')?.tools.map((tool) => tool.name)).toEqual([
+      'Bash', 'TaskList', 'TaskOutput', 'TaskStop', 'WaitFor',
+    ]);
+    expect(groups.find((group) => group.id === 'cron')?.tools.map((tool) => tool.name)).toEqual([
+      'CronCreate', 'CronList', 'CronDelete',
+    ]);
+  });
+
+  it('uses settings-specific noun labels instead of chat streaming verbs', () => {
+    const { t } = createKimiI18n({ locale: 'zh' }).global;
+    const labelOf = (name: string) => {
+      const key = defaultToolLabelKey(name);
+      expect(key).toBeDefined();
+      return t(key!);
+    };
+
+    expect(t('settings.defaultToolsGroupShell')).toBe('终端与后台任务');
+    expect(labelOf('Bash')).toBe('执行终端命令');
+    expect(labelOf('WebSearch')).toBe('网页搜索');
+    expect(labelOf('Grep')).toBe('搜索文件内容');
+    expect(labelOf('Agent')).toBe('子智能体');
+    expect(labelOf('NotifyUser')).toBe('发送进展通知');
+    expect(labelOf('ExitPlanMode')).toBe('退出计划模式');
+    expect(labelOf('TowerSpawn')).toBe('启动工作与评审智能体');
+  });
+
+  it('places unknown future tools into the fallback group', () => {
+    const groups = groupDefaultTools([{ name: 'FutureTool', source: 'builtin' }]);
+    expect(groups).toEqual([
+      { id: 'other', labelKey: 'settings.defaultToolsGroupOther', tools: [{ name: 'FutureTool', source: 'builtin' }] },
+    ]);
   });
 });
