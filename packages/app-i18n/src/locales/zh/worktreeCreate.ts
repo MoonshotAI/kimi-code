@@ -3,7 +3,7 @@ export default {
     label: '运行环境',
     local: '本地',
     localDescription: '直接在项目目录中工作',
-    worktree: 'Worktree',
+    worktree: '工作树',
     worktreeDescription: '为本会话新建独立工作树',
     notGitRepo: '当前项目不是 Git 仓库',
     remoteHost: '远程主机上的项目暂不支持工作树',
