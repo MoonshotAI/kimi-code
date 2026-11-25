@@ -306,6 +306,8 @@ useJumpList(client, (payload) => {
     if (payload.action === 'new-chat') {
       setSessionIntent('jump_list');
       handleCreateSession();
+    } else if (payload.action === 'open-session') {
+      void client.openSessionLink(payload.sessionId, 'deep_link');
     } else {
       void openWorkspaceByRoot(payload.root, payload.newChat);
     }
