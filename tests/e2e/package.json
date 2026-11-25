@@ -10,7 +10,7 @@
     "test": "playwright test"
   },
   "devDependencies": {
-    "@agentclientprotocol/sdk": "^1.5.0",
+    "@agentclientprotocol/sdk": "1.5.0",
     "@moonshot-ai/pi-tui": "workspace:^",
     "@moonshot-ai/testkit": "workspace:^",
     "@playwright/test": "1.63.0",

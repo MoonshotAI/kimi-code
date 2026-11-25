@@ -11,7 +11,7 @@ selfTest('expectNotice', {
           say('The project is on track.'),
         );
         await product.send('Summarise the project status.');
-        await product.expectNotice('Model request failed; retrying (2/10)');
+        await product.expectNotice('Model request failed; retrying (attempt 2)');
         await product.waitIdle();
         await product.expectNotice('The example service is not ready yet.');
         await product.expectReply('The project is on track.');

@@ -103,11 +103,7 @@ export function retryingToSessionUpdate(
   event: RetryProgress,
   useNotice: boolean,
 ): SessionNotification {
-  const attempt =
-    event.nextAttempt <= event.maxAttempts
-      ? `${event.nextAttempt}/${event.maxAttempts}`
-      : `attempt ${event.nextAttempt}`;
-  const title = `Model request failed; retrying (${attempt})`;
+  const title = `Model request failed; retrying (attempt ${event.nextAttempt})`;
   const delay =
     event.delayMs <= 0 ? 'immediately' : `in ${Math.ceil(event.delayMs / 1000)}s`;
   const message = event.errorMessage.replaceAll(/\s+/g, ' ').trim();
@@ -133,7 +129,7 @@ export function retryingToSessionUpdate(
     sessionId,
     update: {
       sessionUpdate: 'agent_message_chunk',
-      content: { type: 'text', text: `${title} · ${description}` },
+      content: { type: 'text', text: `\n\n${title} · ${description}\n\n` },
     },
   };
 }

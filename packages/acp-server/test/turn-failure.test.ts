@@ -163,12 +163,12 @@ describe('retry progress notifications', () => {
         expect(notices).toHaveLength(2);
         expect(notices[0]).toMatchObject({
           severity: 'warning',
-          title: 'Model request failed; retrying (2/10)',
+          title: 'Model request failed; retrying (attempt 2)',
           description: expect.stringContaining('in 1s'),
         });
         expect(notices[0]?.description).toContain('429');
         expect(notices[0]?.description).toContain('The example service is not ready yet.');
-        expect(notices[1]).toMatchObject({ title: 'Model request failed; retrying (3/10)' });
+        expect(notices[1]).toMatchObject({ title: 'Model request failed; retrying (attempt 3)' });
         expect(agentText(client, sessionId)).toBe('Recovered.');
       },
       { session: { notices: {} } },
@@ -191,10 +191,10 @@ describe('retry progress notifications', () => {
       });
       expect(updatesOf(client, sessionId, 'notice')).toHaveLength(0);
       const text = agentText(client, sessionId);
-      expect(text).toContain('Model request failed; retrying (2/10)');
+      expect(text).toContain('Model request failed; retrying (attempt 2)');
       expect(text).toContain('429');
       expect(text).toContain('The example service is not ready yet.');
-      expect(text.endsWith('Recovered.')).toBe(true);
+      expect(text.endsWith('\n\nRecovered.')).toBe(true);
       expect(JSON.stringify(model.requests('main')[1]?.view.messages)).not.toContain(
         'Model request failed; retrying',
       );

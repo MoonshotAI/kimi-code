@@ -669,8 +669,8 @@ importers:
   packages/acp-server:
     dependencies:
       '@agentclientprotocol/sdk':
-        specifier: ^1.5.0
-        version: 1.9.0(zod@4.3.6)
+        specifier: 1.5.0
+        version: 1.5.0(zod@4.3.6)
       '@moonshot-ai/agent-core-v2':
         specifier: workspace:^
         version: link:../agent-core-v2
@@ -1470,8 +1470,8 @@ importers:
   tests/e2e:
     devDependencies:
       '@agentclientprotocol/sdk':
-        specifier: ^1.5.0
-        version: 1.9.0(zod@4.3.6)
+        specifier: 1.5.0
+        version: 1.5.0(zod@4.3.6)
       '@moonshot-ai/pi-tui':
         specifier: workspace:^
         version: link:../../packages/pi-tui
@@ -1496,8 +1496,8 @@ importers:
 
 packages:
 
-  '@agentclientprotocol/sdk@1.9.0':
-    resolution: {integrity: sha512-saCOTPYBK1iqWqJFAYHXbg3+zCoFXyZZFoqQAwdTWkbrZZPpAETr80QOnYr2l+dzPwL0jpNhn3eDY8MoEIDbUA==}
+  '@agentclientprotocol/sdk@1.5.0':
+    resolution: {integrity: sha512-524jwbB2iYWA+kWWyv9fhKbhU89dH/lu9u5EXwVNmfYzopV8BujCDxByBDZhxRUkB7RWIJzISCnwivdDk+bdVg==}
     peerDependencies:
       zod: 4.3.6
 
@@ -11798,7 +11798,7 @@ packages:
 
 snapshots:
 
-  '@agentclientprotocol/sdk@1.9.0(zod@4.3.6)':
+  '@agentclientprotocol/sdk@1.5.0(zod@4.3.6)':
     dependencies:
       zod: 4.3.6
 

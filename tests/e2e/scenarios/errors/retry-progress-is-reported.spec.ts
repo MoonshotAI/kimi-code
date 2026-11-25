@@ -13,7 +13,7 @@ scenario(
     );
 
     await product.send(prompt);
-    await product.expectNotice('Model request failed; retrying (2/10)');
+    await product.expectNotice('Model request failed; retrying (attempt 2)');
     await product.expectNotice('503');
     await product.waitIdle();
 
