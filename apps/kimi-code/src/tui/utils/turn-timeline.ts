@@ -1,4 +1,5 @@
 import {
+  AUTO_REVIEW_HINT_DELAY_MS,
   TRANSCRIPT_GROUP_COUNT_DELAY_MS,
   TRANSCRIPT_TAIL_ENTER_MS,
   TRANSCRIPT_TAIL_THINKING_THROTTLE_MS,
@@ -141,11 +142,24 @@ function preparingInterval(facts: CallFacts): Interval | undefined {
   return interval.from < interval.to ? interval : undefined;
 }
 
+function reviewHintInterval(facts: CallFacts): Interval | undefined {
+  if (facts.reviewStart === undefined) return undefined;
+  const interval = {
+    from: facts.reviewStart + AUTO_REVIEW_HINT_DELAY_MS,
+    to: Math.min(facts.reviewEnd ?? Infinity, facts.settle?.at ?? Infinity),
+  };
+  return interval.from < interval.to ? interval : undefined;
+}
+
 const contains = (interval: Interval | undefined, now: Instant): boolean =>
   interval !== undefined && interval.from <= now && now < interval.to;
 
 export function slowAt(facts: CallFacts | undefined, now: Instant): boolean {
   return facts !== undefined && contains(slowInterval(facts), now);
+}
+
+export function reviewHintAt(facts: CallFacts | undefined, now: Instant): boolean {
+  return facts !== undefined && contains(reviewHintInterval(facts), now);
 }
 
 export function preparingAt(facts: CallFacts | undefined, now: Instant): boolean {
@@ -358,6 +372,7 @@ export class TurnTimeline implements TimelineReader {
       nextThought?.start ?? Infinity,
       ...this.turnCalls.map((call) => firstTaken(slowInterval(call))),
       ...this.turnCalls.map((call) => firstTaken(preparingInterval(call))),
+      ...this.turnCalls.map((call) => firstTaken(reviewHintInterval(call))),
       this.firstWaitAfter(end),
     ));
   }

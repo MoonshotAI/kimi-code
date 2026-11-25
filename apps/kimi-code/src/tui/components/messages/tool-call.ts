@@ -16,6 +16,7 @@ import { Markdown } from '#/tui/components/markdown/markdown';
 import { highlightLines, langFromPath } from '#/tui/components/media/code-highlight';
 import { renderDiffLinesClustered } from '#/tui/components/media/diff-preview';
 import {
+  AUTO_REVIEW_HINT_DELAY_MS,
   BRAILLE_SPINNER_FRAMES,
   BRAILLE_SPINNER_INTERVAL_MS,
   COMMAND_PREVIEW_LINES,
@@ -752,7 +753,8 @@ export class ToolCallComponent extends Container {
   private progressLines: string[] = [];
   private progressStatusRows = 0;
   private static readonly MAX_PROGRESS_LINES = 24;
-  private autoReviewing = false;
+  private autoReviewHintTimer: ReturnType<typeof setTimeout> | undefined;
+  private autoReviewHintVisible = false;
   private liveOutput = '';
 
   private detachHintTimer: ReturnType<typeof setTimeout> | undefined;
@@ -1051,7 +1053,8 @@ export class ToolCallComponent extends Container {
     this.projectionVersion += 1;
     this.progressLines = [];
     this.progressStatusRows = 0;
-    this.autoReviewing = false;
+    this.stopAutoReviewHintTimer();
+    this.autoReviewHintVisible = false;
     this.liveOutput = '';
     this.detachHintVisible = false;
     this.stopDetachHintTimer();
@@ -1095,11 +1098,30 @@ export class ToolCallComponent extends Container {
   }
 
   setAutoReviewing(reviewing: boolean): void {
-    if (this.autoReviewing === reviewing) return;
-    this.autoReviewing = reviewing;
+    if (!reviewing) {
+      this.stopAutoReviewHintTimer();
+      this.showAutoReviewHint(false);
+      return;
+    }
+    if (this.autoReviewHintVisible || this.autoReviewHintTimer !== undefined) return;
+    this.autoReviewHintTimer = setTimeout(() => {
+      this.autoReviewHintTimer = undefined;
+      this.showAutoReviewHint(true);
+    }, AUTO_REVIEW_HINT_DELAY_MS);
+  }
+
+  private showAutoReviewHint(visible: boolean): void {
+    if (this.autoReviewHintVisible === visible) return;
+    this.autoReviewHintVisible = visible;
     this.projectionVersion += 1;
     this.rebuildBody();
     this.ui?.requestRender();
+  }
+
+  private stopAutoReviewHintTimer(): void {
+    if (this.autoReviewHintTimer === undefined) return;
+    clearTimeout(this.autoReviewHintTimer);
+    this.autoReviewHintTimer = undefined;
   }
 
   appendLiveOutput(text: string): void {
@@ -1840,7 +1862,7 @@ export class ToolCallComponent extends Container {
 
   private buildProgressBlock(): void {
     if (this.result !== undefined) return;
-    if (this.autoReviewing) {
+    if (this.autoReviewHintVisible) {
       this.addChild(new Text(currentTheme.dim('Reviewing…'), 2, 0));
     }
     for (const raw of this.progressLines) {

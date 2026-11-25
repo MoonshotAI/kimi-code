@@ -128,7 +128,7 @@ export function buildPermissionToolCallUpdate(req: ApprovalRequest): ToolCallUpd
   const review = req.approvalDetail;
   const prompt = review === undefined
     ? `Requesting approval to ${req.action}`
-    : `${review.outcome === 'failed' ? "Auto Review couldn't finish" : `Auto Review recommends rejecting · ${review.risk ?? 'medium'} risk`}: ${review.reason}\n\nRequesting approval to ${req.action}`;
+    : `${review.outcome === 'failed' ? "Auto Review couldn't finish" : `Auto Review didn't approve · ${review.risk ?? 'medium'} risk`}: ${review.reason}\n\nRequesting approval to ${req.action}`;
   content.push({
     type: 'content',
     content: { type: 'text', text: prompt },

@@ -31,7 +31,7 @@ export default {
   subagentBadge: 'sub agent · {name}',
   danger: 'Danger: {detail}',
   reviewFailed: "Auto Review couldn't finish",
-  reviewDenied: 'Auto Review recommends rejecting · {risk} risk',
+  reviewDenied: "Auto Review didn't approve · {risk} risk",
   reviewRisk: {
     low: 'low',
     medium: 'medium',

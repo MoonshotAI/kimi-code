@@ -116,21 +116,28 @@ function summary(components: readonly Component[], presentation = options()) {
 }
 
 describe('transcript projection', () => {
-  it('shows Reviewing tail in group view only while the review is pending', () => {
+  it.each([
+    ['still pending', undefined, [false, true, true]],
+    ['finished after 3 seconds', 3_500, [false, true, false]],
+    ['finished within 3 seconds', 2_000, [false, false, false]],
+  ] as const)('shows the Reviewing tail at 2999, 3000 and 5000 ms for a review %s', (_label, endsAt, expected) => {
     const bash = tool('Bash', { command: 'rm -rf dist' }, null);
     const callId = bash.toolCallView.id as ToolCallId;
     const group = onlyGroup([bash], options({ toolCallDensity: 'compact' }));
-    const timeline = new TurnTimeline(() => instant(0));
+    let clock = 0;
+    const timeline = new TurnTimeline(() => instant(clock));
     timeline.turnStarted();
-    const tail = () => {
-      const view = groupView(group, timeline, 100, true);
-      return view.tail ? tailText(view.tail, 80, instant(100)) : '';
+    const reviewingAt = (now: number) => {
+      const view = groupView(group, timeline, now, true);
+      return (view.tail ? tailText(view.tail, 80, instant(now)) : '').includes('Reviewing');
     };
 
     timeline.reviewStarted(callId, 'Bash');
-    expect(tail()).toContain('Reviewing');
-    timeline.reviewEnded(callId);
-    expect(tail()).not.toContain('Reviewing');
+    if (endsAt !== undefined) {
+      clock = endsAt;
+      timeline.reviewEnded(callId);
+    }
+    expect([2_999, 3_000, 5_000].map(reviewingAt)).toEqual(expected);
   });
 
   it('returns the original source list when every grouping option is off or not fullscreen', () => {

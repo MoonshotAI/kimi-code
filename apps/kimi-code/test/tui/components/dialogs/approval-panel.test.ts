@@ -126,7 +126,7 @@ describe('ApprovalPanelComponent', () => {
   it.each([
     {
       detail: { outcome: 'denied', risk: 'medium', reason: 'Creating remote resources was not explicitly authorized.' },
-      title: 'Auto Review recommends rejecting · medium risk',
+      title: "Auto Review didn't approve · medium risk",
     },
     {
       detail: { outcome: 'failed', reason: 'Review timed out.' },

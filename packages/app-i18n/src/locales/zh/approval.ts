@@ -31,7 +31,7 @@ export default {
   subagentBadge: '子 agent · {name}',
   danger: '危险: {detail}',
   reviewFailed: '自动复核未完成',
-  reviewDenied: '自动复核建议拒绝 · {risk}风险',
+  reviewDenied: '自动复核未通过 · {risk}风险',
   reviewRisk: {
     low: '低',
     medium: '中',

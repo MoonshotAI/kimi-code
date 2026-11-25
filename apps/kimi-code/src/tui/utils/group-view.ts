@@ -18,6 +18,7 @@ import {
   countedAt,
   phaseAt,
   preparingAt,
+  reviewHintAt,
   settledAt,
   slowAt,
   slowSince,
@@ -297,7 +298,7 @@ function reviewingTail(
   members: readonly MemberState[],
   now: Instant,
 ): { readonly kind: RunningKind; readonly since: Instant } | undefined {
-  if (input.expanded === true && members.some((member) => phaseAt(member.facts, now).kind === 'reviewing')) {
+  if (input.expanded === true && members.some((member) => reviewHintAt(member.facts, now))) {
     return undefined;
   }
   const seen = new Set<string>();
@@ -306,7 +307,7 @@ function reviewingTail(
   for (const item of [...members.map((member) => member.item), ...input.pending]) {
     if (item.callId === undefined || seen.has(item.callId)) continue;
     const facts = input.timeline.call(item.callId);
-    if (facts === undefined || phaseAt(facts, now).kind !== 'reviewing') continue;
+    if (facts === undefined || !reviewHintAt(facts, now)) continue;
     seen.add(item.callId);
     if (facts.start < since) since = facts.start;
     const kind = kindOf(item.event);

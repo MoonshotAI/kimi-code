@@ -213,7 +213,7 @@ describe('buildPermissionToolCallUpdate', () => {
       type: 'content',
       content: {
         type: 'text',
-        text: 'Auto Review recommends rejecting · high risk: Exposes credentials.\n\nRequesting approval to run `echo hi`',
+        text: "Auto Review didn't approve · high risk: Exposes credentials.\n\nRequesting approval to run `echo hi`",
       },
     });
   });
