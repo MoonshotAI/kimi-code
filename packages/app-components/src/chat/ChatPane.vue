@@ -2429,13 +2429,13 @@ function streamingTailIndex(turn: ChatTurn): number | null {
 .skill-act-head {
   font-size: var(--text-sm);
   font-weight: 500;
-  color: var(--color-accent-hover);
+  color: var(--p-pill-fg);
   display: flex;
   align-items: center;
   gap: 6px;
 }
 .skill-act-arrow {
-  color: var(--color-accent);
+  color: var(--p-pill-icon);
   font-size: var(--text-base);
 }
 .skill-act-args {

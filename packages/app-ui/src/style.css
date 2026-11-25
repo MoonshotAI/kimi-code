@@ -569,6 +569,17 @@ html[data-color-scheme="dark"] {
   --p-findring-w: 2px;
   --p-pill-excerpt-max: 24em;
   --p-quote-pill-excerpt-max: 12em;
+  /* -- unified hyperlink & inline reference ink ------------------------------
+     One blue shared by every hyperlink (Markdown links, Link.vue) and every
+     structured inline reference (@file/folder/skill/session, attachments,
+     quotes, pasted text, browser refs, bare file paths, slash commands).
+     Inline references carry NO background and NO border: their text sits on
+     the exact same baseline and line-height as the surrounding prose. */
+  --color-link: light-dark(#0a5ad0, #3393ff);
+  --color-link-hover: light-dark(#084aa8, #66adff);
+  --p-pill-fg: var(--color-link);
+  --p-pill-icon: var(--color-link);
+  --p-pill-muted-fg: color-mix(in srgb, var(--color-link) 72%, var(--color-text-muted));
   /* -- mentionTooltip scroll caps (line units, so the cap tracks the font) --
      the quote tooltip's full text and the bundled comment's second block.
      Half-line caps: an overflowing block cuts its last visible line at half,
@@ -1060,15 +1071,13 @@ html[data-color-scheme="dark"] {
   display: inline-flex;
   align-items: baseline;
   gap: var(--space-05);
-  color: var(--color-text-muted);
-  font-weight: var(--weight-ui-strong);
+  color: var(--p-pill-fg);
+  font-weight: inherit;
   white-space: nowrap;
   text-decoration: none;
   vertical-align: baseline;
-  /* A hair of air around every pill: CJK autospacing can't cross element
-     boundaries, and the separation also sets the pill apart from the
-     surrounding text. */
-  padding-inline: var(--space-05);
+  margin-inline: 0;
+  padding-inline: 0;
   transition: color var(--duration-fast) var(--ease-out);
 }
 .composer-text .quote-pill {
@@ -1078,7 +1087,7 @@ html[data-color-scheme="dark"] {
 .mention-pill:hover,
 .attachment-pill:hover,
 .quote-pill:hover {
-  color: var(--color-text);
+  color: var(--color-link-hover);
 }
 .mention-pill:hover .mention-pill-icon,
 .attachment-pill:hover .attachment-pill-icon,
@@ -1162,7 +1171,7 @@ a.mention-folder {
   justify-content: center;
   width: var(--p-ic-sm);
   height: var(--p-ic-sm);
-  color: var(--color-text-faint);
+  color: var(--p-pill-icon);
   align-self: center;
   flex-shrink: 0;
 }
@@ -1172,10 +1181,6 @@ a.mention-folder {
   width: var(--p-ic-sm);
   height: var(--p-ic-sm);
   display: block;
-  /* The registry glyphs are fill-based; a hairline stroke in the same ink
-     reads as real weight at this size. */
-  stroke: currentColor;
-  stroke-width: var(--p-hairline);
 }
 
 .mention-pill.pill-in-selection,
@@ -1187,7 +1192,7 @@ a.mention-folder {
 
 .quote-pill:focus-visible {
   box-shadow:
-    0 0 0 1px var(--color-text-muted),
+    0 0 0 1px var(--color-link),
     0 0 0 var(--p-focus-ring-w) var(--color-accent-soft);
 }
 .quote-pill-comment {
@@ -1195,13 +1200,13 @@ a.mention-folder {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
-  color: var(--color-text-muted);
+  color: var(--p-pill-muted-fg);
   font-weight: var(--weight-regular);
 }
 .quote-pill-comment::before {
   content: '❘';
-  color: var(--color-text-faint);
-  margin-inline: var(--space-1-5) var(--space-1);
+  color: color-mix(in srgb, var(--color-link) 45%, transparent);
+  margin-inline: var(--space-05);
 }
 .quote-pill-comment-full {
   display: none;
@@ -1763,7 +1768,9 @@ a.mention-folder {
 .attachment-pill.attachment-missing,
 .attachment-pill.attachment-missing:hover,
 .attachment-pill.attachment-missing .attachment-pill-icon,
-.attachment-pill.attachment-missing:hover .attachment-pill-icon {
+.attachment-pill.attachment-missing:hover .attachment-pill-icon,
+.attachment-pill.attachment-missing .quote-pill-comment,
+.attachment-pill.attachment-missing .quote-pill-comment::before {
   color: color-mix(in srgb, var(--color-text-muted) 55%, transparent);
   text-decoration: line-through;
 }
@@ -1776,7 +1783,9 @@ a.mention-folder {
 .attachment-pill.attachment-error,
 .attachment-pill.attachment-error:hover,
 .attachment-pill.attachment-error .attachment-pill-icon,
-.attachment-pill.attachment-error:hover .attachment-pill-icon {
+.attachment-pill.attachment-error:hover .attachment-pill-icon,
+.attachment-pill.attachment-error .quote-pill-comment,
+.attachment-pill.attachment-error .quote-pill-comment::before {
   color: var(--color-danger);
 }
 .resize-drag-shield {
