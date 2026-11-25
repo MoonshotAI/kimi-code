@@ -2,7 +2,7 @@ import { bash, say } from '@moonshot-ai/testkit/model';
 
 import { expect, scenario } from '../../support/scenario';
 
-const NO_LIVE_OUTPUT = "An editor that offers no terminals gets a command's output only once the command ends: ACP streams the output of a running command through the editor's terminal.";
+const NO_LIVE_OUTPUT = "Product gap, left out until the owner decides: the agent sends a command's output to an editor that offers no terminals only once the command ends, so such an editor cannot show what a running command has printed.";
 
 scenario('keeps what a stopped command printed', { exceptVariants: { 'bare-editor': NO_LIVE_OUTPUT } }, async ({ product, model }) => {
   const command = "printf 'rea%s\\n' dy; sleep 30";

@@ -58,6 +58,8 @@ const KITTY_KEYBOARD = /\x1b\[([<=>?])(\d*)(?:;(\d*))?u/g;
 const MODIFY_OTHER_KEYS = /\x1b\[>4(?:;(\d*))?m/g;
 const KITTY_DISAMBIGUATE = 1;
 const KITTY_EVENT_TYPES = 2;
+const KITTY_EMULATED_FLAGS = 7;
+const KITTY_LEGACY_RELEASES: Readonly<Record<string, string>> = { '\x1b[A': '\x1b[1;1:3A', '\x1b[B': '\x1b[1;1:3B' };
 const KITTY_SEQUENCE_LONGEST = 16;
 const KITTY_KEYS: Readonly<Record<string, { readonly code: number; readonly modifiers: number }>> = {
   '\x1b': { code: 27, modifiers: 1 },
@@ -565,6 +567,7 @@ class TuiDriver implements SurfaceDriver<'tui'> {
   private readonly keyboardStack: number[] = [];
   private keyboardTail = '';
   private modifyOtherKeys = false;
+  private keyboardProblem: string | undefined;
   private turn: Turn | undefined;
 
   constructor(
@@ -683,6 +686,7 @@ class TuiDriver implements SurfaceDriver<'tui'> {
     } catch (cause) {
       throw new Error(`expectTerminalRestored() found no terminal modes printed by the shell after the CLI exited.\n${await this.describe()}`, { cause });
     }
+    if (this.kitty && this.keyboardProblem !== undefined) throw new Error(`${this.keyboardProblem}\n${await this.describe()}`);
     if (this.kitty && (this.keyboardFlags !== 0 || this.keyboardStack.length > 0)) {
       throw new Error(`The CLI left the Kitty keyboard protocol on after it exited: flags ${this.keyboardFlags}, ${this.keyboardStack.length} pushed level(s) not popped.\n${await this.describe()}`);
     }
@@ -1137,6 +1141,7 @@ class TuiDriver implements SurfaceDriver<'tui'> {
 
   assertKeyboard(): void {
     if (!this.kitty) return;
+    if (this.keyboardProblem !== undefined) throw new Error(this.keyboardProblem);
     if ((this.keyboardFlags & KITTY_DISAMBIGUATE) === 0 || this.modifyOtherKeys) {
       const fallback = this.modifyOtherKeys ? ' and fell back to modifyOtherKeys' : '';
       throw new Error(`The CLI did not use the Kitty keyboard protocol in a terminal that offers it (flags ${this.keyboardFlags})${fallback}.`);
@@ -1156,11 +1161,18 @@ class TuiDriver implements SurfaceDriver<'tui'> {
         this.keyboardStack.push(this.keyboardFlags);
         this.keyboardFlags = value ?? 0;
       } else if (kind === '<') {
-        for (let count = value ?? 1; count > 0; count -= 1) this.keyboardFlags = this.keyboardStack.pop() ?? 0;
+        for (let count = value ?? 1; count > 0; count -= 1) {
+          const popped = this.keyboardStack.pop();
+          if (popped === undefined) this.keyboardProblem ??= 'The CLI popped more Kitty keyboard levels than it had pushed.';
+          this.keyboardFlags = popped ?? 0;
+        }
       } else {
         const mode = second === '' ? 1 : Number(second);
         const flags = value ?? 0;
         this.keyboardFlags = mode === 1 ? flags : mode === 2 ? this.keyboardFlags | flags : this.keyboardFlags & ~flags;
+      }
+      if ((this.keyboardFlags & ~KITTY_EMULATED_FLAGS) !== 0) {
+        this.keyboardProblem ??= `The CLI asked for Kitty keyboard flags ${this.keyboardFlags}; the driver emulates only flags 1, 2 and 4.`;
       }
     }
     for (const match of scanned.matchAll(MODIFY_OTHER_KEYS)) {
@@ -1172,8 +1184,12 @@ class TuiDriver implements SurfaceDriver<'tui'> {
   }
 
   private encode(input: string): string {
+    if (!this.kitty) return input;
+    if (this.keyboardProblem !== undefined) throw new Error(this.keyboardProblem);
+    const release = KITTY_LEGACY_RELEASES[input];
+    if (release !== undefined) return (this.keyboardFlags & KITTY_EVENT_TYPES) === 0 ? input : `${input}${release}`;
     const key = KITTY_KEYS[input];
-    if (!this.kitty || key === undefined || (this.keyboardFlags & KITTY_DISAMBIGUATE) === 0) return input;
+    if (key === undefined || (this.keyboardFlags & KITTY_DISAMBIGUATE) === 0) return input;
     const press = key.modifiers === 1 ? `\x1b[${key.code}u` : `\x1b[${key.code};${key.modifiers}u`;
     return (this.keyboardFlags & KITTY_EVENT_TYPES) === 0 ? press : `${press}\x1b[${key.code};${key.modifiers}:3u`;
   }

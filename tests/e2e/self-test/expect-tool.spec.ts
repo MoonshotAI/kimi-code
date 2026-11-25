@@ -9,7 +9,7 @@ const QUESTION = 'Which database should we use?';
 const ASK = askUserQuestion({ questions: [{ question: QUESTION, header: 'Database', options: [{ label: 'Postgres' }, { label: 'SQLite' }], multi_select: false }] });
 const DISMISSED_WITHOUT_QUESTION_ON_TUI = 'The terminal UI shows a dismissed question only as dismissed, without the question it asked.';
 
-const NO_LIVE_OUTPUT = "An editor that offers no terminals gets a command's output only once the command ends: ACP streams the output of a running command through the editor's terminal.";
+const NO_LIVE_OUTPUT = "Product gap, left out until the owner decides: the agent sends a command's output to an editor that offers no terminals only once the command ends, so such an editor cannot show what a running command has printed.";
 
 selfTest('expectTool', {
   positive: {
