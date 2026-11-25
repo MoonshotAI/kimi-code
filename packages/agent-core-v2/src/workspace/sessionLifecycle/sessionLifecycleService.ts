@@ -635,7 +635,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       }
       await this.hostFs.remove(sessionDirOf(this.bootstrap.homeDir, this.handlerScope, sessionId));
       await this.index.remove(sessionId);
-      await dropFileHistorySession({ docs: this.docs, workspaceId: this.workspaceId, placement: summary ?? {}, sessionId });
+      await dropFileHistorySession({ docs: this.docs, workspaceId: this.workspaceId, projectRoot: this.workspaceContext.meta.root, placement: summary ?? {}, sessionId });
       this.appendLogStore.append('', 'session_index.jsonl', { sessionId, deleted: true });
       await this.appendLogStore.flush();
       this.event.publish(
@@ -814,6 +814,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
           docs: this.docs,
           hostFs: this.hostFs,
           workspaceId: this.workspaceId,
+          projectRoot: this.workspaceContext.meta.root,
           placement: sourceMeta ?? {},
           sessionDir: targetSessionDir,
           sessionId: targetId!,

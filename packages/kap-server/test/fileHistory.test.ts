@@ -104,8 +104,8 @@ describe('file history of forked and deleted sessions', () => {
     const lab = await realpath(await mkdtemp(join(tmpdir(), 'kimi-server-v2-file-history-repo-')));
     try {
       const { main, worktree } = await createGitWorktree({ main: join(lab, 'app'), worktree: join(lab, 'app-fix') });
-      const forkOf = async (cwd: string): Promise<{ id: string; workspace_id: string }> => {
-        const source = await post<{ id: string; workspace_id: string }>('/api/v1/sessions', { cwd });
+      const forkOf = async (cwd: string, environment?: { environment_id: string; environment_cwd: string }): Promise<{ id: string; workspace_id: string }> => {
+        const source = await post<{ id: string; workspace_id: string }>('/api/v1/sessions', { cwd, ...environment });
         const blobs = join(home, 'sessions', source.workspace_id, source.id, 'agents', 'main', 'file-history');
         await mkdir(blobs, { recursive: true });
         await writeFile(join(blobs, 'blob@v1'), 'before');
@@ -113,13 +113,16 @@ describe('file history of forked and deleted sessions', () => {
       };
       const inMain = await forkOf(main);
       const inWorktree = await forkOf(worktree);
+      const pinnedToMain = await forkOf(main, { environment_id: 'local', environment_cwd: main });
 
       expect(inWorktree.workspace_id).toBe(inMain.workspace_id);
       expect(await listsWith(inMain.id)).toEqual([inMain.workspace_id]);
+      expect(pinnedToMain.workspace_id).toBe(inMain.workspace_id);
+      expect(await listsWith(pinnedToMain.id)).toEqual([inMain.workspace_id]);
       expect(await listsWith(inWorktree.id)).toHaveLength(1);
       expect(await listsWith(inWorktree.id)).not.toContain(inMain.workspace_id);
 
-      for (const fork of [inMain, inWorktree]) {
+      for (const fork of [inMain, inWorktree, pinnedToMain]) {
         await post(`/api/v1/sessions/${fork.id}:delete`, {});
         expect(await listsWith(fork.id)).toEqual([]);
       }

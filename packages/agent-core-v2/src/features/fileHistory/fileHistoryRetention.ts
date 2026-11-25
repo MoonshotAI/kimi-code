@@ -7,6 +7,7 @@ import { LOCAL_ENVIRONMENT_ID } from '#/environment/environment';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import type { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import type { SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
+import { workDirToPin } from '#/session/workspaceContext/workspaceRoots';
 
 import { FILE_HISTORY_BLOB_PREFIX } from './fileHistory';
 
@@ -26,6 +27,7 @@ interface RetentionDoc {
 interface FileHistorySession {
   readonly docs: IAtomicDocumentStore;
   readonly workspaceId: string;
+  readonly projectRoot?: string;
   readonly placement: Pick<SessionMeta, 'environmentId' | 'environmentCwd'>;
   readonly sessionId: string;
 }
@@ -37,11 +39,12 @@ export interface FileHistoryRetentionInput extends FileHistorySession {
 
 const touchQueues = new Map<string, Promise<void>>();
 
-function listKeyOf({ workspaceId, placement }: FileHistorySession): string {
+function listKeyOf({ workspaceId, projectRoot, placement }: FileHistorySession): string {
   const { environmentId = LOCAL_ENVIRONMENT_ID, environmentCwd } = placement;
-  return environmentId === LOCAL_ENVIRONMENT_ID && environmentCwd !== undefined
-    ? `${workspaceId}.${encodeWorkDirKey(environmentCwd)}`
-    : workspaceId;
+  const ownDir = environmentId === LOCAL_ENVIRONMENT_ID && environmentCwd !== undefined
+    ? projectRoot === undefined ? environmentCwd : workDirToPin(environmentCwd, projectRoot)
+    : undefined;
+  return ownDir === undefined ? workspaceId : `${workspaceId}.${encodeWorkDirKey(ownDir)}`;
 }
 
 function enqueue(listKey: string, work: () => Promise<void>): Promise<void> {

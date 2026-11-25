@@ -47,6 +47,7 @@ import { resolveWorkspacePath } from '#/session/workspaceContext/workspacePaths'
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import type { ISessionContext } from '#/session/sessionContext/sessionContext';
 import type { ISessionWorkdir } from '#/session/workdir/workdir';
+import type { ISessionWorkspaceInfo } from '#/session/workspaceInfo/workspaceInfo';
 import { JsonAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDocumentStore';
 import type { RunnableToolExecution } from '#/tool/toolContract';
 
@@ -58,6 +59,7 @@ import { createTestAgent, homeDirServices } from '../../harness';
 const SCOPE = 'wire';
 const KEY = 'file-history-test';
 const WORK_DIR = '/ws';
+const PROJECT_ROOT = '/project';
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
@@ -184,6 +186,7 @@ describe('AgentFileHistoryService', () => {
             remove: async () => {},
           } as unknown as IHostFileSystem,
           { handleOf: () => undefined } as unknown as IAgentLifecycleService,
+          { primaryByWorkspace: { wd_test: PROJECT_ROOT } } as unknown as ISessionWorkspaceInfo,
         ),
       );
     } finally {
@@ -554,6 +557,7 @@ describe('AgentFileHistoryService', () => {
   it.each([
     ['follows the project', { environmentId: 'local' }, true],
     ['runs in a directory of its own', { environmentId: 'local', cwd: WORK_DIR }, false],
+    ['is pinned to the primary directory', { environmentId: 'local', cwd: PROJECT_ROOT }, true],
     ['runs on another environment', { environmentId: 'box', cwd: '/srv/app' }, true],
   ])('counts a session in the project list unless it runs locally in a directory of its own (%s)', async (_label, binding, inProjectList) => {
     const service = createService('main', false, binding);
@@ -597,6 +601,7 @@ describe('file history session lists', () => {
       docs,
       hostFs,
       workspaceId: 'wd_app',
+      projectRoot: '/app',
       placement: environmentId === undefined ? { environmentCwd: ownDir } : { environmentId, environmentCwd: ownDir },
       sessionDir: `/home/sessions/wd_app/${sessionId}`,
       sessionId,
@@ -625,6 +630,26 @@ describe('file history session lists', () => {
 
     await touch('fix-new', '/app-fix');
     expect(evicted).toEqual(['main-0', 'fix-0']);
+  });
+
+  it('counts a session pinned to the primary directory in the list of the project', async () => {
+    const { evicted, fill, touch } = retention();
+    await fill('main');
+
+    await touch('pinned', '/app');
+
+    expect(evicted).toEqual(['main-0']);
+  });
+
+  it('frees the place of a deleted session pinned to the primary directory in the list of the project', async () => {
+    const { docs, drop, evicted, touch } = retention();
+    const pinned = Array.from({ length: FILE_HISTORY_SESSION_WINDOW }, (_, index) => ({ id: `pinned-${String(index)}`, touchedAt: index }));
+    await docs.set('file-history', 'wd_app', { sessions: pinned });
+    await drop('pinned-3', '/app');
+
+    await touch('main-new');
+
+    expect(evicted).toEqual([]);
   });
 
   it('counts remote sessions in the list of their project, where earlier versions counted them', async () => {
