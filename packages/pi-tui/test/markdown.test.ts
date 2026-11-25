@@ -2066,6 +2066,22 @@ bar`,
 				"Punctuation inside balanced full-width parens remains part of the hyperlink target",
 			);
 		});
+
+		it("should stop bare URLs at full-width punctuation outside the autocomplete separator set", () => {
+			setCapabilities({ images: null, trueColor: false, hyperlinks: true });
+			for (const sample of [
+				"https://example.com／后面的中文",
+				"https://example.com～说明文字",
+				"https://example.com＠用户",
+			]) {
+				const markdown = new Markdown(sample, 0, 0, defaultMarkdownTheme);
+				const joined = markdown.render(80).join("");
+				assert.ok(
+					joined.includes("\x1b]8;;https://example.com\x1b\\"),
+					`OSC 8 target should stop before full-width punctuation in: ${sample}`,
+				);
+			}
+		});
 	});
 
 	describe("HTML-like tags in text", () => {

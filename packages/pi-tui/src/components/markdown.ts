@@ -9,6 +9,8 @@ const STRICT_STRIKETHROUGH_REGEX = /^(~~)(?=[^\s~])((?:\\.|[^\\])*?(?:\\.|[^\s~\
 
 const FULLWIDTH_LEFT_PAREN = 0xff08; // （
 const FULLWIDTH_RIGHT_PAREN = 0xff09; // ）
+const CJK_URL_TERMINATOR_REGEX =
+	/[\u3000-\u303f\uff01-\uff07\uff0a-\uff0f\uff1a-\uff20\uff3b-\uff40\uff5b-\uff65\u2013\u2014\u2018\u2019\u201c\u201d\u2026]/;
 
 /**
  * Index at which to cut a bare URL autolink, or -1 to keep it whole. Non-paren
@@ -33,7 +35,7 @@ function findCjkUrlBoundary(match: string): number {
 			if (parenDepth === 0) {
 				unmatchedOpen = -1;
 			}
-		} else if (parenDepth === 0 && cjkPunctuationRegex.test(match[i]!)) {
+		} else if (parenDepth === 0 && (CJK_URL_TERMINATOR_REGEX.test(match[i]!) || cjkPunctuationRegex.test(match[i]!))) {
 			return i;
 		}
 	}
