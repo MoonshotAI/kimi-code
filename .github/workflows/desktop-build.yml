@@ -358,6 +358,7 @@ jobs:
         run: |
           $runtime = Resolve-Path "apps/desktop/dist-app/win-unpacked/resources/windows-bash"
           node apps/desktop/scripts/prepare-windows-bash.mjs --verify "$runtime"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $executables = Get-ChildItem "$runtime" -Recurse -Filter *.exe
           foreach ($file in $executables) {
             $sig = Get-AuthenticodeSignature -LiteralPath $file.FullName

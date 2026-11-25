@@ -309,7 +309,7 @@ export async function verifyWindowsBashRuntime(runtimeDir, options = {}) {
   if (options.smoke === true && process.platform === 'win32') {
     const binDir = path.join(runtimeDir, 'usr', 'bin');
     const systemRoot = process.env.SystemRoot ?? 'C:\\Windows';
-    const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !['PATH', 'TMP', 'TEMP', 'TMPDIR'].includes(key.toUpperCase())));
+    const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !['PATH', 'TMP', 'TEMP', 'TMPDIR', 'BASH_ENV'].includes(key.toUpperCase())));
     env.PATH = [binDir, `${systemRoot}\\System32`, systemRoot].join(';');
     const userTemp = await mkdtemp(path.join(tmpdir(), 'kimi bash temp '));
     try {
@@ -317,26 +317,10 @@ export async function verifyWindowsBashRuntime(runtimeDir, options = {}) {
       env.TEMP = userTemp;
       const marker = path.basename(userTemp);
       await writeFile(path.join(userTemp, marker), 'from-windows');
-      execFileSync(path.join(binDir, 'bash.exe'), ['-c', [
-        'set -e',
-        'test -x /bin/bash',
-        'test -x /bin/sh',
-        'test "$(command -v find)" = /usr/bin/find',
-        'test "$(command -v sort)" = /usr/bin/sort',
-        '! command -v git > /dev/null 2>&1',
-        'command -v cat grep sed awk find xargs diff patch tar gzip bzip2 xz unzip which cygpath',
-        'test "$(cat "/tmp/$1")" = from-windows',
-        'tmp=$(mktemp)',
-        'test "$tmp" -ef "/tmp/${tmp##*/}"',
-        'printf "alpha\\nbeta\\n" > "/tmp/${tmp##*/}"',
-        'test "$(grep alpha "$tmp" | sed "s/alpha/gamma/" | awk "{print \\$1}")" = gamma',
-        'printf "alpha\\n" > "$tmp.diff"',
-        'diff "$tmp" "$tmp.diff" > /dev/null && exit 1 || true',
-        'rm -f "$tmp" "$tmp.diff"',
-        'cygpath -w / > /dev/null',
-        'for cmd in cat grep sed gawk find xargs diff patch tar gzip bzip2 xz which; do "$cmd" --version > /dev/null; done',
-        'unzip -v > /dev/null',
-      ].join('; '), 'verify-windows-bash', marker], { env, cwd: runtimeDir, encoding: 'utf8', timeout: 30_000, windowsHide: true });
+      execFileSync(path.join(binDir, 'bash.exe'), ['-s', '--', marker], {
+        input: await readFile(new URL('./verify-windows-bash.sh', import.meta.url)),
+        env, cwd: runtimeDir, encoding: 'utf8', timeout: 30_000, windowsHide: true,
+      });
     } finally {
       await rm(userTemp, { recursive: true, force: true });
     }

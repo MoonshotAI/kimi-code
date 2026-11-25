@@ -2,6 +2,8 @@
 
 > 临时状态：Desktop E2E、E2E smoke 和 Layered QA 目前仅手动触发；主 CI 的 built CLI 子进程旅程和 L0 汇总暂停，普通分片暂时排除 `apps/kimi-code/test/e2e/tui/` 和 `packages/app-core/test/reconnect/`。`packages/kap-server/test/` 和 `tests/scenarios/` 仍在主 CI 自动运行。下文涉及这些自动触发与门禁的段落描述恢复后的配置。
 
+Windows 桌面 Bash 的构建或验证脚本改动时，[独立的 Windows 检查](../.github/workflows/desktop-windows-bash.yml) 从干净 checkout 构建 Desktop，验证运行时及缺工具的失败路径，并运行一条桌面首轮会话测试，不跑整套 E2E。
+
 先写出用户或调用方依赖的行为，再选能复现故障、能直接观察结果的入口。「桌面用户看到了回答」要读真实窗口。「引擎重试后完成了原回合」可以从引擎会话验收。选定位置后，再读该目录最近的 AGENTS.md。
 
 ## 测试今天写在哪

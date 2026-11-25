@@ -288,6 +288,61 @@ void test('Windows Bash verification handles literal executable names and the Ac
   });
 });
 
+void test('a regular Desktop build prepares Bash without running dev or dist first', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'desktop-build-hook-'));
+  dirs.push(dir);
+  const { scripts } = JSON.parse(readFileSync(new URL('../apps/desktop/package.json', import.meta.url), 'utf8'));
+  writeFileSync(join(dir, 'package.json'), JSON.stringify({ scripts: {
+    prebuild: scripts.prebuild,
+    'prepare:windows-bash': `node -e "require('node:fs').writeFileSync('runtime-ready', 'yes')"`,
+    'build:renderer': `node -e "require('node:fs').writeFileSync('renderer-ready', 'yes')"`,
+    build: `node -e "for (const f of ['runtime-ready','renderer-ready']) require('node:fs').accessSync(f)"`,
+  } }));
+  const result = spawnSync('npm', ['run', 'build', '--silent'], { cwd: dir, encoding: 'utf8', shell: process.platform === 'win32' });
+  assert.equal(result.status, 0, result.stderr);
+});
+
+void test('the Windows Bash smoke checks reject broken command lookup and diff errors', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'windows-bash-smoke-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const bin = join(dir, 'bin');
+  mkdirSync(bin);
+  const script = fileURLToPath(new URL('../apps/desktop/scripts/verify-windows-bash.sh', import.meta.url)).replaceAll('\\', '/');
+  const runCheck = (command, ...args) => spawnSync('bash', ['--noprofile', '--norc', '-c', `source "$1"; shift; ${command} "$@"`, 'smoke-test', script, ...args], {
+    cwd: dir, env: { ...process.env, BASH_ENV: '' }, encoding: 'utf8',
+  });
+  const commands = () => runCheck('PATH="$PWD/bin"; check_commands', 'cat', 'awk', 'sed');
+  for (const tool of ['cat', 'awk', 'sed']) writeFileSync(join(bin, tool), '#!/bin/sh\n', { mode: 0o755 });
+  const complete = commands();
+  assert.equal(complete.status, 0, complete.stderr);
+  await t.test('Git on the isolated PATH is a hard failure', () => {
+    writeFileSync(join(bin, 'git'), '#!/bin/sh\n', { mode: 0o755 });
+    const result = spawnSync('bash', ['-c', 'PATH="$PWD/bin"; exec "$BASH" -s -- marker'], {
+      cwd: dir, env: { ...process.env, BASH_ENV: '' }, input: readFileSync(script), encoding: 'utf8',
+    });
+    rmSync(join(bin, 'git'));
+    assert.equal(result.status, 1, result.stderr);
+    assert.match(result.stderr, /unexpected git/i);
+  });
+  await t.test('one missing command fails even when the others exist', () => {
+    rmSync(join(bin, 'awk'));
+    const result = commands();
+    assert.equal(result.status, 1, result.stderr);
+    assert.match(result.stderr, /missing.*command: awk/i);
+  });
+  writeFileSync(join(dir, 'left'), 'alpha\nbeta\n');
+  writeFileSync(join(dir, 'right'), 'alpha\n');
+  const different = runCheck('check_different_files', 'left', 'right');
+  assert.equal(different.status, 0, different.stderr);
+  for (const [file, code] of [['left', 0], ['missing-file', 2]]) {
+    await t.test(`diff exit ${code} is not an expected difference`, () => {
+      const result = runCheck('check_different_files', 'left', file);
+      assert.equal(result.status, 1, result.stderr);
+      assert.match(result.stderr, new RegExp(`diff.*expected 1.*got ${code}`));
+    });
+  }
+});
+
 test('version command records the consumed changesets and changed package versions', () => {
   const f = fixture();
   writeFileSync(join(f.dir, '.changeset/fix.md'), '---\n---\n');
