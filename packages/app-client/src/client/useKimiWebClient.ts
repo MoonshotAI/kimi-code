@@ -72,6 +72,7 @@ import {
   turnResult,
   undoableOpener,
   type CompactionItem,
+  type ConversationContinuation,
   type ConversationLoadError,
   type ConversationNotice,
   type ConversationTurn,
@@ -1937,6 +1938,7 @@ function settleMainTurnEnd(entry: ConversationEntry, turn: ConversationTurn): vo
     ratingTurnId: turn.turn_id,
     predictionSourceId: turn.turn_id,
     predictionTurnId: turn.ordinal,
+    continuation: turn.continuation,
   });
 }
 
@@ -3265,7 +3267,14 @@ function isWindowHidden(): boolean {
 function onMainTurnEnd(
   sid: string,
   status: 'idle' | 'aborted',
-  opts: { firstTurn: boolean; promptId?: string; ratingTurnId?: string; predictionSourceId?: string; predictionTurnId?: number },
+  opts: {
+    firstTurn: boolean;
+    promptId?: string;
+    ratingTurnId?: string;
+    predictionSourceId?: string;
+    predictionTurnId?: number;
+    continuation?: ConversationContinuation;
+  },
 ): void {
   const goalActive = rawState.goalBySession[sid]?.status === 'active';
 
@@ -3295,7 +3304,7 @@ function onMainTurnEnd(
 
   const hasPendingApproval = (rawState.approvalsBySession[sid] ?? []).length > 0;
   const hasPendingQuestion = (rawState.questionsBySession[sid] ?? []).length > 0;
-  if (!goalActive && shouldNotifyCompletion(status, hasPendingApproval, hasPendingQuestion)) {
+  if (!goalActive && shouldNotifyCompletion(status, hasPendingApproval, hasPendingQuestion, opts.continuation)) {
     notificationsStore().maybeNotifyCompletion(sid, {
       isUserWatching: isUserWatching(sid),
       sessionTitle: rawState.sessions.find((s) => s.id === sid)?.title ?? '',
