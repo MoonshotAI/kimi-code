@@ -106,8 +106,8 @@ function choose(action: ModelSwitchAction): void {
 .model-switch-confirm__hint,
 .model-switch-confirm__warning {
   margin: 0;
-  font-size: 14px;
-  line-height: 20px;
+  font-size: var(--text-base);
+  line-height: calc(20px + var(--ui-shift));
   white-space: pre-line;
   overflow-wrap: anywhere;
 }
@@ -146,14 +146,14 @@ function choose(action: ModelSwitchAction): void {
   background: var(--color-hover);
 }
 .model-switch-confirm__option-title {
-  font-size: 14px;
+  font-size: var(--text-base);
   font-weight: var(--weight-regular);
-  line-height: 20px;
+  line-height: calc(20px + var(--ui-shift));
   color: var(--color-text);
 }
 .model-switch-confirm__option-desc {
-  font-size: 12px;
-  line-height: 18px;
+  font-size: var(--text-xs);
+  line-height: calc(18px + var(--ui-shift));
   color: var(--color-text-faint);
 }
 .model-switch-confirm__foot {

@@ -22,6 +22,12 @@ describe('providerVisibleRows', () => {
     expect(providerVisibleRows({ recentCount: 3, providerCount: 12, maxHeight: 380 })).toBe(3);
     expect(providerVisibleRows({ recentCount: 3, providerCount: 2, maxHeight: 380 })).toBe(2);
   });
+
+  it('uses scaled row and label heights when font scale changes', () => {
+    expect(providerVisibleRows({ recentCount: 3, providerCount: 12, maxHeight: 480, rowHeight: 40, labelHeight: 36 })).toBe(3);
+    expect(providerVisibleRows({ recentCount: 3, providerCount: 12, maxHeight: 640, rowHeight: 40, labelHeight: 36 })).toBe(6);
+    expect(providerVisibleRows({ recentCount: 3, providerCount: 12, maxHeight: 380, rowHeight: 28, labelHeight: 24 })).toBe(4);
+  });
 });
 
 describe('computeAnchoredFlyoutPosition', () => {

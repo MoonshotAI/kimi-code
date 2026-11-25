@@ -15,6 +15,8 @@ export interface ProviderRowsInput {
   recentCount: number;
   providerCount: number;
   maxHeight: number;
+  rowHeight?: number;
+  labelHeight?: number;
 }
 
 export function clampModelMenuMaxHeight(availableAboveAnchor: number): number {
@@ -25,21 +27,27 @@ export function clampModelMenuMaxHeight(availableAboveAnchor: number): number {
 }
 
 export function providerVisibleRows(input: ProviderRowsInput): number {
-  const { recentCount, providerCount, maxHeight } = input;
+  const {
+    recentCount,
+    providerCount,
+    maxHeight,
+    rowHeight = MODEL_MENU_ROW_HEIGHT,
+    labelHeight = MODEL_MENU_LABEL_HEIGHT,
+  } = input;
   if (providerCount <= 0) return 0;
   const recentHeight =
     recentCount > 0
-      ? MODEL_MENU_LABEL_HEIGHT + recentCount * MODEL_MENU_ROW_HEIGHT + MODEL_MENU_DIVIDER_HEIGHT
+      ? labelHeight + recentCount * rowHeight + MODEL_MENU_DIVIDER_HEIGHT
       : 0;
   const fixedHeight =
     MODEL_MENU_PADDING_BLOCK +
     recentHeight +
-    MODEL_MENU_LABEL_HEIGHT +
+    labelHeight +
     MODEL_MENU_DIVIDER_HEIGHT +
-    MODEL_MENU_ROW_HEIGHT * 2 +
+    rowHeight * 2 +
     MODEL_MENU_DIVIDER_HEIGHT +
-    MODEL_MENU_ROW_HEIGHT;
-  const availableRows = Math.floor((maxHeight - fixedHeight) / MODEL_MENU_ROW_HEIGHT);
+    rowHeight;
+  const availableRows = Math.floor((maxHeight - fixedHeight) / rowHeight);
   if (availableRows >= PROVIDER_MENU_MAX_ROWS) return Math.min(providerCount, PROVIDER_MENU_MAX_ROWS);
   const preferredMin = Math.min(providerCount, PROVIDER_MENU_MIN_ROWS);
   return Math.max(1, Math.min(providerCount, Math.max(preferredMin, availableRows)));

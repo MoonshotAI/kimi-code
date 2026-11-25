@@ -58,8 +58,8 @@ function capabilityText(item: ReturnType<typeof modelCapabilityItems>[number]): 
   display: flex;
   flex-direction: column;
   gap: 2px;
-  font-size: 13px;
-  line-height: 18px;
+  font-size: var(--text-sm);
+  line-height: calc(18px + var(--ui-shift));
 }
 .model-cap-info__model {
   display: -webkit-box;
@@ -96,8 +96,8 @@ function capabilityText(item: ReturnType<typeof modelCapabilityItems>[number]): 
   align-items: center;
   gap: 8px;
   color: var(--color-text-muted);
-  font-size: 13px;
-  line-height: 18px;
+  font-size: var(--text-sm);
+  line-height: calc(18px + var(--ui-shift));
 }
 .model-cap-info__icon {
   flex: none;

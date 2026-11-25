@@ -1,12 +1,14 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
+import { useAppearance } from '@moonshot-ai/app-core';
 import type { AppModel } from '@moonshot-ai/app-core/api';
 import { commitLevel, effectiveThinkingLevel, effortLabel, modelThinkingAvailability, providerDisplayName, segmentsFor } from '@moonshot-ai/app-core/lib';
 import { searchModelsForMenu, type ModelSearchTextRange } from '@moonshot-ai/app-client/lib';
 import { Icon, useImeComposition } from '@moonshot-ai/app-ui';
 import ModelCapabilityInfo from './ModelCapabilityInfo.vue';
 import {
+  MODEL_MENU_LABEL_HEIGHT,
   MODEL_MENU_ROW_HEIGHT,
   MODEL_MENU_WIDTH,
   PROVIDER_SUBMENU_MAX_ITEMS,
@@ -55,6 +57,7 @@ const emit = defineEmits<{
 }>();
 
 const { t } = useI18n();
+const { fontScale } = useAppearance();
 const { handleCompositionStart, handleCompositionEnd, isComposingKeyEvent } = useImeComposition();
 
 const rootEl = ref<HTMLElement>();
@@ -67,6 +70,8 @@ const submenu = ref<SubmenuState | null>(null);
 const submenuIndex = ref(0);
 const hoverModel = ref<{ key: string; model: AppModel } | null>(null);
 const flyoutStyle = ref<Record<string, string>>({});
+const rowHeight = ref(MODEL_MENU_ROW_HEIGHT);
+const labelHeight = ref(MODEL_MENU_LABEL_HEIGHT);
 let hoverTimer: ReturnType<typeof setTimeout> | undefined;
 let submenuTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -91,10 +96,12 @@ const visibleProviderRows = computed(() =>
     recentCount: props.recentModels.length,
     providerCount: props.providerModels.length,
     maxHeight: props.maxHeight,
+    rowHeight: rowHeight.value,
+    labelHeight: labelHeight.value,
   }),
 );
 const providerListStyle = computed(() => ({
-  maxHeight: `${visibleProviderRows.value * MODEL_MENU_ROW_HEIGHT}px`,
+  maxHeight: `${visibleProviderRows.value * rowHeight.value}px`,
 }));
 
 function supportsThinkingSubmenu(model: AppModel): boolean {
@@ -390,7 +397,7 @@ function syncFlyoutPosition(): void {
     menuTop: frame?.y ?? menuRect.top,
     menuWidth: menuRect.width || MODEL_MENU_WIDTH,
     triggerTop: triggerRect.top - menuRect.top,
-    triggerHeight: triggerRect.height || MODEL_MENU_ROW_HEIGHT,
+    triggerHeight: triggerRect.height || rowHeight.value,
     flyoutWidth: flyoutRect.width || MODEL_MENU_WIDTH,
     flyoutHeight: flyoutRect.height,
     firstOptionOffset,
@@ -401,6 +408,16 @@ function syncFlyoutPosition(): void {
     top: `${Math.round(position.top * 100) / 100}px`,
     ...(position.side === 'right' ? { left: 'calc(100% + 4px)', right: 'auto' } : { right: 'calc(100% + 4px)', left: 'auto' }),
   };
+}
+
+function syncMenuMetrics(): void {
+  const menu = rootEl.value;
+  if (menu === undefined) return;
+  const shift = Number.parseFloat(getComputedStyle(menu).fontSize) - 14;
+  const delta = Number.isFinite(shift) ? shift * 2 : 0;
+  rowHeight.value = MODEL_MENU_ROW_HEIGHT + delta;
+  labelHeight.value = MODEL_MENU_LABEL_HEIGHT + delta;
+  if (submenu.value !== null || hoverModel.value !== null) syncFlyoutPosition();
 }
 
 watch([submenu, hoverModel], () => {
@@ -414,11 +431,14 @@ watch(query, () => {
   activeKey.value = navRows.value[0]?.key ?? '';
 });
 
+watch([rootEl, fontScale], syncMenuMetrics, { flush: 'post' });
+
 onMounted(() => {
   const current = navRows.value.find(
     (row) => row.key === `provider:${props.currentModelId}` || row.key === `recent:${props.currentModelId}`,
   );
   activeKey.value = (current ?? navRows.value.find((row) => !row.disabled))?.key ?? '';
+  syncMenuMetrics();
 });
 
 onUnmounted(() => {
@@ -671,6 +691,8 @@ defineExpose({
 
 <style scoped>
 .mqm {
+  --mqm-row-height: calc(32px + var(--ui-shift) * 2);
+  --mqm-label-height: calc(28px + var(--ui-shift) * 2);
   position: relative;
   display: flex;
   flex-direction: column;
@@ -683,6 +705,7 @@ defineExpose({
   box-shadow: var(--shadow-menu);
   color: var(--color-text);
   font-family: var(--font-ui);
+  font-size: var(--text-base);
   outline: none;
   box-sizing: border-box;
 }
@@ -712,12 +735,12 @@ defineExpose({
 .mqm-label {
   display: flex;
   align-items: center;
-  height: 28px;
-  padding: 5px 8px;
+  height: var(--mqm-label-height);
+  padding: 0 8px;
   overflow: hidden;
   color: var(--color-text-faint);
-  font-size: 12px;
-  line-height: 18px;
+  font-size: var(--text-xs);
+  line-height: calc(18px + var(--ui-shift));
   text-overflow: ellipsis;
   white-space: nowrap;
   box-sizing: border-box;
@@ -726,11 +749,11 @@ defineExpose({
   display: flex;
   align-items: center;
   gap: 8px;
-  height: 32px;
+  height: var(--mqm-row-height);
   padding: 0 8px;
   border-radius: 8px;
-  font-size: 13px;
-  line-height: 18px;
+  font-size: var(--text-sm);
+  line-height: calc(18px + var(--ui-shift));
   white-space: nowrap;
   cursor: pointer;
   box-sizing: border-box;
@@ -761,7 +784,7 @@ defineExpose({
   min-width: 64px;
   overflow: hidden;
   color: var(--color-text-faint);
-  font-size: 12px;
+  font-size: var(--text-xs);
   text-overflow: ellipsis;
 }
 .mqm-row:not(:has(.mqm-provider)) .mqm-name,
@@ -789,7 +812,7 @@ defineExpose({
   max-width: 96px;
   overflow: hidden;
   color: var(--color-text-muted);
-  font-size: 12px;
+  font-size: var(--text-xs);
   text-overflow: ellipsis;
 }
 .mqm-trailing-icon {
@@ -815,7 +838,7 @@ defineExpose({
   flex: none;
   align-items: center;
   gap: 8px;
-  height: 32px;
+  height: var(--mqm-row-height);
   padding: 0 8px;
   box-sizing: border-box;
 }
@@ -832,8 +855,8 @@ defineExpose({
   background: transparent;
   color: var(--color-text);
   font-family: inherit;
-  font-size: 13px;
-  line-height: 18px;
+  font-size: var(--text-sm);
+  line-height: calc(18px + var(--ui-shift));
 }
 .mqm-search__input::placeholder {
   color: var(--color-text-faint);
@@ -858,8 +881,8 @@ defineExpose({
 .mqm-thinking-desc {
   padding: 6px 8px;
   color: var(--color-text-faint);
-  font-size: 12px;
-  line-height: 18px;
+  font-size: var(--text-xs);
+  line-height: calc(18px + var(--ui-shift));
 }
 .mqm-flyout-model-info {
   padding: 8px;

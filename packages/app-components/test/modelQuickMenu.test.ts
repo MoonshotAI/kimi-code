@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { createApp, h, nextTick, reactive, type App } from 'vue';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { useAppearance } from '@moonshot-ai/app-core';
 import type { AppModel } from '@moonshot-ai/app-core/api';
 import type { QuickModelMenuAction, QuickModelMenuPayload } from '@moonshot-ai/app-core/quick-model-menu';
 import { createKimiI18n } from '@moonshot-ai/app-i18n';
@@ -74,6 +75,7 @@ function rows(selector = '.mqm > .mqm-section .mqm-row, .mqm > .mqm-actions .mqm
 
 beforeEach(() => {
   vi.useFakeTimers();
+  useAppearance().setFontScale('medium');
   actions = [];
   dismissed = 0;
   host = document.createElement('div');
@@ -84,6 +86,8 @@ afterEach(() => {
   app?.unmount();
   app = undefined;
   host.remove();
+  useAppearance().setFontScale('medium');
+  vi.restoreAllMocks();
   vi.useRealTimers();
 });
 
@@ -250,5 +254,30 @@ describe('ModelQuickMenu states', () => {
     expect(dismissed).toBe(0);
     root.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
     expect(dismissed).toBe(1);
+  });
+
+  it('scales row metrics with the appearance font scale', async () => {
+    const realGetComputedStyle = window.getComputedStyle.bind(window);
+    let baseFontSize = '14px';
+    vi.spyOn(window, 'getComputedStyle').mockImplementation((elt, pseudo) => {
+      if (elt.classList.contains('mqm')) return { fontSize: baseFontSize } as CSSStyleDeclaration;
+      return realGetComputedStyle(elt, pseudo);
+    });
+
+    mountMenu(initialState({ providerModels: kimiModels.slice(0, 2) }));
+    const scroll = () => host.querySelector<HTMLElement>('.mqm-provider-scroll')!;
+    expect(scroll().style.maxHeight).toBe('64px');
+
+    baseFontSize = '18px';
+    useAppearance().setFontScale('xlarge');
+    await nextTick();
+    await nextTick();
+    expect(scroll().style.maxHeight).toBe('80px');
+
+    baseFontSize = '12px';
+    useAppearance().setFontScale('small');
+    await nextTick();
+    await nextTick();
+    expect(scroll().style.maxHeight).toBe('56px');
   });
 });
