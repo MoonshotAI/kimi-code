@@ -93,8 +93,8 @@ Google SDK 只把「单独一次读到的错误 JSON」识别为流中错误。�
 
 agent-core-v2 的集成测试不起服务端，用 harness 的 `testkitAgentFixtures()` 取得 `{ agent, model }`。它把 `model.fetch` 注入引擎真实的 provider 请求链：步骤、命名挂起点、通道、请求记录和 `verify()` 都与其他层相同，请求会经过真实的协议编码和解析。harness 默认的 provider 是 `kimi`，所以子 agent 和压缩请求会自动进入各自的通道。这时调用旧的 `agent.mockNextResponse()` 会直接报错，避免两套脚本混用。[引擎用例](../../agent-core-v2/test/integration/conversation/testkit-model.test.ts) · [harness 夹具](../../agent-core-v2/test/harness/testkit.ts)
 
-## 在新 E2E 里接入假模型
+## 在桌面端接入假模型
 
-[新 E2E](../../../tests/e2e/AGENTS.md) 的场景直接拿到一个 `FakeModel`，驱动负责把它配进 TUI、ACP、Desktop、Web 四个面上的真实产品，场景只管编排：用 `model.script(...)` 安排回复，用 `held(...)` 和 `model.hold(...)` 控制时机，收尾时自动 `verify()`。只断言主通道 `model.requests('main')`，回合结束后生成会话标题的请求走 `side` 通道。四个面怎么接入假模型，见[各个面的驱动](../../../tests/e2e/surfaces/)。
+按 [E2E 指南](../../../tests/e2e/AGENTS.md)编写场景。场景通过 `scenario()` 取得 `product`、`model` 和 `workspace`。场景夹具在启动前写入假模型配置，[Desktop 驱动](../../../tests/e2e/surfaces/desktop.ts)启动 Electron。场景结束后，夹具验证并关闭假模型。
 
-`apps/desktop/e2e/` 的旧旅程和它的 `testWithProvider` 夹具已停止自动运行，新用例不再写进那里。
+例如测试用户取消流式回复时，用 `held()` 安排部分文本后挂起，用 `product.send()` 发消息，等模型到达挂起点和界面显示部分文本，再用 `product.stop()` 停止回合。可以检查模型请求是否中止，然后在同一会话发下一条消息并断言新回复。[取消的端到端场景](../../../tests/e2e/scenarios/turn/stop-mid-turn.spec.ts)

@@ -19,7 +19,7 @@ This is a private workspace package. When adopting it in another package, add `"
 | What a provider client sends and how it parses the reply | [假模型与 SDK 测试](docs/model.md) |
 | What a KAP client sees during tool use, approval, cancellation or restart | [编写 KAP 场景测试](docs/kap-scenarios.md) |
 | Code that reads configuration, uses a workspace or produces snapshots | [夹具、隔离与快照](docs/fixtures.md) |
-| What a user sees in the TUI, Web, Desktop or an ACP editor | [在新 E2E 里接入假模型](docs/model.md#在新-e2e-里接入假模型) |
+| A Playwright test that drives Kimi Code Desktop against a scripted provider | [在桌面端接入假模型](docs/model.md#在桌面端接入假模型) |
 
 To try the tool-call example or run both suites, use these commands from the repository root.
 

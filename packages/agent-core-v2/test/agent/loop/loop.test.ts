@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { IDisposable } from '#/_base/di/lifecycle';
 import { toErrorMessage } from '#/_base/errors/errorMessage';
 import { Event } from '#/_base/event';
+import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import type { LoopRequester } from '#/agent/loop/requesterContract';
 import type { AgentLoopRequestObserver } from '#/agent/loop/requestObservation';
 import type { ContextMessage, PromptOrigin } from '#/agent/contextMemory/types';
@@ -2763,6 +2764,10 @@ describe('aborted step tool execution', () => {
     await ctx.restorePersisted();
     try {
       const slowToolStarted = registerAbortableWorkTool(ctx);
+      ctx.get(IAgentLoopService).update({ activeToolNames: ['Work', 'UpdateGoal'] });
+      await vi.waitFor(() => {
+        expect(ctx.get(IAgentToolPolicyService).isToolActive('UpdateGoal')).toBe(true);
+      });
       const goals = ctx.get(IAgentGoalService);
       await goals.createGoal({ objective: 'finish the task' });
       await goals.setBudgetLimits({ budgetLimits: { tokenBudget: 60 } });
