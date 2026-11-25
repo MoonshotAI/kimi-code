@@ -285,12 +285,13 @@ describe('FlagService', () => {
     expect(flags.explain('graduated_on_tui')?.source).toBe('env');
   });
 
-  it('filters explainAll to flags declared for the active surface while keeping enabled() functional across surfaces', async () => {
+  it('filters explainAll and exposedIds to flags declared for the active surface while keeping enabled() functional across surfaces', async () => {
     const { config, flags: webFlags } = makeFlags({}, 'web');
     expect(webFlags.explainAll().map((f) => f.id)).toEqual(['example_beta']);
 
     await config.set(EXPERIMENTAL_SECTION, { example_exp: true });
     expect(webFlags.enabled('example_exp')).toBe(true);
+    expect(webFlags.exposedIds()).not.toContain('example_exp');
   });
 
   it('distinguishes active from enabled when isExposed is false before restart', async () => {
@@ -626,5 +627,102 @@ describe('migrateLegacyMasterEnvTower', () => {
         env: { [MASTER_ENV]: '1' },
       }),
     ).toBe('already-migrated');
+  });
+
+  it('rejects schema-invalid experimental values without stamping and falls back to env when master flag is set', () => {
+    const configPath = join(tempDir, 'config.toml');
+    writeFileSync(configPath, '[experimental]\ntower = "yes"\n', 'utf8');
+
+    expect(
+      migrateLegacyMasterEnvTower({
+        homeDir: tempDir,
+        env: {},
+      }),
+    ).toBe('skipped-error');
+    expect(
+      migrateLegacyMasterEnvTower({
+        homeDir: tempDir,
+        env: { [MASTER_ENV]: '1' },
+      }),
+    ).toBe('fallback-env');
+    expect(
+      resolveBootstrapEnvWithLegacyTowerMigration({
+        homeDir: tempDir,
+        env: { [MASTER_ENV]: '1' },
+      })?.['KIMI_CODE_EXPERIMENTAL_TOWER'],
+    ).toBe('1');
+    expect(() =>
+      readFileSync(join(tempDir, EXPERIMENTAL_MIGRATIONS_FILENAME), 'utf8'),
+    ).toThrow();
+
+    writeFileSync(configPath, '[experimental]\nother = 123\n', 'utf8');
+    expect(
+      migrateLegacyMasterEnvTower({
+        homeDir: tempDir,
+        env: { [MASTER_ENV]: '1' },
+      }),
+    ).toBe('fallback-env');
+    expect(readFileSync(configPath, 'utf8')).not.toContain('tower');
+    expect(() =>
+      readFileSync(join(tempDir, EXPERIMENTAL_MIGRATIONS_FILENAME), 'utf8'),
+    ).toThrow();
+
+    writeFileSync(configPath, '[experimental]\nnotify_user = true\n', 'utf8');
+    expect(
+      migrateLegacyMasterEnvTower({
+        homeDir: tempDir,
+        env: { [MASTER_ENV]: '1' },
+      }),
+    ).toBe('migrated-tower');
+    expect(readFileSync(configPath, 'utf8')).toContain('tower = true');
+  });
+
+  it('falls back to env override when experimental-migrations.json is malformed while honoring explicit tower opt-outs', () => {
+    const configPath = join(tempDir, 'config.toml');
+    const markerPath = join(tempDir, EXPERIMENTAL_MIGRATIONS_FILENAME);
+    writeFileSync(configPath, 'default_model = "kimi-k2"\n', 'utf8');
+    writeFileSync(markerPath, '{truncated', 'utf8');
+
+    expect(
+      migrateLegacyMasterEnvTower({
+        homeDir: tempDir,
+        env: {},
+      }),
+    ).toBe('skipped-error');
+    expect(
+      migrateLegacyMasterEnvTower({
+        homeDir: tempDir,
+        env: { [MASTER_ENV]: '1' },
+      }),
+    ).toBe('fallback-env');
+    expect(
+      resolveBootstrapEnvWithLegacyTowerMigration({
+        homeDir: tempDir,
+        env: { [MASTER_ENV]: '1' },
+      })?.['KIMI_CODE_EXPERIMENTAL_TOWER'],
+    ).toBe('1');
+    expect(readFileSync(configPath, 'utf8')).not.toContain('tower');
+    expect(readFileSync(markerPath, 'utf8')).toBe('{truncated');
+
+    expect(
+      resolveBootstrapEnvWithLegacyTowerMigration({
+        homeDir: tempDir,
+        env: { [MASTER_ENV]: '1', KIMI_CODE_EXPERIMENTAL_TOWER: '0' },
+      })?.['KIMI_CODE_EXPERIMENTAL_TOWER'],
+    ).toBe('0');
+
+    writeFileSync(configPath, '[experimental]\ntower = false\n', 'utf8');
+    expect(
+      migrateLegacyMasterEnvTower({
+        homeDir: tempDir,
+        env: { [MASTER_ENV]: '1' },
+      }),
+    ).toBe('skipped-error');
+    expect(
+      resolveBootstrapEnvWithLegacyTowerMigration({
+        homeDir: tempDir,
+        env: { [MASTER_ENV]: '1' },
+      })?.['KIMI_CODE_EXPERIMENTAL_TOWER'],
+    ).toBeUndefined();
   });
 });

@@ -64,7 +64,7 @@ const { vibrancy, setVibrancy } = useVibrancy();
 const { preventSleepState, lidSleepStopped, setPreventSystemSleep, setPreventLidSleep } = usePreventSystemSleep();
 
 const { sidebarTabs, setSidebarTabs } = useSidebarTabs();
-const { contextInspectorEnabled, setContextInspectorEnabled } = useContextInspector();
+const { contextInspectorEnabled } = useContextInspector();
 
 const { turnFolding, setTurnFolding } = useTurnFolding();
 const { activityRunFolding, setActivityRunFolding } = useActivityRunFolding();
@@ -82,17 +82,7 @@ function onSidebarTabsChange(on: boolean): void {
   track('settings_changed', { key: 'sidebar-multi-tab', value: on ? 'on' : 'off', source_panel: 'settings' });
 }
 
-const { sessionMentions, setSessionMentions } = useSessionMentions();
-
-function onSessionMentionsChange(on: boolean): void {
-  setSessionMentions(on);
-  track('settings_changed', { key: 'session-mentions', value: on ? 'on' : 'off', source_panel: 'settings' });
-}
-
-function onContextInspectorChange(on: boolean): void {
-  setContextInspectorEnabled(on);
-  track('settings_changed', { key: 'context-inspector', value: on ? 'on' : 'off', source_panel: 'settings' });
-}
+const { sessionMentions } = useSessionMentions();
 
 const betaMasterState = computed(() => configStore().experimentalBeta);
 const betaMasterEnabled = computed(() => betaMasterState.value?.enabled === true);
@@ -102,12 +92,31 @@ function findExperimentalFeature(id: string) {
   return configStore().experimentalFeatures.find((feature) => feature.id === id);
 }
 
+const contextInspectorFeature = computed(() => findExperimentalFeature('context_inspector'));
+const contextInspectorToggleEnabled = computed(
+  () => contextInspectorFeature.value?.enabled ?? contextInspectorEnabled.value,
+);
+const contextInspectorLockedByEnv = computed(
+  () => contextInspectorFeature.value?.source === 'env',
+);
+const contextInspectorLocked = computed(
+  () => contextInspectorLockedByEnv.value || betaMasterEnabled.value,
+);
+
 const notifyUserFeature = computed(() => findExperimentalFeature('notify_user'));
 const notifyUserEnabled = computed(
   () => notifyUserFeature.value?.enabled ?? configStore().experimentalFlags['notify_user'] === true,
 );
 const notifyUserLockedByEnv = computed(() => notifyUserFeature.value?.source === 'env');
 const notifyUserLocked = computed(() => notifyUserLockedByEnv.value || betaMasterEnabled.value);
+
+const sessionMentionsFeature = computed(() => findExperimentalFeature('session_mentions'));
+const sessionMentionsToggleEnabled = computed(
+  () => sessionMentionsFeature.value?.enabled ?? sessionMentions.value,
+);
+const sessionMentionsLockedByEnv = computed(
+  () => sessionMentionsFeature.value?.source === 'env',
+);
 
 const promptPredictionFeature = computed(() => findExperimentalFeature('prompt_prediction'));
 const promptPredictionEnabled = computed(
@@ -134,9 +143,21 @@ async function onBetaMasterChange(on: boolean): Promise<void> {
   }
 }
 
+async function onContextInspectorChange(on: boolean): Promise<void> {
+  if (await configStore().setExperimentalFlag('context_inspector', on)) {
+    track('settings_changed', { key: 'context-inspector', value: on ? 'on' : 'off', source_panel: 'settings' });
+  }
+}
+
 async function onNotifyUserChange(on: boolean): Promise<void> {
   if (await configStore().setNotifyUserEnabled(on)) {
     track('settings_changed', { key: 'notify-user', value: on ? 'on' : 'off', source_panel: 'settings' });
+  }
+}
+
+async function onSessionMentionsChange(on: boolean): Promise<void> {
+  if (await configStore().setExperimentalFlag('session_mentions', on)) {
+    track('settings_changed', { key: 'session-mentions', value: on ? 'on' : 'off', source_panel: 'settings' });
   }
 }
 
@@ -1533,13 +1554,16 @@ defineExpose({ confirmDiscard });
               <span class="rlabel">
                 {{ t('settings.lab.contextInspector') }}
                 <span class="hint">{{ t('settings.lab.contextInspectorHint') }}</span>
-                <span v-if="betaMasterEnabled" class="hint">
+                <span v-if="contextInspectorLockedByEnv && contextInspectorFeature" class="hint">
+                  {{ t('settings.lab.lockedByEnv', { env: contextInspectorFeature.env }) }}
+                </span>
+                <span v-else-if="betaMasterEnabled" class="hint">
                   {{ t('settings.lab.lockedByBetaMaster') }}
                 </span>
               </span>
               <Switch
-                :model-value="contextInspectorEnabled"
-                :disabled="betaMasterEnabled"
+                :model-value="contextInspectorToggleEnabled"
+                :disabled="contextInspectorLocked"
                 :label="t('settings.lab.contextInspector')"
                 @update:model-value="onContextInspectorChange"
               />
@@ -1572,9 +1596,13 @@ defineExpose({ confirmDiscard });
               <span class="rlabel">
                 {{ t('settings.lab.sessionMentions') }}
                 <span class="hint">{{ t('settings.lab.sessionMentionsHint') }}</span>
+                <span v-if="sessionMentionsLockedByEnv && sessionMentionsFeature" class="hint">
+                  {{ t('settings.lab.lockedByEnv', { env: sessionMentionsFeature.env }) }}
+                </span>
               </span>
               <Switch
-                :model-value="sessionMentions"
+                :model-value="sessionMentionsToggleEnabled"
+                :disabled="sessionMentionsLockedByEnv"
                 :label="t('settings.lab.sessionMentions')"
                 @update:model-value="onSessionMentionsChange"
               />

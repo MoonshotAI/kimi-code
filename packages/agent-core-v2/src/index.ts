@@ -162,6 +162,7 @@ export type { LlmSampling as SamplingOptions } from '@moonshot-ai/core/llm/reque
 export * from '#/llm-adapter/contract/request-trace';
 export type { KimiThinkingConfig } from '@moonshot-ai/core/llm/builtin/provider/kimi/protocol';
 
+export * from '#/app/sessionIndex/flag';
 export * from '#/app/sessionIndex/sessionIndex';
 export * from '#/app/sessionIndex/sessionIndexService';
 export * from '#/app/sessionIndex/sessionIndexMirrorService';
@@ -663,6 +664,7 @@ export * from '#/agent/tokenCounting/tokenCountingOps';
 export * from '#/session/tokenCounting/sessionTokenCounting';
 export * from '#/session/tokenCounting/tokenCountingAgentModel';
 export * from '#/session/tokenCounting/sessionTokenCountingService';
+export * from '#/features/tokenCounting/flag';
 import '#/features/tokenCounting/tokenCountingFeature';
 export * from '#/agent/plugin/agentPlugin';
 export * from '#/agent/plugin/agentPluginOps';

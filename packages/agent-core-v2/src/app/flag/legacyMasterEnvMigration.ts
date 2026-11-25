@@ -22,7 +22,7 @@ import { isPlainObject } from '#/app/config/configPure';
 import { planConfigWriteback } from '#/app/config/tomlWriteback';
 import { TOWER_FLAG_ENV, TOWER_FLAG_ID } from '#/features/tower/tower';
 
-import { EXPERIMENTAL_SECTION } from './flag';
+import { EXPERIMENTAL_SECTION, ExperimentalConfigSchema } from './flag';
 import { MASTER_ENV } from './flagService';
 
 export const EXPERIMENTAL_MIGRATIONS_FILENAME = 'experimental-migrations.json';
@@ -98,12 +98,23 @@ function normalizeConfigKey(configPath: string): string {
 }
 
 function readMigrationsRecord(markerPath: string): ExperimentalMigrationsRecord | undefined {
-  if (safeLstat(markerPath) === undefined) return {};
+  let stat: Stats | undefined;
+  try {
+    stat = lstatSync(markerPath, { throwIfNoEntry: false });
+  } catch {
+    return undefined;
+  }
+  if (stat === undefined) return {};
   try {
     const raw = JSON.parse(readFileSync(markerPath, 'utf8')) as unknown;
     if (!isPlainObject(raw)) return undefined;
+    const legacyFlag = raw['legacyMasterEnvTowerMigrated'];
+    if (legacyFlag !== undefined && typeof legacyFlag !== 'boolean') return undefined;
     const configs = raw['legacyMasterEnvTowerMigratedConfigs'];
-    if (configs !== undefined && !isPlainObject(configs)) return undefined;
+    if (configs !== undefined) {
+      if (!isPlainObject(configs)) return undefined;
+      if (Object.values(configs).some((value) => typeof value !== 'boolean')) return undefined;
+    }
     return raw as ExperimentalMigrationsRecord;
   } catch {
     return undefined;
@@ -164,11 +175,13 @@ export function migrateLegacyMasterEnvTower(
   const markerPath = join(homeDir, EXPERIMENTAL_MIGRATIONS_FILENAME);
 
   const record = readMigrationsRecord(markerPath);
-  if (record === undefined) return 'skipped-error';
-  if (isConfigMigrated(record, configKey, isDefaultConfig)) return 'already-migrated';
+  if (record !== undefined && isConfigMigrated(record, configKey, isDefaultConfig)) {
+    return 'already-migrated';
+  }
 
   if (!isExistingInstallation(homeDir, configPath, defaultConfigPath)) {
-    return stampMigrationMarker(markerPath, record, configKey, isDefaultConfig)
+    return record !== undefined &&
+      stampMigrationMarker(markerPath, record, configKey, isDefaultConfig)
       ? 'stamped-fresh-install'
       : 'skipped-error';
   }
@@ -176,14 +189,20 @@ export function migrateLegacyMasterEnvTower(
   const masterEnv = parseBooleanEnv(env[MASTER_ENV]);
   const towerEnvOverride = parseBooleanEnv(env[TOWER_FLAG_ENV]);
   if (towerEnvOverride === false) {
-    return stampMigrationMarker(markerPath, record, configKey, isDefaultConfig)
+    return record !== undefined &&
+      stampMigrationMarker(markerPath, record, configKey, isDefaultConfig)
       ? 'stamped-noop'
       : 'skipped-error';
   }
 
   let onDiskText: string | undefined;
   let parsedDoc: Record<string, unknown> = {};
-  const configLinkStat = safeLstat(configPath);
+  let configLinkStat: Stats | undefined;
+  try {
+    configLinkStat = lstatSync(configPath, { throwIfNoEntry: false });
+  } catch {
+    return masterEnv === true ? 'fallback-env' : 'skipped-error';
+  }
   if (configLinkStat !== undefined) {
     try {
       onDiskText = readFileSync(configPath, 'utf8');
@@ -198,21 +217,34 @@ export function migrateLegacyMasterEnvTower(
   }
 
   const rawExperimental = parsedDoc[EXPERIMENTAL_SECTION];
-  if (rawExperimental !== undefined && !isPlainObject(rawExperimental)) {
-    return masterEnv === true ? 'fallback-env' : 'skipped-error';
+  let validatedExperimental: Record<string, boolean> | undefined;
+  if (rawExperimental !== undefined) {
+    if (!isPlainObject(rawExperimental)) {
+      return masterEnv === true ? 'fallback-env' : 'skipped-error';
+    }
+    const parsedExperimental = ExperimentalConfigSchema.safeParse(rawExperimental);
+    if (!parsedExperimental.success) {
+      return masterEnv === true ? 'fallback-env' : 'skipped-error';
+    }
+    validatedExperimental = parsedExperimental.data;
   }
-  if (isPlainObject(rawExperimental) && Object.hasOwn(rawExperimental, TOWER_FLAG_ID)) {
-    return stampMigrationMarker(markerPath, record, configKey, isDefaultConfig)
+  if (validatedExperimental !== undefined && Object.hasOwn(validatedExperimental, TOWER_FLAG_ID)) {
+    return record !== undefined &&
+      stampMigrationMarker(markerPath, record, configKey, isDefaultConfig)
       ? 'stamped-noop'
       : 'skipped-error';
   }
 
   if (masterEnv !== true) {
-    return 'pending-master-env';
+    return record === undefined ? 'skipped-error' : 'pending-master-env';
+  }
+
+  if (record === undefined) {
+    return 'fallback-env';
   }
 
   const nextExperimental: Record<string, unknown> = {
-    ...(isPlainObject(rawExperimental) ? rawExperimental : {}),
+    ...validatedExperimental,
     [TOWER_FLAG_ID]: true,
   };
   const nextDoc: Record<string, unknown> = {

@@ -100,7 +100,10 @@ export class FlagService extends Disposable implements IFlagService {
   exposedIds(): readonly FlagId[] {
     return this.registry
       .list()
-      .filter((def) => def.stages[this.surface] !== 'ga')
+      .filter((def) => {
+        const stage = def.stages[this.surface];
+        return stage !== undefined && stage !== 'ga';
+      })
       .filter((def) => this.enabled(def.id))
       .filter((def) => def.isExposed?.(this) ?? true)
       .map((def) => def.id);

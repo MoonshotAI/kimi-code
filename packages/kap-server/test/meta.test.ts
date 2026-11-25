@@ -143,7 +143,9 @@ describe('/api/v1/meta experimental_flags', () => {
       env: 'KIMI_CODE_EXPERIMENTAL_FLAG',
     });
     const initialIds = (initialBody.data.experimental_features ?? []).map((f) => f.id);
+    expect(initialIds).toContain('context_inspector');
     expect(initialIds).toContain('notify_user');
+    expect(initialIds).toContain('session_mentions');
     expect(initialIds).toContain('prompt_prediction');
     expect(initialIds).toContain('tower');
     expect(initialIds).not.toContain('wait_for');

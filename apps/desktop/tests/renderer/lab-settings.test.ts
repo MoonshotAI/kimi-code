@@ -57,6 +57,18 @@ describe('SettingsDialog General sidebarTabs and Lab two-tier layout', () => {
     };
     configStore().experimentalFeatures = [
       {
+        id: 'context_inspector',
+        title: 'Context usage',
+        description: 'Context inspector',
+        env: 'KIMI_CODE_EXPERIMENTAL_CONTEXT_INSPECTOR',
+        stage: 'beta',
+        effectTiming: 'immediate',
+        enabled: false,
+        active: false,
+        source: 'config',
+        configValue: false,
+      },
+      {
         id: 'notify_user',
         title: 'NotifyUser tool',
         description: 'Progress updates',
@@ -67,6 +79,17 @@ describe('SettingsDialog General sidebarTabs and Lab two-tier layout', () => {
         active: false,
         source: 'config',
         configValue: false,
+      },
+      {
+        id: 'session_mentions',
+        title: 'Session mentions',
+        description: 'Reference sessions',
+        env: 'KIMI_CODE_EXPERIMENTAL_SESSION_MENTIONS',
+        stage: 'experimental',
+        effectTiming: 'immediate',
+        enabled: false,
+        active: false,
+        source: 'default',
       },
       {
         id: 'prompt_prediction',
@@ -93,7 +116,9 @@ describe('SettingsDialog General sidebarTabs and Lab two-tier layout', () => {
       },
     ];
     configStore().experimentalFlags = {
+      context_inspector: false,
       notify_user: false,
+      session_mentions: false,
       prompt_prediction: false,
       tower: false,
     };
@@ -148,6 +173,9 @@ describe('SettingsDialog General sidebarTabs and Lab two-tier layout', () => {
     const notifySwitch = document.querySelector<HTMLButtonElement>(
       'button[role="switch"][aria-label="进展更新"]',
     )!;
+    const sessionMentionsSwitch = document.querySelector<HTMLButtonElement>(
+      'button[role="switch"][aria-label="引用会话"]',
+    )!;
     const promptPredictionSwitch = document.querySelector<HTMLButtonElement>(
       'button[role="switch"][aria-label="提示词预测"]',
     )!;
@@ -157,6 +185,7 @@ describe('SettingsDialog General sidebarTabs and Lab two-tier layout', () => {
 
     expect(contextSwitch.getAttribute('aria-checked')).toBe('false');
     expect(notifySwitch.getAttribute('aria-checked')).toBe('false');
+    expect(sessionMentionsSwitch.getAttribute('aria-checked')).toBe('false');
     expect(promptPredictionSwitch.getAttribute('aria-checked')).toBe('false');
     expect(towerSwitch.getAttribute('aria-checked')).toBe('true');
 
@@ -168,9 +197,11 @@ describe('SettingsDialog General sidebarTabs and Lab two-tier layout', () => {
     expect(contextSwitch.disabled).toBe(true);
     expect(notifySwitch.getAttribute('aria-checked')).toBe('true');
     expect(notifySwitch.disabled).toBe(true);
+    expect(sessionMentionsSwitch.getAttribute('aria-checked')).toBe('false');
+    expect(sessionMentionsSwitch.disabled).toBe(false);
     expect(promptPredictionSwitch.getAttribute('aria-checked')).toBe('false');
     expect(promptPredictionSwitch.disabled).toBe(false);
-    expect(localStorage.getItem(STORAGE_KEYS.contextInspector)).toBe('false');
+    expect(localStorage.getItem(STORAGE_KEYS.contextInspector)).toBeNull();
 
     betaMasterSwitch.click();
     await flush();
@@ -179,6 +210,18 @@ describe('SettingsDialog General sidebarTabs and Lab two-tier layout', () => {
     expect(contextSwitch.disabled).toBe(false);
     expect(notifySwitch.getAttribute('aria-checked')).toBe('false');
     expect(notifySwitch.disabled).toBe(false);
+
+    contextSwitch.click();
+    await flush();
+    expect(setConfig).toHaveBeenCalledWith({ experimental: { context_inspector: true } });
+    expect(contextSwitch.getAttribute('aria-checked')).toBe('true');
+    expect(localStorage.getItem(STORAGE_KEYS.contextInspector)).toBeNull();
+
+    sessionMentionsSwitch.click();
+    await flush();
+    expect(setConfig).toHaveBeenCalledWith({ experimental: { session_mentions: true } });
+    expect(sessionMentionsSwitch.getAttribute('aria-checked')).toBe('true');
+    expect(localStorage.getItem(STORAGE_KEYS.sessionMentions)).toBeNull();
 
     promptPredictionSwitch.click();
     await flush();

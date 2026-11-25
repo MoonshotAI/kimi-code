@@ -5986,13 +5986,148 @@ describe('setNotifyUserEnabled', () => {
     expect(await configStore().setBetaFeaturesEnabled(true)).toBe(true);
     expect(apiMock.setConfig).toHaveBeenCalledWith({ experimental: { beta: true } });
     expect(useContextInspector().contextInspectorEnabled.value).toBe(true);
-    expect(localStorage.getItem(STORAGE_KEYS.contextInspector)).toBe('false');
+    expect(localStorage.getItem(STORAGE_KEYS.contextInspector)).toBeNull();
     expect(configStore().experimentalFlags['notify_user']).toBe(true);
     expect(configStore().experimentalFlags['tower']).toBe(false);
 
     expect(await configStore().setBetaFeaturesEnabled(false)).toBe(true);
     expect(useContextInspector().contextInspectorEnabled.value).toBe(false);
     expect(configStore().experimentalFlags['notify_user']).toBe(false);
+  });
+
+  it('migrates legacy localStorage context_inspector and session_mentions into config.toml once without overriding existing configValue', async () => {
+    const { useContextInspector, useSessionMentions } = await import('@moonshot-ai/app-core');
+    localStorage.setItem(STORAGE_KEYS.contextInspector, 'true');
+    localStorage.setItem(STORAGE_KEYS.sessionMentions, '1');
+
+    apiMock.setConfig.mockResolvedValue({ providers: {} });
+    apiMock.getMeta
+      .mockResolvedValueOnce({
+        serverVersion: '1.0.0',
+        openInApps: [],
+        dangerousBypassAuth: false,
+        experimentalFlags: { context_inspector: false, session_mentions: false },
+        experimentalBeta: {
+          enabled: false,
+          source: 'default',
+          env: 'KIMI_CODE_EXPERIMENTAL_FLAG',
+        },
+        experimentalFeatures: [
+          {
+            id: 'context_inspector',
+            title: 'Context usage',
+            description: 'Context inspector',
+            env: 'KIMI_CODE_EXPERIMENTAL_CONTEXT_INSPECTOR',
+            stage: 'beta',
+            effectTiming: 'immediate',
+            enabled: false,
+            active: false,
+            source: 'default',
+          },
+          {
+            id: 'session_mentions',
+            title: 'Session mentions',
+            description: 'Reference sessions',
+            env: 'KIMI_CODE_EXPERIMENTAL_SESSION_MENTIONS',
+            stage: 'experimental',
+            effectTiming: 'immediate',
+            enabled: false,
+            active: false,
+            source: 'default',
+          },
+        ],
+        backend: 'v2',
+        webTitle: '',
+        homeDir: '/tmp/home',
+      })
+      .mockResolvedValueOnce({
+        serverVersion: '1.0.0',
+        openInApps: [],
+        dangerousBypassAuth: false,
+        experimentalFlags: { context_inspector: true, session_mentions: true },
+        experimentalBeta: {
+          enabled: false,
+          source: 'default',
+          env: 'KIMI_CODE_EXPERIMENTAL_FLAG',
+        },
+        experimentalFeatures: [
+          {
+            id: 'context_inspector',
+            title: 'Context usage',
+            description: 'Context inspector',
+            env: 'KIMI_CODE_EXPERIMENTAL_CONTEXT_INSPECTOR',
+            stage: 'beta',
+            effectTiming: 'immediate',
+            enabled: true,
+            active: true,
+            source: 'config',
+            configValue: true,
+          },
+          {
+            id: 'session_mentions',
+            title: 'Session mentions',
+            description: 'Reference sessions',
+            env: 'KIMI_CODE_EXPERIMENTAL_SESSION_MENTIONS',
+            stage: 'experimental',
+            effectTiming: 'immediate',
+            enabled: true,
+            active: true,
+            source: 'config',
+            configValue: true,
+          },
+        ],
+        backend: 'v2',
+        webTitle: '',
+        homeDir: '/tmp/home',
+      });
+
+    await configStore().refreshServerMeta();
+    expect(apiMock.setConfig).toHaveBeenCalledWith({
+      experimental: {
+        context_inspector: true,
+        session_mentions: true,
+      },
+    });
+    expect(localStorage.getItem(STORAGE_KEYS.contextInspector)).toBeNull();
+    expect(localStorage.getItem(STORAGE_KEYS.sessionMentions)).toBeNull();
+    expect(useContextInspector().contextInspectorEnabled.value).toBe(true);
+    expect(useSessionMentions().sessionMentions.value).toBe(true);
+
+    apiMock.setConfig.mockClear();
+    localStorage.setItem(STORAGE_KEYS.contextInspector, 'true');
+    apiMock.getMeta.mockResolvedValueOnce({
+      serverVersion: '1.0.0',
+      openInApps: [],
+      dangerousBypassAuth: false,
+      experimentalFlags: { context_inspector: false },
+      experimentalBeta: {
+        enabled: false,
+        source: 'default',
+        env: 'KIMI_CODE_EXPERIMENTAL_FLAG',
+      },
+      experimentalFeatures: [
+        {
+          id: 'context_inspector',
+          title: 'Context usage',
+          description: 'Context inspector',
+          env: 'KIMI_CODE_EXPERIMENTAL_CONTEXT_INSPECTOR',
+          stage: 'beta',
+          effectTiming: 'immediate',
+          enabled: false,
+          active: false,
+          source: 'config',
+          configValue: false,
+        },
+      ],
+      backend: 'v2',
+      webTitle: '',
+      homeDir: '/tmp/home',
+    });
+
+    await configStore().refreshServerMeta();
+    expect(apiMock.setConfig).not.toHaveBeenCalled();
+    expect(localStorage.getItem(STORAGE_KEYS.contextInspector)).toBeNull();
+    expect(useContextInspector().contextInspectorEnabled.value).toBe(false);
   });
 
   it('ignores stale out-of-order refreshServerMeta responses across rapid Lab toggles', async () => {

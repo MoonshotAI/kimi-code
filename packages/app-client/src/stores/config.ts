@@ -1,13 +1,18 @@
 import { nextTick, ref } from 'vue';
 import { defineStore } from 'pinia';
-import { setContextInspectorBetaOverride } from '@moonshot-ai/app-core';
+import { setContextInspectorEnabled, setSessionMentions } from '@moonshot-ai/app-core';
 import type {
   AppConfig,
   ServerExperimentalBeta,
   ServerExperimentalFeature,
 } from '@moonshot-ai/app-core/api';
 import { isDaemonApiError } from '@moonshot-ai/app-core/api';
-import { permissionModeFromConfig } from '@moonshot-ai/app-core/lib';
+import {
+  STORAGE_KEYS,
+  permissionModeFromConfig,
+  safeGetString,
+  safeRemove,
+} from '@moonshot-ai/app-core/lib';
 import type { PermissionMode } from '@moonshot-ai/app-core/client/types';
 import { getKimiWebApi } from '../client/deps';
 import { clientPinia } from './pinia';
@@ -28,6 +33,27 @@ export function setConfigHooks(next: ConfigHooks | null): void {
   configHooks = next;
 }
 
+const LEGACY_LOCAL_EXPERIMENTAL_ENTRIES = [
+  {
+    id: 'context_inspector',
+    storageKey: STORAGE_KEYS.contextInspector,
+    trueLiteral: 'true',
+  },
+  {
+    id: 'session_mentions',
+    storageKey: STORAGE_KEYS.sessionMentions,
+    trueLiteral: '1',
+  },
+] as const;
+
+function clearLegacyLocalExperimentalKey(id: string): void {
+  for (const entry of LEGACY_LOCAL_EXPERIMENTAL_ENTRIES) {
+    if (entry.id === id) {
+      safeRemove(entry.storageKey);
+    }
+  }
+}
+
 function buildActiveExperimentalFlags(
   rawFlags: Record<string, boolean>,
   features: readonly ServerExperimentalFeature[] | undefined,
@@ -38,6 +64,33 @@ function buildActiveExperimentalFlags(
     merged[feature.id] = feature.effectTiming === 'restart' ? feature.active : feature.enabled;
   }
   return merged;
+}
+
+interface LegacyLocalExperimentalMigrationPlan {
+  readonly patch: Record<string, boolean>;
+  readonly clearImmediately: string[];
+}
+
+function planLegacyLocalExperimentalMigration(
+  features: readonly ServerExperimentalFeature[] | undefined,
+): LegacyLocalExperimentalMigrationPlan {
+  const patch: Record<string, boolean> = {};
+  const clearImmediately: string[] = [];
+  if (!features || features.length === 0) {
+    return { patch, clearImmediately };
+  }
+  for (const entry of LEGACY_LOCAL_EXPERIMENTAL_ENTRIES) {
+    const raw = safeGetString(entry.storageKey);
+    if (raw === null) continue;
+    const feature = features.find((item) => item.id === entry.id);
+    if (feature === undefined) continue;
+    if (feature.configValue !== undefined || raw !== entry.trueLiteral) {
+      clearImmediately.push(entry.storageKey);
+      continue;
+    }
+    patch[entry.id] = true;
+  }
+  return { patch, clearImmediately };
 }
 
 export const useConfigStore = defineStore('kimi.config', () => {
@@ -58,6 +111,29 @@ export const useConfigStore = defineStore('kimi.config', () => {
   let configWriteQueue: Promise<unknown> = Promise.resolve();
   let metaRequestGeneration = 0;
   let metaCommittedGeneration = 0;
+  let storeEpoch = 0;
+  let legacyLocalMigrationInFlight: Promise<void> | null = null;
+
+  function syncClientExperimentalSignals(): void {
+    const contextFeature = experimentalFeatures.value.find(
+      (feature) => feature.id === 'context_inspector',
+    );
+    const contextEnabled =
+      contextFeature !== undefined
+        ? contextFeature.enabled
+        : experimentalBeta.value?.enabled === true ||
+          experimentalFlags.value['context_inspector'] === true;
+    setContextInspectorEnabled(contextEnabled);
+
+    const mentionsFeature = experimentalFeatures.value.find(
+      (feature) => feature.id === 'session_mentions',
+    );
+    const mentionsEnabled =
+      mentionsFeature !== undefined
+        ? mentionsFeature.enabled
+        : experimentalFlags.value['session_mentions'] === true;
+    setSessionMentions(mentionsEnabled);
+  }
 
   function noteConfigWrite(): void {
     const generation = ++configWriteGeneration;
@@ -138,6 +214,44 @@ export const useConfigStore = defineStore('kimi.config', () => {
     }
   }
 
+  function runLegacyLocalExperimentalMigration(
+    plannedPatch: Record<string, boolean>,
+  ): Promise<void> {
+    if (legacyLocalMigrationInFlight !== null) {
+      return legacyLocalMigrationInFlight;
+    }
+    const epochAtStart = storeEpoch;
+    let task: Promise<void> | null = null;
+    task = (async () => {
+      try {
+        const activePatch: Record<string, boolean> = {};
+        const keysToRemove: string[] = [];
+        for (const entry of LEGACY_LOCAL_EXPERIMENTAL_ENTRIES) {
+          if (
+            plannedPatch[entry.id] === true &&
+            safeGetString(entry.storageKey) === entry.trueLiteral
+          ) {
+            activePatch[entry.id] = true;
+            keysToRemove.push(entry.storageKey);
+          }
+        }
+        if (Object.keys(activePatch).length === 0) return;
+        const saved = await updateConfig({ experimental: activePatch });
+        if (!saved || epochAtStart !== storeEpoch) return;
+        for (const key of keysToRemove) {
+          safeRemove(key);
+        }
+        await refreshServerMeta();
+      } finally {
+        if (legacyLocalMigrationInFlight === task) {
+          legacyLocalMigrationInFlight = null;
+        }
+      }
+    })();
+    legacyLocalMigrationInFlight = task;
+    return task;
+  }
+
   async function refreshServerMeta(onError?: (error: unknown) => void): Promise<void> {
     const api = getKimiWebApi();
     if (typeof api.getMeta !== 'function') return;
@@ -154,18 +268,48 @@ export const useConfigStore = defineStore('kimi.config', () => {
     availableOpenInApps.value = m.openInApps;
     dangerousBypassAuth.value = m.dangerousBypassAuth;
     experimentalBeta.value = m.experimentalBeta ?? null;
-    experimentalFeatures.value = m.experimentalFeatures ?? [];
+
+    const migrationPlan = planLegacyLocalExperimentalMigration(m.experimentalFeatures);
+    for (const key of migrationPlan.clearImmediately) {
+      safeRemove(key);
+    }
+
+    const rawFeatures = m.experimentalFeatures ?? [];
+    experimentalFeatures.value =
+      Object.keys(migrationPlan.patch).length > 0
+        ? rawFeatures.map((feature) => {
+            if (migrationPlan.patch[feature.id] !== true) return feature;
+            if (feature.source === 'env') {
+              return { ...feature, configValue: true };
+            }
+            return {
+              ...feature,
+              enabled: true,
+              active: feature.effectTiming === 'restart' ? feature.active : true,
+              source:
+                feature.stage === 'beta' && experimentalBeta.value?.enabled === true
+                  ? feature.source
+                  : 'config',
+              configValue: true,
+            };
+          })
+        : rawFeatures;
     experimentalFlags.value = buildActiveExperimentalFlags(
       m.experimentalFlags ?? {},
-      m.experimentalFeatures,
+      experimentalFeatures.value,
     );
-    setContextInspectorBetaOverride(experimentalBeta.value?.enabled === true);
+    syncClientExperimentalSignals();
     backend.value = m.backend;
     webTitle.value = m.webTitle;
     homeDir.value = m.homeDir;
+
+    if (Object.keys(migrationPlan.patch).length > 0) {
+      await runLegacyLocalExperimentalMigration(migrationPlan.patch);
+    }
   }
 
   async function setExperimentalFlag(id: string, on: boolean): Promise<boolean> {
+    clearLegacyLocalExperimentalKey(id);
     const saved = await updateConfig({ experimental: { [id]: on } });
     if (!saved) return false;
     metaCommittedGeneration = ++metaRequestGeneration;
@@ -186,6 +330,7 @@ export const useConfigStore = defineStore('kimi.config', () => {
           : feature,
       );
     }
+    syncClientExperimentalSignals();
     await refreshServerMeta();
     return true;
   }
@@ -200,7 +345,6 @@ export const useConfigStore = defineStore('kimi.config', () => {
       env: experimentalBeta.value?.env ?? 'KIMI_CODE_EXPERIMENTAL_FLAG',
       configValue: on,
     };
-    setContextInspectorBetaOverride(on);
     experimentalFeatures.value = experimentalFeatures.value.map((feature) => {
       if (feature.stage !== 'beta' || feature.source === 'env') return feature;
       const nextEnabled = on ? true : (feature.configValue ?? false);
@@ -215,6 +359,7 @@ export const useConfigStore = defineStore('kimi.config', () => {
       experimentalFlags.value,
       experimentalFeatures.value,
     );
+    syncClientExperimentalSignals();
     await refreshServerMeta();
     return true;
   }
@@ -228,6 +373,8 @@ export const useConfigStore = defineStore('kimi.config', () => {
   }
 
   function resetConfig(): void {
+    storeEpoch += 1;
+    legacyLocalMigrationInFlight = null;
     config.value = null;
     serverVersion.value = '';
     availableOpenInApps.value = [];
@@ -235,7 +382,7 @@ export const useConfigStore = defineStore('kimi.config', () => {
     experimentalFlags.value = {};
     experimentalBeta.value = null;
     experimentalFeatures.value = [];
-    setContextInspectorBetaOverride(false);
+    syncClientExperimentalSignals();
     backend.value = 'v1';
     webTitle.value = '';
     homeDir.value = '';
