@@ -188,6 +188,7 @@ describe('SessionManager', () => {
     } as unknown as SessionLifecycleService;
     const workspace = {
       id: 'workspace-1',
+      root: '/workspace',
       program: { sessionControllerGeneration: 'generation-1', createSessionController: () => service },
     } as unknown as WorkspaceInstance;
     const workspaces = workspaceManager(workspace);
@@ -213,6 +214,7 @@ describe('SessionManager', () => {
     const fake = controller();
     const workspace = {
       id: 'workspace-1',
+      root: '/workspace',
       program: { sessionControllerGeneration: 'generation-1', createSessionController: () => fake.service },
     } as unknown as WorkspaceInstance;
     const workspaces = workspaceManager(workspace);
@@ -243,6 +245,26 @@ describe('SessionManager', () => {
     manager.dispose();
   });
 
+  it('treats a session whose project is gone as missing and surfaces every other failure to open its project', async () => {
+    const acquire = vi.fn<IWorkspaceInstanceManager['acquire']>();
+    const workspaces = { acquire, get: () => undefined } as unknown as IWorkspaceInstanceManager;
+    const index = {
+      get: async () => ({ workspaceId: 'wm_gone', cwd: '/workspace', environmentCwd: '/workspace' }),
+    } as unknown as ISessionIndex;
+    const manager = makeSessionManager(workspaces, index);
+
+    acquire.mockRejectedValue(new Error2(ErrorCodes.WORKSPACE_NOT_FOUND, 'project is gone'));
+    await expect(manager.resume('session-1')).resolves.toBeUndefined();
+    await expect(manager.restore('session-1')).resolves.toBeUndefined();
+    await expect(manager.archive('session-1')).resolves.toBeUndefined();
+    await expect(manager.fork({ sourceSessionId: 'session-1' })).rejects.toMatchObject({ code: ErrorCodes.SESSION_NOT_FOUND });
+    await expect(manager.delete('session-1')).rejects.toMatchObject({ code: ErrorCodes.SESSION_NOT_FOUND });
+
+    acquire.mockRejectedValue(new Error2(ErrorCodes.STORAGE_IO_FAILED, 'catalog is unreadable'));
+    await expect(manager.resume('session-1')).rejects.toMatchObject({ code: ErrorCodes.STORAGE_IO_FAILED });
+    manager.dispose();
+  });
+
   it('serializes delete with the per-session lifecycle chain', async () => {
     const order: string[] = [];
     const fake = controller();
@@ -251,6 +273,7 @@ describe('SessionManager', () => {
     };
     const workspace = {
       id: 'workspace-1',
+      root: '/workspace',
       program: { sessionControllerGeneration: 'generation-1', createSessionController: () => fake.service },
     } as unknown as WorkspaceInstance;
     const workspaces = workspaceManager(workspace);
@@ -286,6 +309,7 @@ describe('SessionManager', () => {
     };
     const workspace = {
       id: 'workspace-1',
+      root: '/workspace',
       program: { sessionControllerGeneration: 'generation-1', createSessionController: () => fake.service },
     } as unknown as WorkspaceInstance;
     const workspaces = workspaceManager(workspace);
@@ -321,6 +345,7 @@ describe('SessionManager', () => {
     };
     const workspace = {
       id: 'workspace-1',
+      root: '/workspace',
       program: { sessionControllerGeneration: 'generation-1', createSessionController: () => fake.service },
     } as unknown as WorkspaceInstance;
     const workspaces = workspaceManager(workspace);
@@ -356,6 +381,7 @@ describe('SessionManager', () => {
     };
     const workspace = {
       id: 'workspace-1',
+      root: '/workspace',
       program: { sessionControllerGeneration: 'generation-1', createSessionController: () => fake.service },
     } as unknown as WorkspaceInstance;
     const workspaces = workspaceManager(workspace);
@@ -391,6 +417,7 @@ describe('SessionManager', () => {
     };
     const workspace = {
       id: 'workspace-1',
+      root: '/workspace',
       program: { sessionControllerGeneration: 'generation-1', createSessionController: () => fake.service },
     } as unknown as WorkspaceInstance;
     const workspaces = workspaceManager(workspace);
@@ -425,6 +452,7 @@ describe('SessionManager', () => {
     };
     const workspace = {
       id: 'workspace-1',
+      root: '/workspace',
       program: { sessionControllerGeneration: 'generation-1', createSessionController: () => fake.service },
     } as unknown as WorkspaceInstance;
     const workspaces = workspaceManager(workspace);
@@ -460,6 +488,7 @@ describe('SessionManager', () => {
     };
     const workspace = {
       id: 'workspace-1',
+      root: '/workspace',
       program: { sessionControllerGeneration: 'generation-1', createSessionController: () => fake.service },
     } as unknown as WorkspaceInstance;
     const workspaces = workspaceManager(workspace);
@@ -481,6 +510,7 @@ describe('SessionManager', () => {
     const fake = controller();
     const workspace = {
       id: 'workspace-1',
+      root: '/workspace',
       program: { sessionControllerGeneration: 'generation-1', createSessionController: () => fake.service },
     } as unknown as WorkspaceInstance;
     const workspaces = workspaceManager(workspace);
@@ -502,6 +532,7 @@ describe('SessionManager', () => {
     let generation = 'generation-1';
     const workspace = {
       id: 'workspace-1',
+      root: '/workspace',
       program: {
         get sessionControllerGeneration() { return generation; },
         createSessionController: () => generation === 'generation-1' ? first.service : second.service,
@@ -541,6 +572,7 @@ describe('SessionManager', () => {
     let generation = 'generation-1';
     const workspace = {
       id: 'workspace-1',
+      root: '/workspace',
       program: {
         get sessionControllerGeneration() { return generation; },
         createSessionController: () => generation === 'generation-1' ? first.service : second.service,
@@ -643,6 +675,7 @@ describe('SessionManager closeIfIdle', () => {
     } as unknown as SessionLifecycleService;
     const workspace = {
       id: 'workspace-1',
+      root: '/workspace',
       program: { sessionControllerGeneration: 'generation-1', createSessionController: () => service },
     } as unknown as WorkspaceInstance;
     manager = makeSessionManager(
@@ -860,7 +893,7 @@ describe('SessionManager controller retirement', () => {
   }
 
   function managerFor(program: Program, registry?: EnvironmentRegistry, config?: IConfigService): SessionManager {
-    const workspace = { id: 'workspace', program, environments: registry } as unknown as WorkspaceInstance;
+    const workspace = { id: 'workspace', root: '/workspace', program, environments: registry } as unknown as WorkspaceInstance;
     return makeSessionManager(
       workspaceManager(workspace),
       { get: async () => undefined } as unknown as ISessionIndex,
@@ -1028,6 +1061,64 @@ describe('SessionManager creation environment', () => {
     await manager.create({ workDir: '/workspace' });
     expect(options[0]).toMatchObject({ workDir: '/workspace' });
     expect((options[0] as { environmentId?: string }).environmentId).toBeUndefined();
+  });
+
+  it('lets a new local session started at the project root follow it and keeps its main agent lazy', async () => {
+    const { options } = setup(configWith(undefined));
+
+    await manager.create({ workDir: '/workspace' });
+    await manager.create({ workDir: '/workspace', environmentId: 'local' });
+    await manager.create({ workDir: '/workspace/' });
+
+    expect(options).toMatchObject([
+      { workDir: '/workspace', environmentCwd: undefined, ensureMainAgent: false },
+      { workDir: '/workspace', environmentId: 'local', environmentCwd: undefined, ensureMainAgent: false },
+      { workDir: '/workspace/', environmentCwd: undefined, ensureMainAgent: false },
+    ]);
+    await expect(manager.resolveCreationEnvironment({ workDir: '/workspace' })).resolves.toEqual({
+      workspaceId: 'workspace-1',
+      environmentId: undefined,
+      environmentCwd: undefined,
+    });
+  });
+
+  it('pins a new local session started outside the project root at that directory and keeps its main agent lazy', async () => {
+    const { options } = setup(configWith(undefined));
+
+    await manager.create({ workDir: '/workspace/app-fix' });
+    await manager.create({ workDir: '/workspace/app-fix', environmentId: 'local' });
+
+    expect(options).toMatchObject([
+      { workDir: '/workspace/app-fix', environmentCwd: '/workspace/app-fix', ensureMainAgent: false },
+      { workDir: '/workspace/app-fix', environmentId: 'local', environmentCwd: '/workspace/app-fix', ensureMainAgent: false },
+    ]);
+    await expect(manager.resolveCreationEnvironment({ workDir: '/workspace/app-fix' })).resolves.toEqual({
+      workspaceId: 'workspace-1',
+      environmentId: undefined,
+      environmentCwd: '/workspace/app-fix',
+    });
+  });
+
+  it('keeps an explicit local environment cwd even at the project root', async () => {
+    const { options } = setup(configWith(undefined));
+
+    await manager.create({ workDir: '/workspace', environmentId: 'local', environmentCwd: '/workspace' });
+
+    expect(options).toMatchObject([{ environmentId: 'local', environmentCwd: '/workspace', ensureMainAgent: true }]);
+  });
+
+  it('creates the main agent eagerly only when the caller bound an environment before pinning', async () => {
+    const { options } = setup(configWith({ sandbox: { command: 'sandbox', defaultCwd: '/remote/project' } }), true);
+
+    await manager.create({ workDir: '/workspace', environmentId: 'local', environmentCwd: '/workspace/sub' });
+    await manager.create({ workDir: '/workspace', environmentId: 'sandbox' });
+    await manager.create({ workDir: '/workspace/app-fix', ensureMainAgent: true });
+
+    expect(options).toMatchObject([
+      { environmentId: 'local', environmentCwd: '/workspace/sub', ensureMainAgent: true },
+      { environmentId: 'sandbox', environmentCwd: '/remote/project', ensureMainAgent: true },
+      { environmentCwd: '/workspace/app-fix', ensureMainAgent: true },
+    ]);
   });
 
   it('rejects creation when declaration resolution fails and allows explicit local', async () => {

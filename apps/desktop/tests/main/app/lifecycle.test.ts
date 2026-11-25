@@ -200,6 +200,19 @@ describe('app second-instance routing', () => {
     });
   });
 
+  it('routes session links to the renderer as open-session launch actions, queued until ready', async () => {
+    Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
+    main();
+    const event = { preventDefault: vi.fn() };
+    mocks.listeners.get('open-url')!(event, 'kimi-code://sessions/session_1');
+    expect(mocks.sendLaunchAction).not.toHaveBeenCalled();
+    mocks.ready();
+    await vi.waitFor(() => expect(mocks.sendLaunchAction).toHaveBeenCalledWith({ action: 'open-session', sessionId: 'session_1' }));
+    mocks.listeners.get('second-instance')!({}, ['desktop', 'kimi-code://sessions/session_2']);
+    expect(mocks.sendLaunchAction).toHaveBeenLastCalledWith({ action: 'open-session', sessionId: 'session_2' });
+    expect(mocks.sendToRenderer).not.toHaveBeenCalled();
+  });
+
   it.each(['', '/'])('routes workspace links from an already running second instance with pathname "%s"', async (pathname) => {
     main();
     mocks.ready();

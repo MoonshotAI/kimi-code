@@ -51,7 +51,7 @@ import type { IAcpConnection } from './acp-fs';
 import { buildTerminalAuthMethod, TERMINAL_AUTH_METHOD } from './auth-methods';
 import { acpMcpServersToConfigRecord } from './convert';
 import { log } from './log';
-import { isAcpModeId } from './modes';
+import { isAcpModeId, type AcpModeId } from './modes';
 import { AcpSession } from './session';
 import { negotiateVersion } from './version';
 
@@ -85,6 +85,7 @@ export interface AcpServerOptions {
   readonly terminalAuthEnv?: Readonly<Record<string, string>>;
   readonly terminalAuthLegacyCommand?: string;
   readonly resolveOriginalsDir?: (sessionId: string) => string | undefined;
+  readonly resolveSessionMode?: (sessionId: string) => AcpModeId | undefined;
   readonly slashCommands?: SlashCommandsResolver;
 }
 
@@ -95,6 +96,7 @@ export class AcpServer {
   private readonly terminalAuthEnv: Readonly<Record<string, string>> | undefined;
   private readonly terminalAuthLegacyCommand: string | undefined;
   private readonly resolveOriginalsDir: ((sessionId: string) => string | undefined) | undefined;
+  private readonly resolveSessionMode: AcpServerOptions['resolveSessionMode'];
   private readonly resolveSlashCommands: (
     session: SessionHandle,
   ) => Promise<ReadonlyArray<AvailableCommand> | SlashCommandsSnapshot>;
@@ -111,6 +113,7 @@ export class AcpServer {
     this.terminalAuthEnv = opts.terminalAuthEnv;
     this.terminalAuthLegacyCommand = opts.terminalAuthLegacyCommand;
     this.resolveOriginalsDir = opts.resolveOriginalsDir;
+    this.resolveSessionMode = opts.resolveSessionMode;
     const slashCommands = opts.slashCommands;
     this.resolveSlashCommands =
       typeof slashCommands === 'function'
@@ -422,7 +425,7 @@ export class AcpServer {
       this.resolveOriginalsDir,
       hostCommands,
     );
-    await acpSession.init();
+    await acpSession.init(() => this.resolveSessionMode?.(sessionId));
     return acpSession;
   }
 

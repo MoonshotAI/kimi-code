@@ -7,6 +7,7 @@ import type { AppDetailsOptions, BaseWindowConstructorOptions, WebContents, WebP
 import { DESKTOP_DISPLAY_NAME } from '../../shared/identity';
 import { connect } from '../server/connect';
 import { e2eWindowMode } from '../app/e2e-mode';
+import { deepLinkSchemeAvailable } from '../app/deep-link';
 import { installEditableContextMenu } from '../shell/context-menu';
 import { installDownloadHandler } from '../browser/downloads';
 import { installExternalLinkGuard } from '../shell/external-links';
@@ -539,7 +540,7 @@ export function createWindow(): void {
     ...titleBarWindowOptions(process.platform, nativeTheme.shouldUseDarkColors, linuxNativeTitleBar),
   }, {
     preload: join(__dirname, 'preload.cjs'),
-    additionalArguments: ['--kimi-native-overlay-host'],
+    additionalArguments: ['--kimi-native-overlay-host', ...(deepLinkSchemeAvailable() ? ['--kimi-session-links'] : [])],
     contextIsolation: true,
     nodeIntegration: false,
     sandbox: true,

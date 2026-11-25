@@ -23,6 +23,7 @@ import { watch, watchCandidates } from '#human/utils/watch';
 
 import {
   IWorkspaceMcpConfigService,
+  type McpDirs,
   type McpServersChangeEvent,
   type McpTunables,
 } from './workspaceMcpConfig';
@@ -51,7 +52,7 @@ export class WorkspaceMcpConfigService extends Disposable implements IWorkspaceM
   private primaryReloadTail: Promise<void> = Promise.resolve();
 
   constructor(
-    @IWorkspaceDirs private readonly dirs: IWorkspaceDirs,
+    @IWorkspaceDirs private readonly dirs: McpDirs,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
     @IPluginService private readonly plugins: IPluginService,
     @ILogService private readonly log: ILogService,

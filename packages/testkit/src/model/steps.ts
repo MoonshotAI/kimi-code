@@ -88,6 +88,10 @@ export function withUsage(usage: UsageSpec | null, step: ReplyStep): ReplyStep {
   return { ...step, usage, label: `withUsage(${JSON.stringify(usage)}, ${step.label})` };
 }
 
+export function withResponseId(responseId: string, step: ReplyStep): ReplyStep {
+  return { ...step, responseId, label: `withResponseId(${JSON.stringify(responseId)}, ${step.label})` };
+}
+
 export function paced(intervalMs: number, step: ReplyStep): ReplyStep {
   return { ...step, timing: { ...step.timing, intervalMs }, label: `paced(${intervalMs}, ${step.label})` };
 }

@@ -1,10 +1,9 @@
 #!/usr/bin/env node
 
-import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
-import { ratchetBaseline } from './ratchet.mjs';
+import { reportChanges, runCountCheck, trackedFiles } from './ratchet.mjs';
 
 const ROOT = resolve(import.meta.dirname, '../..');
 const CHECK_FILE = 'scripts/checks/test-doubles.mjs';
@@ -29,8 +28,14 @@ export const LEGACY_DOUBLES = [
     count: (text) => occurrences(text, /\bmockNext(?:Provider)?Response\(/g),
   },
   {
+    id: 'engine-mock-provider',
+    instead: 'build the agent with testkitAgentFixtures() and script replies with model.script(...); a reply chosen from the request becomes a testkit step function. A unit test of the loop core that only needs a requester may keep createMockProviderRequester',
+    applies: () => true,
+    count: (text) => occurrences(text, /(?<![\w.$])(?:createMockProvider|withMockProvider|fetchBackedProvider|createScriptedGenerate)\(/g),
+  },
+  {
     id: 'desktop-stub-model',
-    instead: 'write the journey with testWithProvider from apps/desktop/e2e/fixtures/app.ts and script the testkit provider',
+    instead: 'write the journey in tests/e2e (see tests/e2e/AGENTS.md); apps/desktop/e2e only changes to migrate or delete journeys',
     applies: (file) => file.startsWith('apps/desktop/'),
     count: (text) => {
       const stubTests = stubTestNames(text).reduce((total, name) => total + occurrences(text, new RegExp(`^\\s*${name}(?:\\.(?:only|skip|fixme|fail))?\\(`, 'gm')), 0);
@@ -77,29 +82,23 @@ export function countLegacyDoubles(files) {
 }
 
 export function formatReport(changes) {
-  const lines = [];
-  const added = changes.filter((change) => change.kind === 'added');
-  const removed = changes.filter((change) => change.kind === 'removed');
-  if (added.length > 0) {
-    lines.push('✗ test-doubles: new tests use a legacy model double instead of the testkit');
-    for (const change of added) {
-      const double = LEGACY_DOUBLES.find((candidate) => candidate.id === change.rule);
-      lines.push(`  ${change.rule} in ${change.file}: ${change.from} → ${change.to}`, `    instead: ${double?.instead ?? 'use @moonshot-ai/testkit'}`);
-    }
-    lines.push(
+  return reportChanges(changes, {
+    added: (added) => [
+      '✗ test-doubles: new tests use a legacy model double instead of the testkit',
+      ...added.flatMap((change) => [
+        `  ${change.rule} in ${change.file}: ${change.from} → ${change.to}`,
+        `    instead: ${LEGACY_DOUBLES.find((candidate) => candidate.id === change.rule)?.instead ?? 'use @moonshot-ai/testkit'}`,
+      ]),
       '  Why: every layer shares one scripted model, so new tests get the same steps, holds and strict verify(). The legacy doubles stay only for existing tests until they migrate.',
       `  What to do: write the new case with the testkit. If you only moved an existing case between files, run \`node ${CHECK_FILE} --update --allow-increase\` and say so in the PR.`,
-    );
-  }
-  if (removed.length > 0) {
-    lines.push(
+    ],
+    removed: (removed) => [
       `✗ test-doubles: ${BASELINE_FILE} allows more legacy doubles than the tests use`,
       ...removed.map((change) => `  ${change.rule} in ${change.file}: ${change.from} → ${change.to}`),
       '  Why: the baseline only moves down, so a migrated test cannot slide back to a legacy double unnoticed.',
       `  What to do: run \`node ${CHECK_FILE} --update\` and commit the baseline.`,
-    );
-  }
-  return lines;
+    ],
+  });
 }
 
 export function stubTestNames(text) {
@@ -117,31 +116,20 @@ function occurrences(text, pattern) {
   return [...text.matchAll(pattern)].length;
 }
 
-function trackedFiles() {
-  const output = execFileSync('git', ['ls-files', '--cached', '--others', '--exclude-standard', '-z'], { cwd: ROOT, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
-  return output.split('\0').filter((file) => file !== '' && isCheckedFile(file) && existsSync(join(ROOT, file)));
-}
-
 export function main(args) {
-  const known = new Set(['--update', '--allow-increase']);
-  if (args.some((arg) => !known.has(arg)) || (args.includes('--allow-increase') && !args.includes('--update'))) {
-    process.stderr.write(`✗ test-doubles: unsupported arguments ${args.join(' ')}. Run \`pnpm lint\`; \`node ${CHECK_FILE} --update\` lowers ${BASELINE_FILE}.\n`);
-    return 2;
-  }
-  const counts = countLegacyDoubles(trackedFiles().map((file) => ({ file, text: readFileSync(join(ROOT, file), 'utf8') })));
-  const outcome = ratchetBaseline(join(ROOT, BASELINE_FILE), counts, args);
-  if (outcome.status === 'written') {
-    process.stdout.write(`✓ test-doubles: wrote ${BASELINE_FILE}\n`);
-    return 0;
-  }
-  const report = formatReport(outcome.changes);
-  if (report.length > 0) {
-    process.stderr.write(`${report.join('\n')}\n`);
-    return 1;
-  }
-  const files = new Set(Object.values(counts).flatMap((perFile) => Object.keys(perFile)));
-  process.stdout.write(`✓ test-doubles: legacy model doubles frozen in ${files.size} existing test files; new tests use the testkit\n`);
-  return 0;
+  return runCountCheck({
+    name: 'test-doubles',
+    root: ROOT,
+    checkFile: CHECK_FILE,
+    baselineFile: BASELINE_FILE,
+    args,
+    measure: () => countLegacyDoubles(trackedFiles(ROOT, isCheckedFile).map((file) => ({ file, text: readFileSync(join(ROOT, file), 'utf8') }))),
+    formatReport,
+    summary: (counts) => {
+      const files = new Set(Object.values(counts).flatMap((perFile) => Object.keys(perFile)));
+      return `legacy model doubles frozen in ${files.size} existing test files; new tests use the testkit`;
+    },
+  });
 }
 
 if (process.argv[1] !== undefined && resolve(process.argv[1]) === import.meta.filename) {

@@ -488,6 +488,7 @@ defineExpose({ loadForEdit, insertQuote, insertScreenshotAnnotation, insertPathM
                   size="sm"
                   :label="t('status.goalResume')"
                   :tooltip="t('status.goalResume')"
+                  :disabled="!client.goalModeAvailable.value"
                   @click.stop="client.controlGoal('resume')"
                 >
                   <Icon name="play" size="md" />

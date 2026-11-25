@@ -219,6 +219,8 @@ defineExpose({ focus, el });
     color var(--duration-base) var(--ease-out);
 }
 .ui-number-input__step:hover:not(:disabled) { background: var(--color-hover); color: var(--color-text); }
+.ui-number-input__step:focus,
+.ui-number-input__step:focus-visible { outline: none; }
 .ui-number-input__minus { transform: scaleX(calc(20 / 12)); }
 .ui-number-input__step:disabled { opacity: 0.4; cursor: not-allowed; }
 </style>

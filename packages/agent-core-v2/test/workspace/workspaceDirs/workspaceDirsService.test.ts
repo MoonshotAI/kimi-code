@@ -10,6 +10,7 @@ import { Emitter } from '#/_base/event';
 import type { ILogService } from '#/_base/log/log';
 import { encodeWorkDirKey } from '#/_base/utils/workdir-slug';
 import type { IEventService } from '#/app/event/event';
+import { noopTelemetryService } from '#/app/telemetry/telemetry';
 import { FileProjectLocalConfigService } from '#/persistence/backends/node-fs/projectLocalConfigService';
 import { JsonAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDocumentStore';
 import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
@@ -22,7 +23,11 @@ import { WorkspaceStateService } from '#/workspace/state/workspaceStateService';
 import type { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
 import { WorkspaceDirsService } from '#/workspace/workspaceDirs/workspaceDirsService';
 
+import { linkedWorktree, mainCheckout } from '../../app/git/checkoutLayouts';
 import { stubBootstrap } from '../../app/bootstrap/stubs';
+import { stubHostEnvironment } from '../../stubs';
+import { stubConfigService } from '../../app/config/stubs';
+import { WorkspaceTrustStore } from '#/workspace/workspaceTrust/workspaceTrustStore';
 
 const noopLog = {
   error: () => {},
@@ -66,6 +71,11 @@ describe('WorkspaceDirsService (registry source)', () => {
       localConfig,
       noopLog,
       noopEvent,
+      stubHostEnvironment(homeDir),
+      noopTelemetryService,
+      bootstrap,
+      new JsonAtomicDocumentStore(storage),
+      new WorkspaceTrustStore(new JsonAtomicDocumentStore(storage), noopTelemetryService, bootstrap, stubConfigService()),
     );
   });
 
@@ -130,23 +140,34 @@ describe('WorkspaceDirsService (registry source)', () => {
     expect(dirs.additionalDirs).toEqual([dirC]);
   });
 
-  it('keeps the current primary for managed scopes and the associated primary for member scopes', async () => {
+  it('keeps the current primary for managed scopes and lets implicit scopes absorb only implicit projects', async () => {
     const project = await workspaces.create({ root: dirA, additionalDirs: [dirB], name: 'proj' });
-
     const primary = createDirs(dirA, project.id, 'managed');
     await primary.ready;
     expect(primary.additionalDirs).toEqual([dirB]);
     expect(primary.sessionInfo().primaryByWorkspace).toEqual({ [project.id]: dirA });
 
-    const member = createDirs(dirB, 'wd_other_000000000000');
-    await member.ready;
-    expect(member.additionalDirs).toEqual([dirA]);
-    expect(member.sessionInfo().primaryByWorkspace).toEqual({ [project.id]: dirA });
+    const managedMember = createDirs(dirB, 'wd_other_000000000000');
+    await managedMember.ready;
+    expect(managedMember.additionalDirs).toEqual([]);
+    expect(managedMember.sessionInfo().primaryByWorkspace).toEqual({});
 
-    const outsider = createDirs(dirC, 'wd_else_000000000000');
-    await outsider.ready;
-    expect(outsider.additionalDirs).toEqual([]);
-    expect(outsider.sessionInfo().primaryByWorkspace).toEqual({});
+    const implicitProject = await workspaces.resolveImplicit(dirC);
+    await workspaces.update(implicitProject.id, { additionalDirs: [dirB] });
+    const implicitMember = createDirs(dirB, 'wd_member_000000000000');
+    await implicitMember.ready;
+    expect(implicitMember.additionalDirs).toEqual([dirC]);
+    expect(implicitMember.sessionInfo().primaryByWorkspace).toEqual({ [implicitProject.id]: dirC });
+
+    const outsiderDir = mkdtempSync(join(tmpdir(), 'ws-dirs-outsider-'));
+    try {
+      const outsider = createDirs(outsiderDir, 'wd_else_000000000000');
+      await outsider.ready;
+      expect(outsider.additionalDirs).toEqual([]);
+      expect(outsider.sessionInfo().primaryByWorkspace).toEqual({});
+    } finally {
+      await rm(outsiderDir, { recursive: true, force: true });
+    }
   });
 
   it('keeps same-root managed workspaces scoped to their workspace id', async () => {
@@ -169,8 +190,11 @@ describe('WorkspaceDirsService (registry source)', () => {
     expect(secondDirs.additionalDirs).toEqual([dirC]);
   });
 
-  it('merges registry dirs with local.toml dirs for implicit scopes', async () => {
-    await workspaces.create({ root: dirA, additionalDirs: [dirB], name: 'proj' });
+  it('merges registry dirs with local.toml dirs for implicit scopes and skips a same-root managed project', async () => {
+    const implicit = await workspaces.resolveImplicit(dirA);
+    await workspaces.update(implicit.id, { additionalDirs: [dirB] });
+    const managedDir = mkdtempSync(join(tmpdir(), 'ws-dirs-managed-'));
+    await workspaces.create({ root: dirA, additionalDirs: [managedDir], name: 'proj' });
     await mkdir(join(dirA, '.kimi-code'), { recursive: true });
     await writeFile(
       join(dirA, '.kimi-code', 'local.toml'),
@@ -178,16 +202,20 @@ describe('WorkspaceDirsService (registry source)', () => {
       'utf8',
     );
 
-    const dirs = createDirs(dirA, encodeWorkDirKey(dirA), 'implicit');
-    await dirs.ready;
-    expect(dirs.additionalDirs).toEqual([dirC, dirB]);
+    try {
+      const dirs = createDirs(dirA, implicit.id, 'implicit');
+      await dirs.ready;
+      expect(dirs.additionalDirs).toEqual([dirC, dirB]);
 
-    await dirs.addDir({ path: dirB, persist: false });
-    expect(dirs.additionalDirs).toEqual([dirC, dirB]);
+      await dirs.addDir({ path: dirB, persist: false });
+      expect(dirs.additionalDirs).toEqual([dirC, dirB]);
+    } finally {
+      await rm(managedDir, { recursive: true, force: true });
+    }
   });
 
-  it('moves legacy local config and its watcher when the associated primary changes', async () => {
-    const project = await workspaces.createOrTouch(dirA);
+  it('moves legacy local config and its watcher when an older version moves the implicit primary', async () => {
+    const project = await workspaces.resolveImplicit(dirA);
     await workspaces.update(project.id, { additionalDirs: [dirB] });
     const dirD = mkdtempSync(join(tmpdir(), 'ws-dirs-d-'));
     const writeLocalConfig = async (root: string, additionalDirs: readonly string[]) => {
@@ -202,7 +230,12 @@ describe('WorkspaceDirsService (registry source)', () => {
       await dirs.ready;
       expect(dirs.additionalDirs).toEqual([dirC, dirB]);
 
-      await workspaces.setPrimary(project.id, dirB);
+      await persistence.update((catalog) => ({
+        ...catalog,
+        workspaces: catalog.workspaces.map((entry) =>
+          entry.id === project.id ? { ...entry, root: dirB, additionalDirs: [dirA] } : entry,
+        ),
+      }));
       await vi.waitFor(
         () => {
           expect(dirs.primary).toBe(dirB);
@@ -326,6 +359,55 @@ describe('WorkspaceDirsService (registry source)', () => {
     expect((await workspaces.get(hiddenId))?.additionalDirs).toEqual([dirB]);
   });
 
+  it('adds the primary to a view pinned away from it for this session only, because a project cannot register it', async () => {
+    const project = await workspaces.create({ root: dirA, additionalDirs: [dirB], name: 'proj' });
+    const pinned = createDirs(dirC, project.id, 'managed', 'local', false);
+    await pinned.ready;
+    let fired = 0;
+    pinned.onDidChange(() => {
+      fired += 1;
+    });
+
+    const result = await pinned.addDir({ path: dirA, persist: true });
+
+    expect(result.persisted).toBe(false);
+    expect(result.additionalDirs).toEqual([dirA]);
+    expect(pinned.additionalDirs).toEqual([dirA]);
+    expect(pinned.sharedAdditionalDirs).toEqual([]);
+    expect(fired).toBe(1);
+    expect((await workspaces.get(project.id))?.additionalDirs).toEqual([dirB]);
+    expect((await pinned.addDir({ path: dirA, persist: true })).persisted).toBe(false);
+  });
+
+  it('keeps reporting the primary as remembered to views the project already gives it', async () => {
+    const project = await workspaces.create({ root: dirA, additionalDirs: [dirB], name: 'proj' });
+    const atRoot = createDirs(dirA, project.id, 'managed');
+    const atRegistered = createDirs(dirB, project.id, 'managed', 'local', false);
+    await Promise.all([atRoot.ready, atRegistered.ready]);
+
+    expect(await atRoot.addDir({ path: dirA, persist: true })).toMatchObject({ persisted: true, additionalDirs: [dirB] });
+    expect(await atRegistered.addDir({ path: dirA, persist: true })).toMatchObject({ persisted: true, additionalDirs: [dirA] });
+    expect((await workspaces.get(project.id))?.additionalDirs).toEqual([dirB]);
+  });
+
+  it('opens a remembered directory to the view that added it even when project dirs do not reach it', async () => {
+    const project = await workspaces.create({ root: dirA, additionalDirs: [dirB], name: 'proj' });
+    const pinned = createDirs(dirC, project.id, 'managed', 'local', false);
+    await pinned.ready;
+    const dirD = mkdtempSync(join(tmpdir(), 'ws-dirs-d-'));
+    try {
+      const added = await pinned.addDir({ path: dirD, persist: true });
+      expect(added).toMatchObject({ persisted: true, additionalDirs: [dirD] });
+      expect((await workspaces.get(project.id))?.additionalDirs).toEqual([dirB, dirD]);
+
+      const known = await pinned.addDir({ path: dirB, persist: true });
+      expect(known).toMatchObject({ persisted: true, additionalDirs: [dirD, dirB] });
+      expect((await workspaces.get(project.id))?.additionalDirs).toEqual([dirB, dirD]);
+    } finally {
+      await rm(dirD, { recursive: true, force: true });
+    }
+  });
+
   it('keeps persist:false dirs in memory only', async () => {
     const project = await workspaces.create({ root: dirA, name: 'proj' });
     const dirs = createDirs(dirA, project.id, 'managed');
@@ -368,12 +450,9 @@ describe('WorkspaceDirsService (registry source)', () => {
     expect(dirs.additionalDirs).toEqual([dirB]);
   });
 
-  it('observes a primary swap from a member cwd even when additional dirs stay unchanged', async () => {
-    const project = await workspaces.create({
-      root: dirA,
-      additionalDirs: [dirB],
-      name: 'proj',
-    });
+  it('observes a primary swap of an absorbed implicit project from a member cwd', async () => {
+    const project = await workspaces.resolveImplicit(dirA);
+    await workspaces.update(project.id, { additionalDirs: [dirB] });
     const dirs = createDirs(dirB, 'wd_member_000000000000');
     const oldPrimaryMember = createDirs(dirA, 'wd_old_member_000000000');
     await Promise.all([dirs.ready, oldPrimaryMember.ready]);
@@ -385,7 +464,12 @@ describe('WorkspaceDirsService (registry source)', () => {
       fired += 1;
     });
 
-    await workspaces.setPrimary(project.id, dirB);
+    await persistence.update((catalog) => ({
+      ...catalog,
+      workspaces: catalog.workspaces.map((entry) =>
+        entry.id === project.id ? { ...entry, root: dirB, additionalDirs: [dirA] } : entry,
+      ),
+    }));
     await vi.waitFor(() => {
       expect(dirs.sessionInfo().primaryByWorkspace).toEqual({ [project.id]: dirB });
     });
@@ -413,11 +497,59 @@ describe('WorkspaceDirsService (registry source)', () => {
     await vi.waitFor(() => {
       expect(following.primary).toBe(dirB);
     });
+    await pinned.reload();
     expect(pinned.primary).toBe(dirC);
     expect(pinned.additionalDirs).toEqual([]);
     expect(pinned.sessionInfo().primaryByWorkspace).toEqual({});
     expect(following.additionalDirs).toEqual([dirA]);
   });
+
+  it.each(['managed', 'implicit'] as const)(
+    'gives a view pinned in the repository of a %s project its additional dirs but never the primary',
+    async (kind) => {
+      const main = mainCheckout(dirA);
+      const worktree = linkedWorktree(join(main, '.git'), dirB);
+      const subdir = join(main, 'src');
+      const nested = mainCheckout(join(main, 'vendor', 'lib'));
+      await mkdir(subdir);
+      const project = kind === 'managed'
+        ? await workspaces.create({ root: main })
+        : await workspaces.resolveImplicit(main);
+      await workspaces.update(project.id, { additionalDirs: [dirC] });
+      const views = [worktree, subdir, nested].map((cwd) => createDirs(cwd, project.id, kind, 'local', false));
+      await Promise.all(views.map((view) => view.ready));
+
+      expect(views.map((view) => view.additionalDirs)).toEqual([[dirC], [dirC], []]);
+      expect(views.map((view) => view.sessionInfo().primaryByWorkspace)).toEqual([{}, {}, {}]);
+
+      await workspaces.update(project.id, { additionalDirs: [] });
+      await vi.waitFor(() => {
+        expect(views.map((view) => view.additionalDirs)).toEqual([[], [], []]);
+      });
+    },
+  );
+
+  it.each(['managed', 'implicit'] as const)(
+    'keeps the primary away from a worktree of a %s project even when the worktree is registered, and remembers the worktree as itself without registering it',
+    async (kind) => {
+      const main = mainCheckout(dirA);
+      const worktree = linkedWorktree(join(main, '.git'), dirB);
+      const project = kind === 'managed'
+        ? await workspaces.create({ root: main })
+        : await workspaces.resolveImplicit(main);
+      await workspaces.update(project.id, { additionalDirs: [dirC] });
+      const view = createDirs(worktree, project.id, kind, 'local', false);
+      await view.ready;
+
+      expect(await view.addDir({ path: worktree, persist: true })).toMatchObject({ persisted: true, additionalDirs: [dirC] });
+      expect((await workspaces.get(project.id))?.additionalDirs).toEqual([dirC]);
+
+      await workspaces.update(project.id, { additionalDirs: [dirC, worktree] });
+      await view.reload();
+      expect(view.additionalDirs).toEqual([dirC]);
+      expect(view.sessionInfo().primaryByWorkspace).toEqual({});
+    },
+  );
 
   it('keeps the complete directory set when the primary changes from the original cwd', async () => {
     const project = await workspaces.create({
@@ -482,7 +614,7 @@ describe('WorkspaceDirsService (registry source)', () => {
   });
 
   it('coalesces local config and registry changes into one explicit reload event', async () => {
-    const project = await workspaces.create({ root: dirA, name: 'proj' });
+    const project = await workspaces.resolveImplicit(dirA);
     const dirs = createDirs(dirA, encodeWorkDirKey(dirA));
     await dirs.ready;
     await mkdir(join(dirA, '.kimi-code'), { recursive: true });
@@ -499,7 +631,7 @@ describe('WorkspaceDirsService (registry source)', () => {
           [project.id]: {
             root: dirA,
             name: 'proj',
-            kind: 'managed',
+            kind: 'implicit',
             additional_dirs: [dirB],
             created_at: new Date(project.createdAt).toISOString(),
             last_opened_at: new Date(project.lastOpenedAt).toISOString(),

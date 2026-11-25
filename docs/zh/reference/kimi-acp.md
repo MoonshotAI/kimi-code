@@ -62,12 +62,16 @@ kimi acp
 | `session/set_mode` | 是 | 校验 `modeId`，与 `set_config_option({configId:'mode'})` 走同一个模式切换 |
 | `session/set_config_option` | 是 | 统一的 model / thinking / mode picker 分发 |
 
+在模式选择器中，Auto（`auto`）可以自动批准敏感操作，仍遵守显式拒绝规则。YOLO（`yolo`）自动批准常规操作，遇到敏感操作仍可能请求确认。
+
+在 Plan 模式下创建或恢复会话时，两种模式选择器都会显示 Plan。批准计划或选择「拒绝并退出」后，选择器会更新为实际生效的权限模式。
+
 ### 客户端 reverse-RPC — agent → IDE（10 / 11）
 
 | 方法 | 状态 | 说明 |
 | --- | --- | --- |
 | `session/update` | 是 | 流式推送 `agent_message_chunk` / `tool_call*` / `plan` / `config_option_update` / `available_commands_update` |
-| `session/request_permission` | 是 | 工具审批和问题提问共用此通道 |
+| `session/request_permission` | 是 | 工具审批和提问共用此通道。Bash 审批包含完整命令和工作目录。已解析的绝对文件路径通过 `toolCall.locations` 提供 |
 | `fs/read_text_file` | 是 | 客户端声明 `fsCapabilities` 时，引擎的文件读取路由到客户端 |
 | `fs/write_text_file` | 是 | 引擎的文件写入路由到客户端 |
 | `terminal/create` · `output` · `release` · `kill` · `wait_for_exit` | 是 | 客户端声明 `clientCapabilities.terminal` 时，shell 执行通过 reverse-RPC 交给客户端 |

@@ -75,5 +75,6 @@ export default {
   pastedTextDiscardTitle: 'Discard changes?',
   pastedTextDiscardMessage: 'Your edits to this pasted text will be lost.',
   pastedTextDiscard: 'Discard',
+  disabledCommand: '{cmd} is disabled in tool settings',
 
 } as const;

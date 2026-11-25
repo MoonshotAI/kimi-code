@@ -728,7 +728,7 @@ additional_dir = ["/absolute/path/to/shared"]
 
 目录以绝对路径存储，与具体机器相关。因此建议把 `.kimi-code/local.toml` 加入项目的 `.gitignore`，避免被提交。
 
-除了 `local.toml`，项目 `.kimi-code/` 目录还可以放 `mcp.json`（项目级 MCP server），受工作区信任门控：在启动提示中选择信任该文件夹后才生效。详见 [Model Context Protocol](../customization/mcp.md)。
+除了 `local.toml`，项目 `.kimi-code/` 目录还可以放 `mcp.json`（项目级 MCP server），受工作区信任门控：在启动提示中选择信任该项目后才生效。详见 [Model Context Protocol](../customization/mcp.md)。
 
 ## 下一步
 

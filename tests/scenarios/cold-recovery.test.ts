@@ -1,9 +1,9 @@
-import { readFile } from 'node:fs/promises';
+import { mkdir, readFile, realpath, rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import { createTestHome, until, writeKimiConfig, type TestHome } from '@moonshot-ai/testkit/fixtures';
+import { bashPathOf, createTestHome, until, writeKimiConfig, type TestHome } from '@moonshot-ai/testkit/fixtures';
 import { KapProcess, type KapSocket, type KapTurn } from '@moonshot-ai/testkit/kap';
-import { fakeModelConfig, say, type FakeModel } from '@moonshot-ai/testkit/model';
+import { bash, fakeModelConfig, held, say, type FakeModel } from '@moonshot-ai/testkit/model';
 import { modelFixtures, type ModelFixtures } from '@moonshot-ai/testkit/vitest';
 import { expect, test as base } from 'vitest';
 
@@ -86,5 +86,207 @@ test('[L0:kap.cold-recovery] continues sessions written by every released versio
     } finally {
       await home.remove();
     }
+  }
+});
+
+interface ProjectsFile {
+  readonly projects: Record<string, { root: string }>;
+  deleted_project_ids: string[];
+}
+
+interface RepositoryLayout {
+  readonly main: string;
+  readonly worktree: string;
+}
+
+async function writeConfig(home: TestHome, model: FakeModel): Promise<void> {
+  await writeKimiConfig(home.dataDir, { ...fakeModelConfig(model, { type: 'openai' }), defaultPermissionMode: 'yolo' });
+}
+
+async function editProjects(home: TestHome, edit: (projects: ProjectsFile) => void): Promise<void> {
+  const path = join(home.dataDir, 'projects.json');
+  const projects = JSON.parse(await readFile(path, 'utf8')) as ProjectsFile;
+  edit(projects);
+  await writeFile(path, JSON.stringify(projects));
+}
+
+async function repositoryWithWorktree(home: TestHome): Promise<RepositoryLayout> {
+  const main = join(home.workspace, 'app');
+  const worktree = join(home.workspace, 'app-fix');
+  const gitDir = join(main, '.git', 'worktrees', 'app-fix');
+  await mkdir(gitDir, { recursive: true });
+  await mkdir(join(worktree, 'src'), { recursive: true });
+  await writeFile(join(main, '.git', 'HEAD'), 'ref: refs/heads/main\n');
+  await writeFile(join(gitDir, 'HEAD'), 'ref: refs/heads/fix\n');
+  await writeFile(join(gitDir, 'commondir'), '../..\n');
+  await writeFile(join(gitDir, 'gitdir'), `${join(worktree, '.git')}\n`);
+  await writeFile(join(worktree, '.git'), `gitdir: ${gitDir}\n`);
+  return { main, worktree };
+}
+
+function pathKey(path: string): string {
+  return process.platform === 'win32' ? path.replaceAll('\\', '/').toLowerCase() : path;
+}
+
+async function toolOutputOf(model: FakeModel, request: number): Promise<string | undefined> {
+  return model.request(request).view.messages.find((message) => message.role === 'tool')?.text.replace(/^Wall time: \d+\.\d{3} seconds\n/, '');
+}
+
+test('keeps a released session without an environment cwd following the current root of its workspace', { timeout: CORPUS_TIMEOUT_MS }, async ({ model }) => {
+  const corpus = corpora.at(-1)!;
+  await model.listen();
+  const home = await createTestHome(`cold-recovery-follow-${corpus.version}`);
+  try {
+    await installCorpus(corpus, home);
+    await writeConfig(home, model);
+    const moved = join(home.workspace, 'moved');
+    await mkdir(moved);
+    await editProjects(home, (projects) => {
+      for (const project of Object.values(projects.projects)) project.root = moved;
+    });
+    const id = corpus.manifest.sessionId;
+    const server = await startServer(home);
+    try {
+      expect((await server.session(id)).cwd, 'cwd of the released session').toBe(moved);
+      model.script(bash('pwd -P'), say('Still at the root.'));
+      const before = model.requests('main').length;
+      await server.prompt(id, 'Where are you?');
+      await server.waitIdle(id);
+      expect(await toolOutputOf(model, before + 1)).toBe(`${bashPathOf(await realpath(moved))}\n`);
+      expect((await server.session(id)).cwd).toBe(moved);
+    } finally {
+      await server.close();
+    }
+    const state = join(home.dataDir, Object.keys(corpus.manifest.files).find((name) => name.endsWith('/state.json'))!);
+    expect(JSON.parse(await readFile(state, 'utf8')), 'state.json of the released session').not.toHaveProperty('environmentCwd');
+  } finally {
+    await home.remove();
+  }
+});
+
+test('continues a session at the root of a managed project in the new folder after the folder is renamed and made its primary', { timeout: CORPUS_TIMEOUT_MS }, async ({ model }) => {
+  await model.listen();
+  const home = await createTestHome('cold-recovery-renamed');
+  try {
+    await writeConfig(home, model);
+    const notes = join(home.workspace, 'notes');
+    const renamed = join(home.workspace, 'notes-renamed');
+    await mkdir(notes);
+    const first = await startServer(home);
+    let workspaceId: string;
+    let sessionId: string;
+    try {
+      workspaceId = (await first.rest.post<{ readonly id: string }>('/api/v1/workspaces', { root: notes })).id;
+      sessionId = (
+        await first.rest.post<{ readonly id: string }>('/api/v1/sessions', { workspace_id: workspaceId, metadata: { cwd: notes } })
+      ).id;
+      model.script(say('Written before the rename.'));
+      await first.prompt(sessionId, 'Hello.');
+      await first.waitIdle(sessionId);
+    } finally {
+      await first.close();
+    }
+    await rename(notes, renamed);
+    const second = await startServer(home);
+    try {
+      const workspace = `/api/v1/workspaces/${workspaceId}`;
+      await second.rest.patch(workspace, { additional_dirs: [renamed] });
+      await second.rest.post(`${workspace}/primary`, { path: renamed });
+      await second.rest.patch(workspace, { additional_dirs: [] });
+
+      const continued = await second.session(sessionId);
+      expect(continued).toMatchObject({ workspace_id: workspaceId });
+      expect(pathKey(continued.cwd)).toBe(pathKey(renamed));
+      expect((await subscribe(second, sessionId)).turns(sessionId)).toHaveLength(1);
+      model.script(bash('pwd -P'), say('Continued.'));
+      const before = model.requests('main').length;
+      await second.prompt(sessionId, 'Where are you?');
+      await second.waitIdle(sessionId);
+      expect(model.request(before).texts('assistant')).toContain('Written before the rename.');
+      expect(await toolOutputOf(model, before + 1)).toBe(`${bashPathOf(await realpath(renamed))}\n`);
+      expect(await second.turns(sessionId)).toHaveLength(2);
+    } finally {
+      await second.close();
+    }
+  } finally {
+    await home.remove();
+  }
+});
+
+test('keeps a pinned session in its directory after the server crashes mid-turn and restarts', { timeout: CORPUS_TIMEOUT_MS }, async ({ model }) => {
+  await model.listen();
+  const home = await createTestHome('cold-recovery-pinned');
+  try {
+    await writeConfig(home, model);
+    const { main, worktree } = await repositoryWithWorktree(home);
+    const pinnedDir = join(worktree, 'src');
+    const first = await startServer(home);
+    let created: Awaited<ReturnType<KapProcess['createSession']>>;
+    try {
+      const atMain = await first.createSession({ cwd: main });
+      created = await first.createSession({ cwd: pinnedDir });
+      expect(created).toMatchObject({ workspace_id: atMain.workspace_id, cwd: pinnedDir });
+      model.script(held('mid-turn', say('never finished')));
+      await first.prompt(created.id, 'Start something long.');
+      await model.hold('mid-turn').reached();
+    } finally {
+      await first.crash();
+    }
+    model.hold('mid-turn').release();
+    const second = await startServer(home);
+    try {
+      expect(second.pid).not.toBe(first.pid);
+      expect(await second.session(created.id)).toMatchObject({ workspace_id: created.workspace_id, cwd: pinnedDir });
+      model.script(bash('pwd -P'), say('Still pinned.'));
+      const before = model.requests('main').length;
+      await second.prompt(created.id, 'Where are you?');
+      await second.waitIdle(created.id);
+      expect(await toolOutputOf(model, before + 1)).toBe(`${bashPathOf(await realpath(pinnedDir))}\n`);
+      expect(await second.session(created.id)).toMatchObject({ cwd: pinnedDir });
+    } finally {
+      await second.close();
+    }
+  } finally {
+    await home.remove();
+  }
+});
+
+test('revives the repository project of a pinned worktree session whose project was deleted from the catalog', { timeout: CORPUS_TIMEOUT_MS }, async ({ model }) => {
+  await model.listen();
+  const home = await createTestHome('cold-recovery-revive');
+  try {
+    await writeConfig(home, model);
+    const { main, worktree } = await repositoryWithWorktree(home);
+    const first = await startServer(home);
+    let created: Awaited<ReturnType<KapProcess['createSession']>>;
+    try {
+      created = await first.createSession({ cwd: worktree });
+    } finally {
+      await first.close();
+    }
+    await editProjects(home, (projects) => {
+      delete projects.projects[created.workspace_id];
+      projects.deleted_project_ids.push(created.workspace_id);
+    });
+    const second = await startServer(home);
+    try {
+      expect(await second.session(created.id)).toMatchObject({ workspace_id: created.workspace_id, cwd: worktree });
+      model.script(bash('pwd -P'), say('Revived.'));
+      const before = model.requests('main').length;
+      await second.prompt(created.id, 'Where are you?');
+      await second.waitIdle(created.id);
+      expect(await toolOutputOf(model, before + 1)).toBe(`${bashPathOf(await realpath(worktree))}\n`);
+      const workspaces = await second.rest.get<{ items: { id: string; root: string }[] }>('/api/v1/workspaces');
+      const repositoryDirs = [main, worktree].map(pathKey);
+      expect(
+        workspaces.items
+          .filter((item) => repositoryDirs.includes(pathKey(item.root)))
+          .map((item) => ({ id: item.id, root: pathKey(item.root) })),
+      ).toEqual([{ id: created.workspace_id, root: pathKey(main) }]);
+    } finally {
+      await second.close();
+    }
+  } finally {
+    await home.remove();
   }
 });

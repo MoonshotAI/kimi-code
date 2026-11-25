@@ -24,6 +24,7 @@ export {
   think,
   thinkSigned,
   unitsOf,
+  withResponseId,
   withUsage,
   type CallOptions,
   type HttpErrorOptions,

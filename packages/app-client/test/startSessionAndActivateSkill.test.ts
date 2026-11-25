@@ -291,7 +291,7 @@ describe('startSessionAndActivateSkill', () => {
     expect(store.workspaces).toEqual([singleRoot, multiRoot]);
   });
 
-  it('keeps the session-only project id without registering it again', async () => {
+  it('creates in a project known only from its sessions by id, leaving the directory to the server', async () => {
     const { api, ws } = createWorkspaceState();
     const store = workspacesStore();
     const id = 'wd_legacy_123456789abc';
@@ -309,7 +309,7 @@ describe('startSessionAndActivateSkill', () => {
 
     expect(started).toEqual({ sessionId: 'session-1', promptRejected: false });
     expect(api.addWorkspace).not.toHaveBeenCalled();
-    expect(api.createSession.mock.calls[0]?.[0]).toEqual({ workspaceId: id, cwd: '/repo/legacy' });
+    expect(api.createSession.mock.calls[0]?.[0]).toEqual({ workspaceId: id });
   });
 
   it('passes an immutable composer snapshot through new-session skill activation', async () => {

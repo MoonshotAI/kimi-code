@@ -25,7 +25,7 @@ playwright.config.ts               一个面一个 project，另有两个跑法�
 - Web 跑的是 CLI 自带的 Web 界面。先 `pnpm sync:web` 把界面构建出来，改了 `apps/desktop/src/renderer` 或它依赖的 `packages/` 之后要重跑；第一次还要装浏览器：`pnpm --filter @moonshot-ai/e2e exec playwright install chromium`。然后 `pnpm --filter @moonshot-ai/e2e exec playwright test --project=web`。CLI 本身和 TUI 一样，默认跑源码，设 `TESTKIT_CLI_BUILD=dist` 跑构建产物。`kimi web` 和用户一样跑在一个真终端里（`surfaces/terminal-process.ts`，`node-pty`），终端输出渲染到 xterm.js 里，地址从渲染出的屏幕按行读（Windows 的 ConPTY 用光标定位而不是换行输出横幅）；结束时驱动在这个终端里按 Ctrl+C，要求它以 0 退出。
 - Desktop 的窗口和 Web 的浏览器默认都不显示。想看着跑，设 `E2E_HEADED=1`。
 - 工作区必须在 git 工作树之外。`TMPDIR` 如果在某个仓库里，夹具会直接报错：POSIX 上，工作区在 git 工作树里时，Edit 和 Write 会被自动批准，审批场景会挂住。
-- CI：`.github/workflows/e2e.yml`，每个 PR 都在 Linux 上跑，作业名带 optional；Desktop 和 Web 各分成两片（`--shard`），各占一个作业；Desktop 作业跑在 xvfb 的虚拟显示器里，Web 作业先装 Chromium。Windows 上四个面各一个作业，名字是 `Windows <面> (manual)`，现在只在手动触发（`workflow_dispatch`）时跑，四个面都稳定通过之后再放到 PR 上。仓库目前没有必过检查，所以它红了不挡合并。
+- CI：`.github/workflows/e2e.yml`，在 Linux 上跑，作业名带 optional。每次合并到 main 都跑；PR 上跳过 draft，只在打了 `e2e` 标签，或改动了 `tests/e2e/`、`packages/testkit/` 或这个工作流时跑。改了产品代码、想在合并前看 E2E 结果，就给 PR 打 `e2e` 标签。Desktop 和 Web 各分成两片（`--shard`），各占一个作业；Desktop 作业跑在 xvfb 的虚拟显示器里，Web 作业先装 Chromium。Windows 上四个面各一个作业，名字是 `Windows <面> (manual)`，现在只在手动触发（`workflow_dispatch`）时跑，四个面都稳定通过之后再放到 PR 上。仓库目前没有必过检查，所以它红了不挡合并。
 - Windows 上 Desktop 收尾时只能确认主进程退出了，查不到它的子进程：`process.kill(-pid, 0)` 这种按进程组的查法在 Windows 上没有。
 
 ## 写场景
@@ -54,6 +54,7 @@ scenario('reads one file and edits another after approval', { workspace: { 'a.tx
 | 某个面不适用，写 `except: { 面: '理由' }`；只在某些面跑，写 `onlyOn` 加 `reason`。理由不能为空，不适用的面在报告里显示为跳过并带着理由 | `scenario()` 登记用例时检查，理由为空时列用例那一步就失败 |
 | 跑法（`tui-kitty`、`acp-bare`）下某个用例不适用，写 `exceptVariants: { 'bare-editor': '理由' }`。只用在两种情形：协议或终端本来就提供不了这项能力；或者是已经记录的产品缺口，负责人在 PR 里同意先排除，理由开头写明 `Product gap` | `scenario()` 登记时检查理由不为空 |
 | 某个动作在某个平台上暂时查不了（动作表里的 `unavailableOn`，例如 Windows 上的 `expectTerminalRestored`），用到它的场景写 `exceptPlatforms: { win32: '理由' }`，这个平台上整条场景显示为不适用。没写就跑到这个动作时报错。自测按动作表自动带上。`unavailableOn` 只用于驱动还做不到的检查，不能用来绕开产品在某个平台上的 bug | 场景会话的分发；`scenario()` 登记时检查理由不为空；在其他平台上跑时，收尾检查要求场景确实用到了一个在被排除平台上不可用的动作 |
+| 常规场景预先信任工作区。首次打开工作区的 TUI 场景可设 `workspaceTrust: 'trust'` 或 `workspaceTrust: 'exit'`。驱动通过终端选择信任并继续，或按 Esc 返回 shell。重启沿用同一个 home，由产品读取已记录的信任状态 | 信任场景检查模型收到的项目指令和重启后的会话。退出场景检查终端模式和模型请求 |
 | 场景结束时产品必须空闲，产品要能正常退出，除了假模型和本机不能连别的地址 | 收尾检查 |
 | 改场景断言就是改产品行为，PR 里要写明为什么改 | CODEOWNERS 评审 |
 | 提示词用一行文字，可以是中文，不含控制字符，不以 `/`、`!`、`@` 开头，不以反斜杠结尾 | `send()`、`queue()`、`steer()` 的运行时检查 |
@@ -107,7 +108,7 @@ scenario('reads one file and edits another after approval', { workspace: { 'a.tx
 | 每个动作在每个面上都要有正例和反例。自测写成 `selfTest('动作', { positive, negative })`，放在以动作命名的文件里；要加动作，先改 `VERBS`。某个用例要用只在部分面上才有的动作（例如 `waitIdle` 的自测里用 `queue`），写成 `selfTestCase({ except: … }, run)`，`run` 拿到的 `product` 按这个用例跑的面收窄 | `selfTest()` 登记时检查每个面都有正反例；`self-test/coverage.spec.ts` 检查每个动作都有自测文件 |
 | 动作的含义由自测固定，改自测就等于改含义 | CODEOWNERS 评审 |
 | 产品不连真网络：会去 CDN 下载的工具和 Desktop 启动时要取的模型目录，在 `surfaces/offline.ts` 里桩成 404，其余对外连接由 testkit 的网络守卫记下 | 收尾检查 |
-| 产品进程的环境一律用 `surfaces/environment.ts` 的 `productEnv()`：它在 `kimiCliEnv()` 的基础上去掉 testkit 给单元测试关掉的会话索引读模型和搜索 worker，让产品按用户的默认配置跑。工作区信任仍由 `kimiCliEnv()` 预先设好（`KIMI_CODE_TRUST_WORKSPACE`） | 评审 |
+| 产品进程的环境一律用 `surfaces/environment.ts` 的 `productEnv()`：它在 `kimiCliEnv()` 的基础上去掉 testkit 给单元测试关掉的会话索引读模型和搜索 worker，让产品按用户的默认配置跑。工作区信任仍由 `kimiCliEnv()` 预先设好（`KIMI_CODE_TRUST_WORKSPACE`），设了 `workspaceTrust` 的场景去掉这个变量 | 评审 |
 | Desktop 和 Web 的页面操作都在 `surfaces/renderer.ts` 里，两个面共用。挂着的审批只认按钮可见而且可点的审批卡：用户点了之后、产品处理完之前，卡片还在但按钮是禁用的，这时不算有审批要回答。证据只认用户看得见的内容：收起的工具分组和收起的卡片详情（页面上带 `inert`）里的东西不算，所以查工具卡片之前先点开收起的分组。只有一处例外：区分 rejected 和 failed 时，拒绝说明读自卡片的详情，不要求详情是展开的 | 驱动自测；评审 |
 | Desktop 和 Web 上，工具卡片靠三样认出来：工具标签（Bash 的标签是 `Run`）、目标、状态。文件类工具的目标对的是文件按钮上的完整路径，不是只对文件名；Bash 的目标对的是卡片头上的命令，命令输出里的文字不算。回复只认 Markdown 渲染出来的那一块，思考块和工具卡片不算。一块内容要么是回复、要么是卡片：回复里写了工具标签和目标（例如加粗的 `Run` 后面跟一段命令，或者被渲染成文件链接的文件名）不算工具卡片 | 驱动自测 |
 | Desktop 用启动参数 `--workspace=` 打开工作区，引导向导在界面上点 `Skip` 跳过。网络分三路：主进程里 Node 发的请求由 testkit 的网络守卫记下；渲染进程的请求由驱动记下（只看不拦）；域名解析用启动参数关掉。有一路记不到：主进程经 Electron 的 `net` 发的请求走 Chromium 的网络栈，只会因为域名解析被关而失败，不会让用例变红 | 评审 |

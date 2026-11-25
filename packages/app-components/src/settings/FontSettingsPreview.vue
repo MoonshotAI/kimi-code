@@ -107,9 +107,9 @@ const landing = [
   line-height: var(--leading-prose);
   user-select: text;
 }
+.font-preview:focus,
 .font-preview:focus-visible {
   outline: none;
-  box-shadow: var(--p-focus-ring);
 }
 .font-preview strong {
   font-weight: var(--weight-medium);
