@@ -1722,7 +1722,20 @@ key = "${titleOAuthRef.key}"
       });
       unsubscribe();
 
-      await client.setModel({ sessionId: 'ses_resume_removed_model', model: 'acme/new' });
+      const session = new Session({
+        id: summary.id,
+        workDir: summary.workDir,
+        summary,
+        rpc: client,
+      });
+      expect(session.getResumeState()?.warning).toBe(summary.warning);
+      await expect(session.setModel('acme/missing')).rejects.toMatchObject({
+        code: ErrorCodes.CONFIG_INVALID,
+      });
+      expect(session.getResumeState()?.warning).toBe(summary.warning);
+
+      await session.setModel('acme/new');
+      expect(session.getResumeState()?.warning).toBeUndefined();
       await expect(client.getStatus({ sessionId: 'ses_resume_removed_model' })).resolves.toMatchObject({
         model: 'acme/new',
         maxContextTokens: 200_000,

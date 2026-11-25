@@ -1584,14 +1584,14 @@ export class KimiTUI {
     preExtracted?: ExtractionResult,
     delivery: FollowUpDelivery = 'default',
   ): Promise<void> {
-    if (this.btwPanelController.sendUserInput(text)) return;
-    if (this.state.appState.model.trim().length === 0) {
-      this.showError(LLM_NOT_SET_MESSAGE);
-      return;
-    }
     const unavailableModel = unavailableSessionModelError(this);
     if (unavailableModel !== undefined) {
       this.showError(unavailableModel);
+      return;
+    }
+    if (this.btwPanelController.sendUserInput(text)) return;
+    if (this.state.appState.model.trim().length === 0) {
+      this.showError(LLM_NOT_SET_MESSAGE);
       return;
     }
     let extraction: ReturnType<typeof extractMediaAttachments>;
@@ -1662,14 +1662,14 @@ export class KimiTUI {
     preExtracted?: ExtractionResult,
     delivery: FollowUpDelivery = 'default',
   ): Promise<void> {
-    if (this.btwPanelController.sendUserInput(text, activations)) return;
-    if (this.state.appState.model.trim().length === 0) {
-      this.showError(LLM_NOT_SET_MESSAGE);
-      return;
-    }
     const unavailableModel = unavailableSessionModelError(this);
     if (unavailableModel !== undefined) {
       this.showError(unavailableModel);
+      return;
+    }
+    if (this.btwPanelController.sendUserInput(text, activations)) return;
+    if (this.state.appState.model.trim().length === 0) {
+      this.showError(LLM_NOT_SET_MESSAGE);
       return;
     }
     const originatingSession = this.session;

@@ -1309,6 +1309,37 @@ describe('KimiTUI startup', () => {
     );
   });
 
+  it('does not show the unavailable model warning when -m overrides the model on startup resume', async () => {
+    let warning: string | undefined =
+      'Session model "removed-model" is not configured in config.toml. Use /model to select an available model.';
+    const session = makeSession({
+      id: 'ses-target',
+      listMcpServers: vi.fn(async () => []),
+      setModel: vi.fn(async () => {
+        warning = undefined;
+      }),
+      getResumeState: vi.fn(() => Object.assign(createResumeState(), { warning })),
+    });
+    const harness = makeHarness(session, {
+      listSessions: vi.fn(async () => [{ id: 'ses-target', workDir: '/tmp/proj-a' }]),
+    });
+    const driver = makeDriver(harness, makeStartupInput({ session: 'ses-target', model: 'k2' }));
+
+    await expect(driver.init()).resolves.toBe(true);
+    await (
+      driver as unknown as {
+        finishStartup(shouldReplayHistory: boolean): Promise<void>;
+      }
+    ).finishStartup(true);
+
+    expect(session.setModel).toHaveBeenCalledWith('k2');
+    const transcript = driver.state.transcriptContainer
+      .render(120)
+      .join('\n')
+      .replaceAll(/\u001B\[[0-9;]*m/g, '');
+    expect(transcript).not.toContain('is not configured in config.toml');
+  });
+
   it('applies --auto permission when resuming an explicit session', async () => {
     let permission = 'manual';
     const session = makeSession({

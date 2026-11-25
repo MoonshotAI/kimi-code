@@ -11,6 +11,7 @@ import { LLM_NOT_SET_MESSAGE, NO_ACTIVE_SESSION_MESSAGE } from '../constant/kimi
 import { isAbortError } from '../utils/errors';
 import { formatErrorMessage } from '../utils/event-payload';
 import { buildExportMarkdown } from '../utils/export-markdown';
+import { unavailableSessionModelError } from '../utils/model-switch';
 import { sessionWorkDir } from '../utils/session-work-dir';
 import type { SlashCommandHost } from './dispatch';
 
@@ -163,6 +164,11 @@ export async function handleInitCommand(host: SlashCommandHost): Promise<void> {
   const session = host.session;
   if (host.state.appState.model.trim().length === 0 || session === undefined) {
     host.showError(LLM_NOT_SET_MESSAGE);
+    return;
+  }
+  const unavailableModel = unavailableSessionModelError(host);
+  if (unavailableModel !== undefined) {
+    host.showError(unavailableModel);
     return;
   }
 
