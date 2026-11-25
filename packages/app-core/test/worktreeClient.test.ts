@@ -300,8 +300,12 @@ describe('worktree routes', () => {
     expect(found).toMatchObject({ repoRoot: '/repo', branch: 'kimi/a', sessionCount: 2, workspace: { id: 'ws-1', root: '/repo' } });
     expect(lastRequest()).toMatchObject({ url: 'http://daemon.test/api/v1/worktrees:lookup', body: { path: '/wt/a' } });
 
-    respond({ worktree: null });
+    respond({ worktree: null, enclosing_repo_root: null });
     expect(await api.lookupWorktree('/elsewhere')).toBeNull();
+
+    respond({ worktree: null, enclosing_repo_root: '/repo' });
+    expect(await api.enclosingRepoRoot('/repo/app')).toBe('/repo');
+    expect(lastRequest()).toMatchObject({ url: 'http://daemon.test/api/v1/worktrees:lookup', body: { path: '/repo/app' } });
   });
 });
 

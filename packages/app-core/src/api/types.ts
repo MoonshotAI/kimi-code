@@ -1396,6 +1396,7 @@ export interface KimiWebApi {
   inspectWorktrees(paths: string[]): Promise<WorktreeInspection>;
   removeWorktree(input: RemoveWorktreeInput): Promise<RemoveWorktreeResult>;
   lookupWorktree(path: string): Promise<WorktreeLookup | null>;
+  enclosingRepoRoot(path: string): Promise<string | null>;
   browseFs(path: string | undefined, signal?: AbortSignal): Promise<FsBrowseResult>;
   listHosts(): Promise<AppHost[]>;
   putHost(id: string, definition: AppHostDefinition): Promise<void>;

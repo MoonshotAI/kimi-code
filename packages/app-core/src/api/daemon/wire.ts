@@ -209,6 +209,7 @@ export interface WireLookupWorktreeResponse {
     workspace?: WireWorkspace;
     session_count: number;
   } | null;
+  enclosing_repo_root: string | null;
 }
 
 export interface WireDeleteSessionResponse {

@@ -46775,7 +46775,7 @@
     },
     "/api/v1/worktrees:lookup": {
       "post": {
-        "description": "Tell whether a directory is a linked git worktree, and of which repository, branch and registered workspace. worktree is null for anything else",
+        "description": "Tell whether a directory is a linked git worktree, and of which repository, branch and registered workspace. worktree is null for anything else. enclosing_repo_root is the top folder of the git repository the directory sits in when the directory is below that folder, and null otherwise",
         "requestBody": {
           "content": {
             "application/json": {
@@ -46813,6 +46813,11 @@
                         "data": {
                           "additionalProperties": false,
                           "properties": {
+                            "enclosing_repo_root": {
+                              "minLength": 1,
+                              "nullable": true,
+                              "type": "string"
+                            },
                             "worktree": {
                               "additionalProperties": false,
                               "nullable": true,
@@ -46888,7 +46893,8 @@
                             }
                           },
                           "required": [
-                            "worktree"
+                            "worktree",
+                            "enclosing_repo_root"
                           ],
                           "type": "object"
                         },

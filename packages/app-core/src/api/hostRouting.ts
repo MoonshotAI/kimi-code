@@ -117,6 +117,7 @@ const ROUTES = {
   inspectWorktrees: 'local',
   removeWorktree: 'local',
   lookupWorktree: 'local',
+  enclosingRepoRoot: 'local',
   browseFs: 'local',
   mkdirFs: 'local',
   listHosts: 'custom',

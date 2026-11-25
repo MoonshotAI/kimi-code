@@ -286,4 +286,18 @@ describe('server-v2 worktree inventory', () => {
       expect(lookup.data.worktree, other).toBeNull();
     }
   });
+
+  it('names the repository a subfolder sits in and nothing for a repository top folder', async () => {
+    const repo = await createRepo('lookup-enclosing');
+    const nested = join(repo, 'packages', 'app');
+    await mkdir(nested, { recursive: true });
+
+    const lookupOf = async (path: string) =>
+      (await post<{ enclosing_repo_root: string | null }>('/worktrees:lookup', { path })).data.enclosing_repo_root;
+
+    expect(await lookupOf(nested)).toBe(repo);
+    expect(await lookupOf(repo)).toBeNull();
+    expect(await lookupOf(fixture.scratch)).toBeNull();
+    expect(await lookupOf(join(fixture.scratch, 'nowhere'))).toBeNull();
+  });
 });

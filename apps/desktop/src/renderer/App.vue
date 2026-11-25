@@ -2770,6 +2770,7 @@ function openPr(url: string): void {
       :hosts="remoteHosts"
       :manage-hosts="() => openHostSettings(undefined, { addIfEmpty: true })"
       :import-project-config="importProjectConfigDirs"
+      :enclosing-repo-root="(dir) => getKimiWebApi().enclosingRepoRoot(dir)"
       :busy="workspaceDialogBusy"
       :primary-immutable="workspaceDialog.mode === 'edit' && workspaceDialog.primaryImmutable"
       @submit="onWorkspaceDialogSubmit"

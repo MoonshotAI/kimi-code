@@ -246,11 +246,14 @@ export function registerWorktreeRoutes(
         [ErrorCode.VALIDATION_FAILED]: {},
       },
       description:
-        'Tell whether a directory is a linked git worktree, and of which repository, branch and registered workspace. worktree is null for anything else',
+        'Tell whether a directory is a linked git worktree, and of which repository, branch and registered workspace. worktree is null for anything else. enclosing_repo_root is the top folder of the git repository the directory sits in when the directory is below that folder, and null otherwise',
       tags: ['worktrees'],
     },
     async (req, reply) => {
-      const found = await worktrees.inventory.lookup(req.body.path);
+      const [found, enclosing] = await Promise.all([
+        worktrees.inventory.lookup(req.body.path),
+        worktrees.inventory.enclosingRepoRoot(req.body.path),
+      ]);
       reply.send(
         okEnvelope(
           {
@@ -266,6 +269,7 @@ export function registerWorktreeRoutes(
                         : await toWireWorkspace(core, found.workspace),
                     session_count: found.sessionCount,
                   },
+            enclosing_repo_root: enclosing ?? null,
           },
           req.id,
         ),

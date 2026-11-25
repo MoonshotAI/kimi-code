@@ -71,6 +71,7 @@ export const lookupWorktreeResponseSchema = z.object({
       session_count: z.number().int().nonnegative(),
     })
     .nullable(),
+  enclosing_repo_root: z.string().min(1).nullable(),
 });
 export type LookupWorktreeResponse = z.infer<typeof lookupWorktreeResponseSchema>;
 

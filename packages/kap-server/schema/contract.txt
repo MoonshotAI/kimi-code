@@ -3791,6 +3791,7 @@ POST /api/v1/worktrees:lookup request.path: string minLength=1
 POST /api/v1/worktrees:lookup request: object
 POST /api/v1/worktrees:lookup response 200: oneOf
 POST /api/v1/worktrees:lookup response 200<code=0>.code: enum 0
+POST /api/v1/worktrees:lookup response 200<code=0>.data.enclosing_repo_root: string minLength=1 nullable
 POST /api/v1/worktrees:lookup response 200<code=0>.data.worktree.branch: string minLength=1 optional
 POST /api/v1/worktrees:lookup response 200<code=0>.data.worktree.repo_root: string minLength=1
 POST /api/v1/worktrees:lookup response 200<code=0>.data.worktree.session_count: integer minimum=0 maximum=9007199254740991

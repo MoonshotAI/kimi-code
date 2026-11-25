@@ -22,6 +22,7 @@ const props = withDefaults(
     hosts?: AppHost[];
     manageHosts?: () => void;
     importProjectConfig?: (primary: string, hostId?: string) => Promise<string[] | undefined>;
+    enclosingRepoRoot?: (dir: string) => Promise<string | null>;
     busy?: boolean;
     primaryImmutable?: boolean;
   }>(),
@@ -105,6 +106,23 @@ const sourceOptions = computed(() => [
     trailingIcon: 'arrow-up-right',
   }]),
 ]);
+const enclosingRepoRoots = ref<Record<string, string | null>>({});
+const primaryEnclosingRepo = computed(() => {
+  const primary = dirs.value[0];
+  return primary === undefined || hostId.value !== undefined ? null : (enclosingRepoRoots.value[primary] ?? null);
+});
+
+watch(
+  [() => dirs.value[0], hostId],
+  async ([primary, host]) => {
+    const lookup = props.enclosingRepoRoot;
+    if (primary === undefined || host !== undefined || lookup === undefined || primary in enclosingRepoRoots.value) return;
+    const found = await lookup(primary).catch(() => null);
+    enclosingRepoRoots.value = { ...enclosingRepoRoots.value, [primary]: found };
+  },
+  { immediate: true },
+);
+
 const showSourceField = computed(() => props.mode === 'create' && (remoteOptions.value.length > 0 || props.manageHosts !== undefined));
 const canImportProjectConfig = computed(() => props.importProjectConfig !== undefined && dirs.value.length > 0 && !selectedHostBlocked.value);
 const submitHint = computed(() => {
@@ -335,6 +353,12 @@ function onNameKeydown(e: KeyboardEvent): void {
                 </Tooltip>
                 <span v-if="hostName" class="we-dir-host" :title="hostName">{{ hostName }}</span>
               </div>
+              <Tooltip v-if="i === 0 && primaryEnclosingRepo" :text="primaryEnclosingRepo">
+                <div class="we-dir-warning" data-dir-warning="subfolder" tabindex="0">
+                  <Icon name="alert-triangle" size="sm" />
+                  <span>{{ t('workspace.dialog.subfolderOfRepo', { repo: basename(primaryEnclosingRepo) }) }}</span>
+                </div>
+              </Tooltip>
             </div>
             <Badge v-if="i === 0" class="we-dir-badge" size="sm" variant="outline">
               {{ t('workspace.dialog.primaryBadge') }}
@@ -388,6 +412,18 @@ function onNameKeydown(e: KeyboardEvent): void {
 </template>
 
 <style scoped>
+.we-dir-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-1);
+  color: var(--color-warning);
+  font-size: var(--text-xs);
+  line-height: var(--leading-normal);
+}
+.we-dir-warning > :deep(svg) {
+  flex: none;
+  margin-top: 2px;
+}
 .we-dir-host {
   min-width: 0;
   max-width: 120px;

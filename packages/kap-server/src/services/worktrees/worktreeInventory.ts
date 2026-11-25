@@ -354,6 +354,14 @@ export class WorktreeInventory {
       sessionCount: ((await this.sessionsByDirectory()).get(key) ?? []).length,
     };
   }
+
+  async enclosingRepoRoot(path: string): Promise<string | undefined> {
+    if (!(await isDirectory(path))) return undefined;
+    const top = await gitText(path, ['rev-parse', '--show-toplevel']);
+    if (top === undefined || top.length === 0) return undefined;
+    const root = await canonical(top);
+    return root === (await canonical(path)) ? undefined : root;
+  }
 }
 
 function removeFailed(

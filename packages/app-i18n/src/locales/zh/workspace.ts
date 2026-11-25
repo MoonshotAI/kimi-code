@@ -94,6 +94,7 @@ export default {
     importProjectConfigEmpty: '该项目 local.toml 中没有可导入的目录',
     importProjectConfigFailed: '读取项目配置失败',
     pickFailed: '目录选择失败，请重试',
+    subfolderOfRepo: '位于 Git 仓库 {repo} 内，工作树会话需要选择仓库的顶层文件夹',
     primaryBadge: '主目录',
     removeDir: '移除',
     setPrimary: '设为主目录',

@@ -1749,6 +1749,11 @@ export class DaemonKimiWebApi implements KimiWebApi {
     return toWorktreeLookup(data);
   }
 
+  async enclosingRepoRoot(path: string): Promise<string | null> {
+    const data = await this.http.post<WireLookupWorktreeResponse>('/worktrees:lookup', { path });
+    return data.enclosing_repo_root;
+  }
+
   async browseFs(path: string | undefined, signal?: AbortSignal): Promise<FsBrowseResult> {
     const data = await this.http.get<WireFsBrowseResult>('/fs:browse', { path }, { signal });
     return {
