@@ -203,6 +203,32 @@ describe('openai responses', () => {
     model.verify();
   });
 
+  it('keeps a replayed tool call and the text after it in one assistant turn', async () => {
+    const model = fakeModel();
+    model.lane('main').script(reply(call('Bash', { command: 'ls' }), say('working')), say('done'));
+    const client = responsesClient(model);
+    const first = await client.responses.create({ ...ask, input: [{ role: 'user', content: 'list files' }] });
+    const callItem = first.output.find((item) => item.type === 'function_call');
+    if (callItem?.type !== 'function_call') throw new Error('expected a function call in the first reply');
+
+    const replay = first.output.flatMap((item): OpenAI.Responses.ResponseInputItem[] => {
+      if (item.type === 'function_call') return [{ type: 'function_call', call_id: item.call_id, name: item.name, arguments: item.arguments }];
+      if (item.type === 'message') return [{ role: 'assistant', content: item.content.map((part) => (part.type === 'output_text' ? part.text : '')).join('') }];
+      return [];
+    });
+    expect(first.output.map((item) => item.type)).toEqual(['function_call', 'message']);
+
+    await client.responses.create({
+      ...ask,
+      input: [{ role: 'user', content: 'list files' }, ...replay, { type: 'function_call_output', call_id: callItem.call_id, output: 'a.txt' }],
+    });
+
+    const replayed = model.request(1).view.messages;
+    expect(replayed.map((message) => message.role)).toEqual(['user', 'assistant', 'tool']);
+    expect(replayed[1]).toMatchObject({ text: 'working', calls: [{ id: callItem.call_id, name: 'Bash' }] });
+    model.verify();
+  });
+
   it('sends a mid-stream error event that the SDK hands to the caller', async () => {
     const model = fakeModel();
     model.lane('main').script(streamError(say('partial'), { message: 'upstream broke', code: 'server_error' }));

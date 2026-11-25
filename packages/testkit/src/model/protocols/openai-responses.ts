@@ -285,12 +285,8 @@ function parseRequest(body: unknown): RequestView {
           pushSystem(text, parts);
         } else if (role === 'assistant') {
           const target = assistant();
-          if (target.calls.length > 0) {
-            messages.push({ role: 'assistant', text, parts, calls: [] });
-          } else {
-            target.text += text;
-            target.parts.push(...parts);
-          }
+          target.text += text;
+          target.parts.push(...parts);
         } else {
           messages.push({ role: 'user', text, parts, calls: [] });
         }
