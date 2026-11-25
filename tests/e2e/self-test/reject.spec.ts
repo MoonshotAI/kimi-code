@@ -1,6 +1,9 @@
-import { edit, read, say } from '@moonshot-ai/testkit/model';
+import { askUserQuestion, edit, read, say } from '@moonshot-ai/testkit/model';
 
 import { expect, selfTest } from '../support/scenario';
+
+const QUESTION = 'Which database should we use?';
+const ASK = askUserQuestion({ questions: [{ question: QUESTION, header: 'Database', options: [{ label: 'Postgres' }, { label: 'SQLite' }], multi_select: false }] });
 
 selfTest('reject', {
   positive: {
@@ -18,6 +21,16 @@ selfTest('reject', {
     },
   },
   negative: {
+    'fails at once when a question is pending, not an approval': {
+      run: async ({ product, model }) => {
+        model.script(ASK, say('Noted the choice.'));
+        await product.send('Help me choose a database.');
+        await expect(product.reject()).rejects.toThrow('a question is pending');
+        await product.answer('SQLite');
+        await product.waitIdle();
+        await product.expectReply('Noted the choice.');
+      },
+    },
     'fails when the turn ends without asking for approval': {
       workspace: { 'a.txt': 'hello\n' },
       run: async ({ product, model }) => {

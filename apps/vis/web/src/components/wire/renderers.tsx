@@ -1278,9 +1278,12 @@ export const WIRE_RENDERERS: RendererMap = {
             {r.reason}
           </Pill>
           {r.durationMs !== undefined ? <Dim>{r.durationMs}ms</Dim> : null}
-          {r.loopEnd !== undefined ? (
-            <Pill tone={r.loopEnd.outcome === 'idle' ? 'success' : 'warning'} variant="soft">
-              loop {r.loopEnd.outcome}
+          {r.continuation !== undefined ? (
+            <Pill
+              tone={r.continuation === 'none' ? 'success' : r.continuation === 'background' ? 'warning' : 'neutral'}
+              variant="soft"
+            >
+              continuation {r.continuation}
             </Pill>
           ) : null}
           {r.stopReason !== undefined ? (

@@ -10,7 +10,7 @@ export class TodoFeature extends Feature {
   constructor() {
     super();
     this.contributeAgentService(IAgentTodoService, AgentTodoService);
-    this.contributeTool(ITodoListTool, TodoListTool, { name: 'TodoList', domain: 'todo' });
+    this.contributeTool(ITodoListTool, TodoListTool, { name: 'TodoList', domain: 'todo', userConfigurable: true });
   }
 }
 

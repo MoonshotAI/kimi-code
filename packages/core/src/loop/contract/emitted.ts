@@ -19,7 +19,7 @@ export interface LlmMessageTiming {
   readonly llmStreamDurationMs?: number;
 }
 
-export type LoopEndOutcome = 'drained' | 'idle';
+export type TurnContinuation = 'turn' | 'background' | 'none';
 
 export type ToolEvent =
   | { type: 'tool.started'; taskId?: string; turnId: number; step: number; toolCall: ToolCall; args?: unknown; display?: ToolStartDisplay }
@@ -84,7 +84,7 @@ export type LoopEmitted =
       timing?: LlmTiming;
       llmTiming?: LlmMessageTiming;
     }
-  | { type: 'turn.ended'; turnId: number; outcome: TurnOutcome; durationMs?: number; stopReason?: string; requestId?: string; loopEnd?: { outcome: LoopEndOutcome } }
+  | { type: 'turn.ended'; turnId: number; outcome: TurnOutcome; durationMs?: number; stopReason?: string; requestId?: string; continuation?: TurnContinuation }
   | { type: 'context.settled'; messages: Message[]; reason?: string }
   | { type: 'context.rejected'; messages: Message[]; reason?: string }
   | { type: 'system_prompt.settled'; systemPrompt: string }

@@ -25,7 +25,7 @@ export const TOWER_FLAG_ID = 'tower';
 export type TowerEnterFailure =
   | {
       readonly entered: false;
-      readonly reason: 'not-main-agent' | 'experiment-off' | 'feature-not-assembled';
+      readonly reason: 'not-main-agent' | 'experiment-off' | 'feature-not-assembled' | 'tools-disabled';
     }
   | {
       readonly entered: false;
@@ -46,6 +46,8 @@ export function towerEnterFailureMessage(failure: TowerEnterFailure): string {
       return 'the tower experiment is disabled; enable it with KIMI_CODE_EXPERIMENTAL_TOWER=1 or `[experimental] tower = true` in config.toml';
     case 'feature-not-assembled':
       return 'the tower feature is not assembled in this process; a restart is required';
+    case 'tools-disabled':
+      return 'tower mode requires the complete Tower tool set; enable all Tower tools before entering tower mode';
     case 'owned-by-live-session': {
       const owner =
         failure.ownerTitle === undefined
@@ -60,6 +62,7 @@ export interface IAgentTowerService {
   readonly _serviceBrand: undefined;
 
   readonly isActive: boolean;
+  readonly toolsAvailable: boolean;
   enter(base?: string): Promise<TowerEnterResult>;
   exit(reason?: TowerExitReason): Promise<void>;
   isBranchLeased(branch: string): boolean;

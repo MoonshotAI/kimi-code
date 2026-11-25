@@ -6,7 +6,7 @@ import {
 import { z } from 'zod';
 
 import { errEnvelope, okEnvelope } from '../envelope';
-import { defineRoute } from '../middleware/defineRoute';
+import { defineRoute, type GetRouteHost } from '../middleware/defineRoute';
 import { ErrorCode } from '../protocol/error-codes';
 import {
   fileHistoryChangesQuerySchema,
@@ -20,18 +20,7 @@ const sessionIdParamSchema = z.object({
   session_id: z.string().min(1),
 });
 
-interface FileHistoryRouteHost {
-  get(
-    path: string,
-    options: { preHandler: unknown[]; schema?: Record<string, unknown> } | undefined,
-    handler: (
-      req: { id: string; query: unknown; params: unknown },
-      reply: { send(payload: unknown): unknown },
-    ) => Promise<void> | void,
-  ): unknown;
-}
-
-export function registerFileHistoryRoutes(app: FileHistoryRouteHost, core: Scope): void {
+export function registerFileHistoryRoutes(app: GetRouteHost, core: Scope): void {
   const changesRoute = defineRoute(
     {
       method: 'GET',
@@ -71,7 +60,7 @@ export function registerFileHistoryRoutes(app: FileHistoryRouteHost, core: Scope
   app.get(
     changesRoute.path,
     changesRoute.options,
-    changesRoute.handler as Parameters<FileHistoryRouteHost['get']>[2],
+    changesRoute.handler as Parameters<GetRouteHost['get']>[2],
   );
 
   const contentRoute = defineRoute(
@@ -106,6 +95,6 @@ export function registerFileHistoryRoutes(app: FileHistoryRouteHost, core: Scope
   app.get(
     contentRoute.path,
     contentRoute.options,
-    contentRoute.handler as Parameters<FileHistoryRouteHost['get']>[2],
+    contentRoute.handler as Parameters<GetRouteHost['get']>[2],
   );
 }
