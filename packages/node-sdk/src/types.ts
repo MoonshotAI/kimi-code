@@ -471,7 +471,9 @@ export interface ExportSessionResult {
   readonly manifest: ExportSessionManifest;
 }
 
-export type ListSessionsOptions = {
+export interface ListSessionsOptions {
+  readonly workDir?: string;
+  readonly scope?: 'workdir' | 'project';
   readonly sessionId?: string;
   /**
    * Include archived sessions in the listing. Defaults to non-archived only.
@@ -485,10 +487,7 @@ export type ListSessionsOptions = {
   readonly limit?: number;
   /** Keyset cursor: return the page strictly older than this session id. */
   readonly before?: string;
-} & (
-  | { readonly workDir: string; readonly scope: 'workdir' | 'project' }
-  | { readonly workDir?: string; readonly scope?: undefined }
-);
+}
 
 export interface SessionSummaryPage {
   readonly items: readonly SessionSummary[];

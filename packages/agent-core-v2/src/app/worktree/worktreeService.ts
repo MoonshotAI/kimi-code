@@ -12,7 +12,7 @@ import { LifecycleScope } from '#/app/scopes';
 import { ISessionPresence } from '#/app/sessionPresence/sessionPresence';
 import { LOCAL_ENVIRONMENT_ID } from '#/environment/environment';
 import { resolveProgramPath } from '#/environment/programPath';
-import { Error2, ErrorCodes } from '#/errors';
+import { Error2, ErrorCodes, isError2 } from '#/errors';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import type { IHostProcess } from '#/os/interface/hostProcess';
 
@@ -170,8 +170,13 @@ export class WorktreeService implements IWorktreeService {
     let branchCreated = false;
     try {
       if (plan.branch !== undefined) {
-        await this.createBranchRef(plan, signal);
-        branchCreated = true;
+        try {
+          await this.createBranchRef(plan, signal);
+          branchCreated = true;
+        } catch (error) {
+          if (isError2(error) && error.code === ErrorCodes.WORKTREE_CANCELLED) branchCreated = true;
+          throw error;
+        }
       }
       await this.addWorktree(plan, signal, (text) => {
         emit({ type: 'output', step: 'add', text });
@@ -436,7 +441,8 @@ export class WorktreeService implements IWorktreeService {
 
   private async readRepository(cwd: string, repoRoot: string, signal?: AbortSignal): Promise<Repository> {
     const listed = await this.git(['worktree', 'list', '--porcelain'], cwd, { signal });
-    const entries = listed.exitCode === 0 ? parseWorktreeList(listed.stdout) : [];
+    if (listed.exitCode !== 0) throw gitFailed(`Could not list worktrees for ${cwd}.`, listed);
+    const entries = parseWorktreeList(listed.stdout);
     const main = entries[0];
     if (main === undefined) throw notGitRepo(cwd, listed);
     return { root: await canonicalPath(this.fs, repoRoot), bare: main.bare, entries };
@@ -752,6 +758,7 @@ export class WorktreeService implements IWorktreeService {
 }
 
 async function waitForProcess(proc: IHostProcess, options: RunOptions): Promise<RunResult> {
+  const startedAt = Date.now();
   let stdout = '';
   let stderr = '';
   const emitOutput = (text: string): void => {
@@ -760,6 +767,7 @@ async function waitForProcess(proc: IHostProcess, options: RunOptions): Promise<
     } catch {}
   };
   const capture = options.captureOutput !== false;
+  let streamError: unknown;
   const output = Promise.all([
     drain(proc.stdout, (text) => {
       if (capture) stdout += text;
@@ -769,7 +777,9 @@ async function waitForProcess(proc: IHostProcess, options: RunOptions): Promise<
       if (capture) stderr += text;
       emitOutput(text);
     }),
-  ]).catch(() => {});
+  ]).catch((error: unknown) => {
+    streamError = error;
+  });
   proc.stdin.on('error', () => {});
   proc.stdin.end(options.stdin);
 
@@ -777,6 +787,28 @@ async function waitForProcess(proc: IHostProcess, options: RunOptions): Promise<
   const outcome = await firstOutcome(exit, options.timeoutMs, options.signal);
   if (outcome !== 'exit') await terminate(proc, exit);
   const exitCode = await exit;
+  if (outcome === 'exit' && capture) {
+    const drainMs =
+      options.timeoutMs === undefined
+        ? undefined
+        : Math.max(OUTPUT_GRACE_MS, options.timeoutMs - (Date.now() - startedAt));
+    const drainOutcome = await firstOutcome(
+      output.then(() => 0),
+      drainMs,
+      options.signal,
+    );
+    if (drainOutcome === 'abort') throw cancelledError();
+    if (drainOutcome === 'timeout') {
+      const note = `output stream did not close within ${(options.timeoutMs ?? 0) / 1000}s`;
+      return { exitCode: -1, stdout, stderr: stderr === '' ? note : `${stderr.trimEnd()}\n${note}` };
+    }
+    if (streamError !== undefined) {
+      const detail = streamError instanceof Error ? streamError.message : 'output stream failed';
+      const note = `failed to read process output: ${detail}`;
+      return { exitCode: -1, stdout, stderr: stderr === '' ? note : `${stderr.trimEnd()}\n${note}` };
+    }
+    return { exitCode, stdout, stderr };
+  }
   await settlesWithin(output, OUTPUT_GRACE_MS);
   if (outcome === 'abort') throw cancelledError();
   if (outcome === 'timeout') {

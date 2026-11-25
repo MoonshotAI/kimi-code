@@ -1548,11 +1548,12 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   }
 
   override async listSessions(input: ListSessionsOptions = {}): Promise<readonly SessionSummary[]> {
+    const { limit: _limit, before: _before, ...filter } = input;
     const all: SessionSummary[] = [];
     let before: string | undefined;
     for (;;) {
       const page = await this.listSessionsPage({
-        ...input,
+        ...filter,
         before,
       });
       all.push(...page.items);
@@ -1562,6 +1563,9 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   }
 
   override async listSessionsPage(input: ListSessionsOptions = {}): Promise<SessionSummaryPage> {
+    if (input.scope !== undefined && input.scope !== 'workdir' && input.scope !== 'project') {
+      throw new KimiError(ErrorCodes.REQUEST_INVALID, `Invalid listSessions scope: ${String(input.scope)}`);
+    }
     if (input.scope !== undefined && input.workDir === undefined) {
       throw new KimiError(ErrorCodes.REQUEST_WORK_DIR_REQUIRED, 'listSessions with scope requires workDir');
     }

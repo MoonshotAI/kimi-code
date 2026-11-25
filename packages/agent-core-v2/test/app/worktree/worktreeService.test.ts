@@ -14,6 +14,7 @@ import {
 } from 'node:fs';
 import { hostname, tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { PassThrough } from 'node:stream';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
@@ -344,6 +345,13 @@ describe('WorktreeService', () => {
 
         expect((await failure(service.create({ cwd: bare }))).code).toBe('worktree.not_git_repo');
         expect(existsSync(join(home, 'worktrees'))).toBe(false);
+      });
+
+      it('propagates git_failed when git worktree list fails inside a repository', async () => {
+        writeFileSync(join(repo, '.git', 'config'), '[broken\n');
+
+        const error = await failure(service.list(repo));
+        expect(error.code).toBe('worktree.git_failed');
       });
     });
 
@@ -1420,6 +1428,115 @@ describe('WorktreeService', () => {
       expect(readdirSync(markers)).toEqual([]);
       await service.remove(removal(wt));
       expect(existsSync(wt)).toBe(false);
+    });
+  });
+
+  describe('process stream and cancellation edge cases', () => {
+    function withCustomProcess<T>(
+      customProcess: Pick<HostProcessService, 'spawn'>,
+      run: (customService: IWorktreeService) => Promise<T>,
+    ): Promise<T> {
+      const localDisposables = new DisposableStore();
+      const env = { process: customProcess } as unknown as Environment;
+      const lease = { environment: env, track: <U>(resource: U): U => resource, dispose: () => {} };
+      const hostFs = new HostFileSystem();
+      const ix = createServices(localDisposables, {
+        additionalServices: (reg) => {
+          reg.defineInstance(IHostFileSystem, hostFs);
+          reg.definePartialInstance(IProjectService, {
+            peekImplicit: async (dir: string) => ({ id: encodeWorkDirKey(dir), root: dir }),
+          });
+          reg.definePartialInstance(IEnvironmentService, {
+            _serviceBrand: undefined,
+            ready: Promise.resolve(),
+            inspect: () => env,
+            acquire: () => lease,
+            acquireWhenReady: async () => lease,
+          });
+          reg.definePartialInstance(IBootstrapService, { homeDir: home, scope: () => 'sessions' });
+          reg.definePartialInstance(ISessionIndex, { listRecent: async () => ({ items: [] }) });
+          reg.definePartialInstance(ILogService, { warn: () => {} });
+          reg.define(ISessionPresence, SessionPresenceService);
+          reg.defineInstance(IFlagService, stubFlag(true));
+          reg.define(IWorktreeService, WorktreeService);
+        },
+      });
+      return run(ix.get(IWorktreeService)).finally(() => {
+        localDisposables.dispose();
+      });
+    }
+
+    it('waits for complete captured git stdout beyond OUTPUT_GRACE_MS before trusting removal counts', async () => {
+      const created = await create({ name: 'slow-stdout' });
+      const wt = created.worktree.path;
+      const realProcess = new HostProcessService();
+      const delayedProcess: Pick<HostProcessService, 'spawn'> = {
+        spawn: async (command, args, options) => {
+          const proc = await realProcess.spawn(command, args, options);
+          if (args?.[0] !== 'status') return proc;
+          const delayedStdout = new PassThrough();
+          const chunks: Buffer[] = [];
+          proc.stdout.on('data', (chunk: Buffer) => {
+            chunks.push(chunk);
+          });
+          proc.stdout.on('end', () => {
+            setTimeout(() => {
+              for (const chunk of chunks) delayedStdout.write(chunk);
+              delayedStdout.write('?? slow-untracked.txt\0');
+              delayedStdout.end();
+            }, 1_150);
+          });
+          return {
+            ...proc,
+            stdin: proc.stdin,
+            stdout: delayedStdout,
+            stderr: proc.stderr,
+            wait: () => proc.wait(),
+            kill: (sig?: NodeJS.Signals) => proc.kill(sig),
+            dispose: () => {
+              delayedStdout.destroy();
+              return proc.dispose();
+            },
+          };
+        },
+      };
+      const check = await withCustomProcess(delayedProcess, (customService) =>
+        customService.inspectRemoval({ repoRoot: realRepo, path: wt, deleteBranch: false }),
+      );
+      expect(check.uncommittedFiles).toBe(1);
+    });
+
+    it('rolls back a newly created branch when cancellation races update-ref completion', async () => {
+      const controller = new AbortController();
+      const realProcess = new HostProcessService();
+      const racingProcess: Pick<HostProcessService, 'spawn'> = {
+        spawn: async (command, args, options) => {
+          const proc = await realProcess.spawn(command, args, options);
+          if (args?.[0] !== 'update-ref' || args[1] !== 'refs/heads/raced-branch') return proc;
+          return {
+            ...proc,
+            stdin: proc.stdin,
+            stdout: proc.stdout,
+            stderr: proc.stderr,
+            wait: async () => {
+              const code = await proc.wait();
+              controller.abort();
+              await new Promise((resolvePromise) => {
+                setTimeout(resolvePromise, 20);
+              });
+              return code;
+            },
+            kill: (sig?: NodeJS.Signals) => proc.kill(sig),
+            dispose: () => proc.dispose(),
+          };
+        },
+      };
+      const error = await withCustomProcess(racingProcess, (customService) =>
+        failure(customService.create({ cwd: repo, name: 'raced', branch: 'raced-branch' }, { signal: controller.signal })),
+      );
+      expect(error.code).toBe('worktree.cancelled');
+      expect(branches(repo)).toEqual(['main']);
+      expect(existsSync(join(kimiDir(), 'raced'))).toBe(false);
     });
   });
 });

@@ -5254,7 +5254,13 @@ describe('KimiHarness worktrees', () => {
       const session = await harness.createSession({ workDir: created.cwd });
       expect(session.summary?.projectWorkDir).toBe(repo);
       expect((await harness.listSessions({ workDir: created.cwd })).map((item) => item.id)).toEqual([session.id]);
+      expect((await harness.listSessions({ workDir: created.cwd, limit: 0 })).map((item) => item.id)).toEqual([
+        session.id,
+      ]);
       expect((await harness.listSessions({ workDir: repo, scope: 'project' })).map((item) => item.id)).toEqual([session.id]);
+      await expect(
+        harness.listSessionsPage({ workDir: repo, scope: 'repository' as unknown as 'project' }),
+      ).rejects.toMatchObject({ code: ErrorCodes.REQUEST_INVALID });
 
       expect(await harness.resolveWorkLocation(repo)).toStrictEqual({
         cwd: repo,
