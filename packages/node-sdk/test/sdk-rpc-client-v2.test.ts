@@ -10,6 +10,7 @@ import {
   resolveKimiTokenStorageName,
 } from '@moonshot-ai/kimi-code-oauth';
 import { createGitRepository, createGitWorktree, type GitWorktreeLayout } from '@moonshot-ai/testkit/fixtures';
+import { createFakeModel, say } from '@moonshot-ai/testkit/model';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -1827,32 +1828,21 @@ key = "${titleOAuthRef.key}"
       await expect(client.getStatus({ sessionId: 'ses_resume_missing_default' })).resolves.toMatchObject({
         model: 'acme/new',
       });
-      const requestModels: string[] = [];
-      const fetchStub = vi.spyOn(globalThis, 'fetch').mockImplementation(async (_input, init) => {
-        const body = JSON.parse(typeof init?.body === 'string' ? init.body : '{}') as { model?: string };
-        requestModels.push(body.model ?? '');
-        const chunks = [
-          { delta: { role: 'assistant', content: 'ok' }, finish_reason: null },
-          { delta: {}, finish_reason: 'stop' },
-        ].map((choice) => `data: ${JSON.stringify({
-          id: 'chatcmpl-stub',
-          object: 'chat.completion.chunk',
-          created: 0,
-          model: 'new-wire',
-          choices: [{ index: 0, ...choice }],
-        })}`);
-        return new Response([...chunks, 'data: [DONE]'].map((line) => `${line}\n\n`).join(''), {
-          status: 200,
-          headers: { 'Content-Type': 'text/event-stream' },
-        });
-      });
+      const model = createFakeModel();
+      model.route('prompt', () => true).script(say('ok'));
+      const fetchStub = vi.spyOn(globalThis, 'fetch').mockImplementation(model.fetch);
       try {
         await client.prompt({ sessionId: 'ses_resume_missing_default', input: [{ type: 'text', text: 'hello' }] });
         await vi.waitFor(() => {
-          expect(requestModels).toEqual(['new-wire']);
+          expect(model.requests().map((request) => (request.body as { model?: string }).model)).toEqual([
+            'new-wire',
+          ]);
+          expect(model.requests()[0]?.state).toBe('finished');
         });
+        model.verify();
       } finally {
         fetchStub.mockRestore();
+        await model.close();
       }
       await expect(client.createSession({
         id: 'ses_resume_invalid_explicit',

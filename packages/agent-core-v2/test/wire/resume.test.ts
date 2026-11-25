@@ -749,7 +749,6 @@ describe('Agent resume', () => {
       await ctx.restorePersisted();
 
       expect(steer).not.toHaveBeenCalled();
-      ctx.mockNextResponse({ type: 'text', text: 'Fresh response.' });
       await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Fresh prompt' }] });
       await ctx.untilTurnEnd();
       expect(
