@@ -743,9 +743,19 @@ testWithProvider('opens feedback from the Help menu and aligns reply feedback bu
     feedbackRequests.push({ path: new URL(route.request().url()).pathname, body: route.request().postDataJSON() });
     return route.fulfill({ json: envelope({ feedback_id: 41 }) });
   });
+  const configGate = deferred();
+  let holdConfig = true;
+  await page.route('**/api/v1/config', async route => {
+    if (holdConfig) {
+      holdConfig = false;
+      await configGate.promise;
+    }
+    await route.continue();
+  });
+  const configPending = page.waitForRequest('**/api/v1/config');
   await page.reload();
-  await expect(page.locator('.gload')).toBeHidden();
-  await expect(page.getByRole('button', { name: 'Not signed in' })).toBeVisible();
+  await configPending;
+  await expect(page.locator('.gload')).toBeVisible();
 
   const helpMenuOrder = await app.electron.evaluate(({ Menu }) => {
     const menu = Menu.getApplicationMenu();
@@ -760,8 +770,15 @@ testWithProvider('opens feedback from the Help menu and aligns reply feedback bu
   expect(consoleIndex).toBe(feedbackIndex + 1);
   expect(helpMenuOrder[feedbackIndex]?.label).toBe('Feedback');
 
-  await clickHelpFeedbackMenu(app);
   const loginDialog = page.getByRole('dialog', { name: 'Sign in to Kimi Code' });
+  try {
+    await clickHelpFeedbackMenu(app);
+    await clickHelpFeedbackMenu(app);
+    await expect(loginDialog).toBeHidden();
+  } finally {
+    configGate.resolve();
+  }
+  await expect(page.locator('.gload')).toBeHidden();
   await expect(loginDialog).toBeVisible();
   await page.keyboard.press('Escape');
   await expect(loginDialog).toBeHidden();
@@ -782,7 +799,7 @@ testWithProvider('opens feedback from the Help menu and aligns reply feedback bu
   await expect(dialog).toBeHidden();
   expect(feedbackRequests).toEqual([{
     path: '/api/v1/feedback',
-    body: expect.objectContaining({ kind: 'global', source: 'sidebar', session_id: sessionId, content: 'Opened from Help menu' }),
+    body: expect.objectContaining({ kind: 'global', source: 'menu', session_id: sessionId, content: 'Opened from Help menu' }),
   }]);
 
   const copy = page.locator('.a-cpbtn').first();

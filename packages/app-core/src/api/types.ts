@@ -1015,7 +1015,7 @@ export interface ReadRequestOptions {
 export type CreateFeedbackInput =
   | {
     kind: 'global';
-    source: 'sidebar' | 'command';
+    source: 'sidebar' | 'command' | 'menu';
     category: 'bug' | 'suggestion' | 'other';
     content: string;
     session_id?: string;

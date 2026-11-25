@@ -409,9 +409,18 @@ onMounted(() => {
         return;
       }
       if (menuId === 'open-feedback') {
-        if (!initialized.value || anyOverlayOpen.value) return;
-        track('action_invoked', { action: 'open-feedback', source: 'menu' });
-        openGlobalFeedback('sidebar');
+        if (cancelPendingFeedbackMenu !== null) return;
+        const openFromMenu = (): void => {
+          cancelPendingFeedbackMenu = null;
+          if (anyOverlayOpen.value) return;
+          track('action_invoked', { action: 'open-feedback', source: 'menu' });
+          openGlobalFeedback('menu');
+        };
+        if (initialized.value) {
+          openFromMenu();
+        } else {
+          cancelPendingFeedbackMenu = runWhenInitialized(initialized, openFromMenu);
+        }
         return;
       }
       const actionId = MENU_ACTION_TO_SHORTCUT[menuId];
@@ -454,6 +463,10 @@ onMounted(() => {
 
 onUnmounted(() => {
   window.removeEventListener('keydown', onShortcutKeydown);
+  if (cancelPendingFeedbackMenu !== null) {
+    cancelPendingFeedbackMenu();
+    cancelPendingFeedbackMenu = null;
+  }
   if (offMenuAction !== null) {
     offMenuAction();
     offMenuAction = null;
@@ -487,6 +500,7 @@ onUnmounted(() => {
 });
 
 let offMenuAction: (() => void) | null = null;
+let cancelPendingFeedbackMenu: (() => void) | null = null;
 let offBrowserAutomationUiRequest: (() => void) | null = null;
 let offScreenshotHotkey: (() => void) | null = null;
 let offScreenshotHotkeyResult: (() => void) | null = null;
