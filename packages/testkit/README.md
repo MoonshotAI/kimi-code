@@ -7,7 +7,7 @@ Shared test infrastructure for this repository: a protocol-level fake model, fak
 | `@moonshot-ai/testkit/model` | the fake model, the step DSL, tool-call builders, and the provider config that points the product at the fake model |
 | `@moonshot-ai/testkit/services` | fake Kimi managed services: session titles and feedback with signed uploads, scripted and recorded like the fake model |
 | `@moonshot-ai/testkit/kap` | `startKap`: an in-process KAP server backed by the fake model; `KapProcess`: the CLI's `web --json` server in a child process; `KapClient`: the session operations both of them share, with REST and WebSocket clients and a turn reducer |
-| `@moonshot-ai/testkit/fixtures` | temporary homes, a `config.toml` writer, git repositories with a linked worktree, environment isolation, the network guard, child processes that stay offline, the CLI command and environment, repository paths, directory snapshots, waits, timeouts, media samples and normalizers |
+| `@moonshot-ai/testkit/fixtures` | temporary homes, a `config.toml` writer, git repositories with a linked worktree, environment isolation, the network guard, child processes that stay offline, the CLI command and environment, repository paths, directory snapshots, waits, timeouts, media samples, normalizers, and a fake stdio MCP server |
 | `@moonshot-ai/testkit/contract` | a field-per-line summary of OpenAPI and AsyncAPI documents, a check that lists contract changes as breaking, non-breaking or unclassified, and a digest that ignores wording, for pinning an API level |
 | `@moonshot-ai/testkit/vitest` | fixture definitions for `test.extend` and the network guard hooks |
 
@@ -168,7 +168,7 @@ For OpenAI chat completions, `request.texts('system')` returns the individual sy
 
 ## The KAP harness
 
-`startKap({ startServer, model, provider, config, env, serverOptions, home, token })` writes `config.toml` into a temporary home with the fake model as the default model and model-catalog refresh turned off, points `HOME` at that home, and starts the server on `127.0.0.1` with a random port, silent logs and no instance registry.
+`startKap({ startServer, model, provider, config, mcpServers, env, serverOptions, home, token })` writes `config.toml` into a temporary home with the fake model as the default model and model-catalog refresh turned off, writes `mcpServers` (from `fakeMcpServer`) into `mcp.json`, points `HOME` at that home, and starts the server on `127.0.0.1` with a random port, silent logs and no instance registry.
 
 | Method | What it does |
 |---|---|
@@ -198,4 +198,4 @@ For OpenAI chat completions, `request.texts('system')` returns the individual sy
 
 - Request indexes and the default tool-call ids follow arrival order. When subagents run concurrently, find their requests by lane and content (`waitForRequest(predicate)`) and take ids from `model.callId(request.index, k)`, or give the calls fixed ids with `call(name, args, { id })`.
 - `startKap` points `process.env.HOME` at the test home while the server runs, because user-level skills are read from the OS home. Do not run KAP tests concurrently in one worker.
-- Not built yet: the OpenAI responses API, general model recording/replay, an ACP driver in this package, and fake MCP servers. The terminal session driver lives in the CLI tests and starts the CLI through `TestProcess`. See the [testing guide](../../tests/AGENTS.md).
+- Not built yet: the OpenAI responses API, general model recording/replay, and an ACP driver in this package. The terminal session driver lives in the CLI tests and starts the CLI through `TestProcess`. See the [testing guide](../../tests/AGENTS.md).

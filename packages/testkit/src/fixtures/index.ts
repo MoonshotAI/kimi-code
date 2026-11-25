@@ -28,6 +28,16 @@ export {
   type JsonDifference,
 } from '#/fixtures/golden';
 export { createTestHome, osHomeEnv, removeDirectory, type TestHome } from '#/fixtures/home';
+export {
+  FAKE_MCP_SERVER,
+  fakeMcpServer,
+  readMcpCalls,
+  writeMcpConfig,
+  type FakeMcpServerOptions,
+  type FakeMcpTool,
+  type McpCall,
+  type McpServerEntry,
+} from '#/fixtures/mcp';
 export { BROKEN_DATA_URLS, dataUrl, mp4Header, ONE_PIXEL_PNG_BASE64, solidPng } from '#/fixtures/media';
 export {
   installNetworkGuard,

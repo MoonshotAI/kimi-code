@@ -32,6 +32,12 @@ test('writes manual permissions to the test config', async ({ testHome }) => {
 
 需要真实的 git 仓库时，用 `await createGitRepository(dir, { files })`：它在 `dir` 初始化仓库，写入 `files`（相对路径到内容）并提交一次。要验证 worktree 相关的行为，用 `await createGitWorktree({ main, worktree }, { files })`：它在 `main` 建同样的仓库，再用 `git worktree add` 在 `worktree` 检出新分支。两者都调用系统的 `git`，提交身份和关闭签名用命令行参数指定，不改动全局 git 配置。断言 Bash 工具打印的工作目录时，用 `bashPathOf(path)` 把本机路径换成 Git Bash 的写法：Windows 上 `C:\Users\me\app` 写成 `/c/Users/me/app`，其他平台原样返回。[git 夹具](../src/fixtures/git.ts)
 
+## 挂一个假的 MCP 服务
+
+`fakeMcpServer(name, { tools, callLog })` 返回 `mcp.json` 里的一项服务配置。产品按这项配置启动一个真实的 stdio MCP 进程，它用官方 SDK 回答工具列表和调用：每个工具有名字、描述、JSON Schema 和固定的回复文字（不写回复时回 `<工具名> done`），给了 `callLog` 就把每次调用按行写进这个文件，用 `readMcpCalls(callLog)` 读回。服务配置里的 `deferred: true` 让产品把这台服务的工具放到渐进加载后面。
+
+KAP 场景把配置交给 `scenarioFixtures({ mcpServers: { docs: fakeMcpServer('docs', { tools }) } })`，夹具启动服务前写好数据目录下的 `mcp.json`。模型调用的工具名是 `mcp__<服务名>__<工具名>`，例如 `call('mcp__docs__search', { query: 'cache' })`。其他直接启动产品的测试用 `writeMcpConfig(join(testHome.dataDir, 'mcp.json'), servers)` 写同样的文件。[MCP 夹具](../src/fixtures/mcp.ts) · [官方客户端对照](../test/fixtures.test.ts) · [经过真实引擎](../../../tests/scenarios/prompt-cache.test.ts)
+
 ## 控制环境和网络
 
 - **被测代码接收环境参数时**，传入 `testEnv({ set: { HOME: testHome.home } })`。它返回新的对象，过滤继承来的 `KIMI_*`、已列出的厂商凭据和代理变量，再设置测试默认值。要保留某个原值用 `keep`，要模拟变量缺失用 `set: { MY_OPTION: undefined }`。测试默认值里有两类：关掉遥测、模型目录刷新这类和外界隔离的设置；以及为了让单元测试更快而关掉的产品功能，单独导出为 `UNIT_TEST_SWITCHES`（目前是会话索引的读模型和搜索 worker）。端到端测试要让产品按用户的默认配置跑时，把 `UNIT_TEST_SWITCHES` 的每个名字设成 `undefined` 传进 `set`。新增只为提速的默认值放进 `UNIT_TEST_SWITCHES`。[环境夹具](../src/fixtures/env.ts)
