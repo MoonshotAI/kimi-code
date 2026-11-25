@@ -589,8 +589,13 @@ class AcpDriver implements SurfaceDriver<'acp'> {
   async expectNotice(text: string): Promise<void> {
     const state = await this.wait(`a live notice with ${JSON.stringify(text)}`, () => {
       const found = this.turnUpdates().some((update) => {
-        if (update.sessionUpdate !== 'notice') return false;
-        return update.title.includes(text) || (update.description ?? '').includes(text);
+        if (update.sessionUpdate === 'notice') {
+          return update.title.includes(text) || (update.description ?? '').includes(text);
+        }
+        if (!this.bare || update.sessionUpdate !== 'agent_message_chunk' || update.content.type !== 'text') {
+          return false;
+        }
+        return update.content.text.includes(text);
       });
       if (found) return 'shown' as const;
       return this.turnOver() ? ('over' as const) : undefined;
