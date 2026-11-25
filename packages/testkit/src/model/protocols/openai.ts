@@ -6,7 +6,7 @@ import {
   type ProtocolCodec,
   type ResolvedUsage,
 } from '#/model/protocols/codec';
-import { asArray, asRecord, optionalString, stringOf } from '#/model/protocols/json';
+import { asArray, asRecord, contentPartsOf, optionalString, stringOf } from '#/model/protocols/json';
 import { argumentsText } from '#/model/steps';
 import type { ErrorSpec, FinishSpec, ReplyStep, RequestView, ToolCallSpec, ViewCall, ViewMessage, ViewPart } from '#/model/types';
 import { textOfParts } from '#/model/view';
@@ -189,9 +189,7 @@ function callOf(raw: unknown): ViewCall {
 }
 
 function contentParts(content: unknown): ViewPart[] {
-  if (typeof content === 'string') return [{ type: 'text', text: content }];
-  return asArray(content).map((raw): ViewPart => {
-    const part = asRecord(raw);
+  return contentPartsOf(content, (part, raw) => {
     switch (part['type']) {
       case 'text':
         return { type: 'text', text: stringOf(part['text']) };

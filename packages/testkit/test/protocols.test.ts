@@ -4,7 +4,7 @@ import OpenAI from 'openai';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createFakeModel, type FakeModel, type FakeModelOptions } from '#/model/fake-model';
-import { call, httpError, say, streamError, think, thinkSigned, withResponseId, withUsage } from '#/model/steps';
+import { call, finishWith, httpError, reply, say, streamError, think, thinkSigned, withResponseId, withUsage } from '#/model/steps';
 
 const models: FakeModel[] = [];
 
@@ -133,6 +133,111 @@ describe('tool call extras', () => {
     const google = new GoogleGenAI({ apiKey: 'test-key', httpOptions: { baseUrl: model.origin } });
     const response = await google.models.generateContent({ model: 'testkit-model', contents: [{ role: 'user', parts: [{ text: 'hi' }] }], config: { tools: GOOGLE_TOOLS } });
     expect(response.candidates?.[0]?.content?.parts?.[0]).toMatchObject({ functionCall: { name: 'Bash' }, thoughtSignature: 'c2lnbmF0dXJl' });
+    model.verify();
+  });
+});
+
+describe('openai responses', () => {
+  const responsesClient = (model: FakeModel) =>
+    new OpenAI({ apiKey: 'sk-test', baseURL: 'http://testkit.invalid/v1', fetch: model.fetch, maxRetries: 0 });
+  const tools = [{ type: 'function' as const, name: 'Bash', parameters: { type: 'object', properties: { command: { type: 'string' } } }, strict: false }];
+  const ask = {
+    model: 'testkit-model',
+    instructions: 'Be brief.',
+    input: [
+      { role: 'user' as const, content: [{ type: 'input_text' as const, text: 'list files' }] },
+      { type: 'function_call' as const, call_id: 'call_prev', name: 'Bash', arguments: '{"command":"pwd"}' },
+      { type: 'function_call_output' as const, call_id: 'call_prev', output: '/work' },
+    ],
+    tools,
+  };
+
+  it('streams reasoning, text and a tool call that the official SDK assembles into one response', async () => {
+    const model = fakeModel();
+    model.lane('main').script(
+      withUsage({ input: 7, output: 3, cacheRead: 2 }, reply(thinkSigned('ponder', 'c2lnbmVk'), say('Hel'), say('lo'), call('Bash', { command: 'ls' }, { argumentChunks: 3 }))),
+    );
+    const streamed = await responsesClient(model).responses.stream(ask).finalResponse();
+
+    expect(streamed.status).toBe('completed');
+    expect(streamed.output.map((item) => item.type)).toEqual(['reasoning', 'message', 'function_call']);
+    expect(streamed.output[1]).toMatchObject({ role: 'assistant', content: [{ type: 'output_text', text: 'Hello' }] });
+    expect(streamed.output[0]).toMatchObject({ summary: [{ type: 'summary_text', text: 'ponder' }], encrypted_content: 'c2lnbmVk' });
+    expect(streamed.output[2]).toMatchObject({ call_id: 'call_0_0', name: 'Bash', arguments: '{"command":"ls"}' });
+    expect(streamed.usage).toMatchObject({ input_tokens: 9, output_tokens: 3, input_tokens_details: { cached_tokens: 2 } });
+
+    const request = model.request(0);
+    expect(request.protocol).toBe('openai-responses');
+    expect(request.view.system).toBe('Be brief.');
+    expect(request.firstUserText).toBe('list files');
+    expect(request.tools).toEqual(['Bash']);
+    expect(request.view.messages.map((message) => message.role)).toEqual(['user', 'assistant', 'tool']);
+    expect(request.view.messages[1]?.calls).toEqual([{ id: 'call_prev', name: 'Bash', arguments: '{"command":"pwd"}' }]);
+    expect(request.view.messages[2]).toMatchObject({ callId: 'call_prev', text: '/work' });
+    model.verify();
+  });
+
+  it('answers a non-streaming request and reports truncation and errors the way the SDK reads them', async () => {
+    const model = fakeModel();
+    model.lane('main').script(
+      withResponseId('example-response', say('done')),
+      finishWith('truncated', say('cut')),
+      httpError(429, { message: 'slow down', code: 'rate_limit_exceeded' }),
+    );
+    const client = responsesClient(model);
+
+    const response = await client.responses.create(ask);
+    expect(response).toMatchObject({ id: 'example-response', status: 'completed', output_text: 'done' });
+
+    const events: string[] = [];
+    let incomplete: unknown;
+    for await (const event of await client.responses.create({ ...ask, stream: true })) {
+      events.push(event.type);
+      if (event.type === 'response.incomplete') incomplete = event.response.incomplete_details;
+    }
+    expect(events[0]).toBe('response.created');
+    expect(events.at(-1)).toBe('response.incomplete');
+    expect(incomplete).toEqual({ reason: 'max_output_tokens' });
+
+    await expect(client.responses.create(ask)).rejects.toMatchObject({ status: 429, message: expect.stringContaining('slow down') });
+    model.verify();
+  });
+
+  it('keeps a replayed tool call and the text after it in one assistant turn', async () => {
+    const model = fakeModel();
+    model.lane('main').script(reply(call('Bash', { command: 'ls' }), say('working')), say('done'));
+    const client = responsesClient(model);
+    const first = await client.responses.create({ ...ask, input: [{ role: 'user', content: 'list files' }] });
+    const callItem = first.output.find((item) => item.type === 'function_call');
+    if (callItem?.type !== 'function_call') throw new Error('expected a function call in the first reply');
+
+    const replay = first.output.flatMap((item): OpenAI.Responses.ResponseInputItem[] => {
+      if (item.type === 'function_call') return [{ type: 'function_call', call_id: item.call_id, name: item.name, arguments: item.arguments }];
+      if (item.type === 'message') return [{ role: 'assistant', content: item.content.map((part) => (part.type === 'output_text' ? part.text : '')).join('') }];
+      return [];
+    });
+    expect(first.output.map((item) => item.type)).toEqual(['function_call', 'message']);
+
+    await client.responses.create({
+      ...ask,
+      input: [{ role: 'user', content: 'list files' }, ...replay, { type: 'function_call_output', call_id: callItem.call_id, output: 'a.txt' }],
+    });
+
+    const replayed = model.request(1).view.messages;
+    expect(replayed.map((message) => message.role)).toEqual(['user', 'assistant', 'tool']);
+    expect(replayed[1]).toMatchObject({ text: 'working', calls: [{ id: callItem.call_id, name: 'Bash' }] });
+    model.verify();
+  });
+
+  it('sends a mid-stream error event that the SDK hands to the caller', async () => {
+    const model = fakeModel();
+    model.lane('main').script(streamError(say('partial'), { message: 'upstream broke', code: 'server_error' }));
+    const events: Array<{ readonly type: string; readonly message?: string }> = [];
+    for await (const event of await responsesClient(model).responses.create({ ...ask, stream: true })) {
+      events.push(event as { readonly type: string; readonly message?: string });
+    }
+    expect(events.map((event) => event.type)).toContain('response.output_text.delta');
+    expect(events.at(-1)).toMatchObject({ type: 'error', message: 'upstream broke' });
     model.verify();
   });
 });
