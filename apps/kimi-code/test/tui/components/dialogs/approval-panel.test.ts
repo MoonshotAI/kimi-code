@@ -126,11 +126,11 @@ describe('ApprovalPanelComponent', () => {
   it.each([
     {
       detail: { outcome: 'denied', risk: 'medium', reason: 'Creating remote resources was not explicitly authorized.' },
-      title: 'Auto Review: denied (medium risk)',
+      title: 'Auto Review recommends rejecting · medium risk',
     },
     {
       detail: { outcome: 'failed', reason: 'Review timed out.' },
-      title: 'Auto Review failed',
+      title: "Auto Review couldn't finish",
     },
   ] as const)('renders $title above the pending command', ({ detail, title }) => {
     const data = adaptApprovalRequest({
@@ -162,7 +162,7 @@ describe('ApprovalPanelComponent', () => {
       approvalDetail: { outcome: 'failed', reason: 'Review timed out.' },
     });
     const out = strip(mount(new ApprovalPanelComponent({ data }, () => {})).render(100).join('\n'));
-    expect(out).toContain('Auto Review failed');
+    expect(out).toContain("Auto Review couldn't finish");
     expect(out).toContain('Review timed out.');
     expect(out).toContain('Post message to #releases');
     expect(out.indexOf('Review timed out.')).toBeLessThan(out.indexOf('Post message to #releases'));

@@ -380,6 +380,26 @@ describe('AgentPermissionGate', () => {
     });
   });
 
+  it.each([
+    ['low', 'Do not retry it or work around the review. If the action is still required, end your reply by stating the exact action and its target and asking the user to confirm.'],
+    ['medium', 'Do not retry it or work around the review. If the action is still required, end your reply by stating the exact action and its target and asking the user to confirm.'],
+    ['high', 'High-risk actions cannot be authorized through Auto Review. Do not retry it or work around the review; tell the user it was blocked.'],
+  ] as const)('tells the main model how to proceed after a %s-risk denial in Never Ask', (risk, guidance) => {
+    const { result } = resolveAutoReview(
+      makeContext('Bash'),
+      modeApproval,
+      { kind: 'ask', reason: { executable_name: 'git' } },
+      { decision: 'deny', risk, reason: 'Pushing tags was not authorized.' },
+      'auto',
+    );
+
+    expect(result).toEqual({
+      kind: 'deny',
+      reason: { executable_name: 'git', review_risk: risk },
+      message: `Auto Review denied tool "Bash"; it was not executed. Pushing tags was not authorized. ${guidance}`,
+    });
+  });
+
   it('surfaces review failure details to the main model in Never Ask and rejected Ask When Needed fallbacks', () => {
     const autoResult = resolveAutoReview(
       makeContext('Bash'),

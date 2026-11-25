@@ -27,6 +27,7 @@ import {
   buildReviewMessages,
   detectAuthorizationDrift,
   extractAuthorization,
+  REPLY_TO_MAX_CHARS,
   type ReviewText,
 } from '#/features/autoReview/context';
 import {
@@ -189,6 +190,45 @@ describe('autoReview context and state', () => {
       { role: 'direct-parent-instruction', content: [{ type: 'text', text: 'Delete dist and rebuild.' }] },
       { role: 'human-instruction', content: [{ type: 'text', text: 'keep-text' }, { type: 'text', text: '[image_url attachment omitted]' }] },
     ]);
+  });
+
+  it('attaches the tail of the agent reply that each human instruction answers', () => {
+    const longReply = `${'x'.repeat(REPLY_TO_MAX_CHARS)}Push main to origin?`;
+    const history: ContextMessage[] = [
+      userMsg('Prepare the release.', { kind: 'user' }),
+      {
+        role: 'assistant',
+        content: [{ type: 'think', think: 'hidden reasoning' }, { type: 'text', text: 'Push tag v1.2 to origin?' }],
+        toolCalls: [toolCallFor('tag', 'Bash', { command: 'git tag v1.2' })],
+      },
+      { role: 'tool', toolCallId: 'tag', content: [{ type: 'text', text: 'tagged' }] },
+      userMsg('<notification>Background task finished.</notification>'),
+      userMsg('Yes.', { kind: 'user' }),
+      userMsg('Also delete the old tag.', { kind: 'user' }),
+      { role: 'assistant', content: [{ type: 'text', text: longReply }], toolCalls: [] },
+      userMsg('Go ahead.', { kind: 'user' }),
+      { role: 'assistant', content: [{ type: 'text', text: 'Delegating.' }], toolCalls: [] },
+      userMsg('Delete dist.', { kind: 'system_trigger', name: 'subagent' }),
+    ];
+
+    expect(extractAuthorization(history)).toEqual([
+      human('Prepare the release.'),
+      { ...human('Yes.'), replyTo: 'Push tag v1.2 to origin?' },
+      human('Also delete the old tag.'),
+      { ...human('Go ahead.'), replyTo: `…${longReply.slice(-REPLY_TO_MAX_CHARS)}` },
+      { role: 'direct-parent-instruction', content: [{ type: 'text', text: 'Delete dist.' }] },
+    ]);
+    const rendered = messageText(buildReviewMessages(history, [], undefined, undefined, '/workspace', reviewContext()));
+    expect(rendered).toContain(
+      '{"kind":"instruction","role":"human-instruction","replyTo":"Push tag v1.2 to origin?","content":[{"type":"text","text":"Yes."}]}',
+    );
+    expect(rendered).not.toContain('hidden reasoning');
+  });
+
+  it('treats a changed reply target as authorization drift', () => {
+    const reply = (replyTo: string): ReviewText => ({ ...human('Yes.'), replyTo });
+    expect(detectAuthorizationDrift([reply('Push tag v1.2?')], [reply('Push tag v1.2?')])).toBe('unchanged');
+    expect(detectAuthorizationDrift([reply('Push tag v1.2?')], [reply('Delete the release branch?')])).toBe('changed');
   });
 
   it('folds approved tool call ids and clears them on ContextClear', () => {
@@ -575,6 +615,18 @@ describe('AutoReviewService', () => {
     const restored = await spawn({ agentId: 'child-1', flagEnabled: false, replayedAncestry: snapshot });
     expect(recorded).toEqual([]);
     expect(restored.inheritedAuthorization()).toEqual(snapshot.authorization);
+  });
+
+  it('keeps the reply target in the authorization subagents inherit and in the review request', async () => {
+    history = [
+      { role: 'assistant', content: [{ type: 'text', text: 'Push tag v1.2 to origin?' }], toolCalls: [] },
+      userMsg('Yes.', { kind: 'user' }),
+    ];
+    const main = await spawn({ agentId: 'main' });
+    expect(main.humanAuthorization()).toEqual([{ ...human('Yes.'), replyTo: 'Push tag v1.2 to origin?' }]);
+
+    await main.review(reviewContext({ command: 'git push origin v1.2' }), 'fallback-ask');
+    expect(messageText(sentInputs.at(-1)!.messages)).toContain('"replyTo":"Push tag v1.2 to origin?"');
   });
 
   it('returns a failed outcome instead of throwing when the loop has no bound model', async () => {

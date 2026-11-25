@@ -1217,6 +1217,7 @@ export interface AgentStateSnapshot {
   'autoReview.ancestry': /* AutoReviewAncestry — packages/agent-core-v2/src/features/autoReview/autoReviewEvents.ts */ {
     readonly authorization: readonly /* ReviewText — packages/agent-core-v2/src/features/autoReview/context.ts */ {
       readonly role: 'human-instruction' | 'direct-parent-instruction' | 'constraint' | 'fact';
+      readonly replyTo?: string;
       readonly content: readonly /* TextPart — packages/core/src/llm/message.ts */ {
         type: 'text';
         text: string;

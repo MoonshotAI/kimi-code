@@ -7,9 +7,11 @@ import { renderPrompt } from '#/_base/utils/render-prompt';
 import REVIEW_REQUEST from './auto-review-request.md?raw';
 
 const SECTION_TAG = /<(\/?(?:environment|project_instructions|history|pending_action)\b)/gi;
+export const REPLY_TO_MAX_CHARS = 2000;
 
 export interface ReviewText {
   readonly role: 'human-instruction' | 'direct-parent-instruction' | 'constraint' | 'fact';
+  readonly replyTo?: string;
   readonly content: readonly TextPart[];
 }
 
@@ -41,8 +43,8 @@ export function buildReviewMessages(
     }),
     history: sectionJson([
       ...inherited.map((entry) => ({ kind: 'instruction', ...entry })),
-      ...messages.flatMap((message) => [
-        ...authorizationEntry(message).map((entry) => ({ kind: 'instruction', ...entry })),
+      ...messages.flatMap((message, index) => [
+        ...authorizationEntry(message, index, messages).map((entry) => ({ kind: 'instruction', ...entry })),
         ...actionEntries(message, completedIds, approvedToolCallIds),
       ]),
     ]),
@@ -69,6 +71,7 @@ export function sameAuthorization(
   return left.length === right.length && left.every((entry, index) => {
     const other = right[index]!;
     return entry.role === other.role
+      && entry.replyTo === other.replyTo
       && entry.content.length === other.content.length
       && entry.content.every((part, partIndex) => part.text === other.content[partIndex]!.text);
   });
@@ -84,12 +87,34 @@ export function detectAuthorizationDrift(
   return sameAuthorization(previous, current.slice(0, previous.length)) ? 'appended' : 'changed';
 }
 
-function authorizationEntry(message: ContextMessage): ReviewText[] {
+function authorizationEntry(
+  message: ContextMessage,
+  index: number,
+  messages: readonly ContextMessage[],
+): ReviewText[] {
   if (message.role !== 'user') return [];
   const role = authorizationRole(message);
   if (role === undefined) return [];
   const content = message.content.flatMap(reviewPart);
-  return content.length === 0 ? [] : [{ role, content }];
+  if (content.length === 0) return [];
+  const replyTo = role === 'human-instruction' ? replyTarget(messages, index) : undefined;
+  return [replyTo === undefined ? { role, content } : { role, replyTo, content }];
+}
+
+function replyTarget(messages: readonly ContextMessage[], index: number): string | undefined {
+  for (let cursor = index - 1; cursor >= 0; cursor -= 1) {
+    const message = messages[cursor]!;
+    if (message.role === 'assistant') {
+      const text = message.content
+        .flatMap((part) => (part.type === 'text' ? [part.text] : []))
+        .join('\n')
+        .trim();
+      if (text.length === 0) return undefined;
+      return text.length > REPLY_TO_MAX_CHARS ? `…${text.slice(-REPLY_TO_MAX_CHARS)}` : text;
+    }
+    if (message.role === 'user' && authorizationRole(message) !== undefined) return undefined;
+  }
+  return undefined;
 }
 
 function authorizationRole(

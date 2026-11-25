@@ -87,9 +87,12 @@ function denial(
     };
   }
   const suffix = review.decision === 'deny' && review.reason !== undefined ? ` ${review.reason}` : '';
+  const guidance = review.risk === 'high'
+    ? 'High-risk actions cannot be authorized through Auto Review. Do not retry it or work around the review; tell the user it was blocked.'
+    : 'Do not retry it or work around the review. If the action is still required, end your reply by stating the exact action and its target and asking the user to confirm.';
   return {
     kind: 'deny',
-    message: `Auto Review denied tool "${context.toolCall.name}"; it was not executed.${suffix} Do not retry the same action or bypass the review.`,
+    message: `Auto Review denied tool "${context.toolCall.name}"; it was not executed.${suffix} ${guidance}`,
     reason: withReason(baseReason, { review_risk: review.risk }),
   };
 }
