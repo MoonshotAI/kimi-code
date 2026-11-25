@@ -82,21 +82,35 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      # Pull requests run only the packages their diff reaches through the
+      # workspace dependency graph, on as many shards as that needs; shards
+      # left over stop here before installing. Pushes and manual runs test
+      # everything, so a manual run on a branch is the way to get a full run.
+      - name: Select tests
+        id: select
+        run: node scripts/select-vitest-targets.mjs ${{ github.event_name == 'pull_request' && '--pull-request' || '' }} ${{ matrix.shard == 1 && '--summary' || '' }}
 
       - uses: pnpm/action-setup@v6
+        if: fromJSON(steps.select.outputs.shards) >= matrix.shard
 
       - uses: actions/setup-node@v6
+        if: fromJSON(steps.select.outputs.shards) >= matrix.shard
         with:
           node-version-file: .nvmrc
           cache: pnpm
 
       - run: pnpm install --frozen-lockfile
+        if: fromJSON(steps.select.outputs.shards) >= matrix.shard
       # Keep the KAP server suite and every tests/scenarios case in these shards.
-      - run: pnpm run test --shard=${{ matrix.shard }}/5 --exclude='**/test/e2e/tui/**' --exclude='**/test/reconnect/**' --reporter=default --reporter=github-actions --reporter=./scripts/vitest-l0-gate.mjs
+      - run: pnpm run test ${{ steps.select.outputs.filters }} --shard=${{ matrix.shard }}/${{ steps.select.outputs.shards }} --passWithNoTests --exclude='**/test/e2e/tui/**' --exclude='**/test/reconnect/**' --reporter=default --reporter=github-actions --reporter=./scripts/vitest-l0-gate.mjs
+        if: fromJSON(steps.select.outputs.shards) >= matrix.shard
         env:
           KIMI_L0_RESULTS: .vitest-reports/l0-${{ matrix.shard }}.json
       - uses: actions/upload-artifact@v7
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && fromJSON(steps.select.outputs.shards) >= matrix.shard }}
         with:
           name: l0-results-${{ matrix.shard }}
           path: .vitest-reports/l0-${{ matrix.shard }}.json
@@ -220,7 +234,7 @@ jobs:
       - name: Release workflow tests
         if: ${{ !cancelled() }}
         run: node --test scripts/release.test.mjs scripts/release-trigger.test.mjs scripts/canary-release.test.mjs scripts/desktop-nightly-guard.test.mjs
-      - run: node --test scripts/desktop-artifact-prefix.test.mjs scripts/canary-version.test.mjs scripts/desktop-canary-publish.test.mjs scripts/canary-linux.test.mjs scripts/mac-update-minimum-system-version.test.mjs scripts/mutation-diff.test.mjs apps/desktop/scripts/ci/select-e2e-specs.test.mjs apps/desktop/scripts/ci/report-main-journeys.test.mjs
+      - run: node --test scripts/select-vitest-targets.test.mjs scripts/desktop-artifact-prefix.test.mjs scripts/canary-version.test.mjs scripts/desktop-canary-publish.test.mjs scripts/canary-linux.test.mjs scripts/mac-update-minimum-system-version.test.mjs scripts/mutation-diff.test.mjs apps/desktop/scripts/ci/select-e2e-specs.test.mjs apps/desktop/scripts/ci/report-main-journeys.test.mjs
       - run: pnpm run sherif
       - name: Check new code duplication
         id: duplication

@@ -9,7 +9,7 @@ import {
   type ResolvedUsage,
 } from '#/model/protocols/codec';
 import { asArray, asRecord, optionalString, stringOf } from '#/model/protocols/json';
-import type { ErrorSpec, ReplyStep, RequestView, ViewCall, ViewMessage, ViewPart } from '#/model/types';
+import type { ErrorSpec, ReplyStep, RequestView, ToolCallSpec, ViewCall, ViewMessage, ViewPart } from '#/model/types';
 import { textOfParts } from '#/model/view';
 
 export const googleCodec: ProtocolCodec = {
@@ -71,7 +71,7 @@ function partOfEmission(emission: Emission): Record<string, unknown> | undefined
     case 'think':
       return { text: emission.text, thought: true, thoughtSignature: emission.signature };
     case 'call-start':
-      return { functionCall: { id: emission.id, name: emission.call.name, args: objectArguments(emission.call, 'google') } };
+      return { functionCall: { id: emission.id, name: emission.call.name, args: objectArguments(emission.call, 'google') }, ...thoughtSignatureOf(emission.call) };
     case 'call-arguments':
       return undefined;
   }
@@ -232,4 +232,9 @@ function viewPartOf(part: Record<string, unknown>): ViewPart {
   const url = part['inlineData'] !== undefined ? `data:${mediaType ?? 'application/octet-stream'};base64,${stringOf(inline['data'])}` : stringOf(file['fileUri']);
   if (part['inlineData'] === undefined && part['fileData'] === undefined) return { type: 'other', raw: part };
   return { type: mediaType?.startsWith('video/') === true ? 'video' : 'image', url, mediaType };
+}
+
+function thoughtSignatureOf(call: ToolCallSpec): { readonly thoughtSignature?: string } {
+  const signature = call.extras?.['thought_signature_b64'];
+  return typeof signature === 'string' ? { thoughtSignature: signature } : {};
 }

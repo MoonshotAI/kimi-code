@@ -187,13 +187,18 @@ class LoopMailbox {
     return ack;
   }
 
-  cancel(promptId: string): LoopAck<'prompt.canceled'> {
+  cancel(promptId: string, startingTurnId?: number): LoopAck<'prompt.canceled'> {
     const normal = this.normal.filter((message) => message.attributes?.promptId !== promptId);
     const notify = this.notifyEntries.filter((message) => message.attributes?.promptId !== promptId);
     const canceled = normal.length !== this.normal.length || notify.length !== this.notifyEntries.length;
     this.normal = normal;
     this.notifyEntries = notify;
-    const ack: LoopAck<'prompt.canceled'> = { type: 'prompt.canceled', promptId, canceled };
+    const ack: LoopAck<'prompt.canceled'> = {
+      type: 'prompt.canceled',
+      promptId,
+      canceled,
+      ...(startingTurnId === undefined ? {} : { startingTurnId }),
+    };
     this.emit(ack);
     return ack;
   }
@@ -258,6 +263,7 @@ type LoopActorState =
       readonly machine: Turn;
       pending: QueuedItem[];
       announced: boolean;
+      cancelledBeforeStart?: boolean;
       readonly completion?: Deferred<TurnOutcome>;
       readonly signal?: AbortSignal;
       onAbort?: () => void;
@@ -668,11 +674,18 @@ class LoopActor implements Loop {
     });
   }
 
-  cancel(promptId: string): LoopAck<'prompt.canceled'> | undefined {
+  cancel(promptId: string, options?: Parameters<Loop['cancel']>[1]): LoopAck<'prompt.canceled'> | undefined {
     this.check({ type: 'input.cancel', promptId });
     if (!this.open()) return undefined;
     return this.actor.act(() => {
       if (!this.open()) return undefined;
+      const turn = options?.includeStarting === true ? this.turn : undefined;
+      if (turn?.pending.some((item) => item.kind !== 'remind' && item.message.attributes?.promptId === promptId)) {
+        const startingTurnId = turn.announced ? undefined : turn.machine.id;
+        if (startingTurnId !== undefined) turn.cancelledBeforeStart = true;
+        this.requestAbort(turn, undefined, !this.held);
+        return this.mailbox.cancel(promptId, startingTurnId);
+      }
       return this.mailbox.cancel(promptId);
     });
   }
@@ -907,7 +920,7 @@ class LoopActor implements Loop {
   }
 
   private announceTurn(turn: RunningTurn): void {
-    if (turn.announced) return;
+    if (turn.announced || turn.cancelledBeforeStart === true) return;
     turn.announced = true;
     if (turn.machine.state.kind === 'resume') {
       this.record({ type: 'turn.resumed', turnId: turn.machine.id, step: turn.machine.state.step });

@@ -18,6 +18,7 @@ export interface ToolCallSpec {
   readonly rawArguments?: string;
   readonly argumentChunks?: number;
   readonly invalid?: boolean;
+  readonly extras?: Readonly<Record<string, unknown>>;
 }
 
 export type ReplyPart =
@@ -47,7 +48,7 @@ export interface HoldPoint {
 export type ReplyEnding =
   | { readonly type: 'complete' }
   | { readonly type: 'stream-error'; readonly error: ErrorSpec }
-  | { readonly type: 'disconnect' };
+  | { readonly type: 'disconnect'; readonly afterUsage?: boolean };
 
 interface StepBase {
   readonly label: string;

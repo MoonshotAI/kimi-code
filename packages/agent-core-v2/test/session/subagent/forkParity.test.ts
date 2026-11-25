@@ -1,4 +1,3 @@
-import { createControlledPromise } from '@antfu/utils';
 import { appendContext, compactContext } from '../../agent/contextMemory/stubs';
 import { afterEach, describe, expect, it, vi, type TestContext } from 'vitest';
 
@@ -11,6 +10,7 @@ import type { IAgentScopeHandle } from '#/_base/di/scope';
 import { Event } from '#/_base/event';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentLoopService } from '#/agent/loop/loop';
+import { AssistantDelta } from '#/agent/loop/turnEvents';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { IAgentTaskService } from '#/agent/task/task';
 import type { LlmRequestContent } from '@moonshot-ai/core/llm/request';
@@ -33,6 +33,7 @@ import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { WAIT_FOR_FLAG_ID } from '#/agent/tools/task/task-wait/flag';
 import { IWebSearchProviderService } from '#/app/auth/webSearch/webSearch';
+import { ISessionEventBus } from '#/app/event/eventBus';
 import { IFlagService } from '#/app/flag/flag';
 import { AUTO_REVIEW_FLAG_ID } from '#/features/autoReview/flag';
 import { ISessionNotify } from '#/features/notify/sessionNotify';
@@ -60,7 +61,7 @@ import {
 } from '../../harness';
 import { McpConnectionManager } from '#/mcpCore/connection-manager';
 import { startInProcessHttpMcpServer } from '../../mcpCore/stubs';
-import { say } from '@moonshot-ai/testkit/model';
+import { held, reply, say } from '@moonshot-ai/testkit/model';
 import { stubFlag } from '../../app/flag/stubs';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 
@@ -172,15 +173,6 @@ function requestTexts(content: LlmRequestContent, role?: string): string[] {
     .flatMap((part) => (part.type === 'text' ? [part.text] : []));
 }
 
-async function waitForAbortReason(signal: AbortSignal): Promise<unknown> {
-  if (!signal.aborted) {
-    await new Promise<void>((resolve) => {
-      signal.addEventListener('abort', () => resolve(), { once: true });
-    });
-  }
-  return signal.reason ?? new DOMException('The operation was aborted.', 'AbortError');
-}
-
 describe('subagent task reminders and btw request parity', () => {
   let ctx: TestAgentContext;
   let store: ScopedAppendLogStore;
@@ -188,6 +180,16 @@ describe('subagent task reminders and btw request parity', () => {
   afterEach(async () => {
     await ctx.dispose();
   });
+
+  function childWrote(text: string): Promise<void> {
+    return new Promise((resolve) => {
+      const subscription = ctx.get(ISessionEventBus).subscribe(AssistantDelta, (event) => {
+        if (!event.delta.includes(text)) return;
+        subscription.dispose();
+        resolve();
+      });
+    });
+  }
 
   function createSubagentTestCtx(
     flags: IFlagService = stubFlag(true),
@@ -234,12 +236,12 @@ describe('subagent task reminders and btw request parity', () => {
     return child;
   }
 
-  async function runPrompt(agent: IAgentScopeHandle): Promise<void> {
+  async function runPrompt(agent: IAgentScopeHandle, text = 'continue the task'): Promise<void> {
     ctx.mockNextResponse({ type: 'text', text: CHILD_FINAL_TEXT });
     const loop = agent.accessor.get(IAgentLoopService);
     const { id } = loop.submit({
       role: 'user',
-      content: [{ type: 'text', text: 'continue the task' }],
+      content: [{ type: 'text', text }],
       attributes: { origin: { kind: 'user' } },
     });
     expect((await loop.promptHandle(id)!.completion).state).toBe('completed');
@@ -346,7 +348,7 @@ describe('subagent task reminders and btw request parity', () => {
         compact();
       }
 
-      await runPrompt(child);
+      await runPrompt(child, 'finish the task');
 
       expect(ctx.llmCalls).toHaveLength(2);
       expect(taskReminders(ctx.llmCalls[1]!.history)).toHaveLength(1);
@@ -545,34 +547,17 @@ describe('subagent task reminders and btw request parity', () => {
   it('hands a stopped background subagent its run text back through TaskStop without extra requests', async () => {
     const parentScript = createScriptedGenerate();
     const childScript = createScriptedGenerate();
-    const childStreaming = createControlledPromise<void>();
     let childRequests = 0;
     createSubagentTestCtx(stubFlag(true), [], createMockProvider(async (request, signal) => {
         if (requestTexts(request.content, 'user').some((text) => text.includes(STOPPED_CHILD_PROMPT))) {
           childRequests += 1;
           if (childRequests === 2) {
-            return {
-              request,
-              result: {
-                id: 'stopped-child',
-                message: {
-                  role: 'assistant',
-                  content: [{ type: 'text', text: STOPPED_CHILD_DRAFT }],
-                  toolCalls: [],
-                },
-                usage: null,
-                finishReason: null,
-                rawFinishReason: null,
-              },
-              parts: [{ type: 'text', text: STOPPED_CHILD_DRAFT }],
-              error: waitForAbortReason(signal),
-              onStream: childStreaming.resolve,
-            };
+            return { step: held('child-draft', reply(say(STOPPED_CHILD_DRAFT), say(' unfinished')), 1) };
           }
           return childScript.provider.respond(request, signal);
         }
         if (parentScript.calls.length === 1) {
-          await childStreaming;
+          await childWroteDraft;
           const taskId = /task_id: (agent-[0-9a-z]+)/.exec(requestTexts(request.content).join('\n'))?.[1];
           parentScript.mockNextResponse({
             type: 'function',
@@ -585,6 +570,7 @@ describe('subagent task reminders and btw request parity', () => {
         }
         return parentScript.provider.respond(request, signal);
     }));
+    const childWroteDraft = childWrote(STOPPED_CHILD_DRAFT);
     const profile = ctx.get(IAgentLoopService);
     await ctx.get(IAgentLoopService).bindProfile({ profile: 'agent', model: 'mock-model' });
     profile.update({ activeToolNames: contributedToolNames() });
@@ -641,34 +627,15 @@ describe('subagent task reminders and btw request parity', () => {
 
   it('records the text a foreground subagent wrote when the user interrupts the parent turn', async () => {
     const parentScript = createScriptedGenerate();
-    const childStreaming = createControlledPromise<void>();
     let childRequests = 0;
     createSubagentTestCtx(stubFlag(true), [], createMockProvider(async (request, signal) => {
         if (requestTexts(request.content, 'user').some((text) => text.includes(STOPPED_CHILD_PROMPT))) {
           childRequests += 1;
-          return {
-            request,
-            result: {
-              id: 'stopped-child',
-              message: {
-                role: 'assistant',
-                content: [{ type: 'text', text: STOPPED_CHILD_FINDING }],
-                toolCalls: [],
-              },
-              usage: null,
-              finishReason: null,
-              rawFinishReason: null,
-            },
-            parts: [{ type: 'text', text: STOPPED_CHILD_FINDING }],
-            error: waitForAbortReason(signal),
-            onStream: () => {
-              childStreaming.resolve();
-              loop.cancel(undefined, userCancellationReason());
-            },
-          };
+          return { step: held('child-finding', reply(say(STOPPED_CHILD_FINDING), say(' unfinished')), 1) };
         }
         return parentScript.provider.respond(request, signal);
     }));
+    const childWroteFinding = childWrote(STOPPED_CHILD_FINDING);
     const profile = ctx.get(IAgentLoopService);
     await ctx.get(IAgentLoopService).bindProfile({ profile: 'agent', model: 'mock-model' });
     profile.update({ activeToolNames: contributedToolNames() });
@@ -686,7 +653,8 @@ describe('subagent task reminders and btw request parity', () => {
       content: [{ type: 'text', text: 'investigate the parser loop' }],
       attributes: { origin: { kind: 'user' } },
     });
-    await childStreaming;
+    await childWroteFinding;
+    loop.cancel(undefined, userCancellationReason());
     expect((await loop.promptHandle(id)!.completion).state).toBe('cancelled');
 
     expect(parentScript.calls).toHaveLength(1);

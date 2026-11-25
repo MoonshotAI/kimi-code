@@ -116,6 +116,8 @@ async function streamReply(step: ReplyStep, playback: Playback): Promise<void> {
       return;
     case 'disconnect':
       ensureHead();
+      if (step.ending.afterUsage === true && encoding.usageOnly !== undefined) await writeData(encoding.usageOnly, playback);
+      if (sink.gone) return;
       request.transition('cut');
       sink.disconnect();
       return;

@@ -1247,7 +1247,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       for (let index = this.pendingSubmissions.length - 1; index >= 0; index -= 1) {
         if (this.pendingSubmissions[index]!.attributes?.promptId === target.promptId) this.pendingSubmissions.splice(index, 1);
       }
-      this.loop?.cancel(target.promptId);
+      this.loop?.cancel(target.promptId, { includeStarting: true });
       this.prompts.cancel(target.promptId);
       return true;
     }
