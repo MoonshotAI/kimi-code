@@ -90,7 +90,6 @@ import {
   wrapSubagentModelError,
 } from '#/session/subagent/configSection';
 import {
-  DEFAULT_SWARM_MODE_SECTION,
   DEFAULT_SWARM_TIMEOUT_MS,
   resolveSwarmTimeoutMs,
   SWARM_SECTION,
@@ -845,18 +844,6 @@ describe('defaultPermissionMode config section', () => {
     expect(() => registry.validate(DEFAULT_PERMISSION_MODE_SECTION, 'bogus')).toThrow();
 
     expect(registry.getSection('yolo')).toBeUndefined();
-  });
-});
-
-describe('defaultSwarmMode config section', () => {
-  it('registers the defaultSwarmMode section with a false default and a boolean schema', () => {
-    const registry = new ConfigRegistry();
-
-    const section = registry.getSection(DEFAULT_SWARM_MODE_SECTION);
-    expect(section).toBeDefined();
-    expect(section?.defaultValue).toBe(false);
-    expect(registry.validate(DEFAULT_SWARM_MODE_SECTION, true)).toBe(true);
-    expect(() => registry.validate(DEFAULT_SWARM_MODE_SECTION, 'yes')).toThrow();
   });
 });
 

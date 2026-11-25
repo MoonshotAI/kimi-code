@@ -309,8 +309,6 @@ export default {
   defaultThinkingHint: '新会话默认是否开启思考',
   defaultPlanMode: '默认计划模式',
   defaultPlanModeHint: '新会话默认进入计划模式',
-  defaultSwarmMode: '默认 Swarm 模式',
-  defaultSwarmModeHint: '新会话默认进入 Swarm 模式',
   secondaryModelSection: '子智能体',
   secondaryModel: '子智能体模型',
   secondaryModelHint: '子智能体默认使用的模型与思考强度',
