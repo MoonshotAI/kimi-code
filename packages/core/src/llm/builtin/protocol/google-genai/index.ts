@@ -114,14 +114,20 @@ export const googleGenAIProtocol = defineProtocol({
   client: createClient,
   send: async (client: GenAIClient, request: Request, signal) => {
     const response = await Promise.race([
-      modelsOf(client).generateContent(request.params),
+      modelsOf(client).generateContent({
+        ...request.params,
+        config: { ...request.params.config, abortSignal: signal },
+      }),
       abortPromise(signal),
     ]);
     return { body: response as unknown };
   },
   sendStream: async (client: GenAIClient, request: Request, signal) => {
     const stream = await Promise.race([
-      modelsOf(client).generateContentStream(request.params),
+      modelsOf(client).generateContentStream({
+        ...request.params,
+        config: { ...request.params.config, abortSignal: signal },
+      }),
       abortPromise(signal),
     ]);
     return { body: abortableStream(stream, signal) as AsyncIterable<unknown> };

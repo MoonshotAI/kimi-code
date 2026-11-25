@@ -65,12 +65,16 @@ jobs:
         env:
           TESTKIT_CLI_BUILD: dist
       - uses: actions/upload-artifact@v7
+        if: ${{ !cancelled() }}
+        with:
+          name: e2e-tui-report
+          path: tests/e2e/playwright-report/
+          retention-days: 7
+      - uses: actions/upload-artifact@v7
         if: failure()
         with:
           name: e2e-tui-failure
-          path: |
-            tests/e2e/test-results/
-            tests/e2e/playwright-report/
+          path: tests/e2e/test-results/
           retention-days: 7
 
   acp:
@@ -95,12 +99,16 @@ jobs:
         env:
           TESTKIT_CLI_BUILD: dist
       - uses: actions/upload-artifact@v7
+        if: ${{ !cancelled() }}
+        with:
+          name: e2e-acp-report
+          path: tests/e2e/playwright-report/
+          retention-days: 7
+      - uses: actions/upload-artifact@v7
         if: failure()
         with:
           name: e2e-acp-failure
-          path: |
-            tests/e2e/test-results/
-            tests/e2e/playwright-report/
+          path: tests/e2e/test-results/
           retention-days: 7
 
   desktop:
@@ -127,12 +135,16 @@ jobs:
       - name: Run the scenarios and driver self-tests on Desktop
         run: xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" pnpm --filter @moonshot-ai/e2e exec playwright test --project=desktop --workers=1
       - uses: actions/upload-artifact@v7
+        if: ${{ !cancelled() }}
+        with:
+          name: e2e-desktop-report
+          path: tests/e2e/playwright-report/
+          retention-days: 7
+      - uses: actions/upload-artifact@v7
         if: failure()
         with:
           name: e2e-desktop-failure
-          path: |
-            tests/e2e/test-results/
-            tests/e2e/playwright-report/
+          path: tests/e2e/test-results/
           retention-days: 7
 
   web:
@@ -159,10 +171,14 @@ jobs:
         env:
           TESTKIT_CLI_BUILD: dist
       - uses: actions/upload-artifact@v7
+        if: ${{ !cancelled() }}
+        with:
+          name: e2e-web-report
+          path: tests/e2e/playwright-report/
+          retention-days: 7
+      - uses: actions/upload-artifact@v7
         if: failure()
         with:
           name: e2e-web-failure
-          path: |
-            tests/e2e/test-results/
-            tests/e2e/playwright-report/
+          path: tests/e2e/test-results/
           retention-days: 7

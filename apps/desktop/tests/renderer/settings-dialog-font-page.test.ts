@@ -137,3 +137,62 @@ it('opens Agent & Sessions on initialTab="agent", scrolls to and highlights runn
   await flush();
   expect(row.getAttribute('data-setting-highlighted')).toBeNull();
 }, 60_000);
+
+
+it('exposes confirmDiscard so external shortcut or menu toggles respect unsaved tool edits', async () => {
+  const { IconResolverKey } = await import('@moonshot-ai/app-ui');
+  const { KimiI18nKey } = await import('@moonshot-ai/app-i18n');
+  const { setKimiClientDeps } = await import('@moonshot-ai/app-client/client');
+  const { useConfirmDialog } = await import('@moonshot-ai/app-client/composables');
+  const { clientPinia, configStore } = await import('@moonshot-ai/app-client/stores');
+  const { default: i18n } = await import('../../src/renderer/i18n');
+  const { default: SettingsDialog } = await import('../../src/renderer/components/settings/SettingsDialog.vue');
+  configStore().resetConfig();
+  setKimiClientDeps({
+    api: () => ({
+      listToolCatalog: async () => [{ name: 'Bash', source: 'builtin' }],
+      getConfig: async () => ({ providers: {}, tools: { disabled: [] } }),
+    }),
+    t: (key: string) => key,
+  } as never);
+
+  let dialogRef!: { confirmDiscard: () => Promise<boolean> };
+  const host = document.createElement('div');
+  document.body.append(host);
+  app = createApp({
+    render: () =>
+      h(SettingsDialog, {
+        ref: (value) => { dialogRef = value as unknown as typeof dialogRef; },
+        colorScheme: 'light',
+        fontScale: 'medium',
+        notify: false,
+        notifySound: false,
+        initialTab: 'agent',
+        onFetchUsage: async () => ({ kind: 'error' }) as never,
+      }),
+  });
+  app.use(i18n);
+  app.use(clientPinia);
+  app.provide(KimiI18nKey, { t: (key: string) => key });
+  app.provide(IconResolverKey, () => defineComponent({ render: () => h('svg') }));
+  app.mount(host);
+  await flush();
+
+  document.querySelector<HTMLButtonElement>('[data-settings-subpage-origin="tools"]')!.click();
+  await vi.waitFor(() => expect(document.querySelector('.settings-subpage [role="switch"]')).not.toBeNull());
+  await expect(dialogRef.confirmDiscard()).resolves.toBe(true);
+
+  document.querySelector<HTMLButtonElement>('.settings-subpage [role="switch"]')!.click();
+  await flush();
+
+  const cancelled = dialogRef.confirmDiscard();
+  await flush();
+  expect(useConfirmDialog().isConfirmOpen.value).toBe(true);
+  useConfirmDialog().settle(false);
+  await expect(cancelled).resolves.toBe(false);
+
+  const confirmed = dialogRef.confirmDiscard();
+  await flush();
+  useConfirmDialog().settle(true);
+  await expect(confirmed).resolves.toBe(true);
+}, 60_000);

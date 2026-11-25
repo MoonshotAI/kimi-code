@@ -1,10 +1,13 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 
+import { TIMEOUTS } from '@moonshot-ai/testkit/fixtures';
 import type { BrowserContext, Page } from '@playwright/test';
 
-import type { Diagnostic, SurfaceDriver, ToolExpectation } from '../support/verbs';
-import { RendererSurface } from './renderer';
+import type { ApprovalExpectation, ApproveOptions, Diagnostic, Frame, PermissionMode, ReopenState, SurfaceDriver, ToolExpectation } from '../support/verbs';
+import { RendererSurface, type MenuPage } from './renderer';
+
+export const WELCOME_DIALOG = 'Welcome to Kimi Code';
 
 export const OFFLINE_NAMES = '--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE localhost, EXCLUDE 127.0.0.1';
 
@@ -25,7 +28,7 @@ function reachesBeyondThisMachine(url: string): boolean {
   return !LOCAL_SCHEMES.has(target.protocol) && !LOOPBACK_HOSTS.has(target.hostname);
 }
 
-export abstract class PageDriver implements SurfaceDriver {
+export abstract class PageDriver implements SurfaceDriver<'desktop' | 'web'> {
   protected readonly beyond: string[] = [];
   protected readonly trace: string;
   protected readonly context: BrowserContext;
@@ -34,12 +37,13 @@ export abstract class PageDriver implements SurfaceDriver {
   private tracing = false;
   private traceProblem: string | undefined;
   private renderer: RendererSurface | undefined;
+  private page: Page | undefined;
   private lastPage = 'The page never became ready.';
 
-  protected constructor(context: BrowserContext, root: string, name: string) {
+  protected constructor(context: BrowserContext, root: string, name: string, launch: number) {
     this.context = context;
     this.name = name;
-    this.trace = join(root, `${name}-trace.zip`);
+    this.trace = join(root, `${name}-${launch}-trace.zip`);
     context.on('request', (request) => {
       if (reachesBeyondThisMachine(request.url())) this.beyond.push(`${request.method()} ${request.url()}`);
     });
@@ -55,6 +59,8 @@ export abstract class PageDriver implements SurfaceDriver {
 
   abstract close(): Promise<void>;
 
+  abstract reopenState(): ReopenState;
+
   abstract kill(): Promise<void>;
 
   abstract networkViolations(): Promise<readonly string[]>;
@@ -65,12 +71,44 @@ export abstract class PageDriver implements SurfaceDriver {
     return this.window().send(text);
   }
 
-  approve(): Promise<void> {
-    return this.window().approve();
+  queue(text: string): Promise<void> {
+    return this.window().queue(text);
+  }
+
+  steer(text: string): Promise<void> {
+    return this.window().steer(text);
+  }
+
+  approve(options?: ApproveOptions): Promise<void> {
+    return this.window().approve(options);
   }
 
   reject(): Promise<void> {
     return this.window().reject();
+  }
+
+  rejectWithFeedback(feedback: string): Promise<void> {
+    return this.window().rejectWithFeedback(feedback);
+  }
+
+  expectApproval(expectation: ApprovalExpectation): Promise<void> {
+    return this.window().expectApproval(expectation);
+  }
+
+  answer(option: string): Promise<void> {
+    return this.window().answer(option);
+  }
+
+  answerOther(text: string): Promise<void> {
+    return this.window().answerOther(text);
+  }
+
+  dismissQuestion(): Promise<void> {
+    return this.window().dismissQuestion();
+  }
+
+  setPermissionMode(mode: PermissionMode): Promise<void> {
+    return this.window().setPermissionMode(mode);
   }
 
   stop(): Promise<void> {
@@ -89,13 +127,46 @@ export abstract class PageDriver implements SurfaceDriver {
     return this.window().expectReply(text);
   }
 
+  expectError(text: string): Promise<void> {
+    return this.window().expectError(text);
+  }
+
+  expectAbsent(text: string): Promise<void> {
+    return this.window().expectAbsent(text);
+  }
+
+  continue(): Promise<void> {
+    return this.window().continue();
+  }
+
+  expectTranscript(text: string): Promise<void> {
+    return this.window().expectTranscript(text);
+  }
+
+  idle(): Promise<boolean> {
+    return this.window().idle();
+  }
+
+  protected async awaitResumed(lastPrompt: string | undefined): Promise<void> {
+    if (lastPrompt !== undefined) await this.window().awaitMessage(lastPrompt);
+    if (this.page !== undefined && (await this.page.getByRole('dialog', { name: WELCOME_DIALOG }).isVisible())) {
+      throw new Error(`The welcome dialog came back after the restart; a returning user should not be onboarded again.\n${await this.window().describe()}`);
+    }
+  }
+
   protected async startTrace(): Promise<void> {
     await this.context.tracing.start({ screenshots: true, snapshots: true });
     this.tracing = true;
   }
 
-  protected show(page: Page, workspace: string): void {
-    this.renderer = new RendererSurface(page, workspace);
+  async frame(): Promise<Frame> {
+    if (this.page === undefined) throw new Error(`The ${this.name} page is not ready.`);
+    return { kind: 'image', png: await this.page.screenshot({ scale: 'css', caret: 'initial', timeout: TIMEOUTS.wait }) };
+  }
+
+  protected show(page: Page, workspace: string, menus: MenuPage): void {
+    this.page = page;
+    this.renderer = new RendererSurface(page, workspace, menus);
   }
 
   protected async leave(): Promise<void> {

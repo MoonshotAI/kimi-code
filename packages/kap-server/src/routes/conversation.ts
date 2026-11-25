@@ -9,22 +9,14 @@ import {
 import { z } from 'zod';
 
 import { errEnvelope, okEnvelope } from '../envelope';
-import { defineRoute } from '../middleware/defineRoute';
+import { defineRoute, type GetRouteHost } from '../middleware/defineRoute';
 import { conversationTurnsPageSchema } from '../protocol/conversation';
 import { ErrorCode } from '../protocol/error-codes';
 import type { ConversationService } from '../services/conversation/conversationService';
 import { type ActionTable, resolveActionTarget, runAction } from './action-dispatch';
 import { sendMappedError, sessionConflictErrors } from './sessionErrors';
 
-interface ConversationRouteHost {
-  get(
-    path: string,
-    options: { preHandler: unknown[]; schema?: Record<string, unknown> } | undefined,
-    handler: (
-      req: { id: string; query: unknown; params: unknown },
-      reply: { send(payload: unknown): unknown },
-    ) => Promise<void> | void,
-  ): unknown;
+interface ConversationRouteHost extends GetRouteHost {
   post(
     path: string,
     options: { preHandler: unknown[]; schema?: Record<string, unknown> } | undefined,

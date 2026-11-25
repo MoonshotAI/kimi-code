@@ -1365,18 +1365,18 @@ describe('WaitForTool (harness)', () => {
       }));
       expect(tasks.getTask(taskId)?.status).toBe('running');
       await ctx.get(IAgentLoopService).settled();
-      const lifecycleOutcomes = () => ctx.allEvents.filter(
+      const continuations = () => ctx.allEvents.filter(
         (event) => event.type === '[rpc]' && event.event === 'turn.ended',
-      ).map((event) => (event.args as { loopEnd?: { outcome: string } } | undefined)?.loopEnd?.outcome);
-      expect(lifecycleOutcomes().at(-1)).toBe('drained');
-      expect(lifecycleOutcomes()).not.toContain('idle');
+      ).map((event) => (event.args as { continuation?: string } | undefined)?.continuation);
+      expect(continuations().at(-1)).toBe('background');
+      expect(continuations()).not.toContain('none');
       ctx.mockNextResponse({ type: 'text', text: 'The background work has finished.' });
       const notified = vi.waitFor(() => expect(taskNotifications(ctx, taskId)).toHaveLength(1));
       controlled.resolve('');
       await notified;
       await ctx.get(IAgentLoopService).settled();
       expect(tasks.getTask(taskId)?.status).toBe('completed');
-      expect(lifecycleOutcomes().at(-1)).toBe('idle');
+      expect(continuations().at(-1)).toBe('none');
       expect(taskNotifications(ctx, taskId)).toHaveLength(1);
       await ctx.expectResumeMatches();
     } finally {

@@ -52,7 +52,6 @@
     "apps/desktop/e2e/turn-steer-into-wait.spec.ts": 2,
     "apps/desktop/e2e/turn-steer-then-stop.spec.ts": 2,
     "apps/desktop/e2e/turn-steer.spec.ts": 2,
-    "apps/desktop/e2e/turn-stop-during-approval.spec.ts": 2,
     "apps/desktop/e2e/turn-stop-then-send.spec.ts": 2,
     "apps/desktop/e2e/undelivered-records-and-session-cleanup.spec.ts": 2,
     "apps/desktop/e2e/undetermined-and-history-leave.spec.ts": 1,

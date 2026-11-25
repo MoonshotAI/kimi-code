@@ -166,6 +166,13 @@ describe('Plan service', () => {
   }
 
   describe('manual plan entry', () => {
+    it('rejects entry when ExitPlanMode is unavailable', async () => {
+      useTools([]);
+
+      await expect(plan.enter()).rejects.toThrow('Plan mode requires the ExitPlanMode tool');
+      await expectPlanActive(false);
+    });
+
     it('keeps permission gating out of the PlanMode state object', () => {
       expect('beforeToolCall' in plan).toBe(false);
     });
@@ -287,7 +294,7 @@ describe('Plan service', () => {
     }
 
     it('keeps denying writes to non-plan files on a remote binding', async () => {
-      useRemoteTools(['Write']);
+      useRemoteTools(['ExitPlanMode', 'Write']);
       await remotePlan.enter('remote-plan', false);
 
       const otherPath = '/remote/work/src/main.ts';
@@ -756,7 +763,7 @@ describe('Plan service', () => {
           files.set(path, content);
         });
         useFakes(createPlanFakes({ readText, writeText }));
-        useTools([toolName]);
+        useTools(['ExitPlanMode', toolName]);
         await plan.enter('test-plan', false);
 
         const planPath = await expectActivePlanPath();
@@ -795,7 +802,7 @@ describe('Plan service', () => {
         files.set(path, content);
       });
       useFakes(createPlanFakes({ writeText }));
-      useTools(['Write']);
+      useTools(['ExitPlanMode', 'Write']);
       await permissionRules.addRules([
         {
           decision: 'deny',
@@ -837,9 +844,10 @@ describe('Plan service', () => {
         arguments: '{"command":"printf plan-safe","timeout":60}',
       };
       useFakes(createPlanCommandFakes('plan-safe'));
-      useTools(['Bash']);
+      useTools(['ExitPlanMode', 'Bash']);
       await ctx.rpc.setPermission({ mode: 'yolo' });
       await plan.enter('test-plan', false);
+      profile.update({ activeToolNames: ['Bash'] });
 
       ctx.mockNextResponse({ type: 'text', text: 'I will inspect safely.' }, bashCall);
       ctx.mockNextResponse({ type: 'text', text: 'The safe command printed plan-safe.' });
@@ -850,6 +858,7 @@ describe('Plan service', () => {
         [emit] agent.status.updated        { "time": "<time>", "agentId": "main", "permission": "yolo" }
         [wire] plan_mode.enter             { "agentId": "main", "id": "test-plan", "time": "<time>" }
         [emit] agent.status.updated        { "time": "<time>", "agentId": "main", "planMode": true }
+        [wire] tools.set_active_tools      { "agentId": "main", "names": [ "Bash" ], "time": "<time>" }
         [emit] prompt.submitted            { "time": "<time>", "agentId": "main", "promptId": "<msg-1>", "userMessageId": "<msg-1>", "status": "running", "content": [ { "type": "text", "text": "Inspect without mutating files" } ], "origin": { "kind": "user" }, "createdAt": "<time>" }
         [wire] turn.prompt                 { "agentId": "main", "input": [ { "type": "text", "text": "Inspect without mutating files" } ], "origin": { "kind": "user" }, "promptId": "<msg-1>", "turnId": 0, "trigger": "normal", "time": "<time>" }
         [emit] context.spliced             { "time": "<time>", "agentId": "main", "start": 0, "deleteCount": 0, "messages": [ { "role": "user", "content": [ { "type": "text", "text": "Inspect without mutating files" } ], "id": "<msg-1>", "origin": { "kind": "user" } } ] }
@@ -896,8 +905,8 @@ describe('Plan service', () => {
         [wire] usage.record                { "agentId": "main", "model": "mock-model", "usage": { "inputOther": 799, "output": 12, "inputCacheRead": 0, "inputCacheCreation": 0 }, "usageScope": "turn", "time": "<time>" }
         [wire] token_counting.measured     { "agentId": "main", "length": 5, "tokens": 811, "time": "<time>" }
         [wire] context.append_loop_event   { "agentId": "main", "event": { "type": "step.end", "uuid": "<uuid-6>", "turnId": "0", "step": 2, "finishReason": "end_turn", "usage": { "inputOther": 799, "output": 12, "inputCacheRead": 0, "inputCacheCreation": 0 }, "messageId": "mock-2", "providerFinishReason": "completed", "rawFinishReason": "stop" }, "time": "<time>" }
-        [wire] turn.ended                  { "agentId": "main", "turnId": 0, "reason": "completed", "replyModel": { "provider": "openai", "model": "mock-model" }, "modelSteps": [ { "model": "mock-model", "provider": "openai", "isKfc": false, "step": 1, "role": "step" }, { "model": "mock-model", "provider": "openai", "isKfc": false, "step": 2, "role": "step" } ], "loopEnd": { "outcome": "idle" }, "time": "<time>" }
-        [emit] turn.ended                  { "time": "<time>", "agentId": "main", "turnId": 0, "reason": "completed", "replyModel": { "provider": "openai", "model": "mock-model" }, "modelSteps": [ { "model": "mock-model", "provider": "openai", "isKfc": false, "step": 1, "role": "step" }, { "model": "mock-model", "provider": "openai", "isKfc": false, "step": 2, "role": "step" } ], "loopEnd": { "outcome": "idle" } }
+        [wire] turn.ended                  { "agentId": "main", "turnId": 0, "reason": "completed", "replyModel": { "provider": "openai", "model": "mock-model" }, "modelSteps": [ { "model": "mock-model", "provider": "openai", "isKfc": false, "step": 1, "role": "step" }, { "model": "mock-model", "provider": "openai", "isKfc": false, "step": 2, "role": "step" } ], "continuation": "none", "time": "<time>" }
+        [emit] turn.ended                  { "time": "<time>", "agentId": "main", "turnId": 0, "reason": "completed", "replyModel": { "provider": "openai", "model": "mock-model" }, "modelSteps": [ { "model": "mock-model", "provider": "openai", "isKfc": false, "step": 1, "role": "step" }, { "model": "mock-model", "provider": "openai", "isKfc": false, "step": 2, "role": "step" } ], "continuation": "none" }
       `);
 
       expect(ctx.llmCalls).toHaveLength(2);
@@ -918,9 +927,10 @@ describe('Plan service', () => {
         arguments: '{"command":"rm forbidden.txt","timeout":60}',
       };
       useFakes(createPlanCommandFakes('removed'));
-      useTools(['Bash']);
+      useTools(['ExitPlanMode', 'Bash']);
       await ctx.rpc.setPermission({ mode: 'yolo' });
       await plan.enter('test-plan', false);
+      profile.update({ activeToolNames: ['Bash'] });
 
       ctx.mockNextResponse({ type: 'text', text: 'I will mutate a file.' }, bashCall);
       ctx.mockNextResponse({ type: 'text', text: 'The command completed.' });
@@ -931,6 +941,7 @@ describe('Plan service', () => {
         [emit] agent.status.updated        { "time": "<time>", "agentId": "main", "permission": "yolo" }
         [wire] plan_mode.enter             { "agentId": "main", "id": "test-plan", "time": "<time>" }
         [emit] agent.status.updated        { "time": "<time>", "agentId": "main", "planMode": true }
+        [wire] tools.set_active_tools      { "agentId": "main", "names": [ "Bash" ], "time": "<time>" }
         [emit] prompt.submitted            { "time": "<time>", "agentId": "main", "promptId": "<msg-1>", "userMessageId": "<msg-1>", "status": "running", "content": [ { "type": "text", "text": "Remove forbidden.txt" } ], "origin": { "kind": "user" }, "createdAt": "<time>" }
         [wire] turn.prompt                 { "agentId": "main", "input": [ { "type": "text", "text": "Remove forbidden.txt" } ], "origin": { "kind": "user" }, "promptId": "<msg-1>", "turnId": 0, "trigger": "normal", "time": "<time>" }
         [emit] context.spliced             { "time": "<time>", "agentId": "main", "start": 0, "deleteCount": 0, "messages": [ { "role": "user", "content": [ { "type": "text", "text": "Remove forbidden.txt" } ], "id": "<msg-1>", "origin": { "kind": "user" } } ] }
@@ -977,8 +988,8 @@ describe('Plan service', () => {
         [wire] usage.record                { "agentId": "main", "model": "mock-model", "usage": { "inputOther": 795, "output": 9, "inputCacheRead": 0, "inputCacheCreation": 0 }, "usageScope": "turn", "time": "<time>" }
         [wire] token_counting.measured     { "agentId": "main", "length": 5, "tokens": 804, "time": "<time>" }
         [wire] context.append_loop_event   { "agentId": "main", "event": { "type": "step.end", "uuid": "<uuid-6>", "turnId": "0", "step": 2, "finishReason": "end_turn", "usage": { "inputOther": 795, "output": 9, "inputCacheRead": 0, "inputCacheCreation": 0 }, "messageId": "mock-2", "providerFinishReason": "completed", "rawFinishReason": "stop" }, "time": "<time>" }
-        [wire] turn.ended                  { "agentId": "main", "turnId": 0, "reason": "completed", "replyModel": { "provider": "openai", "model": "mock-model" }, "modelSteps": [ { "model": "mock-model", "provider": "openai", "isKfc": false, "step": 1, "role": "step" }, { "model": "mock-model", "provider": "openai", "isKfc": false, "step": 2, "role": "step" } ], "loopEnd": { "outcome": "idle" }, "time": "<time>" }
-        [emit] turn.ended                  { "time": "<time>", "agentId": "main", "turnId": 0, "reason": "completed", "replyModel": { "provider": "openai", "model": "mock-model" }, "modelSteps": [ { "model": "mock-model", "provider": "openai", "isKfc": false, "step": 1, "role": "step" }, { "model": "mock-model", "provider": "openai", "isKfc": false, "step": 2, "role": "step" } ], "loopEnd": { "outcome": "idle" } }
+        [wire] turn.ended                  { "agentId": "main", "turnId": 0, "reason": "completed", "replyModel": { "provider": "openai", "model": "mock-model" }, "modelSteps": [ { "model": "mock-model", "provider": "openai", "isKfc": false, "step": 1, "role": "step" }, { "model": "mock-model", "provider": "openai", "isKfc": false, "step": 2, "role": "step" } ], "continuation": "none", "time": "<time>" }
+        [emit] turn.ended                  { "time": "<time>", "agentId": "main", "turnId": 0, "reason": "completed", "replyModel": { "provider": "openai", "model": "mock-model" }, "modelSteps": [ { "model": "mock-model", "provider": "openai", "isKfc": false, "step": 1, "role": "step" }, { "model": "mock-model", "provider": "openai", "isKfc": false, "step": 2, "role": "step" } ], "continuation": "none" }
       `);
       expect(toolResultText(context.history())).toContain('removed');
     });

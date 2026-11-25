@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ErrorCodes, Error2 } from '#/errors';
 import {
@@ -135,6 +135,32 @@ describe('HttpMcpClient', () => {
       const result = await client.callTool('echo', { text: 'hello http' });
       expect(result.isError).toBe(false);
       expect(result.content).toEqual([{ type: 'text', text: 'hello http' }]);
+    } finally {
+      await client.close();
+    }
+  }, 15000);
+
+  it('notifies after the server changes its tool list', async () => {
+    const server = await startInProcessHttpMcpServer();
+    cleanups.push(server.close);
+
+    const client = new HttpMcpClient({ transport: 'http', url: server.url });
+    const listener = vi.fn();
+    client.onToolsChanged(listener);
+    try {
+      await client.connect();
+      const initialTools = await client.listTools();
+      expect(initialTools.map((tool) => tool.name)).toEqual(['echo']);
+      server.mcpServer.registerTool(
+        'added',
+        { description: 'Added later', inputSchema: {} },
+        () => ({ content: [{ type: 'text', text: 'added' }] }),
+      );
+      await vi.waitFor(() => {
+        expect(listener).toHaveBeenCalledTimes(1);
+      });
+      const tools = await client.listTools();
+      expect(tools.map((tool) => tool.name)).toEqual(['echo', 'added']);
     } finally {
       await client.close();
     }

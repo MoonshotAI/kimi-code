@@ -31,7 +31,7 @@ export const turnEndedEventSchema = z.object({
     .enum(['user_cancelled', 'aborted', 'max_steps', 'error', 'filtered', 'blocked'])
     .optional(),
   requestId: z.string().optional(),
-  loopEnd: z.object({ outcome: z.enum(['drained', 'idle']) }).optional(),
+  continuation: z.enum(['turn', 'background', 'none']).optional(),
 });
 
 export const assistantDeltaEventSchema = z.object({

@@ -6324,7 +6324,7 @@ command = "vim"
     const compactingSend = vi.fn();
     compacting.driver.handleUserInput('held for compaction');
     compacting.driver.sessionEventHandler.handleEvent(
-      { type: 'turn.ended', agentId: 'main', sessionId: 'ses-1', turnId: 4, reason: 'completed', loopEnd: { outcome: 'idle' } } as Event,
+      { type: 'turn.ended', agentId: 'main', sessionId: 'ses-1', turnId: 4, reason: 'completed', continuation: 'none' } as Event,
       compactingSend,
     );
     expect(compactingSend).not.toHaveBeenCalled();
@@ -8786,7 +8786,7 @@ capabilities = ["image_in", "video_in"]
       driver.handleUserInput('first');
 
       driver.sessionEventHandler.handleEvent(
-        { ...main, type: 'turn.ended', turnId: 2, reason: 'completed' } as Event,
+        { ...main, type: 'turn.ended', turnId: 2, reason: 'completed', continuation: 'turn' } as Event,
         handoffQueued,
       );
       await vi.advanceTimersByTimeAsync(100);
@@ -8806,7 +8806,7 @@ capabilities = ["image_in", "video_in"]
         handoffQueued,
       );
       driver.sessionEventHandler.handleEvent(
-        { ...main, type: 'turn.ended', turnId: 3, reason: 'completed', stopReason: 'notify', loopEnd: { outcome: 'idle' } } as Event,
+        { ...main, type: 'turn.ended', turnId: 3, reason: 'completed', stopReason: 'notify', continuation: 'none' } as Event,
         handoffQueued,
       );
       await vi.advanceTimersByTimeAsync(0);
@@ -8821,7 +8821,7 @@ capabilities = ["image_in", "video_in"]
         handoffQueued,
       );
       driver.sessionEventHandler.handleEvent(
-        { ...main, type: 'turn.ended', turnId: 4, reason: 'completed', loopEnd: { outcome: 'idle' } } as Event,
+        { ...main, type: 'turn.ended', turnId: 4, reason: 'completed', continuation: 'none' } as Event,
         handoffQueued,
       );
       await vi.advanceTimersByTimeAsync(0);
@@ -8834,7 +8834,7 @@ capabilities = ["image_in", "video_in"]
         handoffQueued,
       );
       driver.sessionEventHandler.handleEvent(
-        { ...main, type: 'turn.ended', turnId: 5, reason: 'completed', loopEnd: { outcome: 'idle' } } as Event,
+        { ...main, type: 'turn.ended', turnId: 5, reason: 'completed', continuation: 'none' } as Event,
         handoffQueued,
       );
       await vi.advanceTimersByTimeAsync(0);
@@ -8847,7 +8847,7 @@ capabilities = ["image_in", "video_in"]
       const racedSend = vi.fn();
       raced.driver.handleUserInput('requeue for compaction');
       raced.driver.sessionEventHandler.handleEvent(
-        { ...main, type: 'turn.ended', turnId: 1, reason: 'completed', loopEnd: { outcome: 'idle' } } as Event,
+        { ...main, type: 'turn.ended', turnId: 1, reason: 'completed', continuation: 'none' } as Event,
         racedSend,
       );
       raced.driver.state.appState.isCompacting = true;
@@ -8867,14 +8867,14 @@ capabilities = ["image_in", "video_in"]
       const staleSend = vi.fn();
       stale.driver.handleUserInput('new work');
       stale.driver.sessionEventHandler.handleEvent(
-        { ...main, type: 'turn.ended', turnId: 1, reason: 'completed', loopEnd: { outcome: 'idle' } } as Event,
+        { ...main, type: 'turn.ended', turnId: 1, reason: 'completed', continuation: 'none' } as Event,
         staleSend,
       );
       await vi.advanceTimersByTimeAsync(0);
       expect(staleSend).toHaveBeenCalledOnce();
       stale.driver.state.appState.streamingPhase = 'waiting';
       stale.driver.sessionEventHandler.handleEvent(
-        { ...main, type: 'turn.ended', turnId: 1, reason: 'completed', loopEnd: { outcome: 'idle' } } as Event,
+        { ...main, type: 'turn.ended', turnId: 1, reason: 'completed', continuation: 'none' } as Event,
         staleSend,
       );
       await vi.advanceTimersByTimeAsync(0);
@@ -8885,18 +8885,18 @@ capabilities = ["image_in", "video_in"]
       versioned.driver.state.appState.loopLifecycleEvents = true;
       versioned.driver.state.appState.streamingPhase = 'waiting';
       versioned.driver.sessionEventHandler.handleEvent(
-        { ...main, type: 'turn.ended', turnId: 7, reason: 'completed', loopEnd: { outcome: 'drained' } } as Event,
+        { ...main, type: 'turn.ended', turnId: 7, reason: 'completed', continuation: 'background' } as Event,
         vi.fn(),
       );
       expect(versioned.driver.state.appState.streamingPhase).toBe('idle');
       versioned.driver.state.appState.streamingPhase = 'waiting';
       versioned.driver.sessionEventHandler.handleEvent(
-        { ...main, type: 'turn.ended', turnId: 6, reason: 'completed', loopEnd: { outcome: 'idle' } } as Event,
+        { ...main, type: 'turn.ended', turnId: 6, reason: 'completed', continuation: 'none' } as Event,
         vi.fn(),
       );
       expect(versioned.driver.state.appState.streamingPhase).toBe('waiting');
       versioned.driver.sessionEventHandler.handleEvent(
-        { ...main, type: 'turn.ended', turnId: 8, reason: 'completed', loopEnd: { outcome: 'idle' } } as Event,
+        { ...main, type: 'turn.ended', turnId: 8, reason: 'completed', continuation: 'none' } as Event,
         vi.fn(),
       );
       expect(versioned.driver.state.appState.streamingPhase).toBe('idle');
@@ -8905,7 +8905,7 @@ capabilities = ["image_in", "video_in"]
       switched.driver.state.appState.loopLifecycleEvents = true;
       switched.driver.state.appState.streamingPhase = 'waiting';
       switched.driver.sessionEventHandler.handleEvent(
-        { ...main, type: 'turn.ended', turnId: 7, reason: 'completed', loopEnd: { outcome: 'idle' } } as Event,
+        { ...main, type: 'turn.ended', turnId: 7, reason: 'completed', continuation: 'none' } as Event,
         vi.fn(),
       );
       expect(switched.driver.state.appState.streamingPhase).toBe('idle');
@@ -8913,7 +8913,7 @@ capabilities = ["image_in", "video_in"]
       switched.driver.state.appState.loopLifecycleEvents = true;
       switched.driver.state.appState.streamingPhase = 'waiting';
       switched.driver.sessionEventHandler.handleEvent(
-        { ...main, type: 'turn.ended', turnId: 1, reason: 'completed', loopEnd: { outcome: 'idle' } } as Event,
+        { ...main, type: 'turn.ended', turnId: 1, reason: 'completed', continuation: 'none' } as Event,
         vi.fn(),
       );
       expect(switched.driver.state.appState.streamingPhase).toBe('idle');
