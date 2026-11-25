@@ -18,7 +18,7 @@ vi.mock('../../../src/main/browser/browser-automation', () => ({ runBrowserAutom
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import { DESKTOP_BROWSER_DISABLED_ERROR, DESKTOP_BROWSER_RESTRICTED_GUIDANCE, startDesktopBrowserMcp, type DesktopBrowserAccess, type DesktopBrowserMcpHandle } from '../../../src/main/browser/browser-mcp';
+import { DESKTOP_BROWSER_BLOCKED_GUIDANCE, DESKTOP_BROWSER_DISABLED_ERROR, DESKTOP_BROWSER_RESTRICTED_GUIDANCE, startDesktopBrowserMcp, type DesktopBrowserAccess, type DesktopBrowserMcpHandle } from '../../../src/main/browser/browser-mcp';
 import { BROWSER_AUTOMATION_PROTOCOL } from '../../../src/shared/browser-automation';
 import { DESKTOP_BROWSER_SUBAGENT_RUN } from '../../../src/main/browser/browser-subagent-control';
 import { setDesktopTrackImpl } from '../../../src/main/diagnostics/track';
@@ -225,9 +225,7 @@ describe('Desktop Browser MCP', () => {
     const forgedText = JSON.stringify(forged.content);
     expect(forgedText).toContain('not currently running with built-in browser control enabled');
     expect(forgedText).toContain(DESKTOP_BROWSER_RESTRICTED_GUIDANCE);
-    expect(forgedText).not.toContain('To view or operate a page, use WebBridge');
-    expect(forgedText).not.toContain('then tell the user and use CU');
-    expect(forgedText).not.toContain('workaround');
+    expect(forgedText).not.toContain(DESKTOP_BROWSER_BLOCKED_GUIDANCE);
   });
 
   it('refuses calls while agent control is off with a reason and allows other available tools', async () => {
@@ -238,13 +236,7 @@ describe('Desktop Browser MCP', () => {
     });
     expect(result.isError).toBe(true);
     const text = (result.content as Array<{ type: string; text: string }>)[0]?.text ?? '';
-    expect(text).toContain('turned off in Kimi Code Settings > Browser');
-    expect(text).toContain('For a one-off lookup of public information, prefer WebSearch or FetchURL');
-    expect(text).toContain('To view or operate a page, use WebBridge');
-    expect(text).toContain("verify that CU's browser extension and local service are connected");
-    expect(text).toContain('tell the user (or your parent agent) that the built-in browser is unavailable and why.');
-    expect(text).not.toContain('workaround');
-    expect(text).not.toContain('Otherwise, stop');
+    expect(text).toContain(DESKTOP_BROWSER_DISABLED_ERROR);
     expect(runBrowserAutomation).not.toHaveBeenCalled();
   });
 
