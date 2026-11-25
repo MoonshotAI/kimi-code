@@ -64,6 +64,8 @@ With `@agentclientprotocol/sdk@1.x`, the ACP method set is organized by namespac
 
 In the mode picker, Auto (`auto`) can approve sensitive operations automatically and honors explicit deny rules. YOLO (`yolo`) automatically approves routine operations and can still prompt for sensitive actions.
 
+Sessions created or restored with Plan mode active report Plan in both mode pickers. Approving a plan or choosing Reject and Exit updates the pickers to the effective permission mode.
+
 ### Client-side reverse-RPC — agent → IDE (10 / 11)
 
 | Method | Implemented | Description |
