@@ -72,7 +72,7 @@ function onKeydown(event: KeyboardEvent): void {
 .ui-menu-search--divider:focus-within { border-bottom-color: var(--color-line-strong); }
 .ui-menu-search--divider:first-child {
   margin-top: calc(-1 * var(--menu-pad));
-  padding-block: calc(var(--menu-item-padding-block) + var(--menu-pad) / 2);
+  padding-block: calc(var(--menu-item-padding-block) + var(--menu-pad));
 }
 .ui-menu-search > :deep(svg) { flex: none; }
 .ui-menu-search__input {
