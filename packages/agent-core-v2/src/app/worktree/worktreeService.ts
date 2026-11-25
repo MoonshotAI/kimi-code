@@ -146,10 +146,13 @@ export class WorktreeService implements IWorktreeService {
     const worktrees = (await this.linkedEntries(repo))
       .map(({ worktree }) => worktree)
       .toSorted(compareWorktrees);
+    const main = repo.entries[0]!;
     return {
       repoRoot: repo.root,
       currentCheckoutRoot: checkout.checkoutRoot,
       bare: repo.bare,
+      ...(!repo.bare && main.branch !== undefined ? { repoBranch: main.branch } : {}),
+      ...(!repo.bare && main.head !== undefined ? { repoHead: main.head } : {}),
       worktrees,
     };
   }

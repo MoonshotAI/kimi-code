@@ -25,6 +25,8 @@ export interface WorktreeListing {
   readonly repoRoot: string;
   readonly currentCheckoutRoot: string;
   readonly bare: boolean;
+  readonly repoBranch?: string;
+  readonly repoHead?: string;
   readonly worktrees: readonly KimiWorktree[];
 }
 

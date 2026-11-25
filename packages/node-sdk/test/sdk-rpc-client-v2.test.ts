@@ -5367,12 +5367,16 @@ describe('KimiHarness worktrees', () => {
         repoRoot: repo,
         currentCheckoutRoot: repo,
         bare: false,
+        repoBranch: 'main',
+        repoHead: head,
         worktrees,
       });
       expect(await harness.listWorktrees(path)).toEqual({
         repoRoot: repo,
         currentCheckoutRoot: path,
         bare: false,
+        repoBranch: 'main',
+        repoHead: head,
         worktrees,
       });
 
@@ -5393,6 +5397,8 @@ describe('KimiHarness worktrees', () => {
         repoRoot: repo,
         currentCheckoutRoot: repo,
         bare: false,
+        repoBranch: 'main',
+        repoHead: head,
         worktrees: [],
       });
       await expect(readdir(path)).rejects.toMatchObject({ code: 'ENOENT' });

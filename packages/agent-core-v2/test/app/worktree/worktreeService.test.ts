@@ -371,6 +371,8 @@ describe('WorktreeService', () => {
         expect(listing.repoRoot).toBe(realBare);
         expect(listing.currentCheckoutRoot).toBe(created.worktree.path);
         expect(listing.bare).toBe(true);
+        expect(listing.repoBranch).toBeUndefined();
+        expect(listing.repoHead).toBeUndefined();
         expect(listing.worktrees.map(({ name, managed }) => ({ name, managed }))).toEqual([
           { name: 'from-bare', managed: true },
           { name: 'bare-linked', managed: false },
@@ -636,6 +638,8 @@ describe('WorktreeService', () => {
       expect(listing.repoRoot).toBe(realRepo);
       expect(listing.currentCheckoutRoot).toBe(realRepo);
       expect(listing.bare).toBe(false);
+      expect(listing.repoBranch).toBe('main');
+      expect(listing.repoHead).toBe(alpha.worktree.head);
       expect(listing.worktrees).toEqual([
         { ...alpha.worktree, branch: 'alpha-branch' },
         { ...beta.worktree, missing: true },
@@ -651,7 +655,24 @@ describe('WorktreeService', () => {
 
       const fromExternal = await service.list(external);
       expect(fromExternal.currentCheckoutRoot).toBe(realpathSync(external));
+      expect(fromExternal.repoBranch).toBe('main');
+      expect(fromExternal.repoHead).toBe(alpha.worktree.head);
       expect(fromExternal.worktrees).toEqual(listing.worktrees);
+    });
+
+    it('reports the main checkout head when detached and branch when unborn', async () => {
+      const head = git(repo, 'rev-parse', 'HEAD');
+      git(repo, 'checkout', '-q', '--detach', 'HEAD');
+
+      const detached = await service.list(repo);
+      expect(detached.repoBranch).toBeUndefined();
+      expect(detached.repoHead).toBe(head);
+
+      const unbornRepo = join(root, 'unborn');
+      initRepo(unbornRepo);
+      const unborn = await service.list(unbornRepo);
+      expect(unborn.repoBranch).toBe('main');
+      expect(unborn.repoHead).toBeUndefined();
     });
 
     it('allows creating a managed worktree with the same name as an external linked worktree', async () => {
