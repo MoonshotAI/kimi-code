@@ -1271,6 +1271,9 @@ importers:
       '@moonshot-ai/kap-server':
         specifier: workspace:^
         version: link:../kap-server
+      '@moonshot-ai/testkit':
+        specifier: workspace:^
+        version: link:../testkit
       '@types/ws':
         specifier: ^8.18.0
         version: 8.18.1

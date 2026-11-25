@@ -17,10 +17,7 @@ import { IModelCatalog } from '@moonshot-ai/agent-core-v2/llm-adapter/model/cata
 import { IModelService } from '@moonshot-ai/agent-core-v2/llm-adapter/model/model';
 import { IProtocolAdapterRegistry } from '@moonshot-ai/agent-core-v2/llm-adapter/protocol/protocol';
 import { streamLlmRequest } from '@moonshot-ai/core/llm/stream';
-import {
-  createMockProvider,
-  withMockProvider,
-} from '../../../agent-core-v2/test/harness/scripted-generate.js';
+import { createFakeModel, say } from '@moonshot-ai/testkit/model';
 import {
   resetModelsDevUpstreamForTest,
   setModelsDevUpstreamForTest,
@@ -456,31 +453,14 @@ export function defineKlientConformance(
         supportEfforts: ['low', 'high'],
         defaultEffort: 'high',
       });
-      const bodies: Record<string, unknown>[] = [];
-      const chunk = JSON.stringify({
-        id: 'chatcmpl-conf',
-        object: 'chat.completion.chunk',
-        created: 0,
-        model: 'conf-kimi',
-        choices: [{ index: 0, delta: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' }],
-        usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
-      });
-      vi.stubGlobal('fetch', (async (
-        input: Parameters<typeof fetch>[0],
-        init?: Parameters<typeof fetch>[1],
-      ) => {
-        bodies.push(JSON.parse(await new Request(input, init).text()) as Record<string, unknown>);
-        return new Response(`data: ${chunk}\n\ndata: [DONE]\n\n`, {
-          status: 200,
-          headers: { 'content-type': 'text/event-stream' },
-        });
-      }) as typeof fetch);
-      const consume = async (stream: AsyncIterable<unknown>): Promise<void> => {
-        let finished = false;
-        for await (const event of stream) {
-          if ((event as { readonly type?: string }).type === 'llm.ended') finished = true;
-        }
-        expect(finished).toBe(true);
+      const model = createFakeModel();
+      model.route('kosong', () => true).script(say('ok'), say('ok'), say('ok'), say('ok'));
+      vi.stubGlobal('fetch', model.fetch);
+      const consume = async (stream: AsyncIterable<unknown>): Promise<unknown[]> => {
+        const events: unknown[] = [];
+        for await (const event of stream) events.push(event);
+        expect(events).toContainEqual(expect.objectContaining({ type: 'llm.ended' }));
+        return events;
       };
       const publicInput = {
         systemPrompt: '',
@@ -515,7 +495,9 @@ export function defineKlientConformance(
         ],
       };
       try {
-        await consume(kosong.generate(kimiId, publicInput, { model: { thinking: { effort: 'on' } } }));
+        const responseEvents = await consume(
+          kosong.generate(kimiId, publicInput, { model: { thinking: { effort: 'on' } } }),
+        );
         await consume(kosong.generate(kimiId, publicInput, { model: { thinking: { effort: 'max' } } }));
         const catalog = target.app.accessor.get(IModelCatalog);
         const registry = target.app.accessor.get(IProtocolAdapterRegistry);
@@ -533,6 +515,7 @@ export function defineKlientConformance(
         };
         await consume(directGenerate('on'));
         await consume(directGenerate('max'));
+        const bodies = model.requests().map((request) => request.body as Record<string, unknown>);
         expect(bodies.map((body) => body['thinking'])).toEqual([
           { type: 'enabled' },
           { type: 'enabled', effort: 'max' },
@@ -557,43 +540,26 @@ export function defineKlientConformance(
         }
 
         const responsePart = { type: 'text' as const, text: 'ok' };
-        const fakeRequester = createMockProvider(async () => ({
-          id: 'response-1',
-          message: { role: 'assistant', content: [responsePart], toolCalls: [] },
-          usage: null,
-          finishReason: 'completed',
-          rawFinishReason: 'stop',
-        }));
-        const request = registry.request.bind(registry);
-        const generate = vi.spyOn(registry, 'request').mockImplementation((model, params) =>
-          withMockProvider(request(model, params), fakeRequester),
+        expect(responseEvents).toContainEqual(
+          expect.objectContaining({ type: 'llm.delta.part', part: responsePart }),
         );
-        try {
-          const responseEvents: unknown[] = [];
-          for await (const event of kosong.generate(kimiId, publicInput)) {
-            responseEvents.push(event);
-          }
-          expect(responseEvents).toContainEqual(
-            expect.objectContaining({ type: 'llm.delta.part', part: responsePart }),
-          );
-          expect(responseEvents).toContainEqual(
-            expect.objectContaining({
-              type: 'llm.ended',
-              outcome: expect.objectContaining({
-                type: 'done',
-                message: expect.objectContaining({
-                  role: 'assistant',
-                  content: [responsePart],
-                  toolCalls: [],
-                }),
+        expect(responseEvents).toContainEqual(
+          expect.objectContaining({
+            type: 'llm.ended',
+            outcome: expect.objectContaining({
+              type: 'done',
+              message: expect.objectContaining({
+                role: 'assistant',
+                content: [responsePart],
+                toolCalls: [],
               }),
             }),
-          );
-        } finally {
-          generate.mockRestore();
-        }
+          }),
+        );
+        model.verify();
       } finally {
         vi.unstubAllGlobals();
+        await model.close();
         await kosong.removeProvider(kimiId);
         await kosong.removeProvider(kimiProviderId);
       }
