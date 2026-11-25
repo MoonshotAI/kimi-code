@@ -2,7 +2,7 @@ import { getMaxListeners } from 'node:events';
 
 import { type ToolCall } from '@moonshot-ai/core/llm/message';
 import { emptyUsage } from '@moonshot-ai/core/llm/usage';
-import { call, say } from '@moonshot-ai/testkit/model';
+import { call, held, reply, say, think, thinkSigned } from '@moonshot-ai/testkit/model';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { IDisposable } from '#/_base/di/lifecycle';
@@ -614,7 +614,8 @@ describe('Agent loop', () => {
       [wire] tool_select.initialized         { "agentId": "main", "tools": [ "Agent", "AgentSwarm", "AskUserQuestion", "Bash", "CreateGoal", "CronCreate", "CronDelete", "CronList", "Edit", "ExitPlanMode", "FetchURL", "GetGoal", "Glob", "Grep", "Lookup", "Read", "ReadMediaFile", "select_tools", "SetGoalBudget", "Skill", "TaskList", "TaskOutput", "TaskStop", "TodoList", "UpdateGoal", "WaitFor", "Write" ], "time": "<time>" }
       [wire] llm.tools_snapshot              { "agentId": "main", "hash": "<tools-hash>", "tools": [ "Agent", "AgentSwarm", "AskUserQuestion", "Bash", "CreateGoal", "CronCreate", "CronDelete", "CronList", "Edit", "ExitPlanMode", "FetchURL", "GetGoal", "Glob", "Grep", "Read", "SetGoalBudget", "Skill", "TaskList", "TaskOutput", "TaskStop", "TodoList", "UpdateGoal", "WaitFor", "Write" ], "time": "<time>" }
       [emit] assistant.delta                 { "time": "<time>", "agentId": "main", "turnId": 0, "delta": "I will look it up.", "block": 0 }
-      [emit] tool.call.delta                 { "time": "<time>", "agentId": "main", "turnId": 0, "toolCallId": "call_lookup", "name": "Lookup", "argumentsPart": "{\\"query\\":\\"moon\\"}" }
+      [emit] tool.call.delta                 { "time": "<time>", "agentId": "main", "turnId": 0, "toolCallId": "call_lookup", "name": "Lookup", "argumentsPart": "" }
+      [emit] tool.call.delta                 { "time": "<time>", "agentId": "main", "turnId": 0, "toolCallId": "call_lookup", "argumentsPart": "{\\"query\\":\\"moon\\"}" }
       [emit] context.spliced                 { "time": "<time>", "agentId": "main", "start": 1, "deleteCount": 0, "messages": [ { "role": "assistant", "content": [ { "type": "text", "text": "I will look it up." } ], "toolCalls": [ { "type": "function", "id": "call_lookup", "name": "Lookup", "arguments": "{\\"query\\":\\"moon\\"}" } ], "providerMessageId": "mock-1", "usage": { "inputOther": 4, "output": 16, "inputCacheRead": 0, "inputCacheCreation": 0 } } ] }
       [emit] agent.status.updated            { "time": "<time>", "agentId": "main", "usage": { "byModel": { "mock-model": { "inputOther": 4, "output": 16, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 4, "output": 16, "inputCacheRead": 0, "inputCacheCreation": 0 }, "currentTurn": { "inputOther": 4, "output": 16, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
       [emit] agent.status.updated            { "time": "<time>", "agentId": "main", "contextTokens": 20 }
@@ -2287,7 +2288,7 @@ describe('interruption reminder', () => {
   }
 
   it('preserves the partial stream and appends one reminder before turn.ended', async () => {
-    ctx.mockNextResponse({ type: 'text', text: 'partial answer' }, { type: 'text', text: ' more' });
+    ctx.mockNextProviderResponse({ step: held('rest', reply(say('partial answer'), say(' more')), 1) });
     const subscription = cancelOnFirstDelta();
     const turn = submitTurn(loop, 'Hello').turn;
     await expect(turn.result).resolves.toMatchObject({ type: 'cancelled' });
@@ -2347,7 +2348,7 @@ describe('interruption reminder', () => {
   });
 
   it('writes one active cancellation when cancel repeats before the turn settles', async () => {
-    ctx.mockNextResponse({ type: 'text', text: 'partial answer' }, { type: 'text', text: ' more' });
+    ctx.mockNextProviderResponse({ step: held('rest', reply(say('partial answer'), say(' more')), 1) });
     const results: boolean[] = [];
     let cancelled = false;
     const subscription = ctx.get(IEventBus).subscribe(AssistantDelta, () => {
@@ -2372,7 +2373,7 @@ describe('interruption reminder', () => {
   });
 
   it('preserves the partial stream but appends no reminder on programmatic abort', async () => {
-    ctx.mockNextResponse({ type: 'text', text: 'partial answer' }, { type: 'text', text: ' more' });
+    ctx.mockNextProviderResponse({ step: held('rest', reply(say('partial answer'), say(' more')), 1) });
     const subscription = ctx.get(IEventBus).subscribe(AssistantDelta, () => {
       loop.cancel(undefined, new Error('stop'));
     });
@@ -2459,7 +2460,7 @@ describe('interruption reminder', () => {
   });
 
   it('sends the reminder recorded on the cancelled turn ahead of the next user message', async () => {
-    ctx.mockNextResponse({ type: 'text', text: 'partial answer' }, { type: 'text', text: ' more' });
+    ctx.mockNextProviderResponse({ step: held('rest', reply(say('partial answer'), say(' more')), 1) });
     const subscription = cancelOnFirstDelta();
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Hello' }] });
     await ctx.untilTurnEnd();
@@ -2537,7 +2538,7 @@ describe('interruption reminder', () => {
   });
 
   it('drops unsigned thinking but keeps signed thinking on user cancel', async () => {
-    ctx.mockNextResponse({ type: 'think', think: 'pondering' }, { type: 'text', text: 'answer' });
+    ctx.mockNextProviderResponse({ step: held('rest', reply(think('pondering'), say('answer')), 1) });
     const subscription = ctx.get(IEventBus).subscribe(ThinkingDelta, () => {
       loop.cancel();
     });
@@ -2552,10 +2553,7 @@ describe('interruption reminder', () => {
     expect(thinkParts).toEqual([]);
     expect(interruptionReminders()).toHaveLength(1);
 
-    ctx.mockNextResponse(
-      { type: 'think', think: 'seg', encrypted: 'sig' },
-      { type: 'text', text: 'partial answer' },
-    );
+    ctx.mockNextProviderResponse({ step: held('end', reply(thinkSigned('seg', 'sig'), say('partial answer')), 2) });
     const second = ctx.get(IEventBus).subscribe(AssistantDelta, () => {
       loop.cancel();
     });
@@ -2581,7 +2579,7 @@ describe('interruption reminder', () => {
   });
 
   it('records no partial content when the stream only produced whitespace', async () => {
-    ctx.mockNextResponse({ type: 'text', text: '  ' }, { type: 'text', text: 'answer' });
+    ctx.mockNextProviderResponse({ step: held('rest', reply(say('  '), say('answer')), 1) });
     const subscription = cancelOnFirstDelta();
     const turn = submitTurn(loop, 'Hello').turn;
     await expect(turn.result).resolves.toMatchObject({ type: 'cancelled' });
