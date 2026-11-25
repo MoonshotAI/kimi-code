@@ -61,7 +61,7 @@ jobs:
           name: e2e-cli
           path: apps/kimi-code
       - name: Run the scenarios and driver self-tests on the TUI
-        run: pnpm --filter @moonshot-ai/e2e exec playwright test --project=tui
+        run: pnpm --filter @moonshot-ai/e2e exec playwright test --project=tui --project=tui-kitty
         env:
           TESTKIT_CLI_BUILD: dist
       - uses: actions/upload-artifact@v7
@@ -95,7 +95,7 @@ jobs:
           name: e2e-cli
           path: apps/kimi-code
       - name: Run the scenarios and driver self-tests over ACP
-        run: pnpm --filter @moonshot-ai/e2e exec playwright test --project=acp
+        run: pnpm --filter @moonshot-ai/e2e exec playwright test --project=acp --project=acp-bare
         env:
           TESTKIT_CLI_BUILD: dist
       - uses: actions/upload-artifact@v7

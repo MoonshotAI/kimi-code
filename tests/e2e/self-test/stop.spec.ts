@@ -7,6 +7,8 @@ const QUESTION = 'Which database should we use?';
 const ASK = askUserQuestion({ questions: [{ question: QUESTION, header: 'Database', options: [{ label: 'Postgres' }, { label: 'SQLite' }], multi_select: false }] });
 const MARKER = "printf 'x\\n' > marker.txt";
 
+const NO_LIVE_OUTPUT = "An editor that offers no terminals gets a command's output only once the command ends: ACP streams the output of a running command through the editor's terminal.";
+
 selfTest('stop', {
   positive: {
     'stops a turn that is still streaming its reply': {
@@ -23,6 +25,7 @@ selfTest('stop', {
       },
     },
     'stops a command that is running and has already printed, and takes the next message': {
+      exceptVariants: { 'bare-editor': NO_LIVE_OUTPUT },
       run: async ({ product, model }) => {
         const command = "printf 'rea%s\\n' dy; sleep 30";
         model.script(bash(command), say('The command was stopped.'));

@@ -70,9 +70,9 @@ const REJECTION_NOTICE = 'was not run because the user rejected the approval req
 const INVALID_REQUEST = -32600;
 const INVALID_PARAMS = -32602;
 
-const HANDLED_METHODS: ReadonlySet<string> = new Set([
-  methods.client.session.update,
-  methods.client.session.requestPermission,
+const SESSION_METHODS = [methods.client.session.update, methods.client.session.requestPermission];
+
+const EDITOR_CAPABILITY_METHODS = [
   methods.client.fs.readTextFile,
   methods.client.fs.writeTextFile,
   methods.client.terminal.create,
@@ -80,7 +80,7 @@ const HANDLED_METHODS: ReadonlySet<string> = new Set([
   methods.client.terminal.waitForExit,
   methods.client.terminal.kill,
   methods.client.terminal.release,
-]);
+];
 
 interface Turn {
   readonly prompt: string;
@@ -260,6 +260,8 @@ function tailOf(bytes: Buffer, limit: number | undefined): { text: string; trunc
 class AcpDriver implements SurfaceDriver<'acp'> {
   private readonly proc: TestProcess;
   private readonly home: TestHome;
+  private readonly bare: boolean;
+  private readonly handled: ReadonlySet<string>;
   private readonly connection: ClientConnection;
   private readonly wire: string[] = [];
   private readonly timeline: WireEvent[] = [];
@@ -286,10 +288,12 @@ class AcpDriver implements SurfaceDriver<'acp'> {
   private leftSessionUpdates = 0;
   private turn: Turn | undefined;
 
-  constructor(proc: TestProcess, home: TestHome) {
+  constructor(proc: TestProcess, home: TestHome, bare: boolean) {
     this.proc = proc;
     this.home = home;
-    this.connection = client({ name: EDITOR_NAME })
+    this.bare = bare;
+    this.handled = new Set(bare ? SESSION_METHODS : [...SESSION_METHODS, ...EDITOR_CAPABILITY_METHODS]);
+    const session = client({ name: EDITOR_NAME })
       .onNotification(methods.client.session.update, ({ params }) => {
         if (this.leftSessions.has(params.sessionId)) this.leftSessionUpdates += 1;
         else this.updates.push(params.update);
@@ -300,7 +304,12 @@ class AcpDriver implements SurfaceDriver<'acp'> {
           new Promise<RequestPermissionResponse>((answer) => {
             this.permissions.push({ params, requestId, answer });
           }),
-      )
+      );
+    this.connection = (bare ? session : this.withEditorCapabilities(session)).connect(this.stream());
+  }
+
+  private withEditorCapabilities(session: ReturnType<typeof client>): ReturnType<typeof client> {
+    return session
       .onRequest(methods.client.fs.readTextFile, ({ params }) => this.readTextFile(params))
       .onRequest(methods.client.fs.writeTextFile, ({ params }) => this.writeTextFile(params))
       .onRequest(methods.client.terminal.create, ({ params }) => this.createTerminal(params))
@@ -314,8 +323,7 @@ class AcpDriver implements SurfaceDriver<'acp'> {
         this.killCommand(this.terminal(params.terminalId));
         this.terminals.delete(params.terminalId);
         return {};
-      })
-      .connect(this.stream());
+      });
   }
 
   async open(resume: string | undefined): Promise<void> {
@@ -323,7 +331,7 @@ class AcpDriver implements SurfaceDriver<'acp'> {
       'the agent to answer initialize',
       this.connection.agent.request(methods.agent.initialize, {
         protocolVersion: PROTOCOL_VERSION,
-        clientCapabilities: { fs: { readTextFile: true, writeTextFile: true }, terminal: true },
+        clientCapabilities: this.bare ? {} : { fs: { readTextFile: true, writeTextFile: true }, terminal: true },
       }),
     );
     if (initialized.protocolVersion !== PROTOCOL_VERSION) {
@@ -697,7 +705,7 @@ class AcpDriver implements SurfaceDriver<'acp'> {
     const method = property(message, 'method');
     if (typeof method === 'string') {
       if (method === methods.client.session.update) this.receivedUpdates += 1;
-      if (!HANDLED_METHODS.has(method)) this.unhandled.push(method);
+      if (!this.handled.has(method)) this.unhandled.push(method);
       this.trace(method, property(message, 'params'), property(message, 'id'));
     }
     return message as AnyMessage;
@@ -871,7 +879,7 @@ class AcpDriver implements SurfaceDriver<'acp'> {
   }
 
   private missingEditorEvidence(tool: ToolView, expectation: ToolExpectation): string | undefined {
-    if (expectation.status === 'rejected' || this.replayedTurn()) return undefined;
+    if (expectation.status === 'rejected' || this.replayedTurn() || this.bare) return undefined;
     if (expectation.name === 'AskUserQuestion') {
       const reply = this.questionReplies.get(tool.id);
       return reply !== undefined && this.served.has(reply) ? undefined : 'the editor never answered a question for it';
@@ -905,7 +913,7 @@ class AcpDriver implements SurfaceDriver<'acp'> {
       if (expectation.name === 'AskUserQuestion') return tool.questions.includes(expectation.target);
       if (expectation.name !== 'Bash') return tool.path !== undefined && this.workspacePath(tool.path) === expectation.target;
       if (tool.command !== expectation.target || output === undefined) return tool.command === expectation.target;
-      return this.replayedTurn() ? tool.shownText.split('\n').some((line) => line.trim() === output) : this.embedsOutput(tool, output);
+      return this.replayedTurn() || this.bare ? tool.shownText.split('\n').some((line) => line.trim() === output) : this.embedsOutput(tool, output);
     });
   }
 
@@ -1042,7 +1050,7 @@ class AcpDriver implements SurfaceDriver<'acp'> {
   }
 }
 
-export async function startAcp({ home, reopen }: SurfaceLaunch): Promise<SurfaceDriver<'acp'>> {
+export async function startAcp({ home, reopen, variant }: SurfaceLaunch): Promise<SurfaceDriver<'acp'>> {
   const proc = TestProcess.start({
     label: 'kimi acp',
     command: kimiCliCommand(),
@@ -1053,7 +1061,7 @@ export async function startAcp({ home, reopen }: SurfaceLaunch): Promise<Surface
     stdin: true,
     fetchStubs: offlineStubs(),
   });
-  const driver = new AcpDriver(proc, home);
+  const driver = new AcpDriver(proc, home, variant === 'bare-editor');
   try {
     await driver.open(reopen?.state.sessionId);
   } catch (error) {

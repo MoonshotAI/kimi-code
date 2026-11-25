@@ -54,6 +54,18 @@ const RECENT_INPUTS = 12;
 const RAW_OUTPUT_TAIL = 8 * 1024;
 
 const FULL_REDRAW = '\x1b[2J\x1b[H\x1b[3J';
+const KITTY_KEYBOARD = /\x1b\[([<=>?])(\d*)(?:;(\d*))?u/g;
+const MODIFY_OTHER_KEYS = /\x1b\[>4(?:;(\d*))?m/g;
+const KITTY_DISAMBIGUATE = 1;
+const KITTY_EVENT_TYPES = 2;
+const KITTY_SEQUENCE_LONGEST = 16;
+const KITTY_KEYS: Readonly<Record<string, { readonly code: number; readonly modifiers: number }>> = {
+  '\x1b': { code: 27, modifiers: 1 },
+  '\x03': { code: 99, modifiers: 5 },
+  '\x0f': { code: 111, modifiers: 5 },
+  '\x11': { code: 113, modifiers: 5 },
+  '\x13': { code: 115, modifiers: 5 },
+};
 const BEGIN_FRAME = '\x1b[?2026h';
 const END_FRAME = '\x1b[?2026l';
 const TERMINAL_ESCAPE = /\x1b(?:\[[0-9;?]*[ -/]*[@-~]|\][^\x07]*\x07|[@-Z\\-_])/g;
@@ -548,10 +560,21 @@ class TuiDriver implements SurfaceDriver<'tui'> {
   private fullRedraws = 0;
   private redrawTail = '';
   private received = 0;
+  private readonly kitty: boolean;
+  private keyboardFlags = 0;
+  private readonly keyboardStack: number[] = [];
+  private keyboardTail = '';
+  private modifyOtherKeys = false;
   private turn: Turn | undefined;
 
-  constructor(pty: IPty, networkLog: string, exitMarker: string | undefined, { workspace, lastPrompt, size }: { readonly workspace: string; readonly lastPrompt: string | undefined; readonly size: WindowSize }) {
+  constructor(
+    pty: IPty,
+    networkLog: string,
+    exitMarker: string | undefined,
+    { workspace, lastPrompt, size, kitty }: { readonly workspace: string; readonly lastPrompt: string | undefined; readonly size: WindowSize; readonly kitty: boolean },
+  ) {
     this.pty = pty;
+    this.kitty = kitty;
     this.size = size;
     this.terminal.resize(TERMINAL_SIZES[size].columns, TERMINAL_SIZES[size].rows);
     this.networkLog = networkLog;
@@ -562,6 +585,7 @@ class TuiDriver implements SurfaceDriver<'tui'> {
       this.received += text.length;
       this.output = (this.output + text).slice(-OUTPUT_TAIL);
       this.countFullRedraws(text);
+      if (this.kitty) this.followKeyboard(text);
       this.show(text);
     });
     pty.onExit(({ exitCode }) => {
@@ -658,6 +682,9 @@ class TuiDriver implements SurfaceDriver<'tui'> {
       modes = await until('the shell to print its terminal modes', () => terminalModes(this.output, exitStatus), { timeoutMs: TIMEOUTS.wait });
     } catch (cause) {
       throw new Error(`expectTerminalRestored() found no terminal modes printed by the shell after the CLI exited.\n${await this.describe()}`, { cause });
+    }
+    if (this.kitty && (this.keyboardFlags !== 0 || this.keyboardStack.length > 0)) {
+      throw new Error(`The CLI left the Kitty keyboard protocol on after it exited: flags ${this.keyboardFlags}, ${this.keyboardStack.length} pushed level(s) not popped.\n${await this.describe()}`);
     }
     const off = RESTORED_MODES.filter((mode) => !modes.includes(mode) || modes.includes(`-${mode}`));
     if (off.length > 0) {
@@ -1108,6 +1135,49 @@ class TuiDriver implements SurfaceDriver<'tui'> {
     return screenOf(this.terminal.getScrollBuffer(), this.terminal.getViewport());
   }
 
+  assertKeyboard(): void {
+    if (!this.kitty) return;
+    if ((this.keyboardFlags & KITTY_DISAMBIGUATE) === 0 || this.modifyOtherKeys) {
+      const fallback = this.modifyOtherKeys ? ' and fell back to modifyOtherKeys' : '';
+      throw new Error(`The CLI did not use the Kitty keyboard protocol in a terminal that offers it (flags ${this.keyboardFlags})${fallback}.`);
+    }
+  }
+
+  private followKeyboard(text: string): void {
+    const scanned = this.keyboardTail + text;
+    let consumed = 0;
+    for (const match of scanned.matchAll(KITTY_KEYBOARD)) {
+      consumed = match.index + match[0].length;
+      const [, kind, first = '', second = ''] = match;
+      const value = first === '' ? undefined : Number(first);
+      if (kind === '?') {
+        if (this.exitCode() === undefined && !this.released) this.pty.write(`\x1b[?${this.keyboardFlags}u`);
+      } else if (kind === '>') {
+        this.keyboardStack.push(this.keyboardFlags);
+        this.keyboardFlags = value ?? 0;
+      } else if (kind === '<') {
+        for (let count = value ?? 1; count > 0; count -= 1) this.keyboardFlags = this.keyboardStack.pop() ?? 0;
+      } else {
+        const mode = second === '' ? 1 : Number(second);
+        const flags = value ?? 0;
+        this.keyboardFlags = mode === 1 ? flags : mode === 2 ? this.keyboardFlags | flags : this.keyboardFlags & ~flags;
+      }
+    }
+    for (const match of scanned.matchAll(MODIFY_OTHER_KEYS)) {
+      consumed = Math.max(consumed, match.index + match[0].length);
+      this.modifyOtherKeys = match[1] !== undefined && match[1] !== '' && match[1] !== '0';
+    }
+    const pending = scanned.lastIndexOf('\x1b');
+    this.keyboardTail = pending >= consumed && scanned.length - pending < KITTY_SEQUENCE_LONGEST ? scanned.slice(pending) : '';
+  }
+
+  private encode(input: string): string {
+    const key = KITTY_KEYS[input];
+    if (!this.kitty || key === undefined || (this.keyboardFlags & KITTY_DISAMBIGUATE) === 0) return input;
+    const press = key.modifiers === 1 ? `\x1b[${key.code}u` : `\x1b[${key.code};${key.modifiers}u`;
+    return (this.keyboardFlags & KITTY_EVENT_TYPES) === 0 ? press : `${press}\x1b[${key.code};${key.modifiers}:3u`;
+  }
+
   private countFullRedraws(text: string): void {
     const scanned = this.redrawTail + text;
     this.fullRedraws += scanned.split(FULL_REDRAW).length - 1;
@@ -1126,7 +1196,7 @@ class TuiDriver implements SurfaceDriver<'tui'> {
   private write(input: string): void {
     this.inputs.push(input.slice(-200));
     if (this.inputs.length > RECENT_INPUTS) this.inputs.shift();
-    this.pty.write(input);
+    this.pty.write(this.encode(input));
   }
 
   private exitCode(): number | undefined {
@@ -1149,7 +1219,7 @@ class TuiDriver implements SurfaceDriver<'tui'> {
   }
 }
 
-export async function startTui({ home, reopen }: SurfaceLaunch): Promise<SurfaceDriver<'tui'>> {
+export async function startTui({ home, reopen, variant }: SurfaceLaunch): Promise<SurfaceDriver<'tui'>> {
   const command = kimiCliCommand();
   if (!existsSync(command.entry)) {
     throw new Error(`The CLI entry ${command.entry} does not exist; build the CLI before running against its bundle.`);
@@ -1177,9 +1247,10 @@ export async function startTui({ home, reopen }: SurfaceLaunch): Promise<Surface
     await writeFile(launcher, [[process.execPath, ...args].map(quote).join(' '), `printf '\\n${exitMarker}%s\\n' "$?"`, 'stty -a', ''].join('\n'));
     pty = spawn('/bin/sh', [launcher], options);
   }
-  const driver = new TuiDriver(pty, networkLog, exitMarker, { workspace: home.workspace, lastPrompt: reopen?.lastPrompt, size });
+  const driver = new TuiDriver(pty, networkLog, exitMarker, { workspace: home.workspace, lastPrompt: reopen?.lastPrompt, size, kitty: variant === 'kitty-keyboard' });
   try {
     await driver.ready();
+    driver.assertKeyboard();
   } catch (error) {
     await driver.kill();
     throw error;

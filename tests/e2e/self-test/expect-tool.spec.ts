@@ -9,6 +9,8 @@ const QUESTION = 'Which database should we use?';
 const ASK = askUserQuestion({ questions: [{ question: QUESTION, header: 'Database', options: [{ label: 'Postgres' }, { label: 'SQLite' }], multi_select: false }] });
 const DISMISSED_WITHOUT_QUESTION_ON_TUI = 'The terminal UI shows a dismissed question only as dismissed, without the question it asked.';
 
+const NO_LIVE_OUTPUT = "An editor that offers no terminals gets a command's output only once the command ends: ACP streams the output of a running command through the editor's terminal.";
+
 selfTest('expectTool', {
   positive: {
     'finds a completed edit by name, target and status': {
@@ -88,6 +90,7 @@ selfTest('expectTool', {
       },
     },
     'finds the latest line a running command has printed, and both lines after the user stopped the command': {
+      exceptVariants: { 'bare-editor': NO_LIVE_OUTPUT },
       run: async ({ product, model }) => {
         model.script(bash(PRINT_TWO_LINES_THEN_WAIT));
         await product.send('Print two words, then wait.');

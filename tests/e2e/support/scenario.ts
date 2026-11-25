@@ -24,12 +24,14 @@ import {
   absenceReason,
   SURFACES,
   unavailableReason,
+  VARIANTS,
   VERB_NAMES,
   verbOn,
   verbSpec,
   wantedOutput,
   type Actions,
   type Platform,
+  type Variant,
   type ApprovalExpectation,
   type Diagnostic,
   type Frame,
@@ -46,6 +48,7 @@ export { expect };
 
 export interface SurfaceOptions {
   surface: Surface | undefined;
+  variant: Variant | undefined;
 }
 
 export interface ScenarioOptions {
@@ -54,6 +57,7 @@ export interface ScenarioOptions {
   readonly onlyOn?: readonly Surface[];
   readonly reason?: string;
   readonly exceptPlatforms?: Readonly<Partial<Record<Platform, string>>>;
+  readonly exceptVariants?: Readonly<Partial<Record<Variant, string>>>;
 }
 
 export interface Workspace {
@@ -154,8 +158,8 @@ async function readIfPresent(path: string): Promise<string | undefined> {
 
 function promptCheck(verb: 'send' | 'queue' | 'steer'): (text: string) => void {
   return (text) => {
-    if (!/^[ -~]+$/.test(text) || text !== text.trim()) {
-      throw new Error(`${verb}() takes one line of printable ASCII without surrounding spaces, got ${JSON.stringify(text)}`);
+    if (!/^[^\p{Cc}\p{Cf}\p{Zl}\p{Zp}]+$/u.test(text) || text !== text.trim()) {
+      throw new Error(`${verb}() takes one line of printable text without surrounding spaces, got ${JSON.stringify(text)}`);
     }
     if (text.endsWith('\\')) {
       throw new Error(`${verb}() cannot end with a backslash: the product reads a backslash before Enter as a line break and never submits. Got ${JSON.stringify(text)}`);
@@ -230,6 +234,7 @@ function problemOf(error: unknown): string {
 
 class ScenarioSession {
   private readonly surface: Surface;
+  private readonly variant: Variant | undefined;
   private readonly declared = new Map<string, string | undefined>();
   private home: TestHome | undefined;
   private model: FakeModel | undefined;
@@ -246,8 +251,9 @@ class ScenarioSession {
   private readonly performed = new Set<Verb>();
   private exceptPlatforms: readonly string[] = [];
 
-  constructor(surface: Surface) {
+  constructor(surface: Surface, variant: Variant | undefined) {
     this.surface = surface;
+    this.variant = variant;
   }
 
   async start(options: ScenarioOptions, frames: FramePolicy, testInfo: TestInfo): Promise<RunningContext> {
@@ -262,7 +268,7 @@ class ScenarioSession {
     this.model = model;
     await writeKimiConfig(home.dataDir, fakeModelConfig(model));
     await base.step('启动产品，等到可以输入', async () => {
-      this.driver = await startSurface(this.surface, { home, model });
+      this.driver = await startSurface(this.surface, { home, model, ...this.variantLaunch() });
       this.baseline = await snapshotDirectory(home.workspace);
       if (frames === 'every-step') await this.show('00 启动完成');
     });
@@ -333,6 +339,10 @@ class ScenarioSession {
     if (verb === 'newSession') this.lastPrompt = undefined;
   }
 
+  private variantLaunch(): { readonly variant?: Variant } {
+    return this.variant === undefined ? {} : { variant: this.variant };
+  }
+
   private async restart(): Promise<void> {
     const { home, model, driver } = this;
     if (home === undefined || model === undefined || driver === undefined) throw new Error('restart() was called while the product is not running.');
@@ -346,7 +356,7 @@ class ScenarioSession {
     this.driver = undefined;
     if (problems.length > 0) throw new Error(`The product did not shut down cleanly before restart():\n\n${problems.join('\n\n')}`);
     this.launches += 1;
-    this.driver = await startSurface(this.surface, { home, model, reopen: { launch: this.launches, lastPrompt: this.lastPrompt, state } });
+    this.driver = await startSurface(this.surface, { home, model, reopen: { launch: this.launches, lastPrompt: this.lastPrompt, state }, ...this.variantLaunch() });
   }
 
   private async shutdownProblems(driver: SurfaceDriver<Surface>): Promise<string[]> {
@@ -480,9 +490,11 @@ class ScenarioSession {
 
 const test = base.extend<SurfaceOptions & { session: ScenarioSession }>({
   surface: [undefined, { option: true }],
-  session: async ({ surface }, use, testInfo) => {
+  variant: [undefined, { option: true }],
+  session: async ({ surface, variant }, use, testInfo) => {
     if (surface === undefined) throw new Error(`The Playwright project must set use.surface to one of: ${SURFACES.join(', ')}`);
-    const session = new ScenarioSession(surface);
+    if (variant !== undefined && VARIANTS[variant] !== surface) throw new Error(`The Playwright project runs ${surface}, but the variant ${variant} belongs to ${VARIANTS[variant]}.`);
+    const session = new ScenarioSession(surface, variant);
     await use(session);
     await session.finish(testInfo);
   },
@@ -494,6 +506,9 @@ function assertReasons(title: string, options: ScenarioOptions): void {
   }
   for (const [platform, reason] of Object.entries(options.exceptPlatforms ?? {})) {
     if (reason.trim() === '') throw new Error(`Scenario "${title}" excludes the ${platform} platform without a reason.`);
+  }
+  for (const [variant, reason] of Object.entries(options.exceptVariants ?? {})) {
+    if (reason.trim() === '') throw new Error(`Scenario "${title}" excludes the ${variant} variant without a reason.`);
   }
   if (options.onlyOn !== undefined && (options.onlyOn.length === 0 || (options.reason ?? '').trim() === '')) {
     throw new Error(`Scenario "${title}" uses onlyOn; it must name at least one surface and give a reason.`);
@@ -516,11 +531,13 @@ function platformExclusion(options: ScenarioOptions): string | undefined {
 
 function register(title: string, options: ScenarioOptions, body: RunningBody, frames: FramePolicy): void {
   assertReasons(title, options);
-  test(title, async ({ surface, session }, testInfo) => {
+  test(title, async ({ surface, variant, session }, testInfo) => {
     const reason = surface === undefined ? undefined : notApplicableReason(options, surface);
     testInfo.skip(reason !== undefined, `not applicable on ${String(surface)}: ${String(reason)}`);
     const platformReason = platformExclusion(options);
     testInfo.skip(platformReason !== undefined, `not applicable on ${process.platform}: ${String(platformReason)}`);
+    const variantReason = variant === undefined ? undefined : options.exceptVariants?.[variant];
+    testInfo.skip(variantReason !== undefined, `not applicable on ${String(variant)}: ${String(variantReason)}`);
     await body(await session.start(options, frames, testInfo));
   });
 }

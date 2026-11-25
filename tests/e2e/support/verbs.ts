@@ -10,6 +10,10 @@ export type Surface = (typeof SURFACES)[number];
 
 export type Platform = 'darwin' | 'linux' | 'win32';
 
+export const VARIANTS = { 'kitty-keyboard': 'tui', 'bare-editor': 'acp' } as const satisfies Readonly<Record<string, Surface>>;
+
+export type Variant = keyof typeof VARIANTS;
+
 interface VerbSpec {
   readonly on: readonly Surface[];
   readonly absentBecause?: string | Readonly<Partial<Record<Surface, string>>>;
@@ -248,4 +252,5 @@ export interface SurfaceLaunch {
   readonly home: TestHome;
   readonly model: FakeModel;
   readonly reopen?: Reopen;
+  readonly variant?: Variant;
 }
