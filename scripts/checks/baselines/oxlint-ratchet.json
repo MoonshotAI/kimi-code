@@ -586,7 +586,7 @@
     "packages/app-client/test/useUpdateStatus.test.ts": 2,
     "scripts/canary-linux.test.mjs": 1,
     "scripts/desktop-artifact-prefix.test.mjs": 2,
-    "scripts/release.test.mjs": 9
+    "scripts/release.test.mjs": 8
   },
   "typescript/no-implied-eval": {
     "apps/desktop/tests/renderer/api-bootstrap.test.ts": 1,

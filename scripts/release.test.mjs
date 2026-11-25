@@ -30,7 +30,6 @@ function fixture(overrides = {}) {
   writeFileSync(join(dir, '.changeset/README.md'), '# Changesets');
   writeFileSync(join(dir, '.changeset/release-plan.json'), JSON.stringify({ branch, packages: [{ ...pkg, path }] }));
   const state = {
-    runs: [{ id: 1, head_sha: sha, head_branch: branch, event: 'push', status: 'completed', conclusion: 'success' }],
     tags: {}, releases: {}, calls: [], ...overrides,
   };
   writeFileSync(join(dir, 'state.json'), JSON.stringify(state));
@@ -48,8 +47,7 @@ if (args[0] === 'api') {
   if (endpoint === 'graphql') {
     const tag = args.find(x => x.startsWith('tag=')).slice(4);
     done({ data: { repository: { release: state.releases[tag] ? { isDraft: state.releases[tag].draft } : null } } });
-  } else if (endpoint.includes('/actions/workflows/')) done({ workflow_runs: state.runs });
-  else if (endpoint.includes('/git/ref/tags/')) {
+  } else if (endpoint.includes('/git/ref/tags/')) {
     const tag = decodeURIComponent(endpoint.split('/git/ref/tags/')[1]);
     if (!state.tags[tag]) missing();
     done({ object: { type: 'commit', sha: state.tags[tag] } });
@@ -102,6 +100,7 @@ afterEach(() => {
 test('accepts only the tested release commit', () => {
   const f = fixture();
   assert.equal(run(f, 'check').status, 0);
+  assert.equal(run(f, 'check', { GITHUB_SHA: otherSha, RELEASE_SHA: sha }).status, 0);
   for (const invalid of ['', 'main', sha.slice(0, 8)]) {
     assert.match(run(f, 'check', { GITHUB_SHA: invalid }).stderr, /full commit SHA/);
   }
@@ -120,19 +119,14 @@ test('rejects an old plan and unconsumed changesets', () => {
   assert.match(run(next, 'check', { GITHUB_REF: 'refs/heads/release/next', GITHUB_REF_NAME: 'release/next' }).stderr, /version PR/);
 });
 
-test('does not accept PR checks, another SHA, or a superseded green run', () => {
-  for (const override of [{ event: 'pull_request' }, { head_sha: otherSha }, { conclusion: 'failure' }, { status: 'in_progress' }]) {
-    const f = fixture();
-    const state = f.state();
-    state.runs.push({ ...state.runs[0], id: 2, ...override });
-    if (override.event || override.head_sha) state.runs.shift();
-    writeFileSync(join(f.dir, 'state.json'), JSON.stringify(state));
-    assert.match(run(f, 'check').stderr, /CI run/);
-  }
+void test('release plan checks do not depend on a separate CI run', () => {
+  const f = fixture({ tags: { [tag]: sha } });
+  assert.equal(run(f, 'check').status, 0);
+  assert.equal(f.state().calls.some(args => args[1]?.includes('/actions/workflows/')), false);
 });
 
 test('API failure and existing tags on another commit stop publication', () => {
-  assert.match(run(fixture({ apiError: true }), 'check').stderr, /Forbidden/);
+  assert.match(run(fixture({ apiError: true }), 'prepare').stderr, /Forbidden/);
   assert.match(run(fixture({ tags: { [tag]: otherSha } }), 'prepare').stderr, /another commit/);
 });
 
@@ -165,7 +159,7 @@ function addCliToPlan(f) {
   return { cli, plan, planFile };
 }
 
-void test('native asset reruns require the exact npm version and remote tag, and leave complete downloads alone', () => {
+void test('native asset recovery requires the exact npm version and remote tag, and leaves complete downloads alone', () => {
   const f = fixture();
   const { cli, planFile } = addCliToPlan(f);
   writeFileSync(planFile, JSON.stringify({ branch, packages: [cli] }));
@@ -187,7 +181,7 @@ console.log(JSON.stringify(process.env.TEST_NPM_VERSION));
   const check = (extra = {}) => {
     writeFileSync(f.env.RELEASE_TEST_STATE, JSON.stringify(state));
     writeFileSync(f.env.GITHUB_OUTPUT, '');
-    return run(f, 'check-cli-retry', { RELEASE_TAG: releaseTag, GITHUB_RUN_ATTEMPT: '2', TEST_NPM_VERSION: cli.version, ...extra });
+    return run(f, 'check-cli-retry', { RELEASE_TAG: releaseTag, GITHUB_RUN_ATTEMPT: '1', TEST_NPM_VERSION: cli.version, ...extra });
   };
   for (const { remote, complete } of [
     { remote: [], complete: false },
@@ -204,7 +198,6 @@ console.log(JSON.stringify(process.env.TEST_NPM_VERSION));
     [{ TEST_NPM_VERSION: '2.0.1' }, /npm did not confirm/],
     [{ TEST_NPM_VERSION: '' }, /npm view/],
     [{ RELEASE_TAG: `${cli.name}@2.0.1` }, /does not match the release plan/],
-    [{ GITHUB_RUN_ATTEMPT: '1' }, /requires a rerun/],
   ]) {
     const result = check(extra);
     assert.notEqual(result.status, 0);
@@ -273,6 +266,19 @@ void test('workflow release titles use product names and full versions', () => {
   assert.doesNotMatch(desktop, /--title "Kimi Code Canary/);
 });
 
+void test('release workflow runs candidate tests directly and supports manual SHA reruns', () => {
+  const workflow = readFileSync(fileURLToPath(new URL('../.github/workflows/release.yml', import.meta.url)), 'utf8');
+  assert.match(workflow, /workflow_dispatch:[\s\S]*sha:/);
+  assert.match(workflow, /candidate:[\s\S]*workflow_dispatch/);
+  assert.match(workflow, /candidate:[\s\S]*pnpm run test --exclude='[^']+\/test\/e2e\/tui\/[^']+'/);
+  assert.doesNotMatch(workflow, /gh workflow run ci\.yml/);
+  assert.doesNotMatch(workflow, /gh run watch/);
+  assert.doesNotMatch(workflow, /ci-run-id/);
+  assert.match(workflow, /github\.run_attempt > 1/);
+  const ci = readFileSync(fileURLToPath(new URL('../.github/workflows/ci.yml', import.meta.url)), 'utf8');
+  assert.doesNotMatch(ci, /branches:\n\s+- 'release\/\*'/);
+});
+
 test('version command records the consumed changesets and changed package versions', () => {
   const f = fixture();
   writeFileSync(join(f.dir, '.changeset/fix.md'), '---\n---\n');
@@ -328,17 +334,13 @@ void test('skips desktop publication when the plan has no desktop package', () =
   assert.deepEqual(f.state().releases, {});
 });
 
-test('publishes the triggering commit even when the branch has newer CI runs', () => {
+test('publishes the triggering commit without querying CI runs', () => {
   const f = fixture();
-  const state = f.state();
-  state.runs.push({ ...state.runs[0], id: 2, head_sha: otherSha });
-  writeFileSync(join(f.dir, 'state.json'), JSON.stringify(state));
   for (const command of ['check', 'prepare', 'finish']) {
     const result = run(f, command);
     assert.equal(result.status, 0, result.stderr);
   }
   assert.equal(f.state().tags[tag], sha);
   assert.equal(f.state().releases[tag].draft, false);
-  const query = f.state().calls.find(args => args[1]?.includes('/actions/workflows/'))[1];
-  assert.ok(query.includes(`head_sha=${sha}`));
+  assert.equal(f.state().calls.some(args => args[1]?.includes('/actions/workflows/')), false);
 });
