@@ -189,7 +189,7 @@ export interface FooterGitBinding {
 export class FooterComponent implements Component {
   private state: AppState;
   private readonly onRefresh: () => void;
-  private readonly runningFullscreen: boolean;
+  private runningFullscreen: boolean;
   private gitBinding: ((state: AppState) => FooterGitBinding | null) | null = null;
   private gitCache: GitStatusCache | null = null;
   private gitCacheKey: string | null = null;
@@ -230,6 +230,12 @@ export class FooterComponent implements Component {
     this.syncEnvironmentSpinner(state.environment);
     this.syncStatusLineRunner(state);
     this.state = state;
+  }
+
+  setRunningFullscreen(runningFullscreen: boolean): void {
+    if (this.runningFullscreen === runningFullscreen) return;
+    this.runningFullscreen = runningFullscreen;
+    this.invalidate();
   }
 
   setGitBinding(resolve: (state: AppState) => FooterGitBinding | null): void {

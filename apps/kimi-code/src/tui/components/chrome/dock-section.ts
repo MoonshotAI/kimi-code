@@ -92,11 +92,28 @@ export function createInteractiveChildView(
 }
 
 export abstract class DockSection extends VStack {
-  private readonly bodyScroll: OverflowScrollView | undefined;
+  private currentLayout: DockLayout | undefined;
+  private bodyScroll: OverflowScrollView | undefined;
   private pendingEnsureRange: { readonly start: number; readonly end: number } | undefined;
 
-  constructor(readonly layout?: DockLayout) {
+  constructor(layout?: DockLayout) {
     super();
+    this.mountLayout(layout);
+  }
+
+  get layout(): DockLayout | undefined {
+    return this.currentLayout;
+  }
+
+  setLayout(layout?: DockLayout): void {
+    this.mountLayout(layout);
+    this.invalidate();
+  }
+
+  private mountLayout(layout?: DockLayout): void {
+    this.currentLayout = layout;
+    this.pendingEnsureRange = undefined;
+    this.clear();
     const view = (part: DockPart): Component =>
       createInteractiveChildView(
         this,
@@ -113,6 +130,7 @@ export abstract class DockSection extends VStack {
         },
       );
     if (layout === undefined) {
+      this.bodyScroll = undefined;
       this.addChild(view('head'));
       this.addChild(view('body'));
       this.addChild(view('foot'));

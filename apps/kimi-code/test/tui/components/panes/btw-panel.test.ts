@@ -154,4 +154,57 @@ describe('BtwPanelComponent', () => {
       ui.stop();
     }
   });
+
+  it('toggles fullscreen mode in place while preserving turns and scrolled position', async () => {
+    const vt = new VirtualTerminal(60, 15);
+    const panel = makePanel({
+      fullscreen: false,
+      terminalRows: () => vt.rows,
+      canUseScrollKeys: () => true,
+    });
+    panel.submit('side question');
+    panel.appendAnswer(Array.from({ length: 16 }, (_, i) => `row-${String(i + 1)}`).join('\n\n'));
+    panel.markDone();
+
+    expect(panel.render(60).map(strip)[0]).toMatch(/^╭ BTW ─/);
+    for (let i = 0; i < 40; i++) panel.scroll('up');
+    const regularTopSnapshot = panel.render(60).map(strip).join('\n');
+    expect(regularTopSnapshot).toContain('Q: side question');
+    expect(regularTopSnapshot).not.toContain('row-16');
+
+    panel.setFullscreen(true);
+    const ui = new TuiAltScreen(vt);
+    const transcript = new ScrollView(new Text('chat line', 0, 0), { follow: 'end', primary: true });
+    const root = new VStack([
+      { component: transcript, basis: 0, grow: 1, shrink: 1, minSize: 1 },
+      { component: panel, shrink: 1, minSize: 0 },
+    ]);
+    ui.addLayoutEffect(() => {
+      if (panel.consumeOverflowChange()) ui.requestRender();
+    });
+    ui.setLayoutRoot(root);
+    ui.start();
+    try {
+      await vt.waitForRender();
+      const fullscreenScreen = vt.getViewport().map(strip).join('\n');
+      expect(fullscreenScreen).toContain('↑↓ scroll');
+      expect(fullscreenScreen).toContain('Q: side question');
+      expect(fullscreenScreen).not.toContain('row-16');
+
+      const topRow = vt.getViewport().map(strip).findIndex((line) => line.includes('BTW ─ Esc close'));
+      expect(topRow).toBeGreaterThan(0);
+      for (let i = 0; i < 40; i++) {
+        vt.sendInput(`\u001B[<65;10;${String(topRow + 2)}M`);
+      }
+      await vt.waitForRender();
+      expect(vt.getViewport().map(strip).join('\n')).toContain('row-16');
+
+      panel.setFullscreen(false);
+      const backToRegular = panel.render(60).map(strip);
+      expect(backToRegular[0]).toMatch(/^╭ BTW ─/);
+      expect(backToRegular.join('\n')).toContain('row-16');
+    } finally {
+      ui.stop();
+    }
+  });
 });
