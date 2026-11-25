@@ -87,40 +87,6 @@
             {
               "agent_id": "main",
               "event_created_at": "2000-01-01T00:00:00.000Z",
-              "item": {
-                "created_at": "2000-01-01T00:00:00.000Z",
-                "debug": {
-                  "finish_reason": "end_turn",
-                  "timing": {
-                    "client_blocked_ms": 0,
-                    "client_consume_ms": 0,
-                    "first_token_ms": 0,
-                    "request_build_ms": 0,
-                    "server_decode_ms": 0,
-                    "server_first_token_ms": 0,
-                    "stream_ms": 0
-                  },
-                  "usage": {
-                    "input_cache_creation": 0,
-                    "input_cache_read": 0,
-                    "input_other": 20,
-                    "output": 3
-                  }
-                },
-                "item_id": "<item_id:2>",
-                "outcome": "completed",
-                "status": "ended",
-                "step_index": 1,
-                "text": "First answer",
-                "type": "assistant_message"
-              },
-              "session_id": "<session_id:1>",
-              "turn_id": "<turn_id:1>",
-              "type": "item.ended"
-            },
-            {
-              "agent_id": "main",
-              "event_created_at": "2000-01-01T00:00:00.000Z",
               "session_id": "<session_id:1>",
               "step": {
                 "ended_at": "2000-01-01T00:00:00.000Z",
@@ -208,24 +174,6 @@
               },
               {
                 "created_at": "2000-01-01T00:00:00.000Z",
-                "debug": {
-                  "finish_reason": "end_turn",
-                  "timing": {
-                    "client_blocked_ms": 0,
-                    "client_consume_ms": 0,
-                    "first_token_ms": 0,
-                    "request_build_ms": 0,
-                    "server_decode_ms": 0,
-                    "server_first_token_ms": 0,
-                    "stream_ms": 0
-                  },
-                  "usage": {
-                    "input_cache_creation": 0,
-                    "input_cache_read": 0,
-                    "input_other": 20,
-                    "output": 3
-                  }
-                },
                 "item_id": "<item_id:2>",
                 "outcome": "completed",
                 "status": "ended",
@@ -417,40 +365,6 @@
             {
               "agent_id": "main",
               "event_created_at": "2000-01-01T00:00:00.000Z",
-              "item": {
-                "created_at": "2000-01-01T00:00:00.000Z",
-                "debug": {
-                  "finish_reason": "end_turn",
-                  "timing": {
-                    "client_blocked_ms": 0,
-                    "client_consume_ms": 0,
-                    "first_token_ms": 0,
-                    "request_build_ms": 0,
-                    "server_decode_ms": 0,
-                    "server_first_token_ms": 0,
-                    "stream_ms": 0
-                  },
-                  "usage": {
-                    "input_cache_creation": 0,
-                    "input_cache_read": 0,
-                    "input_other": 20,
-                    "output": 3
-                  }
-                },
-                "item_id": "<item_id:2>",
-                "outcome": "completed",
-                "status": "ended",
-                "step_index": 1,
-                "text": "First answer",
-                "type": "assistant_message"
-              },
-              "session_id": "<session_id:1>",
-              "turn_id": "<turn_id:1>",
-              "type": "item.ended"
-            },
-            {
-              "agent_id": "main",
-              "event_created_at": "2000-01-01T00:00:00.000Z",
               "session_id": "<session_id:1>",
               "step": {
                 "ended_at": "2000-01-01T00:00:00.000Z",
@@ -538,24 +452,6 @@
               },
               {
                 "created_at": "2000-01-01T00:00:00.000Z",
-                "debug": {
-                  "finish_reason": "end_turn",
-                  "timing": {
-                    "client_blocked_ms": 0,
-                    "client_consume_ms": 0,
-                    "first_token_ms": 0,
-                    "request_build_ms": 0,
-                    "server_decode_ms": 0,
-                    "server_first_token_ms": 0,
-                    "stream_ms": 0
-                  },
-                  "usage": {
-                    "input_cache_creation": 0,
-                    "input_cache_read": 0,
-                    "input_other": 20,
-                    "output": 3
-                  }
-                },
                 "item_id": "<item_id:2>",
                 "outcome": "completed",
                 "status": "ended",
