@@ -114,6 +114,7 @@ interface ToolView {
   path: string | undefined;
   command: string | undefined;
   questions: readonly string[];
+  shownText: string;
 }
 
 type Entry = { readonly kind: 'reply'; text: string } | { readonly kind: 'tool'; readonly id: string };
@@ -148,6 +149,7 @@ function toolsOf(updates: readonly SessionUpdate[]): ToolView[] {
       path: undefined,
       command: undefined,
       questions: [],
+      shownText: '',
     };
     tools.set(update.toolCallId, tool);
     const location = update.locations?.[0]?.path;
@@ -163,6 +165,7 @@ function toolsOf(updates: readonly SessionUpdate[]): ToolView[] {
     }
     if (update.content !== undefined && update.content !== null) tool.embedded = terminals;
     const text = parts.map((part) => (part.type === 'content' && part.content.type === 'text' ? part.content.text : '')).join('\n');
+    if (update.content !== undefined && update.content !== null) tool.shownText = text;
     if (update.status === 'completed') tool.status = 'done';
     if (update.status === 'failed') tool.status = text.includes(REJECTION_NOTICE) ? 'rejected' : 'failed';
   }
@@ -274,7 +277,8 @@ class AcpDriver implements SurfaceDriver<'acp'> {
   private framedWireLines = 0;
   private receivedUpdates = 0;
   private sentPrompts = 0;
-  private readonly prompts: string[] = [];
+  private prompts: string[] = [];
+  private sessionStart = 0;
   private sessionId = '';
   private openedMode: string | undefined;
   private turn: Turn | undefined;
@@ -365,7 +369,8 @@ class AcpDriver implements SurfaceDriver<'acp'> {
   }
 
   private conversation(): string[] {
-    return [...userTextsOf(this.updates).map((text) => `user: ${text}`), ...this.prompts.map((text) => `user: ${text}`), ...repliesOf(this.updates).map((text) => `assistant: ${text}`)];
+    const updates = this.sessionUpdates();
+    return [...userTextsOf(updates).map((text) => `user: ${text}`), ...this.prompts.map((text) => `user: ${text}`), ...repliesOf(updates).map((text) => `assistant: ${text}`)];
   }
 
   async send(text: string): Promise<void> {
@@ -445,6 +450,25 @@ class AcpDriver implements SurfaceDriver<'acp'> {
     if (!reported) {
       throw new Error(`setPermissionMode() switched the session to mode ${modeId}, but the agent never reported it with current_mode_update.\n${this.describe()}`);
     }
+  }
+
+  async newSession(): Promise<void> {
+    if (!this.turnOver() || this.permissions.length > 0) {
+      throw new Error(`newSession() needs an idle product, but a turn is running or an approval is pending.\n${this.describe()}`);
+    }
+    await this.wait('the agent to send every session/update it announced', () => (this.updates.length >= this.receivedUpdates ? true : undefined));
+    const session = await this.response(
+      'the agent to create a new session',
+      this.connection.agent.request(methods.agent.session.new, { cwd: this.home.workspace, mcpServers: [] }),
+    );
+    if (session.sessionId === this.sessionId) {
+      throw new Error(`newSession() asked for a new session, but the agent answered with the current one, ${session.sessionId}.\n${this.describe()}`);
+    }
+    this.sessionId = session.sessionId;
+    this.openedMode = session.modes?.currentModeId;
+    this.sessionStart = this.updates.length;
+    this.prompts = [];
+    this.turn = undefined;
   }
 
   async stop(): Promise<void> {
@@ -834,7 +858,7 @@ class AcpDriver implements SurfaceDriver<'acp'> {
   }
 
   private missingEditorEvidence(tool: ToolView, expectation: ToolExpectation): string | undefined {
-    if (expectation.status === 'rejected') return undefined;
+    if (expectation.status === 'rejected' || this.replayedTurn()) return undefined;
     if (expectation.name === 'AskUserQuestion') {
       const reply = this.questionReplies.get(tool.id);
       return reply !== undefined && this.served.has(reply) ? undefined : 'the editor never answered a question for it';
@@ -867,7 +891,8 @@ class AcpDriver implements SurfaceDriver<'acp'> {
       if (tool.name !== expectation.name || tool.status !== expectation.status) return false;
       if (expectation.name === 'AskUserQuestion') return tool.questions.includes(expectation.target);
       if (expectation.name !== 'Bash') return tool.path !== undefined && this.workspacePath(tool.path) === expectation.target;
-      return tool.command === expectation.target && (output === undefined || this.embedsOutput(tool, output));
+      if (tool.command !== expectation.target || output === undefined) return tool.command === expectation.target;
+      return this.replayedTurn() ? tool.shownText.split('\n').some((line) => line.trim() === output) : this.embedsOutput(tool, output);
     });
   }
 
@@ -886,12 +911,23 @@ class AcpDriver implements SurfaceDriver<'acp'> {
   }
 
   private sessionMode(): string | undefined {
-    const reported = this.updates.findLast((update) => update.sessionUpdate === 'current_mode_update');
+    const reported = this.sessionUpdates().findLast((update) => update.sessionUpdate === 'current_mode_update');
     return reported?.sessionUpdate === 'current_mode_update' ? reported.currentModeId : this.openedMode;
   }
 
   private turnUpdates(): readonly SessionUpdate[] {
-    return this.turn === undefined ? [] : this.updates.slice(this.turn.updates);
+    if (this.turn !== undefined) return this.updates.slice(this.turn.updates);
+    const updates = this.sessionUpdates();
+    const lastUserMessage = updates.findLastIndex((update) => update.sessionUpdate === 'user_message_chunk');
+    return lastUserMessage < 0 ? [] : updates.slice(lastUserMessage + 1);
+  }
+
+  private sessionUpdates(): readonly SessionUpdate[] {
+    return this.updates.slice(this.sessionStart);
+  }
+
+  private replayedTurn(): boolean {
+    return this.turn === undefined;
   }
 
   private turnOver(): boolean {

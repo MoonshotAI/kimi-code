@@ -128,6 +128,8 @@ const ASKED = 'Collected your answers';
 const ASKED_QUESTION = 'Q';
 const ASKED_ANSWER = '→';
 const DISMISSED_NOTE = 'User dismissed the question without answering.';
+const NEW_SESSION_COMMAND = '/new';
+const NEW_SESSION_NOTICE = 'Started a new session (';
 
 interface Screen {
   readonly text: string;
@@ -137,6 +139,7 @@ interface Screen {
   readonly transcript: readonly string[];
   readonly status: readonly string[];
   readonly panel: readonly string[];
+  readonly startedSession: string | undefined;
 }
 
 interface ApprovalPanel {
@@ -211,7 +214,8 @@ function squash(text: string): string {
 
 function screenOf(rows: readonly string[], viewport: readonly string[]): Screen {
   const lines = rows.map((row) => row.trim());
-  const frame = { text: rows.join('\n'), height: rows.length, viewport };
+  const startedSession = lines.findLast((line) => line.startsWith(NEW_SESSION_NOTICE));
+  const frame = { text: rows.join('\n'), height: rows.length, viewport, startedSession };
   const editor = lines.findLastIndex((line, index) => EDITOR_TOP.test(line) && lines[index + 1]?.startsWith(EDITOR_PROMPT) === true);
   const hint = lines.findLastIndex((line) => line.includes(APPROVAL_HINT));
   const rule = lines.findLastIndex((line, index) => index < hint && APPROVAL_RULE.test(line));
@@ -601,6 +605,17 @@ class TuiDriver implements SurfaceDriver<'tui'> {
         settled.found,
       );
     }
+  }
+
+  async newSession(): Promise<void> {
+    const before = await this.read();
+    if (!this.turnOver(before)) throw this.failure('newSession() needs an idle product: a turn is running, a message is queued or an approval is pending.', before);
+    this.write(paste(NEW_SESSION_COMMAND));
+    this.write(KEYS.enter);
+    await this.wait('the CLI to report a new session', (screen) =>
+      screen.startedSession !== undefined && screen.startedSession !== before.startedSession && screen.input === 'editor' ? true : undefined,
+    );
+    this.turn = undefined;
   }
 
   async resize(size: WindowSize): Promise<void> {

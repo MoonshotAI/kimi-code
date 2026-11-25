@@ -223,7 +223,6 @@ const PRECHECKS: { readonly [V in Verb]?: (...args: Parameters<Actions[V]>) => v
   expectAbsent: lineCheck('expectAbsent'),
 };
 
-const READS_THE_LATEST_TURN: ReadonlySet<Verb> = new Set(['expectReply', 'expectTool', 'expectError', 'expectAbsent']);
 
 function problemOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -243,7 +242,6 @@ class ScenarioSession {
   private failedStep: string | undefined;
   private launches = 1;
   private lastPrompt: string | undefined;
-  private turnSinceLaunch = true;
   private readonly earlierDiagnostics: Diagnostic[] = [];
   private readonly performed = new Set<Verb>();
   private exceptPlatforms: readonly string[] = [];
@@ -321,9 +319,6 @@ class ScenarioSession {
     if (unavailable !== undefined) {
       throw new Error(`${verb}() cannot be checked on ${process.platform}: ${unavailable} Leave the platform out of the scenario with exceptPlatforms.`);
     }
-    if (READS_THE_LATEST_TURN.has(verb) && !this.turnSinceLaunch) {
-      throw new Error(`${verb}() reads the latest turn, and no turn has started since restart(); check the restored conversation with expectTranscript().`);
-    }
     if (!verbOn(verb, this.surface)) {
       throw new Error(
         `${verb}() does not exist on ${this.surface}: ${absenceReason(verb, this.surface)} Leave ${this.surface} out of the scenario with except or onlyOn.`,
@@ -334,11 +329,7 @@ class ScenarioSession {
     const method: unknown = Reflect.get(driver, verb);
     if (typeof method !== 'function') throw new Error(`The ${this.surface} driver does not implement ${verb}().`);
     await Reflect.apply(method, driver, args);
-    if (verb === 'continue') this.turnSinceLaunch = true;
-    if (verb === 'send' || verb === 'queue' || verb === 'steer') {
-      this.lastPrompt = String(args[0]);
-      this.turnSinceLaunch = true;
-    }
+    if (verb === 'send' || verb === 'queue' || verb === 'steer') this.lastPrompt = String(args[0]);
   }
 
   private async restart(): Promise<void> {
@@ -355,7 +346,6 @@ class ScenarioSession {
     if (problems.length > 0) throw new Error(`The product did not shut down cleanly before restart():\n\n${problems.join('\n\n')}`);
     this.launches += 1;
     this.driver = await startSurface(this.surface, { home, model, reopen: { launch: this.launches, lastPrompt: this.lastPrompt, state } });
-    this.turnSinceLaunch = false;
   }
 
   private async shutdownProblems(driver: SurfaceDriver<Surface>): Promise<string[]> {

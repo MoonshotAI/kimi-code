@@ -143,6 +143,10 @@ export abstract class PageDriver implements SurfaceDriver<'desktop' | 'web'> {
     return this.window().expectTranscript(text);
   }
 
+  newSession(): Promise<void> {
+    return this.window().newSession();
+  }
+
   idle(): Promise<boolean> {
     return this.window().idle();
   }

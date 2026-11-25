@@ -52,6 +52,7 @@ export const VERBS = {
   expectAbsent: { on: SURFACES, checksInterface: false },
   continue: { on: ['desktop', 'web'], absentBecause: NO_CONTINUE, checksInterface: false },
   restart: { on: SURFACES, checksInterface: false, bySession: true },
+  newSession: { on: SURFACES, checksInterface: false },
   resize: { on: ['tui', 'web'], absentBecause: NO_WINDOW_TO_RESIZE, checksInterface: false },
   expectTranscript: { on: SURFACES, checksInterface: true },
   exit: { on: ['tui'], absentBecause: ONLY_IN_A_SHELL, checksInterface: false },
@@ -198,6 +199,7 @@ interface VerbSignatures {
   expectAbsent(text: string): Promise<void>;
   continue(): Promise<void>;
   restart(): Promise<void>;
+  newSession(): Promise<void>;
   resize(size: WindowSize): Promise<void>;
   expectTranscript(text: string): Promise<void>;
   exit(): Promise<void>;

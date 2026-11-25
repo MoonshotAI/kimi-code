@@ -35,6 +35,7 @@ const BLOCK = `${ROW}${SHOWN}:not(:has(${LIST}))`;
 const REPLY = `:not(:has(${DISCLOSURE})):not(:has(${STATE})):has(${MARKDOWN})`;
 const ON_A_CARD = `${SHOWN}:not(:is(${MARKDOWN}), :is(${MARKDOWN}) *)`;
 const DESCRIBED_LINES = 80;
+const NEW_SESSION = 'New Session';
 const APPROVAL_TITLES: Readonly<Record<string, ApprovalToolName>> = { 'Run command?': 'Bash', 'Apply changes?': 'Edit', 'Write file?': 'Write' };
 const COMMAND_PROMPT = '$ ';
 const FEEDBACK_BOX = 'Explain why you are rejecting…';
@@ -343,6 +344,14 @@ export class RendererSurface implements DriverActionsOn<'desktop' | 'web'> {
     } catch (error) {
       return `The page could not be read: ${reasonOf(error)}`;
     }
+  }
+
+  async newSession(): Promise<void> {
+    if (!(await this.idle())) {
+      throw new Error(`newSession() needs an idle product, but a turn is running, a message is queued or an approval is pending.\n${await this.describe()}`);
+    }
+    await this.press('newSession()', `the ${NEW_SESSION} button`, this.page.getByRole('button', { name: new RegExp(`^${NEW_SESSION}`) }).first());
+    await this.wait('a new, empty conversation', async () => ((await this.conversationSize()) === 0 && (await this.composer().isVisible()) ? true : undefined));
   }
 
   async resize(viewport: { readonly width: number; readonly height: number }): Promise<void> {
