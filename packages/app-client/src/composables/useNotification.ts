@@ -8,7 +8,7 @@ export function shouldNotifyCompletion(
   hasPendingQuestion: boolean,
   continuation?: ConversationContinuation,
 ): boolean {
-  if (continuation !== undefined && continuation !== 'none') return false;
+  if (continuation === 'turn') return false;
   return status === 'idle' && !hasPendingApproval && !hasPendingQuestion;
 }
 

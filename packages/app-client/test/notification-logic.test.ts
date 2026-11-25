@@ -170,18 +170,18 @@ describe('shouldNotifyCompletion', () => {
     expect(shouldNotifyCompletion('idle', false, true)).toBe(false);
   });
 
-  it('returns true when continuation is none', () => {
-    expect(shouldNotifyCompletion('idle', false, false, 'none')).toBe(true);
+  it.each(['none', 'background'] as const)('returns true when continuation is %s', (continuation) => {
+    expect(shouldNotifyCompletion('idle', false, false, continuation)).toBe(true);
   });
 
-  it.each(['turn', 'background'] as const)('returns false while work continues with %s', (continuation) => {
-    expect(shouldNotifyCompletion('idle', false, false, continuation)).toBe(false);
+  it('returns false while another turn follows', () => {
+    expect(shouldNotifyCompletion('idle', false, false, 'turn')).toBe(false);
   });
 
-  it('still blocks aborted turns and pending interactions when continuation is none', () => {
-    expect(shouldNotifyCompletion('aborted', false, false, 'none')).toBe(false);
-    expect(shouldNotifyCompletion('idle', true, false, 'none')).toBe(false);
-    expect(shouldNotifyCompletion('idle', false, true, 'none')).toBe(false);
+  it.each(['none', 'background'] as const)('still blocks aborted turns and pending interactions when continuation is %s', (continuation) => {
+    expect(shouldNotifyCompletion('aborted', false, false, continuation)).toBe(false);
+    expect(shouldNotifyCompletion('idle', true, false, continuation)).toBe(false);
+    expect(shouldNotifyCompletion('idle', false, true, continuation)).toBe(false);
   });
 });
 

@@ -301,7 +301,7 @@ describe('conversation events in the client', () => {
     expect(h.turnEndReads.listSkills).toHaveBeenCalled();
   });
 
-  it('notifies completion only when continuation is none, falling back for legacy frames without continuation', async () => {
+  it('suppresses completion while another turn follows, notifying on background, none, and legacy frames', async () => {
     const h = await boot();
     const { notificationsStore } = await import('../src/stores/notifications');
     const notifyCompletion = vi.spyOn(notificationsStore(), 'maybeNotifyCompletion');
@@ -313,21 +313,22 @@ describe('conversation events in the client', () => {
 
     h.startTurn('s1', 1, 'msg_1', 'second');
     h.endTurn('s1', 1, 'completed', 't1', 'background');
-    expect(notifyCompletion).not.toHaveBeenCalled();
+    expect(notifyCompletion).toHaveBeenCalledTimes(1);
+    expect(notifyCompletion).toHaveBeenLastCalledWith('s1', expect.objectContaining({ promptId: 'msg_1' }));
 
     h.startTurn('s1', 2, 'msg_2', 'task notification');
     h.endTurn('s1', 2, 'completed', 't2', 'none');
-    expect(notifyCompletion).toHaveBeenCalledTimes(1);
-    expect(notifyCompletion).toHaveBeenCalledWith('s1', expect.objectContaining({ promptId: 'msg_2' }));
+    expect(notifyCompletion).toHaveBeenCalledTimes(2);
+    expect(notifyCompletion).toHaveBeenLastCalledWith('s1', expect.objectContaining({ promptId: 'msg_2' }));
 
     h.startTurn('s1', 3, 'msg_3', 'legacy server');
     h.endTurn('s1', 3, 'completed', 't3');
-    expect(notifyCompletion).toHaveBeenCalledTimes(2);
+    expect(notifyCompletion).toHaveBeenCalledTimes(3);
     expect(notifyCompletion).toHaveBeenLastCalledWith('s1', expect.objectContaining({ promptId: 'msg_3' }));
 
     h.startTurn('s1', 4, 'msg_4', 'cancelled');
     h.endTurn('s1', 4, 'interrupted', 't4', 'none');
-    expect(notifyCompletion).toHaveBeenCalledTimes(2);
+    expect(notifyCompletion).toHaveBeenCalledTimes(3);
   });
 
   it('drops a sent prompt the server lost while disconnected and sends the next queued one', async () => {

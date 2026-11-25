@@ -3,4 +3,4 @@
 "kimi-code-app": patch
 ---
 
-Send completion notifications in the web and desktop apps only after all queued turns and background tasks have finished.
+Suppress completion notifications in the web and desktop apps between consecutive queued turns, while still notifying when background tasks remain running.
