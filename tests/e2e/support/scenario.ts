@@ -245,6 +245,8 @@ class ScenarioSession {
   private lastPrompt: string | undefined;
   private turnSinceLaunch = true;
   private readonly earlierDiagnostics: Diagnostic[] = [];
+  private readonly performed = new Set<Verb>();
+  private exceptPlatforms: readonly string[] = [];
 
   constructor(surface: Surface) {
     this.surface = surface;
@@ -252,6 +254,7 @@ class ScenarioSession {
 
   async start(options: ScenarioOptions, frames: FramePolicy, testInfo: TestInfo): Promise<RunningContext> {
     this.frames = frames;
+    this.exceptPlatforms = Object.keys(options.exceptPlatforms ?? {});
     this.testInfo = testInfo;
     const home = await createTestHome(`e2e-${this.surface}`);
     this.home = home;
@@ -292,6 +295,7 @@ class ScenarioSession {
   }
 
   private async perform(verb: Verb, args: readonly unknown[]): Promise<void> {
+    this.performed.add(verb);
     const number = this.nextStep();
     const title = (STEP_TITLES[verb] as (...values: readonly unknown[]) => string)(...args);
     this.failedStep = undefined;
@@ -422,6 +426,13 @@ class ScenarioSession {
     const problems = await this.shutdownProblems(driver);
     if (this.interfaceChecks === 0) {
       problems.push('The scenario never checked the interface. Add at least one product.expectTool(), product.expectReply() or another product.expect…() check.');
+    }
+    for (const platform of this.exceptPlatforms) {
+      if (![...this.performed].some((verb) => unavailableReason(verb, platform) !== undefined)) {
+        problems.push(
+          `The scenario leaves out ${platform} with exceptPlatforms, but none of the actions it used is unavailable there. exceptPlatforms only covers checks the driver cannot make on a platform; a failure the product causes there is a bug to record, not to leave out.`,
+        );
+      }
     }
     try {
       model.verify();

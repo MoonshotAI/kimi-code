@@ -773,7 +773,16 @@ class AcpDriver implements SurfaceDriver<'acp'> {
   }
 
   private killCommand(terminal: Terminal): void {
-    killProcessTree(terminal.pid);
+    if (terminal.exit === undefined) {
+      killProcessTree(terminal.pid);
+      return;
+    }
+    if (process.platform === 'win32') return;
+    try {
+      process.kill(-terminal.pid, 'SIGKILL');
+    } catch {
+      return;
+    }
   }
 
   private async answerPermission(verb: string, optionId: string): Promise<void> {

@@ -1,5 +1,6 @@
-import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 
 import {
   killProcessTree,
@@ -13,8 +14,6 @@ import {
 import { VirtualTerminal } from '@moonshot-ai/pi-tui/testing';
 import type { IPty } from 'node-pty';
 
-const OUTPUT_TAIL = 64 * 1024;
-const TERMINAL_ESCAPE = /\x1b(?:\[[0-9;?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\)|[@-Z\\-_])/g;
 const INTERRUPT = '\x03';
 
 export interface TerminalCommand {
@@ -51,10 +50,6 @@ export async function loadNodePty(): Promise<typeof import('node-pty')> {
   }
 }
 
-export function plainText(text: string): string {
-  return text.replaceAll(TERMINAL_ESCAPE, '').replaceAll('\r', '');
-}
-
 export class TerminalProcess {
   readonly label: string;
   readonly pid: number;
@@ -62,7 +57,6 @@ export class TerminalProcess {
   readonly closed: Promise<TerminalExit>;
   private readonly pty: IPty;
   private readonly screen: VirtualTerminal;
-  private output = '';
   private exitState: TerminalExit | undefined;
 
   private constructor(pty: IPty, label: string, networkLog: string, screen: VirtualTerminal) {
@@ -72,7 +66,6 @@ export class TerminalProcess {
     this.networkLog = networkLog;
     this.pid = pty.pid;
     pty.onData((text) => {
-      this.output = (this.output + text).slice(-OUTPUT_TAIL);
       screen.write(text);
     });
     screen.onReply((reply) => {
@@ -87,6 +80,7 @@ export class TerminalProcess {
   }
 
   static async start(options: TerminalProcessOptions): Promise<TerminalProcess> {
+    if (!existsSync(options.command.entry)) throw new Error(`${options.label} cannot start: ${options.command.entry} does not exist`);
     const { spawn } = await loadNodePty();
     const networkLog = join(options.logDir, `network-${randomUUID()}.log`);
     const imports = [...(options.command.imports ?? []), NETWORK_GUARD_PRELOAD.href].flatMap((specifier) => ['--import', specifier]);
@@ -108,23 +102,19 @@ export class TerminalProcess {
     return this.exitState;
   }
 
-  outputTail(): string {
-    return plainText(this.output);
-  }
-
   async waitForLine(predicate: (line: string) => boolean, description: string): Promise<string> {
-    const line = await until(
+    const outcome = await until(
       description,
       async () => {
         await this.screen.flush();
         const found = this.screen.getScrollBuffer().find((row) => predicate(row.trimEnd()));
-        if (found !== undefined) return found;
-        if (this.exited) throw new Error(`${this.label} exited before printing ${description}.\n${this.describe()}`);
-        return undefined;
+        if (found !== undefined) return { line: found };
+        return this.exited ? { exited: true as const } : undefined;
       },
       { timeoutMs: TIMEOUTS.server },
     );
-    return line;
+    if ('exited' in outcome) throw new Error(`${this.label} exited before printing ${description}.\n${this.describe()}`);
+    return outcome.line;
   }
 
   interrupt(): void {
@@ -132,7 +122,15 @@ export class TerminalProcess {
   }
 
   async forceKill(): Promise<TerminalExit> {
-    if (this.exitState === undefined) killProcessTree(this.pid);
+    if (this.exitState === undefined) {
+      killProcessTree(this.pid);
+    } else if (process.platform !== 'win32') {
+      try {
+        process.kill(-this.pid, 'SIGKILL');
+      } catch {
+        return this.closed;
+      }
+    }
     return this.closed;
   }
 
@@ -142,7 +140,7 @@ export class TerminalProcess {
 
   describe(): string {
     const state = this.exitState === undefined ? 'running' : `exit=${String(this.exitState.code)} signal=${String(this.exitState.signal)}`;
-    const output = this.outputTail().trimEnd();
-    return [`${this.label} pid=${this.pid} ${state}`, 'terminal output:', output === '' ? '(empty)' : output].join('\n');
+    const output = this.screen.getScrollBuffer().map((row) => row.trimEnd()).join('\n').trim();
+    return [`${this.label} pid=${this.pid} ${state}`, 'terminal screen:', output === '' ? '(empty)' : output].join('\n');
   }
 }
