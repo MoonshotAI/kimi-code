@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+
 import { afterEach, describe, expect, it } from 'vitest';
 
 import type { ContextMessage } from '#/agent/contextMemory/types';
@@ -53,6 +55,26 @@ describe('AgentShellCommandService', () => {
     expect(textOf(context.history()[0]!)).toBe('<bash-input>\necho hello\n</bash-input>');
     expect(textOf(context.history()[1]!)).toContain('<bash-stdout>hello');
     expect(ctx.project().some((message) => 'origin' in message)).toBe(false);
+  });
+
+  it.each([
+    { label: 'a single long line', full: 'x'.repeat(60_000) },
+    {
+      label: 'many lines',
+      full: Array.from({ length: 1_500 }, (_, i) => `line ${String(i)} ${'x'.repeat(50)}`).join('\n'),
+    },
+  ])('injects the truncated Bash result for $label while returning full stdout to the caller', async ({ full }) => {
+    await setup(full, 0);
+
+    const result = await shell.run({ command: 'cat large.txt' });
+
+    expect(result.stdout).toBe(full);
+    const injected = textOf(context.history().at(-1)!);
+    expect(injected).toMatch(/Tool output exceeded 50000 characters|Per-line truncation occurred/);
+    expect(injected.length).toBeLessThan(10_000);
+    const outputPath = /^output_path: (.+)$/m.exec(injected)?.[1];
+    expect(outputPath).toBeDefined();
+    expect(readFileSync(outputPath!, 'utf8')).toBe(full);
   });
 
   it('escapes bash tag delimiters inside command output', async () => {

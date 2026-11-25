@@ -1,6 +1,7 @@
 import { userPromptSubmitHookPart } from '#/agent/contextMemory/hookParts';
 import type { TextPart } from '@moonshot-ai/core/llm/message';
 
+import { HOOK_CONTEXT_MAX_CHARS, truncateHookText } from './runHook';
 import type { HookResult } from './types';
 
 export function renderHookResult(event: string, message: string): string {
@@ -69,7 +70,9 @@ function userPromptHookMessage(result: HookResult): string | undefined {
   if (message !== undefined && message.length > 0) return message;
   if (result.structuredOutput === true) return undefined;
   const stdout = result.stdout?.trim();
-  return stdout === undefined || stdout.length === 0 ? undefined : stdout;
+  return stdout === undefined || stdout.length === 0
+    ? undefined
+    : truncateHookText(stdout, HOOK_CONTEXT_MAX_CHARS);
 }
 
 function isNonEmptyString(value: string | undefined): value is string {

@@ -103,6 +103,8 @@ You can also return a JSON object via stdout to block:
 }
 ```
 
+Hook output is bounded before it reaches the model. Standard output (stdout) and standard error (stderr) are each captured up to 1,000,000 characters; output past that is cut with a `[truncated]` marker, and an oversized stdout payload is not parsed as JSON. Text appended to context from `UserPromptSubmit` (plain stdout or a JSON `message`) is truncated to 8,000 characters, and blocking reasons (stderr on exit code `2`, or `permissionDecisionReason` / `message` in JSON) are truncated to 2,000 characters.
+
 ::: info Which events support blocking?
 Only **blockable events** (`PreToolUse`, `Stop`, `UserPromptSubmit`) have return values that affect the main flow. All other events are **observation-only events**: they fire and forget, and the main flow is unaffected regardless of what the script returns.
 :::

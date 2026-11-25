@@ -448,6 +448,22 @@ describe('IExternalHooksRunnerService integration', () => {
     }
   });
 
+  it('truncates an oversized Stop hook block reason before injecting it into the conversation', async () => {
+    const engine = makeHookRunner([
+      {
+        event: 'Stop',
+        command: nodeCommand('process.stderr.write("s".repeat(10_000)); process.exitCode = 2;'),
+        timeout: 5,
+      },
+    ]);
+
+    const decision = await engine.triggerBlock('Stop', { inputData: { stopHookActive: false } });
+
+    expect(decision?.block).toBe(true);
+    expect(decision?.reason.length).toBeLessThanOrEqual(2_020);
+    expect(decision?.reason).toContain('[truncated]');
+  });
+
   it('passes permission approval contexts through to PermissionRequest and PermissionResult hooks', async () => {
     const disposables = new DisposableStore();
     let ix: TestInstantiationService | undefined;

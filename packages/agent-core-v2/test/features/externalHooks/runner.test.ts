@@ -1,7 +1,16 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildHookSpawnOptions, runHook } from '#/features/externalHooks/internal/runHook';
-import { renderUserPromptHookResult } from '#/features/externalHooks/internal/userPrompt';
+import {
+  buildHookSpawnOptions,
+  HOOK_BLOCK_REASON_MAX_CHARS,
+  HOOK_CONTEXT_MAX_CHARS,
+  HOOK_STREAM_MAX_CHARS,
+  runHook,
+} from '#/features/externalHooks/internal/runHook';
+import {
+  renderUserPromptHookBlockResult,
+  renderUserPromptHookResult,
+} from '#/features/externalHooks/internal/userPrompt';
 import { HostProcessService } from '#/os/backends/node-local/hostProcessService';
 
 const hostProcess = new HostProcessService();
@@ -142,6 +151,78 @@ describe('runHook process runner', () => {
 
     expect(result.action).toBe('block');
     expect(result.reason).toBe('use rg');
+  });
+
+  it('caps captured stdout at the stream limit and truncates plain-text prompt context', async () => {
+    const result = await runHook(
+      hostProcess,
+      nodeCommand('process.stdout.write("a".repeat(1_100_000));'),
+      {},
+      { timeout: 5 },
+    );
+
+    expect(result.action).toBe('allow');
+    expect(result.stdout?.length).toBeLessThanOrEqual(HOOK_STREAM_MAX_CHARS + 20);
+    expect(result.stdout).toContain('[truncated]');
+
+    const rendered = renderUserPromptHookResult([result]);
+    expect(rendered?.messages).toHaveLength(1);
+    expect(rendered?.messages[0]?.length).toBeLessThanOrEqual(HOOK_CONTEXT_MAX_CHARS + 20);
+    expect(rendered?.messages[0]).toContain('[truncated]');
+  });
+
+  it('truncates plain-text and structured allow messages to the context limit', async () => {
+    const plain = await runHook(
+      hostProcess,
+      nodeCommand('process.stdout.write("b".repeat(20_000));'),
+      {},
+      { timeout: 5 },
+    );
+    const structured = await runHook(
+      hostProcess,
+      nodeCommand('process.stdout.write(JSON.stringify({ message: "c".repeat(20_000) }));'),
+      {},
+      { timeout: 5 },
+    );
+
+    expect(plain.stdout).toHaveLength(20_000);
+    expect(structured.structuredOutput).toBe(true);
+    expect(structured.message?.length).toBeLessThanOrEqual(HOOK_CONTEXT_MAX_CHARS + 20);
+    expect(structured.message).toContain('[truncated]');
+
+    const rendered = renderUserPromptHookResult([plain, structured]);
+    expect(rendered?.messages).toHaveLength(2);
+    for (const message of rendered?.messages ?? []) {
+      expect(message.length).toBeLessThanOrEqual(HOOK_CONTEXT_MAX_CHARS + 20);
+      expect(message).toContain('[truncated]');
+    }
+  });
+
+  it('truncates block reasons from stderr and structured JSON to the reason limit', async () => {
+    const fromStderr = await runHook(
+      hostProcess,
+      nodeCommand('process.stderr.write("d".repeat(10_000)); process.exitCode = 2;'),
+      {},
+      { timeout: 5 },
+    );
+    expect(fromStderr.action).toBe('block');
+    expect(fromStderr.reason?.length).toBeLessThanOrEqual(HOOK_BLOCK_REASON_MAX_CHARS + 20);
+    expect(fromStderr.reason).toContain('[truncated]');
+    const blocked = renderUserPromptHookBlockResult([fromStderr]);
+    expect(blocked?.message.length).toBeLessThanOrEqual(HOOK_BLOCK_REASON_MAX_CHARS + 20);
+    expect(blocked?.message).toContain('[truncated]');
+
+    const fromJson = await runHook(
+      hostProcess,
+      nodeCommand(
+        'process.stdout.write(JSON.stringify({ hookSpecificOutput: { permissionDecision: "deny", permissionDecisionReason: "e".repeat(10_000) } }));',
+      ),
+      {},
+      { timeout: 5 },
+    );
+    expect(fromJson.action).toBe('block');
+    expect(fromJson.reason?.length).toBeLessThanOrEqual(HOOK_BLOCK_REASON_MAX_CHARS + 20);
+    expect(fromJson.reason).toContain('[truncated]');
   });
 
   it('writes the input payload to the hook process stdin as JSON', async () => {

@@ -103,6 +103,8 @@ Hook 命令始终在运行 Kimi Code 的机器上执行，工作目录是当前�
 }
 ```
 
+Hook 输出在进入模型前会按长度截断。标准输出（stdout）和错误输出（stderr）各自最多保留 1,000,000 个字符，超出部分会截断并附带 `[truncated]` 标记；stdout 超出该上限时不会再按 JSON 解析。`UserPromptSubmit` 附加到上下文的文本（普通 stdout 或 JSON 中的 `message`）最多保留 8,000 个字符；阻断原因（退出码 `2` 时的 stderr，或 JSON 中的 `permissionDecisionReason` / `message`）最多保留 2,000 个字符。
+
 ::: info 说明
 只有**可阻断事件**（`PreToolUse`、`Stop`、`UserPromptSubmit`）的返回值会影响主流程。其余事件属于**观察型事件**：触发后即发即忘，不管脚本返回什么，主流程都不会改变。
 :::

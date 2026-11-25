@@ -2,9 +2,19 @@ import { type SpawnOptionsWithoutStdio } from 'node:child_process';
 
 import { z } from 'zod';
 
+import { sliceOnCodePointBoundary } from '#/_base/text/code-points';
 import { type IHostProcess, IHostProcessService } from '#/os/interface/hostProcess';
 
 import type { HookResult } from './types';
+
+export const HOOK_STREAM_MAX_CHARS = 1_000_000;
+export const HOOK_CONTEXT_MAX_CHARS = 8_000;
+export const HOOK_BLOCK_REASON_MAX_CHARS = 2_000;
+
+export function truncateHookText(text: string, maxChars: number): string {
+  if (text.length <= maxChars) return text;
+  return `${sliceOnCodePointBoundary(text, maxChars)}… [truncated]`;
+}
 
 export interface RunHookOptions {
   readonly timeout: number;
@@ -75,6 +85,8 @@ export async function runHook(
   return new Promise<HookResult>((resolve) => {
     let stdout = '';
     let stderr = '';
+    let stdoutTruncated = false;
+    let stderrTruncated = false;
     let settled = false;
     const timeoutMs = timeoutSeconds(options.timeout) * 1000;
 
@@ -93,9 +105,21 @@ export async function runHook(
     proc.stdout.setEncoding('utf8');
     proc.stderr.setEncoding('utf8');
     proc.stdout.on('data', (chunk: string) => {
+      if (stdoutTruncated) return;
+      if (stdout.length + chunk.length > HOOK_STREAM_MAX_CHARS) {
+        stdout = truncateHookText(stdout + chunk, HOOK_STREAM_MAX_CHARS);
+        stdoutTruncated = true;
+        return;
+      }
       stdout += chunk;
     });
     proc.stderr.on('data', (chunk: string) => {
+      if (stderrTruncated) return;
+      if (stderr.length + chunk.length > HOOK_STREAM_MAX_CHARS) {
+        stderr = truncateHookText(stderr + chunk, HOOK_STREAM_MAX_CHARS);
+        stderrTruncated = true;
+        return;
+      }
       stderr += chunk;
     });
 
@@ -104,7 +128,7 @@ export async function runHook(
     void Promise.all([proc.wait(), stdoutDone, stderrDone]).then(
       ([code]) => {
         void proc.dispose();
-        settle(resultFromExitCode(code, stdout, stderr));
+        settle(resultFromExitCode(code, stdout, stderr, stdoutTruncated));
       },
       (error) => {
         void proc.dispose();
@@ -137,9 +161,14 @@ function timeoutSeconds(timeout: number): number {
   return Number.isFinite(timeout) && timeout > 0 ? timeout : DEFAULT_TIMEOUT_SECONDS;
 }
 
-function resultFromExitCode(exitCode: number, stdout: string, stderr: string): HookResult {
+function resultFromExitCode(
+  exitCode: number,
+  stdout: string,
+  stderr: string,
+  stdoutTruncated: boolean,
+): HookResult {
   if (exitCode === 2) {
-    const message = stderr.trim();
+    const message = truncateHookText(stderr.trim(), HOOK_BLOCK_REASON_MAX_CHARS);
     return {
       action: 'block',
       message,
@@ -150,12 +179,15 @@ function resultFromExitCode(exitCode: number, stdout: string, stderr: string): H
     };
   }
 
-  const structured = exitCode === 0 ? structuredOutput(stdout) : undefined;
+  const structured = exitCode === 0 && !stdoutTruncated ? structuredOutput(stdout) : undefined;
   if (structured?.action === 'block') {
+    const message = structured.message ?? structured.reason;
     return {
       action: 'block',
-      message: structured.message ?? structured.reason,
-      reason: structured.reason,
+      message: message === undefined ? undefined : truncateHookText(message, HOOK_BLOCK_REASON_MAX_CHARS),
+      reason: structured.reason === undefined
+        ? undefined
+        : truncateHookText(structured.reason, HOOK_BLOCK_REASON_MAX_CHARS),
       stdout,
       stderr,
       exitCode,
@@ -164,7 +196,9 @@ function resultFromExitCode(exitCode: number, stdout: string, stderr: string): H
   }
 
   return allowResult({
-    message: structured?.message,
+    message: structured?.message === undefined
+      ? undefined
+      : truncateHookText(structured.message, HOOK_CONTEXT_MAX_CHARS),
     stdout,
     stderr,
     exitCode,
