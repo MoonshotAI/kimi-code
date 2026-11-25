@@ -92,6 +92,7 @@
     "packages/agent-core-v2/test/app/sessionIndex/sessionIndexMirror.test.ts": 1,
     "packages/agent-core-v2/test/app/task/task.test.ts": 3,
     "packages/agent-core-v2/test/app/telemetry/cloudAppender.test.ts": 1,
+    "packages/agent-core-v2/test/app/worktree/worktreeService.test.ts": 1,
     "packages/agent-core-v2/test/features/cron/sessionCron.test.ts": 2,
     "packages/agent-core-v2/test/features/debugEvents/debugEvents.test.ts": 1,
     "packages/agent-core-v2/test/features/externalHooks/externalHooksFeature.test.ts": 1,
