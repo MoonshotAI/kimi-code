@@ -412,16 +412,28 @@ describe('migrateLegacyMasterEnvTower', () => {
     }
   });
 
-  it('does not stamp marker when config.toml has syntax errors, allowing retry after fix', () => {
+  it('falls back to env override without stamping marker when config.toml has syntax errors, allowing retry after fix', () => {
     const configPath = join(tempDir, 'config.toml');
     writeFileSync(configPath, '[experimental\nbroken =', 'utf8');
 
     expect(
       migrateLegacyMasterEnvTower({
         homeDir: tempDir,
-        env: { [MASTER_ENV]: '1' },
+        env: {},
       }),
     ).toBe('skipped-error');
+
+    expect(
+      migrateLegacyMasterEnvTower({
+        homeDir: tempDir,
+        env: { [MASTER_ENV]: '1' },
+      }),
+    ).toBe('fallback-env');
+    const resolvedEnv = resolveBootstrapEnvWithLegacyTowerMigration({
+      homeDir: tempDir,
+      env: { [MASTER_ENV]: '1' },
+    });
+    expect(resolvedEnv?.['KIMI_CODE_EXPERIMENTAL_TOWER']).toBe('1');
     expect(() =>
       readFileSync(join(tempDir, EXPERIMENTAL_MIGRATIONS_FILENAME), 'utf8'),
     ).toThrow();

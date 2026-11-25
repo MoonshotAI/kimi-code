@@ -140,20 +140,18 @@ export function migrateLegacyMasterEnvTower(
     try {
       onDiskText = readFileSync(configPath, 'utf8');
       const parsed = parseToml(onDiskText);
-      if (!isPlainObject(parsed)) return 'skipped-error';
-      parsedDoc = parsed;
-    } catch (error) {
-      const code = (error as NodeJS.ErrnoException).code;
-      if (configLinkStat.isSymbolicLink() && (code === 'ENOENT' || code === 'ELOOP') && masterEnv === true) {
-        return 'fallback-env';
+      if (!isPlainObject(parsed)) {
+        return masterEnv === true ? 'fallback-env' : 'skipped-error';
       }
-      return 'skipped-error';
+      parsedDoc = parsed;
+    } catch {
+      return masterEnv === true ? 'fallback-env' : 'skipped-error';
     }
   }
 
   const rawExperimental = parsedDoc[EXPERIMENTAL_SECTION];
   if (rawExperimental !== undefined && !isPlainObject(rawExperimental)) {
-    return 'skipped-error';
+    return masterEnv === true ? 'fallback-env' : 'skipped-error';
   }
   if (isPlainObject(rawExperimental) && Object.hasOwn(rawExperimental, TOWER_FLAG_ID)) {
     return stampMigrationMarker(markerPath, record) ? 'stamped-noop' : 'skipped-error';
