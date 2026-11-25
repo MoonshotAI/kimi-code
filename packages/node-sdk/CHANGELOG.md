@@ -1,5 +1,21 @@
 # @moonshot-ai/kimi-code-sdk
 
+## 0.24.0
+
+### Minor Changes
+
+- [#5414](https://github.com/MoonshotAI/kimi-code/pull/5414) [`132c4e8`](https://github.com/MoonshotAI/kimi-code/commit/132c4e88b1d316a7d9a9b2f20df4d59a88061dc7) Thanks [@liruifengv](https://github.com/liruifengv)! - Remove the experimental `fork` parameter that let `Agent` and `AgentSwarm` start subagents with the caller's conversation history.
+
+### Patch Changes
+
+- [#5414](https://github.com/MoonshotAI/kimi-code/pull/5414) [`132c4e8`](https://github.com/MoonshotAI/kimi-code/commit/132c4e88b1d316a7d9a9b2f20df4d59a88061dc7) Thanks [@liruifengv](https://github.com/liruifengv)! - Start MCP servers only for sessions and MCP listings, not for other workspace queries.
+
+- [#5414](https://github.com/MoonshotAI/kimi-code/pull/5414) [`132c4e8`](https://github.com/MoonshotAI/kimi-code/commit/132c4e88b1d316a7d9a9b2f20df4d59a88061dc7) Thanks [@liruifengv](https://github.com/liruifengv)! - Retry when a provider returns an invalid tool call.
+
+- [#5414](https://github.com/MoonshotAI/kimi-code/pull/5414) [`132c4e8`](https://github.com/MoonshotAI/kimi-code/commit/132c4e88b1d316a7d9a9b2f20df4d59a88061dc7) Thanks [@liruifengv](https://github.com/liruifengv)! - Automatically reclaim session locks recorded under a different hostname. Shared state directories no longer protect live holders across machines or containers.
+
+- [#5414](https://github.com/MoonshotAI/kimi-code/pull/5414) [`132c4e8`](https://github.com/MoonshotAI/kimi-code/commit/132c4e88b1d316a7d9a9b2f20df4d59a88061dc7) Thanks [@liruifengv](https://github.com/liruifengv)! - Keep the `model` parameter static in subagent tool schemas, deliver available subagent models via `<system-reminder>` messages instead of tool descriptions, and reject invalid or resume-time `model` arguments with explicit errors.
+
 ## 0.23.2
 
 ### Patch Changes
