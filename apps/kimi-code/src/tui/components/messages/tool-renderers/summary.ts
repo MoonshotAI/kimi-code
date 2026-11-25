@@ -5,6 +5,7 @@ import { OUTCOME_GLANCE_SAMPLES, OUTCOME_ROW_INDENT } from '#/tui/constant/rende
 import { currentTheme } from '#/tui/theme';
 
 import { parseGlobOutput, parseGrepOutput, searchNoticeOnly } from './grep-output';
+import { parseReadMediaOutput, renderReadMediaSummary } from './media';
 import { outcomeRow, outcomeRows } from './outcome';
 import { renderTruncated } from './truncated';
 import { CardOnly, isSpilledToolOutput, type ResultRenderer } from './types';
@@ -63,7 +64,14 @@ const globGlance: GlanceFn = (toolCall, result) => {
   return sampleList(parseGlobOutput(result.output).entries);
 };
 
-export const readSummary: ResultRenderer = withGlance(null);
+const textReadSummary: ResultRenderer = withGlance(null);
+export const readSummary: ResultRenderer = (toolCall, result, ctx) => {
+  if (!result.is_error) {
+    const media = parseReadMediaOutput(result.output);
+    if (media !== null) return renderReadMediaSummary(media, ctx);
+  }
+  return textReadSummary(toolCall, result, ctx);
+};
 export const fetchSummary: ResultRenderer = withGlance(null);
 export const webSearchSummary: ResultRenderer = withGlance(null);
 export const thinkSummary: ResultRenderer = withGlance(null);

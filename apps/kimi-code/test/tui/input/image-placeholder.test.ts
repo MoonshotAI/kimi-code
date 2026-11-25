@@ -736,7 +736,7 @@ describe('rewriteMediaPlaceholders', () => {
       expect(r.imageAttachmentIds).toEqual([1]);
       expect(r.text).not.toMatch(/[<>&"]/);
       const m =
-        /^look at Attached image file: (\S+) \(open it with ReadMediaFile\)$/.exec(r.text);
+        /^look at Attached image file: (\S+) \(open it with Read\)$/.exec(r.text);
       if (!m) throw new Error(`no plain reference found in: ${r.text}`);
       expect(m[1]!.startsWith(getCacheDir())).toBe(true);
       expect(new Uint8Array(readFileSync(m[1]!))).toEqual(bytes);
@@ -757,7 +757,7 @@ describe('rewriteMediaPlaceholders', () => {
       expect(r.hasMedia).toBe(true);
       expect(r.videoAttachmentIds).toEqual([1]);
       expect(r.text).not.toMatch(/[<>&"]/);
-      const m = /^Attached video file: (\S+) \(open it with ReadMediaFile\)$/.exec(r.text);
+      const m = /^Attached video file: (\S+) \(open it with Read\)$/.exec(r.text);
       if (!m) throw new Error(`no plain reference found in: ${r.text}`);
       expect(readFileSync(m[1]!, 'utf8')).toBe('video-bytes');
     } finally {
@@ -776,7 +776,7 @@ describe('rewriteMediaPlaceholders', () => {
       const att = store.addVideo('video/quicktime', srcVideo);
       const r = rewriteMediaPlaceholders(att.placeholder, store, 'plain');
       expect(r.text).not.toMatch(/[<>&"]/);
-      const m = /^Attached video file: (\S+) \(open it with ReadMediaFile\)$/.exec(r.text);
+      const m = /^Attached video file: (\S+) \(open it with Read\)$/.exec(r.text);
       if (!m) throw new Error(`no plain reference found in: ${r.text}`);
       expect(readFileSync(m[1]!, 'utf8')).toBe('video-bytes');
     } finally {

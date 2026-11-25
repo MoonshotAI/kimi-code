@@ -121,7 +121,7 @@ import { ISessionToolPolicyGate } from '#/session/sessionToolPolicyGate/sessionT
 import { _clearAgentToolContributionsForTests } from '#/agent/toolRegistry/toolContribution';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import '#/agent/toolActivation/toolActivationService';
-import { IAgentMediaToolsRegistrar } from '#/agent/media/mediaTools';
+import { IAgentMediaCapabilityReminderService } from '#/agent/media/mediaCapabilityReminder';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import { ISessionWorkspaceInfo } from '#/session/workspaceInfo/workspaceInfo';
 import { FakeEnvironment } from '#/environment/fakeEnvironment';
@@ -367,9 +367,9 @@ describe('AgentLifecycleService', () => {
       list: () => [],
       listReferences: () => [],
     } as unknown as IAgentToolRegistryService);
-    ix.stub(IAgentMediaToolsRegistrar, {
+    ix.stub(IAgentMediaCapabilityReminderService, {
       _serviceBrand: undefined,
-    } as IAgentMediaToolsRegistrar);
+    } as IAgentMediaCapabilityReminderService);
     beforeExecuteListeners = 0;
     didExecuteHookIds = [];
     ix.stub(IAgentToolExecutorService, {

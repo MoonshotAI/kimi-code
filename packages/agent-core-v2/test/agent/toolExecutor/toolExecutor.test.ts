@@ -65,8 +65,6 @@ import { IAgentTaskOutputService } from '#/agent/task/taskOutput';
 import { ToolResultTruncationService } from '#/agent/toolResultTruncation/toolResultTruncationService';
 import { ReadTool } from '#/agent/tools/os/read/readTool';
 import type { IAgentLoopService } from '#/agent/loop/loop';
-import type { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
-import { ReadMediaFileTool } from '#/agent/tools/read-media-file/readMediaFileTool';
 import { SessionMediaStoreService } from '#/agent/media/sessionMediaStoreService';
 import {
   JsonAtomicDocumentStore,
@@ -1202,8 +1200,6 @@ describe('truncation pipeline', () => {
       {
         getModelCapabilities: () => ({ image_in: true, video_in: true }),
       } as unknown as IAgentLoopService,
-      { isToolActive: () => true } as unknown as IAgentToolPolicyService,
-      { resolve: () => ({}) } as unknown as IAgentToolRegistryService,
       attachmentStore,
     ));
     registry.register(new GlobTool(binding, stubWorkspaceContext(homeDir), noopTelemetryService));
@@ -1407,7 +1403,6 @@ describe('truncation pipeline', () => {
     vi.spyOn(environmentFs, 'readLines').mockImplementation(() => {
       throw new Error('client cannot access daemon storage');
     });
-    registry.register(new ReadMediaFileTool(mediaEnvironment, { workspaceDir: homeDir, additionalDirs: [] }, attachmentStore));
     const png = Buffer.from(await new Jimp({ width: 32, height: 32, color: 0x3366ccff }).getBuffer('image/png'));
     const bytes = [png, Buffer.from('%PDF-1.4\nexample\n%%EOF')];
     const client: MCPClient = {
@@ -1424,17 +1419,13 @@ describe('truncation pipeline', () => {
     const refs = [...text.matchAll(/Attachment reference: ("[^\n]+")/g)].map((match) => JSON.parse(match[1]!) as string);
     const paths = [...text.matchAll(/Original attachment saved at: ("[^\n]+")/g)].map((match) => JSON.parse(match[1]!) as string);
     expect(refs).toHaveLength(2);
-    const [image] = await execute([toolCall('read_image', 'ReadMediaFile', { path: refs[0] })]);
+    const [image] = await execute([toolCall('read_image', 'Read', { path: refs[0] })]);
     expect(image?.isError).not.toBe(true);
     expect(Array.isArray(image?.output) && image.output.some((part) => part.type === 'image_url')).toBe(true);
     if (image === undefined) throw new Error('expected image output');
     const imageText = renderToolResultForModel(image).map((part) => part.type === 'text' ? part.text : '').join('\n');
     const tagPath = /<image path="([^"]+)">/.exec(imageText)?.[1];
     expect(tagPath).toBe(refs[0]);
-    const [crop] = await execute([toolCall('read_crop', 'ReadMediaFile', {
-      path: tagPath, region: { x: 0, y: 0, width: 16, height: 16 },
-    })]);
-    expect(crop?.isError).not.toBe(true);
     const [pdf] = await execute([toolCall('read_pdf', 'Read', { path: refs[1] })]);
     expect(pdf?.isError).toBe(true);
     expect(pdf?.output).toContain(paths[1]);

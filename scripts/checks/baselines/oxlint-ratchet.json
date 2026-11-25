@@ -642,7 +642,6 @@
     "apps/desktop/tests/main/screenshot/screenshot-lifecycle.test.ts": 1,
     "apps/kimi-code/src/utils/survey-setting.ts": 1,
     "packages/agent-core-v2/src/_base/log/fileLog.ts": 1,
-    "packages/agent-core-v2/src/agent/tools/os/read/readTool.ts": 2,
     "packages/agent-core-v2/src/app/kosongConfig/modelsDevUpstream.ts": 1,
     "packages/agent-core-v2/src/features/cron/tools/cron-create/cronCreateTool.ts": 1,
     "packages/agent-core-v2/src/features/goal/injection/goalInjection.ts": 1,

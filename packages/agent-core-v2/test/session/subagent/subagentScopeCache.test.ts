@@ -16,7 +16,7 @@ import type { AgentContext } from '#/agent/agentContext/agentContext';
 import { IAgentAgentsMdReminderService } from '#/agent/agentsMdReminder/agentsMdReminder';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
 import { IAgentLoopService, type LoopSnapshot } from '#/agent/loop/loop';
-import { IAgentMediaToolsRegistrar } from '#/agent/media/mediaTools';
+import { IAgentMediaCapabilityReminderService } from '#/agent/media/mediaCapabilityReminder';
 import { ISessionMediaStore } from '#/agent/media/sessionMediaStore';
 import { SessionMediaStoreService } from '#/agent/media/sessionMediaStoreService';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
@@ -394,9 +394,9 @@ describe('SessionSubagentScopeCacheService', () => {
       resolve: () => undefined,
       list: () => [],
     } as unknown as IAgentToolRegistryService);
-    ix.stub(IAgentMediaToolsRegistrar, {
+    ix.stub(IAgentMediaCapabilityReminderService, {
       _serviceBrand: undefined,
-    } as IAgentMediaToolsRegistrar);
+    } as IAgentMediaCapabilityReminderService);
     ix.stub(IAgentToolExecutorService, {
       _serviceBrand: undefined,
       handlers: () => [],

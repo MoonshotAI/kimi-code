@@ -858,7 +858,7 @@ describe('Agent tool description', () => {
 
     const description = agentDescription();
 
-    expect(description).toContain('Tools: Bash, Read, ReadMediaFile, Glob, Grep, FetchURL');
+    expect(description).toContain('Tools: Bash, Read, Glob, Grep, FetchURL');
     expect(description).toContain('Tools: Bash, CronCreate, CronDelete, CronList, Edit');
   });
 
@@ -870,83 +870,6 @@ describe('Agent tool description', () => {
     expect(description).toContain('Available agent types');
     expect(description).not.toContain('ReadMediaFile');
     expect(description).toContain('Tools: Bash, Read, Glob, Grep, FetchURL');
-  });
-
-  it('lists ReadMediaFile when a selectable pool model has image input even if the primary model does not', () => {
-    ctx = createTestAgent({
-      initialConfig: {
-        secondaryModel: {
-          defaultModel: 'provider/vision',
-          models: { 'provider/vision': 'vision-capable model' },
-        },
-        models: {
-          'provider/vision': {
-            provider: 'test-provider',
-            model: 'vision-model',
-            maxContextSize: 262_144,
-            capabilities: ['image_in'],
-          },
-        },
-      },
-    });
-
-    const description = agentDescription();
-
-    expect(description).toContain('ReadMediaFile');
-  });
-
-  it('omits ReadMediaFile when the tool policy disables it even with a vision-capable pool model', () => {
-    ctx = createTestAgent({
-      initialConfig: {
-        secondaryModel: {
-          defaultModel: 'provider/vision',
-          models: { 'provider/vision': 'vision-capable model' },
-        },
-        models: {
-          'provider/vision': {
-            provider: 'test-provider',
-            model: 'vision-model',
-            maxContextSize: 262_144,
-            capabilities: ['image_in'],
-          },
-        },
-        tools: { disabled: ['ReadMediaFile'] },
-      },
-    });
-
-    const description = agentDescription();
-
-    expect(description).not.toContain('ReadMediaFile');
-  });
-
-  it('omits caller-only ReadMediaFile from subagent types', async () => {
-    ctx = createTestAgent({
-      initialConfig: {
-        secondaryModel: { defaultModel: 'provider/text' },
-        models: {
-          'provider/text': {
-            provider: 'test-provider',
-            model: 'text-model',
-            maxContextSize: 262_144,
-          },
-        },
-      },
-    });
-    ctx.configure({
-      modelCapabilities: {
-        image_in: true,
-        video_in: false,
-        audio_in: false,
-        thinking: false,
-        tool_use: true,
-        maxContextSize: 0,
-      },
-    });
-    await ctx.get(IEventDispatcher).flush();
-
-    const description = agentDescription();
-
-    expect(description).not.toContain('ReadMediaFile');
   });
 
   it('preserves glob tool patterns that do not end with an asterisk', () => {
@@ -5008,7 +4931,7 @@ describe('Agent tools', () => {
         [emit] context.spliced             { "time": "<time>", "agentId": "main", "start": 1, "deleteCount": 0, "messages": [ { "role": "user", "content": [ { "type": "text", "text": "<auto-mode-enter-reminder>" } ], "origin": { "kind": "injection", "variant": "permission_mode" } } ] }
         [wire] context.append_message      { "agentId": "main", "message": { "role": "user", "content": [ { "type": "text", "text": "<auto-mode-enter-reminder>" } ], "toolCalls": [], "origin": { "kind": "injection", "variant": "permission_mode" } }, "time": "<time>" }
         [wire] context.append_loop_event   { "agentId": "main", "event": { "type": "step.begin", "uuid": "<uuid-2>", "turnId": "0", "step": 1 }, "time": "<time>" }
-        [wire] tool_select.initialized     { "agentId": "main", "tools": [ "Agent", "AgentSwarm", "AskUserQuestion", "Bash", "CreateGoal", "CronCreate", "CronDelete", "CronList", "Edit", "ExitPlanMode", "FetchURL", "GetGoal", "Glob", "Grep", "Lookup", "Read", "ReadMediaFile", "select_tools", "SetGoalBudget", "Skill", "TaskList", "TaskOutput", "TaskStop", "TodoList", "UpdateGoal", "WaitFor", "Write" ], "time": "<time>" }
+        [wire] tool_select.initialized     { "agentId": "main", "tools": [ "Agent", "AgentSwarm", "AskUserQuestion", "Bash", "CreateGoal", "CronCreate", "CronDelete", "CronList", "Edit", "ExitPlanMode", "FetchURL", "GetGoal", "Glob", "Grep", "Lookup", "Read", "select_tools", "SetGoalBudget", "Skill", "TaskList", "TaskOutput", "TaskStop", "TodoList", "UpdateGoal", "WaitFor", "Write" ], "time": "<time>" }
         [wire] llm.tools_snapshot          { "agentId": "main", "hash": "<tools-hash>", "tools": [ "Agent", "AgentSwarm", "AskUserQuestion", "Bash", "CreateGoal", "CronCreate", "CronDelete", "CronList", "Edit", "ExitPlanMode", "FetchURL", "GetGoal", "Glob", "Grep", "Read", "SetGoalBudget", "Skill", "TaskList", "TaskOutput", "TaskStop", "TodoList", "UpdateGoal", "WaitFor", "Write" ], "time": "<time>" }
         [emit] assistant.delta             { "time": "<time>", "agentId": "main", "turnId": 0, "delta": "I will look it up.", "block": 0 }
         [emit] tool.call.delta             { "time": "<time>", "agentId": "main", "turnId": 0, "toolCallId": "call_lookup", "name": "Lookup", "argumentsPart": "{\\"query\\":\\"moon\\"}" }

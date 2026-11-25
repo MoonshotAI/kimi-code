@@ -602,5 +602,5 @@ function originalImageTempDir(): string {
 }
 
 function formatMediaReference(kind: 'image' | 'video', path: string): string {
-  return `Attached ${kind} file: ${path} (open it with ReadMediaFile)`;
+  return `Attached ${kind} file: ${path} (open it with Read)`;
 }

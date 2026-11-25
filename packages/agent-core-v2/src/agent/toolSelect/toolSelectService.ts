@@ -13,6 +13,7 @@ import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
 import { wrapSystemReminder } from '#/features/reminder/systemReminder';
 import { IAgentLoopService } from '#/agent/loop/loop';
+import { LEGACY_READ_MEDIA_FILE_TOOL_NAME } from '#/agent/loop/mediaPolicy';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { isMcpToolName, type ToolInfo } from '#/tool/toolContract';
 import { toLegacyToolReturn } from '#/tool/executor';
@@ -53,6 +54,7 @@ import {
 } from './toolSelectOps';
 
 const STOP_RETRY_THRESHOLD = 2;
+const LEGACY_READ_MEDIA_MERGED_VARIANT = 'legacy_read_media_merged';
 const EMPTY_TOOL_PARAMETERS: Record<string, unknown> = {
   type: 'object',
   properties: {},
@@ -63,6 +65,7 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
 
   private reconcileTail: Promise<void> = Promise.resolve();
   private readonly notifiedUpdates = new Set<string>();
+  private notifiedLegacyReadMediaMerge = false;
   private pendingInitialization: readonly ToolSelectTool[] | undefined;
   private projectedAnnouncements: readonly ContextMessage[] = [];
   private projectedHistoryRevision = -1;
@@ -152,9 +155,10 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
     let shaped: Tool[] | undefined;
     for (let index = 0; index < tools.length; index += 1) {
       const tool = tools[index]!;
-      const drop = disclosure
-        ? tool.deferred === true
-        : tool.name === SELECT_TOOLS_TOOL_NAME;
+      const drop =
+        (tool.name === LEGACY_READ_MEDIA_FILE_TOOL_NAME &&
+          this.toolRegistry.resolve(LEGACY_READ_MEDIA_FILE_TOOL_NAME) === undefined) ||
+        (disclosure ? tool.deferred === true : tool.name === SELECT_TOOLS_TOOL_NAME);
       if (drop) {
         if (shaped === undefined) shaped = tools.slice(0, index);
         continue;
@@ -369,7 +373,10 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
   }
 
   private initialToolInfos(): readonly ToolSelectTool[] {
-    return this.modelState().initial ?? this.activeTools('initial');
+    const initial = this.modelState().initial;
+    if (initial === undefined) return this.activeTools('initial');
+    if (this.toolRegistry.resolve(LEGACY_READ_MEDIA_FILE_TOOL_NAME) !== undefined) return initial;
+    return initial.filter((tool) => tool.name !== LEGACY_READ_MEDIA_FILE_TOOL_NAME);
   }
 
   private activeTools(origin: ToolSelectTool['origin']): readonly ToolSelectTool[] {
@@ -450,8 +457,30 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
   }
 
   private notifyUpdatedTools(live: readonly ToolSelectTool[], signal?: AbortSignal): void {
+    const state = this.modelState();
     const liveByName = new Map(live.map((tool) => [tool.name, tool]));
-    for (const active of this.modelState().current) {
+    const hadLegacyReadMedia =
+      state.initial?.some((tool) => tool.name === LEGACY_READ_MEDIA_FILE_TOOL_NAME) === true &&
+      !liveByName.has(LEGACY_READ_MEDIA_FILE_TOOL_NAME);
+    if (hadLegacyReadMedia && !this.notifiedLegacyReadMediaMerge) {
+      this.notifiedLegacyReadMediaMerge = true;
+      const alreadyInjected = this.history().some(
+        (message) =>
+          message.origin?.kind === 'injection' &&
+          message.origin.variant === LEGACY_READ_MEDIA_MERGED_VARIANT,
+      );
+      if (!alreadyInjected) {
+        signal?.throwIfAborted();
+        this.reminder.notify(
+          'Tool "ReadMediaFile" has been merged into "Read" (region and full_resolution were removed). ' +
+            'In this session, call Read with { "path": "..." } to view image and video files as well as text files, ' +
+            'even though the frozen Read schema from earlier in this session only mentions text files.',
+          { variant: LEGACY_READ_MEDIA_MERGED_VARIANT },
+        );
+      }
+    }
+    for (const active of state.current) {
+      if (hadLegacyReadMedia && active.name === 'Read') continue;
       const next = liveByName.get(active.name);
       if (next === undefined || toolSelectVersionSignature(next) === toolSelectVersionSignature(active)) {
         continue;
@@ -716,6 +745,12 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
 
   private describeMissingTool(name: string): string | undefined {
     if (this.toolRegistry.resolve(name) !== undefined) return undefined;
+    if (name === LEGACY_READ_MEDIA_FILE_TOOL_NAME) {
+      return (
+        'Tool "ReadMediaFile" has been merged into "Read". ' +
+        'Call Read with { "path": "..." } instead (region and full_resolution are no longer supported).'
+      );
+    }
     if (!this.historicallyLoadedToolNames().has(name)) return undefined;
     if (isMcpToolName(name)) {
       return (

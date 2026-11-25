@@ -110,7 +110,6 @@ import AGENT_BACKGROUND_DESCRIPTION from './agent-background-enabled.md?raw';
 import AGENT_DESCRIPTION_BASE from './agent.md?raw';
 
 const SUBAGENT_TOOL_PARAMETERS = toInputJsonSchema(SubagentToolInputSchema);
-const READ_MEDIA_FILE_TOOL_NAME = 'ReadMediaFile';
 const MCP_GLOB_MAGIC = /[*?[\]{}!@+()]/;
 
 function isToolNamePattern(name: string): boolean {
@@ -222,13 +221,6 @@ export class SubagentTool implements ISubagentTool {
         }
       }
     });
-    if (refs.get(READ_MEDIA_FILE_TOOL_NAME)?.source !== 'user') {
-      if (this.anySubagentModelSupports((capabilities) => capabilities?.image_in === true || capabilities?.video_in === true)) {
-        refs.set(READ_MEDIA_FILE_TOOL_NAME, { name: READ_MEDIA_FILE_TOOL_NAME, source: 'builtin' });
-      } else {
-        refs.delete(READ_MEDIA_FILE_TOOL_NAME);
-      }
-    }
     if (
       !this.anySubagentModelSupports((capabilities) =>
         capabilities?.dynamically_loaded_tools === true && capabilities.tool_use === true,

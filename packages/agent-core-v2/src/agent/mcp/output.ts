@@ -337,7 +337,7 @@ function attachmentNotice(saved: SavedAttachment, mimeType: string, size: number
     ...(saved.path === undefined ? [] : [`Original attachment saved at: ${JSON.stringify(saved.path)}`]),
     `Attachment reference: ${JSON.stringify(saved.reference)}`,
     `Session-relative attachment: ${JSON.stringify(saved.relativePath)}`,
-    `MIME: ${JSON.stringify(mimeType)}; size: ${String(size)} bytes. Pass the attachment reference to Read or ReadMediaFile in the current session. For other binary formats, Read reports the resolved local path for a converter.`,
+    `MIME: ${JSON.stringify(mimeType)}; size: ${String(size)} bytes. Pass the attachment reference to Read in the current session. For unsupported binary formats, Read reports the resolved local path for a converter.`,
   ].join('\n');
 }
 

@@ -790,7 +790,7 @@ describe('video blocks', () => {
     }
   }, 60_000);
 
-  it('kimi (composed): ReadMediaFile on a video uploads via the files API (uploadVideo trait)', async () => {
+  it('kimi (composed): Read on a video uploads via the files API (uploadVideo trait)', async () => {
     const ctx = await newCase(M_KIMI, 'kimi-video-upload');
     await writeFile(join(ctx.workDir, 'clip.mp4'), Buffer.from(MP4_FTYP_HEX, 'hex'));
 
@@ -814,7 +814,7 @@ describe('video blocks', () => {
       return chatCallCount === 1
         ? {
             kind: 'sse',
-            lines: openAiToolCallSse('call_video_1', 'ReadMediaFile', '{"path":"clip.mp4"}'),
+            lines: openAiToolCallSse('call_video_1', 'Read', '{"path":"clip.mp4"}'),
           }
         : OK_OPENAI;
     });
@@ -836,7 +836,7 @@ describe('video blocks', () => {
     expect(ctx.payloads('prompt.completed')[0]?.['reason']).toBe('completed');
   }, 30_000);
 
-  it('kimi (composed): cancelling ReadMediaFile aborts the in-flight video upload', async () => {
+  it('kimi (composed): cancelling Read aborts the in-flight video upload', async () => {
     const ctx = await newCase(M_KIMI, 'kimi-video-upload-cancel');
     await writeFile(
       join(ctx.workDir, 'clip.mp4'),
@@ -847,7 +847,7 @@ describe('video blocks', () => {
       if (req.url === '/v1/files') return { kind: 'hang' };
       return {
         kind: 'sse',
-        lines: openAiToolCallSse('call_video_1', 'ReadMediaFile', '{"path":"clip.mp4"}'),
+        lines: openAiToolCallSse('call_video_1', 'Read', '{"path":"clip.mp4"}'),
       };
     });
     const promptAborted = onceEvent(ctx.agent.events, 'prompt.aborted', 10_000);
@@ -867,7 +867,7 @@ describe('video blocks', () => {
 
     resetMock(
       queueScript(
-        { kind: 'sse', lines: openAiToolCallSse('call_video_1', 'ReadMediaFile', '{"path":"clip.mp4"}') },
+        { kind: 'sse', lines: openAiToolCallSse('call_video_1', 'Read', '{"path":"clip.mp4"}') },
         OK_OPENAI,
       ),
     );
@@ -954,7 +954,7 @@ describe('tool exchange structure', () => {
       const replies = queueScript(
         {
           kind: 'sse',
-          lines: openAiToolCallSse('call_media_1', 'ReadMediaFile', '{"path":"pixel.png"}'),
+          lines: openAiToolCallSse('call_media_1', 'Read', '{"path":"pixel.png"}'),
         },
         OK_OPENAI,
       );

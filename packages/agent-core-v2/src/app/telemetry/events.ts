@@ -568,25 +568,6 @@ export interface ImageCompressEvent {
   duration_ms: number;
 }
 
-export interface ImageCropEvent {
-  source: string;
-  ok: boolean;
-  error_kind?:
-    | 'empty'
-    | 'unsupported_format'
-    | 'region_invalid'
-    | 'too_large'
-    | 'out_of_bounds'
-    | 'budget'
-    | 'decode_failed';
-  resized?: boolean;
-  original_width?: number;
-  original_height?: number;
-  region_area_ratio?: number;
-  final_bytes?: number;
-  duration_ms: number;
-}
-
 export interface VideoUploadEvent {
   model?: string;
   provider_type?: string;
@@ -1441,21 +1422,6 @@ export const telemetryEventDefinitions = {
       final_height: 'Output height in pixels',
       exif_transposed: 'Whether EXIF orientation was applied',
       duration_ms: 'Compression wall-clock time in milliseconds',
-    },
-  }),
-  image_crop: defineTelemetryEvent<ImageCropEvent>({
-    owner: 'kimi-code',
-    comment: 'An image is cropped to a region before being sent to the model.',
-    properties: {
-      source: 'Where the image came from',
-      ok: 'Whether the crop succeeded',
-      error_kind: 'Failure category when the crop failed',
-      resized: 'Whether the crop was resized',
-      original_width: 'Input width in pixels',
-      original_height: 'Input height in pixels',
-      region_area_ratio: 'Cropped region area relative to the original',
-      final_bytes: 'Output size in bytes',
-      duration_ms: 'Crop wall-clock time in milliseconds',
     },
   }),
   video_upload: defineAgentTelemetryEvent<VideoUploadEvent>({

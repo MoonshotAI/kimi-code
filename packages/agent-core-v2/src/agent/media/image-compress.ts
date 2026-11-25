@@ -1,5 +1,5 @@
 import type { ContentPart } from '@moonshot-ai/core/llm/message';
-import type { ImageCompressEvent, ImageCropEvent } from '#/app/telemetry/events';
+import type { ImageCompressEvent } from '#/app/telemetry/events';
 import type { ITelemetryService } from '#/app/telemetry/telemetry';
 import { DEFAULT_INLINE_IMAGE_BYTE_BUDGET } from '@moonshot-ai/core/llm/protocol/kit/media';
 
@@ -390,166 +390,6 @@ export interface CompressAnnotateOptions {
   readonly persistOriginal?: (bytes: Uint8Array, mimeType: string) => Promise<string | null>;
 }
 
-export interface ImageCropRegion {
-  readonly x: number;
-  readonly y: number;
-  readonly width: number;
-  readonly height: number;
-}
-
-export interface CropImageOptions extends CompressImageOptions {
-  readonly skipResize?: boolean;
-}
-
-export interface CropImageSuccess {
-  readonly ok: true;
-  readonly data: Uint8Array;
-  readonly mimeType: string;
-  readonly width: number;
-  readonly height: number;
-  readonly originalWidth: number;
-  readonly originalHeight: number;
-  readonly region: ImageCropRegion;
-  readonly resized: boolean;
-  readonly originalByteLength: number;
-  readonly finalByteLength: number;
-}
-
-export interface CropImageFailure {
-  readonly ok: false;
-  readonly error: string;
-}
-
-export type CropImageOutcome = CropImageSuccess | CropImageFailure;
-
-export async function cropImageForModel(
-  bytes: Uint8Array,
-  mimeType: string,
-  region: ImageCropRegion,
-  options: CropImageOptions = {},
-): Promise<CropImageOutcome> {
-  const startedAt = Date.now();
-  const maxEdge = options.maxEdge ?? resolveMaxImageEdgePx();
-  const byteBudget = options.byteBudget ?? IMAGE_BYTE_BUDGET;
-  const maxDecodeBytes = options.maxDecodeBytes ?? MAX_IMAGE_DECODE_BYTES;
-  const normalizedMime = normalizeImageMime(mimeType);
-
-  const fail = (errorKind: CropErrorKind, error: string): CropImageFailure => {
-    reportCropEvent(options.telemetry, options.telemetrySource, { startedAt, ok: false, errorKind });
-    return { ok: false, error };
-  };
-  const succeed = (result: CropImageSuccess): CropImageSuccess => {
-    reportCropEvent(options.telemetry, options.telemetrySource, { startedAt, ok: true, result });
-    return result;
-  };
-
-  if (bytes.length === 0) {
-    return fail('empty', 'The image is empty.');
-  }
-  if (!RECODABLE_MIME.has(normalizedMime)) {
-    return fail(
-      'unsupported_format',
-      `Cropping is only supported for PNG, JPEG, and WebP images; got ${mimeType}.`,
-    );
-  }
-  if (normalizedMime === 'image/webp' && isAnimatedWebp(bytes)) {
-    return fail('unsupported_format', 'Cropping is not supported for animated WebP images.');
-  }
-  if (
-    ![region.x, region.y, region.width, region.height].every((value) => Number.isFinite(value))
-  ) {
-    return fail(
-      'region_invalid',
-      `Region coordinates must be finite numbers; got x=${String(region.x)}, ` +
-        `y=${String(region.y)}, width=${String(region.width)}, height=${String(region.height)}.`,
-    );
-  }
-  const dims = sniffImageDimensions(bytes);
-  if (dims && dims.width * dims.height > MAX_DECODE_PIXELS) {
-    return fail(
-      'too_large',
-      `The image (${String(dims.width)}x${String(dims.height)} pixels) is too large to decode for cropping.`,
-    );
-  }
-  if (bytes.length > maxDecodeBytes) {
-    return fail('too_large', 'The image is too large to decode for cropping.');
-  }
-
-  try {
-    const image = await decodeToJimp(bytes, normalizedMime);
-    const originalWidth = image.width;
-    const originalHeight = image.height;
-
-    const x = Math.floor(region.x);
-    const y = Math.floor(region.y);
-    if (x < 0 || y < 0 || x >= originalWidth || y >= originalHeight || region.width < 1 || region.height < 1) {
-      return fail(
-        'out_of_bounds',
-        `Region (x=${String(region.x)}, y=${String(region.y)}, width=${String(region.width)}, ` +
-          `height=${String(region.height)}) lies outside the ${String(originalWidth)}x${String(originalHeight)} image.`,
-      );
-    }
-    const w = Math.min(Math.floor(region.width), originalWidth - x);
-    const h = Math.min(Math.floor(region.height), originalHeight - y);
-    const applied: ImageCropRegion = { x, y, width: w, height: h };
-    image.crop({ x, y, w, h });
-    const preferLossless = normalizedMime !== 'image/jpeg';
-
-    if (options.skipResize === true) {
-      const buffer = preferLossless
-        ? await image.getBuffer('image/png', { deflateLevel: 9 })
-        : await image.getBuffer('image/jpeg', { quality: 90 });
-      if (buffer.length > byteBudget) {
-        return fail(
-          'budget',
-          `The cropped region encodes to ${String(buffer.length)} bytes ` +
-            `(${formatByteSize(buffer.length)}), over the ${String(byteBudget)}-byte ` +
-            `(${formatByteSize(byteBudget)}) per-image limit. ` +
-            'Choose a smaller region, or allow downscaling.',
-        );
-      }
-      return succeed({
-        ok: true,
-        data: new Uint8Array(buffer),
-        mimeType: preferLossless ? 'image/png' : 'image/jpeg',
-        width: image.width,
-        height: image.height,
-        originalWidth,
-        originalHeight,
-        region: applied,
-        resized: false,
-        originalByteLength: bytes.length,
-        finalByteLength: buffer.length,
-      });
-    }
-
-    fitWithinEdge(image, maxEdge);
-    const encoded = await encodeWithinBudget(image, {
-      preferLossless,
-      byteBudget,
-      fallbackEdges: FALLBACK_EDGES_PX,
-    });
-    return succeed({
-      ok: true,
-      data: new Uint8Array(encoded.data),
-      mimeType: encoded.mimeType,
-      width: encoded.width,
-      height: encoded.height,
-      originalWidth,
-      originalHeight,
-      region: applied,
-      resized: encoded.width !== w || encoded.height !== h,
-      originalByteLength: bytes.length,
-      finalByteLength: encoded.data.length,
-    });
-  } catch (error) {
-    return fail(
-      'decode_failed',
-      `Failed to decode the image for cropping: ${error instanceof Error ? error.message : String(error)}`,
-    );
-  }
-}
-
 export interface ImageVariantDescription {
   readonly width: number;
   readonly height: number;
@@ -572,8 +412,7 @@ export function buildImageCompressionCaption(input: ImageCompressionCaptionInput
   if (typeof input.originalPath === 'string' && input.originalPath.length > 0) {
     sentences.push(
       `The uncompressed original is saved at "${input.originalPath}"; if you need fine detail ` +
-        '(e.g. small text), call ReadMediaFile on that path with the region parameter ' +
-        '(original-pixel coordinates) to view a crop at full fidelity.',
+        '(e.g. small text), crop or resize the needed part into a smaller image within limits and call Read on it.',
     );
   } else {
     sentences.push('The uncompressed original was not preserved.');
@@ -709,15 +548,6 @@ function fitWithinEdge(image: JimpImage, edge: number): boolean {
   return true;
 }
 
-type CropErrorKind =
-  | 'empty'
-  | 'unsupported_format'
-  | 'region_invalid'
-  | 'too_large'
-  | 'out_of_bounds'
-  | 'budget'
-  | 'decode_failed';
-
 interface CompressEventResult {
   readonly mimeType: string;
   readonly width: number;
@@ -756,40 +586,6 @@ function reportCompressEvent(
       duration_ms: Date.now() - input.startedAt,
     };
     telemetry.track2('image_compress', event);
-  } catch {
-  }
-}
-
-function reportCropEvent(
-  telemetry: ITelemetryService | undefined,
-  source: string | undefined,
-  input: {
-    readonly startedAt: number;
-    readonly ok: boolean;
-    readonly errorKind?: CropErrorKind;
-    readonly result?: CropImageSuccess;
-  },
-): void {
-  if (telemetry === undefined || source === undefined) return;
-  try {
-    const { result } = input;
-    const originalPixels =
-      result === undefined ? 0 : result.originalWidth * result.originalHeight;
-    const event: ImageCropEvent = {
-      source,
-      ok: input.ok,
-      error_kind: input.errorKind,
-      resized: result?.resized,
-      original_width: result?.originalWidth,
-      original_height: result?.originalHeight,
-      region_area_ratio:
-        result === undefined || originalPixels === 0
-          ? undefined
-          : (result.region.width * result.region.height) / originalPixels,
-      final_bytes: result?.finalByteLength,
-      duration_ms: Date.now() - input.startedAt,
-    };
-    telemetry.track2('image_crop', event);
   } catch {
   }
 }
