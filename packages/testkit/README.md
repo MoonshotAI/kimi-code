@@ -115,9 +115,10 @@ An unscripted request on `main`, `subagent` or `compaction` gets HTTP 400, which
 - a message was empty, two adjacent user messages had the same nonempty text, or a tool result was missing, unknown or out of order;
 - two tool calls used the same ID while the first call was still awaiting a result;
 - a request used the wrong API key or an unknown endpoint;
-- a scripted call names a tool the request did not offer, or its arguments break the offered schema: a missing required argument, an unknown argument, or a top-level type or enum mismatch. Pass `{ invalid: true }` to send such a call on purpose. Calls with unparseable `rawArguments` are not checked.
+- a scripted call names a tool the request did not offer, or its arguments break the offered schema: a missing required argument, an unknown argument, or a top-level type or enum mismatch. Pass `{ invalid: true }` to send such a call on purpose. Calls with unparseable `rawArguments` are not checked;
+- a main or compaction request does not extend the prompt cache prefix of the previous main request, and the test did not declare the break (see Prompt cache).
 
-`checkMessages: false` disables message sequence checks. `checkCalls: false` disables checks on scripted tool calls. Both options apply to the whole model.
+`checkMessages: false` disables message sequence checks. `checkCalls: false` disables checks on scripted tool calls. `checkPromptCache: false` disables the prompt cache check. These options apply to the whole model.
 
 When the testkit itself cannot answer (a step function or a route matcher throws, or a step asks for a status or header the transport cannot send), the request gets HTTP 400, which the engine does not retry, and `verify()` reports why.
 
@@ -126,18 +127,18 @@ When the testkit itself cannot answer (a step function or a route matcher throws
 The model keeps a ledger that imitates a provider's prefix cache. `model.promptCache()` returns one entry per request with:
 
 - `lane`, and `role`: the built-in lane that the request's metadata or tools point to, even when a custom route took the request;
-- `cacheKey`: `prompt_cache_key` for OpenAI chat completions and Responses, `metadata.user_id` for Anthropic, none for Google;
-- `totalTokens` and `reusedTokens`, estimated at four characters per token, and `reusedFrom`, the earlier request under the same key that shares the longest prefix;
-- for main and compaction requests, `baseline`, the latest main request under the same key, and `break`, the first difference from it.
+- `cacheKey`: `prompt_cache_key` for OpenAI chat completions and Responses, `metadata.user_id` for Anthropic, none for Google; and `model`, the model name the request was sent to;
+- `rejected`: whether the step answered the request with an HTTP or network error. The provider caches nothing for such a request, so it is never checked, a baseline or a source of reuse;
+- `totalTokens` and `reusedTokens`, estimated at four characters per token, and `reusedFrom`, the earlier request under the same key and model that shares the longest prefix;
+- for main and compaction requests, `baseline`, the latest main request under the same key and model, and `break`, the first difference from it. A request to another model starts its own baseline, because every model has its own cache.
 
 Each request is split into segments in the order the provider caches them. The first segment holds the model and thinking settings. Then come system, tools and messages for OpenAI and Google, and tools, system and messages for Anthropic. Segments are compared as the JSON text that was sent, so a schema whose keys changed order counts as changed. Anthropic `cache_control` markers are ignored, and string content equals a single text block. Reuse stops at the first segment that differs, so the estimate is conservative: everything after a difference counts as uncached.
 
-Two options turn the ledger into checks:
+`verify()` fails when a main or compaction request does not extend its baseline, unless the test declared the break. One break is allowed without a declaration: the first main request after a compaction request under the same key may start a new history, but its model settings, system and tools must stay the same. Only the `kimi` provider type sends the metadata that marks compaction and subagent requests. With other types, every request with tools counts as a main request, so declare the break after a compaction, and prefer the `kimi` type for tests whose agents start subagents. `model.promptCacheProblems()` returns what the check would report now, for harnesses that report problems without `verify()`. `checkPromptCache: false` turns the check off for the whole model.
 
-- `reportCachedTokens: true` reports the reused tokens as cache reads in the usage of steps that do not script their own usage (`cached_tokens`, `cache_read_input_tokens` or `cachedContentTokenCount`). The prompt token total stays the same.
-- `checkPromptCache: true` makes `verify()` fail when a main or compaction request does not extend its baseline. One break is allowed without a declaration: the first main request after a compaction request under the same key may start a new history, but its model settings, system and tools must stay the same. Only the `kimi` provider type sends the metadata that marks compaction requests; with other types, declare this break too.
+Declare every intended break with `model.expectCacheBreak(reason, { at })`, before or after the request, for example undo, clearing the context or media recovery rewriting the history. `at` is `header` (model settings, system or tools) or `history` (messages), and leaving it out accepts either. Breaks consume declarations in request order, and `verify()` also fails on a declaration that no break used. With `checkPromptCache: false`, `expectCacheBreak` throws.
 
-Declare every other intended break with `model.expectCacheBreak(reason, { at })`, before or after the request. `at` is `header` (model settings, system or tools) or `history` (messages), and leaving it out accepts either. Breaks consume declarations in request order, and `verify()` also fails on a declaration that no break used. Without `checkPromptCache`, `expectCacheBreak` throws.
+`reportCachedTokens: true` also reports the reused tokens as cache reads in the usage of steps that do not script their own usage (`cached_tokens`, `cache_read_input_tokens` or `cachedContentTokenCount`). The prompt token total stays the same. It is off by default.
 
 The check leaves some cases to the test: subagent and side requests are recorded but not checked, and a main request under a new cache key starts a new baseline without failing.
 

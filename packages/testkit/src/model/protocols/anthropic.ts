@@ -168,6 +168,7 @@ function promptPrefix(body: unknown): PromptPrefix {
   const record = asRecord(withoutCacheControl(body));
   return {
     cacheKey: optionalString(asRecord(record['metadata'])['user_id']),
+    model: optionalString(record['model']),
     segments: [
       promptSegment('params', 'params', pickedFields(record, ['model', 'thinking'])),
       ...asArray(record['tools']).map((tool, index) => promptSegment('tools', `tools[${index}] ${stringOf(asRecord(tool)['name'])}`, tool)),

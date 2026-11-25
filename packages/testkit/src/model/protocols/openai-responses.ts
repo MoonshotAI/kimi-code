@@ -272,6 +272,7 @@ function promptPrefix(body: unknown): PromptPrefix {
   const instructions = record['instructions'];
   return {
     cacheKey: optionalString(record['prompt_cache_key']),
+    model: optionalString(record['model']),
     segments: [
       promptSegment('params', 'params', pickedFields(record, ['model', 'reasoning'])),
       ...(instructions === undefined ? [] : [promptSegment('system', 'instructions', instructions)]),

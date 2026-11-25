@@ -502,6 +502,7 @@ describe('progressive tool disclosure end-to-end', () => {
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'load alpha' }] });
     await ctx.untilTurnEnd();
 
+    ctx.expectCacheBreak('undo rewrites the history', { at: 'history' });
     await ctx.get(IAgentConversationUndoService).undo(1);
     const afterUndo = ctx.get(IAgentLoopService).history();
     expect(afterUndo.some((message) => toolsOf(message)?.some((tool) => tool.name === MCP_ALPHA))).toBe(
@@ -751,6 +752,7 @@ describe('deferred tool argument correction', () => {
         say('done'),
       );
 
+      model.expectCacheBreak('the argument correction is dropped once the retry succeeds', { at: 'history' });
       await agent.rpc.prompt({ input: [{ type: 'text', text: 'load and call the deferred weather tool' }] });
       await agent.untilTurnEnd();
 

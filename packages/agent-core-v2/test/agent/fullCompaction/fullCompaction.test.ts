@@ -4508,6 +4508,7 @@ describe('FullCompaction cache probe', () => {
     await ctx.untilTurnEnd();
     const completed = ctx.once('compaction.completed');
 
+    ctx.expectCacheBreak('a truncated summary is retried without the oldest message', { at: 'history' });
     await ctx.rpc.beginCompaction({});
     await completed;
 

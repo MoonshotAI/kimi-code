@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import { FakeModelVerificationError, TestkitError } from '#/errors';
 import { createFakeModel, type FakeModel, type FakeModelOptions } from '#/model/fake-model';
-import { say, withUsage } from '#/model/steps';
+import { httpError, say, withUsage } from '#/model/steps';
 
 const models: FakeModel[] = [];
 
@@ -50,12 +50,13 @@ interface Ask {
   readonly tools?: ChatCompletionTool[];
   readonly key?: string;
   readonly role?: 'main' | 'compaction';
+  readonly model?: string;
 }
 
 function openai(model: FakeModel) {
   const client = new OpenAI({ apiKey: 'sk-test', baseURL: 'http://testkit.invalid/v1', fetch: model.fetch, maxRetries: 0 });
-  return async ({ messages, tools = [READ, BASH], key = 'session-1', role }: Ask) => {
-    const body: ChatCompletionCreateParamsNonStreaming = { model: 'testkit-model', messages, tools, prompt_cache_key: key };
+  return async ({ messages, tools = [READ, BASH], key = 'session-1', role, model: name = 'testkit-model' }: Ask) => {
+    const body: ChatCompletionCreateParamsNonStreaming = { model: name, messages, tools, prompt_cache_key: key };
     const metadata = role === undefined ? undefined : { agent_role: 'main', step_reason: role === 'compaction' ? 'compact' : 'tool_use' };
     return client.chat.completions.create(body, metadata === undefined ? {} : { headers: { 'x-msh-client-metadata': JSON.stringify(metadata) } });
   };
@@ -180,15 +181,58 @@ describe('prompt cache ledger', () => {
     expect(problemsOf(model)).toEqual([]);
   });
 
-  it('records breaks without failing or reporting cached tokens until a test opts in', async () => {
+  it('starts a new baseline for another model and returns to the earlier one', async () => {
+    const model = fakeModel();
+    const ask = openai(model);
+
+    await ask({ messages: FIRST_TURN });
+    await ask({ messages: [SYSTEM, { role: 'user', content: 'Pick a file.' }], tools: [READ], model: 'small-model' });
+    await ask({ messages: SECOND_TURN });
+
+    expect(model.promptCache().map(({ model: name, baseline, reusedFrom }) => ({ name, baseline, reusedFrom }))).toEqual([
+      { name: 'testkit-model', baseline: undefined, reusedFrom: undefined },
+      { name: 'small-model', baseline: undefined, reusedFrom: undefined },
+      { name: 'testkit-model', baseline: 0, reusedFrom: 0 },
+    ]);
+    expect(problemsOf(model)).toEqual([]);
+  });
+
+  it('neither checks, compares with nor reuses a request the provider rejected', async () => {
+    const model = fakeModel();
+    model.lane('every request').script(say('first'), httpError(400, { message: 'image rejected' }), say('recovered'));
+    const ask = openai(model);
+
+    await ask({ messages: FIRST_TURN });
+    await expect(ask({ messages: SECOND_TURN, tools: [READ] })).rejects.toThrow('image rejected');
+    await ask({ messages: [...FIRST_TURN, { role: 'assistant', content: 'It says launch on friday.' }, { role: 'user', content: 'And then, briefly?' }] });
+
+    expect(model.promptCache().map(({ rejected, baseline, reusedFrom }) => ({ rejected, baseline, reusedFrom }))).toEqual([
+      { rejected: false, baseline: undefined, reusedFrom: undefined },
+      { rejected: true, baseline: 0, reusedFrom: 0 },
+      { rejected: false, baseline: 0, reusedFrom: 0 },
+    ]);
+    expect(problemsOf(model)).toEqual([]);
+  });
+
+  it('checks the prefix by default and reports cached tokens only when asked', async () => {
     const model = fakeModel({});
     const ask = openai(model);
 
     await ask({ messages: FIRST_TURN });
     const second = await ask({ messages: SECOND_TURN, tools: [READ] });
 
-    expect(model.promptCache()[1]?.break).toMatchObject({ previous: 'tools[1] Bash' });
     expect(second.usage?.prompt_tokens_details?.cached_tokens).toBe(0);
+    expect(problemsOf(model)).toEqual([expect.stringContaining('tools[1] Bash is missing')]);
+  });
+
+  it('records breaks without failing when a test turns the check off', async () => {
+    const model = fakeModel({ checkPromptCache: false });
+    const ask = openai(model);
+
+    await ask({ messages: FIRST_TURN });
+    await ask({ messages: SECOND_TURN, tools: [READ] });
+
+    expect(model.promptCache()[1]?.break).toMatchObject({ previous: 'tools[1] Bash' });
     expect(problemsOf(model)).toEqual([]);
     expect(() => model.expectCacheBreak('anything')).toThrow(TestkitError);
   });

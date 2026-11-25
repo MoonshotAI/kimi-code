@@ -54,6 +54,7 @@ export interface FakeModel {
   holdUploads(): void;
   promptCache(): readonly PromptCacheEntry[];
   expectCacheBreak(reason: string, options?: CacheBreakOptions): void;
+  promptCacheProblems(): readonly string[];
   problems(): readonly string[];
   verify(): void;
   close(): Promise<void>;
@@ -205,10 +206,14 @@ class FakeModelImpl implements FakeModel {
   }
 
   expectCacheBreak(reason: string, options: CacheBreakOptions = {}): void {
-    if (this.options.checkPromptCache !== true) {
-      throw new TestkitError('expectCacheBreak() declares a break for the prompt cache check; create the model with checkPromptCache: true');
+    if (this.options.checkPromptCache === false) {
+      throw new TestkitError('expectCacheBreak() declares a break for the prompt cache check, which this model was created without (checkPromptCache: false)');
     }
     this.cache.expect(reason, options);
+  }
+
+  promptCacheProblems(): readonly string[] {
+    return this.options.checkPromptCache === false ? [] : this.cache.problems();
   }
 
   problems(): readonly string[] {
@@ -225,7 +230,7 @@ class FakeModelImpl implements FakeModel {
     for (const { name, request } of this.holds.unsettled()) {
       problems.push(`hold ${JSON.stringify(name)} was reached by request #${request.index} but never released, failed, or cut`);
     }
-    if (this.options.checkPromptCache === true) problems.push(...this.cache.problems());
+    problems.push(...this.promptCacheProblems());
     if (problems.length > 0) throw new FakeModelVerificationError(problems);
   }
 
@@ -306,13 +311,20 @@ class FakeModelImpl implements FakeModel {
     const record = new RecordedRequest(this.records.length, lane.name, lane.nextIndex, facts, () => this.notify(this.stateListeners));
     this.records.push(record);
     lane.record(record);
-    this.cache.observe(record.index, lane.name, builtInLaneOf(facts), codec.promptPrefix(body, path));
+    this.cache.observe(
+      { request: record.index, lane: lane.name, role: builtInLaneOf(facts), protocol: codec.name },
+      codec.promptPrefix(body, path),
+    );
     this.notify(this.arrivalListeners);
     if (this.options.checkMessages !== false) {
       for (const problem of messageProblems(view.messages)) this.problem(`request #${record.index} (${lane.name}): ${problem}`);
     }
     const step = await this.resolveStep(lane, record, codec, sink);
-    if (step === undefined) return;
+    if (step === undefined) {
+      if (record.state === 'failed') this.cache.reject(record.index);
+      return;
+    }
+    if (step.kind === 'error' || step.kind === 'network-error' || (step.kind === 'raw' && step.status >= 400)) this.cache.reject(record.index);
     if (step.kind === 'reply' && this.options.checkCalls !== false) {
       for (const problem of callProblems(step, record.view.tools)) this.problem(`request #${record.index} (${lane.name}): ${problem}`);
     }

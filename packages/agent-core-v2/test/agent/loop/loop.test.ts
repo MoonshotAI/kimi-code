@@ -2554,6 +2554,7 @@ describe('interruption reminder', () => {
     subscription.dispose();
     expect(interruptionReminders()).toHaveLength(1);
 
+    ctx.expectCacheBreak('undo rewrites the history', { at: 'history' });
     await ctx.undoHistory(1);
 
     expect(ctx.contextData().history).toEqual([]);

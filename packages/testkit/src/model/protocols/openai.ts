@@ -152,6 +152,7 @@ function promptPrefix(body: unknown): PromptPrefix {
   const labelOf = (message: unknown, index: number): string => `messages[${index}] ${stringOf(asRecord(message)['role'])}`;
   return {
     cacheKey: optionalString(record['prompt_cache_key']),
+    model: optionalString(record['model']),
     segments: [
       promptSegment('params', 'params', pickedFields(record, ['model', 'reasoning_effort', 'thinking'])),
       ...messages.slice(0, systemCount).map((message, index) => promptSegment('system', labelOf(message, index), message)),

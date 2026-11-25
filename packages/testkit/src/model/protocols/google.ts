@@ -139,6 +139,7 @@ function promptPrefix(body: unknown, path: string): PromptPrefix {
     return functions === undefined ? [tool] : asArray(functions);
   });
   return {
+    model: modelOfPath(path),
     segments: [
       promptSegment('params', 'params', { model: modelOfPath(path), thinkingConfig: asRecord(record['generationConfig'])['thinkingConfig'] }),
       ...(record['systemInstruction'] === undefined ? [] : [promptSegment('system', 'systemInstruction', record['systemInstruction'])]),

@@ -295,6 +295,7 @@ describe('AgentDateChangeService', () => {
     await runWillBeginStepHooks(loop);
     expect(dateReminders(context)).toHaveLength(1);
 
+    ctx.expectCacheBreak('undo rewrites the history', { at: 'history' });
     await ctx.get(IAgentConversationUndoService).undo(1);
     expect(dateReminders(context)).toHaveLength(1);
     ctx.mockNextResponse({ type: 'text', text: 'replacement answer' });
@@ -318,6 +319,7 @@ describe('AgentDateChangeService', () => {
     await runWillBeginStepHooks(loop);
     expect(dateReminders(context)).toHaveLength(1);
 
+    ctx.expectCacheBreak('undo rewrites the history', { at: 'history' });
     await ctx.get(IAgentConversationUndoService).undo(1);
     expect(dateReminders(context)).toHaveLength(1);
     ctx.mockNextResponse({ type: 'text', text: 'replacement answer' });

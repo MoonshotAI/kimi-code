@@ -26,7 +26,6 @@ import {
   telemetryServices,
   type TestAgentContext,
 } from '../../harness';
-import { promptCacheComparisons } from '../../harness/prompt-cache-guard';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 
 interface CapturedLogEntry {
@@ -127,6 +126,7 @@ describe('LLMRequester service migration coverage', () => {
           logFields: { turnStep: '7.2', droppedCount: 3 },
         },
       });
+      ctx.expectCacheBreak('the test sends two unrelated requests through the requester', { at: 'history' });
       ctx.mockNextResponse({ type: 'text', text: 'second response' });
       await requestCore(llmRequester, {
         messages: [userMessage('second direct request')],
@@ -814,7 +814,6 @@ describe('LLMRequester service migration coverage', () => {
     ])(
       'starts the next turn as a prefix extension of the $recovery request the previous turn settled on',
       async ({ response, keptMedia }) => {
-        const compared = promptCacheComparisons();
         const ctx = createTestAgent();
         try {
           ctx.configure({
@@ -848,7 +847,11 @@ describe('LLMRequester service migration coverage', () => {
           expect(countMedia(settled!.history)).toBe(keptMedia);
           expect(findGenerateCallPrefixBreak(settled!, nextTurn!)).toBeUndefined();
           expect(ctx.llmCalls).toHaveLength(3);
-          expect(promptCacheComparisons()).toBeGreaterThan(compared);
+          expect(ctx.promptCache().slice(0, 3)).toMatchObject([
+            { rejected: true },
+            { rejected: false, break: undefined },
+            { rejected: false, baseline: 1, break: undefined },
+          ]);
 
           const mediaMessage = (value: string): Message => ({
             role: 'user',
@@ -857,6 +860,8 @@ describe('LLMRequester service migration coverage', () => {
           ctx.mockNextProviderResponse(providerHttpError(413, 'Request Entity Too Large'));
           ctx.mockNextResponse({ type: 'text', text: 'Independent request.' });
           ctx.mockNextResponse({ type: 'text', text: 'Recovered request.' });
+          ctx.expectCacheBreak('the test sends its own media requests through the requester', { at: 'history' });
+          ctx.expectCacheBreak('media recovery replaces the image the next request sent', { at: 'history' });
           await Promise.all([
             requestCore(ctx.get(IAgentLoopService).requester, { messages: [mediaMessage('AAAA')] }),
             requestCore(ctx.get(IAgentLoopService).requester, { messages: [mediaMessage('BBBB')] }),

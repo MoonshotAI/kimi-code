@@ -1,5 +1,6 @@
 import { estimateTokens } from '#/model/emission';
 import type { BuiltInLaneName } from '#/model/lanes';
+import type { ProtocolName } from '#/model/types';
 
 export type PromptRegion = 'params' | 'system' | 'tools' | 'messages';
 
@@ -13,7 +14,15 @@ export interface PromptSegment {
 
 export interface PromptPrefix {
   readonly cacheKey?: string;
+  readonly model?: string;
   readonly segments: readonly PromptSegment[];
+}
+
+export interface ObservedRequest {
+  readonly request: number;
+  readonly lane: string;
+  readonly role: BuiltInLaneName;
+  readonly protocol: ProtocolName;
 }
 
 export interface CacheBreakOptions {
@@ -29,11 +38,10 @@ export interface PromptCacheBreak {
   readonly detail: string;
 }
 
-export interface PromptCacheEntry {
-  readonly request: number;
-  readonly lane: string;
-  readonly role: BuiltInLaneName;
+export interface PromptCacheEntry extends ObservedRequest {
   readonly cacheKey?: string;
+  readonly model?: string;
+  readonly rejected: boolean;
   readonly totalTokens: number;
   readonly reusedTokens: number;
   readonly reusedFrom?: number;
@@ -43,9 +51,10 @@ export interface PromptCacheEntry {
 }
 
 interface Observation {
-  readonly entry: Omit<PromptCacheEntry, 'explanation'>;
+  readonly entry: Omit<PromptCacheEntry, 'explanation' | 'rejected'>;
   readonly allowance?: string;
   readonly segments: readonly PromptSegment[];
+  rejected: boolean;
 }
 
 interface Expectation {
@@ -76,8 +85,12 @@ export class PromptCacheLedger {
   private readonly observations: Observation[] = [];
   private readonly expectations: Expectation[] = [];
 
-  observe(request: number, lane: string, role: BuiltInLaneName, prefix: PromptPrefix): void {
-    const pool = this.observations.filter((observation) => observation.entry.cacheKey === prefix.cacheKey);
+  observe(source: ObservedRequest, prefix: PromptPrefix): void {
+    const { role } = source;
+    const pool = this.observations.filter(
+      ({ rejected, entry }) =>
+        !rejected && entry.protocol === source.protocol && entry.cacheKey === prefix.cacheKey && entry.model === prefix.model,
+    );
     let reusedCharacters = 0;
     let reusedFrom: number | undefined;
     for (const earlier of pool) {
@@ -92,10 +105,9 @@ export class PromptCacheLedger {
       baseline !== undefined && pool.some((observation) => observation.entry.role === 'compaction' && observation.entry.request > baseline.entry.request);
     this.observations.push({
       entry: {
-        request,
-        lane,
-        role,
+        ...source,
         cacheKey: prefix.cacheKey,
+        model: prefix.model,
         totalTokens: tokensOf(prefix.segments.reduce((total, segment) => total + segment.text.length, 0)),
         reusedTokens: tokensOf(reusedCharacters),
         reusedFrom,
@@ -104,7 +116,13 @@ export class PromptCacheLedger {
       },
       allowance: role === 'main' && found?.part === 'history' && compactedSinceBaseline ? AFTER_COMPACTION : undefined,
       segments: prefix.segments,
+      rejected: false,
     });
+  }
+
+  reject(request: number): void {
+    const observation = this.observations.find((candidate) => candidate.entry.request === request);
+    if (observation !== undefined) observation.rejected = true;
   }
 
   reusedTokens(request: number): number {
@@ -117,9 +135,9 @@ export class PromptCacheLedger {
 
   entries(): readonly PromptCacheEntry[] {
     const { explanations } = this.explain();
-    return this.observations.map(({ entry }) => {
+    return this.observations.map(({ entry, rejected }) => {
       const explanation = explanations.get(entry.request);
-      return explanation === undefined ? entry : { ...entry, explanation };
+      return explanation === undefined ? { ...entry, rejected } : { ...entry, rejected, explanation };
     });
   }
 
@@ -137,7 +155,7 @@ export class PromptCacheLedger {
     const unexplained: Observation[] = [];
     for (const observation of this.observations) {
       const found = observation.entry.break;
-      if (found === undefined) continue;
+      if (found === undefined || observation.rejected) continue;
       if (observation.allowance !== undefined) {
         explanations.set(observation.entry.request, observation.allowance);
         continue;
@@ -208,7 +226,7 @@ function countIn(segments: readonly PromptSegment[], region: PromptRegion): numb
   return segments.filter((segment) => segment.region === region).length;
 }
 
-function describeUnexplained(entry: PromptCacheEntry): string {
+function describeUnexplained(entry: Observation['entry']): string {
   const key = entry.cacheKey === undefined ? 'without a prompt cache key' : `under prompt cache key ${JSON.stringify(entry.cacheKey)}`;
   return [
     `request #${entry.request} (${entry.lane}) does not extend request #${entry.baseline} ${key}: ${entry.break?.detail}.`,
