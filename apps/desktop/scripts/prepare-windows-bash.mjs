@@ -2,6 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { createReadStream, createWriteStream } from 'node:fs';
 import {
+  appendFile,
   copyFile,
   cp,
   mkdir,
@@ -13,6 +14,7 @@ import {
   stat,
   writeFile,
 } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { pipeline } from 'node:stream/promises';
@@ -25,6 +27,7 @@ const defaultOutputDir = path.join(desktopDir, 'resources-stage', 'windows-bash'
 const defaultCacheDir = path.join(desktopDir, 'resources-stage', 'windows-bash-cache');
 
 const requiredFiles = [
+  'etc/fstab',
   'usr/bin/bash.exe',
   'usr/bin/sh.exe',
   'usr/bin/cygpath.exe',
@@ -306,26 +309,37 @@ export async function verifyWindowsBashRuntime(runtimeDir, options = {}) {
   if (options.smoke === true && process.platform === 'win32') {
     const binDir = path.join(runtimeDir, 'usr', 'bin');
     const systemRoot = process.env.SystemRoot ?? 'C:\\Windows';
-    const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => key.toUpperCase() !== 'PATH'));
+    const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !['PATH', 'TMP', 'TEMP', 'TMPDIR'].includes(key.toUpperCase())));
     env.PATH = [binDir, `${systemRoot}\\System32`, systemRoot].join(';');
-    execFileSync(path.join(binDir, 'bash.exe'), ['-c', [
-      'set -e',
-      'test -x /bin/bash',
-      'test -x /bin/sh',
-      'test "$(command -v find)" = /usr/bin/find',
-      'test "$(command -v sort)" = /usr/bin/sort',
-      '! command -v git > /dev/null 2>&1',
-      'command -v cat grep sed awk find xargs diff patch tar gzip bzip2 xz unzip which cygpath',
-      'tmp=$(mktemp)',
-      'printf "alpha\\nbeta\\n" > "$tmp"',
-      'test "$(grep alpha "$tmp" | sed "s/alpha/gamma/" | awk "{print \\$1}")" = gamma',
-      'printf "alpha\\n" > "$tmp.diff"',
-      'diff "$tmp" "$tmp.diff" > /dev/null && exit 1 || true',
-      'rm -f "$tmp" "$tmp.diff"',
-      'cygpath -w / > /dev/null',
-      'for cmd in cat grep sed gawk find xargs diff patch tar gzip bzip2 xz which; do "$cmd" --version > /dev/null; done',
-      'unzip -v > /dev/null',
-    ].join('; ')], { env, cwd: runtimeDir, encoding: 'utf8', timeout: 30_000, windowsHide: true });
+    const userTemp = await mkdtemp(path.join(tmpdir(), 'kimi bash temp '));
+    try {
+      env.TMP = userTemp;
+      env.TEMP = userTemp;
+      const marker = path.basename(userTemp);
+      await writeFile(path.join(userTemp, marker), 'from-windows');
+      execFileSync(path.join(binDir, 'bash.exe'), ['-c', [
+        'set -e',
+        'test -x /bin/bash',
+        'test -x /bin/sh',
+        'test "$(command -v find)" = /usr/bin/find',
+        'test "$(command -v sort)" = /usr/bin/sort',
+        '! command -v git > /dev/null 2>&1',
+        'command -v cat grep sed awk find xargs diff patch tar gzip bzip2 xz unzip which cygpath',
+        'test "$(cat "/tmp/$1")" = from-windows',
+        'tmp=$(mktemp)',
+        'test "$tmp" -ef "/tmp/${tmp##*/}"',
+        'printf "alpha\\nbeta\\n" > "/tmp/${tmp##*/}"',
+        'test "$(grep alpha "$tmp" | sed "s/alpha/gamma/" | awk "{print \\$1}")" = gamma',
+        'printf "alpha\\n" > "$tmp.diff"',
+        'diff "$tmp" "$tmp.diff" > /dev/null && exit 1 || true',
+        'rm -f "$tmp" "$tmp.diff"',
+        'cygpath -w / > /dev/null',
+        'for cmd in cat grep sed gawk find xargs diff patch tar gzip bzip2 xz which; do "$cmd" --version > /dev/null; done',
+        'unzip -v > /dev/null',
+      ].join('; '), 'verify-windows-bash', marker], { env, cwd: runtimeDir, encoding: 'utf8', timeout: 30_000, windowsHide: true });
+    } finally {
+      await rm(userTemp, { recursive: true, force: true });
+    }
   }
   return {
     files: files.length,
@@ -392,7 +406,8 @@ export async function prepareWindowsBash(options = {}) {
     await mkdir(path.join(temporary, 'bin'), { recursive: true });
     await copyFile(path.join(temporary, 'usr/bin/bash.exe'), path.join(temporary, 'bin/bash.exe'));
     await copyFile(path.join(temporary, 'usr/bin/sh.exe'), path.join(temporary, 'bin/sh.exe'));
-    for (const directory of ['tmp', 'dev', 'proc']) await mkdir(path.join(temporary, directory), { recursive: true });
+    for (const directory of ['etc', 'dev', 'proc']) await mkdir(path.join(temporary, directory), { recursive: true });
+    await appendFile(path.join(temporary, 'etc', 'fstab'), '\nnone /tmp usertemp binary,posix=0 0 0\n');
     await cp(path.join(desktopDir, 'build', 'windows-bash-licenses'), path.join(temporary, 'licenses', 'common'), { recursive: true });
     await writeFile(path.join(temporary, 'source-manifest.json'), `${JSON.stringify(sourceManifest(lock), null, 2)}\n`);
     const result = await verifyWindowsBashRuntime(temporary);

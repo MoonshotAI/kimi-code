@@ -25,8 +25,12 @@ async function workspace() {
   return dir;
 }
 
-async function makePackage(dir: string, options: { depends?: string[]; traversal?: boolean } = {}) {
+async function makePackage(dir: string, options: { depends?: string[]; traversal?: boolean; fstab?: string } = {}) {
   const source = path.join(dir, 'source');
+  if (options.fstab !== undefined) {
+    await mkdir(path.join(source, 'etc'), { recursive: true });
+    await writeFile(path.join(source, 'etc', 'fstab'), options.fstab);
+  }
   const bin = path.join(source, 'usr', 'bin');
   await mkdir(bin, { recursive: true });
   for (const file of requiredFiles) await writeFile(path.join(bin, file), file === 'bash.exe' ? 'bash' : file);
@@ -105,6 +109,18 @@ describe('prepareWindowsBash', () => {
     expect(manifest.packages).toHaveLength(1);
     expect(manifest.packages[0].binary.sha256).toHaveLength(64);
     await expect(prepareWindowsBash({ platform: 'win32', ...options })).resolves.toEqual(result);
+  });
+
+  it('ships the Windows user temp mount even when packaging omits empty directories', async () => {
+    const otherMount = 'none /drives cygdrive binary 0 0';
+    const options = await makePackage(await workspace(), { fstab: otherMount });
+    await prepareWindowsBash({ platform: 'win32', ...options });
+    await rm(path.join(options.outputDir, 'tmp'), { recursive: true, force: true });
+    const fstab = path.join(options.outputDir, 'etc', 'fstab');
+    expect((await readFile(fstab, 'utf8')).trim().split(/\r?\n/)).toEqual([otherMount, 'none /tmp usertemp binary,posix=0 0 0']);
+    await expect(verifyWindowsBashRuntime(options.outputDir)).resolves.toBeDefined();
+    await rm(fstab);
+    await expect(verifyWindowsBashRuntime(options.outputDir)).rejects.toThrow('Missing Windows Bash runtime files: etc/fstab');
   });
 
   it('rejects an incomplete dependency closure without replacing the current runtime', async () => {
