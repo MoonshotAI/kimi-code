@@ -25,7 +25,7 @@ playwright.config.ts               一个面一个 project，另有两个跑法�
 - Web 跑的是 CLI 自带的 Web 界面。先 `pnpm sync:web` 把界面构建出来，改了 `apps/desktop/src/renderer` 或它依赖的 `packages/` 之后要重跑；第一次还要装浏览器：`pnpm --filter @moonshot-ai/e2e exec playwright install chromium`。然后 `pnpm --filter @moonshot-ai/e2e exec playwright test --project=web`。CLI 本身和 TUI 一样，默认跑源码，设 `TESTKIT_CLI_BUILD=dist` 跑构建产物。`kimi web` 和用户一样跑在一个真终端里（`surfaces/terminal-process.ts`，`node-pty`），终端输出渲染到 xterm.js 里，地址从渲染出的屏幕按行读（Windows 的 ConPTY 用光标定位而不是换行输出横幅）；结束时驱动在这个终端里按 Ctrl+C，要求它以 0 退出。
 - Desktop 的窗口和 Web 的浏览器默认都不显示。想看着跑，设 `E2E_HEADED=1`。
 - 工作区必须在 git 工作树之外。`TMPDIR` 如果在某个仓库里，夹具会直接报错：POSIX 上，工作区在 git 工作树里时，Edit 和 Write 会被自动批准，审批场景会挂住。
-- CI：`.github/workflows/e2e.yml`，在 Linux 上跑，作业名带 optional。每次合并到 main 都跑；PR 上跳过 draft，只在打了 `e2e` 标签，或改动了 `tests/e2e/`、`packages/testkit/` 或这个工作流时跑。改了产品代码、想在合并前看 E2E 结果，就给 PR 打 `e2e` 标签。Desktop 和 Web 各分成两片（`--shard`），各占一个作业；Desktop 作业跑在 xvfb 的虚拟显示器里，Web 作业先装 Chromium。Windows 上四个面各一个作业，名字是 `Windows <面> (manual)`，现在只在手动触发（`workflow_dispatch`）时跑，四个面都稳定通过之后再放到 PR 上。仓库目前没有必过检查，所以它红了不挡合并。
+- CI：`.github/workflows/e2e.yml`，在 Linux 上跑，作业名带 optional。每次合并到 main 都跑；PR 上跳过 draft，只在打了 `e2e` 标签，或改动了 `tests/e2e/`、`packages/testkit/` 或这个工作流时跑。改了产品代码、想在合并前看 E2E 结果，就给 PR 打 `e2e` 标签。Desktop 和 Web 各分成两片（`--shard`），各占一个作业；Desktop 作业跑在 xvfb 的虚拟显示器里，Web 作业先装 Chromium。Windows 上也跑这四个面，作业名是 `Windows <面> (optional)`，Web 分成两片（`Windows web (optional, 1/2)`、`2/2`）；它们在上面那些会跑 E2E 的 PR 上和手动触发（`workflow_dispatch`）时跑，合并到 main 时不跑，免得每次合并再多占五个 runner。Windows 上只跑 `tui`、`acp`、`desktop`、`web` 四个 project，不跑 `tui-kitty`、`acp-bare` 两个跑法。仓库目前没有必过检查，所以它红了不挡合并。
 - Windows 上 Desktop 收尾时只能确认主进程退出了，查不到它的子进程：`process.kill(-pid, 0)` 这种按进程组的查法在 Windows 上没有。
 
 ## 写场景
