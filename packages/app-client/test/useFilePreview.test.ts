@@ -7,6 +7,7 @@ function makeClient(overrides: Partial<FilePreviewClient>): FilePreviewClient {
   return {
     status: ref({ cwd: '/ws/a' }),
     getFileDownloadUrl: () => null,
+    getFsHome: vi.fn(async () => ({ home: '', recentRoots: [] })),
     readHostFileContent: vi.fn(),
     readFileContent: vi.fn(),
     readWorkspaceFileBlob: vi.fn(),
@@ -69,6 +70,50 @@ describe('useFilePreview not-found errors', () => {
     await preview.openFilePreview({ path: 'package.json', assumed: true });
     expect(preview.previewTarget.value?.assumed).toBe(true);
     expect(preview.previewError.value).toBeNull();
+  });
+});
+
+describe('useFilePreview tilde paths', () => {
+  it('expands the home directory before reading a file outside the workspace', async () => {
+    const getFsHome = vi.fn(async () => ({ home: '/Users/test', recentRoots: [] }));
+    const readHostFileContent = vi.fn(async (path: string) => ({
+      path,
+      content: '# Rules',
+      encoding: 'utf-8' as const,
+      mime: 'text/markdown',
+      isBinary: false,
+      size: 7,
+    }));
+    const client = makeClient({ getFsHome, readHostFileContent });
+    const preview = useFilePreview({ client, t });
+
+    await preview.openFilePreview({ path: '~/agent-workspace/rules/common.md' });
+
+    expect(getFsHome).toHaveBeenCalledOnce();
+    expect(readHostFileContent).toHaveBeenCalledWith('/Users/test/agent-workspace/rules/common.md');
+    expect(preview.previewError.value).toBeNull();
+    expect(preview.previewFile.value?.path).toBe('/Users/test/agent-workspace/rules/common.md');
+    expect(preview.previewAbsolutePath.value).toBe('/Users/test/agent-workspace/rules/common.md');
+  });
+
+  it('normalizes an expanded Windows home directory', async () => {
+    const getFsHome = vi.fn(async () => ({ home: 'C:\\Users\\test', recentRoots: [] }));
+    const readHostFileContent = vi.fn(async (path: string) => ({
+      path,
+      content: '# Rules',
+      encoding: 'utf-8' as const,
+      mime: 'text/markdown',
+      isBinary: false,
+      size: 7,
+    }));
+    const client = makeClient({ status: ref({ cwd: 'C:\\work' }), getFsHome, readHostFileContent });
+    const preview = useFilePreview({ client, t });
+
+    await preview.openFilePreview({ path: '~/agent-workspace/rules/common.md' });
+
+    expect(readHostFileContent).toHaveBeenCalledWith('C:/Users/test/agent-workspace/rules/common.md');
+    expect(preview.previewError.value).toBeNull();
+    expect(preview.previewAbsolutePath.value).toBe('C:/Users/test/agent-workspace/rules/common.md');
   });
 });
 

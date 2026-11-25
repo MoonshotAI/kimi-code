@@ -27,8 +27,28 @@ const insertPathMention = inject(InsertPathMentionKey, undefined);
 const localWorkspace = computed(() => workspacesStore().isLocalWorkspace);
 
 const state = useFileContextMenuState();
+const homePath = ref('');
+const homePending = ref(false);
+let homeSeq = 0;
 
-const targetPath = computed(() => resolveFileMenuPath(state.path, state.cwd));
+watch(
+  () => [state.open, state.path] as const,
+  async ([open, path]) => {
+    const seq = ++homeSeq;
+    homePath.value = '';
+    homePending.value = open && (path === '~' || path.startsWith('~/'));
+    if (!homePending.value) return;
+    try {
+      const { home } = await workspacesStore().getFsHome(workspacesStore().visibleWorkspace?.hostId);
+      if (seq === homeSeq) homePath.value = home;
+    } finally {
+      if (seq === homeSeq) homePending.value = false;
+    }
+  },
+  { immediate: true },
+);
+
+const targetPath = computed(() => resolveFileMenuPath(state.path, state.cwd, homePath.value));
 const canReveal = computed(
   () => revealInFolder !== undefined && localWorkspace.value && !state.deleted && isAbsoluteFilePath(targetPath.value),
 );
@@ -44,6 +64,7 @@ const canOpenWith = computed(
     /\.(md|markdown|mdx)$/i.test(targetPath.value),
 );
 const canAddToChat = computed(() => insertPathMention !== undefined && !state.deleted);
+const canCopyPath = computed(() => !homePending.value);
 
 const catalog = ref<OpenInAppEntry[]>([]);
 const availableApps = computed(() => catalog.value.filter((app) => app.id !== 'finder' && app.id !== 'explorer'));
@@ -167,7 +188,7 @@ function detach(): void {
 }
 
 watch(
-  () => [state.open, state.x, state.y, state.path] as const,
+  () => [state.open, state.x, state.y, state.path, targetPath.value] as const,
   async ([open]) => {
     detach();
     closeOpenWithMenu();
@@ -272,7 +293,7 @@ async function copyPath(): Promise<void> {
         <Icon name="folder" size="sm" />
         {{ t('conversation.revealInFolder') }}
       </MenuItem>
-      <MenuItem @mouseenter="closeOpenWithMenu" @focusin="closeOpenWithMenu" @click="copyPath">
+      <MenuItem v-if="canCopyPath" @mouseenter="closeOpenWithMenu" @focusin="closeOpenWithMenu" @click="copyPath">
         <Icon name="copy" size="sm" />
         {{ t('conversation.copyPath') }}
       </MenuItem>

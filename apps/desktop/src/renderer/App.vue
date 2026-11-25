@@ -711,7 +711,7 @@ function onShortcutKeydown(e: KeyboardEvent): void {
 }
 
 const filePreview = useFilePreview({
-  client,
+  client: { ...client, getFsHome: () => client.getFsHome(client.visibleWorkspace.value?.hostId) },
   t: (key, params) => (params === undefined ? t(key) : t(key, params)),
 });
 

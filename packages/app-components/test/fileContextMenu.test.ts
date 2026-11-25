@@ -3,7 +3,7 @@ import { createApp, h, type App } from 'vue';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
 const lib = vi.hoisted(() => ({ copy: vi.fn<(text: string) => Promise<boolean>>() }));
-const workspaceLocation = vi.hoisted(() => ({ local: { value: true } }));
+const workspaceLocation = vi.hoisted(() => ({ local: { value: true }, visibleWorkspace: null as { hostId?: string } | null, getFsHome: vi.fn() }));
 
 vi.mock('@moonshot-ai/app-core/lib', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
@@ -11,7 +11,7 @@ vi.mock('@moonshot-ai/app-core/lib', async (importOriginal) => ({
 }));
 vi.mock('@moonshot-ai/app-client/stores', () => ({
   useWarningsStore: () => ({ pushWarning: vi.fn() }),
-  workspacesStore: () => ({ isLocalWorkspace: workspaceLocation.local.value }),
+  workspacesStore: () => ({ isLocalWorkspace: workspaceLocation.local.value, visibleWorkspace: workspaceLocation.visibleWorkspace, getFsHome: workspaceLocation.getFsHome }),
 }));
 
 import { createKimiI18n } from '@moonshot-ai/app-i18n';
@@ -36,6 +36,8 @@ function rightClickOn(el: Element, cwd?: string, x = 40, y = 50): void {
 
 beforeEach(() => {
   workspaceLocation.local.value = true;
+  workspaceLocation.visibleWorkspace = null;
+  workspaceLocation.getFsHome.mockReset().mockResolvedValue({ home: '/Users/test', recentRoots: [] });
   lib.copy.mockReset().mockResolvedValue(true);
   document.body.innerHTML = '';
 });
@@ -125,6 +127,13 @@ it('resolveFileMenuPath joins relative paths against cwd', () => {
   expect(resolveFileMenuPath('src/a.ts', '/repo/')).toBe('/repo/src/a.ts');
   expect(resolveFileMenuPath('src/a.ts')).toBe('src/a.ts');
   expect(resolveFileMenuPath('src/a.ts', 'C:\\repo')).toBe('C:\\repo\\src\\a.ts');
+});
+
+it('resolveFileMenuPath expands only a bare home tilde with a known home', () => {
+  expect(resolveFileMenuPath('~/notes.md', '/repo', '/Users/test')).toBe('/Users/test/notes.md');
+  expect(resolveFileMenuPath('~other/notes.md', '/repo', '/Users/test')).toBe('/repo/~other/notes.md');
+  expect(resolveFileMenuPath('~/notes.md', '/repo')).toBe('~/notes.md');
+  expect(resolveFileMenuPath('~/notes.md', 'C:\\work', 'C:\\Users\\test')).toBe('C:\\Users\\test\\notes.md');
 });
 
 it('resolveFileMenuPath returns native Windows paths without changing POSIX paths', () => {
@@ -375,6 +384,80 @@ it('opens a selected detected app only for this invocation', async () => {
   expect(open).toHaveBeenCalledWith('vscode', { path: '/tmp/notes.md' });
   expect(openWithDefaultApp).not.toHaveBeenCalled();
   expect(state.open).toBe(false);
+});
+
+it('expands a tilde path before opening it with VS Code', async () => {
+  const openWithDefaultApp = vi.fn<(path: string) => Promise<boolean>>().mockResolvedValue(true);
+  const { service, catalog, open } = openInServiceStub();
+  mountHost(undefined, openWithDefaultApp, service);
+  const host = document.createElement('div');
+  host.innerHTML = '<button data-file-path="~/agent-workspace/rules/common.md">common.md</button>';
+  document.body.append(host);
+
+  rightClickOn(host.querySelector('button')!, '/repo');
+  await flush();
+  menuItem(menuEl()!, 'Open with').click();
+  await flush();
+  expect(workspaceLocation.getFsHome).toHaveBeenCalled();
+  expect(catalog).toHaveBeenCalledWith('file', '/Users/test/agent-workspace/rules/common.md');
+
+  menuItem(submenuEl()!, 'VS Code').click();
+  await flush();
+  expect(open).toHaveBeenCalledWith('vscode', { path: '/Users/test/agent-workspace/rules/common.md' });
+  expect(openWithDefaultApp).not.toHaveBeenCalled();
+});
+
+it('queries the home directory on the visible workspace host', async () => {
+  workspaceLocation.visibleWorkspace = { hostId: 'devbox' };
+  mountHost();
+  const host = document.createElement('div');
+  host.innerHTML = '<button data-file-path="~/agent-workspace/rules/common.md">common.md</button>';
+  document.body.append(host);
+
+  rightClickOn(host.querySelector('button')!, '/repo');
+  await flush();
+
+  expect(workspaceLocation.getFsHome).toHaveBeenCalledWith('devbox');
+});
+
+it('hides Copy path until the home directory resolves', async () => {
+  let resolveHome!: (value: { home: string; recentRoots: string[] }) => void;
+  workspaceLocation.getFsHome.mockImplementation(() => new Promise((resolve) => { resolveHome = resolve; }));
+  mountHost();
+  const host = document.createElement('div');
+  host.innerHTML = '<button data-file-path="~/agent-workspace/rules/common.md">common.md</button>';
+  document.body.append(host);
+
+  rightClickOn(host.querySelector('button')!, '/repo');
+  await flush();
+  expect(menuTexts().join('|')).not.toContain('Copy path');
+
+  resolveHome({ home: '/Users/test', recentRoots: [] });
+  await flush();
+  menuItem(menuEl()!, 'Copy path').click();
+  await flush();
+  expect(lib.copy).toHaveBeenCalledWith('/Users/test/agent-workspace/rules/common.md');
+});
+
+it('repositions the menu after the home directory resolves', async () => {
+  let resolveHome!: (value: { home: string; recentRoots: string[] }) => void;
+  workspaceLocation.getFsHome.mockImplementation(() => new Promise((resolve) => { resolveHome = resolve; }));
+  mountHost();
+  let menuHeight = 30;
+  vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockImplementation(() => menuHeight);
+  window.innerHeight = 768;
+  const host = document.createElement('div');
+  host.innerHTML = '<button data-file-path="~/agent-workspace/rules/common.md">common.md</button>';
+  document.body.append(host);
+
+  rightClickOn(host.querySelector('button')!, '/repo', 40, 740);
+  await flush();
+  expect(menuEl()!.style.top).toBe('710px');
+
+  menuHeight = 200;
+  resolveHome({ home: '/Users/test', recentRoots: [] });
+  await flush();
+  expect(menuEl()!.style.top).toBe('540px');
 });
 
 it('does not offer open-with for unsupported, deleted, or symlinked files', async () => {
