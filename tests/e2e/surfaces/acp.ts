@@ -283,6 +283,7 @@ class AcpDriver implements SurfaceDriver<'acp'> {
   private openedMode: string | undefined;
   private restored = false;
   private readonly leftSessions = new Set<string>();
+  private leftSessionUpdates = 0;
   private turn: Turn | undefined;
 
   constructor(proc: TestProcess, home: TestHome) {
@@ -290,7 +291,8 @@ class AcpDriver implements SurfaceDriver<'acp'> {
     this.home = home;
     this.connection = client({ name: EDITOR_NAME })
       .onNotification(methods.client.session.update, ({ params }) => {
-        if (!this.leftSessions.has(params.sessionId)) this.updates.push(params.update);
+        if (this.leftSessions.has(params.sessionId)) this.leftSessionUpdates += 1;
+        else this.updates.push(params.update);
       })
       .onRequest(
         methods.client.session.requestPermission,
@@ -449,7 +451,7 @@ class AcpDriver implements SurfaceDriver<'acp'> {
     }
     const mark = this.updates.length;
     await this.response(`the agent to switch the session to mode ${modeId}`, this.connection.agent.request(methods.agent.session.setMode, { sessionId: this.sessionId, modeId }));
-    await this.wait('the agent to send every session/update it announced', () => (this.updates.length >= this.receivedUpdates ? true : undefined));
+    await this.wait('the agent to send every session/update it announced', () => (this.handledUpdates() >= this.receivedUpdates ? true : undefined));
     const reported = this.updates.slice(mark).some((update) => update.sessionUpdate === 'current_mode_update' && update.currentModeId === modeId);
     if (!reported) {
       throw new Error(`setPermissionMode() switched the session to mode ${modeId}, but the agent never reported it with current_mode_update.\n${this.describe()}`);
@@ -460,7 +462,7 @@ class AcpDriver implements SurfaceDriver<'acp'> {
     if (!this.turnOver() || this.permissions.length > 0) {
       throw new Error(`newSession() needs an idle product, but a turn is running or an approval is pending.\n${this.describe()}`);
     }
-    await this.wait('the agent to send every session/update it announced', () => (this.updates.length >= this.receivedUpdates ? true : undefined));
+    await this.wait('the agent to send every session/update it announced', () => (this.handledUpdates() >= this.receivedUpdates ? true : undefined));
     const session = await this.response(
       'the agent to create a new session',
       this.connection.agent.request(methods.agent.session.new, { cwd: this.home.workspace, mcpServers: [] }),
@@ -933,6 +935,10 @@ class AcpDriver implements SurfaceDriver<'acp'> {
     return lastUserMessage < 0 ? [] : updates.slice(lastUserMessage + 1);
   }
 
+  private handledUpdates(): number {
+    return this.updates.length + this.leftSessionUpdates;
+  }
+
   private sessionUpdates(): readonly SessionUpdate[] {
     return this.updates.slice(this.sessionStart);
   }
@@ -942,7 +948,7 @@ class AcpDriver implements SurfaceDriver<'acp'> {
   }
 
   private turnOver(): boolean {
-    return this.turn === undefined || (this.turn.done && this.updates.length >= this.receivedUpdates);
+    return this.turn === undefined || (this.turn.done && this.handledUpdates() >= this.receivedUpdates);
   }
 
   private assertPromptValid(): void {
@@ -983,7 +989,7 @@ class AcpDriver implements SurfaceDriver<'acp'> {
         { timeoutMs: TIMEOUTS.server },
       );
     } catch (cause) {
-      const unparsed = this.receivedUpdates - this.updates.length;
+      const unparsed = this.receivedUpdates - this.handledUpdates();
       const schema =
         this.turn?.done === true && unparsed > 0
           ? `\n${unparsed} session/update notification(s) did not pass the SDK's schema, so the editor never saw the turn as finished.`
