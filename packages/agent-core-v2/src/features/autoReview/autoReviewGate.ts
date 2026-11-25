@@ -82,7 +82,7 @@ function denial(
   if (review.decision === 'failed') {
     return {
       kind: 'deny',
-      message: `Auto Review could not complete; the tool was not executed: ${review.reason} Resolve the review error or ask the user for guidance.`,
+      message: `Auto Review could not complete; the tool was not executed: ${review.reason} Do not retry the same action or attempt to fix the review configuration yourself; inform the user in your response that Auto Review failed and include this reason.`,
       reason: withReason(baseReason, { review_error: true }),
     };
   }
@@ -113,6 +113,12 @@ function fallbackAsk(
       reason: withReason(baseAsk?.reason, { review_error: true }),
       approvalDetail: { outcome: 'failed', reason: review.reason },
       resolveNonInteractive: () => denial(context, review, baseAsk?.reason),
+      resolveApproval: (response) => response.decision === 'approved'
+        ? baseAsk?.resolveApproval?.(response)
+        : {
+            kind: 'deny',
+            message: `Tool "${context.toolCall.name}" was not run because ${response.decision === 'cancelled' ? 'the approval request was cancelled' : 'the user rejected the approval request'} (Auto Review failed: ${review.reason}).${feedbackSuffix(response.feedback)}`,
+          },
       resolveError: (error) =>
         baseAsk?.resolveError?.(error) ?? {
           kind: 'deny',

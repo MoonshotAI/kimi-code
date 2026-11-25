@@ -421,7 +421,8 @@ export class ApprovalPanelComponent extends DockSection implements Focusable {
           lines.push(`  ${line}`);
         }
       }
-    } else if (data.description) {
+    }
+    if (data.description && blocks.every((block) => block.type === 'review')) {
       for (const descLine of data.description.split('\n')) {
         lines.push(`  ${currentTheme.fg('textDim', descLine)}`);
       }

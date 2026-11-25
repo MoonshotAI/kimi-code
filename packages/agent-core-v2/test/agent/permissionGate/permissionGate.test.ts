@@ -380,6 +380,52 @@ describe('AgentPermissionGate', () => {
     });
   });
 
+  it('surfaces review failure details to the main model in Never Ask and rejected Ask When Needed fallbacks', () => {
+    const autoResult = resolveAutoReview(
+      makeContext('Bash'),
+      modeApproval,
+      { kind: 'ask', reason: { dangerous_command: 'rm -rf' } },
+      { decision: 'failed', reason: 'Review timed out.' },
+      'auto',
+    ).result;
+
+    expect(autoResult).toEqual({
+      kind: 'deny',
+      reason: { dangerous_command: 'rm -rf', review_error: true },
+      message:
+        'Auto Review could not complete; the tool was not executed: Review timed out. Do not retry the same action or attempt to fix the review configuration yourself; inform the user in your response that Auto Review failed and include this reason.',
+    });
+
+    const onUnderlyingApproved = vi.fn(() => undefined);
+    const yoloResult = resolveAutoReview(
+      makeContext('Bash'),
+      modeApproval,
+      { kind: 'ask', reason: { dangerous_command: 'rm -rf' }, resolveApproval: onUnderlyingApproved },
+      { decision: 'failed', reason: 'Review timed out.' },
+      'yolo',
+    ).result;
+
+    expect(yoloResult).toMatchObject({
+      kind: 'ask',
+      approvalDetail: { outcome: 'failed', reason: 'Review timed out.' },
+      reason: { dangerous_command: 'rm -rf', review_error: true },
+    });
+    if (yoloResult.kind !== 'ask') return;
+    expect(yoloResult.resolveApproval?.({ decision: 'approved' })).toBeUndefined();
+    expect(onUnderlyingApproved).toHaveBeenCalledWith({ decision: 'approved' });
+    expect(yoloResult.resolveApproval?.({ decision: 'rejected', feedback: 'Wait for service recovery.' })).toEqual({
+      kind: 'deny',
+      message:
+        'Tool "Bash" was not run because the user rejected the approval request (Auto Review failed: Review timed out.). Reason: Wait for service recovery.',
+    });
+    expect(yoloResult.resolveApproval?.({ decision: 'cancelled' })).toEqual({
+      kind: 'deny',
+      message:
+        'Tool "Bash" was not run because the approval request was cancelled (Auto Review failed: Review timed out.).',
+    });
+    expect(yoloResult.resolveNonInteractive?.()).toEqual(autoResult);
+  });
+
   it('data() reflects the mode and rules services', () => {
     mode = 'yolo';
     rules = [{ decision: 'allow', scope: 'user', pattern: 'Bash(*)' }];

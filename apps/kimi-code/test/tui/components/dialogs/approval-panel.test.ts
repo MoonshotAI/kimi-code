@@ -149,6 +149,25 @@ describe('ApprovalPanelComponent', () => {
     expect(titleLine).toContain(currentTheme.fg('warning', title));
   });
 
+  it('keeps generic MCP description visible below an Auto Review failure banner', () => {
+    const data = adaptApprovalRequest({
+      toolCallId: 'tool_mcp_review',
+      toolName: 'mcp__slack__post_message',
+      action: 'Approve mcp__slack__post_message',
+      display: {
+        kind: 'generic',
+        summary: 'Post message to #releases',
+        detail: { channel: '#releases' },
+      },
+      approvalDetail: { outcome: 'failed', reason: 'Review timed out.' },
+    });
+    const out = strip(mount(new ApprovalPanelComponent({ data }, () => {})).render(100).join('\n'));
+    expect(out).toContain('Auto Review failed');
+    expect(out).toContain('Review timed out.');
+    expect(out).toContain('Post message to #releases');
+    expect(out.indexOf('Review timed out.')).toBeLessThan(out.indexOf('Post message to #releases'));
+  });
+
   it('wraps a long single-line shell command instead of truncating it', () => {
     const head = 'approve-long-command-head';
     const tail = 'approve-long-command-tail';
