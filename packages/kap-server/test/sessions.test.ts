@@ -2111,6 +2111,39 @@ describe('server-v2 /api/v1/sessions', () => {
     }
   });
 
+  it('returns snake_case data beside the deprecated camelCase fields when :undo cannot remove the requested turns', async () => {
+    const created = await postJson<SessionWire>('/api/v1/sessions', {
+      metadata: { cwd: home as string },
+    });
+    const session = getLiveSessionById((server as RunningServer).core.accessor, created.body.data.id);
+    if (session === undefined) throw new Error('expected live session');
+    await session.accessor.get(IAgentLifecycleService).create({ agentId: MAIN_AGENT_ID });
+    const undo = vi
+      .spyOn(ConversationFeed.prototype, 'undo')
+      .mockRejectedValueOnce(new Error2(ErrorCodes.SESSION_UNDO_UNAVAILABLE, 'only 1 turn can be undone', {
+        details: { reason: 'insufficient', requestedCount: 2, undoableCount: 1 },
+      }))
+      .mockRejectedValueOnce(new Error2(ErrorCodes.SESSION_UNDO_UNAVAILABLE, 'turn t_1 does not open with user input'));
+
+    try {
+      const limited = await postJson<unknown>(`/api/v1/sessions/${created.body.data.id}:undo`, { turn_id: 't_1' });
+      const unexplained = await postJson<unknown>(`/api/v1/sessions/${created.body.data.id}:undo`, { turn_id: 't_1' });
+
+      expect(limited.body.code).toBe(40911);
+      expect(limited.body.data).toEqual({
+        reason: 'insufficient',
+        requested_count: 2,
+        undoable_count: 1,
+        requestedCount: 2,
+        undoableCount: 1,
+      });
+      expect(unexplained.body.code).toBe(40911);
+      expect(unexplained.body.data).toBeNull();
+    } finally {
+      undo.mockRestore();
+    }
+  });
+
   it('returns 40901 when :reload is requested during an active compaction', async () => {
     const created = await postJson<SessionWire>('/api/v1/sessions', {
       metadata: { cwd: home as string },
@@ -2279,6 +2312,22 @@ describe('server-v2 /api/v1/sessions', () => {
       'This session requires a newer version of Kimi Code. Upgrade Kimi Code to the latest version to read this session.',
     );
     expect(incompatible.body.details).toEqual({ minReaderVersion: '9.9', readerVersion: '1.5' });
+  });
+
+  it('forks a session from a request without a body', async () => {
+    const cwd = home as string;
+    const parent = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
+    const parentId = parent.body.data.id;
+    const session = getLiveSessionById((server as RunningServer).core.accessor, parentId);
+    expect(session).toBeDefined();
+    await session!.accessor.get(IAgentLifecycleService).create({ agentId: MAIN_AGENT_ID });
+    const main = session!.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID)!;
+    await main.accessor.get(IWireService).flush();
+
+    const forked = await postJson<SessionWire>(`/api/v1/sessions/${parentId}:fork`);
+
+    expect(forked.body.code).toBe(0);
+    expect(forked.body.data.id).not.toBe(parentId);
   });
 
   it('fork clears inherited cron tasks while the source keeps them', async () => {

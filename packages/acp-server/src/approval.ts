@@ -10,7 +10,7 @@ import type {
 } from '@moonshot-ai/agent-core-v2';
 
 import { displayBlockToAcpContent } from './convert';
-import { acpToolCallId } from './events-map';
+import { acpToolCallId, toolCallLocations } from './events-map';
 
 export const APPROVE_ONCE_OPTION_ID = 'approve_once';
 export const APPROVE_ALWAYS_OPTION_ID = 'approve_always';
@@ -113,19 +113,28 @@ function mapPlanReviewOptionId(
 export function buildPermissionToolCallUpdate(req: ApprovalRequest): ToolCallUpdate {
   const rawId = req.toolCallId ?? req.toolName;
   const toolCallId = req.turnId !== undefined ? acpToolCallId(req.turnId, rawId) : rawId;
+  const { display } = req;
   const content: ToolCallContent[] = [];
-  const headlineEntry = displayBlockToAcpContent(req.display);
+  const headlineEntry = displayBlockToAcpContent(display);
   if (headlineEntry !== null) {
     content.push(headlineEntry);
+  }
+  if (display.kind === 'command') {
+    content.push({ type: 'content', content: { type: 'text', text: display.command } });
+    if (display.cwd !== undefined) {
+      content.push({ type: 'content', content: { type: 'text', text: `Working directory\n${display.cwd}` } });
+    }
   }
   content.push({
     type: 'content',
     content: { type: 'text', text: `Requesting approval to ${req.action}` },
   });
+  const locations = toolCallLocations(req.toolName, undefined, display);
   return {
     toolCallId,
     title: req.toolName,
     content,
+    ...(locations === undefined ? {} : { locations }),
   };
 }
 

@@ -92,6 +92,7 @@ import {
   updateSessionProfileResponseSchema,
   waitSessionRequestSchema,
   waitSessionResponseSchema,
+  type SessionAction,
 } from '../protocol/rest-session';
 import {
   sessionSchema,
@@ -593,22 +594,6 @@ export function registerSessionsRoutes(
     sessionWarningsRoute.handler as Parameters<SessionRouteHost['get']>[2],
   );
 }
-
-type SessionAction =
-  | 'fork'
-  | 'compact'
-  | 'undo'
-  | 'cancel'
-  | 'wait'
-  | 'continue'
-  | 'btw'
-  | 'predict-prompt'
-  | 'cancel-prompt-prediction'
-  | 'restore'
-  | 'archive'
-  | 'delete'
-  | 'reload'
-  | 'takeover';
 
 interface SessionActionExtra {
   readonly core: Scope;

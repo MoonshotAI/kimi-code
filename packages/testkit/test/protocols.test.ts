@@ -4,7 +4,7 @@ import OpenAI from 'openai';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createFakeModel, type FakeModel, type FakeModelOptions } from '#/model/fake-model';
-import { call, httpError, say, streamError, think, thinkSigned, withUsage } from '#/model/steps';
+import { call, httpError, say, streamError, think, thinkSigned, withResponseId, withUsage } from '#/model/steps';
 
 const models: FakeModel[] = [];
 
@@ -78,6 +78,42 @@ it.each([
     'request #1 (main): messages[7] (user) is empty',
   ]);
   expect(() => model.verify()).toThrow(/messages\[3\] \(user\) is empty/);
+});
+
+describe('scripted response ids', () => {
+  it('carries the scripted ID to each official SDK, streamed and not, and numbers unscripted replies by request', async () => {
+    const model = fakeModel();
+    model.script(
+      withResponseId('example-openai-stream', say('a')),
+      withResponseId('example-openai', say('b')),
+      say('c'),
+      withResponseId('example-anthropic-stream', say('d')),
+      withResponseId('example-anthropic', say('e')),
+      withResponseId('example-google-stream', say('f')),
+      withResponseId('example-google', say('g')),
+    );
+    const openai = new OpenAI({ apiKey: 'sk-test', baseURL: 'http://testkit.invalid/v1', fetch: model.fetch, maxRetries: 0 });
+    const ask = { model: 'testkit-model', messages: [{ role: 'user' as const, content: 'hi' }], tools: [{ type: 'function' as const, function: { name: 'Bash', parameters: { type: 'object' } } }] };
+    const ids = new Set<string>();
+    for await (const chunk of await openai.chat.completions.create({ ...ask, stream: true })) ids.add(chunk.id);
+    expect([...ids]).toEqual(['example-openai-stream']);
+    expect((await openai.chat.completions.create({ ...ask, stream: false })).id).toBe('example-openai');
+    expect((await openai.chat.completions.create({ ...ask, stream: false })).id).toBe('testkit-2');
+
+    const anthropic = anthropicClient(model);
+    const anthropicAsk = { model: 'testkit-model', max_tokens: 10, messages: [{ role: 'user' as const, content: 'hi' }], tools: ANTHROPIC_TOOLS };
+    expect((await anthropic.messages.stream(anthropicAsk).finalMessage()).id).toBe('example-anthropic-stream');
+    expect((await anthropic.messages.create(anthropicAsk)).id).toBe('example-anthropic');
+
+    await model.listen();
+    const google = new GoogleGenAI({ apiKey: 'test-key', httpOptions: { baseUrl: model.origin } });
+    const googleAsk = { model: 'testkit-model', contents: [{ role: 'user', parts: [{ text: 'hi' }] }], config: { tools: GOOGLE_TOOLS } };
+    const streamed: GenerateContentResponse[] = [];
+    for await (const chunk of await google.models.generateContentStream(googleAsk)) streamed.push(chunk);
+    expect(new Set(streamed.map((chunk) => chunk.responseId))).toEqual(new Set(['example-google-stream']));
+    expect((await google.models.generateContent(googleAsk)).responseId).toBe('example-google');
+    model.verify();
+  });
 });
 
 describe('anthropic messages', () => {

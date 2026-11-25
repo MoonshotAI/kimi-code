@@ -79,6 +79,7 @@ Failed KAP tests also print summaries of the most recent 32 WebSocket frames and
 | `reply(...)`, `batch(...)` | several parts in one reply; `batch` reads as parallel calls |
 | `interleave(step)` | interleaves argument pieces of parallel calls in an OpenAI stream |
 | `finishWith(reason, step)`, `withUsage(usage, step)` | finish reason and token usage, including cache reads and writes |
+| `withResponseId(id, step)` | the reply's ID: OpenAI `id`, Anthropic message `id`, Google `responseId`. Unscripted replies get `testkit-<requestIndex>` |
 | `paced(ms, step)`, `after(ms, step)` | delay between chunks, or before the reply |
 | `held(name, step, beforeUnit?)` | pauses before a chunk until the test releases it |
 | `httpError(status, options)` | an HTTP error with body, headers, `retry-after`, request and trace ids |
