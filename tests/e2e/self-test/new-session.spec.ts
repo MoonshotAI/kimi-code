@@ -35,6 +35,18 @@ selfTest('newSession', {
         expect(model.requests('main')[2]?.texts('user').some((text) => text.includes('Ask the second question.'))).toBe(false);
       },
     },
+    'lets the product restart after a new session that has no message yet': {
+      run: async ({ product, model }) => {
+        model.script(say('The earlier answer.'), say('Answered after the restart.'));
+        await product.send('Ask the earlier question.');
+        await product.waitIdle();
+        await product.newSession();
+        await product.restart();
+        await product.send('Ask after the restart.');
+        await product.waitIdle();
+        await product.expectReply('Answered after the restart.');
+      },
+    },
     'starts a new session before the first message as well': {
       run: async ({ product, model }) => {
         await product.newSession();

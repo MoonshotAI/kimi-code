@@ -281,6 +281,8 @@ class AcpDriver implements SurfaceDriver<'acp'> {
   private sessionStart = 0;
   private sessionId = '';
   private openedMode: string | undefined;
+  private restored = false;
+  private readonly leftSessions = new Set<string>();
   private turn: Turn | undefined;
 
   constructor(proc: TestProcess, home: TestHome) {
@@ -288,7 +290,7 @@ class AcpDriver implements SurfaceDriver<'acp'> {
     this.home = home;
     this.connection = client({ name: EDITOR_NAME })
       .onNotification(methods.client.session.update, ({ params }) => {
-        this.updates.push(params.update);
+        if (!this.leftSessions.has(params.sessionId)) this.updates.push(params.update);
       })
       .onRequest(
         methods.client.session.requestPermission,
@@ -342,6 +344,7 @@ class AcpDriver implements SurfaceDriver<'acp'> {
       this.connection.agent.request(methods.agent.session.load, { sessionId: resume, cwd: this.home.workspace, mcpServers: [] }),
     );
     this.sessionId = resume;
+    this.restored = true;
     this.openedMode = loaded.modes?.currentModeId;
   }
 
@@ -379,6 +382,7 @@ class AcpDriver implements SurfaceDriver<'acp'> {
     }
     const turn: Turn = { prompt: text, updates: this.updates.length, stopReason: undefined, rejection: undefined, done: false };
     this.turn = turn;
+    this.restored = false;
     this.prompts.push(text);
     const sent = this.sentPrompts;
     void this.connection.agent.request(methods.agent.session.prompt, { sessionId: this.sessionId, prompt: [{ type: 'text', text }] }).then(
@@ -464,9 +468,11 @@ class AcpDriver implements SurfaceDriver<'acp'> {
     if (session.sessionId === this.sessionId) {
       throw new Error(`newSession() asked for a new session, but the agent answered with the current one, ${session.sessionId}.\n${this.describe()}`);
     }
+    this.leftSessions.add(this.sessionId);
     this.sessionId = session.sessionId;
     this.openedMode = session.modes?.currentModeId;
     this.sessionStart = this.updates.length;
+    this.restored = false;
     this.prompts = [];
     this.turn = undefined;
   }
@@ -554,7 +560,12 @@ class AcpDriver implements SurfaceDriver<'acp'> {
     this.assertPromptValid();
     const turn = this.turn;
     if (turn?.rejection === undefined) {
-      const ended = turn === undefined ? 'no turn has started' : `the latest turn ended with stop reason ${String(turn.stopReason)}`;
+      const ended =
+        turn === undefined
+          ? this.restored
+            ? "the restored last turn shows none (ACP's session/load replays messages and tool calls, not failures)"
+            : 'no turn has started'
+          : `the latest turn ended with stop reason ${String(turn.stopReason)}`;
       throw new Error(`expectError() found no failure: ${ended}, and session/prompt did not fail.\n${this.describe()}`);
     }
     const message = property(turn.rejection, 'message');
@@ -927,7 +938,7 @@ class AcpDriver implements SurfaceDriver<'acp'> {
   }
 
   private replayedTurn(): boolean {
-    return this.turn === undefined;
+    return this.restored && this.turn === undefined;
   }
 
   private turnOver(): boolean {
