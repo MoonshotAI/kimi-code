@@ -335,17 +335,20 @@ describe('acp-server session lifecycle', () => {
         sessionId: string;
       };
 
+      const before = (await c.send('session/list', {})) as { sessions: { sessionId: string }[] };
+      expect(before.sessions.map((session) => session.sessionId)).toContain(created.sessionId);
+
       const deleted = await c.send('session/delete', { sessionId: created.sessionId });
       expect(deleted).toEqual({});
-      await expect(
-        c.send('session/prompt', { sessionId: created.sessionId, prompt: [] }),
-      ).rejects.toThrow(/-32602/);
 
       const listed = (await c.send('session/list', {})) as {
         sessions: { sessionId: string }[];
       };
       expect(listed.sessions.some((s) => s.sessionId === created.sessionId)).toBe(false);
 
+      await expect(
+        c.send('session/prompt', { sessionId: created.sessionId, prompt: [] }),
+      ).rejects.toThrow(/-32602/);
       await expect(
         c.send('session/delete', { sessionId: created.sessionId }),
       ).rejects.toThrow(/-32602/);
