@@ -95,7 +95,7 @@ export default {
     importProjectConfigEmpty: 'No importable directories in this project local.toml',
     importProjectConfigFailed: 'Failed to read the project config',
     pickFailed: "Couldn't select the directory. Try again",
-    subfolderOfRepo: "Inside the Git repository {repo}. Worktree sessions need the repository's top folder",
+    subfolderOfRepo: 'Subfolder of the Git repository {repo}',
     primaryBadge: 'Primary',
     removeDir: 'Remove',
     setPrimary: 'Set as primary',

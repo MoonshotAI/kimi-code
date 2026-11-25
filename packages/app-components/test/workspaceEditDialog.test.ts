@@ -270,7 +270,7 @@ describe('WorkspaceEditDialog create mode', () => {
     await vi.waitFor(() => expect(primaryRow()?.querySelector('[data-dir-warning="subfolder"]')).not.toBeNull());
 
     expect(primaryRow()?.querySelector('[data-dir-warning="subfolder"]')?.textContent).toContain(
-      "Inside the Git repository repo. Worktree sessions need the repository's top folder",
+      'Subfolder of the Git repository repo',
     );
     expect(dirRows()[1]?.querySelector('[data-dir-warning]')).toBeNull();
 
