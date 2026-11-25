@@ -44,9 +44,9 @@ describe('loop.wait', () => {
     const event = await pending;
     expect(event.turnId).toBe(1);
     expect(event.outcome.type).toBe('done');
-    expect(turnEnds.map((ended) => [ended.turnId, ended.loopEnd?.outcome])).toEqual([
-      [0, 'idle'],
-      [1, 'idle'],
+    expect(turnEnds.map((ended) => [ended.turnId, ended.continuation])).toEqual([
+      [0, 'none'],
+      [1, 'none'],
     ]);
 
     let submissionState: unknown;
@@ -81,7 +81,7 @@ describe('loop.wait', () => {
     expect(turnEnds).toEqual([]);
 
     const stopEnded = loop.subscribe((ended) => {
-      if (ended.type !== 'turn.ended' || ended.loopEnd === undefined) return;
+      if (ended.type !== 'turn.ended' || ended.continuation === undefined || ended.continuation === 'turn') return;
       stopEnded();
       loop.submit(prompt('submitted from ended'));
     });
@@ -90,14 +90,14 @@ describe('loop.wait', () => {
     loop.submit(prompt('start macro'));
     await followUpTurn;
     await loop.waitForIdle();
-    expect(turnEnds.map((ended) => [ended.turnId, ended.loopEnd?.outcome])).toEqual([
-      [followUpTurnId - 1, 'idle'],
-      [followUpTurnId, 'idle'],
+    expect(turnEnds.map((ended) => [ended.turnId, ended.continuation])).toEqual([
+      [followUpTurnId - 1, 'none'],
+      [followUpTurnId, 'none'],
     ]);
     await loop.close();
   });
 
-  it('marks loop end on crash-window settlement only when no work follows', async () => {
+  it('marks continuation on crash-window settlement according to whether work follows', async () => {
     const crashed = createLoop({
       requester: echoRequester(),
       executor: noopExecutor,
@@ -113,9 +113,9 @@ describe('loop.wait', () => {
     await crashed.waitForIdle();
     expect(crashedEnds).toEqual([]);
     await crashed.runTurn(prompt('fresh work after the crash window'));
-    expect(crashedEnds.map((ended) => [ended.turnId, ended.loopEnd?.outcome])).toEqual([
-      [3, undefined],
-      [4, 'idle'],
+    expect(crashedEnds.map((ended) => [ended.turnId, ended.continuation])).toEqual([
+      [3, 'turn'],
+      [4, 'none'],
     ]);
     await crashed.close();
 
@@ -130,12 +130,12 @@ describe('loop.wait', () => {
     expect(parkedEnds).toEqual([]);
     parked.start();
     await parked.waitForIdle();
-    expect(parkedEnds.map((ended) => [ended.turnId, ended.loopEnd?.outcome])).toEqual([[0, 'idle']]);
+    expect(parkedEnds.map((ended) => [ended.turnId, ended.continuation])).toEqual([[0, 'none']]);
     expect(parked.state.messages.map((entry) => entry.role)).toEqual(['user', 'user']);
     await parked.close();
   });
 
-  it('marks loop end on an aborted turn only when no continuation follows', async () => {
+  it('marks continuation on an aborted turn according to whether follow-up work is queued', async () => {
     let call = 0;
     const requester = createMockProviderRequester((_request, signal) => {
       call += 1;
@@ -162,7 +162,7 @@ describe('loop.wait', () => {
     expect((await parked).type).toBe('aborted');
     await loop.waitForIdle();
     expect(loop.state.held).toBe(true);
-    expect(turnEnds.map((ended) => [ended.turnId, ended.loopEnd?.outcome])).toEqual([[0, 'idle']]);
+    expect(turnEnds.map((ended) => [ended.turnId, ended.continuation])).toEqual([[0, 'none']]);
 
     turnEnds.length = 0;
     const secondRequest = loop.wait('llm.delta.part');
@@ -172,9 +172,9 @@ describe('loop.wait', () => {
     loop.abort('user', { continue: true });
     expect((await continued).type).toBe('aborted');
     await loop.waitForIdle();
-    expect(turnEnds.map((ended) => [ended.turnId, ended.loopEnd?.outcome])).toEqual([
-      [1, undefined],
-      [2, 'idle'],
+    expect(turnEnds.map((ended) => [ended.turnId, ended.continuation])).toEqual([
+      [1, 'turn'],
+      [2, 'none'],
     ]);
     await loop.close();
   });
