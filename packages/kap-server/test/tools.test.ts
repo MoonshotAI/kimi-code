@@ -5,13 +5,17 @@ import { join } from 'node:path';
 import {
   IAgentLifecycleService,
   IAgentToolRegistryService,
+  IAgentToolPolicyService,
   getLiveSessionById,
   ISessionToolPolicy,
   IModelCatalog,
   type ExecutableTool,
 } from '@moonshot-ai/agent-core-v2';
-import { listToolsResponseSchema } from '../src/protocol/rest-tool';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import {
+  listToolCatalogResponseSchema,
+  listToolsResponseSchema,
+} from '../src/protocol/rest-tool';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { type RunningServer, startServer } from '../src/start';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
@@ -55,6 +59,7 @@ describe('server-v2 /api/v1 tools', () => {
         throw new Error('modelCatalog.setDefaultModel not exercised in this test');
       },
     };
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_TOWER', '1');
     server = await startServer({
       hostIdentity: TEST_HOST_IDENTITY,
       host: '127.0.0.1',
@@ -67,6 +72,7 @@ describe('server-v2 /api/v1 tools', () => {
   });
 
   afterAll(async () => {
+    vi.unstubAllEnvs();
     if (server !== undefined) {
       await server.close();
       server = undefined;
@@ -126,6 +132,32 @@ describe('server-v2 /api/v1 tools', () => {
       }),
     } as ExecutableTool;
   }
+
+  describe('GET /api/v1/tools/catalog', () => {
+    it('returns the user-configurable builtin catalog before any session exists', async () => {
+      const { status, body } = await getJson<{ tools: { name: string; source: string }[] }>(
+        '/api/v1/tools/catalog',
+      );
+      expect(status).toBe(200);
+      expect(body.code).toBe(0);
+      const tools = listToolCatalogResponseSchema.parse(body.data).tools;
+      expect(tools.length).toBeGreaterThan(0);
+      expect(tools.map((tool) => tool.name)).toEqual(
+        tools.map((tool) => tool.name).toSorted((left, right) => left.localeCompare(right)),
+      );
+      expect(tools).toContainEqual({ name: 'Bash', source: 'builtin' });
+      expect(tools).toContainEqual({ name: 'Read', source: 'builtin' });
+      expect(tools).toContainEqual({ name: 'Skill', source: 'builtin' });
+      expect(tools).toContainEqual({ name: 'TodoList', source: 'builtin' });
+      expect(tools).toContainEqual({ name: 'TowerInit', source: 'builtin' });
+      expect(tools).toContainEqual({ name: 'TowerSpawn', source: 'builtin' });
+      expect(tools).toContainEqual({ name: 'TowerTeardown', source: 'builtin' });
+      expect(tools).toContainEqual({ name: 'TowerSend', source: 'builtin' });
+      expect(tools).toContainEqual({ name: 'TowerComplete', source: 'builtin' });
+      expect(new Set(tools.map((tool) => tool.name)).size).toBe(tools.length);
+      expect(tools.some((tool) => tool.name === 'select_tools')).toBe(false);
+    });
+  });
 
   describe('GET /api/v1/tools', () => {
     it('returns an empty list before any session exists', async () => {
@@ -189,6 +221,39 @@ describe('server-v2 /api/v1 tools', () => {
       const tools = listToolsResponseSchema.parse(body.data).tools;
       expect(tools.find((t) => t.name === 'Bash')).toMatchObject({ active: false });
       expect(tools.find((t) => t.name === 'Read')).toMatchObject({ active: true });
+    });
+
+    it('applies global config changes to existing agents, subagents, and new sessions', async () => {
+      try {
+        const existingId = await createSession();
+        await ensureMainAgent(existingId);
+        await postJson('/api/v1/config', { tools: { disabled: ['Bash'] } });
+
+        const existing = await getJson<{ tools: ToolWire[] }>(
+          `/api/v1/tools?session_id=${existingId}`,
+        );
+        expect(listToolsResponseSchema.parse(existing.body.data).tools.find((tool) => tool.name === 'Bash'))
+          .toMatchObject({ active: false });
+
+        const existingSession = getLiveSessionById(server!.core.accessor, existingId);
+        if (existingSession === undefined) throw new Error(`session ${existingId} not found`);
+        await existingSession.accessor.get(IAgentLifecycleService).create({});
+        const child = existingSession.accessor.get(IAgentLifecycleService).list().at(-1);
+        const childPolicy = existingSession.accessor.get(IAgentLifecycleService)
+          .handleOf(child!.agentId)!
+          .accessor.get(IAgentToolPolicyService);
+        expect(childPolicy.isToolActive('Bash')).toBe(false);
+
+        const createdId = await createSession();
+        await ensureMainAgent(createdId);
+        const created = await getJson<{ tools: ToolWire[] }>(
+          `/api/v1/tools?session_id=${createdId}`,
+        );
+        expect(listToolsResponseSchema.parse(created.body.data).tools.find((tool) => tool.name === 'Bash'))
+          .toMatchObject({ active: false });
+      } finally {
+        await postJson('/api/v1/config', { tools: { disabled: [] } });
+      }
     });
 
     it('rejects an empty session_id with 40001', async () => {

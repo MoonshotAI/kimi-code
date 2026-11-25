@@ -116,6 +116,7 @@ function classifySearchError(error: unknown): string {
 registerAgentToolService(IWebSearchTool, WebSearchTool, {
   name: 'WebSearch',
   domain: 'auth',
+  userConfigurable: true,
   when: (accessor) =>
     accessor
       .get(IWebSearchProviderService)
