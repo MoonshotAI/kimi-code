@@ -1445,7 +1445,7 @@ describe('fullscreen layout', () => {
     await vt.waitForRender();
     rows = screenRows(vt);
     expect(rows.join('\n')).toContain('Page 2/2');
-    expect(rows.join('\n')).toContain('❯ Follow-up behavior');
+    expect(rows.join('\n')).toContain('❯ Editor');
 
     state.ui.setFocus(state.notifyPanel);
     state.ui.requestRender();
