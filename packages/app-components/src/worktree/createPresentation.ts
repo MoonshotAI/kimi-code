@@ -17,12 +17,11 @@ export interface CreateStepView {
   label: string;
   command?: string;
   output?: string;
+  connected: boolean;
 }
 
 export interface CreateBlockView {
   title: string;
-  running: boolean;
-  startedAt: string;
   meta: string | null;
   note: string | null;
   steps: CreateStepView[];
@@ -111,8 +110,6 @@ export function createStepLabel(step: AppWorktreeSetupStep, t: CreateTranslate):
 function staticBlockView(setup: AppWorktreeSetup, t: CreateTranslate): CreateBlockView {
   return {
     title: t(setup.status === 'local' ? 'worktreeCreate.block.local' : 'worktreeCreate.block.created'),
-    running: false,
-    startedAt: setup.startedAt,
     meta: null,
     note: null,
     steps: [],
@@ -134,30 +131,27 @@ export function createBlockView(
     return createBlockView(original, t);
   }
   const running = setup.status === 'running';
-  const steps = setup.steps.map((step, index): CreateStepView => ({
-    key: `${index}:${step.kind}`,
-    kind: step.kind,
-    tone: step.state,
-    label: createStepLabel(step, t),
-    ...(step.command === undefined || step.command.length === 0 ? {} : { command: step.command }),
-    ...(step.output === undefined || step.output.trim().length === 0 ? {} : { output: step.output.trimEnd() }),
-  }));
+  const steps = setup.steps.map((step, index): CreateStepView => {
+    const next = setup.steps[index + 1];
+    return {
+      key: `${index}:${step.kind}`,
+      kind: step.kind,
+      tone: step.state,
+      label: createStepLabel(step, t),
+      ...(step.command === undefined || step.command.length === 0 ? {} : { command: step.command }),
+      ...(step.output === undefined || step.output.trim().length === 0 ? {} : { output: step.output.trimEnd() }),
+      connected: next !== undefined && next.state !== 'pending',
+    };
+  });
+  const commands = setup.commandsRan + (setup.steps.some((step) => step.state === 'running') ? 1 : 0);
   return {
     title: t(`worktreeCreate.block.${blockTitleKey(setup)}`),
-    running,
-    startedAt: setup.startedAt,
-    meta: running ? null : t('worktreeCreate.block.commandsRan', { n: setup.commandsRan }, setup.commandsRan),
+    meta: commands === 0 ? null : t('worktreeCreate.block.commandsRan', { n: commands }, commands),
     note: worktree.includedLocalChanges === true ? t('worktreeCreate.block.includedLocalChanges') : null,
     steps,
     expandable: steps.length > 0,
     defaultOpen: running || setup.status === 'failed',
   };
-}
-
-export function createElapsedSeconds(startedAt: string, nowMs: number): number {
-  const started = Date.parse(startedAt);
-  if (!Number.isFinite(started)) return 0;
-  return Math.max(0, Math.floor((nowMs - started) / 1000));
 }
 
 function action(id: CreateCardActionId, label: string): CreateCardAction {

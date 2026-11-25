@@ -5,7 +5,6 @@ import type { AppSessionWorktree, AppWorktreeSetup, AppWorktreeSetupStep } from 
 import {
   createBlockView,
   createDecisionCardView,
-  createElapsedSeconds,
   createInvalidCardView,
   createStepLabel,
   type CreateTranslate,
@@ -48,7 +47,7 @@ describe('worktree creation step copy', () => {
 });
 
 describe('worktree creation block', () => {
-  it('lists pending steps and hides the command count while running', () => {
+  it('lists pending steps and counts the running command', () => {
     const view = createBlockView(
       worktree({
         status: 'running',
@@ -62,8 +61,7 @@ describe('worktree creation block', () => {
       t,
     );
     expect(view.title).toBe('Creating Worktree');
-    expect(view.running).toBe(true);
-    expect(view.meta).toBeNull();
+    expect(view.meta).toBe('2 commands ran');
     expect(view.defaultOpen).toBe(true);
     expect(view.steps.map((item) => [item.tone, item.label])).toEqual([
       ['done', 'Fetched origin/main'],
@@ -126,23 +124,15 @@ describe('worktree creation block', () => {
     const recreating = worktree({ purpose: 'recreate', status: 'running', steps: [step('prune', 'running'), step('create', 'pending')] });
     const remembered = createBlockView(recreating, t, original);
     expect(remembered.title).toBe('Worktree created');
-    expect(remembered.running).toBe(false);
     expect(remembered.meta).toBe('2 commands ran');
     expect(remembered.steps).toHaveLength(2);
 
     const fallback = createBlockView(recreating, t);
-    expect(fallback).toMatchObject({ title: 'Worktree created', running: false, meta: null, expandable: false, steps: [] });
+    expect(fallback).toMatchObject({ title: 'Worktree created', meta: null, expandable: false, steps: [] });
 
     const failed = worktree({ purpose: 'recreate', status: 'failed', failure: { kind: 'create_failed' } });
     expect(createBlockView(failed, t).title).toBe('Worktree created');
     expect(createBlockView(worktree({ purpose: 'recreate', status: 'local' }), t, original).title).toBe('Switched to Local Mode');
-  });
-
-  it('counts elapsed whole seconds from the start time', () => {
-    const started = '2026-11-18T10:00:00.000Z';
-    expect(createElapsedSeconds(started, Date.parse(started) + 12_400)).toBe(12);
-    expect(createElapsedSeconds(started, Date.parse(started) - 500)).toBe(0);
-    expect(createElapsedSeconds('not a date', 1000)).toBe(0);
   });
 });
 

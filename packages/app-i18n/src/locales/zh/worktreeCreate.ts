@@ -34,7 +34,6 @@ export default {
     stopped: '已终止创建工作树',
     local: '已改用本地模式',
     commandsRan: '运行了 {n} 条命令',
-    elapsed: '{n} 秒',
     includedLocalChanges: '已带入本地未提交的改动（不含暂存状态），原目录不受影响。',
     expand: '展开步骤',
     collapse: '收起步骤',

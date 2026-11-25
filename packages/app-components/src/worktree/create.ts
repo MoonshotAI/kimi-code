@@ -7,7 +7,6 @@ export { useCreateCardActions, type CreateCardActions } from './createCardAction
 export {
   createBlockView,
   createDecisionCardView,
-  createElapsedSeconds,
   createInvalidCardView,
   createStepLabel,
   type CreateBlockView,

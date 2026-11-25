@@ -34,7 +34,6 @@ export default {
     stopped: 'Worktree creation stopped',
     local: 'Switched to Local Mode',
     commandsRan: '{n} command ran | {n} commands ran',
-    elapsed: '{n} s',
     includedLocalChanges:
       'Local uncommitted changes were included (without staging state). The original directory is unaffected.',
     expand: 'Show steps',

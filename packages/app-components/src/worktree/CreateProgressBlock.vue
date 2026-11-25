@@ -4,9 +4,9 @@ import { useI18n } from 'vue-i18n';
 import type { AppSessionWorktree } from '@moonshot-ai/app-core/api';
 import { Icon, Spinner } from '@moonshot-ai/app-ui';
 import { useHistoryState } from '../chat/historyState';
-import { useTickingNow } from '../chat/useTickingNow';
 import { recallCreateRun, rememberCreateRun } from './createBlockMemory';
-import { createBlockView, createElapsedSeconds } from './createPresentation';
+import { createBlockView } from './createPresentation';
+import WorktreeCommand from './WorktreeCommand.vue';
 import WorktreeOutput from './WorktreeOutput.vue';
 
 const props = defineProps<{
@@ -42,14 +42,6 @@ watch(
   },
 );
 
-const nowMs = useTickingNow(() => view.value.running);
-
-const elapsedLabel = computed(() =>
-  view.value.running
-    ? t('worktreeCreate.block.elapsed', { n: createElapsedSeconds(view.value.startedAt, nowMs.value) })
-    : '',
-);
-
 function toggle(): void {
   if (!view.value.expandable) return;
   open.value = !open.value;
@@ -74,9 +66,8 @@ function toggle(): void {
       @click="toggle"
     >
       <span class="wcb-title" role="status">{{ view.title }}</span>
-      <span v-if="view.running" class="wcb-meta wcb-elapsed">{{ elapsedLabel }}</span>
-      <span v-else-if="view.meta" class="wcb-meta">{{ view.meta }}</span>
-      <Icon v-if="view.expandable" class="wcb-car" name="chevron-right" size="sm" aria-hidden="true" />
+      <span v-if="view.meta" class="wcb-meta">{{ view.meta }}</span>
+      <Icon v-if="view.expandable" class="wcb-car" name="chevron-down" size="sm" aria-hidden="true" />
     </component>
     <p v-if="view.note" class="wcb-note">{{ view.note }}</p>
     <ol v-if="effectiveOpen" class="wcb-steps">
@@ -84,7 +75,7 @@ function toggle(): void {
         v-for="step in view.steps"
         :key="step.key"
         class="wcb-step"
-        :class="`is-${step.tone}`"
+        :class="[`is-${step.tone}`, { connected: step.connected }]"
         :data-step="step.kind"
         :data-state="step.tone"
       >
@@ -92,10 +83,10 @@ function toggle(): void {
           <Spinner v-if="step.tone === 'running'" size="sm" />
           <Icon v-else-if="step.tone === 'done'" name="check" size="md" />
           <Icon v-else-if="step.tone === 'failed'" name="alert-triangle" size="md" />
-          <span v-else class="wcb-dot" />
+          <span v-else class="wcb-circle" />
         </span>
         <span class="wcb-label">{{ step.label }}</span>
-        <span v-if="step.command" class="wcb-command" :title="step.command">{{ step.command }}</span>
+        <WorktreeCommand v-if="step.command" class="wcb-command" :text="step.command" />
         <WorktreeOutput v-if="step.output && step.tone !== 'done'" class="wcb-output" :text="step.output" />
       </li>
     </ol>
@@ -141,21 +132,19 @@ function toggle(): void {
   color: var(--color-text-muted);
   transition: color var(--duration-base) var(--ease-out);
 }
-.wcb-elapsed {
-  font-variant-numeric: tabular-nums;
-}
 .wcb-head:not(.is-static):hover .wcb-meta {
   color: var(--color-text);
 }
 .wcb-car {
   flex: none;
-  width: 12px;
-  height: 12px;
-  color: var(--color-text-faint);
+  width: 13px;
+  height: 13px;
+  color: var(--color-text-muted);
+  transform: rotate(-90deg);
   transition: transform var(--duration-base) var(--ease-out);
 }
 .wcb.open .wcb-car {
-  transform: rotate(90deg);
+  transform: none;
 }
 .wcb-note {
   margin: var(--space-1) 0 0;
@@ -164,73 +153,72 @@ function toggle(): void {
   line-height: var(--leading-normal);
 }
 .wcb-steps {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  margin: var(--space-3) 0 var(--space-1);
+  margin: var(--space-3) 0 0;
   padding: 0;
   list-style: none;
 }
 .wcb-step {
+  position: relative;
   display: grid;
-  grid-template-columns: 16px minmax(0, 1fr);
+  grid-template-columns: 15px minmax(0, 1fr);
   column-gap: var(--space-2);
-  row-gap: 2px;
-  align-items: center;
+  padding-bottom: var(--space-2);
+  color: var(--color-text-muted);
+}
+.wcb-step:last-child {
+  padding-bottom: 0;
+}
+.wcb-step.connected::after {
+  content: '';
+  position: absolute;
+  top: 21px;
+  bottom: 2px;
+  left: 7px;
+  width: 1px;
+  background: var(--color-line);
 }
 .wcb-glyph {
+  position: relative;
+  z-index: 1;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 16px;
-  height: 20px;
-  color: var(--color-text-faint);
+  width: 15px;
+  height: 21px;
 }
 .wcb-step.is-done .wcb-glyph {
   color: var(--color-success);
 }
-.wcb-step.is-failed .wcb-glyph {
-  color: var(--color-danger);
-}
-.wcb-step.is-running .wcb-glyph {
+.wcb-step.is-running {
   color: var(--color-text);
 }
-.wcb-dot {
-  width: 5px;
-  height: 5px;
+.wcb-step.is-failed {
+  color: var(--color-danger);
+}
+.wcb-circle {
+  box-sizing: border-box;
+  width: 11px;
+  height: 11px;
+  border: 1.25px solid var(--color-line-strong);
   border-radius: var(--radius-full);
-  background: currentColor;
 }
 .wcb-label {
   min-width: 0;
-  color: var(--color-text);
   font-size: var(--text-base);
-  line-height: 20px;
+  line-height: 21px;
   overflow-wrap: anywhere;
-}
-.wcb-step.is-pending .wcb-label,
-.wcb-step.is-skipped .wcb-label {
-  color: var(--color-text-faint);
-}
-.wcb-step.is-failed .wcb-label {
-  color: var(--color-danger);
 }
 .wcb-command,
 .wcb-output {
   grid-column: 2;
-  min-width: 0;
 }
 .wcb-command {
-  font-family: var(--font-mono);
-  font-size: var(--text-sm);
-  line-height: var(--leading-normal);
-  overflow: hidden;
-  color: var(--color-text-faint);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  user-select: text;
+  margin-top: 3px;
+}
+.wcb-step.is-running .wcb-command {
+  color: var(--color-text-muted);
 }
 .wcb-output {
-  margin-top: var(--space-1);
+  margin-top: 7px;
 }
 </style>

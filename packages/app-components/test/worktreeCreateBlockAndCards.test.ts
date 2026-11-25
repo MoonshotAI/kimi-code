@@ -56,32 +56,26 @@ afterEach(() => {
 });
 
 describe('CreateProgressBlock', () => {
-  it('shows elapsed seconds and every step while running', async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date('2026-11-18T10:00:05.000Z'));
+  it('counts the running command and links reached steps', async () => {
     const worktree = sessionWorktree('running', {}, {
-      startedAt: '2026-11-18T10:00:00.000Z',
+      commandsRan: 1,
       steps: [
         step('fetch', 'done', { ref: 'origin/main', command: 'git fetch --no-tags origin main' }),
         step('create', 'running', { ref: 'origin/main', command: 'git worktree add --no-track -b kimi/1 /w origin/main' }),
-        step('changes', 'pending'),
+        step('changes', 'pending', { command: 'git cherry-pick --no-commit abc' }),
       ],
     });
     mount(CreateProgressBlock, { worktree, sessionId: 's1' });
     await nextTick();
 
     expect(text('.wcb-title')).toBe('Creating Worktree');
-    expect(text('.wcb-elapsed')).toBe('5 s');
-    expect(host.querySelector('.wcb-head svg[data-icon="check"], .wcb-head svg[data-icon="alert-triangle"]')).toBeNull();
+    expect(text('.wcb-meta')).toBe('2 commands ran');
+    expect(host.querySelector('.wcb-head svg[data-icon="chevron-down"]')).not.toBeNull();
     expect(stepRows().map((row) => row.dataset.state)).toEqual(['done', 'running', 'pending']);
-    expect(stepRows()[0]?.querySelector('.wcb-command')?.textContent).toBe('git fetch --no-tags origin main');
+    expect(stepRows().map((row) => row.classList.contains('connected'))).toEqual([true, false, false]);
     expect(stepRows()[0]?.querySelector('svg[data-icon="check"]')).not.toBeNull();
-    expect(stepRows()[2]?.querySelector('.wcb-dot')).not.toBeNull();
-    expect(stepRows()[2]?.querySelector('.wcb-command')).toBeNull();
-
-    vi.advanceTimersByTime(2000);
-    await nextTick();
-    expect(text('.wcb-elapsed')).toBe('7 s');
+    expect(stepRows()[2]?.querySelector('.wcb-circle')).not.toBeNull();
+    expect(stepRows()[2]?.querySelector('.wcb-command')?.textContent).toBe('git cherry-pick --no-commit abc');
   });
 
   it('collapses when created and expands on demand', async () => {
@@ -147,7 +141,6 @@ describe('CreateProgressBlock', () => {
 
     expect(text('.wcb-title')).toBe('Worktree created');
     expect(text('.wcb-meta')).toBe('1 command ran');
-    expect(host.querySelector('.wcb-elapsed')).toBeNull();
     expect(stepRows()).toHaveLength(0);
   });
 });
