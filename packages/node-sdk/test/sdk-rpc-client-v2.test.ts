@@ -56,9 +56,9 @@ import {
   ISessionManager,
   ISessionMcpHandle,
   ISessionLockService,
-  IWorkspaceInstanceManager,
+  IProjectInstanceManager,
   IEnvironmentService,
-  IWorkspaceService,
+  IProjectService,
   MAIN_AGENT_ID,
   OsProcessErrors,
   APIProviderRateLimitError,
@@ -71,7 +71,7 @@ import { ISessionAgentProfileCatalog } from '@moonshot-ai/agent-core-v2/session/
 import { attachmentFileSource } from '@moonshot-ai/agent-core-v2/agent/tools/fileReadSource';
 import { HostFileSystem } from '@moonshot-ai/agent-core-v2/os/backends/node-local/hostFsService';
 import { encodeWorkDirKey } from '@moonshot-ai/agent-core-v2/_base/utils/workdir-slug';
-import { IWorkspacePersistence } from '@moonshot-ai/agent-core-v2/app/workspace/workspacePersistence';
+import { IProjectPersistence } from '@moonshot-ai/agent-core-v2/app/project/projectPersistence';
 import { HostProcessService } from '@moonshot-ai/agent-core-v2/os/backends/node-local/hostProcessService';
 import { FakeEnvironment } from '@moonshot-ai/agent-core-v2/environment/fakeEnvironment';
 import { RemoteEnvironmentProviderFactory } from '@moonshot-ai/agent-core-v2/remote';
@@ -685,7 +685,7 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
     ['its project was removed', async (homeDir, projectId) => {
       const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
       try {
-        await (harness['rpc'] as SDKRpcClientV2).engineAccessor.get(IWorkspaceService).delete(projectId);
+        await (harness['rpc'] as SDKRpcClientV2).engineAccessor.get(IProjectService).delete(projectId);
       } finally {
         await harness.close();
       }
@@ -702,7 +702,7 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
     const reopened = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
     try {
       expect((await reopened.resumeSession({ id: created.id })).workDir).toBe(worktree);
-      const workspaces = (reopened['rpc'] as SDKRpcClientV2).engineAccessor.get(IWorkspaceService);
+      const workspaces = (reopened['rpc'] as SDKRpcClientV2).engineAccessor.get(IProjectService);
       expect((await workspaces.list()).map(({ id, root }) => ({ id, root }))).toEqual([{ id: projectId, root: main }]);
     } finally {
       await reopened.close();
@@ -1974,7 +1974,7 @@ key = "${titleOAuthRef.key}"
         `[workspace]\nadditional_dir = [${JSON.stringify(extraDir)}]\n`,
       );
       const client = harness['rpc'] as SDKRpcClientV2;
-      const manager = client.engineAccessor.get(IWorkspaceInstanceManager);
+      const manager = client.engineAccessor.get(IProjectInstanceManager);
       const acquireSpy = vi.spyOn(manager, 'acquire');
       try {
         await expect(harness.getWorkspaceAdditionalDirs(workDir)).resolves.toEqual([extraDir]);
@@ -1994,7 +1994,7 @@ key = "${titleOAuthRef.key}"
       const managedDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-managed-'));
       tempDirs.push(workDir, extraDir, managedDir);
       const client = harness['rpc'] as SDKRpcClientV2;
-      const workspaces = client.engineAccessor.get(IWorkspaceService);
+      const workspaces = client.engineAccessor.get(IProjectService);
       try {
         await expect(harness.getWorkspaceAdditionalDirs(workDir)).resolves.toEqual([]);
         await workspaces.create({ root: workDir, additionalDirs: [managedDir] });
@@ -2013,7 +2013,7 @@ key = "${titleOAuthRef.key}"
       const home = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-missing-'));
       tempDirs.push(home);
       const missing = join(home, 'missing');
-      const workspaces = (harness['rpc'] as SDKRpcClientV2).engineAccessor.get(IWorkspaceService);
+      const workspaces = (harness['rpc'] as SDKRpcClientV2).engineAccessor.get(IProjectService);
       try {
         await expect(harness.getWorkspaceAdditionalDirs(missing)).resolves.toEqual([]);
         for (const query of [
@@ -2036,7 +2036,7 @@ key = "${titleOAuthRef.key}"
       const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
       const extraDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-extra-'));
       tempDirs.push(extraDir);
-      const workspaces = (harness['rpc'] as SDKRpcClientV2).engineAccessor.get(IWorkspaceService);
+      const workspaces = (harness['rpc'] as SDKRpcClientV2).engineAccessor.get(IProjectService);
       try {
         const project = await workspaces.resolveImplicit(workDir);
         await workspaces.update(project.id, { additionalDirs: [extraDir] });
@@ -2054,7 +2054,7 @@ key = "${titleOAuthRef.key}"
       const extraDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-extra-'));
       tempDirs.push(workDir, extraDir);
       const client = harness['rpc'] as SDKRpcClientV2;
-      const manager = client.engineAccessor.get(IWorkspaceInstanceManager);
+      const manager = client.engineAccessor.get(IProjectInstanceManager);
       const lease = await manager.acquire({ cwd: workDir });
       const { program } = lease.instance;
       const dirs = program.dirs;
@@ -2736,7 +2736,7 @@ key = "${titleOAuthRef.key}"
       const before = getLiveSessionById(client.engineAccessor, 'ses_dirs_reload')!;
       const workspaceId = before.accessor.get(ISessionContext).workspaceId;
       const currentProgram = () => {
-        const current = client.engineAccessor.get(IWorkspaceInstanceManager).get(workspaceId);
+        const current = client.engineAccessor.get(IProjectInstanceManager).get(workspaceId);
         if (current === undefined) throw new Error('expected the current workspace program');
         return current.program;
       };
@@ -3605,8 +3605,8 @@ describe('SDKRpcClientV2 workspace trust', () => {
     tempDirs.push(elsewhere);
     const { engineAccessor } = harness['rpc'] as SDKRpcClientV2;
     try {
-      const project = await engineAccessor.get(IWorkspaceService).resolveImplicit(main);
-      await engineAccessor.get(IWorkspacePersistence).update((catalog) => ({
+      const project = await engineAccessor.get(IProjectService).resolveImplicit(main);
+      await engineAccessor.get(IProjectPersistence).update((catalog) => ({
         ...catalog,
         workspaces: catalog.workspaces.map((entry) => (entry.id === project.id ? { ...entry, root: elsewhere } : entry)),
       }));
@@ -3628,7 +3628,7 @@ describe('SDKRpcClientV2 workspace trust', () => {
       input: { readonly primary: string; readonly workDir: string; readonly id: string },
     ): Promise<string> {
       const { engineAccessor } = harness['rpc'] as SDKRpcClientV2;
-      const project = await engineAccessor.get(IWorkspaceService).create({ root: input.primary, additionalDirs: [], name: 'Managed' });
+      const project = await engineAccessor.get(IProjectService).create({ root: input.primary, additionalDirs: [], name: 'Managed' });
       const sessions = engineAccessor.get(ISessionManager);
       await sessions.create({ workspaceId: project.id, workDir: input.workDir, sessionId: input.id });
       await sessions.close(input.id);
@@ -3706,7 +3706,7 @@ describe('SDKRpcClientV2 workspace trust', () => {
       const notFound = { name: 'KimiError', code: 'session.not_found' };
       try {
         const projectId = await managedSession(harness, { primary: worktree, workDir: worktree, id: 'ses_managed' });
-        await (harness['rpc'] as SDKRpcClientV2).engineAccessor.get(IWorkspaceService).delete(projectId);
+        await (harness['rpc'] as SDKRpcClientV2).engineAccessor.get(IProjectService).delete(projectId);
 
         await expect(harness.getWorkspaceTrustInfo(worktree, missing)).rejects.toMatchObject(notFound);
         await expect(harness.trustWorkspace(worktree, missing)).rejects.toMatchObject(notFound);
@@ -3927,7 +3927,7 @@ describe('SDKRpcClientV2 workspace MCP servers', () => {
 
   it('stop once listed while the project stays open', async () => {
     const { client, workDir, started } = await setup();
-    const lease = await client.engineAccessor.get(IWorkspaceInstanceManager).acquire({ cwd: workDir });
+    const lease = await client.engineAccessor.get(IProjectInstanceManager).acquire({ cwd: workDir });
     try {
       const listed = await client.listWorkspaceMcpServers(workDir);
 
@@ -4000,7 +4000,7 @@ describe('SDKRpcClientV2 workspace MCP servers', () => {
     },
   ])('stop after a session $session fails to open while the project stays open', async ({ open }) => {
     const { client, workDir, started } = await setup();
-    const lease = await client.engineAccessor.get(IWorkspaceInstanceManager).acquire({ cwd: workDir });
+    const lease = await client.engineAccessor.get(IProjectInstanceManager).acquire({ cwd: workDir });
     try {
       await expect(open(client.engineAccessor.get(ISessionManager), workDir, client)).rejects.toThrow();
 
@@ -4161,7 +4161,7 @@ describe('SDKRpcClientV2 MCP servers of a working directory', () => {
     await writeServers(layout.worktree, { '.kimi-code/mcp.json': 'worktree' });
     const { harness } = await makeHarness();
     const spawn = vi.spyOn(HostProcessService.prototype, 'spawn');
-    const project = await (harness['rpc'] as SDKRpcClientV2).engineAccessor.get(IWorkspaceInstanceManager).acquire({ cwd: layout.main });
+    const project = await (harness['rpc'] as SDKRpcClientV2).engineAccessor.get(IProjectInstanceManager).acquire({ cwd: layout.main });
     try {
       const listed = await harness.listWorkspaceMcpServers(...query(layout));
 

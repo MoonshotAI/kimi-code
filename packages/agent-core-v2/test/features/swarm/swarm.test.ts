@@ -33,7 +33,7 @@ import { AgentSwarmTool } from '#/features/swarm/tools/agent-swarm/agentSwarmToo
 import { ISessionSubagentService } from '#/session/subagent/subagent';
 import { SessionSubagentService } from '#/session/subagent/subagentService';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
-import { IWorkspaceInstanceManager } from '#/workspace/workspaceInstance/workspaceInstanceManager';
+import { IProjectInstanceManager } from '#/project/projectInstance/projectInstanceManager';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';

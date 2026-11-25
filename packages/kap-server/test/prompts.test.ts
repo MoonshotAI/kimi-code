@@ -15,7 +15,7 @@ import {
   IFileService,
   ISessionContext,
   ISessionMetadata,
-  IWorkspaceInstanceManager,
+  IProjectInstanceManager,
   MAX_IMAGE_DECODE_BYTES,
   Error2,
   ErrorCodes,
@@ -1704,7 +1704,7 @@ describe('server-v2 /api/v1 prompts', () => {
 
     const remoteRoot = await realpath(await mkdtemp(join(tmpdir(), 'kimi-prompt-fake-remote-')));
     try {
-      const instance = server!.core.accessor.get(IWorkspaceInstanceManager).get(workspaceId);
+      const instance = server!.core.accessor.get(IProjectInstanceManager).get(workspaceId);
       const fake = new FakeEnvironment(
         { environmentId: 'fake-remote', generation: 'fake-generation' },
         { capabilities: ['fs'] },
@@ -1816,7 +1816,7 @@ describe('server-v2 /api/v1 prompts', () => {
     const session = getLiveSessionById(server!.core.accessor, id);
     const workspaceId = session!.accessor.get(ISessionContext).workspaceId;
     try {
-      const instance = server!.core.accessor.get(IWorkspaceInstanceManager).get(workspaceId);
+      const instance = server!.core.accessor.get(IProjectInstanceManager).get(workspaceId);
       const fake = new FakeEnvironment(
         { environmentId: 'broken-remote', generation: 'broken-generation' },
         { capabilities: ['fs'] },

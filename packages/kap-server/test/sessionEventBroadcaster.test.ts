@@ -37,9 +37,9 @@ import {
   ISessionTokenCountingService,
   ISessionToolPolicy,
   ISessionUsageService,
-  IWorkspaceInstanceManager,
-  IWorkspaceService,
-  IWorkspaceSessions,
+  IProjectInstanceManager,
+  IProjectService,
+  IProjectSessions,
   MAIN_AGENT_ID,
   interactions,
   makeAgentScopeContext,
@@ -527,7 +527,7 @@ function makeCore(
           onDidArchiveSession: managerEvents?.onDidArchiveSession,
         };
       }
-      if (token === IWorkspaceInstanceManager) {
+      if (token === IProjectInstanceManager) {
         return {
           list: () => [{ program: { accessor: handler.accessor } }],
           onDidChange: () => ({ dispose: () => {} }),
@@ -545,13 +545,13 @@ function makeCore(
           }),
         };
       }
-      if (token === IWorkspaceService) {
+      if (token === IProjectService) {
         return { get: async () => ({ root: '/repo/a' }) };
       }
       if (token === IConfigService) {
         return { ready: Promise.resolve(), getAll: () => ({}), ...policySources.config };
       }
-      if (token === IWorkspaceSessions) {
+      if (token === IProjectSessions) {
         return { listRecent: async () => [], count: async () => 3 };
       }
       return undefined;

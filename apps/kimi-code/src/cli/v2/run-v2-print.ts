@@ -18,7 +18,7 @@ import {
   ISessionManager,
   ISessionRunGate,
   ITelemetryService,
-  IWorkspaceSessions,
+  IProjectSessions,
   PRINT_MAX_TURNS_DEFAULT,
   PRINT_WAIT_CEILING_S_DEFAULT,
   applyPrintModeConfigDefaults,
@@ -404,7 +404,7 @@ async function resolveNativeSession(
   }
 
   if (opts.continue) {
-    const [previous] = (await services.get(IWorkspaceSessions).listForWorkdir(workDir, { limit: 1 })).items;
+    const [previous] = (await services.get(IProjectSessions).listForWorkdir(workDir, { limit: 1 })).items;
     if (previous !== undefined) {
       const session = await resumeById(previous.id);
       const agentContext = await ensureMainAgent(session);

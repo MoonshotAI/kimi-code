@@ -3,7 +3,7 @@ import { LOCAL_ENVIRONMENT_ID, type EnvironmentBinding } from '#/environment/env
 import type { HostEnvironmentInfo } from '#/os/interface/hostEnvironment';
 import type { ISessionContext } from '#/session/sessionContext/sessionContext';
 import type { SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
-import type { ISessionWorkspaceInfo } from '#/session/workspaceInfo/workspaceInfo';
+import type { ISessionProjectInfo } from '#/session/projectInfo/projectInfo';
 
 export interface EffectiveWorkspaceRoots {
   readonly workDir: string;
@@ -30,7 +30,7 @@ export function workDirToPin(startDir: string, projectRoot: string): string | un
 export function resolveEffectiveWorkspaceRoots(
   session: Pick<ISessionContext, 'workspaceId' | 'cwd'>,
   binding: EnvironmentBinding | undefined,
-  workspace: Pick<ISessionWorkspaceInfo, 'primaryByWorkspace' | 'additionalDirs'>,
+  workspace: Pick<ISessionProjectInfo, 'primaryByWorkspace' | 'additionalDirs'>,
   host?: Pick<HostEnvironmentInfo, 'cwd' | 'homeDir'>,
 ): EffectiveWorkspaceRoots {
   const environmentId = binding?.environmentId ?? LOCAL_ENVIRONMENT_ID;

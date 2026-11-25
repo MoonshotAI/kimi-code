@@ -4,9 +4,9 @@ import type { IEnvironmentService } from '#/app/environment/environment';
 import type { McpServerConfig } from '#/mcpCore/config-schema';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { isHostFsNotDirectory, isHostFsNotFound } from '#/os/interface/hostFsErrors';
-import type { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
-import type { McpDirs } from '#/workspace/workspaceMcpConfig/workspaceMcpConfig';
-import type { IWorkspaceTrust, WorkspaceTrustChange } from '#/workspace/workspaceTrust/workspaceTrust';
+import type { IProjectContext } from '#/project/projectContext/projectContext';
+import type { McpDirs } from '#/project/projectMcpConfig/projectMcpConfig';
+import type { IProjectTrust, ProjectTrustChange } from '#/project/projectTrust/projectTrust';
 
 import type { ProgramDependencies } from './programDependencies';
 import { ProgramMcp, type ProgramMcpLease } from './programMcp';
@@ -18,14 +18,14 @@ type OwnDir =
 
 const PRIMARY: OwnDir = { kind: 'primary' };
 
-const MISSING_DIR_TRUST: IWorkspaceTrust = {
+const MISSING_DIR_TRUST: IProjectTrust = {
   _serviceBrand: undefined,
   ready: Promise.resolve(),
   get: () => Promise.resolve(false),
   isTrusted: () => false,
   trust: () => Promise.reject(new Error('a working directory that no longer exists cannot be trusted')),
   untrust: () => Promise.reject(new Error('a working directory that no longer exists cannot be untrusted')),
-  onDidChange: Event.None as Event<WorkspaceTrustChange>,
+  onDidChange: Event.None as Event<ProjectTrustChange>,
 };
 
 export class ProgramMcpSets {
@@ -36,11 +36,11 @@ export class ProgramMcpSets {
 
   constructor(
     private readonly environments: IEnvironmentService,
-    private readonly context: IWorkspaceContext,
+    private readonly context: IProjectContext,
     private readonly dependencies: ProgramDependencies,
     private readonly hostFs: IHostFileSystem,
     private readonly dirs: McpDirs,
-    private readonly trust: IWorkspaceTrust,
+    private readonly trust: IProjectTrust,
   ) {
     this.primary = this.setFor(dirs, trust);
   }
@@ -87,7 +87,7 @@ export class ProgramMcpSets {
     return projectDir === undefined || projectDir === root ? PRIMARY : { kind: 'checkout', dir: projectDir };
   }
 
-  private setAt(sets: Map<string, ProgramMcp>, dir: string, trust: IWorkspaceTrust): ProgramMcp {
+  private setAt(sets: Map<string, ProgramMcp>, dir: string, trust: IProjectTrust): ProgramMcp {
     const key = workspaceRootKey(dir);
     let set = sets.get(key);
     if (set === undefined) {
@@ -97,7 +97,7 @@ export class ProgramMcpSets {
     return set;
   }
 
-  private setFor(dirs: McpDirs, trust: IWorkspaceTrust): ProgramMcp {
+  private setFor(dirs: McpDirs, trust: IProjectTrust): ProgramMcp {
     return new ProgramMcp(this.environments, this.context, this.dependencies, this.hostFs, dirs, trust);
   }
 }

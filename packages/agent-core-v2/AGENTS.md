@@ -6,7 +6,7 @@
 
 - 引擎是 DI × Scope 架构。`LifecycleScope` 有三个层级：`App`、`Session`、`Agent`（`src/app/scopes.ts`）。
 - L3 单元层提供 `Service` 和 `Fiber` 单元、集合贡献点，以及 `src/features/` 里的 Feature 接缝。
-- `WorkspaceInstance` 和 `Program` 图在运行时通过 `IWorkspaceInstanceManager` 实例化；App 作用域的 `ISessionManager` 通过 `Program` 为每个工作区创建会话控制器。
+- `ProjectInstance` 和 `Program` 图在运行时通过 `IProjectInstanceManager` 实例化；App 作用域的 `ISessionManager` 通过 `Program` 为每个项目创建会话控制器。
 
 ## 远程执行（`src/remote`）
 

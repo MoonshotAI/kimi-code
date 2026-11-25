@@ -47,7 +47,7 @@ import { resolveWorkspacePath } from '#/session/workspaceContext/workspacePaths'
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import type { ISessionContext } from '#/session/sessionContext/sessionContext';
 import type { ISessionWorkdir } from '#/session/workdir/workdir';
-import type { ISessionWorkspaceInfo } from '#/session/workspaceInfo/workspaceInfo';
+import type { ISessionProjectInfo } from '#/session/projectInfo/projectInfo';
 import { JsonAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDocumentStore';
 import type { RunnableToolExecution } from '#/tool/toolContract';
 
@@ -186,7 +186,7 @@ describe('AgentFileHistoryService', () => {
             remove: async () => {},
           } as unknown as IHostFileSystem,
           { handleOf: () => undefined } as unknown as IAgentLifecycleService,
-          { primaryByWorkspace: { wd_test: PROJECT_ROOT } } as unknown as ISessionWorkspaceInfo,
+          { primaryByWorkspace: { wd_test: PROJECT_ROOT } } as unknown as ISessionProjectInfo,
         ),
       );
     } finally {

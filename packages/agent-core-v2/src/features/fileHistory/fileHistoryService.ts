@@ -19,7 +19,7 @@ import { IBlobStore } from '#/persistence/interface/blobStore';
 import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionWorkdir } from '#/session/workdir/workdir';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
-import { ISessionWorkspaceInfo } from '#/session/workspaceInfo/workspaceInfo';
+import { ISessionProjectInfo } from '#/session/projectInfo/projectInfo';
 import {
   hostWorkspacePathSemantics,
   resolveWorkspacePath,
@@ -73,7 +73,7 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
     @IAtomicDocumentStore private readonly docs: IAtomicDocumentStore,
     @IHostFileSystem private readonly hostFs: IHostFileSystem,
     @IAgentLifecycleService private readonly agentLifecycle: IAgentLifecycleService,
-    @ISessionWorkspaceInfo private readonly workspaceInfo: ISessionWorkspaceInfo,
+    @ISessionProjectInfo private readonly projectInfo: ISessionProjectInfo,
   ) {
     super();
     this.agentState.contributeState(fileHistoryKey);
@@ -353,7 +353,7 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
       docs: this.docs,
       hostFs: this.hostFs,
       workspaceId: this.sessionCtx.workspaceId,
-      projectRoot: this.workspaceInfo.primaryByWorkspace[this.sessionCtx.workspaceId],
+      projectRoot: this.projectInfo.primaryByWorkspace[this.sessionCtx.workspaceId],
       placement: {
         environmentId: this.workdir.environmentId,
         environmentCwd: this.workdir.cwd,

@@ -56,7 +56,7 @@ kimi acp
 | `session/list` | 是 | 枚举磁盘会话，可按 `cwd` 过滤 |
 | `session/fork` | 是 | 从源会话分叉；请求上的 `cwd` / `additionalDirectories` / `mcpServers` 会被忽略并写 warn |
 | `session/close` | 是 | 尽力拆除：中断进行中的 turn、释放会话级资源并关闭存活会话；未知 id 不算错误 |
-| `session/delete` | 是 | 永久删除会话及其持久化数据；未知 id 返回 `invalidParams (-32602)` |
+| `session/delete` | 是 | 永久删除会话及其持久化数据。后续的 `session/list` 调用会从列表中排除该会话。未知 ID 返回 `invalidParams (-32602)`。 |
 | `session/prompt` | 是 | 接受 `text` / `image` / `resource` / `resource_link` 内容块，流式输出 `agent_message_chunk`。回合开始之后失败时返回 JSON-RPC 错误：认证失败返回 `authRequired (-32000)`，其他失败返回 `-32603`，`message` 是错误信息，错误码放在 `data.code`。回复被供应商的内容过滤拦下时，以停止原因 `refusal` 结束；发出 `session/cancel` 之后失败的回合，仍以 `cancelled` 结束 |
 | `session/cancel` | 是 | 中断当前 turn（针对 prompt 的 JSON-RPC `$/cancel_request` 走同一条取消路径） |
 | `session/set_mode` | 是 | 校验 `modeId`，与 `set_config_option({configId:'mode'})` 走同一个模式切换 |

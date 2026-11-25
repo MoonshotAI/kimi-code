@@ -9,12 +9,12 @@ import {
   IAgentEnvironmentBindingService,
   ISessionContext,
   ISessionWorkdir,
-  IWorkspaceService,
+  IProjectService,
   IAgentLifecycleService,
   ensureMainAgent,
   ISessionManager,
   ISessionMcpHandle,
-  IWorkspaceInstanceManager,
+  IProjectInstanceManager,
   SyncDescriptor,
 } from '@moonshot-ai/agent-core-v2';
 import { createFakeModel, say, type FakeModel } from '@moonshot-ai/testkit/model';
@@ -99,7 +99,7 @@ describe('acp-server session lifecycle', () => {
     sessionId: string,
   ): Promise<readonly { readonly name: string; readonly status: string; readonly error?: string }[]> {
     const lease = await c.server.core.accessor
-      .get(IWorkspaceInstanceManager)
+      .get(IProjectInstanceManager)
       .acquire({ cwd: homeDir! });
     try {
       const handle = c.server.core.accessor.get(ISessionManager).get(sessionId);
@@ -335,17 +335,20 @@ describe('acp-server session lifecycle', () => {
         sessionId: string;
       };
 
+      const before = (await c.send('session/list', {})) as { sessions: { sessionId: string }[] };
+      expect(before.sessions.map((session) => session.sessionId)).toContain(created.sessionId);
+
       const deleted = await c.send('session/delete', { sessionId: created.sessionId });
       expect(deleted).toEqual({});
-      await expect(
-        c.send('session/prompt', { sessionId: created.sessionId, prompt: [] }),
-      ).rejects.toThrow(/-32602/);
 
       const listed = (await c.send('session/list', {})) as {
         sessions: { sessionId: string }[];
       };
       expect(listed.sessions.some((s) => s.sessionId === created.sessionId)).toBe(false);
 
+      await expect(
+        c.send('session/prompt', { sessionId: created.sessionId, prompt: [] }),
+      ).rejects.toThrow(/-32602/);
       await expect(
         c.send('session/delete', { sessionId: created.sessionId }),
       ).rejects.toThrow(/-32602/);
@@ -449,7 +452,7 @@ describe('acp-server session lifecycle', () => {
       expect(created.sessionId).toMatch(/^session_/);
 
       const lease = await c.server.core.accessor
-        .get(IWorkspaceInstanceManager)
+        .get(IProjectInstanceManager)
         .acquire({ cwd: homeDir! });
       try {
         const dirs = lease.instance.program.dirs;
@@ -581,7 +584,7 @@ describe('acp-server session lifecycle', () => {
 
       const handle = c.server.core.accessor.get(ISessionManager).get(created.sessionId)!;
       const context = handle.accessor.get(ISessionContext);
-      const project = await c.server.core.accessor.get(IWorkspaceService).get(context.workspaceId);
+      const project = await c.server.core.accessor.get(IProjectService).get(context.workspaceId);
       expect(await realpath(project!.root)).toBe(await realpath(main));
       expect(context.cwd).toBe(worktree);
       const inWorktree = (await c.send('session/list', { cwd: worktree })) as {

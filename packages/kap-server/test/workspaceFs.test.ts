@@ -1,8 +1,8 @@
 import {
   IEnvironmentService,
   IModelCatalog,
-  IWorkspaceInstanceManager,
-  IWorkspaceService,
+  IProjectInstanceManager,
+  IProjectService,
 } from '@moonshot-ai/agent-core-v2';
 import { mkdir, mkdtemp, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';

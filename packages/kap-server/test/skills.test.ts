@@ -10,7 +10,7 @@ import {
   IAgentLoopService,
   IAgentSkillService,
   IConfigService,
-  IWorkspaceService,
+  IProjectService,
   MAIN_AGENT_ID,
   closeSessionById,
   getLiveSessionById,
@@ -237,7 +237,7 @@ describe('server-v2 /api/v1 skills', () => {
           session = await create({ workspace_id: await registerWorkspace(main, [worktree]), metadata: { cwd: worktree } });
         } else {
           const { workspace_id: project } = await create({ cwd: main });
-          await server!.core.accessor.get(IWorkspaceService).update(project, { additionalDirs: [worktree] });
+          await server!.core.accessor.get(IProjectService).update(project, { additionalDirs: [worktree] });
           session = await create({ cwd: worktree });
         }
 
