@@ -175,11 +175,11 @@ async function copyPath(): Promise<void> {
       </button>
     </Tooltip>
 
-    <Transition name="menu-pop">
+    <Transition name="ui-menu-fade">
       <Menu
         v-if="menuOpen"
         ref="menuRef"
-        class="open-in-menu"
+        class="ui-menu-floating open-in-menu"
         :style="menuStyle"
         @click.stop
       >
@@ -253,23 +253,6 @@ async function copyPath(): Promise<void> {
 }
 .open-in-icon { width: 16px; height: 16px; border-radius: 4px; }
 
-.open-in-menu {
-  position: fixed;
-  top: 0;
-  left: 0;
-  z-index: var(--z-dropdown);
-}
-.menu-pop-enter-active {
-  transition: opacity var(--duration-base) var(--ease-out);
-}
-.menu-pop-leave-active {
-  transition: opacity var(--duration-fast) var(--ease-out);
-  pointer-events: none;
-}
-.menu-pop-enter-from,
-.menu-pop-leave-to {
-  opacity: 0;
-}
 .om-icon { width: 16px; height: 16px; flex: none; border-radius: 4px; }
 .om-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 </style>

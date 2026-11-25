@@ -283,8 +283,17 @@ function isObjectiveEditedSinceTurnStart(context: GoalOperationContext, turnId: 
   return revision !== undefined && revision !== context.effects.objectiveRevision;
 }
 
+function assertGoalDriverAvailable(context: GoalOperationContext): void {
+  if (context.runtime.get(IAgentToolPolicyService).isToolActive('UpdateGoal')) return;
+  throw new Error2(
+    ErrorCodes.VALIDATION_FAILED,
+    'Goal mode requires the UpdateGoal tool; enable it before creating or resuming a goal',
+  );
+}
+
 async function createGoal(context: GoalOperationContext, input: CreateGoalInput, actor: GoalActor = 'user'): Promise<GoalSnapshot> {
   assertSupportedAgent(context);
+  assertGoalDriverAvailable(context);
   const objective = validateObjective(context, input.objective);
   prepareForGoalCreation(context, input.replace === true);
   const wallClockResumedAt = Date.now();
@@ -378,6 +387,7 @@ async function resumeGoal(context: GoalOperationContext, input: ResumeGoalInput 
   assertSupportedAgent(context);
   const state = requireState(context);
   if (state.status === 'active') return toSnapshot(context, state);
+  assertGoalDriverAvailable(context);
   if (state.status !== 'paused' && state.status !== 'blocked') {
     throw new Error2(
       ErrorCodes.GOAL_NOT_RESUMABLE,
@@ -395,6 +405,7 @@ async function resumeGoal(context: GoalOperationContext, input: ResumeGoalInput 
   if (budgetBlocked !== null) return budgetBlocked;
   if (canLaunchContinuation(context)) {
     try {
+      await context.runtime.get(IAgentLoopService).start();
       launchContinuationTurn(context, state.goalId);
     } catch (error) {
       await settleGoalAfterContinuationFailure(context, error, state.goalId);

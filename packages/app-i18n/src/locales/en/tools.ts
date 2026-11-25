@@ -1,4 +1,14 @@
 export default {
+  mcpAuth: {
+    approval: 'Waiting for permission to start authorization for {server}.',
+    preparing: 'Preparing authorization for {server}…', waiting: 'Authorize {server} in your browser.',
+    reconnecting: 'Authorized. Connecting to {server}…', connected: 'Connected to {server}.',
+    unavailable: 'No valid authorization link for {server}. Stop this request and try again.',
+    cancelled: 'Authorization for {server} was cancelled.', failed: 'Authorization for {server} did not finish.',
+    expired: 'Authorization for {server} expired. Start a new request.',
+    reconnectFailed: 'Authorized, but could not connect to {server}. Retry the connection.',
+    open: 'Open authorization page', blocked: 'Could not open your browser. Try the button again.',
+  },
   browser: {
     "noClickTarget": "No click: no interactive target",
     "nearbyCount": "{count} nearby elements",

@@ -5,6 +5,7 @@ import { setKimiClientDeps } from '../src/client/deps';
 const apiMock = {
   getPluginInfo: vi.fn(),
   getMcpAuthStatuses: vi.fn(),
+  inspectMcpAuthStatuses: vi.fn(),
   beginMcpAuth: vi.fn(),
   completeMcpAuth: vi.fn(),
   cancelMcpAuth: vi.fn(),
@@ -54,6 +55,7 @@ describe('useMcpAuthorization', () => {
     vi.resetAllMocks();
     apiMock.getPluginInfo.mockResolvedValue({ skills: [], mcpServers: [] });
     apiMock.getMcpAuthStatuses.mockResolvedValue([]);
+    apiMock.inspectMcpAuthStatuses.mockResolvedValue([]);
     apiMock.beginMcpAuth.mockResolvedValue(authorizationRequired());
     apiMock.completeMcpAuth.mockImplementation(() => new Promise(() => {}));
     apiMock.cancelMcpAuth.mockResolvedValue(null);
@@ -236,7 +238,7 @@ describe('useMcpAuthorization', () => {
         { name: 'second', runtimeName: 'plugin-vercel:second', enabled: true, transport: 'http' },
       ],
     });
-    apiMock.getMcpAuthStatuses.mockResolvedValue([
+    apiMock.inspectMcpAuthStatuses.mockResolvedValue([
       { name: 'plugin-vercel:second', authStatus: 'oauth-required' },
       { name: 'plugin-vercel:first', authStatus: 'oauth-required' },
       { name: 'plugin-vercel:stdio', authStatus: 'not-applicable' },
@@ -264,7 +266,7 @@ describe('useMcpAuthorization', () => {
         transport: 'http',
       }],
     });
-    apiMock.getMcpAuthStatuses.mockResolvedValue([
+    apiMock.inspectMcpAuthStatuses.mockResolvedValue([
       { name: target.runtimeName, authStatus: 'oauth-required' },
     ]);
     const auth = useMcpAuthorization();
@@ -294,7 +296,7 @@ describe('useMcpAuthorization', () => {
         transport: 'http',
       }],
     });
-    apiMock.getMcpAuthStatuses.mockResolvedValue([
+    apiMock.inspectMcpAuthStatuses.mockResolvedValue([
       { name: target.runtimeName, authStatus: 'oauth-required' },
     ]);
     const auth = useMcpAuthorization();
@@ -305,6 +307,90 @@ describe('useMcpAuthorization', () => {
     expect(popup.location.href).toBe(authorizationUrl);
     expect(apiMock.completeMcpAuth).toHaveBeenCalledTimes(1);
   });
+
+  it('falls back to an explicit OAuth status when active inspection is unavailable', async () => {
+    apiMock.getPluginInfo.mockResolvedValue({
+      skills: [],
+      mcpServers: [{
+        name: target.serverName,
+        runtimeName: target.runtimeName,
+        enabled: true,
+        transport: 'http',
+      }],
+    });
+    apiMock.getMcpAuthStatuses.mockResolvedValue([
+      { name: target.runtimeName, authStatus: 'oauth-required' },
+    ]);
+    apiMock.inspectMcpAuthStatuses.mockResolvedValue([
+      { name: target.runtimeName, authStatus: 'unavailable' },
+    ]);
+    const auth = useMcpAuthorization();
+
+    await auth.authorizePlugin('vercel');
+
+    expect(apiMock.beginMcpAuth).toHaveBeenCalledWith({
+      source: 'plugin',
+      pluginId: 'vercel',
+      serverName: 'vercel',
+    });
+    expect(open).toHaveBeenCalledTimes(1);
+  });
+
+  it('discovers OAuth through targeted active inspection after offline lookup misses it', async () => {
+    apiMock.getPluginInfo.mockResolvedValue({
+      skills: [],
+      mcpServers: [
+        { name: 'stdio', runtimeName: 'plugin-vercel:stdio', enabled: true, transport: 'stdio' },
+        { name: 'disabled', runtimeName: 'plugin-vercel:disabled', enabled: false, transport: 'http' },
+        {
+          name: target.serverName,
+          runtimeName: target.runtimeName,
+          enabled: true,
+          transport: 'http',
+        },
+      ],
+    });
+    apiMock.getMcpAuthStatuses.mockResolvedValue([
+      { name: target.runtimeName, authStatus: 'not-applicable' },
+    ]);
+    apiMock.inspectMcpAuthStatuses.mockResolvedValue([
+      { name: target.runtimeName, authStatus: 'oauth-required' },
+    ]);
+    const auth = useMcpAuthorization();
+
+    await auth.authorizePlugin('vercel');
+
+    expect(apiMock.inspectMcpAuthStatuses).toHaveBeenCalledWith([
+      { source: 'plugin', pluginId: 'vercel', serverName: 'vercel' },
+    ]);
+    expect(apiMock.beginMcpAuth).toHaveBeenCalledWith({
+      source: 'plugin',
+      pluginId: 'vercel',
+      serverName: 'vercel',
+    });
+    expect(open).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['oauth-required', 'not-applicable'] as const)(
+    'honors the offline %s state when the server accepts anonymous connections',
+    async (offlineStatus) => {
+      apiMock.getPluginInfo.mockResolvedValue({
+        skills: [],
+        mcpServers: [{ name: target.serverName, runtimeName: target.runtimeName, enabled: true, transport: 'http' }],
+      });
+      apiMock.getMcpAuthStatuses.mockResolvedValue([{ name: target.runtimeName, authStatus: offlineStatus }]);
+      apiMock.inspectMcpAuthStatuses.mockResolvedValue([{ name: target.runtimeName, authStatus: 'not-applicable' }]);
+      const auth = useMcpAuthorization();
+
+      await auth.refresh(target.pluginId);
+      expect(auth.states[target.runtimeName]?.status).toBe(offlineStatus);
+      expect(apiMock.beginMcpAuth).not.toHaveBeenCalled();
+      await auth.authorizePlugin(target.pluginId);
+      const expectedFlows = offlineStatus === 'oauth-required' ? 1 : 0;
+      expect(apiMock.beginMcpAuth).toHaveBeenCalledTimes(expectedFlows);
+      expect(open).toHaveBeenCalledTimes(expectedFlows);
+    },
+  );
 
   it('shares a flow across runtime names without reopening or cancelling peers', async () => {
     const completion = deferred<null>();
@@ -459,6 +545,46 @@ describe('useMcpAuthorization', () => {
     expect(auth.states[target.runtimeName]?.status).toBe('oauth-authorized');
   });
 
+  it('refreshes plugin details with targeted required and authorized states without starting authorization', async () => {
+    apiMock.getPluginInfo.mockResolvedValue({
+      skills: [],
+      mcpServers: [{
+        name: target.serverName,
+        runtimeName: target.runtimeName,
+        enabled: true,
+        transport: 'http',
+      }],
+    });
+    apiMock.getMcpAuthStatuses.mockResolvedValue([
+      { name: target.runtimeName, authStatus: 'not-applicable' },
+    ]);
+    apiMock.inspectMcpAuthStatuses.mockResolvedValue([
+      { name: target.runtimeName, authStatus: 'oauth-required' },
+    ]);
+    const auth = useMcpAuthorization();
+
+    await auth.refresh('vercel');
+    expect(auth.states[target.runtimeName]).toMatchObject({
+      status: 'oauth-required',
+      phase: 'idle',
+    });
+
+    apiMock.inspectMcpAuthStatuses.mockResolvedValue([
+      { name: target.runtimeName, authStatus: 'oauth-authorized' },
+    ]);
+    await auth.refresh('vercel');
+    expect(auth.states[target.runtimeName]).toMatchObject({
+      status: 'oauth-authorized',
+      phase: 'idle',
+    });
+    expect(apiMock.inspectMcpAuthStatuses).toHaveBeenCalledTimes(2);
+    expect(apiMock.inspectMcpAuthStatuses).toHaveBeenCalledWith([
+      { source: 'plugin', pluginId: 'vercel', serverName: 'vercel' },
+    ]);
+    expect(apiMock.beginMcpAuth).not.toHaveBeenCalled();
+    expect(open).not.toHaveBeenCalled();
+  });
+
   it('refreshes statuses without starting authorization', async () => {
     apiMock.getMcpAuthStatuses.mockResolvedValue([
       { name: target.runtimeName, authStatus: 'oauth-expired' },
@@ -498,8 +624,19 @@ describe('useMcpAuthorization', () => {
       expect(auth.states[target.runtimeName]?.status).toBe('oauth-authorized');
     });
 
+    apiMock.getPluginInfo.mockResolvedValue({
+      skills: [],
+      mcpServers: [{ name: target.serverName, runtimeName: target.runtimeName, enabled: true, transport: 'http' }],
+    });
+    apiMock.getMcpAuthStatuses.mockResolvedValue([{ name: target.runtimeName, authStatus: 'not-applicable' }]);
+    apiMock.inspectMcpAuthStatuses.mockResolvedValue([{ name: target.runtimeName, authStatus: 'oauth-required' }]);
     await auth.reset(target);
 
+    expect(apiMock.inspectMcpAuthStatuses).toHaveBeenCalledWith([
+      { source: 'plugin', pluginId: target.pluginId, serverName: target.serverName },
+    ]);
+    expect(apiMock.beginMcpAuth).toHaveBeenCalledTimes(1);
+    expect(open).toHaveBeenCalledTimes(1);
     expect(apiMock.resetMcpAuth).toHaveBeenCalledWith({
       source: 'plugin',
       pluginId: 'vercel',

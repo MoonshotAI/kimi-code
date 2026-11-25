@@ -1261,6 +1261,24 @@
                           "type": "boolean"
                         },
                         "thinking": {},
+                        "tools": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "disabled": {
+                              "items": {
+                                "type": "string"
+                              },
+                              "type": "array"
+                            },
+                            "enabled": {
+                              "items": {
+                                "type": "string"
+                              },
+                              "type": "array"
+                            }
+                          },
+                          "type": "object"
+                        },
                         "yolo": {
                           "type": "boolean"
                         }
@@ -1369,6 +1387,23 @@
                     "type": "boolean"
                   },
                   "thinking": {},
+                  "tools": {
+                    "properties": {
+                      "disabled": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "enabled": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      }
+                    },
+                    "type": "object"
+                  },
                   "yolo": {
                     "type": "boolean"
                   }
@@ -1484,6 +1519,24 @@
                               "type": "boolean"
                             },
                             "thinking": {},
+                            "tools": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "disabled": {
+                                  "items": {
+                                    "type": "string"
+                                  },
+                                  "type": "array"
+                                },
+                                "enabled": {
+                                  "items": {
+                                    "type": "string"
+                                  },
+                                  "type": "array"
+                                }
+                              },
+                              "type": "object"
+                            },
                             "yolo": {
                               "type": "boolean"
                             }
@@ -1550,6 +1603,1614 @@
         },
         "tags": [
           "config"
+        ]
+      }
+    },
+    "/api/v1/feedback": {
+      "post": {
+        "description": "Create global feedback or rate a completed assistant reply",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "properties": {
+                      "category": {
+                        "enum": [
+                          "bug",
+                          "suggestion",
+                          "other"
+                        ],
+                        "type": "string"
+                      },
+                      "client": {
+                        "enum": [
+                          "desktop",
+                          "web"
+                        ],
+                        "type": "string"
+                      },
+                      "content": {
+                        "maxLength": 2000,
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "kind": {
+                        "enum": [
+                          "global"
+                        ],
+                        "type": "string"
+                      },
+                      "session_id": {
+                        "maxLength": 200,
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "source": {
+                        "enum": [
+                          "sidebar",
+                          "command"
+                        ],
+                        "type": "string"
+                      },
+                      "upload_logs": {
+                        "type": "boolean"
+                      },
+                      "upload_session": {
+                        "type": "boolean"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "source",
+                      "category",
+                      "content"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "properties": {
+                      "client": {
+                        "enum": [
+                          "desktop",
+                          "web"
+                        ],
+                        "type": "string"
+                      },
+                      "kind": {
+                        "enum": [
+                          "turn"
+                        ],
+                        "type": "string"
+                      },
+                      "rating": {
+                        "enum": [
+                          "up",
+                          "down"
+                        ],
+                        "type": "string"
+                      },
+                      "reply_id": {
+                        "maxLength": 200,
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "session_id": {
+                        "maxLength": 200,
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "turn_id": {
+                        "maxLength": 200,
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "session_id",
+                      "turn_id",
+                      "rating"
+                    ],
+                    "type": "object"
+                  }
+                ]
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "code": {
+                          "enum": [
+                            0
+                          ],
+                          "type": "number"
+                        },
+                        "data": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "feedback_id": {
+                              "exclusiveMinimum": true,
+                              "maximum": 9007199254740991,
+                              "type": "integer"
+                            }
+                          },
+                          "required": [
+                            "feedback_id"
+                          ],
+                          "type": "object"
+                        },
+                        "details": {},
+                        "msg": {
+                          "type": "string"
+                        },
+                        "request_id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "msg",
+                        "data",
+                        "request_id"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "code": {
+                          "enum": [
+                            40001
+                          ],
+                          "type": "number"
+                        },
+                        "data": {
+                          "enum": [
+                            null
+                          ],
+                          "nullable": true,
+                          "type": "string"
+                        },
+                        "details": {},
+                        "msg": {
+                          "type": "string"
+                        },
+                        "request_id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "msg",
+                        "data",
+                        "request_id"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "code": {
+                          "enum": [
+                            40111
+                          ],
+                          "type": "number"
+                        },
+                        "data": {
+                          "enum": [
+                            null
+                          ],
+                          "nullable": true,
+                          "type": "string"
+                        },
+                        "details": {},
+                        "msg": {
+                          "type": "string"
+                        },
+                        "request_id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "msg",
+                        "data",
+                        "request_id"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "code": {
+                          "enum": [
+                            40112
+                          ],
+                          "type": "number"
+                        },
+                        "data": {
+                          "enum": [
+                            null
+                          ],
+                          "nullable": true,
+                          "type": "string"
+                        },
+                        "details": {},
+                        "msg": {
+                          "type": "string"
+                        },
+                        "request_id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "msg",
+                        "data",
+                        "request_id"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "code": {
+                          "enum": [
+                            40401
+                          ],
+                          "type": "number"
+                        },
+                        "data": {
+                          "enum": [
+                            null
+                          ],
+                          "nullable": true,
+                          "type": "string"
+                        },
+                        "details": {},
+                        "msg": {
+                          "type": "string"
+                        },
+                        "request_id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "msg",
+                        "data",
+                        "request_id"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "code": {
+                          "enum": [
+                            40421
+                          ],
+                          "type": "number"
+                        },
+                        "data": {
+                          "enum": [
+                            null
+                          ],
+                          "nullable": true,
+                          "type": "string"
+                        },
+                        "details": {},
+                        "msg": {
+                          "type": "string"
+                        },
+                        "request_id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "msg",
+                        "data",
+                        "request_id"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "code": {
+                          "enum": [
+                            40936
+                          ],
+                          "type": "number"
+                        },
+                        "data": {
+                          "enum": [
+                            null
+                          ],
+                          "nullable": true,
+                          "type": "string"
+                        },
+                        "details": {},
+                        "msg": {
+                          "type": "string"
+                        },
+                        "request_id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "msg",
+                        "data",
+                        "request_id"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "code": {
+                          "enum": [
+                            50001
+                          ],
+                          "type": "number"
+                        },
+                        "data": {
+                          "enum": [
+                            null
+                          ],
+                          "nullable": true,
+                          "type": "string"
+                        },
+                        "details": {},
+                        "msg": {
+                          "type": "string"
+                        },
+                        "request_id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "msg",
+                        "data",
+                        "request_id"
+                      ],
+                      "type": "object"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": "Default Response"
+          }
+        },
+        "tags": [
+          "feedback"
+        ]
+      }
+    },
+    "/api/v1/feedback/session-archives": {
+      "post": {
+        "description": "Prepare an expiring session-only archive for a feedback attachment on another host",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "session_id": {
+                    "maxLength": 200,
+                    "minLength": 1,
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "session_id"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "code": {
+                          "enum": [
+                            0
+                          ],
+                          "type": "number"
+                        },
+                        "data": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "file_id": {
+                              "pattern": "^f_[A-Za-z0-9][A-Za-z0-9_-]*$",
+                              "type": "string"
+                            },
+                            "size": {
+                              "exclusiveMinimum": true,
+                              "maximum": 9007199254740991,
+                              "type": "integer"
+                            }
+                          },
+                          "required": [
+                            "file_id",
+                            "size"
+                          ],
+                          "type": "object"
+                        },
+                        "details": {},
+                        "msg": {
+                          "type": "string"
+                        },
+                        "request_id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "msg",
+                        "data",
+                        "request_id"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "code": {
+                          "enum": [
+                            40001
+                          ],
+                          "type": "number"
+                        },
+                        "data": {
+                          "enum": [
+                            null
+                          ],
+                          "nullable": true,
+                          "type": "string"
+                        },
+                        "details": {},
+                        "msg": {
+                          "type": "string"
+                        },
+                        "request_id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "msg",
+                        "data",
+                        "request_id"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "code": {
+                          "enum": [
+                            40111
+                          ],
+                          "type": "number"
+                        },
+                        "data": {
+                          "enum": [
+                            null
+                          ],
+                          "nullable": true,
+                          "type": "string"
+                        },
+                        "details": {},
+                        "msg": {
+                          "type": "string"
+                        },
+                        "request_id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "msg",
+                        "data",
+                        "request_id"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "code": {
+                          "enum": [
+                            40112
+                          ],
+                          "type": "number"
+                        },
+                        "data": {
+                          "enum": [
+                            null
+                          ],
+                          "nullable": true,
+                          "type": "string"
+                        },
+                        "details": {},
+                        "msg": {
+                          "type": "string"
+                        },
+                        "request_id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "msg",
+                        "data",
+                        "request_id"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "code": {
+                          "enum": [
+                            40401
+                          ],
+                          "type": "number"
+                        },
+                        "data": {
+                          "enum": [
+                            null
+                          ],
+                          "nullable": true,
+                          "type": "string"
+                        },
+                        "details": {},
+                        "msg": {
+                          "type": "string"
+                        },
+                        "request_id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "msg",
+                        "data",
+                        "request_id"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "code": {
+                          "enum": [
+                            40936
+                          ],
+                          "type": "number"
+                        },
+                        "data": {
+                          "enum": [
+                            null
+                          ],
+                          "nullable": true,
+                          "type": "string"
+                        },
+                        "details": {},
+                        "msg": {
+                          "type": "string"
+                        },
+                        "request_id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "msg",
+                        "data",
+                        "request_id"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "code": {
+                          "enum": [
+                            41301
+                          ],
+                          "type": "number"
+                        },
+                        "data": {
+                          "enum": [
+                            null
+                          ],
+                          "nullable": true,
+                          "type": "string"
+                        },
+                        "details": {},
+                        "msg": {
+                          "type": "string"
+                        },
+                        "request_id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "msg",
+                        "data",
+                        "request_id"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "code": {
+                          "enum": [
+                            50001
+                          ],
+                          "type": "number"
+                        },
+                        "data": {
+                          "enum": [
+                            null
+                          ],
+                          "nullable": true,
+                          "type": "string"
+                        },
+                        "details": {},
+                        "msg": {
+                          "type": "string"
+                        },
+                        "request_id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "msg",
+                        "data",
+                        "request_id"
+                      ],
+                      "type": "object"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": "Default Response"
+          }
+        },
+        "tags": [
+          "feedback"
+        ]
+      }
+    },
+    "/api/v1/feedback/{feedback_id}": {
+      "patch": {
+        "description": "Add details to a reply rating or cancel it",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "feedback_id",
+            "required": true,
+            "schema": {
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "properties": {
+                      "content": {
+                        "maxLength": 2000,
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "kind": {
+                        "enum": [
+                          "details"
+                        ],
+                        "type": "string"
+                      },
+                      "reasons": {
+                        "items": {
+                          "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+                          "type": "string"
+                        },
+                        "maxItems": 12,
+                        "type": "array"
+                      },
+                      "upload_session": {
+                        "type": "boolean"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "reasons"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "properties": {
+                      "kind": {
+                        "enum": [
+                          "cancel"
+                        ],
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "kind"
+                    ],
+                    "type": "object"
+                  }
+                ]
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "code": {
+                          "enum": [
+                            0
+                          ],
+                          "type": "number"
+                        },
+                        "data": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "feedback_id": {
+                              "exclusiveMinimum": true,
+                              "maximum": 9007199254740991,
+                              "type": "integer"
+                            }
+                          },
+                          "required": [
+                            "feedback_id"
+                          ],
+                          "type": "object"
+                        },
+                        "details": {},
+                        "msg": {
+                          "type": "string"
+                        },
+                        "request_id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "msg",
+                        "data",
+                        "request_id"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "code": {
+                          "enum": [
+                            40001
+                          ],
+                          "type": "number"
+                        },
+                        "data": {
+                          "enum": [
+                            null
+                          ],
+                          "nullable": true,
+                          "type": "string"
+                        },
+                        "details": {},
+                        "msg": {
+                          "type": "string"
+                        },
+                        "request_id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "msg",
+                        "data",
+                        "request_id"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "code": {
+                          "enum": [
+                            40111
+                          ],
+                          "type": "number"
+                        },
+                        "data": {
+                          "enum": [
+                            null
+                          ],
+                          "nullable": true,
+                          "type": "string"
+                        },
+                        "details": {},
+                        "msg": {
+                          "type": "string"
+                        },
+                        "request_id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "msg",
+                        "data",
+                        "request_id"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "code": {
+                          "enum": [
+                            40112
+                          ],
+                          "type": "number"
+                        },
+                        "data": {
+                          "enum": [
+                            null
+                          ],
+                          "nullable": true,
+                          "type": "string"
+                        },
+                        "details": {},
+                        "msg": {
+                          "type": "string"
+                        },
+                        "request_id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "msg",
+                        "data",
+                        "request_id"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "code": {
+                          "enum": [
+                            40936
+                          ],
+                          "type": "number"
+                        },
+                        "data": {
+                          "enum": [
+                            null
+                          ],
+                          "nullable": true,
+                          "type": "string"
+                        },
+                        "details": {},
+                        "msg": {
+                          "type": "string"
+                        },
+                        "request_id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "msg",
+                        "data",
+                        "request_id"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "code": {
+                          "enum": [
+                            50001
+                          ],
+                          "type": "number"
+                        },
+                        "data": {
+                          "enum": [
+                            null
+                          ],
+                          "nullable": true,
+                          "type": "string"
+                        },
+                        "details": {},
+                        "msg": {
+                          "type": "string"
+                        },
+                        "request_id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "msg",
+                        "data",
+                        "request_id"
+                      ],
+                      "type": "object"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": "Default Response"
+          }
+        },
+        "tags": [
+          "feedback"
+        ]
+      }
+    },
+    "/api/v1/feedback/{feedback_id}/attachments": {
+      "post": {
+        "description": "Upload one user-selected media file or an authorized desktop diagnostics archive",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "kind",
+            "required": true,
+            "schema": {
+              "enum": [
+                "media",
+                "diagnostics"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "feedback_id",
+            "required": true,
+            "schema": {
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "properties": {
+                  "file": {
+                    "format": "binary",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "file"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "code": {
+                          "enum": [
+                            0
+                          ],
+                          "type": "number"
+                        },
+                        "data": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "upload_id": {
+                              "exclusiveMinimum": true,
+                              "maximum": 9007199254740991,
+                              "type": "integer"
+                            }
+                          },
+                          "required": [
+                            "upload_id"
+                          ],
+                          "type": "object"
+                        },
+                        "details": {},
+                        "msg": {
+                          "type": "string"
+                        },
+                        "request_id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "msg",
+                        "data",
+                        "request_id"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "code": {
+                          "enum": [
+                            40001
+                          ],
+                          "type": "number"
+                        },
+                        "data": {
+                          "enum": [
+                            null
+                          ],
+                          "nullable": true,
+                          "type": "string"
+                        },
+                        "details": {},
+                        "msg": {
+                          "type": "string"
+                        },
+                        "request_id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "msg",
+                        "data",
+                        "request_id"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "code": {
+                          "enum": [
+                            40111
+                          ],
+                          "type": "number"
+                        },
+                        "data": {
+                          "enum": [
+                            null
+                          ],
+                          "nullable": true,
+                          "type": "string"
+                        },
+                        "details": {},
+                        "msg": {
+                          "type": "string"
+                        },
+                        "request_id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "msg",
+                        "data",
+                        "request_id"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "code": {
+                          "enum": [
+                            40112
+                          ],
+                          "type": "number"
+                        },
+                        "data": {
+                          "enum": [
+                            null
+                          ],
+                          "nullable": true,
+                          "type": "string"
+                        },
+                        "details": {},
+                        "msg": {
+                          "type": "string"
+                        },
+                        "request_id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "msg",
+                        "data",
+                        "request_id"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "code": {
+                          "enum": [
+                            40936
+                          ],
+                          "type": "number"
+                        },
+                        "data": {
+                          "enum": [
+                            null
+                          ],
+                          "nullable": true,
+                          "type": "string"
+                        },
+                        "details": {},
+                        "msg": {
+                          "type": "string"
+                        },
+                        "request_id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "msg",
+                        "data",
+                        "request_id"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "code": {
+                          "enum": [
+                            41301
+                          ],
+                          "type": "number"
+                        },
+                        "data": {
+                          "enum": [
+                            null
+                          ],
+                          "nullable": true,
+                          "type": "string"
+                        },
+                        "details": {},
+                        "msg": {
+                          "type": "string"
+                        },
+                        "request_id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "msg",
+                        "data",
+                        "request_id"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "code": {
+                          "enum": [
+                            50001
+                          ],
+                          "type": "number"
+                        },
+                        "data": {
+                          "enum": [
+                            null
+                          ],
+                          "nullable": true,
+                          "type": "string"
+                        },
+                        "details": {},
+                        "msg": {
+                          "type": "string"
+                        },
+                        "request_id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "msg",
+                        "data",
+                        "request_id"
+                      ],
+                      "type": "object"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": "Default Response"
+          }
+        },
+        "tags": [
+          "feedback"
+        ]
+      }
+    },
+    "/api/v1/feedback/{feedback_id}/attachments/session": {
+      "post": {
+        "description": "Export and upload an authorized session without global diagnostics",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "feedback_id",
+            "required": true,
+            "schema": {
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "host_id": {
+                    "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
+                    "type": "string"
+                  },
+                  "session_id": {
+                    "maxLength": 200,
+                    "minLength": 1,
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "session_id"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "code": {
+                          "enum": [
+                            0
+                          ],
+                          "type": "number"
+                        },
+                        "data": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "upload_id": {
+                              "exclusiveMinimum": true,
+                              "maximum": 9007199254740991,
+                              "type": "integer"
+                            }
+                          },
+                          "required": [
+                            "upload_id"
+                          ],
+                          "type": "object"
+                        },
+                        "details": {},
+                        "msg": {
+                          "type": "string"
+                        },
+                        "request_id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "msg",
+                        "data",
+                        "request_id"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "code": {
+                          "enum": [
+                            40001
+                          ],
+                          "type": "number"
+                        },
+                        "data": {
+                          "enum": [
+                            null
+                          ],
+                          "nullable": true,
+                          "type": "string"
+                        },
+                        "details": {},
+                        "msg": {
+                          "type": "string"
+                        },
+                        "request_id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "msg",
+                        "data",
+                        "request_id"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "code": {
+                          "enum": [
+                            40111
+                          ],
+                          "type": "number"
+                        },
+                        "data": {
+                          "enum": [
+                            null
+                          ],
+                          "nullable": true,
+                          "type": "string"
+                        },
+                        "details": {},
+                        "msg": {
+                          "type": "string"
+                        },
+                        "request_id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "msg",
+                        "data",
+                        "request_id"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "code": {
+                          "enum": [
+                            40112
+                          ],
+                          "type": "number"
+                        },
+                        "data": {
+                          "enum": [
+                            null
+                          ],
+                          "nullable": true,
+                          "type": "string"
+                        },
+                        "details": {},
+                        "msg": {
+                          "type": "string"
+                        },
+                        "request_id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "msg",
+                        "data",
+                        "request_id"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "code": {
+                          "enum": [
+                            40401
+                          ],
+                          "type": "number"
+                        },
+                        "data": {
+                          "enum": [
+                            null
+                          ],
+                          "nullable": true,
+                          "type": "string"
+                        },
+                        "details": {},
+                        "msg": {
+                          "type": "string"
+                        },
+                        "request_id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "msg",
+                        "data",
+                        "request_id"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "code": {
+                          "enum": [
+                            40936
+                          ],
+                          "type": "number"
+                        },
+                        "data": {
+                          "enum": [
+                            null
+                          ],
+                          "nullable": true,
+                          "type": "string"
+                        },
+                        "details": {},
+                        "msg": {
+                          "type": "string"
+                        },
+                        "request_id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "msg",
+                        "data",
+                        "request_id"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "code": {
+                          "enum": [
+                            41301
+                          ],
+                          "type": "number"
+                        },
+                        "data": {
+                          "enum": [
+                            null
+                          ],
+                          "nullable": true,
+                          "type": "string"
+                        },
+                        "details": {},
+                        "msg": {
+                          "type": "string"
+                        },
+                        "request_id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "msg",
+                        "data",
+                        "request_id"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "code": {
+                          "enum": [
+                            50001
+                          ],
+                          "type": "number"
+                        },
+                        "data": {
+                          "enum": [
+                            null
+                          ],
+                          "nullable": true,
+                          "type": "string"
+                        },
+                        "details": {},
+                        "msg": {
+                          "type": "string"
+                        },
+                        "request_id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "msg",
+                        "data",
+                        "request_id"
+                      ],
+                      "type": "object"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": "Default Response"
+          }
+        },
+        "tags": [
+          "feedback"
         ]
       }
     },
@@ -2182,6 +3843,368 @@
               }
             },
             "description": "File download failed"
+          }
+        },
+        "tags": [
+          "workspaces"
+        ]
+      },
+      "put": {
+        "description": "Create or replace an allowlisted UTF-8 host file. Supply the SHA-256 of the bytes read, or missing to create only.",
+        "operationId": "writeFsContent",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "path",
+            "required": true,
+            "schema": {
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "environment_id",
+            "required": false,
+            "schema": {
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "revision",
+            "required": true,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "missing"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "pattern": "^[0-9a-f]{64}$",
+                  "type": "string"
+                }
+              ]
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "text/plain": {
+              "schema": {
+                "type": "string"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "code": {
+                          "enum": [
+                            0
+                          ],
+                          "type": "number"
+                        },
+                        "data": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "revision": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "revision"
+                          ],
+                          "type": "object"
+                        },
+                        "details": {},
+                        "msg": {
+                          "type": "string"
+                        },
+                        "request_id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "msg",
+                        "data",
+                        "request_id"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "code": {
+                          "enum": [
+                            40001
+                          ],
+                          "type": "number"
+                        },
+                        "data": {
+                          "enum": [
+                            null
+                          ],
+                          "nullable": true,
+                          "type": "string"
+                        },
+                        "details": {},
+                        "msg": {
+                          "type": "string"
+                        },
+                        "request_id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "msg",
+                        "data",
+                        "request_id"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "code": {
+                          "enum": [
+                            50001
+                          ],
+                          "type": "number"
+                        },
+                        "data": {
+                          "enum": [
+                            null
+                          ],
+                          "nullable": true,
+                          "type": "string"
+                        },
+                        "details": {},
+                        "msg": {
+                          "type": "string"
+                        },
+                        "request_id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "msg",
+                        "data",
+                        "request_id"
+                      ],
+                      "type": "object"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": "Default Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "code": {
+                      "enum": [
+                        40001
+                      ],
+                      "type": "number"
+                    },
+                    "data": {
+                      "enum": [
+                        null
+                      ],
+                      "nullable": true,
+                      "type": "string"
+                    },
+                    "details": {},
+                    "msg": {
+                      "type": "string"
+                    },
+                    "request_id": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "msg",
+                    "data",
+                    "request_id"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Default Response"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "code": {
+                          "enum": [
+                            40301
+                          ],
+                          "type": "number"
+                        },
+                        "data": {
+                          "enum": [
+                            null
+                          ],
+                          "nullable": true,
+                          "type": "string"
+                        },
+                        "details": {},
+                        "msg": {
+                          "type": "string"
+                        },
+                        "request_id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "msg",
+                        "data",
+                        "request_id"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "code": {
+                          "enum": [
+                            40302
+                          ],
+                          "type": "number"
+                        },
+                        "data": {
+                          "enum": [
+                            null
+                          ],
+                          "nullable": true,
+                          "type": "string"
+                        },
+                        "details": {},
+                        "msg": {
+                          "type": "string"
+                        },
+                        "request_id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "msg",
+                        "data",
+                        "request_id"
+                      ],
+                      "type": "object"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": "Default Response"
+          },
+          "412": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "code": {
+                      "enum": [
+                        41201
+                      ],
+                      "type": "number"
+                    },
+                    "data": {
+                      "enum": [
+                        null
+                      ],
+                      "nullable": true,
+                      "type": "string"
+                    },
+                    "details": {},
+                    "msg": {
+                      "type": "string"
+                    },
+                    "request_id": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "msg",
+                    "data",
+                    "request_id"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Default Response"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "code": {
+                      "enum": [
+                        41302
+                      ],
+                      "type": "number"
+                    },
+                    "data": {
+                      "enum": [
+                        null
+                      ],
+                      "nullable": true,
+                      "type": "string"
+                    },
+                    "details": {},
+                    "msg": {
+                      "type": "string"
+                    },
+                    "request_id": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "msg",
+                    "data",
+                    "request_id"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Default Response"
           }
         },
         "tags": [
@@ -8335,6 +10358,12 @@
                           "additionalProperties": false,
                           "properties": {
                             "agent_close": {
+                              "enum": [
+                                true
+                              ],
+                              "type": "boolean"
+                            },
+                            "feedback": {
                               "enum": [
                                 true
                               ],
@@ -14564,6 +16593,13 @@
                                           "archived_at": {},
                                           "created_at": {},
                                           "cwd": {
+                                            "deprecated": true,
+                                            "type": "string"
+                                          },
+                                          "environment_cwd": {
+                                            "type": "string"
+                                          },
+                                          "environment_id": {
                                             "type": "string"
                                           },
                                           "git": {
@@ -14638,6 +16674,9 @@
                                           "updated_at": {},
                                           "workspace_id": {
                                             "pattern": "^wd_[a-z0-9._-]+_[0-9a-f]{12}$|^wm_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                                            "type": "string"
+                                          },
+                                          "workspace_root": {
                                             "type": "string"
                                           }
                                         },
@@ -14729,6 +16768,13 @@
                                                 "archived_at": {},
                                                 "created_at": {},
                                                 "cwd": {
+                                                  "deprecated": true,
+                                                  "type": "string"
+                                                },
+                                                "environment_cwd": {
+                                                  "type": "string"
+                                                },
+                                                "environment_id": {
                                                   "type": "string"
                                                 },
                                                 "git": {
@@ -14803,6 +16849,9 @@
                                                 "updated_at": {},
                                                 "workspace_id": {
                                                   "pattern": "^wd_[a-z0-9._-]+_[0-9a-f]{12}$|^wm_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                                                  "type": "string"
+                                                },
+                                                "workspace_root": {
                                                   "type": "string"
                                                 }
                                               },
@@ -15087,6 +17136,7 @@
                     "type": "object"
                   },
                   "cwd": {
+                    "deprecated": true,
                     "minLength": 1,
                     "type": "string"
                   },
@@ -15102,6 +17152,7 @@
                     "additionalProperties": {},
                     "properties": {
                       "cwd": {
+                        "deprecated": true,
                         "minLength": 1,
                         "type": "string"
                       }
@@ -15114,6 +17165,10 @@
                   },
                   "workspace_id": {
                     "pattern": "^wd_[a-z0-9._-]+_[0-9a-f]{12}$|^wm_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                    "type": "string"
+                  },
+                  "workspace_root": {
+                    "minLength": 1,
                     "type": "string"
                   }
                 },
@@ -15155,6 +17210,13 @@
                             "archived_at": {},
                             "created_at": {},
                             "cwd": {
+                              "deprecated": true,
+                              "type": "string"
+                            },
+                            "environment_cwd": {
+                              "type": "string"
+                            },
+                            "environment_id": {
                               "type": "string"
                             },
                             "git": {
@@ -15229,6 +17291,9 @@
                             "updated_at": {},
                             "workspace_id": {
                               "pattern": "^wd_[a-z0-9._-]+_[0-9a-f]{12}$|^wm_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                              "type": "string"
+                            },
+                            "workspace_root": {
                               "type": "string"
                             }
                           },
@@ -15763,6 +17828,13 @@
                             "archived_at": {},
                             "created_at": {},
                             "cwd": {
+                              "deprecated": true,
+                              "type": "string"
+                            },
+                            "environment_cwd": {
+                              "type": "string"
+                            },
+                            "environment_id": {
                               "type": "string"
                             },
                             "git": {
@@ -15837,6 +17909,9 @@
                             "updated_at": {},
                             "workspace_id": {
                               "pattern": "^wd_[a-z0-9._-]+_[0-9a-f]{12}$|^wm_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                              "type": "string"
+                            },
+                            "workspace_root": {
                               "type": "string"
                             }
                           },
@@ -19307,6 +21382,10 @@
                           "additionalProperties": false,
                           "properties": {
                             "cwd": {
+                              "deprecated": true,
+                              "type": "string"
+                            },
+                            "environment_cwd": {
                               "type": "string"
                             },
                             "environment_id": {
@@ -21320,6 +23399,7 @@
                     "additionalProperties": {},
                     "properties": {
                       "cwd": {
+                        "deprecated": true,
                         "minLength": 1,
                         "type": "string"
                       }
@@ -21361,6 +23441,9 @@
                                 "compacting": {
                                   "type": "boolean"
                                 },
+                                "goal_mode_available": {
+                                  "type": "boolean"
+                                },
                                 "model": {
                                   "type": "string"
                                 },
@@ -21375,6 +23458,9 @@
                                 "plan_mode": {
                                   "type": "boolean"
                                 },
+                                "plan_mode_available": {
+                                  "type": "boolean"
+                                },
                                 "status": {
                                   "enum": [
                                     "idle",
@@ -21386,10 +23472,16 @@
                                 "swarm_mode": {
                                   "type": "boolean"
                                 },
+                                "swarm_mode_available": {
+                                  "type": "boolean"
+                                },
                                 "thinking": {
                                   "type": "string"
                                 },
                                 "tower_mode": {
+                                  "type": "boolean"
+                                },
+                                "tower_mode_available": {
                                   "type": "boolean"
                                 }
                               },
@@ -21398,7 +23490,11 @@
                                 "compacting",
                                 "plan_mode",
                                 "swarm_mode",
-                                "tower_mode"
+                                "tower_mode",
+                                "plan_mode_available",
+                                "swarm_mode_available",
+                                "tower_mode_available",
+                                "goal_mode_available"
                               ],
                               "type": "object"
                             },
@@ -21419,6 +23515,13 @@
                                 "archived_at": {},
                                 "created_at": {},
                                 "cwd": {
+                                  "deprecated": true,
+                                  "type": "string"
+                                },
+                                "environment_cwd": {
+                                  "type": "string"
+                                },
+                                "environment_id": {
                                   "type": "string"
                                 },
                                 "git": {
@@ -21493,6 +23596,9 @@
                                 "updated_at": {},
                                 "workspace_id": {
                                   "pattern": "^wd_[a-z0-9._-]+_[0-9a-f]{12}$|^wm_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                                  "type": "string"
+                                },
+                                "workspace_root": {
                                   "type": "string"
                                 }
                               },
@@ -31581,6 +33687,13 @@
                             "archived_at": {},
                             "created_at": {},
                             "cwd": {
+                              "deprecated": true,
+                              "type": "string"
+                            },
+                            "environment_cwd": {
+                              "type": "string"
+                            },
+                            "environment_id": {
                               "type": "string"
                             },
                             "git": {
@@ -31655,6 +33768,9 @@
                             "updated_at": {},
                             "workspace_id": {
                               "pattern": "^wd_[a-z0-9._-]+_[0-9a-f]{12}$|^wm_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                              "type": "string"
+                            },
+                            "workspace_root": {
                               "type": "string"
                             }
                           },
@@ -32885,6 +35001,13 @@
                                 "archived_at": {},
                                 "created_at": {},
                                 "cwd": {
+                                  "deprecated": true,
+                                  "type": "string"
+                                },
+                                "environment_cwd": {
+                                  "type": "string"
+                                },
+                                "environment_id": {
                                   "type": "string"
                                 },
                                 "git": {
@@ -32959,6 +35082,9 @@
                                 "updated_at": {},
                                 "workspace_id": {
                                   "pattern": "^wd_[a-z0-9._-]+_[0-9a-f]{12}$|^wm_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                                  "type": "string"
+                                },
+                                "workspace_root": {
                                   "type": "string"
                                 }
                               },
@@ -33933,6 +36059,83 @@
                               "name",
                               "description",
                               "input_schema",
+                              "source"
+                            ],
+                            "type": "object"
+                          },
+                          "type": "array"
+                        }
+                      },
+                      "required": [
+                        "tools"
+                      ],
+                      "type": "object"
+                    },
+                    "details": {},
+                    "msg": {
+                      "type": "string"
+                    },
+                    "request_id": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "msg",
+                    "data",
+                    "request_id"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Default Response"
+          }
+        },
+        "tags": [
+          "tools"
+        ]
+      }
+    },
+    "/api/v1/tools/catalog": {
+      "get": {
+        "description": "List user-configurable builtin tools",
+        "operationId": "listToolCatalog",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "code": {
+                      "enum": [
+                        0
+                      ],
+                      "type": "number"
+                    },
+                    "data": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "tools": {
+                          "items": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "name": {
+                                "minLength": 1,
+                                "type": "string"
+                              },
+                              "source": {
+                                "enum": [
+                                  "builtin",
+                                  "skill",
+                                  "mcp"
+                                ],
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "name",
                               "source"
                             ],
                             "type": "object"

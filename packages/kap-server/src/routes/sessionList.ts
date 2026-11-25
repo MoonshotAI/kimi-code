@@ -17,7 +17,7 @@ import { GitService } from '@moonshot-ai/agent-core-v2/app/git/gitService';
 import { z } from 'zod';
 
 import { errEnvelope, okEnvelope } from '../envelope';
-import { defineRoute } from '../middleware/defineRoute';
+import { defineRoute, type GetRouteHost, type PostRouteHost } from '../middleware/defineRoute';
 import { ErrorCode } from '../protocol/error-codes';
 import {
   batchSessionsRequestSchema,
@@ -40,24 +40,7 @@ import type { HostSources } from '../services/hosts/hostFanout';
 import { resolveSessionFacts, toWireSession, type SessionFacts } from './sessions';
 import { listAllSessionsAcrossHosts, listSessionsAcrossHosts, type SessionsListOutcome } from './sessionsAcrossHosts';
 
-interface SessionListRouteHost {
-  get(
-    path: string,
-    options: { preHandler: unknown[]; schema?: Record<string, unknown> } | undefined,
-    handler: (
-      req: { id: string; query: unknown; params: unknown },
-      reply: { send(payload: unknown): unknown },
-    ) => Promise<void> | void,
-  ): unknown;
-  post(
-    path: string,
-    options: { preHandler: unknown[]; schema?: Record<string, unknown> },
-    handler: (
-      req: { id: string; body: unknown; params: unknown; headers: Record<string, unknown> },
-      reply: { send(payload: unknown): unknown },
-    ) => Promise<void> | void,
-  ): unknown;
-}
+type SessionListRouteHost = GetRouteHost & PostRouteHost;
 
 const DEFAULT_PAGE_SIZE = 50;
 const DEFAULT_GROUP_PAGE_SIZE = 5;
@@ -422,7 +405,7 @@ async function listSessionsHere(
         }
         return summaries.map((summary) =>
           toWireSession(
-            summary,
+            { ...summary, workspaceRoot: roots.get(summary.workspaceId) },
             requiredCwdOf(summary),
             factsOf(summary.id),
             gitBySession === undefined

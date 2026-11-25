@@ -298,7 +298,7 @@ function protectInteraction(): void {
   const selection = document.getSelection();
   const active = document.activeElement;
   for (const [key, el] of rows) {
-    if (active && el.contains(active)) next.add(key);
+    if (el.contains(active) || el.querySelector('[aria-haspopup="dialog"][aria-expanded="true"][aria-controls]')) next.add(key);
     if (selection && !selection.isCollapsed) {
       for (const endpoint of [selection.anchorNode, selection.focusNode]) {
         let node = endpoint;
@@ -399,7 +399,7 @@ defineExpose({ reveal, release });
 .transcript-measure { height: 0; overflow: hidden; }
 .transcript-space { pointer-events: none; overflow-anchor: none; }
 .history-row { position: relative; }
-.history-row:focus-visible { outline: none; box-shadow: var(--p-focus-ring); }
+.history-row:focus, .history-row:focus-visible { outline: none; }
 .history-navigation { position: absolute; inset-inline-start: var(--space-1); z-index: var(--z-raised); user-select: none; }
 .history-previous { top: var(--space-1); }
 .history-next { bottom: var(--space-1); }

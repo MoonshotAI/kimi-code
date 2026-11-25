@@ -60,6 +60,8 @@ Tower 可能把未提交和未跟踪的文件快照到 worker branch 中；创�
 
    如果当前是 detached HEAD（未检出任何 branch），或者需要切换 base，再输入 `/tower <base-branch>`，例如 `/tower feature/my-objective`。
 
+   Tower 可以随时开关，包括会话进行中。对于支持动态加载工具的模型，`/tower on` 后 Tower 工具会通过 `<tools_added>` 通告下发，并可经 `select_tools` 加载；对于不支持动态加载的模型，会话中注册的工具不会进入模型请求，请改在新会话中使用 Tower。
+
 2. **发送开发目标。** 像平常对话一样输入任务，例如 "把结算文档更新拆成相互独立的 mission，分别测试，只合并通过独立 review 的 branch。" 最好同时说明如何验证、什么情况下算完成。Tower 会初始化 `.tower/`、规划 mission，并在后台启动依赖已经满足的 worker。worker 完成任务或 Tower 收到 inbox 消息时，Tower 就会自动继续处理，不用你反复查询。
 
 3. **让任务在后台推进。** worker 会在各自的 branch 上提交改动。对于 build mission，Tower 会安排独立 reviewer；对于 artifact mission，Tower 会展示交付物供你验收。必要时 Tower 会 rebase，并按依赖顺序合并通过审核的 mission。如果出现审批提示，或 Tower 询问任务范围和优先级，请及时处理。

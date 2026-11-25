@@ -1,0 +1,8 @@
+.settings-row-label {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-05);
+  font-family: var(--font-ui);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-option-label);
+}

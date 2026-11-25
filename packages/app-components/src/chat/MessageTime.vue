@@ -22,7 +22,7 @@ const display = computed(() => formatMessageTime(props.time, t('conversation.yes
   box-sizing: border-box;
   padding: 2px 5px;
   border-radius: var(--radius-sm);
-  color: var(--muted);
+  color: var(--color-text-faint);
   font-size: var(--text-xs);
   font-weight: var(--weight-medium);
   line-height: 1;

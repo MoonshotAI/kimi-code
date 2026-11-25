@@ -16,6 +16,12 @@ export interface SubmitKindInput {
   queueLength: number;
   goalMode: boolean;
   towerEnabled: boolean;
+  towerAvailable?: boolean;
+  towerActive?: boolean;
+  extraBuiltins?: readonly SlashCommand[];
+  planEnabled?: boolean;
+  swarmEnabled?: boolean;
+  goalEnabled?: boolean;
 }
 
 export interface SubmitDecisionInput extends SubmitKindInput {
@@ -31,6 +37,7 @@ export type SubmitDecision =
   | { kind: 'builtin-command'; cmd: string; leave: boolean; historyText: string; restoreText: string;
       editText?: string }
   | { kind: 'invalid-command'; cmd: string }
+  | { kind: 'disabled-command'; cmd: string }
   | { kind: 'unresolved-skill-command'; cmd: string; restoreText: string; attachments: PromptAttachment[]; historyText: string }
   | { kind: 'multi-skill-activation'; text: string; skills: { name: string; path?: string }[]; restoreText: string; editText: string; attachments: PromptAttachment[]; historyText: string }
   | { kind: 'submit'; text: string; restoreText: string; editText: string; attachments: PromptAttachment[]; historyText: string };
@@ -42,6 +49,7 @@ export type SubmitKind =
   | { kind: 'skill-activation'; skillName: string; skillPath?: string }
   | { kind: 'skill-command'; cmdToken: string; matched: SlashCommand }
   | { kind: 'invalid-command'; cmdToken: string }
+  | { kind: 'disabled-command'; cmdToken: string }
   | { kind: 'builtin-command'; cmdToken: string; noArgs: boolean }
   | { kind: 'prompt-command'; cmdToken: string; target: 'main' | 'side' }
   | { kind: 'unresolved-skill-command'; cmdToken: string }
@@ -63,11 +71,39 @@ export function decideSubmitKind(input: SubmitKindInput): SubmitKind {
   const bareText = removeAttachmentLinks(trimmed);
   const bareModeCommand = bareText.trim();
 
+  const command = parseSlash(bareText)?.cmd;
+  const controlArg = command === undefined ? '' : bareText.trim().slice(command.length).trim();
+  const swarmControlAllowed = command === '/swarm' && controlArg === 'off';
+  const goalControlAllowed = command === '/goal' && ['pause', 'cancel'].includes(controlArg);
+  const towerExitAllowed = command === '/tower' && controlArg === 'off';
+  const towerCommandAllowed =
+    towerExitAllowed ||
+    (command === '/tower' &&
+      ((controlArg === '' && input.towerActive === true) ||
+        controlArg === 'status' ||
+        controlArg === 'teardown'));
+  if (
+    (command === '/plan' && input.planEnabled === false) ||
+    (command === '/swarm' && input.swarmEnabled === false && !swarmControlAllowed) ||
+    (command === '/goal' && input.goalEnabled === false && !goalControlAllowed) ||
+    (command === '/tower' && input.towerEnabled && input.towerAvailable === false && !towerCommandAllowed)
+  ) {
+    return { kind: 'disabled-command', cmdToken: command };
+  }
+
   const bareMode = modeCommandFor(bareModeCommand);
   if (bareMode !== undefined) return { kind: 'mode', mode: bareMode, bareModeCommand };
   if (trimmed) {
-    const cmdToken = parseSlash(bareText)?.cmd;
-    const matched = cmdToken ? matchSlashItem(buildSlashItems(skills, { towerEnabled: input.towerEnabled }), cmdToken) : undefined;
+    const extraToken = bareModeCommand.match(/^\/\S+/)?.[0];
+    const extra = input.extraBuiltins?.find((item) => item.name === extraToken);
+    const cmdToken = extra?.name ?? parseSlash(bareText)?.cmd;
+    const matched = extra ?? (cmdToken ? matchSlashItem(buildSlashItems(skills, {
+      towerEnabled: input.towerEnabled || towerExitAllowed,
+      planEnabled: input.planEnabled,
+      swarmEnabled: input.swarmEnabled !== false || swarmControlAllowed,
+      goalEnabled: input.goalEnabled !== false || goalControlAllowed,
+      extraBuiltins: input.extraBuiltins,
+    }), cmdToken) : undefined);
     const staleSkillPill =
       skillMentions.length === 1 && skillsLoaded && !skills.some((skill) => {
         const mention = skillMentions[0]!;
@@ -107,8 +143,7 @@ export function decideSubmitKind(input: SubmitKindInput): SubmitKind {
         return { kind: 'skill-command', cmdToken, matched };
       }
       if (matched.noArgs === true) {
-        const bareParsed = parseSlash(bareModeCommand) ?? { cmd: cmdToken, arg: '' };
-        if (bareParsed.arg.trim() !== '') return { kind: 'invalid-command', cmdToken };
+        if (bareModeCommand.slice(cmdToken.length).trim() !== '') return { kind: 'invalid-command', cmdToken };
         return { kind: 'builtin-command', cmdToken, noArgs: true };
       }
       const argument = trimmed.slice(cmdToken.length).trim();
@@ -173,6 +208,8 @@ export function decideComposerSubmit(input: SubmitDecisionInput): SubmitDecision
     }
     case 'invalid-command':
       return { kind: 'invalid-command', cmd: plan.cmdToken };
+    case 'disabled-command':
+      return { kind: 'disabled-command', cmd: plan.cmdToken };
     case 'builtin-command': {
       if (plan.noArgs) {
         return { kind: 'builtin-command', cmd: plan.cmdToken, leave: leaves(plan.cmdToken), historyText: plan.cmdToken, restoreText: trimmed };

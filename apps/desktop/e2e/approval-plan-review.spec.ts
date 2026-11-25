@@ -96,6 +96,38 @@ test('plan review: revise with feedback, approve the revised plan and execute, t
     await app.snapshot('plan-approved-and-executed');
   });
 
+  await test.step('Approving with a selected option returns the chosen approach to the model', async () => {
+    await armPlanMode();
+    const research = model.hold('research-3');
+    model.script(held('research-3', bash('pwd', { description: 'Look around' })));
+    const third = await app.startTurn('Plan a greeting file with options');
+    await research.reached();
+    const thirdPlanFile = planFileIn(third);
+    model.script(
+      call('Write', { path: thirdPlanFile, content: PLAN_V1 }),
+      call('ExitPlanMode', {
+        options: [
+          { label: 'Approach A', description: 'Small change.' },
+          { label: 'Approach B', description: 'Larger change.' },
+        ],
+      }),
+      say('Option plan executed.'),
+    );
+    research.release();
+    await expect(planReview).toBeVisible();
+    await expect(app.window.getByRole('button', { name: /Approach A/ })).toBeVisible();
+    await app.snapshot('plan-review-options');
+    const before = model.requests().length;
+    await app.window.getByRole('button', { name: /Approach B/ }).click();
+    await expect(transcript.getByText('Option plan executed.', { exact: true })).toBeVisible();
+    const approved = model.request(before);
+    expect(lastToolResult(approved)).toContain('Selected approach: Approach B');
+    expect(lastToolResult(approved)).toContain('Execute ONLY the selected approach');
+    expect(lastToolResult(approved)).toContain('## Approved Plan:');
+    await expect(planChip).toBeHidden();
+    await app.snapshot('plan-approved-option-executed');
+  });
+
   await test.step('Reject and Exit on a second plan stops the turn and leaves plan mode', async () => {
     await armPlanMode();
     const research = model.hold('research-2');

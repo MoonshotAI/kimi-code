@@ -98,7 +98,7 @@ function session(id: string): AppSession {
   };
 }
 
-async function boot(opts: { deferPages?: boolean; sessionIds?: string[] } = {}) {
+async function boot(opts: { deferPages?: boolean; sessionIds?: string[]; promptPrediction?: boolean } = {}) {
   vi.stubGlobal('WebSocket', class {});
   vi.resetModules();
   const sessions = (opts.sessionIds ?? ['s1']).map(session);
@@ -135,6 +135,7 @@ async function boot(opts: { deferPages?: boolean; sessionIds?: string[] } = {}) 
       capabilities: {},
       openInApps: [],
       dangerousBypassAuth: false,
+      experimentalFlags: opts.promptPrediction === true ? { prompt_prediction: true } : {},
       backend: 'v2' as const,
     })),
     getConfig: vi.fn(async () => ({ providers: {}, defaultModel: 'model-1' })),
@@ -165,6 +166,8 @@ async function boot(opts: { deferPages?: boolean; sessionIds?: string[] } = {}) 
     listSkills,
     listSkillsForWorkspace: vi.fn(async () => []),
     generateSessionTitle,
+    predictNextPrompt: vi.fn(async () => null),
+    cancelPromptPrediction: vi.fn(async () => true),
     getFileUrl: (fileId: string) => `file:${fileId}`,
     connectEvents: vi.fn((next: KimiEventHandlers) => {
       handlers = next;
@@ -182,10 +185,11 @@ async function boot(opts: { deferPages?: boolean; sessionIds?: string[] } = {}) 
   if (opts.deferPages !== true) await vi.waitFor(() => expect(client.sessionLoading.value).toBe(false));
 
   const frame = (sid: string, next: ConversationFrame) => handlers!.onConversation?.(sid, 'main', next);
-  const agentStatus = (sid: string, status: AppAgentState['status'] | 'compacting') =>
-    handlers!.onAgentState?.(sid, 'main', status === 'compacting' ? agentState('idle', { compacting: true }) : agentState(status));
-  const header = (ordinal: number, outcome?: ConversationOutcome): ConversationTurnHeader => ({
-    turn_id: `t${ordinal}`,
+  const agentStatus = (sid: string, status: AppAgentState['status'] | 'compacting', extra: Partial<AppAgentState> = {}) =>
+    handlers!.onAgentState?.(sid, 'main', status === 'compacting' ? agentState('idle', { ...extra, compacting: true }) : agentState(status, extra));
+  const turnId = (ordinal: number): string => opts.promptPrediction === true ? `t_${ordinal}` : `t${ordinal}`;
+  const header = (ordinal: number, outcome?: ConversationOutcome, id = turnId(ordinal)): ConversationTurnHeader => ({
+    turn_id: id,
     ordinal,
     turn_number: ordinal + 1,
     kind: 'agent',
@@ -194,13 +198,13 @@ async function boot(opts: { deferPages?: boolean; sessionIds?: string[] } = {}) 
     started_at: AT,
     steps: [],
   });
-  const startTurn = (sid: string, ordinal: number, promptId: string, text: string) => {
+  const startTurn = (sid: string, ordinal: number, promptId: string, text: string, id = turnId(ordinal)) => {
     agentStatus(sid, 'running');
-    frame(sid, { type: 'turn.started', turn: header(ordinal) });
-    frame(sid, { type: 'item.ended', turn_id: `t${ordinal}`, item: opener(promptId, text) });
+    frame(sid, { type: 'turn.started', turn: header(ordinal, undefined, id) });
+    frame(sid, { type: 'item.ended', turn_id: id, item: opener(promptId, text) });
   };
-  const endTurn = (sid: string, ordinal: number, outcome: ConversationOutcome = 'completed') => {
-    frame(sid, { type: 'turn.ended', turn: header(ordinal, outcome) });
+  const endTurn = (sid: string, ordinal: number, outcome: ConversationOutcome = 'completed', id = turnId(ordinal)) => {
+    frame(sid, { type: 'turn.ended', turn: header(ordinal, outcome, id) });
     agentStatus(sid, 'idle');
   };
   const sentPromptId = (index: number) => submitPrompt.mock.calls[index]![1].promptId!;
@@ -212,6 +216,27 @@ async function boot(opts: { deferPages?: boolean; sessionIds?: string[] } = {}) 
 }
 
 describe('conversation events in the client', () => {
+  it('opens a live MCP wait only for the foreground client that sent the prompt, never for a snapshot or a greeting alone', async () => {
+    const h = await boot();
+    const openExternal = vi.fn(async () => {});
+    vi.stubGlobal('window', { kimiDesktop: { openExternal } });
+    vi.stubGlobal('document', { visibilityState: 'visible', hasFocus: () => true });
+    await h.client.sendPrompt(h.client.createPromptEnvelope({ text: 'hi' }));
+    h.startTurn('s1', 0, h.sentPromptId(0), 'hi');
+    expect(openExternal).not.toHaveBeenCalled();
+    const call = { type: 'tool_call', item_id: 'auth', status: 'running', name: 'mcp__example__authenticate', created_at: AT, started_at: AT, stage: 'executing', display: { kind: 'generic', detail: { kind: 'mcp_oauth', serverName: 'example' } } } as const;
+    const request = { serverName: 'example', waitId: 'test-wait', expiresAt: Date.now() + 60_000, authorizationUrl: 'https://auth.example.test/authorize?state=test' };
+    const fields = { 'mcp.oauth.authorization_url': request };
+    const update = { type: 'item.updated', turn_id: 't0', item_id: 'auth', set: { fields } } as const;
+    h.frame('s1', { type: 'item.started', turn_id: 't0', item: call });
+    h.frame('s1', update);
+    h.frame('s1', update);
+    expect(openExternal.mock.calls).toEqual([[request.authorizationUrl]]);
+    h.frame('s1', { type: 'turns', has_more: false, turns: [endedTurn(1, { status: 'running', outcome: undefined, items: [opener('another-client', 'use example'), { ...call, fields }] })] });
+    h.frame('s1', { ...update, turn_id: 't1' });
+    expect(openExternal).toHaveBeenCalledTimes(1);
+  });
+
   it('settles a local turn whose terminal frames beat the POST response', async () => {
     const h = await boot();
     const { notificationsStore } = await import('../src/stores/notifications');
@@ -345,8 +370,17 @@ describe('conversation events in the client', () => {
     expect(userTexts()).toEqual(['hello there']);
   });
 
-  it('reads the main turn as running from the agent frame, and from the session row only before any frame', async () => {
-    const h = await boot();
+  it('reads the main turn state and drives the prompt prediction lifecycle after a normal turn', async () => {
+    vi.stubGlobal('document', {
+      visibilityState: 'visible',
+      hasFocus: () => true,
+      addEventListener: vi.fn(),
+      title: '',
+    });
+    const h = await boot({ promptPrediction: true });
+    const hasFocus = vi.spyOn(document, 'hasFocus').mockReturnValue(false);
+    const predict = clientApiMock['predictNextPrompt'] as ReturnType<typeof vi.fn>;
+    const cancel = clientApiMock['cancelPromptPrediction'] as ReturnType<typeof vi.fn>;
     h.event('s1', { type: 'sessionWorkChanged', sessionId: 's1', busy: true, mainTurnActive: true });
     expect(h.client.turnActive.value).toBe(true);
     expect(h.client.activity.value).toBe('running');
@@ -357,6 +391,148 @@ describe('conversation events in the client', () => {
 
     h.agentStatus('s1', 'running');
     expect(h.client.working.value).toBe(true);
+
+    expect(h.client.promptPredictionHasTurn.value).toBe(false);
+    predict.mockResolvedValueOnce('next step');
+    h.startTurn('s1', 0, 'msg_remote', 'work');
+    h.endTurn('s1', 0);
+    await vi.waitFor(() => expect(h.client.promptPrediction.value?.text).toBe('next step'));
+    expect(h.client.promptPredictionHasTurn.value).toBe(true);
+    expect(predict).toHaveBeenCalledWith('s1', {
+      predictionId: expect.any(String),
+      expectedTurnId: 0,
+    });
+    const { modeStore } = await import('../src/stores/mode');
+    modeStore().setPlanMode(true);
+    expect(h.client.promptPrediction.value).toBeNull();
+    expect(h.client.acceptPromptPrediction('tab')).toBeNull();
+    modeStore().setPlanMode(false);
+    await vi.waitFor(() => expect(h.client.promptPrediction.value?.text).toBe('next step'));
+    expect(h.client.acceptPromptPrediction('tab')).toBe('next step');
+    expect(h.client.promptPrediction.value).toMatchObject({ accepted: true });
+    h.client.handlePromptPredictionInput();
+    expect(h.client.promptPrediction.value).toMatchObject({ accepted: true });
+    h.client.handlePromptPredictionSubmit('next step edited');
+    expect(h.client.promptPrediction.value).toBeNull();
+
+    let resolvePrediction!: (value: string) => void;
+    const latePrediction = new Promise<string>((resolve) => {
+      resolvePrediction = resolve;
+    });
+    predict.mockReturnValueOnce(latePrediction);
+    h.startTurn('s1', 1, 'msg_next', 'next');
+    h.endTurn('s1', 1);
+    await vi.waitFor(() => expect(predict).toHaveBeenCalledTimes(2));
+    h.client.handlePromptPredictionInput();
+    expect(cancel).not.toHaveBeenCalled();
+    resolvePrediction('late result');
+    await vi.waitFor(() => expect(h.client.promptPrediction.value?.text).toBe('late result'));
+    h.endTurn('s1', 1);
+    expect(predict).toHaveBeenCalledTimes(2);
+
+    const { promptStore } = await import('../src/stores/prompt');
+    promptStore().inFlightBySession['s1'] = true;
+    h.startTurn('s1', 2, 'msg_settle', 'settle');
+    h.endTurn('s1', 2);
+    expect(predict).toHaveBeenCalledTimes(2);
+    promptStore().inFlightBySession['s1'] = false;
+    await vi.waitFor(() => expect(predict).toHaveBeenCalledTimes(3));
+
+    const storage = new Map<string, string>();
+    vi.stubGlobal('localStorage', {
+      getItem: (key: string) => storage.get(key) ?? null,
+      setItem: (key: string, value: string) => { storage.set(key, value); },
+      removeItem: (key: string) => { storage.delete(key); },
+    });
+    const { draftStorageKey, safeGetString, safeRemove, safeSetString } = await import('@moonshot-ai/app-core/lib');
+    safeSetString(draftStorageKey('s1'), 'draft');
+    expect(safeGetString(draftStorageKey('s1'))).toBe('draft');
+    h.startTurn('s1', 3, 'msg_draft', 'draft');
+    h.endTurn('s1', 3);
+    safeRemove(draftStorageKey('s1'));
+    expect(predict).toHaveBeenCalledTimes(3);
+
+    const { createPromptPrediction } = await import('../src/client/promptPrediction');
+    let activeSession = 's1';
+    let emptyInput = true;
+    let resolveFirstSession!: (value: string) => void;
+    const directPredict = vi.fn((sessionId: string) => sessionId === 's1'
+      ? new Promise<string>((resolve) => { resolveFirstSession = resolve; })
+      : Promise.resolve(`${sessionId} result`));
+    const directController = createPromptPrediction({
+      api: () => ({
+        predictNextPrompt: directPredict,
+      }),
+      isActiveSession: (sessionId) => sessionId === activeSession,
+      canPredict: (sessionId) => sessionId === activeSession,
+      hasEmptyInput: () => emptyInput,
+    });
+    emptyInput = false;
+    directController.handleTurnEnded('s1', 'first', 0, true);
+    expect(directPredict).not.toHaveBeenCalled();
+    emptyInput = true;
+    expect(directController.accept('tab')).toBeNull();
+    expect(directController.active.value).toBeDefined();
+    resolveFirstSession('first result');
+    await Promise.resolve();
+    await Promise.resolve();
+    directController.handleTurnStarted('s2');
+    directController.handleTurnEnded('s2', 'background', 99, true);
+    expect(directController.suggestion.value).toMatchObject({ text: 'first result' });
+    expect(directPredict).toHaveBeenCalledTimes(1);
+    emptyInput = false;
+    directController.handleInput();
+    expect(directController.suggestion.value).toMatchObject({ text: 'first result', parked: true });
+    emptyInput = true;
+    const parked = directController.suggestion.value;
+    directController.handleInput();
+    expect(directController.suggestion.value).not.toBe(parked);
+    expect(directController.suggestion.value).toMatchObject({ text: 'first result', parked: true });
+    expect(directController.accept('right')).toBe('first result');
+    expect(directController.suggestion.value).toMatchObject({ acceptedRevision: 1 });
+    expect(directController.accept('tab')).toBe('first result');
+    expect(directController.suggestion.value).toMatchObject({ acceptedRevision: 2 });
+    expect(directPredict).toHaveBeenCalledTimes(1);
+    directController.handleSubmit('first result');
+    expect(directController.suggestion.value).toBeNull();
+
+    directController.handleTurnEnded('s1', 'pending', 1, true);
+    emptyInput = false;
+    directController.handleInput();
+    expect(directController.active.value).toMatchObject({ parked: true });
+    emptyInput = true;
+    directController.handleInput();
+    expect(directController.accept('tab')).toBeNull();
+    expect(directController.active.value).toMatchObject({ parked: true, acceptKey: 'tab' });
+    resolveFirstSession('pending result');
+    await vi.waitFor(() => expect(directController.suggestion.value).toMatchObject({ text: 'pending result', accepted: true }));
+    expect(directPredict).toHaveBeenCalledTimes(2);
+    directController.handleSubmit('pending result');
+    expect(directController.suggestion.value).toBeNull();
+
+    activeSession = 's2';
+    directController.handleTurnEnded('s2', 'second', 0, true);
+    directController.refresh();
+    await vi.waitFor(() => expect(directPredict).toHaveBeenCalledTimes(3));
+    expect(directPredict).toHaveBeenNthCalledWith(3, 's2', {
+      predictionId: expect.any(String),
+      expectedTurnId: 0,
+    });
+    directController.handleTurnEnded('s2', 'replacement', 0, true);
+    await vi.waitFor(() => expect(directPredict).toHaveBeenCalledTimes(4));
+    expect(directPredict).toHaveBeenNthCalledWith(4, 's2', {
+      predictionId: expect.any(String),
+      expectedTurnId: 0,
+    });
+    directPredict.mockResolvedValueOnce(null);
+    directController.handleTurnEnded('s2', 'empty', 1, true);
+    await vi.waitFor(() => expect(directPredict).toHaveBeenCalledTimes(5));
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(directController.active.value).toBeUndefined();
+    expect(directController.suggestion.value).toBeNull();
+    expect(directController.canAttemptPrediction()).toBe(false);
+    hasFocus.mockRestore();
   });
 
   it('stops the running turn by its opener prompt, else falls back to session cancel', async () => {
@@ -532,6 +708,55 @@ describe('model turn error notices', () => {
         message: 'boom',
       }),
     ]);
+  });
+});
+
+describe('model availability notices', () => {
+  it('opens the model picker from the unavailable-model confirmation dialog', async () => {
+    const h = await boot();
+    const { useConfirmDialog } = await import('../src/composables/useConfirmDialog');
+    const { registerModelPickerOpener } = await import('../src/client/deps');
+    const open = vi.fn(async () => {});
+    registerModelPickerOpener(open);
+    const { current, runAction } = useConfirmDialog();
+
+    h.frame('s1', { type: 'notice', level: 'warning', code: 'model.not_configured', title: 'old-model' });
+
+    expect(current.value).toMatchObject({
+      title: 'warnings.modelUnavailable.title',
+      message: 'warnings.modelUnavailable.message',
+      confirmLabel: 'warnings.modelUnavailable.change',
+      variant: 'primary',
+    });
+    await runAction();
+    expect(open).toHaveBeenCalledWith('s1');
+    expect(current.value).toBeNull();
+    expect(h.warningsStore().warnings).toEqual([]);
+  });
+
+  it('keeps unavailable state after a failed profile write', async () => {
+    const h = await boot();
+    h.frame('s1', { type: 'notice', level: 'warning', code: 'model.not_configured', title: 'old-model' });
+    expect(h.client.status.value.model).toBe('—');
+
+    clientApiMock['updateSession'] = vi.fn(async () => {
+      throw new Error('offline');
+    });
+    await h.client.selectModel('stub');
+    expect(h.client.unavailableModelBySession.value['s1']).toBe('old-model');
+  });
+
+  it('clears unavailable state after a successful write or a valid agent state', async () => {
+    const h = await boot();
+    h.frame('s1', { type: 'notice', level: 'warning', code: 'model.not_configured', title: 'old-model' });
+    clientApiMock['updateSession'] = vi.fn(async () => ({ id: 's1' }));
+    await h.client.selectModel('stub');
+    expect(h.client.unavailableModelBySession.value['s1']).toBeUndefined();
+
+    h.frame('s1', { type: 'notice', level: 'warning', code: 'model.not_configured', title: 'old-model' });
+    expect(h.client.status.value.model).toBe('—');
+    h.agentStatus('s1', 'idle', { model: 'stub' });
+    expect(h.client.unavailableModelBySession.value['s1']).toBeUndefined();
   });
 });
 

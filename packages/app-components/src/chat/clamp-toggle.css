@@ -1,0 +1,27 @@
+.u-text-toggle,
+.agent-prompt-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  align-self: center;
+  border: none;
+  border-radius: var(--radius-full);
+  background: var(--color-surface-raised);
+  box-shadow: var(--shadow-sm);
+  color: var(--color-text);
+  font-family: var(--font-ui);
+  font-size: var(--text-sm);
+  line-height: 1;
+  cursor: pointer;
+  user-select: none;
+  transition: box-shadow var(--duration-base) var(--ease-out);
+}
+.u-text-toggle:hover,
+.agent-prompt-toggle:hover {
+  box-shadow: var(--shadow-md);
+}
+.u-text-toggle:focus-visible,
+.agent-prompt-toggle:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
+}

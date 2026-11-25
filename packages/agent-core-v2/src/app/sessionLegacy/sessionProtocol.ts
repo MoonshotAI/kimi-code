@@ -23,7 +23,7 @@ export type PromptPermissionMode = z.infer<typeof promptPermissionModeSchema>;
 
 export const sessionMetadataSchema = z
   .object({
-    cwd: z.string().min(1),
+    cwd: z.string().min(1).meta({ deprecated: true }),
   })
   .catchall(z.unknown());
 export type SessionMetadata = z.infer<typeof sessionMetadataSchema>;

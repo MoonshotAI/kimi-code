@@ -223,3 +223,66 @@ describe('ExitPlanMode without a review', () => {
     expect(result.output).not.toContain('EnterPlanMode');
   });
 });
+
+describe('ExitPlanMode approved review', () => {
+  it('exits plan mode and returns the approved plan with the chosen option', async () => {
+    const exit = vi.fn();
+
+    const result = await executeTool(new ExitPlanModeTool({ ...planService(), exit }), {
+      turnId: 7,
+      toolCallId: 'call_exit_approved',
+      args: { options },
+      signal,
+      metadata: { planReview: { selectedLabel: 'Approach B' } },
+    });
+
+    expect(exit).toHaveBeenCalledTimes(1);
+    expect(result.isError).toBeFalsy();
+    expect(result.output).toContain('Exited plan mode.');
+    expect(result.output).toContain('Selected approach: Approach B');
+    expect(result.output).toContain('Execute ONLY the selected approach');
+    expect(result.output).toContain('Plan saved to: /tmp/kimi-plan.md');
+    expect(result.output).toContain('## Approved Plan:\n# Plan');
+  });
+
+  it('returns the approved plan without an option prefix when no label was selected', async () => {
+    const exit = vi.fn();
+
+    const result = await executeTool(new ExitPlanModeTool({ ...planService(), exit }), {
+      turnId: 7,
+      toolCallId: 'call_exit_approved_plain',
+      args: { options },
+      signal,
+      metadata: { planReview: {} },
+    });
+
+    expect(exit).toHaveBeenCalledTimes(1);
+    expect(result.isError).toBeFalsy();
+    expect(result.output).not.toContain('Selected approach:');
+    expect(result.output).toContain('## Approved Plan:\n# Plan');
+  });
+
+  it('omits the saved-to line when the plan has no path', async () => {
+    const exit = vi.fn();
+
+    const result = await executeTool(
+      new ExitPlanModeTool({
+        ...planService(),
+        exit,
+        status: async () => ({ id: 'test-plan', content: '# Plan', path: null }),
+      }),
+      {
+        turnId: 7,
+        toolCallId: 'call_exit_approved_no_path',
+        args: {},
+        signal,
+        metadata: { planReview: {} },
+      },
+    );
+
+    expect(exit).toHaveBeenCalledTimes(1);
+    expect(result.isError).toBeFalsy();
+    expect(result.output).toContain('## Approved Plan:\n# Plan');
+    expect(result.output).not.toContain('Plan saved to:');
+  });
+});

@@ -2,14 +2,17 @@
 import { onBeforeUnmount, onMounted, ref } from 'vue';
 import { registerMenuSurface } from '../../composables/menuStack';
 
-withDefaults(defineProps<{ role?: 'menu' | 'dialog' | 'listbox' }>(), { role: 'menu' });
+const props = withDefaults(
+  defineProps<{ role?: 'menu' | 'dialog' | 'listbox'; register?: boolean }>(),
+  { role: 'menu', register: true },
+);
 
 const el = ref<HTMLElement>();
 defineExpose({ el });
 
 let releaseSurface: (() => void) | undefined;
 onMounted(() => {
-  if (el.value) releaseSurface = registerMenuSurface(el.value);
+  if (props.register && el.value) releaseSurface = registerMenuSurface(el.value);
 });
 onBeforeUnmount(() => releaseSurface?.());
 </script>

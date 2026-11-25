@@ -1,0 +1,48 @@
+.ui-menu-floating {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: var(--z-dropdown);
+}
+
+.ui-menu-pop-enter-active {
+  transition:
+    opacity var(--duration-base) var(--ease-out),
+    transform var(--duration-base) var(--ease-out);
+}
+
+.ui-menu-pop-leave-active {
+  transition:
+    opacity var(--duration-fast) var(--ease-out),
+    transform var(--duration-fast) var(--ease-out);
+  pointer-events: none;
+}
+
+.ui-menu-pop-enter-from,
+.ui-menu-pop-leave-to {
+  opacity: 0;
+  transform: scale(0.97) translateY(var(--menu-pop-shift, -2px));
+}
+
+.ui-menu-fade-enter-active {
+  transition: opacity var(--duration-base) var(--ease-out);
+}
+
+.ui-menu-fade-leave-active {
+  transition: opacity var(--duration-fast) var(--ease-out);
+  pointer-events: none;
+}
+
+.ui-menu-fade-enter-from,
+.ui-menu-fade-leave-to {
+  opacity: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ui-menu-pop-enter-active,
+  .ui-menu-pop-leave-active,
+  .ui-menu-fade-enter-active,
+  .ui-menu-fade-leave-active {
+    transition: none;
+  }
+}

@@ -11,6 +11,8 @@ import type { SessionContextInfoState, SessionFolderInfoRow } from '@moonshot-ai
 import SessionInfoContext from '../../src/renderer/components/chat/SessionInfoContext.vue';
 import SessionInfoFolder from '../../src/renderer/components/chat/SessionInfoFolder.vue';
 import SessionInfoPanel from '../../src/renderer/components/chat/SessionInfoPanel.vue';
+import { ActivityNotice } from '@moonshot-ai/app-components';
+import { resolveCompactPhase } from '@moonshot-ai/app-components/support';
 import sessionInfoFolderSource from '../../src/renderer/components/chat/SessionInfoFolder.vue?raw';
 import sessionInfoPanelSource from '../../src/renderer/components/chat/SessionInfoPanel.vue?raw';
 import sessionInfoTabsSource from '../../src/renderer/components/chat/SessionInfoTabs.vue?raw';
@@ -138,7 +140,7 @@ describe('SessionInfoFolder', () => {
       await nextTick();
       const branch = host!.querySelector<HTMLElement>('.sif-branch')!;
       expect(branch.getAttribute('title')).toBeNull();
-      expect(host!.querySelector('.ui-tip')).toBeNull();
+      expect(host!.querySelector('.sif-branch-line .ui-tip')).toBeNull();
 
       Object.defineProperties(branch, {
         scrollWidth: { value: 240, configurable: true },
@@ -146,7 +148,7 @@ describe('SessionInfoFolder', () => {
       });
       callback([], {} as ResizeObserver);
       await nextTick();
-      expect(host!.querySelector('.ui-tip')).not.toBeNull();
+      expect(host!.querySelector('.sif-branch-line .ui-tip')).not.toBeNull();
     } finally {
       vi.unstubAllGlobals();
     }
@@ -165,10 +167,10 @@ describe('SessionInfoFolder', () => {
 
     row.state.value.branch = 'feat/a-very-long-branch-name-that-needs-a-tooltip';
     await nextTick();
-    expect(host!.querySelector('.ui-tip')).not.toBeNull();
+    expect(host!.querySelector('.sif-branch-line .ui-tip')).not.toBeNull();
     row.state.value.branch = 'main';
     await nextTick();
-    expect(host!.querySelector('.ui-tip')).toBeNull();
+    expect(host!.querySelector('.sif-branch-line .ui-tip')).toBeNull();
   });
 
   it('collapses additional folders by default and toggles their content', async () => {
@@ -340,7 +342,9 @@ describe('SessionInfoPanel', () => {
 
   it('wires the overflow action to the right panel', () => {
     expect(conversationPaneSource).toContain('@show-tabs="emit(\'showTabs\')"');
+    expect(conversationPaneSource).toContain('preserveDraft: true');
     expect(appSource).toContain('@show-tabs="panel.showPanel"');
+    expect(appSource).not.toContain('commands.compactQueue.queued');
   });
 
   it('uses the sidebar width for the floating panel', () => {
@@ -643,6 +647,84 @@ describe('SessionInfoPanel', () => {
       .map((seg) => Number.parseFloat(seg.style.width));
     expect(widths[0]).toBeCloseTo(100 / 3, 5);
     expect(widths[1]).toBeCloseTo(200 / 3, 5);
+  });
+
+  it('keeps compact clickable while a turn is running and reflects queued and compacting phases', async () => {
+    useContextInspector().setContextInspectorEnabled(true);
+    const compact = vi.fn();
+    store.rows.mockReturnValue([readyRow()]);
+    store.foldersForSession.mockReturnValue([{ path: '/repo/a', primary: true }]);
+    store.contextState.mockReturnValue({
+      status: 'ready',
+      value: {
+        session_id: 's1',
+        agent_id: 'main',
+        captured_at: 1000,
+        tokens: { used: 120000, max: 1000000 },
+        groups: [{ role: 'user', count: 2, tokens: 120000 }],
+      },
+    });
+    const props = reactive({
+      sessionId: 's1',
+      mode: 'sidebar' as const,
+      running: true,
+      hasMessages: true,
+      compactPhase: 'idle' as 'idle' | 'queued' | 'compacting',
+    });
+    host = document.createElement('div');
+    document.body.append(host);
+    app = createApp({ render: () => h(SessionInfoPanel, { ...props, onCompact: compact }) });
+    app.use(createKimiI18n({ locale: 'zh' }));
+    app.provide(IconResolverKey, (name) => getIcon(name as IconName)?.component);
+    app.mount(host);
+    await nextTick();
+
+    const btn = () => host!.querySelector<HTMLButtonElement>('.ctx-summary-btn')!;
+    expect(btn().disabled).toBe(false);
+    expect(btn().textContent?.trim()).toBe('压缩上下文');
+    btn().click();
+    expect(compact).toHaveBeenCalledOnce();
+
+    props.compactPhase = resolveCompactPhase(null, [{ kind: 'compact' }]);
+    await nextTick();
+    expect(btn().disabled).toBe(true);
+    expect(btn().textContent?.trim()).toBe('等待压缩');
+
+    props.compactPhase = resolveCompactPhase({ status: 'running' }, [{ kind: 'compact' }]);
+    await nextTick();
+    expect(btn().disabled).toBe(true);
+    expect(btn().getAttribute('aria-busy')).toBe('true');
+    expect(btn().textContent?.trim()).toBe('正在压缩…');
+
+    props.running = false;
+    props.compactPhase = 'idle';
+    await nextTick();
+    expect(store.refreshContext).toHaveBeenCalledWith('s1');
+
+    props.hasMessages = false;
+    await nextTick();
+    expect(btn().disabled).toBe(true);
+  });
+});
+
+describe('ActivityNotice compaction timer', () => {
+  it('displays elapsed duration once a second passes', async () => {
+    vi.useFakeTimers();
+    try {
+      mount(ActivityNotice, {});
+      await nextTick();
+      expect(host!.querySelector('.activity-notice')).toBeNull();
+
+      await vi.advanceTimersByTimeAsync(1000);
+      await nextTick();
+      expect(host!.querySelector('.activity-notice')?.textContent).toBe('1秒');
+
+      await vi.advanceTimersByTimeAsync(2000);
+      await nextTick();
+      expect(host!.querySelector('.activity-notice')?.textContent).toBe('3秒');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

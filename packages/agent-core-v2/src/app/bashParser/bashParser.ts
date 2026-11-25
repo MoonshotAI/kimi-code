@@ -26,3 +26,12 @@ export interface IBashParserService {
 
 export const IBashParserService: ServiceIdentifier<IBashParserService> =
   createDecorator<IBashParserService>('bashParserService');
+
+export function normalizeBashCommandName(raw: string): string {
+  let name = raw;
+  const separator = Math.max(name.lastIndexOf('/'), name.lastIndexOf('\\'));
+  if (separator >= 0) name = name.slice(separator + 1);
+  name = name.toLowerCase();
+  if (name.endsWith('.exe')) name = name.slice(0, -'.exe'.length);
+  return name;
+}

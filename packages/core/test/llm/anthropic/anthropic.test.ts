@@ -24,7 +24,6 @@ describe('Anthropic decode fixtures', () => {
 describe('Anthropic transport fixtures', () => {
   runTransportFixtures(anthropicProtocol, anthropicTransportFixtures, 'anthropic');
 });
-
 describe('Anthropic output token ceilings', () => {
   it.each([
     { model: 'claude-opus-5-5' },

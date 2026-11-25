@@ -1,15 +1,17 @@
 import { ScopeActivation } from '#/_base/di/instantiation';
-import type { ServiceIdentifier } from '#/_base/di/instantiation';
+import type { ServiceIdentifier, ServicesAccessor } from '#/_base/di/instantiation';
 import type {
   AgentToolCtor,
   AnyAgentTool,
 } from '#/agent/toolRegistry/toolContribution';
+import { AgentToolContribution } from '#/agent/toolRegistry/toolContribution';
+import { IAgentLoopService } from '#/agent/loop/loop';
 import { IFlagService } from '#/app/flag/flag';
 import { LifecycleScope } from '#/app/scopes';
 import { Feature } from '#/features/feature';
 import { registerFeature } from '#/features/featureRegistry';
 
-import { TOWER_FLAG_ID } from './tower';
+import { TOWER_FLAG_ID, TOWER_WORKER_PROFILE } from './tower';
 import { ITowerRateLimitService } from './towerRateLimit';
 import { TowerRateLimitService } from './towerRateLimitService';
 import { ITowerCompleteTool } from './tools/complete/complete';
@@ -62,6 +64,23 @@ export const TOWER_TOOL_CONTRIBUTIONS: readonly TowerToolContribution[] = [
   { id: ITowerStatusTool, ctor: TowerStatusTool, name: 'TowerStatus' },
 ];
 
+const TOWER_WORKER_SHARED_TOOL_NAMES: ReadonlySet<string> = new Set([
+  'TowerFinding',
+  'TowerInbox',
+  'TowerMission',
+  'TowerReview',
+  'TowerSend',
+  'TowerStatus',
+]);
+
+export const USER_CONFIGURABLE_TOWER_MODE_TOOLS = TOWER_TOOL_CONTRIBUTIONS.filter(
+  (tool) => tool.name !== 'TowerComplete' && !TOWER_WORKER_SHARED_TOOL_NAMES.has(tool.name),
+).map((tool) => ({ name: tool.name, source: 'builtin' as const }));
+
+function isTowerWorkerProfile(accessor: ServicesAccessor): boolean {
+  return accessor.get(IAgentLoopService).data().profileName === TOWER_WORKER_PROFILE;
+}
+
 export class TowerFeature extends Feature {
   static override readonly name = 'tower';
 
@@ -76,9 +95,27 @@ export class TowerFeature extends Feature {
       activation: ScopeActivation.OnDemand,
     });
     for (const tool of TOWER_TOOL_CONTRIBUTIONS) {
-      this.contributeTool(tool.id, tool.ctor, {
-        name: tool.name,
-        domain: 'tower',
+      if (tool.name === 'TowerComplete') {
+        this.contributeTool(tool.id, tool.ctor, {
+          name: tool.name,
+          domain: 'tower',
+          userConfigurable: true,
+        });
+        continue;
+      }
+      this.contributeService(LifecycleScope.Agent, tool.id, tool.ctor, {
+        activation: ScopeActivation.OnDemand,
+      });
+      if (!TOWER_WORKER_SHARED_TOOL_NAMES.has(tool.name)) continue;
+      this.provide(AgentToolContribution, {
+        id: tool.id,
+        ctor: tool.ctor,
+        options: {
+          name: tool.name,
+          domain: 'tower',
+          when: isTowerWorkerProfile,
+          userConfigurable: true,
+        },
       });
     }
     this.contributeProfiles([TOWER_WORKER_PROFILE_DEF]);

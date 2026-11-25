@@ -34,13 +34,9 @@ const noopExecutor = successfulExecutor(['noop']);
 describe('loop.wait', () => {
   it('resolves with the first emitted event of the type passing match', async () => {
     const loop = createLoop({ requester: echoRequester(), executor: noopExecutor });
-    const lifecycleEvents: LoopEmitted['type'][] = [];
-    const lifecycleGenerations: number[] = [];
+    const turnEnds: Extract<LoopEmitted, { type: 'turn.ended' }>[] = [];
     loop.subscribe((event) => {
-      if (event.type === 'turn.ended' || event.type === 'loop.drained' || event.type === 'loop.idle') {
-        lifecycleEvents.push(event.type);
-      }
-      if (event.type === 'loop.drained' || event.type === 'loop.idle') lifecycleGenerations.push(event.generation);
+      if (event.type === 'turn.ended') turnEnds.push(event);
     });
     const pending = loop.wait('turn.ended', { match: (event) => event.turnId === 1 });
     await loop.runTurn(prompt('one'));
@@ -48,13 +44,9 @@ describe('loop.wait', () => {
     const event = await pending;
     expect(event.turnId).toBe(1);
     expect(event.outcome.type).toBe('done');
-    expect(lifecycleEvents).toEqual([
-      'turn.ended',
-      'loop.drained',
-      'loop.idle',
-      'turn.ended',
-      'loop.drained',
-      'loop.idle',
+    expect(turnEnds.map((ended) => [ended.turnId, ended.continuation])).toEqual([
+      [0, 'none'],
+      [1, 'none'],
     ]);
 
     let submissionState: unknown;
@@ -82,34 +74,108 @@ describe('loop.wait', () => {
     await loop.waitForIdle();
     expect(loop.state.nextTurnId).toBe(4);
 
-    lifecycleEvents.length = 0;
+    turnEnds.length = 0;
     loop.remind(prompt('passive reminder'));
     await loop.waitForIdle();
     expect(loop.state.inbox.remind).toEqual([]);
-    expect(lifecycleEvents).not.toContain('llm.started');
-    expect(lifecycleEvents).toEqual(['loop.drained', 'loop.idle']);
+    expect(turnEnds).toEqual([]);
 
-    lifecycleEvents.length = 0;
-    const stopDrained = loop.subscribe((event) => {
-      if (event.type !== 'loop.drained') return;
-      stopDrained();
-      loop.submit(prompt('submitted from drained'));
+    const stopEnded = loop.subscribe((ended) => {
+      if (ended.type !== 'turn.ended' || ended.continuation === undefined || ended.continuation === 'turn') return;
+      stopEnded();
+      loop.submit(prompt('submitted from ended'));
     });
     const followUpTurnId = loop.state.nextTurnId + 1;
-    const followUpTurn = loop.wait('turn.ended', { match: (event) => event.turnId === followUpTurnId });
+    const followUpTurn = loop.wait('turn.ended', { match: (ended) => ended.turnId === followUpTurnId });
     loop.submit(prompt('start macro'));
     await followUpTurn;
     await loop.waitForIdle();
-    expect(lifecycleEvents).toEqual([
-      'turn.ended',
-      'loop.drained',
-      'turn.ended',
-      'loop.drained',
-      'loop.idle',
+    expect(turnEnds.map((ended) => [ended.turnId, ended.continuation])).toEqual([
+      [followUpTurnId - 1, 'none'],
+      [followUpTurnId, 'none'],
     ]);
-    const macroGenerations = lifecycleGenerations.slice(-3);
-    expect(macroGenerations[1]).toBe(macroGenerations[0]! + 1);
-    expect(macroGenerations[2]).toBe(macroGenerations[1]);
+    await loop.close();
+  });
+
+  it('marks continuation on crash-window settlement according to whether work follows', async () => {
+    const crashed = createLoop({
+      requester: echoRequester(),
+      executor: noopExecutor,
+      input: {
+        nextTurnId: 4,
+        unfinished: { turnId: 3, trigger: 'normal', step: 1, stepUnfinished: false, appended: false },
+      },
+    });
+    const crashedEnds: Extract<LoopEmitted, { type: 'turn.ended' }>[] = [];
+    crashed.subscribe((event) => {
+      if (event.type === 'turn.ended') crashedEnds.push(event);
+    });
+    await crashed.waitForIdle();
+    expect(crashedEnds).toEqual([]);
+    await crashed.runTurn(prompt('fresh work after the crash window'));
+    expect(crashedEnds.map((ended) => [ended.turnId, ended.continuation])).toEqual([
+      [3, 'turn'],
+      [4, 'none'],
+    ]);
+    await crashed.close();
+
+    const parked = createLoop({ requester: echoRequester(), executor: noopExecutor });
+    const parkedEnds: Extract<LoopEmitted, { type: 'turn.ended' }>[] = [];
+    parked.subscribe((event) => {
+      if (event.type === 'turn.ended') parkedEnds.push(event);
+    });
+    parked.recordNotification(prompt('restored completion'));
+    parked.remind(prompt('parked reminder'));
+    await parked.waitForIdle();
+    expect(parkedEnds).toEqual([]);
+    parked.start();
+    await parked.waitForIdle();
+    expect(parkedEnds.map((ended) => [ended.turnId, ended.continuation])).toEqual([[0, 'none']]);
+    expect(parked.state.messages.map((entry) => entry.role)).toEqual(['user', 'user']);
+    await parked.close();
+  });
+
+  it('marks continuation on an aborted turn according to whether follow-up work is queued', async () => {
+    let call = 0;
+    const requester = createMockProviderRequester((_request, signal) => {
+      call += 1;
+      if (call > 2) return { parts: [{ type: 'text', text: 'done' }] };
+      return {
+        parts: [{ type: 'text', text: 'pending' }],
+        error: signal.aborted
+          ? new Error('aborted')
+          : new Promise<never>((_resolve, reject) => {
+              signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
+            }),
+      };
+    });
+    const loop = createLoop({ requester, executor: noopExecutor, abortGraceMs: 5 });
+    const turnEnds: Extract<LoopEmitted, { type: 'turn.ended' }>[] = [];
+    loop.subscribe((event) => {
+      if (event.type === 'turn.ended') turnEnds.push(event);
+    });
+
+    const firstRequest = loop.wait('llm.delta.part');
+    const parked = loop.runTurn(prompt('cancel without follow-up'));
+    await firstRequest;
+    loop.abort('user');
+    expect((await parked).type).toBe('aborted');
+    await loop.waitForIdle();
+    expect(loop.state.held).toBe(true);
+    expect(turnEnds.map((ended) => [ended.turnId, ended.continuation])).toEqual([[0, 'none']]);
+
+    turnEnds.length = 0;
+    const secondRequest = loop.wait('llm.delta.part');
+    const continued = loop.runTurn(prompt('cancel with queued follow-up'));
+    await secondRequest;
+    loop.submit(prompt('queued follow-up'));
+    loop.abort('user', { continue: true });
+    expect((await continued).type).toBe('aborted');
+    await loop.waitForIdle();
+    expect(turnEnds.map((ended) => [ended.turnId, ended.continuation])).toEqual([
+      [1, 'turn'],
+      [2, 'none'],
+    ]);
     await loop.close();
   });
 

@@ -14,6 +14,7 @@ const props = withDefaults(
     text?: string | null;
     keys?: string[];
     placement?: Placement;
+    arrow?: boolean;
     maxWidth?: number;
     maxLines?: number;
   }>(),
@@ -34,6 +35,7 @@ const SHOW_DELAY = 150;
 const bubble = ref<HTMLElement>();
 const open = ref(false);
 const positioned = ref(false);
+const side = ref<Placement>(props.placement);
 const bubbleStyle = ref<Record<string, string>>({ maxWidth: `${props.maxWidth}px` });
 
 let showTimer: number | undefined;
@@ -58,25 +60,27 @@ function position(anchorEl: HTMLElement): void {
   const vh = window.innerHeight;
 
   let place = props.placement;
-  if (place === 'top' && r.top - GAP - bh < MARGIN) place = 'bottom';
-  else if (place === 'bottom' && r.bottom + GAP + bh > vh - MARGIN) place = 'top';
-  else if (place === 'left' && r.left - GAP - bw < MARGIN) place = 'right';
-  else if (place === 'right' && r.right + GAP + bw > vw - MARGIN) place = 'left';
+  const gap = props.arrow ? 4 : GAP;
+  if (place === 'top' && r.top - gap - bh < MARGIN) place = 'bottom';
+  else if (place === 'bottom' && r.bottom + gap + bh > vh - MARGIN) place = 'top';
+  else if (place === 'left' && r.left - gap - bw < MARGIN) place = 'right';
+  else if (place === 'right' && r.right + gap + bw > vw - MARGIN) place = 'left';
+  side.value = place;
 
   let top = 0;
   let left = 0;
   if (place === 'top') {
-    top = r.top - GAP - bh;
+    top = r.top - gap - bh;
     left = r.left + r.width / 2 - bw / 2;
   } else if (place === 'bottom') {
-    top = r.bottom + GAP;
+    top = r.bottom + gap;
     left = r.left + r.width / 2 - bw / 2;
   } else if (place === 'left') {
     top = r.top + r.height / 2 - bh / 2;
-    left = r.left - GAP - bw;
+    left = r.left - gap - bw;
   } else {
     top = r.top + r.height / 2 - bh / 2;
-    left = r.right + GAP;
+    left = r.right + gap;
   }
 
   left = Math.min(Math.max(left, MARGIN), vw - MARGIN - bw);
@@ -86,6 +90,8 @@ function position(anchorEl: HTMLElement): void {
     maxWidth: `${props.maxWidth}px`,
     top: `${Math.round(top)}px`,
     left: `${Math.round(left)}px`,
+    '--tip-anchor-x': `${r.left + r.width / 2 - left}px`,
+    '--tip-anchor-y': `${r.top + r.height / 2 - top}px`,
   };
 }
 
@@ -242,8 +248,9 @@ onBeforeUnmount(() => {
   <Teleport v-if="open" to="body">
     <div
       ref="bubble"
-      class="ui-tip__bubble"
-      :class="{ positioned, 'ui-tip__bubble--keys': keys.length > 0 }"
+      class="ui-tip-surface ui-tip__bubble"
+      :class="{ positioned, 'ui-tip__bubble--keys': keys.length > 0, 'ui-tip__bubble--arrow': arrow }"
+      :data-side="arrow ? side : undefined"
       :style="[bubbleStyle, { '--tip-lines': maxLines }]"
       role="tooltip"
     >
@@ -258,26 +265,37 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .ui-tip__bubble {
-  position: fixed;
-  z-index: var(--z-tooltip);
   display: -webkit-box;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: var(--tip-lines);
   max-width: 280px;
-  padding: 4px 8px;
-  border-radius: var(--radius-sm);
-  background: var(--color-text);
-  color: var(--color-bg);
-  font-family: var(--font-ui);
-  font-size: var(--text-xs);
   line-height: 1.35;
   overflow: hidden;
-  overflow-wrap: anywhere;
   pointer-events: none;
   opacity: 0;
   transition: opacity var(--duration-fast) var(--ease-out);
 }
 .ui-tip__bubble.positioned { opacity: 1; }
+.ui-tip__bubble--arrow {
+  overflow: visible;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: #2b2b2b;
+  color: white;
+  font: 400 14px/20px "PingFang SC", var(--font-ui);
+}
+.ui-tip__bubble--arrow::after {
+  content: '';
+  position: absolute;
+  width: 10px;
+  height: 4px;
+  background: inherit;
+  clip-path: path('M10 0H0L4.37531 3.50024C4.74052 3.79242 5.25948 3.79242 5.62469 3.50024L10 0Z');
+}
+.ui-tip__bubble--arrow[data-side='top']::after { top: 100%; left: var(--tip-anchor-x); transform: translateX(-50%); }
+.ui-tip__bubble--arrow[data-side='bottom']::after { bottom: 100%; left: var(--tip-anchor-x); transform: translateX(-50%) rotate(180deg); }
+.ui-tip__bubble--arrow[data-side='left']::after { left: 100%; top: var(--tip-anchor-y); transform: translate(-3px, -50%) rotate(-90deg); }
+.ui-tip__bubble--arrow[data-side='right']::after { right: 100%; top: var(--tip-anchor-y); transform: translate(3px, -50%) rotate(90deg); }
 .ui-tip__bubble--keys {
   display: flex;
   align-items: center;

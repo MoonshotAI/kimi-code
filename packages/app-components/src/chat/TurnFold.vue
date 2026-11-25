@@ -406,7 +406,7 @@ function isRunLive(block: { items: { sourceIndex: number }[] }): boolean {
 }
 
 .tf-body-inner .msg {
-  font-size: var(--ui-font-size);
+  font-size: var(--text-base);
   line-height: var(--leading-prose);
   color: var(--color-text);
   font-weight: var(--weight-medium);
