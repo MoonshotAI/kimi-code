@@ -2955,7 +2955,7 @@ export class KimiTUI {
     });
   }
 
-  private removeTranscriptEntries(entries: readonly TranscriptEntry[]): void {
+  removeTranscriptEntries(entries: readonly TranscriptEntry[]): void {
     const doomed = new Set(entries);
     const componentsToRemove = this.state.transcriptContainer.children.filter((child) => {
       const entry = getTranscriptComponentEntry(child);
