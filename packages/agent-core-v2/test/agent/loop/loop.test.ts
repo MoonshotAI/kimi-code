@@ -537,6 +537,7 @@ describe('Agent loop', () => {
     });
     ctx.mockNextProviderResponse({ step: held('cancelled', reply(say('unreached'))) });
     const { turn } = submitTurn(loop, 'go');
+    await vi.waitFor(() => expect(ctx.llmCalls).toHaveLength(1));
     turn.cancel(new Error('stop'));
 
     const result = await turn.result;
