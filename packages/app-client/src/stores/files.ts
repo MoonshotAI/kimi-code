@@ -377,7 +377,13 @@ export const useFilesStore = defineStore('kimi.files', () => {
       return;
     }
     void loadGitStatus(sid);
-    if (fileTreeBySession.value[sid] !== undefined) void refreshFileTree(sid);
+    const tree = fileTreeBySession.value[sid];
+    if (tree === undefined) return;
+    for (const [key, seq] of fileTreeSeqs) {
+      if (key.startsWith(`${sid}:`)) fileTreeSeqs.set(key, seq + 1);
+    }
+    for (const path of Object.keys(tree.loading)) delete tree.loading[path];
+    void refreshFileTree(sid);
   }
 
   watch(

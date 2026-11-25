@@ -519,6 +519,7 @@ describe('sessionListStore cancellable background reads', () => {
 describe('session directories after a project moves', () => {
   const listDirectory = vi.fn();
   const getGitStatus = vi.fn();
+  const setWorkspacePrimary = vi.fn();
 
   function project(root: string, extra: Partial<AppWorkspace> = {}): AppWorkspace {
     return { id: 'wm_m', root, name: 'M', kind: 'managed', additionalDirs: ['/m1', '/m2'].filter((dir) => dir !== root), sessionCount: 3, ...extra };
@@ -542,7 +543,8 @@ describe('session directories after a project moves', () => {
     sessionListStore();
     listDirectory.mockReset().mockResolvedValue({ items: [], truncated: false });
     getGitStatus.mockReset().mockResolvedValue({ pullRequest: null });
-    setKimiClientDeps({ api: () => ({ listDirectory, getGitStatus }) as unknown as KimiWebApi, t: (key) => key });
+    setWorkspacePrimary.mockReset().mockImplementation(async (_id: string, path: string) => project(path));
+    setKimiClientDeps({ api: () => ({ listDirectory, getGitStatus, setWorkspacePrimary }) as unknown as KimiWebApi, t: (key) => key });
     workspacesStore().hiddenWorkspaceIds = [];
     workspacesStore().workspaces = [project('/m1'), { ...project('/m1'), id: 'wm_other' }];
     workspacesStore().selectWorkspace('wm_m');
@@ -588,6 +590,26 @@ describe('session directories after a project moves', () => {
     expect(getGitStatus.mock.calls.map(([id]) => id)).toEqual(['follows']);
     expect(filesStore().fileTreeBySession['also-follows']).toBeUndefined();
     expect(filesStore().fileTreeBySession['worktree']?.children['.']?.map((entry) => entry.name)).toEqual(['m1.txt']);
+  });
+
+  it.each([
+    ['the project primary is changed', () => workspacesStore().setWorkspacePrimary({ id: 'wm_m', path: '/m2' })],
+    ['the session gets a new directory', () => Promise.resolve(sessionsStore().updateSession('follows', (session) => ({ ...session, cwd: '/m2' })))],
+  ])('lists the new directory when %s while the old one is still being read', async (_source, move) => {
+    let serverDir = '/m1';
+    const answers: Array<() => void> = [];
+    listDirectory.mockReset().mockImplementation(() => {
+      const name = `${serverDir.slice(1)}.txt`;
+      return new Promise((resolve) => answers.push(() => resolve({ items: [{ path: name, name, kind: 'file' }], truncated: false })));
+    });
+    const oldListing = filesStore().loadFileTreeChildren('follows', '.');
+    serverDir = '/m2';
+    await move();
+    await nextTick();
+    for (const answer of answers.toReversed()) answer();
+    await oldListing;
+
+    expect(filesStore().fileTreeBySession['follows']?.children['.']?.map((entry) => entry.name)).toEqual(['m2.txt']);
   });
 
   it('moves nothing when only the name or the additional directories of a project change', async () => {
