@@ -215,10 +215,12 @@ export function usePromptPipeline(rawState: ExtendedState, deps: PromptPipelineD
     const worktree = opts?.local === true ? undefined : newSessionEnvironmentStore().worktreeRequest(ws.id);
     const request = worktree === undefined ? { cwd: ws.root, model } : { cwd: ws.root, model, worktree };
     const workspaceId = ws.id === ws.root ? undefined : ws.id;
+    const rootIsListed = workspacesStore().workspaces.some((w) => w.id === ws.id);
+    const cwd = workspaceId === undefined || rootIsListed ? ws.root : undefined;
     let session: AppSession;
     try {
       try {
-        session = await api.createSession({ ...request, workspaceId });
+        session = await api.createSession({ ...request, cwd, workspaceId });
       } catch (err) {
         if (!isDaemonApiError(err) || err.code !== WORKSPACE_NOT_FOUND_CODE) throw err;
         session = await api.createSession({ ...request, workspaceId: undefined });

@@ -84,22 +84,8 @@ export function sessionWorktreeCard(worktree: AppSessionWorktree | null | undefi
   }
 }
 
-export function sessionMainDirectory(
-  session: Pick<AppSession, 'cwd' | 'worktree'> | null | undefined,
-  workspaceRoot: string | null | undefined,
-): string {
-  if (session === null || session === undefined) return workspaceRoot ?? '';
-  if (isWorktreeSession(session)) return session.worktree?.path ?? session.cwd;
-  return workspaceRoot ?? session.cwd;
-}
-
-export function sessionDirectoryRoots(
-  session: Pick<AppSession, 'cwd' | 'worktree'> | null | undefined,
-  workspace: { root: string; additionalDirs?: readonly string[] } | null | undefined,
-): string[] {
-  const main = sessionMainDirectory(session, workspace?.root);
-  if (main.length === 0) return [];
-  return [main, ...(workspace?.additionalDirs ?? [])];
+export function sessionWorkingDirectory(session: Pick<AppSession, 'cwd' | 'worktree'>): string {
+  return isWorktreeSession(session) ? (session.worktree?.path ?? session.cwd) : session.cwd;
 }
 
 export type NewSessionEnvironment = 'local' | 'worktree';

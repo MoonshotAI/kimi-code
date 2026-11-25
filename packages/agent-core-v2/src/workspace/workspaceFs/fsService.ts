@@ -1665,7 +1665,7 @@ export class WorkspaceFsService implements IWorkspaceFsService {
     const roots: { dir: string; real: string }[] = [];
     for (const dir of dirs) {
       try {
-        roots.push({ dir, real: await this.hostFs.realpath(dir) });
+        roots.push({ dir, real: await this.realpathExistingPrefix(dir) });
       } catch {
         roots.push({ dir, real: dir });
       }

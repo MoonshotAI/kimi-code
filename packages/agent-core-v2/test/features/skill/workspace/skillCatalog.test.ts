@@ -329,6 +329,35 @@ describe('WorkspaceSkillCatalogService', () => {
     }
   });
 
+  it('handles the rejection of a source that changes but cannot be loaded', async () => {
+    const dirChanges = new Emitter<void>();
+    const unhandled = vi.fn();
+    process.on('unhandledRejection', unhandled);
+    const { host, workspace } = makeHost(
+      new FileSkillDiscovery(stubLog()),
+      workspaceContextStub('/work'),
+      [],
+      undefined,
+      undefined,
+      {
+        ...workspaceDirsStub([], [], Promise.reject(new Error('invalid workspace directories'))),
+        onDidChange: dirChanges.event,
+      },
+    );
+
+    try {
+      const catalog = workspace.accessor.get(IWorkspaceSkillCatalog);
+      dirChanges.fire();
+      await expect(catalog.ready).rejects.toThrow('invalid workspace directories');
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(unhandled).not.toHaveBeenCalled();
+    } finally {
+      process.off('unhandledRejection', unhandled);
+      host.dispose();
+      dirChanges.dispose();
+    }
+  });
+
   it('discovers all workspace directories with primary and earlier dirs winning collisions', async () => {
     const base = await mkdtemp(join(tmpdir(), 'skill-catalog-multi-root-'));
     const primary = join(base, 'primary');
@@ -456,11 +485,11 @@ describe('WorkspaceSkillCatalogService', () => {
     await seedCatalogSkill(secondary, 'secondary-only', 'from secondary');
     await seedCatalogSkill(secondary, 'shared', 'from secondary');
     const dirChanges = new Emitter<void>();
-    let primaryByWorkspace = { wd_test: primary };
+    let currentPrimary = primary;
     const dirs = {
       ...workspaceDirsStub([secondary]),
-      get primaryByWorkspace() {
-        return primaryByWorkspace;
+      get primary() {
+        return currentPrimary;
       },
       onDidChange: dirChanges.event,
     } as IWorkspaceDirs;
@@ -478,7 +507,7 @@ describe('WorkspaceSkillCatalogService', () => {
       await catalog.load();
       expect(catalog.catalog.getSkill('shared')?.description).toBe('from primary');
 
-      primaryByWorkspace = { wd_test: secondary };
+      currentPrimary = secondary;
       const changed = waitForEvents(catalog.onDidChange, 1);
       dirChanges.fire();
       await changed;

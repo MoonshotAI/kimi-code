@@ -36,7 +36,7 @@ afterEach(() => { vi.unstubAllGlobals(); vi.clearAllMocks(); });
 
 
 it('rejects old session menu actions after switching and reopening another context', async () => {
-  const client = { activeSessionId: ref('A'), activeSessionArchived: ref(false), visibleWorkspace: ref(null), activeMainDirectory: ref(''), activeSessionEnvironment: ref('local'), status: ref({}), gitInfo: ref(null), gitDiffStats: ref(null), activePullRequest: ref(null), archiveSessionWithToast: mocks.archive };
+  const client = { activeSessionId: ref('A'), activeSessionArchived: ref(false), visibleWorkspace: ref(null), activeSessionEnvironment: ref('local'), status: ref({}), gitInfo: ref(null), gitDiffStats: ref(null), activePullRequest: ref(null), archiveSessionWithToast: mocks.archive };
   mocks.client = client;
   vi.stubGlobal('document', { removeEventListener() {} });
   vi.stubGlobal('window', { removeEventListener() {} });
@@ -68,7 +68,7 @@ it('rejects old session menu actions after switching and reopening another conte
 });
 
 function mountHeader() {
-  const client = { activeSessionId: ref('A'), activeSessionArchived: ref(false), visibleWorkspace: ref(null), activeMainDirectory: ref(''), activeSessionEnvironment: ref('local'), status: ref({}), gitInfo: ref(null), gitDiffStats: ref(null), activePullRequest: ref(null), archiveSessionWithToast: mocks.archive, reloadSession: mocks.reload };
+  const client = { activeSessionId: ref('A'), activeSessionArchived: ref(false), visibleWorkspace: ref(null), activeSessionEnvironment: ref('local'), status: ref({}), gitInfo: ref(null), gitDiffStats: ref(null), activePullRequest: ref(null), archiveSessionWithToast: mocks.archive, reloadSession: mocks.reload };
   mocks.client = client;
   vi.stubGlobal('document', { addEventListener() {}, removeEventListener() {} });
   vi.stubGlobal('window', { addEventListener() {}, removeEventListener() {} });

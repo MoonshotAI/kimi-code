@@ -610,12 +610,13 @@ export class SessionEventBroadcaster {
         const live = getLiveSessionById(this.opts.core.accessor, sessionId);
         if (live !== undefined) {
           try {
-            const meta = await live.accessor.get(ISessionMetadata).read();
+            const metadata = live.accessor.get(ISessionMetadata);
+            const meta = await metadata.read();
             const ctx = live.accessor.get(ISessionContext);
             summary = {
               id: meta.id,
               workspaceId: ctx.workspaceId,
-              cwd: ctx.cwd,
+              cwd: metadata.effectiveCwd,
               environmentId: meta.environmentId,
               environmentCwd: meta.environmentCwd,
               title: meta.title,

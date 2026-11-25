@@ -12,7 +12,7 @@ const stores = vi.hoisted(() => ({
   roots: [] as string[],
   workspaces: [] as Array<{ id: string; name: string }>,
   rows: [] as Array<Record<string, unknown>>,
-  directoryRootsFor: vi.fn(),
+  sessionPanelRoots: vi.fn(),
   infoRows: vi.fn(),
   observe: vi.fn(),
   refresh: vi.fn(),
@@ -22,7 +22,7 @@ vi.mock('@moonshot-ai/app-client/stores', () => ({
   sessionsStore: () => ({ sessions: stores.sessions }),
   workspacesStore: () => ({
     fsHome: stores.fsHome,
-    directoryRootsFor: stores.directoryRootsFor,
+    sessionPanelRoots: stores.sessionPanelRoots,
     mergedWorkspaces: stores.workspaces,
     workspaceIdForSession: (session: { workspaceId?: string }) => session.workspaceId ?? '',
   }),
@@ -108,7 +108,7 @@ beforeEach(() => {
   stores.roots = [];
   stores.workspaces = [];
   stores.rows = [];
-  stores.directoryRootsFor.mockReset().mockImplementation(() => stores.roots);
+  stores.sessionPanelRoots.mockReset().mockImplementation(() => ({ root: stores.roots[0] ?? '', roots: stores.roots }));
   stores.infoRows.mockReset().mockImplementation(() => stores.rows);
   stores.observe.mockReset();
   stores.refresh.mockReset();
@@ -247,7 +247,7 @@ describe('SessionHoverCard', () => {
     const el = mountCard(row({ cwd: '/Users/me/elsewhere' }));
     await nextTick();
 
-    expect(stores.directoryRootsFor).toHaveBeenCalledWith('s1', 'w1');
+    expect(stores.sessionPanelRoots).not.toHaveBeenCalled();
     expect(el.querySelector('.shc-path')?.textContent).toBe('~/elsewhere');
   });
 });

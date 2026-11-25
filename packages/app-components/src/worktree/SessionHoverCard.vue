@@ -34,8 +34,8 @@ const record = computed(() => sessionsStore().sessions.find((item) => item.id ==
 const worktree = computed(() => sessionWorktreeDisplay(record.value));
 const home = computed(() => (props.session.hostId === undefined ? workspacesStore().fsHome : null));
 
-const roots = computed<string[]>(() => {
-  const found = workspacesStore().directoryRootsFor(props.session.id, props.session.workspaceId);
+const roots = computed<readonly string[]>(() => {
+  const found = record.value === undefined ? [] : workspacesStore().sessionPanelRoots(record.value).roots;
   if (found.length > 0) return found;
   return props.session.cwd ? [props.session.cwd] : [];
 });

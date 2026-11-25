@@ -12,7 +12,7 @@ import {
   type SessionContextSummary,
 } from '@moonshot-ai/app-core/api';
 import { workspaceFolders, type WorkspaceFolder } from '@moonshot-ai/app-core/client';
-import { isWorktreeSession, sessionDirectoryRoots } from '@moonshot-ai/app-core/lib';
+import { isWorktreeSession } from '@moonshot-ai/app-core/lib';
 import { getKimiWebApi } from '../client/deps';
 import { sessionsStore } from './sessions';
 import { workspacesStore } from './workspaces';
@@ -69,10 +69,8 @@ export const useSessionInfoStore = defineStore('kimi.sessionInfo', () => {
   function foldersForSession(sessionId: string): WorkspaceFolder[] {
     const session = sessionsStore().sessions.find((item) => item.id === sessionId);
     if (!session) return [];
-    const workspaceId = workspacesStore().workspaceIdForSession(session);
-    const workspace = workspacesStore().mergedWorkspaces.find((item) => item.id === workspaceId);
-    const [root = '', ...additionalDirs] = sessionDirectoryRoots(session, workspace);
-    return workspaceFolders({ root, additionalDirs });
+    const { root, roots } = workspacesStore().sessionPanelRoots(session);
+    return workspaceFolders({ root, additionalDirs: roots.slice(1) });
   }
 
   function rows(sessionId: string): SessionFolderInfoRow[] {

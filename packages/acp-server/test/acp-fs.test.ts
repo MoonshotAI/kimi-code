@@ -87,6 +87,17 @@ describe('AcpHostFileSystem', () => {
     expect(writes).toEqual(['fresh']);
   });
 
+  it('maps the ACP resource-not-found response for direct text reads', async () => {
+    const failure = RequestError.resourceNotFound('/buffer.txt');
+    const fs = makeFileSystem({
+      readTextFile: async () => { throw failure; },
+      writeTextFile: async () => {},
+    });
+    const error = await fs.readText('/buffer.txt').catch((error: unknown) => error);
+    expect(isHostFsNotFound(error)).toBe(true);
+    expect(error).toMatchObject({ cause: failure });
+  });
+
   it('does not write after a non-not-found client read failure', async () => {
     const writes: string[] = [];
     const failure = new Error('transport failed');

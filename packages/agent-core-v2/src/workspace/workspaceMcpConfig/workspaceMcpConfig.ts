@@ -1,6 +1,9 @@
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import type { Event, IWaitUntil } from '#/_base/event';
 import type { McpServerConfig } from '#/mcpCore/config-schema';
+import type { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
+
+export type McpDirs = Pick<IWorkspaceDirs, 'ready' | 'primary' | 'onDidChange'>;
 
 export interface McpServersChange {
   readonly upsert: Readonly<Record<string, McpServerConfig>>;

@@ -39,7 +39,7 @@ const emit = defineEmits<{
 
 const sessionId = computed(() => client.activeSessionId.value);
 const workspaceName = computed(() => client.visibleWorkspace.value?.name);
-const workspaceRoot = computed(() => client.activeMainDirectory.value || client.status.value.cwd);
+const panelRoot = computed(() => workspacesStore().activePanelRoot);
 const sessionTitle = computed(() => sessionViews.activeSessionTitle);
 const archived = client.activeSessionArchived;
 const pinned = computed(() => sessionViews.activeSessionPinned);
@@ -106,7 +106,7 @@ watch(nativeMenu.open, value => {
   menuOpen.value = value;
   if (!value) resetCopyFeedback();
 });
-watch([sessionId, workspaceRoot], () => { menuContext = randomUUID(); closeMenu(); }, { flush: 'sync' });
+watch([sessionId, panelRoot], () => { menuContext = randomUUID(); closeMenu(); }, { flush: 'sync' });
 
 function onDocClick(e: MouseEvent): void {
   const target = e.target as Node;
@@ -413,8 +413,8 @@ const isDev = import.meta.env.DEV;
     <!-- Open workspace in editor/terminal; the pill self-hides on an empty
          service catalog (the no-bridge degradation). -->
     <OpenInMenu
-      v-if="workspaceRoot && workspacesStore().isLocalWorkspace && client.activeSessionEnvironment.value !== 'invalid'"
-      :work-dir="workspaceRoot"
+      v-if="panelRoot && workspacesStore().isLocalWorkspace && client.activeSessionEnvironment.value !== 'invalid'"
+      :work-dir="panelRoot"
     />
 
     <IconButton

@@ -14,6 +14,7 @@ beforeEach(() => {
   workspacesStore().hiddenWorkspaceIds = [];
   sessionsStore().setSessions([
     appSession({ id: 'ready', cwd: '/wt/a', workspaceId: 'ws1', worktree: sessionWorktree('ready', { path: '/wt/a' }) }),
+    appSession({ id: 'creating', cwd: '/repo', workspaceId: 'ws1', worktree: sessionWorktree('running', { path: '/wt/b' }) }),
   ]);
 });
 
@@ -22,9 +23,14 @@ afterEach(() => {
   sessionsStore().setSessions([]);
 });
 
-describe('workspacesStore directory roots', () => {
+describe('workspacesStore panel roots', () => {
+  const session = (id: string) => sessionsStore().sessions.find((item) => item.id === id)!;
+
   it('uses the worktree directory once a worktree session is ready', () => {
-    expect(workspacesStore().directoryRootsFor('ready')).toEqual(['/wt/a', '/extra']);
-    expect(workspacesStore().mainDirectoryFor('ready', 'ws1')).toBe('/wt/a');
+    expect(workspacesStore().sessionPanelRoots(session('ready'))).toEqual({ root: '/wt/a', roots: ['/wt/a', '/extra'] });
+  });
+
+  it('uses the worktree directory while the worktree is still being set up', () => {
+    expect(workspacesStore().sessionPanelRoots(session('creating'))).toEqual({ root: '/wt/b', roots: ['/wt/b', '/extra'] });
   });
 });

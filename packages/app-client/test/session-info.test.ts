@@ -79,6 +79,17 @@ describe('sessionInfoStore', () => {
     expect(sessionInfoStore().foldersForSession('s1')).toEqual(folders('/shared', '/one'));
   });
 
+  it('lists the working directory of a worktree session first instead of the project root', () => {
+    sessionsStore().setSessions([
+      { id: 's1', workspaceId: 'wd_repo', cwd: '/repo-wt' } as AppSession,
+      { id: 's2', workspaceId: 'wd_repo', cwd: '/repo' } as AppSession,
+    ]);
+    workspacesStore().workspaces = [seedWorkspace('wd_repo', '/repo', ['/shared'])];
+
+    expect(sessionInfoStore().foldersForSession('s1')).toEqual(folders('/repo-wt', '/shared'));
+    expect(sessionInfoStore().foldersForSession('s2')).toEqual(folders('/repo', '/shared'));
+  });
+
   it('loads independent git state for every folder in two batch requests', async () => {
     const getGitStatusBatch = vi.fn().mockResolvedValue(statusBatch({ '/a': gitStatus('branch-a'), '/b': gitStatus('branch-b') }));
     const getPullRequestBatch = vi.fn().mockResolvedValue(prBatch({ '/a': null, '/b': null }));

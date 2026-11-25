@@ -15,6 +15,7 @@ import {
 import { IGitService, type FsPullRequest } from '@moonshot-ai/agent-core-v2/app/git/git';
 import { GitService } from '@moonshot-ai/agent-core-v2/app/git/gitService';
 import type { SessionWorktreeService } from '../services/worktrees/sessionWorktreeService';
+import { sessionWorkDir } from '@moonshot-ai/agent-core-v2/session/workspaceContext/workspaceRoots';
 import { z } from 'zod';
 
 import { errEnvelope, okEnvelope } from '../envelope';
@@ -361,7 +362,7 @@ async function listSessionsHere(
       };
 
       const cwdOf = (summary: SessionSummary): string | undefined => {
-        const candidate = summary.cwd ?? roots.get(summary.workspaceId);
+        const candidate = sessionWorkDir(summary, roots.get(summary.workspaceId));
         return candidate !== undefined && candidate.length > 0 ? candidate : undefined;
       };
 

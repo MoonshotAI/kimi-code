@@ -3035,12 +3035,6 @@ const activeSessionEnvironment = computed<SessionEnvironmentKind>(() =>
   classifySessionEnvironment({ worktree: activeSessionWorktree.value }),
 );
 
-const activeMainDirectory = computed<string>(
-  () =>
-    workspacesStore().mainDirectoryFor(rawState.activeSessionId, activeWorkspaceId.value) ||
-    (visibleWorkspace.value?.root ?? ''),
-);
-
 const sessionActions = createSessionActions({
   mainUndoTarget,
   updateSession,
@@ -3757,7 +3751,6 @@ export function useKimiWebClient() {
     abortCurrentPrompt: promptPipeline.abortCurrentPrompt,
     activeSessionWorktree,
     activeSessionEnvironment,
-    activeMainDirectory,
     runSessionWorktreeAction: promptPipeline.runSessionWorktreeAction,
     retrySessionWorktree: (sessionId: string, input?: SessionWorktreeRetryInput) =>
       promptPipeline.runSessionWorktreeAction(sessionId, 'retry', input),

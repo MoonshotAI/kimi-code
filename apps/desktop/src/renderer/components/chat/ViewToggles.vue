@@ -2,16 +2,13 @@
 import { computed, inject, nextTick } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { track } from '@moonshot-ai/app-client/contracts';
-import { useKimiWebClient } from '@moonshot-ai/app-client/client';
 import { panelApiKey } from '@moonshot-ai/app-client/panel';
+import { workspacesStore } from '@moonshot-ai/app-client/stores';
 import { Icon, IconButton } from '@moonshot-ai/app-ui';
 import { useNativeTerminal } from '../../composables/useNativeTerminal';
 import { shortcutTooltip } from '../../composables/useShortcuts';
 
 const { t } = useI18n();
-
-const client = useKimiWebClient();
-const workspaceRoot = computed(() => client.activeMainDirectory.value || client.status.value.cwd);
 
 const terminalStore = useNativeTerminal();
 
@@ -22,7 +19,7 @@ const terminalToggleLabel = computed(() =>
 const terminalTooltip = computed(() => shortcutTooltip(terminalToggleLabel.value, 'toggleTerminal'));
 
 function toggleTerminalPanel(): void {
-  terminalStore.toggle(workspaceRoot.value);
+  terminalStore.toggle(workspacesStore().activePanelRoot);
 }
 
 const panelApi = inject(panelApiKey);

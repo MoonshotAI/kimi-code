@@ -10,11 +10,10 @@ import {
   isSessionWorktreeSettingUp,
   isWorktreeSession,
   resolveWorktreeSource,
-  sessionDirectoryRoots,
   sessionEnvironmentTag,
-  sessionMainDirectory,
   sessionWorktreeBlocksSend,
   sessionWorktreeCard,
+  sessionWorkingDirectory,
   sessionWorktreeHoldsPrompts,
 } from '../src/lib/sessionWorktree';
 
@@ -151,43 +150,29 @@ describe('sessionWorktreeCard', () => {
   });
 });
 
-describe('sessionMainDirectory', () => {
-  it('uses the project root for local sessions', () => {
-    expect(sessionMainDirectory({ cwd: '/repo/sub' }, '/repo')).toBe('/repo');
-    expect(sessionMainDirectory({ cwd: '/repo' }, undefined)).toBe('/repo');
-    expect(sessionMainDirectory(undefined, '/repo')).toBe('/repo');
-    expect(sessionMainDirectory(undefined, undefined)).toBe('');
-  });
-
-  it('uses the session directory for worktree sessions', () => {
-    expect(sessionMainDirectory({ cwd: '/wt/a', worktree: worktree('ready') }, '/repo')).toBe('/wt/a');
-    expect(sessionMainDirectory({ cwd: '/wt/a', worktree: worktree('ready', { missing: true }) }, '/repo')).toBe('/wt/a');
+describe('sessionWorkingDirectory', () => {
+  it('uses the session directory for local and worktree sessions', () => {
+    expect(sessionWorkingDirectory({ cwd: '/repo/sub' })).toBe('/repo/sub');
+    expect(sessionWorkingDirectory({ cwd: '/wt/a', worktree: worktree('ready') })).toBe('/wt/a');
+    expect(sessionWorkingDirectory({ cwd: '/wt/a', worktree: worktree('ready', { missing: true }) })).toBe('/wt/a');
   });
 
   it('uses the worktree as soon as it exists, before setup has finished', () => {
-    expect(sessionMainDirectory({ cwd: '/wt/a', worktree: worktree('running') }, '/repo')).toBe('/wt/a');
     expect(isWorktreeSession({ worktree: worktree('running') })).toBe(true);
-    expect(sessionMainDirectory({ cwd: '/repo', worktree: worktree('running') }, '/repo')).toBe('/wt/a');
+    expect(sessionWorkingDirectory({ cwd: '/repo', worktree: worktree('running') })).toBe('/wt/a');
     expect(classifySessionEnvironment({ worktree: worktree('running') })).toBe('settingUp');
   });
 
   it('returns to the project root once a missing worktree was abandoned', () => {
     const abandoned = worktree('local', { path: undefined, branch: undefined, missing: true });
-    expect(sessionMainDirectory({ cwd: '/repo', worktree: abandoned }, '/repo')).toBe('/repo');
+    expect(sessionWorkingDirectory({ cwd: '/repo', worktree: abandoned })).toBe('/repo');
     expect(classifySessionEnvironment({ worktree: abandoned })).toBe('local');
     expect(sessionWorktreeBlocksSend({ worktree: abandoned })).toBe(false);
   });
 
   it('stays on the project root while the worktree is being created and after falling back', () => {
-    expect(sessionMainDirectory({ cwd: '/repo', worktree: worktree('running', { path: undefined }) }, '/repo')).toBe('/repo');
-    expect(sessionMainDirectory({ cwd: '/repo', worktree: worktree('local') }, '/repo')).toBe('/repo');
-  });
-
-  it('lists the main directory before additional directories', () => {
-    const workspace = { root: '/repo', additionalDirs: ['/extra'] };
-    expect(sessionDirectoryRoots({ cwd: '/wt/a', worktree: worktree('ready') }, workspace)).toEqual(['/wt/a', '/extra']);
-    expect(sessionDirectoryRoots({ cwd: '/repo' }, workspace)).toEqual(['/repo', '/extra']);
-    expect(sessionDirectoryRoots(undefined, undefined)).toEqual([]);
+    expect(sessionWorkingDirectory({ cwd: '/repo', worktree: worktree('running', { path: undefined }) })).toBe('/repo');
+    expect(sessionWorkingDirectory({ cwd: '/repo', worktree: worktree('local') })).toBe('/repo');
   });
 });
 

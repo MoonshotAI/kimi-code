@@ -58,10 +58,16 @@ rest of this skill, `<KIMI_CODE_HOME>` means that resolved data root —
 - User-global: `<KIMI_CODE_HOME>/mcp.json`. Use for servers you want
   everywhere.
 - Project-root: `<project root>/.mcp.json`, where project root is found
-  by walking up from `<cwd>` to the nearest `.git`. Use for
-  Claude-compatible, repo-shared, or cross-agent servers.
-- Project-local: `<cwd>/.kimi-code/mcp.json`. Use for Kimi-specific
-  overrides in the current working directory.
+  by walking up from `<cwd>` to the nearest `.git`, or is `<cwd>` when
+  there is none. Use for Claude-compatible, repo-shared, or cross-agent
+  servers.
+- Project-local: `<project root>/.kimi-code/mcp.json`. Use for
+  Kimi-specific overrides; Kimi does not read this file from
+  subdirectories. When `<cwd>` is not the project root, say in the
+  announcement before the write that Kimi loads this file for sessions
+  anywhere in this git checkout, while a project opened directly at
+  `<cwd>` (for example one created for this folder in the desktop app)
+  reads `<cwd>/.kimi-code/mcp.json` instead.
 
 Mention once that project-root and project-local stdio entries spawn
 commands at session start, so they should only live in trusted repos.

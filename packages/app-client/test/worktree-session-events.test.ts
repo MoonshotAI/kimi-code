@@ -116,6 +116,7 @@ describe('useKimiWebClient worktree session', () => {
     const { useKimiWebClient } = await import('../src/client/useKimiWebClient');
     const { newSessionEnvironmentStore } = await import('../src/stores/newSessionEnvironment');
     const { promptStore } = await import('../src/stores/prompt');
+    const { workspacesStore } = await import('../src/stores/workspaces');
     const client = useKimiWebClient();
     await client.load();
     newSessionEnvironmentStore().selectEnvironment('worktree');
@@ -126,7 +127,7 @@ describe('useKimiWebClient worktree session', () => {
     expect(started).toEqual({ sessionId: SID, promptRejected: false });
     expect(api.createSession).toHaveBeenCalledWith(expect.objectContaining({ worktree: { sourceBranch: 'main' } }));
     expect(client.activeSessionEnvironment.value).toBe('settingUp');
-    expect(client.activeMainDirectory.value).toBe('/workspace');
+    expect(workspacesStore().activePanelRoot).toBe('/workspace');
     expect(client.turns.value.filter((turn) => turn.role === 'user').map((turn) => turn.text)).toEqual(['hello']);
     expect(client.activity.value).toBe('idle');
     expect(submitPrompt).not.toHaveBeenCalled();
@@ -151,7 +152,7 @@ describe('useKimiWebClient worktree session', () => {
     await vi.waitFor(() => expect(submitPrompt).toHaveBeenCalledTimes(1));
     expect(submitPrompt.mock.calls[0]![1].content).toEqual([{ type: 'text', text: 'hello' }]);
     expect(client.activeSessionEnvironment.value).toBe('worktree');
-    expect(client.activeMainDirectory.value).toBe('/wt/a');
+    expect(workspacesStore().activePanelRoot).toBe('/wt/a');
     expect(client.status.value.cwd).toBe('/wt/a');
     expect(getGitStatus).toHaveBeenCalled();
     expect(promptStore().heldFirstPromptBySession[SID]).toBeUndefined();

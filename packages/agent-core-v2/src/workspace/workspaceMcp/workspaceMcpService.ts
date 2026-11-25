@@ -17,11 +17,11 @@ import { ISessionEphemeralMcpServers } from '#/session/mcp/ephemeralMcpServers';
 import { MergedMcpConnectionView } from '#/session/mcp/mergedConnectionView';
 import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
-import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
 import { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
 import { IEnvironmentService, type EnvironmentResolver } from '#/app/environment/environment';
 import {
   IWorkspaceMcpConfigService,
+  type McpDirs,
   type McpServersChange,
 } from '#/workspace/workspaceMcpConfig/workspaceMcpConfig';
 
@@ -36,7 +36,6 @@ export class WorkspaceMcpService extends Disposable implements IWorkspaceMcpServ
 
   private readonly manager: McpConnectionManager;
   private readonly oauthService: McpOAuthService;
-  private readonly workspaceId: string;
   private appliedPrimary?: string;
   readonly ready: Promise<void>;
   private mutationTail: Promise<void> = Promise.resolve();
@@ -46,8 +45,7 @@ export class WorkspaceMcpService extends Disposable implements IWorkspaceMcpServ
   private shutdown?: Promise<void>;
 
   constructor(
-    @IWorkspaceContext workspace: IWorkspaceContext,
-    @IWorkspaceDirs private readonly dirs: IWorkspaceDirs,
+    @IWorkspaceDirs private readonly dirs: McpDirs,
     @IEnvironmentService private readonly environmentResolver: EnvironmentResolver,
     @IWorkspaceMcpConfigService private readonly mcpConfig: IWorkspaceMcpConfigService,
     @IMcpOAuthService oauthService: McpOAuthService,
@@ -58,7 +56,6 @@ export class WorkspaceMcpService extends Disposable implements IWorkspaceMcpServ
   ) {
     super();
     this.sessionLifecycle = sessionLifecycle;
-    this.workspaceId = workspace.workspaceId;
     this.oauthService = oauthService;
     this.manager = new McpConnectionManager({
       log: this.log,
@@ -124,8 +121,8 @@ export class WorkspaceMcpService extends Disposable implements IWorkspaceMcpServ
     this.sessionLifecycleAttached = true;
     this._register(
       lifecycle.onWillCreateSession((event) => {
+        if (event.readSeed(ISessionMcpHandle).connectionManager !== this.manager) return;
         const context = event.readSeed(ISessionContext);
-        if (context.workspaceId !== this.workspaceId) return;
         const servers = event.readSeed(ISessionEphemeralMcpServers);
         if (Object.keys(servers).length === 0) return;
         const overlay = this.sessionOverlay(servers, {
