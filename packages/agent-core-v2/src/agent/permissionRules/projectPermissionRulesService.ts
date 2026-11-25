@@ -5,7 +5,7 @@ import { ErrorCodes, Error2 } from '#/errors';
 import { LOCAL_ENVIRONMENT_ID } from '#/environment/environment';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionWorkdir } from '#/session/workdir/workdir';
-import { IWorkspaceTrust } from '#/workspace/workspaceTrust/workspaceTrust';
+import { IProjectTrust } from '#/project/projectTrust/projectTrust';
 
 import { PersistedPermissionRuleSchema } from './configSection';
 import type { PermissionRule } from './permissionRules';
@@ -25,7 +25,7 @@ export class ProjectPermissionRulesService implements IProjectPermissionRulesSer
     @ISessionContext session: ISessionContext,
     @ISessionWorkdir workdir: ISessionWorkdir,
     @IProjectLocalConfigService private readonly localConfig: IProjectLocalConfigService,
-    @IWorkspaceTrust private readonly trust: IWorkspaceTrust,
+    @IProjectTrust private readonly trust: IProjectTrust,
   ) {
     this.cwd = workdir.cwd ?? session.cwd;
     this.local = workdir.environmentId === LOCAL_ENVIRONMENT_ID;

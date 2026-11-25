@@ -45,7 +45,7 @@ import {
 import { writeExportZip } from '#/app/sessionExport/zip';
 import { ISessionIndex, type SessionSummary } from '#/app/sessionIndex/sessionIndex';
 import { ISessionManager, type UnguardedSessionLifecycle } from '#/app/sessionManager/sessionManager';
-import { ISessionLifecycleService } from '#/workspace/sessionLifecycle/sessionLifecycle';
+import { ISessionLifecycleService } from '#/project/sessionLifecycle/sessionLifecycle';
 import { Error2 } from '#/errors';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionRequestAttributionService } from '#/session/requestAttribution/requestAttribution';

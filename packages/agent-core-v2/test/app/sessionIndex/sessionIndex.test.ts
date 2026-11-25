@@ -18,8 +18,8 @@ import { encodeWorkDirKey } from '#/_base/utils/workdir-slug';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemetry';
-import { IWorkspaceService, type Workspace } from '#/app/workspace/workspace';
-import { IWorkspacePersistence } from '#/app/workspace/workspacePersistence';
+import { IProjectService, type Project } from '#/app/project/project';
+import { IProjectPersistence } from '#/app/project/projectPersistence';
 import {
   ISessionIndex,
   ISessionIndexMirror,
@@ -428,8 +428,8 @@ describe('FileSessionIndex (read model)', () => {
   function build(
     fileStorage: FileStorageService = new FileStorageService(homeDir),
     primary?: {
-      service: IWorkspaceService;
-      persistence: IWorkspacePersistence;
+      service: IProjectService;
+      persistence: IProjectPersistence;
       deferActivation?: boolean;
     },
   ): FileSessionIndex {
@@ -441,8 +441,8 @@ describe('FileSessionIndex (read model)', () => {
       stubPair(IConfigService, stubConfigService({ [DATABASE_SECTION]: { base: true } })),
       stubPair(ITelemetryService, noopTelemetryService),
       ...(primary === undefined || primary.deferActivation === true ? [] : [
-        stubPair(IWorkspaceService, primary.service),
-        stubPair(IWorkspacePersistence, primary.persistence),
+        stubPair(IProjectService, primary.service),
+        stubPair(IProjectPersistence, primary.persistence),
       ]),
     ]);
     disposeHost = () => {
@@ -450,8 +450,8 @@ describe('FileSessionIndex (read model)', () => {
     };
     activatePrimary = primary?.deferActivation === true
       ? () => {
-          host.app.instantiation.provide(IWorkspaceService, primary.service);
-          host.app.instantiation.provide(IWorkspacePersistence, primary.persistence);
+          host.app.instantiation.provide(IProjectService, primary.service);
+          host.app.instantiation.provide(IProjectPersistence, primary.persistence);
         }
       : () => {};
     queryStore = host.app.accessor.get(IQueryStore);
@@ -497,7 +497,7 @@ describe('FileSessionIndex (read model)', () => {
 
   it('reprojects closed sessions on primary changes and detects stale primaries after restart', async () => {
     const changes = new Emitter<void>();
-    const workspace: Workspace = {
+    const workspace: Project = {
       id: workspaceId,
       root: '/old',
       name: 'project',
@@ -507,8 +507,8 @@ describe('FileSessionIndex (read model)', () => {
       lastOpenedAt: 0,
     };
     let primary = workspace.root;
-    const service = { list: async () => [{ ...workspace, root: primary }] } as unknown as IWorkspaceService;
-    const persistence = { onDidChange: changes.event } as IWorkspacePersistence;
+    const service = { list: async () => [{ ...workspace, root: primary }] } as unknown as IProjectService;
+    const persistence = { onDidChange: changes.event } as IProjectPersistence;
     const storage = new FileStorageService(homeDir);
     await seedSession('closed', { cwd: '/old', createdAt: 1, updatedAt: 2 });
     const store = build(storage, { service, persistence });
@@ -540,7 +540,7 @@ describe('FileSessionIndex (read model)', () => {
 
   it('publishes the primary snapshot used to build reconciliation summaries', async () => {
     const changes = new Emitter<void>();
-    const workspace: Workspace = {
+    const workspace: Project = {
       id: workspaceId,
       root: '/old',
       name: 'project',
@@ -550,8 +550,8 @@ describe('FileSessionIndex (read model)', () => {
       lastOpenedAt: 0,
     };
     const list = vi.fn(async () => [{ ...workspace, root: '/old' }]);
-    const service = { list } as unknown as IWorkspaceService;
-    const persistence = { onDidChange: changes.event } as IWorkspacePersistence;
+    const service = { list } as unknown as IProjectService;
+    const persistence = { onDidChange: changes.event } as IProjectPersistence;
     await seedSession('closed', { cwd: '/old', createdAt: 1, updatedAt: 2 });
     const store = build(new FileStorageService(homeDir), { service, persistence });
     await store.prepare();
@@ -568,7 +568,7 @@ describe('FileSessionIndex (read model)', () => {
 
   it('subscribes when workspace persistence activates after the index', async () => {
     const changes = new Emitter<void>();
-    const workspace: Workspace = {
+    const workspace: Project = {
       id: workspaceId,
       root: '/old',
       name: 'project',
@@ -578,9 +578,9 @@ describe('FileSessionIndex (read model)', () => {
       lastOpenedAt: 0,
     };
     let primary = workspace.root;
-    const service = { list: async () => [{ ...workspace, root: primary }] } as unknown as IWorkspaceService;
+    const service = { list: async () => [{ ...workspace, root: primary }] } as unknown as IProjectService;
     const onDidChange = vi.fn(changes.event);
-    const persistence = { onDidChange } as unknown as IWorkspacePersistence;
+    const persistence = { onDidChange } as unknown as IProjectPersistence;
     await seedSession('closed', { cwd: '/old', createdAt: 1, updatedAt: 2 });
     const store = build(new FileStorageService(homeDir), {
       service,
