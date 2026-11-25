@@ -1,7 +1,9 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
+import { setImmediate } from 'node:timers/promises';
 import { join } from 'pathe';
 
+import { deferred } from '@moonshot-ai/testkit/fixtures';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
@@ -11,12 +13,15 @@ import {
 import {
   WIRE_PROTOCOL_VERSION,
   IAgentGoalService,
+  ISessionContext,
   type WireRecord,
   type PromptOrigin,
 } from '#/index';
 import { IAgentPlanService } from '#/features/plan/plan';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { turnKey } from '#/agent/loop/turnOps';
+import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
+import { drainSessionMetadataWrites } from '#/session/sessionMetadata/sessionMetadataService';
 import {
   createAgentTaskPersistence,
   taskHistoryRecords,
@@ -741,12 +746,30 @@ describe('Agent resume', () => {
     ] as unknown as WireRecord[]);
     const homeDir = await mkdtemp(join(tmpdir(), 'kimi-bg-resume-undelivered-'));
     const ctx = testAgent(homeDirServices(homeDir), { autoConfigure: false, persistence });
+    const writeStarted = deferred();
+    const releaseWrite = deferred();
+    const lifecycle: string[] = [];
+    let closing: Promise<void> | undefined;
     try {
       const backgroundPersistence = createAgentTaskPersistence(homeDir);
       await backgroundPersistence.appendTaskOutput('agent-new00000', 'newly delivered summary');
       const steer = vi.spyOn(ctx.get(IAgentLoopService), 'steer');
 
       await ctx.restorePersisted();
+
+      const documents = ctx.get(IAtomicDocumentStore);
+      const set = documents.set.bind(documents);
+      const { metaScope } = ctx.get(ISessionContext);
+      vi.spyOn(documents, 'set').mockImplementation(async (scope, key, value) => {
+        if (scope === metaScope && key === 'state.json' && (value as { lastTurnReason?: string }).lastTurnReason !== undefined) {
+          writeStarted.resolve();
+          await releaseWrite.promise;
+          await set(scope, key, value);
+          lifecycle.push('metadata persisted');
+          return;
+        }
+        await set(scope, key, value);
+      });
 
       expect(steer).not.toHaveBeenCalled();
       await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Fresh prompt' }] });
@@ -771,8 +794,28 @@ describe('Agent resume', () => {
           }),
         }),
       );
+
+      await writeStarted.promise;
+      const wireFlushed = deferred();
+      const flush = ctx.wire.flush.bind(ctx.wire);
+      vi.spyOn(ctx.wire, 'flush').mockImplementationOnce(async () => {
+        await flush();
+        wireFlushed.resolve();
+      });
+      closing = ctx.dispose().then(() => {
+        lifecycle.push('disposed');
+      });
+      await wireFlushed.promise;
+      await setImmediate();
+      releaseWrite.resolve();
+      await closing;
+      await drainSessionMetadataWrites();
+      expect(lifecycle).toContain('metadata persisted');
+      expect(lifecycle.at(-1)).toBe('disposed');
     } finally {
-      await ctx.dispose();
+      releaseWrite.resolve();
+      await (closing ?? ctx.dispose());
+      await drainSessionMetadataWrites();
       await rm(homeDir, { recursive: true, force: true });
     }
   });

@@ -32,7 +32,10 @@ import {
   IAgentLifecycleService,
   IAgentLoopService,
   IEventBus,
+  IModelCatalog,
+  IModelService,
   interactions,
+  isMissingConfiguredModelError,
   ISessionTokenCountingService,
   ISessionUsageService,
   MAIN_AGENT_ID,
@@ -286,20 +289,45 @@ function withStatusSnapshot(agent: IAgentScopeHandle, event: Event2<any>): Event
   }
   const context = agentContextOf(agent);
   const contextTokens = tokenCounting.statusSize(context);
-  const model = profile.getModel() === '' ? undefined : profile.resolveModelContext().model;
-  const maxContextTokens = model?.maxInputSize ?? model?.maxContextSize;
+  const { modelAlias, maxContextTokens } = readStatusModelContext(agent);
   const contextUsage =
-    Number.isFinite(contextTokens) &&
-    maxContextTokens !== undefined &&
-    Number.isFinite(maxContextTokens) &&
-    maxContextTokens > 0
+    Number.isFinite(contextTokens) && maxContextTokens > 0
       ? contextTokens / maxContextTokens
       : undefined;
   return Object.assign({}, event, {
     usage: usageService.status(context),
     contextTokens,
-    maxContextTokens,
+    maxContextTokens: maxContextTokens > 0 ? maxContextTokens : undefined,
     contextUsage,
-    model: profile.getModel(),
+    model: modelAlias,
   }) as unknown as Event2<any>;
+}
+
+export function readStatusModelContext(agent: IAgentScopeHandle): {
+  readonly modelAlias: string;
+  readonly maxContextTokens: number;
+} {
+  const profile = agent.accessor.get(IAgentLoopService);
+  const modelAlias = profile.getModel();
+  let modelSpec;
+  try {
+    modelSpec = modelAlias === '' ? undefined : profile.resolveModelContext().model;
+  } catch (error) {
+    if (agent.id !== MAIN_AGENT_ID || !isMissingConfiguredModelError(error, modelAlias)) {
+      throw error;
+    }
+  }
+  let maxContextTokens = modelSpec?.maxInputSize ?? modelSpec?.maxContextSize ?? 0;
+  if (maxContextTokens === 0) {
+    const models = agent.accessor.get(IModelService) as IModelService | undefined;
+    const catalog = agent.accessor.get(IModelCatalog) as IModelCatalog | undefined;
+    const defaultModel = models?.getDefaultModel();
+    if (defaultModel !== undefined && defaultModel.length > 0 && catalog !== undefined) {
+      try {
+        const model = catalog.get(defaultModel);
+        maxContextTokens = model.spec.maxInputSize ?? model.spec.maxContextSize ?? 0;
+      } catch {}
+    }
+  }
+  return { modelAlias, maxContextTokens };
 }

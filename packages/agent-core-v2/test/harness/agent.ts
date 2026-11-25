@@ -10,6 +10,7 @@ import { toDisposable } from '#/_base/di/lifecycle';
 import type { IInstantiationService } from '#/_base/di/instantiation';
 import type { IAgentScopeHandle } from '#/_base/di/scope';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
+import { drainSessionMetadataWrites } from '#/session/sessionMetadata/sessionMetadataService';
 import { IFeatureManager } from '#/app/feature/featureManager';
 import { IFlagService } from '#/app/flag/flag';
 import { ISessionNotify } from '#/features/notify/sessionNotify';
@@ -2264,6 +2265,12 @@ export class AgentTestContext {
     await this.closeWire();
     this.root.dispose();
     this.scriptedGenerate.retire();
+    await Promise.all([
+      this.agent.instantiation.disposeAsync(),
+      this.session.instantiation.disposeAsync(),
+      this.root.instantiation.disposeAsync(),
+    ]);
+    await drainSessionMetadataWrites();
   }
 
   async dispose(): Promise<void> {

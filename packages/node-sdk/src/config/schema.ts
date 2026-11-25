@@ -296,17 +296,21 @@ export const McpServerConfigSchema = z.preprocess((raw) => {
 
 export type McpServerConfig = z.infer<typeof McpServerConfigSchema>;
 
+const sessionModeFields = {
+  planMode: z.boolean().optional(),
+  yolo: z.boolean().optional(),
+  defaultPermissionMode: PermissionModeSchema.optional(),
+  defaultPlanMode: z.boolean().optional(),
+  autoSessionTitle: z.boolean().optional(),
+};
+
 export const KimiConfigSchema = z.object({
   providers: z.record(z.string(), ProviderConfigSchema).default({}),
   defaultProvider: z.string().optional(),
   defaultModel: z.string().optional(),
   models: z.record(z.string(), ModelAliasSchema).optional(),
   thinking: ThinkingConfigSchema.optional(),
-  planMode: z.boolean().optional(),
-  yolo: z.boolean().optional(),
-  defaultPermissionMode: PermissionModeSchema.optional(),
-  defaultPlanMode: z.boolean().optional(),
-  autoSessionTitle: z.boolean().optional(),
+  ...sessionModeFields,
   permission: PermissionConfigSchema.optional(),
   hooks: z.array(HookDefSchema).optional(),
   services: ServicesConfigSchema.optional(),
@@ -354,11 +358,7 @@ export const KimiConfigPatchSchema = z
     defaultModel: z.string().optional(),
     models: z.record(z.string(), ModelAliasPatchSchema).optional(),
     thinking: ThinkingConfigPatchSchema.optional(),
-    planMode: z.boolean().optional(),
-    yolo: z.boolean().optional(),
-    defaultPermissionMode: PermissionModeSchema.optional(),
-    defaultPlanMode: z.boolean().optional(),
-    autoSessionTitle: z.boolean().optional(),
+    ...sessionModeFields,
     permission: PermissionConfigPatchSchema.optional(),
     hooks: z.array(HookDefSchema).optional(),
     services: ServicesConfigPatchSchema.optional(),
