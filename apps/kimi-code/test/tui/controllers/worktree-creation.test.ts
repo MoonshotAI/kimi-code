@@ -117,7 +117,7 @@ describe('WorktreeCreationController', () => {
     vi.unstubAllEnvs();
   });
 
-  it('creates the worktree, enters it, and records it for this run', async () => {
+  it('creates and enters the worktree', async () => {
     const { host, controller, text } = makeHost();
     host.harness.createWorktree.mockImplementation(
       succeed(
@@ -150,11 +150,6 @@ describe('WorktreeCreationController', () => {
         "  packages/foo doesn't exist at this commit, so the session starts at the worktree root.",
       ].join('\n'),
     );
-    expect(controller.createdThisRun.get(WORKTREE_PATH)).toEqual({
-      name: 'fix-login',
-      repoRoot: '/repo',
-      setupScriptRan: false,
-    });
     expect(controller.busy).toBe(false);
   });
 
@@ -230,7 +225,6 @@ describe('WorktreeCreationController', () => {
     await controller.run({}, { enter: async () => false });
 
     expect(text()).not.toContain('Entered worktree');
-    expect(controller.createdThisRun.has(WORKTREE_PATH)).toBe(true);
     expect(controller.busy).toBe(false);
   });
 
@@ -304,21 +298,23 @@ describe('WorktreeCreationController', () => {
   });
 
   it('skips the setup script on Esc and runs it on Run it', async () => {
-    const setupScript = '/repo/.kimi-code/worktree-setup.sh';
+    const worktreeSetupScript = `${WORKTREE_PATH}/.kimi-code/worktree-setup.sh`;
     const skipped = makeHost();
-    skipped.host.harness.createWorktree.mockImplementation(succeed(createdWorktree({ setupScript })));
+    skipped.host.harness.createWorktree.mockImplementation(
+      succeed(createdWorktree({ setupScript: worktreeSetupScript })),
+    );
     const skipRun = skipped.controller.run({});
     const prompt = await skipped.picker('Run the worktree setup script?');
     expect(stripVTControlCharacters(prompt.render(80).join('\n'))).toContain(
-      '.kimi-code/worktree-setup.sh from /repo',
+      '.kimi-code/worktree-setup.sh from ~/.kimi-code/worktrees/wd_repo/fix-login',
     );
     prompt.handleInput?.(ESC);
     await skipRun;
     expect(skipped.host.harness.runWorktreeSetupScript).not.toHaveBeenCalled();
-    expect(skipped.controller.createdThisRun.get(WORKTREE_PATH)?.setupScriptRan).toBe(false);
 
+    const fallbackScript = '/repo/.kimi-code/worktree-setup.sh';
     const ran = makeHost();
-    ran.host.harness.createWorktree.mockImplementation(succeed(createdWorktree({ setupScript })));
+    ran.host.harness.createWorktree.mockImplementation(succeed(createdWorktree({ setupScript: fallbackScript })));
     let finish!: (result: { exitCode: number }) => void;
     ran.host.harness.runWorktreeSetupScript.mockImplementation(
       (_input: unknown, options: SetupOptions = {}) =>
@@ -328,7 +324,11 @@ describe('WorktreeCreationController', () => {
         }),
     );
     const run = ran.controller.run({});
-    await ran.choose('Run the worktree setup script?', [ENTER]);
+    const fallbackPrompt = await ran.picker('Run the worktree setup script?');
+    expect(stripVTControlCharacters(fallbackPrompt.render(80).join('\n'))).toContain(
+      '.kimi-code/worktree-setup.sh from /repo',
+    );
+    fallbackPrompt.handleInput?.(ENTER);
     await vi.waitFor(() => {
       expect(ran.text()).toContain('Running .kimi-code/worktree-setup.sh');
     });
@@ -345,7 +345,6 @@ describe('WorktreeCreationController', () => {
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
     expect(ran.host.applyWorkLocation).toHaveBeenCalledOnce();
-    expect(ran.controller.createdThisRun.get(WORKTREE_PATH)?.setupScriptRan).toBe(true);
   });
 
   it('offers to rerun, continue, or delete after the setup script fails', async () => {
@@ -386,7 +385,6 @@ describe('WorktreeCreationController', () => {
     });
     expect(remove.host.stop).toHaveBeenCalledWith(0);
     expect(remove.host.applyWorkLocation).not.toHaveBeenCalled();
-    expect(remove.controller.createdThisRun.size).toBe(0);
   });
 
   it('reports an interrupted setup script', async () => {

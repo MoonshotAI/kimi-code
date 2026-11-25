@@ -1608,7 +1608,7 @@ describe('runV2Print', () => {
       }
     });
 
-    it('skips the setup script with a warning when the project is untrusted', async () => {
+    it('refuses to create a worktree when the project is untrusted', async () => {
       const stdout = writer();
       const stderr = writer();
       const { app, appServices } = makeFakeHarness();
@@ -1617,28 +1617,23 @@ describe('runV2Print', () => {
         instance: { program: { trust: { get: vi.fn(async () => false) } } },
         dispose: vi.fn(),
       });
-      const created = sampleCreated({ setupScript: '/tmp/repo/.kimi-code/worktree-setup.sh', copiedFiles: [], sourceDirty: false });
-      const createWt = vi.spyOn(SDKRpcClientV2.prototype, 'createWorktree').mockResolvedValueOnce(created);
+      const createWt = vi.spyOn(SDKRpcClientV2.prototype, 'createWorktree');
       const runSetup = vi.spyOn(SDKRpcClientV2.prototype, 'runWorktreeSetupScript');
-      const listWt = vi.spyOn(SDKRpcClientV2.prototype, 'listWorktrees').mockResolvedValueOnce({
-        repoRoot: created.repoRoot,
-        currentCheckoutRoot: created.repoRoot,
-        bare: false,
-        worktrees: [created.worktree],
-      });
       mocks.bootstrap.mockReturnValue({ app });
-      mocks.ensureMainAgent.mockResolvedValue({ agentId: 'main', generation: 1 });
+      const previousExitCode = process.exitCode;
 
       try {
         await runV2Print(opts({ worktree: 'fix-login' }) as never, '1.2.3-test', { stdout, stderr });
 
+        expect(process.exitCode).toBe(1);
+        expect(createWt).not.toHaveBeenCalled();
         expect(runSetup).not.toHaveBeenCalled();
-        expect(stderr.text()).toContain('this project is not trusted; skipped the worktree setup script');
-        expect(stdout.text()).toContain('hello world');
+        expect(stderr.text()).toContain('This project is not trusted; cannot create a worktree with -w/--worktree.');
+        expect(stdout.text()).toBe('');
       } finally {
+        process.exitCode = previousExitCode;
         createWt.mockRestore();
         runSetup.mockRestore();
-        listWt.mockRestore();
       }
     });
 
@@ -1745,18 +1740,39 @@ describe('runV2Print', () => {
       }
     });
 
-    it('reports the retained worktree path when the trust lookup throws before running setup', async () => {
+    it('aborts without creating a worktree when the trust lookup throws', async () => {
       const { app, appServices } = makeFakeHarness();
       (appServices.get(IFlagService) as { enabled: ReturnType<typeof vi.fn> }).enabled.mockReturnValue(true);
       (appServices.get(IProjectInstanceManager) as { acquire: ReturnType<typeof vi.fn> }).acquire.mockRejectedValueOnce(
         new Error('trust store unreadable'),
       );
+      const createWt = vi.spyOn(SDKRpcClientV2.prototype, 'createWorktree');
+      mocks.bootstrap.mockReturnValue({ app });
+      const stderr = writer();
+      const previousExitCode = process.exitCode;
+      try {
+        await runV2Print(opts({ worktree: 'fix-login' }) as never, '1.2.3-test', { stdout: writer(), stderr });
+        expect(process.exitCode).toBe(1);
+        expect(createWt).not.toHaveBeenCalled();
+        expect(stderr.text()).toContain('error: trust store unreadable');
+      } finally {
+        process.exitCode = previousExitCode;
+        createWt.mockRestore();
+      }
+    });
+
+    it('reports the retained worktree path when the setup script fails', async () => {
+      const { app, appServices } = makeFakeHarness();
+      (appServices.get(IFlagService) as { enabled: ReturnType<typeof vi.fn> }).enabled.mockReturnValue(true);
       const created = sampleCreated({
-        setupScript: '/tmp/repo/.kimi-code/worktree-setup.sh',
+        setupScript: '/tmp/home/worktrees/wd_repo/fix-login/.kimi-code/worktree-setup.sh',
         copiedFiles: [],
         sourceDirty: false,
       });
       const createWt = vi.spyOn(SDKRpcClientV2.prototype, 'createWorktree').mockResolvedValueOnce(created);
+      const runSetup = vi
+        .spyOn(SDKRpcClientV2.prototype, 'runWorktreeSetupScript')
+        .mockResolvedValueOnce({ exitCode: 2 });
       const listWt = vi.spyOn(SDKRpcClientV2.prototype, 'listWorktrees').mockResolvedValueOnce({
         repoRoot: '/tmp/repo',
         currentCheckoutRoot: '/tmp/repo',
@@ -1769,11 +1785,12 @@ describe('runV2Print', () => {
       try {
         await runV2Print(opts({ worktree: 'fix-login' }) as never, '1.2.3-test', { stdout: writer(), stderr });
         expect(process.exitCode).toBe(1);
-        expect(stderr.text()).toContain('error: trust store unreadable');
+        expect(stderr.text()).toContain('error: The worktree setup script .kimi-code/worktree-setup.sh exited with code 2.');
         expect(stderr.text()).toContain('Worktree: /tmp/home/worktrees/wd_repo/fix-login');
       } finally {
         process.exitCode = previousExitCode;
         createWt.mockRestore();
+        runSetup.mockRestore();
         listWt.mockRestore();
       }
     });

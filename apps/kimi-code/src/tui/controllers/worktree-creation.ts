@@ -1,5 +1,5 @@
 import { realpath } from 'node:fs/promises';
-import { relative } from 'node:path';
+import { isAbsolute, relative } from 'node:path';
 import { stripVTControlCharacters } from 'node:util';
 
 import {
@@ -42,12 +42,6 @@ export interface WorktreeCreationOptions {
   readonly enter?: (location: WorkLocation) => Promise<boolean>;
 }
 
-export interface WorktreeRunRecord {
-  readonly name: string;
-  readonly repoRoot: string;
-  setupScriptRan: boolean;
-}
-
 export interface WorktreeCreationHost {
   readonly harness: Pick<KimiHarness, 'createWorktree' | 'runWorktreeSetupScript' | 'removeWorktree'>;
   readonly state: Pick<TUIState, 'appState' | 'transcriptContainer' | 'ui'>;
@@ -62,7 +56,6 @@ export interface WorktreeCreationHost {
 type PlannedWorktree = Extract<WorktreeCreateEvent, { type: 'planned' }>;
 
 export class WorktreeCreationController {
-  readonly createdThisRun = new Map<string, WorktreeRunRecord>();
   private running = false;
   private disposed = false;
   private abort: AbortController | undefined;
@@ -110,15 +103,9 @@ export class WorktreeCreationController {
     try {
       const created = await this.create(request, sourceDir, progress, options);
       if (created === undefined) return;
-      const record: WorktreeRunRecord = {
-        name: created.worktree.name,
-        repoRoot: created.repoRoot,
-        setupScriptRan: false,
-      };
-      this.createdThisRun.set(created.worktree.path, record);
       if (
         created.setupScript !== undefined &&
-        !(await this.runSetupScript(created, created.setupScript, record, progress))
+        !(await this.runSetupScript(created, created.setupScript, progress))
       ) {
         return;
       }
@@ -242,17 +229,19 @@ export class WorktreeCreationController {
   private async runSetupScript(
     created: CreatedWorktree,
     setupScript: string,
-    record: WorktreeRunRecord,
     progress: ProgressRows,
   ): Promise<boolean> {
-    const script = relative(created.sourceRoot, setupScript);
+    const fromWorktree = relative(created.worktree.path, setupScript);
+    const inWorktree =
+      fromWorktree !== '' && !/^\.\.(?:[\\/]|$)/.test(fromWorktree) && !isAbsolute(fromWorktree);
+    const scriptRoot = inWorktree ? created.worktree.path : created.sourceRoot;
+    const script = inWorktree ? fromWorktree : relative(created.sourceRoot, setupScript);
     const choice = await this.choose<SetupScriptChoice>(
-      (onChoose) => createSetupScriptPrompt({ script, sourceDir: created.sourceRoot, onChoose }),
+      (onChoose) => createSetupScriptPrompt({ script, sourceDir: scriptRoot, onChoose }),
       'skip',
     );
     if (choice === 'skip') return true;
     for (;;) {
-      record.setupScriptRan = true;
       const abort = new AbortController();
       this.abort = abort;
       const output = new OutputTail(WORKTREE_SETUP_OUTPUT_LINES);
@@ -315,7 +304,6 @@ export class WorktreeCreationController {
       progress.stop();
       return;
     }
-    this.createdThisRun.delete(path);
     progress.set({ step: 'remove', status: 'done', path });
     progress.stop();
     void this.host.stop(0);
