@@ -636,6 +636,237 @@ describe('AgentPermissionPolicyService chain', () => {
     });
   });
 
+  it.each([
+    'cat .env',
+    'cat .env.local',
+    'cat .env.production',
+    'head -n 50 .env',
+    'cat ~/.ssh/id_rsa',
+    'cat ~/.ssh/id_ed25519',
+    'cat ~/.ssh/id_ecdsa',
+    'cat ~/.aws/credentials',
+    'cat .aws/credentials',
+    'cat ~/.gcp/credentials',
+    'cat credentials',
+    'cat ".env"',
+    "cat '.env'",
+    'cat .e"nv"',
+    'cat ./.env',
+    'cat ../.env',
+    'cat /home/test/.ssh/id_rsa',
+    'cat /c/Users/test/.env',
+    'cat /cygdrive/c/Users/test/.ssh/id_rsa',
+    'cat "C:\\Users\\test\\.env"',
+    "cat 'C:\\Users\\test\\.env'",
+    'cat C:\\Users\\test\\.env',
+    'cat C:/Users/test/.env',
+    'type C:\\Users\\test\\.env',
+    'cat .env | grep TOKEN',
+    'echo ok && cat .env',
+    'echo ok; cat .env',
+    'echo $(cat .env)',
+    'diff <(cat .env) <(cat ../.env)',
+    '(cat .env)',
+    '{ cat .env; }',
+    'if [ -f .env ]; then cat .env; fi',
+    'cat < .env',
+    '< .env cat',
+    'cat 2>&1 .env',
+    'echo TOKEN=x > .env',
+    'echo TOKEN=x >> .env',
+    'echo err 2> .env',
+    'echo hi >& .env',
+    'echo hi &> .env',
+    'echo hi &>> .env',
+    'cat <<EOF > .env\nTOKEN=x\nEOF',
+    'while read -r line; do echo "$line"; done < .env',
+    'echo TOKEN=x | tee .env',
+    'echo TOKEN=x | tee -a .env',
+    'sudo cat .env',
+    'sudo -u root cat ~/.ssh/id_rsa',
+    'env FOO=bar cat .env',
+    'cp .env .env.bak',
+    'mv .env .env.old',
+    'rm .env',
+    'chmod 600 ~/.ssh/id_rsa',
+    'touch .env',
+    'ln -s .env .env.link',
+    'source .env',
+    '. ./.env',
+    'sed -i \'s/a/b/\' .env',
+    'sed -f .env input.txt',
+    'grep -f .env foo',
+    'grep --file=.env foo',
+    'grep -e TOKEN .env',
+    'grep -eTOKEN .env',
+    'grep -ne TOKEN .env',
+    'rg --regexp=TOKEN .env',
+    'sed --expression=s/a/b/ .env',
+    'rg --hidden TOKEN .env',
+    "awk '{print $1}' .env",
+    "jq --raw-output '.a' .env",
+    'dd if=.env of=/dev/null',
+    'dd if=/dev/zero of=.env',
+    'docker run --env-file .env image',
+    'docker run --env-file=.env image',
+    'cat --files0-from=.env',
+    'ssh -i ~/.ssh/id_rsa example.test',
+    'find .env -type f',
+    'FOO=$(cat .env) echo ok',
+    'FOO=bar cat .env',
+    'cat .env &',
+  ])('asks for literal sensitive Bash path `%s` in yolo mode', async (command) => {
+    mode = 'yolo';
+
+    await expect(evaluate({
+      toolName: 'Bash',
+      args: { command },
+    })).resolves.toMatchObject({
+      policyName: 'sensitive-file-access-ask',
+      result: { kind: 'ask' },
+    });
+  });
+
+  it.each([
+    'cat README.md',
+    'cat package.json',
+    'cat .env.example',
+    'cat .env.sample',
+    'cat .env.template',
+    'cat .ENV.EXAMPLE',
+    'cat ~/.ssh/id_rsa.pub',
+    'cat ~/.ssh/id_ed25519.pub',
+    'cat ~/.ssh/id_ecdsa.pub',
+    'cat id_rsa.pub',
+    'cat "C:\\Users\\test\\.env.example"',
+    'cat "C:\\Users\\test\\.ssh\\id_rsa.pub"',
+    'cat .envrc',
+    'cat credentials.json',
+    'cat environment.py',
+    'cat .env_example',
+    'echo ".env"',
+    'echo "reading .env"',
+    "printf '%s\\n' '.env'",
+    'echo TOKEN=x > .env.example',
+    'echo TOKEN=x | tee .env.sample',
+    'export ENV_FILE=.env',
+    'FOO=.env',
+    "grep '\\.env' README.md",
+    "grep -e '\\.env' README.md",
+    "grep -ne '\\.env' README.md",
+    "grep --regexp='\\.env' README.md",
+    "grep -rn '\\.env' src/",
+    "rg '\\.env' .",
+    "rg --regexp='\\.env' .",
+    "rg --no-ignore '\\.env' .",
+    "rg -g '.env' TOKEN src/",
+    "sed -n '/\\.env/p' README.md",
+    "sed -i 's/\\.env/x/' README.md",
+    "awk '/\\.env/ {print}' README.md",
+    "jq '.env' config.json",
+    'find . -name .env',
+    'find . -name .env -print',
+    'cat <<< ".env"',
+    'cat <<EOF\n.env\nEOF',
+    'FILE=.env; cat "$FILE"',
+    'cat $HOME/.env',
+    'cat *.env',
+    'cat ~/.ssh/id_[r]sa',
+    'sh -c "cat .env"',
+    "bash -c 'cat .env'",
+    'eval "cat .env"',
+    'find . -name .env -exec cat {} +',
+    "printf '.env' | xargs cat",
+    'echo "unterminated',
+  ])('approves Bash command `%s` without a literal sensitive path in yolo mode', async (command) => {
+    mode = 'yolo';
+
+    await expect(evaluate({
+      toolName: 'Bash',
+      args: { command },
+    })).resolves.toMatchObject({
+      policyName: 'yolo-mode-approve',
+      result: { kind: 'approve' },
+    });
+  });
+
+  it('keeps sensitive Bash paths approved in auto mode and when the guard is disabled', async () => {
+    mode = 'auto';
+    await expect(evaluate({
+      toolName: 'Bash',
+      args: { command: 'cat .env' },
+    })).resolves.toMatchObject({
+      policyName: 'auto-mode-approve',
+      result: { kind: 'approve' },
+    });
+
+    hostArgs = { ...hostArgs, nonInteractive: true };
+    await expect(evaluate({
+      toolName: 'Bash',
+      args: { command: 'cat ~/.ssh/id_rsa' },
+    })).resolves.toMatchObject({
+      policyName: 'auto-mode-approve',
+      result: { kind: 'approve' },
+    });
+
+    hostArgs = { ...hostArgs, nonInteractive: false };
+    mode = 'yolo';
+    dangerousCommandGuardEnabled = false;
+    for (const command of ['cat .env', 'cat ~/.ssh/id_rsa', 'echo TOKEN=x > .env']) {
+      await expect(evaluate({
+        toolName: 'Bash',
+        args: { command },
+      })).resolves.toMatchObject({
+        policyName: 'yolo-mode-approve',
+        result: { kind: 'approve' },
+      });
+    }
+  });
+
+  it('keeps manual-mode sensitive Bash reads on the existing read-only fallback path', async () => {
+    mode = 'manual';
+
+    await expect(evaluate({
+      toolName: 'Bash',
+      args: { command: 'cat .env' },
+    })).resolves.toMatchObject({
+      policyName: 'fallback-ask',
+      result: {
+        kind: 'ask',
+        reason: { read_only_rejection: 'path_check_failed', executable_name: 'cat' },
+      },
+    });
+  });
+
+  it('honors explicit allow rules and records no sensitive path in yolo telemetry', async () => {
+    mode = 'yolo';
+    rules.push({ decision: 'allow', scope: 'user', pattern: 'Bash(cat .env.local)' });
+
+    await expect(evaluate({
+      toolName: 'Bash',
+      args: { command: 'cat .env.local' },
+    })).resolves.toMatchObject({
+      policyName: 'user-configured-allow',
+      result: { kind: 'approve' },
+    });
+
+    records.length = 0;
+    const gate = ix.get(IAgentPermissionGate);
+    await gate.authorize(policyContext({ toolName: 'Bash', args: { command: 'cat .env.production' } }));
+    expect(records).toEqual([{
+      event: 'permission_policy_decision',
+      properties: {
+        turn_id: 0,
+        tool_call_id: 'call_Bash',
+        policy_name: 'sensitive-file-access-ask',
+        tool_name: 'Bash',
+        permission_mode: 'yolo',
+        decision: 'ask',
+      },
+    }]);
+    expect(JSON.stringify(records)).not.toContain('.env');
+  });
+
   it('does not load the dangerous command policy for non-interactive hosts', async () => {
     hostArgs = { ...hostArgs, nonInteractive: true };
     mode = 'auto';
@@ -1215,6 +1446,7 @@ describe('AgentPermissionPolicyService with Windows Git Bash paths', () => {
   let ix: TestInstantiationService;
   let shellPathBridge: ShellPathBridge | undefined;
   let workspace: ReturnType<typeof workspaceStub>;
+  let mode: PermissionMode;
 
   const winWorkDir = 'C:\\workspace';
   const winHomeDir = 'C:\\Users\\test';
@@ -1289,10 +1521,11 @@ describe('AgentPermissionPolicyService with Windows Git Bash paths', () => {
       },
     );
     const fs = makeWindowsFs();
+    mode = 'manual';
     workspace = workspaceStub(winWorkDir);
     ix = createServices(disposables, {
       additionalServices: (reg) => {
-        reg.defineInstance(IAgentPermissionModeService, stubPermissionModeService(() => 'manual'));
+        reg.defineInstance(IAgentPermissionModeService, stubPermissionModeService(() => mode));
         reg.definePartialInstance(IBootstrapService, {
           args: { requestHeaders: {}, nonInteractive: false },
         });
@@ -1392,6 +1625,43 @@ describe('AgentPermissionPolicyService with Windows Git Bash paths', () => {
       toolName: 'Bash',
       args: { command: 'cat /c/workspace/.env' },
     })).resolves.toMatchObject({ policyName: 'fallback-ask', result: { kind: 'ask' } });
+  });
+
+  it('asks for literal Windows and Git Bash sensitive paths in yolo mode', async () => {
+    mode = 'yolo';
+
+    for (const command of [
+      'cat /c/workspace/.env',
+      'cat /c/Users/test/.ssh/id_rsa',
+      'cat /cygdrive/c/Users/test/.aws/credentials',
+      'cat "C:\\Users\\test\\.env"',
+      "cat '~/.ssh/id_ed25519'",
+      'cat C:/workspace/.env',
+      'echo TOKEN=x > .env',
+    ]) {
+      await expect(evaluate({
+        toolName: 'Bash',
+        args: { command },
+      })).resolves.toMatchObject({
+        policyName: 'sensitive-file-access-ask',
+        result: { kind: 'ask' },
+      });
+    }
+
+    for (const command of [
+      'cat /c/workspace/.env.example',
+      'cat /c/Users/test/.ssh/id_rsa.pub',
+      'cat "C:\\workspace\\.env.template"',
+      'cat /c/workspace/notes.txt',
+    ]) {
+      await expect(evaluate({
+        toolName: 'Bash',
+        args: { command },
+      })).resolves.toMatchObject({
+        policyName: 'yolo-mode-approve',
+        result: { kind: 'approve' },
+      });
+    }
   });
 
   it('fails closed when a Windows POSIX path cannot be bridged', async () => {
