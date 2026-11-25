@@ -44,6 +44,7 @@ const rowBusy = computed(() =>
   installBusy.value || removeBusy.value || toggleBusy.value || running.value,
 );
 const showInstall = computed(() => pluginRowShowsInstall(props.row));
+const installing = computed(() => showInstall.value && (installBusy.value || running.value));
 const installDisabled = computed(() =>
   rowBusy.value ||
   props.row.capabilityUnavailable ||
@@ -178,7 +179,7 @@ async function removePlugin(): Promise<void> {
     >
       {{ installLabel }}
     </Button>
-    <template v-if="row.installedPlugin">
+    <template v-if="row.installedPlugin && !installing">
       <Switch
         :model-value="row.installedPlugin.enabled"
         :disabled="rowBusy"
