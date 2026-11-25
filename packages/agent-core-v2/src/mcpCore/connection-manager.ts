@@ -501,7 +501,8 @@ export class McpConnectionManager implements McpConnectionView {
     if (plan === undefined) return;
     const automaticRetry = entry.state === 'connecting' && entry.failureStreak > 0;
     const before = toPublicEntry(entry);
-    const fromFamily = entry.state === 'connected' || entry.state === 'probing';
+    const previousState = entry.state;
+    const fromFamily = previousState === 'connected' || previousState === 'probing';
     const toFamily = plan.target === 'connected' || plan.target === 'probing';
     if (!(fromFamily && toFamily)) entry.attemptId += 1;
     if (fromFamily && !toFamily) {
@@ -525,6 +526,9 @@ export class McpConnectionManager implements McpConnectionView {
       entry.enabledNames = undefined;
       entry.connectedAt = undefined;
     }
+    if (plan.tools !== undefined) entry.tools = plan.tools;
+    if (plan.rawTools !== undefined) entry.rawTools = plan.rawTools;
+    if (plan.enabledNames !== undefined) entry.enabledNames = plan.enabledNames;
     entry.error = undefined;
     entry.nextRetryAt = undefined;
     if (plan.target !== 'connecting') entry.attemptPromise = undefined;
@@ -540,9 +544,6 @@ export class McpConnectionManager implements McpConnectionView {
         break;
       }
       case 'connected': {
-        if (plan.tools !== undefined) entry.tools = plan.tools;
-        if (plan.rawTools !== undefined) entry.rawTools = plan.rawTools;
-        if (plan.enabledNames !== undefined) entry.enabledNames = plan.enabledNames;
         if (plan.client !== undefined) {
           entry.connectedAt = this.oauthService?.now() ?? Date.now();
           entry.failureStreak = 0;
@@ -552,7 +553,7 @@ export class McpConnectionManager implements McpConnectionView {
       }
       case 'probing': {
         const client = entry.client;
-        if (client !== undefined) {
+        if (client !== undefined && previousState !== 'probing') {
           const attemptId = entry.attemptId;
           const reason = plan.weakReason ?? {};
           void this.enqueueOperation(entry.name, () => this.runProbe(entry, client, attemptId, reason));
@@ -630,9 +631,10 @@ export class McpConnectionManager implements McpConnectionView {
         return { target, error: formatStartupError(event.error, event.client) };
       }
       case 'toolsChanged':
-        if (from !== 'connected' || entry.client !== event.client) return undefined;
+        if (from !== 'connected' && from !== 'probing') return undefined;
+        if (entry.client !== event.client) return undefined;
         return {
-          target: 'connected',
+          target: from,
           tools: event.tools,
           rawTools: event.rawTools,
           enabledNames: event.enabledNames,
@@ -760,13 +762,19 @@ export class McpConnectionManager implements McpConnectionView {
   }
 
   private attachToolsChanged(entry: InternalEntry, client: RuntimeMcpClient): void {
-    client.onToolsChanged(() => {
+    const refresh = { scheduled: false, dirty: false };
+    const requestRefresh = (): void => {
       if (this.entries.get(entry.name) !== entry) return;
       if (entry.client !== client && entry.attemptClient !== client) return;
+      if (refresh.scheduled) {
+        refresh.dirty = true;
+        return;
+      }
+      refresh.scheduled = true;
       void this.enqueueOperation(entry.name, async () => {
-        if (this.entries.get(entry.name) !== entry) return;
-        if (entry.client !== client) return;
         try {
+          if (this.entries.get(entry.name) !== entry) return;
+          if (entry.client !== client) return;
           const discovered = await this.discoverTools(client, entry.config);
           if (this.entries.get(entry.name) !== entry) return;
           if (entry.client !== client) return;
@@ -782,9 +790,16 @@ export class McpConnectionManager implements McpConnectionView {
             server: entry.name,
             reason: error instanceof Error ? error.message : String(error),
           });
+        } finally {
+          refresh.scheduled = false;
+          if (refresh.dirty) {
+            refresh.dirty = false;
+            requestRefresh();
+          }
         }
       });
-    });
+    };
+    client.onToolsChanged(requestRefresh);
   }
 
   private async runProbe(
