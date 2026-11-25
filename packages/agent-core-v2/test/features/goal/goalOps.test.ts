@@ -66,6 +66,7 @@ function createToolExecutorStub(): IAgentToolExecutorService {
     onBeforeExecuteTool: Event.None,
     onWillExecuteTool: Event.None,
     hooks: { onDidExecuteTool: hookSlot() },
+    registerHook: () => noopDisposable(),
     registerLegacyStarting: () => noopDisposable(),
   } as unknown as IAgentToolExecutorService;
 }

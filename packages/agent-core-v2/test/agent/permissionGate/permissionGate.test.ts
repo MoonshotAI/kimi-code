@@ -182,7 +182,7 @@ describe('AgentPermissionGate', () => {
     expect(later).not.toHaveBeenCalled();
   });
 
-  it('defers an ask resolution to a cold waitUntil factory', async () => {
+  it('routes an ask resolution to the approval service', async () => {
     const synthetic: BeforeExecuteDecision = { veto: { output: 'Plan review handled.' } };
     const ask: PermissionPolicyResolution = { kind: 'ask' };
     policyResult = { policyName: 'p', result: ask };

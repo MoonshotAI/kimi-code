@@ -962,6 +962,23 @@ describe('AgentGoalService goal-start review', () => {
     expect(decision).toBeUndefined();
   });
 
+  it('vetoes a stale CreateGoal without opening the goal-start approval', async () => {
+    await setup('manual');
+    const goals = ctx!.get(IAgentGoalService);
+    const eventBus = ctx!.get(IEventBus);
+    await goals.createGoal({ objective: 'old task' });
+    eventBus.publish(new TurnStarted({ agentId: 'main', turnId: 1, origin: USER_PROMPT_ORIGIN }));
+    await goals.createGoal({ objective: 'new task', replace: true });
+    const hookCtx = createGoalHookContext(goalStartDisplay);
+
+    const decision = await executorEvents.fireBeforeExecute(hookCtx);
+
+    expect(decision?.veto?.output).toBe(
+      'Goal changed since this turn started; ignored stale goal tool call.',
+    );
+    expect(approvalCalls).toHaveLength(0);
+  });
+
 });
 
 describe('AgentGoalService core workflow hooks', () => {

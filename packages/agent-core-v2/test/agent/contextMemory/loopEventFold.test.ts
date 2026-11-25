@@ -113,6 +113,45 @@ describe('loop-event fold parity', () => {
     expect(folded).toEqual(baseline);
   });
 
+  it('restores emission order when tool.call records arrive out of order', () => {
+    const folded = foldAll([], [
+      { type: 'step.begin', uuid: 's1' },
+      { type: 'tool.call', stepUuid: 's1', toolCallId: 'c2', name: 'Bash', args: {}, callIndex: 1 },
+      { type: 'tool.call', stepUuid: 's1', toolCallId: 'c1', name: 'ExitPlanMode', args: {}, callIndex: 0 },
+      { type: 'tool.result', toolCallId: 'c2', result: { output: 'done' } },
+      { type: 'tool.result', toolCallId: 'c1', result: { output: 'rejected' } },
+      { type: 'step.end', uuid: 's1' },
+    ]);
+
+    const assistant = folded.find((message) => message.role === 'assistant');
+    expect(assistant?.role === 'assistant' ? assistant.toolCalls.map((call) => call.id) : []).toEqual(['c1', 'c2']);
+    expect(folded.filter((message) => message.role === 'tool').map((message) => message.toolCallId)).toEqual(['c2', 'c1']);
+  });
+
+  it('keeps arrival order when tool.call records carry no emission index', () => {
+    const folded = foldAll([], [
+      { type: 'step.begin', uuid: 's1' },
+      { type: 'tool.call', stepUuid: 's1', toolCallId: 'c2', name: 'Bash', args: {} },
+      { type: 'tool.call', stepUuid: 's1', toolCallId: 'c1', name: 'ExitPlanMode', args: {} },
+      { type: 'step.end', uuid: 's1' },
+    ]);
+
+    const assistant = folded.find((message) => message.role === 'assistant');
+    expect(assistant?.role === 'assistant' ? assistant.toolCalls.map((call) => call.id) : []).toEqual(['c2', 'c1']);
+  });
+
+  it('keeps arrival order when only some tool.call records carry an emission index', () => {
+    const folded = foldAll([], [
+      { type: 'step.begin', uuid: 's1' },
+      { type: 'tool.call', stepUuid: 's1', toolCallId: 'c2', name: 'Bash', args: {}, callIndex: 1 },
+      { type: 'tool.call', stepUuid: 's1', toolCallId: 'c1', name: 'ExitPlanMode', args: {} },
+      { type: 'step.end', uuid: 's1' },
+    ]);
+
+    const assistant = folded.find((message) => message.role === 'assistant');
+    expect(assistant?.role === 'assistant' ? assistant.toolCalls.map((call) => call.id) : []).toEqual(['c2', 'c1']);
+  });
+
   it('rebuilds tool call arguments byte-for-byte from argsRaw', () => {
     const raw = '{ "q":  "moon", "limit": 1e3, "big": 9007199254740993, "esc": "\\u0041", "q": "dup" }';
     const folded = foldAll([], [

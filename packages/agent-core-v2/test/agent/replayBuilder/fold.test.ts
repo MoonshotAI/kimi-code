@@ -102,6 +102,27 @@ describe('foldWireRecords', () => {
     expect(tool.time).toBe(13);
   });
 
+  it('restores emission order when tool.call records arrive out of order', () => {
+    const folded = fold([
+      loopEvent({ type: 'step.begin', uuid: 's1' }, 10),
+      loopEvent(
+        { type: 'tool.call', stepUuid: 's1', toolCallId: 'tc2', name: 'Bash', args: {}, callIndex: 1 },
+        11,
+      ),
+      loopEvent(
+        { type: 'tool.call', stepUuid: 's1', toolCallId: 'tc1', name: 'ExitPlanMode', args: {}, callIndex: 0 },
+        12,
+      ),
+      loopEvent({ type: 'step.end', uuid: 's1' }, 13),
+    ]);
+    const messages = messageRecords(folded.replay);
+    const assistant = messages[0];
+    if (assistant?.type !== 'message' || assistant.message.role !== 'assistant') {
+      throw new Error('expected assistant message');
+    }
+    expect(assistant.message.toolCalls.map((call) => call.id)).toEqual(['tc1', 'tc2']);
+  });
+
   it('rebuilds tool call arguments from argsRaw when present and keeps legacy records unchanged', () => {
     const raw = '{ "command":  "ls", "timeout": 1e3 }';
     const folded = fold([
