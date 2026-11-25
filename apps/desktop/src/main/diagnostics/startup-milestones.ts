@@ -20,16 +20,18 @@ export function asRendererMilestone(value: unknown): RendererMilestone | null {
 
 const reportedPhases = new Set<'ui_mounted' | 'ui_ready'>();
 
-export function recordRendererMilestone(value: unknown): void {
+export function recordRendererMilestone(value: unknown): RendererMilestone | null {
   const parsed = asRendererMilestone(value);
-  if (parsed === null) return;
+  if (parsed === null) return null;
   if (parsed.milestone === 'boot-stage') {
     logStartup(`boot-${parsed.stage}`);
-    return;
+    return parsed;
   }
   logStartup(parsed.milestone);
   const phase = parsed.milestone === 'ui-mounted' ? 'ui_mounted' : 'ui_ready';
-  if (reportedPhases.has(phase)) return;
-  reportedPhases.add(phase);
-  trackDesktopEvent('startup_timing', { phase, duration_ms: uptimeMs() });
+  if (!reportedPhases.has(phase)) {
+    reportedPhases.add(phase);
+    trackDesktopEvent('startup_timing', { phase, duration_ms: uptimeMs() });
+  }
+  return parsed;
 }

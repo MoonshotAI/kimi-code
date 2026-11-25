@@ -498,6 +498,14 @@ export class Editor implements Component, Focusable {
 		}
 	}
 
+	clearHistory(): void {
+		if (this.historyIndex !== -1) {
+			this.restoreHistoryDraft();
+		}
+		this.history = [];
+		this.exitHistoryBrowsing();
+	}
+
 	private isEditorEmpty(): boolean {
 		return this.state.lines.length === 1 && this.state.lines[0] === "";
 	}
@@ -558,25 +566,30 @@ export class Editor implements Component, Focusable {
 		this.historyIndex = newIndex;
 
 		if (this.historyIndex === -1) {
-			const draft = this.historyDraft;
-			this.historyDraft = null;
-			if (draft) {
-				this.state = draft;
-				this.preferredVisualCol = null;
-				this.snappedFromCursorCol = null;
-				this.scrollOffset = 0;
-				if (this.hostHistoryDraft !== undefined) {
-					this.onHistoryDraftRestore?.(this.hostHistoryDraft);
-					this.hostHistoryDraft = undefined;
-				}
-				if (this.onChange) this.onChange(this.getText());
-			} else {
-				this.setTextInternal("");
-			}
+			this.restoreHistoryDraft();
 		} else {
 			const rawEntry = this.history[this.historyIndex] || "";
 			const entry = this.onRecall ? this.onRecall(rawEntry, direction) ?? rawEntry : rawEntry;
 			this.setTextInternal(entry, direction === -1 ? "start" : "end");
+		}
+	}
+
+	private restoreHistoryDraft(): void {
+		const draft = this.historyDraft;
+		this.historyDraft = null;
+		const hostDraft = this.hostHistoryDraft;
+		this.hostHistoryDraft = undefined;
+		if (draft) {
+			this.state = draft;
+			this.preferredVisualCol = null;
+			this.snappedFromCursorCol = null;
+			this.scrollOffset = 0;
+			if (hostDraft !== undefined) {
+				this.onHistoryDraftRestore?.(hostDraft);
+			}
+			if (this.onChange) this.onChange(this.getText());
+		} else {
+			this.setTextInternal("");
 		}
 	}
 

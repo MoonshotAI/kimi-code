@@ -260,6 +260,18 @@ default_model = "alternate"
     expect(uploads.size).toBe(previousUploads);
   });
 
+  it('records menu as a global feedback source', async () => {
+    const result = await request('POST', '/feedback', {
+      kind: 'global', source: 'menu', category: 'suggestion', content: 'Feedback from Help menu',
+    });
+    expect(result.code).toBe(0);
+    expect(created.at(-1)).toMatchObject({
+      session_id: 'global',
+      content: 'Feedback from Help menu',
+      info: { kind: 'global', source: 'menu', category: 'suggestion', client: 'desktop' },
+    });
+  });
+
   it('attaches a chosen file and finalizes it using the same upload id', async () => {
     const { data } = await request<{ feedback_id: number }>('POST', '/feedback', {
       kind: 'global', source: 'command', category: 'suggestion', content: 'Improve contrast',

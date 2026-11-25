@@ -10,7 +10,7 @@ const client = z.enum(['desktop', 'web']);
 export const createFeedbackSchema = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('global'),
-    source: z.enum(['sidebar', 'command']),
+    source: z.enum(['sidebar', 'command', 'menu']),
     category: z.enum(['bug', 'suggestion', 'other']),
     content,
     session_id: identifier.optional(),

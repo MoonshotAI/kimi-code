@@ -4,6 +4,8 @@ export type ConversationOutcome = 'completed' | 'interrupted' | 'failed';
 
 export type ConversationEndReason = 'user_cancelled' | 'aborted' | 'max_steps' | 'error' | 'filtered' | 'blocked';
 
+export type ConversationContinuation = 'turn' | 'background' | 'none';
+
 export interface ConversationError {
   readonly code: string;
   readonly message: string;
@@ -233,6 +235,7 @@ export interface ConversationTurnHeader {
   readonly status: ConversationItemStatus;
   readonly outcome?: ConversationOutcome;
   readonly end_reason?: ConversationEndReason;
+  readonly continuation?: ConversationContinuation;
   readonly error?: ConversationError;
   readonly retry?: ConversationRetry;
   readonly turn_number?: number;

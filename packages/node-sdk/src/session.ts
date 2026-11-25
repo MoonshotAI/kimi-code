@@ -304,6 +304,9 @@ export class Session {
       ErrorCodes.SESSION_MODEL_EMPTY,
     );
     await this.rpc.setModel({ sessionId: this.id, model: normalized });
+    if (this.resumeState?.warning !== undefined) {
+      this.resumeState = { ...this.resumeState, warning: undefined };
+    }
   }
 
   async attachFile(data: Uint8Array, options: Pick<UploadFileOptions, 'name' | 'mimeType'>): Promise<string> {

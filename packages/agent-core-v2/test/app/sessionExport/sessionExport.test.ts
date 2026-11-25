@@ -897,6 +897,40 @@ describe('sessionExport', () => {
     ]);
   });
 
+  it('excludes session presence markers from both preview and exported archives', async () => {
+    const tmp = await mkdtemp(join(tmpdir(), 'session-export-test-'));
+    const sessionDir = join(tmp, 'sessions', 'ws_live', 'ses_presence');
+    await mkdir(join(sessionDir, 'presence'), { recursive: true });
+    await writeFile(join(sessionDir, 'state.json'), '{}\n', 'utf-8');
+    await writeFile(
+      join(sessionDir, 'presence', '1234-marker.json'),
+      JSON.stringify({ version: 1, pid: 1234, hostname: 'secret-host.example.test', startedAt: 1 }),
+      'utf-8',
+    );
+    const outputPath = join(tmp, 'presence.zip');
+    ix = createTestServices(tmp, {
+      summary: {
+        id: 'ses_presence',
+        workspaceId: 'ws_live',
+        title: 'Presence test',
+        createdAt: 1,
+        updatedAt: 1,
+        archived: false,
+      },
+      lifecycleHandle: undefined,
+    });
+
+    const preview = await ix.get(ISessionExportService).preview?.('ses_presence');
+    const result = await ix.get(ISessionExportService).export({
+      sessionId: 'ses_presence',
+      outputPath,
+      version: '1.0.0-test',
+    });
+
+    expect(preview?.files).toEqual(['state.json']);
+    expect(result.entries).toEqual(['manifest.json', 'state.json']);
+  });
+
   function createTestServices(
     homeDir: string,
     options: {

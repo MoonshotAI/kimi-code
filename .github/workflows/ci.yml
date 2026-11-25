@@ -47,6 +47,10 @@ jobs:
           fi
       - name: Smoke test CLI bundle
         run: pnpm -C apps/kimi-code run smoke
+      - name: Test automatic reconnect on the built CLI
+        run: pnpm exec vitest run packages/app-core/test/reconnect/server-restart.test.ts
+        env:
+          TESTKIT_CLI_BUILD: dist
       # Temporarily disabled while the E2E suite is being replaced.
       - name: Run the TUI and KAP subprocess journeys on the built CLI
         if: false

@@ -14,7 +14,7 @@ const toolsConfigSchema = z.object({
   disabled: z.array(z.string()).optional(),
 });
 
-const configFields = {
+const configFieldsSchema = z.object({
   default_provider: z.string().optional(),
   default_model: z.string().optional(),
   models: z.record(z.string(), z.unknown()).optional(),
@@ -37,19 +37,17 @@ const configFields = {
   experimental: z.record(z.string(), z.boolean()).optional(),
   telemetry: z.boolean().optional(),
   disable_feedback_survey: z.boolean().optional(),
-};
+});
 
-export const configResponseSchema = z
-  .object({
+export const configResponseSchema = configFieldsSchema
+  .extend({
     providers: z.record(z.string(), providerConfigResponseSchema).default({}),
-    ...configFields,
     raw: z.record(z.string(), z.unknown()).optional(),
   })
   .passthrough();
 export type ConfigResponse = z.infer<typeof configResponseSchema>;
 
-export const patchConfigRequestSchema = z.object({
+export const patchConfigRequestSchema = configFieldsSchema.extend({
   providers: z.record(z.string(), z.unknown()).optional(),
-  ...configFields,
 });
 export type PatchConfigRequest = z.infer<typeof patchConfigRequestSchema>;

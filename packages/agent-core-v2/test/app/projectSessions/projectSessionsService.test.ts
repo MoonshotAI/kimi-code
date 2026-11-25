@@ -304,4 +304,33 @@ describe('WorkspaceSessionsService', () => {
     expect((await sessions.listForWorkdir('/repo')).items.map((item) => item.id)).toEqual(['own']);
     expect(workspaces.peeked).toEqual(['/repo']);
   });
+
+  it('lists every session across worktrees and subdirectories of the implicit project', async () => {
+    const { sessions, index, aliases, workspaces } = build();
+    workspaces.decision = { id: 'wd_repo', root: '/repo' };
+    aliases.aliases['wd_repo'] = ['wd_repo', 'wd_repo_legacy'];
+    index.items = [
+      summary('in-worktree', 'wd_repo', 500, '/home/worktrees/repo/feat'),
+      summary('in-subdir', 'wd_repo_legacy', 400, '/repo/packages/a'),
+      summary('in-other-project', 'wd_other', 300, '/other'),
+      summary('in-main', 'wd_repo', 200, '/repo'),
+    ];
+
+    const first = await sessions.listForProject('/repo', { limit: 2 });
+    const second = await sessions.listForProject('/repo', { limit: 2, before: first.nextCursor });
+
+    expect(first.items.map((item) => item.id)).toEqual(['in-worktree', 'in-subdir']);
+    expect(first.nextCursor).toBe('in-subdir');
+    expect(second).toEqual({ items: [index.items[3]] });
+  });
+
+  it('returns an empty page from listForProject when limit is zero or directory is missing', async () => {
+    const { sessions, index, hostFs } = build();
+    index.items = [summary('s1', 'wd_repo', 100, '/repo')];
+    hostFs.failures.set('/gone', new HostFsError('os.fs.not_found', 'missing'));
+
+    expect(await sessions.listForProject('/repo', { limit: 0 })).toEqual({ items: [] });
+    expect(await sessions.listForProject('/gone')).toEqual({ items: [] });
+    expect(index.listQueries).toEqual([]);
+  });
 });
