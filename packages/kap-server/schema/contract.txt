@@ -2569,10 +2569,12 @@ POST /api/v1/sessions/{session_id}/profile response 200: oneOf
 POST /api/v1/sessions/{session_id}/profile response 200<code=0>.code: enum 0
 POST /api/v1/sessions/{session_id}/profile response 200<code=0>.data.agent.compacting: boolean
 POST /api/v1/sessions/{session_id}/profile response 200<code=0>.data.agent.goal_mode_available: boolean
+POST /api/v1/sessions/{session_id}/profile response 200<code=0>.data.agent.missing_model: string optional
 POST /api/v1/sessions/{session_id}/profile response 200<code=0>.data.agent.model: string optional
 POST /api/v1/sessions/{session_id}/profile response 200<code=0>.data.agent.permission_mode: enum "auto"|"manual"|"yolo" optional
 POST /api/v1/sessions/{session_id}/profile response 200<code=0>.data.agent.plan_mode: boolean
 POST /api/v1/sessions/{session_id}/profile response 200<code=0>.data.agent.plan_mode_available: boolean
+POST /api/v1/sessions/{session_id}/profile response 200<code=0>.data.agent.profile_revision: integer minimum=0 maximum=9007199254740991 optional
 POST /api/v1/sessions/{session_id}/profile response 200<code=0>.data.agent.status: enum "ended"|"idle"|"running"
 POST /api/v1/sessions/{session_id}/profile response 200<code=0>.data.agent.swarm_mode: boolean
 POST /api/v1/sessions/{session_id}/profile response 200<code=0>.data.agent.swarm_mode_available: boolean
@@ -3815,10 +3817,12 @@ ws server message agent.agent_id: string minLength=1
 ws server message agent.compacting: boolean
 ws server message agent.event_created_at: string
 ws server message agent.goal_mode_available: boolean
+ws server message agent.missing_model: string optional
 ws server message agent.model: string optional
 ws server message agent.permission_mode: enum "auto"|"manual"|"yolo" optional
 ws server message agent.plan_mode: boolean
 ws server message agent.plan_mode_available: boolean
+ws server message agent.profile_revision: integer minimum=0 maximum=9007199254740991 optional
 ws server message agent.session_id: string minLength=1
 ws server message agent.status: enum "ended"|"idle"|"running"
 ws server message agent.swarm_mode: boolean

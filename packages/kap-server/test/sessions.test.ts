@@ -4757,6 +4757,10 @@ kapTest('a session whose saved model was removed opens with history and a model 
   const session = await kap.createSession({ agentConfig: { model: 'old' } });
   await kap.prompt(session.id, 'history from removed model', { model: 'old' });
   await kap.waitIdle(session.id);
+  const live = await ensureMainAgent((await resumeSessionById(kap.server.core.accessor, session.id))!);
+  const liveState = readAgentState(live, false);
+  expect(liveState).toMatchObject({ model: 'old', profile_revision: expect.any(Number) });
+  expect(liveState.missing_model).toBeUndefined();
 
   await kap.writeConfig(baseConfig);
   modelFrames.length = 0;
@@ -4764,7 +4768,10 @@ kapTest('a session whose saved model was removed opens with history and a model 
   expect(JSON.stringify(await kap.turns(session.id))).toContain('history from removed model');
   const resumed = await resumeSessionById(kap.server.core.accessor, session.id);
   const main = await ensureMainAgent(resumed!);
-  expect(readAgentState(main, false).model).toBeUndefined();
+  const resumedState = readAgentState(main, false);
+  expect(resumedState.model).toBeUndefined();
+  expect(resumedState.missing_model).toBe('old');
+  expect(resumedState.profile_revision).toBeGreaterThan(liveState.profile_revision!);
   expect(main.accessor.get(IAgentLoopService).getModel()).toBe('old');
 
   const first = await kap.connect();

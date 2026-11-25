@@ -23453,6 +23453,9 @@
                                 "goal_mode_available": {
                                   "type": "boolean"
                                 },
+                                "missing_model": {
+                                  "type": "string"
+                                },
                                 "model": {
                                   "type": "string"
                                 },
@@ -23469,6 +23472,11 @@
                                 },
                                 "plan_mode_available": {
                                   "type": "boolean"
+                                },
+                                "profile_revision": {
+                                  "maximum": 9007199254740991,
+                                  "minimum": 0,
+                                  "type": "integer"
                                 },
                                 "status": {
                                   "enum": [
@@ -25546,6 +25554,7 @@
                     "type": "array"
                   },
                   "goal_control": {
+                    "deprecated": true,
                     "enum": [
                       "pause",
                       "resume",
@@ -25554,6 +25563,7 @@
                     "type": "string"
                   },
                   "goal_objective": {
+                    "deprecated": true,
                     "type": "string"
                   },
                   "metadata": {
@@ -25564,10 +25574,12 @@
                     "type": "object"
                   },
                   "model": {
+                    "deprecated": true,
                     "minLength": 1,
                     "type": "string"
                   },
                   "permission_mode": {
+                    "deprecated": true,
                     "enum": [
                       "manual",
                       "yolo",
@@ -25576,6 +25588,7 @@
                     "type": "string"
                   },
                   "plan_mode": {
+                    "deprecated": true,
                     "type": "boolean"
                   },
                   "profile": {
@@ -25608,9 +25621,11 @@
                     "type": "array"
                   },
                   "swarm_mode": {
+                    "deprecated": true,
                     "type": "boolean"
                   },
                   "thinking": {
+                    "deprecated": true,
                     "minLength": 1,
                     "type": "string"
                   }
@@ -28593,6 +28608,7 @@
                     "type": "array"
                   },
                   "goal_control": {
+                    "deprecated": true,
                     "enum": [
                       "pause",
                       "resume",
@@ -28601,6 +28617,7 @@
                     "type": "string"
                   },
                   "goal_objective": {
+                    "deprecated": true,
                     "type": "string"
                   },
                   "metadata": {
@@ -28611,10 +28628,12 @@
                     "type": "object"
                   },
                   "model": {
+                    "deprecated": true,
                     "minLength": 1,
                     "type": "string"
                   },
                   "permission_mode": {
+                    "deprecated": true,
                     "enum": [
                       "manual",
                       "yolo",
@@ -28623,6 +28642,7 @@
                     "type": "string"
                   },
                   "plan_mode": {
+                    "deprecated": true,
                     "type": "boolean"
                   },
                   "profile": {
@@ -28655,9 +28675,11 @@
                     "type": "array"
                   },
                   "swarm_mode": {
+                    "deprecated": true,
                     "type": "boolean"
                   },
                   "thinking": {
+                    "deprecated": true,
                     "minLength": 1,
                     "type": "string"
                   }

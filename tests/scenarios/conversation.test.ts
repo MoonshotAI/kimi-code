@@ -782,6 +782,28 @@ describe('conversation over KAP', () => {
     ]);
   });
 
+  test('orders agent settings across the profile response and agent frames with profile_revision', async ({ kap }) => {
+    const session = await kap.createSession();
+    const socket = await kap.connect();
+    await socket.subscribe(session.id);
+    const initial = await socket.waitFor((frame) => isMainAgentFrame(frame, session.id));
+    const initialRevision = initial['profile_revision'];
+    expect(initial['permission_mode']).toBe('yolo');
+    expect(initialRevision).toEqual(expect.any(Number));
+
+    const profilePath = `/api/v1/sessions/${session.id}/profile`;
+    const updated = await kap.rest.post<{ readonly agent: Readonly<Record<string, unknown>> }>(profilePath, {
+      agent_config: { permission_mode: 'manual' },
+    });
+    expect(updated.agent['permission_mode']).toBe('manual');
+    expect(updated.agent['profile_revision']).toBeGreaterThan(initialRevision as number);
+    const pushed = await socket.waitFor((frame) => isMainAgentFrame(frame, session.id) && frame['permission_mode'] === 'manual');
+    expect(pushed['profile_revision']).toBe(updated.agent['profile_revision']);
+
+    const renamed = await kap.rest.post<{ readonly agent: Readonly<Record<string, unknown>> }>(profilePath, { title: 'renamed' });
+    expect(renamed.agent['profile_revision']).toBe(updated.agent['profile_revision']);
+  });
+
   test('closes a side agent with an ended agent frame and refuses to close the main agent', async ({ kap }) => {
     const session = await kap.createSession();
     const side = await kap.rest.post<{ readonly agent_id: string }>(`/api/v1/sessions/${session.id}:btw`, {});
