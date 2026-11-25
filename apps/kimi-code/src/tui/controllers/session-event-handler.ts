@@ -469,8 +469,8 @@ export class SessionEventHandler {
     }
     this.pluginMcpToolsUsedInTurn.clear();
     this.scheduleQueuedGoalPromotion();
-    if (event.loopEnd !== undefined) {
-      this.host.streamingUI.finalizeLoopEnd(sendQueued, event.loopEnd.outcome, event.turnId);
+    if (event.continuation !== undefined && event.continuation !== 'turn') {
+      this.host.streamingUI.finalizeContinuation(sendQueued, event.continuation, event.turnId);
       this.host.handlePromptPredictionIdle?.();
     }
   }
@@ -1210,7 +1210,7 @@ export class SessionEventHandler {
     const hasActiveTurn = this.host.streamingUI.hasActiveTurn();
     if (!hasActiveTurn && this.host.state.appState.loopLifecycleEvents === true) {
       this.host.setAppState({ isCompacting: false });
-      this.host.streamingUI.resumeLoopEnd(sendQueued);
+      this.host.streamingUI.resumeContinuation(sendQueued);
       this.host.handlePromptPredictionIdle?.();
       return;
     }
