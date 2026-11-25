@@ -107,7 +107,10 @@ describe('Preview distribution', () => {
     if (preview) {
       expect(config.win.artifactName).toBe('KimiCodePreview-${version}-${os}-${arch}.${ext}');
       expect(config.win.icon).toBe('build/icon-preview.ico');
-      expect(config.win.extraResources).toEqual([{ from: 'build/icon-preview.ico', to: 'build/icon.ico' }]);
+      expect(config.win.extraResources).toEqual([
+        { from: 'build/icon-preview.ico', to: 'build/icon.ico' },
+        { from: 'resources-stage/windows-bash', to: 'windows-bash' },
+      ]);
     }
     const channel = preview ? 'preview' : canary ? 'canary' : null;
     expect(config.mac.icon).toBe(channel ? `build/icon-${channel}.icns` : undefined);

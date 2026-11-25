@@ -8,6 +8,7 @@ const {
   wireDesktopTelemetryMock,
   startDesktopBrowserMcpMock,
   configureSearchWorkerRuntimeMock,
+  configureWindowsBashRuntimeMock,
   browserMcpCloseMock,
   registerBrowserMcpMock,
   registrationDisposeMock,
@@ -19,6 +20,7 @@ const {
   wireDesktopTelemetryMock: vi.fn(),
   startDesktopBrowserMcpMock: vi.fn(),
   configureSearchWorkerRuntimeMock: vi.fn(),
+  configureWindowsBashRuntimeMock: vi.fn(() => undefined),
   browserMcpCloseMock: vi.fn().mockResolvedValue(undefined),
   registerBrowserMcpMock: vi.fn(),
   registrationDisposeMock: vi.fn(),
@@ -65,6 +67,9 @@ vi.mock('../../../src/main/browser/browser-agent-control', () => ({
 vi.mock('../../../src/main/browser/browser-mcp', () => ({
   startDesktopBrowserMcp: startDesktopBrowserMcpMock,
 }));
+vi.mock('../../../src/main/server/windows-bash-runtime', () => ({
+  configureWindowsBashRuntime: configureWindowsBashRuntimeMock,
+}));
 
 import { startDesktopServer } from '../../../src/main/server/embedded-server';
 import { desktopServerSecret } from '../../../src/main/server/server-auth';
@@ -78,6 +83,7 @@ describe('startDesktopServer', () => {
     registerBrowserMcpMock.mockReset().mockReturnValue({ dispose: registrationDisposeMock });
     registrationDisposeMock.mockReset();
     startServerMock.mockReset();
+    configureWindowsBashRuntimeMock.mockReset().mockReturnValue(undefined);
     installProxyMock.mockReset();
     createKimiDeviceIdMock.mockReset().mockReturnValue('device-1');
     wireDesktopTelemetryMock.mockReset().mockResolvedValue(null);
@@ -123,6 +129,8 @@ describe('startDesktopServer', () => {
     expect(installProxyMock).toHaveBeenCalledOnce();
     expect(startDesktopBrowserMcpMock).toHaveBeenCalledWith({ access: browserAccess, token: undefined });
     expect(startServerMock).toHaveBeenCalledOnce();
+    expect(configureWindowsBashRuntimeMock).toHaveBeenCalledOnce();
+    expect(configureWindowsBashRuntimeMock.mock.invocationCallOrder[0]).toBeLessThan(startServerMock.mock.invocationCallOrder[0]!);
     expect(configureSearchWorkerRuntimeMock).toHaveBeenCalledWith(fileURLToPath(new URL('../../../src/main/server/search-worker.cjs', import.meta.url)));
     const args = startServerMock.mock.calls[0]![0];
     expect(args.host).toBe('127.0.0.1');

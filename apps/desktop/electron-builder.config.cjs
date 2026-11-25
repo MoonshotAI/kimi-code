@@ -183,7 +183,10 @@ module.exports = {
     target: ['nsis'],
     artifactName,
     ...(iconChannel ? { icon: `build/icon-${iconChannel}.ico` } : {}),
-    extraResources: [{ from: iconChannel ? `build/icon-${iconChannel}.ico` : 'build/icon.ico', to: 'build/icon.ico' }],
+    extraResources: [
+      { from: iconChannel ? `build/icon-${iconChannel}.ico` : 'build/icon.ico', to: 'build/icon.ico' },
+      { from: 'resources-stage/windows-bash', to: 'windows-bash' },
+    ],
     ...(azureTrustedSigning
       ? {
           azureSignOptions: {

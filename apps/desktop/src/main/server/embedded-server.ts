@@ -15,6 +15,7 @@ import {
 } from '../../shared/identity';
 import { resolveDesktopHostIdentity } from '../app/identity';
 import { log } from '../diagnostics/log';
+import { configureWindowsBashRuntime } from './windows-bash-runtime';
 import { createDesktopServerLogger } from './server-log';
 import { createDesktopAuthTokenService } from './server-auth';
 import { wireDesktopTelemetry } from '../diagnostics/telemetry';
@@ -41,6 +42,8 @@ export interface StartDesktopServerOptions {
 export async function startDesktopServer(
   opts: StartDesktopServerOptions,
 ): Promise<DesktopServerHandle> {
+  const bundledShell = configureWindowsBashRuntime();
+  if (bundledShell !== undefined) log.info(`[kimi-desktop] Using bundled Windows Bash: ${bundledShell}`);
   configureSearchWorkerRuntime(fileURLToPath(new URL('./search-worker.cjs', import.meta.url)));
   installGlobalProxyDispatcher();
   const homeDir = resolveKimiHome();
