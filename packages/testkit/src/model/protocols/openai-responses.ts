@@ -1,6 +1,6 @@
 import { emissionsOf, type Emission } from '#/model/emission';
 import { jsonResponse, SSE_HEADERS, type EncodeContext, type ProtocolCodec, type ResolvedUsage } from '#/model/protocols/codec';
-import { asArray, asRecord, optionalString, stringOf } from '#/model/protocols/json';
+import { asArray, asRecord, contentPartsOf, optionalString, stringOf } from '#/model/protocols/json';
 import { argumentsText } from '#/model/steps';
 import type { ErrorSpec, ReplyStep, RequestView, ToolCallSpec, ViewCall, ViewMessage, ViewPart } from '#/model/types';
 import { textOfParts } from '#/model/view';
@@ -328,9 +328,7 @@ function parseRequest(body: unknown): RequestView {
 }
 
 function contentParts(content: unknown): ViewPart[] {
-  if (typeof content === 'string') return [{ type: 'text', text: content }];
-  return asArray(content).map((raw): ViewPart => {
-    const part = asRecord(raw);
+  return contentPartsOf(content, (part, raw) => {
     switch (part['type']) {
       case 'input_text':
       case 'output_text':

@@ -697,7 +697,8 @@ function defaultRawFinishReason(
         return 'max_output_tokens';
       case 'filtered':
         return 'content_filter';
-      default:
+      case 'paused':
+      case 'other':
         return 'incomplete';
     }
   }
