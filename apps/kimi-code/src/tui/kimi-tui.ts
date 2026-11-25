@@ -1429,7 +1429,6 @@ export class KimiTUI {
   }
 
   handlePlanToggle(next: boolean): void {
-    this.promptPredictionController.handlePlanModeChanged(next);
     void slashCommands.handlePlanCommand(this, next ? 'on' : 'off');
   }
 
@@ -2211,6 +2210,10 @@ export class KimiTUI {
 
   handlePromptPredictionTurnEnded(event: TurnEndedEvent): void {
     this.promptPredictionController.handleTurnEnded(event);
+  }
+
+  handlePromptPredictionIdle(): void {
+    this.promptPredictionController.handleLoopIdle();
   }
 
   private async maybeAutoGenerateSessionTitle(): Promise<void> {
@@ -4411,7 +4414,6 @@ export class KimiTUI {
 
   updateQueueDisplay(): void {
     this.programStatus?.refresh();
-    this.promptPredictionController.handleQueueChange();
     const { queueContainer, queuePane, queuedMessages } = this.state;
     if (queuedMessages.length === 0) {
       queuePane.scrollBodyToTop();
@@ -4686,7 +4688,6 @@ export class KimiTUI {
     this.editorReplacementOnDisplaced = onDisplaced;
     this.editorReplacementOnReplaced = onReplaced;
     this.editorReplacementOwner = owner;
-    this.promptPredictionController.notifyDisplaced();
     this.surveyController.notifyDisplaced();
     if (this.state.activeDialog === 'model-switch-confirm') this.state.activeDialog = null;
     this.disposeEditorReplacement();

@@ -1051,6 +1051,17 @@ export interface RemoteControlStatus {
   };
 }
 
+export type PromptPredictionCancelReason =
+  | 'input'
+  | 'escape'
+  | 'new_turn'
+  | 'session'
+  | 'dialog'
+  | 'queue'
+  | 'submit'
+  | 'visibility'
+  | 'shutdown';
+
 export interface KimiWebApi {
   dispose(): void;
   getHealth(): Promise<{ status: 'ok'; uptimeSec: number }>;
@@ -1118,6 +1129,8 @@ export interface KimiWebApi {
   forkSession(sessionId: string, input?: { title?: string; turnIndex?: number }): Promise<AppSession>;
   startBtw(sessionId: string): Promise<{ agentId: string }>;
   closeAgent(sessionId: string, agentId: string): Promise<{ closed: true }>;
+  predictNextPrompt(sessionId: string, input: { predictionId: string; expectedTurnId: number }): Promise<string | null>;
+  cancelPromptPrediction(sessionId: string, predictionId: string, reason?: PromptPredictionCancelReason): Promise<boolean>;
   respondApproval(sessionId: string, approvalId: string, response: ApprovalResponse): Promise<InteractionRespondResult>;
   respondQuestion(sessionId: string, questionId: string, response: QuestionResponse): Promise<InteractionRespondResult>;
   dismissQuestion(sessionId: string, questionId: string): Promise<InteractionRespondResult>;

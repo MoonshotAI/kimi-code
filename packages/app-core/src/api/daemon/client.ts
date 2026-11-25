@@ -65,6 +65,7 @@ import type {
   OAuthRegion,
   PromptSubmission,
   PromptSubmitResult,
+  PromptPredictionCancelReason,
   QuestionResponse,
   ReadRequestOptions,
   RemoteControlStatus,
@@ -964,6 +965,25 @@ export class DaemonKimiWebApi implements KimiWebApi {
       { allowCodes: [40401] },
     );
     return { closed: true };
+  }
+
+  async predictNextPrompt(
+    sessionId: string,
+    input: { predictionId: string; expectedTurnId: number },
+  ): Promise<string | null> {
+    const data = await this.http.post<{ prediction: string | null }>(
+      `/sessions/${encodeURIComponent(sessionId)}:predict-prompt`,
+      { prediction_id: input.predictionId, expected_turn_id: input.expectedTurnId },
+    );
+    return data.prediction;
+  }
+
+  async cancelPromptPrediction(sessionId: string, predictionId: string, reason?: PromptPredictionCancelReason): Promise<boolean> {
+    const data = await this.http.post<{ cancelled: boolean }>(
+      `/sessions/${encodeURIComponent(sessionId)}:cancel-prompt-prediction`,
+      { prediction_id: predictionId, reason },
+    );
+    return data.cancelled;
   }
 
   respondApproval(
