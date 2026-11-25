@@ -4,7 +4,7 @@ import { Disposable, toDisposable, type IDisposable } from '#/_base/di/lifecycle
 import { IInstantiationService } from '#/_base/di/instantiation';
 import { ILogService } from '#/_base/log/log';
 import { LifecycleScope } from '#/app/scopes';
-import { ScopeActivation, registerScopedService, type IAgentScopeHandle } from '#/_base/di/scope';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/state/state';
 import { abortError, isUserCancellation, userCancellationReason } from '#/_base/utils/abort';
 import { toErrorMessage } from '#/_base/errors/errorMessage';
@@ -74,7 +74,6 @@ import {
   type ResolvedAgentProfile,
   type SystemPromptContext,
 } from '#/agent/profile/profile';
-import { isMissingConfiguredModelError } from '#/agent/profile/errors';
 import type {
   LlmRequest as CoreLlmRequest,
   LlmRequestModel,
@@ -1512,19 +1511,6 @@ function mergeCorePolicies(host: LlmPolicy, extra: LlmPolicy | undefined): LlmPo
 function machineUserMessage(message: ContextMessage | undefined): UserMessage {
   if (message === undefined) return EMPTY_LOOP_PROMPT;
   return { role: 'user', content: [...message.content] };
-}
-
-export function missingConfiguredModelAlias(agent: IAgentScopeHandle): string | undefined {
-  const profile = agent.accessor.get(IAgentLoopService);
-  const previous = profile.getModel();
-  if (previous === '' || typeof profile.resolveModelContext !== 'function') return undefined;
-  try {
-    profile.resolveModelContext();
-    return undefined;
-  } catch (error) {
-    if (!isMissingConfiguredModelError(error, previous)) throw error;
-    return previous;
-  }
 }
 
 registerScopedService(
