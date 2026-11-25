@@ -53,10 +53,18 @@ function openDeepLinkWorkspace(root: string): void {
   sendLaunchAction({ action: 'open-workspace', root, newChat: true });
 }
 
+function openDeepLinkSession(sessionId: string): void {
+  sendLaunchAction({ action: 'open-session', sessionId });
+}
+
+function routeDeepLink(url: string): void {
+  handleDeepLink(url, showMainWindow, notifyDeepLinkAuth, openDeepLinkWorkspace, openDeepLinkSession);
+}
+
 function handleSecondInstanceArgv(argv: readonly string[]): void {
   const deepLink = extractDeepLink(argv);
   if (deepLink !== undefined) {
-    handleDeepLink(deepLink, showMainWindow, notifyDeepLinkAuth, openDeepLinkWorkspace);
+    routeDeepLink(deepLink);
     return;
   }
   showMainWindow();
@@ -124,7 +132,7 @@ export function main(): void {
       pendingDeepLinks.push(url);
       return;
     }
-    handleDeepLink(url, showMainWindow, notifyDeepLinkAuth, openDeepLinkWorkspace);
+    routeDeepLink(url);
   });
 
   registerIpcHandlers();
@@ -264,7 +272,7 @@ export function main(): void {
     }
     const startupDeepLink = process.platform === 'darwin' ? undefined : extractDeepLink(process.argv);
     if (startupDeepLink !== undefined) {
-      handleDeepLink(startupDeepLink, showMainWindow, notifyDeepLinkAuth, openDeepLinkWorkspace);
+      routeDeepLink(startupDeepLink);
     } else {
       forwardLaunchArgs(process.argv);
     }
@@ -274,7 +282,7 @@ export function main(): void {
     const deepLinks = pendingDeepLinks.splice(0);
     launchRoutingReady = true;
     for (const url of deepLinks) {
-      handleDeepLink(url, showMainWindow, notifyDeepLinkAuth, openDeepLinkWorkspace);
+      routeDeepLink(url);
     }
     app.on('activate', () => {
       showMainWindow();

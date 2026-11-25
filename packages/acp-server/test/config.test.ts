@@ -45,6 +45,7 @@ describe('acp-server config surface', () => {
     thinking?: boolean;
     supportEfforts?: readonly string[];
     defaultEffort?: string;
+    defaultPlanMode?: boolean;
     altThinking?: boolean;
     altSupportEfforts?: readonly string[];
     altDefaultEffort?: string;
@@ -58,10 +59,16 @@ describe('acp-server config surface', () => {
         altThinking: opts?.altThinking === true,
         altSupportEfforts: opts?.altSupportEfforts,
         altDefaultEffort: opts?.altDefaultEffort,
+        defaultPlanMode: opts?.defaultPlanMode,
       });
+    } else if (opts?.defaultPlanMode === true) {
+      await writeFile(join(homeDir, 'config.toml'), 'default_plan_mode = true\n');
     }
     client = await createTestClient({ homeDir });
-    await client.send('initialize', { protocolVersion: 1, clientCapabilities: {} });
+    await client.send('initialize', {
+      protocolVersion: 1,
+      clientCapabilities: opts?.defaultPlanMode === true ? { fs: { readTextFile: true } } : {},
+    });
     return client;
   }
 
@@ -103,6 +110,22 @@ describe('acp-server config surface', () => {
     30_000,
   );
 
+  it('describes the approval policies in both ACP mode pickers', async () => {
+    await boot();
+    const { modes, configOptions } = await newSession();
+    const auto = 'Run unattended, including sensitive operations, while honoring explicit deny rules.';
+    const yolo = 'Approve routine operations automatically. Sensitive actions can still require confirmation.';
+
+    expect(modes?.availableModes).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'auto', description: auto }),
+      expect.objectContaining({ id: 'yolo', description: yolo }),
+    ]));
+    expect(configOptions.find((option) => option.id === 'mode')?.options).toEqual(expect.arrayContaining([
+      expect.objectContaining({ value: 'auto', description: auto }),
+      expect.objectContaining({ value: 'yolo', description: yolo }),
+    ]));
+  }, 30_000);
+
   it(
     'session/set_mode pushes current_mode_update alongside config_option_update',
     async () => {
@@ -126,6 +149,43 @@ describe('acp-server config surface', () => {
     30_000,
   );
 
+  it('reports the configured default plan mode on session creation and reload', async () => {
+    const c = await boot({ defaultPlanMode: true });
+    const { sessionId, modes, configOptions } = await newSession();
+    expect(modes?.currentModeId).toBe('plan');
+    expect(configOptions.find((option) => option.id === 'mode')?.currentValue).toBe('plan');
+    await c.send('session/close', { sessionId });
+    const restored = (await c.send('session/load', { sessionId, cwd: homeDir, mcpServers: [] })) as NewSessionResult;
+    expect(restored.modes?.currentModeId).toBe('plan');
+    expect(restored.configOptions.find((option) => option.id === 'mode')?.currentValue).toBe('plan');
+    expect(c.received.filter(({ method }) => method === 'fs/read_text_file')).toEqual([]);
+  }, 30_000);
+
+  it('reports a persisted plan mode on session resume', async () => {
+    const c = await boot();
+    const { sessionId } = await newSession();
+    await c.send('session/set_mode', { sessionId, modeId: 'plan' });
+    await c.send('session/close', { sessionId });
+
+    const restored = (await c.send('session/resume', { sessionId, cwd: homeDir, mcpServers: [] })) as NewSessionResult;
+    expect(restored.modes?.currentModeId).toBe('plan');
+    expect(restored.configOptions.find((option) => option.id === 'mode')?.currentValue).toBe('plan');
+  }, 30_000);
+
+  it('publishes only the final mode when explicitly switching from plan to YOLO', async () => {
+    const c = await boot();
+    const { sessionId } = await newSession();
+    await c.send('session/set_mode', { sessionId, modeId: 'plan' });
+    const start = c.sessionUpdates().length;
+    await c.send('session/set_mode', { sessionId, modeId: 'yolo' });
+    const updates = c.sessionUpdates().slice(start).map(({ params }) => (
+      params as { update: { sessionUpdate: string; currentModeId?: string } }
+    ).update);
+    expect(updates.filter(({ sessionUpdate }) => sessionUpdate === 'current_mode_update')).toEqual([
+      { sessionUpdate: 'current_mode_update', currentModeId: 'yolo' },
+    ]);
+  }, 30_000);
+
   it(
     'session/set_mode propagates plan errors without reporting a new mode',
     async () => {
@@ -142,6 +202,7 @@ describe('acp-server config surface', () => {
         conn: { sessionUpdate: async (update: unknown) => updates.push(update) },
         sessionId: 'session-test',
         currentModeId: 'default',
+        modeChangesInFlight: 0,
       });
 
       await expect(session.setMode('plan')).rejects.toThrow('plan toggle failed');

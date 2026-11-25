@@ -275,9 +275,7 @@ const terminalEverOpened = ref(terminalOpen.value);
 watch(terminalOpen, (isOpen) => {
   if (isOpen) terminalEverOpened.value = true;
 });
-const terminalCwd = computed(
-  () => client.visibleWorkspace.value?.root ?? client.status.value.cwd ?? null,
-);
+const terminalCwd = computed(() => workspaces.activePanelRoot);
 function terminalBucketKey(sessionId: string, workspaceId: string | null): string {
   return sessionId === '' ? nativeTerminalDraftKey(workspaceId) : sessionId;
 }
@@ -306,6 +304,8 @@ useJumpList(client, (payload) => {
     if (payload.action === 'new-chat') {
       setSessionIntent('jump_list');
       handleCreateSession();
+    } else if (payload.action === 'open-session') {
+      void client.openSessionLink(payload.sessionId, 'deep_link');
     } else {
       void openWorkspaceByRoot(payload.root, payload.newChat);
     }
@@ -495,6 +495,7 @@ const MENU_ACTION_TO_SHORTCUT: Record<string, AppActionId> = {
 };
 
 const sidebarRef = ref<InstanceType<typeof Sidebar> | null>(null);
+const settingsDialogRef = ref<InstanceType<typeof SettingsDialog> | null>(null);
 
 const OPEN_IN_FILE_EXCLUDED_IDS: ReadonlySet<string> = new Set([
   'terminal',
@@ -518,7 +519,7 @@ const openInService: OpenInService = {
 provide(OpenInServiceKey, openInService);
 
 async function openWorkspaceInDefaultApp(): Promise<void> {
-  const root = client.visibleWorkspace.value?.root ?? client.status.value.cwd;
+  const root = workspaces.activePanelRoot;
   if (!root) return;
   const apps = await openInService.catalog();
   const target = resolveOpenInTarget(
@@ -541,8 +542,12 @@ function runShortcutAction(id: AppActionId, source: 'shortcut' | 'menu' | 'butto
     case 'openSettings':
       if (isMobile.value) {
         showMobileSettings.value = !showMobileSettings.value;
+      } else if (showSettings.value) {
+        void Promise.resolve(settingsDialogRef.value?.confirmDiscard()).then((discard) => {
+          if (discard) showSettings.value = false;
+        });
       } else {
-        showSettings.value = !showSettings.value;
+        showSettings.value = true;
       }
       break;
     case 'toggleSidebar':
@@ -1928,6 +1933,10 @@ let sendGeneration = 0;
 // command, stale row) fails the enable write server-side and toasts the
 // daemon's own error.
 const towerEnabled = computed(() => client.experimentalFlags.value['tower'] === true);
+const towerEntryEnabled = computed(() => towerEnabled.value && client.towerModeAvailable.value);
+const planEntryEnabled = computed(() => client.planModeAvailable.value);
+const swarmEntryEnabled = computed(() => client.swarmModeAvailable.value);
+const goalEntryEnabled = computed(() => client.goalModeAvailable.value);
 
 // Mobile settings sheet's tower toggle: the sheet hides the row while the
 // flag is off, so this only forwards.
@@ -2269,7 +2278,7 @@ async function handleSubmitDispatch(payload: SubmitPayload, owner: number): Prom
 
 type WorkspaceDialogState =
   | { mode: 'create'; dirs: string[]; hostId?: string }
-  | { mode: 'edit'; id: string; name: string; dirs: string[]; hostId?: string };
+  | { mode: 'edit'; id: string; name: string; dirs: string[]; hostId?: string; primaryImmutable: boolean };
 
 const workspaceDialog = ref<WorkspaceDialogState | null>(null);
 const workspaceDialogBusy = ref(false);
@@ -2294,6 +2303,7 @@ function openWorkspaceEditor(ws: WorkspaceView): void {
     name: full?.name ?? ws.name,
     dirs: [ws.root, ...(full?.additionalDirs ?? [])],
     hostId: ws.hostId,
+    primaryImmutable: full?.kind !== 'managed',
   };
 }
 
@@ -2699,6 +2709,7 @@ function openPr(url: string): void {
     <ErrorBoundary closable @close="showSettings = false">
     <SettingsDialog
       v-if="showSettings"
+      ref="settingsDialogRef"
       :color-scheme="colorScheme"
       :font-scale="fontScale"
       :managed-provider-status="managedProviderStatus"
@@ -2756,6 +2767,7 @@ function openPr(url: string): void {
       :manage-hosts="() => openHostSettings(undefined, { addIfEmpty: true })"
       :import-project-config="importProjectConfigDirs"
       :busy="workspaceDialogBusy"
+      :primary-immutable="workspaceDialog.mode === 'edit' && workspaceDialog.primaryImmutable"
       @submit="onWorkspaceDialogSubmit"
       @cancel="closeWorkspaceDialog"
     />
@@ -2842,7 +2854,10 @@ function openPr(url: string): void {
       :goal-active="mobileGoalActive"
       :swarm-mode="swarmMode"
       :tower-mode="client.towerMode.value"
-      :tower-enabled="towerEnabled"
+      :tower-enabled="towerEntryEnabled"
+      :plan-enabled="planEntryEnabled"
+      :swarm-enabled="swarmEntryEnabled"
+      :goal-enabled="goalEntryEnabled"
       :color-scheme="colorScheme"
       :font-scale="fontScale"
       :managed-provider-status="managedProviderStatus"

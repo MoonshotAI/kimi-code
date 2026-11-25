@@ -1010,6 +1010,34 @@ html[data-color-scheme="dark"] {
   right: 0;
 }
 
+:where(*):focus {
+  outline: none;
+}
+
+:where(
+  button,
+  [type="button"],
+  [type="reset"],
+  [type="submit"],
+  [type="checkbox"],
+  [type="radio"],
+  [type="range"],
+  [type="color"],
+  select,
+  summary,
+  a[href],
+  [role="button"],
+  [role="tab"],
+  [role="menuitem"],
+  [role="option"],
+  [role="switch"],
+  [role="checkbox"],
+  [role="radio"]
+):focus-visible {
+  outline: 2px solid var(--color-accent-bd);
+  outline-offset: 1px;
+}
+
 .ui-kbd__key {
   display: inline-flex;
   align-items: center;

@@ -19,7 +19,7 @@ import {
   normalizeAgentProfile,
   type AgentProfile,
 } from '#/app/agentProfileCatalog/agentProfileCatalog';
-import { IAgentProfileRegistry } from '#/app/agentProfileCatalog/agentProfileRegistry';
+import { agentProfileRegistryInContext, IAgentProfileRegistry } from '#/app/agentProfileCatalog/agentProfileRegistry';
 import { AgentProfileRegistryService } from '#/app/agentProfileCatalog/agentProfileRegistryService';
 import { IBuiltinAgentProfileLoader } from '#/app/agentProfileCatalog/builtinAgentProfileLoader';
 import { BuiltinAgentProfileLoaderService } from '#/app/agentProfileCatalog/builtinAgentProfileLoaderService';
@@ -835,6 +835,50 @@ describe('agent profile loaders + session catalog', () => {
     });
   });
 
+  it('does not let a load that finishes after disposal withdraw the profiles of its successor', async () => {
+    await withFixture(async (fixture) => {
+      const explicitFile = await writeAgent(fixture.extraDir, 'late.md', agentMd('late', 'explicit'));
+      await withStack(fixture, undefined, async (stack) => {
+        await stack.ready();
+        const hostFs = new HostFileSystem();
+        let openGate!: () => void;
+        const gate = new Promise<void>((resolve) => {
+          openGate = resolve;
+        });
+        const slowFs = Object.create(hostFs) as HostFileSystem;
+        slowFs.readText = async (path: string) => {
+          await gate;
+          return hostFs.readText(path);
+        };
+        const loader = (fs: HostFileSystem) =>
+          new ExplicitAgentProfileLoaderService(
+            stack.workspaceContext,
+            workspaceDirsStub(fixture.workDir),
+            stubBootstrap(fixture.homeDir, {}, { agentFiles: [explicitFile] }),
+            fs,
+            logStub(),
+            stack.userLoader,
+            agentProfileRegistryInContext(stack.registry, 'view'),
+          );
+        const released = loader(slowFs);
+        released.dispose();
+        const successor = loader(hostFs);
+        await successor.ready;
+
+        openGate();
+        await released.ready;
+
+        const profiles = () =>
+          stack.registry.entries()
+            .filter((entry) => entry.contextKey === 'view')
+            .flatMap((entry) => entry.contribution.profiles.map((profile) => profile.name));
+        expect(profiles()).toEqual(['late']);
+        successor.dispose();
+        expect(profiles()).toEqual([]);
+      });
+    });
+  });
+
   it('withdraws a loader’s record (and re-projects the catalog) when the loader is disposed', async () => {
     await withFixture(async (fixture) => {
       await writeAgent(
@@ -954,7 +998,6 @@ describe('workspace loader watchEnabled', () => {
           workspaceDirsStub(fixture.workDir),
           logStub(),
           userStub(),
-          undefined,
           undefined,
           watchEnabled,
         );

@@ -52,6 +52,7 @@ function makeHarness() {
     setTelemetryContext: vi.fn(),
     getWorkspaceTrustInfo: vi.fn(async () => ({
       trusted: true,
+      projectRoot: '/tmp/proj-signals',
       gatedMcpServers: [],
       gatedAdditionalDirs: [], additionalDirSources: [], warnings: [],
       instructionSources: { agentsMdPaths: [], skills: [], agentProfiles: [], paths: [] },

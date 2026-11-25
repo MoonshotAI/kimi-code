@@ -4,14 +4,28 @@ import { basename, isAbsolute } from 'pathe';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { ILogService } from '#/_base/log/log';
-import { encodeWorkDirKey, isWorkDirKey, workspaceRootKey } from '#/_base/utils/workdir-slug';
+import {
+  encodeWorkDirKey,
+  isWorkDirKey,
+  workspaceRootKey,
+  type AbsoluteDir,
+} from '#/_base/utils/workdir-slug';
+import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IEventService } from '#/app/event/event';
+import { isDegradedLocation, locateCheckout, type CheckoutLocation } from '#/app/git/workTree';
 import { IProjectLocalConfigService } from '#/app/projectLocalConfig/projectLocalConfig';
+import { listSessionIds, readSessionSummary } from '#/app/sessionIndex/sessionIndexSource';
+import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { ErrorCodes, Error2, unwrapErrorCause } from '#/errors';
+import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
+import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
+import { IWorkspaceTrustStore } from '#/workspace/workspaceTrust/workspaceTrustStore';
 
+import { decideImplicitProject, isNonDirectory, type ImplicitDecision } from './implicitProject';
+import { projectDirAt } from './projectWorkDir';
 import {
   IWorkspaceService,
   type Workspace,
@@ -29,6 +43,7 @@ import {
   dedupeByRoot,
   isImplicitBucketSessionLine,
   readSessionIndexEntries,
+  sessionBucketOf,
 } from './workspaceAlias';
 import { IWorkspacePersistence, type WorkspaceCatalog } from './workspacePersistence';
 
@@ -37,6 +52,7 @@ export class WorkspaceService implements IWorkspaceService {
 
   private merged = false;
   private opQueue: Promise<unknown> = Promise.resolve();
+  private readonly degradedDirs = new Set<string>();
 
   constructor(
     @IWorkspacePersistence private readonly store: IWorkspacePersistence,
@@ -46,6 +62,11 @@ export class WorkspaceService implements IWorkspaceService {
     @IProjectLocalConfigService private readonly localConfig: IProjectLocalConfigService,
     @ILogService private readonly log: ILogService,
     @IEventService private readonly event: IEventService,
+    @IHostEnvironment private readonly hostEnvironment: IHostEnvironment,
+    @ITelemetryService private readonly telemetry: ITelemetryService,
+    @IBootstrapService private readonly bootstrap: IBootstrapService,
+    @IAtomicDocumentStore private readonly docs: IAtomicDocumentStore,
+    @IWorkspaceTrustStore private readonly trustStore: IWorkspaceTrustStore,
   ) {}
 
   list(): Promise<readonly Workspace[]> {
@@ -65,54 +86,25 @@ export class WorkspaceService implements IWorkspaceService {
     });
   }
 
-  createOrTouch(root: string, name?: string): Promise<Workspace> {
+  resolveImplicit(dir: string): Promise<Workspace> {
     return this.runExclusive(async () => {
-      let stat;
-      try {
-        stat = await this.hostFs.stat(root);
-      } catch {
-        stat = undefined;
-      }
-      if (stat !== undefined && !stat.isDirectory) {
-        try {
-          stat = await this.hostFs.stat(await this.hostFs.realpath(root));
-        } catch {
-          stat = undefined;
-        }
-      }
-      if (stat !== undefined && !stat.isDirectory) {
-        throw new Error2(ErrorCodes.FS_PATH_NOT_FOUND, `workspace root ${root} is not a directory`);
+      if (await isNonDirectory(this.hostFs, dir)) {
+        throw new Error2(ErrorCodes.FS_PATH_NOT_FOUND, `workspace root ${dir} is not a directory`);
       }
       await this.ensureMerged();
+      const homeDirs = await this.homeDirs();
       let ws!: Workspace;
       let existing: Workspace | undefined;
-      await this.store.update((catalog) => {
+      await this.store.update(async (catalog) => {
         const byId = new Map(catalog.workspaces.map((entry) => [entry.id, entry]));
         const deletedIds = new Set(catalog.deletedIds);
-        const id = encodeWorkDirKey(root);
-        existing = byId.get(id);
-        if (existing === undefined) {
-          const rootKey = workspaceRootKey(root);
-          for (const entry of byId.values()) {
-            if (isWorkDirKey(entry.id) && workspaceRootKey(entry.root) === rootKey) {
-              existing = entry;
-              break;
-            }
-          }
-        }
+        const decision = await this.decide(dir, catalog.workspaces, homeDirs);
         const now = Date.now();
+        existing = decision.project;
         ws =
           existing !== undefined
             ? { ...existing, lastOpenedAt: now }
-            : {
-                id,
-                root,
-                name: name ?? basename(root),
-                kind: 'implicit',
-                additionalDirs: [],
-                createdAt: now,
-                lastOpenedAt: now,
-              };
+            : implicitEntry(decision.id, decision.root, now);
         byId.set(ws.id, ws);
         deletedIds.delete(ws.id);
         return {
@@ -128,6 +120,59 @@ export class WorkspaceService implements IWorkspaceService {
       );
       return ws;
     });
+  }
+
+  peekImplicit(dir: string): Promise<ImplicitDecision> {
+    return this.runExclusive(async () => {
+      await this.ensureMerged();
+      return this.decide(dir, (await this.loadCatalog()).workspaces, await this.homeDirs());
+    });
+  }
+
+  reviveImplicit(id: string, workDir: string): Promise<Workspace> {
+    return this.runExclusive(async () => {
+      await this.ensureMerged();
+      let revived!: Workspace;
+      let created = false;
+      await this.store.update(async (catalog) => {
+        const existing = catalog.workspaces.find((ws) => ws.id === id);
+        if (existing !== undefined) {
+          revived = existing;
+          return catalog;
+        }
+        const root = !isWorkDirKey(id)
+          ? undefined
+          : encodeWorkDirKey(workDir) === id
+            ? workDir
+            : (await this.bucketRoots()).get(id);
+        if (root === undefined) {
+          throw new Error2(
+            ErrorCodes.WORKSPACE_NOT_FOUND,
+            isWorkDirKey(id)
+              ? `session project ${id} no longer exists and cannot be recreated from ${workDir}: neither that directory nor a directory its sessions recorded hashes to that id`
+              : `session project ${id} no longer exists and only implicit projects can be recreated`,
+          );
+        }
+        const now = Date.now();
+        revived = implicitEntry(id, root, now);
+        created = true;
+        return {
+          workspaces: [...catalog.workspaces, revived],
+          deletedIds: catalog.deletedIds.filter((deleted) => deleted !== id),
+          idempotencyKeys: catalog.idempotencyKeys,
+        };
+      });
+      if (created) this.event.publish(new WorkspaceCreated({ payload: { workspace: revived } }));
+      return revived;
+    });
+  }
+
+  async projectDirAt(project: Pick<Workspace, 'root'>, dir: string): Promise<string | undefined> {
+    return projectDirAt(project.root, dir, { fs: this.hostFs, homeDirs: await this.homeDirs() });
+  }
+
+  async acceptsWorkDir(project: Pick<Workspace, 'root'>, dir: string): Promise<boolean> {
+    return (await this.projectDirAt(project, dir)) !== undefined;
   }
 
   create(input: WorkspaceCreate): Promise<Workspace> {
@@ -246,10 +291,16 @@ export class WorkspaceService implements IWorkspaceService {
     return this.runExclusive(async () => {
       await this.ensureMerged();
       let updated: Workspace | undefined;
-      let changed = false;
+      let previousRoot: string | undefined;
       await this.store.update(async (catalog) => {
         const existing = catalog.workspaces.find((ws) => ws.id === id);
         if (existing === undefined) return catalog;
+        if (existing.kind === 'implicit') {
+          throw new Error2(
+            ErrorCodes.WORKSPACE_PRIMARY_IMMUTABLE,
+            `project ${id} is implicit; its primary directory is the directory it was opened from and cannot change`,
+          );
+        }
         const resolved = (await this.localConfig.resolveAdditionalDirs(existing.root, [path]))[0];
         if (resolved === undefined) {
           throw new Error2(ErrorCodes.FS_PATH_NOT_FOUND, `primary ${path} does not exist`);
@@ -275,14 +326,17 @@ export class WorkspaceService implements IWorkspaceService {
           ],
           lastOpenedAt: Date.now(),
         };
-        changed = true;
+        previousRoot = existing.root;
         return {
           workspaces: catalog.workspaces.map((ws) => (ws.id === id ? updated! : ws)),
           deletedIds: catalog.deletedIds,
           idempotencyKeys: catalog.idempotencyKeys,
         };
       });
-      if (changed && updated !== undefined) {
+      if (previousRoot === undefined || updated === undefined) return updated;
+      try {
+        await this.trustStore.carry(previousRoot, updated.root);
+      } finally {
         this.event.publish(new WorkspaceUpdated({ payload: { workspace: updated } }));
       }
       return updated;
@@ -397,20 +451,9 @@ export class WorkspaceService implements IWorkspaceService {
   ): Promise<boolean> {
     let changed = false;
     const now = Date.now();
-    for (const entry of await readSessionIndexEntries(this.storage)) {
-      if (!isAbsolute(entry.workDir)) continue;
-      if (!isImplicitBucketSessionLine(entry)) continue;
-      const id = encodeWorkDirKey(entry.workDir);
+    for (const [id, root] of await this.bucketRoots()) {
       if (byId.has(id) || deletedIds.has(id)) continue;
-      byId.set(id, {
-        id,
-        root: entry.workDir,
-        name: basename(entry.workDir),
-        kind: 'implicit',
-        additionalDirs: [],
-        createdAt: now,
-        lastOpenedAt: now,
-      });
+      byId.set(id, implicitEntry(id, root, now));
       changed = true;
     }
     return changed;
@@ -420,24 +463,81 @@ export class WorkspaceService implements IWorkspaceService {
     const result = new Map<string, Workspace>();
     const now = Date.now();
     const seenRootKeys = new Set<string>();
-    for (const entry of await readSessionIndexEntries(this.storage)) {
-      if (!isAbsolute(entry.workDir)) continue;
-      if (!isImplicitBucketSessionLine(entry)) continue;
-      const rootKey = workspaceRootKey(entry.workDir);
+    for (const [id, root] of await this.bucketRoots()) {
+      const rootKey = workspaceRootKey(root);
       if (seenRootKeys.has(rootKey)) continue;
       seenRootKeys.add(rootKey);
-      const id = encodeWorkDirKey(entry.workDir);
-      result.set(id, {
-        id,
-        root: entry.workDir,
-        name: basename(entry.workDir),
-        kind: 'implicit',
-        additionalDirs: [],
-        createdAt: now,
-        lastOpenedAt: now,
-      });
+      result.set(id, implicitEntry(id, root, now));
     }
     return result;
+  }
+
+  private async bucketRoots(): Promise<Map<string, string>> {
+    const roots = new Map<string, string>();
+    for (const entry of await readSessionIndexEntries(this.storage)) {
+      if (!isImplicitBucketSessionLine(entry)) continue;
+      const bucket = sessionBucketOf(entry);
+      if (roots.has(bucket)) continue;
+      const root = [entry.projectRoot, entry.workDir].find(
+        (dir) => dir !== undefined && isAbsolute(dir) && encodeWorkDirKey(dir) === bucket,
+      );
+      if (root !== undefined) roots.set(bucket, root);
+    }
+    return roots;
+  }
+
+  private decide(
+    dir: string,
+    workspaces: readonly Workspace[],
+    homeDirs: readonly string[] | undefined,
+  ): Promise<ImplicitDecision> {
+    return decideImplicitProject(dir, workspaces, {
+      occupied: async (project) => {
+        if (await this.bucketsHoldSession([project.id])) return true;
+        const indexLines = await readSessionIndexEntries(this.storage);
+        return this.bucketsHoldSession(collectAliasIds(workspaces, indexLines, project.root));
+      },
+      locate: (target) => this.locate(target),
+      homeDirs,
+    });
+  }
+
+  private async locate(dir: AbsoluteDir): Promise<CheckoutLocation> {
+    const location = await locateCheckout(this.hostFs, dir);
+    if (isDegradedLocation(location) && !this.degradedDirs.has(dir)) {
+      this.degradedDirs.add(dir);
+      this.log.warn('project checkout could not be verified; the directory stays its own project', {
+        dir,
+        checkoutRoot: location.checkoutRoot,
+        reason: location.reason,
+      });
+      this.telemetry.track2('project_locate_degraded', { reason: location.reason });
+    }
+    return location;
+  }
+
+  private async bucketsHoldSession(ids: readonly string[]): Promise<boolean> {
+    const sessionsScope = this.bootstrap.scope('sessions');
+    for (const id of new Set(ids)) {
+      for (const sessionId of await listSessionIds(this.storage, sessionsScope, id)) {
+        if ((await readSessionSummary(this.docs, sessionsScope, id, sessionId)) !== undefined) return true;
+      }
+    }
+    return false;
+  }
+
+  private async homeDirs(): Promise<readonly string[] | undefined> {
+    try {
+      await this.hostEnvironment.ready;
+      const home = this.hostEnvironment.homeDir;
+      if (home.length === 0) return undefined;
+      return [home, await this.hostFs.realpath(home).catch(() => home)];
+    } catch (error) {
+      this.log.warn('home directory is unavailable; implicit projects are not grouped by repository', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return undefined;
+    }
   }
 
   private async requireDirectory(root: string): Promise<void> {
@@ -495,6 +595,18 @@ export class WorkspaceService implements IWorkspaceService {
     );
     return next;
   }
+}
+
+function implicitEntry(id: string, root: string, now: number): Workspace {
+  return {
+    id,
+    root,
+    name: basename(root),
+    kind: 'implicit',
+    additionalDirs: [],
+    createdAt: now,
+    lastOpenedAt: now,
+  };
 }
 
 registerScopedService(

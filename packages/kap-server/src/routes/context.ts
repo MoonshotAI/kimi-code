@@ -15,7 +15,7 @@ import type { ContentPart, Message } from '@moonshot-ai/core/llm/message';
 import { z } from 'zod';
 
 import { okEnvelope } from '../envelope';
-import { defineRoute } from '../middleware/defineRoute';
+import { defineRoute, type GetRouteHost } from '../middleware/defineRoute';
 import { ErrorCode } from '../protocol/error-codes';
 import {
   contextItemDetailSchema,
@@ -33,17 +33,6 @@ import { readLegacyStatus } from '../services/legacyStatus/legacyStatus';
 import { ensureMainAgent, MAIN_AGENT_ID } from '../transport/mainAgent';
 import { sendMappedError, sessionConflictErrors } from './sessionErrors';
 import { selectContextItems } from './contextItems';
-
-interface ContextRouteHost {
-  get(
-    path: string,
-    options: { preHandler: unknown[]; schema?: Record<string, unknown> } | undefined,
-    handler: (
-      req: { id: string; query: unknown; params: unknown },
-      reply: { send(payload: unknown): unknown },
-    ) => Promise<void> | void,
-  ): unknown;
-}
 
 const sessionParamsSchema = z.object({
   session_id: z.string().min(1),
@@ -511,7 +500,7 @@ function readContextItem(sources: ContextSources, itemId: string): ContextItemDe
   return undefined;
 }
 
-export function registerContextRoutes(app: ContextRouteHost, core: Scope): void {
+export function registerContextRoutes(app: GetRouteHost, core: Scope): void {
   const summaryRoute = defineRoute(
     {
       method: 'GET',
@@ -541,7 +530,7 @@ export function registerContextRoutes(app: ContextRouteHost, core: Scope): void 
   app.get(
     summaryRoute.path,
     summaryRoute.options,
-    summaryRoute.handler as Parameters<ContextRouteHost['get']>[2],
+    summaryRoute.handler as Parameters<GetRouteHost['get']>[2],
   );
 
   const itemsRoute = defineRoute(
@@ -597,7 +586,7 @@ export function registerContextRoutes(app: ContextRouteHost, core: Scope): void 
   app.get(
     itemsRoute.path,
     itemsRoute.options,
-    itemsRoute.handler as Parameters<ContextRouteHost['get']>[2],
+    itemsRoute.handler as Parameters<GetRouteHost['get']>[2],
   );
 
   const itemDetailRoute = defineRoute(
@@ -639,6 +628,6 @@ export function registerContextRoutes(app: ContextRouteHost, core: Scope): void 
   app.get(
     itemDetailRoute.path,
     itemDetailRoute.options,
-    itemDetailRoute.handler as Parameters<ContextRouteHost['get']>[2],
+    itemDetailRoute.handler as Parameters<GetRouteHost['get']>[2],
   );
 }

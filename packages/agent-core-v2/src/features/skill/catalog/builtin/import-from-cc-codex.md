@@ -34,9 +34,9 @@ and MCP server declarations, with a user preview before any write.
     directory containing `.git`; if no `.git` exists, use the current working
     directory.
   - Project skills: `<project root>/.kimi-code/skills/`.
-  - Project-local MCP: `<cwd>/.kimi-code/mcp.json`, because Kimi reads the
-    current working directory's Kimi-specific MCP file, not every project-root
-    `.kimi-code/mcp.json` from subdirectories.
+  - Project-local MCP: `<project root>/.kimi-code/mcp.json`, because Kimi
+    reads the Kimi-specific MCP file at the project root, not
+    `.kimi-code/mcp.json` files in its subdirectories.
 - Preserve existing Kimi files. Never overwrite existing skills or replace an
   existing AGENTS.md / mcp.json wholesale.
 
@@ -353,7 +353,8 @@ Claude Code MCP (user file `.claude.json`):
   lists one of its servers under `disabledMcpjsonServers`: Claude rejected
   that server, while Kimi will start every `.mcp.json` server. Suggest a
   complete server entry with `"enabled": false` in
-  `<cwd>/.kimi-code/mcp.json`; an entry containing only `enabled` is invalid.
+  `<project root>/.kimi-code/mcp.json`; an entry containing only `enabled`
+  is invalid.
 
 Codex MCP (`config.toml`):
 
@@ -394,9 +395,11 @@ For each MCP candidate, choose the target scope in the preview:
 - User-level source -> user-global MCP target (`$KIMI_CODE_HOME/mcp.json` or
   `~/.kimi-code/mcp.json`).
 - Project-level source (Claude local scope, `<dir>/.codex/config.toml`) ->
-  project-local Kimi MCP target (`<cwd>/.kimi-code/mcp.json`). If `<cwd>` is
-  not the project root, call this out in the preview so the user understands
-  when Kimi will load it.
+  project-local Kimi MCP target (`<project root>/.kimi-code/mcp.json`). If
+  `<cwd>` is not the project root, say in the preview that Kimi loads it for
+  sessions anywhere in this git checkout, while a project opened directly at
+  `<cwd>` (for example one created for this folder in the desktop app) reads
+  `<cwd>/.kimi-code/mcp.json` instead.
 
 Warn that stdio MCP entries spawn commands at session start, and the user should
 only import MCP servers they trust. Warn if an MCP entry contains apparent

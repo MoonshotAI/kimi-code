@@ -32,6 +32,7 @@ export interface IWorkspaceTrustDisclosure {
     pendingAdditionalDirs?: readonly string[],
     baseDir?: string,
     pendingAdditionalDirsResolved?: boolean,
+    mcpWorkDir?: string,
   ): Promise<TrustGatedActivation>;
 }
 

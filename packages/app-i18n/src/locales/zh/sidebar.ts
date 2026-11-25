@@ -34,6 +34,7 @@ export default {
   emojiGroupSymbols: '符号与状态',
   copyPath: '复制路径',
   copySessionId: '复制 Session ID',
+  copySessionLink: '复制会话链接',
   copied: '已复制',
   copyFailed: '复制失败',
   archive: '归档',
