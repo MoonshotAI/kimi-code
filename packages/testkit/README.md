@@ -1,10 +1,11 @@
 # @moonshot-ai/testkit
 
-Shared test infrastructure for this repository: a protocol-level fake model, a driver for the Kimi Agent Protocol (KAP), and the fixtures around them. The package depends on no `@moonshot-ai/*` package, so the tests of any package can use it. Code that needs a product package, such as the server, is passed in by the caller.
+Shared test infrastructure for this repository: a protocol-level fake model, fake Kimi managed services, a driver for the Kimi Agent Protocol (KAP), and the fixtures around them. The package depends on no `@moonshot-ai/*` package, so the tests of any package can use it. Code that needs a product package, such as the server, is passed in by the caller.
 
 | Import | What it provides |
 |---|---|
 | `@moonshot-ai/testkit/model` | the fake model, the step DSL, tool-call builders, and the provider config that points the product at the fake model |
+| `@moonshot-ai/testkit/services` | fake Kimi managed services: session titles and feedback with signed uploads, scripted and recorded like the fake model |
 | `@moonshot-ai/testkit/kap` | `startKap`: an in-process KAP server backed by the fake model; `KapProcess`: the CLI's `web --json` server in a child process; `KapClient`: the session operations both of them share, with REST and WebSocket clients and a turn reducer |
 | `@moonshot-ai/testkit/fixtures` | temporary homes, a `config.toml` writer, git repositories with a linked worktree, environment isolation, the network guard, child processes that stay offline, the CLI command and environment, repository paths, directory snapshots, waits, timeouts, media samples and normalizers |
 | `@moonshot-ai/testkit/contract` | a field-per-line summary of OpenAPI and AsyncAPI documents, a check that lists contract changes as breaking, non-breaking or unclassified, and a digest that ignores wording, for pinning an API level |
@@ -17,6 +18,7 @@ This is a private workspace package. When adopting it in another package, add `"
 | What you want to test | Guide |
 |---|---|
 | What a provider client sends and how it parses the reply | [假模型与 SDK 测试](docs/model.md) |
+| How the product uses the session title or feedback service | [The fake Kimi services](#the-fake-kimi-services) |
 | What a KAP client sees during tool use, approval, cancellation or restart | [编写 KAP 场景测试](docs/kap-scenarios.md) |
 | Code that reads configuration, uses a workspace or produces snapshots | [夹具、隔离与快照](docs/fixtures.md) |
 | A Playwright test that drives Kimi Code Desktop against a scripted provider | [在桌面端接入假模型](docs/model.md#在桌面端接入假模型) |
@@ -131,6 +133,17 @@ model.hold('slow').release();
 A hold can also `fail(status)` before the headers or `cut()` the connection. `model.releaseHeld()` releases every hold a request is waiting at, and leaves holds that no request has reached yet. After parsing and routing, `model.requests(lane?)` and `model.request(index)` expose the raw body, parsed body, headers, metadata, state (`pending`, `streaming`, `held`, `finished`, `aborted`, `cut`, `failed`) and a normalized `view` of system text, tools and messages. Earlier failures such as invalid JSON or a wrong API key appear in `model.problems()`. Helpers include `firstUserText`, `userTextsSinceReply`, `remindersSinceReply` and `texts(role)`. `model.waitForRequest(index | predicate)` waits for a matching record.
 
 For OpenAI chat completions, `request.texts('system')` returns the individual system and developer messages in request order, including empty entries. Use `request.view.system` for the combined prompt across providers.
+
+## The fake Kimi services
+
+`createKimiServices({ accessToken })` answers the Kimi managed services that are not model calls. `services.fetch` serves them in process; `await services.listen()` (or `startKimiServices()`) also serves them on `127.0.0.1`. Point the product at `services.baseUrl`, which ends in `/coding/v1`, through its provider `base_url`, `KIMI_CODE_BASE_URL` or `KIMI_CODE_FEEDBACK_BASE_URL`. Endpoints are matched by the end of the path, so a test can tell two configured deployments apart by giving each its own path prefix under `services.origin`.
+
+- Session titles: `services.title('A title', serviceError(503, 'unavailable'))` queues replies for `POST …/tools` `chat_title` calls, in order.
+- Feedback: `POST …/feedback` returns ids from 1, `…/feedback/update` and `…/feedback/upload_url` answer 409 for an id the services did not hand out, and the upload URL points at `services.origin`. Storage rejects an `Authorization` header or a method other than the signed one (`services.uploadMethod('POST')` changes it). `services.feedback()` lists each submission with its updates, uploads, stored bytes and completion.
+- `services.holdNext('title' | 'storage' | …)` holds the next request to that endpoint; `hold.reached()` resolves with the request and `hold.release()` lets it answer. A request whose client gives up while held is dropped.
+- `services.requests(endpoint?)` lists every request with its path, headers, `authorization` and parsed JSON. With `accessToken` set, a wrong bearer token gets 401 and fails `verify()`.
+
+`services.verify()` fails on an unexpected request, a title request with no scripted reply, a scripted title nobody asked for, a hold never reached or never released, an upload completed before its bytes reached storage, with the wrong etag or for an unknown upload, and a storage request that carried a token or used the wrong method. `packages/oauth/test/kimi-services-contract.test.ts` drives the real managed clients against these services.
 
 ## The KAP harness
 
