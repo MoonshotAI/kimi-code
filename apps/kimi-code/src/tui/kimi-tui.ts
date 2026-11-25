@@ -1159,10 +1159,7 @@ export class KimiTUI {
     });
     if (this.options.startup.worktree !== undefined) {
       void this.worktreeCreation.run(this.options.startup.worktree, {
-        enter: async (location) => {
-          await this.applyWorkLocation(location, { environmentId: 'local' });
-          return true;
-        },
+        enter: (location) => this.startSessionAt(location),
       });
     }
   }
@@ -3271,6 +3268,7 @@ export class KimiTUI {
   }
 
   async startSessionAt(location: WorkLocation): Promise<boolean> {
+    await this.waitForSessionAssembly();
     const previous = this.currentWorkLocation();
     const replaced = this.session;
     if (replaced === undefined && !sameDir(previous.cwd, location.cwd)) {
@@ -3429,6 +3427,10 @@ export class KimiTUI {
   }
 
   async ensureSession(): Promise<Session | undefined> {
+    if (this.session === undefined && this.worktreeCreation.busy) {
+      this.showStatus('Wait for the worktree to finish setting up.');
+      return undefined;
+    }
     if (this.ensureSessionPromise !== null) return this.ensureSessionPromise;
     if (this.session !== undefined) return this.session;
     this.ensureSessionPromise = this.lazyCreateSession().finally(() => {

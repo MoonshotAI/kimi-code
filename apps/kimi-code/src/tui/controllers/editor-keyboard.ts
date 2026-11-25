@@ -67,6 +67,7 @@ export interface EditorKeyboardHost {
   recallLastQueued(): QueuedMessage | undefined;
   isSteeringQueuedMessages(): boolean;
   showError(msg: string): void;
+  showStatus?(msg: string): void;
   track(event: string, props?: Record<string, unknown>): void;
   updateEditorBorderHighlight(text?: string): void;
   updateGoalLengthWarning(text: string | undefined): void;
@@ -276,6 +277,10 @@ export class EditorKeyboardController {
     };
 
     editor.onShiftTab = () => {
+      if (host.worktreeCreation?.busy === true) {
+        host.showStatus?.('Wait for the worktree to finish setting up.');
+        return;
+      }
       const togglePlan = (): void => {
         const next = !host.state.appState.planMode;
         host.track('shortcut_plan_toggle', { enabled: next });

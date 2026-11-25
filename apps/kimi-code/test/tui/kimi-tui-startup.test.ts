@@ -4836,6 +4836,10 @@ describe('KimiTUI work location', () => {
     expect(transcriptText()).toContain('Wait for the worktree to finish setting up.');
     expect(harness.createSession).not.toHaveBeenCalled();
 
+    driver.state.editor.onShiftTab?.();
+    await expect((driver as unknown as { ensureSession(): Promise<unknown> }).ensureSession()).resolves.toBeUndefined();
+    expect(harness.createSession).not.toHaveBeenCalled();
+
     driver.state.editor.setText('');
     driver.state.editor.handleInput('\u001B');
     await running;

@@ -489,13 +489,16 @@ describe('EditorKeyboardController input changes', () => {
 });
 
 describe('EditorKeyboardController Shift-Tab plan toggle', () => {
-  function createShiftTabHarness(options: { sessionless?: boolean } = {}) {
+  function createShiftTabHarness(
+    options: { sessionless?: boolean; worktreeCreationBusy?: boolean } = {},
+  ) {
     const editor: Record<string, ((...args: never[]) => unknown) | undefined> = {
       setHistoryFilter: vi.fn() as unknown as (...args: never[]) => unknown,
     };
     const handlePlanToggle = vi.fn();
     const track = vi.fn();
     const showError = vi.fn();
+    const showStatus = vi.fn();
     const ensureSession = vi.fn(async (): Promise<{ id: string } | undefined> => ({ id: 'ses-lazy' }));
     const host = {
       state: {
@@ -506,16 +509,19 @@ describe('EditorKeyboardController Shift-Tab plan toggle', () => {
         ui: { requestRender: vi.fn() },
       },
       session: options.sessionless ? undefined : { cancel: vi.fn(async () => {}) },
+      worktreeCreation:
+        options.worktreeCreationBusy === true ? { busy: true, cancel: vi.fn() } : undefined,
       ensureSession,
       handlePlanToggle,
       track,
       showError,
+      showStatus,
       btwPanelController: { cancelRunning: vi.fn(), closeOrCancel: vi.fn() },
     } as unknown as EditorKeyboardHost;
 
     new EditorKeyboardController(host, undefined as unknown as ImageAttachmentStore).install();
     const onShiftTab = editor['onShiftTab'] as unknown as () => void;
-    return { onShiftTab, handlePlanToggle, track, showError, ensureSession };
+    return { onShiftTab, handlePlanToggle, track, showError, showStatus, ensureSession };
   }
 
   it('toggles plan mode directly with an active session', () => {
@@ -552,6 +558,19 @@ describe('EditorKeyboardController Shift-Tab plan toggle', () => {
     await new Promise((resolve) => setImmediate(resolve));
 
     expect(handlePlanToggle).not.toHaveBeenCalled();
+  });
+
+  it('ignores Shift+Tab while a worktree is being created', () => {
+    const { onShiftTab, ensureSession, handlePlanToggle, showStatus } = createShiftTabHarness({
+      sessionless: true,
+      worktreeCreationBusy: true,
+    });
+
+    onShiftTab();
+
+    expect(ensureSession).not.toHaveBeenCalled();
+    expect(handlePlanToggle).not.toHaveBeenCalled();
+    expect(showStatus).toHaveBeenCalledWith('Wait for the worktree to finish setting up.');
   });
 });
 
