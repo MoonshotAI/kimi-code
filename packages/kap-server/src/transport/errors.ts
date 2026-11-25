@@ -10,6 +10,17 @@ export class TimeoutError extends Error {
   }
 }
 
+export class ProtocolError extends Error {
+  constructor(
+    readonly code: ErrorCode,
+    message: string,
+    readonly details?: unknown,
+  ) {
+    super(message);
+    this.name = 'ProtocolError';
+  }
+}
+
 export function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   if (ms <= 0) return promise;
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -81,6 +92,9 @@ export function mapError(err: unknown, requestId: string): ReturnType<typeof err
     const code = KIMI_TO_PROTOCOL[err.code] ?? ErrorCode.INTERNAL_ERROR;
     const details = PUBLIC_DETAIL_CODES.has(err.code) ? err.details : undefined;
     return errEnvelope(code, err.message, requestId, details);
+  }
+  if (err instanceof ProtocolError) {
+    return errEnvelope(err.code, err.message, requestId, err.details);
   }
   if (err instanceof TimeoutError) {
     return errEnvelope(ErrorCode.INTERNAL_ERROR, err.message, requestId);

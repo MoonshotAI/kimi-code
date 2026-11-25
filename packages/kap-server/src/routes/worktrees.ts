@@ -24,28 +24,20 @@ import {
 import { sessionSchema } from '../protocol/session';
 import { isDirty, isRepoRoot, listLocalBranches } from '../services/worktrees/gitRefs';
 import type { SessionWorktreeService } from '../services/worktrees/sessionWorktreeService';
-import { WorktreeError } from '../services/worktrees/worktreeError';
-import { sendMappedError as sendSessionMappedError, sessionConflictErrors } from './sessionErrors';
+import { sendMappedError, sessionConflictErrors } from './sessionErrors';
 import { readWireSession } from './sessions';
 import { toWireWorkspace } from './workspaces';
 
+type WorktreeRouteHandler = (
+  req: { id: string; query: unknown; body: unknown; params: unknown },
+  reply: { send(payload: unknown): unknown },
+) => Promise<void> | void;
+
+type WorktreeRouteOptions = { preHandler: unknown[]; schema?: Record<string, unknown> };
+
 interface WorktreeRouteHost {
-  get(
-    path: string,
-    options: { preHandler: unknown[]; schema?: Record<string, unknown> } | undefined,
-    handler: (
-      req: { id: string; query: unknown; params: unknown },
-      reply: { send(payload: unknown): unknown },
-    ) => Promise<void> | void,
-  ): unknown;
-  post(
-    path: string,
-    options: { preHandler: unknown[]; schema?: Record<string, unknown> },
-    handler: (
-      req: { id: string; body: unknown; params: unknown },
-      reply: { send(payload: unknown): unknown },
-    ) => Promise<void> | void,
-  ): unknown;
+  get(path: string, options: WorktreeRouteOptions | undefined, handler: WorktreeRouteHandler): unknown;
+  post(path: string, options: WorktreeRouteOptions, handler: WorktreeRouteHandler): unknown;
 }
 
 const sessionIdParamSchema = z.object({ session_id: z.string().min(1) });
@@ -59,18 +51,6 @@ const SESSION_WORKTREE_ACTION_DESCRIPTIONS: Readonly<Record<SessionWorktreeActio
   use_local: 'Give up the worktree and keep working in the workspace root',
   recreate: 'Recreate a missing worktree directory from its recorded branch',
 };
-
-function sendWorktreeError(
-  reply: { send(payload: unknown): unknown },
-  req: { id: string },
-  error: unknown,
-): void {
-  if (error instanceof WorktreeError) {
-    reply.send(errEnvelope(error.code, error.message, req.id, error.details));
-    return;
-  }
-  sendSessionMappedError(reply, req, error);
-}
 
 export function registerWorktreeRoutes(
   app: WorktreeRouteHost,
@@ -112,7 +92,7 @@ export function registerWorktreeRoutes(
           requestLog(req)?.info({ session_id, action: `worktree:${action}` }, 'session action completed');
           reply.send(okEnvelope(session, req.id));
         } catch (error) {
-          sendWorktreeError(reply, req, error);
+          sendMappedError(reply, req, error);
         }
       },
     );
@@ -246,7 +226,7 @@ export function registerWorktreeRoutes(
         requestLog(req)?.info({ path: req.body.path, action: 'worktree:remove' }, 'worktree removed');
         reply.send(okEnvelope(removed, req.id));
       } catch (error) {
-        sendWorktreeError(reply, req, error);
+        sendMappedError(reply, req, error);
       }
     },
   );

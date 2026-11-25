@@ -1,14 +1,8 @@
 import { ErrorCode } from '../../protocol/error-codes';
+import { ProtocolError } from '../../transport/errors';
 
-export class WorktreeError extends Error {
-  constructor(
-    readonly code: ErrorCode,
-    message: string,
-    readonly details?: unknown,
-  ) {
-    super(message);
-    this.name = 'WorktreeError';
-  }
+export class WorktreeError extends ProtocolError {
+  override readonly name = 'WorktreeError';
 }
 
 export function stateInvalid(message: string): WorktreeError {

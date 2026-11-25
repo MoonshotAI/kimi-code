@@ -113,7 +113,6 @@ import {
   sessionWorktreeWire,
   withStoredSessionWorktree,
 } from '../services/worktrees/sessionWorktreeState';
-import { WorktreeError } from '../services/worktrees/worktreeError';
 
 interface SessionRouteHost {
   post(
@@ -1404,10 +1403,6 @@ function sendMappedError(
   req: { id: string },
   error: unknown,
 ): void {
-  if (error instanceof WorktreeError) {
-    reply.send(errEnvelope(error.code, error.message, req.id, error.details));
-    return;
-  }
   if (sendEnvironmentError(reply, req.id, error)) return;
   sendSessionMappedError(reply, req, error);
 }
