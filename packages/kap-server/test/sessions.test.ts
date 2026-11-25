@@ -4799,6 +4799,32 @@ kapTest('a session whose saved model was removed opens with history and a model 
   expect(JSON.parse(model.requests().at(-1)!.rawBody).model).toBe('testkit-model');
 });
 
+kapTest('pushes missing_model to a connected client when the saved model is removed from the config', { timeout: 30_000 }, async ({ kap, model }) => {
+  const baseConfig = fakeModelConfig(model);
+  await kap.writeConfig({
+    ...baseConfig,
+    models: {
+      ...baseConfig.models,
+      old: { provider: 'testkit', model: 'old-model', maxContextSize: 100000 },
+    },
+  });
+  await kap.server.core.accessor.get(IConfigService).reload();
+  const session = await kap.createSession({ agentConfig: { model: 'old' } });
+  const isMainAgentFrame = (frame: Record<string, unknown>): boolean =>
+    frame['type'] === 'agent' && frame['session_id'] === session.id && frame['agent_id'] === 'main';
+  const socket = await kap.connect();
+  await socket.subscribe(session.id);
+  const live = await socket.waitFor((frame) => isMainAgentFrame(frame) && frame['model'] === 'old');
+
+  await kap.writeConfig(baseConfig);
+  await kap.server.core.accessor.get(IConfigService).reload();
+
+  const removed = await socket.waitFor((frame) => isMainAgentFrame(frame) && frame['missing_model'] === 'old');
+  expect(removed['model']).toBeUndefined();
+  expect(removed['profile_revision']).toBeGreaterThan(live['profile_revision'] as number);
+  await socket.close();
+});
+
 kapTest('a session with no default model opens with no displayed model and a model error notice', { timeout: 30_000 }, async ({ kap, model }) => {
   model.script(say('history without a default model'));
   const baseConfig = fakeModelConfig(model);

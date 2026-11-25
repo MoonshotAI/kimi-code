@@ -139,6 +139,8 @@ function releaseConversation(subscription: AgentSubscription): void {
   subscription.conversation = undefined;
 }
 
+const AGENT_STATE_CONFIG_DOMAINS = new Set(['tools', 'experimental', 'models', 'providers']);
+
 export class SessionEventBroadcaster {
   private readonly sessions = new Map<string, SessionState>();
   private readonly workTrackers = new Map<string, WorkTracker>();
@@ -482,7 +484,7 @@ export class SessionEventBroadcaster {
         const subscriptions = [
           sessionPolicy?.onDidChange(() => listener()),
           config?.onDidSectionChange?.((event) => {
-            if (event.domain === 'tools' || event.domain === 'experimental') listener();
+            if (AGENT_STATE_CONFIG_DOMAINS.has(event.domain)) listener();
           }),
         ];
         return toDisposable(() => {
