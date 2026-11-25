@@ -9,6 +9,7 @@ scenario(
     reason: 'The TUI presents a workspace trust dialog before opening the conversation.',
     workspace: { 'AGENTS.md': instructions },
     workspaceTrust: 'exit',
+    exceptPlatforms: { win32: 'The driver cannot read the Windows console input modes back after the CLI exits yet.' },
   },
   async ({ product, model, workspace }) => {
     await product.expectTerminalRestored();
