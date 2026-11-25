@@ -7,7 +7,6 @@ import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentPermissionGate } from '#/agent/permissionGate/permissionGate';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { IAgentPermissionPolicyService } from '#/agent/permissionPolicy/permissionPolicy';
-import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
@@ -64,7 +63,6 @@ export class AutoReviewService extends Service implements IAutoReviewService {
     @IAgentPermissionPolicyService policyService: IAgentPermissionPolicyService,
     @IAgentPermissionGate permissionGate: IAgentPermissionGate,
     @IAgentStateService private readonly states: IAgentStateService,
-    @IAgentProfileService private readonly profile: IAgentProfileService,
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @IAgentLoopService private readonly loop: IAgentLoopService,
     @ISessionAutoReviewService private readonly sessionReview: ISessionAutoReviewService,
@@ -124,9 +122,10 @@ export class AutoReviewService extends Service implements IAutoReviewService {
     }));
     const timeoutMs = this.configService.get<AutoReviewConfig>(AUTO_REVIEW_SECTION)?.timeoutMs ?? 30000;
     const deadline = createDeadlineAbortSignal(context.signal, timeoutMs);
-    let modelAlias = this.profile.resolveModelContext().modelAlias;
+    let modelAlias = '';
     let outcome: AutoReviewOutcome;
     try {
+      modelAlias = this.loop.resolveModelContext().modelAlias;
       let appended = false;
       while (true) {
         const snapshot = await this.takeSnapshot(context, deadline.signal);

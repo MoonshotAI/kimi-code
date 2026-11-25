@@ -8,7 +8,6 @@ import { userPromptSubmitHookPart } from '#/agent/contextMemory/hookParts';
 import type { ContextMessage, PromptOrigin } from '#/agent/contextMemory/types';
 import type { IAgentLoopService } from '#/agent/loop/loop';
 import type { IAgentPermissionGate } from '#/agent/permissionGate/permissionGate';
-import type { IAgentProfileService } from '#/agent/profile/profile';
 import { PermissionRecordApprovalResult } from '#/agent/permissionRules/permissionRulesOps';
 import { makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import type { IAgentStateService } from '#/agent/state/agentState';
@@ -410,6 +409,7 @@ describe('AutoReviewService', () => {
   let recorded: AutoReviewAncestry[];
   let sentInputs: SessionReviewInput[];
   let runSessionReview: (input: SessionReviewInput) => Promise<AutoReviewOutcome>;
+  let resolveLoopModel: () => { readonly modelAlias: string };
 
   beforeEach(() => {
     disposables = new DisposableStore();
@@ -424,6 +424,7 @@ describe('AutoReviewService', () => {
     recorded = [];
     sentInputs = [];
     runSessionReview = async () => ({ decision: 'allow', risk: 'low' });
+    resolveLoopModel = () => ({ modelAlias: 'loop-model' });
   });
 
   afterEach(() => {
@@ -472,13 +473,12 @@ describe('AutoReviewService', () => {
       stubPermissionPolicyService(() => undefined),
       { registerReviewer: () => toDisposable(() => {}) } as unknown as IAgentPermissionGate,
       states,
-      { resolveModelContext: () => ({ modelAlias: 'main-model' }) } as IAgentProfileService,
       makeAgentScopeContext({
         agentId: options.agentId,
         agentScope: '',
         meta: options.agentId === 'main' ? undefined : { parentAgentId: 'main' },
       }),
-      { history: () => history } as unknown as IAgentLoopService,
+      { history: () => history, resolveModelContext: () => resolveLoopModel() } as unknown as IAgentLoopService,
       sessionReview,
       new StubConfigService(),
       { ...stubWorkspaceContext('/workspace'), get workDir() { return workspaceDir; } },
@@ -511,11 +511,19 @@ describe('AutoReviewService', () => {
     expect(restored.humanAuthorization()).toEqual(child.humanAuthorization());
 
     await restored.review(reviewContext({ command: 'rm -rf coverage', cwd: 'sub' }), 'fallback-ask');
+    expect(sentInputs.at(-1)!.mainModelAlias).toBe('loop-model');
     const sent = messageText(sentInputs.at(-1)!.messages);
     expect(sent.match(/Only remove generated files\./g)).toHaveLength(1);
     expect(sent).not.toContain('Also delete production data.');
     expect(sent).toContain('"branch":"feat/sub"');
     expect(sent).toContain('"id":"mkdir","name":"Bash","arguments":"{\\"command\\":\\"mkdir generated\\"}","approved":true');
+  });
+
+  it('returns a failed outcome instead of throwing when the loop has no bound model', async () => {
+    resolveLoopModel = () => { throw new Error('Model not set'); };
+    const main = await spawn({ agentId: 'main' });
+    await expect(main.review(reviewContext(), 'fallback-ask')).resolves.toEqual({ decision: 'failed', reason: 'Model not set' });
+    expect(sentInputs).toHaveLength(0);
   });
 
   it('re-reviews once on appended instructions and fails on repeated drift or cwd change', async () => {
