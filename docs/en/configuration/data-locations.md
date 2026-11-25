@@ -71,7 +71,7 @@ Each top-level file under the data root serves a specific purpose; most are mana
 - **`skills/`**: Kimi-specific user-level Skills. This directory moves with `KIMI_CODE_HOME`; generic cross-tool Skills can still live under `~/.agents/skills/`. See [Agent Skills](../customization/skills.md).
 - **`plugins/installed.json`**: records installed plugins, each plugin's enabled state, and MCP server capability state changes made via `/plugins` or `/plugins mcp disable|enable`. Files installed from local paths or zip URLs are copied to `plugins/managed/<id>/`. See [Plugins](../customization/plugins.md).
 - **`credentials/`**: OAuth credential directory, with permissions `0o700` (directory) / `0o600` (files), readable and writable only by the current user. Managed provider credentials are stored as `credentials/<name>.json`; MCP server credentials are stored under `credentials/mcp/`. Credentials are written using an atomic flow (tmp → fsync → rename) to prevent corruption.
-- **`worktrees/`**: managed [Git worktrees](../guides/worktrees.md) created with `-w` / `--worktree` or `/worktree`, organized by repository bucket under `worktrees/<repoKey>/<name>/`. Prefer removing them through `/worktree` or the exit prompt rather than deleting folders directly so Git does not keep stale worktree entries.
+- **`worktrees/`**: Kimi-managed [Git worktrees](../guides/worktrees.md), stored under `worktrees/<repoKey>/<name>/`. Remove them via `/worktree` or the exit prompt rather than deleting folders directly so Git does not leave stale worktree records.
 
 ## Session data
 

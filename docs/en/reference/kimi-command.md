@@ -27,8 +27,8 @@ All flags are optional — run `kimi` directly to enter an interactive session:
 | `--agent <name>` | | Start a new session with the specified agent as the main Agent. Cannot be combined with `--session`/`--continue` |
 | `--agent-file <path>` | | Load a custom agent from a Markdown file for the new session and select it. Cannot be repeated or combined with `--agent`, `--session`, or `--continue` |
 | `--add-dir <dir>` | | Add an extra workspace directory for this session. Relative paths resolve against the current working directory. Can be repeated |
-| `--worktree [name]` | `-w` | Start a new session in an isolated [Git worktree](../guides/worktrees.md) (experimental, off by default). Auto-generates a name when omitted. Works in both TUI and `--prompt` mode |
-| `--worktree-base <ref>` | | Specify the starting commit, branch, or tag for the new worktree. Requires `-w` / `--worktree` |
+| `--worktree [name]` | `-w` | Start a new session in a fresh [Git worktree](../guides/worktrees.md) (experimental). Generates a name when omitted |
+| `--worktree-base <ref>` | | Starting commit, branch, or tag for the new worktree. Requires `--worktree` |
 
 `-r` / `--resume` is a hidden alias for `--session`; `--yes` and `--auto-approve` are hidden aliases for `--yolo` and are not shown in help output. The hidden `--environment <id>` flag binds the new session to a configured remote environment, and `--environment-cwd <path>` overrides that environment's working directory (see [Remote environments](../guides/remote-environment.md#kimi-environment-and-environment-cwd)).
 
@@ -46,8 +46,8 @@ The following combinations are rejected at startup:
 - `--output-format` can only be used together with `--prompt`
 - `--environment` cannot be combined with `--session`/`--continue` — the environment is bound at session creation and the bound environment is restored automatically on resume
 - `--environment-cwd` requires `--environment`; both flags are creation-only and cannot be combined with `--session`/`--continue`
-- `--worktree` cannot be combined with `--session`, `--continue`, or `--environment` — a worktree session always starts locally as a new session
-- `--worktree-base` requires `-w` / `--worktree` and cannot be empty
+- `--worktree` cannot be combined with `--session`, `--continue`, or `--environment`
+- `--worktree-base` requires `--worktree`
 
 Nobody can review a plan in non-interactive mode, so `default_plan_mode` is not applied to new sessions. A resumed session that is already in Plan mode still runs and stays in Plan mode, but its plan cannot be approved in non-interactive mode: it waits for your review the next time you open the session with `kimi -r`.
 
