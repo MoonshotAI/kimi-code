@@ -39,6 +39,7 @@ import {
 } from '../support/verbs';
 import { productEnv } from './environment';
 import { offlineStubs } from './offline';
+import { loadNodePty } from './terminal-process';
 
 const TERMINAL_NAME = 'xterm-256color';
 const TERMINAL_SIZES: Readonly<Record<WindowSize, { readonly columns: number; readonly rows: number }>> = {
@@ -527,7 +528,8 @@ function latestTurnEntries(screen: Screen): string {
 class TuiDriver implements SurfaceDriver<'tui'> {
   private readonly pty: IPty;
   private readonly networkLog: string;
-  private readonly exitStatus: RegExp;
+  private readonly exitStatus: RegExp | undefined;
+  private ptyExit: number | undefined;
   private readonly terminal = new VirtualTerminal(COLUMNS, ROWS);
   private readonly inputs: string[] = [];
   private output = '';
@@ -542,20 +544,21 @@ class TuiDriver implements SurfaceDriver<'tui'> {
   private redrawTail = '';
   private turn: Turn | undefined;
 
-  constructor(pty: IPty, networkLog: string, exitMarker: string, { workspace, lastPrompt, size }: { readonly workspace: string; readonly lastPrompt: string | undefined; readonly size: WindowSize }) {
+  constructor(pty: IPty, networkLog: string, exitMarker: string | undefined, { workspace, lastPrompt, size }: { readonly workspace: string; readonly lastPrompt: string | undefined; readonly size: WindowSize }) {
     this.pty = pty;
     this.size = size;
     this.terminal.resize(TERMINAL_SIZES[size].columns, TERMINAL_SIZES[size].rows);
     this.networkLog = networkLog;
     this.workspace = workspace;
     this.lastPrompt = lastPrompt;
-    this.exitStatus = new RegExp(`${exitMarker}(\\d+)`);
+    this.exitStatus = exitMarker === undefined ? undefined : new RegExp(`${exitMarker}(\\d+)`);
     pty.onData((text) => {
       this.output = (this.output + text).slice(-OUTPUT_TAIL);
       this.countFullRedraws(text);
       this.show(text);
     });
-    pty.onExit(() => {
+    pty.onExit(({ exitCode }) => {
+      this.ptyExit = exitCode;
       this.terminal.write(this.unshown);
       this.unshown = '';
       this.released = true;
@@ -621,9 +624,11 @@ class TuiDriver implements SurfaceDriver<'tui'> {
 
   async expectTerminalRestored(): Promise<void> {
     if (!this.left) throw new Error('expectTerminalRestored() reads the shell after the CLI has left; call exit() first.');
+    const exitStatus = this.exitStatus;
+    if (exitStatus === undefined) throw new Error('expectTerminalRestored() reads stty from the launcher shell, which the Windows driver does not start.');
     let modes: readonly string[] | undefined;
     try {
-      modes = await until('the shell to print its terminal modes', () => terminalModes(this.output, this.exitStatus), { timeoutMs: TIMEOUTS.wait });
+      modes = await until('the shell to print its terminal modes', () => terminalModes(this.output, exitStatus), { timeoutMs: TIMEOUTS.wait });
     } catch (cause) {
       throw new Error(`expectTerminalRestored() found no terminal modes printed by the shell after the CLI exited.\n${await this.describe()}`, { cause });
     }
@@ -1097,6 +1102,7 @@ class TuiDriver implements SurfaceDriver<'tui'> {
   }
 
   private exitCode(): number | undefined {
+    if (this.exitStatus === undefined) return this.ptyExit;
     const match = this.exitStatus.exec(this.output);
     return match?.[1] === undefined ? undefined : Number(match[1]);
   }
@@ -1115,19 +1121,7 @@ class TuiDriver implements SurfaceDriver<'tui'> {
   }
 }
 
-async function loadNodePty(): Promise<typeof import('node-pty')> {
-  try {
-    return await import('node-pty');
-  } catch (cause) {
-    throw new Error(
-      'The TUI surface could not load node-pty. On Linux it is compiled by the apps/desktop postinstall during pnpm install; run pnpm install again and let that postinstall finish.',
-      { cause },
-    );
-  }
-}
-
 export async function startTui({ home, reopen }: SurfaceLaunch): Promise<SurfaceDriver<'tui'>> {
-  if (process.platform === 'win32') throw new Error('The TUI surface runs the CLI from a /bin/sh launcher; Windows is not supported yet.');
   const command = kimiCliCommand();
   if (!existsSync(command.entry)) {
     throw new Error(`The CLI entry ${command.entry} does not exist; build the CLI before running against its bundle.`);
@@ -1136,18 +1130,25 @@ export async function startTui({ home, reopen }: SurfaceLaunch): Promise<Surface
   const networkLog = join(home.root, `tui-network-${launch}.log`);
   const launcher = join(home.root, `tui-launch-${launch}.sh`);
   const preloads = [...(command.imports ?? []), NETWORK_GUARD_PRELOAD.href].flatMap((specifier) => ['--import', specifier]);
-  const cli = [process.execPath, ...preloads, command.entry, ...(reopen === undefined ? [] : ['--continue'])].map(quote).join(' ');
-  const exitMarker = `E2E_CLI_EXIT_${randomUUID()}=`;
-  await writeFile(launcher, [cli, `printf '\\n${exitMarker}%s\\n' "$?"`, 'stty -a', ''].join('\n'));
+  const args = [...preloads, command.entry, ...(reopen === undefined ? [] : ['--continue'])];
   const { spawn } = await loadNodePty();
   const size = reopen?.state.size ?? 'normal';
-  const pty = spawn('/bin/sh', [launcher], {
+  const options = {
     name: TERMINAL_NAME,
     cols: TERMINAL_SIZES[size].columns,
     rows: TERMINAL_SIZES[size].rows,
     cwd: home.workspace,
     env: { ...productEnv(home, { TERM: TERMINAL_NAME }), ...command.env, ...networkGuardEnv(networkLog, offlineStubs()) },
-  });
+  };
+  let exitMarker: string | undefined;
+  let pty: IPty;
+  if (process.platform === 'win32') {
+    pty = spawn(process.execPath, args, options);
+  } else {
+    exitMarker = `E2E_CLI_EXIT_${randomUUID()}=`;
+    await writeFile(launcher, [[process.execPath, ...args].map(quote).join(' '), `printf '\\n${exitMarker}%s\\n' "$?"`, 'stty -a', ''].join('\n'));
+    pty = spawn('/bin/sh', [launcher], options);
+  }
   const driver = new TuiDriver(pty, networkLog, exitMarker, { workspace: home.workspace, lastPrompt: reopen?.lastPrompt, size });
   try {
     await driver.ready();

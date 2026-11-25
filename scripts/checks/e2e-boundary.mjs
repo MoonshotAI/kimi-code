@@ -35,7 +35,7 @@ const ALLOWED_EVERYWHERE = new Set([
 const ALLOWED_ONLY_IN = {
   '@agentclientprotocol/sdk': ['tests/e2e/surfaces/acp.ts'],
   '@moonshot-ai/pi-tui/testing': ['tests/e2e/surfaces/tui.ts'],
-  'node-pty': ['tests/e2e/surfaces/tui.ts'],
+  'node-pty': ['tests/e2e/surfaces/tui.ts', 'tests/e2e/surfaces/terminal-process.ts'],
   'node:child_process': ['tests/e2e/surfaces/acp.ts'],
 };
 

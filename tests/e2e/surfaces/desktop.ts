@@ -156,7 +156,7 @@ class DesktopDriver extends PageDriver {
     const pid = this.child.pid;
     if (pid === undefined) return false;
     try {
-      process.kill(-pid, 0);
+      process.kill(process.platform === 'win32' ? pid : -pid, 0);
       return true;
     } catch {
       return false;

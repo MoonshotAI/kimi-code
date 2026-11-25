@@ -192,3 +192,53 @@ jobs:
           name: e2e-web-failure-${{ matrix.shard }}
           path: tests/e2e/test-results/
           retention-days: 7
+
+  windows:
+    name: Windows ${{ matrix.surface }} (manual)
+    if: ${{ github.event_name == 'workflow_dispatch' }}
+    needs: build
+    runs-on: windows-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        surface: [tui, acp, desktop, web]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - uses: actions/download-artifact@v8
+        with:
+          name: e2e-cli
+          path: apps/kimi-code
+      - uses: actions/download-artifact@v8
+        if: ${{ matrix.surface == 'desktop' }}
+        with:
+          name: e2e-desktop
+          path: apps/desktop
+      - name: Download the Electron binary before parallel cases start it
+        if: ${{ matrix.surface == 'desktop' }}
+        run: pnpm --filter kimi-code-app exec node -e "require('electron')"
+      - name: Install the browser the Web scenarios run in
+        if: ${{ matrix.surface == 'web' }}
+        run: pnpm --filter @moonshot-ai/e2e exec playwright install chromium
+      - name: Run the scenarios and driver self-tests on Windows
+        run: pnpm --filter @moonshot-ai/e2e exec playwright test --project=${{ matrix.surface }}
+        env:
+          TESTKIT_CLI_BUILD: dist
+      - uses: actions/upload-artifact@v7
+        if: ${{ !cancelled() }}
+        with:
+          name: e2e-windows-${{ matrix.surface }}-report
+          path: tests/e2e/playwright-report/
+          retention-days: 7
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: e2e-windows-${{ matrix.surface }}-failure
+          path: tests/e2e/test-results/
+          retention-days: 7

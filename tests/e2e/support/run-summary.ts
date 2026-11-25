@@ -121,7 +121,8 @@ function failed(outcome: Outcome): boolean {
 
 function viewingHints(surface: string, shard: Shard | null): string[] {
   const known = isSurface(surface);
-  const report = `e2e-${surface}-report${shard === null ? '' : `-${shard.current}`}`;
+  const platform = process.platform === 'win32' ? 'windows-' : '';
+  const report = `e2e-${platform}${surface}-report${shard === null ? '' : `-${shard.current}`}`;
   const hints = [
     `看画面：下载本次运行的 artifact \`${report}\`，解压后双击 \`index.html\`，点进场景。${known ? FRAME_PLACES[surface] : '每一步之后的画面在用例的附件里'}，按步骤编号排列。`,
   ];
@@ -172,7 +173,8 @@ export default class RunSummary {
   }
 
   onTestEnd(test: ReportedTest, result: ReportedResult): void {
-    const [, surface = '', file = ''] = test.titlePath();
+    const [, surface = '', path = ''] = test.titlePath();
+    const file = path.replaceAll('\\', '/');
     const outcome = { surface, file, title: test.title, status: result.status, duration: result.duration, note: noteOf(test, result) };
     this.outcomes.set(test.titlePath().join('\u0000'), outcome);
   }

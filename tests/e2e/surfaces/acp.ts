@@ -22,7 +22,7 @@ import {
   type ToolCallUpdate,
   type WriteTextFileRequest,
 } from '@agentclientprotocol/sdk';
-import { kimiCliCommand, kimiCliEnv, TestProcess, TIMEOUTS, until, type TestHome } from '@moonshot-ai/testkit/fixtures';
+import { killProcessTree, kimiCliCommand, kimiCliEnv, TestProcess, TIMEOUTS, until, type TestHome } from '@moonshot-ai/testkit/fixtures';
 
 import { quote, TOOL_STATUS_WORDS } from '../support/steps';
 import {
@@ -727,7 +727,8 @@ class AcpDriver implements SurfaceDriver<'acp'> {
         cwd: params.cwd ?? this.home.workspace,
         env: { ...kimiCliEnv(this.home), ...requested },
         stdio: ['ignore', output.fd, output.fd],
-        detached: true,
+        detached: process.platform !== 'win32',
+        windowsHide: true,
       });
       exited = new Promise((resolve) => {
         child.once('exit', (exitCode, signal) => {
@@ -772,11 +773,7 @@ class AcpDriver implements SurfaceDriver<'acp'> {
   }
 
   private killCommand(terminal: Terminal): void {
-    try {
-      process.kill(-terminal.pid, 'SIGKILL');
-    } catch {
-      return;
-    }
+    killProcessTree(terminal.pid);
   }
 
   private async answerPermission(verb: string, optionId: string): Promise<void> {
@@ -984,7 +981,6 @@ class AcpDriver implements SurfaceDriver<'acp'> {
 }
 
 export async function startAcp({ home, reopen }: SurfaceLaunch): Promise<SurfaceDriver<'acp'>> {
-  if (process.platform === 'win32') throw new Error('The ACP surface runs terminal commands in process groups; Windows is not supported yet.');
   const proc = TestProcess.start({
     label: 'kimi acp',
     command: kimiCliCommand(),

@@ -1,3 +1,4 @@
+import { TIMEOUTS } from '@moonshot-ai/testkit/fixtures';
 import { defineConfig } from '@playwright/test';
 
 import type { SurfaceOptions } from './support/scenario';
@@ -9,7 +10,7 @@ export default defineConfig<SurfaceOptions>({
   fullyParallel: true,
   retries: 0,
   forbidOnly: true,
-  timeout: 120_000,
+  timeout: TIMEOUTS.server * 4,
   reporter: [['list'], ['html', { outputFolder: 'playwright-report', open: 'never' }], ['./support/run-summary.ts']],
   projects: [
     { name: 'tui', use: { surface: 'tui' } },

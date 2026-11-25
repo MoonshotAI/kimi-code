@@ -1,3 +1,5 @@
+import { join } from 'node:path';
+
 import type { TestHome } from '@moonshot-ai/testkit/fixtures';
 import type { FakeModel } from '@moonshot-ai/testkit/model';
 
@@ -5,9 +7,12 @@ export const SURFACES = ['tui', 'acp', 'desktop', 'web'] as const;
 
 export type Surface = (typeof SURFACES)[number];
 
+export type Platform = 'darwin' | 'linux' | 'win32';
+
 interface VerbSpec {
   readonly on: readonly Surface[];
   readonly absentBecause?: string | Readonly<Partial<Record<Surface, string>>>;
+  readonly unavailableOn?: Readonly<Partial<Record<Platform, string>>>;
   readonly checksInterface: boolean;
   readonly bySession?: true;
 }
@@ -49,7 +54,14 @@ export const VERBS = {
   resize: { on: ['tui', 'web'], absentBecause: NO_WINDOW_TO_RESIZE, checksInterface: false },
   expectTranscript: { on: SURFACES, checksInterface: true },
   exit: { on: ['tui'], absentBecause: ONLY_IN_A_SHELL, checksInterface: false },
-  expectTerminalRestored: { on: ['tui'], absentBecause: ONLY_IN_A_SHELL, checksInterface: true },
+  expectTerminalRestored: {
+    on: ['tui'],
+    absentBecause: ONLY_IN_A_SHELL,
+    unavailableOn: {
+      win32: 'Windows keeps the input modes in the console rather than in a POSIX terminal, and the driver cannot read them back after the CLI exits yet.',
+    },
+    checksInterface: true,
+  },
 } as const satisfies Readonly<Record<string, VerbSpec>>;
 
 export type Verb = keyof typeof VERBS;
@@ -64,6 +76,11 @@ export function verbSpec(verb: Verb): VerbSpec {
 
 export function verbOn(verb: Verb, surface: Surface): boolean {
   return verbSpec(verb).on.includes(surface);
+}
+
+export function unavailableReason(verb: Verb, platform: string): string | undefined {
+  const reasons: Readonly<Partial<Record<string, string>>> = verbSpec(verb).unavailableOn ?? {};
+  return reasons[platform];
 }
 
 export function absenceReason(verb: Verb, surface: Surface): string {
@@ -137,7 +154,7 @@ export function describeApproval({ name, target }: ApprovalExpectation): string 
 }
 
 export function namesFile(shown: string, target: string, workspace: string): boolean {
-  return shown === target || shown.endsWith(` ${target}`) || shown.endsWith(`${workspace}/${target}`);
+  return shown === target || shown.endsWith(` ${target}`) || shown.endsWith(`${workspace}/${target}`) || shown.endsWith(join(workspace, target));
 }
 
 export interface ApproveOptions {

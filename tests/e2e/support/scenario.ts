@@ -23,11 +23,13 @@ import { DISK_TITLES, STEP_TITLES } from './steps';
 import {
   absenceReason,
   SURFACES,
+  unavailableReason,
   VERB_NAMES,
   verbOn,
   verbSpec,
   wantedOutput,
   type Actions,
+  type Platform,
   type ApprovalExpectation,
   type Diagnostic,
   type Frame,
@@ -51,6 +53,7 @@ export interface ScenarioOptions {
   readonly except?: Readonly<Partial<Record<Surface, string>>>;
   readonly onlyOn?: readonly Surface[];
   readonly reason?: string;
+  readonly exceptPlatforms?: Readonly<Partial<Record<Platform, string>>>;
 }
 
 export interface Workspace {
@@ -310,6 +313,10 @@ class ScenarioSession {
       await this.restart();
       return;
     }
+    const unavailable = unavailableReason(verb, process.platform);
+    if (unavailable !== undefined) {
+      throw new Error(`${verb}() cannot be checked on ${process.platform}: ${unavailable} Leave the platform out of the scenario with exceptPlatforms.`);
+    }
     if (READS_THE_LATEST_TURN.has(verb) && !this.turnSinceLaunch) {
       throw new Error(`${verb}() reads the latest turn, and no turn has started since restart(); check the restored conversation with expectTranscript().`);
     }
@@ -483,6 +490,9 @@ function assertReasons(title: string, options: ScenarioOptions): void {
   for (const [surface, reason] of Object.entries(options.except ?? {})) {
     if (reason.trim() === '') throw new Error(`Scenario "${title}" excludes ${surface} without a reason.`);
   }
+  for (const [platform, reason] of Object.entries(options.exceptPlatforms ?? {})) {
+    if (reason.trim() === '') throw new Error(`Scenario "${title}" excludes the ${platform} platform without a reason.`);
+  }
   if (options.onlyOn !== undefined && (options.onlyOn.length === 0 || (options.reason ?? '').trim() === '')) {
     throw new Error(`Scenario "${title}" uses onlyOn; it must name at least one surface and give a reason.`);
   }
@@ -497,11 +507,18 @@ function notApplicableReason(options: ScenarioOptions, surface: Surface): string
   return options.onlyOn === undefined || options.onlyOn.includes(surface) ? undefined : options.reason;
 }
 
+function platformExclusion(options: ScenarioOptions): string | undefined {
+  const reasons: Readonly<Partial<Record<string, string>>> = options.exceptPlatforms ?? {};
+  return reasons[process.platform];
+}
+
 function register(title: string, options: ScenarioOptions, body: RunningBody, frames: FramePolicy): void {
   assertReasons(title, options);
   test(title, async ({ surface, session }, testInfo) => {
     const reason = surface === undefined ? undefined : notApplicableReason(options, surface);
     testInfo.skip(reason !== undefined, `not applicable on ${String(surface)}: ${String(reason)}`);
+    const platformReason = platformExclusion(options);
+    testInfo.skip(platformReason !== undefined, `not applicable on ${process.platform}: ${String(platformReason)}`);
     await body(await session.start(options, frames, testInfo));
   });
 }
@@ -514,8 +531,9 @@ function selfTestFile(verb: Verb): string {
   return `${verb.replaceAll(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`)}.spec.ts`;
 }
 
-function withinVerb(verb: Verb, title: string, options: ScenarioOptions): ScenarioOptions {
+function withinVerb(verb: Verb, title: string, given: ScenarioOptions): ScenarioOptions {
   const spec = verbSpec(verb);
+  const options = spec.unavailableOn === undefined ? given : { ...given, exceptPlatforms: { ...spec.unavailableOn, ...given.exceptPlatforms } };
   const absent = SURFACES.filter((surface) => !spec.on.includes(surface));
   if (absent.length === 0) return options;
   if (options.onlyOn !== undefined) {
