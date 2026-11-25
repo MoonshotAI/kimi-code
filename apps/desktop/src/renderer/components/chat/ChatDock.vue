@@ -44,6 +44,7 @@ const props = defineProps<{
   approvalBusy?: boolean;
   mobile?: boolean;
   statusNote?: string;
+  sessionSubmitBlockedReason?: string;
   beforeSubmit?: () => boolean;
   deferSubmitReset?: boolean;
   extraBuiltinCommands?: readonly SlashCommand[];
@@ -683,6 +684,7 @@ defineExpose({ loadForEdit, insertQuote, insertScreenshotAnnotation, insertPathM
       <Composer
         :style="hasPendingCard ? { display: 'none' } : undefined"
         :status-note="props.statusNote"
+        :session-submit-blocked-reason="props.sessionSubmitBlockedReason"
         :before-submit="props.beforeSubmit"
         :defer-submit-reset="props.deferSubmitReset"
         :extra-builtin-commands="props.extraBuiltinCommands"
