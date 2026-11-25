@@ -283,6 +283,75 @@ describe('DefaultToolsPanel', () => {
     });
   });
 
+  it('adopts in-flight config updates from another client instead of overwriting them on the next save', async () => {
+    fakes.config!.value = { tools: { disabled: [] } };
+    fakes.listToolCatalog.mockResolvedValue([
+      { name: 'Bash', source: 'builtin' },
+      { name: 'Write', source: 'builtin' },
+      { name: 'Read', source: 'builtin' },
+    ]);
+    let resolveSave!: (saved: boolean) => void;
+    fakes.updateConfig.mockReturnValueOnce(new Promise<boolean>((resolve) => {
+      resolveSave = resolve;
+    }));
+    await mountPanel();
+    switchNamed('Write files').click();
+    await flush();
+    button('Save')?.click();
+    await flush();
+
+    fakes.config!.value = { tools: { disabled: ['Bash'] } };
+    await flush();
+    resolveSave(true);
+    await flush();
+
+    expect(switchNamed('Run terminal commands').getAttribute('aria-checked')).toBe('false');
+    expect(switchNamed('Write files').getAttribute('aria-checked')).toBe('true');
+
+    switchNamed('Read files').click();
+    await flush();
+    button('Save')?.click();
+    await flush();
+    expect(fakes.updateConfig).toHaveBeenLastCalledWith({
+      tools: { enabled: undefined, disabled: ['Bash', 'Read'] },
+    });
+  });
+
+  it('rebases unsaved draft toggles onto config updates that arrive during a failed save', async () => {
+    fakes.config!.value = { tools: { disabled: [] } };
+    fakes.listToolCatalog.mockResolvedValue([
+      { name: 'Bash', source: 'builtin' },
+      { name: 'Write', source: 'builtin' },
+    ]);
+    let resolveSave!: (saved: boolean) => void;
+    fakes.updateConfig
+      .mockReturnValueOnce(new Promise<boolean>((resolve) => {
+        resolveSave = resolve;
+      }))
+      .mockResolvedValueOnce(true);
+    await mountPanel();
+    switchNamed('Write files').click();
+    await flush();
+    button('Save')?.click();
+    await flush();
+
+    fakes.config!.value = { tools: { disabled: ['Bash'] } };
+    await flush();
+    resolveSave(false);
+    await flush();
+
+    expect(host?.textContent).toContain('Couldn\'t save. Try again');
+    expect(host?.textContent).toContain('Unsaved changes');
+    expect(switchNamed('Run terminal commands').getAttribute('aria-checked')).toBe('false');
+    expect(switchNamed('Write files').getAttribute('aria-checked')).toBe('false');
+
+    button('Save')?.click();
+    await flush();
+    expect(fakes.updateConfig).toHaveBeenLastCalledWith({
+      tools: { enabled: undefined, disabled: ['Bash', 'Write'] },
+    });
+  });
+
   it('refuses to discard while a save is in flight', async () => {
     let resolveSave!: (saved: boolean) => void;
     fakes.updateConfig.mockReturnValue(new Promise<boolean>((resolve) => {

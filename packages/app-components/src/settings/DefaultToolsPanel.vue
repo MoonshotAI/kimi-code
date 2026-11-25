@@ -47,17 +47,21 @@ function resetDraft(config: AppToolsConfig | undefined): void {
   draftConfig.value = cloneConfig(config);
 }
 
+function applyStoreConfig(config: AppToolsConfig | undefined): void {
+  if (!dirty.value) {
+    resetDraft(config);
+    return;
+  }
+  draftConfig.value = rebaseDefaultToolsConfig(savedConfig.value, draftConfig.value, config);
+  savedConfig.value = cloneConfig(config);
+  saveFailed.value = false;
+}
+
 watch(
   () => configStore().config,
   (config) => {
     if (config === null || config === undefined || saving.value) return;
-    if (!dirty.value) {
-      resetDraft(config.tools);
-      return;
-    }
-    draftConfig.value = rebaseDefaultToolsConfig(savedConfig.value, draftConfig.value, config.tools);
-    savedConfig.value = cloneConfig(config.tools);
-    saveFailed.value = false;
+    applyStoreConfig(config.tools);
   },
   { immediate: true },
 );
@@ -101,13 +105,20 @@ async function save(): Promise<void> {
   if (!dirty.value || saving.value || !hasConfig.value) return;
   saving.value = true;
   saveFailed.value = false;
+  const beforeSave = configStore().config;
   const next = cloneConfig(draftConfig.value);
   const saved = await configStore().updateConfig({ tools: next });
   saving.value = false;
+  const latest = configStore().config;
+  const updatedInFlight =
+    latest !== null &&
+    latest !== undefined &&
+    configKey(latest.tools ?? {}) !== configKey(beforeSave?.tools ?? {});
   if (saved) {
-    resetDraft(next);
+    resetDraft(updatedInFlight ? latest.tools : next);
     toast({ layout: 'bar', mode: 'replace', variant: 'success', title: t('settings.defaultToolsSaved') });
   } else {
+    if (updatedInFlight) applyStoreConfig(latest.tools);
     saveFailed.value = true;
   }
 }
