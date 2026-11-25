@@ -881,8 +881,8 @@ describe('event hub', () => {
     channel.emit(0, cancelled);
     channel.emit(0, completed);
     channel.emit(0, { type: 'turn.ended', turnId: 1, reason: 'completed', time: 1 });
-    channel.emit(0, { type: 'turn.ended', turnId: 1, reason: 'completed', loopEnd: { outcome: 'drained' }, time: 2 });
-    channel.emit(0, { type: 'turn.ended', turnId: 2, reason: 'completed', loopEnd: { outcome: 'idle' }, time: 3 });
+    channel.emit(0, { type: 'turn.ended', turnId: 1, reason: 'completed', continuation: 'background', time: 2 });
+    channel.emit(0, { type: 'turn.ended', turnId: 2, reason: 'completed', continuation: 'none', time: 3 });
     channel.emit(0, { type: 'tool.updated', turnId: 1, toolCallId: 'tc1', taskId: 'task-1', status: 'running', detached: false }); // missing fields
     channel.emit(0, { type: 'unregistered.type', turnId: 1 });
     await tick();
@@ -895,8 +895,8 @@ describe('event hub', () => {
     expect(seen.completed).toEqual([completed]);
     expect(seen.turnEnded).toEqual([
       { type: 'turn.ended', turnId: 1, reason: 'completed', time: 1 },
-      { type: 'turn.ended', turnId: 1, reason: 'completed', loopEnd: { outcome: 'drained' }, time: 2 },
-      { type: 'turn.ended', turnId: 2, reason: 'completed', loopEnd: { outcome: 'idle' }, time: 3 },
+      { type: 'turn.ended', turnId: 1, reason: 'completed', continuation: 'background', time: 2 },
+      { type: 'turn.ended', turnId: 2, reason: 'completed', continuation: 'none', time: 3 },
     ]);
     expect(errors).toHaveLength(1);
     expect(errors[0]).toBeInstanceOf(KlientValidationError);

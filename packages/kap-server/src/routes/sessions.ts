@@ -99,7 +99,7 @@ import { z } from 'zod';
 
 import { errEnvelope, okEnvelope } from '../envelope';
 import { requestLog } from '../lib/requestLog';
-import { defineRoute } from '../middleware/defineRoute';
+import { defineRoute, type GetRouteHost, type PostRouteHost } from '../middleware/defineRoute';
 import { readAgentState } from '../transport/ws/v1/agentState';
 import { ensureMainAgent, MAIN_AGENT_ID } from '../transport/mainAgent';
 import { type ActionTable, dispatchAction } from './action-dispatch';
@@ -116,24 +116,7 @@ import {
 } from './sessionAgentConfig';
 import { customSessionMetadata, updateSessionProfile } from './sessionProfile';
 
-interface SessionRouteHost {
-  post(
-    path: string,
-    options: { preHandler: unknown[]; schema?: Record<string, unknown> },
-    handler: (
-      req: { id: string; body: unknown; params: unknown; headers: Record<string, unknown> },
-      reply: { send(payload: unknown): unknown },
-    ) => Promise<void> | void,
-  ): unknown;
-  get(
-    path: string,
-    options: { preHandler: unknown[]; schema?: Record<string, unknown> } | undefined,
-    handler: (
-      req: { id: string; query: unknown; params: unknown },
-      reply: { send(payload: unknown): unknown },
-    ) => Promise<void> | void,
-  ): unknown;
-}
+type SessionRouteHost = GetRouteHost & PostRouteHost;
 
 const sessionIdParamSchema = z.object({
   session_id: z.string().min(1),

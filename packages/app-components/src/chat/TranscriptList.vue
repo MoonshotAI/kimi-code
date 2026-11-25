@@ -399,7 +399,7 @@ defineExpose({ reveal, release });
 .transcript-measure { height: 0; overflow: hidden; }
 .transcript-space { pointer-events: none; overflow-anchor: none; }
 .history-row { position: relative; }
-.history-row:focus-visible { outline: none; box-shadow: var(--p-focus-ring); }
+.history-row:focus, .history-row:focus-visible { outline: none; }
 .history-navigation { position: absolute; inset-inline-start: var(--space-1); z-index: var(--z-raised); user-select: none; }
 .history-previous { top: var(--space-1); }
 .history-next { bottom: var(--space-1); }

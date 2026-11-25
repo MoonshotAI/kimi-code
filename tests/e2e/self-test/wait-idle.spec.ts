@@ -1,6 +1,10 @@
-import { bash, edit, held, httpError, read, say } from '@moonshot-ai/testkit/model';
+import { askUserQuestion, bash, edit, held, httpError, read, say } from '@moonshot-ai/testkit/model';
 
-import { expect, selfTest } from '../support/scenario';
+import { expect, selfTest, selfTestCase } from '../support/scenario';
+
+const QUESTION = 'Which database should we use?';
+const ASK = askUserQuestion({ questions: [{ question: QUESTION, header: 'Database', options: [{ label: 'Postgres' }, { label: 'SQLite' }], multi_select: false }] });
+const NO_QUEUE_ON_ACP = 'ACP has no way to send a message while a turn runs, so nothing ever waits in a queue there.';
 
 selfTest('waitIdle', {
   positive: {
@@ -33,6 +37,22 @@ selfTest('waitIdle', {
         await product.expectReply('Full moon tonight.');
       },
     },
+    'returns only after the messages queued during the turn have run': selfTestCase({ except: { acp: NO_QUEUE_ON_ACP } }, async ({ product, model }) => {
+      const order: string[] = [];
+      model.script(held('first', say(['Working on the ', 'first answer.']), 1), held('queued', say('Queued message answered.')));
+      await product.send('Start the first answer.');
+      await model.hold('first').reached();
+      await product.queue('Then answer this.');
+      const idle = product.waitIdle().then(() => order.push('returned'));
+      model.hold('first').release();
+      await model.hold('queued').reached();
+      order.push('released');
+      model.hold('queued').release();
+      await idle;
+      expect(order).toEqual(['released', 'returned']);
+      expect(model.requests('main').map((request) => request.state)).toEqual(['finished', 'finished']);
+      await product.expectReply('Queued message answered.');
+    }),
     'returns once a turn has failed, without judging it': {
       run: async ({ product, model }) => {
         model.script(httpError(400), say('Recovered.'));
@@ -70,6 +90,16 @@ selfTest('waitIdle', {
     },
   },
   negative: {
+    'fails at once when a question is pending, not an approval': {
+      run: async ({ product, model }) => {
+        model.script(ASK, say('Noted the choice.'));
+        await product.send('Help me choose a database.');
+        await expect(product.waitIdle()).rejects.toThrow('a question is pending');
+        await product.answer('SQLite');
+        await product.waitIdle();
+        await product.expectReply('Noted the choice.');
+      },
+    },
     'does not return while the model is still replying': {
       run: async ({ product, model }) => {
         const order: string[] = [];
