@@ -496,7 +496,7 @@ describe('subagent task reminders and btw request parity', () => {
           await agent.untilTurnEnd();
 
           const parentTools = model.requests('main')[1]!.view.tools.map((tool) => tool.name);
-          expect(parentTools).toEqual(timing === 'startup' ? ['mcp__srv__echo', 'Read'] : ['Read']);
+          expect(parentTools).toEqual(timing === 'startup' ? ['mcp__srv__echo', 'Read'] : ['Read', 'mcp__srv__echo']);
           expect(model.requests('main')[0]!.view.tools.map((tool) => tool.name)).toEqual(parentTools);
           expect(model.requests('subagent')[0]!.view.tools.map((tool) => tool.name)).toEqual(parentTools);
         });

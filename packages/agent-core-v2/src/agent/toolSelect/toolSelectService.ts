@@ -168,7 +168,31 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
       }
       shaped?.push(tool);
     }
-    return shaped ?? tools;
+    const result = shaped ?? tools;
+    if (disclosure) return result;
+    const baseline = this.profile.baselineTools();
+    if (
+      baseline.length !== tools.length ||
+      baseline.some((tool, index) => tool.name !== tools[index]?.name)
+    ) {
+      return result;
+    }
+    const present = new Set(result.map((tool) => tool.name));
+    const lateMcp = this.currentTools().filter(
+      (info) =>
+        info.source === 'mcp' &&
+        !present.has(info.name) &&
+        this.toolPolicy.isToolActive(info.name, info.source),
+    );
+    if (lateMcp.length === 0) return result;
+    return [
+      ...result,
+      ...lateMcp.map((tool) => ({
+        name: tool.name,
+        description: tool.description,
+        parameters: tool.parameters,
+      })),
+    ];
   }
 
   shapeTools(

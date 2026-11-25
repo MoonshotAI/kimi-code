@@ -1314,6 +1314,7 @@ describe('Agent loop', () => {
   });
 
   testWithProvider('cancels a prompt while its turn is starting and runs the next queued prompt', async ({ agent, model }) => {
+    await agent.restorePersisted();
     const agentLoop = agent.get(IAgentLoopService);
     const entered = deferred();
     const release = deferred();

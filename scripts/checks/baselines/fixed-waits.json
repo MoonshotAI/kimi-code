@@ -222,7 +222,7 @@
     "packages/agent-core-v2/test/features/tower/store.test.ts": 3,
     "packages/agent-core-v2/test/features/tower/tools/towerTools.test.ts": 1,
     "packages/agent-core-v2/test/features/tower/towerService.test.ts": 2,
-    "packages/agent-core-v2/test/mcpCore/connection-manager.test.ts": 30,
+    "packages/agent-core-v2/test/mcpCore/connection-manager.test.ts": 29,
     "packages/agent-core-v2/test/project/projectMcp/initialization.test.ts": 1,
     "packages/kap-server/test/hosts.test.ts": 3,
     "packages/kap-server/test/sessions.test.ts": 1,
