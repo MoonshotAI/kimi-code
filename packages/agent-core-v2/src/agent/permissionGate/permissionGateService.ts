@@ -11,8 +11,11 @@ import type { PermissionData } from '#/agent/permissionPolicy/types';
 import { IAgentPermissionRulesService } from '#/agent/permissionRules/permissionRules';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
-import { runLegacyStarting } from '#/agent/toolExecutor/legacyHooks';
-import type { BeforeToolExecuteEvent } from '#/agent/toolExecutor/toolHooks';
+import { legacyExecutionContext, legacyStartingDecision } from '#/agent/toolExecutor/legacyHooks';
+import type {
+  BeforeExecuteDecision,
+  ResolvedToolExecutionHookContext,
+} from '#/agent/toolExecutor/toolHooks';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 
 import { IAgentPermissionGate, type PermissionGateReviewer } from './permissionGate';
@@ -32,7 +35,10 @@ export class AgentPermissionGate extends Service implements IAgentPermissionGate
     super();
     this._register(toolExecutor.registerHook({
       permitting: async (context) => {
-        const decision = await runLegacyStarting(context, (event) => this.adjudicate(event));
+        const decision = legacyStartingDecision(
+          context,
+          await this.adjudicate(legacyExecutionContext(context)),
+        );
         return decision !== undefined && 'skipPermitting' in decision ? undefined : decision;
       },
     }));
@@ -52,47 +58,35 @@ export class AgentPermissionGate extends Service implements IAgentPermissionGate
     });
   }
 
-  private async adjudicate(event: BeforeToolExecuteEvent): Promise<void> {
-    const evaluation = await this.policyService.evaluate(event);
-    if (evaluation === undefined) return;
-    const deferredReview = await this.reviewer?.(event, evaluation);
-    if (deferredReview !== undefined) {
-      event.waitUntil(async () => {
-        const resolved = await deferredReview();
-        this.trackPolicyDecision(event, resolved);
-        return this.toolApproval.resolvePermissionResolution(
-          resolved.result,
-          event,
-          resolved.policyName,
-        );
-      });
-      return;
+  private async adjudicate(
+    context: ResolvedToolExecutionHookContext,
+  ): Promise<BeforeExecuteDecision | undefined> {
+    const evaluation = await this.policyService.evaluate(context);
+    if (evaluation === undefined) return undefined;
+    const reviewed = await this.reviewer?.(context, evaluation);
+    if (reviewed !== undefined) {
+      this.trackPolicyDecision(context, reviewed);
+      return this.toolApproval.resolvePermissionResolution(reviewed.result, context, reviewed.policyName);
     }
-    this.trackPolicyDecision(event, evaluation);
+    this.trackPolicyDecision(context, evaluation);
     const { result, policyName } = evaluation;
-    if (result.kind === 'ask') {
-      event.waitUntil(() => this.toolApproval.requestToolApproval(event, result, policyName));
-      return;
-    }
+    if (result.kind === 'ask') return this.toolApproval.requestToolApproval(context, result, policyName);
     if (result.kind === 'approve') {
-      event.pass(result.executionMetadata);
-      return;
+      return result.executionMetadata === undefined ? undefined : { executionMetadata: result.executionMetadata };
     }
-    const resolved = await this.toolApproval.resolvePermissionResolution(result, event, policyName);
-    if (resolved?.veto !== undefined) {
-      event.veto(resolved.veto);
-    }
+    const resolved = await this.toolApproval.resolvePermissionResolution(result, context, policyName);
+    return resolved?.veto === undefined ? undefined : { veto: resolved.veto };
   }
 
   private trackPolicyDecision(
-    event: BeforeToolExecuteEvent,
+    context: ResolvedToolExecutionHookContext,
     evaluation: PermissionPolicyEvaluation,
   ): void {
     this.telemetry.track2('permission_policy_decision', {
-      turn_id: event.turnId,
-      tool_call_id: event.toolCall.id,
+      turn_id: context.turnId,
+      tool_call_id: context.toolCall.id,
       policy_name: evaluation.policyName,
-      tool_name: event.toolCall.name,
+      tool_name: context.toolCall.name,
       permission_mode: this.modeService.mode,
       decision: evaluation.result.kind,
       ...evaluation.result.reason,

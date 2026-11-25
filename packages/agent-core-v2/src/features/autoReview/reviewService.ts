@@ -115,7 +115,8 @@ export class AutoReviewService extends Service implements IAutoReviewService {
       if (
         flags.enabled(AUTO_REVIEW_FLAG_ID) &&
         this.scopeContext.agentId !== MAIN_AGENT_ID &&
-        this.states.get(autoReviewAncestryKey) === undefined
+        this.states.get(autoReviewAncestryKey) === undefined &&
+        this.loop.history().length === 0
       ) {
         await this.dispatcher.dispatch(new AutoReviewAncestryRecorded({
           agentId: this.scopeContext.agentId,

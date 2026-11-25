@@ -1,4 +1,5 @@
 import { createUserMessage, type ContentPart, type TextPart, type ToolCall } from '@moonshot-ai/core/llm/message';
+import { codePointBoundaryStart } from '#/_base/text/code-points';
 import { isUserPromptSubmitHookPart } from '#/agent/contextMemory/hookParts';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { analyzeBashReadOnly } from '#/agent/permissionPolicy/policies/bash-read-only';
@@ -106,7 +107,9 @@ function replyTarget(messages: readonly ContextMessage[], index: number): string
         .join('\n')
         .trim();
       if (text.length === 0) return undefined;
-      return text.length > REPLY_TO_MAX_CHARS ? `…${text.slice(-REPLY_TO_MAX_CHARS)}` : text;
+      return text.length > REPLY_TO_MAX_CHARS
+        ? `…${text.slice(codePointBoundaryStart(text, text.length - REPLY_TO_MAX_CHARS))}`
+        : text;
     }
     if (message.role === 'user' && authorizationRole(message) !== undefined) return undefined;
   }
@@ -133,7 +136,11 @@ function actionEntries(
 ): unknown[] {
   if (message.role !== 'assistant') return [];
   return message.toolCalls
-    .filter((call) => completedIds.has(call.id) && !needsNoApproval(call, bashParser))
+    .filter(
+      (call) =>
+        completedIds.has(call.id) &&
+        (approvedToolCallIds?.has(call.id) === true || !needsNoApproval(call, bashParser)),
+    )
     .map((call) => ({
       kind: 'tool-call',
       role: 'fact',

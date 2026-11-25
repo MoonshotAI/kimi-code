@@ -1,4 +1,9 @@
-import type { ApprovalRequest, ApprovalResponse, ToolInputDisplay } from '@moonshot-ai/kimi-code-sdk';
+import {
+  formatApprovalReviewTitle,
+  type ApprovalRequest,
+  type ApprovalResponse,
+  type ToolInputDisplay,
+} from '@moonshot-ai/kimi-code-sdk';
 
 import type { ApprovalPanelResponse } from '#/tui/components/dialogs/approval-panel';
 import { goalStartOptions } from '#/tui/components/dialogs/goal-start-permission-prompt';
@@ -29,9 +34,7 @@ export function adaptApprovalRequest(event: ApprovalRequest): ApprovalPanelData 
       : [
           {
             type: 'review',
-            title: event.approvalDetail.outcome === 'failed'
-              ? "Auto Review couldn't finish"
-              : `Auto Review didn't approve · ${event.approvalDetail.risk ?? 'medium'} risk`,
+            title: formatApprovalReviewTitle(event.approvalDetail),
             detail: event.approvalDetail.reason,
           },
           ...resolved.blocks,

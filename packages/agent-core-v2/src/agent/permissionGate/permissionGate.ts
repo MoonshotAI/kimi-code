@@ -4,12 +4,10 @@ import type { PermissionPolicyEvaluation } from '#/agent/permissionPolicy/permis
 import type { PermissionData } from '#/agent/permissionPolicy/types';
 import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
 
-export type DeferredPermissionReview = () => Promise<PermissionPolicyEvaluation>;
-
 export type PermissionGateReviewer = (
   context: ResolvedToolExecutionHookContext,
   evaluation: PermissionPolicyEvaluation,
-) => DeferredPermissionReview | undefined | Promise<DeferredPermissionReview | undefined>;
+) => PermissionPolicyEvaluation | undefined | Promise<PermissionPolicyEvaluation | undefined>;
 
 export interface IAgentPermissionGate {
   readonly _serviceBrand: undefined;

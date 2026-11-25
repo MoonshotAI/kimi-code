@@ -10015,19 +10015,22 @@ capabilities = ["image_in", "video_in"]
         );
       };
       vi.useFakeTimers();
-      emit({ type: 'tool.call.started', name: 'Bash', args: { command: 'echo hi' } });
+      emit({ type: 'tool.call.delta', name: 'Bash', argumentsPart: '{"command":"echo hi"}' });
       emit({ type: 'auto_review.started', toolName: 'Bash' });
       return {
         reviewing: () => stripSgr(renderTranscript(driver)).includes('Reviewing'),
-        decide: () => emit({
-          type: 'auto_review.decision',
-          toolName: 'Bash',
-          triggerPolicy: 'fallback-ask',
-          model: 'review-model',
-          decision: 'allow',
-          risk: 'low',
-          durationMs: 1,
-        }),
+        decide: () => {
+          emit({
+            type: 'auto_review.decision',
+            toolName: 'Bash',
+            triggerPolicy: 'fallback-ask',
+            model: 'review-model',
+            decision: 'allow',
+            risk: 'low',
+            durationMs: 1,
+          });
+          emit({ type: 'tool.call.started', name: 'Bash', args: { command: 'echo hi' } });
+        },
       };
     }
 

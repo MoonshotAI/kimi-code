@@ -189,7 +189,7 @@ describe('AgentPermissionGate', () => {
     expect(later).not.toHaveBeenCalled();
   });
 
-  it('defers an ask resolution to a cold waitUntil factory', async () => {
+  it('requests tool approval on an ask resolution', async () => {
     const synthetic: BeforeExecuteDecision = { veto: { output: 'Plan review handled.' } };
     const ask: PermissionPolicyResolution = { kind: 'ask' };
     policyResult = { policyName: 'p', result: ask };
@@ -260,7 +260,7 @@ describe('AgentPermissionGate', () => {
     [true, 'auto', 'Bash', modeApproval, allowPolicy('default-tool-approve'), false, 0],
     [true, 'yolo', 'Bash', fallbackAsk, undefined, true, 0],
     [true, 'yolo', 'Bash', configuredAsk, undefined, false, 1],
-    [true, 'auto', 'Bash', modeApproval, configuredAsk, false, 0],
+    [true, 'auto', 'Bash', modeApproval, configuredAsk, true, 0],
     [true, 'auto', 'Bash', modeApproval, fallbackAsk, true, 0],
     [true, 'yolo', 'mcp__fs__write_file', modeApproval, fallbackAsk, true, 0],
   ] satisfies Array<[boolean, PermissionMode, string, PermissionPolicyEvaluation, PermissionPolicyEvaluation | undefined, boolean, number]>)(

@@ -703,8 +703,12 @@ export class SessionEventHandler {
   private setToolAutoReviewing(toolCallId: string, toolName: string, reviewing: boolean): void {
     const { streamingUI } = this.host;
     if (isToolCallId(toolCallId)) {
-      if (reviewing) streamingUI.timeline.reviewStarted(toolCallId, toolName);
-      else streamingUI.timeline.reviewEnded(toolCallId);
+      if (reviewing) {
+        streamingUI.timeline.reviewStarted(toolCallId, toolName);
+        if (streamingUI.getToolComponent(toolCallId) === undefined) {
+          streamingUI.accumulateToolCallDelta(toolCallId, toolName, undefined);
+        }
+      } else streamingUI.timeline.reviewEnded(toolCallId);
     }
     streamingUI.flushNow();
     streamingUI.getToolComponent(toolCallId)?.setAutoReviewing(reviewing);

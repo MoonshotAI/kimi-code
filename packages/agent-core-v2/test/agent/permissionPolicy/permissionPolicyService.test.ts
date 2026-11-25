@@ -663,6 +663,17 @@ describe('AgentPermissionPolicyService chain', () => {
       policyName: 'dangerous-command-ask',
       result: { kind: 'ask' },
     });
+
+    mode = 'yolo';
+    await expect(evaluate(input)).resolves.toMatchObject({
+      policyName: 'user-configured-allow',
+      result: { kind: 'approve' },
+    });
+    autoReviewEnabled = true;
+    await expect(evaluate(input)).resolves.toMatchObject({
+      policyName: 'dangerous-command-ask',
+      result: { kind: 'ask' },
+    });
   });
 
   it('reads the current permission mode at each policy step unless overridden', async () => {

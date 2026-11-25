@@ -525,6 +525,7 @@ export * from '#/session/sessionContext/sessionContext';
 
 export * from '#/agent/interaction/question';
 export {
+  formatApprovalReviewTitle,
   type ApprovalDecision,
   type ApprovalRequest as SessionApprovalRequest,
   type ApprovalResponse as SessionApprovalResponse,

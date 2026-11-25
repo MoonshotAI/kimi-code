@@ -182,7 +182,7 @@ describe('AgentToolExecutorService', () => {
       noopTelemetryService,
       executor,
     ));
-    disposables.add(gate.registerReviewer(() => async () => {
+    disposables.add(gate.registerReviewer(async () => {
       inFlight += 1;
       maxInFlight = Math.max(maxInFlight, inFlight);
       try {

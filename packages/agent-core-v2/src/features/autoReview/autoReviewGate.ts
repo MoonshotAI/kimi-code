@@ -30,6 +30,7 @@ export function createAutoReviewReviewer(
     if (
       !flags.enabled(AUTO_REVIEW_FLAG_ID) ||
       modes.mode === 'manual' ||
+      evaluation.policyName === 'user-configured-ask' ||
       (context.toolCall.name !== 'Bash' && !isMcpToolName(context.toolCall.name))
     ) {
       return undefined;
@@ -39,12 +40,11 @@ export function createAutoReviewReviewer(
       : evaluation.result.kind === 'approve'
         ? await policies.evaluate(context, { mode: 'manual' })
         : undefined;
-    if (askEval?.result.kind !== 'ask' || askEval.policyName === 'user-configured-ask') return undefined;
-    const baseAsk = askEval.result;
-    return async () => resolveAutoReview(
+    if (askEval?.result.kind !== 'ask') return undefined;
+    return resolveAutoReview(
       context,
       evaluation,
-      baseAsk,
+      askEval.result,
       await reviewService.review(context, askEval.policyName),
       flags.enabled(AUTO_REVIEW_FLAG_ID) ? modes.mode : 'manual',
     );

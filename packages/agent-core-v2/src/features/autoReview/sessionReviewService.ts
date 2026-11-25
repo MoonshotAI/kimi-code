@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { Service } from '#/_base/di/service';
+import { sliceOnCodePointBoundary } from '#/_base/text/code-points';
 import { type DeadlineAbortSignal } from '#/_base/utils/abort';
 import { sleepForRetry } from '#/_base/utils/retry';
 import { IConfigService } from '#/app/config/config';
@@ -27,9 +28,9 @@ import {
   type SecondaryModelConfig,
 } from '#/session/subagent/configSection';
 import { ISessionUsageService } from '#/session/usage/sessionUsage';
-import type { Message } from '@moonshot-ai/core/llm/message';
 import { credentialRecovery } from '@moonshot-ai/core/llm/policy/credentials';
-import { readRetryAfterMs, retryBackoffDelay } from '@moonshot-ai/core/llm/policy/retry';
+import { createLlmRequesterExecution } from '@moonshot-ai/core/llm/policy/policy';
+import { isRetryableError, readRetryAfterMs, retryBackoffDelay } from '@moonshot-ai/core/llm/policy/retry';
 import type { InitializedLlmRequestPart } from '@moonshot-ai/core/llm/requester';
 import type { LlmOutcome } from '@moonshot-ai/core/llm/response';
 import {
@@ -66,7 +67,7 @@ const DecisionSchema = z.union([
   }).strict().transform(({ risk, reason }) => ({
     decision: 'deny' as const,
     risk,
-    reason: reason === null ? undefined : reason.slice(0, 1000),
+    reason: reason === null ? undefined : sliceOnCodePointBoundary(reason, 1000),
   })),
 ]);
 
@@ -102,6 +103,7 @@ export class SessionAutoReviewService extends Service implements ISessionAutoRev
   private cachedInstructions: Promise<ProjectInstructions> | undefined;
   private activeReviews = 0;
   private readonly reviewSlots: Array<() => void> = [];
+  private readonly requesterExecution = createLlmRequesterExecution();
 
   constructor(
     @IFlagService private readonly flags: IFlagService,
@@ -158,23 +160,25 @@ export class SessionAutoReviewService extends Service implements ISessionAutoRev
 
   private assertReviewModelValid(modelAlias: string): void {
     const config = this.configService.get<AutoReviewConfig>(AUTO_REVIEW_SECTION);
-    if (modelAlias === config?.model) {
-      try {
-        this.models.get(modelAlias);
-      } catch (error) {
-        throw new Error2(
-          ErrorCodes.CONFIG_INVALID,
-          `[auto_review].model "${modelAlias}" could not be resolved: ${error instanceof Error ? error.message : String(error)}`,
-          { cause: error, details: { section: AUTO_REVIEW_SECTION, field: 'model', model: modelAlias } },
-        );
-      }
+    const configured = config?.model ?? resolveSubagentModelPool(this.configService)?.defaultModel;
+    if (modelAlias !== configured && config?.effort === undefined) return;
+    let model;
+    try {
+      model = this.models.get(modelAlias);
+    } catch (error) {
+      const source = modelAlias === config?.model ? '[auto_review].model' : 'Auto Review model';
+      throw new Error2(
+        ErrorCodes.CONFIG_INVALID,
+        `${source} "${modelAlias}" could not be resolved: ${error instanceof Error ? error.message : String(error)}`,
+        { cause: error, details: { section: AUTO_REVIEW_SECTION, field: 'model', model: modelAlias } },
+      );
     }
     if (config?.effort === undefined) return;
     assertModelSupportsConfiguredEffort(
       { section: AUTO_REVIEW_SECTION, field: 'effort', key: '[auto_review].effort' },
       config.effort,
       modelAlias,
-      this.models.get(modelAlias),
+      model,
     );
   }
 
@@ -187,18 +191,18 @@ export class SessionAutoReviewService extends Service implements ISessionAutoRev
     try {
       await this.acquireSlot(deadline.signal);
       acquired = true;
-      for (let attempt = 1; attempt <= MAX_REVIEW_ATTEMPTS; attempt += 1) {
+      for (let attempt = 1; ; attempt += 1) {
         const result = await this.reviewOnce(input, binding);
         if (result.decision !== 'retry') return result;
         if (attempt === MAX_REVIEW_ATTEMPTS) return { decision: 'failed', reason: result.reason };
-        const delayMs = Math.min(
-          result.retryAfterMs ?? retryBackoffDelay(attempt - 1),
-          deadline.remainingMs(),
-        );
-        if (delayMs <= 0 || deadline.signal.aborted) return deadlineFailure(deadline);
+        const remainingMs = deadline.remainingMs();
+        if (remainingMs <= 0 || deadline.signal.aborted) return deadlineFailure(deadline);
+        if (result.retryAfterMs !== undefined && result.retryAfterMs >= remainingMs) {
+          return { decision: 'failed', reason: result.reason };
+        }
+        const delayMs = Math.min(result.retryAfterMs ?? retryBackoffDelay(attempt - 1), remainingMs);
         await sleepForRetry(delayMs, deadline.signal);
       }
-      return { decision: 'failed', reason: 'Review timed out.' };
     } catch (error) {
       if (deadline.signal.aborted) return deadlineFailure(deadline);
       return { decision: 'failed', reason: error instanceof Error ? error.message : String(error) };
@@ -214,7 +218,7 @@ export class SessionAutoReviewService extends Service implements ISessionAutoRev
     const { deadline } = input;
     let outcome: LlmOutcome;
     try {
-      outcome = await this.sendRequest(binding, input.messages, deadline.signal);
+      outcome = await this.sendRequest(input, binding, deadline.signal);
     } catch (error) {
       if (deadline.signal.aborted) return deadlineFailure(deadline);
       const mapped = llmMessageFromError(error);
@@ -240,8 +244,8 @@ export class SessionAutoReviewService extends Service implements ISessionAutoRev
   }
 
   private sendRequest(
+    input: SessionReviewInput,
     binding: ReviewBinding,
-    messages: readonly Message[],
     signal: AbortSignal,
   ): Promise<LlmOutcome> {
     const model = this.models.get(binding.modelAlias);
@@ -250,11 +254,13 @@ export class SessionAutoReviewService extends Service implements ISessionAutoRev
     const strict = requiresStrictThinkingValidation(this.protocols, model.protocol, model.providerType);
     const requestedEffort = resolveSubagentThinking(this.configService, model, binding.effort);
     const resolvedEffort = resolveThinkingEffortForModel(requestedEffort, thinkingConfig, model.spec, strict);
-    const thinkingEffort = resolveForcedThinkingEffort(
-      thinkingConfig?.forcedEffort,
-      resolvedEffort,
-      drivesThinkingThroughTraits(model.providerType),
-    ) ?? resolvedEffort;
+    const thinkingEffort = binding.effort !== undefined
+      ? resolvedEffort
+      : (resolveForcedThinkingEffort(
+          thinkingConfig?.forcedEffort,
+          resolvedEffort,
+          drivesThinkingThroughTraits(model.providerType),
+        ) ?? resolvedEffort);
     const sampling =
       overrides?.temperature === undefined && overrides?.topP === undefined
         ? undefined
@@ -273,10 +279,10 @@ export class SessionAutoReviewService extends Service implements ISessionAutoRev
         }),
       },
     };
-    return this.protocols.request(model, params).with({
+    return this.protocols.request(model, params, this.requesterExecution).with({
       model: { responseFormat: RESPONSE_FORMAT },
       profile: { systemPrompt: REVIEW_POLICY, tools: [] },
-      content: { messages },
+      content: { messages: input.messages },
       policy: {
         retry: { maxAttemptsPerStep: 1 },
         recoveries: [credentialRecovery],
@@ -330,7 +336,7 @@ function classifyLlmError(
   if (error.kind === 'context_overflow') {
     return { decision: 'failed', reason: 'The review context exceeded the model window.' };
   }
-  if (error.kind !== 'syntax' && error.kind !== 'abort' && error.retryable) {
+  if (isRetryableError(error)) {
     return { decision: 'retry', reason: error.message, retryAfterMs: readRetryAfterMs(error) };
   }
   return { decision: 'failed', reason: error.message };

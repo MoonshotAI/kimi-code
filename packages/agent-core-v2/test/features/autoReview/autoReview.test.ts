@@ -163,10 +163,11 @@ describe('autoReview context and state', () => {
     expect(second.slice(second.indexOf('<history>'), second.indexOf('</history>')).startsWith(firstHistory)).toBe(true);
   });
 
-  it('omits approval-free tools and read-only shell commands from history', () => {
+  it('omits approval-free tools and read-only shell commands unless explicitly approved', () => {
     const calls = [
       toolCallFor('agent', 'Agent', { description: 'Sweep', prompt: 'Inspect' }),
       toolCallFor('ls', 'Bash', { command: 'ls src' }),
+      toolCallFor('cat_env', 'Bash', { command: 'cat .env' }),
       toolCallFor('stage', 'Bash', { command: 'git add src/a.ts' }),
       toolCallFor('edit', 'Edit', { path: 'src/a.ts', old_string: 'a', new_string: 'b' }),
     ];
@@ -179,11 +180,11 @@ describe('autoReview context and state', () => {
         content: [{ type: 'text', text: 'result' }],
       })),
     ];
-    const rendered = messageText(buildReviewMessages(history, [], undefined, undefined, '/workspace', reviewContext(), new BashParserService()));
+    const rendered = messageText(buildReviewMessages(history, [], undefined, undefined, '/workspace', reviewContext(), new BashParserService(), new Set(['cat_env'])));
     for (const omitted of ['agent', 'ls']) {
       expect(rendered).not.toContain(`"id":"${omitted}"`);
     }
-    for (const kept of ['stage', 'edit']) {
+    for (const kept of ['cat_env', 'stage', 'edit']) {
       expect(rendered).toContain(`"id":"${kept}"`);
     }
   });
@@ -251,6 +252,9 @@ describe('autoReview context and state', () => {
       '{"kind":"instruction","role":"human-instruction","replyTo":"Push tag v1.2 to origin?","content":[{"type":"text","text":"Yes."}]}',
     );
     expect(rendered).not.toContain('hidden reasoning');
+    const emojiReply = `prefix🚀${'x'.repeat(REPLY_TO_MAX_CHARS - 1)}`;
+    expect(extractAuthorization([{ role: 'assistant', content: [{ type: 'text', text: emojiReply }], toolCalls: [] }, userMsg('Ok.', { kind: 'user' })])[0]?.replyTo)
+      .toBe(`…${'x'.repeat(REPLY_TO_MAX_CHARS - 1)}`);
   });
 
   it('compares authorization by text and reply target', () => {
@@ -397,6 +401,7 @@ describe('SessionAutoReviewService', () => {
   it('validates explicit model only when enabled or executed, resolves fallback chain, and refreshes instructions on change', async () => {
     await expect(execute(makeSessionService({ model: 'missing-model', flagEnabled: false }))).rejects.toThrow(/\[auto_review\]\.model/);
     expect(() => makeSessionService({ model: 'missing-model', flagEnabled: true })).toThrow(/\[auto_review\]\.model/);
+    expect(() => makeSessionService({ configured: false, secondaryModel: { defaultModel: 'missing-model' }, flagEnabled: true })).toThrow(/Auto Review model "missing-model"/);
 
     const secondary = { defaultModel: 'secondary-model' };
     expect((await execute(makeSessionService({ model: 'review-model', secondaryModel: secondary }))).modelAlias).toBe('review-model');
@@ -432,12 +437,14 @@ describe('SessionAutoReviewService', () => {
   it.each([
     ['[auto_review].effort over the model entry default', { effort: 'low' }, 'low'],
     ['[auto_review].effort while thinking is disabled', { effort: 'low', thinking: { enabled: false } }, 'low'],
+    ['[auto_review].effort over forced effort on a trait-driven provider', { effort: 'low', thinking: { forcedEffort: 'max' }, providerType: 'kimi' }, 'low'],
     ['[secondary_model].default_effort with the borrowed secondary model', { configured: false, secondaryModel: pooled }, 'low'],
     ['[auto_review].effort over the borrowed [secondary_model].default_effort', { effort: 'max', secondaryModel: pooled }, 'max'],
     ['the review model entry default without borrowing [secondary_model].default_effort', { model: 'review-model', secondaryModel: pooled }, 'high'],
   ] as const)('requests %s', async (_label, options, effort) => {
-    const catalogModel = effortModel({ supportEfforts: ['low', 'high', 'max'], defaultEffort: 'high' });
-    await execute(makeSessionService({ catalogModel, ...options }));
+    const { providerType, ...rest } = options as typeof options & { readonly providerType?: string };
+    const catalogModel = effortModel({ supportEfforts: ['low', 'high', 'max'], defaultEffort: 'high' }, providerType);
+    await execute(makeSessionService({ catalogModel, ...rest }));
     expect(requestedEfforts).toEqual([effort]);
   });
 
@@ -496,6 +503,7 @@ describe('SessionAutoReviewService', () => {
     for (const step of [
       httpError(401, { message: 'Unauthorized' }),
       httpError(429, { message: 'Insufficient balance', type: 'insufficient_quota' }),
+      httpError(429, { message: 'Retry after deadline', retryAfterSeconds: 60 }),
       httpError(400, { message: 'prompt is too long', type: 'context_length_exceeded' }),
     ]) {
       selectedModels = [];
@@ -569,9 +577,11 @@ describe('AutoReviewService', () => {
     readonly agentId: string;
     readonly replayedAncestry?: AutoReviewAncestry;
     readonly flagEnabled?: boolean;
+    readonly restoredWithHistory?: boolean;
     readonly projectInstructions?: ISessionAutoReviewService['projectInstructions'];
   }): Promise<AutoReviewService> {
     let ancestry = options.replayedAncestry;
+    let restored = options.restoredWithHistory === true;
     let onDidRestore: ((ctx: unknown, next: () => Promise<void>) => Promise<void>) | undefined;
     const states = {
       contributeState: () => toDisposable(() => {}),
@@ -614,7 +624,7 @@ describe('AutoReviewService', () => {
         agentScope: '',
         meta: options.agentId === 'main' ? undefined : { parentAgentId: 'main' },
       }),
-      { history: () => history, resolveModelContext: () => resolveLoopModel() } as unknown as IAgentLoopService,
+      { history: () => (restored ? history : []), resolveModelContext: () => resolveLoopModel() } as unknown as IAgentLoopService,
       sessionReview,
       new StubConfigService(),
       {
@@ -634,6 +644,7 @@ describe('AutoReviewService', () => {
       new BashParserService(),
     ));
     await onDidRestore?.({}, async () => {});
+    restored = true;
     return reviewer;
   }
 
@@ -738,6 +749,10 @@ describe('AutoReviewService', () => {
     const restored = await spawn({ agentId: 'child-1', flagEnabled: false, replayedAncestry: snapshot });
     expect(recorded).toEqual([]);
     expect(restored.inheritedAuthorization()).toEqual(snapshot.authorization);
+
+    const legacy = await spawn({ agentId: 'child-legacy', restoredWithHistory: true });
+    expect(recorded).toEqual([]);
+    expect(legacy.inheritedAuthorization()).toEqual([]);
   });
 
   it('keeps the reply target in the authorization subagents inherit and in the review request', async () => {

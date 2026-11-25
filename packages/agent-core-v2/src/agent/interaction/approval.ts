@@ -8,6 +8,12 @@ export interface ApprovalReviewDetail {
   readonly reason: string;
 }
 
+export function formatApprovalReviewTitle(review: ApprovalReviewDetail): string {
+  return review.outcome === 'failed'
+    ? "Auto Review couldn't finish"
+    : `Auto Review didn't approve · ${review.risk ?? 'medium'} risk`;
+}
+
 export interface ApprovalRequest {
   readonly id?: string;
   readonly sessionId?: string;
