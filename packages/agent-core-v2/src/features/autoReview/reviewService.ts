@@ -285,11 +285,11 @@ export class AutoReviewService extends Service implements IAutoReviewService {
     try {
       const status = await git.statusAt(targetCwd, { includePullRequest: false, includeStats: false });
       const keys = Object.keys(status.entries);
-      if (keys.length === 0) return { branch: status.branch, clean: true };
+      if (keys.length === 0) return { cwd: targetCwd, branch: status.branch, clean: true };
       const entries = Object.fromEntries(
         keys.slice(0, MAX_GIT_STATUS_ENTRIES).map((key) => [key, status.entries[key]!]),
       );
-      return { branch: status.branch, clean: false, entries };
+      return { cwd: targetCwd, branch: status.branch, clean: false, entries };
     } catch {
       return undefined;
     }

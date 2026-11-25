@@ -144,7 +144,7 @@ describe('autoReview context and state', () => {
 
     const first = render(
       [...turn1, { role: 'assistant', content: [], toolCalls: [running, pending, sibling] }],
-      { branch: 'feat/sub', clean: false, entries: { 'dirty.ts': 'modified' } },
+      { cwd: '/workspace', branch: 'feat/sub', clean: false, entries: { 'dirty.ts': 'modified' } },
     );
     expect(first).toContain('Do not delete user-data.');
     expect(first).toContain('"id":"mkdir","name":"Bash","arguments":"{\\"command\\":\\"mkdir generated\\"}","approved":true');
@@ -153,7 +153,7 @@ describe('autoReview context and state', () => {
     expect(first).not.toContain('"id":"running"');
     expect(first).not.toContain('"id":"rm"');
     expect(first).not.toContain('"id":"sibling"');
-    expect(first).toContain('"gitStatus":{"branch":"feat/sub","clean":false,"entries":{"dirty.ts":"modified"}}');
+    expect(first).toContain('"gitStatus":{"cwd":"/workspace","branch":"feat/sub","clean":false,"entries":{"dirty.ts":"modified"}}');
     expect(first).not.toContain('Execute a shell command.');
     expect(first).not.toContain('untrusted tool output');
 
@@ -657,7 +657,7 @@ describe('AutoReviewService', () => {
     const sent = messageText(sentInputs.at(-1)!.messages);
     expect(sent.match(/Only remove generated files\./g)).toHaveLength(1);
     expect(sent).not.toContain('Also delete production data.');
-    expect(sent).toContain('"branch":"feat/sub"');
+    expect(sent).toContain('"gitStatus":{"cwd":"/workspace/sub","branch":"feat/sub"');
     expect(sent).toContain('"id":"mkdir","name":"Bash","arguments":"{\\"command\\":\\"mkdir generated\\"}","approved":true');
   });
 
@@ -671,7 +671,7 @@ describe('AutoReviewService', () => {
     await main.review(reviewContext({ command: 'ls', cwd: '/outside/repo' }), 'fallback-ask');
 
     expect(statusAt).not.toHaveBeenCalled();
-    expect(messageText(sentInputs.at(-1)!.messages)).not.toContain('"gitStatus":{"branch"');
+    expect(messageText(sentInputs.at(-1)!.messages)).not.toContain('"gitStatus":{"cwd"');
   });
 
   it('propagates cancellation while waiting for project instructions', async () => {
@@ -713,15 +713,17 @@ describe('AutoReviewService', () => {
     for (const command of [
       'git add src/a.ts && git commit -m "wip"',
       'git add "$STAGED_FILE"',
-      'git -C /workspace reset --hard HEAD',
+      'git -C /workspace/other reset --hard HEAD',
+      'cd /workspace/other && git add -A && git commit -m "wip"',
       'rm -rf coverage',
       'if [ -f dirty.ts ]; then git restore dirty.ts; fi',
       'cat <<EOF\nunclosed',
     ]) {
       await main.review(reviewContext({ command }), 'fallback-ask');
-      expect(messageText(sentInputs.at(-1)!.messages)).toContain('"gitStatus":{"branch":"main","clean":false');
+      expect(messageText(sentInputs.at(-1)!.messages)).toContain('"gitStatus":{"cwd":"/workspace","branch":"main","clean":false');
     }
-    expect(statusAt).toHaveBeenCalledTimes(6);
+    expect(statusAt).toHaveBeenCalledTimes(7);
+    expect(statusAt).toHaveBeenLastCalledWith('/workspace', { includePullRequest: false, includeStats: false });
   });
 
   it('skips ancestry snapshot writes when the flag is disabled while still reading replayed snapshots', async () => {

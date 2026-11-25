@@ -34,6 +34,7 @@ export interface ReviewText {
 }
 
 export interface ReviewGitStatus {
+  readonly cwd: string;
   readonly branch: string;
   readonly clean: boolean;
   readonly entries?: Readonly<Record<string, string>>;
