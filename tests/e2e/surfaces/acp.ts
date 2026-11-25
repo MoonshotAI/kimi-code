@@ -70,6 +70,10 @@ const REJECTION_NOTICE = 'was not run because the user rejected the approval req
 const INVALID_REQUEST = -32600;
 const INVALID_PARAMS = -32602;
 
+const COMPACT_COMMAND = '/compact';
+const COMPACTION_DONE = 'Compaction completed.';
+const COMPACTION_FAILURES = ['Compaction cancelled.', 'Compaction is blocked'];
+
 const SESSION_METHODS = [methods.client.session.update, methods.client.session.requestPermission];
 
 const EDITOR_CAPABILITY_METHODS = [
@@ -464,6 +468,23 @@ class AcpDriver implements SurfaceDriver<'acp'> {
     if (!reported) {
       throw new Error(`setPermissionMode() switched the session to mode ${modeId}, but the agent never reported it with current_mode_update.\n${this.describe()}`);
     }
+  }
+
+  async compact(): Promise<void> {
+    if (!this.turnOver() || this.permissions.length > 0) {
+      throw new Error(`compact() needs an idle product, but a turn is running or an approval is pending.\n${this.describe()}`);
+    }
+    await this.send(COMPACT_COMMAND);
+    const turn = this.turn;
+    if (turn === undefined) throw new Error(`compact() lost the /compact prompt.\n${this.describe()}`);
+    const outcome = await this.wait('the agent to report that the compaction finished', () => {
+      if (!this.turnOver()) return undefined;
+      const said = repliesOf(this.updates.slice(turn.updates)).join('\n');
+      if (said.includes(COMPACTION_DONE)) return 'done' as const;
+      return COMPACTION_FAILURES.some((failure) => said.includes(failure)) ? ('failed' as const) : undefined;
+    });
+    this.assertPromptValid();
+    if (outcome === 'failed') throw new Error(`compact() saw the compaction cancelled or blocked.\n${this.describe()}`);
   }
 
   async newSession(): Promise<void> {

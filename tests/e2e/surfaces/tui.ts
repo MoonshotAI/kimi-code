@@ -143,6 +143,9 @@ const ASKED_QUESTION = 'Q';
 const ASKED_ANSWER = '→';
 const DISMISSED_NOTE = 'User dismissed the question without answering.';
 const NEW_SESSION_COMMAND = '/new';
+const COMPACT_COMMAND = '/compact';
+const COMPACTION_DONE = 'Compaction complete';
+const COMPACTION_CANCELLED = 'Compaction cancelled';
 const NEW_SESSION_NOTICE = 'Started a new session (';
 
 interface Screen {
@@ -244,6 +247,10 @@ function screenOf(rows: readonly string[], viewport: readonly string[]): Screen 
   if (editor < 0) return { ...frame, input: 'none', transcript: rows, status: [], panel: [] };
   const gap = lines.findLastIndex((line, index) => index < editor && line === '');
   return { ...frame, input: 'editor', transcript: rows.slice(0, gap + 1), status: lines.slice(gap + 1, editor), panel: [] };
+}
+
+function compactionNotices(screen: Screen, notice: string): number {
+  return screen.transcript.filter((row) => row.includes(notice)).length;
 }
 
 function drawnWidth(screen: Screen): number | undefined {
@@ -632,6 +639,20 @@ class TuiDriver implements SurfaceDriver<'tui'> {
         settled.found,
       );
     }
+  }
+
+  async compact(): Promise<void> {
+    const before = await this.read();
+    if (!this.turnOver(before)) throw this.failure('compact() needs an idle product: a turn is running, a message is queued or an approval is pending.', before);
+    const done = compactionNotices(before, COMPACTION_DONE);
+    const cancelled = compactionNotices(before, COMPACTION_CANCELLED);
+    this.write(paste(COMPACT_COMMAND));
+    this.write(KEYS.enter);
+    const outcome = await this.wait('the CLI to finish compacting the context', (screen) => {
+      if (compactionNotices(screen, COMPACTION_CANCELLED) > cancelled) return 'cancelled' as const;
+      return compactionNotices(screen, COMPACTION_DONE) > done && this.turnOver(screen) ? ('done' as const) : undefined;
+    });
+    if (outcome === 'cancelled') throw this.failure('compact() saw the compaction cancelled.', await this.read());
   }
 
   async newSession(): Promise<void> {
