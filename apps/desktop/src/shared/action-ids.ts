@@ -58,6 +58,7 @@ export const ACTION_INVOKED_IDS = [
   ...APP_ACTION_IDS,
   'select-all',
   'retry-connection',
+  'open-feedback',
 ] as const;
 
 export type ActionInvokedId = (typeof ACTION_INVOKED_IDS)[number];

@@ -11,7 +11,7 @@ export type { FeedbackAttachment } from '../lib/feedbackReceipt';
 export type { FeedbackForm };
 
 export interface GlobalFeedbackTarget {
-  source: 'sidebar' | 'command';
+  source: 'sidebar' | 'command' | 'menu';
   sessionId?: string;
 }
 
