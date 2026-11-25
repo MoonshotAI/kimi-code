@@ -6,7 +6,7 @@ import {
 } from "./alt-screen-search.ts";
 import { AltScreenFlashContainer } from "./components/alt-screen-flash.ts";
 import { ScrollView } from "./components/scroll-view.ts";
-import { getKeybindings } from "./keybindings.ts";
+import { getKeybindings, type KeybindingsManager } from "./keybindings.ts";
 import { isKeyRelease } from "./keys.ts";
 import {
 	getLayoutBoxesAt,
@@ -168,6 +168,10 @@ interface SearchHighlightRange {
 	current: boolean;
 }
 
+function sanitizeSearchQuery(query: string): string {
+	return query.replace(/\r\n|[\r\n\t]/g, " ");
+}
+
 export interface TuiAltScreenOptions {
 	/**
 	 * Logical lines moved for each mouse-wheel event (default: 1). `"auto"` accelerates fast wheel
@@ -184,6 +188,8 @@ export interface TuiAltScreenOptions {
 	searchCurrentMatchStyle?: (text: string) => string;
 	/** Style a transcript search navigation button. */
 	searchNavigationButtonStyle?: (text: string, hovered: boolean) => string;
+	/** Keybindings for alternate-screen viewport navigation and search. Defaults to global keybindings. */
+	keybindings?: KeybindingsManager;
 	/**
 	 * Render a clickable jump-to-end label. It is centered on the last row of a follow-end
 	 * primary scroll view while that view is scrolled away from its end.
@@ -267,6 +273,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 	private readonly searchMatchStyle: (text: string) => string;
 	private readonly searchCurrentMatchStyle: (text: string) => string;
 	private readonly searchNavigationButtonStyle: (text: string, hovered: boolean) => string;
+	private readonly keybindings?: KeybindingsManager;
 	private readonly scrollToEndIndicator?: () => string;
 	private readonly openUrl?: (url: string) => void;
 	private readonly onRightClickPaste?: () => void;
@@ -295,6 +302,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		this.searchMatchStyle = options.searchMatchStyle ?? ((text) => `\x1b[4m${text}\x1b[24m`);
 		this.searchCurrentMatchStyle = options.searchCurrentMatchStyle ?? ((text) => `\x1b[1;7m${text}\x1b[22;27m`);
 		this.searchNavigationButtonStyle = options.searchNavigationButtonStyle ?? ((text) => text);
+		this.keybindings = options.keybindings;
 		this.scrollToEndIndicator = options.scrollToEndIndicator;
 		this.openUrl = options.openUrl;
 		this.onRightClickPaste = options.onRightClickPaste;
@@ -392,6 +400,10 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 
 	private getPrimaryScrollView(): ScrollView {
 		return this.currentLayout?.primaryScrollView ?? this.implicitScrollView;
+	}
+
+	private hasSearchableScrollView(): boolean {
+		return this.layoutRoot === undefined || this.currentLayout?.primaryScrollView !== undefined;
 	}
 
 	protected override beforeTerminalStart(): void {
@@ -579,19 +591,38 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		}
 	}
 
-	private toggleSearch(): void {
-		if (this.activeSearch) {
-			this.closeSearch();
+	/** Open and focus transcript search, optionally pre-filling a single-line query. */
+	openSearch(query?: string): void {
+		const sanitized = query === undefined ? undefined : sanitizeSearchQuery(query);
+		const existing = this.activeSearch;
+		if (existing) {
+			if (existing.overlay?.isHidden()) existing.overlay.setHidden(false);
+			existing.overlay?.focus();
+			if (sanitized !== undefined) {
+				existing.component.setQuery(sanitized);
+				if (sanitized !== existing.query) {
+					existing.query = sanitized;
+					existing.component.setResult(-1, 0);
+				}
+				existing.anchorRow = this.getPrimaryScrollView().scrollTop;
+				existing.selectionMode = "query";
+			}
+			this.requestRender();
 			return;
 		}
+
 		const component = new AltScreenSearchComponent(
-			(query) => this.updateSearchQuery(query),
+			(nextQuery) => this.updateSearchQuery(nextQuery),
 			this.searchNavigationButtonStyle,
+			this.keybindings,
 		);
+		if (sanitized !== undefined) {
+			component.setQuery(sanitized);
+		}
 		const search: ActiveSearch = {
 			component,
 			index: new AltScreenSearchIndex(),
-			query: "",
+			query: sanitized ?? "",
 			matches: [],
 			selectedIndex: -1,
 			anchorRow: this.getPrimaryScrollView().scrollTop,
@@ -604,6 +635,15 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 			minWidth: 32,
 			margin: 1,
 		});
+		this.requestRender();
+	}
+
+	private toggleSearch(): void {
+		if (this.activeSearch) {
+			this.closeSearch();
+			return;
+		}
+		this.openSearch();
 	}
 
 	private closeSearch(): void {
@@ -733,10 +773,14 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		this.flashes.flash(message, durationMs);
 	}
 
+	private isNonSearchOverlayFocused(): boolean {
+		return this.isOverlayFocused() && this.activeSearch?.overlay?.isFocused() !== true;
+	}
+
 	/** Focused overlays and components that capture viewport input receive viewport keys instead of the transcript. */
 	private shouldDeferViewportInput(): boolean {
 		if (this.getFocusedComponent()?.capturesViewportInput) return true;
-		return this.isOverlayFocused() && this.activeSearch?.overlay?.isFocused() !== true;
+		return this.isNonSearchOverlayFocused();
 	}
 
 	private clearComponentMouseGesture(): void {
@@ -803,13 +847,14 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		}
 		if (this.isMouseSequence(data)) return { consume: true };
 
-		const keybindings = getKeybindings();
+		const keybindings = this.keybindings ?? getKeybindings();
 		const isRelease = isKeyRelease(data);
+		if (this.isNonSearchOverlayFocused()) return undefined;
 		// When the primary scroll view has nothing to scroll (short content, or a
 		// full-screen component mounted as the layout root), let navigation keys
 		// fall through to the focused component instead of consuming them.
 		const primaryScrollable = this.getPrimaryScrollView().canScroll;
-		if (keybindings.matches(data, "tui.altScreen.search")) {
+		if (keybindings.matches(data, "tui.altScreen.search") && (this.activeSearch || this.hasSearchableScrollView())) {
 			if (!isRelease) this.toggleSearch();
 			return { consume: true };
 		}

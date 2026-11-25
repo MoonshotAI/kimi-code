@@ -300,7 +300,8 @@ const MODIFIERS = {
 	super: 8,
 } as const;
 
-const LOCK_MASK = 64 + 128; // Caps Lock + Num Lock
+const CAPS_LOCK_BIT = 64;
+const LOCK_MASK = CAPS_LOCK_BIT + 128; // Caps Lock + Num Lock
 
 const CODEPOINTS = {
 	escape: 27,
@@ -380,7 +381,10 @@ function normalizeKittyFunctionalCodepoint(codepoint: number): number {
 
 function normalizeShiftedLetterIdentityCodepoint(codepoint: number, modifier: number): number {
 	const effectiveModifier = modifier & ~LOCK_MASK;
-	if ((effectiveModifier & MODIFIERS.shift) !== 0 && codepoint >= 65 && codepoint <= 90) {
+	const normalizeUppercaseLetter =
+		(effectiveModifier & MODIFIERS.shift) !== 0 ||
+		((modifier & CAPS_LOCK_BIT) !== 0 && (effectiveModifier & MODIFIERS.ctrl) !== 0);
+	if (normalizeUppercaseLetter && codepoint >= 65 && codepoint <= 90) {
 		return codepoint + 32;
 	}
 	return codepoint;

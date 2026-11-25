@@ -34,6 +34,27 @@ describe("Input component", () => {
 		assert.strictEqual(input.getValue(), "\\x");
 	});
 
+	it("moves cursor to the end for ASCII and multi-byte text without changing setValue clamping", () => {
+		const preserved = new Input();
+		preserved.setValue("hello");
+		preserved.handleInput("\x7f");
+		assert.strictEqual(preserved.getValue(), "hello");
+
+		const ascii = new Input();
+		ascii.setValue("hello");
+		ascii.moveCursorToEnd();
+		ascii.handleInput("\x7f");
+		assert.strictEqual(ascii.getValue(), "hell");
+
+		const unicode = new Input();
+		unicode.setValue("你好🙂");
+		unicode.moveCursorToEnd();
+		unicode.handleInput("\x7f");
+		assert.strictEqual(unicode.getValue(), "你好");
+		unicode.handleInput("\x7f");
+		assert.strictEqual(unicode.getValue(), "你");
+	});
+
 	describe("render", () => {
 		it("supports a custom prompt and styled placeholder", () => {
 			const input = new Input({

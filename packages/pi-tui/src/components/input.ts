@@ -68,6 +68,11 @@ export class Input implements Component, Focusable {
 		this.cursor = Math.min(this.cursor, value.length);
 	}
 
+	moveCursorToEnd(): void {
+		this.lastAction = null;
+		this.cursor = this.value.length;
+	}
+
 	handleInput(data: string): void {
 		// Handle bracketed paste mode
 		// Start of paste: \x1b[200~
