@@ -101,6 +101,47 @@ describe('TurnFeedbackActions and TurnFeedbackPopover', () => {
     expect(feedback.prefetchForm).toHaveBeenNthCalledWith(4, target.sessionId);
   });
 
+  it('uses compact standard tooltips without arrows on reply feedback buttons', async () => {
+    vi.useFakeTimers();
+    try {
+      const feedback = createFeedbackStub();
+      app = createApp(defineComponent({
+        setup() {
+          provide(DesktopFeedbackKey, feedback as never);
+          return () => h(TurnFeedbackActions, { target });
+        },
+      }));
+      app.use(createKimiI18n({ locale: 'en' }));
+      app.mount(container);
+      await nextTick();
+
+      const up = container.querySelector<HTMLButtonElement>('button[aria-label="Good response"]');
+      const down = container.querySelector<HTMLButtonElement>('button[aria-label="Poor response"]');
+      expect(up?.classList.contains('ui-icon-button--xs')).toBe(true);
+      expect(down?.classList.contains('ui-icon-button--xs')).toBe(true);
+
+      let clientX = 10;
+      for (const [button, expectedText] of [[up!, 'Good response'], [down!, 'Poor response']] as const) {
+        clientX += 20;
+        button.dispatchEvent(new MouseEvent('pointermove', { bubbles: true, clientX, clientY: 12 }));
+        clientX += 20;
+        button.dispatchEvent(new MouseEvent('pointermove', { bubbles: true, clientX, clientY: 12 }));
+        await vi.advanceTimersByTimeAsync(200);
+        await nextTick();
+
+        const bubble = document.body.querySelector<HTMLElement>('.ui-tip__bubble');
+        expect(bubble?.textContent).toBe(expectedText);
+        expect(bubble?.classList.contains('ui-tip-surface')).toBe(true);
+        expect(bubble?.classList.contains('ui-tip__bubble--arrow')).toBe(false);
+
+        button.dispatchEvent(new MouseEvent('mouseleave'));
+        await nextTick();
+      }
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('renders cached reasons immediately without loading state and keeps an open popover stable while revalidating', async () => {
     let resolveRefresh!: (value: FeedbackForm | null) => void;
     const replacementForm: FeedbackForm = {

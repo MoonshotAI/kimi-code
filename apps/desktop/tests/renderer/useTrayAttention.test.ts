@@ -228,6 +228,17 @@ describe('runWhenInitialized', () => {
     expect(second).toHaveBeenCalledTimes(1);
     expect(first).toHaveBeenCalledTimes(1);
   });
+
+  it('cancels a deferred callback when the returned stop handle is called', async () => {
+    const initialized = ref(false);
+    const fn = vi.fn();
+    const stop = runWhenInitialized(initialized, fn);
+    stop();
+
+    initialized.value = true;
+    await nextTick();
+    expect(fn).not.toHaveBeenCalled();
+  });
 });
 
 describe('createTrayLocaleSync', () => {

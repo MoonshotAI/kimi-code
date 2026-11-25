@@ -1606,7 +1606,8 @@
                       "source": {
                         "enum": [
                           "sidebar",
-                          "command"
+                          "command",
+                          "menu"
                         ],
                         "type": "string"
                       },

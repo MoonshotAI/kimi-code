@@ -1575,7 +1575,7 @@ POST /api/v1/feedback request<#0>.client: enum "desktop"|"web" optional
 POST /api/v1/feedback request<#0>.content: string minLength=1 maxLength=2000
 POST /api/v1/feedback request<#0>.kind: enum "global"
 POST /api/v1/feedback request<#0>.session_id: string minLength=1 maxLength=200 optional
-POST /api/v1/feedback request<#0>.source: enum "command"|"sidebar"
+POST /api/v1/feedback request<#0>.source: enum "command"|"menu"|"sidebar"
 POST /api/v1/feedback request<#0>.upload_logs: boolean optional
 POST /api/v1/feedback request<#0>.upload_session: boolean optional
 POST /api/v1/feedback request<#0>: object
