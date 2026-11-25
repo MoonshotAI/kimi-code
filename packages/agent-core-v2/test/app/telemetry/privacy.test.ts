@@ -182,6 +182,24 @@ describe('cleanTelemetryString (absolute path redaction)', () => {
     );
   });
 
+  it('redacts the entire double-quoted Windows filename while preserving diagnostics', () => {
+    expect(cleanTelemetryString(String.raw`open "C:\Users\example\.env Production Notes" failed`)).toBe(
+      `open "${REDACTED}" failed`,
+    );
+    expect(cleanTelemetryString(String.raw`open "C:\Users\example\.env, Production Notes" failed`)).toBe(
+      `open "${REDACTED}" failed`,
+    );
+    expect(cleanTelemetryString(String.raw`open "C:\user\node_modules\pkg\index.js" failed`)).toBe(
+      'open "node_modules/pkg/index.js" failed',
+    );
+  });
+
+  it('keeps CRLF atomic at the end of the value budget', () => {
+    const prefix = '\n'.repeat(32_767);
+    expect(cleanTelemetryString(prefix + '\r\nnext')).toBe(prefix + '<REDACTED: oversized telemetry-line>');
+    expect(cleanTelemetryString(prefix + '\r')).toBe(prefix + '\r');
+  });
+
   it('preserves diagnostics after single-quoted extensionless Windows paths', () => {
     expect(
       cleanTelemetryString(String.raw`failure at 'C:\Users\alice\cache' could not be read`),

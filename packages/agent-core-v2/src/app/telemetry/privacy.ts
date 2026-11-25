@@ -53,10 +53,15 @@ const POSIX_GENERIC_PATH = String.raw`\/+${POSIX_GENERIC_COMPONENT}(?:[ \t]*\/+$
 const POSIX_PATH = String.raw`(?<![\p{L}\p{M}\p{N}.$_~+\\/-])(?:${POSIX_EXTENSION_PATH}|${POSIX_GENERIC_PATH})`;
 const WINDOWS_PATH = `${WINDOWS_DEVICE_DRIVE}|${WINDOWS_UNC_OR_LONG}|${WINDOWS_DRIVE}`;
 const WINDOWS_QUOTED_PATH = `'(?:${WINDOWS_PATH.replaceAll(WINDOWS_FINAL_COMPONENT, WINDOWS_QUOTED_FINAL_COMPONENT).replaceAll(WINDOWS_COMPONENT, WINDOWS_QUOTED_COMPONENT)})'`;
-const ABSOLUTE_PATH = new RegExp(`(${WINDOWS_QUOTED_PATH}|${WINDOWS_PATH})|${POSIX_PATH}`, 'gu');
+// Inside double quotes, spaces and diagnostic punctuation belong to the filename.
+const WINDOWS_DOUBLE_QUOTED_PATH = String.raw`"(?:[A-Za-z]:[\\/]|[\\/]{2})[^"\u0000-\u001F]+"`;
+const ABSOLUTE_PATH = new RegExp(`(${WINDOWS_DOUBLE_QUOTED_PATH}|${WINDOWS_QUOTED_PATH}|${WINDOWS_PATH})|${POSIX_PATH}`, 'gu');
 
 function redactAbsolutePath(match: string, windowsPath: boolean): string {
-  if (match.startsWith("'")) return `'${redactAbsolutePath(match.slice(1, -1), windowsPath)}'`;
+  const quote = match[0];
+  if (quote === "'" || quote === '"') {
+    return quote + redactAbsolutePath(match.slice(1, -1), windowsPath) + quote;
+  }
   const normalized = windowsPath ? match.replaceAll('\\', '/') : match;
   if (/\s\//u.test(normalized)) return REDACTED_PATH;
   const markerMatch = windowsPath
@@ -76,13 +81,14 @@ function cleanTelemetryLine(line: string): string {
     out = out.replace(pattern, label);
   }
   return out.replace(ABSOLUTE_PATH, (match: string, windowsMatch: string | undefined) =>
-    redactAbsolutePath(match, windowsMatch !== undefined && /^'?(?:[A-Za-z]:|\\|[\\/]{2}[^\\/]*\\)/.test(match)),
+    redactAbsolutePath(match, windowsMatch !== undefined && /^['"]?(?:[A-Za-z]:|\\|[\\/]{2}[^\\/]*\\)/.test(match)),
   );
 }
 
 export function cleanTelemetryString(value: string): string {
   let budget = MAX_TELEMETRY_VALUE_LENGTH;
-  const parts = value.split(/(\r\n|[\n\r\u2028\u2029])/);
+  // One extra code unit distinguishes an exact fit from a truncated line or CRLF.
+  const parts = value.slice(0, MAX_TELEMETRY_VALUE_LENGTH + 1).split(/(\r\n|[\n\r\u2028\u2029])/);
   let out = '';
   for (let index = 0; index < parts.length; index++) {
     const part = parts[index]!;
