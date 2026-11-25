@@ -81,7 +81,7 @@ describe('ExperimentsSelectorComponent', () => {
 
     const out = text(selector);
 
-    expect(out).toContain(' Experimental features  (type to search)');
+    expect(out).toContain(' Lab  (type to search)');
     expect(out).toContain(' ↑↓ navigate · Space toggle · Enter apply · Esc cancel');
     expect(out).toContain(' Beta');
     expect(out).toContain('  ❯ Enable all Beta features  disabled');

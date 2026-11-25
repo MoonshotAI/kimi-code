@@ -77,8 +77,8 @@ const SETTINGS_OPTIONS: readonly ChoiceOption[] = [
   },
   {
     value: 'experiments',
-    label: 'Experiments',
-    description: 'Turn experimental features on or off.',
+    label: 'Lab',
+    description: 'Turn Beta and Experimental features on or off.',
   },
   {
     value: 'upgrade',

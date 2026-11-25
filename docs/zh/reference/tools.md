@@ -130,7 +130,7 @@ Plan 模式是一种受约束的工作状态，只能由用户打开（`Shift-Ta
 
 **`TaskStop`** 接受 `task_id` 和可选的 `reason`（默认 `Stopped by TaskStop`）。对已处于终止状态的任务也能安全调用。停止的是 subagent 任务时，结果还会附上它停止前已写出的文字（标注为未完成）和它的 agent ID，可通过 `Agent` 继续这项工作。
 
-**`WaitFor`**（实验性功能，默认关闭；可在 `/experiments` 中开启 **WaitFor tool**、在 `config.toml` 中写入 `[experimental] wait_for = true`，或设置 `KIMI_CODE_EXPERIMENTAL_WAIT_FOR=1` 启用）把当前轮次挂起，直到后台任务结束、超时或有新输入注入当前轮次。参数：`timeout`（必填，单位秒，上限 90）和可选的 `task_id`。不传 `task_id` 时，调用时刻运行中的任意一个后台任务结束即返回；当前没有运行中的后台任务时立即返回。超时不是错误——结果会列出仍在运行的任务，Agent 可以再次等待，也可以先处理其他工作。新消息会提前结束本次等待。
+**`WaitFor`**（实验性功能，默认关闭；可在 `/lab` 中开启 **WaitFor tool**、在 `config.toml` 中写入 `[experimental] wait_for = true`，或设置 `KIMI_CODE_EXPERIMENTAL_WAIT_FOR=1` 启用）把当前轮次挂起，直到后台任务结束、超时或有新输入注入当前轮次。参数：`timeout`（必填，单位秒，上限 90）和可选的 `task_id`。不传 `task_id` 时，调用时刻运行中的任意一个后台任务结束即返回；当前没有运行中的后台任务时立即返回。超时不是错误——结果会列出仍在运行的任务，Agent 可以再次等待，也可以先处理其他工作。新消息会提前结束本次等待。
 
 在终端中，Agent 等待期间按 `Enter` 会将消息注入当前轮次，等待开始时已在队列中的消息也会被自动注入。如果队列中有 Shell 命令或 Skill，则不会自动投递，队列和新输入仍排队到轮次结束。按 `Ctrl-S` 可手动将编辑器和队列中的非 Shell 输入注入当前轮次。在 Agent 读取之前，注入的文字保持淡色；如果消息因轮次中断转入后续轮次，淡色会持续到后续轮次开始。后台任务继续运行，完成后仍会自动通知。已通过 `WaitFor` 汇报结果的任务不会再推送自动完成通知。
 

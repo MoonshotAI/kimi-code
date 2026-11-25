@@ -77,7 +77,7 @@ export class ExperimentsSelectorComponent extends Container implements Focusable
         id: BETA_MASTER_CONFIG_KEY,
         title: 'Enable all Beta features',
         description:
-          'Enable upcoming Beta features that are being polished before general release.',
+          'Try upcoming features being polished before release.',
         group: 'beta',
         state: this.betaState,
       },
@@ -145,7 +145,7 @@ export class ExperimentsSelectorComponent extends Container implements Focusable
 
     const lines: string[] = [
       currentTheme.fg('primary', '─'.repeat(width)),
-      currentTheme.boldFg('primary', ' Experimental features') + titleSuffix,
+      currentTheme.boldFg('primary', ' Lab') + titleSuffix,
       currentTheme.fg('textMuted', ` ${hintParts.join(' · ')}`),
       '',
     ];

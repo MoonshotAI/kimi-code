@@ -33,13 +33,13 @@ For a persistent setting, add this to `config.toml` (by default, `~/.kimi-code/c
 tower = true
 ```
 
-You can also enable **Tower mode** in `/experiments` and apply the change for the same effect. To enable it only for the current process, set this environment variable before launch:
+You can also enable **Tower mode** in `/lab` and apply the change for the same effect. To enable it only for the current process, set this environment variable before launch:
 
 ```sh
 KIMI_CODE_EXPERIMENTAL_TOWER=1 kimi
 ```
 
-Set the environment variable before launch. If you modify `/experiments` or `config.toml` while Kimi Code is running, restart Kimi Code: Tower tools and the worker profile load only at process startup. `/tower` appears in the command list only after the experiment is enabled.
+Set the environment variable before launch. If you modify `/lab` or `config.toml` while Kimi Code is running, restart Kimi Code: Tower tools and the worker profile load only at process startup. `/tower` appears in the command list only after the experiment is enabled.
 
 Before starting, check out the local branch that should receive the changes and inspect the worktree:
 

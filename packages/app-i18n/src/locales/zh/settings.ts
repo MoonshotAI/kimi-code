@@ -78,10 +78,10 @@ export default {
     copyConfirm: '导入',
   },
   lab: {
-    betaGroup: '抢先体验 (Beta)',
-    experimentalGroup: 'Experimental',
+    betaGroup: 'Beta 功能',
+    experimentalGroup: '实验性功能',
     enableAllBeta: '开启全部 Beta 功能',
-    enableAllBetaHint: '抢先体验即将正式上线、正在打磨中的功能',
+    enableAllBetaHint: '功能已基本定型，正在做正式发布前的打磨',
     lockedByEnv: '由环境变量 {env} 控制',
     lockedByBetaMaster: '已随「开启全部 Beta 功能」开启',
     notifyUser: '进展更新',

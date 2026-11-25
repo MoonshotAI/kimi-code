@@ -133,8 +133,9 @@ describe('SettingsDialog General sidebarTabs and Lab two-tier layout', () => {
     await flush();
 
     const bodyText = document.body.textContent ?? '';
-    expect(bodyText).toContain('抢先体验 (Beta)');
-    expect(bodyText).toContain('Experimental');
+    expect(bodyText).toContain('Beta 功能');
+    expect(bodyText).toContain('实验性功能');
+    expect(bodyText).not.toContain('抢先体验');
     expect(bodyText).not.toContain('先锋探索');
     expect(bodyText).toContain('重启 Kimi Code 后生效');
 

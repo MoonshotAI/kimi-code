@@ -81,7 +81,7 @@ export default {
     betaGroup: 'Beta',
     experimentalGroup: 'Experimental',
     enableAllBeta: 'Enable all Beta features',
-    enableAllBetaHint: 'Try upcoming features that are being polished before general release.',
+    enableAllBetaHint: 'Try upcoming features being polished before release.',
     lockedByEnv: 'Controlled by environment variable {env}',
     lockedByBetaMaster: 'Enabled by "Enable all Beta features"',
     notifyUser: 'Progress updates',
