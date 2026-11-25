@@ -13,6 +13,10 @@
       "types": "./src/model/index.ts",
       "default": "./src/model/index.ts"
     },
+    "./services": {
+      "types": "./src/services/index.ts",
+      "default": "./src/services/index.ts"
+    },
     "./kap": {
       "types": "./src/kap/index.ts",
       "default": "./src/kap/index.ts"
