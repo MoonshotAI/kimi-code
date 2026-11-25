@@ -1,6 +1,6 @@
 # 测试指南
 
-新的 [E2E 工作流](../.github/workflows/e2e.yml)运行 TUI、Web、Desktop 和 ACP 场景：每次合并到 main 都跑，PR 上按需跑（规则见 `tests/e2e/AGENTS.md`）。旧的 Desktop E2E、E2E smoke 和 Layered QA 工作流仅手动触发。主 CI 暂停用 CLI 构建产物跑子进程旅程以及 L0 汇总，测试分片排除 `apps/kimi-code/test/e2e/tui/` 和 `packages/app-core/test/reconnect/`。`packages/kap-server/test/` 和 `tests/scenarios/` 仍在主 CI 自动运行。
+新的 [E2E 工作流](../.github/workflows/e2e.yml)运行 TUI、Web、Desktop 和 ACP 场景：每次合并到 main 都跑，PR 上按需跑（规则见 `tests/e2e/AGENTS.md`）。旧的 Desktop E2E、E2E smoke 和 Layered QA 工作流仅手动触发。主 CI 暂停用 CLI 构建产物跑子进程旅程以及 L0 汇总，测试分片排除 `apps/kimi-code/test/e2e/tui/` 和 `packages/app-core/test/reconnect/`。`packages/kap-server/test/` 和 `tests/scenarios/` 仍在主 CI 自动运行。PR 上的测试分片只跑改动沿工作区依赖波及的包，以及 `scripts/select-vitest-targets.mjs` 里登记的跨包读取；推送到 main、release 和手动触发 CI 时跑全量。测试跨包读取另一个包的文件、又没在 `package.json` 里依赖它时，要登记到该脚本的 `UNDECLARED_READS`。
 
 先写出用户或调用方依赖的行为，再选能复现故障、能直接观察结果的入口。「桌面用户看到了回答」要读真实窗口。「引擎重试后完成了原回合」可以从引擎会话验收。选定位置后，再读该目录最近的 AGENTS.md。
 
