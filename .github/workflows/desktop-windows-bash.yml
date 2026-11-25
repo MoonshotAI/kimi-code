@@ -5,15 +5,21 @@ on:
   pull_request:
     paths:
       - '.github/workflows/desktop-windows-bash.yml'
+      - '.github/workflows/desktop-build.yml'
       - 'apps/desktop/package.json'
+      - 'apps/desktop/electron-builder.config.cjs'
       - 'apps/desktop/build/windows-bash-*'
       - 'apps/desktop/build/windows-bash-licenses/**'
       - 'apps/desktop/scripts/prepare-windows-bash.mjs'
       - 'apps/desktop/scripts/verify-windows-bash.sh'
       - 'apps/desktop/src/main/server/windows-bash-runtime.ts'
+      - 'apps/desktop/tests/main/server/windows-bash-runtime.test.ts'
+      - 'apps/desktop/tests/main/release/windows-bash-prepare.test.ts'
       - 'apps/desktop/src/main/server/embedded-server.ts'
-      - 'apps/desktop/e2e/bash-tool-card.spec.ts'
+      - 'tests/e2e/scenarios/shell/read-workspace-and-home.spec.ts'
       - 'packages/agent-core-v2/src/_base/execEnv/shellPathBridge.ts'
+      - 'packages/agent-core-v2/src/_base/execEnv/environmentProbe.ts'
+      - 'packages/agent-core-v2/src/os/backends/node-local/hostEnvironmentService.ts'
       - 'packages/agent-core-v2/src/os/backends/node-local/hostServices.ts'
 
 permissions:
@@ -41,6 +47,8 @@ jobs:
           pnpm --filter kimi-code-app run build
       - name: Verify the runtime produced by the build
         run: node apps/desktop/scripts/prepare-windows-bash.mjs --verify apps/desktop/resources-stage/windows-bash
+      - name: Check Windows Bash packaging, source archives and concurrent mounts
+        run: pnpm --filter kimi-code-app exec vitest run tests/main/release/windows-bash-prepare.test.ts tests/main/server/windows-bash-runtime.test.ts
       - name: Reject a runtime missing awk
         run: |
           $broken = Join-Path $env:RUNNER_TEMP 'incomplete Bash runtime'
@@ -55,4 +63,4 @@ jobs:
       - name: Start the built Desktop and complete a local session
         run: pnpm --filter kimi-code-app run e2e:headless --no-build --project=smoke --grep=desktop.first-turn
       - name: Read workspace and user profile files through the Desktop Bash tool
-        run: pnpm --filter kimi-code-app run e2e:headless --no-build --project=turns-transcript --no-deps --grep=Bash.reads.files.in.the.workspace
+        run: pnpm --filter @moonshot-ai/e2e exec playwright test --project=desktop scenarios/shell/read-workspace-and-home.spec.ts

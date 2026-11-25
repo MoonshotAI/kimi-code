@@ -61,7 +61,7 @@ test('a running command moved to the background finishes and its output stays vi
     await expect(detail.getByRole('tab', { name: 'Long job' })).toHaveAttribute('aria-selected', 'true');
   });
 
-  await test.step('when the job ends the model is notified and the job leaves the dock', async () => {
+  await test.step('when the job ends the model is notified and the dock clears its running count', async () => {
     await writeFile(join(app.workspace, gateFile('bg')), '');
     const notified = await model.waitForRequest(2);
     const notice = notified.userTextsSinceReply.join('\n');
@@ -74,7 +74,8 @@ test('a running command moved to the background finishes and its output stays vi
     expect(messageProblems(notified.messages)).toEqual([]);
     await expect(transcript.getByText(FINISHED, { exact: true })).toBeVisible();
     await expect(transcript.getByRole('status').filter({ hasText: 'From background (Bash)' })).toContainText('Completed');
-    await expect(window.getByRole('button', { name: /^Bash( \d+ running)?$/ })).toHaveCount(0);
+    await expect(window.getByRole('button', { name: 'Bash', exact: true })).toBeVisible();
+    await expect(window.getByRole('button', { name: /Bash \d+ running/ })).toHaveCount(0);
     expect(model.requests()).toHaveLength(3);
     await app.snapshot('dock-done');
   });
@@ -114,7 +115,7 @@ test('a running command moved to the background finishes and its output stays vi
     await expect(detail.getByRole('tab', { name: 'Long job' })).toHaveAttribute('aria-selected', 'true');
     for (const line of FULL_OUTPUT.split('\n')) await expect(detail.getByText(line, { exact: true })).toBeVisible();
     await expect(detail.getByText('Waiting for output…')).toBeHidden();
-    await expect(restored.getByRole('button', { name: /^Bash( \d+ running)?$/ })).toHaveCount(0);
+    await expect(restored.getByRole('button', { name: 'Bash', exact: true })).toBeVisible();
     await app.snapshot('restored');
     expect(model.requests()).toHaveLength(3);
   });

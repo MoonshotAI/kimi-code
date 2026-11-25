@@ -136,7 +136,7 @@ describe('createTerminalManager', () => {
       const original = { ...env };
       const { deps, spawns } = makeDeps({ platform: 'win32', env, pathExists: path => path === shell });
       const terminal = createTerminalManager(deps);
-      const runtime = resolveWindowsBashEnv({ platform: 'win32', runtimeRoot: 'D:\\App\\windows-bash', env, fileExists: () => true });
+      const runtime = await resolveWindowsBashEnv({ platform: 'win32', runtimeRoot: 'D:\\App\\windows-bash', env, fileExists: () => true });
       expect(runtime?.['Path']).toBe(`D:\\App\\windows-bash\\usr\\bin;${original.Path}`);
       await terminal.create();
       expect(spawns[0]?.file).toBe(shell);

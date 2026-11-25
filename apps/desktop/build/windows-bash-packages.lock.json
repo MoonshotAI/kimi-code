@@ -39,7 +39,9 @@
         "sh"
       ],
       "packagePage": "https://packages.msys2.org/package/bash?repo=msys",
-      "sourceUrl": "https://mirror.msys2.org/msys/sources/bash-5.3.20-2.src.tar.zst"
+      "sourceUrl": "https://mirror.msys2.org/msys/sources/bash-5.3.20-2.src.tar.zst",
+      "sourceSize": 11344878,
+      "sourceSha256": "31d7d05005a69f5297c17cd27592bc7a6d3a2bf3dbd8948ada6f8ed4bccd7ac7"
     },
     {
       "name": "bzip2",
@@ -60,7 +62,9 @@
       ],
       "provides": [],
       "packagePage": "https://packages.msys2.org/package/bzip2?repo=msys",
-      "sourceUrl": "https://mirror.msys2.org/msys/sources/bzip2-1.0.8-4.src.tar.zst"
+      "sourceUrl": "https://mirror.msys2.org/msys/sources/bzip2-1.0.8-4.src.tar.zst",
+      "sourceSize": 842603,
+      "sourceSha256": "a7e9ea6335ef2902508de0bbbb70e2e9909b6b7b6d05fc207f8fdf0cf44ad053"
     },
     {
       "name": "coreutils",
@@ -83,7 +87,9 @@
       ],
       "provides": [],
       "packagePage": "https://packages.msys2.org/package/coreutils?repo=msys",
-      "sourceUrl": "https://mirror.msys2.org/msys/sources/coreutils-8.32-5.src.tar.zst"
+      "sourceUrl": "https://mirror.msys2.org/msys/sources/coreutils-8.32-5.src.tar.zst",
+      "sourceSize": 5561991,
+      "sourceSha256": "2b8689413bc50367a9995adf50ea84cd3caaff0ec68a8f32d8328842c3f83835"
     },
     {
       "name": "diffutils",
@@ -106,7 +112,9 @@
       ],
       "provides": [],
       "packagePage": "https://packages.msys2.org/package/diffutils?repo=msys",
-      "sourceUrl": "https://mirror.msys2.org/msys/sources/diffutils-3.12-1.src.tar.zst"
+      "sourceUrl": "https://mirror.msys2.org/msys/sources/diffutils-3.12-1.src.tar.zst",
+      "sourceSize": 1941123,
+      "sourceSha256": "474c4a3528a2afbb8d9608c65ad1bdbbd81ff42c143a438d7d56272a61b1bfac"
     },
     {
       "name": "findutils",
@@ -128,7 +136,9 @@
       ],
       "provides": [],
       "packagePage": "https://packages.msys2.org/package/findutils?repo=msys",
-      "sourceUrl": "https://mirror.msys2.org/msys/sources/findutils-4.11.0-2.src.tar.zst"
+      "sourceUrl": "https://mirror.msys2.org/msys/sources/findutils-4.11.0-2.src.tar.zst",
+      "sourceSize": 2454027,
+      "sourceSha256": "92edf442f61f8873318811a688ba327a0d2878a63a9ed21992b5cce12b0ae146"
     },
     {
       "name": "gawk",
@@ -154,7 +164,9 @@
         "awk"
       ],
       "packagePage": "https://packages.msys2.org/package/gawk?repo=msys",
-      "sourceUrl": "https://mirror.msys2.org/msys/sources/gawk-5.4.1-1.src.tar.zst"
+      "sourceUrl": "https://mirror.msys2.org/msys/sources/gawk-5.4.1-1.src.tar.zst",
+      "sourceSize": 6693723,
+      "sourceSha256": "d8b8cdd6cbf72431c02cb26cf92174aca5b6f1b7791aaf29fa3a11d205a66b39"
     },
     {
       "name": "gcc-libs",
@@ -173,7 +185,9 @@
       "depends": [],
       "provides": [],
       "packagePage": "https://packages.msys2.org/package/gcc-libs?repo=msys",
-      "sourceUrl": "https://mirror.msys2.org/msys/sources/gcc-16.2.0-1.src.tar.zst"
+      "sourceUrl": "https://mirror.msys2.org/msys/sources/gcc-16.2.0-1.src.tar.zst",
+      "sourceSize": 107239619,
+      "sourceSha256": "19c927f27da78aad25a449a4e6e3bfe8650541cc09ac2e701a4ec4d7e61137b9"
     },
     {
       "name": "gmp",
@@ -192,7 +206,9 @@
       "depends": [],
       "provides": [],
       "packagePage": "https://packages.msys2.org/package/gmp?repo=msys",
-      "sourceUrl": "https://mirror.msys2.org/msys/sources/gmp-6.3.0-2.src.tar.zst"
+      "sourceUrl": "https://mirror.msys2.org/msys/sources/gmp-6.3.0-2.src.tar.zst",
+      "sourceSize": 2096699,
+      "sourceSha256": "02356ca25ce362edb883ce7c060050de2cec5f2b1227a1c56ef7c0a0f99ff667"
     },
     {
       "name": "grep",
@@ -216,7 +232,9 @@
       ],
       "provides": [],
       "packagePage": "https://packages.msys2.org/package/grep?repo=msys",
-      "sourceUrl": "https://mirror.msys2.org/msys/sources/grep-1~3.0-7.src.tar.zst"
+      "sourceUrl": "https://mirror.msys2.org/msys/sources/grep-1~3.0-7.src.tar.zst",
+      "sourceSize": 1378706,
+      "sourceSha256": "acba43b9b2c3eb393f9a75d02a1eca34fa23d959541150a7ac4ffbafce3cae4e"
     },
     {
       "name": "gzip",
@@ -238,7 +256,9 @@
       ],
       "provides": [],
       "packagePage": "https://packages.msys2.org/package/gzip?repo=msys",
-      "sourceUrl": "https://mirror.msys2.org/msys/sources/gzip-1.15-1.src.tar.zst"
+      "sourceUrl": "https://mirror.msys2.org/msys/sources/gzip-1.15-1.src.tar.zst",
+      "sourceSize": 811076,
+      "sourceSha256": "edf0bbd51c3f366b9d19cf5d6f1f2830caefae68d0fc626ad2befbd25d5f21eb"
     },
     {
       "name": "less",
@@ -260,7 +280,9 @@
       ],
       "provides": [],
       "packagePage": "https://packages.msys2.org/package/less?repo=msys",
-      "sourceUrl": "https://mirror.msys2.org/msys/sources/less-710-1.src.tar.zst"
+      "sourceUrl": "https://mirror.msys2.org/msys/sources/less-710-1.src.tar.zst",
+      "sourceSize": 1159335,
+      "sourceSha256": "115d438589a12bbc1ebf4fc9c88d0e465b1650a0b272f76b2df06d993832990c"
     },
     {
       "name": "libbz2",
@@ -281,7 +303,9 @@
       ],
       "provides": [],
       "packagePage": "https://packages.msys2.org/package/libbz2?repo=msys",
-      "sourceUrl": "https://mirror.msys2.org/msys/sources/bzip2-1.0.8-4.src.tar.zst"
+      "sourceUrl": "https://mirror.msys2.org/msys/sources/bzip2-1.0.8-4.src.tar.zst",
+      "sourceSize": 842603,
+      "sourceSha256": "a7e9ea6335ef2902508de0bbbb70e2e9909b6b7b6d05fc207f8fdf0cf44ad053"
     },
     {
       "name": "libiconv",
@@ -302,7 +326,9 @@
       ],
       "provides": [],
       "packagePage": "https://packages.msys2.org/package/libiconv?repo=msys",
-      "sourceUrl": "https://mirror.msys2.org/msys/sources/libiconv-1.19-1.src.tar.zst"
+      "sourceUrl": "https://mirror.msys2.org/msys/sources/libiconv-1.19-1.src.tar.zst",
+      "sourceSize": 5133707,
+      "sourceSha256": "5a8bcd3242e2be94fffd9f03fadcda8d9fd64047430050c5cbd214cd3bf7f0a7"
     },
     {
       "name": "libintl",
@@ -324,7 +350,9 @@
       ],
       "provides": [],
       "packagePage": "https://packages.msys2.org/package/libintl?repo=msys",
-      "sourceUrl": "https://mirror.msys2.org/msys/sources/gettext-0.22.5-1.src.tar.zst"
+      "sourceUrl": "https://mirror.msys2.org/msys/sources/gettext-0.22.5-1.src.tar.zst",
+      "sourceSize": 21732949,
+      "sourceSha256": "e07a0b3e6716aae86dc0edd2dcdc8864731d56051345592b53659a3840ccfbd8"
     },
     {
       "name": "liblzma",
@@ -343,7 +371,9 @@
       "depends": [],
       "provides": [],
       "packagePage": "https://packages.msys2.org/package/liblzma?repo=msys",
-      "sourceUrl": "https://mirror.msys2.org/msys/sources/xz-5.8.4-1.src.tar.zst"
+      "sourceUrl": "https://mirror.msys2.org/msys/sources/xz-5.8.4-1.src.tar.zst",
+      "sourceSize": 1669697,
+      "sourceSha256": "dedeb89e94779cdf4a90ce6f6422ac218b7b1ac1e11766dcb915a823e1c4d8ee"
     },
     {
       "name": "libpcre",
@@ -364,7 +394,9 @@
       ],
       "provides": [],
       "packagePage": "https://packages.msys2.org/package/libpcre?repo=msys",
-      "sourceUrl": "https://mirror.msys2.org/msys/sources/pcre-8.45-5.src.tar.zst"
+      "sourceUrl": "https://mirror.msys2.org/msys/sources/pcre-8.45-5.src.tar.zst",
+      "sourceSize": 1577595,
+      "sourceSha256": "f7104aa31f29655689b404ead9923332e2fa6aadfe97c060d0dfc02f4661d6b5"
     },
     {
       "name": "libpcre2_8",
@@ -385,7 +417,9 @@
       ],
       "provides": [],
       "packagePage": "https://packages.msys2.org/package/libpcre2_8?repo=msys",
-      "sourceUrl": "https://mirror.msys2.org/msys/sources/pcre2-10.49-1.src.tar.zst"
+      "sourceUrl": "https://mirror.msys2.org/msys/sources/pcre2-10.49-1.src.tar.zst",
+      "sourceSize": 2183626,
+      "sourceSha256": "2ea315e233443321a6581ddaefc057289f91fdd4b396c1d0dffae5320e064e4b"
     },
     {
       "name": "libreadline",
@@ -406,7 +440,9 @@
       ],
       "provides": [],
       "packagePage": "https://packages.msys2.org/package/libreadline?repo=msys",
-      "sourceUrl": "https://mirror.msys2.org/msys/sources/readline-8.3.006-1.src.tar.zst"
+      "sourceUrl": "https://mirror.msys2.org/msys/sources/readline-8.3.006-1.src.tar.zst",
+      "sourceSize": 3357587,
+      "sourceSha256": "9ddb3eb989f6ad7d696ce5a2d92322b33a20056b293e3c4fc4f6cc568a320640"
     },
     {
       "name": "mpfr",
@@ -427,7 +463,9 @@
       ],
       "provides": [],
       "packagePage": "https://packages.msys2.org/package/mpfr?repo=msys",
-      "sourceUrl": "https://mirror.msys2.org/msys/sources/mpfr-4.2.2-1.src.tar.zst"
+      "sourceUrl": "https://mirror.msys2.org/msys/sources/mpfr-4.2.2-1.src.tar.zst",
+      "sourceSize": 1507563,
+      "sourceSha256": "e0c56e3af3819471e74dd37e32660e4eb8f58761c4d214dabd2d62f57c548869"
     },
     {
       "name": "msys2-runtime",
@@ -446,7 +484,9 @@
       "depends": [],
       "provides": [],
       "packagePage": "https://packages.msys2.org/package/msys2-runtime?repo=msys",
-      "sourceUrl": "https://mirror.msys2.org/msys/sources/msys2-runtime-3.6.11-4.src.tar.zst"
+      "sourceUrl": "https://mirror.msys2.org/msys/sources/msys2-runtime-3.6.11-4.src.tar.zst",
+      "sourceSize": 128907415,
+      "sourceSha256": "4b178dfb5b77bce293706dcfabea673b77d8da061a4725bdf4cd94f17533c204"
     },
     {
       "name": "ncurses",
@@ -467,7 +507,9 @@
       ],
       "provides": [],
       "packagePage": "https://packages.msys2.org/package/ncurses?repo=msys",
-      "sourceUrl": "https://mirror.msys2.org/msys/sources/ncurses-6.6-2.src.tar.zst"
+      "sourceUrl": "https://mirror.msys2.org/msys/sources/ncurses-6.6-2.src.tar.zst",
+      "sourceSize": 3785750,
+      "sourceSha256": "f5df12bd297e6b6930e2aa68e8014347b2193592645d93acce6774e05cbf15e6"
     },
     {
       "name": "patch",
@@ -486,7 +528,9 @@
       "depends": [],
       "provides": [],
       "packagePage": "https://packages.msys2.org/package/patch?repo=msys",
-      "sourceUrl": "https://mirror.msys2.org/msys/sources/patch-2.8-2.src.tar.zst"
+      "sourceUrl": "https://mirror.msys2.org/msys/sources/patch-2.8-2.src.tar.zst",
+      "sourceSize": 910153,
+      "sourceSha256": "bc69f8c3ddd1f6e6849d5351f32a540e2dd14d19970cf24373de6c67e63a3cd9"
     },
     {
       "name": "sed",
@@ -508,7 +552,9 @@
       ],
       "provides": [],
       "packagePage": "https://packages.msys2.org/package/sed?repo=msys",
-      "sourceUrl": "https://mirror.msys2.org/msys/sources/sed-4.9-1.src.tar.zst"
+      "sourceUrl": "https://mirror.msys2.org/msys/sources/sed-4.9-1.src.tar.zst",
+      "sourceSize": 1399712,
+      "sourceSha256": "a9686da7c1f3cb2ba7ae5f20f30d9ef38f7bba993f9c777b43bd13c7fbd7cc58"
     },
     {
       "name": "tar",
@@ -531,7 +577,9 @@
       ],
       "provides": [],
       "packagePage": "https://packages.msys2.org/package/tar?repo=msys",
-      "sourceUrl": "https://mirror.msys2.org/msys/sources/tar-1.35-3.src.tar.zst"
+      "sourceUrl": "https://mirror.msys2.org/msys/sources/tar-1.35-3.src.tar.zst",
+      "sourceSize": 2322225,
+      "sourceSha256": "eeef1210f2f3db98bdf301ab72e0e8886b8348938e58dfc58897639143eebf0b"
     },
     {
       "name": "unzip",
@@ -553,7 +601,9 @@
       ],
       "provides": [],
       "packagePage": "https://packages.msys2.org/package/unzip?repo=msys",
-      "sourceUrl": "https://mirror.msys2.org/msys/sources/unzip-6.0-3.src.tar.zst"
+      "sourceUrl": "https://mirror.msys2.org/msys/sources/unzip-6.0-3.src.tar.zst",
+      "sourceSize": 1383852,
+      "sourceSha256": "cac4880eed19117a26ee8827619e6a22110adf2ba18f4ca0d94ba5dd5d4d1453"
     },
     {
       "name": "which",
@@ -574,7 +624,9 @@
       ],
       "provides": [],
       "packagePage": "https://packages.msys2.org/package/which?repo=msys",
-      "sourceUrl": "https://mirror.msys2.org/msys/sources/which-2.25-1.src.tar.zst"
+      "sourceUrl": "https://mirror.msys2.org/msys/sources/which-2.25-1.src.tar.zst",
+      "sourceSize": 204710,
+      "sourceSha256": "374eb8f909ee69c57bdf9b4f4baf696459eb6e47e96e3e7f396661614d8628b0"
     },
     {
       "name": "xz",
@@ -597,7 +649,9 @@
       ],
       "provides": [],
       "packagePage": "https://packages.msys2.org/package/xz?repo=msys",
-      "sourceUrl": "https://mirror.msys2.org/msys/sources/xz-5.8.4-1.src.tar.zst"
+      "sourceUrl": "https://mirror.msys2.org/msys/sources/xz-5.8.4-1.src.tar.zst",
+      "sourceSize": 1669697,
+      "sourceSha256": "dedeb89e94779cdf4a90ce6f6422ac218b7b1ac1e11766dcb915a823e1c4d8ee"
     }
   ]
 }

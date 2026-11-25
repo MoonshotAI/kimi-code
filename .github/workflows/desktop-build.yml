@@ -370,6 +370,10 @@ jobs:
           "Windows Bash runtime: $($files.Count) files, $($executables.Count) signed executables, $([math]::Round($bytes / 1MB, 1)) MiB" >> "$env:GITHUB_STEP_SUMMARY"
           "Windows installer size: $([math]::Round($installer.Length / 1MB, 1)) MiB" >> "$env:GITHUB_STEP_SUMMARY"
 
+      - name: Bundle corresponding sources for Windows Bash
+        if: runner.os == 'Windows'
+        run: node apps/desktop/scripts/prepare-windows-bash.mjs --bundle-sources apps/desktop/dist-app
+
       - name: Verify Canary Linux installers
         if: runner.os == 'Linux' && (inputs.canary || github.event_name == 'schedule' || (github.event_name == 'push' && github.workflow == 'Desktop build' && startsWith(github.ref, 'refs/heads/release/')))
         run: |
@@ -439,12 +443,23 @@ jobs:
           retention-days: ${{ inputs.retention-days || 7 }}
           if-no-files-found: error
 
+      - name: Upload Windows Preview Bash sources
+        if: runner.os == 'Windows' && inputs.preview
+        id: upload-preview-sources
+        uses: actions/upload-artifact@v7
+        with:
+          path: apps/desktop/dist-app/Windows-Bash-Sources.tar
+          archive: false
+          retention-days: ${{ inputs.retention-days || 7 }}
+          if-no-files-found: error
+
       - name: Add Windows Preview download link
         if: runner.os == 'Windows' && inputs.preview
         shell: bash
         env:
           INSTALLER_URL: ${{ steps.upload-preview-exe.outputs.artifact-url }}
-        run: printf '\n[Download EXE (win32-x64)](%s)\n' "$INSTALLER_URL" >> "$GITHUB_STEP_SUMMARY"
+          SOURCES_URL: ${{ steps.upload-preview-sources.outputs.artifact-url }}
+        run: printf '\n[Download EXE (win32-x64)](%s) · [Windows Bash sources](%s)\n' "$INSTALLER_URL" "$SOURCES_URL" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload release bundle
         if: ${{ !inputs.preview }}
@@ -456,6 +471,7 @@ jobs:
             apps/desktop/dist-app/*.dmg
             apps/desktop/dist-app/*.zip
             apps/desktop/dist-app/*.exe
+            apps/desktop/dist-app/Windows-Bash-Sources.tar
             apps/desktop/dist-app/*.AppImage
             apps/desktop/dist-app/*.deb
             apps/desktop/dist-app/*.rpm
@@ -524,7 +540,7 @@ jobs:
             gh release create "$tag" \
               --target "${GITHUB_SHA}" \
               --title "Kimi Code Desktop ${version}" \
-              --notes "目标版本：${version%%-canary.*}；来源：${GITHUB_REF_NAME} @ ${GITHUB_SHA}。CDN 需手动发布。" \
+              --notes "目标版本：${version%%-canary.*}；来源：${GITHUB_REF_NAME} @ ${GITHUB_SHA}。CDN 需手动发布。[Windows Bash 源码](https://github.com/${GITHUB_REPOSITORY}/releases/download/${tag}/Windows-Bash-Sources.tar)" \
               --prerelease
             release_json='{"assets":[]}'
           fi

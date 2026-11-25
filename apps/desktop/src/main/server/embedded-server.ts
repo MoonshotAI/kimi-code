@@ -43,7 +43,7 @@ export interface StartDesktopServerOptions {
 export async function startDesktopServer(
   opts: StartDesktopServerOptions,
 ): Promise<DesktopServerHandle> {
-  const bashEnv = resolveWindowsBashEnv();
+  const bashEnv = await resolveWindowsBashEnv();
   if (bashEnv !== undefined) log.info(`[kimi-desktop] Using bundled Windows Bash: ${bashEnv.KIMI_SHELL_PATH}`);
   configureSearchWorkerRuntime(fileURLToPath(new URL('./search-worker.cjs', import.meta.url)));
   installGlobalProxyDispatcher();

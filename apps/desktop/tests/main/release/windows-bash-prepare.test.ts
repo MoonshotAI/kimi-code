@@ -1,12 +1,12 @@
-import { mkdtemp, link, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, link, mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { zstdCompressSync } from 'node:zlib';
-import { c as createTar, Header } from 'tar';
+import { c as createTar, Header, x as extractTar } from 'tar';
 import { afterEach, describe, expect, it } from 'vitest';
 // @ts-expect-error JavaScript build script has no declaration file.
-import { prepareWindowsBash, verifyWindowsBashRuntime } from '../../../scripts/prepare-windows-bash.mjs';
+import { bundleWindowsBashSources, prepareWindowsBash, verifyWindowsBashRuntime } from '../../../scripts/prepare-windows-bash.mjs';
 
 const temporaryDirs: string[] = [];
 const requiredFiles = [
@@ -139,6 +139,21 @@ describe('prepareWindowsBash', () => {
     await expect(readdir(options.outputDir)).resolves.toEqual(['sentinel']);
   });
 
+  it('publishes complete runtimes when builders share a cache and output directory', async () => {
+    const dir = await workspace();
+    const options = await makePackage(dir);
+    const build = (outputDir: string) => prepareWindowsBash({ platform: 'win32', ...options, outputDir });
+    await build(options.outputDir);
+    await rename(options.outputDir, options.outputDir + '.previous');
+    const other = path.join(dir, 'other');
+    const [one, two, three] = await Promise.all([build(options.outputDir), build(other), build(options.outputDir)]);
+    expect([two, three]).toEqual([one, one]);
+    await expect(verifyWindowsBashRuntime(options.outputDir)).resolves.toEqual(one);
+    await expect(verifyWindowsBashRuntime(other)).resolves.toEqual(one);
+    expect(await readdir(options.cacheDir)).toEqual(['bash-1-1-x86_64.pkg.tar.zst']);
+    expect((await readdir(dir)).filter(file => file.endsWith('.previous') || file.endsWith('.lock') || file.startsWith('.windows-bash-'))).toEqual([]);
+  });
+
   it('rejects archive path traversal', async () => {
     const dir = await workspace();
     const options = await makePackage(dir, { traversal: true });
@@ -148,7 +163,52 @@ describe('prepareWindowsBash', () => {
   });
 });
 
+describe('bundleWindowsBashSources', () => {
+  it('archives the pinned source once for split packages alongside its checksum and build recipe', async () => {
+    const dir = await workspace();
+    const options = await makePackage(dir);
+    const lock = JSON.parse(await readFile(options.lockPath, 'utf8'));
+    const pkg = lock.packages[0];
+    const source = 'bash-1-1.src.tar.zst';
+    await writeFile(path.join(options.cacheDir, source), 'test source archive');
+    pkg.sourceSha256 = createHash('sha256').update('test source archive').digest('hex');
+    pkg.sourceSize = Buffer.byteLength('test source archive');
+    lock.packages.push({ ...pkg, name: 'bash-library' });
+    await writeFile(options.lockPath, JSON.stringify(lock));
+    await bundleWindowsBashSources(options.outputDir, options);
+    const out = path.join(dir, 'extracted');
+    await mkdir(out);
+    const entries: string[] = [];
+    await extractTar({ file: path.join(options.outputDir, 'Windows-Bash-Sources.tar'), cwd: out, onReadEntry: e => { entries.push(e.path); } });
+    expect(entries.filter(file => file === source)).toHaveLength(1);
+    expect(await readFile(path.join(out, source), 'utf8')).toBe('test source archive');
+    expect(await readFile(path.join(out, 'SHA256SUMS'), 'utf8')).toBe(`${pkg.sourceSha256}  ${source}\n`);
+    expect(await readFile(path.join(out, 'build', 'windows-bash-packages.lock.json'), 'utf8')).toBe(JSON.stringify(lock));
+    expect(entries).toContain('scripts/prepare-windows-bash.mjs');
+    lock.packages[1].sourceSha256 = '0'.repeat(64);
+    await writeFile(options.lockPath, JSON.stringify(lock));
+    await expect(bundleWindowsBashSources(options.outputDir, options)).rejects.toThrow('Conflicting source archive');
+  });
+});
+
 describe('verifyWindowsBashRuntime', () => {
+  it.each([
+    ['PCRE-8.45-LICENCE.txt', 'University of Cambridge'],
+    ['PCRE2-10.49-LICENCE.txt', 'EXEMPTION FOR BINARY LIBRARY-LIKE PACKAGES'],
+    ['bzip2-1.0.8-LICENSE.txt', 'Julian R Seward'],
+  ])('ships the upstream %s and rejects a missing or substituted copy', async (file, copyrightOrTerms) => {
+    const options = await makePackage(await workspace());
+    await prepareWindowsBash({ platform: 'win32', ...options });
+    const notice = path.join(options.outputDir, 'licenses', 'common', file);
+    const text = await readFile(notice, 'utf8');
+    expect(text).toContain(copyrightOrTerms);
+    const generic = path.join(options.outputDir, 'licenses', 'common', 'BSD-3-Clause.txt');
+    await writeFile(notice, await readFile(generic));
+    await expect(verifyWindowsBashRuntime(options.outputDir)).rejects.toThrow(file);
+    await rm(notice);
+    await expect(verifyWindowsBashRuntime(options.outputDir)).rejects.toThrow(file);
+  });
+
   it('rejects missing required files and forbidden Git executables', async () => {
     const dir = await workspace();
     await expect(verifyWindowsBashRuntime(dir)).rejects.toThrow();

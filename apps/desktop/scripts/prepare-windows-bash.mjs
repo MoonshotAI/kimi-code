@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
-import { createReadStream, createWriteStream } from 'node:fs';
+import { createHash, randomUUID } from 'node:crypto';
+import { createReadStream, createWriteStream, existsSync } from 'node:fs';
 import {
   appendFile,
   copyFile,
@@ -19,12 +19,14 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { pipeline } from 'node:stream/promises';
 import { createZstdDecompress } from 'node:zlib';
-import { list as listTar, x as extractTar } from 'tar';
+import { create as createTar, list as listTar, x as extractTar } from 'tar';
+import lockfile from 'proper-lockfile';
 
 const desktopDir = fileURLToPath(new URL('..', import.meta.url));
 const defaultLockPath = path.join(desktopDir, 'build', 'windows-bash-packages.lock.json');
 const defaultOutputDir = path.join(desktopDir, 'resources-stage', 'windows-bash');
 const defaultCacheDir = path.join(desktopDir, 'resources-stage', 'windows-bash-cache');
+const sourceBundleName = 'Windows-Bash-Sources.tar';
 
 const requiredFiles = [
   'etc/fstab',
@@ -148,28 +150,31 @@ async function downloadPackage(pkg, cacheDir) {
   if (await validCachedPackage(destination, pkg)) return destination;
   let lastError;
   for (let attempt = 1; attempt <= 3; attempt += 1) {
+    const temporary = `${destination}.${randomUUID()}.download`;
     try {
-      const response = await fetch(pkg.downloadUrl, {
+      const url = attempt === 2 && pkg.mirrorUrl ? pkg.mirrorUrl : pkg.downloadUrl;
+      const response = await fetch(url, {
         headers: { 'user-agent': 'KimiCodeDesktopBuild/1' },
-        signal: AbortSignal.timeout(60_000),
+        signal: AbortSignal.timeout(pkg.mirrorUrl ? 600_000 : 60_000),
       });
-      if (!response.ok) throw new Error(`HTTP ${response.status} for ${pkg.downloadUrl}`);
+      if (!response.ok) throw new Error(`HTTP ${response.status} for ${url}`);
       const length = Number(response.headers.get('content-length'));
       if (Number.isFinite(length) && length > 0 && length !== pkg.size) {
         throw new Error(`Unexpected content length for ${pkg.filename}: ${length}`);
       }
-      const body = Buffer.from(await response.arrayBuffer());
-      if (body.length !== pkg.size) throw new Error(`Unexpected size for ${pkg.filename}: ${body.length}`);
-      if (createHash('sha256').update(body).digest('hex') !== pkg.sha256) {
-        throw new Error(`SHA-256 mismatch for ${pkg.filename}`);
+      await pipeline(response.body, createWriteStream(temporary, { flags: 'wx' }));
+      if (!await validCachedPackage(temporary, pkg)) throw new Error(`Size or SHA-256 mismatch for ${pkg.filename}`);
+      try {
+        await rename(temporary, destination);
+      } catch (error) {
+        if (!await validCachedPackage(destination, pkg)) throw error;
       }
-      const temporary = `${destination}.${process.pid}.download`;
-      await writeFile(temporary, body);
-      await rename(temporary, destination);
       return destination;
     } catch (error) {
       lastError = error;
       if (attempt < 3) await new Promise((resolve) => setTimeout(resolve, attempt * 500));
+    } finally {
+      await rm(temporary, { force: true });
     }
   }
   throw lastError;
@@ -190,7 +195,7 @@ async function downloadAll(packages, cacheDir) {
 }
 
 async function unpackPackage(pkg, tarPath, outputDir, owners) {
-  const unpackedTar = `${tarPath}.tar`;
+  const unpackedTar = path.join(path.dirname(outputDir), 'package.tar');
   await pipeline(createReadStream(tarPath), createZstdDecompress(), createWriteStream(unpackedTar));
   try {
     const { entries, pkgInfo } = await inspectPackage(unpackedTar);
@@ -276,6 +281,7 @@ function sourceManifest(lock) {
   return {
     schemaVersion: 1,
     architecture: lock.architecture,
+    sourceBundle: sourceBundleName,
     packages: lock.packages.map((pkg) => ({
       name: pkg.name,
       version: pkg.version,
@@ -284,9 +290,51 @@ function sourceManifest(lock) {
       licenses: pkg.licenses,
       packagePage: pkg.packagePage,
       sourceUrl: pkg.sourceUrl,
+      sourceSha256: pkg.sourceSha256,
       binary: { filename: pkg.filename, size: pkg.size, sha256: pkg.sha256 },
     })),
   };
+}
+
+export async function bundleWindowsBashSources(outputDir, options = {}) {
+  const lockPath = options.lockPath ?? defaultLockPath;
+  const lock = JSON.parse(await readFile(lockPath, 'utf8'));
+  validateLock(lock);
+  const sources = new Map();
+  for (const pkg of lock.packages) {
+    const url = new URL(pkg.sourceUrl);
+    const filename = path.posix.basename(url.pathname);
+    if (!/^[\w.+~-]+\.src\.tar\.zst$/.test(filename) || !/^[a-f0-9]{64}$/.test(pkg.sourceSha256) || !Number.isSafeInteger(pkg.sourceSize) || pkg.sourceSize <= 0) {
+      throw new Error(`Invalid source archive for ${pkg.name}`);
+    }
+    const previous = sources.get(filename);
+    if (previous && (previous.sha256 !== pkg.sourceSha256 || previous.size !== pkg.sourceSize || previous.mirrorUrl !== pkg.sourceUrl)) {
+      throw new Error(`Conflicting source archive: ${filename}`);
+    }
+    url.hostname = 'repo.msys2.org';
+    sources.set(filename, { name: filename, filename, sha256: pkg.sourceSha256, size: pkg.sourceSize, downloadUrl: url.href, mirrorUrl: pkg.sourceUrl });
+  }
+  const archives = await downloadAll(sources.values(), options.cacheDir ?? defaultCacheDir);
+  await mkdir(outputDir, { recursive: true });
+  const staging = await mkdtemp(path.join(outputDir, '.windows-bash-sources-'));
+  try {
+    const files = [...sources.keys()].sort();
+    for (const filename of files) await copyFile(archives.get(filename), path.join(staging, filename));
+    const checksums = files.map(filename => `${sources.get(filename).sha256}  ${filename}\n`).join('');
+    await writeFile(path.join(staging, 'SHA256SUMS'), checksums);
+    await mkdir(path.join(staging, 'build'));
+    await mkdir(path.join(staging, 'scripts'));
+    await copyFile(lockPath, path.join(staging, 'build', 'windows-bash-packages.lock.json'));
+    await cp(path.join(desktopDir, 'build', 'windows-bash-licenses'), path.join(staging, 'build', 'windows-bash-licenses'), { recursive: true });
+    for (const file of ['package.json', 'scripts/prepare-windows-bash.mjs', 'scripts/verify-windows-bash.sh']) {
+      await copyFile(path.join(desktopDir, file), path.join(staging, file));
+    }
+    const archive = path.join(staging, sourceBundleName);
+    await createTar({ cwd: staging, file: archive, portable: true }, [...files, 'SHA256SUMS', 'build', 'scripts', 'package.json']);
+    await rename(archive, path.join(outputDir, sourceBundleName));
+  } finally {
+    await rm(staging, { recursive: true, force: true });
+  }
 }
 
 async function walk(root, relative = '') {
@@ -305,6 +353,14 @@ export async function verifyWindowsBashRuntime(runtimeDir, options = {}) {
   const files = await walk(runtimeDir);
   const missing = requiredFiles.filter((file) => !files.includes(file));
   if (missing.length > 0) throw new Error(`Missing Windows Bash runtime files: ${missing.join(', ')}`);
+  const { packageNotices } = JSON.parse(await readFile(new URL('../build/windows-bash-licenses/SOURCE.json', import.meta.url), 'utf8'));
+  for (const [name, notice] of Object.entries(packageNotices)) {
+    const relative = `licenses/common/${name}`;
+    if (!files.includes(relative)) throw new Error(`Missing Windows Bash license notice: ${relative}`);
+    if (await sha256File(path.join(runtimeDir, relative)) !== notice.sha256) {
+      throw new Error(`Windows Bash license notice SHA-256 mismatch: ${relative}`);
+    }
+  }
   const forbidden = files.filter((file) => /(?:^|\/)(?:git|git-bash|pacman)(?:\.exe)?$|git-credential-/i.test(file));
   if (forbidden.length > 0) throw new Error(`Forbidden Windows Bash runtime files: ${forbidden.join(', ')}`);
   if (options.smoke === true && process.platform === 'win32') {
@@ -340,7 +396,23 @@ export async function verifyWindowsBashRuntime(runtimeDir, options = {}) {
 }
 
 async function replaceDirectory(source, destination) {
-  const backup = `${destination}.previous-${process.pid}`;
+  const release = await lockfile.lock(destination, {
+    realpath: false,
+    retries: { retries: 120, minTimeout: 50, maxTimeout: 500, randomize: true },
+  });
+  try {
+    await swapRuntimeDirectory(source, destination);
+  } finally {
+    await release();
+  }
+}
+
+async function swapRuntimeDirectory(source, destination) {
+  const backup = `${destination}.previous`;
+  if (existsSync(backup)) {
+    if (existsSync(destination)) await rm(backup, { recursive: true, force: true });
+    else await rename(backup, destination);
+  }
   let hasBackup = false;
   try {
     await rename(destination, backup);
@@ -384,8 +456,10 @@ export async function prepareWindowsBash(options = {}) {
   const lock = JSON.parse(lockText);
   validateLock(lock);
   await mkdir(path.dirname(outputDir), { recursive: true });
-  const temporary = await mkdtemp(path.join(path.dirname(outputDir), '.windows-bash-'));
+  const staging = await mkdtemp(path.join(path.dirname(outputDir), '.windows-bash-'));
+  const temporary = path.join(staging, 'runtime');
   try {
+    await mkdir(temporary);
     const archives = await downloadAll(lock.packages, cacheDir);
     const owners = new Map();
     const inspected = new Map();
@@ -405,13 +479,17 @@ export async function prepareWindowsBash(options = {}) {
     const result = await verifyWindowsBashRuntime(temporary);
     await replaceDirectory(temporary, outputDir);
     return result;
-  } catch (error) {
-    await rm(temporary, { recursive: true, force: true });
-    throw error;
+  } finally {
+    await rm(staging, { recursive: true, force: true });
   }
 }
 
 async function main() {
+  if (process.argv[2] === '--bundle-sources') {
+    if (!process.argv[3]) throw new Error('--bundle-sources requires an output directory');
+    await bundleWindowsBashSources(path.resolve(process.argv[3]));
+    return;
+  }
   const verifyIndex = process.argv.indexOf('--verify');
   if (verifyIndex >= 0) {
     const runtimeDir = process.argv[verifyIndex + 1];

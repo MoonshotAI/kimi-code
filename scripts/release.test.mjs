@@ -143,6 +143,7 @@ test('prepares a draft and retries an interrupted release from the same SHA', ()
   assert.equal(f.state().releases[tag].draft, true);
   assert.equal(f.state().releases[tag].title, 'Kimi Code Desktop 1.0.1');
   assert.match(f.state().releases[tag].notes, /Fix a bug/);
+  assert.ok(f.state().releases[tag].notes.includes(`/releases/download/${tag}/Windows-Bash-Sources.tar`));
   assert.doesNotMatch(f.state().releases[tag].notes, /Old notes/);
   assert.match(readFileSync(join(f.dir, 'output'), 'utf8'), /build=true/);
   assert.equal(run(f, 'prepare').status, 0);
@@ -286,6 +287,18 @@ void test('Windows Bash verification handles literal executable names and the Ac
       assert.match(report ?? '', />> "\$env:GITHUB_STEP_SUMMARY"$/);
     }
   });
+});
+
+void test('Windows installers and their corresponding sources ship through the same release channels', () => {
+  const workflow = readFileSync(new URL('../.github/workflows/desktop-build.yml', import.meta.url), 'utf8');
+  const steps = workflow.split('      - name: ');
+  const release = steps.find(step => step.startsWith('Upload release bundle\n'));
+  const preview = steps.find(step => step.startsWith('Upload Windows Preview Bash sources\n'));
+  assert.ok(release?.includes('apps/desktop/dist-app/Windows-Bash-Sources.tar'));
+  assert.ok(preview?.includes('apps/desktop/dist-app/Windows-Bash-Sources.tar'));
+  assert.ok(preview.includes("runner.os == 'Windows' && inputs.preview"));
+  assert.match(workflow, /steps\.upload-preview-sources\.outputs\.artifact-url/);
+  assert.match(workflow, /--bundle-sources apps\/desktop\/dist-app/);
 });
 
 void test('a regular Desktop build prepares Bash without running dev or dist first', () => {

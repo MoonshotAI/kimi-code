@@ -88,7 +88,7 @@ describe('startDesktopServer', () => {
     registerBrowserMcpMock.mockReset().mockReturnValue({ dispose: registrationDisposeMock });
     registrationDisposeMock.mockReset();
     startServerMock.mockReset();
-    resolveWindowsBashEnvMock.mockReset().mockReturnValue(undefined);
+    resolveWindowsBashEnvMock.mockReset().mockResolvedValue(undefined);
     installProxyMock.mockReset();
     createKimiDeviceIdMock.mockReset().mockReturnValue('device-1');
     wireDesktopTelemetryMock.mockReset().mockResolvedValue(null);
@@ -178,7 +178,7 @@ describe('startDesktopServer', () => {
     const originalPath = process.env[pathKey];
     const originalShell = process.env['KIMI_SHELL_PATH'];
     const runtime = { KIMI_SHELL_PATH: process.execPath, [pathKey]: 'D:\\Desktop Tools\\usr\\bin' };
-    resolveWindowsBashEnvMock.mockReturnValue(runtime);
+    resolveWindowsBashEnvMock.mockResolvedValue(runtime);
     startServerMock.mockResolvedValue({ host: '127.0.0.1', port: 54321, core: core(), close: vi.fn() });
 
     const handle = await startDesktopServer({});
@@ -202,7 +202,7 @@ describe('startDesktopServer', () => {
           await child.dispose();
         }
       };
-      await expect(childEnv(process.execPath)).resolves.toEqual([runtime[pathKey], process.execPath, 'test-session']);
+      await expect(childEnv(process.execPath)).resolves.toEqual([runtime[pathKey], originalShell ?? null, 'test-session']);
       await expect(childEnv('node')).resolves.toEqual([originalPath, originalShell ?? null, 'test-session']);
       expect(process.env[pathKey]).toBe(originalPath);
       expect(process.env['KIMI_SHELL_PATH']).toBe(originalShell);

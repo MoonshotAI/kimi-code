@@ -237,6 +237,9 @@ importers:
       pinia:
         specifier: 4.0.3
         version: 4.0.3(@vue/devtools-api@8.2.1)(typescript@6.0.2)(vue@3.5.35(typescript@6.0.2))
+      proper-lockfile:
+        specifier: ^4.1.2
+        version: 4.1.2
       qrcode:
         specifier: ^1.5.4
         version: 1.5.4

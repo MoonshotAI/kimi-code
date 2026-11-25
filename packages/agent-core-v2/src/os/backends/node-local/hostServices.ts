@@ -16,15 +16,16 @@ export interface WindowsBashRuntimeEnv extends Readonly<Record<string, string>> 
 }
 
 export function windowsBashRuntimeSeed(env: WindowsBashRuntimeEnv): ScopeSeed {
+  const { KIMI_SHELL_PATH: shellPath, ...shellEnv } = env;
   const native = new HostProcessService();
   const processes: IHostProcessService = {
     _serviceBrand: undefined,
-    spawn: (command, args, options) => native.spawn(command, args, command === env.KIMI_SHELL_PATH
-      ? { ...options, env: { ...env, ...options?.env } }
+    spawn: (command, args, options) => native.spawn(command, args, command === shellPath
+      ? { ...options, env: { ...shellEnv, ...options?.env } }
       : options),
   };
   return [
-    [IHostEnvironment, new SyncDescriptor(HostEnvironmentService, [env.KIMI_SHELL_PATH])],
+    [IHostEnvironment, new SyncDescriptor(HostEnvironmentService, [shellPath])],
     [IHostProcessService, processes],
   ];
 }

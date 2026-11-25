@@ -32,7 +32,8 @@ test('the terminal panel runs commands in tabs, guards running programs and keep
     await expect(panel).toBeVisible();
     await expect(tabs).toHaveCount(1);
     await expect(tabs.first()).toHaveAttribute('aria-selected', 'true');
-    await expect(tabs.first()).toHaveAttribute('title', app.workspace);
+    await tabs.first().hover();
+    await expect(window.getByRole('tooltip')).toHaveText(app.workspace);
     await waitForPrompt(window);
     await expect(tabs.first()).toHaveText(shellName);
   });

@@ -1,4 +1,5 @@
 import { existsSync } from 'node:fs';
+import { mkdir } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -203,11 +204,14 @@ export async function startDesktop({ home, reopen }: SurfaceLaunch): Promise<Sur
   const launch = reopen?.launch ?? 1;
   const networkLog = join(home.root, `desktop-network-${launch}.log`);
   const workspace = reopen === undefined ? [`--workspace=${home.workspace}`] : [];
+  const windowsHome = process.platform === 'win32' ? { HOME: undefined, HOMEDRIVE: '', HOMEPATH: '' } : {};
+  if (process.platform === 'win32') await mkdir(join(home.home, 'Downloads'), { recursive: true });
   const app = await _electron.launch({
     args: ['-r', fileURLToPath(NETWORK_GUARD_PRELOAD), desktop, `--user-data-dir=${join(home.root, 'user-data')}`, '--lang=en-US', ...workspace, OFFLINE_NAMES],
     cwd: home.workspace,
     env: {
       ...kimiCliEnv(home, {
+        ...windowsHome,
         ELECTRON_RUN_AS_NODE: undefined,
         LANG: 'en_US.UTF-8',
         KIMI_DESKTOP_E2E: process.env['E2E_HEADED'] === '1' ? '1' : 'quiet',

@@ -2,31 +2,13 @@ import { existsSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import { bash as callBash, say as reply } from '@moonshot-ai/testkit/model';
-
-import { expect, test, testWithProvider } from './fixtures/app';
+import { expect, test } from './fixtures/app';
 import { cardOutput, gatedLoop, gateFile, readyFile, toolCard } from './fixtures/bash-card';
 import { captureClipboardWrites } from './fixtures/clipboard';
 import { bash, messageProblems, say, textOf } from './fixtures/model';
 import { sidebarOf } from './fixtures/sessions';
 
 test.use({ permissionMode: 'yolo' });
-
-test.describe('Bash path resolution', () => {
-  test.use({ appEnv: process.platform === 'win32' ? { HOME: undefined, HOMEDRIVE: '', HOMEPATH: '' } : {} });
-
-  testWithProvider('Bash reads files in the workspace and the user home', async ({ app, provider, scratch }) => {
-    await writeFile(join(app.workspace, 'workspace marker.txt'), 'from the workspace\n');
-    await writeFile(join(scratch, 'os-home', 'home marker.txt'), 'from the user profile\n');
-    const readMarkers = 'cat "workspace marker.txt" && cd ~ && cat "home marker.txt"';
-    const command = process.platform === 'win32' ? `test -f /source-manifest.json && ${readMarkers}` : readMarkers;
-    provider.script(callBash(command), reply('Read both files.'));
-    await app.submit('Read both markers with Bash');
-    const followup = await provider.lane('main').waitForRequest(1);
-    expect(followup.texts('tool').join('\n')).toContain('from the workspace\nfrom the user profile');
-    await expect(app.window.getByRole('list').first().getByText('Read both files.', { exact: true })).toBeVisible();
-  });
-});
 
 const STREAM = gatedLoop('stream', ['stream-line-1', 'stream-line-2'], ['stream-line-3', 'stream-line-4']);
 const FAIL = 'echo boom-on-stderr >&2; exit 3';

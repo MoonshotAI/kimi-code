@@ -48,6 +48,7 @@ export interface SurfaceOptions {
 
 export interface ScenarioOptions {
   readonly workspace?: Readonly<Record<string, string>>;
+  readonly homeFiles?: Readonly<Record<string, string>>;
   readonly except?: Readonly<Partial<Record<Surface, string>>>;
   readonly onlyOn?: readonly Surface[];
   readonly reason?: string;
@@ -132,7 +133,7 @@ function workspaceKey(path: string): string {
   return normalized.split(sep).join('/');
 }
 
-async function seedWorkspace(root: string, files: Readonly<Record<string, string>>): Promise<void> {
+async function seedFiles(root: string, files: Readonly<Record<string, string>>): Promise<void> {
   for (const [path, content] of Object.entries(files)) {
     const target = join(root, workspaceKey(path));
     await mkdir(dirname(target), { recursive: true });
@@ -253,7 +254,10 @@ class ScenarioSession {
     const home = await createTestHome(`e2e-${this.surface}`);
     this.home = home;
     assertOutsideGitWorkTree(home.workspace);
-    await seedWorkspace(home.workspace, options.workspace ?? {});
+    await Promise.all([
+      seedFiles(home.workspace, options.workspace ?? {}),
+      seedFiles(home.home, options.homeFiles ?? {}),
+    ]);
     const model = await startFakeModel();
     this.model = model;
     await writeKimiConfig(home.dataDir, fakeModelConfig(model));
@@ -391,7 +395,7 @@ class ScenarioSession {
       write: (path, content) =>
         base.step(DISK_TITLES.write(path, content), async () => {
           const key = workspaceKey(path);
-          await seedWorkspace(root, { [key]: content });
+          await seedFiles(root, { [key]: content });
           this.declared.set(key, contentDigest(content));
         }),
       expectFile: (path, content) =>
