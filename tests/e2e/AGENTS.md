@@ -24,7 +24,7 @@ playwright.config.ts               一个面一个 project
 - Web 跑的是 CLI 自带的 Web 界面。先 `pnpm sync:web` 把界面构建出来，改了 `apps/desktop/src/renderer` 或它依赖的 `packages/` 之后要重跑；第一次还要装浏览器：`pnpm --filter @moonshot-ai/e2e exec playwright install chromium`。然后 `pnpm --filter @moonshot-ai/e2e exec playwright test --project=web`。CLI 本身和 TUI 一样，默认跑源码，设 `TESTKIT_CLI_BUILD=dist` 跑构建产物。结束时驱动给服务端发 Ctrl+C，所以也只支持 Linux 和 macOS。
 - Desktop 的窗口和 Web 的浏览器默认都不显示。想看着跑，设 `E2E_HEADED=1`。
 - 工作区必须在 git 工作树之外。`TMPDIR` 如果在某个仓库里，夹具会直接报错：POSIX 上，工作区在 git 工作树里时，Edit 和 Write 会被自动批准，审批场景会挂住。
-- CI：`.github/workflows/e2e.yml`，每个 PR 都在 Linux 上跑，作业名带 optional；Desktop 作业跑在 xvfb 的虚拟显示器里，Web 作业先装 Chromium。仓库目前没有必过检查，所以它红了不挡合并。
+- CI：`.github/workflows/e2e.yml`，在 Linux 上跑，作业名带 optional。每次合并到 main 都跑；PR 上跳过 draft，只在打了 `e2e` 标签，或改动了 `tests/e2e/`、`packages/testkit/` 或这个工作流时跑。改了产品代码、想在合并前看 E2E 结果，就给 PR 打 `e2e` 标签。Desktop 作业跑在 xvfb 的虚拟显示器里，Web 作业先装 Chromium。仓库目前没有必过检查，所以它红了不挡合并。
 
 ## 写场景
 
