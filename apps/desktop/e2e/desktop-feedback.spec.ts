@@ -4,6 +4,7 @@ import { held, say, type FakeModel } from '@moonshot-ai/testkit/model';
 
 import { expect, testWithProvider, type DesktopApp } from './fixtures/app';
 import { captureClipboardWrites } from './fixtures/clipboard';
+import { clickAppMenu } from './fixtures/lifecycle';
 import { sessionRowById } from './fixtures/sessions';
 import { waitForSettledReply } from './fixtures/transcript';
 
@@ -16,7 +17,7 @@ async function openAccountMenu(page: Page): Promise<Locator> {
 
 async function openAccountFeedback(page: Page): Promise<void> {
   const menu = await openAccountMenu(page);
-  await menu.getByRole('menuitem', { name: 'Feedback', exact: true }).click();
+  await menu.getByRole('menuitem', { name: 'Report an issue', exact: true }).click();
 }
 
 function themeColor(page: Page, name: string): Promise<string> {
@@ -128,10 +129,12 @@ testWithProvider('submits global and reply feedback with opt-in attachments', as
   });
   await page.reload();
 
-  await expect(page.getByRole('button', { name: 'Send feedback', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Report an issue', exact: true })).toHaveCount(0);
   const account = await openAccountMenu(page);
-  const preferences = account.getByRole('menuitem').filter({ hasText: /Settings|Appearance|Language|Feedback/ });
-  await expect(preferences).toHaveText([/^Settings/, /^Appearance/, /^Language/, 'Feedback']);
+  const preferences = account.getByRole('menuitem').filter({ hasText: /Settings|Appearance|Language|Report an issue/ });
+  await expect(preferences).toHaveText([/^Settings/, /^Appearance/, /^Language/, 'Report an issue']);
+  const reportItem = account.getByRole('menuitem', { name: 'Report an issue', exact: true });
+  await expect(reportItem.locator('xpath=preceding-sibling::*[1]')).toHaveAttribute('role', 'separator');
   const menuIcons = preferences.locator(':scope > :first-child');
   for (const colorScheme of ['dark', 'light'] as const) {
     await page.emulateMedia({ colorScheme });
@@ -145,14 +148,14 @@ testWithProvider('submits global and reply feedback with opt-in attachments', as
       return [...new Set(colors)];
     })).toHaveLength(1);
   }
-  await account.getByRole('menuitem', { name: 'Feedback', exact: true }).click();
+  await reportItem.click();
   await expect(page.getByRole('dialog', { name: 'Sign in to Kimi Code' })).toBeVisible();
   expect(feedbackRequests).toHaveLength(0);
 
   signedIn = true;
   await page.reload();
   await openAccountFeedback(page);
-  const dialog = page.getByRole('dialog', { name: 'Send feedback' });
+  const dialog = page.getByRole('dialog', { name: 'Report an issue' });
   const guideUrl = 'https://www.kimi.com/code/docs/en/kimi-code/feedback.html';
   await expect(dialog.getByRole('link', { name: 'Learn more', exact: true })).toHaveAttribute('href', guideUrl);
   await expectSelectedFeedbackPillOnHover(dialog.getByRole('button', { name: 'Bug', exact: true }));
@@ -517,12 +520,12 @@ testWithProvider('submits global feedback locally from an SSH conversation by de
   await expect(page.getByRole('button', { name: 'Good response' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Poor response' })).toBeVisible();
   const account = await openAccountMenu(page);
-  await expect(account.getByRole('menuitem', { name: 'Feedback', exact: true })).toBeVisible();
+  await expect(account.getByRole('menuitem', { name: 'Report an issue', exact: true })).toBeVisible();
   await page.keyboard.press('Escape');
   const input = page.getByRole('combobox', { name: 'Message input' });
   await input.fill('/feedback');
   await input.press('Enter');
-  const dialog = page.getByRole('dialog', { name: 'Send feedback' });
+  const dialog = page.getByRole('dialog', { name: 'Report an issue' });
   await expect(dialog).toBeVisible();
   const conversation = dialog.getByRole('checkbox', { name: /Submit this conversation/ });
   await expect(conversation).toBeAttached();
@@ -540,10 +543,12 @@ testWithProvider('keeps local feedback available when the SSH host lacks feedbac
   await expect(page.getByRole('button', { name: 'Good response' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Poor response' })).toHaveCount(0);
 
-  const dialog = page.getByRole('dialog', { name: 'Send feedback' });
-  for (const source of ['sidebar', 'command'] as const) {
+  const dialog = page.getByRole('dialog', { name: 'Report an issue' });
+  for (const source of ['sidebar', 'command', 'menu'] as const) {
     if (source === 'sidebar') {
       await openAccountFeedback(page);
+    } else if (source === 'menu') {
+      await clickAppMenu(app, 'Report an Issue');
     } else {
       const input = page.getByRole('combobox', { name: 'Message input' });
       await input.fill('/feedback');
@@ -555,7 +560,7 @@ testWithProvider('keeps local feedback available when the SSH host lacks feedbac
     await dialog.getByRole('button', { name: 'Submit', exact: true }).click();
     await expect(dialog).toBeHidden();
   }
-  expect(requests).toEqual(['sidebar', 'command'].map(source => ({
+  expect(requests).toEqual(['sidebar', 'command', 'menu'].map(source => ({
     path: '/api/v1/feedback',
     body: expect.objectContaining({ kind: 'global', source, session_id: sessionId, upload_session: false }),
   })));
@@ -565,12 +570,12 @@ testWithProvider('sends reply feedback to its SSH host by default', async ({ app
   const { sessionId, requests } = await openSshConversation(app, provider);
   const page = app.window;
   const account = await openAccountMenu(page);
-  await expect(account.getByRole('menuitem', { name: 'Feedback', exact: true })).toBeVisible();
+  await expect(account.getByRole('menuitem', { name: 'Report an issue', exact: true })).toBeVisible();
   await page.keyboard.press('Escape');
   const input = page.getByRole('combobox', { name: 'Message input' });
   await input.fill('/');
   await expect(page.getByRole('listbox')).toBeVisible();
-  await expect(page.getByRole('option', { name: 'feedback Send feedback', exact: true })).toBeVisible();
+  await expect(page.getByRole('option', { name: 'feedback Report an issue', exact: true })).toBeVisible();
   await input.press('Escape');
   await input.fill('');
   await page.getByRole('button', { name: 'Good response' }).click();
@@ -583,7 +588,7 @@ testWithProvider('attaches an SSH conversation to the locally submitted feedback
   const { sessionId, requests } = await openSshConversation(app, provider);
   const page = app.window;
   await openAccountFeedback(page);
-  const dialog = page.getByRole('dialog', { name: 'Send feedback' });
+  const dialog = page.getByRole('dialog', { name: 'Report an issue' });
   await dialog.getByRole('textbox', { name: 'Description' }).fill('Include this conversation');
   await dialog.getByText('Submit this conversation', { exact: true }).click();
   await dialog.getByRole('button', { name: 'Submit', exact: true }).click();
@@ -692,6 +697,6 @@ testWithProvider('requires a reason from the SSH host before submitting reply fe
   await expect(details).toBeHidden();
 
   await openAccountFeedback(page);
-  const global = page.getByRole('dialog', { name: 'Send feedback' });
+  const global = page.getByRole('dialog', { name: 'Report an issue' });
   await expect(global.getByRole('link', { name: 'Learn more', exact: true })).toHaveAttribute('href', localGuide);
 });

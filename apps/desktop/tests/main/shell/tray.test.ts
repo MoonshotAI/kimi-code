@@ -311,8 +311,8 @@ describe('tray telemetry', () => {
     setTrayLocale('zh');
     const template = lastTemplate();
     const labels = template.map((item) => item.label ?? item.type);
-    expect(labels.slice(-5)).toEqual(['separator', '导出诊断信息…', '打开日志文件夹', 'separator', '退出']);
-    clickItem(template.find((item) => item.label === '导出诊断信息…'));
+    expect(labels.slice(-5)).toEqual(['separator', '导出诊断信息', '打开日志文件夹', 'separator', '退出']);
+    clickItem(template.find((item) => item.label === '导出诊断信息'));
     expect(actions.exportDiagnostics).toHaveBeenCalledWith('zh');
     expect(mocks.trackDesktopEvent).toHaveBeenCalledWith('tray_action', {
       action: 'export-diagnostics',

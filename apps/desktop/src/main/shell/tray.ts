@@ -149,7 +149,7 @@ const TRAY_STRINGS: Record<TrayLocale, TrayStrings> = {
   zh: {
     pending: '待处理',
     openApp: '打开 Kimi Code',
-    exportDiagnostics: '导出诊断信息…',
+    exportDiagnostics: '导出诊断信息',
     openLogsFolder: '打开日志文件夹',
     quit: '退出',
     unnamedSession: '未命名会话',
@@ -163,7 +163,7 @@ const TRAY_STRINGS: Record<TrayLocale, TrayStrings> = {
   en: {
     pending: 'Pending',
     openApp: 'Open Kimi Code',
-    exportDiagnostics: 'Export Diagnostics…',
+    exportDiagnostics: 'Export Diagnostics',
     openLogsFolder: 'Open Logs Folder',
     quit: 'Quit',
     unnamedSession: 'Untitled session',

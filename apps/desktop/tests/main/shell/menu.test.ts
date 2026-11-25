@@ -21,6 +21,7 @@ const mocks = vi.hoisted(() => ({
   trackDesktopEvent: vi.fn(),
   showMainWindow: vi.fn(),
   createWindow: vi.fn(),
+  openFeedbackInRenderer: vi.fn(),
   sendToRenderer: vi.fn(),
   getMainWindow: vi.fn((): { webContents: object } | null => null),
   focusedContents: vi.fn((): { isDestroyed: () => boolean; selectAll: () => void; undo: () => void; redo: () => void } | null => null),
@@ -54,6 +55,7 @@ vi.mock('../../../src/main/diagnostics/track', () => ({ trackDesktopEvent: mocks
 vi.mock('../../../src/main/window/main-window', () => ({
   getMainWindow: mocks.getMainWindow,
   createWindow: mocks.createWindow,
+  openFeedbackInRenderer: mocks.openFeedbackInRenderer,
   sendToRenderer: mocks.sendToRenderer,
   showMainWindow: mocks.showMainWindow,
   devToolsMode: mocks.devToolsMode,
@@ -479,15 +481,16 @@ describe('menuTemplate', () => {
     }
   });
 
-  it('Help menu carries working Documentation / Console links, bilingually', () => {
+  it('Help menu groups links with Report an Issue above troubleshooting items, bilingually', () => {
     const zhTemplate = menuTemplate(true, 'zh');
     const helpMenu = zhTemplate[zhTemplate.length - 1] as MenuItemConstructorOptions;
     expect(helpMenu.label).toBe('帮助');
     const zhItems = submenuItems(helpMenu);
+    expect(zhItems.map((item) => item.type === 'separator' ? 'separator' : item.label)).toEqual([
+      '使用文档', '控制台', '反馈问题', 'separator', '性能录制', '导出诊断信息', '打开日志文件夹',
+    ]);
     const docs = zhItems.find((item) => item.id === 'help-docs');
     const consoleItem = zhItems.find((item) => item.id === 'help-console');
-    expect(docs?.label).toBe('使用文档');
-    expect(consoleItem?.label).toBe('控制台');
     expect(typeof docs?.click).toBe('function');
     expect(typeof consoleItem?.click).toBe('function');
 
@@ -495,21 +498,37 @@ describe('menuTemplate', () => {
     const enHelp = enTemplate[enTemplate.length - 1] as MenuItemConstructorOptions;
     expect(enHelp.label).toBe('Help');
     const enItems = submenuItems(enHelp);
-    expect(enItems.find((item) => item.id === 'help-docs')?.label).toBe('Documentation');
-    expect(enItems.find((item) => item.id === 'help-console')?.label).toBe('Console');
+    expect(enItems.map((item) => item.type === 'separator' ? 'separator' : item.label)).toEqual([
+      'Documentation', 'Console', 'Report an Issue', 'separator', 'Performance Trace', 'Export Diagnostics', 'Open Logs Folder',
+    ]);
+  });
+
+  it('Help menu Report an Issue tracks the action, shows the main window, and opens feedback', () => {
+    vi.clearAllMocks();
+    for (const isMac of [true, false]) {
+      const template = menuTemplate(isMac, 'zh');
+      const help = submenuItems(template[template.length - 1] as MenuItemConstructorOptions);
+      const report = help.find((item) => item.id === 'help-report-issue')!;
+      expect(report.label).toBe('反馈问题');
+      (report.click as () => void)();
+    }
+    expect(mocks.trackDesktopEvent).toHaveBeenCalledTimes(2);
+    expect(mocks.trackDesktopEvent).toHaveBeenCalledWith('menu_action', { action: 'help-report-issue' });
+    expect(mocks.showMainWindow).toHaveBeenCalledTimes(2);
+    expect(mocks.openFeedbackInRenderer).toHaveBeenCalledTimes(2);
   });
 
   it('Help menu exports diagnostics in the menu locale and opens the logs folder', () => {
     const zhItems = submenuItems(menuTemplate(true, 'zh').find((item) => item.label === '帮助') as MenuItemConstructorOptions);
     const zhExport = zhItems.find((item) => item.id === 'export-diagnostics');
-    expect(zhExport?.label).toBe('导出诊断信息…');
+    expect(zhExport?.label).toBe('导出诊断信息');
     expect(zhItems.find((item) => item.id === 'open-logs-folder')?.label).toBe('打开日志文件夹');
     (zhExport?.click as (() => void) | undefined)?.();
     expect(mocks.exportDiagnostics).toHaveBeenCalledWith('zh');
     expect(mocks.trackDesktopEvent).toHaveBeenCalledWith('menu_action', { action: 'export-diagnostics' });
 
     const enItems = submenuItems(menuTemplate(false, 'en').find((item) => item.label === 'Help') as MenuItemConstructorOptions);
-    expect(enItems.find((item) => item.id === 'export-diagnostics')?.label).toBe('Export Diagnostics…');
+    expect(enItems.find((item) => item.id === 'export-diagnostics')?.label).toBe('Export Diagnostics');
     const openFolder = enItems.find((item) => item.id === 'open-logs-folder');
     expect(openFolder?.label).toBe('Open Logs Folder');
     (openFolder?.click as (() => void) | undefined)?.();
@@ -676,12 +695,31 @@ describe('windowsMenuTemplate', () => {
     expect(items.some((item) => item.id === 'toggle-dev-tools')).toBe(true);
   });
 
-  it('keeps diagnostics export reachable from the custom title bar Help menu', () => {
-    const help = submenuItems(
-      windowsMenuTemplate('zh', {}, false, false).find((item) => item.id === 'help-menu') as MenuItemConstructorOptions,
-    );
-    expect(help.find((item) => item.id === 'export-diagnostics')?.label).toBe('导出诊断信息…');
-    expect(help.find((item) => item.id === 'open-logs-folder')?.label).toBe('打开日志文件夹');
+  it('keeps Report an Issue and diagnostics export reachable from the custom title bar Help menu', () => {
+    vi.clearAllMocks();
+    for (const [locale, reportLabel, exportLabel] of [
+      ['zh', '反馈问题', '导出诊断信息'],
+      ['en', 'Report an Issue', 'Export Diagnostics'],
+    ] as const) {
+      const help = submenuItems(
+        windowsMenuTemplate(locale, {}, false, false).find((item) => item.id === 'help-menu') as MenuItemConstructorOptions,
+      );
+      const report = help.find((item) => item.id === 'help-report-issue')!;
+      expect(report.label).toBe(reportLabel);
+      (report.click as () => void)();
+      expect(help.map((item) => item.type === 'separator' ? 'separator' : item.id ?? item.role)).toEqual([
+        'check-for-updates', 'retry-connection', 'separator',
+        'help-docs', 'help-console', 'help-report-issue', 'separator',
+        'performance-trace', 'export-diagnostics', 'open-logs-folder',
+        'separator', 'about',
+      ]);
+      expect(help.find((item) => item.id === 'export-diagnostics')?.label).toBe(exportLabel);
+      expect(help.find((item) => item.id === 'open-logs-folder')?.label).toBe(locale === 'zh' ? '打开日志文件夹' : 'Open Logs Folder');
+    }
+    expect(mocks.trackDesktopEvent).toHaveBeenCalledTimes(2);
+    expect(mocks.trackDesktopEvent).toHaveBeenCalledWith('menu_action', { action: 'help-report-issue' });
+    expect(mocks.showMainWindow).toHaveBeenCalledTimes(2);
+    expect(mocks.openFeedbackInRenderer).toHaveBeenCalledTimes(2);
   });
 
   it('reflects the performance trace state in Help', () => {

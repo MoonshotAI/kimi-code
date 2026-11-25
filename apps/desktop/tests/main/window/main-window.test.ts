@@ -353,6 +353,43 @@ describe('drainLaunchActions', () => {
   });
 });
 
+describe('openFeedbackInRenderer', () => {
+  beforeEach(() => {
+    vi.resetModules();
+    vi.clearAllMocks();
+    mocks.windows.length = 0;
+    mocks.startupListeners.length = 0;
+  });
+
+  it('queues open-feedback until the renderer finishes loading and delivers it once', async () => {
+    const { openFeedbackInRenderer, showMainWindow } = await import('../../../src/main/window/main-window');
+    openFeedbackInRenderer();
+    showMainWindow();
+    openFeedbackInRenderer();
+    const contents = (mocks.windows.at(-1) as { webContents: { emit(event: string): void; send: ReturnType<typeof vi.fn> } }).webContents;
+    expect(contents.send).not.toHaveBeenCalledWith(IPC.menuAction, 'open-feedback');
+
+    contents.emit('did-finish-load');
+    expect(contents.send.mock.calls.filter(([channel]) => channel === IPC.menuAction)).toEqual([
+      [IPC.menuAction, 'open-feedback'],
+    ]);
+
+    contents.emit('did-finish-load');
+    expect(contents.send.mock.calls.filter(([channel]) => channel === IPC.menuAction)).toHaveLength(1);
+  });
+
+  it('sends open-feedback immediately once the renderer is ready', async () => {
+    const { openFeedbackInRenderer, showMainWindow } = await import('../../../src/main/window/main-window');
+    showMainWindow();
+    const contents = (mocks.windows.at(-1) as { webContents: { emit(event: string): void; send: ReturnType<typeof vi.fn> } }).webContents;
+    contents.emit('did-finish-load');
+    contents.send.mockClear();
+
+    openFeedbackInRenderer();
+    expect(contents.send).toHaveBeenCalledExactlyOnceWith(IPC.menuAction, 'open-feedback');
+  });
+});
+
 describe('shouldPersistBounds', () => {
   it('persists normal window bounds', () => {
     expect(shouldPersistBounds(false, false)).toBe(true);

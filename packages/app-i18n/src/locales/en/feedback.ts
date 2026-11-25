@@ -1,6 +1,6 @@
 export default {
-  menuLabel: 'Feedback',
-  send: 'Send feedback',
+  menuLabel: 'Report an issue',
+  send: 'Report an issue',
   category: 'Feedback type',
   categories: {
     bug: 'Bug',
