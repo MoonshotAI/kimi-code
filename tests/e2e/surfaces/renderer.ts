@@ -711,7 +711,9 @@ export class RendererSurface implements DriverActionsOn<'desktop' | 'web'> {
   }
 
   private async approvalShown(): Promise<boolean> {
-    return (await this.approveButton().isVisible()) && (await this.rejectButton().isVisible());
+    const approve = this.approveButton();
+    const reject = this.rejectButton();
+    return (await approve.isVisible()) && (await reject.isVisible()) && (await approve.isEnabled()) && (await reject.isEnabled());
   }
 
   private async answerApproval(verb: string, button: Locator): Promise<void> {
