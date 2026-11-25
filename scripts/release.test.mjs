@@ -273,6 +273,21 @@ void test('workflow release titles use product names and full versions', () => {
   assert.doesNotMatch(desktop, /--title "Kimi Code Canary/);
 });
 
+void test('Windows Bash verification handles literal executable names and the Actions summary file', async (t) => {
+  const workflow = readFileSync(new URL('../.github/workflows/desktop-build.yml', import.meta.url), 'utf8');
+  const step = workflow.split('      - name: Verify Windows Bash runtime\n')[1]?.split('\n      - name:')[0];
+  assert.ok(step);
+  await t.test('does not treat [.exe as a wildcard when checking signatures', () => {
+    assert.match(step, /Get-AuthenticodeSignature -LiteralPath \$file\.FullName/);
+  });
+  await t.test('appends both size reports to the PowerShell environment path', () => {
+    for (const label of ['Windows Bash runtime:', 'Windows installer size:']) {
+      const report = step.split('\n').find(line => line.trimStart().startsWith(`"${label}`));
+      assert.match(report ?? '', />> "\$env:GITHUB_STEP_SUMMARY"$/);
+    }
+  });
+});
+
 test('version command records the consumed changesets and changed package versions', () => {
   const f = fixture();
   writeFileSync(join(f.dir, '.changeset/fix.md'), '---\n---\n');

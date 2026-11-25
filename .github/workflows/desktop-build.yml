@@ -360,14 +360,14 @@ jobs:
           node apps/desktop/scripts/prepare-windows-bash.mjs --verify "$runtime"
           $executables = Get-ChildItem "$runtime" -Recurse -Filter *.exe
           foreach ($file in $executables) {
-            $sig = Get-AuthenticodeSignature $file.FullName
+            $sig = Get-AuthenticodeSignature -LiteralPath $file.FullName
             if ($sig.Status -ne 'Valid') { throw "Windows Bash runtime signature check failed: $($file.FullName): $($sig.Status) $($sig.StatusMessage)" }
           }
           $files = Get-ChildItem "$runtime" -Recurse -File
           $bytes = ($files | Measure-Object Length -Sum).Sum
           $installer = Get-Item "apps/desktop/dist-app/*.exe" | Select-Object -First 1
-          "Windows Bash runtime: $($files.Count) files, $($executables.Count) signed executables, $([math]::Round($bytes / 1MB, 1)) MiB" >> "$GITHUB_STEP_SUMMARY"
-          "Windows installer size: $([math]::Round($installer.Length / 1MB, 1)) MiB" >> "$GITHUB_STEP_SUMMARY"
+          "Windows Bash runtime: $($files.Count) files, $($executables.Count) signed executables, $([math]::Round($bytes / 1MB, 1)) MiB" >> "$env:GITHUB_STEP_SUMMARY"
+          "Windows installer size: $([math]::Round($installer.Length / 1MB, 1)) MiB" >> "$env:GITHUB_STEP_SUMMARY"
 
       - name: Verify Canary Linux installers
         if: runner.os == 'Linux' && (inputs.canary || github.event_name == 'schedule' || (github.event_name == 'push' && github.workflow == 'Desktop build' && startsWith(github.ref, 'refs/heads/release/')))
