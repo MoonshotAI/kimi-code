@@ -30,6 +30,7 @@ import {
 } from './autoReviewEvents';
 import { createAutoReviewReviewer } from './autoReviewGate';
 import { AUTO_REVIEW_SECTION, type AutoReviewConfig } from './configSection';
+import { AUTO_REVIEW_FLAG_ID } from './flag';
 import {
   buildReviewMessages,
   detectAuthorizationDrift,
@@ -78,7 +79,11 @@ export class AutoReviewService extends Service implements IAutoReviewService {
     this._register(this.states.contributeState(autoReviewApprovedCallsKey));
     this._register(this.states.contributeState(autoReviewAncestryKey));
     this._register(dispatcher.hooks.onDidRestore.register('autoReview', async (_ctx, next) => {
-      if (this.scopeContext.agentId !== MAIN_AGENT_ID && this.states.get(autoReviewAncestryKey) === undefined) {
+      if (
+        flags.enabled(AUTO_REVIEW_FLAG_ID) &&
+        this.scopeContext.agentId !== MAIN_AGENT_ID &&
+        this.states.get(autoReviewAncestryKey) === undefined
+      ) {
         await this.dispatcher.dispatch(new AutoReviewAncestryRecorded({
           agentId: this.scopeContext.agentId,
           ...ancestrySnapshotOf(this.scopeContext, agentLifecycle),
