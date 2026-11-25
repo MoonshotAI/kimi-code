@@ -21,7 +21,12 @@ import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 
 import { TODO_LIST_TOOL_NAME, readTodoItems, todoProgress, type TodoItem } from './todoItem';
-import { TODO_LIST_REMINDER_VARIANT, todoListStaleReminder } from './todoListReminder';
+import {
+  TODO_LIST_GUIDANCE_REMINDER_VARIANT,
+  TODO_LIST_REMINDER_VARIANT,
+  todoListGuidanceReminder,
+  todoListStaleReminder,
+} from './todoListReminder';
 import { ToolsUpdateStore, type TodoState } from './todoOps';
 
 
@@ -47,13 +52,26 @@ const todoReminder = fromCallback(({
   };
 }) => {
   const runtime = input.runtime;
-  if (runtime.agent.agentId !== MAIN_AGENT_ID) return;
   const memory = runtime.get(IAgentLoopService);
   const toolPolicy = runtime.get(IAgentToolPolicyService);
+  const reminders = runtime.get(IAgentReminderService);
+  if (!memory || !reminders) return;
+  const guidanceRegistration = reminders.register(
+    TODO_LIST_GUIDANCE_REMINDER_VARIANT,
+    ({ isNewTurn, injectedPositions, lastInjectedAt }) =>
+      todoListGuidanceReminder({
+        active: toolPolicy.isToolActive(TODO_LIST_TOOL_NAME, 'builtin'),
+        isNewTurn,
+        injectedPositions,
+        lastInjectedAt,
+        history: memory.history(),
+      }),
+  );
+  if (runtime.agent.agentId !== MAIN_AGENT_ID) return () => { guidanceRegistration.dispose(); };
   const telemetry = runtime.get(ITelemetryService);
   const bus = runtime.get(IEventBus);
   let updatedInTurn = false;
-  const registration = runtime.get(IAgentReminderService).register(TODO_LIST_REMINDER_VARIANT, () => {
+  const registration = reminders.register(TODO_LIST_REMINDER_VARIANT, () => {
     const todos = runtime.getState();
     const reminder = todoListStaleReminder({
       active: toolPolicy.isToolActive(TODO_LIST_TOOL_NAME, 'builtin'),
@@ -85,6 +103,7 @@ const todoReminder = fromCallback(({
     });
   });
   return () => {
+    guidanceRegistration.dispose();
     ended.dispose();
     started.dispose();
     change.dispose();

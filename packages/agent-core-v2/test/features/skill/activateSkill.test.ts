@@ -456,7 +456,11 @@ describe('promptWithSkills', () => {
 
     const undone = await ctx.rpc.undoHistory({ count: 1 });
     expect(undone).toBe(1);
-    expect(ctx.context.history()).toHaveLength(0);
+    expect(ctx.context.history()).toEqual([
+      expect.objectContaining({
+        origin: expect.objectContaining({ variant: 'todo_list_guidance' }),
+      }),
+    ]);
   });
 
   it('accepts later prompt_id reuse of a bundled prompt id as a pure correlation id', async () => {
