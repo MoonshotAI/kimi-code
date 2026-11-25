@@ -27,7 +27,7 @@
 // references become '(circular)', and class instances collapse to a '(ClassName)'
 // marker — the wire shape of an entry is the JSON projection of the type here.
 //
-// Index (App: 0 keys · Workspace: 8 keys · Session: 9 keys · Agent: 61 keys)
+// Index (App: 0 keys · Workspace: 8 keys · Session: 9 keys · Agent: 62 keys)
 //   App
 //   Workspace
 //     workspaceDirs.ephemeralDirs          src/workspace/workspaceDirs/workspaceDirsService.ts
@@ -92,6 +92,7 @@
 //     profile.emittedToolPatternWarnings              src/agent/profile/profileService.ts
 //     shellCommand.tasks                              src/agent/shellCommand/shellCommandService.ts
 //     swarm                                           src/features/swarm/swarmOps.ts
+//     swarmReminderDelivered                          src/features/swarm/swarmOps.ts
 //     task                                            src/agent/task/taskOps.ts
 //     toolDedupe.activeStep                           src/agent/toolDedupe/toolDedupeService.ts
 //     toolDedupe.activeTurnId                         src/agent/toolDedupe/toolDedupeService.ts
@@ -1241,6 +1242,8 @@ export interface AgentStateSnapshot {
   // src/features/swarm/swarmOps.ts
   // replayable · durable — folds: SwarmModeEnter, SwarmModeExit
   'swarm': 'manual' | 'task' | 'tool' | null;
+  // replayable · durable — folds: SwarmModeEnter, SwarmModeExit, ContextAppendMessage, ContextSpliced
+  'swarmReminderDelivered': boolean;
   // src/features/tower/towerOps.ts
   // replayable · durable — folds: TowerModeEnter, TowerModeExit
   'tower': boolean;

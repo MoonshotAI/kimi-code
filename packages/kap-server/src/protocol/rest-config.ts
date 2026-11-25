@@ -18,7 +18,6 @@ const configFieldsSchema = z.object({
   yolo: z.boolean().optional(),
   default_permission_mode: z.string().optional(),
   default_plan_mode: z.boolean().optional(),
-  default_swarm_mode: z.boolean().optional(),
   auto_session_title: z.boolean().optional(),
   permission: z.unknown().optional(),
   hooks: z.array(z.unknown()).optional(),

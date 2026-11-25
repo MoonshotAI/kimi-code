@@ -1,4 +1,5 @@
 import { Service } from '#/_base/di/service';
+import { IAgentReminderService } from '#/features/reminder/reminderService';
 import { TurnEnded } from '#/agent/loop/turnOps';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import { IAgentLoopService } from '#/agent/loop/loop';
@@ -10,14 +11,16 @@ import { IAgentStateService } from '#/agent/state/agentState';
 import { Error2, ErrorCodes } from '#/errors';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 
+import { SwarmInjection } from './injection/swarmInjection';
 import { IAgentSwarmService, type SwarmModeTrigger } from './swarm';
-import { SwarmModeEnter, SwarmModeExit, swarmKey } from '../swarmOps';
+import { SwarmModeEnter, SwarmModeExit, swarmKey, swarmReminderDeliveredKey } from '../swarmOps';
 
 export class AgentSwarmService extends Service implements IAgentSwarmService {
   declare readonly _serviceBrand: undefined;
 
   constructor(
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
+    @IAgentReminderService reminder: IAgentReminderService,
     @IEventBus eventBus: IEventBus,
     @IAgentToolApprovalService private readonly toolApproval: IAgentToolApprovalService,
     @IAgentLoopService loop: IAgentLoopService,
@@ -27,6 +30,16 @@ export class AgentSwarmService extends Service implements IAgentSwarmService {
   ) {
     super();
     this.agentState.contributeState(swarmKey);
+    this.agentState.contributeState(swarmReminderDeliveredKey);
+    this._register(
+      new SwarmInjection(
+        {
+          getTrigger: () => this.agentState.get(swarmKey),
+          isReminderDelivered: () => this.agentState.get(swarmReminderDeliveredKey),
+        },
+        reminder,
+      ),
+    );
     this._register(
       eventBus.subscribe(TurnEnded, () => {
         if (this.shouldAutoExit) {

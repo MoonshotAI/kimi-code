@@ -46,7 +46,6 @@ export interface ConfigResponse {
   yolo?: boolean;
   default_permission_mode?: string;
   default_plan_mode?: boolean;
-  default_swarm_mode?: boolean;
   permission?: unknown;
   hooks?: unknown[];
   services?: unknown;
