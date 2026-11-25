@@ -1,5 +1,60 @@
 # @moonshot-ai/agent-core-v2
 
+## 0.7.0
+
+### Minor Changes
+
+- [#5352](https://github.com/MoonshotAI/kimi-code/pull/5352) [`2b1b095`](https://github.com/MoonshotAI/kimi-code/commit/2b1b095f3bbf48e83632b0aaaabce6773caf4469) Thanks [@sailist](https://github.com/sailist)! - Add the `defaultSwarmMode` config section: when `default_swarm_mode = true`, new sessions enter swarm mode on creation.
+
+- [#5352](https://github.com/MoonshotAI/kimi-code/pull/5352) [`2b1b095`](https://github.com/MoonshotAI/kimi-code/commit/2b1b095f3bbf48e83632b0aaaabce6773caf4469) Thanks [@sailist](https://github.com/sailist)! - Remove the swarm mode enter reminder: turning swarm mode on no longer injects guidance into the conversation, and the `swarmReminderDelivered` replayable state is gone.
+
+### Patch Changes
+
+- [#5239](https://github.com/MoonshotAI/kimi-code/pull/5239) [`b53e7a8`](https://github.com/MoonshotAI/kimi-code/commit/b53e7a8b5bb0a485ec4a67e65f0ce92d1fa919f2) Thanks [@sailist](https://github.com/sailist)! - Truncate the model-visible foreground output in the Bash tool's background-detach acknowledgement to the standard tool-result cap; the full output remains available through the task output log and TaskOutput.
+
+- [#5253](https://github.com/MoonshotAI/kimi-code/pull/5253) [`c0e9faf`](https://github.com/MoonshotAI/kimi-code/commit/c0e9faf0bda52462e034d938f41a3aa48a2e6426) Thanks [@7Sageer](https://github.com/7Sageer)! - Automatically approve statically verified read-only Bash commands in Always Ask mode. Add an `ask` permission rule to keep confirming them.
+
+- [#5132](https://github.com/MoonshotAI/kimi-code/pull/5132) [`dbcf39b`](https://github.com/MoonshotAI/kimi-code/commit/dbcf39bddd1d3b68a76782fb3937d8ae3d735b84) Thanks [@sailist](https://github.com/sailist)! - Migrate the existing JSONL storage layer into the core package without changing persistence behavior.
+
+- [#5240](https://github.com/MoonshotAI/kimi-code/pull/5240) [`6bdb7ea`](https://github.com/MoonshotAI/kimi-code/commit/6bdb7ead8cb5c5b5982ebd59c912ae36010bdfa3) Thanks [@sailist](https://github.com/sailist)! - Wait for initial MCP discovery to settle before pinning the agent loop's tool baseline, so tools from slow-starting MCP servers stay visible for the whole session. Loop start is now the single point that waits for MCP readiness; the per-step and per-tool-call waits are removed.
+
+- [#5047](https://github.com/MoonshotAI/kimi-code/pull/5047) [`f9ee8bb`](https://github.com/MoonshotAI/kimi-code/commit/f9ee8bbf4dee5b12bb7ba66e5824dc5386e30c3b) Thanks [@wbxl2000](https://github.com/wbxl2000)! - Add `POST /api/v1/sessions/{session_id}/agents/{agent_id}:close` (advertised via `meta.capabilities.agent_close`) backed by `ISessionBtwService.close`, `IAgentLifecycleService.removeById`, and `ISessionMetadata.unregisterAgent` to abort and remove side-channel (`btw`) agents.
+
+- [#5302](https://github.com/MoonshotAI/kimi-code/pull/5302) [`9f04403`](https://github.com/MoonshotAI/kimi-code/commit/9f0440376150f9f2a94419c1ad8984991f7099db) Thanks [@sailist](https://github.com/sailist)! - Support unloading removed tool declarations for the Kimi provider.
+
+- [#5369](https://github.com/MoonshotAI/kimi-code/pull/5369) [`f8375e1`](https://github.com/MoonshotAI/kimi-code/commit/f8375e18b74130ed82b7a314d10916e942c9f73b) Thanks [@markankamaransheogarat-sys](https://github.com/markankamaransheogarat-sys)! - Delay loop initialization until the first operation for new agents and restore persisted agents immediately.
+
+- [#5203](https://github.com/MoonshotAI/kimi-code/pull/5203) [`3d7f4c1`](https://github.com/MoonshotAI/kimi-code/commit/3d7f4c10e7967ebac6832b9cf17ebb3024d477f5) Thanks [@Grapedge](https://github.com/Grapedge)! - Start a project's MCP servers only while a session or an MCP listing uses them, and never after their session or project has closed.
+
+- [#5261](https://github.com/MoonshotAI/kimi-code/pull/5261) [`9dadda1`](https://github.com/MoonshotAI/kimi-code/commit/9dadda17606cf2c44b5e9e6f0b2d2425edd4be4d) Thanks [@7Sageer](https://github.com/7Sageer)! - Label user media from session metadata at request time, preserve per-attachment labels on provider retries, and save media referenced by direct steering messages.
+
+- [#5301](https://github.com/MoonshotAI/kimi-code/pull/5301) [`afa8ef6`](https://github.com/MoonshotAI/kimi-code/commit/afa8ef65ee0f24092c243dca671d17b62ffae0b2) Thanks [@sailist](https://github.com/sailist)! - Recover conversations when an uploaded image or video can no longer be read: after a matching provider 400, the failed upload is confirmed via the file status endpoint, permanently marked to skip re-upload, and resent inline from the local original.
+
+- [#5295](https://github.com/MoonshotAI/kimi-code/pull/5295) [`92ea0c6`](https://github.com/MoonshotAI/kimi-code/commit/92ea0c6dc3bf718c5a237e28db2d7e2c83978419) Thanks [@sailist](https://github.com/sailist)! - Fix approved plan reviews being reported as rejected tool calls: an approved plan now exits plan mode through normal tool execution and returns the approved plan as a successful result, instead of an error-marked rejection.
+
+- [#5295](https://github.com/MoonshotAI/kimi-code/pull/5295) [`92ea0c6`](https://github.com/MoonshotAI/kimi-code/commit/92ea0c6dc3bf718c5a237e28db2d7e2c83978419) Thanks [@sailist](https://github.com/sailist)! - Run the plan-mode tool guard on the native tool-executor hook chain: plan approvals are awaited inline in the starting hook instead of being deferred through the legacy two-phase event emitter.
+
+- [#5289](https://github.com/MoonshotAI/kimi-code/pull/5289) [`e42d4a5`](https://github.com/MoonshotAI/kimi-code/commit/e42d4a53b8b1fe73bbe5fde3ca142bfe4af3a5cf) Thanks [@7Sageer](https://github.com/7Sageer)! - Automatically reclaim session locks recorded under a different hostname. Shared state directories no longer protect live holders across machines or containers.
+
+- [#5266](https://github.com/MoonshotAI/kimi-code/pull/5266) [`1655099`](https://github.com/MoonshotAI/kimi-code/commit/16550990aa7ae3b526abcb2fb045868bebf5c418) Thanks [@sailist](https://github.com/sailist)! - Record measured tool durations in tool message attributes, so turn, compaction, and resumed requests carry the same tool result timing.
+
+- [#5254](https://github.com/MoonshotAI/kimi-code/pull/5254) [`314a6bd`](https://github.com/MoonshotAI/kimi-code/commit/314a6bd96baa697b41bc4b26dbcc74419af7ebde) Thanks [@7Sageer](https://github.com/7Sageer)! - Remove the experimental context-forking branch from `Agent` and `AgentSwarm` subagent spawning, including its flag, schema parameter, compatibility checks, and telemetry field.
+
+- [#5268](https://github.com/MoonshotAI/kimi-code/pull/5268) [`3a43c68`](https://github.com/MoonshotAI/kimi-code/commit/3a43c683de31440e496b9b926a03db93c2baa16f) Thanks [@sailist](https://github.com/sailist)! - Preserve the raw tool call argument bytes in recorded loop events so resumed sessions rebuild assistant messages identical to the live ones, including malformed or empty arguments.
+
+- [#5058](https://github.com/MoonshotAI/kimi-code/pull/5058) [`638fd94`](https://github.com/MoonshotAI/kimi-code/commit/638fd94b6c22589253570b9b90dbe5359849ddc2) Thanks [@wbxl2000](https://github.com/wbxl2000)! - Add `GET /api/v1/sessions/{session_id}/context/summary`, `/context/items`, and `/context/items/{item_id}`, which return an unresolved read-only snapshot of the agent's system prompt, baseline tool definitions, and raw messages for context inspection and token estimation.
+
+- [#5290](https://github.com/MoonshotAI/kimi-code/pull/5290) [`13b09d9`](https://github.com/MoonshotAI/kimi-code/commit/13b09d994985d7747572730400be6ef89e722ab6) Thanks [@wbxl2000](https://github.com/wbxl2000)! - Mark the session metadata `cwd` field as deprecated in generated schemas, and drop the legacy session wire-field type that no longer has callers.
+
+- [#5190](https://github.com/MoonshotAI/kimi-code/pull/5190) [`1ef139e`](https://github.com/MoonshotAI/kimi-code/commit/1ef139e6c32a01c7ac51a89fea6ae279c91bc276) Thanks [@7Sageer](https://github.com/7Sageer)! - Keep the `model` parameter static in subagent tool schemas, deliver available subagent models via `<system-reminder>` messages instead of tool descriptions, and reject invalid or resume-time `model` arguments with explicit errors.
+
+- [#5369](https://github.com/MoonshotAI/kimi-code/pull/5369) [`f8375e1`](https://github.com/MoonshotAI/kimi-code/commit/f8375e18b74130ed82b7a314d10916e942c9f73b) Thanks [@markankamaransheogarat-sys](https://github.com/markankamaransheogarat-sys)! - Register Tower mode tools as deferred tools when Tower mode is enabled and unload them when it is disabled, so Tower mode can be toggled at any time in a session.
+
+- [#5257](https://github.com/MoonshotAI/kimi-code/pull/5257) [`a3de86a`](https://github.com/MoonshotAI/kimi-code/commit/a3de86aa53dcbf1a911d19932caf525bf0d4d0bc) Thanks [@sailist](https://github.com/sailist)! - Unify how history is obtained within the agent scope.
+
+- Updated dependencies [[`dbcf39b`](https://github.com/MoonshotAI/kimi-code/commit/dbcf39bddd1d3b68a76782fb3937d8ae3d735b84), [`57200d5`](https://github.com/MoonshotAI/kimi-code/commit/57200d54e5ad95c704e166166023ed1fe4ca4e6a), [`f8375e1`](https://github.com/MoonshotAI/kimi-code/commit/f8375e18b74130ed82b7a314d10916e942c9f73b), [`f56a260`](https://github.com/MoonshotAI/kimi-code/commit/f56a260feec03b5037c1999d24bd8d930b1300e2), [`9dadda1`](https://github.com/MoonshotAI/kimi-code/commit/9dadda17606cf2c44b5e9e6f0b2d2425edd4be4d), [`afa8ef6`](https://github.com/MoonshotAI/kimi-code/commit/afa8ef65ee0f24092c243dca671d17b62ffae0b2), [`1655099`](https://github.com/MoonshotAI/kimi-code/commit/16550990aa7ae3b526abcb2fb045868bebf5c418), [`ba2491c`](https://github.com/MoonshotAI/kimi-code/commit/ba2491ca4b86bd03ae691b36d34f3d7487468d68)]:
+  - @moonshot-ai/core@0.2.0
+
 ## 0.6.1
 
 ### Patch Changes
