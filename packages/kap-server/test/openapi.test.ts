@@ -103,8 +103,12 @@ describe('server-v2 OpenAPI', () => {
     expect(errorData('undo', 40911)).toMatchObject({
       type: 'object',
       nullable: true,
-      required: ['reason', 'requested_count', 'undoable_count'],
-      properties: { reason: { enum: ['empty', 'compaction_boundary', 'insufficient'] } },
+      required: ['reason', 'requested_count', 'undoable_count', 'requestedCount', 'undoableCount'],
+      properties: {
+        reason: { enum: ['empty', 'compaction_boundary', 'insufficient'] },
+        requestedCount: { deprecated: true },
+        undoableCount: { deprecated: true },
+      },
     });
     expect(errorData('fork', 40911)).toMatchObject({ enum: [null] });
   });

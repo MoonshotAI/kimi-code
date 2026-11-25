@@ -430,6 +430,8 @@ export const undoUnavailableDataSchema = z.object({
   reason: z.enum(['empty', 'compaction_boundary', 'insufficient']),
   requested_count: z.number().int().nonnegative(),
   undoable_count: z.number().int().nonnegative(),
+  requestedCount: z.number().int().nonnegative().meta({ deprecated: true }),
+  undoableCount: z.number().int().nonnegative().meta({ deprecated: true }),
 });
 export type UndoUnavailableData = z.infer<typeof undoUnavailableDataSchema>;
 

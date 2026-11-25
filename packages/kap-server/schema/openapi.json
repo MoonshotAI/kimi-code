@@ -37328,7 +37328,19 @@
                               ],
                               "type": "string"
                             },
+                            "requestedCount": {
+                              "deprecated": true,
+                              "maximum": 9007199254740991,
+                              "minimum": 0,
+                              "type": "integer"
+                            },
                             "requested_count": {
+                              "maximum": 9007199254740991,
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "undoableCount": {
+                              "deprecated": true,
                               "maximum": 9007199254740991,
                               "minimum": 0,
                               "type": "integer"
@@ -37342,7 +37354,9 @@
                           "required": [
                             "reason",
                             "requested_count",
-                            "undoable_count"
+                            "undoable_count",
+                            "requestedCount",
+                            "undoableCount"
                           ],
                           "type": "object"
                         },

@@ -40,5 +40,7 @@ function undoUnavailableData(
     reason: details['reason'],
     requested_count: details['requestedCount'],
     undoable_count: details['undoableCount'],
+    requestedCount: details['requestedCount'],
+    undoableCount: details['undoableCount'],
   });
 }

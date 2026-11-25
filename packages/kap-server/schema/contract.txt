@@ -3327,7 +3327,9 @@ POST /api/v1/sessions/{session_id}:undo response 200<code=40901>: shape e90ff74c
 POST /api/v1/sessions/{session_id}:undo response 200<code=40910>: shape f7431fdb
 POST /api/v1/sessions/{session_id}:undo response 200<code=40911>.code: enum 40911
 POST /api/v1/sessions/{session_id}:undo response 200<code=40911>.data.reason: enum "compaction_boundary"|"empty"|"insufficient"
+POST /api/v1/sessions/{session_id}:undo response 200<code=40911>.data.requestedCount: integer minimum=0 maximum=9007199254740991
 POST /api/v1/sessions/{session_id}:undo response 200<code=40911>.data.requested_count: integer minimum=0 maximum=9007199254740991
+POST /api/v1/sessions/{session_id}:undo response 200<code=40911>.data.undoableCount: integer minimum=0 maximum=9007199254740991
 POST /api/v1/sessions/{session_id}:undo response 200<code=40911>.data.undoable_count: integer minimum=0 maximum=9007199254740991
 POST /api/v1/sessions/{session_id}:undo response 200<code=40911>.data: object nullable closed
 POST /api/v1/sessions/{session_id}:undo response 200<code=40911>.details: any optional

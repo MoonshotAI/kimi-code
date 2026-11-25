@@ -2,4 +2,4 @@
 "@moonshot-ai/kap-server": patch
 ---
 
-Rename `requestedCount` and `undoableCount` to `requested_count` and `undoable_count` in the `data` of the 40911 error from `:undo`, and document that `data` in `/openapi.json`.
+Add `requested_count` and `undoable_count` to the `data` of the 40911 error from `:undo`, document that `data` in `/openapi.json`, and mark the existing `requestedCount` and `undoableCount` as deprecated.
