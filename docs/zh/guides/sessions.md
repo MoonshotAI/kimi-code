@@ -50,7 +50,7 @@ kimi --session abc123
 kimi --session
 ```
 
-恢复会话时，TUI 会在尝试连接会话记录的环境期间显示进度。
+恢复会话时，TUI 会在尝试连接会话记录的环境期间显示进度。在同一 Git 项目的不同子目录或 [Git worktree](./worktrees.md) 之间，可以直接用 `kimi -r <id>`、`/sessions` 或 `kimi -p -S <id>` 恢复会话，CLI 会自动切换到该会话记录的工作目录，无需先手动 `cd`。如果原工作目录或 worktree 已被删除，会话仍然可以恢复并继续对话，界面与模型上下文都会收到目录已不存在的提示。
 
 ::: warning 注意
 `--continue` 与 `--session` 互斥。
@@ -61,7 +61,8 @@ kimi --session
 不离开当前终端也可以管理会话，以下斜杠命令仅在 Agent 空闲时可用：
 
 - **`/new`**（别名 `/clear`）：在当前环境切换到新会话，丢弃当前对话。环境和它的工作目录保留，清掉的只是上下文。
-- **`/sessions`**（别名 `/resume`）：浏览并恢复历史会话。
+- **`/sessions`**（别名 `/resume`）：浏览并恢复历史会话。在 Git 仓库中，顶部会展示 `Cwd`、`Project`、`All` 三个标签页（默认 `Cwd`，按 `Tab` / `Shift-Tab` 切换，`Ctrl-A` 仍可直接跳到全部会话），条目会标出所属 `worktree <name>` 以及已删除目录的 `missing` 标签；非 Git 目录保持原有单列表。全屏模式下同时支持鼠标选中和滚轮滚动。
+- **`/worktree`**：启用实验功能后，浏览、创建、切换和删除当前仓库的 [Git worktree](./worktrees.md)。
 - **`/fork`**：派生当前会话（详见下文）。
 - **`/title <text>`**（别名 `/rename`）：设置会话标题方便识别；不带参数时显示当前标题。
 

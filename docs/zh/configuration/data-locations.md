@@ -42,6 +42,8 @@ $KIMI_CODE_HOME  （默认 ~/.kimi-code）
 │       └── <key>-<suffix>.json
 ├── sessions/               # 会话数据（详见下文）
 │   └── <workDirKey>/<sessionId>/
+├── worktrees/              # Kimi 托管的 Git worktree（实验功能）
+│   └── <repoKey>/<name>/
 ├── locks/
 │   └── sessions/           # 客户端写会话期间持有的跨进程占用锁
 ├── bin/
@@ -69,6 +71,7 @@ $KIMI_CODE_HOME  （默认 ~/.kimi-code）
 - **`skills/`**：Kimi 专属用户级 Skills。该目录会随 `KIMI_CODE_HOME` 移动；跨工具通用 Skills 仍可放在 `~/.agents/skills/`。详见 [Agent Skills](../customization/skills.md)。
 - **`plugins/installed.json`**：记录已安装的 plugin、每个 plugin 的启用状态，以及通过 `/plugins` 或 `/plugins mcp disable|enable` 修改的 MCP server 能力状态。本地路径和 zip URL 安装的文件会复制到 `plugins/managed/<id>/`。详见 [Plugins](../customization/plugins.md)。
 - **`credentials/`**：OAuth 凭据目录，权限 `0o700`（目录）/ `0o600`（文件），仅当前用户可读写。托管供应商凭据存为 `credentials/<name>.json`，MCP server 凭据存在 `credentials/mcp/` 子目录下。凭据写入使用原子流程（tmp → fsync → rename）防止写损。
+- **`worktrees/`**：由 `-w` / `--worktree` 或 `/worktree` 创建的托管 [Git worktree](../guides/worktrees.md)，按仓库桶名存放于 `worktrees/<repoKey>/<name>/`。建议优先通过 `/worktree` 或退出清理提示删除，不要直接删除磁盘目录以免留下悬空的 Git 记录。
 
 ## 会话数据
 

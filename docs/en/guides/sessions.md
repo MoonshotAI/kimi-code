@@ -50,7 +50,7 @@ kimi --session abc123
 kimi --session
 ```
 
-When a session is being restored, the TUI shows progress while it attempts the session's recorded environment connection.
+When a session is being restored, the TUI shows progress while it attempts the session's recorded environment connection. Across subdirectories or [Git worktrees](./worktrees.md) of the same Git project, you can resume a session directly with `kimi -r <id>`, `/sessions`, or `kimi -p -S <id>` — the CLI switches to the session's recorded working directory without asking you to `cd` first. If the session's original directory or worktree was deleted, you can still resume and continue the conversation, with a notice shown to both you and the model that the directory no longer exists.
 
 ::: warning
 `--continue` and `--session` are mutually exclusive.
@@ -61,7 +61,8 @@ When a session is being restored, the TUI shows progress while it attempts the s
 You can manage sessions without leaving the terminal. The following slash commands are available only when the agent is idle:
 
 - **`/new`** (alias `/clear`): switch to a new session in the current environment, discarding the conversation. The environment and its working directory stay; only the context is cleared.
-- **`/sessions`** (alias `/resume`): browse and resume a previous session.
+- **`/sessions`** (alias `/resume`): browse and resume a previous session. Inside a Git repository, the picker shows `Cwd`, `Project`, and `All` tabs (`Cwd` by default; switch with `Tab` / `Shift-Tab`, or press `Ctrl-A` to jump to all sessions) and tags entries with `worktree <name>` and `missing` when the directory is gone; outside Git repositories, it keeps the single-list view. Fullscreen dialogs also support mouse selection and scrolling.
+- **`/worktree`**: when the experimental feature is enabled, list, create, switch into, and delete [Git worktrees](./worktrees.md) for the current repository.
 - **`/fork`**: fork the current session (see below).
 - **`/title <text>`** (alias `/rename`): set a session title for easier identification; without arguments, displays the current title.
 

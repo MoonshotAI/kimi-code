@@ -29,7 +29,8 @@ Some commands are only available in the idle state. Executing these commands whi
 | Command | Alias | Description | Always available |
 | --- | --- | --- | --- |
 | `/new` | `/clear` | Start a fresh session in the current environment, discarding the conversation | No |
-| `/sessions` | `/resume` | Browse historical sessions and switch to / restore one | No |
+| `/sessions` | `/resume` | Browse historical sessions and switch to / restore one. Shows `Cwd` / `Project` / `All` tabs in Git repositories and supports same-project cross-directory resume | No |
+| `/worktree` | — | Open the [Git worktrees](../guides/worktrees.md) panel to list, create, switch into, or delete worktrees in the current local Git repository (experimental, off by default) | No |
 | `/tasks` | `/task` | Browse background tasks and inspect running foreground subagents. Press `Enter` on a task to view its output. | Yes |
 | `/fork` | — | Fork a new session from the current one, preserving the full conversation history; you stay in the current session | No |
 | `/title [<text>]` | `/rename` | Without arguments, display the current session title; with an argument, set a new title (max 200 characters) | Yes |
