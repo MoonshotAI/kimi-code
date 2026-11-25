@@ -9,6 +9,7 @@ import {
   KIMI_MCP_CLIENT_NAME,
   KIMI_MCP_CLIENT_VERSION,
   MCP_LIVENESS_PROBE_TIMEOUT_MS,
+  McpToolListChangeSource,
   toMcpToolDefinition,
   toMcpToolResult,
   type SessionEvidence,
@@ -28,14 +29,14 @@ export interface SseMcpClientOptions {
   readonly oauthProvider?: OAuthClientProvider;
 }
 
-export class SseMcpClient implements MCPClient {
-  private readonly client: Client;
+export class SseMcpClient extends McpToolListChangeSource implements MCPClient {
+  protected readonly client: Client;
   private readonly transport: SSEClientTransport;
   private readonly startupTimeoutMs?: number;
   private readonly toolCallTimeoutMs?: number;
   private started = false;
-  private closed = false;
-  private ready = false;
+  protected closed = false;
+  protected ready = false;
   private hooksInstalled = false;
   private sessionEvidenceListener: SessionEvidenceListener | undefined;
   private lastTransportError: Error | undefined;
@@ -43,6 +44,7 @@ export class SseMcpClient implements MCPClient {
   private sessionEvidenceFired = false;
 
   constructor(private readonly config: McpServerSseConfig, options: SseMcpClientOptions = {}) {
+    super();
     const envLookup = options.envLookup ?? ((name) => process.env[name]);
     const headers = buildMcpRemoteHeaders(config, envLookup);
 
