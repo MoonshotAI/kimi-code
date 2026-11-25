@@ -142,6 +142,13 @@ function onSearchNavigate(key: 'ArrowDown' | 'ArrowUp'): void {
   void nextTick(revealActive);
 }
 
+function onPanelKeydown(event: KeyboardEvent): void {
+  if (event.defaultPrevented || (event.key !== 'ArrowDown' && event.key !== 'ArrowUp')) return;
+  event.preventDefault();
+  onSearchNavigate(event.key);
+  searchRef.value?.focus();
+}
+
 function setUseRemote(value: boolean): void {
   if (props.workspaceId === undefined || props.workspaceId === null) return;
   store.setUseRemote(props.workspaceId, value);
@@ -185,6 +192,7 @@ onUnmounted(hideHover);
     @mouseleave="hideHover"
     @focusin="showHover"
     @focusout="hideHover"
+    @panel-keydown="onPanelKeydown"
   >
     <template #chip>
       <span class="wsb-glyph" :class="{ 'has-dot': includesLocalChanges }" :data-glyph="glyphIcon">

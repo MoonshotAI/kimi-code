@@ -341,6 +341,25 @@ describe('CreateSourceBranchPicker', () => {
     expect(q('.wsb-panel')).not.toBeNull();
   });
 
+  it('keeps arrow-key navigation after a row or the remote toggle takes focus', async () => {
+    await mountOpen({ ...repo, dirty: false });
+    const toggle = q<HTMLButtonElement>('[data-foot="remote"] .ui-switch')!;
+    toggle.focus();
+    pressKey(toggle, 'ArrowUp');
+    await nextTick();
+    expect(q('.wsb-row.active')?.dataset.row).toBe('local-only');
+    expect(document.activeElement).toBe(q('.wsb-search input'));
+
+    const row = q<HTMLButtonElement>('.wsb-row[data-row="local-only"]')!;
+    row.focus();
+    row.click();
+    await settle();
+    pressKey(row, 'ArrowDown');
+    await nextTick();
+    expect(q('.wsb-row.active')?.dataset.row).toBe('main');
+    expect(document.activeElement).toBe(q('.wsb-search input'));
+  });
+
   it('toggles the latest remote code without closing and badges the button with a cloud', async () => {
     await mountOpen();
     const toggle = q<HTMLButtonElement>('[data-foot="remote"] .ui-switch')!;
