@@ -301,7 +301,6 @@ const sessionModeFields = {
   yolo: z.boolean().optional(),
   defaultPermissionMode: PermissionModeSchema.optional(),
   defaultPlanMode: z.boolean().optional(),
-  defaultSwarmMode: z.boolean().optional(),
   autoSessionTitle: z.boolean().optional(),
 };
 

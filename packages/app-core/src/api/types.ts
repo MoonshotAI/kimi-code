@@ -834,7 +834,6 @@ export interface AppConfig {
   yolo?: boolean;
   defaultPermissionMode?: string;
   defaultPlanMode?: boolean;
-  defaultSwarmMode?: boolean;
   autoSessionTitle?: boolean;
   permission?: unknown;
   hooks?: unknown[];

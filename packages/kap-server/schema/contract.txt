@@ -155,7 +155,6 @@ GET /api/v1/config response 200.data.default_model: string optional
 GET /api/v1/config response 200.data.default_permission_mode: string optional
 GET /api/v1/config response 200.data.default_plan_mode: boolean optional
 GET /api/v1/config response 200.data.default_provider: string optional
-GET /api/v1/config response 200.data.default_swarm_mode: boolean optional
 GET /api/v1/config response 200.data.disable_feedback_survey: boolean optional
 GET /api/v1/config response 200.data.experimental: object optional
 GET /api/v1/config response 200.data.experimental{*}: boolean optional
@@ -1517,7 +1516,6 @@ POST /api/v1/config request.default_model: string optional
 POST /api/v1/config request.default_permission_mode: string optional
 POST /api/v1/config request.default_plan_mode: boolean optional
 POST /api/v1/config request.default_provider: string optional
-POST /api/v1/config request.default_swarm_mode: boolean optional
 POST /api/v1/config request.disable_feedback_survey: boolean optional
 POST /api/v1/config request.experimental: object optional
 POST /api/v1/config request.experimental{*}: boolean optional
@@ -1553,7 +1551,6 @@ POST /api/v1/config response 200<code=0>.data.default_model: string optional
 POST /api/v1/config response 200<code=0>.data.default_permission_mode: string optional
 POST /api/v1/config response 200<code=0>.data.default_plan_mode: boolean optional
 POST /api/v1/config response 200<code=0>.data.default_provider: string optional
-POST /api/v1/config response 200<code=0>.data.default_swarm_mode: boolean optional
 POST /api/v1/config response 200<code=0>.data.disable_feedback_survey: boolean optional
 POST /api/v1/config response 200<code=0>.data.experimental: object optional
 POST /api/v1/config response 200<code=0>.data.experimental{*}: boolean optional
@@ -4160,7 +4157,6 @@ ws server message session_event<config>.config.default_model: string optional
 ws server message session_event<config>.config.default_permission_mode: string optional
 ws server message session_event<config>.config.default_plan_mode: boolean optional
 ws server message session_event<config>.config.default_provider: string optional
-ws server message session_event<config>.config.default_swarm_mode: boolean optional
 ws server message session_event<config>.config.disable_feedback_survey: boolean optional
 ws server message session_event<config>.config.experimental: object optional
 ws server message session_event<config>.config.experimental{*}: boolean optional

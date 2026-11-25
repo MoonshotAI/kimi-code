@@ -266,6 +266,7 @@ describe('conversation-time checkpoint registration', () => {
     'goalForkNotice',
     'turn',
     'fullCompaction.wireRanges',
+    'swarmReminderDelivered',
   ]);
   const CONTEXT_OWNER_STATE = 'contextMemory';
   const CONTEXT_EVENTS: readonly Event2Class[] = [

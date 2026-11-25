@@ -30,7 +30,7 @@
 //   changeNotifier.snapshot            changeNotifier.snapshot                                    src/agent/changeNotifier/changeNotifierOps.ts
 //   config.update                      (none)                                                     src/agent/profile/profileOps.ts
 //   context.append_loop_event          changeNotifier.snapshot, interruptionReminder, plan, turn  src/agent/contextMemory/contextEvents.ts
-//   context.append_message             (none)                                                     src/agent/contextMemory/contextEvents.ts
+//   context.append_message             swarmReminderDelivered                                     src/agent/contextMemory/contextEvents.ts
 //   context.apply_compaction           changeNotifier.snapshot, interruptionReminder, plan, turn  src/agent/contextMemory/contextEvents.ts
 //   context.clear                      changeNotifier.snapshot, interruptionReminder, plan, turn  src/agent/contextMemory/contextEvents.ts
 //   context.undo                       changeNotifier.snapshot, interruptionReminder, plan, turn  src/agent/contextMemory/contextEvents.ts
@@ -72,8 +72,8 @@
 //   subagent.failed                    (none)                                                     src/session/subagent/mirrorAgentRun.ts
 //   subagent.spawned                   (none)                                                     src/session/subagent/mirrorAgentRun.ts
 //   subagent.started                   (none)                                                     src/session/subagent/mirrorAgentRun.ts
-//   swarm_mode.enter                   swarm                                                      src/features/swarm/swarmOps.ts
-//   swarm_mode.exit                    swarm                                                      src/features/swarm/swarmOps.ts
+//   swarm_mode.enter                   swarm, swarmReminderDelivered                              src/features/swarm/swarmOps.ts
+//   swarm_mode.exit                    swarm, swarmReminderDelivered                              src/features/swarm/swarmOps.ts
 //   task.started                       task                                                       src/agent/task/taskOps.ts
 //   task.terminated                    task                                                       src/agent/task/taskOps.ts
 //   token_counting.measured            (none)                                                     src/agent/tokenCounting/tokenCountingOps.ts
@@ -144,7 +144,7 @@ interface ContextAppendLoopEventPayload {
 }
 
 /**
- * states: (none)
+ * states: swarmReminderDelivered
  * owner: src/agent/contextMemory/contextEvents.ts
  */
 interface ContextAppendMessagePayload {
@@ -700,7 +700,7 @@ interface SubagentStartedPayload {
 }
 
 /**
- * states: swarm
+ * states: swarm, swarmReminderDelivered
  * owner: src/features/swarm/swarmOps.ts
  */
 interface SwarmModeEnterPayload {
@@ -711,7 +711,7 @@ interface SwarmModeEnterPayload {
 }
 
 /**
- * states: swarm
+ * states: swarm, swarmReminderDelivered
  * owner: src/features/swarm/swarmOps.ts
  */
 interface SwarmModeExitPayload {

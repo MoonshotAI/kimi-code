@@ -1894,7 +1894,6 @@ export class DaemonKimiWebApi implements KimiWebApi {
       yolo: 'yolo',
       defaultPermissionMode: 'default_permission_mode',
       defaultPlanMode: 'default_plan_mode',
-      defaultSwarmMode: 'default_swarm_mode',
       autoSessionTitle: 'auto_session_title',
       permission: 'permission',
       hooks: 'hooks',

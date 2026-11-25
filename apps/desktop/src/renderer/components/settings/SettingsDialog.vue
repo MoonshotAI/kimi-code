@@ -615,7 +615,7 @@ async function setSecondaryModel(value: { model: string | null; effort?: string 
   });
 }
 
-function toggleConfigBoolean(key: 'defaultPlanMode' | 'defaultSwarmMode'): void {
+function toggleConfigBoolean(key: 'defaultPlanMode'): void {
   const current = props.config?.[key];
   emit('updateConfig', { [key]: !configBool(current) } as Partial<AppConfig>);
 }
@@ -1171,18 +1171,6 @@ defineExpose({ confirmDiscard });
                   :model-value="configBool(config.defaultPlanMode)"
                   :label="t('settings.defaultPlanMode')"
                   @update:model-value="toggleConfigBoolean('defaultPlanMode')"
-                />
-              </div>
-
-              <div class="row">
-                <span class="rlabel">
-                  {{ t('settings.defaultSwarmMode') }}
-                  <span class="hint">{{ t('settings.defaultSwarmModeHint') }}</span>
-                </span>
-                <Switch
-                  :model-value="configBool(config.defaultSwarmMode)"
-                  :label="t('settings.defaultSwarmMode')"
-                  @update:model-value="toggleConfigBoolean('defaultSwarmMode')"
                 />
               </div>
             </template>
