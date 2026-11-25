@@ -544,6 +544,45 @@ describe('Agent loop', () => {
     expect(called).toBe(false);
   });
 
+  testWithProvider('cancels a prompt while its turn is starting and runs the next queued prompt', async ({ agent, model }) => {
+    const agentLoop = agent.get(IAgentLoopService);
+    const entered = deferred();
+    const release = deferred();
+    const firstPrompt = 'Cancel this prompt.';
+    const nextPrompt = 'Keep this prompt.';
+    const hook = agentLoop.hooks.onBeforeSubmitPrompt.register('hold-starting-prompt', async (context, next) => {
+      if (context.promptMessage.content.some((part) => part.type === 'text' && part.text === firstPrompt)) {
+        entered.resolve();
+        await release.promise;
+      }
+      await next();
+    });
+    model.script(say('Here is the reply.'));
+    try {
+      const starting = submitTurn(agentLoop, firstPrompt).turn;
+      await entered.promise;
+      const queued = submitTurn(agentLoop, nextPrompt).turn;
+
+      expect(starting.cancel()).toBe(true);
+      release.resolve();
+      await expect(starting.result).resolves.toMatchObject({ type: 'cancelled' });
+      const result = await queued.result;
+
+      expect(model.requests('main').map((request) => request.firstUserText)).toEqual([nextPrompt]);
+      expect(result).toMatchObject({ type: 'completed' });
+      expect(agentLoop.snapshot()).toMatchObject({ hasPendingRequests: false, queue: [] });
+      const records = await agent.persistedWireRecords();
+      expect(records.filter((record) => record.type === 'turn.prompt').map((record) => record['input'])).toEqual([
+        [{ type: 'text', text: nextPrompt }],
+      ]);
+      expect(records).toContainEqual(expect.objectContaining({ type: 'turn.cancel', target: 'queued', turnId: 0 }));
+      await agent.expectResumeMatches();
+    } finally {
+      release.resolve();
+      hook.dispose();
+    }
+  });
+
   it('fails with the error handler error when recovery throws', async () => {
     const recoveryError = new Error('recovery failed');
     loop.registerLoopErrorHandler({
