@@ -108,6 +108,7 @@ export class ConfiguredSkillRootWatcher extends Disposable {
   private watchTarget(path: string): WatchHandle {
     const root = parse(path).root;
     return watchCandidates(root, [path], {
+      depth: MAX_SKILL_SCAN_DEPTH + 2,
       ignored: subtreeWatchFilter(root, [path.replace(/[\\/]+$/, '')], {
         maxDepth: MAX_SKILL_SCAN_DEPTH + 2,
         skipEntry: isSkillScanExcludedEntry,

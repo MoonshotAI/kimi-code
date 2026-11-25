@@ -49,7 +49,7 @@ import { ExtraFileSkillSource, IExtraFileSkillSource } from '#/features/skill/wo
 import { IWorkspaceRootSkillSource, WorkspaceRootSkillSource } from '#/features/skill/workspace/rootFileSkillSource';
 import { IPluginSkillSource, PluginSkillSource } from '#/features/skill/workspace/pluginSkillSource';
 import { ISkillDiscovery } from '#/features/skill/catalog/skillDiscovery';
-import { FileSkillDiscovery } from '#/features/skill/catalog/fileSkillDiscovery';
+import { FileSkillDiscovery, MAX_SKILL_SCAN_DEPTH } from '#/features/skill/catalog/fileSkillDiscovery';
 import type { SkillRoot } from '#/features/skill/catalog/types';
 import { ILogService } from '#/_base/log/log';
 import type { WatchChange, WatchOptions } from '#human/utils/watch';
@@ -748,6 +748,9 @@ describe('WorkspaceSkillCatalogService', () => {
       try {
         await expect.poll(() => catalog.catalog.getSkill('existing-skill')?.description).toBe(existingSkill.description);
         await loaded;
+
+        const rootWatch = watchMockState.calls.find((call) => call.path === watchRoot);
+        expect(rootWatch?.options?.depth).toBe(MAX_SKILL_SCAN_DEPTH + 2);
 
         const addedSkill = stubSkill('added-skill', { description: 'Added before watching starts' });
         store.setUserSkills([existingSkill, addedSkill]);

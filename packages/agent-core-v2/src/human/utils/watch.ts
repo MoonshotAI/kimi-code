@@ -1,5 +1,5 @@
 import { existsSync, watch as fsWatch, realpathSync } from 'node:fs';
-import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, sep, win32 } from 'node:path';
 
 import { FSWatcher } from 'chokidar';
 
@@ -123,6 +123,7 @@ interface ChokidarLegInput {
   readonly path: string;
   readonly depth?: number;
   readonly ignored: (path: string) => boolean;
+  readonly usePolling: boolean;
 }
 
 const chokidarLeg = fromCallback<WatchEvent, ChokidarLegInput>(({ input, sendBack }) => {
@@ -132,6 +133,7 @@ const chokidarLeg = fromCallback<WatchEvent, ChokidarLegInput>(({ input, sendBac
     followSymlinks: false,
     depth: input.depth,
     ignored: input.ignored,
+    ...(input.usePolling ? { usePolling: true } : {}),
   });
   watcher.on('all', (eventName: string, absPath: string) => {
     const mapped = CHOKIDAR_EVENTS[eventName];
@@ -223,9 +225,7 @@ const watchMachine = setup({
         {
           target: 'chokidar',
           actions: assign({
-            chokidarDepth: ({ context }) =>
-              context.input.options?.depth ??
-              (context.input.options?.recursive === false ? 0 : undefined),
+            chokidarDepth: ({ context }) => chokidarWatchDepth(context.input.options),
           }),
         },
       ],
@@ -237,6 +237,8 @@ const watchMachine = setup({
           path: context.input.path,
           depth: context.chokidarDepth,
           ignored: context.ignored,
+          usePolling:
+            context.input.runtime.platform === 'win32' && isWindowsUncPath(context.input.path),
         }),
       },
       on: {
@@ -305,10 +307,17 @@ const watchMachine = setup({
             }),
           },
           {
-            guard: ({ event }) => event.error.code === 'ERR_FEATURE_UNAVAILABLE_ON_PLATFORM',
+            guard: ({ context, event }) =>
+              event.error.code === 'ERR_FEATURE_UNAVAILABLE_ON_PLATFORM' ||
+              (event.error.code === 'EISDIR' &&
+                context.input.runtime.platform === 'win32' &&
+                isWindowsUncPath(context.input.path)),
             target: 'chokidar',
             actions: [
-              assign({ recovering: false, chokidarDepth: undefined }),
+              assign({
+                recovering: false,
+                chokidarDepth: ({ context }) => chokidarWatchDepth(context.input.options),
+              }),
               emit(({ context }) => invalidation(context.input.path)),
             ],
           },
@@ -347,6 +356,27 @@ const watchMachine = setup({
 
 function invalidation(path: string): WatchEmitted {
   return { type: 'change', change: { path, action: 'modified', kind: 'directory' } };
+}
+
+function chokidarWatchDepth(options?: WatchOptions): number | undefined {
+  if (options?.listing === false || options?.recursive === false) return 0;
+  return options?.depth;
+}
+
+function isWindowsUncPath(path: string): boolean {
+  if (!path.startsWith('\\\\') && !path.startsWith('//')) return false;
+  const { root } = win32.parse(path);
+  if (root.length <= 1) return false;
+  const tail = root.slice(2);
+  if (
+    tail.startsWith('?\\') ||
+    tail.startsWith('?/') ||
+    tail.startsWith('.\\') ||
+    tail.startsWith('./')
+  ) {
+    return tail.slice(2, 5).toUpperCase() === 'UNC';
+  }
+  return true;
 }
 
 type WatchActorRef = ActorRefFrom<typeof watchMachine>;
