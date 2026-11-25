@@ -775,6 +775,7 @@ export class SessionEventBroadcaster {
     if (event.type === 'event.model_catalog.changed') {
       const payload = modelCatalogChangedPayload(corePayload);
       if (payload === undefined) return;
+      for (const state of this.sessions.values()) state.agents?.refresh();
       this.enqueueGlobal(event.type, () => ({ type: 'invalidated', kind: 'models' }));
       return;
     }
