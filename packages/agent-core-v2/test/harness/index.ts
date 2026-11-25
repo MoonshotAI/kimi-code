@@ -45,6 +45,7 @@ export {
   type MockProviderHandler,
   type MockProviderOptions,
   type MockProviderResponse,
+  type ScriptedMockProvider,
 } from './scripted-generate';
 export {
   DEFAULT_TEST_SYSTEM_PROMPT,

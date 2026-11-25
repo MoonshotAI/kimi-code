@@ -42,6 +42,7 @@ import {
   withResponseId,
   withUsage,
   type FakeModel,
+  type Hold,
   type HttpErrorOptions,
   type Lane,
   type ReplyStep,
@@ -79,7 +80,6 @@ export interface MockProviderResponse {
   readonly requestId?: string | null;
   readonly httpError?: MockProviderHttpError;
   readonly error?: unknown;
-  readonly onStream?: () => void | Promise<void>;
   readonly step?: ScriptedStep;
 }
 
@@ -93,23 +93,20 @@ export interface MockProviderOptions {
   readonly checkCalls?: boolean;
 }
 
-interface StreamPause {
-  readonly name: string;
-  readonly hangs: boolean;
-  readonly onStream?: () => void | Promise<void>;
-}
-
 interface PreparedAttempt {
   readonly request: LlmRequest;
   readonly signal?: AbortSignal;
   readonly step?: ScriptedStep;
   readonly fault?: unknown;
-  readonly pause?: StreamPause;
 }
 
 export interface MockProvider {
   respond(request: LlmRequest, signal: AbortSignal): PreparedAttempt | Promise<PreparedAttempt>;
   readonly fetch: typeof fetch;
+}
+
+export interface ScriptedMockProvider extends MockProvider {
+  hold(name: string): Hold;
 }
 
 const UNSCRIPTED = Symbol('unscripted');
@@ -158,11 +155,11 @@ export function generateCallOf(request: LlmRequest): GenerateCall {
   });
 }
 
-export function createMockProvider(handler: MockProviderHandler, options: MockProviderOptions = {}): MockProvider {
+export function createMockProvider(handler: MockProviderHandler, options: MockProviderOptions = {}): ScriptedMockProvider {
   return createModelProvider(handler, options);
 }
 
-interface CheckedProvider extends MockProvider {
+interface CheckedProvider extends ScriptedMockProvider {
   readonly check: ScriptedCheck;
 }
 
@@ -182,9 +179,15 @@ function createModelProvider(handler: ScriptedHandler, options: MockProviderOpti
   scriptedChecks.add(check);
   return {
     check,
+    hold: (name) => model.hold(name),
     respond: (request, signal) => {
       const attempt = (async (): Promise<PreparedAttempt> => {
         const current = index++;
+        if (protocolKind(request) === 'responses') {
+          const message = `request #${String(current)} uses the OpenAI Responses protocol, which the testkit model does not answer yet`;
+          handlerProblems.push(message);
+          return { request, fault: new Error(message) };
+        }
         try {
           const response = await handler(request, signal);
           if (response === UNSCRIPTED) return { request, signal };
@@ -382,65 +385,8 @@ function modelFetch(pending: Promise<PreparedAttempt>[], lane: Lane, model: Fake
     }
     if (attempt.fault !== undefined && attempt.step === undefined) throw providerFault(attempt.fault);
     if (attempt.step !== undefined) lane.script(attempt.step);
-    const pause = attempt.pause;
-    if (pause === undefined) {
-      const response = await model.fetch(input, init);
-      return attempt.fault === undefined ? response : failingAfterBody(response, providerFault(attempt.fault));
-    }
-    const reader = trackedReader();
-    void model
-      .hold(pause.name)
-      .reached()
-      .then(async () => {
-        if (attempt.step !== undefined && unitsOf(attempt.step) > 0) await reader.drained();
-        await pause.onStream?.();
-        if (!pause.hangs) model.hold(pause.name).release();
-      })
-      .catch(() => undefined);
-    return reader.wrap(await model.fetch(input, init));
-  };
-}
-
-function trackedReader(): { wrap(response: Response): Response; drained(): Promise<void> } {
-  let waiting = false;
-  const waiters: Array<() => void> = [];
-  const settle = (): void => {
-    for (const waiter of waiters.splice(0)) waiter();
-  };
-  return {
-    wrap: (response) => {
-      const source = response.body?.getReader();
-      return new Response(
-        new ReadableStream<Uint8Array>({
-          async pull(controller) {
-            if (source === undefined) {
-              controller.close();
-              return;
-            }
-            waiting = true;
-            settle();
-            try {
-              const chunk = await source.read();
-              waiting = false;
-              if (chunk.done) controller.close();
-              else controller.enqueue(chunk.value);
-            } catch (error) {
-              waiting = false;
-              controller.error(error);
-            }
-          },
-          cancel: (reason) => source?.cancel(reason),
-        }, { highWaterMark: 0 }),
-        { status: response.status, headers: response.headers },
-      );
-    },
-    drained: async () => {
-      for (;;) {
-        if (!waiting) await new Promise<void>((resolve) => waiters.push(resolve));
-        await new Promise<void>((resolve) => setTimeout(resolve, 0));
-        if (waiting) return;
-      }
-    },
+    const response = await model.fetch(input, init);
+    return attempt.fault === undefined ? response : failingAfterBody(response, providerFault(attempt.fault));
   };
 }
 
@@ -493,7 +439,7 @@ function attemptOf(request: LlmRequest, response: MockProviderResponse, index: n
   return { request, step: disconnect(step, { afterUsage: response.usage !== null }), fault: response.error };
 }
 
-function stepOf(request: LlmRequest, response: MockProviderResponse, index: number): { readonly step: ScriptedStep; readonly pause?: StreamPause } {
+function stepOf(request: LlmRequest, response: MockProviderResponse, index: number): { readonly step: ScriptedStep } {
   const base = response.step === undefined
     ? replyOf(request, response, index)
     : response.step.kind === 'reply' && response.step.responseId === undefined
@@ -501,10 +447,8 @@ function stepOf(request: LlmRequest, response: MockProviderResponse, index: numb
       : response.step;
   const step = base.kind === 'reply' ? withRequestId(response.requestId, base) : base;
   const failed = failureOf(response, step);
-  const hangs = response.error instanceof Promise;
-  if ((!hangs && response.onStream === undefined) || failed.kind !== 'reply') return { step: failed };
-  const name = `reply-${String(index)}`;
-  return { step: held(name, failed, unitsOf(failed)), pause: { name, hangs, onStream: response.onStream } };
+  if (!(response.error instanceof Promise) || failed.kind !== 'reply') return { step: failed };
+  return { step: held(`reply-${String(index)}`, failed, unitsOf(failed)) };
 }
 
 function replyOf(request: LlmRequest, response: MockProviderResponse, index: number): ReplyStep {
