@@ -13,6 +13,7 @@ import { makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import type { IAgentStateService } from '#/agent/state/agentState';
 import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
 import type { FsGitStatusResponse } from '#/app/git/git';
+import { THINKING_SECTION } from '#/app/kosongConfig/configSection';
 import { LifecycleScope } from '#/app/scopes';
 import { noopTelemetryService } from '#/app/telemetry/telemetry';
 import {
@@ -38,6 +39,7 @@ import { ancestrySnapshotOf, AutoReviewService } from '#/features/autoReview/rev
 import { SessionAutoReviewService } from '#/features/autoReview/sessionReviewService';
 import { APIContextOverflowError, APIProviderQuotaExhaustedError } from '#/llm-adapter/contract/errors';
 import type { IModelCatalog, Model } from '#/llm-adapter/model/catalog';
+import type { ThinkingConfig } from '#/llm-adapter/model/thinking';
 import type { IProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocol';
 import { ProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocolAdapterRegistry';
 import type { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
@@ -49,6 +51,7 @@ import type { ISessionWorkdir } from '#/session/workdir/workdir';
 import type { IEventDispatcher } from '#/state/eventDispatcher';
 import type { IWorkspaceGitService } from '#/workspace/workspaceGit/workspaceGit';
 import type { Message, ToolCall } from '@moonshot-ai/core/llm/message';
+import type { LlmRequest } from '@moonshot-ai/core/llm/request';
 import { emptyUsage } from '@moonshot-ai/core/llm/usage';
 
 import { stubLog } from '../../_base/log/stubs';
@@ -259,11 +262,13 @@ describe('SessionAutoReviewService', () => {
 
   let disposables: DisposableStore;
   let selectedModels: string[];
+  let requests: LlmRequest[];
   let agentsMd: string;
 
   beforeEach(() => {
     disposables = new DisposableStore();
     selectedModels = [];
+    requests = [];
     agentsMd = 'Do not delete user-data.';
   });
 
@@ -277,6 +282,8 @@ describe('SessionAutoReviewService', () => {
     readonly configured?: boolean;
     readonly flagEnabled?: boolean;
     readonly secondaryModel?: { readonly defaultModel: string };
+    readonly catalogModel?: Model;
+    readonly thinking?: ThinkingConfig;
   } = {}): SessionAutoReviewService {
     const registry = new ProtocolAdapterRegistry();
     const respond = options.respond ?? (() => Promise.resolve(allowResponse));
@@ -285,18 +292,22 @@ describe('SessionAutoReviewService', () => {
       new StubConfigService({
         ...(options.configured === false ? {} : { [AUTO_REVIEW_SECTION]: { model: options.model } }),
         ...(options.secondaryModel === undefined ? {} : { [SECONDARY_MODEL_SECTION]: options.secondaryModel }),
+        ...(options.thinking === undefined ? {} : { [THINKING_SECTION]: options.thinking }),
       }),
       {
         get: (alias: string) => {
           if (alias === 'missing-model') throw new Error(`Unknown model: ${alias}`);
           selectedModels.push(alias);
-          return baseModel;
+          return options.catalogModel ?? baseModel;
         },
       } as unknown as IModelCatalog,
       {
         resolveAdapterIdentity: (protocol, providerType) => registry.resolveAdapterIdentity(protocol, providerType),
         request: (target, params) =>
-          withMockProvider(registry.request(target, params), createMockProvider((_req, sig) => respond(sig))),
+          withMockProvider(registry.request(target, params), createMockProvider((req, sig) => {
+            requests.push(req);
+            return respond(sig);
+          })),
       } as IProtocolAdapterRegistry,
       { record: async () => {} } as unknown as ISessionUsageService,
       { sessionId: 'session-1' } as ISessionContext,
@@ -326,6 +337,26 @@ describe('SessionAutoReviewService', () => {
     expect(await fallback.projectInstructions()).toMatchObject({ agentsMd: 'Do not delete user-data.' });
     agentsMd = 'Changed later.';
     expect(await fallback.projectInstructions()).toMatchObject({ agentsMd: 'Do not delete user-data.' });
+  });
+
+  const effortModel = (thinking: Model['spec']['thinking'], providerType?: string): Model => ({
+    ...baseModel,
+    ...(providerType === undefined ? {} : { providerType }),
+    spec: { ...baseModel.spec, thinking },
+  });
+
+  it.each([
+    ['the model entry default over the global effort', effortModel({ supportEfforts: ['low', 'high', 'max'], defaultEffort: 'high' }), { effort: 'low' }, 'high'],
+    ['the global effort when the model declares no default', effortModel({ supportEfforts: ['low', 'medium', 'high'] }), { effort: 'low' }, 'low'],
+    ['the model fallback without a configured effort', effortModel({ supportEfforts: ['low', 'medium', 'high'] }), undefined, 'medium'],
+    ['thinking off when thinking is disabled', effortModel({ supportEfforts: ['low', 'high'], defaultEffort: 'high' }), { enabled: false }, 'off'],
+    ['the model default when thinking cannot be disabled', effortModel({ alwaysThinking: true, supportEfforts: ['low', 'high'], defaultEffort: 'high' }), { enabled: false }, 'high'],
+    ['the forced effort on a trait-driven provider', effortModel({ supportEfforts: ['low', 'high'], defaultEffort: 'high' }, 'kimi'), { forcedEffort: 'max' }, 'max'],
+    ['no forced effort on other providers', effortModel({ supportEfforts: ['low', 'high'], defaultEffort: 'high' }), { forcedEffort: 'max' }, 'high'],
+    ['no forced effort while thinking is disabled', effortModel({ supportEfforts: ['low', 'high'], defaultEffort: 'high' }, 'kimi'), { enabled: false, forcedEffort: 'max' }, 'off'],
+  ] as const)('requests %s', async (_label, catalogModel, thinking, effort) => {
+    await execute(makeSessionService({ catalogModel, thinking }));
+    expect(requests.map((request) => request.model.thinking?.effort)).toEqual([effort]);
   });
 
   it.each([

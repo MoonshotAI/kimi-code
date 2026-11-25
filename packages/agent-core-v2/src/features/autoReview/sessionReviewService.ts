@@ -11,7 +11,11 @@ import { llmMessageFromError } from '#/llm-adapter/contract/errors';
 import { IModelCatalog } from '#/llm-adapter/model/catalog';
 import { resolveMaxOutputTokens } from '#/llm-adapter/model/completion-budget';
 import type { ModelOverrides } from '#/llm-adapter/model/model.types';
-import { requiresStrictThinkingValidation, type ThinkingConfig } from '#/llm-adapter/model/thinking';
+import {
+  drivesThinkingThroughTraits,
+  requiresStrictThinkingValidation,
+  type ThinkingConfig,
+} from '#/llm-adapter/model/thinking';
 import { IProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocol';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
@@ -22,7 +26,12 @@ import { credentialRecovery } from '@moonshot-ai/core/llm/policy/credentials';
 import { readRetryAfterMs, retryBackoffDelay } from '@moonshot-ai/core/llm/policy/retry';
 import type { InitializedLlmRequestPart } from '@moonshot-ai/core/llm/requester';
 import type { LlmOutcome } from '@moonshot-ai/core/llm/response';
-import { resolveThinkingEffortForModel, resolveThinkingKeep } from '@moonshot-ai/core/llm/thinking';
+import {
+  declaredDefaultEffortForModel,
+  resolveForcedThinkingEffort,
+  resolveThinkingEffortForModel,
+  resolveThinkingKeep,
+} from '@moonshot-ai/core/llm/thinking';
 
 import REVIEW_POLICY from './auto-review-policy.md?raw';
 import { AUTO_REVIEW_SECTION, type AutoReviewConfig } from './configSection';
@@ -207,7 +216,13 @@ export class SessionAutoReviewService extends Service implements ISessionAutoRev
     const overrides = this.configService.get<ModelOverrides>('modelOverrides');
     const thinkingConfig = this.configService.get<ThinkingConfig>(THINKING_SECTION);
     const strict = requiresStrictThinkingValidation(this.protocols, model.protocol, model.providerType);
-    const thinkingEffort = resolveThinkingEffortForModel('off', undefined, model.spec, strict);
+    const requestedEffort = thinkingConfig?.enabled === false ? 'off' : declaredDefaultEffortForModel(model.spec);
+    const resolvedEffort = resolveThinkingEffortForModel(requestedEffort, thinkingConfig, model.spec, strict);
+    const thinkingEffort = resolveForcedThinkingEffort(
+      thinkingConfig?.forcedEffort,
+      resolvedEffort,
+      drivesThinkingThroughTraits(model.providerType),
+    ) ?? resolvedEffort;
     const sampling =
       overrides?.temperature === undefined && overrides?.topP === undefined
         ? undefined
