@@ -1192,6 +1192,43 @@ describe('WorkspaceFsService.suggest', () => {
     expect(partial.truncated).toBe(true);
   });
 
+  it('asks fd to honor .gitignore files outside a git repository', async () => {
+    const captured: string[][] = [];
+    const fs = makeSession({}, fdLinesHandler(['src/app.ts'], captured));
+    Object.defineProperty(fs, 'fdResolution', { value: undefined });
+
+    await fs.suggest({ query: 'app', limit: 50, follow_gitignore: true, show_hidden: false });
+
+    expect(captured).not.toHaveLength(0);
+    for (const args of captured) expect(args).toContain('--no-require-git');
+  });
+
+  it('falls back from an fd that rejects its arguments and stops asking it', async () => {
+    const fdSearches: string[][] = [];
+    const fs = makeSession(
+      { 'src/app.ts': '', '.gitignore': 'ignored-app.ts\n', 'ignored-app.ts': '' },
+      (args) => {
+        if (args[0] === 'fd' && args[1] === '--version') return { stdout: 'fd 8.6.0', exitCode: 0 };
+        if (args[0] === 'fd') {
+          fdSearches.push([...args]);
+          return { stdout: '', stderr: "error: unexpected argument '--no-require-git' found", exitCode: 2 };
+        }
+        return rgMissingHandler(args);
+      },
+    );
+    Object.defineProperty(fs, 'fdResolution', { value: undefined });
+    const request = { query: 'app', limit: 50, follow_gitignore: true, show_hidden: false };
+
+    const first = await fs.suggest(request);
+    const searchesAfterFirst = fdSearches.length;
+    const second = await fs.suggest(request);
+
+    expect(first.items.map((item) => item.path)).toEqual(['src/app.ts']);
+    expect(second.items.map((item) => item.path)).toEqual(['src/app.ts']);
+    expect(searchesAfterFirst).toBeGreaterThan(0);
+    expect(fdSearches).toHaveLength(searchesAfterFirst);
+  });
+
   it('applies fd matching, hidden, and bounded result semantics', async () => {
     const fs = makeSession({}, fdLinesHandler(['docs/README.md', 'src/app.ts']));
     Object.defineProperty(fs, 'fdResolution', { value: undefined });
