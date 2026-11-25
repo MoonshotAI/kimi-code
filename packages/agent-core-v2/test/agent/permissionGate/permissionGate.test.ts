@@ -239,23 +239,10 @@ describe('AgentPermissionGate', () => {
     expect(decision).toBeUndefined();
   });
 
-  it('defers a static ask until every listener has voted', async () => {
-    policyResult = { policyName: 'p', result: { kind: 'ask' } };
-    const blocked: BeforeExecuteDecision = { veto: { output: 'hook denied', isError: true } };
-    make();
-    executorEvents.executor.registerLegacyStarting((event) => {
-      event.veto(blocked.veto!);
-    });
-
-    expect(await executorEvents.fireBeforeExecute(makeContext('Write'))).toEqual(blocked);
-    expect(requestToolApproval).not.toHaveBeenCalled();
-  });
-
   const fallbackAsk: PermissionPolicyEvaluation = { policyName: 'fallback-ask', result: { kind: 'ask' } };
-  const modeApproval: PermissionPolicyEvaluation = {
-    policyName: 'auto-mode-approve',
-    result: { kind: 'approve' },
-  };
+  const modeApproval: PermissionPolicyEvaluation = { policyName: 'auto-mode-approve', result: { kind: 'approve' } };
+  const allowPolicy = (policyName: string): PermissionPolicyEvaluation => ({ policyName, result: { kind: 'approve' } });
+  const denyPolicy: PermissionPolicyEvaluation = { policyName: 'user-configured-deny', result: { kind: 'deny', message: 'no' } };
 
   function reviewModeApprovals(): void {
     autoReviewEnabled = true;
@@ -263,107 +250,95 @@ describe('AgentPermissionGate', () => {
     manualPolicyResult = fallbackAsk;
   }
 
-  it('reviews only Bash and MCP calls that Always Ask would ask about', async () => {
-    const reviewer = createAutoReviewReviewer(
-      stubFlag(() => autoReviewEnabled),
-      stubPermissionModeService(() => mode),
-      ix.get(IAgentPermissionPolicyService),
-      { review },
-    );
+  it.each([
+    [false, 'yolo', 'Bash', fallbackAsk, undefined, false, 1],
+    [true, 'manual', 'Bash', fallbackAsk, undefined, false, 1],
+    [true, 'yolo', 'Write', fallbackAsk, undefined, false, 1],
+    [true, 'yolo', 'Edit', modeApproval, fallbackAsk, false, 0],
+    [true, 'yolo', 'CronCreate', modeApproval, fallbackAsk, false, 0],
+    [true, 'yolo', 'Bash', denyPolicy, undefined, false, 0],
+    [true, 'auto', 'Bash', modeApproval, allowPolicy('default-tool-approve'), false, 0],
+    [true, 'yolo', 'Bash', modeApproval, allowPolicy('session-approval-history'), false, 0],
+    [true, 'yolo', 'Bash', modeApproval, allowPolicy('user-configured-allow'), false, 0],
+    [true, 'yolo', 'Bash', allowPolicy('session-approval-history'), allowPolicy('session-approval-history'), false, 0],
+    [true, 'yolo', 'Bash', allowPolicy('user-configured-allow'), allowPolicy('user-configured-allow'), false, 0],
+    [true, 'yolo', 'Bash', allowPolicy('user-configured-allow'), fallbackAsk, true, 0],
+    [true, 'yolo', 'Bash', fallbackAsk, undefined, true, 0],
+    [true, 'auto', 'Bash', modeApproval, fallbackAsk, true, 0],
+    [true, 'yolo', 'mcp__fs__write_file', modeApproval, fallbackAsk, true, 0],
+    [true, 'auto', 'mcp__fs__write_file', fallbackAsk, undefined, true, 0],
+  ] satisfies Array<[boolean, PermissionMode, string, PermissionPolicyEvaluation, PermissionPolicyEvaluation | undefined, boolean, number]>)(
+    'reviews tool=%s mode=%s policy=%s -> %s',
+    async (enabled, nextMode, tool, policy, manualPolicy, expected, expectedHumanAsks) => {
+      autoReviewEnabled = enabled;
+      mode = nextMode;
+      policyResult = policy;
+      manualPolicyResult = manualPolicy;
+      make();
 
-    policyResult = modeApproval;
-    manualPolicyResult = fallbackAsk;
-    expect(await reviewer(makeContext('Bash'), modeApproval)).toBeUndefined();
+      await executorEvents.fireBeforeExecute(makeContext(tool));
 
-    autoReviewEnabled = true;
-    for (const toolName of ['Bash', 'mcp__filesystem__write_file']) {
-      expect(await reviewer(makeContext(toolName), modeApproval)).toBeDefined();
-      expect(await reviewer(makeContext(toolName), fallbackAsk)).toBeDefined();
-    }
-    for (const toolName of ['Write', 'Edit', 'CronCreate']) {
-      expect(await reviewer(makeContext(toolName), modeApproval)).toBeUndefined();
-      expect(await reviewer(makeContext(toolName), fallbackAsk)).toBeUndefined();
-    }
-    const userAllow: PermissionPolicyEvaluation = { policyName: 'user-configured-allow', result: { kind: 'approve' } };
-    expect(await reviewer(makeContext('Bash'), userAllow)).toBeDefined();
-    expect(await reviewer(makeContext('Bash'), { policyName: 'user-configured-deny', result: { kind: 'deny' } })).toBeUndefined();
-    for (const policyName of ['default-tool-approve', 'session-approval-history', 'user-configured-allow']) {
-      manualPolicyResult = { policyName, result: { kind: 'approve' } };
-      expect(await reviewer(makeContext('Bash'), modeApproval)).toBeUndefined();
-      expect(await reviewer(makeContext('Bash'), userAllow)).toBeUndefined();
-    }
-    expect(review).not.toHaveBeenCalled();
-  });
+      expect(review).toHaveBeenCalledTimes(expected ? 1 : 0);
+      expect(requestToolApproval).toHaveBeenCalledTimes(expectedHumanAsks);
+    },
+  );
 
-  it('reviews eligible static asks in Ask When Needed and leaves ineligible ones on the user path', async () => {
+  it('passes the asking policy name and routes a denial back to approval in Ask When Needed', async () => {
     policyResult = { policyName: 'sensitive-file-access-ask', result: { kind: 'ask' } };
     autoReviewOutcome = { decision: 'deny', risk: 'high' };
-
     autoReviewEnabled = true;
     mode = 'yolo';
     make();
+
     await executorEvents.fireBeforeExecute(makeContext('Bash'));
+
     expect(review).toHaveBeenCalledWith(expect.anything(), 'sensitive-file-access-ask');
     expect(resolvePermissionResolution).toHaveBeenCalledWith(
       expect.objectContaining({ kind: 'ask' }),
       expect.anything(),
       'auto-review',
     );
-
-    for (const [enabled, nextMode, toolName] of [
-      [false, 'yolo', 'Bash'],
-      [true, 'manual', 'Bash'],
-      [true, 'yolo', 'Write'],
-    ] as const) {
-      vi.clearAllMocks();
-      autoReviewEnabled = enabled;
-      mode = nextMode;
-      make();
-      await executorEvents.fireBeforeExecute(makeContext(toolName));
-      expect(review).not.toHaveBeenCalled();
-      expect(requestToolApproval).toHaveBeenCalledTimes(1);
-    }
   });
 
-  it('does not review when another listener vetoes or finally allows', async () => {
+  it('defers asks and skips review when another listener vetoes or finally allows', async () => {
     reviewModeApprovals();
+    const blocked: BeforeExecuteDecision = { veto: { output: 'hook denied', isError: true } };
     make();
     let outcome: 'veto' | 'allow' = 'veto';
     executorEvents.executor.registerLegacyStarting((event) => {
-      if (outcome === 'veto') event.veto({ output: 'hook denied', isError: true });
+      if (outcome === 'veto') event.veto(blocked.veto!);
       else event.allow();
     });
 
-    await executorEvents.fireBeforeExecute(makeContext('Bash'));
+    expect(await executorEvents.fireBeforeExecute(makeContext('Bash'))).toEqual(blocked);
     outcome = 'allow';
     expect(await executorEvents.fireBeforeExecute(makeContext('Bash'))).toEqual({ allow: true });
-
     expect(review).not.toHaveBeenCalled();
+    expect(requestToolApproval).not.toHaveBeenCalled();
+
+    policyResult = fallbackAsk;
+    autoReviewEnabled = false;
+    outcome = 'veto';
+    expect(await executorEvents.fireBeforeExecute(makeContext('Write'))).toEqual(blocked);
+    expect(requestToolApproval).not.toHaveBeenCalled();
   });
 
   it.each([
-    { from: 'yolo', to: 'yolo', outcome: 'deny', expected: 'ask' },
-    { from: 'yolo', to: 'yolo', outcome: 'failed', expected: 'ask' },
-    { from: 'auto', to: 'auto', outcome: 'deny', expected: 'deny' },
-    { from: 'auto', to: 'auto', outcome: 'failed', expected: 'deny' },
-    { from: 'auto', to: 'yolo', outcome: 'deny', expected: 'ask' },
-    { from: 'yolo', to: 'auto', outcome: 'deny', expected: 'deny' },
-    { from: 'auto', to: 'manual', outcome: 'deny', expected: 'ask' },
-    { from: 'auto', to: 'manual', outcome: 'allow', expected: 'ask' },
-  ] as const)('resolves a $outcome review started in $from and finished in $to as $expected', async ({
-    from,
-    to,
-    outcome,
-    expected,
-  }) => {
+    ['yolo', 'yolo', 'deny', 'ask'],
+    ['yolo', 'yolo', 'failed', 'ask'],
+    ['auto', 'auto', 'deny', 'deny'],
+    ['auto', 'auto', 'failed', 'deny'],
+    ['auto', 'yolo', 'deny', 'ask'],
+    ['yolo', 'auto', 'deny', 'deny'],
+    ['auto', 'manual', 'deny', 'ask'],
+    ['auto', 'manual', 'allow', 'ask'],
+  ] as const)('resolves a %s review started in %s and finished in %s as %s', async (from, to, outcome, expected) => {
     reviewModeApprovals();
     mode = from;
     review.mockImplementation(async () => {
       mode = to;
       if (outcome === 'failed') return { decision: 'failed', reason: 'invalid JSON' };
-      return outcome === 'allow'
-        ? { decision: 'allow', risk: 'low' }
-        : { decision: 'deny', risk: 'high' };
+      return outcome === 'allow' ? { decision: 'allow', risk: 'low' } : { decision: 'deny', risk: 'high' };
     });
     make();
 
@@ -381,11 +356,7 @@ describe('AgentPermissionGate', () => {
     const { result } = resolveAutoReview(
       makeContext('Bash'),
       modeApproval,
-      {
-        kind: 'ask',
-        reason: { executable_name: 'ssh' },
-        resolveApproval: onUnderlyingApproved,
-      },
+      { kind: 'ask', reason: { executable_name: 'ssh' }, resolveApproval: onUnderlyingApproved },
       { decision: 'deny', risk: 'high', reason: 'Too broad.' },
       'yolo',
     );
@@ -399,19 +370,13 @@ describe('AgentPermissionGate', () => {
     expect(result.resolveApproval?.({ decision: 'approved' })).toBeUndefined();
     expect(onUnderlyingApproved).toHaveBeenCalledWith({ decision: 'approved' });
     expect(result.resolveApproval?.({ decision: 'rejected' })).toMatchObject({
-      kind: 'deny',
-      message: expect.stringContaining('Too broad.'),
+      kind: 'deny', message: expect.stringContaining('Too broad.'),
     });
-    expect(result.resolveApproval?.({
-      decision: 'rejected',
-      feedback: 'Only delete generated/.',
-    })).toMatchObject({
-      kind: 'deny',
-      message: expect.stringContaining('Reason: Only delete generated/.'),
+    expect(result.resolveApproval?.({ decision: 'rejected', feedback: 'Only delete generated/.' })).toMatchObject({
+      kind: 'deny', message: expect.stringContaining('Reason: Only delete generated/.'),
     });
     expect(result.resolveNonInteractive?.()).toMatchObject({
-      kind: 'deny',
-      message: expect.stringContaining('Too broad.'),
+      kind: 'deny', message: expect.stringContaining('Too broad.'),
     });
   });
 

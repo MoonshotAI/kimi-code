@@ -95,14 +95,14 @@ import type { LLMRequestTrace } from '#/llm-adapter/contract/request-trace';
 import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemetry';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { AgentPermissionGate } from '#/agent/permissionGate/permissionGateService';
-import type { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
-import type { IAgentPermissionPolicyService } from '#/agent/permissionPolicy/permissionPolicy';
 import type { PermissionPolicyResolution } from '#/agent/permissionPolicy/types';
-import type { IAgentPermissionRulesService } from '#/agent/permissionRules/permissionRules';
 import type { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { registerLogServices, stubLog } from '../../_base/log/stubs';
+import { stubPermissionModeService } from '../permissionMode/stubs';
+import { stubPermissionPolicyService } from '../permissionPolicy/stubs';
+import { stubPermissionRulesService } from '../permissionRules/stubs';
 import { stubBootstrap } from '../../app/bootstrap/stubs';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 import { registerStateServices } from '../../state/stubs';
@@ -172,13 +172,12 @@ describe('AgentToolExecutorService', () => {
     let maxInFlight = 0;
     const release = deferred<{ readonly policyName: string; readonly result: { readonly kind: 'deny'; readonly message: string } }>();
     const gate = disposables.add(new AgentPermissionGate(
-      { _serviceBrand: undefined, mode: 'auto' } as unknown as IAgentPermissionModeService,
-      { _serviceBrand: undefined, rules: [], sessionApprovalRulePatterns: [] } as unknown as IAgentPermissionRulesService,
-      { _serviceBrand: undefined, evaluate: () => Promise.resolve({ policyName: 'auto-mode-approve', result: { kind: 'approve' as const } }) } as IAgentPermissionPolicyService,
+      stubPermissionModeService(() => 'auto'),
+      stubPermissionRulesService(() => []),
+      stubPermissionPolicyService(() => ({ policyName: 'auto-mode-approve', result: { kind: 'approve' } })),
       {
-        _serviceBrand: undefined,
-        resolvePermissionResolution: (res: PermissionPolicyResolution) =>
-          Promise.resolve(res.kind === 'deny' ? { veto: { output: res.message, isError: true } } : undefined),
+        resolvePermissionResolution: async (res: PermissionPolicyResolution) =>
+          res.kind === 'deny' ? { veto: { output: res.message, isError: true } } : undefined,
       } as unknown as IAgentToolApprovalService,
       noopTelemetryService,
       executor,

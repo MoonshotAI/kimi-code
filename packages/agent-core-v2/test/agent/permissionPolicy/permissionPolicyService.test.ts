@@ -746,26 +746,22 @@ describe('AgentPermissionPolicyService chain', () => {
 
   it('evaluates what Always Ask would decide when asked for manual mode', async () => {
     mode = 'auto';
+    autoReviewEnabled = true;
     rules.push({ decision: 'allow', scope: 'user', pattern: 'Bash(rm build/*)' });
     const bash = (command: string): PolicyContextInput => ({ toolName: 'Bash', args: { command, timeout: 60 } });
 
-    autoReviewEnabled = true;
     await expect(evaluate(bash('curl -X POST https://example.test'))).resolves.toMatchObject({
       policyName: 'auto-mode-approve',
       result: { kind: 'approve' },
     });
-    await expect(evaluate(bash('curl -X POST https://example.test'), { mode: 'manual' })).resolves.toMatchObject({
-      policyName: 'fallback-ask',
-      result: { kind: 'ask' },
-    });
-    await expect(evaluate({ toolName: 'SetTodoList', args: {} }, { mode: 'manual' })).resolves.toMatchObject({
-      policyName: 'default-tool-approve',
-      result: { kind: 'approve' },
-    });
-    await expect(evaluate(bash('rm build/out'), { mode: 'manual' })).resolves.toMatchObject({
-      policyName: 'user-configured-allow',
-      result: { kind: 'approve' },
-    });
+    for (const [input, policyName, kind] of [
+      [bash('curl -X POST https://example.test'), 'fallback-ask', 'ask'],
+      [{ toolName: 'SetTodoList', args: {} }, 'default-tool-approve', 'approve'],
+      [bash('rm build/out'), 'user-configured-allow', 'approve'],
+    ] satisfies Array<[PolicyContextInput, string, string]>) {
+      await expect(evaluate(input, { mode: 'manual' })).resolves.toMatchObject({ policyName, result: { kind } });
+    }
+
     rules.push({ decision: 'allow', scope: 'user', pattern: 'Bash(rm *)' });
     await expect(evaluate(bash('rm -rf build'))).resolves.toMatchObject({
       policyName: 'auto-mode-approve',

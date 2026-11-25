@@ -74,6 +74,16 @@ export function sameAuthorization(
   });
 }
 
+export type AuthorizationDrift = 'unchanged' | 'appended' | 'changed';
+
+export function detectAuthorizationDrift(
+  previous: readonly ReviewText[],
+  current: readonly ReviewText[],
+): AuthorizationDrift {
+  if (sameAuthorization(previous, current)) return 'unchanged';
+  return sameAuthorization(previous, current.slice(0, previous.length)) ? 'appended' : 'changed';
+}
+
 function authorizationEntry(message: ContextMessage): ReviewText[] {
   if (message.role !== 'user') return [];
   const role = authorizationRole(message);

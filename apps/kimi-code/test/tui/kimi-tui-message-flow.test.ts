@@ -10055,41 +10055,30 @@ capabilities = ["image_in", "video_in"]
     }
   });
 
-  describe('Auto Review progress on the tool card', () => {
-    const PROGRESS_TEXT = 'Reviewing';
+  it('shows Auto Review progress on the tool card until the decision arrives', async () => {
+    const { driver } = await makeDriver();
+    driver.streamingUI.setTurnId('1');
+    driver.streamingUI.setStep(1);
+    const emit = (event: object): void => {
+      driver.sessionEventHandler.handleEvent(
+        { agentId: 'main', sessionId: 'ses-1', turnId: 1, toolCallId: 'call_bash', ...event } as Event,
+        vi.fn(),
+      );
+    };
+    emit({ type: 'tool.call.started', name: 'Bash', args: { command: 'echo hi' } });
+    emit({ type: 'auto_review.started', toolName: 'Bash' });
+    expect(stripSgr(renderTranscript(driver))).toContain('Reviewing');
 
-    async function startReview(): Promise<{ driver: MessageDriver; emit: (event: object) => void }> {
-      const { driver } = await makeDriver(makeSession(), {}, makeStartupInput());
-      driver.streamingUI.setTurnId('1');
-      driver.streamingUI.setStep(1);
-      const sendQueued = vi.fn();
-      const emit = (event: object): void => {
-        driver.sessionEventHandler.handleEvent(
-          { agentId: 'main', sessionId: 'ses-1', turnId: 1, toolCallId: 'call_bash', ...event } as Event,
-          sendQueued,
-        );
-      };
-      emit({ type: 'tool.call.started', name: 'Bash', args: { command: 'echo hi' } });
-      emit({ type: 'auto_review.started', toolName: 'Bash' });
-      return { driver, emit };
-    }
-
-    it('shows the status until the decision arrives', async () => {
-      const { driver, emit } = await startReview();
-      expect(stripSgr(renderTranscript(driver))).toContain(PROGRESS_TEXT);
-
-      emit({
-        type: 'auto_review.decision',
-        toolName: 'Bash',
-        triggerPolicy: 'fallback-ask',
-        model: 'review-model',
-        decision: 'allow',
-        risk: 'low',
-        durationMs: 1,
-      });
-
-      expect(stripSgr(renderTranscript(driver))).not.toContain(PROGRESS_TEXT);
+    emit({
+      type: 'auto_review.decision',
+      toolName: 'Bash',
+      triggerPolicy: 'fallback-ask',
+      model: 'review-model',
+      decision: 'allow',
+      risk: 'low',
+      durationMs: 1,
     });
+    expect(stripSgr(renderTranscript(driver))).not.toContain('Reviewing');
   });
 
   it('cancels manual compaction from the editor', async () => {

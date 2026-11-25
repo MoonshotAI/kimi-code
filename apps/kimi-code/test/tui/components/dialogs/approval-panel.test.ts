@@ -123,36 +123,30 @@ describe('ApprovalPanelComponent', () => {
     expect(out).not.toContain('⚠');
   });
 
-  it('renders adapted auto review details before the pending command', () => {
+  it.each([
+    {
+      detail: { outcome: 'denied', risk: 'medium', reason: 'Creating remote resources was not explicitly authorized.' },
+      title: 'Auto Review: denied (medium risk)',
+    },
+    {
+      detail: { outcome: 'failed', reason: 'Review timed out.' },
+      title: 'Auto Review failed',
+    },
+  ] as const)('renders $title above the pending command', ({ detail, title }) => {
     const data = adaptApprovalRequest({
       toolCallId: 'tool_review',
       toolName: 'Bash',
       action: 'run',
       display: { kind: 'command', command: 'terraform apply' },
-      approvalDetail: {
-        outcome: 'denied',
-        risk: 'medium',
-        reason: 'Creating remote resources was not explicitly authorized.',
-      },
+      approvalDetail: detail,
     });
     const rendered = mount(new ApprovalPanelComponent({ data }, () => {})).render(100).join('\n');
     const out = strip(rendered);
-    expect(out).toContain('Auto Review: denied (medium risk)');
-    expect(out).toContain('Creating remote resources was not explicitly authorized.');
-    expect(out.indexOf('Auto Review: denied')).toBeLessThan(out.indexOf('terraform apply'));
-    const titleLine = rendered.split('\n').find((line) => strip(line).includes('Auto Review: denied'));
-    expect(titleLine).toContain(currentTheme.fg('warning', 'Auto Review: denied (medium risk)'));
-
-    const failed = adaptApprovalRequest({
-      toolCallId: 'tool_failed',
-      toolName: 'Bash',
-      action: 'run',
-      display: { kind: 'command', command: 'terraform apply' },
-      approvalDetail: { outcome: 'failed', reason: 'Review timed out.' },
-    });
-    expect(strip(mount(new ApprovalPanelComponent({ data: failed }, () => {})).render(100).join('\n'))).toContain(
-      'Auto Review failed',
-    );
+    expect(out).toContain(title);
+    expect(out).toContain(detail.reason);
+    expect(out.indexOf(title)).toBeLessThan(out.indexOf('terraform apply'));
+    const titleLine = rendered.split('\n').find((line) => strip(line).includes(title));
+    expect(titleLine).toContain(currentTheme.fg('warning', title));
   });
 
   it('wraps a long single-line shell command instead of truncating it', () => {

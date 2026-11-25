@@ -33,8 +33,8 @@ import { createAutoReviewReviewer } from './autoReviewGate';
 import { AUTO_REVIEW_SECTION, type AutoReviewConfig } from './configSection';
 import {
   buildReviewMessages,
+  detectAuthorizationDrift,
   extractAuthorization,
-  sameAuthorization,
   type ReviewGitStatus,
   type ReviewText,
 } from './context';
@@ -83,7 +83,7 @@ export class AutoReviewService extends Service implements IAutoReviewService {
       if (this.scopeContext.agentId !== MAIN_AGENT_ID && this.states.get(autoReviewAncestryKey) === undefined) {
         await this.dispatcher.dispatch(new AutoReviewAncestryRecorded({
           agentId: this.scopeContext.agentId,
-          ...this.snapshotAncestry(agentLifecycle),
+          ...ancestrySnapshotOf(this.scopeContext, agentLifecycle),
         }));
       }
       await next();
@@ -147,12 +147,12 @@ export class AutoReviewService extends Service implements IAutoReviewService {
         }
         const latestHistory = this.loop.history();
         if (latestHistory !== snapshot.history) {
-          const current = this.authorizationOf(latestHistory);
-          if (!sameAuthorization(snapshot.authorization, current)) {
-            if (!appended && sameAuthorization(snapshot.authorization, current.slice(0, snapshot.authorization.length))) {
-              appended = true;
-              continue;
-            }
+          const drift = detectAuthorizationDrift(snapshot.authorization, this.authorizationOf(latestHistory));
+          if (drift === 'appended' && !appended) {
+            appended = true;
+            continue;
+          }
+          if (drift !== 'unchanged') {
             outcome = { decision: 'failed', reason: AUTHORIZATION_CHANGED_REASON };
           }
         }
@@ -207,23 +207,6 @@ export class AutoReviewService extends Service implements IAutoReviewService {
     return inherited.length === 0 ? own : [...inherited, ...own];
   }
 
-  private snapshotAncestry(agentLifecycle: IAgentLifecycleService): AutoReviewAncestry {
-    const { meta, forkedFrom } = this.scopeContext;
-    const forkSourceId = meta?.forkedFrom ?? forkedFrom;
-    if (forkSourceId !== undefined) {
-      const source = agentLifecycle.handleOf(forkSourceId)?.accessor.get(IAutoReviewService);
-      if (source === undefined) return EMPTY_ANCESTRY;
-      return {
-        authorization: source.inheritedAuthorization(),
-        approvedToolCallIds: [...source.approvedToolCallIds()],
-      };
-    }
-    const parentId = subagentParentAgentId(meta) ?? meta?.parentAgentId ?? MAIN_AGENT_ID;
-    const parent = agentLifecycle.handleOf(parentId)?.accessor.get(IAutoReviewService);
-    if (parent === undefined) return EMPTY_ANCESTRY;
-    return { authorization: parent.humanAuthorization(), approvedToolCallIds: [] };
-  }
-
   private async takeSnapshot(
     context: ResolvedToolExecutionHookContext,
     signal: AbortSignal,
@@ -268,6 +251,22 @@ export class AutoReviewService extends Service implements IAutoReviewService {
       return undefined;
     }
   }
+}
+
+export function ancestrySnapshotOf(
+  scope: Pick<IAgentScopeContext, 'meta' | 'forkedFrom'>,
+  agentLifecycle: Pick<IAgentLifecycleService, 'handleOf'>,
+): AutoReviewAncestry {
+  const forkSourceId = scope.meta?.forkedFrom ?? scope.forkedFrom;
+  if (forkSourceId !== undefined) {
+    const source = agentLifecycle.handleOf(forkSourceId)?.accessor.get(IAutoReviewService);
+    return source === undefined
+      ? EMPTY_ANCESTRY
+      : { authorization: source.inheritedAuthorization(), approvedToolCallIds: [...source.approvedToolCallIds()] };
+  }
+  const parentId = subagentParentAgentId(scope.meta) ?? scope.meta?.parentAgentId ?? MAIN_AGENT_ID;
+  const parent = agentLifecycle.handleOf(parentId)?.accessor.get(IAutoReviewService);
+  return parent === undefined ? EMPTY_ANCESTRY : { authorization: parent.humanAuthorization(), approvedToolCallIds: [] };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

@@ -116,23 +116,21 @@ function summary(components: readonly Component[], presentation = options()) {
 }
 
 describe('transcript projection', () => {
-  it('derives reviewing phase on TurnTimeline and shows Reviewing tail in group view', () => {
+  it('shows Reviewing tail in group view only while the review is pending', () => {
     const bash = tool('Bash', { command: 'rm -rf dist' }, null);
     const callId = bash.toolCallView.id as ToolCallId;
-    const group = onlyGroup([thought(100), bash], options({ toolCallDensity: 'compact' }));
-    let now = 0;
-    const timeline = new TurnTimeline(() => instant(now));
+    const group = onlyGroup([bash], options({ toolCallDensity: 'compact' }));
+    const timeline = new TurnTimeline(() => instant(0));
     timeline.turnStarted();
-    now = 100;
+    const tail = () => {
+      const view = groupView(group, timeline, 100, true);
+      return view.tail ? tailText(view.tail, 80, instant(100)) : '';
+    };
+
     timeline.reviewStarted(callId, 'Bash');
-
-    const reviewing = groupView(group, timeline, 250, true);
-    expect(reviewing.tail && tailText(reviewing.tail, 80, instant(250))).toContain('Reviewing');
-
-    now = 400;
+    expect(tail()).toContain('Reviewing');
     timeline.reviewEnded(callId);
-    const afterReview = groupView(group, timeline, 450, true);
-    expect(afterReview.tail && tailText(afterReview.tail, 80, instant(450))).not.toContain('Reviewing');
+    expect(tail()).not.toContain('Reviewing');
   });
 
   it('returns the original source list when every grouping option is off or not fullscreen', () => {
