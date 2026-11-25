@@ -1,6 +1,6 @@
 export default {
-  menuLabel: '反馈',
-  send: '发送反馈',
+  menuLabel: '反馈问题',
+  send: '反馈问题',
   category: '反馈类型',
   categories: {
     bug: '问题 / Bug',

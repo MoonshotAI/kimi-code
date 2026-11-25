@@ -249,6 +249,18 @@ default_model = "alternate"
     });
   });
 
+  it('accepts global feedback opened from the application menu', async () => {
+    const result = await request('POST', '/feedback', {
+      kind: 'global', source: 'menu', category: 'bug', content: 'Issue from the Help menu',
+    });
+    expect(result).toMatchObject({ code: 0, data: { feedback_id: expect.any(Number) } });
+    expect(created.at(-1)).toMatchObject({
+      session_id: 'global',
+      content: 'Issue from the Help menu',
+      info: { kind: 'global', source: 'menu', category: 'bug', client: 'desktop' },
+    });
+  });
+
   it('records the client and each upload choice without starting an upload', async () => {
     const previousUploads = uploads.size;
     const { code } = await request('POST', '/feedback', {

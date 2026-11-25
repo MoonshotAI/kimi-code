@@ -147,7 +147,7 @@ export interface UpdateStatusChangedEvent {
 }
 
 export interface MenuActionEvent {
-  action: 'check-for-updates' | 'help-docs' | 'help-console' | 'export-diagnostics' | 'open-logs-folder';
+  action: 'check-for-updates' | 'help-docs' | 'help-console' | 'help-report-issue' | 'export-diagnostics' | 'open-logs-folder';
 }
 
 export interface TrayActionEvent {

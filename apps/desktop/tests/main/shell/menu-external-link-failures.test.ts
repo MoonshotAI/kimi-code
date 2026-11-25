@@ -21,6 +21,7 @@ vi.mock('electron', () => ({
 vi.mock('../../../src/main/window/main-window', () => ({
   getMainWindow: vi.fn(() => null),
   createWindow: vi.fn(),
+  openFeedbackInRenderer: vi.fn(),
   sendToRenderer: vi.fn(),
   showMainWindow: vi.fn(),
   usesCustomTitleBar: vi.fn(() => false),

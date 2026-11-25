@@ -377,6 +377,7 @@ async function onLogout(): Promise<void> {
           <span class="user-menu-row-value">{{ currentLanguageLabel }}</span>
           <Icon name="chevron-right" size="sm" />
         </MenuItem>
+        <MenuItem separator />
         <MenuItem @click="onOpenFeedback" @mouseenter="scheduleSubmenuClose">
           <FeedbackIcon aria-hidden="true" />
           <span class="user-menu-item-label">{{ t('feedback.menuLabel') }}</span>

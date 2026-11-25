@@ -234,6 +234,16 @@ export function selectSessionInRenderer(sessionId: string): void {
   }
 }
 
+let pendingOpenFeedback = false;
+
+export function openFeedbackInRenderer(): void {
+  if (mainWindow !== null && !mainWindow.isDestroyed() && rendererReady) {
+    sendToRenderer(IPC.menuAction, 'open-feedback');
+  } else {
+    pendingOpenFeedback = true;
+  }
+}
+
 let pendingLaunchActions: LaunchActionPayload[] = [];
 
 export function drainLaunchActions(actions: LaunchActionPayload[]): LaunchActionPayload[] {
@@ -695,6 +705,10 @@ export function createWindow(): void {
     if (pendingTraySessionSelect !== null) {
       sendToRenderer(IPC.traySelectSession, pendingTraySessionSelect);
       pendingTraySessionSelect = null;
+    }
+    if (pendingOpenFeedback) {
+      pendingOpenFeedback = false;
+      sendToRenderer(IPC.menuAction, 'open-feedback');
     }
     for (const action of drainLaunchActions(pendingLaunchActions)) {
       sendToRenderer(IPC.launchAction, action);

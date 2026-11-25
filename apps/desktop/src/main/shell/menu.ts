@@ -1,7 +1,7 @@
 import { app, dialog, Menu, shell, webContents } from 'electron';
 import type { BrowserWindow, MenuItemConstructorOptions } from 'electron';
 
-import { getMainWindow, createWindow, sendToRenderer, showMainWindow, usesCustomTitleBar, devToolsMode } from '../window/main-window';
+import { getMainWindow, createWindow, openFeedbackInRenderer, sendToRenderer, showMainWindow, usesCustomTitleBar, devToolsMode } from '../window/main-window';
 import { connect } from '../server/connect';
 import { getTraceRecorder } from '../diagnostics/trace';
 import { exportDiagnostics, openLogsFolder } from '../diagnostics/diagnostics-export';
@@ -79,6 +79,7 @@ interface MenuStrings {
   help: string;
   documentation: string;
   console: string;
+  reportIssue: string;
   performanceTrace: string;
   stopPerformanceTrace: string;
   traceFailed: string;
@@ -143,11 +144,12 @@ const MENU_STRINGS: Record<TrayLocale, MenuStrings> = {
     help: '帮助',
     documentation: '使用文档',
     console: '控制台',
+    reportIssue: '反馈问题',
     performanceTrace: '性能录制',
     stopPerformanceTrace: '停止性能录制',
     traceFailed: '性能录制失败:{message}',
     traceKeptAt: '录制文件已保留在 {path}',
-    exportDiagnostics: '导出诊断信息…',
+    exportDiagnostics: '导出诊断信息',
     openLogsFolder: '打开日志文件夹',
   },
   en: {
@@ -205,11 +207,12 @@ const MENU_STRINGS: Record<TrayLocale, MenuStrings> = {
     help: 'Help',
     documentation: 'Documentation',
     console: 'Console',
+    reportIssue: 'Report an Issue',
     performanceTrace: 'Performance Trace',
     stopPerformanceTrace: 'Stop Performance Trace',
     traceFailed: 'Performance trace failed: {message}',
     traceKeptAt: 'Trace file kept at {path}',
-    exportDiagnostics: 'Export Diagnostics…',
+    exportDiagnostics: 'Export Diagnostics',
     openLogsFolder: 'Open Logs Folder',
   },
 };
@@ -678,6 +681,15 @@ export function menuTemplate(
             .catch((error: unknown) => reportExternalLinkFailure(url, error));
         },
       },
+      {
+        id: 'help-report-issue',
+        label: strings.reportIssue,
+        click: () => {
+          trackDesktopEvent('menu_action', { action: 'help-report-issue' });
+          showMainWindow();
+          openFeedbackInRenderer();
+        },
+      },
       { type: 'separator' },
       {
         id: 'performance-trace',
@@ -686,7 +698,6 @@ export function menuTemplate(
           void runTraceToggle();
         },
       },
-      { type: 'separator' },
       {
         id: 'export-diagnostics',
         label: strings.exportDiagnostics,
