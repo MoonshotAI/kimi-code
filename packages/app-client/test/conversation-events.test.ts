@@ -188,7 +188,12 @@ async function boot(opts: { deferPages?: boolean; sessionIds?: string[]; promptP
   const agentStatus = (sid: string, status: AppAgentState['status'] | 'compacting', extra: Partial<AppAgentState> = {}) =>
     handlers!.onAgentState?.(sid, 'main', status === 'compacting' ? agentState('idle', { ...extra, compacting: true }) : agentState(status, extra));
   const turnId = (ordinal: number): string => opts.promptPrediction === true ? `t_${ordinal}` : `t${ordinal}`;
-  const header = (ordinal: number, outcome?: ConversationOutcome, id = turnId(ordinal)): ConversationTurnHeader => ({
+  const header = (
+    ordinal: number,
+    outcome?: ConversationOutcome,
+    id = turnId(ordinal),
+    extra: Partial<ConversationTurnHeader> = {},
+  ): ConversationTurnHeader => ({
     turn_id: id,
     ordinal,
     turn_number: ordinal + 1,
@@ -197,14 +202,21 @@ async function boot(opts: { deferPages?: boolean; sessionIds?: string[]; promptP
     outcome,
     started_at: AT,
     steps: [],
+    ...extra,
   });
   const startTurn = (sid: string, ordinal: number, promptId: string, text: string, id = turnId(ordinal)) => {
     agentStatus(sid, 'running');
     frame(sid, { type: 'turn.started', turn: header(ordinal, undefined, id) });
     frame(sid, { type: 'item.ended', turn_id: id, item: opener(promptId, text) });
   };
-  const endTurn = (sid: string, ordinal: number, outcome: ConversationOutcome = 'completed', id = turnId(ordinal)) => {
-    frame(sid, { type: 'turn.ended', turn: header(ordinal, outcome, id) });
+  const endTurn = (
+    sid: string,
+    ordinal: number,
+    outcome: ConversationOutcome = 'completed',
+    id = turnId(ordinal),
+    continuation?: ConversationTurnHeader['continuation'],
+  ) => {
+    frame(sid, { type: 'turn.ended', turn: header(ordinal, outcome, id, { continuation }) });
     agentStatus(sid, 'idle');
   };
   const sentPromptId = (index: number) => submitPrompt.mock.calls[index]![1].promptId!;
@@ -287,6 +299,35 @@ describe('conversation events in the client', () => {
     expect(h.turnEndReads.getGitStatus).toHaveBeenCalled();
     expect(h.turnEndReads.getSessionWarnings).toHaveBeenCalled();
     expect(h.turnEndReads.listSkills).toHaveBeenCalled();
+  });
+
+  it('notifies completion only when continuation is none, falling back for legacy frames without continuation', async () => {
+    const h = await boot();
+    const { notificationsStore } = await import('../src/stores/notifications');
+    const notifyCompletion = vi.spyOn(notificationsStore(), 'maybeNotifyCompletion');
+
+    h.startTurn('s1', 0, 'msg_0', 'first');
+    h.endTurn('s1', 0, 'completed', 't0', 'turn');
+    expect(notifyCompletion).not.toHaveBeenCalled();
+    expect(h.turnEndReads.generateSessionTitle).toHaveBeenCalledTimes(1);
+
+    h.startTurn('s1', 1, 'msg_1', 'second');
+    h.endTurn('s1', 1, 'completed', 't1', 'background');
+    expect(notifyCompletion).not.toHaveBeenCalled();
+
+    h.startTurn('s1', 2, 'msg_2', 'task notification');
+    h.endTurn('s1', 2, 'completed', 't2', 'none');
+    expect(notifyCompletion).toHaveBeenCalledTimes(1);
+    expect(notifyCompletion).toHaveBeenCalledWith('s1', expect.objectContaining({ promptId: 'msg_2' }));
+
+    h.startTurn('s1', 3, 'msg_3', 'legacy server');
+    h.endTurn('s1', 3, 'completed', 't3');
+    expect(notifyCompletion).toHaveBeenCalledTimes(2);
+    expect(notifyCompletion).toHaveBeenLastCalledWith('s1', expect.objectContaining({ promptId: 'msg_3' }));
+
+    h.startTurn('s1', 4, 'msg_4', 'cancelled');
+    h.endTurn('s1', 4, 'interrupted', 't4', 'none');
+    expect(notifyCompletion).toHaveBeenCalledTimes(2);
   });
 
   it('drops a sent prompt the server lost while disconnected and sends the next queued one', async () => {

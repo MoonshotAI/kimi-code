@@ -13,16 +13,17 @@ import { stripBundledSkillBlocks } from '@moonshot-ai/core/llm/origin';
 import type { ContentPart } from '@moonshot-ai/core/llm/message';
 import type { WireRecord } from '@moonshot-ai/agent-core-v2/wire/record';
 
-import type {
-  CompactionItem,
-  ConversationItem,
-  ConversationOutcome,
-  ConversationTurn,
-  ErrorInfo,
-  NotificationItem,
-  ToolCallItem,
-  TurnEndReason,
-  UserMessageItem,
+import {
+  conversationContinuationSchema,
+  type CompactionItem,
+  type ConversationItem,
+  type ConversationOutcome,
+  type ConversationTurn,
+  type ErrorInfo,
+  type NotificationItem,
+  type ToolCallItem,
+  type TurnEndReason,
+  type UserMessageItem,
 } from '../../protocol/conversation';
 import {
   agentRefOf,
@@ -598,6 +599,7 @@ function applyTurnEnded(state: ConversationState, record: WireRecord, time: numb
   }
   const error = errorInfoOf(record['error'], requestId);
   endTurn(state, turn, turnEndOf(record['reason'], error, state.provisionalEnds[turn.turn_id]), time);
+  turn.continuation = conversationContinuationSchema.safeParse(record['continuation']).data;
   delete state.implicitlyEnded[turn.turn_id];
   const durationMs = numberField(record['durationMs']);
   if (durationMs !== undefined) turn.duration_ms = durationMs;
@@ -874,6 +876,7 @@ function turnForNumber(state: ConversationState, turnNumber: number | undefined,
       known.status = 'running';
       known.outcome = undefined;
       known.end_reason = undefined;
+      known.continuation = undefined;
       known.error = undefined;
       known.ended_at = undefined;
       known.duration_ms = undefined;

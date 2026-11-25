@@ -1,11 +1,14 @@
 
 import type { Translator } from '@moonshot-ai/app-core/contracts';
+import type { ConversationContinuation } from '@moonshot-ai/app-core/conversation';
 
 export function shouldNotifyCompletion(
   status: 'idle' | 'aborted',
   hasPendingApproval: boolean,
   hasPendingQuestion: boolean,
+  continuation?: ConversationContinuation,
 ): boolean {
+  if (continuation !== undefined && continuation !== 'none') return false;
   return status === 'idle' && !hasPendingApproval && !hasPendingQuestion;
 }
 
