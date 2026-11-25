@@ -51,7 +51,7 @@ export class FeedbackInputDialogComponent implements Component, Focusable {
 
   constructor(tui: TUI, onDone: (result: FeedbackInputDialogResult) => void) {
     this.onDone = onDone;
-    this.input = new FeedbackField(tui, createEditorTheme(), { paddingX: 1 });
+    this.input = new FeedbackField(tui, createEditorTheme(), { paddingX: 1, wheelScroll: true });
     this.input.onSubmit = (value) => {
       this.submit(value);
     };
