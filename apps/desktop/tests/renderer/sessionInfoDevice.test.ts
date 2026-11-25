@@ -93,16 +93,16 @@ describe('SessionInfoDevice', () => {
     ]);
   });
 
-  it('collapses to a one-line summary and shows when a reading is stale', async () => {
+  it('dims the last reading and says so while it cannot refresh', async () => {
     const root = mount({ deviceId: 'gpu-box' });
+    expect(root.querySelector('.sid-stale')).toBeNull();
+
     deviceStats.stale.value = true;
     await nextTick();
-    expect(root.querySelector('.sid-stale')?.textContent).toBe('暂时无法刷新，显示的是上次的数据');
 
-    root.querySelector<HTMLButtonElement>('.sid-heading')!.click();
-    await nextTick();
-    expect(root.querySelector('.sid-body')).toBeNull();
-    expect(root.querySelector('.sid-summary')?.textContent).toBe('CPU 42% · 内存 50%');
+    expect(root.querySelector('.si-device')?.classList.contains('is-stale')).toBe(true);
+    expect(root.querySelector('.sid-stale')?.textContent).toBe('暂时无法刷新，显示的是上次的数据');
+    expect(rows(root)).toHaveLength(4);
   });
 
   it('leaves out the disk and GPU rows the device does not report, and stays hidden without a reading', async () => {

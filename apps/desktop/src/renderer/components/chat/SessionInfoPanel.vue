@@ -158,6 +158,7 @@ watch(
 }
 .si-folders { position: relative; min-height: 0; padding: var(--space-3) 0 var(--space-4); }
 .si-folders::after,
+.session-info :deep(.si-device)::after,
 .session-info :deep(.si-context:has(+ .sit .sit-section))::after {
   content: "";
   position: absolute;

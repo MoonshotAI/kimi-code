@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { Icon, ProgressBar, Tooltip } from '@moonshot-ai/app-ui';
+import { ProgressBar, Tooltip } from '@moonshot-ai/app-ui';
 import { useDeviceStats, type DeviceStatsTarget } from '@moonshot-ai/app-client/composables';
 import { devicesStore } from '@moonshot-ai/app-client/stores';
 import { formatByteSize } from '@moonshot-ai/app-core/lib';
@@ -21,7 +21,6 @@ interface Meter {
 
 const { t } = useI18n();
 const { stats, stale } = useDeviceStats(() => props.target);
-const expanded = ref(true);
 
 function percent(ratio: number | undefined): string {
   return ratio === undefined ? '—' : `${String(Math.round(ratio * 100))}%`;
@@ -99,26 +98,15 @@ const gpuMemoryRatio = computed(() => {
   return share(used, total);
 });
 
-const summary = computed(() =>
-  meters.value
-    .filter((meter) => meter.key !== 'disk')
-    .map((meter) => `${meter.label} ${percent(meter.ratio)}`)
-    .join(' · '),
-);
-
 function high(ratio: number | undefined): boolean {
   return ratio !== undefined && ratio >= HIGH_USAGE;
 }
 </script>
 
 <template>
-  <section v-if="stats !== null" class="si-device" :class="{ 'is-collapsed': !expanded, 'is-stale': stale }">
-    <button class="sid-heading" type="button" :aria-expanded="expanded" @click="expanded = !expanded">
-      <span class="sid-title">{{ t('header.sessionInfoDeviceTitle', { name }) }}</span>
-      <span v-if="!expanded" class="sid-summary">{{ summary }}</span>
-      <Icon class="sid-chevron" :class="{ collapsed: !expanded }" name="chevron-down" size="sm" />
-    </button>
-    <div v-if="expanded" class="sid-body">
+  <section v-if="stats !== null" class="si-device" :class="{ 'is-stale': stale }">
+    <h3 class="sid-title">{{ t('header.sessionInfoDeviceTitle', { name }) }}</h3>
+    <div class="sid-body">
       <Tooltip v-for="meter in meters" :key="meter.key" :text="meter.detail">
         <div class="sid-row" :class="{ 'is-high': high(meter.ratio) }">
           <span class="sid-label">{{ meter.label }}</span>
@@ -151,54 +139,16 @@ function high(ratio: number | undefined): boolean {
   min-width: 0;
   padding: var(--space-3) var(--space-4) var(--space-4);
 }
-.si-device.is-collapsed {
-  padding-bottom: var(--space-3);
-}
-.si-device::after {
-  content: "";
-  position: absolute;
-  right: var(--space-4);
-  bottom: 0;
-  left: var(--space-4);
-  height: var(--p-hairline);
-  background: var(--color-line);
-}
-.sid-heading {
-  width: 100%;
-  min-width: 0;
-  min-height: 32px;
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: var(--color-text);
-  text-align: left;
-  cursor: pointer;
-}
-.sid-heading:focus-visible { outline: none; box-shadow: var(--p-focus-ring); }
 .sid-title {
-  flex: 1;
-  min-width: 0;
+  margin: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: var(--text-xs);
   font-weight: var(--weight-medium);
+  line-height: 32px;
+  color: var(--color-text);
 }
-.sid-summary {
-  flex: none;
-  font-size: var(--text-xs);
-  color: var(--color-text-muted);
-  font-variant-numeric: tabular-nums;
-}
-.sid-chevron {
-  flex: none;
-  color: var(--color-text-faint);
-  transition: transform var(--duration-fast) var(--ease-out);
-}
-.sid-chevron.collapsed { transform: rotate(-90deg); }
 .sid-body {
   display: flex;
   flex-direction: column;
