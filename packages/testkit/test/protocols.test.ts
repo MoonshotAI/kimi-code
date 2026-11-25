@@ -116,6 +116,27 @@ describe('scripted response ids', () => {
   });
 });
 
+describe('tool call extras', () => {
+  it('carries a Gemini thought signature on an OpenAI tool call and as a Google thoughtSignature', async () => {
+    const model = fakeModel();
+    const signed = call('Bash', { command: 'ls' }, { extras: { thought_signature_b64: 'c2lnbmF0dXJl' } });
+    model.script(signed, signed, signed);
+    const openai = new OpenAI({ apiKey: 'sk-test', baseURL: 'http://testkit.invalid/v1', fetch: model.fetch, maxRetries: 0 });
+    const ask = { model: 'testkit-model', messages: [{ role: 'user' as const, content: 'hi' }], tools: [{ type: 'function' as const, function: { name: 'Bash', parameters: { type: 'object' } } }] };
+    const pieces: unknown[] = [];
+    for await (const chunk of await openai.chat.completions.create({ ...ask, stream: true })) pieces.push(...(chunk.choices[0]?.delta.tool_calls ?? []));
+    expect(pieces[0]).toMatchObject({ id: 'call_0_0', function: { name: 'Bash' }, extras: { thought_signature_b64: 'c2lnbmF0dXJl' } });
+    const message = (await openai.chat.completions.create({ ...ask, stream: false })).choices[0]?.message;
+    expect(message?.tool_calls?.[0]).toMatchObject({ id: 'call_1_0', extras: { thought_signature_b64: 'c2lnbmF0dXJl' } });
+
+    await model.listen();
+    const google = new GoogleGenAI({ apiKey: 'test-key', httpOptions: { baseUrl: model.origin } });
+    const response = await google.models.generateContent({ model: 'testkit-model', contents: [{ role: 'user', parts: [{ text: 'hi' }] }], config: { tools: GOOGLE_TOOLS } });
+    expect(response.candidates?.[0]?.content?.parts?.[0]).toMatchObject({ functionCall: { name: 'Bash' }, thoughtSignature: 'c2lnbmF0dXJl' });
+    model.verify();
+  });
+});
+
 describe('anthropic messages', () => {
   it('streams thinking with a signature, text and a tool call the SDK assembles', async () => {
     const model = fakeModel();

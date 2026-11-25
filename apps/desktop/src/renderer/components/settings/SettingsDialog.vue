@@ -33,7 +33,7 @@ import DockIconPicker from './DockIconPicker.vue';
 import BrowserSettingsTab from '../browser/BrowserSettingsTab.vue';
 import { copyTextToClipboard, hasDesktopBridge, isLinuxDesktop, isMacosDesktop, isRcLocation, prefersNativeTitleBar, providerDisplayName } from '@moonshot-ai/app-core/lib';
 import { useContextInspector, useSessionMentions, useSidebarTabs } from '@moonshot-ai/app-core';
-import { configStore, hostsStore } from '@moonshot-ai/app-client/stores';
+import { configStore, hostsStore, workspacesStore } from '@moonshot-ai/app-client/stores';
 import { useActivityRunFolding, usePasteImageAutoMention, useRunningSendMode, useTurnFolding, type RunningSendMode, type SettingsHighlightKey } from '@moonshot-ai/app-client';
 import { useVibrancy } from '../../composables/useVibrancy';
 import { usePreventSystemSleep } from '../../composables/usePreventSystemSleep';
@@ -785,21 +785,29 @@ watch(
   { immediate: true },
 );
 
-const archiveWorkspaces = computed<string[]>(() => {
-  const set = new Set<string>();
-  for (const s of archivedItems.value) set.add(s.cwd);
-  return Array.from(set).sort((a, b) => a.localeCompare(b));
+function archiveWorkspaceOf(session: AppSession): { id: string; label: string; path?: string } {
+  const id = workspacesStore().workspaceIdForSession(session);
+  const workspace = workspacesStore().workspaces.find((w) => w.id === id);
+  if (workspace === undefined) return { id: session.cwd, label: session.cwd };
+  const shortPath = workspacesStore().workspaceById.get(id)?.shortPath ?? workspace.root;
+  return { id, label: workspace.name, path: hostsStore().workspacePathLabel({ shortPath, hostId: workspace.hostId }, t) };
+}
+
+const archiveWorkspaces = computed(() => {
+  const workspaces = new Map(archivedItems.value.map(archiveWorkspaceOf).map((workspace) => [workspace.id, workspace]));
+  return Array.from(workspaces.values(), ({ id, label, path }) => ({ value: id, label, description: path }))
+    .sort((a, b) => a.label.localeCompare(b.label));
 });
 const archiveWorkspaceSelectOptions = computed(() => [
   { value: 'all', label: t('settings.archivedAllWorkspaces') },
-  ...archiveWorkspaces.value.map((workspace) => ({ value: workspace, label: workspace })),
+  ...archiveWorkspaces.value,
 ]);
 
 const filteredArchived = computed<AppSession[]>(() => {
   const q = archiveQuery.value.trim().toLowerCase();
   let rows = archivedItems.value.filter((s) => s.archived === true && !client.isSessionDeleted(s.id));
   if (archiveWsFilter.value !== 'all') {
-    rows = rows.filter((s) => s.cwd === archiveWsFilter.value);
+    rows = rows.filter((s) => archiveWorkspaceOf(s).id === archiveWsFilter.value);
   }
   if (q) rows = rows.filter((s) => s.title.toLowerCase().includes(q));
   rows = rows.slice();
@@ -815,14 +823,15 @@ const filteredArchived = computed<AppSession[]>(() => {
   return rows;
 });
 
-const groupedArchived = computed<{ cwd: string; items: AppSession[] }[]>(() => {
-  const map = new Map<string, AppSession[]>();
+const groupedArchived = computed<{ id: string; label: string; path?: string; items: AppSession[] }[]>(() => {
+  const map = new Map<string, { id: string; label: string; path?: string; items: AppSession[] }>();
   for (const s of filteredArchived.value) {
-    const list = map.get(s.cwd) ?? [];
-    list.push(s);
-    map.set(s.cwd, list);
+    const workspace = archiveWorkspaceOf(s);
+    const group = map.get(workspace.id) ?? { ...workspace, items: [] };
+    group.items.push(s);
+    map.set(workspace.id, group);
   }
-  return Array.from(map.entries()).map(([cwd, items]) => ({ cwd, items }));
+  return Array.from(map.values());
 });
 
 async function onRestore(id: string): Promise<void> {
@@ -1644,10 +1653,11 @@ defineExpose({ confirmDiscard });
 
           <template v-else>
             <div v-if="groupedArchived.length > 0" class="archive-list">
-              <section v-for="g in groupedArchived" :key="g.cwd" class="archive-card">
+              <section v-for="g in groupedArchived" :key="g.id" class="archive-card">
                 <div class="archive-workspace">
                   <Icon name="folder-closed" size="md" />
-                  <span class="path">{{ g.cwd }}</span>
+                  <span class="path">{{ g.label }}</span>
+                  <span v-if="g.path" class="path hint">{{ g.path }}</span>
                   <span class="count">{{ t('settings.archivedSessionsCount', { count: g.items.length }) }}</span>
                 </div>
                 <div class="setting-card">

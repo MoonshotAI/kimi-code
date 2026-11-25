@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { nextTick } from 'vue';
 
-import type { AppConfig, AppSession, KimiWebApi, ReadRequestOptions, SessionsPage } from '@moonshot-ai/app-core/api';
+import type { AppConfig, AppSession, AppWorkspace, KimiWebApi, ReadRequestOptions, SessionsPage } from '@moonshot-ai/app-core/api';
 import { connectionStore } from '../src/stores/connection';
+import { filesStore } from '../src/stores/files';
 import { workspacesStore } from '../src/stores/workspaces';
 import { resetKimiClientDeps, setKimiClientDeps } from '../src/client/deps';
 import { configStore } from '../src/stores/config';
@@ -433,11 +435,11 @@ describe('sessionListStore cancellable background reads', () => {
     expect(workspacesStore().sessionsCursorByWorkspace).toMatchObject({ ws1: 'first', ws2: undefined });
   });
 
-  it('keeps the root fallback for a uniquely registered workspace alias', async () => {
+  it('pairs the group of a legacy alias bucket by the registered id the server reports', async () => {
     listSessionGroups.mockResolvedValueOnce({
       groups: [{
-        workspaceId: 'wd_alias',
-        sessions: [{ ...row('aliased'), workspaceId: 'wd_alias', cwd: '/workspace' }],
+        workspaceId: 'ws1',
+        sessions: [{ ...row('aliased'), workspaceId: 'wd_alias', cwd: '/Workspace' }],
         total: 2,
       }],
       hasMore: false,
@@ -449,9 +451,45 @@ describe('sessionListStore cancellable background reads', () => {
       sessionListStore().fireFirstSessionGroupPage(),
     );
 
-    expect(initial!.sessions[0]).toMatchObject({ id: 'aliased', workspaceId: 'ws1' });
+    expect(initial!.sessions[0]).toMatchObject({ id: 'aliased', workspaceId: 'wd_alias', cwd: '/Workspace' });
     expect(workspacesStore().sessionsHasMoreByWorkspace).toMatchObject({ ws1: true });
     expect(workspacesStore().sessionsCursorByWorkspace).toMatchObject({ ws1: 'aliased' });
+  });
+
+  it.each([
+    {
+      scene: 'an empty project rooted where the chats of a moved project stayed',
+      empty: { id: 'wm_empty', root: '/app', name: 'B', kind: 'managed' as const, additionalDirs: [], sessionCount: 0 },
+      owner: { id: 'wm_owner', root: '/app2', name: 'A', kind: 'managed' as const, additionalDirs: ['/app'], sessionCount: 2 },
+      cwd: '/app',
+    },
+    {
+      scene: 'an empty project rooted in the worktree of a chat of another project',
+      empty: { id: 'wm_empty', root: '/app-haha', name: 'C', kind: 'managed' as const, additionalDirs: [], sessionCount: 0 },
+      owner: { id: 'wd_owner', root: '/app', name: 'app', kind: 'implicit' as const, additionalDirs: [], sessionCount: 2 },
+      cwd: '/app-haha',
+    },
+  ])('keeps chats in their own project next to $scene', async ({ empty, owner, cwd }) => {
+    for (const workspaces of [[empty, owner], [owner, empty]]) {
+      workspacesStore().workspaces = workspaces;
+      listSessionGroups.mockResolvedValueOnce({
+        groups: [{ workspaceId: owner.id, sessions: [{ ...row('chat'), workspaceId: owner.id, cwd }], total: 2 }],
+        hasMore: false,
+        nextPageToken: null,
+        total: 1,
+      });
+
+      const initial = await sessionListStore().loadInitialSessionsByWorkspace(
+        sessionListStore().fireFirstSessionGroupPage(),
+      );
+      sessionsStore().setSessions(initial!.sessions);
+
+      expect(initial!.sessions).toMatchObject([{ id: 'chat', workspaceId: owner.id, cwd }]);
+      expect(workspacesStore().sessionsHasMoreByWorkspace).toEqual({ [owner.id]: true, [empty.id]: false });
+      expect(workspacesStore().sessionsCursorByWorkspace).toEqual({ [owner.id]: 'chat', [empty.id]: undefined });
+      expect(workspacesStore().mergedWorkspaces.find((workspace) => workspace.id === owner.id)?.sessionCount).toBe(2);
+      expect(workspacesStore().mergedWorkspaces.find((workspace) => workspace.id === empty.id)?.sessionCount).toBe(0);
+    }
   });
 
   it('keeps the first grouped page critical and cancels later background pages on a new generation', async () => {
@@ -475,6 +513,111 @@ describe('sessionListStore cancellable background reads', () => {
     await next.firstPage;
     expect(sessionsStore().sessions).toEqual([]);
     expect(failure).not.toHaveBeenCalled();
+  });
+});
+
+describe('session directories after a project moves', () => {
+  const listDirectory = vi.fn();
+  const getGitStatus = vi.fn();
+  const setWorkspacePrimary = vi.fn();
+
+  function project(root: string, extra: Partial<AppWorkspace> = {}): AppWorkspace {
+    return { id: 'wm_m', root, name: 'M', kind: 'managed', additionalDirs: ['/m1', '/m2'].filter((dir) => dir !== root), sessionCount: 3, ...extra };
+  }
+
+  function row(id: string, cwd: string, workspaceId = 'wm_m'): AppSession {
+    return { ...makeSession(id, '2026-01-01T00:00:00.000Z'), workspaceId, cwd };
+  }
+
+  function directories(): Record<string, string> {
+    return Object.fromEntries(sessionsStore().sessions.map((s) => [s.id, s.cwd]));
+  }
+
+  async function moveProject(root: string): Promise<void> {
+    await nextTick();
+    workspacesStore().applyWorkspaceEvent({ type: 'workspaceUpdated', workspace: project(root) });
+    await nextTick();
+  }
+
+  beforeEach(() => {
+    sessionListStore();
+    listDirectory.mockReset().mockResolvedValue({ items: [], truncated: false });
+    getGitStatus.mockReset().mockResolvedValue({ pullRequest: null });
+    setWorkspacePrimary.mockReset().mockImplementation(async (_id: string, path: string) => project(path));
+    setKimiClientDeps({ api: () => ({ listDirectory, getGitStatus, setWorkspacePrimary }) as unknown as KimiWebApi, t: (key) => key });
+    workspacesStore().hiddenWorkspaceIds = [];
+    workspacesStore().workspaces = [project('/m1'), { ...project('/m1'), id: 'wm_other' }];
+    workspacesStore().selectWorkspace('wm_m');
+    sessionsStore().setSessions([
+      row('follows', '/m1'),
+      row('worktree', '/m1-wt'),
+      row('subdirectory', '/m1/src'),
+      row('elsewhere', '/m1', 'wm_other'),
+    ]);
+    sessionsStore().setActiveSessionId('follows');
+  });
+
+  afterEach(() => {
+    for (const id of Object.keys(filesStore().fileTreeBySession)) filesStore().clearSessionFileTree(id);
+    sessionsStore().setActiveSessionId(undefined);
+    sessionsStore().setSessions([]);
+    workspacesStore().workspaces = [];
+    resetKimiClientDeps();
+  });
+
+  it.each(['an event', 'a list refresh'])('moves the sessions at the project root and no others after %s', async (source) => {
+    if (source === 'an event') await moveProject('/m2');
+    else {
+      await nextTick();
+      workspacesStore().workspaces = [project('/m2'), { ...project('/m1'), id: 'wm_other' }];
+      await nextTick();
+    }
+
+    expect(directories()).toEqual({ follows: '/m2', worktree: '/m1-wt', subdirectory: '/m1/src', elsewhere: '/m1' });
+    expect(workspacesStore().activePanelRoots).toEqual({ root: '/m2', roots: ['/m2', '/m1'] });
+  });
+
+  it('reads the files of moved sessions again and keeps those of the others', async () => {
+    listDirectory.mockResolvedValue({ items: [{ path: 'm1.txt', name: 'm1.txt', kind: 'file' }], truncated: false });
+    sessionsStore().setSessions([row('follows', '/m1'), row('also-follows', '/m1'), row('worktree', '/m1-wt')]);
+    for (const id of ['follows', 'also-follows', 'worktree']) await filesStore().loadFileTreeChildren(id, '.');
+    listDirectory.mockReset().mockResolvedValue({ items: [{ path: 'm2.txt', name: 'm2.txt', kind: 'file' }], truncated: false });
+    await moveProject('/m2');
+
+    await vi.waitFor(() => expect(filesStore().fileTreeBySession['follows']?.children['.']?.map((entry) => entry.name)).toEqual(['m2.txt']));
+
+    expect(listDirectory.mock.calls.map(([id]) => id)).toEqual(['follows']);
+    expect(getGitStatus.mock.calls.map(([id]) => id)).toEqual(['follows']);
+    expect(filesStore().fileTreeBySession['also-follows']).toBeUndefined();
+    expect(filesStore().fileTreeBySession['worktree']?.children['.']?.map((entry) => entry.name)).toEqual(['m1.txt']);
+  });
+
+  it.each([
+    ['the project primary is changed', () => workspacesStore().setWorkspacePrimary({ id: 'wm_m', path: '/m2' })],
+    ['the session gets a new directory', () => Promise.resolve(sessionsStore().updateSession('follows', (session) => ({ ...session, cwd: '/m2' })))],
+  ])('lists the new directory when %s while the old one is still being read', async (_source, move) => {
+    let serverDir = '/m1';
+    const answers: Array<() => void> = [];
+    listDirectory.mockReset().mockImplementation(() => {
+      const name = `${serverDir.slice(1)}.txt`;
+      return new Promise((resolve) => answers.push(() => resolve({ items: [{ path: name, name, kind: 'file' }], truncated: false })));
+    });
+    const oldListing = filesStore().loadFileTreeChildren('follows', '.');
+    serverDir = '/m2';
+    await move();
+    await nextTick();
+    for (const answer of answers.toReversed()) answer();
+    await oldListing;
+
+    expect(filesStore().fileTreeBySession['follows']?.children['.']?.map((entry) => entry.name)).toEqual(['m2.txt']);
+  });
+
+  it('moves nothing when only the name or the additional directories of a project change', async () => {
+    await nextTick();
+    workspacesStore().applyWorkspaceEvent({ type: 'workspaceUpdated', workspace: project('/m1', { name: 'renamed', additionalDirs: [] }) });
+    await nextTick();
+
+    expect(directories()).toEqual({ follows: '/m1', worktree: '/m1-wt', subdirectory: '/m1/src', elsewhere: '/m1' });
   });
 });
 

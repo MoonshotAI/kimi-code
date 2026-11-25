@@ -56,18 +56,22 @@ kimi acp
 | `session/list` | 是 | 枚举磁盘会话，可按 `cwd` 过滤 |
 | `session/fork` | 是 | 从源会话分叉；请求上的 `cwd` / `additionalDirectories` / `mcpServers` 会被忽略并写 warn |
 | `session/close` | 是 | 尽力拆除：中断进行中的 turn、释放会话级资源并关闭存活会话；未知 id 不算错误 |
-| `session/delete` | 是 | 永久删除会话及其持久化数据；未知 id 返回 `invalidParams (-32602)` |
+| `session/delete` | 是 | 永久删除会话及其持久化数据。后续的 `session/list` 调用会从列表中排除该会话。未知 ID 返回 `invalidParams (-32602)`。 |
 | `session/prompt` | 是 | 接受 `text` / `image` / `resource` / `resource_link` 内容块，流式输出 `agent_message_chunk`。回合开始之后失败时返回 JSON-RPC 错误：认证失败返回 `authRequired (-32000)`，其他失败返回 `-32603`，`message` 是错误信息，错误码放在 `data.code`。回复被供应商的内容过滤拦下时，以停止原因 `refusal` 结束；发出 `session/cancel` 之后失败的回合，仍以 `cancelled` 结束 |
 | `session/cancel` | 是 | 中断当前 turn（针对 prompt 的 JSON-RPC `$/cancel_request` 走同一条取消路径） |
 | `session/set_mode` | 是 | 校验 `modeId`，与 `set_config_option({configId:'mode'})` 走同一个模式切换 |
 | `session/set_config_option` | 是 | 统一的 model / thinking / mode picker 分发 |
+
+在模式选择器中，Auto（`auto`）可以自动批准敏感操作，仍遵守显式拒绝规则。YOLO（`yolo`）自动批准常规操作，遇到敏感操作仍可能请求确认。
+
+在 Plan 模式下创建或恢复会话时，两种模式选择器都会显示 Plan。批准计划或选择「拒绝并退出」后，选择器会更新为实际生效的权限模式。
 
 ### 客户端 reverse-RPC — agent → IDE（10 / 11）
 
 | 方法 | 状态 | 说明 |
 | --- | --- | --- |
 | `session/update` | 是 | 流式推送 `agent_message_chunk` / `tool_call*` / `plan` / `config_option_update` / `available_commands_update` |
-| `session/request_permission` | 是 | 工具审批和问题提问共用此通道 |
+| `session/request_permission` | 是 | 工具审批和提问共用此通道。Bash 审批包含完整命令和工作目录。已解析的绝对文件路径通过 `toolCall.locations` 提供 |
 | `fs/read_text_file` | 是 | 客户端声明 `fsCapabilities` 时，引擎的文件读取路由到客户端 |
 | `fs/write_text_file` | 是 | 引擎的文件写入路由到客户端 |
 | `terminal/create` · `output` · `release` · `kill` · `wait_for_exit` | 是 | 客户端声明 `clientCapabilities.terminal` 时，shell 执行通过 reverse-RPC 交给客户端 |

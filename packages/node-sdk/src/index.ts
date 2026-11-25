@@ -82,6 +82,7 @@ export {
 } from '@moonshot-ai/agent-core-v2/app/plugin/marketplace';
 export { PluginAvailabilityStore } from '@moonshot-ai/agent-core-v2/app/plugin/availability';
 export { resolveKimiHome } from '@moonshot-ai/agent-core-v2';
+export { sameDir } from '@moonshot-ai/agent-core-v2/_base/utils/workdir-slug';
 export type { LogContext, LogLevel, LogPayload, Logger } from '#/logging/index';
 
 export { effectiveModelAlias, loadRuntimeConfigSafe } from '#/config/index';

@@ -6,28 +6,32 @@ import { ISessionManager, type ISessionManager as SessionManager } from '#/app/s
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { ErrorCodes, isError2 } from '#/errors';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
-import type { ResumeSessionOptions } from '#/workspace/sessionLifecycle/sessionLifecycle';
-import { IWorkspaceInstanceManager, type WorkspaceInstanceLease } from '#/workspace/workspaceInstance/workspaceInstanceManager';
+import { ISessionWorkdir } from '#/session/workdir/workdir';
+import type { ResumeSessionOptions } from '#/project/sessionLifecycle/sessionLifecycle';
+import { IProjectInstanceManager, type ProjectInstanceLease } from '#/project/projectInstance/projectInstanceManager';
+
+import { unlessProjectGone } from './sessionProject';
 
 export async function programForSession(
   accessor: ServicesAccessor,
   sessionId: string,
-): Promise<WorkspaceInstanceLease | undefined> {
-  const manager = accessor.get(ISessionManager);
-  const live = manager.get(sessionId);
-  if (live !== undefined) {
-    const context = live.accessor.get(ISessionContext);
-    return accessor.get(IWorkspaceInstanceManager).acquire({
-      workspaceId: context.workspaceId,
-      root: context.cwd,
-    });
-  }
-  const summary = await accessor.get(ISessionIndex).get(sessionId);
-  if (summary === undefined) return undefined;
-  return accessor.get(IWorkspaceInstanceManager).acquire({
-    workspaceId: summary.workspaceId,
-    root: summary.cwd,
-  });
+): Promise<ProjectInstanceLease | undefined> {
+  const live = accessor.get(ISessionManager).get(sessionId)?.accessor.get(ISessionContext);
+  const session = live ?? (await accessor.get(ISessionIndex).get(sessionId));
+  if (session === undefined) return undefined;
+  return unlessProjectGone(accessor.get(IProjectInstanceManager).acquire({
+    workspaceId: session.workspaceId,
+    reviveFrom: session.cwd,
+  }));
+}
+
+export async function reloadProgramForSession(accessor: ServicesAccessor, sessionId: string): Promise<void> {
+  const live = accessor.get(ISessionManager).get(sessionId);
+  const summary = live === undefined ? await accessor.get(ISessionIndex).get(sessionId) : undefined;
+  const session = live?.accessor.get(ISessionContext) ?? summary;
+  if (session === undefined) return;
+  const binding = live?.accessor.get(ISessionWorkdir) ?? { environmentId: summary?.environmentId, cwd: summary?.environmentCwd };
+  await accessor.get(IProjectInstanceManager).get(session.workspaceId)?.program.reload(binding, session.cwd);
 }
 
 export async function resumeSessionById(

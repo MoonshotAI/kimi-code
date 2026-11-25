@@ -1,6 +1,7 @@
 
 import { reactive } from 'vue';
 import { getKimiWebApi } from './deps';
+import { workspacesStore } from '../stores/workspaces';
 import type {
   AppSession,
   BatchSessionResponse,
@@ -132,6 +133,7 @@ export function useSessionAdmin(deps: UseSessionAdminDeps) {
       if (serial !== requestSerial) return;
       state.items = page.items;
       state.total = page.total;
+      void workspacesStore().listUnseenWorkspaces(page.items);
       for (const item of page.items) {
         if (state.selectedArchivedById.has(item.id)) {
           state.selectedArchivedById.set(item.id, item.archived);

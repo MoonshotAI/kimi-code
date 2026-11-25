@@ -2,8 +2,6 @@ import assert from 'node:assert/strict';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
-import { createServer } from 'node:http';
-import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join, relative, resolve } from 'node:path';
 
@@ -24,6 +22,7 @@ import {
   type GoalSnapshot,
   type Session,
 } from '@moonshot-ai/kimi-code-sdk';
+import { call, startFakeModel } from '@moonshot-ai/testkit/model';
 import chalk from 'chalk';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -3054,14 +3053,21 @@ describe('KimiTUI message flow', () => {
     expect(harness.createSession).toHaveBeenCalledTimes(1);
   });
 
-  it('lists MCP servers before the lazy session via the workspace view (v2 engine)', async () => {
+  it.each([
+    ['the project directory', {}, undefined],
+    [
+      'the directory of --environment-cwd',
+      { environment: 'local', environmentCwd: '/tmp/proj-a/src' },
+      { environmentId: 'local', environmentCwd: '/tmp/proj-a/src' },
+    ],
+  ])('lists MCP servers of %s before the lazy session via the workspace view (v2 engine)', async (_label, startupOptions, environment) => {
     const session = makeSession({ id: 'ses-lazy' });
     const listWorkspaceMcpServers = vi.fn(async () => [
       { name: 'my-mcp', status: 'connected', transport: 'stdio', tools: [] },
     ]);
     const startupInput: KimiTUIStartupInput = {
       ...makeStartupInput(),
-      cliOptions: { ...makeStartupInput().cliOptions },
+      cliOptions: { ...makeStartupInput().cliOptions, ...startupOptions },
     };
     const { driver, harness } = await makeDriver(
       session,
@@ -3072,7 +3078,7 @@ describe('KimiTUI message flow', () => {
     driver.handleUserInput('/mcp');
 
     await vi.waitFor(() => {
-      expect(listWorkspaceMcpServers).toHaveBeenCalledWith('/tmp/proj-a');
+      expect(listWorkspaceMcpServers).toHaveBeenCalledWith('/tmp/proj-a', environment);
     });
     expect(harness.createSession).not.toHaveBeenCalled();
     expect(session.listMcpServers).not.toHaveBeenCalled();
@@ -8601,68 +8607,12 @@ command = "vim"
       Buffer.from('00000020667479706d703432000000006d70343269736f6d', 'hex'),
     );
 
-    let notifyUploadStarted!: () => void;
-    const uploadStarted = new Promise<void>((resolve) => {
-      notifyUploadStarted = resolve;
-    });
-    let uploadAborted = false;
-    const server = createServer((req, res) => {
-      void (async () => {
-        for await (const _chunk of req) {
-        }
-        if (req.url === '/v1/files') {
-          notifyUploadStarted();
-          res.on('close', () => {
-            if (!res.writableEnded) uploadAborted = true;
-          });
-          return;
-        }
-        if (req.url === '/v1/chat/completions') {
-          const chunks = [
-            {
-              id: 'chatcmpl-mock',
-              object: 'chat.completion.chunk',
-              created: 1,
-              model: 'mock',
-              choices: [
-                {
-                  index: 0,
-                  delta: {
-                    role: 'assistant',
-                    tool_calls: [
-                      {
-                        index: 0,
-                        id: 'call_video_1',
-                        type: 'function',
-                        function: { name: 'ReadMediaFile', arguments: '{"path":"clip.mp4"}' },
-                      },
-                    ],
-                  },
-                  finish_reason: null,
-                },
-              ],
-            },
-            {
-              id: 'chatcmpl-mock',
-              object: 'chat.completion.chunk',
-              created: 1,
-              model: 'mock',
-              choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }],
-              usage: { prompt_tokens: 10, completion_tokens: 4, total_tokens: 14 },
-            },
-          ];
-          res.writeHead(200, { 'content-type': 'text/event-stream' });
-          res.end(`${chunks.map((chunk) => `data: ${JSON.stringify(chunk)}\n\n`).join('')}data: [DONE]\n\n`);
-          return;
-        }
-        res.writeHead(404);
-        res.end();
-      })().catch(() => {
-        res.destroy();
-      });
-    });
-    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-    const baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1`;
+    const model = await startFakeModel();
+    model.holdUploads();
+    model
+      .route('video-upload', () => true)
+      .script(call('ReadMediaFile', { path: 'clip.mp4' }, { id: 'call_video_1' }));
+    const baseUrl = model.baseUrl;
     await writeFile(
       join(homeDir, 'config.toml'),
       `
@@ -8702,14 +8652,16 @@ capabilities = ["image_in", "video_in"]
       driver.sessionEventHandler.startSubscription();
 
       driver.handleUserInput('watch clip.mp4');
-      await uploadStarted;
+      await vi.waitFor(() => {
+        expect(model.uploads()).toHaveLength(1);
+      });
       driver.state.editor.onEscape?.();
 
       await vi.waitFor(() => {
         expect(driver!.state.appState.streamingPhase).toBe('idle');
       });
       await vi.waitFor(() => {
-        expect(uploadAborted).toBe(true);
+        expect(model.uploads()[0]?.state).toBe('aborted');
       });
       expect(driver.state.activitySpinner).toBeNull();
       const previousSessionId = driver.getCurrentSessionId();
@@ -8722,16 +8674,12 @@ capabilities = ["image_in", "video_in"]
       expect(driver.state.appState.streamingPhase).toBe('idle');
       expect(driver.state.livePane.mode).toBe('idle');
       expect(driver.state.activitySpinner).toBeNull();
+      model.verify();
     } finally {
       driver?.state.activitySpinner?.instance.stop();
       await driver?.closeSession('test').catch(() => {});
       await harness?.close();
-      server.closeAllConnections();
-      await new Promise<void>((resolve) => {
-        server.close(() => {
-          resolve();
-        });
-      });
+      await model.close();
     }
   }, 20_000);
 

@@ -59,20 +59,6 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
-function immediateProcess(exitCode: number, stdoutText = ''): IHostProcess {
-  return {
-    _serviceBrand: undefined,
-    stdin: { write: vi.fn(), end: vi.fn() } as unknown as Writable,
-    stdout: Readable.from(stdoutText ? [stdoutText] : []),
-    stderr: Readable.from([]),
-    pid: 30000 + exitCode,
-    exitCode,
-    wait: vi.fn().mockResolvedValue(exitCode) as IHostProcess['wait'],
-    kill: vi.fn().mockResolvedValue(undefined) as IHostProcess['kill'],
-    dispose: vi.fn().mockResolvedValue(undefined) as IHostProcess['dispose'],
-  };
-}
-
 function controllableProcess() {
   const stdout = new PassThrough();
   let resolveWait!: (code: number) => void;
@@ -357,13 +343,19 @@ describe('AgentTaskService — event emission', () => {
   });
 
   it('tracks failed and timed-out terminal statuses', async () => {
-    const failedProcess = immediateProcess(1);
-    const failedCtx = processContext(failedProcess);
+    const failedProcess = controllableProcess();
+    const failedCtx = processContext(failedProcess.proc);
     const { handler: failed } = await startBashTaskInLoop(failedCtx, { command: 'false', description: 'failed', run_in_background: true });
+    failedCtx.mockNextResponse({ type: 'text', text: 'failure acknowledged' });
+    failedProcess.finish(1);
     await failed.wait();
+    await drain(failedCtx, failed.taskId);
     const timedCtx = track(createTestAgent());
-    const timed = await startControlled(timedCtx, { timeoutMs: 0 });
+    const timedStart = startControlled(timedCtx, { timeoutMs: 0 });
+    timedCtx.mockNextResponse({ type: 'text', text: 'timeout acknowledged' });
+    const timed = await timedStart;
     await timed.handler.wait();
+    await drain(timedCtx, timed.handler.taskId);
     expect((await failedCtx.persistedWireRecords()).some((record) => record.type === 'task.terminated' && recordInfo(record, 'status') === 'failed')).toBe(true);
     expect((await timedCtx.persistedWireRecords()).some((record) => record.type === 'task.terminated' && recordInfo(record, 'status') === 'timed_out')).toBe(true);
   });
@@ -371,7 +363,9 @@ describe('AgentTaskService — event emission', () => {
   it('stops a task with one terminal record', async () => {
     const ctx = track(createTestAgent());
     const task = await startControlled(ctx);
+    ctx.mockNextResponse({ type: 'text', text: 'stop acknowledged' });
     await ctx.get(IAgentTaskService).stop(task.handler.taskId, 'stop now');
+    await drain(ctx, task.handler.taskId);
     const records = await ctx.persistedWireRecords();
     expect(records.filter((record) => record.type === 'task.terminated' && recordInfo(record, 'taskId') === task.handler.taskId)).toHaveLength(1);
   });
@@ -379,9 +373,9 @@ describe('AgentTaskService — event emission', () => {
   it('marks restored running history lost without dispatching task.terminated', async () => {
     const ctx = track(createTestAgent(taskServices()));
     const running = agentInfo({ status: 'running', endedAt: null });
-    ctx.mockNextResponse({ type: 'text', text: 'lost task acknowledged' });
     await restoreTaskHistory(ctx, [running]);
     await drain(ctx, running.taskId);
+    expect(ctx.llmCalls).toEqual([]);
     expect(ctx.get(IAgentTaskService).getTask(running.taskId)?.status).toBe('lost');
     expect((await ctx.persistedWireRecords()).filter((record) => record.type === 'task.terminated')).toEqual([]);
   });
@@ -770,7 +764,6 @@ describe('AgentTaskService — notification delivery', () => {
       expect(active.signal.aborted).toBe(false);
 
       ctx.mockNextResponse({ type: 'text', text: 'notification acknowledged' });
-      ctx.mockNextResponse({ type: 'text', text: 'turn completed' });
       release();
       await expect(active.result).resolves.toMatchObject({ type: 'completed' });
       await drain(ctx, task.handler.taskId);

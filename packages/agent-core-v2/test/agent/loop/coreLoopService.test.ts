@@ -27,6 +27,7 @@ import type { ProcessTaskInfo } from '#/agent/task/types';
 import {
   createTestAgent,
   InMemoryWireRecordPersistence,
+  providerHttpError,
   testkitAgentFixtures,
   wireRecordPersistenceServices,
   type TestAgentContext,
@@ -311,11 +312,12 @@ describe('core LoopService integration', () => {
     });
 
     await ctx.get(IConfigService).set(LOOP_CONTROL_SECTION, { maxAttemptsPerStep: 1 });
+    ctx.mockNextProviderResponse(providerHttpError(500, 'step failed'));
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Hello' }] });
     await ctx.untilTurnEnd();
 
     expect(seen).toHaveLength(1);
-    expect(ctx.llmCalls).toHaveLength(1);
+    expect(ctx.llmCalls).toHaveLength(2);
     expect(ctx.allEvents).toContainEqual(
       expect.objectContaining({ event: 'turn.ended', args: expect.objectContaining({ reason: 'completed' }) }),
     );
@@ -427,7 +429,6 @@ describe('core LoopService integration', () => {
       await next();
     });
     ctx.mockNextResponse({ type: 'text', text: 'First answer.' });
-    ctx.mockNextResponse({ type: 'text', text: 'This should not run.' });
 
     const { turn } = submitPromptTurn(loop, {
       role: 'user',
@@ -825,8 +826,10 @@ describe('core LoopService integration', () => {
           { type: 'text', text: 'working' },
           { type: 'function', id: 'process-call', name: 'Work', arguments: '{}' },
         );
-        subject.mockNextResponse({ type: 'text', text: 'detached' });
-        subject.mockNextResponse({ type: 'text', text: 'async finished' });
+        if (!closeWhileRunning) {
+          subject.mockNextResponse({ type: 'text', text: 'detached' });
+          subject.mockNextResponse({ type: 'text', text: 'async finished' });
+        }
         const submitted = loop.submit({
           role: 'user',
           content: [{ type: 'text', text: 'start work' }],

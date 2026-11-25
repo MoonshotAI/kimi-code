@@ -4168,6 +4168,13 @@ describe('prompt deferral during full compaction', () => {
 describe('goal reminder re-injection after full compaction', () => {
   const GOAL_OBJECTIVE = 'ship the goal parity fixes';
 
+  const completeGoalCall: ToolCall = {
+    type: 'function',
+    id: 'complete-goal',
+    name: 'UpdateGoal',
+    arguments: JSON.stringify({ status: 'complete' }),
+  };
+
   function goalReminderCount(history: readonly Message[] | readonly string[]): number {
     const texts =
       typeof history[0] === 'string'
@@ -4189,9 +4196,12 @@ describe('goal reminder re-injection after full compaction', () => {
     ctx.appendExchange(2, 'recent user two', 'recent assistant two', 950_000);
 
     ctx.mockNextResponse({ type: 'text', text: 'Auto compacted summary.' });
-    ctx.mockNextResponse({ type: 'text', text: 'I can answer after compaction.' });
+    ctx.mockNextResponse({ type: 'text', text: 'I can answer after compaction.' }, completeGoalCall);
+    ctx.mockNextResponse({ type: 'text', text: 'Goal complete.' });
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Answer after compacting' }] });
     await ctx.untilTurnEnd();
+    await vi.waitFor(() => expect(ctx.llmCalls).toHaveLength(3));
+    await ctx.get(IAgentLoopService).settled();
 
     expect(ctx.llmCalls.length).toBeGreaterThanOrEqual(2);
     expect(goalReminderCount(ctx.llmCalls[0]!.history)).toBe(1);
@@ -4233,10 +4243,13 @@ describe('goal reminder re-injection after full compaction', () => {
     expect(floor).toBe(ctx.tokenCounting.get().size);
     expect(floor).toBe(tokensAfter);
 
-    ctx.mockNextResponse({ type: 'text', text: 'Reply after compaction.' });
+    ctx.mockNextResponse({ type: 'text', text: 'Reply after compaction.' }, completeGoalCall);
+    ctx.mockNextResponse({ type: 'text', text: 'Goal complete.' });
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'next prompt' }] });
     await ctx.untilTurnEnd();
-    expect(goalReminderCount(ctx.llmCalls.at(-1)!.history)).toBe(1);
+    await vi.waitFor(() => expect(ctx.llmCalls).toHaveLength(3));
+    await ctx.get(IAgentLoopService).settled();
+    expect(goalReminderCount(ctx.llmCalls[1]!.history)).toBe(1);
   });
 
   it('replays a deferred prompt whose first request carries the re-injected goal reminder', async () => {
@@ -5003,7 +5016,7 @@ describe('FullCompaction prompt-cache prefix', () => {
     );
     if (media !== 'none') {
       ctx.appendRichToolExchange();
-      ctx.appendRichToolExchange();
+      ctx.appendRichToolExchange('inspect this image again');
       ctx.mockNextProviderResponse(
         media === 'media-degraded'
           ? providerHttpError(413, 'Request Entity Too Large')

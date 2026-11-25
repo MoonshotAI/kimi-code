@@ -169,6 +169,9 @@ export interface SlashCommandHost {
   setExitForegroundTask(task: (exitCode: number) => Promise<void>): void;
   showHelpPanel(): void;
   createNewSession(): Promise<void>;
+  environmentForNewSession(): Promise<
+    { readonly environmentId: string; readonly environmentCwd?: string } | undefined
+  >;
   showSessionPicker(): Promise<void>;
   sendNormalUserInput(text: string, preExtracted?: ExtractionResult, delivery?: FollowUpDelivery): void;
   sendInlineSkillUserInput(

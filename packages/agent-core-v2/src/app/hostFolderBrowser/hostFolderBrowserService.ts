@@ -5,7 +5,7 @@ import { dirname, isAbsolute, join } from 'node:path';
 import type { FsBrowseEntry, FsBrowseResponse, FsHomeResponse } from './hostFolderBrowser';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
-import { IWorkspaceService } from '#/app/workspace/workspace';
+import { IProjectService } from '#/app/project/project';
 
 import {
   HostFolderNotAbsoluteError,
@@ -18,7 +18,7 @@ import {
 export class HostFolderBrowser implements IHostFolderBrowser {
   declare readonly _serviceBrand: undefined;
 
-  constructor(@IWorkspaceService private readonly registry: IWorkspaceService) {}
+  constructor(@IProjectService private readonly registry: IProjectService) {}
 
   async browse(absPath?: string): Promise<FsBrowseResponse> {
     const target = absPath ?? homedir();

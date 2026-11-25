@@ -48,6 +48,7 @@
   },
   "devDependencies": {
     "@moonshot-ai/kap-server": "workspace:^",
+    "@moonshot-ai/testkit": "workspace:^",
     "@types/ws": "^8.18.0",
     "ulid": "^3.0.1",
     "ws": "^8.18.0"

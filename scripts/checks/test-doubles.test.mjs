@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import { compareCounts } from './ratchet.mjs';
-import { countLegacyDoubles, formatReport, isCheckedFile, stubTestNames } from './test-doubles.mjs';
+import { countLegacyDoubles, ENGINE_HARNESS_IMPORTERS, formatReport, isCheckedFile, stubTestNames } from './test-doubles.mjs';
 
 await test('isCheckedFile looks at test sources only and skips the shared kit and the legacy doubles themselves', () => {
   assert.equal(isCheckedFile('packages/kap-server/test/sessions.test.ts'), true);
@@ -12,7 +12,6 @@ await test('isCheckedFile looks at test sources only and skips the shared kit an
   assert.equal(isCheckedFile('packages/testkit/test/model.test.ts'), false);
   assert.equal(isCheckedFile('apps/desktop/e2e/fixtures/model.ts'), false);
   assert.equal(isCheckedFile('packages/agent-core-v2/test/harness/agent.ts'), false);
-  assert.equal(isCheckedFile('apps/vscode/test/fake-provider-harness.ts'), false);
   assert.equal(isCheckedFile('apps/desktop/e2e/README.md'), false);
   assert.equal(isCheckedFile('scripts/checks/test-doubles.test.mjs'), false);
 });
@@ -78,6 +77,16 @@ await test('a loop-core unit test may keep the requester-level helper', () => {
     },
   ]);
   assert.deepEqual(counts, {});
+});
+
+await test('a listed engine harness importer is exempt and names its reason', () => {
+  const file = 'packages/product/test/survey-turns.test.ts';
+  assert.match(ENGINE_HARNESS_IMPORTERS.get(file) ?? '', /testkit model/);
+  const counts = countLegacyDoubles([
+    { file, text: "import { testAgent } from '../../agent-core-v2/test/harness';" },
+    { file: 'packages/product/test/other.test.ts', text: "import { testAgent } from '../../agent-core-v2/test/harness';" },
+  ]);
+  assert.deepEqual(counts, { 'engine-harness-import': { 'packages/product/test/other.test.ts': 1 } });
 });
 
 await test('a new legacy Desktop journey is pointed at tests/e2e, not at the paused Desktop fixtures', () => {

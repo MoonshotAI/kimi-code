@@ -1,12 +1,14 @@
 import {
+  ErrorCodes,
   IBootstrapService,
   IHostFileSystem,
-  IWorkspaceService,
-  IWorkspaceSessions,
-  IWorkspaceTrust,
-  IWorkspaceTrustStore,
+  IProjectService,
+  IProjectSessions,
+  IProjectTrust,
+  IProjectTrustStore,
+  isError2,
   type Scope,
-  type Workspace,
+  type Project,
 } from '@moonshot-ai/agent-core-v2';
 import { workspaceRootKey } from '@moonshot-ai/agent-core-v2/_base/utils/workdir-slug';
 import { isAbsolute, join, normalize, resolve } from 'node:path';
@@ -85,7 +87,7 @@ export function registerWorkspacesRoutes(app: WorkspaceRouteHost, core: Scope, h
       tags: ['workspaces'],
     },
     async (req, reply) => {
-      const items = await core.accessor.get(IWorkspaceService).list();
+      const items = await core.accessor.get(IProjectService).list();
       const projected = await Promise.all(items.map((ws) => toWireWorkspace(core, ws)));
       if (req.query.hosts !== 'include' || hosts === undefined) {
         reply.send(okEnvelope({ items: projected }, req.id));
@@ -147,7 +149,7 @@ export function registerWorkspacesRoutes(app: WorkspaceRouteHost, core: Scope, h
         reply.send(additional.envelope);
         return;
       }
-      const ws = await core.accessor.get(IWorkspaceService).create({
+      const ws = await core.accessor.get(IProjectService).create({
         root,
         name: req.body.name,
         additionalDirs: additional.dirs,
@@ -180,14 +182,8 @@ export function registerWorkspacesRoutes(app: WorkspaceRouteHost, core: Scope, h
     },
     async (req, reply) => {
       const { workspace_id } = req.params;
-      const registry = core.accessor.get(IWorkspaceService);
-      const existing = await registry.get(workspace_id);
-      if (existing === undefined) {
-        reply.send(
-          errEnvelope(ErrorCode.WORKSPACE_NOT_FOUND, `workspace ${workspace_id} does not exist`, req.id),
-        );
-        return;
-      }
+      const existing = await findWorkspace(core, workspace_id, req.id, reply);
+      if (existing === undefined) return;
       let additionalDirs: readonly string[] | undefined;
       if (req.body.additional_dirs !== undefined) {
         const additional = await normalizeAdditionalDirsInput(
@@ -202,7 +198,7 @@ export function registerWorkspacesRoutes(app: WorkspaceRouteHost, core: Scope, h
         }
         additionalDirs = additional.dirs;
       }
-      const ws = await registry.update(workspace_id, {
+      const ws = await core.accessor.get(IProjectService).update(workspace_id, {
         name: req.body.name,
         additionalDirs,
       });
@@ -236,7 +232,7 @@ export function registerWorkspacesRoutes(app: WorkspaceRouteHost, core: Scope, h
     },
     async (req, reply) => {
       const { workspace_id } = req.params;
-      const registry = core.accessor.get(IWorkspaceService);
+      const registry = core.accessor.get(IProjectService);
       const existing = await registry.get(workspace_id);
       if (existing === undefined) {
         reply.send(
@@ -340,20 +336,16 @@ export function registerWorkspacesRoutes(app: WorkspaceRouteHost, core: Scope, h
         [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
         [ErrorCode.FS_PATH_NOT_FOUND]: {},
         [ErrorCode.WORKSPACE_NOT_FOUND]: {},
+        [ErrorCode.WORKSPACE_PRIMARY_IMMUTABLE]: {},
       },
-      description: 'Promote a source folder to the primary directory (atomic swap; id and bucket unchanged)',
+      description:
+        'Promote a source folder to the primary directory (atomic swap; id and bucket unchanged). An implicit workspace keeps the directory it was opened from and is rejected with WORKSPACE_PRIMARY_IMMUTABLE',
       tags: ['workspaces'],
     },
     async (req, reply) => {
       const { workspace_id } = req.params;
-      const registry = core.accessor.get(IWorkspaceService);
-      const existing = await registry.get(workspace_id);
-      if (existing === undefined) {
-        reply.send(
-          errEnvelope(ErrorCode.WORKSPACE_NOT_FOUND, `workspace ${workspace_id} does not exist`, req.id),
-        );
-        return;
-      }
+      const existing = await findWorkspace(core, workspace_id, req.id, reply);
+      if (existing === undefined) return;
       const resolved = resolveAdditionalDirPath(core, existing.root, req.body.path);
       const resolvedKey = workspaceRootKey(resolved);
       const inSet =
@@ -383,7 +375,14 @@ export function registerWorkspacesRoutes(app: WorkspaceRouteHost, core: Scope, h
         );
         return;
       }
-      const ws = await registry.setPrimary(workspace_id, resolved);
+      let ws: Project | undefined;
+      try {
+        ws = await core.accessor.get(IProjectService).setPrimary(workspace_id, resolved);
+      } catch (error) {
+        if (!isError2(error) || error.code !== ErrorCodes.WORKSPACE_PRIMARY_IMMUTABLE) throw error;
+        reply.send(errEnvelope(ErrorCode.WORKSPACE_PRIMARY_IMMUTABLE, error.message, req.id));
+        return;
+      }
       if (ws === undefined) {
         reply.send(
           errEnvelope(ErrorCode.WORKSPACE_NOT_FOUND, `workspace ${workspace_id} does not exist`, req.id),
@@ -409,7 +408,7 @@ export function registerWorkspacesRoutes(app: WorkspaceRouteHost, core: Scope, h
       tags: ['workspaces'],
     },
     async (req, reply) => {
-      const dirs = await core.accessor.get(IWorkspaceService).readProjectConfigDirs(req.query.root);
+      const dirs = await core.accessor.get(IProjectService).readProjectConfigDirs(req.query.root);
       reply.send(okEnvelope({ additional_dirs: dirs }, req.id));
     },
   );
@@ -470,26 +469,35 @@ async function normalizeAdditionalDirsInput(
   return { dirs };
 }
 
-type TrustReply = { send(payload: unknown): unknown };
+type WorkspaceReply = { send(payload: unknown): unknown };
+
+async function findWorkspace(
+  core: Scope,
+  workspaceId: string,
+  requestId: string,
+  reply: WorkspaceReply,
+): Promise<Project | undefined> {
+  const ws = await core.accessor.get(IProjectService).get(workspaceId);
+  if (ws === undefined) {
+    reply.send(
+      errEnvelope(ErrorCode.WORKSPACE_NOT_FOUND, `workspace ${workspaceId} does not exist`, requestId),
+    );
+  }
+  return ws;
+}
 
 async function resolveTrust(
   core: Scope,
   workspaceId: string,
   requestId: string,
-  reply: TrustReply,
-): Promise<IWorkspaceTrust | undefined> {
-  const ws = await core.accessor.get(IWorkspaceService).get(workspaceId);
-  if (ws === undefined) {
-    reply.send(
-      errEnvelope(ErrorCode.WORKSPACE_NOT_FOUND, `workspace ${workspaceId} does not exist`, requestId),
-    );
-    return undefined;
-  }
-  return core.accessor.get(IWorkspaceTrustStore).forRoots([ws.root, ...ws.additionalDirs]);
+  reply: WorkspaceReply,
+): Promise<IProjectTrust | undefined> {
+  const ws = await findWorkspace(core, workspaceId, requestId, reply);
+  return ws === undefined ? undefined : core.accessor.get(IProjectTrustStore).forProject(ws);
 }
 
-export async function toWireWorkspace(core: Scope, ws: Workspace): Promise<WorkspaceWire> {
-  const sessionCount = await core.accessor.get(IWorkspaceSessions).count(ws.id);
+export async function toWireWorkspace(core: Scope, ws: Project): Promise<WorkspaceWire> {
+  const sessionCount = await core.accessor.get(IProjectSessions).count(ws.id);
   return {
     id: ws.id,
     root: ws.root,

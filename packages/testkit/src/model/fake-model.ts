@@ -14,6 +14,7 @@ import { codecForPath } from '#/model/protocols/registry';
 import { factsOf, RecordedRequest, type RequestFacts } from '#/model/record';
 import { held, say } from '#/model/steps';
 import type { IncomingRequest } from '#/model/transport';
+import { fileObjectOf, uploadFactsOf, type FileUpload } from '#/model/uploads';
 import type { ErrorSpec, ModelRequest, ScriptedStep, Step, WaitOptions } from '#/model/types';
 import { waitForModelEvent } from '#/model/wait';
 
@@ -46,6 +47,8 @@ export interface FakeModel {
   waitForHeldTurn(options?: WaitOptions): Promise<void>;
   releaseHeld(): void;
   callId(requestIndex: number, callIndex: number): string;
+  uploads(): readonly FileUpload[];
+  holdUploads(): void;
   problems(): readonly string[];
   verify(): void;
   close(): Promise<void>;
@@ -74,6 +77,8 @@ class FakeModelImpl implements FakeModel {
   private readonly arrivalListeners = new Set<() => void>();
   private readonly stateListeners = new Set<() => void>();
   private readonly activeSinks = new Set<PlaybackSink>();
+  private readonly fileUploads: { -readonly [K in keyof FileUpload]: FileUpload[K] }[] = [];
+  private uploadsHeld = false;
   private endpoint: HttpEndpoint | undefined;
   private starting: Promise<HttpEndpoint> | undefined;
 
@@ -181,6 +186,14 @@ class FakeModelImpl implements FakeModel {
     return `call_${requestIndex}_${callIndex}`;
   }
 
+  uploads(): readonly FileUpload[] {
+    return this.fileUploads.map((upload) => ({ ...upload }));
+  }
+
+  holdUploads(): void {
+    this.uploadsHeld = true;
+  }
+
   problems(): readonly string[] {
     return [...this.recordedProblems];
   }
@@ -224,6 +237,15 @@ class FakeModelImpl implements FakeModel {
     const path = incoming.path.split('?')[0] ?? incoming.path;
     if (incoming.method === 'GET' && path.endsWith('/models')) {
       this.respondModels(incoming, sink);
+      return;
+    }
+    if (incoming.method === 'POST' && path.endsWith('/files')) {
+      await this.respondUpload(incoming, sink);
+      return;
+    }
+    const fileId = incoming.method === 'GET' ? /\/files\/([^/]+)$/.exec(path)?.[1] : undefined;
+    if (fileId !== undefined) {
+      this.respondFile(incoming, fileId, sink);
       return;
     }
     const codec = codecForPath(path);
@@ -389,6 +411,52 @@ class FakeModelImpl implements FakeModel {
     }
     const models = this.options.models ?? DEFAULT_MODELS;
     respondPlain(sink, 200, { object: 'list', data: models.map((id) => ({ id, object: 'model', created: 0, owned_by: 'testkit' })) });
+  }
+
+  private async respondUpload(incoming: IncomingRequest, sink: PlaybackSink): Promise<void> {
+    if (!this.authorized(incoming)) {
+      this.problem(`request POST ${incoming.path} used the wrong API key`);
+      respondPlain(sink, 401, { error: { message: 'Invalid API key', type: 'invalid_request_error', code: 'invalid_api_key' } });
+      return;
+    }
+    const index = this.fileUploads.length;
+    const upload = {
+      index,
+      id: `file-${index}`,
+      ...uploadFactsOf(incoming),
+      contentType: incoming.headers['content-type'] ?? '',
+      rawBody: incoming.body,
+      state: this.uploadsHeld ? ('held' as const) : ('stored' as const),
+    };
+    this.fileUploads.push(upload);
+    if (upload.state === 'held') {
+      await new Promise<void>((resolve) => {
+        sink.goneSignal.addEventListener('abort', () => resolve(), { once: true });
+        this.closing.signal.addEventListener('abort', () => resolve(), { once: true });
+      });
+      if (sink.gone) {
+        this.fileUploads[index] = { ...upload, state: 'aborted' };
+        return;
+      }
+      sink.resetConnection();
+      return;
+    }
+    respondPlain(sink, 200, fileObjectOf(upload));
+  }
+
+  private respondFile(incoming: IncomingRequest, id: string, sink: PlaybackSink): void {
+    if (!this.authorized(incoming)) {
+      this.problem(`request GET ${incoming.path} used the wrong API key`);
+      respondPlain(sink, 401, { error: { message: 'Invalid API key', type: 'invalid_request_error', code: 'invalid_api_key' } });
+      return;
+    }
+    const upload = this.fileUploads.find((candidate) => candidate.id === id);
+    if (upload === undefined) {
+      this.problem(`request GET ${incoming.path} asked for a file that was never uploaded`);
+      respondPlain(sink, 404, { error: { message: `No file ${id}`, type: 'not_found' } });
+      return;
+    }
+    respondPlain(sink, 200, fileObjectOf(upload));
   }
 
   private claimHold(step: Step): void {

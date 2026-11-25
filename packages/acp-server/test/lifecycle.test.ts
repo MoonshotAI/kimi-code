@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -7,17 +7,21 @@ import {
   createDecorator,
   IOAuthToolkit,
   IAgentEnvironmentBindingService,
+  ISessionContext,
+  ISessionWorkdir,
+  IProjectService,
   IAgentLifecycleService,
   ensureMainAgent,
   ISessionManager,
   ISessionMcpHandle,
-  IWorkspaceInstanceManager,
+  IProjectInstanceManager,
   SyncDescriptor,
 } from '@moonshot-ai/agent-core-v2';
 import { createFakeModel, say, type FakeModel } from '@moonshot-ai/testkit/model';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { SessionSummary } from '@moonshot-ai/klient';
+import { createGitWorktree } from '@moonshot-ai/testkit/fixtures';
 
 import { filterSessionSummariesByCwd } from '../src/server';
 import { createTestClient, type TestClient } from './_helpers/acpClient';
@@ -95,8 +99,8 @@ describe('acp-server session lifecycle', () => {
     sessionId: string,
   ): Promise<readonly { readonly name: string; readonly status: string; readonly error?: string }[]> {
     const lease = await c.server.core.accessor
-      .get(IWorkspaceInstanceManager)
-      .acquire({ root: homeDir! });
+      .get(IProjectInstanceManager)
+      .acquire({ cwd: homeDir! });
     try {
       const handle = c.server.core.accessor.get(ISessionManager).get(sessionId);
       expect(handle).toBeDefined();
@@ -331,17 +335,20 @@ describe('acp-server session lifecycle', () => {
         sessionId: string;
       };
 
+      const before = (await c.send('session/list', {})) as { sessions: { sessionId: string }[] };
+      expect(before.sessions.map((session) => session.sessionId)).toContain(created.sessionId);
+
       const deleted = await c.send('session/delete', { sessionId: created.sessionId });
       expect(deleted).toEqual({});
-      await expect(
-        c.send('session/prompt', { sessionId: created.sessionId, prompt: [] }),
-      ).rejects.toThrow(/-32602/);
 
       const listed = (await c.send('session/list', {})) as {
         sessions: { sessionId: string }[];
       };
       expect(listed.sessions.some((s) => s.sessionId === created.sessionId)).toBe(false);
 
+      await expect(
+        c.send('session/prompt', { sessionId: created.sessionId, prompt: [] }),
+      ).rejects.toThrow(/-32602/);
       await expect(
         c.send('session/delete', { sessionId: created.sessionId }),
       ).rejects.toThrow(/-32602/);
@@ -445,8 +452,8 @@ describe('acp-server session lifecycle', () => {
       expect(created.sessionId).toMatch(/^session_/);
 
       const lease = await c.server.core.accessor
-        .get(IWorkspaceInstanceManager)
-        .acquire({ root: homeDir! });
+        .get(IProjectInstanceManager)
+        .acquire({ cwd: homeDir! });
       try {
         const dirs = lease.instance.program.dirs;
         await dirs.ready;
@@ -561,6 +568,61 @@ describe('acp-server session lifecycle', () => {
       const allIds = unfiltered.sessions.map((s) => s.sessionId);
       expect(allIds).toContain(first.sessionId);
       expect(allIds).toContain(second.sessionId);
+    },
+    30_000,
+  );
+
+  it(
+    'session/new in a worktree joins the repository project, pins the worktree and lists it there',
+    async () => {
+      const c = await boot();
+      const repos = join(homeDir!, 'repos');
+      const { main, worktree } = await createGitWorktree({ main: join(repos, 'app'), worktree: join(repos, 'app-fix') });
+      const created = (await c.send('session/new', { cwd: worktree, mcpServers: [] })) as {
+        sessionId: string;
+      };
+
+      const handle = c.server.core.accessor.get(ISessionManager).get(created.sessionId)!;
+      const context = handle.accessor.get(ISessionContext);
+      const project = await c.server.core.accessor.get(IProjectService).get(context.workspaceId);
+      expect(await realpath(project!.root)).toBe(await realpath(main));
+      expect(context.cwd).toBe(worktree);
+      const inWorktree = (await c.send('session/list', { cwd: worktree })) as {
+        sessions: { sessionId: string; cwd: string }[];
+      };
+      const inMain = (await c.send('session/list', { cwd: main })) as {
+        sessions: { sessionId: string }[];
+      };
+      expect(inWorktree.sessions).toContainEqual(
+        expect.objectContaining({ sessionId: created.sessionId, cwd: worktree }),
+      );
+      expect(inMain.sessions.map((s) => s.sessionId)).not.toContain(created.sessionId);
+    },
+    30_000,
+  );
+
+  it(
+    'session/list keeps a session at the main checkout and one in its worktree apart after both are closed',
+    async () => {
+      const c = await boot();
+      const repos = join(homeDir!, 'repos');
+      const { main, worktree } = await createGitWorktree({ main: join(repos, 'app'), worktree: join(repos, 'app-fix') });
+      const sessionIn = async (cwd: string) =>
+        ((await c.send('session/new', { cwd, mcpServers: [] })) as { sessionId: string }).sessionId;
+      const atMain = await sessionIn(main);
+      const inWorktree = await sessionIn(worktree);
+      const manager = c.server.core.accessor.get(ISessionManager);
+      const workdirs = [atMain, inWorktree].map((id) => manager.get(id)!.accessor.get(ISessionWorkdir).cwd);
+      for (const id of [atMain, inWorktree]) await manager.close(id);
+
+      const listed = async (cwd: string) =>
+        ((await c.send('session/list', { cwd })) as { sessions: { sessionId: string; cwd: string }[] }).sessions.map(
+          (s) => [s.sessionId, s.cwd],
+        );
+
+      expect(workdirs).toEqual([undefined, worktree]);
+      expect(await listed(main)).toEqual([[atMain, main]]);
+      expect(await listed(worktree)).toEqual([[inWorktree, worktree]]);
     },
     30_000,
   );

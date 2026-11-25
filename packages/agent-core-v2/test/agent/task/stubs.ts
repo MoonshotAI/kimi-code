@@ -101,9 +101,7 @@ async function startRegisteredTaskInLoop(
     name,
     arguments: JSON.stringify(args),
   });
-  if (args.run_in_background !== true && args.background !== true) {
-    ctx.mockNextResponse({ type: 'text', text: `${name} started` });
-  }
+  ctx.mockNextResponse({ type: 'text', text: `${name} started` });
   await ctx.rpc.prompt({ input: [{ type: 'text', text: `start ${name}` }] });
   const live = await Promise.race([created, ctx.get(IAgentLoopService).settled().then(() => undefined)]);
   if (live === undefined) throw new Error(`${name} did not start`);

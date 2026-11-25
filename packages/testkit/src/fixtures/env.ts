@@ -31,10 +31,14 @@ const STRIPPED_KEYS = new Set([
   'no_proxy',
 ]);
 
-export const TEST_ENV_DEFAULTS: Readonly<Record<string, string>> = {
-  KIMI_DISABLE_TELEMETRY: '1',
+export const UNIT_TEST_SWITCHES: Readonly<Record<string, string>> = {
   KIMI_CODE_SEARCH_WORKER: 'false',
   KIMI_CODE_PERSISTENCE_MINIDB_READMODEL: 'false',
+};
+
+export const TEST_ENV_DEFAULTS: Readonly<Record<string, string>> = {
+  KIMI_DISABLE_TELEMETRY: '1',
+  ...UNIT_TEST_SWITCHES,
   KIMI_CODE_MODEL_CATALOG_REFRESH_ON_START: '0',
   KIMI_CODE_MODEL_CATALOG_REFRESH_INTERVAL_MS: '0',
 };

@@ -13,13 +13,12 @@ import {
   IConfigService,
   IEventBus,
   IEventDispatcher,
-  IHostFileSystem,
   IOAuthToolkit,
   ISessionIndex,
   ISessionManager,
   ISessionRunGate,
   ITelemetryService,
-  IWorkspaceInstanceManager,
+  IProjectSessions,
   PRINT_MAX_TURNS_DEFAULT,
   PRINT_WAIT_CEILING_S_DEFAULT,
   applyPrintModeConfigDefaults,
@@ -40,19 +39,14 @@ import {
   type IAgentScopeHandle,
   type ISessionScopeHandle,
   type LoopRunResult,
-  type McpServerConfig,
   type PrintBackgroundMode,
   type ServicesAccessor,
 } from '@moonshot-ai/agent-core-v2';
 import {
-  loadMcpServersDetailed,
-  resolveMcpJsonPaths,
-} from '@moonshot-ai/agent-core-v2/app/mcpConfig/configLoader';
-import {
   createKimiDeviceId,
   KIMI_CODE_PROVIDER_NAME,
 } from '@moonshot-ai/kimi-code-oauth';
-import { SDKRpcClientV2 } from '@moonshot-ai/kimi-code-sdk';
+import { SDKRpcClientV2, type WorkspaceTrustMcpServerInfo } from '@moonshot-ai/kimi-code-sdk';
 import {
   initializeTelemetry,
   setCrashPhase,
@@ -76,7 +70,7 @@ import type {
   ToolUpdated,
   ToolResultEvent,
 } from '@moonshot-ai/agent-core-v2/agent/toolExecutor/toolExecutorEvents';
-import { resolve } from 'pathe';
+import { sameDir } from '@moonshot-ai/agent-core-v2/_base/utils/workdir-slug';
 
 import {
   CLI_SHUTDOWN_TIMEOUT_MS,
@@ -84,6 +78,7 @@ import {
   PROMPT_CLEANUP_TIMEOUT_MS,
 } from '#/constant/app';
 import { currentKimiProfile, currentKimiRegionResolution } from '#/utils/region';
+import { resumeElsewhereHint } from '#/utils/session-directory';
 
 import {
   formatGoalSummaryText,
@@ -101,6 +96,7 @@ import {
 } from '../run-prompt';
 import { createKimiCodeHostIdentity } from '../host-identity';
 
+import { resolveLaunchPaths } from '../launch-paths';
 import { resolveOutputFormat } from '../options';
 import type { CLIOptions, PromptOutputFormat } from '../options';
 import {
@@ -142,8 +138,7 @@ export async function runV2Print(
     homeDir,
     identity: createKimiCodeHostIdentity(version),
     nonInteractive: true,
-    skillDirs: opts.skillsDirs,
-    agentFiles: opts.agentFiles,
+    ...resolveLaunchPaths(opts, workDir),
   });
   const services = client.engineAccessor;
   const auth = services.get(IOAuthToolkit);
@@ -227,7 +222,7 @@ export async function runV2Print(
     }
 
     try {
-      const gated = await listTrustGatedMcpServers(services, workDir, homeDir);
+      const gated = await listTrustGatedMcpServers(client, opts, workDir);
       if (gated.length > 0) stderr.write(formatTrustGatedMcpWarning(gated));
     } catch {}
 
@@ -386,12 +381,10 @@ async function resolveNativeSession(
     if (target === undefined) {
       throw new Error(`Session "${opts.session}" not found.`);
     }
-    if (target.cwd !== undefined && resolve(target.cwd) !== resolve(workDir)) {
-      stderr.write(
-        `Session "${opts.session}" was created under a different directory.\n` +
-          `  cd "${target.cwd}" && kimi -r ${opts.session}\n\n`,
-      );
-      throw new Error(`Session "${opts.session}" was created under a different directory.`);
+    if (target.cwd !== undefined && !sameDir(target.cwd, workDir)) {
+      const hint = resumeElsewhereHint(opts.session, target.cwd);
+      stderr.write(`${hint.summary}\n${hint.detail}\n\n`);
+      throw new Error(hint.summary);
     }
     const session = await resumeById(opts.session);
     const agentContext = await ensureMainAgent(session);
@@ -411,8 +404,7 @@ async function resolveNativeSession(
   }
 
   if (opts.continue) {
-    const page = await index.listRecent({});
-    const previous = page.items.find((summary) => summary.cwd === workDir);
+    const [previous] = (await services.get(IProjectSessions).listForWorkdir(workDir, { limit: 1 })).items;
     if (previous !== undefined) {
       const session = await resumeById(previous.id);
       const agentContext = await ensureMainAgent(session);
@@ -465,46 +457,35 @@ export interface TrustGatedMcpServer {
   readonly target: string;
 }
 
-export async function listTrustGatedMcpServers(
-  services: ServicesAccessor,
+async function listTrustGatedMcpServers(
+  client: SDKRpcClientV2,
+  opts: Pick<CLIOptions, 'session' | 'environment' | 'environmentCwd'>,
   workDir: string,
-  homeDir: string,
 ): Promise<readonly TrustGatedMcpServer[]> {
-  const lease = await services
-    .get(IWorkspaceInstanceManager)
-    .acquire({ root: workDir });
-  try {
-    if (await lease.instance.program.trust.get()) return [];
-    const fs = services.get(IHostFileSystem);
-    const [paths, loaded] = await Promise.all([
-      resolveMcpJsonPaths({ fs, cwd: workDir, homeDir }),
-      loadMcpServersDetailed({ fs, cwd: workDir, homeDir, includeProject: true }),
-    ]);
-    const projectPaths = new Set([paths.projectRoot, paths.project]);
-    return Object.entries(loaded.servers)
-      .filter(([name]) => projectPaths.has(loaded.origins[name] ?? ''))
-      .map(([name, config]) => ({ name, target: describeMcpTarget(config) }))
-      .toSorted((a, b) => a.name.localeCompare(b.name));
-  } finally {
-    lease.dispose();
-  }
+  const target = opts.session === undefined ? undefined : await client.engineAccessor.get(ISessionIndex).get(opts.session);
+  const { gatedMcpServers } = await client.getWorkspaceTrustInfo(workDir, {
+    sessionId: target?.cwd !== undefined && sameDir(target.cwd, workDir) ? target.id : undefined,
+    environmentId: opts.environment,
+    environmentCwd: opts.environmentCwd,
+  });
+  return gatedMcpServers.map((server) => ({ name: server.name, target: describeMcpTarget(server) }));
 }
 
 export function formatTrustGatedMcpWarning(servers: readonly TrustGatedMcpServer[]): string {
   const noun = servers.length === 1 ? 'server' : 'servers';
   const list = servers.map((server) => `${server.name} (${server.target})`).join(', ');
   return (
-    `Warning: this folder is not trusted; skipped ${servers.length} project-level MCP ${noun}: ${list}.\n` +
-    '  Run `kimi` here and choose "Trust this folder", or set KIMI_CODE_TRUST_WORKSPACE=1, to enable them.\n\n'
+    `Warning: this project is not trusted; skipped ${servers.length} project-level MCP ${noun}: ${list}.\n` +
+    '  Run `kimi` here and choose "Trust and continue", or set KIMI_CODE_TRUST_WORKSPACE=1, to enable them.\n\n'
   );
 }
 
-function describeMcpTarget(config: McpServerConfig): string {
-  if (config.transport === 'stdio') {
-    const args = config.args === undefined ? '' : ` ${config.args.join(' ')}`;
-    return `stdio: ${config.command}${args}`;
+function describeMcpTarget(server: WorkspaceTrustMcpServerInfo): string {
+  if (server.transport === 'stdio') {
+    const args = server.args === undefined ? '' : ` ${server.args.join(' ')}`;
+    return `stdio: ${server.command}${args}`;
   }
-  return `${config.transport}: ${config.url}`;
+  return `${server.transport}: ${server.url}`;
 }
 
 async function runNativeTurn(

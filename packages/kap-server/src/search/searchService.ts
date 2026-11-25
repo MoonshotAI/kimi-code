@@ -15,7 +15,7 @@ import {
   ScopeActivation,
   registerScopedService,
   sessionDirOf,
-  workspacePersistenceScope,
+  projectPersistenceScope,
   type SessionSummary,
 } from '@moonshot-ai/agent-core-v2';
 import { normalizeLiteral, tokenize } from '@moonshot-ai/minidb';
@@ -271,7 +271,7 @@ export class GlobalSearchService implements IGlobalSearchService {
       updatedAt: summary.updatedAt,
       dir: sessionDirOf(
         this.bootstrap.homeDir,
-        workspacePersistenceScope(this.bootstrap.scope('sessions'), summary.workspaceId),
+        projectPersistenceScope(this.bootstrap.scope('sessions'), summary.workspaceId),
         summary.id,
       ),
     };

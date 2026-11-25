@@ -32,6 +32,7 @@ import { resolveCommandPath } from '#/utils/process/resolve-command';
 
 import type { CLIOptions } from './options';
 import { resolveAgentProfileSelection } from './agent-selection';
+import { resolveLaunchPaths } from './launch-paths';
 import { createCliTelemetryBootstrap, initializeCliTelemetry } from './telemetry';
 import { detectNativeInstall } from './update/source';
 import { createKimiCodeHostIdentity } from './host-identity';
@@ -67,7 +68,7 @@ export async function runShell(
   const harnessOptions: KimiHarnessOptions = {
     homeDir: telemetryBootstrap.homeDir,
     identity: createKimiCodeHostIdentity(version),
-    skillDirs: opts.skillsDirs,
+    skillDirs: resolveLaunchPaths(opts, workDir).skillDirs,
     uiCapabilities: TUI_HOST_UI_CAPABILITIES,
     telemetry: telemetryClient,
     onOAuthRefresh: (outcome) => {

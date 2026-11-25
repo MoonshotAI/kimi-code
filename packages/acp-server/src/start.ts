@@ -8,10 +8,15 @@ import {
   drainSessionIndexMirror,
   drainSessionMetadataWrites,
   getLiveSessionById,
+  IAgentLifecycleService,
+  IAgentPermissionModeService,
+  IAgentStateService,
   ISessionContext,
   IAppendLogStore,
   ISessionIndexMirror,
   logSeed,
+  MAIN_AGENT_ID,
+  planKey,
   resolveBootstrapEnvWithLegacyTowerMigration,
   resolveConfigPath,
   resolveKimiHome,
@@ -26,9 +31,10 @@ import { createKlient } from '@moonshot-ai/klient/memory';
 import { acpClientFromContext } from './acp-client';
 import { IAcpConnection } from './acp-fs';
 import './acp-terminal';
+import { DEFAULT_MODE_ID } from './modes';
 import { AcpServer, type AcpServerOptions, createAcpAgentApp } from './server';
 
-export interface RunAcpServerOptions extends AcpServerOptions {
+export interface RunAcpServerOptions extends Omit<AcpServerOptions, 'resolveSessionMode'> {
   readonly homeDir?: string;
   readonly configPath?: string;
   readonly input?: NodeJS.ReadableStream;
@@ -98,6 +104,15 @@ export async function runAcpServerWithStream(
     terminalAuthEnv: opts.terminalAuthEnv,
     terminalAuthLegacyCommand: opts.terminalAuthLegacyCommand,
     slashCommands: opts.slashCommands,
+    resolveSessionMode: (sessionId) => {
+      const session = getLiveSessionById(core.accessor, sessionId);
+      const main = session?.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID);
+      if (main === undefined) return undefined;
+      const states = main.accessor.get(IAgentStateService);
+      if (states.has(planKey) && states.get(planKey).active) return 'plan';
+      const permission = main.accessor.get(IAgentPermissionModeService).mode;
+      return permission === 'manual' ? DEFAULT_MODE_ID : permission;
+    },
     resolveOriginalsDir: (sessionId) => {
       const handle = getLiveSessionById(core.accessor, sessionId);
       return handle === undefined

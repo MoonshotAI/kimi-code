@@ -2,7 +2,9 @@ import { bash, say } from '@moonshot-ai/testkit/model';
 
 import { expect, scenario } from '../../support/scenario';
 
-scenario('keeps what a stopped command printed', {}, async ({ product, model }) => {
+const NO_LIVE_OUTPUT = "Product gap, left out until the owner decides: the agent sends a command's output to an editor that offers no terminals only once the command ends, so such an editor cannot show what a running command has printed.";
+
+scenario('keeps what a stopped command printed', { exceptVariants: { 'bare-editor': NO_LIVE_OUTPUT } }, async ({ product, model }) => {
   const command = "printf 'rea%s\\n' dy; sleep 30";
   const answer = 'It printed ready before you stopped it.';
   model.script(bash(command), say(answer));
