@@ -56,6 +56,18 @@ export class ProjectSessionsService implements IProjectSessions {
     }
   }
 
+  async listForProject(dir: string, query: WorkdirSessionQuery = {}): Promise<Page<SessionSummary>> {
+    if (query.limit !== undefined && query.limit <= 0) return { items: [] };
+    const workspaceIds = await this.implicitWorkspaceIds(dir);
+    if (workspaceIds === undefined) return { items: [] };
+    return this.index.listRecent({
+      workspaceIds,
+      includeArchived: query.includeArchived,
+      limit: query.limit,
+      before: query.before,
+    });
+  }
+
   private async implicitWorkspaceIds(dir: string): Promise<readonly string[] | undefined> {
     if (await this.isMissing(dir)) return undefined;
     const project = await this.projects.peekImplicit(dir);
