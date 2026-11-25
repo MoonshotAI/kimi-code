@@ -152,6 +152,15 @@ export interface LlmRequestContent {
   readonly usedTokens?: number;
 }
 
+export interface LlmRequestAttributes {
+  readonly kind?: 'loop' | 'compaction' | 'prediction' | (string & {});
+  readonly turnId?: number;
+  readonly step?: number;
+  readonly modelAlias?: string;
+  readonly logFields?: Readonly<Record<string, unknown>>;
+  readonly promptCacheProbe?: 'compaction';
+}
+
 export interface LlmRequest {
   readonly protocol: LlmProtocolBinding;
   readonly endpoint?: LlmEndpoint;
@@ -159,4 +168,5 @@ export interface LlmRequest {
   readonly profile?: LlmRequestProfile;
   readonly content: LlmRequestContent;
   readonly policy?: LlmPolicy;
+  readonly attributes?: LlmRequestAttributes;
 }

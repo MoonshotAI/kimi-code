@@ -252,11 +252,27 @@ describe('loop side requester', () => {
   });
 });
 
-describe('turn requester decoration', () => {
-  it('decorates once per turn, freezes the current turn, and keeps side requests raw', async () => {
+describe('loop llm observer and policy merging', () => {
+  it('observes turns and side calls, freezes the current turn base, and concatenates policy lists', async () => {
     const seen: { readonly base: string; readonly request: LlmRequest }[] = [];
     let firstCalls = 0;
-    const first = fullRequester((request) => {
+    const baseResolver = { id: 'base', resolve: async (request: LlmRequest) => request };
+    const loopResolver = { id: 'loop', resolve: async (request: LlmRequest) => request };
+    const callResolver = { id: 'call', resolve: async (request: LlmRequest) => request };
+    const resolverIds = (request: LlmRequest) => {
+      const resolvers = request.policy?.resolvers;
+      return (typeof resolvers === 'function' ? resolvers() : resolvers)?.map((resolver) => resolver.id);
+    };
+    const first = createRequester().with({
+      protocol: { base: {} as never },
+      model: { spec: { provider: 'test', name: 'first' } },
+      policy: { resolvers: [baseResolver], retry: { maxAttemptsPerStep: 4 } },
+    }).with({
+      endpoint: {},
+      content: { messages: [] },
+      profile: {},
+    });
+    const firstFull = fullRequester((request) => {
       seen.push({ base: 'first', request });
       firstCalls += 1;
       if (firstCalls === 1) {
@@ -268,12 +284,13 @@ describe('turn requester decoration', () => {
         };
       }
       return done('first response');
-    });
+    }, contentsOf(first));
     const second = fullRequester((request) => {
       seen.push({ base: 'second', request });
       return done('second response');
     });
-    const decorated: FullLoopLlmRequester[] = [];
+    const started: LlmRequest[] = [];
+    const settled: LlmOutcome[] = [];
     const tools = new ToolExecutor<LoopToolContext>([{
       name: 'work',
       description: 'switch the next turn base',
@@ -284,31 +301,45 @@ describe('turn requester decoration', () => {
       },
     }]);
     const loop = createLoop({
-      requester: first,
-      decorateTurnRequester: (requester) => {
-        decorated.push(requester);
-        return requester.with({ endpoint: { headers: { 'x-turn-requester': 'true' } } });
+      requester: firstFull,
+      llmObserver: {
+        start: (request) => {
+          started.push(request);
+          return { settle: (outcome) => settled.push(outcome) };
+        },
       },
       executor: tools,
     });
+    loop.policy.addResolver(loopResolver);
 
     expect((await loop.runTurn(createUserMessage('first turn'))).type).toBe('done');
-    expect(decorated).toHaveLength(1);
-    expect(decorated[0]).toBe(first);
     expect(seen.map((entry) => entry.base)).toEqual(['first', 'first']);
-    expect(seen.every((entry) => entry.request.endpoint?.headers?.['x-turn-requester'] === 'true')).toBe(true);
+    expect(seen[0]?.request.attributes).toEqual({ kind: 'loop', turnId: 0, step: 1 });
+    expect(seen[1]?.request.attributes).toEqual({ kind: 'loop', turnId: 0, step: 2 });
     expect(loop.baseRequester).toBe(second);
 
-    expect((await loop.runTurn(createUserMessage('second turn'))).type).toBe('done');
-    expect(decorated).toHaveLength(2);
-    expect(decorated[1]).toBe(second);
+    await loop.requester.with({
+      attributes: { kind: 'compaction', turnId: 1, modelAlias: 'alias-a', logFields: { droppedCount: 0 } },
+      policy: { resolvers: [callResolver], retry: { maxAttemptsPerStep: 1 } },
+    }).generate({}, { signal: new AbortController().signal });
     expect(seen.map((entry) => entry.base)).toEqual(['first', 'first', 'second']);
-    expect(seen[2]?.request.endpoint?.headers?.['x-turn-requester']).toBe('true');
-
-    await loop.requester.generate({}, { signal: new AbortController().signal });
-    expect(seen.map((entry) => entry.base)).toEqual(['first', 'first', 'second', 'second']);
-    expect(seen[3]?.request.endpoint?.headers?.['x-turn-requester']).toBeUndefined();
-    expect(decorated).toHaveLength(2);
+    expect(seen[2]?.request.attributes).toEqual({
+      kind: 'compaction',
+      turnId: 1,
+      modelAlias: 'alias-a',
+      logFields: { droppedCount: 0 },
+    });
+    expect(seen[2]?.request.policy?.retry).toEqual({ maxAttemptsPerStep: 1 });
+    const withLoopPolicy = createRequester().with(first).with({
+      policy: { ...loop.policy.asPolicy(), resolvers: undefined },
+    }).with({ policy: { resolvers: [loopResolver] } }).request({});
+    expect(resolverIds(withLoopPolicy)).toEqual(['base', 'loop']);
+    const mergedPolicy = createRequester().with(first).with({
+      policy: { ...loop.policy.asPolicy(), resolvers: undefined },
+    }).with({ policy: { resolvers: [loopResolver, callResolver], retry: { maxAttemptsPerStep: 1 } } }).request({});
+    expect(resolverIds(mergedPolicy)).toEqual(['base', 'loop', 'call']);
+    expect(started).toHaveLength(3);
+    expect(settled.map((outcome) => outcome.type)).toEqual(['done', 'done', 'done']);
     expect(loop.baseRequester).toBe(second);
     await loop.close();
   });

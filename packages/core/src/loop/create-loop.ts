@@ -8,7 +8,7 @@ import type { LoopAck, LoopEmitted } from './contract/emitted';
 import type { LoopHooks } from './contract/hook';
 import type { RemindMessage } from './contract/inbox';
 import type { TurnOutcome } from './contract/outcome';
-import type { FullLoopLlmRequester, LoopRequestRuntime } from './request';
+import type { FullLoopLlmRequester, LoopLlmRunObserver, LoopRequestRuntime } from './request';
 import type { LoopState } from './state';
 import type { WaitForTasks } from './tool/tasks';
 import type { ToolCompletionFactory } from './tool/outcome';
@@ -30,7 +30,7 @@ export interface LoopToolExecutor {
 
 export interface CreateLoopOptions {
   readonly requester?: FullLoopLlmRequester;
-  readonly decorateTurnRequester?: (requester: FullLoopLlmRequester) => FullLoopLlmRequester;
+  readonly llmObserver?: LoopLlmRunObserver;
   readonly executor: LoopToolExecutor;
   readonly toolContext?: (turnId: number) => Omit<LoopToolContext, 'origin' | 'turnId'>;
   readonly hook?: Partial<LoopHooks>;

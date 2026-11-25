@@ -6,6 +6,8 @@ export * from './contract/profile';
 export { createMaxStepsHook, MAX_STEPS_REASON } from '#/hook/loop/builtin';
 export type {
   FullLoopLlmRequester,
+  LoopLlmRunObservation,
+  LoopLlmRunObserver,
   LoopRequestRuntime,
 } from './request';
 export type { PolicyRegistry } from '#/llm/policy/registry';

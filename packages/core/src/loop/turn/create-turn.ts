@@ -64,7 +64,6 @@ class ActorTurn implements Turn {
   private currentStep: TurnStep | undefined;
   private requester: FullLoopLlmRequester | undefined;
   private profile: LoopProfile | undefined;
-  private requesterError: unknown;
   private requestId: string | undefined;
   private toolsSettled = false;
   private started = false;
@@ -203,15 +202,7 @@ class ActorTurn implements Turn {
         ...profile,
         tools: profile.tools === undefined ? undefined : [...profile.tools],
       };
-      try {
-        const requester = this.runtime.requester();
-        this.requester = requester === undefined
-          ? undefined
-          : (this.runtime.decorateTurnRequester?.(requester) ?? requester);
-      } catch (error) {
-        this.requester = undefined;
-        this.requesterError = error;
-      }
+      this.requester = this.runtime.requester();
 
       // 2. Let the owner run starting hooks and produce the initial message batch.
       this.setPhase(proc, 'starting');
@@ -407,8 +398,7 @@ class ActorTurn implements Turn {
       return;
     }
     if (requester === undefined || profile === undefined) {
-      const error = this.requesterError ?? new Error('loop has no requester');
-      step.outcome = { type: 'failed', error };
+      step.outcome = { type: 'failed', error: new Error('loop has no requester') };
       this.setOutcome(proc, step.outcome);
       this.finalizeStep(proc, step);
       return;
@@ -558,10 +548,13 @@ class ActorTurn implements Turn {
       return runLoopRequest(
         requester,
         {
+          turnId: step.batch.turnId,
+          step: step.batch.step,
           messages: [...this.runtime.read().messages],
           profile,
           policy: this.runtime.policy.asPolicy(),
           signal: step.scope.signal,
+          observer: this.runtime.llmObserver,
         },
         onProgress,
       );
