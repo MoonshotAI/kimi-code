@@ -290,6 +290,7 @@ import {
   type SessionIdRpcInput,
   type SessionPromptRpcInput,
   type SessionPromptWithSkillsRpcInput,
+  type SessionWarningInfo,
   type SetSessionModelRpcInput,
   type SetSessionModelRpcResult,
   type SetSessionPermissionRpcInput,
@@ -2180,8 +2181,11 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       facade.getPlan(),
       facade.getUsage(),
     ]);
-    const profile = agent.accessor.get(IAgentLoopService).data();
-    const model = profile.modelAlias === undefined ? undefined : agent.accessor.get(IAgentLoopService).resolveModelContext().model;
+    const loop = agent.accessor.get(IAgentLoopService);
+    const profile = loop.data();
+    const model = profile.modelAlias === undefined || this.isMissingMainModel(agent, profile.modelAlias)
+      ? undefined
+      : loop.resolveModelContext().model;
     const maxContextTokens = model?.maxInputSize ?? model?.maxContextSize ?? 0;
     const contextTokens = context.tokenCount;
     const contextUsage = maxContextTokens > 0 ? contextTokens / maxContextTokens : 0;
@@ -2467,19 +2471,23 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     await session.accessor.get(ISessionInitService).generateAgentsMd();
   }
 
-  /**
-   * No v2 service implements the session-warnings aggregate, so the SDK rebuilds v1's
-   * `Session.getSessionWarnings` over v2 primitives: the profile's cached
-   * `agentsMdWarning` (computed on every bind, v1's bootstrap-time cache),
-   * recomputed through the engine's own `prepareSystemPromptContext` when the
-   * cache is empty — v1 recomputes on demand whenever no warning is cached,
-   * so an AGENTS.md that outgrows the budget mid-session surfaces on both
-   * engines. The single warning shape (`agents-md-oversized`, severity
-   * `warning`) mirrors v1's assembly.
-   */
-  override async getSessionWarnings(input: SessionIdRpcInput) {
+  private isMissingMainModel(agent: IAgentScopeHandle, alias: string): boolean {
+    return agent.id === MAIN_AGENT_ID && this.engineAccessor.get(IModelService).get(alias) === undefined;
+  }
+
+  override async getSessionWarnings(input: SessionIdRpcInput): Promise<readonly SessionWarningInfo[]> {
     const agent = await this.agentScope(input.sessionId);
-    let warning = agent.accessor.get(IAgentLoopService).getAgentsMdWarning();
+    const loop = agent.accessor.get(IAgentLoopService);
+    const model = loop.getModel();
+    const warnings: SessionWarningInfo[] = [];
+    if (model !== '' && this.isMissingMainModel(agent, model)) {
+      warnings.push({
+        code: 'session-model-unavailable',
+        message: `Session model "${model}" is not configured. Use /model or restart with -m to select an available model.`,
+        severity: 'warning',
+      });
+    }
+    let warning = loop.getAgentsMdWarning();
     if (warning === undefined) {
       const session = this.requireLiveSession(input.sessionId);
       const prepared = await prepareSystemPromptContext(
@@ -2493,9 +2501,10 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       );
       warning = prepared.agentsMdWarning;
     }
-    return warning === undefined
-      ? []
-      : [{ code: 'agents-md-oversized', message: warning, severity: 'warning' as const }];
+    if (warning !== undefined) {
+      warnings.push({ code: 'agents-md-oversized', message: warning, severity: 'warning' });
+    }
+    return warnings;
   }
 
   /**
