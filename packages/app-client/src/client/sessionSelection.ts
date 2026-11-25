@@ -2,7 +2,7 @@ import type { AppSession, ReadRequestOptions } from '@moonshot-ai/app-core/api';
 import { sessionReadScope } from './observationScope';
 import { isDaemonApiError } from '@moonshot-ai/app-core/api';
 import type { SessionUrlMode } from '@moonshot-ai/app-core/lib';
-import { getKimiWebApi } from './deps';
+import { getKimiWebApi, t } from './deps';
 import { track } from '../contracts';
 import { startSessionOpenTiming } from '../lib/perfTracking';
 import { filesStore } from '../stores/files';
@@ -152,11 +152,28 @@ export function createSessionSelection(deps: SessionSelectionDeps) {
     }
   }
 
+  async function openSessionLink(sessionId: string, source: SessionCreatedSource): Promise<void> {
+    if (!sessionsStore().sessions.some((s) => s.id === sessionId)) {
+      const attempt = ++navigationAttempt;
+      const outcome = await fetchSessionIntoList(sessionId);
+      if (attempt !== navigationAttempt) return;
+      if (outcome !== 'ok') {
+        warningsStore().pushWarning({
+          severity: 'warning',
+          title: t(outcome === 'not-found' ? 'sessions.notFound' : 'sessions.openFailed'),
+        });
+        return;
+      }
+    }
+    await selectSession(sessionId, { source });
+  }
+
   return {
     refreshSessionSidecars,
     fetchSessionIntoList,
     backfillPinnedSession,
     selectSession,
+    openSessionLink,
   };
 }
 
