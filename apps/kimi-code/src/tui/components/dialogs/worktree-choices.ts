@@ -134,8 +134,33 @@ function worktreeDeleteOptions(removal: WorktreeRemoval): ChoiceOption[] {
   ];
 }
 
-function removalNotice(removal: WorktreeRemoval): ChoiceNoticeLine[] {
+export interface WorktreeExitActiveWork {
+  readonly foreground: boolean;
+  readonly backgroundTasks: number;
+}
+
+function removalNotice(
+  removal: WorktreeRemoval,
+  activeWork?: WorktreeExitActiveWork,
+): ChoiceNoticeLine[] {
   const lines: ChoiceNoticeLine[] = [{ text: abbreviateHome(removal.path), tone: 'text' }];
+  if (activeWork?.foreground === true) {
+    lines.push({
+      text: 'Work is still running in this session and will be stopped.',
+      tone: 'warning',
+    });
+  }
+  if ((activeWork?.backgroundTasks ?? 0) > 0) {
+    const tasks = counted(
+      activeWork!.backgroundTasks,
+      'background task is',
+      'background tasks are',
+    );
+    lines.push({
+      text: `${tasks} still running and will be stopped.`,
+      tone: 'warning',
+    });
+  }
   if (removal.hasSubmodules === true) {
     lines.push({ text: 'Contains git submodules. Force delete is required.', tone: 'warning' });
   }
@@ -169,6 +194,7 @@ function createRemovalPrompt<T extends string>(input: {
   readonly title: string;
   readonly hint?: string;
   readonly removal: WorktreeRemoval;
+  readonly activeWork?: WorktreeExitActiveWork;
   readonly onChoose: (choice: T) => void;
   readonly cancelChoice: T;
   readonly exitChoice?: T;
@@ -176,7 +202,7 @@ function createRemovalPrompt<T extends string>(input: {
   return new ChoicePickerComponent({
     title: input.title,
     hint: input.hint,
-    notice: { lines: removalNotice(input.removal) },
+    notice: { lines: removalNotice(input.removal, input.activeWork) },
     options: worktreeDeleteOptions(input.removal),
     spaceSelect: false,
     onSelect: (value) => {
@@ -210,12 +236,14 @@ export type LeaveWorktreeChoice = WorktreeDeleteChoice | 'keep' | 'cancel';
 
 export function createLeaveWorktreePrompt(input: {
   readonly removal: WorktreeRemoval;
+  readonly activeWork?: WorktreeExitActiveWork;
   readonly onChoose: (choice: LeaveWorktreeChoice) => void;
 }): ChoicePickerComponent {
   return createRemovalPrompt({
     title: `Leaving worktree ${input.removal.name}`,
     hint: '↑↓ navigate · Enter select · Esc stay · Ctrl+C keep and exit',
     removal: input.removal,
+    activeWork: input.activeWork,
     onChoose: input.onChoose,
     cancelChoice: 'cancel',
     exitChoice: 'keep',

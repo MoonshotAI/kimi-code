@@ -43,21 +43,28 @@ function makeHost() {
   let mounted: (Component & Focusable) | undefined;
   let onDisplaced: (() => void) | undefined;
   const createdThisRun = new Map<string, WorktreeRunRecord>();
+  const backgroundTasks = new Map<string, { readonly status: 'running' | 'completed' }>();
+  const events: string[] = [];
   const host = {
     harness: {
       inspectWorktreeRemoval: vi.fn(async (_input: { deleteBranch: boolean }) => check()),
-      removeWorktree: vi.fn(async (_input: unknown) => {}),
+      removeWorktree: vi.fn(async (_input: unknown) => {
+        events.push('removeWorktree');
+      }),
     },
     state: {
       appState: {
         sessionId: 'ses-1',
         environment: undefined,
+        streamingPhase: 'idle' as 'idle' | 'waiting' | 'thinking' | 'composing' | 'shell',
+        isCompacting: false,
         worktree: { root: WORKTREE, name: 'fix-login', repoRoot: '/repo' } as
           | { root: string; name: string; repoRoot: string }
           | undefined,
       },
     },
     worktreeCreation: { createdThisRun },
+    backgroundTasks,
     hasIgnoredFiles: vi.fn(async () => false),
     hasSessionContent: vi.fn(() => true),
     mountEditorReplacement: vi.fn((panel: Component & Focusable, displaced?: () => void) => {
@@ -67,8 +74,11 @@ function makeHost() {
     restoreEditor: vi.fn(() => {
       mounted = undefined;
     }),
-    showError: vi.fn(),
-    stop: vi.fn(async () => {}),
+    stop: vi.fn(async () => {
+      events.push('closeSession');
+      await controller.finishShutdown();
+      events.push('harnessClose');
+    }),
   };
   const controller = new WorktreeExitController(host as unknown as WorktreeExitHost);
   const dialog = async (): Promise<{ text: string; press: (...keys: string[]) => void }> => {
@@ -88,7 +98,7 @@ function makeHost() {
     host.state.appState.sessionId = '';
     host.hasSessionContent.mockReturnValue(false);
   };
-  return { host, controller, dialog, untouched, displace: () => onDisplaced?.() };
+  return { host, controller, dialog, untouched, events, displace: () => onDisplaced?.() };
 }
 
 describe('WorktreeExitController', () => {
@@ -147,7 +157,7 @@ describe('WorktreeExitController', () => {
   });
 
   it('deletes an untouched worktree this run created, without asking', async () => {
-    const { host, controller, untouched } = makeHost();
+    const { host, controller, untouched, events } = makeHost();
     untouched();
 
     await controller.exit();
@@ -161,6 +171,7 @@ describe('WorktreeExitController', () => {
       discard: { uncommittedFiles: 0, uniqueCommits: 0 },
     });
     expect(host.stop).toHaveBeenCalledOnce();
+    expect(events).toEqual(['closeSession', 'removeWorktree', 'harnessClose']);
     expect(formatWorktreeExit(controller.outcome!)).toEqual(['Deleted worktree fix-login.']);
   });
 
@@ -250,6 +261,18 @@ describe('WorktreeExitController', () => {
         h.host.harness.inspectWorktreeRemoval.mockResolvedValue(check({ locked: true }));
       },
     ],
+    [
+      'a background task is still running',
+      (h: ReturnType<typeof makeHost>) => {
+        h.host.backgroundTasks.set('task-1', { status: 'running' });
+      },
+    ],
+    [
+      'a foreground turn is still running',
+      (h: ReturnType<typeof makeHost>) => {
+        h.host.state.appState.streamingPhase = 'thinking';
+      },
+    ],
   ])('asks instead of deleting when %s', async (_case, vary) => {
     const harness = makeHost();
     harness.untouched();
@@ -265,20 +288,22 @@ describe('WorktreeExitController', () => {
     await exiting;
   });
 
-  it('asks when the silent delete fails', async () => {
-    const { host, controller, dialog, untouched } = makeHost();
+  it('reports the error and exits when the silent delete fails after shutdown', async () => {
+    const { host, controller, untouched, events } = makeHost();
     untouched();
     host.harness.removeWorktree.mockRejectedValueOnce(
       new KimiError(ErrorCodes.WORKTREE_GIT_FAILED, 'Could not remove the worktree.'),
     );
 
-    const exiting = controller.exit();
-    const { press } = await dialog();
-    press(ENTER);
-    await exiting;
+    await controller.exit();
 
-    expect(host.showError).toHaveBeenCalledWith(expect.stringContaining('Could not remove the worktree.'));
-    expect(controller.outcome?.kind).toBe('kept');
+    expect(host.mountEditorReplacement).not.toHaveBeenCalled();
+    expect(host.stop).toHaveBeenCalledOnce();
+    expect(events).toEqual(['closeSession', 'harnessClose']);
+    expect(controller.outcome?.kind).toBe('delete-failed');
+    expect(formatWorktreeExit(controller.outcome!)).toEqual([
+      "Couldn't delete worktree fix-login (~/.kimi-code/worktrees/wd_repo/fix-login): Could not remove the worktree.",
+    ]);
   });
 
   it('keeps the worktree by default and says how to save its commits', async () => {
@@ -358,7 +383,7 @@ describe('WorktreeExitController', () => {
   });
 
   it('deletes the worktree and its branch with the discards the dialog showed', async () => {
-    const { host, controller, dialog } = makeHost();
+    const { host, controller, dialog, events } = makeHost();
     host.harness.inspectWorktreeRemoval.mockImplementation(async ({ deleteBranch }) =>
       check({ branch: 'feat', uncommittedFiles: 1, uniqueCommits: deleteBranch ? 2 : 0 }),
     );
@@ -378,34 +403,56 @@ describe('WorktreeExitController', () => {
       deleteBranch: true,
       discard: { uncommittedFiles: 1, uniqueCommits: 2 },
     });
+    expect(events).toEqual(['closeSession', 'removeWorktree', 'harnessClose']);
     expect(formatWorktreeExit(controller.outcome!)).toEqual([
       'Deleted worktree fix-login and branch feat.',
     ]);
   });
 
-  it('shows the error and returns to the dialog when the delete fails', async () => {
-    const { host, controller, dialog } = makeHost();
+  it('warns about running session work in the dialog and closes the session before deleting', async () => {
+    const { host, controller, dialog, events } = makeHost();
+    host.state.appState.streamingPhase = 'thinking';
+    host.backgroundTasks.set('task-1', { status: 'running' });
+    host.backgroundTasks.set('task-2', { status: 'completed' });
+
+    const exiting = controller.exit();
+    const { text, press } = await dialog();
+    expect(text).toContain('Work is still running in this session and will be stopped.');
+    expect(text).toContain('1 background task is still running and will be stopped.');
+    press(DOWN, ENTER);
+    await exiting;
+
+    expect(events).toEqual(['closeSession', 'removeWorktree', 'harnessClose']);
+    expect(controller.outcome).toEqual({ kind: 'deleted', name: 'fix-login', branch: undefined });
+  });
+
+  it('reports the error and exits when deleting after shutdown fails', async () => {
+    const { host, controller, dialog, events } = makeHost();
     host.harness.inspectWorktreeRemoval.mockResolvedValue(check({ branch: 'feat' }));
     host.harness.removeWorktree.mockRejectedValueOnce(
       new KimiError(ErrorCodes.WORKTREE_GIT_FAILED, 'Could not delete branch feat.'),
     );
 
     const exiting = controller.exit();
-    (await dialog()).press(DOWN, ENTER);
-    await vi.waitFor(() => {
-      expect(host.showError).toHaveBeenCalledWith(
-        expect.stringContaining('Could not delete branch feat.'),
-      );
-    });
-    const retry = await dialog();
-    expect(retry.text).toContain('Leaving worktree fix-login');
-    expect(host.stop).not.toHaveBeenCalled();
-    retry.press(ENTER);
+    (await dialog()).press(DOWN, DOWN, ENTER);
     await exiting;
 
+    expect(host.stop).toHaveBeenCalledOnce();
+    expect(events).toEqual(['closeSession', 'harnessClose']);
+    expect(controller.outcome?.kind).toBe('delete-failed');
     expect(formatWorktreeExit(controller.outcome!)).toEqual([
-      'Kept worktree fix-login at ~/.kimi-code/worktrees/wd_repo/fix-login (branch feat).',
+      "Couldn't delete worktree fix-login and branch feat (~/.kimi-code/worktrees/wd_repo/fix-login): Could not delete branch feat.",
     ]);
+  });
+
+  it('only executes a pending shutdown delete once', async () => {
+    const { host, controller, untouched } = makeHost();
+    untouched();
+
+    await controller.exit();
+    await controller.finishShutdown();
+
+    expect(host.harness.removeWorktree).toHaveBeenCalledOnce();
   });
 
   it('exits and leaves the worktree alone when it cannot be checked', async () => {

@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 
-import type { KimiHarness } from '@moonshot-ai/kimi-code-sdk';
+import type { BackgroundTaskInfo, KimiHarness } from '@moonshot-ai/kimi-code-sdk';
 import type { Component, Focusable } from '@moonshot-ai/pi-tui';
 
 import { isExperimentalFlagEnabled } from '#/tui/commands/experimental-flags';
@@ -8,11 +8,11 @@ import {
   createLeaveWorktreePrompt,
   type LeaveWorktreeChoice,
   type WorktreeDeleteChoice,
+  type WorktreeExitActiveWork,
   type WorktreeRemoval,
 } from '#/tui/components/dialogs/worktree-choices';
 import type { TUIState } from '#/tui/tui-state';
 import type { AppState } from '#/tui/types';
-import { formatErrorMessage } from '#/tui/utils/event-payload';
 import { sessionWorktree } from '#/tui/utils/session-work-dir';
 import { abbreviateHome } from '#/utils/paths';
 import { resolveCommandPath } from '#/utils/process/resolve-command';
@@ -56,17 +56,35 @@ export type WorktreeExitOutcome =
     }
   | { readonly kind: 'in-use'; readonly name: string }
   | { readonly kind: 'deleted'; readonly name: string; readonly branch: string | undefined }
+  | {
+      readonly kind: 'delete-failed';
+      readonly name: string;
+      readonly path: string;
+      readonly branch: string | undefined;
+      readonly reason: string;
+    }
   | { readonly kind: 'unchecked'; readonly name: string; readonly reason: string };
+
+interface PendingExitDelete {
+  readonly removal: WorktreeRemoval;
+  readonly choice: WorktreeDeleteChoice;
+  readonly excludeSessionId: string | undefined;
+}
+
+type ExitPlan =
+  | { readonly kind: 'stay' }
+  | { readonly kind: 'outcome'; readonly outcome: WorktreeExitOutcome }
+  | ({ readonly kind: 'delete' } & PendingExitDelete);
 
 export interface WorktreeExitHost {
   readonly harness: Pick<KimiHarness, 'inspectWorktreeRemoval' | 'removeWorktree'>;
   readonly state: Pick<TUIState, 'appState'>;
   readonly worktreeCreation: Pick<WorktreeCreationController, 'createdThisRun'>;
+  readonly backgroundTasks: ReadonlyMap<string, Pick<BackgroundTaskInfo, 'status'>>;
   readonly hasIgnoredFiles?: (worktreePath: string) => Promise<boolean>;
   hasSessionContent(): boolean;
   mountEditorReplacement(panel: Component & Focusable, onDisplaced?: () => void): void;
   restoreEditor(): void;
-  showError(message: string): void;
   stop(exitCode?: number): Promise<void>;
 }
 
@@ -75,6 +93,7 @@ type Worktree = NonNullable<AppState['worktree']>;
 export class WorktreeExitController {
   outcome: WorktreeExitOutcome | undefined;
   private readonly sessionStartedIn = new Map<string, string>();
+  private pendingDelete: PendingExitDelete | undefined;
   private leaving = false;
 
   constructor(private readonly host: WorktreeExitHost) {}
@@ -91,49 +110,86 @@ export class WorktreeExitController {
     if (worktree === undefined) return this.host.stop();
     if (this.leaving) return;
     this.leaving = true;
-    let outcome: WorktreeExitOutcome | 'stay';
     try {
-      outcome = await this.decide(worktree);
+      const plan = await this.decide(worktree);
+      if (plan.kind === 'stay') return;
+      if (plan.kind === 'delete') {
+        this.pendingDelete = plan;
+      } else {
+        this.outcome = plan.outcome;
+      }
+      await this.host.stop();
     } finally {
+      this.pendingDelete = undefined;
       this.leaving = false;
     }
-    if (outcome === 'stay') return;
-    this.outcome = outcome;
-    await this.host.stop();
   }
 
-  private async decide(worktree: Worktree): Promise<WorktreeExitOutcome | 'stay'> {
+  async finishShutdown(): Promise<void> {
+    const pending = this.pendingDelete;
+    if (pending === undefined) return;
+    this.pendingDelete = undefined;
+    const branch = pending.choice === 'delete-branch' ? pending.removal.branch : undefined;
+    try {
+      await removeWorktree(
+        this.host.harness,
+        pending.removal,
+        pending.choice,
+        pending.excludeSessionId,
+      );
+    } catch (error) {
+      this.outcome = {
+        kind: 'delete-failed',
+        name: pending.removal.name,
+        path: pending.removal.path,
+        branch,
+        reason: error instanceof Error ? error.message : String(error),
+      };
+      return;
+    }
+    this.outcome = {
+      kind: 'deleted',
+      name: pending.removal.name,
+      branch,
+    };
+  }
+
+  private async decide(worktree: Worktree): Promise<ExitPlan> {
     let removal: WorktreeRemoval;
     try {
       removal = await this.inspect(worktree);
     } catch (error) {
       return {
-        kind: 'unchecked',
-        name: worktree.name,
-        reason: error instanceof Error ? error.message : String(error),
+        kind: 'outcome',
+        outcome: {
+          kind: 'unchecked',
+          name: worktree.name,
+          reason: error instanceof Error ? error.message : String(error),
+        },
       };
     }
-    if (removal.openSessionIds.length > 0) return { kind: 'in-use', name: worktree.name };
-    if (this.untouched(worktree, removal) && !(await this.hasIgnoredFiles(worktree.root))) {
-      const deleted = await this.remove(removal, 'delete');
-      if (deleted !== undefined) return deleted;
+    if (removal.openSessionIds.length > 0) {
+      return { kind: 'outcome', outcome: { kind: 'in-use', name: worktree.name } };
     }
-    for (;;) {
-      const choice = await this.choose(removal);
-      if (choice === 'cancel') return 'stay';
-      if (choice === 'keep') {
-        return {
+    const excludeSessionId = this.currentSessionId();
+    if (this.untouched(worktree, removal) && !(await this.hasIgnoredFiles(worktree.root))) {
+      return { kind: 'delete', removal, choice: 'delete', excludeSessionId };
+    }
+    const choice = await this.choose(removal);
+    if (choice === 'cancel') return { kind: 'stay' };
+    if (choice === 'keep') {
+      return {
+        kind: 'outcome',
+        outcome: {
           kind: 'kept',
           name: worktree.name,
           path: worktree.root,
           branch: removal.branch,
           uniqueCommits: removal.commitsLostWithWorktree,
-        };
-      }
-      const deleted = await this.remove(removal, choice);
-      if (deleted !== undefined) return deleted;
-      removal = (await this.inspect(worktree).catch(() => undefined)) ?? removal;
+        },
+      };
     }
+    return { kind: 'delete', removal, choice, excludeSessionId };
   }
 
   private inspect(worktree: Worktree): Promise<WorktreeRemoval> {
@@ -148,14 +204,29 @@ export class WorktreeExitController {
     return (this.host.hasIgnoredFiles ?? worktreeHasIgnoredFiles)(worktreePath);
   }
 
+  private activeWork(): WorktreeExitActiveWork {
+    const { streamingPhase, isCompacting } = this.host.state.appState;
+    let backgroundTasks = 0;
+    for (const info of this.host.backgroundTasks.values()) {
+      if (info.status === 'running') backgroundTasks += 1;
+    }
+    return {
+      foreground: streamingPhase !== 'idle' || isCompacting,
+      backgroundTasks,
+    };
+  }
+
   private untouched(worktree: Worktree, removal: WorktreeRemoval): boolean {
     const created = this.host.worktreeCreation.createdThisRun.get(worktree.root);
     const { sessionId } = this.host.state.appState;
+    const active = this.activeWork();
     return (
       created !== undefined &&
       !created.setupScriptRan &&
       (sessionId === '' || this.sessionStartedIn.get(sessionId) === worktree.root) &&
       !this.host.hasSessionContent() &&
+      !active.foreground &&
+      active.backgroundTasks === 0 &&
       removal.branch === undefined &&
       removal.uncommittedFiles === 0 &&
       removal.commitsLostWithWorktree === 0 &&
@@ -165,29 +236,13 @@ export class WorktreeExitController {
     );
   }
 
-  private async remove(
-    removal: WorktreeRemoval,
-    choice: WorktreeDeleteChoice,
-  ): Promise<WorktreeExitOutcome | undefined> {
-    try {
-      await removeWorktree(this.host.harness, removal, choice, this.currentSessionId());
-    } catch (error) {
-      this.host.showError(formatErrorMessage(error));
-      return undefined;
-    }
-    return {
-      kind: 'deleted',
-      name: removal.name,
-      branch: choice === 'delete-branch' ? removal.branch : undefined,
-    };
-  }
-
   private currentSessionId(): string | undefined {
     const { sessionId } = this.host.state.appState;
     return sessionId === '' ? undefined : sessionId;
   }
 
   private choose(removal: WorktreeRemoval): Promise<LeaveWorktreeChoice> {
+    const activeWork = this.activeWork();
     return new Promise((resolve) => {
       let settled = false;
       const finish = (choice: LeaveWorktreeChoice, restore: boolean): void => {
@@ -199,6 +254,7 @@ export class WorktreeExitController {
       this.host.mountEditorReplacement(
         createLeaveWorktreePrompt({
           removal,
+          activeWork,
           onChoose: (choice) => {
             finish(choice, true);
           },
@@ -234,6 +290,14 @@ export function formatWorktreeExit(outcome: WorktreeExitOutcome): string[] {
           ? `Deleted worktree ${outcome.name}.`
           : `Deleted worktree ${outcome.name} and branch ${outcome.branch}.`,
       ];
+    case 'delete-failed': {
+      const displayPath = abbreviateHome(outcome.path);
+      const target =
+        outcome.branch === undefined
+          ? `worktree ${outcome.name}`
+          : `worktree ${outcome.name} and branch ${outcome.branch}`;
+      return [`Couldn't delete ${target} (${displayPath}): ${outcome.reason}`];
+    }
     case 'unchecked':
       return [`Couldn't check worktree ${outcome.name}, so it was left as it is: ${outcome.reason}`];
   }

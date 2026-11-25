@@ -1390,6 +1390,7 @@ export class KimiTUI {
       this.staging.deleteStaged(this.imageStore.clear());
       await this.staging.drain();
       await this.worktreePanel.waitForPendingDeletes();
+      await this.worktreeExit.finishShutdown();
       await this.harness.close();
     } finally {
       removeForceExitListener();

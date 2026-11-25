@@ -5927,10 +5927,16 @@ describe('KimiTUI work location', () => {
           { name: string; repoRoot: string; setupScriptRan: boolean }
         >;
       };
+      readonly sessionEventHandler: {
+        readonly backgroundTasks: Map<string, { readonly status: 'running' | 'completed' }>;
+      };
       mountEditorReplacement(panel: Component & Focusable): void;
     }
 
-    async function startInWorktree(removal: { uncommittedFiles: number }) {
+    async function startInWorktree(
+      removal: { uncommittedFiles: number },
+      options: { readonly mockStop?: boolean } = {},
+    ) {
       onTestFinished(() => {
         setExperimentalFeatures([]);
       });
@@ -5946,7 +5952,8 @@ describe('KimiTUI work location', () => {
         ...removal,
       }));
       const removeWorktree = vi.fn(async (_input: unknown) => {});
-      const harness = makeHarness(makeSession({ id: 'ses-new' }), {
+      const session = makeSession({ id: 'ses-new' });
+      const harness = makeHarness(session, {
         inspectWorktreeRemoval,
         removeWorktree,
         getExperimentalFeatures: vi.fn(async () => [{ id: 'worktree', enabled: true }]),
@@ -5959,9 +5966,21 @@ describe('KimiTUI work location', () => {
         worktree: { root: worktree, name: 'wt', repoRoot: project },
       }) as ExitDriver;
       await driver.initMainTui();
-      const stop = vi.spyOn(driver, 'stop').mockResolvedValue(undefined);
+      const stop =
+        options.mockStop === false
+          ? vi.spyOn(driver, 'stop')
+          : vi.spyOn(driver, 'stop').mockResolvedValue(undefined);
       const mount = vi.spyOn(driver, 'mountEditorReplacement');
-      return { inspectWorktreeRemoval, removeWorktree, driver, worktree, stop, mount };
+      return {
+        harness,
+        session,
+        inspectWorktreeRemoval,
+        removeWorktree,
+        driver,
+        worktree,
+        stop,
+        mount,
+      };
     }
 
     it('asks on /exit, and Ctrl+C in the dialog keeps the worktree and exits', async () => {
@@ -5983,9 +6002,18 @@ describe('KimiTUI work location', () => {
       expect(driver.worktreeExit.outcome?.kind).toBe('kept');
     });
 
-    it('deletes a worktree created this run on /exit when the session /new started there is untouched', async () => {
-      const { removeWorktree, driver, worktree, stop, mount } = await startInWorktree({
-        uncommittedFiles: 0,
+    it('deletes a worktree created this run on /exit after closing the untouched session', async () => {
+      const { harness, session, removeWorktree, driver, worktree, stop, mount } =
+        await startInWorktree({ uncommittedFiles: 0 }, { mockStop: false });
+      const order: string[] = [];
+      session.close.mockImplementation(async () => {
+        order.push('session.close');
+      });
+      removeWorktree.mockImplementation(async () => {
+        order.push('removeWorktree');
+      });
+      harness.close.mockImplementation(async () => {
+        order.push('harness.close');
       });
       execFileSync('git', ['init', '-q'], { cwd: worktree });
       driver.worktreeCreation.createdThisRun.set(worktree, {
@@ -5997,12 +6025,72 @@ describe('KimiTUI work location', () => {
 
       driver.handleUserInput('/exit');
       await vi.waitFor(() => {
-        expect(stop).toHaveBeenCalledOnce();
+        expect(harness.close).toHaveBeenCalledOnce();
       });
+      expect(stop).toHaveBeenCalledOnce();
       expect(mount).not.toHaveBeenCalled();
       expect(removeWorktree).toHaveBeenCalledWith(
         expect.objectContaining({ path: worktree, excludeSessionId: 'ses-new' }),
       );
+      expect(order).toEqual(['session.close', 'removeWorktree', 'harness.close']);
+      expect(driver.worktreeExit.outcome?.kind).toBe('deleted');
+    });
+
+    it('quiesces the active session before deleting the current worktree when a background task is running', async () => {
+      const { harness, session, removeWorktree, driver, worktree, mount } = await startInWorktree(
+        { uncommittedFiles: 0 },
+        { mockStop: false },
+      );
+      const order: string[] = [];
+      let finishClose!: () => void;
+      session.close.mockImplementation(
+        () =>
+          new Promise<void>((resolve) => {
+            order.push('session.close:start');
+            finishClose = () => {
+              order.push('session.close:done');
+              resolve();
+            };
+          }),
+      );
+      removeWorktree.mockImplementation(async () => {
+        order.push('removeWorktree');
+      });
+      harness.close.mockImplementation(async () => {
+        order.push('harness.close');
+      });
+      await driver.ensureSession();
+      driver.sessionEventHandler.backgroundTasks.set('bg-1', { status: 'running' });
+
+      driver.handleUserInput('/exit');
+      await vi.waitFor(() => {
+        expect(mount).toHaveBeenCalled();
+      });
+      const dialog = mount.mock.calls[0]![0];
+      const text = stripVTControlCharacters(dialog.render(100).join('\n'));
+      expect(text).toContain('Leaving worktree wt');
+      expect(text).toContain('1 background task is still running and will be stopped.');
+
+      dialog.handleInput?.('\u001B[B');
+      dialog.handleInput?.('\r');
+      await vi.waitFor(() => {
+        expect(order).toEqual(['session.close:start']);
+      });
+      expect(removeWorktree).not.toHaveBeenCalled();
+
+      finishClose();
+      await vi.waitFor(() => {
+        expect(harness.close).toHaveBeenCalledOnce();
+      });
+      expect(removeWorktree).toHaveBeenCalledWith(
+        expect.objectContaining({ path: worktree, excludeSessionId: 'ses-new' }),
+      );
+      expect(order).toEqual([
+        'session.close:start',
+        'session.close:done',
+        'removeWorktree',
+        'harness.close',
+      ]);
       expect(driver.worktreeExit.outcome?.kind).toBe('deleted');
     });
 
