@@ -1,10 +1,13 @@
 <script setup lang="ts">
-import { onActivated, onDeactivated, onMounted, onUnmounted } from 'vue';
-import { Button, openDialogCount, useImeComposition } from '@moonshot-ai/app-ui';
-import type { CreateCardActionId, CreateDecisionCardView } from './createPresentation';
+import { computed, onActivated, onDeactivated, onMounted, onUnmounted, ref, watch } from 'vue';
+import { useI18n } from 'vue-i18n';
+import { Button, Spinner, openDialogCount, useImeComposition } from '@moonshot-ai/app-ui';
+import type { CreateCardActionId, CreateCardView } from './createPresentation';
+import WorktreeCommand from './WorktreeCommand.vue';
+import WorktreeOutput from './WorktreeOutput.vue';
 
 const props = defineProps<{
-  view: CreateDecisionCardView;
+  view: CreateCardView;
   busyAction?: CreateCardActionId | null;
 }>();
 
@@ -12,9 +15,26 @@ const emit = defineEmits<{
   action: [id: CreateCardActionId];
 }>();
 
+const { t } = useI18n();
+const kind = computed(() => ('kind' in props.view ? props.view.kind : undefined));
+const phase = computed(() => ('phase' in props.view ? props.view.phase : undefined));
+const outputOpen = ref(false);
+
+watch([kind, phase], () => {
+  outputOpen.value = false;
+});
+
 function run(id: CreateCardActionId): void {
+  if (id === 'viewOutput') {
+    outputOpen.value = !outputOpen.value;
+    return;
+  }
   if (props.busyAction !== null && props.busyAction !== undefined) return;
   emit('action', id);
+}
+
+function labelOf(id: CreateCardActionId, label: string): string {
+  return id === 'viewOutput' && outputOpen.value ? t('worktreeCreate.action.hideOutput') : label;
 }
 
 const { isComposingKeyEvent } = useImeComposition();
@@ -40,16 +60,25 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown, true));
 </script>
 
 <template>
-  <div class="appr wcc" :data-worktree-card="view.kind" role="group" :aria-label="view.title">
+  <div
+    class="appr wcc"
+    :data-worktree-card="kind"
+    :data-worktree-invalid="phase"
+    role="group"
+    :aria-label="view.title"
+  >
     <div class="ah">
-      <span class="adot" aria-hidden="true" />
-      <span class="akind">{{ view.title }}</span>
+      <span v-if="phase === 'recreating'" class="adot wcc-spin" aria-hidden="true"><Spinner size="xs" /></span>
+      <span v-else class="adot" aria-hidden="true" />
+      <span class="akind" role="status">{{ view.title }}</span>
     </div>
-    <div class="ab">
-      <p class="wcc-text">{{ view.body }}</p>
+    <div v-if="view.body || view.command || view.files.length > 0 || (outputOpen && view.output)" class="ab">
+      <p v-if="view.body" class="wcc-text">{{ view.body }}</p>
+      <WorktreeCommand v-if="view.command" class="wcc-command" :text="view.command" />
       <ul v-if="view.files.length > 0" class="wcc-files">
         <li v-for="file in view.files" :key="file" class="wcc-file">{{ file }}</li>
       </ul>
+      <WorktreeOutput v-if="outputOpen && view.output" class="wcc-output" :text="view.output" />
     </div>
     <div class="af">
       <div class="abtns">
@@ -60,11 +89,12 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown, true));
           :variant="item.primary ? 'primary' : 'secondary'"
           :keys="item.primary ? ['enter'] : []"
           :loading="busyAction === item.id"
-          :disabled="busyAction !== null && busyAction !== undefined"
+          :disabled="item.id !== 'viewOutput' && busyAction !== null && busyAction !== undefined"
+          :aria-expanded="item.id === 'viewOutput' ? outputOpen : undefined"
           :data-action="item.id"
           @click="run(item.id)"
         >
-          {{ item.label }}
+          {{ labelOf(item.id, item.label) }}
         </Button>
       </div>
     </div>
@@ -77,11 +107,21 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown, true));
   margin: var(--space-2) var(--dock-inline-right, 16px) 0 var(--dock-inline-left, 16px);
   font-family: var(--font-ui);
 }
+.wcc-spin::before {
+  content: none;
+}
 .wcc-text {
   margin: 0;
   color: var(--color-text);
   font: var(--text-base) / var(--leading-normal) var(--font-ui);
   overflow-wrap: anywhere;
+}
+.ab .wcc-command,
+.ab .wcc-output {
+  margin-top: var(--space-2);
+}
+.ab > :first-child {
+  margin-top: 0;
 }
 .wcc-files {
   max-height: 160px;

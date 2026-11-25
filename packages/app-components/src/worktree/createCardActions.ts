@@ -6,13 +6,11 @@ import {
   createDecisionCardView,
   createInvalidCardView,
   type CreateCardActionId,
-  type CreateDecisionCardView,
-  type CreateInvalidCardView,
+  type CreateCardView,
 } from './createPresentation';
 
 export interface CreateCardActions {
-  decisionCard: ComputedRef<CreateDecisionCardView | null>;
-  invalidCard: ComputedRef<CreateInvalidCardView | null>;
+  card: ComputedRef<CreateCardView | null>;
   busyAction: Ref<CreateCardActionId | null>;
   run: (id: CreateCardActionId) => Promise<void>;
 }
@@ -22,8 +20,11 @@ export function useCreateCardActions(): CreateCardActions {
   const { t } = useI18n();
   const busyAction = ref<CreateCardActionId | null>(null);
 
-  const invalidCard = computed(() => createInvalidCardView(client.activeSessionWorktree.value, t));
-  const decisionCard = computed(() => createDecisionCardView(client.activeSessionWorktree.value, t));
+  const card = computed<CreateCardView | null>(
+    () =>
+      createInvalidCardView(client.activeSessionWorktree.value, t) ??
+      createDecisionCardView(client.activeSessionWorktree.value, t),
+  );
 
   function dispatch(sessionId: string, id: CreateCardActionId): Promise<boolean> {
     switch (id) {
@@ -62,5 +63,5 @@ export function useCreateCardActions(): CreateCardActions {
     }
   }
 
-  return { decisionCard, invalidCard, busyAction, run };
+  return { card, busyAction, run };
 }

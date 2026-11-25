@@ -6,7 +6,6 @@ import { IconResolverKey } from '@moonshot-ai/app-ui';
 import { sessionWorktree } from '@moonshot-ai/app-client/testing';
 import type { AppSessionWorktree, AppWorktreeSetupStep } from '@moonshot-ai/app-core/api';
 import CreateDecisionCard from '../src/worktree/CreateDecisionCard.vue';
-import CreateInvalidCard from '../src/worktree/CreateInvalidCard.vue';
 import CreateProgressBlock from '../src/worktree/CreateProgressBlock.vue';
 import { forgetCreateRuns } from '../src/worktree/createBlockMemory';
 import {
@@ -200,14 +199,15 @@ describe('CreateDecisionCard', () => {
   });
 });
 
-describe('CreateInvalidCard', () => {
+describe('CreateDecisionCard for a missing worktree', () => {
   it('offers recreate and local mode for a missing worktree', async () => {
     const onAction = vi.fn();
     const view = createInvalidCardView(sessionWorktree('ready', { path: '/w', branch: 'kimi/1', missing: true }), t)!;
-    mount(CreateInvalidCard, { view, onAction });
+    mount(CreateDecisionCard, { view, onAction });
     await nextTick();
 
-    expect(text('.wci-body')).toBe(view.body);
+    expect(text('.wcc-text')).toBe(view.body);
+    expect(button('Recreate Worktree').classList.contains('ui-button--primary')).toBe(true);
     button('Recreate Worktree').click();
     button('Use Local Mode').click();
     expect(onAction.mock.calls.map((call) => call[0])).toEqual(['recreate', 'useLocal']);
@@ -223,11 +223,12 @@ describe('CreateInvalidCard', () => {
       ),
       t,
     )!;
-    mount(CreateInvalidCard, { view, onAction });
+    mount(CreateDecisionCard, { view, onAction });
     await nextTick();
 
-    expect(text('.wci-command')).toBe('git worktree add /w kimi/1');
-    expect(host.querySelectorAll('.wci-actions button')).toHaveLength(1);
+    expect(text('.wcc-command')).toBe('git worktree add /w kimi/1');
+    expect(host.querySelectorAll('.abtns button')).toHaveLength(1);
+    expect(button('Stop').classList.contains('ui-button--primary')).toBe(false);
     button('Stop').click();
     expect(onAction).toHaveBeenCalledWith('stop');
   });
@@ -246,17 +247,17 @@ describe('CreateInvalidCard', () => {
       ),
       t,
     )!;
-    mount(CreateInvalidCard, { view, onAction });
+    mount(CreateDecisionCard, { view, onAction });
     await nextTick();
 
-    expect(text('.wci-title')).toBe('Worktree recreation failed');
-    expect(host.querySelector('.wci-output')).toBeNull();
+    expect(text('.akind')).toBe('Worktree recreation failed');
+    expect(host.querySelector('.wcc-output')).toBeNull();
     button('View Raw Output').click();
     await nextTick();
-    expect(text('.wci-output')).toBe('git worktree add /w kimi/1\nNo space left on device');
+    expect(text('.wcc-output')).toBe('git worktree add /w kimi/1\nNo space left on device');
     expect(onAction).not.toHaveBeenCalled();
     button('Hide Raw Output').click();
     await nextTick();
-    expect(host.querySelector('.wci-output')).toBeNull();
+    expect(host.querySelector('.wcc-output')).toBeNull();
   });
 });

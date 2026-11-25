@@ -2,7 +2,6 @@ export { default as CreateEnvironmentPicker } from './CreateEnvironmentPicker.vu
 export { default as CreateSourceBranchPicker } from './CreateSourceBranchPicker.vue';
 export { default as CreateProgressBlock } from './CreateProgressBlock.vue';
 export { default as CreateDecisionCard } from './CreateDecisionCard.vue';
-export { default as CreateInvalidCard } from './CreateInvalidCard.vue';
 export { useCreateCardActions, type CreateCardActions } from './createCardActions';
 export {
   createBlockView,
@@ -12,6 +11,7 @@ export {
   type CreateBlockView,
   type CreateCardAction,
   type CreateCardActionId,
+  type CreateCardView,
   type CreateDecisionCardView,
   type CreateInvalidCardPhase,
   type CreateInvalidCardView,

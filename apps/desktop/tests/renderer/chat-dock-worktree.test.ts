@@ -162,7 +162,7 @@ describe('desktop ChatDock worktree cards', () => {
       setup: worktreeSetup({ purpose: 'recreate', status: 'running', steps: [{ kind: 'create', state: 'running', command: 'git worktree add /w kimi/1' }] }),
     };
     await nextTick();
-    expect(host.querySelector('[data-worktree-invalid="recreating"] .wci-command')?.textContent).toBe('git worktree add /w kimi/1');
+    expect(host.querySelector('[data-worktree-invalid="recreating"] .wcc-command')?.textContent).toBe('git worktree add /w kimi/1');
     expect(composer().style.display).toBe('none');
     await press('stop');
     expect(actions.cancelSessionWorktree).toHaveBeenCalledWith('s1');

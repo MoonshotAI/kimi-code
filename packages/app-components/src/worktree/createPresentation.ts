@@ -45,24 +45,26 @@ export interface CreateCardAction {
   primary?: boolean;
 }
 
-export interface CreateDecisionCardView {
-  kind: Exclude<SessionWorktreeCard, 'missing' | 'missingBranchGone'>;
-  title: string;
-  body: string;
-  files: string[];
-  actions: CreateCardAction[];
-}
-
-export type CreateInvalidCardPhase = 'missing' | 'branchGone' | 'recreating' | 'failed' | 'stopped';
-
-export interface CreateInvalidCardView {
-  phase: CreateInvalidCardPhase;
+interface CreateCardViewBase {
   title: string;
   body: string | null;
+  files: string[];
   command: string | null;
   output: string | null;
   actions: CreateCardAction[];
 }
+
+export interface CreateDecisionCardView extends CreateCardViewBase {
+  kind: Exclude<SessionWorktreeCard, 'missing' | 'missingBranchGone'>;
+}
+
+export type CreateInvalidCardPhase = 'missing' | 'branchGone' | 'recreating' | 'failed' | 'stopped';
+
+export interface CreateInvalidCardView extends CreateCardViewBase {
+  phase: CreateInvalidCardPhase;
+}
+
+export type CreateCardView = CreateDecisionCardView | CreateInvalidCardView;
 
 const FETCH_TIMEOUT_SECONDS = 30;
 
@@ -188,7 +190,7 @@ export function createDecisionCardView(
   const retry = action('retry', t('worktreeCreate.action.retry'));
   const useLocal = action('useLocal', t('worktreeCreate.action.useLocal'));
   const createFromLocal = action('createFromLocal', t('worktreeCreate.action.createFromLocal', { branch }));
-  const base = { kind, files: [] as string[] };
+  const base = { kind, files: [] as string[], command: null, output: null };
   switch (kind) {
     case 'fetchFailed':
       return {
@@ -254,7 +256,7 @@ export function createInvalidCardView(
   const setup = worktree.setup;
   const branch = worktree.branch;
   const useLocal = action('useLocal', t('worktreeCreate.action.useLocal'));
-  const empty = { body: null, command: null, output: null };
+  const empty = { body: null, files: [] as string[], command: null, output: null };
   if (isRecreateRun(setup)) {
     if (setup.status === 'running') {
       const current = setup.steps.find((step) => step.state === 'running');
@@ -279,14 +281,15 @@ export function createInvalidCardView(
         phase: 'failed',
         title: t('worktreeCreate.invalid.failedTitle'),
         body: t(diskFull ? 'worktreeCreate.invalid.diskFullBody' : 'worktreeCreate.invalid.failedBody'),
+        files: [],
         command: null,
         output: output.length === 0 ? null : output.join('\n'),
-        actions: [
+        actions: withPrimary([
           ...(output.length === 0 ? [] : [action('viewOutput', t('worktreeCreate.action.viewOutput'))]),
           ...(diskFull ? [action('manage', t('worktreeCreate.action.manage'))] : []),
           useLocal,
           action('retry', t('worktreeCreate.action.retry')),
-        ],
+        ]),
       };
     }
     if (setup.status === 'stopped' && worktree.path === undefined) {
@@ -295,7 +298,7 @@ export function createInvalidCardView(
         phase: 'stopped',
         title: t('worktreeCreate.invalid.stoppedTitle'),
         body: t('worktreeCreate.invalid.stoppedBody'),
-        actions: [useLocal, action('retry', t('worktreeCreate.action.retry'))],
+        actions: withPrimary([useLocal, action('retry', t('worktreeCreate.action.retry'))]),
       };
     }
   }
@@ -309,7 +312,7 @@ export function createInvalidCardView(
         branch === undefined
           ? t('worktreeCreate.invalid.missingBodyPlain')
           : t('worktreeCreate.invalid.branchGoneBody', { branch }),
-      actions: [useLocal],
+      actions: withPrimary([useLocal]),
     };
   }
   if (kind === 'missing') {
@@ -321,7 +324,7 @@ export function createInvalidCardView(
         branch === undefined
           ? t('worktreeCreate.invalid.missingBodyPlain')
           : t('worktreeCreate.invalid.missingBody', { branch }),
-      actions: [useLocal, action('recreate', t('worktreeCreate.action.recreate'))],
+      actions: withPrimary([useLocal, action('recreate', t('worktreeCreate.action.recreate'))]),
     };
   }
   return null;
