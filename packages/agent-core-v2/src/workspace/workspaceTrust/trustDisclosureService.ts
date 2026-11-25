@@ -1,7 +1,12 @@
 import { isAbsolute, relative } from 'pathe';
 
 import type { ILogService } from '#/_base/log/log';
-import type { IAgentProfileRegistry } from '#/app/agentProfileCatalog/agentProfileRegistry';
+import {
+  isVisibleAgentProfileSource,
+  type AgentProfileRegistration,
+  type AgentProfileViewer,
+  type IAgentProfileRegistry,
+} from '#/app/agentProfileCatalog/agentProfileRegistry';
 import { BUILTIN_AGENT_PROFILE_SOURCE_ID } from '#/app/agentProfileCatalog/builtinAgentProfileLoader';
 import type { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import type { IConfigService } from '#/app/config/config';
@@ -17,7 +22,6 @@ import type { IWorkspaceSkillCatalog } from '#/features/skill/workspace/workspac
 import type { McpServerConfig } from '#/mcpCore/config-schema';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import type { IWorkspaceAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/workspaceAgentProfileLoader';
-import type { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
 import type { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
 import type { IWorkspaceInstructionsService } from '#/workspace/workspaceInstructions/workspaceInstructions';
 
@@ -50,7 +54,7 @@ export class WorkspaceTrustDisclosureService implements IWorkspaceTrustDisclosur
   declare readonly _serviceBrand: undefined;
 
   constructor(
-    private readonly context: IWorkspaceContext,
+    private readonly profileViewer: AgentProfileViewer,
     private readonly fs: IHostFileSystem,
     private readonly bootstrap: IBootstrapService,
     private readonly config: IConfigService,
@@ -68,6 +72,7 @@ export class WorkspaceTrustDisclosureService implements IWorkspaceTrustDisclosur
     pendingAdditionalDirs: readonly string[] = [],
     baseDir = this.workspaceDirs.primary,
     pendingAdditionalDirsResolved = false,
+    mcpWorkDir = this.workspaceDirs.primary,
   ): Promise<TrustGatedActivation> {
     if (await this.trust.get()) return EMPTY_ACTIVATION;
     await this.workspaceDirs.ready;
@@ -77,7 +82,7 @@ export class WorkspaceTrustDisclosureService implements IWorkspaceTrustDisclosur
     const warnings: string[] = [];
     await this.skills.reloadSources(['workspace']).catch(() => undefined);
     const [mcpServers, configuredDirs, skillRoots, instructionSources] = await Promise.all([
-      this.describeGatedMcpServers().catch((error: unknown) => {
+      this.describeGatedMcpServers(mcpWorkDir).catch((error: unknown) => {
         this.log.warn(`trust disclosure: MCP scan failed: ${String(error)}`);
         warnings.push('Could not inspect MCP configuration.');
         return [];
@@ -105,8 +110,7 @@ export class WorkspaceTrustDisclosureService implements IWorkspaceTrustDisclosur
     return { mcpServers, additionalDirs, additionalDirSources, instructionSources, warnings };
   }
 
-  private async describeGatedMcpServers(): Promise<readonly TrustGatedMcpServer[]> {
-    const cwd = this.workspaceDirs.primary;
+  private async describeGatedMcpServers(cwd: string): Promise<readonly TrustGatedMcpServer[]> {
     const homeDir = this.bootstrap.homeDir;
     const [paths, loaded] = await Promise.all([
       resolveMcpJsonPaths({ fs: this.fs, cwd, homeDir }),
@@ -197,12 +201,7 @@ export class WorkspaceTrustDisclosureService implements IWorkspaceTrustDisclosur
       agentsMdPaths.push(await realpathOrSelf(this.fs, path));
     }
     agentsMdPaths.sort();
-    const workspaceProfiles = this.agentProfilesRegistry
-      .entries()
-      .find(
-        (entry) =>
-          entry.sourceId === 'workspace' && entry.workspaceKey === this.context.workspaceId,
-      );
+    const workspaceProfiles = this.profileEntries().find((entry) => entry.sourceId === 'workspace');
     const [skillPaths, profilePaths] = await Promise.all([
       skillsReady
         ? this.sourceLocations(skills.map((skill) => skill.path), skillRoots)
@@ -250,13 +249,12 @@ export class WorkspaceTrustDisclosureService implements IWorkspaceTrustDisclosur
       .toSorted();
   }
 
+  private profileEntries(): readonly AgentProfileRegistration[] {
+    return this.agentProfilesRegistry.entries().filter((entry) => isVisibleAgentProfileSource(entry, this.profileViewer));
+  }
+
   private effectiveWorkspaceProfiles(): readonly string[] {
-    const entries = this.agentProfilesRegistry
-      .entries()
-      .filter(
-        (entry) =>
-          entry.workspaceKey === undefined || entry.workspaceKey === this.context.workspaceId,
-      );
+    const entries = this.profileEntries();
     const builtinNames = new Set(
       entries
         .find((entry) => entry.sourceId === BUILTIN_AGENT_PROFILE_SOURCE_ID)

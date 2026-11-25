@@ -1,5 +1,6 @@
 import { Disposable } from '#/_base/di/lifecycle';
 import { Emitter, type Event } from '#/_base/event';
+import type { ILogService } from '#/_base/log/log';
 import { defineState } from '#/state/state';
 import { IBuiltinSkillSource } from '#/features/skill/catalog/builtinSkillSource';
 import { InMemorySkillCatalog } from '#/features/skill/catalog/registry';
@@ -40,6 +41,7 @@ export class WorkspaceSkillCatalogService extends Disposable implements IWorkspa
     @IWorkspaceRootSkillSource workspace: IWorkspaceRootSkillSource,
     @IPluginSkillSource plugin: IPluginSkillSource,
     @IWorkspaceStateService private readonly states: IWorkspaceStateService,
+    private readonly log?: ILogService,
   ) {
     super();
     this.states.contributeState(workspaceSkillCatalogContributionsKey);
@@ -51,7 +53,9 @@ export class WorkspaceSkillCatalogService extends Disposable implements IWorkspa
       if (s.onDidChange)
         this._register(
           s.onDidChange(() => {
-            void this.reloadSource(s.id);
+            void this.reloadSource(s.id).catch((error: unknown) => {
+              this.log?.warn(`skill source "${s.id}" reload failed: ${String(error)}`);
+            });
           }),
         );
     }

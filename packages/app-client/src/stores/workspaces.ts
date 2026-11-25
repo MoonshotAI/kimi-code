@@ -19,6 +19,7 @@ import {
   logWarn,
   mergeWorkspaces,
   migrateWorkspaceLocalOverrides,
+  panelRoots,
   pruneRecencyFloor,
   pinnedWorkspaceKey,
   reconcileRecencyFloor,
@@ -37,6 +38,7 @@ import {
   STORAGE_KEYS,
   stripSurroundingQuotes,
   workspaceRootKey,
+  type PanelRoots,
   type PinnedInsertTarget,
   type SessionUrlMode,
   type WorkspaceSortMode,
@@ -303,6 +305,19 @@ export const useWorkspacesStore = defineStore('kimi.workspaces', () => {
 
   const isLocalWorkspace = computed<boolean>(() => visibleWorkspace.value?.hostId === undefined);
 
+  function sessionPanelRoots(session: AppSession): PanelRoots {
+    const id = workspaceIdForSession(session);
+    return panelRoots(session, workspaces.value.find((w) => w.id === id));
+  }
+
+  const activePanelRoots = computed<PanelRoots>(() => {
+    const sessionId = sessionsStore().activeSessionId;
+    const session = sessionId === undefined ? undefined : sessionsStore().sessions.find((s) => s.id === sessionId);
+    return session === undefined ? panelRoots(undefined, visibleWorkspace.value ?? undefined) : sessionPanelRoots(session);
+  });
+
+  const activePanelRoot = computed<string>(() => activePanelRoots.value.root);
+
   function clearWorkspaceTrustState(workspaceIds: readonly string[], clearCached = false): void {
     let trustChanged = false;
     const nextTrust = clearCached ? { ...trustByWorkspaceId.value } : undefined;
@@ -415,6 +430,35 @@ export const useWorkspacesStore = defineStore('kimi.workspaces', () => {
     },
   );
 
+  const requestedWorkspaceIds = new Set<string>();
+
+  async function listUnseenWorkspaces(sessions: readonly Pick<AppSession, 'workspaceId'>[]): Promise<void> {
+    const seen = new Set([...workspaces.value.map((w) => w.id), ...requestedWorkspaceIds]);
+    const unseen = sessions.flatMap(({ workspaceId: id }) => (id === undefined || seen.has(id) ? [] : [id]));
+    if (unseen.length === 0) return;
+    for (const id of unseen) requestedWorkspaceIds.add(id);
+    const requestedAt = removalClock;
+    try {
+      const list = await getKimiWebApi().listWorkspaces();
+      for (const { id } of list) requestedWorkspaceIds.delete(id);
+      showRelistedWorkspaces(list, requestedAt);
+      const known = new Set([...workspaces.value.map((w) => w.id), ...hiddenWorkspaceIds.value]);
+      const added = list.filter((w) => !known.has(w.id));
+      if (added.length > 0) workspaces.value = [...applyWorkspaceNameOverrides(added), ...workspaces.value];
+    } catch (err) {
+      for (const id of unseen) requestedWorkspaceIds.delete(id);
+      logWarn('[kimi-code] listing the projects of unseen sessions failed', err);
+    }
+  }
+
+  watch(
+    () => sessionsStore().sessions,
+    (sessions, previous) => {
+      const known = new Set(previous.map((s) => s.id));
+      void listUnseenWorkspaces(sessions.filter((s) => !known.has(s.id)));
+    },
+  );
+
   function selectWorkspace(id: string): void {
     storedActiveWorkspaceId.value = id;
     saveActiveWorkspace(id);
@@ -471,6 +515,7 @@ export const useWorkspacesStore = defineStore('kimi.workspaces', () => {
   async function loadWorkspaces(
     trace?: <T>(step: 'list' | 'home', request: () => Promise<T>) => Promise<T>,
   ): Promise<void> {
+    const requestedAt = removalClock;
     try {
       const api = getKimiWebApi();
       const [list, home] = await Promise.all([
@@ -480,9 +525,11 @@ export const useWorkspacesStore = defineStore('kimi.workspaces', () => {
       if (list === undefined) {
         workspaces.value = [];
       } else {
+        showRelistedWorkspaces(list, requestedAt);
         const migrated = migrateWorkspaceLocalOverrides(list);
         if (migrated !== null) hiddenWorkspaceIds.value = migrated.hiddenWorkspaceIds;
         workspaces.value = applyWorkspaceNameOverrides(list);
+        void listUnseenWorkspaces(sessionsStore().sessions);
       }
       fsHome.value = home.home || null;
       recentRoots.value = home.recentRoots;
@@ -508,10 +555,31 @@ export const useWorkspacesStore = defineStore('kimi.workspaces', () => {
 
   function hideWorkspace(id: string): void {
     unpinWorkspace(id);
+    requestedWorkspaceIds.delete(id);
     if (id && !hiddenWorkspaceIds.value.includes(id)) {
       hiddenWorkspaceIds.value = [...hiddenWorkspaceIds.value, id];
       saveHiddenWorkspaceIds(hiddenWorkspaceIds.value);
     }
+  }
+
+  const removalSettledAt = new Map<string, number>();
+  let removalClock = 0;
+
+  function settleRemoval(id: string): void {
+    removalClock += 1;
+    removalSettledAt.set(id, removalClock);
+  }
+
+  function showRelistedWorkspaces(list: readonly AppWorkspace[], requestedAt: number): void {
+    const relisted = new Set(
+      list
+        .filter((w) => w.kind === 'implicit' && (removalSettledAt.get(w.id) ?? 0) <= requestedAt)
+        .map((w) => w.id),
+    );
+    const hidden = hiddenWorkspaceIds.value.filter((id) => !relisted.has(id));
+    if (hidden.length === hiddenWorkspaceIds.value.length) return;
+    hiddenWorkspaceIds.value = hidden;
+    saveHiddenWorkspaceIds(hidden);
   }
 
   function removeWorkspaceEntries(id: string, _root?: string): void {
@@ -616,6 +684,7 @@ export const useWorkspacesStore = defineStore('kimi.workspaces', () => {
     const root =
       workspaces.value.find((w) => w.id === event.workspaceId)?.root ?? event.root;
     hideWorkspace(event.workspaceId);
+    settleRemoval(event.workspaceId);
     removeWorkspaceEntries(event.workspaceId);
     const removingActiveWorkspace =
       storedActiveWorkspaceId.value === event.workspaceId || storedActiveWorkspaceId.value === root;
@@ -893,10 +962,12 @@ export const useWorkspacesStore = defineStore('kimi.workspaces', () => {
       activeSession && sessionBelongsToWorkspace(activeSession, id),
     );
     hideWorkspace(id);
+    removalSettledAt.set(id, Number.POSITIVE_INFINITY);
     let removed = false;
     try {
       await getKimiWebApi().deleteWorkspace(id);
       removed = true;
+      settleRemoval(id);
     } catch (err) {
       logWarn('[kimi-code] deleteWorkspace registry cleanup failed for', id, err);
     }
@@ -1006,6 +1077,9 @@ export const useWorkspacesStore = defineStore('kimi.workspaces', () => {
     activeWorkspaceId,
     visibleWorkspace,
     isLocalWorkspace,
+    sessionPanelRoots,
+    activePanelRoots,
+    activePanelRoot,
     selectWorkspace,
     setWorkspaceSortMode,
     reorderWorkspaces,
@@ -1014,6 +1088,7 @@ export const useWorkspacesStore = defineStore('kimi.workspaces', () => {
     togglePinWorkspace,
     reconcileOrder,
     loadWorkspaces,
+    listUnseenWorkspaces,
     upsertWorkspacePreserveOrder,
     hideWorkspace,
     removeWorkspaceEntries,

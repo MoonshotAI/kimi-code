@@ -25,6 +25,7 @@ import {
   ISessionIndex,
   ISessionManager,
   ISessionMetadata,
+  ISessionToolPolicy,
   IWorkspaceService,
   followSessionLifecycles,
   getLiveSessionById,
@@ -469,9 +470,26 @@ export class SessionEventBroadcaster {
     const tasks = new SessionTaskFeed(agents, (agentId, info) => {
       this.sendAgentFrame(state, agentId, toTaskMessage(state.sessionId, agentId, info));
     });
-    const agentStates = new SessionAgentFeed(sessionId, agents, (agentId, message) => {
-      this.sendAgentFrame(state, agentId, message);
-    });
+    const sessionPolicy = session.accessor.get(ISessionToolPolicy) as ISessionToolPolicy | undefined;
+    const config = this.opts.core.accessor.get(IConfigService) as IConfigService | undefined;
+    const agentStates = new SessionAgentFeed(
+      sessionId,
+      agents,
+      (agentId, message) => {
+        this.sendAgentFrame(state, agentId, message);
+      },
+      (listener) => {
+        const subscriptions = [
+          sessionPolicy?.onDidChange(() => listener()),
+          config?.onDidSectionChange?.((event) => {
+            if (event.domain === 'tools' || event.domain === 'experimental') listener();
+          }),
+        ];
+        return toDisposable(() => {
+          for (const subscription of subscriptions) subscription?.dispose();
+        });
+      },
+    );
     state.tasks = tasks;
     state.agents = agentStates;
     state.lifecycleDisposables.push(tasks, agentStates);
@@ -590,12 +608,13 @@ export class SessionEventBroadcaster {
         const live = getLiveSessionById(this.opts.core.accessor, sessionId);
         if (live !== undefined) {
           try {
-            const meta = await live.accessor.get(ISessionMetadata).read();
+            const metadata = live.accessor.get(ISessionMetadata);
+            const meta = await metadata.read();
             const ctx = live.accessor.get(ISessionContext);
             summary = {
               id: meta.id,
               workspaceId: ctx.workspaceId,
-              cwd: ctx.cwd,
+              cwd: metadata.effectiveCwd,
               environmentId: meta.environmentId,
               environmentCwd: meta.environmentCwd,
               title: meta.title,

@@ -1,6 +1,6 @@
 import { PassThrough, Readable, Writable } from 'node:stream';
 
-import { ndJsonStream } from '@agentclientprotocol/sdk';
+import { ndJsonStream, RequestError } from '@agentclientprotocol/sdk';
 
 import { runAcpServerWithStream, type RunningAcpServer, type RunAcpServerOptions } from '../../src/start';
 
@@ -68,10 +68,10 @@ export async function createTestClient(opts: {
       const result = await handler(params);
       toAgent.write(`${JSON.stringify({ jsonrpc: '2.0', id, result })}\n`);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      toAgent.write(
-        `${JSON.stringify({ jsonrpc: '2.0', id, error: { code: -32603, message } })}\n`,
-      );
+      const response = error instanceof RequestError
+        ? error.toErrorResponse()
+        : { code: -32603, message: error instanceof Error ? error.message : String(error) };
+      toAgent.write(`${JSON.stringify({ jsonrpc: '2.0', id, error: response })}\n`);
     }
   }
 

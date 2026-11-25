@@ -463,15 +463,16 @@ describe('WorkspaceMcpService', () => {
     function willCreateEvent(
       servers: Record<string, McpServerConfig>,
       sessionCwd: string,
-      workspaceId = 'test-workspace',
+      handle: ISessionMcpHandle,
     ) {
       const seeds = new Map<unknown, unknown>([
+        [ISessionMcpHandle, handle],
         [ISessionEphemeralMcpServers, servers],
         [
           ISessionContext,
           makeSessionContext({
             sessionId: 's1',
-            workspaceId,
+            workspaceId: 'test-workspace',
             sessionDir: join(cwd, 's1'),
             sessionScope: 'ws/s1',
             cwd: sessionCwd,
@@ -502,7 +503,7 @@ describe('WorkspaceMcpService', () => {
       const sessionCwd = mkdtempSync(join(tmpdir(), 'kimi-session-mcp-cwd-'));
       const servers = { eph: stdioServer() };
       const sessionOverlay = vi.spyOn(service, 'sessionOverlay');
-      const { event, contributed, disposers } = willCreateEvent(servers, sessionCwd);
+      const { event, contributed, disposers } = willCreateEvent(servers, sessionCwd, service.sessionHandle());
       assemblyEvents.fire(event);
 
       expect(sessionOverlay).toHaveBeenCalledWith(servers, { stdioCwd: cwd, sessionId: 's1' });
@@ -525,7 +526,7 @@ describe('WorkspaceMcpService', () => {
       await service.ready;
 
       const sessionOverlay = vi.spyOn(service, 'sessionOverlay');
-      const { event, contributed, disposers } = willCreateEvent({}, cwd);
+      const { event, contributed, disposers } = willCreateEvent({}, cwd, service.sessionHandle());
       assemblyEvents.fire(event);
 
       expect(sessionOverlay).not.toHaveBeenCalled();
@@ -533,7 +534,7 @@ describe('WorkspaceMcpService', () => {
       expect(disposers).toHaveLength(0);
     });
 
-    it('ignores a will-create event of a session belonging to another workspace', async () => {
+    it('ignores a will-create event of a session that uses another MCP connection set', async () => {
       const service = createService();
       manager = service.connectionManager();
       await service.ready;
@@ -542,7 +543,7 @@ describe('WorkspaceMcpService', () => {
       const { event, contributed, disposers } = willCreateEvent(
         { eph: stdioServer() },
         cwd,
-        'other-workspace',
+        { ...service.sessionHandle(), connectionManager: new McpConnectionManager() },
       );
       assemblyEvents.fire(event);
 

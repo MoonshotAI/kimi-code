@@ -1,6 +1,10 @@
 import { execFileSync } from 'node:child_process';
+import { mkdir, mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import type { createKimiDeviceId as createKimiDeviceIdFn } from '@moonshot-ai/kimi-code-oauth';
+import { normalize } from 'pathe';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { runShell } from '#/cli/run-shell';
@@ -465,6 +469,47 @@ describe('runShell', () => {
 
     expect(mocks.kimiHarnessConstructor).toHaveBeenCalledWith(
       expect.objectContaining({ skillDirs: ['/skills'] }),
+    );
+  });
+
+  it('resolves a relative --skills-dir from the directory the command was started in', async () => {
+    mocks.loadTuiConfig.mockResolvedValue({
+      theme: 'dark',
+      editorCommand: null,
+      notifications: { enabled: true, condition: 'unfocused' },
+    });
+    mocks.tuiStart.mockResolvedValue(undefined);
+    const repository = await mkdtemp(join(tmpdir(), 'kimi-launch-paths-'));
+    const launchDir = join(repository, 'src');
+    await mkdir(join(repository, '.git'));
+    await mkdir(launchDir);
+    const cwd = vi.spyOn(process, 'cwd').mockReturnValue(launchDir);
+
+    try {
+      await runShell(
+        {
+          session: undefined,
+          continue: false,
+          yolo: false,
+          auto: false,
+          plan: false,
+          model: undefined,
+          outputFormat: undefined,
+          prompt: undefined,
+          skillsDirs: ['./local-skills'],
+          agent: undefined,
+          agentFiles: [],
+          environment: undefined,
+        },
+        '1.2.3-test',
+      );
+    } finally {
+      cwd.mockRestore();
+      await rm(repository, { recursive: true, force: true });
+    }
+
+    expect(mocks.kimiHarnessConstructor).toHaveBeenCalledWith(
+      expect.objectContaining({ skillDirs: [normalize(join(repository, 'local-skills'))] }),
     );
   });
 

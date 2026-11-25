@@ -5,9 +5,12 @@ import { join } from 'node:path';
 import {
   Error2,
   ErrorCodes,
+  EXTRA_SKILL_DIRS_SECTION,
   IAgentLifecycleService,
   IAgentLoopService,
   IAgentSkillService,
+  IConfigService,
+  IWorkspaceService,
   MAIN_AGENT_ID,
   closeSessionById,
   getLiveSessionById,
@@ -17,6 +20,7 @@ import {
   activateSkillResultSchema,
   listSkillsResponseSchema,
 } from '../src/protocol/rest-skill';
+import { createGitWorktree } from '@moonshot-ai/testkit/fixtures';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { type RunningServer, startServer } from '../src/start';
@@ -215,6 +219,77 @@ describe('server-v2 /api/v1 skills', () => {
       const updateConfig = skills.find((s) => s.name === 'update-config');
       expect(updateConfig).toBeDefined();
       expect(updateConfig).not.toHaveProperty('scopes');
+    });
+
+    it.each(['implicit', 'managed'])(
+      'reads the skills of a worktree, not those of the primary, when the %s project also lists the worktree',
+      async (kind) => {
+        const lab = await realpath(await makeWorkspaceDir());
+        const { main, worktree } = await createGitWorktree({ main: join(lab, 'app'), worktree: join(lab, 'app-fix') });
+        for (const checkout of [main, worktree]) await seedProjectSkill(checkout, 'e2e-checkout');
+        const create = async (body: Record<string, unknown>): Promise<{ id: string; workspace_id: string }> => {
+          const created = await postJson<{ id: string; workspace_id: string }>('/api/v1/sessions', body);
+          expect(created.body.code).toBe(0);
+          return created.body.data;
+        };
+        let session: { id: string };
+        if (kind === 'managed') {
+          session = await create({ workspace_id: await registerWorkspace(main, [worktree]), metadata: { cwd: worktree } });
+        } else {
+          const { workspace_id: project } = await create({ cwd: main });
+          await server!.core.accessor.get(IWorkspaceService).update(project, { additionalDirs: [worktree] });
+          session = await create({ cwd: worktree });
+        }
+
+        const { body } = await getJson<{ skills: SkillWire[] }>(`/api/v1/sessions/${session.id}/skills`);
+
+        const found = listSkillsResponseSchema.parse(body.data).skills.filter((skill) => skill.name === 'e2e-checkout');
+        expect(await Promise.all(found.map((skill) => realpath(skill.path)))).toEqual(
+          [join(worktree, '.kimi-code', 'skills', 'e2e-checkout', 'SKILL.md')],
+        );
+      },
+    );
+
+    it('reads relative extra skill dirs from the working directory of each session and follows later config changes', async () => {
+      const lab = await makeWorkspaceDir();
+      const { main, worktree } = await createGitWorktree({ main: join(lab, 'app'), worktree: join(lab, 'app-fix') });
+      for (const [checkout, tag] of [[main, 'main'], [worktree, 'fix']] as const) {
+        await seedExplicitSkill(join(checkout, 'team-skills'), `e2e-team-${tag}`);
+        await seedExplicitSkill(join(checkout, 'more-skills'), `e2e-more-${tag}`);
+      }
+      const config = server!.core.accessor.get(IConfigService);
+      const extraSkills = async (id: string): Promise<readonly string[]> => {
+        const { body } = await getJson<{ skills: SkillWire[] }>(`/api/v1/sessions/${id}/skills`);
+        expect(body.code).toBe(0);
+        return listSkillsResponseSchema.parse(body.data).skills
+          .filter((skill) => skill.source === 'extra')
+          .map((skill) => skill.name);
+      };
+      const createAt = async (body: Record<string, unknown>): Promise<string> => {
+        const created = await postJson<{ id: string }>('/api/v1/sessions', body);
+        expect(created.body.code).toBe(0);
+        return created.body.data.id;
+      };
+      try {
+        await config.set(EXTRA_SKILL_DIRS_SECTION, ['team-skills']);
+        const managed = await registerWorkspace(main);
+        const managedMain = await createAt({ workspace_id: managed });
+        const managedWorktree = await createAt({ workspace_id: managed, environment_id: 'local', environment_cwd: worktree });
+        const implicitMain = await createAt({ cwd: main });
+        const implicitWorktree = await createAt({ cwd: worktree });
+        for (const id of [managedMain, implicitMain]) expect(await extraSkills(id)).toEqual(['e2e-team-main']);
+        for (const id of [managedWorktree, implicitWorktree]) expect(await extraSkills(id)).toEqual(['e2e-team-fix']);
+
+        await config.set(EXTRA_SKILL_DIRS_SECTION, ['more-skills']);
+        await vi.waitFor(async () => {
+          expect(await extraSkills(implicitWorktree)).toEqual(['e2e-more-fix']);
+          expect(await extraSkills(managedWorktree)).toEqual(['e2e-more-fix']);
+          expect(await extraSkills(managedMain)).toEqual(['e2e-more-main']);
+          expect(await extraSkills(implicitMain)).toEqual(['e2e-more-main']);
+        });
+      } finally {
+        await config.set(EXTRA_SKILL_DIRS_SECTION, []);
+      }
     });
   });
 

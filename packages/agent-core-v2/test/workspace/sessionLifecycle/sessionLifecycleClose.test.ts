@@ -30,8 +30,6 @@ function closeHarness(environments: EnvironmentRegistry): SessionLifecycleServic
     undefined as never,
     undefined as never,
     undefined as never,
-    undefined as never,
-    undefined as never,
     environments as unknown as IEnvironmentService,
     undefined as never,
     undefined as never,

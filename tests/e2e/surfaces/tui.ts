@@ -565,7 +565,25 @@ class TuiDriver implements SurfaceDriver<'tui'> {
     });
   }
 
-  async ready(): Promise<void> {
+  async ready(workspaceTrust?: SurfaceLaunch['workspaceTrust']): Promise<void> {
+    if (workspaceTrust !== undefined) {
+      await this.wait('the workspace trust prompt', (screen) =>
+        screen.viewport.some((line) => line.includes('Trust this project?')) &&
+        screen.viewport.some((line) => line.includes('Trust and continue'))
+          ? true
+          : undefined,
+      );
+      if (workspaceTrust === 'exit') {
+        this.write(KEYS.escape);
+        await this.waitForExit('declining workspace trust');
+        return;
+      }
+      this.write(KEYS.up);
+      await this.wait('the Trust and continue option to be selected', (screen) =>
+        screen.viewport.some((line) => line.trim() === '❯ Trust and continue') ? true : undefined,
+      );
+      this.write(KEYS.enter);
+    }
     await this.wait('the TUI to show its editor and the configured model', (screen) =>
       screen.input === 'editor' && screen.viewport.some((line) => line.includes(FAKE_PROVIDER_DEFAULTS.modelName)) ? true : undefined,
     );
@@ -614,9 +632,8 @@ class TuiDriver implements SurfaceDriver<'tui'> {
     );
   }
 
-  async exit(): Promise<void> {
-    await this.leave('exit()');
-    this.left = true;
+  exit(): Promise<void> {
+    return this.leave('exit()');
   }
 
   async expectTerminalRestored(): Promise<void> {
@@ -907,13 +924,18 @@ class TuiDriver implements SurfaceDriver<'tui'> {
     this.write(KEYS.interrupt);
     this.write(paste('/exit'));
     this.write(KEYS.enter);
+    await this.waitForExit('/exit');
+  }
+
+  private async waitForExit(action: string): Promise<void> {
     try {
-      await until('the CLI to exit after /exit', () => this.exitCode() !== undefined, { timeoutMs: TIMEOUTS.wait });
+      await until(`the CLI to exit after ${action}`, () => this.exitCode() !== undefined, { timeoutMs: TIMEOUTS.wait });
       await until('the pseudo-terminal to close', () => this.released, { timeoutMs: TIMEOUTS.wait });
     } catch (cause) {
-      throw new Error(`The CLI did not exit cleanly after /exit.\n${await this.describe()}`, { cause });
+      throw new Error(`The CLI did not exit cleanly after ${action}.\n${await this.describe()}`, { cause });
     }
     if (this.exitCode() !== 0) throw new Error(`The CLI exited with status ${String(this.exitCode())}.\n${await this.describe()}`);
+    this.left = true;
   }
 
   async kill(): Promise<void> {
@@ -1126,7 +1148,7 @@ async function loadNodePty(): Promise<typeof import('node-pty')> {
   }
 }
 
-export async function startTui({ home, reopen }: SurfaceLaunch): Promise<SurfaceDriver<'tui'>> {
+export async function startTui({ home, reopen, workspaceTrust }: SurfaceLaunch): Promise<SurfaceDriver<'tui'>> {
   if (process.platform === 'win32') throw new Error('The TUI surface runs the CLI from a /bin/sh launcher; Windows is not supported yet.');
   const command = kimiCliCommand();
   if (!existsSync(command.entry)) {
@@ -1141,16 +1163,20 @@ export async function startTui({ home, reopen }: SurfaceLaunch): Promise<Surface
   await writeFile(launcher, [cli, `printf '\\n${exitMarker}%s\\n' "$?"`, 'stty -a', ''].join('\n'));
   const { spawn } = await loadNodePty();
   const size = reopen?.state.size ?? 'normal';
+  const env = productEnv(home, {
+    TERM: TERMINAL_NAME,
+    ...(workspaceTrust === undefined ? {} : { KIMI_CODE_TRUST_WORKSPACE: undefined }),
+  });
   const pty = spawn('/bin/sh', [launcher], {
     name: TERMINAL_NAME,
     cols: TERMINAL_SIZES[size].columns,
     rows: TERMINAL_SIZES[size].rows,
     cwd: home.workspace,
-    env: { ...productEnv(home, { TERM: TERMINAL_NAME }), ...command.env, ...networkGuardEnv(networkLog, offlineStubs()) },
+    env: { ...env, ...command.env, ...networkGuardEnv(networkLog, offlineStubs()) },
   });
   const driver = new TuiDriver(pty, networkLog, exitMarker, { workspace: home.workspace, lastPrompt: reopen?.lastPrompt, size });
   try {
-    await driver.ready();
+    await driver.ready(reopen === undefined ? workspaceTrust : undefined);
   } catch (error) {
     await driver.kill();
     throw error;

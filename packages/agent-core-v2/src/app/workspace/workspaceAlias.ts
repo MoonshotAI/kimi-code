@@ -1,4 +1,4 @@
-import { encodeWorkDirKey, isWorkDirKey, workspaceRootKey } from '#/_base/utils/workdir-slug';
+import { encodeWorkDirKey, isWorkDirKey, sameDir, workspaceRootKey } from '#/_base/utils/workdir-slug';
 import type { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import type { IFileSystemStorageService } from '#/persistence/interface/storage';
 
@@ -19,6 +19,11 @@ export interface SessionIndexLine {
   readonly sessionId: string;
   readonly sessionDir: string;
   readonly workDir: string;
+  readonly projectRoot?: string;
+}
+
+export function sessionIndexLine(session: Omit<SessionIndexLine, 'projectRoot'>, projectRoot: string): SessionIndexLine {
+  return sameDir(session.workDir, projectRoot) ? session : { ...session, projectRoot };
 }
 
 export interface SessionIndexCompactionDeps {
@@ -140,12 +145,26 @@ export async function compactSessionIndexIfStale(
   return undefined;
 }
 
+export interface LegacyBucketRoot {
+  readonly id: string;
+  readonly root: string;
+}
+
+export function sessionBucketOf(line: SessionIndexLine): string {
+  const segments = line.sessionDir.replaceAll('\\', '/').replace(/\/+$/, '').split('/');
+  return segments.at(-2) ?? '';
+}
+
+export function legacyBucketRoot(line: SessionIndexLine): LegacyBucketRoot | undefined {
+  const id = encodeWorkDirKey(line.workDir);
+  return id === sessionBucketOf(line) ? { id, root: line.workDir } : undefined;
+}
+
 export function collectAliasIds(
   workspaces: readonly Workspace[],
   sessionIndexEntries: readonly SessionIndexLine[],
   root: string,
 ): string[] {
-  const rootKey = workspaceRootKey(root);
   const ids: string[] = [];
   const seen = new Set<string>();
   const add = (alias: string): void => {
@@ -154,10 +173,11 @@ export function collectAliasIds(
     ids.push(alias);
   };
   for (const ws of workspaces) {
-    if (isWorkDirKey(ws.id) && workspaceRootKey(ws.root) === rootKey) add(ws.id);
+    if (isWorkDirKey(ws.id) && sameDir(ws.root, root)) add(ws.id);
   }
   for (const line of sessionIndexEntries) {
-    if (workspaceRootKey(line.workDir) === rootKey) add(encodeWorkDirKey(line.workDir));
+    const legacy = legacyBucketRoot(line);
+    if (legacy !== undefined && sameDir(legacy.root, root)) add(legacy.id);
   }
   return ids;
 }
@@ -185,9 +205,7 @@ export function dedupeByRoot(byId: ReadonlyMap<string, Workspace>): Workspace[] 
 }
 
 export function isImplicitBucketSessionLine(line: SessionIndexLine): boolean {
-  const segments = line.sessionDir.replaceAll('\\', '/').replace(/\/+$/, '').split('/');
-  const bucket = segments.at(-2) ?? '';
-  return !bucket.startsWith('wm_');
+  return isWorkDirKey(sessionBucketOf(line));
 }
 
 export async function readSessionIndexEntries(
@@ -222,6 +240,7 @@ export function parseSessionIndexLine(line: string): SessionIndexLine | undefine
       sessionId: entry.sessionId,
       sessionDir: entry.sessionDir,
       workDir: entry.workDir,
+      ...(typeof entry.projectRoot === 'string' ? { projectRoot: entry.projectRoot } : {}),
     };
   } catch {
     return undefined;

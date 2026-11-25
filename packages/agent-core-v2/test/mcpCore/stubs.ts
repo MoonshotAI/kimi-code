@@ -155,7 +155,7 @@ export async function executeTool<Input>(
 
 export async function startInProcessHttpMcpServer(opts?: {
   authToken?: string;
-}): Promise<{ url: string; close: () => Promise<void> }> {
+}): Promise<{ url: string; mcpServer: McpServer; close: () => Promise<void> }> {
   const mcpServer = new McpServer({ name: 'mock-http', version: '0.0.1' });
   mcpServer.registerTool(
     'echo',
@@ -185,6 +185,7 @@ export async function startInProcessHttpMcpServer(opts?: {
 
   return {
     url: `http://127.0.0.1:${port}/mcp`,
+    mcpServer,
     close: () => closeServer(httpServer),
   };
 }

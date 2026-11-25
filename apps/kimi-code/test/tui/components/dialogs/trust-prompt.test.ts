@@ -3,9 +3,11 @@ import type { TuiMouseEvent } from '@moonshot-ai/pi-tui';
 import type { WorkspaceTrustInfo } from '@moonshot-ai/kimi-code-sdk';
 import { TrustPromptComponent } from '#/tui/components/dialogs/trust-prompt';
 
+const projectRoot = '/tmp/example-project';
 function info(overrides: Partial<WorkspaceTrustInfo> = {}): WorkspaceTrustInfo {
   return {
     trusted: false,
+    projectRoot,
     gatedMcpServers: [],
     gatedAdditionalDirs: [],
     additionalDirSources: [],
@@ -33,7 +35,6 @@ function mouse(type: 'move' | 'press' | 'release' | 'click', y: number): TuiMous
   };
 }
 
-const workDir = '/tmp/example-project';
 function mixedInfo(): WorkspaceTrustInfo {
   return info({
     gatedMcpServers: [
@@ -42,34 +43,60 @@ function mixedInfo(): WorkspaceTrustInfo {
         transport: 'stdio',
         command: 'npx',
         args: ['--private-argument'],
-        origin: `${workDir}/.mcp.json`,
+        origin: `${projectRoot}/.mcp.json`,
       },
       {
         name: 'docs',
         transport: 'http',
         url: 'https://example.test/private',
-        origin: `${workDir}/.kimi-code/mcp.json`,
+        origin: `${projectRoot}/.kimi-code/mcp.json`,
       },
     ],
     gatedAdditionalDirs: ['/tmp/shared-assets', '/Users/example/Documents'],
-    additionalDirSources: [`${workDir}/.kimi-code/local.toml`],
+    additionalDirSources: [`${projectRoot}/.kimi-code/local.toml`],
     instructionSources: {
-      agentsMdPaths: [`${workDir}/AGENTS.md`],
+      agentsMdPaths: [`${projectRoot}/AGENTS.md`],
       skills: ['lint-fix', 'deploy'],
       agentProfiles: ['reviewer'],
       paths: [
-        `${workDir}/AGENTS.md`,
-        `${workDir}/.kimi-code/skills/`,
-        `${workDir}/.kimi-code/agents/`,
+        `${projectRoot}/AGENTS.md`,
+        `${projectRoot}/.kimi-code/skills/`,
+        `${projectRoot}/.kimi-code/agents/`,
       ],
     },
   });
 }
 
 describe('TrustPromptComponent', () => {
+  it('asks to trust the project and shows its primary directory', () => {
+    const prompt = new TrustPromptComponent({
+      info: info({ projectRoot: '/work/app' }),
+      getAvailableRows: () => 23,
+      onSelect: vi.fn(),
+    });
+    const lines = render(prompt);
+    const text = lines.join('\n');
+    expect(lines[1]).toBe(' Trust this project?');
+    expect(lines.slice(4, 5)).toEqual([' /work/app']);
+    expect(text).toContain('Trust is remembered for this project, including future project config changes.');
+    expect(text).not.toContain('folder');
+  });
+  it('shows sources inside the project root relative to it and other sources in full', () => {
+    const prompt = new TrustPromptComponent({
+      info: info({
+        projectRoot: '/work/app',
+        gatedMcpServers: [
+          { name: 'checkout', transport: 'stdio', origin: '/work/app-fix/.kimi-code/mcp.json' },
+          { name: 'root', transport: 'stdio', origin: '/work/app/.mcp.json' },
+        ],
+      }),
+      getAvailableRows: () => 23,
+      onSelect: vi.fn(),
+    });
+    expect(render(prompt).join('\n')).toContain('Config: /work/app-fix/.kimi-code/mcp.json, .mcp.json');
+  });
   it('fits typical consequences and actual source paths on an 80x24 terminal', () => {
     const prompt = new TrustPromptComponent({
-      workDir,
       info: mixedInfo(),
       getAvailableRows: () => 23,
       onSelect: vi.fn(),
@@ -100,12 +127,11 @@ describe('TrustPromptComponent', () => {
       expect(text).not.toContain(hidden);
   });
   it('distinguishes empty activation from unreadable configuration', () => {
-    const empty = new TrustPromptComponent({ workDir, info: info(), onSelect: vi.fn() });
+    const empty = new TrustPromptComponent({ info: info(), onSelect: vi.fn() });
     expect(render(empty).join('\n')).toContain(
       'No project integrations or instructions to activate.',
     );
     const failed = new TrustPromptComponent({
-      workDir,
       info: info({ warnings: ['Could not inspect MCP configuration.'] }),
       onSelect: vi.fn(),
     });
@@ -120,7 +146,6 @@ describe('TrustPromptComponent', () => {
     const origins = Array.from({ length: 12 }, (_, i) => `/outside/source-${i}/mcp.json`);
     let rows = 23;
     const prompt = new TrustPromptComponent({
-      workDir,
       info: info({
         gatedMcpServers: origins.map((origin, i) => ({
           name: `server-${i}`,
@@ -128,7 +153,7 @@ describe('TrustPromptComponent', () => {
           origin,
         })),
         gatedAdditionalDirs: paths,
-        additionalDirSources: [`${workDir}/.kimi-code/local.toml`],
+        additionalDirSources: [`${projectRoot}/.kimi-code/local.toml`],
       }),
       getAvailableRows: () => rows,
       onSelect: vi.fn(),
@@ -159,8 +184,8 @@ describe('TrustPromptComponent', () => {
   it('cleans control characters and retains full long source paths across wrapping', () => {
     const longPath = `/outside/${'x'.repeat(100)}/mcp.json`;
     const prompt = new TrustPromptComponent({
-      workDir: '/tmp/\u001B[2Jproject',
       info: info({
+        projectRoot: '/tmp/\u001B[2Jproject',
         gatedMcpServers: [{ name: 'ignored', transport: 'http', origin: longPath }],
         gatedAdditionalDirs: ['/outside/\u001B[2Jdirectory\u0007'],
         additionalDirSources: ['/outside/\u001B[2Jconfig\u0007'],
@@ -177,7 +202,6 @@ describe('TrustPromptComponent', () => {
     let rows = 4;
     const onSelect = vi.fn();
     const prompt = new TrustPromptComponent({
-      workDir,
       info: mixedInfo(),
       getAvailableRows: () => rows,
       onSelect,
@@ -199,7 +223,7 @@ describe('TrustPromptComponent', () => {
       vi.useRealTimers();
     });
     const onSelect = vi.fn();
-    const prompt = new TrustPromptComponent({ workDir, info: info(), onSelect });
+    const prompt = new TrustPromptComponent({ info: info(), onSelect });
     prompt.focused = true;
     const row = render(prompt).findIndex((line) => line.includes('Exit'));
 
@@ -220,7 +244,7 @@ describe('TrustPromptComponent', () => {
       { keys: ['\u001B'], expected: 'distrust' },
     ]) {
       const onSelect = vi.fn();
-      const prompt = new TrustPromptComponent({ workDir, info: info(), onSelect });
+      const prompt = new TrustPromptComponent({ info: info(), onSelect });
       render(prompt);
       for (const key of keys) prompt.handleInput(key);
       expect(onSelect).toHaveBeenCalledWith(expected);

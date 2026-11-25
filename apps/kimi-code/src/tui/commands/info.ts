@@ -198,7 +198,10 @@ export async function showMcpServers(host: SlashCommandHost): Promise<void> {
     if (host.session !== undefined) {
       servers = await host.session.listMcpServers();
     } else {
-      servers = await host.harness.listWorkspaceMcpServers(host.state.appState.workDir);
+      servers = await host.harness.listWorkspaceMcpServers(
+        host.state.appState.workDir,
+        await host.environmentForNewSession(),
+      );
     }
   } catch (error) {
     host.showError(`Failed to load MCP servers: ${formatErrorMessage(error)}`);

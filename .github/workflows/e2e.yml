@@ -1,19 +1,64 @@
 name: E2E
 
+# Every push to main runs the suite. A pull request runs it only when it is
+# ready for review and either carries the e2e label or changes the suite
+# itself, so the shared runner pool is not spent on every push of every PR.
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review, labeled]
 
 permissions:
   contents: read
 
+# Each main commit gets its own group so every merge is tested. Adding an
+# unrelated label gets a throwaway group so it cannot cancel a running suite.
 concurrency:
-  group: e2e-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  group: e2e-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name == 'push' && github.sha || (github.event.action == 'labeled' && github.event.label.name != 'e2e') && github.run_id || '' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  gate:
+    name: Decide whether E2E runs
+    if: >-
+      github.event_name != 'pull_request' ||
+      (!github.event.pull_request.draft &&
+       (github.event.action != 'labeled' || github.event.label.name == 'e2e'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      pull-requests: read
+    outputs:
+      run: ${{ steps.decide.outputs.run }}
+    steps:
+      - id: decide
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          HAS_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'e2e') }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if [[ "$EVENT" != pull_request || "$HAS_LABEL" == true ]]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          files=$(gh api --paginate "repos/$REPO/pulls/$PR/files?per_page=100" --jq '.[].filename')
+          if grep -qE '^(tests/e2e/|packages/testkit/|\.github/workflows/e2e\.yml$)' <<<"$files"; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "E2E skipped: this pull request does not change the E2E suite. Add the \`e2e\` label to run it." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
   build:
     name: Build (optional)
+    needs: gate
+    if: needs.gate.outputs.run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:

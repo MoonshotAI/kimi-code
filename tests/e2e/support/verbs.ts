@@ -221,5 +221,6 @@ export type SurfaceDriver<S extends Surface> = DriverActionsOn<S> & SurfaceContr
 export interface SurfaceLaunch {
   readonly home: TestHome;
   readonly model: FakeModel;
+  readonly workspaceTrust?: 'trust' | 'exit';
   readonly reopen?: Reopen;
 }
