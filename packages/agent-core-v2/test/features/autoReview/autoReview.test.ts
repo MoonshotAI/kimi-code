@@ -37,7 +37,6 @@ import {
 } from '#/features/autoReview/review';
 import { ancestrySnapshotOf, AutoReviewService } from '#/features/autoReview/reviewService';
 import { SessionAutoReviewService } from '#/features/autoReview/sessionReviewService';
-import { APIContextOverflowError, APIProviderQuotaExhaustedError } from '#/llm-adapter/contract/errors';
 import type { IModelCatalog, Model } from '#/llm-adapter/model/catalog';
 import type { ThinkingConfig } from '#/llm-adapter/model/thinking';
 import type { IProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocol';
@@ -51,14 +50,13 @@ import type { ISessionWorkdir } from '#/session/workdir/workdir';
 import type { IEventDispatcher } from '#/state/eventDispatcher';
 import type { IWorkspaceGitService } from '#/workspace/workspaceGit/workspaceGit';
 import type { Message, ToolCall } from '@moonshot-ai/core/llm/message';
-import type { LlmRequest } from '@moonshot-ai/core/llm/request';
-import { emptyUsage } from '@moonshot-ai/core/llm/usage';
+import type { ThinkingEffort } from '@moonshot-ai/core/llm/request';
+import { call, createFakeModel, httpError, say, type FakeModel, type ScriptedStep } from '@moonshot-ai/testkit/model';
 
 import { stubLog } from '../../_base/log/stubs';
 import { stubFlag } from '../../app/flag/stubs';
 import { stubPermissionModeService } from '../../agent/permissionMode/stubs';
 import { stubPermissionPolicyService } from '../../agent/permissionPolicy/stubs';
-import { createMockProvider, withMockProvider, type MockProviderResponse } from '../../harness/scripted-generate';
 import { stubWorkspaceContext } from '../../session/workspaceContext/stub-workspace-context';
 import { StubConfigService } from '../../stubs';
 
@@ -255,29 +253,33 @@ describe('SessionAutoReviewService', () => {
     },
     maxOutputSize: 8192,
   } as Model;
-  const allowResponse: MockProviderResponse = {
-    message: { role: 'assistant', content: [{ type: 'text', text: '{"risk":"low","decision":"allow","reason":null}' }], toolCalls: [] },
-    usage: emptyUsage(),
-  };
+  const allowStep = (): ScriptedStep => say('{"risk":"low","decision":"allow","reason":null}');
 
   let disposables: DisposableStore;
+  let fakeModel: FakeModel;
   let selectedModels: string[];
-  let requests: LlmRequest[];
+  let requestedEfforts: Array<ThinkingEffort | undefined>;
   let agentsMd: string;
 
   beforeEach(() => {
     disposables = new DisposableStore();
+    fakeModel = createFakeModel({ checkCalls: false });
     selectedModels = [];
-    requests = [];
+    requestedEfforts = [];
     agentsMd = 'Do not delete user-data.';
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     disposables.dispose();
+    try {
+      fakeModel.verify();
+    } finally {
+      await fakeModel.close();
+    }
   });
 
   function makeSessionService(options: {
-    readonly respond?: (signal: AbortSignal | undefined) => Promise<MockProviderResponse>;
+    readonly respond?: (signal: AbortSignal) => ScriptedStep | Promise<ScriptedStep>;
     readonly model?: string;
     readonly configured?: boolean;
     readonly flagEnabled?: boolean;
@@ -286,7 +288,8 @@ describe('SessionAutoReviewService', () => {
     readonly thinking?: ThinkingConfig;
   } = {}): SessionAutoReviewService {
     const registry = new ProtocolAdapterRegistry();
-    const respond = options.respond ?? (() => Promise.resolve(allowResponse));
+    const respond = options.respond ?? allowStep;
+    fakeModel.lane('side').unscripted({ reply: (_request, { signal: requestSignal }) => respond(requestSignal) });
     return disposables.add(new SessionAutoReviewService(
       stubFlag(options.flagEnabled ?? true),
       new StubConfigService({
@@ -303,11 +306,10 @@ describe('SessionAutoReviewService', () => {
       } as unknown as IModelCatalog,
       {
         resolveAdapterIdentity: (protocol, providerType) => registry.resolveAdapterIdentity(protocol, providerType),
-        request: (target, params) =>
-          withMockProvider(registry.request(target, params), createMockProvider((req, sig) => {
-            requests.push(req);
-            return respond(sig);
-          })),
+        request: (target, params) => {
+          requestedEfforts.push(params?.model?.thinking?.effort);
+          return registry.request(target, { ...params, endpoint: { ...params?.endpoint, fetch: fakeModel.fetch } });
+        },
       } as IProtocolAdapterRegistry,
       { record: async () => {} } as unknown as ISessionUsageService,
       { sessionId: 'session-1' } as ISessionContext,
@@ -356,7 +358,7 @@ describe('SessionAutoReviewService', () => {
     ['no forced effort while thinking is disabled', effortModel({ supportEfforts: ['low', 'high'], defaultEffort: 'high' }, 'kimi'), { enabled: false, forcedEffort: 'max' }, 'off'],
   ] as const)('requests %s', async (_label, catalogModel, thinking, effort) => {
     await execute(makeSessionService({ catalogModel, thinking }));
-    expect(requests.map((request) => request.model.thinking?.effort)).toEqual([effort]);
+    expect(requestedEfforts).toEqual([effort]);
   });
 
   it.each([
@@ -366,7 +368,7 @@ describe('SessionAutoReviewService', () => {
     ['missing reason', '{"risk":"low","decision":"allow"}'],
   ] as const)('retries invalid reviewer output 3 times then fails: %s', async (_label, text) => {
     const { outcome } = await execute(makeSessionService({
-      respond: async () => ({ message: { role: 'assistant', content: [{ type: 'text', text }], toolCalls: [] } }),
+      respond: () => say(text),
     }));
     expect(outcome).toEqual({ decision: 'failed', reason: 'The reviewer returned an invalid decision.' });
     expect(selectedModels).toHaveLength(3);
@@ -379,7 +381,7 @@ describe('SessionAutoReviewService', () => {
     ['medium-risk allow with reason', '{"risk":"medium","decision":"allow","reason":"Explicitly authorized."}', { decision: 'allow', risk: 'medium' }],
   ] as const)('accepts %s without retrying', async (_label, text, expected) => {
     const { outcome } = await execute(makeSessionService({
-      respond: async () => ({ message: { role: 'assistant', content: [{ type: 'text', text }], toolCalls: [] } }),
+      respond: () => say(text),
     }));
     expect(outcome).toEqual(expected);
     expect(selectedModels).toHaveLength(1);
@@ -387,10 +389,7 @@ describe('SessionAutoReviewService', () => {
 
   it('rejects a reviewer tool call', async () => {
     const { outcome } = await execute(makeSessionService({
-      respond: async () => ({
-        message: { role: 'assistant', content: [], toolCalls: [toolCallFor('escape', 'Bash', { command: 'id' })] },
-        usage: emptyUsage(),
-      }),
+      respond: () => call('Bash', { command: 'id' }),
     }));
     expect(outcome).toMatchObject({ decision: 'failed' });
   });
@@ -398,18 +397,18 @@ describe('SessionAutoReviewService', () => {
   it('retries rate limits while failing auth, quota, or overflow errors without retry', async () => {
     let calls = 0;
     const retried = await execute(makeSessionService({
-      respond: async () => (++calls < 3 ? { httpError: { statusCode: 429, message: 'Slow down', retryAfterMs: 1 } } : allowResponse),
+      respond: () => (++calls < 3 ? httpError(429, { message: 'Slow down', retryAfterMs: 1 }) : allowStep()),
     }));
     expect(retried.outcome).toEqual({ decision: 'allow', risk: 'low' });
     expect(calls).toBe(3);
 
-    for (const respond of [
-      async (): Promise<MockProviderResponse> => ({ httpError: { statusCode: 401, message: 'Unauthorized' } }),
-      async (): Promise<MockProviderResponse> => { throw new APIProviderQuotaExhaustedError('Insufficient balance'); },
-      async (): Promise<MockProviderResponse> => { throw new APIContextOverflowError(400, 'prompt is too long'); },
+    for (const step of [
+      httpError(401, { message: 'Unauthorized' }),
+      httpError(429, { message: 'Insufficient balance', type: 'insufficient_quota' }),
+      httpError(400, { message: 'prompt is too long', type: 'context_length_exceeded' }),
     ]) {
       selectedModels = [];
-      expect((await execute(makeSessionService({ respond }))).outcome.decision).toBe('failed');
+      expect((await execute(makeSessionService({ respond: () => step }))).outcome.decision).toBe('failed');
       expect(selectedModels).toHaveLength(1);
     }
   });
@@ -422,8 +421,8 @@ describe('SessionAutoReviewService', () => {
       respond: (sig) => new Promise((resolve, reject) => {
         inFlight += 1;
         maxInFlight = Math.max(maxInFlight, inFlight);
-        sig?.addEventListener('abort', () => { inFlight -= 1; reject(sig.reason as Error); });
-        releases.push(() => { inFlight -= 1; resolve(allowResponse); });
+        sig.addEventListener('abort', () => { inFlight -= 1; reject(sig.reason as Error); }, { once: true });
+        releases.push(() => { inFlight -= 1; resolve(allowStep()); });
       }),
     });
 

@@ -53,6 +53,39 @@ await test('countLegacyDoubles counts each legacy double per file', () => {
   });
 });
 
+await test('countLegacyDoubles counts direct calls to the engine harness provider helpers but not their imports or types', () => {
+  const counts = countLegacyDoubles([
+    {
+      file: 'packages/agent-core-v2/test/agent/fullCompaction/fullCompaction.test.ts',
+      text: [
+        "import { createMockProvider, withMockProvider } from '../../harness/scripted-generate';",
+        'type Scripted = ReturnType<typeof createScriptedGenerate>;',
+        'const generate = createMockProvider(async () => ({ parts: [] }));',
+        'const wrapped = withMockProvider(initial, generate);',
+        'const backed = fetchBackedProvider(model.fetch);',
+        'const other = harness.createMockProvider(handler);',
+      ].join('\n'),
+    },
+  ]);
+  assert.deepEqual(counts, { 'engine-mock-provider': { 'packages/agent-core-v2/test/agent/fullCompaction/fullCompaction.test.ts': 3 } });
+});
+
+await test('a loop-core unit test may keep the requester-level helper', () => {
+  const counts = countLegacyDoubles([
+    {
+      file: 'packages/agent-core-v2/test/agent/loop/toolAdapter.test.ts',
+      text: "const requester = createMockProviderRequester((_request, signal) => ({ parts: [] }));\nconst listed = createMockProviderRequester([{ parts: [] }]);",
+    },
+  ]);
+  assert.deepEqual(counts, {});
+});
+
+await test('a new legacy Desktop journey is pointed at tests/e2e, not at the paused Desktop fixtures', () => {
+  const added = formatReport(compareCounts({}, { 'desktop-stub-model': { 'apps/desktop/e2e/new.spec.ts': 1 } })).join('\n');
+  assert.match(added, /instead: write the journey in tests\/e2e/);
+  assert.doesNotMatch(added, /fixtures\/app\.ts/);
+});
+
 await test('a new legacy double fails with the testkit alternative, and a migrated one asks to lower the baseline', () => {
   const baseline = { 'engine-mock-response': { 'packages/agent-core-v2/test/a.test.ts': 2 } };
   const added = formatReport(compareCounts(baseline, {

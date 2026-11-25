@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 
-import { compareCounts, countFindings, ratchetBaseline, ratchetRules, ruleOf } from './ratchet.mjs';
+import { compareCounts, countFindings, ratchetBaseline, ratchetRules, reportChanges, ruleOf, runCountCheck, trackedFiles } from './ratchet.mjs';
 
 await test('ruleOf turns an oxlint diagnostic code into the config rule name', () => {
   assert.equal(ruleOf('typescript(no-explicit-any)'), 'typescript/no-explicit-any');
@@ -114,4 +115,71 @@ await test('ratchetBaseline only compares by default, refuses to raise the basel
   const lowered = ratchetBaseline(path, { 'eslint/no-empty': { 'b.ts': 1, 'a.ts': 1 } }, ['--update']);
   assert.deepEqual(lowered, { status: 'written', changes: [{ kind: 'removed', rule: 'eslint/no-empty', file: 'a.ts', from: 2, to: 1 }] });
   assert.equal(readFileSync(path, 'utf8'), `${JSON.stringify({ 'eslint/no-empty': { 'a.ts': 1, 'b.ts': 1 } }, null, 2)}\n`);
+});
+
+await test('runCountCheck rejects unknown arguments, fails on any change, and writes the baseline only on --update', (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'count-check-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const output = [];
+  t.mock.method(process.stdout, 'write', (text) => output.push(text));
+  t.mock.method(process.stderr, 'write', (text) => output.push(text));
+  const run = (args, counts) => runCountCheck({
+    name: 'demo',
+    root,
+    checkFile: 'scripts/checks/demo.mjs',
+    baselineFile: 'baselines/demo.json',
+    args,
+    measure: () => counts,
+    formatReport: (changes) => changes.map((change) => `${change.file}: ${change.from} → ${change.to}`),
+    summary: () => 'everything frozen',
+  });
+  const counts = { 'demo-rule': { 'a.ts': 1 } };
+
+  assert.equal(run(['--bogus'], counts), 2);
+  assert.equal(run(['--allow-increase'], counts), 2);
+  assert.equal(run([], counts), 1);
+  assert.equal(run(['--update'], counts), 1);
+  assert.equal(existsSync(join(root, 'baselines/demo.json')), false);
+  assert.equal(run(['--update', '--allow-increase'], counts), 0);
+  assert.equal(run([], counts), 0);
+  assert.equal(run([], {}), 1);
+  assert.equal(run(['--update'], {}), 0);
+
+  const text = output.join('');
+  assert.match(text, /✗ demo: unsupported arguments --bogus/);
+  assert.match(text, /a\.ts: 0 → 1/);
+  assert.match(text, /✓ demo: wrote baselines\/demo\.json/);
+  assert.match(text, /✓ demo: everything frozen/);
+  assert.match(text, /a\.ts: 1 → 0/);
+});
+
+await test('trackedFiles lists tracked and untracked files, skips ignored ones, and narrows to the given paths', (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'tracked-files-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  execFileSync('git', ['init', '-q'], { cwd: root });
+  mkdirSync(join(root, 'kept'));
+  writeFileSync(join(root, '.gitignore'), 'ignored.ts\n');
+  writeFileSync(join(root, 'top.ts'), '');
+  writeFileSync(join(root, 'ignored.ts'), '');
+  writeFileSync(join(root, 'kept/inner.ts'), '');
+  writeFileSync(join(root, 'kept/notes.md'), '');
+  execFileSync('git', ['add', 'top.ts'], { cwd: root });
+
+  const sources = (file) => file.endsWith('.ts');
+  assert.deepEqual(trackedFiles(root, sources).toSorted(), ['kept/inner.ts', 'top.ts']);
+  assert.deepEqual(trackedFiles(root, sources, ['kept/']), ['kept/inner.ts']);
+});
+
+await test('reportChanges describes new findings before fixed ones and stays silent when nothing changed', () => {
+  const describe = {
+    added: (added) => [`added ${added.map((change) => change.file).join(',')}`],
+    removed: (removed) => [`removed ${removed.map((change) => change.file).join(',')}`],
+  };
+  const changes = [
+    { kind: 'removed', rule: 'r', file: 'b.ts', from: 2, to: 1 },
+    { kind: 'added', rule: 'r', file: 'a.ts', from: 0, to: 1 },
+  ];
+  assert.deepEqual(reportChanges(changes, describe), ['added a.ts', 'removed b.ts']);
+  assert.deepEqual(reportChanges(changes.slice(0, 1), describe), ['removed b.ts']);
+  assert.deepEqual(reportChanges([], describe), []);
 });
