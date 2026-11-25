@@ -1253,7 +1253,8 @@ describe('browser overlay model menu', () => {
     expect(view.webContents.send).toHaveBeenCalledWith(IPC.browserOverlayShown, {
       requestId: 1,
       placement: 'top-end',
-      menuOffset: { x: 256, y: 84 },
+      menuOffset: { x: 256, y: 272 },
+      menuFrame: { x: 600, y: 358, viewportWidth: 1440, viewportHeight: 900 },
     });
 
     openBrowserOverlayMenu({ ...request, menuId: 'short', width: 240, anchor: { x: 700, y: 300, width: 140, height: 32 }, items: [], modelMenu });

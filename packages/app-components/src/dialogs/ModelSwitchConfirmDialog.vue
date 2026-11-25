@@ -38,7 +38,6 @@ function choose(action: ModelSwitchAction): void {
       ? t('model.switchEffortConfirmTitle', { from: props.fromEffort, to: props.toEffort })
       : t('model.switchConfirmTitle')"
     height="auto"
-    :padded="false"
     panel-class="model-switch-confirm-dialog"
     :initial-focus="props.kind === 'effort' || props.sessionType === 'new' ? '.model-switch-confirm__confirm' : '.model-switch-confirm__cancel'"
     @close="choose('cancel')"
@@ -85,16 +84,16 @@ function choose(action: ModelSwitchAction): void {
 </template>
 
 <style scoped>
-:deep(.model-switch-confirm-dialog) {
+:global(.model-switch-confirm-dialog) {
   border-radius: 16px;
 }
-:deep(.model-switch-confirm-dialog .ui-dialog__head) {
+:global(.model-switch-confirm-dialog .ui-dialog__head) {
   padding: 24px 24px 0;
 }
-:deep(.model-switch-confirm-dialog .ui-dialog__body) {
+:global(.model-switch-confirm-dialog .ui-dialog__body) {
   padding: 16px 24px 0;
 }
-:deep(.model-switch-confirm-dialog .ui-dialog__foot) {
+:global(.model-switch-confirm-dialog .ui-dialog__foot) {
   padding: 16px 24px 24px;
   border-top: none;
 }

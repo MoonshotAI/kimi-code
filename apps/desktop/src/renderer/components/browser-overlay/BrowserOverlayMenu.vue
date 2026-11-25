@@ -42,6 +42,7 @@ const stageRef = ref<HTMLElement | null>(null);
 const menuRef = ref<InstanceType<typeof Menu> | null>(null);
 const modelMenuRef = ref<InstanceType<typeof ModelQuickMenu> | null>(null);
 const modelMenuOffset = ref<{ x: number; y: number } | null>(null);
+const modelMenuFrame = ref<{ x: number; y: number; viewportWidth: number; viewportHeight: number } | null>(null);
 const dialogRef = ref<HTMLElement | null>(null);
 const inputValue = ref('');
 const annotationInput = ref<InstanceType<typeof Textarea>>();
@@ -212,6 +213,9 @@ function show(payload: BrowserOverlayShown): void {
   }
   if (current.kind === 'menu' && payload.menuOffset !== undefined) {
     modelMenuOffset.value = payload.menuOffset;
+  }
+  if (current.kind === 'menu' && payload.menuFrame !== undefined) {
+    modelMenuFrame.value = payload.menuFrame;
   }
   const entering = !presented.value;
   closing.value = false;
@@ -399,6 +403,7 @@ onUnmounted(() => {
       :current-model-id="config.modelMenu.currentModelId"
       :current-effort="config.modelMenu.currentEffort"
       :max-height="config.maxHeight ?? 480"
+      :host-frame="modelMenuFrame ?? undefined"
       @select-model="(modelId, effort) => config?.kind === 'menu' && bridge?.activate({ requestId: config.requestId, itemId: 'model-menu', modelAction: { type: 'select-model', modelId, ...(effort === undefined ? {} : { effort }) } satisfies QuickModelMenuAction })"
       @select-effort="(effort) => config?.kind === 'menu' && bridge?.activate({ requestId: config.requestId, itemId: 'model-menu', modelAction: { type: 'select-effort', effort } satisfies QuickModelMenuAction })"
       @select-provider="(providerId) => config?.kind === 'menu' && bridge?.activate({ requestId: config.requestId, itemId: 'model-menu', modelAction: { type: 'select-provider', providerId } satisfies QuickModelMenuAction })"

@@ -43,6 +43,7 @@ const props = defineProps<{
   currentModelId?: string;
   currentEffort?: string;
   maxHeight: number;
+  hostFrame?: { x: number; y: number; viewportWidth: number; viewportHeight: number };
 }>();
 
 const emit = defineEmits<{
@@ -367,17 +368,18 @@ function syncFlyoutPosition(): void {
   const firstOption = submenu.value !== null ? flyout.querySelector<HTMLElement>('[data-first-option]') : null;
   const firstOptionOffset =
     firstOption === null ? 0 : firstOption.getBoundingClientRect().top - flyoutRect.top;
+  const frame = props.hostFrame;
   const position = computeAnchoredFlyoutPosition({
-    menuLeft: menuRect.left,
-    menuTop: menuRect.top,
+    menuLeft: frame?.x ?? menuRect.left,
+    menuTop: frame?.y ?? menuRect.top,
     menuWidth: menuRect.width || MODEL_MENU_WIDTH,
     triggerTop: triggerRect.top - menuRect.top,
     triggerHeight: triggerRect.height || MODEL_MENU_ROW_HEIGHT,
     flyoutWidth: flyoutRect.width || MODEL_MENU_WIDTH,
     flyoutHeight: flyoutRect.height,
     firstOptionOffset,
-    viewportWidth: window.innerWidth,
-    viewportHeight: window.innerHeight,
+    viewportWidth: frame?.viewportWidth ?? window.innerWidth,
+    viewportHeight: frame?.viewportHeight ?? window.innerHeight,
   });
   flyoutStyle.value = {
     top: `${Math.round(position.top * 100) / 100}px`,

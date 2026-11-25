@@ -2,6 +2,7 @@ import { v4 as randomUUID } from 'uuid';
 import { createBrowserFocusRequest } from './browserFocusRequest';
 import { onScopeDispose, readonly, ref, watch, type Ref } from 'vue';
 import { openDialogCount, registerExternalMenuSurface } from '@moonshot-ai/app-ui';
+import type { AppModel } from '@moonshot-ai/app-core/api';
 import type { QuickModelMenuAction, QuickModelMenuPayload } from '@moonshot-ai/app-core/quick-model-menu';
 import type {
   BrowserOverlayAction,
@@ -83,6 +84,29 @@ function browserOverlayBridge(): BrowserOverlayHostBridge | null {
 }
 
 const registeredIds = new Set<string>();
+
+export function toPlainModelMenuPayload(payload: QuickModelMenuPayload): QuickModelMenuPayload {
+  const copyModel = (model: AppModel): AppModel => ({
+    id: model.id,
+    provider: model.provider,
+    model: model.model,
+    ...(model.displayName === undefined ? {} : { displayName: model.displayName }),
+    maxContextSize: model.maxContextSize,
+    ...(model.capabilities === undefined ? {} : { capabilities: [...model.capabilities] }),
+    ...(model.supportEfforts === undefined ? {} : { supportEfforts: [...model.supportEfforts] }),
+    ...(model.defaultEffort === undefined ? {} : { defaultEffort: model.defaultEffort }),
+  });
+  return {
+    models: payload.models.map(copyModel),
+    recentModels: payload.recentModels.map(copyModel),
+    providerModels: payload.providerModels.map(copyModel),
+    providers: payload.providers.map((provider) => ({ id: provider.id, label: provider.label })),
+    activeProvider: payload.activeProvider,
+    activeProviderLabel: payload.activeProviderLabel,
+    ...(payload.currentModelId === undefined ? {} : { currentModelId: payload.currentModelId }),
+    ...(payload.currentEffort === undefined ? {} : { currentEffort: payload.currentEffort }),
+  };
+}
 
 
 
@@ -232,7 +256,7 @@ export function registerBrowserOverlayMenu(
       preserveFocus: options?.preserveFocus ?? registration.preserveFocus,
       submitOnCtrlEnter: registration.submitOnCtrlEnter === true ? true : undefined,
       items: registration.items(),
-      ...(registration.modelMenu === undefined ? {} : { modelMenu: registration.modelMenu() }),
+      ...(registration.modelMenu === undefined ? {} : { modelMenu: toPlainModelMenuPayload(registration.modelMenu()) }),
       ...(registration.footerStart === undefined ? {} : { footerStart: registration.footerStart() }),
       ...(registration.highlightQuery === undefined ? {} : { query: registration.highlightQuery().slice(0, 1024) }),
     });

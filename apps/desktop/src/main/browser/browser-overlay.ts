@@ -34,7 +34,8 @@ export const MODEL_OVERLAY_MENU_WIDTH = 240;
 export const MODEL_OVERLAY_MAX_HEIGHT = 480;
 export const MODEL_OVERLAY_ANCHOR_OFFSET = 8;
 export const MODEL_OVERLAY_FLYOUT_RESERVE_X = 244;
-export const MODEL_OVERLAY_FLYOUT_RESERVE_Y = 72;
+export const MODEL_OVERLAY_FLYOUT_RESERVE_TOP = 260;
+export const MODEL_OVERLAY_FLYOUT_RESERVE_BOTTOM = 320;
 
 interface BrowserOverlayEntry {
   host: MainWindow;
@@ -194,7 +195,7 @@ function flushConfig(entry: BrowserOverlayEntry): void {
       current.maxHeight = modelOverlayMaxHeight(current.anchor.y, contentHeight);
       if (!entry.visible) {
         const provisionalWidth = Math.min(contentWidth, MODEL_OVERLAY_MENU_WIDTH + (MODEL_OVERLAY_FLYOUT_RESERVE_X + BROWSER_OVERLAY_GUTTER) * 2);
-        const provisionalHeight = Math.min(contentHeight, current.maxHeight + (MODEL_OVERLAY_FLYOUT_RESERVE_Y + BROWSER_OVERLAY_GUTTER) * 2);
+        const provisionalHeight = Math.min(contentHeight, current.maxHeight + MODEL_OVERLAY_FLYOUT_RESERVE_TOP + MODEL_OVERLAY_FLYOUT_RESERVE_BOTTOM + BROWSER_OVERLAY_GUTTER * 2);
         entry.view.setBounds({ x: 0, y: 0, width: Math.ceil(provisionalWidth * entry.zoom), height: Math.ceil(provisionalHeight * entry.zoom) });
       }
     } else {
@@ -457,6 +458,7 @@ export interface BrowserModelOverlayLayoutInput {
 export interface BrowserModelOverlayLayout {
   bounds: Rectangle;
   menuOffset: { x: number; y: number };
+  menuFrame: { x: number; y: number; viewportWidth: number; viewportHeight: number };
 }
 
 export function browserModelOverlayLayout(input: BrowserModelOverlayLayoutInput): BrowserModelOverlayLayout {
@@ -468,12 +470,13 @@ export function browserModelOverlayLayout(input: BrowserModelOverlayLayoutInput)
   const maxMenuY = Math.max(VIEWPORT_MARGIN, contentHeight - VIEWPORT_MARGIN - menuHeight);
   const menuY = Math.min(Math.max(VIEWPORT_MARGIN, anchor.y - MODEL_OVERLAY_ANCHOR_OFFSET - menuHeight), maxMenuY);
   const x = Math.max(0, Math.floor(menuX - MODEL_OVERLAY_FLYOUT_RESERVE_X - BROWSER_OVERLAY_GUTTER));
-  const y = Math.max(0, Math.floor(menuY - MODEL_OVERLAY_FLYOUT_RESERVE_Y - BROWSER_OVERLAY_GUTTER));
+  const y = Math.max(0, Math.floor(menuY - MODEL_OVERLAY_FLYOUT_RESERVE_TOP - BROWSER_OVERLAY_GUTTER));
   const right = Math.min(contentWidth, Math.ceil(menuX + menuWidth + MODEL_OVERLAY_FLYOUT_RESERVE_X + BROWSER_OVERLAY_GUTTER));
-  const bottom = Math.min(contentHeight, Math.ceil(menuY + menuHeight + MODEL_OVERLAY_FLYOUT_RESERVE_Y + BROWSER_OVERLAY_GUTTER));
+  const bottom = Math.min(contentHeight, Math.ceil(menuY + menuHeight + MODEL_OVERLAY_FLYOUT_RESERVE_BOTTOM + BROWSER_OVERLAY_GUTTER));
   return {
     bounds: { x, y, width: Math.max(1, right - x), height: Math.max(1, bottom - y) },
     menuOffset: { x: menuX - x, y: menuY - y },
+    menuFrame: { x: menuX, y: menuY, viewportWidth: contentWidth, viewportHeight: contentHeight },
   };
 }
 
@@ -537,6 +540,7 @@ export function showBrowserOverlayRendered(
       requestId: current.requestId,
       placement: 'top-end',
       menuOffset: modelLayout.menuOffset,
+      menuFrame: modelLayout.menuFrame,
     } satisfies BrowserOverlayShown);
     return;
   }

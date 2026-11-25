@@ -108,7 +108,12 @@ const MenuConfig = Type.Object({
   width: Type.Optional(Type.Number({ minimum: 1 })),
   minWidth: Type.Optional(Type.Number({ minimum: 1 })),
 });
-const Shown = Type.Object({ requestId: BrowserRequestIdSchema, placement: Type.Optional(Placement), menuOffset: Type.Optional(Type.Object({ x: Type.Number(), y: Type.Number() }, { additionalProperties: false })) });
+const Shown = Type.Object({
+  requestId: BrowserRequestIdSchema,
+  placement: Type.Optional(Placement),
+  menuOffset: Type.Optional(Type.Object({ x: Type.Number(), y: Type.Number() }, { additionalProperties: false })),
+  menuFrame: Type.Optional(Type.Object({ x: Type.Number(), y: Type.Number(), viewportWidth: Type.Number(), viewportHeight: Type.Number() }, { additionalProperties: false })),
+});
 const Action = Type.Object({ menuId: Id, itemId: Id, keepOpen: OptionalFlag, modelAction: Type.Optional(QuickModelMenuAction) });
 const CloseReason = Type.Enum(['action', 'dismiss', 'escape', 'replaced', 'window-blur', 'window-move', 'window-resize', 'host-closed', 'programmatic']);
 const Closed = Type.Object({ menuId: Id, reason: CloseReason });
