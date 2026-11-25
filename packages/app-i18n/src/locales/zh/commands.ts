@@ -9,7 +9,6 @@ export default {
   btw: { desc: '侧边聊天：/btw <问题> 向 fork 的侧边会话提问', argHint: '[问题]' },
   compact: { desc: '压缩会话历史', argHint: '[说明]', requiresSession: '请先打开一个会话，再压缩会话历史' },
   compactQueue: {
-    queued: '已加入队列，轮到时会自动执行 /compact',
     alreadyQueued: '已有排队中的 /compact',
     compacting: '正在压缩上下文，请等待完成后再试',
     skippedAuto: '已跳过排队的 /compact：上下文刚被自动压缩',

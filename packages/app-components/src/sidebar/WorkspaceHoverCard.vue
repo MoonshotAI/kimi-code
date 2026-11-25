@@ -3,7 +3,7 @@ import { computed } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { WorkspaceView } from '@moonshot-ai/app-core/client/types';
 import { workspaceFolders } from '@moonshot-ai/app-core/client';
-import { Icon } from '@moonshot-ai/app-ui';
+import { Icon, Menu } from '@moonshot-ai/app-ui';
 import { hostsStore } from '@moonshot-ai/app-client/stores';
 import WorkspaceIcon from '../WorkspaceIcon.vue';
 import { useHostFailureText } from '../composables/useHostFailureText';
@@ -30,9 +30,9 @@ const hostFailure = computed(() => {
 </script>
 
 <template>
-  <div class="workspace-hover-card hover-card-surface" data-workspace-hover-card role="dialog" :aria-label="workspace.name">
+  <Menu class="workspace-hover-card" data-workspace-hover-card role="dialog" :register="false" :aria-label="workspace.name">
     <div class="whc-head">
-      <span class="whc-title hover-card-title">{{ workspace.name }}</span>
+      <span class="whc-title">{{ workspace.name }}</span>
     </div>
     <div class="whc-directories">
       <template v-if="remote">
@@ -64,10 +64,9 @@ const hostFailure = computed(() => {
         </button>
       </template>
     </div>
-  </div>
+  </Menu>
 </template>
 
-<style scoped src="../lib/hover-card.css"></style>
 <style scoped>
 .workspace-hover-card {
   position: fixed;
@@ -75,7 +74,8 @@ const hostFailure = computed(() => {
   z-index: var(--z-dropdown);
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding: var(--space-1);
+  color: var(--color-text);
+  font-family: var(--font-ui);
   user-select: none;
 }
 .whc-head {
@@ -83,6 +83,15 @@ const hostFailure = computed(() => {
   align-items: center;
   gap: var(--space-2);
   padding: var(--space-2) var(--space-3) var(--space-1);
+}
+.whc-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-text-strong);
+  font-size: var(--text-base);
+  font-weight: var(--weight-medium);
 }
 .whc-directories { display: grid; gap: 0; }
 .whc-directory {

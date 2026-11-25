@@ -128,7 +128,6 @@ describe('startDesktopServer', () => {
     expect(args.host).toBe('127.0.0.1');
     expect(args.port).toBe(0);
     expect(args.webAssetsDir).toBe('/app/web-dist');
-    expect(args.env.KIMI_CODE_EXPERIMENTAL_TOOL_SELECT).toBe('1');
     expect(args.corsOrigins).toEqual(['app://renderer']);
     expect(args.disableAuth).toBeUndefined();
     expect(args.debugEndpoints).toBe(false);

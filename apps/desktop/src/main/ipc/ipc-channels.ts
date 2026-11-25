@@ -2,6 +2,7 @@ export const IPC = {
   theme: 'kimi:theme',
   openExternal: 'kimi:open-external',
   writeClipboardText: 'kimi:write-clipboard-text',
+  collectFeedbackDiagnostics: 'kimi:feedback-diagnostics-collect',
   failureToast: 'kimi:failure-toast',
   serverCredential: 'kimi:server-credential',
   dialogOpen: 'kimi:dialog-open',
@@ -198,7 +199,10 @@ export interface WindowsMenuPopupRequest {
   y: number;
 }
 
-export type LaunchActionPayload = { action: 'new-chat' } | { action: 'open-workspace'; root: string; newChat?: boolean };
+export type LaunchActionPayload =
+  | { action: 'new-chat' }
+  | { action: 'open-workspace'; root: string; newChat?: boolean }
+  | { action: 'open-session'; sessionId: string };
 
 export type RendererEventChannel =
   | typeof IPC.failureToast

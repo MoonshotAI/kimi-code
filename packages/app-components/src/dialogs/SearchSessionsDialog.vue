@@ -371,7 +371,9 @@ onMounted(() => {
 .sd-row:hover {
   background: var(--color-hover);
 }
-.sd-row.on {
+.sd-row.on,
+.sd-row:focus-visible {
+  outline: none;
   background: var(--color-selected);
 }
 .sd-row.active .sd-title {

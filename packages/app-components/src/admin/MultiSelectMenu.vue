@@ -1,9 +1,8 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { Icon, Menu, MenuItem } from '@moonshot-ai/app-ui';
+import { Icon, Menu, MenuItem, MenuSearch } from '@moonshot-ai/app-ui';
 import { useAnchoredMenu } from '@moonshot-ai/app-components';
-import MenuSearchField from '../MenuSearchField.vue';
 
 const props = defineProps<{
   options: Array<{ id: string; name: string }>;
@@ -29,7 +28,7 @@ const visibleTags = computed(() => selectedTags.value.slice(0, 2));
 const overflowCount = computed(() => selectedTags.value.length - visibleTags.value.length);
 
 const query = ref('');
-const searchRef = ref<InstanceType<typeof MenuSearchField> | null>(null);
+const searchRef = ref<InstanceType<typeof MenuSearch> | null>(null);
 const filteredOptions = computed(() => {
   const q = query.value.trim().toLowerCase();
   if (q === '') return props.options;
@@ -99,16 +98,11 @@ function toggleViaKeyboard(e: KeyboardEvent): void {
     <span v-else class="sa-select-label">{{ t('admin.allWorkspaces') }}</span>
     <Icon class="sa-select-chev" name="chevron-down" size="sm" />
   </div>
-  <Transition name="menu-pop">
+  <Transition name="ui-menu-pop">
     <!-- role=dialog: the panel leads with a search input, so it isn't a pure
          menu (Menu's own contract); its rows take role=button to match. -->
-    <Menu v-if="open" ref="menuRef" class="sa-menu" :style="menuStyle" role="dialog" @click.stop>
-      <MenuSearchField
-        ref="searchRef"
-        v-model="query"
-        class="sa-search-input"
-        :placeholder="t('admin.searchWorkspace')"
-      />
+    <Menu v-if="open" ref="menuRef" class="ui-menu-floating sa-menu" :style="menuStyle" role="dialog" @click.stop>
+      <MenuSearch ref="searchRef" v-model="query" :placeholder="t('admin.searchWorkspace')" />
       <MenuItem role="button" :active="allSelected" @click="toggleAll">
         {{ t('admin.selectAll') }}
       </MenuItem>
@@ -203,22 +197,6 @@ function toggleViaKeyboard(e: KeyboardEvent): void {
   font-size: var(--text-xs);
 }
 
-.sa-menu {
-  position: fixed;
-  top: 0;
-  left: 0;
-  z-index: var(--z-dropdown);
-}
-
-.sa-menu .menu-search {
-  gap: 7px;
-  margin: 0;
-  padding: 5px 9px;
-  border-bottom: none;
-}
-.sa-menu .menu-search :deep(.menu-search-input) {
-  line-height: var(--leading-tight);
-}
 .sa-ws-name {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -233,22 +211,5 @@ function toggleViaKeyboard(e: KeyboardEvent): void {
   padding: 5px 9px;
   color: var(--color-text-faint);
   font-size: var(--text-sm);
-}
-
-.menu-pop-enter-active {
-  transition:
-    opacity var(--duration-base) var(--ease-out),
-    transform var(--duration-base) var(--ease-out);
-}
-.menu-pop-leave-active {
-  transition:
-    opacity var(--duration-fast) var(--ease-out),
-    transform var(--duration-fast) var(--ease-out);
-  pointer-events: none;
-}
-.menu-pop-enter-from,
-.menu-pop-leave-to {
-  opacity: 0;
-  transform: scale(0.97) translateY(var(--menu-pop-shift, -2px));
 }
 </style>

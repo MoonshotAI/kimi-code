@@ -125,6 +125,34 @@ describe('session info layout rules', () => {
     scope.stop();
   });
 
+  it('settles on the closed-panel mode as soon as the right panel starts closing', async () => {
+    const parent = document.createElement('div');
+    const host = document.createElement('div');
+    parent.append(host);
+    Object.defineProperty(host, 'clientWidth', { value: 700, writable: true });
+    host.getBoundingClientRect = () => ({ left: 0, right: 700, width: 700 }) as DOMRect;
+    parent.getBoundingClientRect = () => ({ left: 0, right: 1200, width: 1200 }) as DOMRect;
+    const rightPanelOpen = ref(true);
+    const scope = effectScope();
+    const layout = scope.run(() => useSessionInfoLayout({
+      host: ref(host),
+      activeSessionId: ref('s1'),
+      rightPanelOpen,
+      eligible: ref(true),
+    }))!;
+    await nextTick();
+
+    expect(layout.mode.value).toBe('floating');
+    expect(layout.visible.value).toBe(false);
+    rightPanelOpen.value = false;
+    expect(layout.mode.value).toBe('sidebar');
+    expect(layout.visible.value).toBe(true);
+    rightPanelOpen.value = true;
+    expect(layout.mode.value).toBe('floating');
+    expect(layout.visible.value).toBe(false);
+    scope.stop();
+  });
+
   it('restores an explicitly hidden preference and allows enabling it for the right panel', () => {
     localStorage.setItem('kimi-web.session-info-panel', 'false');
     const scope = effectScope();

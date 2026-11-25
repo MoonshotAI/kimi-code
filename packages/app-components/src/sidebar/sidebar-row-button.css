@@ -1,0 +1,23 @@
+.btn-new-chat,
+.user-menu-trigger,
+.rc-dev-trigger {
+  display: flex;
+  align-items: center;
+  gap: var(--sb-gap);
+  width: 100%;
+  min-width: 0;
+  background: transparent;
+  color: var(--color-text);
+  font-family: var(--font-ui);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  line-height: var(--leading-tight);
+  cursor: pointer;
+  text-align: left;
+}
+.btn-new-chat:focus-visible,
+.user-menu-trigger:focus-visible,
+.rc-dev-trigger:focus-visible {
+  outline: none;
+  box-shadow: var(--p-focus-ring);
+}

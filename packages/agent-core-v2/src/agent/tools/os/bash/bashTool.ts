@@ -24,6 +24,7 @@ import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution'
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { literalRulePattern, matchesGlobRuleSubject } from '#/tool/rule-match';
 import { renderPrompt } from '#/_base/utils/render-prompt';
+import { sliceOnCodePointBoundary } from '#/_base/text/code-points';
 import { isAbortError, userCancellationReason } from '#/_base/utils/abort';
 import bashDescriptionTemplate from './bash.md?raw';
 import {
@@ -476,7 +477,18 @@ export class BashTool implements IBashTool {
       'human_shell_hint: The task is visible in the background-task panel.';
 
     const foregroundResult = builder.ok('');
-    const foregroundOutput = foregroundResult.output.length > 0 ? foregroundResult.output : '';
+    const retainedOutput = foregroundResult.output.length > 0 ? foregroundResult.output : '';
+    const foregroundOutput = sliceOnCodePointBoundary(retainedOutput, DEFAULT_TOOL_RESULT_MAX_CHARS);
+    let truncationNotice = '';
+    if (foregroundOutput.length < retainedOutput.length) {
+      const fullOutputHint = this.allowBackground()
+        ? `use TaskOutput(task_id="${taskId}") to read the full output, including output produced after this message`
+        : 'you will be automatically notified when it completes';
+      truncationNotice =
+        `\n[foreground output truncated: ${String(builder.totalChars)} characters were produced ` +
+        `before this task moved to the background; only the first ${String(foregroundOutput.length)} are shown. ` +
+        `The task is still running and its output keeps growing — ${fullOutputHint}.]`;
+    }
     const result: ExecutableToolResult & {
       readonly brief: string;
       readonly output: string;
@@ -485,7 +497,7 @@ export class BashTool implements IBashTool {
       output:
         foregroundOutput.length === 0
           ? metadata
-          : `${metadata}\n\nforeground_output:\n${foregroundOutput}`,
+          : `${metadata}\n\nforeground_output:\n${foregroundOutput}${truncationNotice}`,
       brief: labels.brief,
     };
     return result;
@@ -521,6 +533,7 @@ export class BashTool implements IBashTool {
 registerAgentToolService(IBashTool, BashTool, {
   name: 'Bash',
   domain: 'os/backends',
+  userConfigurable: true,
   requiredEnvironmentCapabilities: ['process'],
 });
 

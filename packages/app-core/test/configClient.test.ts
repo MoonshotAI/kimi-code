@@ -169,3 +169,62 @@ describe('DaemonKimiWebApi.getMeta experimental_flags', () => {
     expect(meta.webTitle).toBe('');
   });
 });
+
+describe('host text editing', () => {
+  const path = '/custom home/AGENTS.md';
+  const content = '\uFEFF  保留空白\r\n';
+
+  it('reads exact UTF-8 bytes and sends plain text with the observed revision', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(new Response(content)).mockResolvedValueOnce(envelope({ revision: 'new' }));
+    vi.stubGlobal('fetch', fetchMock);
+    const api = makeApi();
+    const snapshot = await api.readHostTextFile(path);
+    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({ cache: 'no-store' });
+    expect(snapshot).toEqual({ path, content, revision: 'b056f91e144410f5490747592a93165ef51b5835d75aadb8c0c2f439ded8b210' });
+    await expect(api.writeHostTextFile(path, content, snapshot.revision)).resolves.toEqual({ revision: 'new' });
+    const [url, init] = fetchMock.mock.calls[1] as [string, RequestInit];
+    expect(new URL(url).pathname).toBe('/api/v1/fs:content');
+    expect(new URL(url).searchParams.get('path')).toBe(path);
+    expect(new URL(url).searchParams.get('revision')).toBe(snapshot.revision);
+    expect(init).toMatchObject({ method: 'PUT', body: content, headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
+  });
+
+  it('only treats FS_PATH_NOT_FOUND as a missing file', async () => {
+    const response = (code: number) => new Response(JSON.stringify({ code, msg: 'failed', data: null }), { status: 404 });
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(response(40409)).mockResolvedValueOnce(response(40411)));
+    await expect(makeApi().readHostTextFile(path)).resolves.toEqual({ path, content: '', revision: null });
+    await expect(makeApi().readHostTextFile(path)).rejects.toMatchObject({ code: 40411 });
+  });
+});
+
+
+describe('DaemonKimiWebApi tools config and catalog', () => {
+  it('maps tools from getConfig and setConfig', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      envelope({ providers: {}, tools: { enabled: ['Read'], disabled: ['Bash'] } }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const config = await makeApi().setConfig({ tools: { enabled: ['Read'], disabled: ['Bash'] } });
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toContain('/config');
+    expect(JSON.parse(init.body as string)).toEqual({
+      tools: { enabled: ['Read'], disabled: ['Bash'] },
+    });
+    expect(config.tools).toEqual({ enabled: ['Read'], disabled: ['Bash'] });
+  });
+
+  it('loads the session-independent tool catalog', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      envelope({ tools: [{ name: 'Bash', source: 'builtin' }] }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const tools = await makeApi().listToolCatalog();
+
+    const [url] = fetchMock.mock.calls[0] as [string];
+    expect(url).toContain('/tools/catalog');
+    expect(tools).toEqual([{ name: 'Bash', source: 'builtin' }]);
+  });
+});

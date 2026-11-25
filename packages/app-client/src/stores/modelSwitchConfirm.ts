@@ -6,21 +6,30 @@ import {
   type ModelSwitchAction,
   type ModelSwitchConfirmConfig,
 } from '@moonshot-ai/app-core/lib';
-import type { ReadRequestOptions } from '@moonshot-ai/app-core/api';
-import { getKimiWebApi } from '../client/deps';
 import { clientPinia } from './pinia';
+import { createClientConfigLoader } from './clientConfigLoader';
 
 export interface ModelSwitchConfirmRequest {
   fromModel: string;
   toModel: string;
+  sessionType: 'old' | 'new';
   hint?: string;
+  warning?: string;
   resolve: (action: ModelSwitchAction) => void;
 }
 
 export type ModelSwitchCompactionOutcome = 'completed' | 'cancelled' | 'timeout' | 'request-failed';
 
 export const useModelSwitchConfirmStore = defineStore('kimi.modelSwitchConfirm', () => {
-  const config = ref<ModelSwitchConfirmConfig | undefined>(undefined);
+  const {
+    value: config,
+    refresh,
+    needsLoad,
+    reset: resetConfig,
+  } = createClientConfigLoader<ModelSwitchConfirmConfig>(
+    MODEL_SWITCH_CONFIRM_CONFIG_NAME,
+    parseModelSwitchConfirmConfig,
+  );
   const pending = ref<ModelSwitchConfirmRequest | null>(null);
 
   let compactionWait: {
@@ -28,15 +37,6 @@ export const useModelSwitchConfirmStore = defineStore('kimi.modelSwitchConfirm',
     promise: Promise<ModelSwitchCompactionOutcome>;
     resolve: (outcome: ModelSwitchCompactionOutcome) => void;
   } | null = null;
-
-  async function refresh(options?: ReadRequestOptions): Promise<void> {
-    try {
-      const raw = await getKimiWebApi().getClientConfig(MODEL_SWITCH_CONFIRM_CONFIG_NAME, options);
-      config.value = raw === null ? undefined : parseModelSwitchConfirmConfig(raw);
-    } catch {
-      config.value = undefined;
-    }
-  }
 
   function peek(): ModelSwitchConfirmConfig | undefined {
     return config.value;
@@ -92,7 +92,7 @@ export const useModelSwitchConfirmStore = defineStore('kimi.modelSwitchConfirm',
   }
 
   function resetForTest(): void {
-    config.value = undefined;
+    resetConfig();
     pending.value = null;
     compactionWait = null;
   }
@@ -101,6 +101,7 @@ export const useModelSwitchConfirmStore = defineStore('kimi.modelSwitchConfirm',
     config,
     pending,
     refresh,
+    needsLoad,
     peek,
     requestConfirm,
     settle,

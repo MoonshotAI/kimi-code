@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { Button, Dialog, Icon, Spinner } from '@moonshot-ai/app-ui';
+import { Button, Checkbox, Dialog, Icon, Spinner } from '@moonshot-ai/app-ui';
 import type { ConfirmDialogCancelSource, ConfirmDialogRow } from './confirmDialogRow';
 
 const props = withDefaults(defineProps<{
@@ -15,13 +15,17 @@ const props = withDefaults(defineProps<{
   loading?: boolean;
   hideCancel?: boolean;
   initialFocus?: 'confirm' | 'cancel';
+  checkboxLabel?: string;
+  checked?: boolean;
 }>(), {
   variant: 'danger',
   initialFocus: 'confirm',
+  checked: false,
 });
 
 const emit = defineEmits<{
   'update:open': [value: boolean];
+  'update:checked': [value: boolean];
   confirm: [];
   cancel: [source: ConfirmDialogCancelSource];
 }>();
@@ -84,6 +88,15 @@ onBeforeUnmount(() => {
       </template>
     </div>
     <slot />
+    <Checkbox
+      v-if="checkboxLabel"
+      class="confirm-dialog__checkbox"
+      :model-value="checked"
+      :disabled="loading"
+      @update:model-value="emit('update:checked', $event)"
+    >
+      {{ checkboxLabel }}
+    </Checkbox>
     <template #foot>
       <Button
         v-if="!hideCancel"
@@ -149,5 +162,8 @@ onBeforeUnmount(() => {
   color: var(--color-text-faint);
   font-size: var(--text-sm);
   font-variant-numeric: tabular-nums;
+}
+.confirm-dialog__checkbox {
+  margin-top: var(--space-4);
 }
 </style>

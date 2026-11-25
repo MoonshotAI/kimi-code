@@ -8,7 +8,7 @@ export interface SlashCommand {
   desc: string;
   isSkill?: boolean;
   skillPath?: string;
-  sourceKind?: 'global' | 'builtin';
+  sourceKind?: 'global' | 'builtin' | 'plugin';
   workspaceLabel?: string;
   acceptsInput?: boolean;
   argHint?: string;
@@ -144,9 +144,10 @@ export function skillRefMatches(skill: SkillRef, ref: SkillRef): boolean {
     (ref.path === undefined || skill.path === ref.path);
 }
 
-export function skillSourceKind(source?: string): 'global' | 'builtin' | undefined {
+export function skillSourceKind(source?: string): 'global' | 'builtin' | 'plugin' | undefined {
   if (source === 'builtin') return 'builtin';
-  if (source === 'user' || source === 'extra' || source === 'plugin') return 'global';
+  if (source === 'plugin') return 'plugin';
+  if (source === 'user' || source === 'extra') return 'global';
   return undefined;
 }
 
@@ -169,12 +170,21 @@ export function skillCommandArgs(cmd: string, skillName: string, restoreText?: s
 
 export function buildSlashItems(
   skills: ReadonlyArray<{ name: string; description: string; source?: string; path?: string; workspaceDir?: string }> = [],
-  opts?: { towerEnabled?: boolean },
+  opts?: {
+    towerEnabled?: boolean;
+    planEnabled?: boolean;
+    swarmEnabled?: boolean;
+    goalEnabled?: boolean;
+    extraBuiltins?: readonly SlashCommand[];
+  },
 ): SlashCommand[] {
-  const builtins =
-    opts?.towerEnabled === true
-      ? SLASH_COMMANDS
-      : SLASH_COMMANDS.filter((item) => item.name !== '/tower');
+  const builtins = SLASH_COMMANDS.filter((item) => {
+    if (item.name === '/tower') return opts?.towerEnabled === true;
+    if (item.name === '/plan') return opts?.planEnabled !== false;
+    if (item.name === '/swarm') return opts?.swarmEnabled !== false;
+    if (item.name === '/goal') return opts?.goalEnabled !== false;
+    return true;
+  });
   const skillItems: SlashCommand[] = skills.map((s) => ({
     name: s.source === 'builtin' ? `/${s.name}` : `/${SKILL_COMMAND_PREFIX}${s.name}`,
     desc: s.description,
@@ -184,7 +194,7 @@ export function buildSlashItems(
     workspaceLabel: skillDirectoryName(s.workspaceDir),
     acceptsInput: true,
   }));
-  return [...builtins, ...skillItems];
+  return [...builtins, ...(opts?.extraBuiltins ?? []), ...skillItems];
 }
 
 interface DescPinyin {

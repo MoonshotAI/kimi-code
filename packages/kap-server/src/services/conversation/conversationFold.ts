@@ -7,6 +7,7 @@ import {
 import { isUserPromptSubmitHookPart } from '@moonshot-ai/agent-core-v2/agent/contextMemory/hookParts';
 import type { LoopRecordedEvent } from '@moonshot-ai/agent-core-v2/agent/contextMemory/loopEventFold';
 import { LoopErrors } from '@moonshot-ai/agent-core-v2/agent/loop/errors';
+import { turnModelStepSchema, type TurnModelStep, type TurnReplyModel } from '@moonshot-ai/agent-core-v2/agent/loop/turnOps';
 import { isUndoAnchorOrigin } from '@moonshot-ai/agent-core-v2/agent/undo/turnUndo';
 import { stripBundledSkillBlocks } from '@moonshot-ai/core/llm/origin';
 import type { ContentPart } from '@moonshot-ai/core/llm/message';
@@ -87,6 +88,14 @@ interface UndoAnchor {
   readonly stepCount: number;
 }
 
+export interface FeedbackTurnAttribution {
+  readonly requestId?: string;
+  readonly replyModel?: TurnReplyModel & { readonly isKfc?: boolean };
+  readonly modelSteps?: readonly TurnModelStep[];
+}
+
+const modelStepsSchema = turnModelStepSchema.array();
+
 export interface ConversationState {
   readonly agentId: string;
   readonly debug: boolean;
@@ -94,6 +103,7 @@ export interface ConversationState {
   inheriting: boolean;
   clock: number;
   turns: ConversationTurn[];
+  readonly feedbackAttribution: Map<string, FeedbackTurnAttribution>;
   steps: Record<string, StepTrack[]>;
   tools: Record<string, ToolTrack>;
   interactions: Record<string, string>;
@@ -109,6 +119,7 @@ export interface ConversationState {
   awaitingContinuationTurnNumber?: number;
   latestPromptId?: string;
   stepParts: Record<string, number>;
+  stepNextBlock: Record<string, number>;
   compaction?: CompactionDetails;
 }
 
@@ -120,6 +131,7 @@ export function createConversationState(agentId: string, fork?: ConversationFork
     inheriting: fork !== undefined,
     clock: 0,
     turns: [],
+    feedbackAttribution: new Map(),
     steps: {},
     tools: {},
     interactions: {},
@@ -131,6 +143,7 @@ export function createConversationState(agentId: string, fork?: ConversationFork
     recordsTurnEnds: false,
     trailingRejectedPrompt: false,
     stepParts: {},
+    stepNextBlock: {},
   };
 }
 
@@ -289,11 +302,21 @@ export function undoConversationTurns(state: ConversationState, count: number): 
     steps.splice(anchor.stepCount);
     turn.steps = turn.steps.filter((summary) => steps.some((step) => step.ended && step.index === summary.index));
     turn.usage = totalUsage(turn.steps);
+    const modelSteps = state.feedbackAttribution.get(turn.turn_id)?.modelSteps;
+    if (modelSteps === undefined) {
+      state.feedbackAttribution.delete(turn.turn_id);
+    } else {
+      const retained = new Set(steps.map(step => step.index));
+      state.feedbackAttribution.set(turn.turn_id, { modelSteps: modelSteps.filter(entry => retained.has(entry.step)) });
+    }
   }
   const cutIndex = anchor.itemCount > 0 ? anchorIndex + 1 : anchorIndex;
   const removed = new Set(state.turns.splice(cutIndex).map((turn) => turn.turn_id));
   state.nextOrdinal = (state.turns.at(-1)?.ordinal ?? -1) + 1;
-  for (const turnId of removed) delete state.steps[turnId];
+  for (const turnId of removed) {
+    delete state.steps[turnId];
+    state.feedbackAttribution.delete(turnId);
+  }
   for (const toolCallId of Object.keys(state.tools)) {
     if (findToolCall(state, toolCallId) === undefined) delete state.tools[toolCallId];
   }
@@ -439,10 +462,17 @@ function applyLoopEvent(state: ConversationState, event: LoopRecordedEvent | und
         turn.items = turn.items.filter((item) => !item.item_id.startsWith(`${previous.id}:`));
       }
       steps.push({ id: event.uuid, index, startedAt: time, ended: false });
+      if (
+        state.stepNextBlock[event.uuid] === undefined &&
+        !turn.items.some((item) => item.item_id.startsWith(`${event.uuid}:`))
+      ) {
+        state.stepNextBlock[event.uuid] = 0;
+      }
       return;
     }
     case 'step.end': {
       delete state.stepParts[event.uuid];
+      delete state.stepNextBlock[event.uuid];
       const found = findStep(state, event.uuid);
       if (found === undefined) return;
       const { turn, step } = found;
@@ -465,14 +495,16 @@ function applyLoopEvent(state: ConversationState, event: LoopRecordedEvent | und
       const position = state.stepParts[event.stepUuid] ?? 0;
       state.stepParts[event.stepUuid] = position + 1;
       const startedAt = event.startedAt ?? findStep(state, event.stepUuid)?.step.startedAt ?? time;
-      const item = contentItem(
-        event.part,
-        `${event.stepUuid}:${event.block ?? position}`,
-        event.step,
-        startedAt,
-        event.durationMs,
-      );
-      if (item !== undefined) upsertItem(turn, item);
+      const block = event.block ?? position;
+      const item = contentItem(event.part, `${event.stepUuid}:${block}`, event.step, startedAt, event.durationMs);
+      if (item === undefined) return;
+      const nextBlock = state.stepNextBlock[event.stepUuid];
+      if (nextBlock !== undefined && block >= nextBlock) {
+        turn.items.push(item);
+        state.stepNextBlock[event.stepUuid] = block + 1;
+      } else {
+        upsertItem(turn, item);
+      }
       return;
     }
     case 'tool.call': {
@@ -558,11 +590,24 @@ function applyTurnEnded(state: ConversationState, record: WireRecord, time: numb
   const turn = findTurnByNumber(state, turnNumber) ?? unnumberedOpenTurn(state);
   if (turn === undefined) return;
   if (turn.turn_number === undefined && turnNumber !== undefined) turn.turn_number = turnNumber;
-  const error = errorInfoOf(record['error'], stringField(record['requestId']));
+  const requestId = stringField(record['requestId']);
+  const replyModel = feedbackReplyModel(record['replyModel']);
+  const modelSteps = record['modelSteps'] === undefined ? undefined : modelStepsSchema.safeParse(record['modelSteps']).data;
+  if (requestId !== undefined || replyModel !== undefined || modelSteps !== undefined) {
+    state.feedbackAttribution.set(turn.turn_id, { requestId, replyModel, modelSteps });
+  }
+  const error = errorInfoOf(record['error'], requestId);
   endTurn(state, turn, turnEndOf(record['reason'], error, state.provisionalEnds[turn.turn_id]), time);
   delete state.implicitlyEnded[turn.turn_id];
   const durationMs = numberField(record['durationMs']);
   if (durationMs !== undefined) turn.duration_ms = durationMs;
+}
+
+function feedbackReplyModel(value: unknown): TurnReplyModel | undefined {
+  if (typeof value !== 'object' || value === null || !('model' in value) || !('provider' in value)) return undefined;
+  const model = stringField(value.model);
+  const provider = stringField(value.provider);
+  return model === undefined || provider === undefined ? undefined : { model, provider };
 }
 
 function turnEndOf(reason: unknown, error: ErrorInfo | undefined, provisional: TurnEnd | undefined): TurnEnd {
@@ -729,6 +774,7 @@ function addForkBoundary(state: ConversationState, fork: ConversationFork, time:
 
 function clearConversation(state: ConversationState): void {
   state.turns = [];
+  state.feedbackAttribution.clear();
   state.nextOrdinal = 0;
   state.steps = {};
   state.tools = {};
@@ -742,6 +788,7 @@ function clearConversation(state: ConversationState): void {
   state.trailingRejectedPrompt = false;
   state.awaitingContinuationTurnNumber = undefined;
   state.stepParts = {};
+  state.stepNextBlock = {};
   state.compaction = undefined;
 }
 

@@ -87,6 +87,11 @@ function parseSubagents(text: string): SwarmResultSubagent[] {
   return subs;
 }
 
+export function isSwarmRejection(output: string[] | string | undefined | null): boolean {
+  const text = Array.isArray(output) ? output.join('\n') : (output ?? '');
+  return parseSwarmResult(text) === null && !/\b(?:aborted|cancelled|interrupted)\b/i.test(text);
+}
+
 export function parseSwarmResult(output: string[] | string | undefined | null): SwarmResult | null {
   if (output === undefined || output === null) return null;
   const text = Array.isArray(output) ? output.join('\n') : output;

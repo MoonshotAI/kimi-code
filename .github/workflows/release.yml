@@ -56,10 +56,14 @@ jobs:
       checks: read
     outputs:
       publish: ${{ steps.trigger.outputs.publish }}
+      ci-run-id: ${{ steps.trigger.outputs.ci-run-id }}
+      cli-tag: ${{ steps.cli.outputs.tag }}
+      cli-targets: ${{ steps.cli.outputs.targets }}
     steps:
       - uses: actions/checkout@v6
         with:
           ref: ${{ github.sha }}
+          fetch-depth: 0
       - uses: actions/setup-node@v6
         with:
           node-version-file: .nvmrc
@@ -68,6 +72,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: node scripts/release-trigger.mjs
+      - name: Plan native build for the tested commit
+        if: steps.trigger.outputs.publish == 'true'
+        id: cli
+        run: node scripts/release.mjs plan-cli
 
   desktop-release:
     name: Desktop release plan
@@ -77,6 +85,7 @@ jobs:
     outputs:
       build: ${{ steps.prepare.outputs.build }}
       tag: ${{ steps.prepare.outputs.tag }}
+      cli-planned: ${{ needs.candidate.outputs.cli-tag != '' }}
     env:
       GH_TOKEN: ${{ github.token }}
     permissions:
@@ -98,7 +107,7 @@ jobs:
 
   desktop-artifacts:
     name: Desktop release artifacts
-    needs: desktop-release
+    needs: [candidate, desktop-release]
     if: needs.desktop-release.outputs.build == 'true'
     # 静态校验：reusable workflow 各 job 声明的权限并集不能超过调用方持有的
     # 权限。desktop-build.yml 的 publish-canary job 请求 contents: write，
@@ -112,6 +121,8 @@ jobs:
     with:
       retention-days: 7
       upload-artifact-prefix: kimi-code-app
+      pnpm-cache-restore-only: ${{ needs.desktop-release.outputs.cli-planned == 'true' }}
+      renderer-ci-run-id: ${{ needs.candidate.outputs.ci-run-id }}
     secrets:
       APPLE_CERTIFICATE_P12: ${{ secrets.APPLE_CERTIFICATE_P12 }}
       APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
@@ -181,7 +192,6 @@ jobs:
     outputs:
       packages_published: ${{ steps.changesets.outputs.published }}
       kimi_native_release: ${{ steps.kimi-release.outputs.should_publish }}
-      kimi_release_tag: ${{ steps.kimi-release.outputs.tag }}
     permissions:
       contents: write
       pull-requests: write
@@ -215,8 +225,13 @@ jobs:
           node apps/kimi-code/scripts/update-catalog.mjs --out "$CATALOG_FILE"
           echo "KIMI_CODE_BUILT_IN_CATALOG_FILE=$CATALOG_FILE" >> "$GITHUB_ENV"
 
-      - name: Build packages
-        run: pnpm build
+      - name: Build publishable npm workspaces and their dependencies
+        shell: bash
+        run: |
+          publishable=$(pnpm -r list --depth -1 --json | jq -er '.[] | select(.private == false) | .name')
+          filters=()
+          while IFS= read -r pkg; do filters+=(--filter "${pkg}..."); done <<< "$publishable"
+          pnpm -r "${filters[@]}" run build
 
       - name: Create Release Pull Request or Publish to npm
         id: changesets
@@ -242,15 +257,25 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ steps.kimi-release.outputs.tag }}
+          PLANNED_TAG: ${{ needs.candidate.outputs.cli-tag }}
           RELEASE_VERSION: ${{ steps.kimi-release.outputs.version }}
-        run: gh release edit "$RELEASE_TAG" --title "Kimi Code CLI ${RELEASE_VERSION}"
+        run: |
+          if [[ "$RELEASE_TAG" != "$PLANNED_TAG" ]]; then
+            echo 'Published CLI tag does not match the planned native build' >&2
+            exit 1
+          fi
+          gh release edit "$RELEASE_TAG" --title "Kimi Code CLI ${RELEASE_VERSION}"
 
   native-artifacts:
     name: Native release artifact
-    needs: release
-    if: needs.release.outputs.kimi_native_release == 'true'
+    needs: candidate
+    if: needs.candidate.outputs.publish == 'true' && needs.candidate.outputs.cli-tag != ''
+    permissions:
+      actions: read
+      contents: read
     uses: ./.github/workflows/_native-build.yml
     with:
+      web-ci-run-id: ${{ needs.candidate.outputs.ci-run-id }}
       upload-artifact-prefix: kimi-code-native
       retention-days: 7
       sign-macos: true
@@ -265,12 +290,52 @@ jobs:
       AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
       AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
 
+  compress-native:
+    name: Compress native archive (${{ matrix.target }})
+    needs: [candidate, native-artifacts]
+    if: needs.candidate.outputs.cli-tag != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        target: ${{ fromJSON(needs.candidate.outputs.cli-targets) }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v8
+        with:
+          name: kimi-code-native-${{ matrix.target }}
+          path: dist-compressed
+      - name: Compress and checksum the signed binary
+        working-directory: dist-compressed
+        env:
+          TARGET: ${{ matrix.target }}
+          TAG: ${{ needs.candidate.outputs.cli-tag }}
+        run: |
+          sha256sum --check "kimi-code-${TARGET}.zip.sha256"
+          node ../apps/kimi-code/scripts/native/produce-manifest.mjs . "$TAG"
+          mv manifest.json "manifest-${TARGET}.json"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: kimi-code-native-compressed-${{ matrix.target }}
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 7
+          path: |
+            dist-compressed/*.zst*
+            dist-compressed/*.tar.gz*
+            dist-compressed/manifest-*.json
+
   publish-native-assets:
     name: Publish native release assets
     needs:
+      - candidate
       - release
-      - native-artifacts
-    if: needs.release.outputs.kimi_native_release == 'true'
+      - compress-native
+    if: needs.candidate.outputs.cli-tag != '' && (needs.release.outputs.kimi_native_release == 'true' || github.run_attempt > 1)
+    env:
+      RELEASE_TAG: ${{ needs.candidate.outputs.cli-tag }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -286,16 +351,23 @@ jobs:
           path: dist-native-release
           merge-multiple: true
 
-      - name: Produce manifest.json
-        env:
-          RELEASE_TAG: ${{ needs.release.outputs.kimi_release_tag }}
-        run: node apps/kimi-code/scripts/native/produce-manifest.mjs dist-native-release "$RELEASE_TAG"
+      - name: Merge the six platform manifests
+        run: node apps/kimi-code/scripts/native/merge-platform-manifests.mjs dist-native-release "$RELEASE_TAG"
 
-      - name: Upload assets to GitHub Release
+      - name: Verify previously published CLI before retrying the upload
+        id: retry
+        if: needs.release.outputs.kimi_native_release != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ needs.release.outputs.kimi_release_tag }}
-        run: gh release upload "$RELEASE_TAG" dist-native-release/* --clobber
+        run: node scripts/release.mjs check-cli-retry
+
+      - name: Upload assets to GitHub Release
+        if: needs.release.outputs.kimi_native_release == 'true' || steps.retry.outputs.complete == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "$RELEASE_TAG" dist-native-release/kimi-code-* --clobber
+          gh release upload "$RELEASE_TAG" dist-native-release/manifest.json --clobber
 
   deploy-docs:
     needs: publish-native-assets

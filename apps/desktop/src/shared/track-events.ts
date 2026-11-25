@@ -215,6 +215,7 @@ export const rendererTrackEventSchema = z.discriminatedUnion('event', [
         'copyAll',
         'copyFinalSummary',
         'copySessionId',
+        'copySessionLink',
         'pin',
         'unpin',
         'rename',
@@ -272,6 +273,7 @@ export const rendererTrackEventSchema = z.discriminatedUnion('event', [
         'notification',
         'search',
         'slash_command',
+        'deep_link',
       ]),
     }),
   }),
@@ -400,6 +402,35 @@ export const rendererTrackEventSchema = z.discriminatedUnion('event', [
       session_id: shortStringSchema,
       duration_ms: clampedPerfMsSchema,
       cached: z.boolean(),
+    }),
+  }),
+  z.object({
+    event: z.literal('prediction_shown'),
+    properties: z.object({
+      prediction_id: shortStringSchema,
+      turn_id: z.number().int().nonnegative(),
+      duration_ms: clampedPerfMsSchema,
+      prediction_chars: clampedCountSchema,
+    }),
+  }),
+  z.object({
+    event: z.literal('prediction_accepted'),
+    properties: z.object({
+      prediction_id: shortStringSchema,
+      turn_id: z.number().int().nonnegative(),
+      duration_ms: clampedPerfMsSchema,
+      prediction_chars: clampedCountSchema,
+      key: z.enum(['tab', 'right']),
+    }),
+  }),
+  z.object({
+    event: z.literal('prediction_submitted'),
+    properties: z.object({
+      prediction_id: shortStringSchema,
+      turn_id: z.number().int().nonnegative(),
+      duration_ms: clampedPerfMsSchema,
+      prediction_chars: clampedCountSchema,
+      edited: z.boolean(),
     }),
   }),
 ]);

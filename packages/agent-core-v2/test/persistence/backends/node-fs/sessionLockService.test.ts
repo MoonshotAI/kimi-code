@@ -179,20 +179,21 @@ describe('SessionLockService', () => {
     }
   });
 
-  it('treats a lock from another hostname as occupied even when the pid is dead', () => {
+  it('reclaims a lock from another hostname even when its pid is locally alive', () => {
     const foreign: SessionLockHolder = {
       version: 1,
       token: 'foreign-token',
-      pid: 1,
+      pid: process.pid,
       hostname: 'definitely-not-this-host',
-      startedAt: 0,
+      startedAt: Date.now(),
       clientIdentity: 'ghost',
     };
     serviceA.hold('warmup');
     serviceA.release('warmup');
     writeFileSync(lockPath(homeDir, SID), JSON.stringify(foreign), { mode: 0o600 });
-    expect(() => serviceA.hold(SID)).toThrowError(/in use by another Kimi Code process/);
-    expect(readLockFile(homeDir, SID).token).toBe('foreign-token');
+    expect(() => serviceA.hold(SID)).not.toThrow();
+    expect(readLockFile(homeDir, SID).token).not.toBe('foreign-token');
+    serviceA.release(SID);
   });
 
   it('takeover evicts a live holder and leaves the new lock alone when the old holder releases', () => {

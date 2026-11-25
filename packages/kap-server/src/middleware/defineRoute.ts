@@ -7,7 +7,7 @@ function toFastifyPath(openApiPath: string): string {
   return openApiPath.replaceAll(/\{([^}]+)\}/g, ':$1');
 }
 
-function buildErrorEnvelopeSchema(
+export function buildErrorEnvelopeSchema(
   code: number,
   dataSchema: z.ZodTypeAny = z.null(),
   detailsSchema?: z.ZodTypeAny,
@@ -76,6 +76,10 @@ function buildUnifiedResponseSchema(
   return { oneOf: variants };
 }
 
+export function httpErrorSchema(code: number): Record<string, unknown> {
+  return openApiDocumentJsonSchema(buildErrorEnvelopeSchema(code), 'output');
+}
+
 type InferZod<T extends z.ZodTypeAny | undefined> = T extends z.ZodTypeAny
   ? z.infer<T>
   : unknown;
@@ -123,6 +127,20 @@ export interface RouteDefinition<
     } & (TQuery extends z.ZodTypeAny ? { query: InferZod<TQuery> } : {}),
     reply: { send(payload: unknown): unknown },
   ) => Promise<void> | void;
+}
+
+type RouteMethod<Req> = (
+  path: string,
+  options: { preHandler: unknown[]; schema?: Record<string, unknown> } | undefined,
+  handler: (req: Req, reply: { send(payload: unknown): unknown }) => Promise<void> | void,
+) => unknown;
+
+export interface GetRouteHost {
+  get: RouteMethod<{ id: string; query: unknown; params: unknown }>;
+}
+
+export interface PostRouteHost {
+  post: RouteMethod<{ id: string; body: unknown; params: unknown; headers: Record<string, unknown> }>;
 }
 
 export function defineRoute<

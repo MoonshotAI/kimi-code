@@ -1,5 +1,5 @@
 
-import { computed, h, reactive, ref, watch, type Component } from 'vue';
+import { computed, h, reactive, ref, watch, watchEffect, type Component } from 'vue';
 import { formatDuration as formatTaskDuration } from '@moonshot-ai/app-core/lib';
 import {
   getKimiWebApi,
@@ -8,11 +8,12 @@ import {
   notifySessionDestroyed,
   notifyWorkspaceDestroyed,
   openArchivedSettings,
+  openModelPicker,
   t,
   traceClientEvent,
   traceKeyEvent,
 } from './deps';
-import { dismissToastByKey, onToast, toast, toastReplaceRevision } from './toast';
+import { dismissToastByKey, nextToastKey, onToast, toast, toastReplaceRevision } from './toast';
 import { planAdminBatchToast, undoBatchDirectionOf, type AdminBatchToastPlan } from './adminBatchToast';
 import type { ToastOptions } from '@moonshot-ai/app-ui';
 import { consumeDraftPromotionOnSessionChange, getDraftPromotion } from './draftPromotion';
@@ -46,29 +47,33 @@ import { permissionModeFromConfig } from '@moonshot-ai/app-core/lib';
 import { clearTurnFileHistorySession } from './turnFileHistory';
 import { ackSwarmPending, foldDaemonSwarmMode } from '@moonshot-ai/app-core/lib';
 import { ackTowerPending, foldDaemonTowerMode } from '@moonshot-ai/app-core/lib';
+import { isDefaultToolEnabled, TOWER_MODE_TOOL_NAMES } from '@moonshot-ai/app-core/lib';
 import {
+  effectiveThinkingLevel,
+  matchEffortSwitchRule,
   matchModelSwitchRule,
   resolveModelSwitchHint,
+  resolveModelSwitchWarning,
   upstreamModelIdFromConfigModels,
   type ModelSwitchAction,
   type ModelSwitchRule,
 } from '@moonshot-ai/app-core/lib';
 import { detect as detectKimiLocale } from '@moonshot-ai/app-i18n';
 import { modelSwitchConfirmStore } from '../stores/modelSwitchConfirm';
+import { effortSwitchStore } from '../stores/effortSwitch';
 import { ackPlanPending, foldDaemonPlanMode } from '@moonshot-ai/app-core/lib';
 import {
-  draftAttachmentsStorageKey,
+  composerSessionScope,
   draftSnapshotStorageKey,
   draftStorageKey,
-  composerSessionScope,
   safeGetJson,
   safeGetString,
   safeRemove,
-  safeSetJson,
   safeSetString,
   STORAGE_KEYS,
 } from '@moonshot-ai/app-core/lib';
-import { discardStashedEditorState } from '@moonshot-ai/app-composer/runtime';
+import { liveComposerEditorFor } from '@moonshot-ai/app-composer/runtime';
+import { createPromptPrediction } from './promptPrediction';
 import { sessionTasksToAppTasks, subagentDisplayName } from '@moonshot-ai/app-core/client';
 import {
   conversationTurnError,
@@ -103,9 +108,12 @@ import { createSessionSelection } from './sessionSelection';
 import { sessionReadScope, workspaceReadScope } from './observationScope';
 import { createSessionActions } from './sessionActions';
 import { usePromptPipeline } from './usePromptPipeline';
+import { createChatMcpAutoOpen } from '../composables/chatMcpAuthorization';
 import { useConfirmDialog } from '../composables/useConfirmDialog';
 import { toastWithManage, useWorktreeManageDialogs } from '../composables/useWorktreeManageDialogs';
 import { persistComposerDraftSnapshot } from '../lib/composerDraftLifecycle';
+import { configureWorkspaceHooks } from '../lib/workspaceHooks';
+import { workspaceModeActions } from '../lib/workspaceModeActions';
 import { closeSessionBusyWindow, openSessionBusyWindow } from '../lib/perfTracking';
 import { waitForSessionExecution, type SessionExecutionState } from '../lib/sessionExecutionReadiness';
 import { sessionMentionCandidates as buildSessionMentionCandidates, type SessionMentionCandidate } from '../lib/sessionReferences';
@@ -118,9 +126,9 @@ import { workspacesStore, setWorkspacesHooks } from '../stores/workspaces';
 import { approvalsStore, setApprovalsHooks } from '../stores/approvals';
 import { filesStore } from '../stores/files';
 import { modelsStore } from '../stores/models';
-import { modeStore, setModeHooks } from '../stores/mode';
+import { modeStore } from '../stores/mode';
 import { warningsStore, warningDetail } from '../stores/warnings';
-import { goalStore, setGoalHooks } from '../stores/goal';
+import { goalStore } from '../stores/goal';
 import { configStore, setConfigHooks } from '../stores/config';
 import { hostsStore, setHostsHooks } from '../stores/hosts';
 import { tasksStore, setTasksHooks } from '../stores/tasks';
@@ -128,7 +136,7 @@ import { agentStatesStore } from '../stores/agentStates';
 import { setFilesHooks } from '../stores/files';
 import { authStore, setAuthHooks } from '../stores/auth';
 import { computeGateVerdict, mapDaemonAuthError, AUTH_MODEL_NOT_RESOLVED_CODE, type ChatGateInput, type ChatGateVerdict } from '../lib/chatGate';
-import { permissionsStore, setPermissionsHooks } from '../stores/permissions';
+import { permissionsStore } from '../stores/permissions';
 import { promptStore } from '../stores/prompt';
 import {
   connectionStore,
@@ -262,6 +270,7 @@ const rawState: ExtendedState = reactive({
     warningsStore().setWarnings(next);
   },
   sessionStatusSettledBySession: {},
+  unavailableModelBySession: {},
   get serverVersion() {
     return configStore().serverVersion;
   },
@@ -493,10 +502,9 @@ function recoverStaleConnection(): void {
 
 if (typeof document !== 'undefined') {
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible') {
-      clearActiveUnread();
-      recoverStaleConnection();
-    }
+    if (document.visibilityState !== 'visible') return;
+    clearActiveUnread();
+    recoverStaleConnection();
   });
 }
 if (typeof window !== 'undefined') {
@@ -577,6 +585,11 @@ function whenSessionStatusSettled(sessionId: string): Promise<void> {
 }
 
 function applyMainAgentState(sessionId: string, state: AppAgentState): void {
+  if (state.model !== undefined && state.model !== '' && rawState.unavailableModelBySession?.[sessionId] !== undefined) {
+    const nextUnavailable = { ...rawState.unavailableModelBySession };
+    delete nextUnavailable[sessionId];
+    rawState.unavailableModelBySession = nextUnavailable;
+  }
   foldDaemonPlanMode(rawState, sessionId, state.planMode);
   foldDaemonSwarmMode(rawState, sessionId, state.swarmMode);
   foldDaemonTowerMode(rawState, sessionId, state.towerMode);
@@ -724,6 +737,44 @@ function hasPendingLocalWork(sessionId: string): boolean {
     promptStore().hasHeldFirstPrompt(sessionId)
   );
 }
+
+function hasEmptyPromptPredictionInput(sessionId: string): boolean {
+  const editor = liveComposerEditorFor(composerSessionScope(sessionId));
+  if (editor !== undefined) {
+    return editor.getText().trim().length === 0 && editor.getAttachmentInventory().activeIds.size === 0;
+  }
+  if ((safeGetString(draftStorageKey(sessionId)) ?? '').trim().length > 0) return false;
+  const snapshot = safeGetJson<{ attachmentOrder?: unknown }>(draftSnapshotStorageKey(sessionId));
+  return !Array.isArray(snapshot?.attachmentOrder) || snapshot.attachmentOrder.length === 0;
+}
+
+function canUsePromptPrediction(sessionId: string): boolean {
+  return (
+    rawState.experimentalFlags?.['prompt_prediction'] === true &&
+    sessionId === rawState.activeSessionId &&
+    rawState.mainView === 'chat' &&
+    !rawState.sessionLoading &&
+    typeof document !== 'undefined' &&
+    document.visibilityState === 'visible' &&
+    !modeStore().planMode &&
+    !modeStore().planArmed &&
+    !modeStore().goalMode &&
+    !hasPendingLocalWork(sessionId) &&
+    (rawState.approvalsBySession[sessionId] ?? []).length === 0 &&
+    (rawState.questionsBySession[sessionId] ?? []).length === 0
+  );
+}
+
+const promptPredictionController = createPromptPrediction({
+  api: getKimiWebApi,
+  isActiveSession: (sessionId) => sessionId === rawState.activeSessionId,
+  canPredict: canUsePromptPrediction,
+  hasEmptyInput: hasEmptyPromptPredictionInput,
+});
+
+watchEffect(() => {
+  promptPredictionController.refresh();
+});
 
 function conversationConnection(): ReturnType<typeof getEventConn> {
   connectEventsIfNeeded();
@@ -1381,9 +1432,22 @@ function createOnConnectionChangeHandler(): KimiEventHandlers['onConnectionChang
 }
 
 function createOnConversationHandler(): NonNullable<KimiEventHandlers['onConversation']> {
+  const autoOpen = createChatMcpAutoOpen();
   return (sessionId, agentId, frame) => {
-    if (agentId === MAIN_AGENT_ID) mainConversations.handleFrame(sessionId, agentId, frame);
-    else auxiliaryConversations.handleFrame(sessionId, agentId, frame);
+    if (agentId !== MAIN_AGENT_ID) {
+      auxiliaryConversations.handleFrame(sessionId, agentId, frame);
+      return;
+    }
+    mainConversations.handleFrame(sessionId, agentId, frame);
+    if (frame.type === 'turns') {
+      autoOpen(frame, undefined, false);
+      return;
+    }
+    if (frame.type !== 'item.updated' || frame.set.fields === undefined) return;
+    const entry = mainConversationOf(sessionId);
+    if (!entry?.loaded) return;
+    const turn = entry.view.turns.findLast(candidate => candidate.turn_id === frame.turn_id);
+    autoOpen(frame, turn, isUserWatching(sessionId) && rawState.sessions.some(row => row.id === sessionId) && chatHostId(sessionId) === undefined);
   };
 }
 
@@ -1765,7 +1829,12 @@ const turns = computed<ChatTurn[]>(() => {
   if (!sid) return [];
   const conversation = activeMainConversation();
   if (conversation === null) return [];
-  const options = { sessionId: sid, getFileUrl: getFileUrlById, getSessionMediaUrl };
+  const options = {
+    sessionId: sid,
+    getFileUrl: getFileUrlById,
+    getSessionMediaUrl,
+    swarmMode: modeStore().swarmModeBySession[sid] ?? false,
+  };
   const base = mainConversationProjector(conversation.view.turns, options);
   const held = promptStore().heldFirstPromptBySession[sid];
   const unechoed = unechoedOptimisticMessages(sid);
@@ -1788,20 +1857,6 @@ const continuePending = computed<boolean>(() => {
 const working = computed<boolean>(
   () => inFlight.value || turnActive.value || promptPending.value || continuePending.value,
 );
-
-const canContinue = computed<boolean>(() => {
-  const sid = rawState.activeSessionId;
-  if (!sid) return false;
-  const session = rawState.sessions.find((s) => s.id === sid);
-  if (session?.archived === true) return false;
-  if (working.value || activity.value !== 'idle' || queued.value.length > 0) return false;
-  const lastAgentTurn = activeMainConversation()?.view.turns.findLast((turn) => turn.kind === 'agent');
-  if (lastAgentTurn?.status !== 'ended') return false;
-  return (
-    lastAgentTurn.outcome === 'interrupted' ||
-    (lastAgentTurn.outcome === 'failed' && lastAgentTurn.end_reason !== 'blocked')
-  );
-});
 
 watch(
   [() => rawState.activeSessionId, working],
@@ -1888,6 +1943,7 @@ function onMainTurnsRemoved(entry: ConversationEntry, turnIds: readonly string[]
 }
 
 function onMainTurnStarted(entry: ConversationEntry, turn: ConversationTurn): void {
+  promptPredictionController.handleTurnStarted(entry.sessionId);
   turnPhasesOf(entry).set(turn.turn_id, 'running');
   scheduleSessionRowRefresh(entry.sessionId);
 }
@@ -1908,10 +1964,23 @@ function settleMainTurnEnd(entry: ConversationEntry, turn: ConversationTurn): vo
     firstTurn: turn.ordinal === 0,
     promptId: openerPromptId(turn),
     ratingTurnId: turn.turn_id,
+    predictionSourceId: turn.turn_id,
+    predictionTurnId: turn.ordinal,
   });
 }
 
 function onMainNotice(sessionId: string, notice: ConversationNotice): void {
+  if (notice.code === 'model.not_configured') {
+    rawState.unavailableModelBySession = { ...rawState.unavailableModelBySession, [sessionId]: notice.title };
+    void confirm({
+      title: t('warnings.modelUnavailable.title'),
+      message: t('warnings.modelUnavailable.message', { model: notice.title }),
+      confirmLabel: t('warnings.modelUnavailable.change'),
+      variant: 'primary',
+      action: () => openModelPicker(sessionId),
+    });
+    return;
+  }
   if (notice.code === 'compaction.cancelled') settleCompaction(sessionId, 'cancelled', undefined);
   warningsStore().markSessionWarningShown(sessionId, `${notice.code ?? ''} ${notice.title}`);
   if (notice.level === 'error') {
@@ -1963,9 +2032,12 @@ const todos = computed<TodoView[]>(() => {
     .map((item) => ({ title: item.title, status: item.status }));
 });
 
+const isMainCompactingOrStarting = (sessionId: string): boolean =>
+  mainCompacting(sessionId) || promptStore().isCompactStarting(sessionId);
+
 const compaction = computed<CompactionStatus | null>(() => {
   const sid = rawState.activeSessionId;
-  return sid && mainCompacting(sid) ? { status: 'running' } : null;
+  return sid && isMainCompactingOrStarting(sid) ? { status: 'running' } : null;
 });
 
 const connection = computed<ConnectionState>(() => connectionStore().connection);
@@ -1980,6 +2052,24 @@ const webTitle = computed<string>(() => rawState.webTitle);
 const experimentalFlags = computed<Record<string, boolean>>(() => rawState.experimentalFlags);
 const backend = computed<'v1' | 'v2'>(() => rawState.backend);
 const dangerousBypassAuth = computed<boolean>(() => rawState.dangerousBypassAuth);
+
+function modeAvailability(
+  toolName: string,
+  field: 'planModeAvailable' | 'swarmModeAvailable' | 'towerModeAvailable' | 'goalModeAvailable',
+): boolean {
+  const sid = sessionsStore().activeSessionId;
+  const reported = sid === undefined ? undefined : agentStatesStore().stateOf(sid, MAIN_AGENT_ID)?.[field];
+  if (reported !== undefined) return reported;
+  if (field === 'towerModeAvailable') {
+    return TOWER_MODE_TOOL_NAMES.every((name) => isDefaultToolEnabled(configStore().config?.tools, name));
+  }
+  return isDefaultToolEnabled(configStore().config?.tools, toolName);
+}
+
+const planModeAvailable = computed(() => modeAvailability('ExitPlanMode', 'planModeAvailable'));
+const swarmModeAvailable = computed(() => modeAvailability('AgentSwarm', 'swarmModeAvailable'));
+const towerModeAvailable = computed(() => modeAvailability('TowerInit', 'towerModeAvailable'));
+const goalModeAvailable = computed(() => modeAvailability('UpdateGoal', 'goalModeAvailable'));
 
 function clearDangerousBypassAuth(): void {
   rawState.dangerousBypassAuth = false;
@@ -2117,7 +2207,8 @@ const status = computed<ConversationStatus>(() => {
   const branch =
     gitInfo.value?.branch ??
     (activeSession ? activeSession.cwd.split('/').pop() ?? activeSession.cwd : 'main');
-  const rawModel = modelsStore().resolveSendModel(activeSession?.model, { includeDraft: activeSession === undefined }) ?? '—';
+  const unavailable = activeSession !== undefined && rawState.unavailableModelBySession?.[activeSession.id] !== undefined;
+  const rawModel = unavailable ? '—' : modelsStore().resolveSendModel(activeSession?.model, { includeDraft: activeSession === undefined }) ?? '—';
 
   const matched =
     modelProvider.models.value.find((m) => m.id === rawModel) ??
@@ -2180,7 +2271,10 @@ function gateVerdictInput(): ChatGateInput {
     ? rawState.sessions.find((s) => s.id === rawState.activeSessionId)
     : undefined;
   return {
-    ...resolveGateChatModel(activeSession?.model, { includeDraft: activeSession === undefined }),
+    ...resolveGateChatModel(
+      activeSession !== undefined && rawState.unavailableModelBySession?.[activeSession.id] !== undefined ? null : activeSession?.model,
+      { includeDraft: activeSession === undefined },
+    ),
     modelsReady: modelsStore().modelsReady,
     hasModels: modelsStore().hasModels,
     signedIn: authStore().signedIn,
@@ -2219,41 +2313,32 @@ async function applySelectModel(modelId: string): Promise<void> {
 
 function matchedModelSwitchRuleForActiveSession(
   modelId: string,
-): { rule: ModelSwitchRule; fromDisplay: string; toDisplay: string } | undefined {
+): { rule: ModelSwitchRule; fromDisplay: string; toDisplay: string; sessionType: 'old' | 'new' } | undefined {
   const sid = rawState.activeSessionId;
-  if (sid === null || sid === undefined) return undefined;
-  const session = rawState.sessions.find((s) => s.id === sid);
-  if (session === undefined || session.lastPrompt === undefined) return undefined;
-  if (session.model === modelId) return undefined;
+  const session = sid === null || sid === undefined ? undefined : rawState.sessions.find((s) => s.id === sid);
+  if (sid !== null && sid !== undefined && session === undefined) return undefined;
   const store = modelsStore();
-  const fromEntry = store.activeModels.find((m) => m.id === session.model);
+  const fromModel = session === undefined ? store.resolveSendModel(undefined, { includeDraft: true }) : session.model;
+  if (fromModel === null || fromModel === modelId) return undefined;
+  const fromEntry = store.activeModels.find((m) => m.id === fromModel);
   const toEntry = store.activeModels.find((m) => m.id === modelId);
   if (fromEntry === undefined || toEntry === undefined) return undefined;
   const configModels = configStore().config?.models;
-  const fromUpstream = upstreamModelIdFromConfigModels(configModels, session.model);
+  const fromUpstream = upstreamModelIdFromConfigModels(configModels, fromModel);
   const toUpstream = upstreamModelIdFromConfigModels(configModels, modelId);
   if (fromUpstream === undefined || toUpstream === undefined) return undefined;
-  const rule = matchModelSwitchRule(modelSwitchConfirmStore().peek(), fromUpstream, toUpstream);
+  const hasConversationHistory =
+    session !== undefined &&
+    (session.lastPrompt !== undefined || session.messageCount > 0 || session.usage.turnCount > 0);
+  const sessionType = hasConversationHistory ? 'old' : 'new';
+  const rule = matchModelSwitchRule(modelSwitchConfirmStore().peek(), fromUpstream, toUpstream, sessionType);
   if (rule === undefined) return undefined;
   return {
     rule,
     fromDisplay: fromEntry.displayName ?? fromEntry.model,
     toDisplay: toEntry.displayName ?? toEntry.model,
+    sessionType,
   };
-}
-
-function migrateSessionDraftToNewSession(sid: string | null | undefined): void {
-  if (sid === null || sid === undefined) return;
-  const text = safeGetString(draftStorageKey(sid));
-  if (text !== null) safeSetString(draftStorageKey(undefined), text);
-  else safeRemove(draftStorageKey(undefined));
-  const snapshot = safeGetJson(draftSnapshotStorageKey(sid));
-  if (snapshot !== null) safeSetJson(draftSnapshotStorageKey(undefined), snapshot);
-  else safeRemove(draftSnapshotStorageKey(undefined));
-  const attachments = safeGetJson(draftAttachmentsStorageKey(sid));
-  if (attachments !== null) safeSetJson(draftAttachmentsStorageKey(undefined), attachments);
-  else safeRemove(draftAttachmentsStorageKey(undefined));
-  discardStashedEditorState(composerSessionScope(undefined));
 }
 
 async function runModelSwitchAction(
@@ -2269,12 +2354,6 @@ async function runModelSwitchAction(
       return;
     case 'continue':
       if (isSuperseded()) return;
-      await applySelectModel(modelId);
-      return;
-    case 'new':
-      if (isSuperseded()) return;
-      migrateSessionDraftToNewSession(triggerSid);
-      workspacesStore().clearActiveSession();
       await applySelectModel(modelId);
       return;
     case 'compact': {
@@ -2331,18 +2410,95 @@ async function runModelSwitchAction(
 async function selectModel(modelId: string): Promise<void> {
   modelSelectGeneration += 1;
   const generation = modelSelectGeneration;
+  const triggerSid = rawState.activeSessionId;
+  const readiness: Promise<unknown>[] = [];
+  if (modelSwitchConfirmStore().needsLoad()) readiness.push(modelSwitchConfirmStore().refresh());
+  if (configStore().config === null) readiness.push(configStore().loadConfig());
+  if (readiness.length > 0) {
+    await Promise.all(readiness);
+    if (generation !== modelSelectGeneration || rawState.activeSessionId !== triggerSid) return;
+  }
   const matched = matchedModelSwitchRuleForActiveSession(modelId);
   if (matched === undefined) {
     await applySelectModel(modelId);
     return;
   }
-  const triggerSid = rawState.activeSessionId;
   const action = await modelSwitchConfirmStore().requestConfirm({
     fromModel: matched.fromDisplay,
     toModel: matched.toDisplay,
+    sessionType: matched.sessionType,
     hint: resolveModelSwitchHint(matched.rule, detectKimiLocale()),
+    warning: resolveModelSwitchWarning(matched.rule, detectKimiLocale()),
   });
   await runModelSwitchAction(action, modelId, triggerSid, generation);
+}
+
+function effortModelIdForSession(sessionId: string | null | undefined): string | undefined {
+  const store = modelsStore();
+  const activeSession = sessionId
+    ? rawState.sessions.find((session) => session.id === sessionId)
+    : undefined;
+  const rawModel =
+    activeSession === undefined
+      ? store.draftModel ?? store.activeDefaultModel
+      : activeSession.model || store.activeDefaultModel;
+  if (rawModel === null || rawModel === undefined || rawModel.length === 0) return undefined;
+  return (
+    store.activeModels.find((model) => model.id === rawModel)?.id ??
+    store.activeModels.find((model) => model.model === rawModel)?.id ??
+    rawModel
+  );
+}
+
+let effortSelectGeneration = 0;
+
+async function setThinking(level: ThinkingLevel): Promise<void> {
+  effortSelectGeneration += 1;
+  const generation = effortSelectGeneration;
+  const triggerSid = rawState.activeSessionId;
+  const triggerModelId = effortModelIdForSession(triggerSid);
+  const fromThinking = rawState.thinking;
+  const store = modelsStore();
+  const modelEntry = store.activeModels.find((model) => model.id === triggerModelId);
+  if (modelEntry?.provider !== MANAGED_KIMI_CODE_PROVIDER_ID) {
+    modelProvider.setThinking(level);
+    return;
+  }
+  const fromEffort = effectiveThinkingLevel(modelEntry, fromThinking);
+  if (fromEffort === level) {
+    modelProvider.setThinking(level);
+    return;
+  }
+  const isStale = () =>
+    generation !== effortSelectGeneration ||
+    rawState.activeSessionId !== triggerSid ||
+    effortModelIdForSession(triggerSid) !== triggerModelId ||
+    rawState.thinking !== fromThinking;
+  if (effortSwitchStore().needsLoad()) await effortSwitchStore().refresh();
+  if (isStale()) return;
+  const activeSession = rawState.sessions.find((session) => session.id === triggerSid);
+  const currentModel = store.activeModels.find((model) => model.id === triggerModelId);
+  if (currentModel?.provider !== MANAGED_KIMI_CODE_PROVIDER_ID) {
+    modelProvider.setThinking(level);
+    return;
+  }
+  const hasConversationHistory =
+    activeSession !== undefined &&
+    (activeSession.lastPrompt !== undefined || activeSession.messageCount > 0 || activeSession.usage.turnCount > 0);
+  const sessionType = hasConversationHistory ? 'old' : 'new';
+  const rule = matchEffortSwitchRule(effortSwitchStore().peek(), fromEffort, level, sessionType);
+  if (rule === undefined) {
+    modelProvider.setThinking(level);
+    return;
+  }
+  const action = await effortSwitchStore().requestConfirm({
+    fromEffort,
+    toEffort: level,
+    sessionType,
+    hint: resolveModelSwitchHint(rule, detectKimiLocale()),
+    warning: resolveModelSwitchWarning(rule, detectKimiLocale()),
+  });
+  if (action === 'continue' && !isStale()) modelProvider.setThinking(level);
 }
 
 let ensureChatReadyFlight: { sid: string | undefined; promise: Promise<EnsureChatReadyResult> } | null = null;
@@ -2827,7 +2983,7 @@ const promptPipeline = usePromptPipeline(rawState, {
   mapSendAuthFailure,
   isMainTurnRunning: mainTurnRunning,
   hasUnechoedPrompt: (sessionId) => unechoedOptimisticMessages(sessionId).length > 0,
-  isCompacting: mainCompacting,
+  isCompacting: isMainCompactingOrStarting,
   isMainWaitForWaiting: mainWaitForWaiting,
   promptIdToAbort: mainPromptIdToAbort,
   lastAgentTurnId: (sessionId) => mainTurnsOf(sessionId).findLast((turn) => turn.kind === 'agent')?.turn_id,
@@ -2892,7 +3048,7 @@ const sessionActions = createSessionActions({
   upsertSessionSorted,
   promptBacklog: promptPipeline.promptBacklog,
   isCompactionRunning: (sessionId) =>
-    promptStore().isCompactFlushHeld(sessionId) || mainCompacting(sessionId),
+    promptStore().isCompactFlushHeld(sessionId) || isMainCompactingOrStarting(sessionId),
   flushQueue: promptPipeline.flushQueueHead,
 });
 
@@ -2916,30 +3072,16 @@ const workspaceBoot = createWorkspaceBoot(rawState, {
 });
 
 const { confirm } = useConfirmDialog();
-setModeHooks({
+configureWorkspaceHooks({
   persistSessionProfile,
-  confirmSwarmEnable: () =>
-    confirm({
-      title: t('workspace.swarmEnableTitle'),
-      message: t('workspace.swarmEnableConfirm'),
-      variant: 'primary',
-    }),
-});
-setGoalHooks({
-  pushOperationFailure: warningsStore().pushOperationFailure,
   confirmGoalStart: (objective) =>
     confirm({
       title: t('workspace.goalStartTitle'),
       message: t('workspace.goalStartConfirm', { objective }),
       variant: 'primary',
     }),
-  createDraftSession: promptPipeline.createDraftSession,
-  sendPrompt: promptPipeline.sendPrompt,
-  steerPromptDirect: promptPipeline.steerPromptDirect,
-  submitPromptInternal: promptPipeline.submitPromptInternal,
-  flushQueueHead: promptPipeline.flushQueueHead,
+  promptPipeline,
 });
-setPermissionsHooks({ persistSessionProfile });
 setFilesHooks({ pushOperationFailure: warningsStore().pushOperationFailure });
 setConfigHooks({ pushOperationFailure: warningsStore().pushOperationFailure });
 setApprovalsHooks({ pushOperationFailure: warningsStore().pushOperationFailure });
@@ -3046,7 +3188,6 @@ type AppActionToastInput =
   | { kind: 'adminBatch'; plan: AdminBatchToastPlan }
   | { kind: 'attachmentOpen'; name: string };
 
-let actionToastKey = 0;
 let latestActionToastKey = 0;
 
 onToast((event) => {
@@ -3139,7 +3280,7 @@ function showActionToastWithKey(input: AppActionToastInput, key: number): void {
 }
 
 function showActionToast(input: AppActionToastInput): void {
-  showActionToastWithKey(input, ++actionToastKey);
+  showActionToastWithKey(input, nextToastKey());
 }
 
 async function archiveSessionWithToast(id: string): Promise<void> {
@@ -3217,7 +3358,7 @@ let exportToastInFlight = false;
 async function exportSessionWithToast(id?: string): Promise<void> {
   if (exportToastInFlight) return;
   exportToastInFlight = true;
-  const key = ++actionToastKey;
+  const key = nextToastKey();
   let runningRevision = toastReplaceRevision();
   let runningShown = false;
   const slowTimer = setTimeout(() => {
@@ -3258,7 +3399,7 @@ function isWindowHidden(): boolean {
 function onMainTurnEnd(
   sid: string,
   status: 'idle' | 'aborted',
-  opts: { firstTurn: boolean; promptId?: string; ratingTurnId?: string },
+  opts: { firstTurn: boolean; promptId?: string; ratingTurnId?: string; predictionSourceId?: string; predictionTurnId?: number },
 ): void {
   const goalActive = rawState.goalBySession[sid]?.status === 'active';
 
@@ -3297,6 +3438,10 @@ function onMainTurnEnd(
         void sessionSelection.selectSession(sid, { source: 'notification' });
       },
     });
+  }
+
+  if (opts.predictionSourceId !== undefined && opts.predictionTurnId !== undefined && Number.isSafeInteger(opts.predictionTurnId)) {
+    promptPredictionController.handleTurnEnded(sid, opts.predictionSourceId, opts.predictionTurnId, status === 'idle');
   }
 }
 
@@ -3381,6 +3526,7 @@ export function useKimiWebClient() {
     activationBadges,
     compaction,
     status,
+    unavailableModelBySession: computed(() => rawState.unavailableModelBySession),
     sessionCost,
     fileDiff,
     selectedDiffPath: computed(() => filesStore().selectedDiffPath),
@@ -3442,8 +3588,31 @@ export function useKimiWebClient() {
     planArmed,
     swarmMode,
     towerMode,
+    planModeAvailable,
+    swarmModeAvailable,
+    towerModeAvailable,
+    goalModeAvailable,
     goalMode,
     queued,
+    promptPrediction: computed(() => {
+      const current = promptPredictionController.suggestion.value;
+      return current !== null && canUsePromptPrediction(current.sessionId) ? current : null;
+    }),
+    promptPredictionHasTurn: computed(() => {
+      const target = promptPredictionController.predictionTarget.value;
+      if (target === undefined || target.sessionId !== rawState.activeSessionId) return false;
+      if (promptPredictionController.active.value !== undefined || promptPredictionController.suggestion.value !== null) return true;
+      return promptPredictionController.canAttemptPrediction();
+    }),
+    promptPredictionPending: computed(() => {
+      const current = promptPredictionController.active.value;
+      return current !== undefined && canUsePromptPrediction(current.sessionId) && hasEmptyPromptPredictionInput(current.sessionId)
+        ? { sessionId: current.sessionId, parked: current.parked }
+        : null;
+    }),
+    acceptPromptPrediction: (key: 'tab' | 'right') => promptPredictionController.accept(key),
+    handlePromptPredictionInput: () => promptPredictionController.handleInput(),
+    handlePromptPredictionSubmit: (text: string) => promptPredictionController.handleSubmit(text),
     warnings,
     questions,
     activity,
@@ -3451,7 +3620,6 @@ export function useKimiWebClient() {
     activeTurnError,
     activeTurnRetry,
     activeTurnEnd,
-    canContinue,
     inFlight,
     working,
     isStartingFirstPrompt,
@@ -3471,6 +3639,7 @@ export function useKimiWebClient() {
 
     load: workspaceBoot.load,
     selectSession: sessionSelection.selectSession,
+    openSessionLink: sessionSelection.openSessionLink,
     clearActiveSession: workspacesStore().clearActiveSession,
     openSessionAdmin: (workspaceId?: string) => {
       if (workspaceId !== undefined) {
@@ -3611,19 +3780,8 @@ export function useKimiWebClient() {
     taskOutputOf: taskOutputStream.outputOf,
 
     setPermission: permissionsStore().setPermission,
-    setThinking: modelProvider.setThinking,
-    setPlanMode: modeStore().setPlanMode,
-    togglePlanMode: modeStore().togglePlanMode,
-    setSwarmMode: modeStore().setSwarmMode,
-    toggleSwarmMode: modeStore().toggleSwarmMode,
-    setTowerMode: modeStore().setTowerMode,
-    toggleTowerMode: modeStore().toggleTowerMode,
-    sendTowerPrompt,
-    setGoalMode: modeStore().setGoalMode,
-    toggleGoalMode: modeStore().toggleGoalMode,
-    createGoal: goalStore().createGoal,
-    controlGoal: goalStore().controlGoal,
-    editGoalObjective: goalStore().editGoalObjective,
+    setThinking,
+    ...workspaceModeActions(sendTowerPrompt),
     enqueue: promptPipeline.enqueue,
     renameSession: sessionListStore().renameSession,
     regenerateSessionTitle: sessionListStore().regenerateSessionTitle,
@@ -3704,6 +3862,9 @@ export function useKimiWebClient() {
     config,
     loadConfig: configStore().loadConfig,
     updateConfig: configStore().updateConfig,
+    loadServerHome: async () => (await getKimiWebApi().getMeta()).homeDir,
+    readHostTextFile: (path: string) => getKimiWebApi().readHostTextFile(path),
+    writeHostTextFile: (path: string, content: string, revision: string | null) => getKimiWebApi().writeHostTextFile(path, content, revision),
 
     checkAuth: () => authStore().checkAuth(),
     probeManagedMembership: () => authStore().probeMembership(),

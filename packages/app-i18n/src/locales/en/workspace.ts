@@ -11,8 +11,9 @@ export default {
   removeWorkspaceConfirmHostOffline:
     'Remove "{name}" from the sidebar\n{device} isn\'t reachable right now, so this only hides the project in this app. Folders and files on the host are not deleted.',
   removeAction: 'Remove',
-  swarmEnableTitle: 'Enable swarm mode?',
-  swarmEnableConfirm: 'The agent will run multiple sub-agents in parallel.',
+  swarmEnabledMessage:
+    "High usage: Swarm is built for large parallel jobs and can use many times the tokens of a normal task. Start small, and turn swarm off when you're done.",
+  swarmEnabledTitle: 'Swarm mode is on',
   goalStartTitle: 'Start goal?',
   goalStartConfirm: '"{objective}" — the agent will run autonomously toward it.',
   newInGroup: 'New session in this project',

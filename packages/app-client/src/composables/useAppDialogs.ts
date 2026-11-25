@@ -1,7 +1,7 @@
 import { computed, nextTick, ref, watch } from 'vue';
 import { useKimiWebClient } from '../client';
 import type { PromptEnvelope } from '../client';
-import { registerArchivedSettingsOpener } from '../client/deps';
+import { registerArchivedSettingsOpener, registerModelPickerOpener } from '../client/deps';
 import { workspacesStore } from '../stores/workspaces';
 import { useIsMobile } from './useIsMobile';
 import { registerWorktreeSettingsOpener } from './useWorktreeManageDialogs';
@@ -187,6 +187,8 @@ export function useAppDialogs(dialogDeps?: AppDialogsDeps) {
       modelsLoading.value = false;
     }
   }
+
+  registerModelPickerOpener(openModelPicker);
 
   function openLogin(): void {
     showLogin.value = true;

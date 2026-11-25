@@ -2,8 +2,7 @@
 import { computed, nextTick, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { newSessionEnvironmentStore } from '@moonshot-ai/app-client/stores';
-import { Icon, MenuItem, Switch, menuNavigationIndex, useImeComposition } from '@moonshot-ai/app-ui';
-import MenuSearchField from '../MenuSearchField.vue';
+import { Icon, MenuItem, MenuSearch, Switch, menuNavigationIndex, useImeComposition } from '@moonshot-ai/app-ui';
 import CreatePicker from './CreatePicker.vue';
 
 const props = defineProps<{
@@ -35,7 +34,7 @@ const hoverRef = computed(() =>
 );
 
 const open = ref(false);
-const searchRef = ref<InstanceType<typeof MenuSearchField> | null>(null);
+const searchRef = ref<InstanceType<typeof MenuSearch> | null>(null);
 const listRef = ref<HTMLElement | null>(null);
 
 const query = ref('');
@@ -108,7 +107,7 @@ watch(open, async (isOpen) => {
   void store.refreshBranches(props.workspaceId);
   activeIndex.value = rows.value.findIndex((row) => row.selected);
   await nextTick();
-  searchRef.value?.focus({ preventScroll: true });
+  searchRef.value?.focus();
   revealActive();
   updateFades();
 });
@@ -127,20 +126,18 @@ function selectRow(row: BranchRow): void {
   store.selectSource(props.workspaceId, { branch: row.branch, includeLocalChanges: row.includeLocalChanges });
 }
 
-const { handleCompositionStart, handleCompositionEnd, isComposingKeyEvent } = useImeComposition();
+const { isComposingKeyEvent } = useImeComposition();
 
 function onSearchKeydown(event: KeyboardEvent): void {
-  if (isComposingKeyEvent(event)) return;
-  if (event.key === 'Enter') {
-    event.preventDefault();
-    const row = rows.value[activeIndex.value];
-    if (row !== undefined) selectRow(row);
-    return;
-  }
-  if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
-  const next = menuNavigationIndex(event.key, false, activeIndex.value, rows.value.length);
-  if (next === null) return;
+  if (event.key !== 'Enter' || isComposingKeyEvent(event)) return;
   event.preventDefault();
+  const row = rows.value[activeIndex.value];
+  if (row !== undefined) selectRow(row);
+}
+
+function onSearchNavigate(key: 'ArrowDown' | 'ArrowUp'): void {
+  const next = menuNavigationIndex(key, false, activeIndex.value, rows.value.length);
+  if (next === null) return;
   activeIndex.value = next;
   void nextTick(revealActive);
 }
@@ -207,18 +204,14 @@ onUnmounted(hideHover);
         </div>
       </div>
     </template>
-    <MenuSearchField
+    <MenuSearch
       ref="searchRef"
       v-model="query"
-      class="wsb-search-input"
-      role="combobox"
-      aria-expanded="true"
-      aria-autocomplete="list"
+      class="wsb-search"
+      divider
       :placeholder="t('worktreeCreate.branch.searchPlaceholder')"
-      spellcheck="false"
       @keydown="onSearchKeydown"
-      @compositionstart="handleCompositionStart"
-      @compositionend="handleCompositionEnd"
+      @navigate="onSearchNavigate"
     />
     <div
       ref="listRef"

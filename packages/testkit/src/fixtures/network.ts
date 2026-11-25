@@ -21,6 +21,12 @@ export interface FetchStub {
   readonly method: string;
   readonly url: string;
   readonly status: number;
+  readonly prefix?: boolean;
+}
+
+export function matchesFetchStub(stub: FetchStub, method: string, url: string): boolean {
+  if (stub.method.toUpperCase() !== method.toUpperCase()) return false;
+  return stub.prefix === true ? url.startsWith(stub.url) : stub.url === url;
 }
 
 export function networkGuardEnv(log: string, stubs: readonly FetchStub[] = []): Record<string, string> {

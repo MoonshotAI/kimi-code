@@ -29,4 +29,11 @@ export default {
   quitConfirmMessageBusyAndRemoteControl: '还有会话在进行，退出会中断它们；远程控制正在运行，退出客户端会停止远程控制',
   quitConfirmQuit: '退出',
   quitConfirmCancel: '取消',
+  updateRestartTitle: '重启并更新 Kimi Code？',
+  updateRestartMessage: '还有会话在进行，重启会中断它们。',
+  updateRestartMessageSessions: '以下会话正在进行，重启会中断它们：',
+  updateRestartMoreSessions: '以及其他 {count} 个会话',
+  updateRestartMessageRemoteControl: '远程控制正在运行，重启会中断远程控制',
+  updateRestartContinueSessions: '重启后继续这些会话',
+  updateRestartConfirm: '重启并更新',
 } as const;

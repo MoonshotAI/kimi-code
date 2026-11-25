@@ -43,7 +43,7 @@ import MediaRail from './MediaRail.vue';
 import WorkingIndicator from './WorkingIndicator.vue';
 import SelectionActionBubble from './SelectionActionBubble.vue';
 import TableSelectionContextMenu from './TableSelectionContextMenu.vue';
-import { Icon, Spinner, Button, Tooltip } from '@moonshot-ai/app-ui';
+import { Icon, IconButton, Spinner, Button, Tooltip } from '@moonshot-ai/app-ui';
 import { useActivityRunFolding, useConfirmDialog, useIsMobile, useTurnFolding } from '@moonshot-ai/app-client/composables';
 import { panelApiKey } from '@moonshot-ai/app-client/panel';
 import { copyTextToClipboard, formatMessageTime, sessionWorktreeHoldsPrompts } from '@moonshot-ai/app-core/lib';
@@ -175,6 +175,11 @@ const worktreeAnchorTurnId = computed<string | null>(() => {
 const worktreeHoldsPrompts = computed(() =>
   sessionWorktreeHoldsPrompts({ worktree: props.worktree ?? undefined }),
 );
+
+defineSlots<{
+  'assistant-reply-actions'?: (props: { turn: ChatTurn | undefined }) => unknown;
+  'assistant-reply-status'?: (props: { turn: ChatTurn | undefined }) => unknown;
+}>();
 
 const topSentinelRef = ref<HTMLElement | null>(null);
 let topSentinelObserver: IntersectionObserver | null = null;
@@ -386,7 +391,8 @@ watch(
 onUnmounted(() => {
   if (sessionLoadingTimer) clearTimeout(sessionLoadingTimer);
 });
-const showMascot = computed(() => showWorking.value || props.turns.length > 0);
+const isCompacting = computed(() => props.compaction?.status === 'running');
+const showMascot = computed(() => showWorking.value || isCompacting.value || props.turns.length > 0);
 
 const localSettledSteerTurnIds = reactive(new Set<string>());
 
@@ -833,20 +839,35 @@ function canEditTurn(turn: ChatTurn): boolean {
   );
 }
 
-function compactionDividerLabel(turn: ChatTurn): string {
+function canOpenCompactionSummary(turn: ChatTurn): boolean {
+  return Boolean(turn.text && panelApi?.openCompaction !== undefined);
+}
+
+function isCompactionSummaryOpen(turn: ChatTurn): boolean {
+  return canOpenCompactionSummary(turn) && panelApi?.isCompactionOpen?.(turn.id) === true;
+}
+
+function compactionBaseLabel(turn: ChatTurn): string {
+  return turn.compaction?.trigger === 'auto'
+    ? t('conversation.compactedAuto')
+    : t('conversation.compactedPlain');
+}
+
+function compactionTokenDelta(turn: ChatTurn): string {
   const c = turn.compaction;
-  const base =
-    c?.trigger === 'auto' ? t('conversation.compactedAuto') : t('conversation.compactedPlain');
-  if (typeof c?.tokensBefore === 'number' && typeof c?.tokensAfter === 'number') {
-    return (
-      base +
-      t('conversation.compactedTokens', {
-        before: formatTokens(c.tokensBefore),
-        after: formatTokens(c.tokensAfter),
-      })
-    );
-  }
-  return base;
+  if (typeof c?.tokensBefore !== 'number' || typeof c?.tokensAfter !== 'number') return '';
+  return t('conversation.compactedTokens', {
+    before: formatTokens(c.tokensBefore),
+    after: formatTokens(c.tokensAfter),
+  });
+}
+
+function compactionSavedLabel(turn: ChatTurn): string {
+  const c = turn.compaction;
+  if (typeof c?.tokensBefore !== 'number' || typeof c?.tokensAfter !== 'number') return '';
+  const saved = c.tokensBefore - c.tokensAfter;
+  if (saved <= 0) return '';
+  return `-${formatTokens(saved)}`;
 }
 
 const copiedTurn = ref<string | null>(null);
@@ -973,13 +994,22 @@ function stableAssistantRun(index: number): ChatTurn[] {
   return run;
 }
 
-function assistantRunFinalText(index: number): string {
-  const run = assistantRunEndingAt(index);
-  for (let i = run.length - 1; i >= 0; i -= 1) {
-    const text = turnVisibleFinalText(run[i]!);
-    if (text) return text;
+function assistantRunFinal(index: number): { turn: ChatTurn; text: string } | undefined {
+  for (let position = index; position >= 0; position -= 1) {
+    const turn = props.turns[position];
+    if (turn?.role !== 'assistant') break;
+    const text = turnVisibleFinalText(turn);
+    if (text) return { turn, text };
   }
-  return '';
+}
+
+function assistantRunFinalText(index: number): string {
+  return assistantRunFinal(index)?.text ?? '';
+}
+
+function assistantRunFinalTurn(index: number): ChatTurn | undefined {
+  const last = assistantRunFinal(index);
+  return last?.text.trim() ? last.turn : undefined;
 }
 
 function assistantRunHasOutput(index: number): boolean {
@@ -1349,14 +1379,15 @@ function streamingTailIndex(turn: ChatTurn): number | null {
       class="top-sentinel"
       :class="{ 'top-sentinel-loading': loadingMore }"
     >
-      <button
+      <Button
         v-if="!loadingMore"
-        type="button"
         class="top-sentinel-btn"
+        variant="secondary"
+        size="xs"
         @click="emit('loadOlderMessages', { manual: true })"
       >
         {{ t('conversation.loadOlder') }}
-      </button>
+      </Button>
       <span v-else class="top-sentinel-text">
         <Spinner size="sm" />
         {{ t('conversation.loadingOlder') }}
@@ -1454,27 +1485,27 @@ function streamingTailIndex(turn: ChatTurn): number | null {
               </span>
             </Tooltip>
             <Tooltip :text="t('filePreview.copy')">
-            <button
+            <IconButton
               v-if="canCopyUserTurn(turn)"
-              type="button"
               class="u-copy"
-              :aria-label="t('filePreview.copy')"
+              size="xs"
+              :label="t('filePreview.copy')"
               @click.stop="copyUserMessage(turn)"
             >
               <Icon v-if="copiedTurn !== turn.id" name="copy" size="sm" />
               <Icon v-else name="check" size="sm" />
-            </button>
+            </IconButton>
             </Tooltip>
             <div v-if="canEditTurn(turn)" class="u-edit-wrap" :class="{ undoing: undoingTurnId === turn.id }">
               <Tooltip :text="t('conversation.undoTooltip')">
-              <button
-                type="button"
+              <IconButton
                 class="u-edit"
-                :aria-label="t('conversation.undoTooltip')"
+                size="xs"
+                :label="t('conversation.undoTooltip')"
                 @click="onUndo(turn)"
               >
                 <Icon name="undo" size="sm" />
-              </button>
+              </IconButton>
               </Tooltip>
             </div>
             <MessageTime v-if="turn.createdAt" :time="turn.createdAt" />
@@ -1492,19 +1523,29 @@ function streamingTailIndex(turn: ChatTurn): number | null {
            compaction lookup: where the API is blanked (an embedded subagent
            transcript, whose turns the root lookup cannot resolve) the label
            stays a plain inert divider. -->
-      <div v-else-if="turn.role === 'compaction'" class="compact-divider turn-anchor" :data-turn-id="turn.id" role="separator">
-        <span class="cd-line" aria-hidden="true" />
-        <button
-          v-if="turn.text && panelApi?.openCompaction !== undefined"
-          type="button"
-          class="cd-label cd-btn"
-          @click="panelApi?.openCompaction?.({ turnId: turn.id })"
+      <div
+        v-else-if="turn.role === 'compaction'"
+        class="compact-divider compact-divider--compacted turn-anchor"
+        :data-turn-id="turn.id"
+        role="separator"
+      >
+        <component
+          :is="canOpenCompactionSummary(turn) ? 'button' : 'span'"
+          v-bind="canOpenCompactionSummary(turn) ? { type: 'button', 'aria-expanded': isCompactionSummaryOpen(turn) } : {}"
+          class="cd-card"
+          :class="{ 'cd-btn': canOpenCompactionSummary(turn), 'cd-open': isCompactionSummaryOpen(turn) }"
+          @click="canOpenCompactionSummary(turn) ? panelApi?.openCompaction?.({ turnId: turn.id }) : undefined"
         >
-          <span>{{ compactionDividerLabel(turn) }}</span>
-          <span class="cd-view">{{ t('conversation.viewSummary') }}</span>
-        </button>
-        <span v-else class="cd-label">{{ compactionDividerLabel(turn) }}</span>
-        <span class="cd-line" aria-hidden="true" />
+          <span class="cd-chip" aria-hidden="true">
+            <Icon name="collapse" size="sm" />
+          </span>
+          <span class="cd-title">{{ compactionBaseLabel(turn) }}</span>
+          <span v-if="compactionTokenDelta(turn)" class="cd-tokens">{{ compactionTokenDelta(turn) }}</span>
+          <span v-if="compactionSavedLabel(turn)" class="cd-saved">{{ compactionSavedLabel(turn) }}</span>
+          <span v-if="canOpenCompactionSummary(turn)" class="cd-chevron" aria-hidden="true">
+            <Icon name="chevron-right" size="sm" />
+          </span>
+        </component>
       </div>
 
       <!-- Cron notice — a turn triggered by a scheduled reminder, rendered as
@@ -1595,7 +1636,11 @@ function streamingTailIndex(turn: ChatTurn): number | null {
               <Icon name="git-fork" size="sm" />
             </button>
             </Tooltip>
+            <div v-if="$slots['assistant-reply-actions']" class="a-reply-actions">
+              <slot name="assistant-reply-actions" :turn="assistantRunFinalTurn(ti)" />
+            </div>
             <span v-if="turnTimeLabel(turn)" class="a-time">{{ turnTimeLabel(turn) }}</span>
+            <slot v-if="$slots['assistant-reply-status']" name="assistant-reply-status" :turn="assistantRunFinalTurn(ti)" />
           </div>
           <Transition name="sr-fade">
             <SessionRatingRow
@@ -1655,11 +1700,14 @@ function streamingTailIndex(turn: ChatTurn): number | null {
     <!-- Pending approvals are rendered in the bottom dock (ConversationPane),
          alongside questions, so both blocking prompts share one position. -->
 
-    <!-- Compaction in progress — body-sized activity notice -->
-    <ActivityNotice v-if="compaction" :ref="transcriptAux('compaction')" :label="t('conversation.compacting')" />
-
     <div v-if="showMascot" :ref="transcriptAux('working')" class="sending-placeholder">
-      <WorkingIndicator :label="showWorking ? workingLabel : ''" :idle="!showWorking" />
+      <WorkingIndicator
+        :label="isCompacting ? t('conversation.compacting') : showWorking ? workingLabel : ''"
+        :idle="!showWorking && !isCompacting"
+        :static-label="isCompacting"
+      >
+        <ActivityNotice v-if="isCompacting" />
+      </WorkingIndicator>
     </div>
 
     <!-- Inline queue — pending user messages shown after the running turn.
@@ -1713,19 +1761,20 @@ function streamingTailIndex(turn: ChatTurn): number | null {
               @activate="(att, img) => openRailMedia(att, img, queueClampId(item))"
             />
             <div class="q-clamp u-text-wrap" :class="{ 'is-clamped': isUserTextClamped(queueClampId(item)) }">
-              <button
-                type="button"
-                class="q-body"
-                :title="t('composer.editQueued')"
-                :ref="(el) => registerUserTextEl(queueClampId(item), el)"
-                @click="onQueueBodyTap(qi)"
-              >
-                <span v-if="item.text" class="u-text q-text"><ComposerText :text="item.text" :snapshot="queueSnapshot(item)" :interactive="false" :attachments="item.attachments" :media-labels="mediaLabels" :pasted-text-meta="pastedTextMeta" /></span>
-                <span v-else class="q-text q-text-placeholder">
-                  <Icon name="file" size="sm" />
-                  {{ t('composer.queuedAttachments', { n: item.attachments?.length ?? 0 }) }}
-                </span>
-              </button>
+              <Tooltip :text="t('composer.editQueued')">
+                <button
+                  type="button"
+                  class="q-body"
+                  :ref="(el) => registerUserTextEl(queueClampId(item), el)"
+                  @click="onQueueBodyTap(qi)"
+                >
+                  <span v-if="item.text" class="u-text q-text"><ComposerText :text="item.text" :snapshot="queueSnapshot(item)" :interactive="false" :attachments="item.attachments" :media-labels="mediaLabels" :pasted-text-meta="pastedTextMeta" /></span>
+                  <span v-else class="q-text q-text-placeholder">
+                    <Icon name="file" size="sm" />
+                    {{ t('composer.queuedAttachments', { n: item.attachments?.length ?? 0 }) }}
+                  </span>
+                </button>
+              </Tooltip>
               <button
                 v-if="clampableUserTurns.has(queueClampId(item))"
                 type="button"
@@ -1752,23 +1801,24 @@ function streamingTailIndex(turn: ChatTurn): number | null {
           </div>
           <!-- Touch-only explicit edit: on hover devices the body itself is
                tap-to-edit; on touch a stray tap must not dequeue the draft. -->
-          <button
-            type="button"
+          <IconButton
             class="q-edit"
-            :aria-label="t('composer.editQueued')"
+            size="xs"
+            :label="t('composer.editQueued')"
             @click.stop="onQueueEdit(qi)"
           >
             <Icon name="pencil" size="sm" />
-          </button>
+          </IconButton>
           <Tooltip :text="t('composer.remove')">
-          <button
-            type="button"
+          <IconButton
             class="q-rm"
-            :aria-label="t('composer.remove')"
+            size="xs"
+            tone="danger"
+            :label="t('composer.remove')"
             @click.stop="void client.unqueue(qi)"
           >
             <Icon name="close" size="sm" />
-          </button>
+          </IconButton>
           </Tooltip>
         </div>
       </div>
@@ -1821,10 +1871,10 @@ function streamingTailIndex(turn: ChatTurn): number | null {
   justify-content: center;
   gap: 10px;
   padding: 24px 16px;
-  color: var(--faint);
+  color: var(--color-text-quaternary);
   text-align: center;
 }
-.chat-empty-text { font-size: var(--ui-font-size-sm); }
+.chat-empty-text { font-size: var(--text-sm); }
 
 .chat-loading {
   flex: 1;
@@ -1833,9 +1883,9 @@ function streamingTailIndex(turn: ChatTurn): number | null {
   justify-content: center;
   gap: 8px;
   padding: 24px 16px;
-  color: var(--muted);
+  color: var(--color-text-faint);
 }
-.chat-loading-text { font-size: var(--ui-font-size-sm); }
+.chat-loading-text { font-size: var(--text-sm); }
 
 .chat {
   text-autospace: normal;
@@ -1967,37 +2017,15 @@ function streamingTailIndex(turn: ChatTurn): number | null {
   mask-image: linear-gradient(to bottom, black calc(100% - 5lh), transparent calc(100% - 1lh));
   -webkit-mask-image: linear-gradient(to bottom, black calc(100% - 5lh), transparent calc(100% - 1lh));
 }
-.u-text-wrap.is-clamped > .q-body {
+.u-text-wrap.is-clamped > .ui-tip > .q-body {
   max-height: calc(3 * 1lh);
   overflow: hidden;
   mask-image: linear-gradient(to bottom, black calc(100% - 1.2lh), transparent calc(100% - 0.2lh));
   -webkit-mask-image: linear-gradient(to bottom, black calc(100% - 1.2lh), transparent calc(100% - 0.2lh));
 }
 .u-text-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1);
-  align-self: center;
   margin-top: var(--space-2);
   padding: var(--space-2) var(--space-4);
-  border: none;
-  border-radius: var(--radius-full);
-  background: var(--color-surface-raised);
-  box-shadow: var(--shadow-sm);
-  color: var(--color-text);
-  font-family: var(--font-ui);
-  font-size: var(--ui-font-size-sm);
-  line-height: 1;
-  cursor: pointer;
-  user-select: none;
-  transition: box-shadow var(--duration-base) var(--ease-out);
-}
-.u-text-toggle:hover {
-  box-shadow: var(--shadow-md);
-}
-.u-text-toggle:focus-visible {
-  outline: 2px solid var(--color-accent);
-  outline-offset: 1px;
 }
 .u-text-wrap.is-clamped .u-text-toggle {
   position: absolute;
@@ -2013,27 +2041,9 @@ function streamingTailIndex(turn: ChatTurn): number | null {
   transform: rotate(180deg);
 }
 
-.u-edit {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 3px;
-  background: none;
-  border: none;
-  border-radius: var(--radius-xs);
-  color: var(--color-text-muted);
-  font: inherit;
-  font-size: var(--text-base);
-  line-height: 1;
-  cursor: pointer;
-  transition: opacity 0.12s, color 0.12s, background-color 0.12s;
-}
-.u-edit svg {
-  display: block;
-  flex: none;
-}
-.u-edit:hover { opacity: 1; color: var(--color-accent); background: var(--hover); }
-.u-copy {
+.u-meta .u-edit:hover:not(:disabled),
+.u-meta .u-copy:hover:not(:disabled) { color: var(--color-accent); }
+.a-cpbtn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -2050,8 +2060,7 @@ function streamingTailIndex(turn: ChatTurn): number | null {
   min-height: 20px;
   box-sizing: border-box;
 }
-.u-copy svg { display: block; flex: none; }
-.u-copy:hover { opacity: 1; color: var(--color-accent); background: var(--hover); }
+.a-cpbtn:hover { opacity: 1; color: var(--color-accent); background: var(--color-hover); }
 .u-edit-wrap { display: flex; justify-content: flex-end; }
 
 .compact-divider {
@@ -2068,7 +2077,7 @@ function streamingTailIndex(turn: ChatTurn): number | null {
 .cd-line {
   flex: 1;
   height: 1px;
-  background: var(--line);
+  background: var(--color-line);
 }
 .cd-label {
   flex: none;
@@ -2077,20 +2086,70 @@ function streamingTailIndex(turn: ChatTurn): number | null {
   gap: 8px;
   max-width: 80%;
   font-size: var(--text-base);
-  color: var(--muted);
+  color: var(--color-text-faint);
   white-space: nowrap;
 }
-.cd-btn {
-  background: none;
-  border: none;
-  padding: 0;
-  cursor: pointer;
-  font: inherit;
-  font-size: var(--text-base);
-  color: var(--muted);
+.cd-card {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  max-width: 100%;
+  padding: 4px 8px 4px 5px;
+  border: var(--p-hairline) solid var(--color-line);
+  border-radius: var(--radius-md);
+  background: var(--color-bg);
+  font: var(--text-xs)/1.25 var(--font-ui);
+  color: var(--color-text-muted);
+  white-space: nowrap;
 }
-.cd-view { color: var(--color-accent); }
-.cd-btn:hover .cd-view { text-decoration: underline; }
+.cd-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--color-context-compaction) 13%, transparent);
+  color: var(--color-context-compaction);
+}
+.cd-title {
+  color: var(--color-text);
+  font-weight: var(--weight-medium);
+}
+.cd-tokens {
+  font-variant-numeric: tabular-nums;
+}
+.cd-saved {
+  padding: 1px 5px;
+  border-radius: var(--radius-xs);
+  background: var(--color-success-soft);
+  color: var(--color-success);
+  font-size: 11px;
+  font-weight: var(--weight-medium);
+  font-variant-numeric: tabular-nums;
+}
+.cd-chevron {
+  display: inline-flex;
+  color: var(--color-text-faint);
+}
+.cd-btn {
+  cursor: pointer;
+}
+.cd-card.cd-btn:hover {
+  background: var(--color-hover);
+  border-color: var(--color-line-strong);
+}
+.cd-card.cd-open {
+  border-color: var(--color-line-strong);
+}
+.cd-card.cd-open .cd-chevron {
+  color: var(--color-text);
+}
+.cd-card.cd-btn:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
+}
 
 .chat > .turn-failed {
   margin-top: var(--chat-turn-gap);
@@ -2169,6 +2228,14 @@ function streamingTailIndex(turn: ChatTurn): number | null {
   align-items: center;
   gap: 6px;
 }
+.a-reply-actions { display: contents; }
+.a-msg-meta:has(> .a-reply-actions > *) { gap: 2px; }
+.a-msg-meta:has(> .a-reply-actions > *) .a-time {
+  margin-inline: 6px;
+  color: light-dark(rgb(0 0 0 / 45%), rgb(255 255 255 / 42%));
+  font-size: var(--ui-c1);
+  line-height: 1.5;
+}
 .chat > .sr-tailrow {
   margin-top: 6px;
 }
@@ -2191,28 +2258,6 @@ function streamingTailIndex(turn: ChatTurn): number | null {
   line-height: 20px;
 }
 
-.a-cpbtn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 3px;
-  background: none;
-  border: none;
-  border-radius: var(--radius-xs);
-  color: var(--color-text-muted);
-  font: inherit;
-  font-size: var(--text-base);
-  line-height: 1;
-  cursor: pointer;
-  transition: opacity 0.12s, color 0.12s, background-color 0.12s;
-  min-height: 20px;
-  box-sizing: border-box;
-}
-.a-cpbtn:hover {
-  opacity: 1;
-  color: var(--color-accent);
-  background: var(--hover);
-}
 .a-cpbtn svg {
   display: block;
   flex: none;
@@ -2223,13 +2268,13 @@ function streamingTailIndex(turn: ChatTurn): number | null {
     margin-top: 6px;
   }
   .a-cpbtn {
-    font-size: var(--ui-font-size-sm);
+    font-size: var(--text-sm);
     padding: 8px 10px;
     margin: -4px -6px;
   }
 }
 .a-msg .msg {
-  font-size: var(--ui-font-size);
+  font-size: var(--text-base);
   line-height: var(--leading-prose);
   color: var(--color-text);
   font-weight: 500;
@@ -2398,7 +2443,7 @@ function streamingTailIndex(turn: ChatTurn): number | null {
   gap: 2px;
 }
 .skill-act-head {
-  font-size: var(--ui-font-size-sm);
+  font-size: var(--text-sm);
   font-weight: 500;
   color: var(--color-accent-hover);
   display: flex;
@@ -2411,7 +2456,7 @@ function streamingTailIndex(turn: ChatTurn): number | null {
 }
 .skill-act-args {
   font-size: var(--text-base);
-  color: var(--muted);
+  color: var(--color-text-faint);
   padding-left: 17px;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -2451,9 +2496,10 @@ function streamingTailIndex(turn: ChatTurn): number | null {
     overflow: hidden;
     text-overflow: ellipsis;
   }
-  .cd-btn {
-    flex-direction: column;
-    gap: 4px;
+  .cd-card {
+    flex-wrap: wrap;
+    white-space: normal;
+    row-gap: 4px;
   }
   .u-edit-confirm {
     flex-wrap: wrap;
@@ -2461,15 +2507,14 @@ function streamingTailIndex(turn: ChatTurn): number | null {
     max-width: calc(100vw - 28px);
   }
   .ts {
-    font-size: var(--ui-font-size-sm);
+    font-size: var(--text-sm);
   }
   .chat-empty-text,
   .chat-loading-text {
-    font-size: var(--ui-font-size-lg);
+    font-size: var(--ui-b1);
   }
-  .cd-label,
-  .cd-btn {
-    font-size: var(--ui-font-size);
+  .cd-label {
+    font-size: var(--text-base);
   }
 }
 
@@ -2484,27 +2529,12 @@ function streamingTailIndex(turn: ChatTurn): number | null {
 .top-sentinel-loading {
   opacity: 0.8;
 }
-.top-sentinel-btn {
-  appearance: none;
-  border: var(--p-hairline) solid var(--border);
-  background: transparent;
-  color: var(--muted);
-  font-size: var(--ui-font-size-sm);
-  padding: 4px 12px;
-  border-radius: 999px;
-  cursor: pointer;
-  transition: color 0.15s ease, border-color 0.15s ease;
-}
-.top-sentinel-btn:hover {
-  color: var(--fg);
-  border-color: var(--fg);
-}
 .top-sentinel-text {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  color: var(--muted);
-  font-size: var(--ui-font-size-sm);
+  color: var(--color-text-faint);
+  font-size: var(--text-sm);
 }
 
 .chat { background: transparent; }
@@ -2542,7 +2572,7 @@ function streamingTailIndex(turn: ChatTurn): number | null {
   gap: 8px;
   padding: 0 6px;
   color: var(--color-text-faint);
-  font-size: var(--ui-font-size-xs);
+  font-size: var(--text-xs);
 }
 .q-title {
   display: inline-flex;
@@ -2600,7 +2630,7 @@ function streamingTailIndex(turn: ChatTurn): number | null {
   transition: background var(--duration-fast) var(--ease-out);
 }
 .q-bub:hover {
-  background: var(--hover);
+  background: var(--color-hover);
 }
 .q-content {
   display: flex;
@@ -2678,59 +2708,36 @@ function streamingTailIndex(turn: ChatTurn): number | null {
   border-radius: var(--radius-sm);
   border: var(--p-hairline) solid var(--color-line);
   color: var(--color-text-muted);
-  font-size: calc(var(--ui-font-size) - 3px);
+  font-size: calc(var(--text-base) - 3px);
   max-width: 160px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.q-rm {
-  flex: none;
+.q-bub .q-rm,
+.q-bub .q-edit {
   width: 22px;
   height: 22px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  background: none;
-  border: none;
-  border-radius: var(--radius-sm);
   color: var(--color-text-faint);
-  cursor: pointer;
+}
+.q-bub .q-rm {
   opacity: 0;
   transition: opacity 0.12s ease, background 0.12s ease, color 0.12s ease;
 }
 .q-bub:hover .q-rm,
 .q-bub:focus-within .q-rm,
-.q-rm:focus-visible {
+.q-bub .q-rm:focus-visible {
   opacity: 1;
 }
-.q-rm:hover {
-  background: var(--color-danger-soft);
-  color: var(--color-danger);
+.q-bub .q-edit {
+  display: none;
 }
 
-.q-edit {
-  display: none;
-  flex: none;
-  width: 22px;
-  height: 22px;
-  align-items: center;
-  justify-content: center;
-  background: none;
-  border: none;
-  border-radius: var(--radius-sm);
-  color: var(--color-text-faint);
-  cursor: pointer;
-}
-.q-edit:hover {
-  background: var(--color-hover);
-  color: var(--color-text);
-}
 @media (hover: none) {
   .q-grip { display: none; }
-  .q-edit { display: inline-flex; }
-  .q-rm,
-  .q-edit {
+  .q-bub .q-edit { display: inline-flex; }
+  .q-bub .q-rm,
+  .q-bub .q-edit {
     opacity: 1;
     position: relative;
   }
@@ -2763,3 +2770,5 @@ function streamingTailIndex(turn: ChatTurn): number | null {
 }
 
 </style>
+
+<style scoped src="./clamp-toggle.css"></style>

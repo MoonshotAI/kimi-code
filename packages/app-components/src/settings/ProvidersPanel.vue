@@ -101,21 +101,21 @@ function onManagedRow(): void {
   <section class="pp">
     <template v-if="view.kind === 'list'">
       <div class="pp-head">
-        <h3 class="pp-title">{{ t('settings.tabs.providers') }}</h3>
+        <h3 class="sec-title">{{ t('settings.tabs.providers') }}</h3>
         <Button variant="secondary" size="sm" @click="navigate({ kind: 'add' })">
           <Icon name="plus" size="sm" />
           {{ t('providers.addProvider') }}
         </Button>
       </div>
 
-      <div v-if="loading" class="pp-loading">
+      <div v-if="loading" class="settings-loading">
         <Spinner size="sm" />
         <span>{{ t('providers.loading') }}</span>
       </div>
 
       <template v-else>
         <h4 class="pp-group-title">{{ t('providers.groupManaged') }}</h4>
-        <div class="pp-group">
+        <div class="settings-group settings-group-divided">
           <button type="button" class="pp-row" @click="onManagedRow">
             <ProviderBrandIcon :id="MANAGED_KIMI_CODE_PROVIDER_ID" size="sm" />
             <div class="grow">
@@ -132,7 +132,7 @@ function onManagedRow(): void {
         </div>
 
         <h4 class="pp-group-title">{{ t('providers.groupCustom') }}</h4>
-        <div class="pp-group">
+        <div class="settings-group settings-group-divided">
           <div v-if="customProviders.length === 0" class="pp-empty">
             <div class="pp-empty-title">{{ t('providers.emptyCustom') }}</div>
             <div class="pp-empty-hint">{{ t('providers.emptyCustomHint') }}</div>
@@ -184,6 +184,8 @@ function onManagedRow(): void {
   </section>
 </template>
 
+<style scoped src="./settings-common.css"></style>
+
 <style scoped>
 .pp { display: flex; flex-direction: column; }
 .pp-head {
@@ -193,13 +195,7 @@ function onManagedRow(): void {
   gap: var(--space-3);
   margin-bottom: var(--space-3);
 }
-.pp-title {
-  margin: 0;
-  font-family: var(--font-ui);
-  font-size: var(--text-base);
-  font-weight: var(--weight-medium);
-  color: var(--color-text);
-}
+.pp-head .sec-title { margin: 0; }
 
 .pp-group-title {
   margin: var(--space-4) 2px var(--space-2);
@@ -209,24 +205,6 @@ function onManagedRow(): void {
   color: var(--color-text);
 }
 .pp-group-title:first-of-type { margin-top: 0; }
-
-.pp-loading {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-2);
-  padding: var(--space-4) 0;
-  color: var(--color-text-muted);
-  font-family: var(--font-ui);
-  font-size: var(--text-base);
-}
-
-.pp-group {
-  overflow: hidden;
-  border-radius: var(--radius-xl);
-  background: var(--color-surface);
-}
-.pp-group > .pp-row + .pp-row { border-top: var(--p-hairline) solid var(--color-line); }
 
 .pp-row {
   display: flex;
@@ -307,9 +285,5 @@ function onManagedRow(): void {
   color: var(--color-text-quaternary);
 }
 
-.pp-row.flash { animation: pp-flash 1.2s var(--ease-out); }
-@keyframes pp-flash {
-  0% { background: var(--color-accent-soft); }
-  100% { background: transparent; }
-}
+.pp-row.flash { animation: ui-row-flash var(--duration-flash) var(--ease-out); }
 </style>

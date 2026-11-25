@@ -5,7 +5,8 @@ import { environmentStatusSchema } from './events-zod';
 export const environmentBindingResponseSchema = z.object({
   workspace_id: z.string(),
   environment_id: z.string(),
-  cwd: z.string().optional(),
+  environment_cwd: z.string().optional(),
+  cwd: z.string().optional().meta({ deprecated: true }),
 });
 
 export const sessionEnvironmentParamsSchema = z.object({

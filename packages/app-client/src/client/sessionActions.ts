@@ -118,12 +118,17 @@ export function createSessionActions(deps: SessionActionsDeps) {
       if (backlog === 'lined-up') deps.flushQueue(sid);
       return 'queued';
     }
-    void retryWhileOccupied(sid, () => getKimiWebApi().compactSession(sid, instruction))
-      .catch((err) => {
+    const store = promptStore();
+    store.beginCompactStart(sid);
+    void retryWhileOccupied(sid, () => getKimiWebApi().compactSession(sid, instruction)).then(
+      () => store.holdCompactStartGrace(sid),
+      (err) => {
+        store.settleCompactStart(sid);
         hooks?.onRequestRejected?.(err);
         if (isSessionOccupiedError(err)) return;
         warningsStore().pushOperationFailure('compact', err, { sessionId: sid });
-      });
+      },
+    );
     return 'sent';
   }
 

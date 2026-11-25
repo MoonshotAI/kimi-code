@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch, type ComponentPublicInstance } from 'vue';
 import { useI18n } from 'vue-i18n';
+import FeedbackIcon from '~icons/kimi/feedback';
 import type { ManagedQuotaResult } from '../api/types';
 import { useKimiWebClient, type ColorScheme } from '@moonshot-ai/app-client/client';
 import { useConfirmDialog } from '@moonshot-ai/app-client/composables';
@@ -17,11 +18,12 @@ import {
 } from '@moonshot-ai/app-core/lib';
 import { track } from '@moonshot-ai/app-client/contracts';
 import { openUpgrade } from '@moonshot-ai/app-core/lib';
-import { Badge, Button, Icon, Kbd, Menu, MenuItem, Spinner } from '@moonshot-ai/app-ui';
+import { Avatar, Badge, Button, Icon, Kbd, Menu, MenuItem, Spinner } from '@moonshot-ai/app-ui';
 
 const emit = defineEmits<{
   login: [];
   openSettings: [];
+  openFeedback: [];
 }>();
 
 const { t, locale } = useI18n();
@@ -36,15 +38,6 @@ const nickname = computed(() => userInfo.value?.nickname || t('sidebar.defaultUs
 const showUpgrade = computed(() => membership.value === 'free' || shouldShowUpgrade(userInfo.value?.userLevel));
 const showUsageRow = computed(() => membership.value !== 'free');
 const accountLevel = computed(() => userInfo.value?.userLevelName?.trim() ?? '');
-
-const avatarLoadFailed = ref(false);
-watch(
-  () => userInfo.value?.avatar,
-  () => {
-    avatarLoadFailed.value = false;
-  },
-);
-const showAvatar = computed(() => Boolean(userInfo.value?.avatar) && !avatarLoadFailed.value);
 
 const colorScheme = client.colorScheme;
 const themeLabel = computed(() => t(`theme.${colorScheme.value}`));
@@ -282,6 +275,11 @@ function onOpenSettings(): void {
   emit('openSettings');
 }
 
+function onOpenFeedback(): void {
+  closeMenu();
+  emit('openFeedback');
+}
+
 async function onLogout(): Promise<void> {
   closeMenu();
   await confirm({
@@ -303,10 +301,7 @@ async function onLogout(): Promise<void> {
     @click.stop="toggleMenu"
   >
     <template v-if="signedIn">
-      <span class="user-menu-avatar" aria-hidden="true">
-        <img v-if="showAvatar" :src="userInfo?.avatar" alt="" @error="avatarLoadFailed = true" />
-        <Icon v-else name="user" size="sm" />
-      </span>
+      <Avatar :src="userInfo?.avatar" size="sm" shape="circle" aria-hidden="true" />
       <span class="user-menu-name">{{ nickname }}</span>
       <Badge v-if="accountLevel" variant="neutral" size="sm">{{ accountLevel }}</Badge>
     </template>
@@ -318,8 +313,8 @@ async function onLogout(): Promise<void> {
 
   <!-- Teleport: the sidebar column's container-type would capture position:fixed and mis-anchor the menu. -->
   <Teleport to="body">
-    <Transition name="menu-pop">
-      <Menu v-if="menuOpen" ref="menuRef" class="user-menu" :style="menuStyle" @click.stop>
+    <Transition name="ui-menu-pop">
+      <Menu v-if="menuOpen" ref="menuRef" class="ui-menu-floating user-menu" :style="menuStyle" @click.stop>
         <template v-if="signedIn">
           <MenuItem
             v-if="showUsageRow"
@@ -345,6 +340,11 @@ async function onLogout(): Promise<void> {
           <MenuItem separator />
         </template>
 
+        <MenuItem @click="onOpenSettings" @mouseenter="scheduleSubmenuClose">
+          <Icon name="settings" size="sm" />
+          <span class="user-menu-item-label">{{ t('settings.title') }}</span>
+          <Kbd v-if="settingsShortcutKeys.length > 0" :keys="settingsShortcutKeys" />
+        </MenuItem>
         <MenuItem
           :ref="setRowRef('theme')"
           aria-haspopup="true"
@@ -377,10 +377,9 @@ async function onLogout(): Promise<void> {
           <span class="user-menu-row-value">{{ currentLanguageLabel }}</span>
           <Icon name="chevron-right" size="sm" />
         </MenuItem>
-        <MenuItem @click="onOpenSettings" @mouseenter="scheduleSubmenuClose">
-          <Icon name="settings" size="sm" />
-          <span class="user-menu-item-label">{{ t('settings.title') }}</span>
-          <Kbd v-if="settingsShortcutKeys.length > 0" :keys="settingsShortcutKeys" />
+        <MenuItem @click="onOpenFeedback" @mouseenter="scheduleSubmenuClose">
+          <FeedbackIcon aria-hidden="true" />
+          <span class="user-menu-item-label">{{ t('feedback.menuLabel') }}</span>
         </MenuItem>
         <template v-if="signedIn && !rcMode">
           <MenuItem separator />
@@ -402,11 +401,11 @@ async function onLogout(): Promise<void> {
 
   <!-- Sibling teleport: stacks above the parent menu by DOM order at the same --z-dropdown tier. -->
   <Teleport to="body">
-    <Transition name="menu-pop">
+    <Transition name="ui-menu-pop">
       <Menu
         v-if="openSubmenu !== null"
         ref="submenuRef"
-        class="user-submenu"
+        class="ui-menu-floating user-submenu"
         :style="submenuStyle"
         :role="openSubmenu === 'usage' ? 'dialog' : 'menu'"
         @click.stop
@@ -456,30 +455,13 @@ async function onLogout(): Promise<void> {
 
 <style scoped>
 .user-menu-trigger {
-  display: flex;
-  align-items: center;
-  gap: var(--sb-gap);
-  width: 100%;
-  min-width: 0;
   padding: 8px calc(var(--sb-pad-x) - var(--sb-inset));
   border: none;
   border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--color-text);
-  font-family: var(--font-ui);
-  font-size: var(--ui-font-size-sm);
-  font-weight: var(--weight-medium);
-  line-height: var(--leading-tight);
-  cursor: pointer;
-  text-align: left;
 }
 .user-menu-trigger:hover,
 .user-menu-trigger[aria-expanded='true'] {
   background: var(--sb-hover);
-}
-.user-menu-trigger:focus-visible {
-  outline: none;
-  box-shadow: var(--p-focus-ring);
 }
 html.macos-desktop .user-menu-trigger {
   border-bottom-left-radius: var(--radius-window-chip);
@@ -490,24 +472,7 @@ html.macos-desktop.vibrancy .user-menu-trigger :deep(.ui-badge--neutral) {
 .user-menu-trigger svg {
   flex: none;
 }
-.user-menu-avatar {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 24px;
-  height: 24px;
-  flex: none;
-  border-radius: var(--radius-full);
-  background: var(--color-surface-sunken);
-  color: var(--color-text-muted);
-  overflow: hidden;
-}
-.user-menu-avatar img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-html.macos-desktop.vibrancy .user-menu-avatar {
+html.macos-desktop.vibrancy .user-menu-trigger :deep(.ui-avatar) {
   background: var(--color-selected);
 }
 .user-menu-name {
@@ -518,43 +483,20 @@ html.macos-desktop.vibrancy .user-menu-avatar {
 }
 
 .user-menu {
-  position: fixed;
-  top: 0;
-  left: 0;
-  z-index: var(--z-dropdown);
+  --menu-pop-shift: 2px;
   max-height: calc(100vh - 16px);
   overflow-y: auto;
   overflow-x: hidden;
   user-select: none;
 }
 .user-submenu {
-  position: fixed;
-  top: 0;
-  left: 0;
-  z-index: var(--z-dropdown);
+  --menu-pop-shift: 2px;
   width: max-content;
   max-height: calc(100vh - 16px);
   overflow-y: auto;
   overflow-x: hidden;
   user-select: none;
 }
-.menu-pop-enter-active {
-  transition:
-    opacity var(--duration-base) var(--ease-out),
-    transform var(--duration-base) var(--ease-out);
-}
-.menu-pop-leave-active {
-  transition:
-    opacity var(--duration-fast) var(--ease-out),
-    transform var(--duration-fast) var(--ease-out);
-  pointer-events: none;
-}
-.menu-pop-enter-from,
-.menu-pop-leave-to {
-  opacity: 0;
-  transform: scale(0.97) translateY(var(--menu-pop-shift, 2px));
-}
-
 .user-menu-usage {
   display: flex;
   flex-direction: column;
@@ -619,12 +561,15 @@ html.macos-desktop.vibrancy .user-menu-avatar {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.user-menu-item-label:has(+ .user-menu-row-value) {
+  flex: 1 0 auto;
+}
 .user-menu-login-label {
   color: var(--color-accent);
 }
 
 .user-menu-row-value {
-  flex: none;
+  flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -633,3 +578,5 @@ html.macos-desktop.vibrancy .user-menu-avatar {
   color: var(--color-text-faint);
 }
 </style>
+
+<style scoped src="@moonshot-ai/app-components/sidebar-row-button.css"></style>

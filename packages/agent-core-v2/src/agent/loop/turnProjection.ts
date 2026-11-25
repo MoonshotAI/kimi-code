@@ -55,7 +55,8 @@ import {
   type TurnInterruptReason,
 } from './turnEvents';
 import { AgentErrorEvent } from '#/agent/mcp/mcpEvents';
-import { TurnEnded, TurnPrompt } from './turnOps';
+import { TurnEnded, TurnPrompt, type TurnReplyModel } from './turnOps';
+import type { ISessionRequestAttributionService } from '#/session/requestAttribution/requestAttribution';
 import { ErrorCodes, Error2, isError2, toKimiErrorPayload } from '#/errors';
 import type {
   AfterStepContext,
@@ -128,13 +129,17 @@ interface ActiveTurn {
   mode: 'agent' | 'plan' | undefined;
   providerType: string | undefined;
   protocol: string | undefined;
+  replyModel?: { requestId?: string; model: TurnReplyModel };
 }
 
 type MutableTurn = {
   -readonly [K in keyof Turn]: Turn[K];
 };
 
+type TurnContinuation = Extract<LoopEmitted, { type: 'turn.ended' }>['continuation'];
+
 export interface TurnProjectionOptions {
+  readonly attribution: ISessionRequestAttributionService;
   readonly dispatcher: IEventDispatcher;
   readonly events: IEventBus;
   readonly scopeContext: IAgentScopeContext;
@@ -326,6 +331,7 @@ export class AgentTurnProjection {
     if (turn === undefined) return undefined;
     const step = turn.current;
     if (step === undefined) return undefined;
+    if (event.draft.type === 'aborted') return undefined;
     if (event.draft.type !== 'failed') {
       const finishReason = step.providerFinishReason ?? 'completed';
       const context: AfterStepContext = {
@@ -660,7 +666,9 @@ export class AgentTurnProjection {
         step.providerFinishReason = attributes?.finish?.finishReason ?? step.providerFinishReason;
         step.rawFinishReason = attributes?.finish?.rawFinishReason ?? step.rawFinishReason;
         step.messageId = attributes?.messageId ?? step.messageId;
-        this.lastRequestId = this.activeRequestTrace?.requestId;
+        const requestId = this.activeRequestTrace?.requestId;
+        this.lastRequestId = requestId;
+        turn.replyModel = attributes?.model === undefined ? undefined : { requestId, model: attributes.model };
         const toolCalls = step.entry.toolCalls;
         if (toolCalls.length === 0 && attributes?.partial !== true) this.endOrInterruptStep(turn, step, step.providerFinishReason ?? 'completed');
         else if (toolCalls.length > 0) step.pendingToolIds = new Set(toolCalls.map((call) => call.id));
@@ -707,7 +715,7 @@ export class AgentTurnProjection {
         }
         const turn = this.active;
         if (turn === undefined) return;
-        return this.finishTurn(turn, outcome);
+        return this.finishTurn(turn, outcome, event.continuation);
       }
       case 'prompt.notified':
       case 'prompt.steered': {
@@ -839,12 +847,12 @@ export class AgentTurnProjection {
     }));
   }
 
-  private async finishTurn(turn: ActiveTurn, outcome: Extract<LoopEmitted, { type: 'turn.ended' }>['outcome']): Promise<void> {
+  private async finishTurn(turn: ActiveTurn, outcome: Extract<LoopEmitted, { type: 'turn.ended' }>['outcome'], continuation?: TurnContinuation): Promise<void> {
     if (this.active !== turn) return;
     if (turn.abortReason !== undefined || turn.controller.signal.aborted || outcome.type === 'aborted') {
       const reason = turn.abortReason ?? (turn.controller.signal.aborted ? turn.controller.signal.reason : undefined) ?? abortError('Turn aborted');
       this.interruptRunForCancel(turn, reason);
-      await this.endTurn(turn, { type: 'cancelled', steps: turn.steps, reason });
+      await this.endTurn(turn, { type: 'cancelled', steps: turn.steps, reason }, undefined, continuation);
       return;
     }
     if (turn.filtered) {
@@ -855,25 +863,25 @@ export class AgentTurnProjection {
           name: 'ProviderFilteredError',
           details: { finishReason: 'filtered' },
         }),
-      });
+      }, undefined, continuation);
       return;
     }
     if (turn.maxStepsError !== undefined || (outcome.type !== 'failed' && outcome.cause?.reason === MAX_STEPS_REASON)) {
       const error = turn.maxStepsError ?? createMaxStepsExceededError(this.options.maxSteps() ?? 0);
       this.failStep(turn.id, turn.interruptStep, error);
-      await this.endTurn(turn, { type: 'failed', steps: turn.steps, error });
+      await this.endTurn(turn, { type: 'failed', steps: turn.steps, error }, undefined, continuation);
       return;
     }
     if (outcome.type === 'failed' || turn.failedStep !== undefined) {
       const error = turn.failedStep?.error ?? (outcome.type === 'failed' ? outcome.error : undefined) ?? new Error('Turn failed');
       this.failStep(turn.id, turn.interruptStep, error);
-      await this.endTurn(turn, { type: 'failed', steps: turn.steps, error });
+      await this.endTurn(turn, { type: 'failed', steps: turn.steps, error }, undefined, continuation);
       return;
     }
     if (outcome.type === 'blocked') {
       const error = new Error2(ErrorCodes.INTERNAL, outcome.cause.message ?? outcome.cause.reason);
       this.failStep(turn.id, turn.interruptStep, error);
-      await this.endTurn(turn, { type: 'failed', steps: turn.steps, error });
+      await this.endTurn(turn, { type: 'failed', steps: turn.steps, error }, undefined, continuation);
       return;
     }
     const result: LoopRunResult = {
@@ -882,7 +890,7 @@ export class AgentTurnProjection {
       truncated: turn.lastStopReason === 'truncated',
       stopReason: this.promptOnlyTurnIds.has(turn.id) ? 'prompt_only' : turn.forcedStopReason,
     };
-    await this.endTurn(turn, result, this.promptOnlyTurnIds.has(turn.id));
+    await this.endTurn(turn, result, this.promptOnlyTurnIds.has(turn.id), continuation);
   }
 
   private failStep(turnId: number, step: number | undefined, error: unknown): void {
@@ -900,7 +908,7 @@ export class AgentTurnProjection {
     }
   }
 
-  private async endTurn(turn: ActiveTurn, result: TurnResult, promptOnly = false): Promise<void> {
+  private async endTurn(turn: ActiveTurn, result: TurnResult, promptOnly = false, continuation?: TurnContinuation): Promise<void> {
     if (this.active !== turn) return;
     this.lastResultValue = result;
     this.active = undefined;
@@ -915,6 +923,7 @@ export class AgentTurnProjection {
     const durationMs = promptOnly ? 0 : Date.now() - turn.startedAt;
     const error = result.type === 'failed' ? toKimiErrorPayload(result.error) : undefined;
     const requestId = this.turnRequestId(promptOnly, result.type === 'cancelled', result.type === 'completed');
+    const modelSteps = this.options.attribution.finishModelSteps(this.options.scopeContext.agentId, turn.id);
     const interruptReason = result.type === 'completed' ? undefined : interruptReasonFor(result);
     const turnEnded = this.options.dispatcher.dispatch(new TurnEnded({
       agentId: this.options.scopeContext.agentId,
@@ -925,6 +934,9 @@ export class AgentTurnProjection {
       interruptReason,
       stopReason: result.type === 'completed' ? result.stopReason : undefined,
       requestId,
+      replyModel: modelSteps !== undefined && turn.replyModel?.requestId === requestId ? turn.replyModel?.model : undefined,
+      modelSteps,
+      continuation,
     }));
     if (error !== undefined) void this.options.dispatcher.dispatch(new AgentErrorEvent({ ...error, agentId: this.options.scopeContext.agentId }));
     this.options.prompts.complete(turn.id, result);

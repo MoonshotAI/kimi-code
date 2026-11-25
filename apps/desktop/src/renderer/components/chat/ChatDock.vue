@@ -24,6 +24,7 @@ import { useConfirmDialog } from '@moonshot-ai/app-client/composables';
 import { panelApiKey } from '@moonshot-ai/app-client/panel';
 import { createDockMetricsPublisher, dockTasksPillPriority, installImeCompositionLatch, isImeKeyEvent, LIVE_PILL_PRIORITY, planDockPillCollapse, publishDockHeightPx } from '@moonshot-ai/app-client/lib';
 import type { DockPillKey } from '@moonshot-ai/app-client/lib';
+import type { SlashCommand } from '@moonshot-ai/app-core/lib';
 import { formatDuration } from '@moonshot-ai/app-components';
 import { useAppDialogs } from '@moonshot-ai/app-client/composables';
 
@@ -46,6 +47,7 @@ const props = defineProps<{
   statusNote?: string;
   beforeSubmit?: () => boolean;
   deferSubmitReset?: boolean;
+  extraBuiltinCommands?: readonly SlashCommand[];
   onCaptureScreenshot?: () => void;
   screenshotShortcutKeys?: string[];
   screenshotShortcutUnavailable?: boolean;
@@ -494,6 +496,7 @@ defineExpose({ loadForEdit, insertQuote, insertScreenshotAnnotation, insertPathM
                   size="sm"
                   :label="t('status.goalResume')"
                   :tooltip="t('status.goalResume')"
+                  :disabled="!client.goalModeAvailable.value"
                   @click.stop="client.controlGoal('resume')"
                 >
                   <Icon name="play" size="md" />
@@ -702,6 +705,7 @@ defineExpose({ loadForEdit, insertQuote, insertScreenshotAnnotation, insertPathM
         :status-note="props.statusNote"
         :before-submit="props.beforeSubmit"
         :defer-submit-reset="props.deferSubmitReset"
+        :extra-builtin-commands="props.extraBuiltinCommands"
         ref="composerRef"
         :on-capture-screenshot="props.onCaptureScreenshot"
         :screenshot-shortcut-keys="props.screenshotShortcutKeys"
@@ -714,7 +718,6 @@ defineExpose({ loadForEdit, insertQuote, insertScreenshotAnnotation, insertPathM
         @steer-queued="emit('steerQueued', $event)"
         @command="emit('command', $event)"
         @interrupt="emit('interrupt')"
-        @continue="emit('continue')"
         @focus-goal="emit('focusGoal')"
         @pick-model="emit('pickModel')"
         @login="emit('login')"

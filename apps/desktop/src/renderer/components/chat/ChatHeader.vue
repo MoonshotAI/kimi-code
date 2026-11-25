@@ -4,9 +4,9 @@ import { computed, inject, nextTick, onUnmounted, ref, watch } from 'vue';
 import { registerBrowserOverlayMenu } from '../../lib/browserOverlayMenu';
 import type { BrowserOverlayMenuItem } from '../../../shared/browser-overlay';
 import { useI18n } from 'vue-i18n';
-import { copyTextToClipboard } from '@moonshot-ai/app-core/lib';
+import { copyTextToClipboard, sessionLink } from '@moonshot-ai/app-core/lib';
 import { useSidebarTabs } from '@moonshot-ai/app-core';
-import { isMacosDesktop } from '@moonshot-ai/app-core/lib';
+import { isMacosDesktop, sessionLinksSupported } from '@moonshot-ai/app-core/lib';
 import { OpenInMenu } from '@moonshot-ai/app-components';
 import { track } from '@moonshot-ai/app-client/contracts';
 import { useKimiWebClient } from '@moonshot-ai/app-client/client';
@@ -17,6 +17,7 @@ import ViewToggles from './ViewToggles.vue';
 const { t } = useI18n();
 
 const { sidebarTabs } = useSidebarTabs();
+const sessionLinkCopyable = sessionLinksSupported();
 
 const client = useKimiWebClient();
 const sessionViews = sessionViewsStore();
@@ -52,7 +53,7 @@ const kebabRef = ref<InstanceType<typeof IconButton> | null>(null);
 const menuRef = ref<InstanceType<typeof Menu> | null>(null);
 const menuStyle = ref<Record<string, string>>({});
 
-type CopyAction = 'all' | 'summary' | 'id';
+type CopyAction = 'all' | 'summary' | 'id' | 'link';
 const copiedAction = ref<CopyAction | null>(null);
 let copyRequest = 0;
 let copiedTimer: ReturnType<typeof setTimeout> | undefined;
@@ -78,6 +79,7 @@ const nativeMenu = registerBrowserOverlayMenu({
     { kind: 'item', id: 'copy-summary', ...copyItem('summary', t('header.copyFinalSummary'), 'file-text'), keepOpen: true },
     ...(sessionId.value ? [
       { kind: 'item' as const, id: 'copy-id', ...copyItem('id', t('header.copySessionId'), 'copy'), keepOpen: true },
+      ...(sessionLinkCopyable ? [{ kind: 'item' as const, id: 'copy-link', ...copyItem('link', t('header.copySessionLink'), 'link'), keepOpen: true }] : []),
       { kind: 'item' as const, id: 'export', label: t('header.exportSession'), icon: 'download' },
       ...(!archived.value ? [{ kind: 'item' as const, id: 'reload', label: t('header.reloadSession'), icon: 'refresh' }] : []),
       ...(!archived.value || sidebarTabs.value ? [{ kind: 'separator' as const }] : []),
@@ -92,7 +94,7 @@ const nativeMenu = registerBrowserOverlayMenu({
     if (id.slice(0, separator) !== menuContext) return;
     const action = id.slice(separator + 1);
     const actions: Record<string, () => void> = {
-      'copy-all': onCopyAll, 'copy-summary': onCopyFinalSummary, 'copy-id': copySessionId,
+      'copy-all': onCopyAll, 'copy-summary': onCopyFinalSummary, 'copy-id': copySessionId, 'copy-link': copySessionLink,
       pin: togglePin, rename: () => { void startRename(); }, fork: forkSession,
       export: exportSession, reload: reloadSession, restore: startRestore, archive: startArchive,
     };
@@ -220,6 +222,12 @@ function copySessionId(): void {
   void copyTextToClipboard(sessionId.value).then(copyFeedback('id'));
 }
 
+function copySessionLink(): void {
+  if (!sessionId.value) return;
+  track('session_menu_action', { action: 'copySessionLink' });
+  void copyTextToClipboard(sessionLink(sessionId.value)).then(copyFeedback('link'));
+}
+
 const renaming = ref(false);
 const renameValue = ref('');
 const renameInputRef = ref<HTMLInputElement | null>(null);
@@ -338,11 +346,11 @@ const isDev = import.meta.env.DEV;
       <Icon name="dots-horizontal" size="sm" />
     </IconButton>
 
-    <Transition name="menu-pop">
+    <Transition name="ui-menu-pop">
       <Menu
         v-if="menuOpen && !nativeMenu.available"
         ref="menuRef"
-        class="ch-menu"
+        class="ui-menu-floating ch-menu"
         :style="menuStyle"
         @click.stop
         @keydown.esc.stop="closeMenu"
@@ -374,6 +382,10 @@ const isDev = import.meta.env.DEV;
           <MenuItem @click="copySessionId">
             <Icon :name="copiedAction === 'id' ? 'check' : 'copy'" size="sm" />
             {{ copiedAction === 'id' ? t('header.copied') : t('header.copySessionId') }}
+          </MenuItem>
+          <MenuItem v-if="sessionLinkCopyable" @click="copySessionLink">
+            <Icon :name="copiedAction === 'link' ? 'check' : 'link'" size="sm" />
+            {{ copiedAction === 'link' ? t('header.copied') : t('header.copySessionLink') }}
           </MenuItem>
           <MenuItem @click="exportSession">
             <Icon name="download" size="sm" />
@@ -511,29 +523,6 @@ const isDev = import.meta.env.DEV;
   color: var(--color-warning);
   font-size: var(--text-xs);
   font-weight: 500;
-}
-
-.ch-menu {
-  position: fixed;
-  top: 0;
-  left: 0;
-  z-index: var(--z-dropdown);
-}
-.menu-pop-enter-active {
-  transition:
-    opacity var(--duration-base) var(--ease-out),
-    transform var(--duration-base) var(--ease-out);
-}
-.menu-pop-leave-active {
-  transition:
-    opacity var(--duration-fast) var(--ease-out),
-    transform var(--duration-fast) var(--ease-out);
-  pointer-events: none;
-}
-.menu-pop-enter-from,
-.menu-pop-leave-to {
-  opacity: 0;
-  transform: scale(0.97) translateY(var(--menu-pop-shift, -2px));
 }
 
 @media (max-width: 980px) {

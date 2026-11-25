@@ -12,7 +12,11 @@ export interface IAgentMediaResolverService {
     requester: InitializedLlmRequester,
     signal?: AbortSignal,
   ): Promise<readonly Message[]>;
-  displayPaths(messages: readonly Message[]): Promise<ReadonlyMap<string, string>>;
+  recoverFailedUploads(
+    messages: readonly Message[],
+    requester: InitializedLlmRequester,
+    signal?: AbortSignal,
+  ): Promise<boolean>;
 }
 
 export const IAgentMediaResolverService = createDecorator<IAgentMediaResolverService>(

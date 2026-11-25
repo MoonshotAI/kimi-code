@@ -1,4 +1,6 @@
 
+import { sha256 } from '@noble/hashes/sha2.js';
+import { bytesToHex } from '@noble/hashes/utils.js';
 import { buildRestUrl, buildWsUrl } from '../config';
 import { noopTracer } from '../../contracts';
 import type { ClientIdentity, CredentialStore, Tracer } from '../../contracts';
@@ -6,6 +8,7 @@ import type {
   AddProviderInput,
   AppCatalogProvider,
   AppConfig,
+  EditableTextFile,
   AppHost,
   AppHostConnectFailure,
   AppHostDefinition,
@@ -14,6 +17,9 @@ import type {
   AppProvider,
   AppProviderDetail,
   AuthResult,
+  CreateFeedbackInput,
+  FeedbackAttachmentInput,
+  UpdateFeedbackInput,
   ImportCatalogProviderInput,
   ImportCatalogProviderResult,
   ImportCustomRegistryInput,
@@ -33,6 +39,7 @@ import type {
   SessionContextItemDetail,
   SessionContextItemsResponse,
   SessionContextSummary,
+  AppToolCatalogEntry,
   AppSkill,
   AppSkillAttachment,
   AppSkillActivationOptions,
@@ -59,6 +66,7 @@ import type {
   OAuthRegion,
   PromptSubmission,
   PromptSubmitResult,
+  PromptPredictionCancelReason,
   QuestionResponse,
   ReadRequestOptions,
   RemoteControlStatus,
@@ -97,6 +105,7 @@ const HOST_READ_MAX_BYTES = 10_485_760;
 const OAUTH_REGION_PROBE_TIMEOUT_MS = 5_000;
 
 const AGENT_TURNS_TIMEOUT_MS = 2 * 60_000;
+const FEEDBACK_UPLOAD_TIMEOUT_MS = Infinity;
 
 const WORKTREE_SLOW_REQUEST_TIMEOUT_MS = 2 * 60_000;
 
@@ -165,6 +174,7 @@ import type {
   WireImportCustomRegistryResult,
   WireMcpAuthBeginResult,
   WireMcpAuthStatus,
+  WireMcpServerAuthInspection,
   WireModel,
   WireOAuthCancelResult,
   WireOAuthLoginPollResult,
@@ -724,6 +734,32 @@ export class DaemonKimiWebApi implements KimiWebApi {
     return this.http.post<WireBatchSessionResponse>('/sessions:restore', { ids });
   }
 
+  async createFeedback(input: CreateFeedbackInput): Promise<{ feedback_id: number }> {
+    return this.http.post('/feedback', input, { sensitive: true });
+  }
+
+  async updateFeedback(feedbackId: number, input: UpdateFeedbackInput): Promise<{ feedback_id: number }> {
+    return this.http.patch(`/feedback/${feedbackId}`, input, { sensitive: true });
+  }
+
+  async uploadFeedbackAttachment(feedbackId: number, input: FeedbackAttachmentInput, signal?: AbortSignal): Promise<{ upload_id: number }> {
+    const form = new FormData();
+    form.append('file', input.file, input.fileName);
+    return this.http.postForm(`/feedback/${feedbackId}/attachments?kind=${input.kind}`, form, {
+      sensitive: true,
+      timeoutMs: FEEDBACK_UPLOAD_TIMEOUT_MS,
+      signal,
+    });
+  }
+
+  async uploadFeedbackSession(feedbackId: number, sessionId: string, signal?: AbortSignal, globalFeedback?: { hostId?: string }): Promise<{ upload_id: number }> {
+    return this.http.post(`/feedback/${feedbackId}/attachments/session`, { session_id: sessionId, host_id: globalFeedback?.hostId }, {
+      timeoutMs: FEEDBACK_UPLOAD_TIMEOUT_MS,
+      signal,
+      sensitive: true,
+    });
+  }
+
   async getAgentTurns(
     sessionId: string,
     agentId: string,
@@ -971,6 +1007,25 @@ export class DaemonKimiWebApi implements KimiWebApi {
     return { closed: true };
   }
 
+  async predictNextPrompt(
+    sessionId: string,
+    input: { predictionId: string; expectedTurnId: number },
+  ): Promise<string | null> {
+    const data = await this.http.post<{ prediction: string | null }>(
+      `/sessions/${encodeURIComponent(sessionId)}:predict-prompt`,
+      { prediction_id: input.predictionId, expected_turn_id: input.expectedTurnId },
+    );
+    return data.prediction;
+  }
+
+  async cancelPromptPrediction(sessionId: string, predictionId: string, reason?: PromptPredictionCancelReason): Promise<boolean> {
+    const data = await this.http.post<{ cancelled: boolean }>(
+      `/sessions/${encodeURIComponent(sessionId)}:cancel-prompt-prediction`,
+      { prediction_id: predictionId, reason },
+    );
+    return data.cancelled;
+  }
+
   respondApproval(
     sessionId: string,
     approvalId: string,
@@ -1007,6 +1062,11 @@ export class DaemonKimiWebApi implements KimiWebApi {
       body,
     );
     return { outcome: data.outcome, endedAt: data.ended_at };
+  }
+
+  async listToolCatalog(): Promise<AppToolCatalogEntry[]> {
+    const data = await this.http.get<{ tools: AppToolCatalogEntry[] }>('/tools/catalog');
+    return data.tools;
   }
 
   async listSkills(sessionId: string, options?: ReadRequestOptions): Promise<AppSkill[]> {
@@ -1154,6 +1214,17 @@ export class DaemonKimiWebApi implements KimiWebApi {
       cwd: options?.cwd,
     });
     return data.map(toAppMcpAuthStatus);
+  }
+
+  async inspectMcpAuthStatuses(
+    locators: AppMcpServerLocator[],
+    options?: { cwd?: string },
+  ): Promise<AppMcpAuthStatus[]> {
+    const data = await this.http.post<WireMcpServerAuthInspection[]>('/mcp/servers:inspect', {
+      targets: locators.map(toWireMcpServerLocator),
+      cwd: options?.cwd,
+    });
+    return data.map((item) => ({ name: item.runtime_name, authStatus: item.auth_status }));
   }
 
   async beginMcpAuth(
@@ -1890,6 +1961,7 @@ export class DaemonKimiWebApi implements KimiWebApi {
       defaultProvider: 'default_provider',
       defaultModel: 'default_model',
       secondaryModel: 'secondary_model',
+      tools: 'tools',
       models: 'models',
       thinking: 'thinking',
       planMode: 'plan_mode',
@@ -1917,6 +1989,25 @@ export class DaemonKimiWebApi implements KimiWebApi {
     }
     const data = await this.http.post<WireConfig>('/config', wirePatch);
     return toAppConfig(data);
+  }
+
+  async readHostTextFile(path: string): Promise<EditableTextFile> {
+    let blob: Blob;
+    try {
+      blob = await this.http.getBlob('/fs:content', { path }, { cache: 'no-store', maxBytes: HOST_READ_MAX_BYTES });
+    } catch (error) {
+      if (isDaemonApiError(error) && error.code === 40409) return { path, content: '', revision: null };
+      throw error;
+    }
+    if (blob.size > HOST_READ_MAX_BYTES) throw new FileTooLargeError({ size: blob.size, limit: HOST_READ_MAX_BYTES });
+    const bytes = new Uint8Array(await blob.arrayBuffer());
+    const content = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes);
+    if (content.includes('\0')) throw new Error('Cannot edit a binary file as text');
+    return { path, content, revision: bytesToHex(sha256(bytes)) };
+  }
+
+  writeHostTextFile(path: string, content: string, revision: string | null): Promise<{ revision: string }> {
+    return this.http.putText('/fs:content', { path, revision: revision ?? 'missing' }, content);
   }
 
   async getAuth(): Promise<AuthResult> {

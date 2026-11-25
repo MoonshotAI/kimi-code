@@ -166,6 +166,109 @@ describe('agent state frames', () => {
     expect(client.status.value.permission).toBe('manual');
   });
 
+  it('reads mode availability from each session frame and uses global config only for drafts', async () => {
+    vi.stubGlobal('WebSocket', vi.fn());
+    vi.resetModules();
+
+    const connection = makeConnection();
+    const handlersRef: { handlers?: KimiEventHandlers } = {};
+    for (const key of Object.keys(clientApiMock)) delete clientApiMock[key];
+    Object.assign(clientApiMock, baseApi([session('s_1'), session('s_2')], connection, handlersRef));
+
+    const { useKimiWebClient } = await import('../src/client/useKimiWebClient');
+    const { configStore } = await import('../src/stores/config');
+    const { sessionsStore } = await import('../src/stores/sessions');
+    const client = useKimiWebClient();
+    await client.load();
+    await client.selectSession('s_1');
+    await flush();
+
+    handlersRef.handlers?.onAgentState?.('s_1', 'main', {
+      status: 'idle',
+      compacting: false,
+      planMode: false,
+      swarmMode: false,
+      towerMode: false,
+      planModeAvailable: true,
+      swarmModeAvailable: true,
+      towerModeAvailable: true,
+      goalModeAvailable: true,
+    });
+    await vi.waitFor(() => expect(client.planModeAvailable.value).toBe(true));
+
+    configStore().config = {
+      ...configStore().config!,
+      tools: { disabled: ['ExitPlanMode', 'AgentSwarm', 'TowerSpawn', 'UpdateGoal'] },
+    };
+    expect(client.planModeAvailable.value).toBe(true);
+    expect(client.swarmModeAvailable.value).toBe(true);
+    expect(client.towerModeAvailable.value).toBe(true);
+    expect(client.goalModeAvailable.value).toBe(true);
+
+    await client.selectSession('s_2');
+    handlersRef.handlers?.onAgentState?.('s_2', 'main', {
+      status: 'idle',
+      compacting: false,
+      planMode: false,
+      swarmMode: false,
+      towerMode: false,
+      planModeAvailable: false,
+      swarmModeAvailable: false,
+      towerModeAvailable: false,
+      goalModeAvailable: false,
+    });
+    await vi.waitFor(() => expect(client.planModeAvailable.value).toBe(false));
+    expect(client.swarmModeAvailable.value).toBe(false);
+    expect(client.towerModeAvailable.value).toBe(false);
+    expect(client.goalModeAvailable.value).toBe(false);
+
+    sessionsStore().setActiveSessionId(undefined);
+    expect(client.planModeAvailable.value).toBe(false);
+    expect(client.swarmModeAvailable.value).toBe(false);
+    expect(client.towerModeAvailable.value).toBe(false);
+    expect(client.goalModeAvailable.value).toBe(false);
+  });
+
+  it('falls back to global config when an older server omits mode availability fields', async () => {
+    vi.stubGlobal('WebSocket', vi.fn());
+    vi.resetModules();
+
+    const connection = makeConnection();
+    const handlersRef: { handlers?: KimiEventHandlers } = {};
+    for (const key of Object.keys(clientApiMock)) delete clientApiMock[key];
+    Object.assign(clientApiMock, baseApi([session('s_1')], connection, handlersRef));
+
+    const { useKimiWebClient } = await import('../src/client/useKimiWebClient');
+    const { configStore } = await import('../src/stores/config');
+    const client = useKimiWebClient();
+    await client.load();
+    await client.selectSession('s_1');
+    await flush();
+
+    handlersRef.handlers?.onAgentState?.('s_1', 'main', {
+      status: 'idle',
+      compacting: false,
+      planMode: false,
+      swarmMode: false,
+      towerMode: false,
+    });
+    await flush();
+
+    expect(client.planModeAvailable.value).toBe(true);
+    expect(client.swarmModeAvailable.value).toBe(true);
+    expect(client.towerModeAvailable.value).toBe(true);
+    expect(client.goalModeAvailable.value).toBe(true);
+
+    configStore().config = {
+      ...configStore().config!,
+      tools: { disabled: ['ExitPlanMode', 'TowerSpawn'] },
+    };
+    expect(client.planModeAvailable.value).toBe(false);
+    expect(client.swarmModeAvailable.value).toBe(true);
+    expect(client.towerModeAvailable.value).toBe(false);
+    expect(client.goalModeAvailable.value).toBe(true);
+  });
+
   it('applies agent and usage frames that arrived before the session row', async () => {
     vi.stubGlobal('WebSocket', class {});
     vi.resetModules();
@@ -265,7 +368,7 @@ describe('agent state frames', () => {
     const client = useKimiWebClient();
     await client.load();
     await flush();
-    client.setThinking('max');
+    await client.setThinking('max');
     const starting = client.startSessionAndSendPrompt(
       'workspace-1',
       client.createPromptEnvelope({ text: 'hello' }),

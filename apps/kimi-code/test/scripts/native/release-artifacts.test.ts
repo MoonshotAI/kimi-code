@@ -204,6 +204,27 @@ describe('native release artifacts', () => {
     }
   });
 
+  it('merges one manifest per release target and rejects missing or mismatched fragments', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'native-fragments-'));
+    const tag = '@moonshot-ai/kimi-code@1.2.3';
+    const targets = ['darwin-arm64', 'darwin-x64', 'linux-arm64', 'linux-x64', 'win32-arm64', 'win32-x64'];
+    const merge = () => execFileAsync(process.execPath, [resolve(appRoot, 'scripts/native/merge-platform-manifests.mjs'), dir, tag]);
+    try {
+      const platforms = Object.fromEntries(targets.map(target => [target, { filename: `kimi-code-${target}` }]));
+      for (const target of targets) {
+        await writeFile(join(dir, `manifest-${target}.json`), JSON.stringify({ tag, version: '1.2.3', platforms: { [target]: platforms[target] } }));
+      }
+      await merge();
+      expect(JSON.parse(await readFile(join(dir, 'manifest.json'), 'utf8'))).toEqual({ tag, version: '1.2.3', platforms });
+      await writeFile(join(dir, 'manifest-linux-x64.json'), JSON.stringify({ tag, version: '1.2.2', platforms }));
+      await expect(merge()).rejects.toThrow(/Unexpected native manifest/);
+      rmSync(join(dir, 'manifest-darwin-arm64.json'));
+      await expect(merge()).rejects.toThrow(/ENOENT/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('fails when no zip sidecars exist', async () => {
     const releaseDir = await mkdtemp(join(tmpdir(), 'kimi-manifest-empty-'));
     try {

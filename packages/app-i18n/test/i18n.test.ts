@@ -14,6 +14,14 @@ describe('createKimiI18n', () => {
     expect(i18n.global.t('filePreview.copyCode')).toBe('Copy code');
   });
 
+  it('names the conversation being submitted and reports rating and attachment failures in Chinese', () => {
+    const { t } = createKimiI18n({ locale: 'zh' }).global;
+    expect(t('feedback.uploadConversation')).toBe('同时提交本次会话记录');
+    expect(t('feedback.undoFailed')).toBe('取消评价失败');
+    expect(t('feedback.uploadFailed', { names: '诊断日志' })).toBe('诊断日志提交失败');
+    expect(t('feedback.retryUpload')).toBe('重试提交');
+  });
+
   it('provides paste-image auto-mention settings copy in en and zh', () => {
     const i18n = createKimiI18n({ locale: 'en' });
     expect(i18n.global.t('settings.composerSection')).toBe('Composer');
@@ -23,6 +31,17 @@ describe('createKimiI18n', () => {
     expect(i18n.global.t('settings.composerSection')).toBe('输入框');
     expect(i18n.global.t('settings.pasteImageAutoMention')).toBe('粘贴图片时自动提及');
     expect(i18n.global.t('settings.pasteImageAutoMentionHint')).toBe('在输入框中粘贴图片时自动添加 @ 提及');
+  });
+
+  it('renders effort switch confirmation titles in en and zh', () => {
+    const i18n = createKimiI18n({ locale: 'en' });
+    expect(i18n.global.t('model.switchEffortConfirmTitle', { from: 'high', to: 'max' })).toBe(
+      'Confirm effort switch from high to max?',
+    );
+    i18n.global.locale.value = 'zh';
+    expect(i18n.global.t('model.switchEffortConfirmTitle', { from: 'high', to: 'max' })).toBe(
+      '确认把思考强度由 high 切换到 max？',
+    );
   });
 
   it('renders the /goal description in full (pipe chars are escaped literals, not plural separators)', () => {

@@ -109,6 +109,10 @@ describe('actor handler execution', () => {
       requester: scripted,
       executor,
     });
+    const continuations: Array<string | undefined> = [];
+    loop.subscribe((event) => {
+      if (event.type === 'turn.ended') continuations.push(event.continuation);
+    });
     const detached = loop.wait('tool.ended', { match: (event) => event.detached });
     const turn = loop.runTurn(prompt());
 
@@ -120,6 +124,7 @@ describe('actor handler execution', () => {
     expect(await loop.waitForTasks({ taskId: 'bg', timeoutMs: 1000 })).toMatchObject({ completed: ['bg'] });
     await loop.waitForIdle();
     expect(loop.state.messages.some((entry) => extractText(entry).includes('[async tool completed]'))).toBe(true);
+    expect(continuations).toEqual(['background', 'none']);
     await loop.close();
 
     const toolGate = deferred<void>();
@@ -284,6 +289,62 @@ describe('actor handler execution', () => {
       await resetLoop.waitForIdle();
       await resetLoop.close();
     }
+  });
+
+  it.each([true, false])('resolves pending detached completion continuation when shouldQueue=%s', async (shouldQueue) => {
+    const runGate = deferred<void>();
+    const messageGate = deferred<ReturnType<typeof prompt>>();
+    const stepTwoStarted = deferred<void>();
+    let step = 0;
+    let notifyCompletion!: () => void;
+    const completionStarted = new Promise<void>((resolve) => {
+      notifyCompletion = resolve;
+    });
+    const executor = executorFrom(['Bash'], async (context) => {
+      context.onDetach(() => ({ content: textToolContent('detached') }));
+      context.detach('detached');
+      await runGate.promise;
+      return { content: [{ type: 'text', text: 'done' }] };
+    });
+    const scripted = createMockProviderRequester((_request, signal) => {
+      step += 1;
+      if (step === 1) return done('', [call('bg')]);
+      if (step === 2) {
+        stepTwoStarted.resolve();
+        return {
+          parts: [],
+          error: new Promise<never>((_resolve, reject) => {
+            signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
+          }),
+        };
+      }
+      return done('notified');
+    });
+    const loop = createLoop({
+      requester: scripted,
+      executor,
+      abortGraceMs: 5,
+      completionMessage: () => {
+        notifyCompletion();
+        return messageGate.promise;
+      },
+      shouldQueueTaskNotification: () => shouldQueue,
+    });
+    const continuations: Array<string | undefined> = [];
+    loop.subscribe((event) => {
+      if (event.type === 'turn.ended') continuations.push(event.continuation);
+    });
+    const turn = loop.runTurn(prompt());
+    await stepTwoStarted.promise;
+    runGate.resolve();
+    await completionStarted;
+    loop.abort('user');
+    expect((await turn).type).toBe('aborted');
+    expect(continuations).toEqual([shouldQueue ? 'turn' : 'none']);
+    messageGate.resolve(createUserMessage('background finished'));
+    await loop.waitForIdle();
+    expect(continuations).toEqual(shouldQueue ? ['turn', 'none'] : ['none']);
+    await loop.close();
   });
 
   it('settles late results only in their original StepCall when an id is reused', async () => {

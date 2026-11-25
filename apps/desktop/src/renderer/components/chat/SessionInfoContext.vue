@@ -2,7 +2,7 @@
 import { computed, inject, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Icon } from '@moonshot-ai/app-ui';
-import { ContextSummaryBody } from '@moonshot-ai/app-components/support';
+import { ContextSummaryBody, type CompactPhase } from '@moonshot-ai/app-components/support';
 import { panelApiKey } from '@moonshot-ai/app-client/panel';
 import type { SessionContextInfoState } from '@moonshot-ai/app-client/stores';
 import { formatTokens } from '@moonshot-ai/app-core/lib';
@@ -12,8 +12,10 @@ const props = withDefaults(defineProps<{
   ctxUsed?: number;
   ctxMax?: number;
   canCompact?: boolean;
+  compactPhase?: CompactPhase;
 }>(), {
   canCompact: false,
+  compactPhase: 'idle',
 });
 
 const emit = defineEmits<{
@@ -60,6 +62,7 @@ const usageLabel = computed(() => {
       :loading="loading"
       :error="error"
       :can-compact="canCompact"
+      :compact-phase="compactPhase"
       :can-open-detail="canOpenDetail"
       @compact="emit('compact')"
       @open-detail="panelApi?.openContext?.()"

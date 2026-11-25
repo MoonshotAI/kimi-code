@@ -1,0 +1,554 @@
+import { describe, expect, it } from 'vitest';
+
+import {
+  createSystemMessage,
+  createUserMessage,
+  type Message,
+  type StreamedMessagePart,
+  type ToolCall,
+} from '#/llm/message';
+import type { LlmModule, Protocol } from '#/llm/protocol/protocol';
+import type { FinishInfo, LlmRemoteErrorMessage, TokenUsage } from '#/llm/response';
+
+import {
+  asyncChunks,
+  doneOutcome,
+  failedOutcome,
+  runGenerate,
+  testModule,
+} from './harness';
+
+interface FakeChunk {
+  readonly tool?: ToolCall;
+  readonly part?: StreamedMessagePart;
+  readonly usage?: Partial<TokenUsage>;
+  readonly finish?: FinishInfo;
+}
+
+function fakeProtocol(options: {
+  chunks?: readonly FakeChunk[];
+  encode?: (module: LlmModule) => unknown;
+  sendStream?: Protocol['sendStream'];
+  emitToolCallEnd?: boolean;
+  retryable?: boolean;
+} = {}): Protocol {
+  const chunks = options.chunks ?? [];
+  const decode = (chunk: FakeChunk, sink: Parameters<Protocol['decoder']>[1]): void => {
+    if (chunk.part !== undefined) sink.onDelta(chunk.part);
+    if (chunk.tool !== undefined) {
+      sink.onDelta(chunk.tool);
+      if (options.emitToolCallEnd !== false) sink.onToolCallEnd(chunk.tool._streamIndex);
+    }
+    if (chunk.usage !== undefined) sink.onUsage(chunk.usage);
+    if (chunk.finish !== undefined) sink.onFinish(chunk.finish);
+  };
+  return {
+    media: { kinds: {} },
+    encode: options.encode ?? ((module) => module.content.messages),
+    client: () => null,
+    send: async () => ({
+      body: chunks,
+      headers: { 'x-request-id': 'req-success' },
+    }),
+    sendStream: options.sendStream ?? (async () => ({
+      body: asyncChunks(chunks),
+      headers: { 'x-request-id': 'req-success' },
+    })),
+    decoder: (_module, sink) => ({
+      push: (chunk) => {
+        decode(chunk, sink);
+      },
+      end: () => {},
+    }),
+    replay: (response) => response,
+    requestId: (headers) => headers['x-request-id'],
+    decodeError: (error): LlmRemoteErrorMessage => ({
+      kind: 'provider',
+      message: error instanceof Error ? error.message : String(error),
+      retryable: options.retryable ?? false,
+    }),
+  };
+}
+
+describe('tool argument settlement', () => {
+  it('validates deferred tools and retries with a clean correction request', async () => {
+    const encoded: (readonly Message[])[] = [];
+    let attempts = 0;
+    const protocol = fakeProtocol({
+      encode: (module) => {
+        encoded.push(module.content.messages);
+        return module.content.messages;
+      },
+      sendStream: async () => {
+        attempts += 1;
+        const tool: ToolCall = {
+          type: 'function',
+          id: 'call-deferred',
+          name: 'weather',
+          arguments: attempts === 1 ? '{"city":' : '{"city":"sf"}',
+        };
+        return {
+          body: asyncChunks([
+            { tool },
+            { finish: { finishReason: 'tool_calls', rawFinishReason: 'stop' } },
+          ]),
+        };
+      },
+    });
+    const module = testModule({
+      profile: {
+        tools: [{
+          name: 'weather',
+          description: 'Get weather',
+          parameters: {
+            type: 'object',
+            properties: { city: { type: 'string' } },
+            required: ['city'],
+          },
+          deferred: true,
+        }],
+      },
+    });
+    const generated = await runGenerate(protocol, {
+      module,
+      maxAttemptsPerStep: 2,
+    });
+
+    expect(attempts).toBe(2);
+    expect(generated.events.filter((event) => event.type === 'llm.delta.tool_call_end')).toHaveLength(1);
+    expect(doneOutcome(generated.outcome).message.toolCalls).toMatchObject([
+      { name: 'weather', arguments: '{"city":"sf"}' },
+    ]);
+    expect(generated.events.find((event) => event.type === 'llm.retry')).toMatchObject({
+      reason: 'invalid_tool_arguments',
+      failedAttempt: 1,
+      nextAttempt: 2,
+      delayMs: 0,
+      error: { kind: 'invalid_tool_arguments', retryable: true },
+    });
+    expect(encoded).toHaveLength(2);
+    expect(encoded[1]?.at(-1)).toMatchObject({ role: 'system' });
+    expect(JSON.stringify(encoded[1]?.at(-1))).toContain('not executed');
+
+    attempts = 0;
+    const infinite = await runGenerate(protocol, { module, infiniteRetry: true });
+    expect(doneOutcome(infinite.outcome).message.toolCalls).toMatchObject([
+      { name: 'weather', arguments: '{"city":"sf"}' },
+    ]);
+    const infiniteDelays = infinite.events.flatMap((event) =>
+      event.type === 'llm.retry' && event.reason === 'invalid_tool_arguments'
+        ? [event.delayMs]
+        : []
+    );
+    expect(infiniteDelays).toHaveLength(1);
+    expect(infiniteDelays[0]).toBeGreaterThan(0);
+  });
+
+  it('validates schemas disclosed through system messages and retries with a clean correction request', async () => {
+    const encoded: (readonly Message[])[] = [];
+    let attempts = 0;
+    const protocol = fakeProtocol({
+      encode: (module) => {
+        encoded.push(module.content.messages);
+        return module.content.messages;
+      },
+      sendStream: async () => {
+        attempts += 1;
+        const tool: ToolCall = {
+          type: 'function',
+          id: 'call-disclosed',
+          name: 'weather',
+          arguments: attempts === 1 ? '{"city":42}' : '{"city":"sf"}',
+        };
+        return {
+          body: asyncChunks([
+            { tool },
+            { finish: { finishReason: 'tool_calls', rawFinishReason: 'stop' } },
+          ]),
+        };
+      },
+    });
+    const module = testModule({
+      messages: [
+        createUserMessage('weather?'),
+        createSystemMessage('Loaded: weather', undefined, [{
+          name: 'weather',
+          description: 'Get weather',
+          parameters: {
+            type: 'object',
+            properties: { city: { type: 'string' } },
+            required: ['city'],
+            additionalProperties: false,
+          },
+        }]),
+      ],
+    });
+    const generated = await runGenerate(protocol, {
+      module,
+      maxAttemptsPerStep: 2,
+    });
+
+    expect(attempts).toBe(2);
+    expect(doneOutcome(generated.outcome).message.toolCalls).toMatchObject([
+      { name: 'weather', arguments: '{"city":"sf"}' },
+    ]);
+    expect(generated.events.find((event) => event.type === 'llm.retry')).toMatchObject({
+      reason: 'invalid_tool_arguments',
+      failedAttempt: 1,
+      nextAttempt: 2,
+    });
+    expect(encoded).toHaveLength(2);
+    expect(encoded[1]?.at(-1)).toMatchObject({ role: 'system' });
+    expect(JSON.stringify(encoded[1]?.at(-1))).toContain('not executed');
+  });
+
+  it('passes calls to tools missing from the visible declarations through to execution', async () => {
+    const generated = await runGenerate(fakeProtocol({
+      chunks: [
+        { tool: { type: 'function', id: 'call-ghost', name: 'ghost', arguments: '{"city":"sf"}' } },
+        { finish: { finishReason: 'tool_calls', rawFinishReason: 'stop' } },
+      ],
+    }), {
+      module: testModule(),
+      maxAttemptsPerStep: 1,
+    });
+
+    expect(doneOutcome(generated.outcome).message.toolCalls).toMatchObject([
+      { name: 'ghost', arguments: '{"city":"sf"}' },
+    ]);
+
+    const empty = await runGenerate(fakeProtocol({
+      chunks: [
+        { tool: { type: 'function', id: 'call-ghost-empty', name: 'ghost', arguments: null } },
+        { finish: { finishReason: 'tool_calls', rawFinishReason: 'stop' } },
+      ],
+    }), {
+      module: testModule(),
+      maxAttemptsPerStep: 1,
+    });
+    expect(failedOutcome(empty.outcome).error).toMatchObject({
+      kind: 'invalid_tool_arguments',
+      retryable: true,
+    });
+  });
+
+  it('validates against the newest disclosed schema across unload boundaries', async () => {
+    const weatherV1 = {
+      name: 'weather',
+      description: 'Get weather v1',
+      parameters: {
+        type: 'object',
+        properties: { city: { type: 'string' } },
+        required: ['city'],
+      },
+    };
+    const weatherV2 = {
+      name: 'weather',
+      description: 'Get weather v2',
+      parameters: {
+        type: 'object',
+        properties: { zip: { type: 'number' } },
+        required: ['zip'],
+      },
+    };
+    const unload = createSystemMessage([{
+      type: 'text',
+      text: 'The available tools changed during this session.',
+      meta: { kind: 'tool_lifecycle', added: [], removed: ['weather'] },
+    }]);
+    const run = (messages: readonly Message[], args: string) => runGenerate(fakeProtocol({
+      chunks: [
+        { tool: { type: 'function', id: 'call-boundary', name: 'weather', arguments: args } },
+        { finish: { finishReason: 'tool_calls', rawFinishReason: 'stop' } },
+      ],
+    }), {
+      module: testModule({ messages }),
+      maxAttemptsPerStep: 1,
+    });
+
+    const unloaded = doneOutcome((await run([
+      createUserMessage('hi'),
+      createSystemMessage('Loaded: weather', undefined, [weatherV1]),
+      unload,
+    ], '{"city":42}')).outcome);
+    expect(unloaded.message.toolCalls).toMatchObject([
+      { name: 'weather', arguments: '{"city":42}' },
+    ]);
+
+    const reloaded = failedOutcome((await run([
+      createUserMessage('hi'),
+      createSystemMessage('Loaded: weather', undefined, [weatherV1]),
+      unload,
+      createSystemMessage('Loaded: weather', undefined, [weatherV2]),
+    ], '{"city":"sf"}')).outcome);
+    expect(reloaded.error).toMatchObject({ kind: 'invalid_tool_arguments', retryable: true });
+    expect(reloaded.error.message).toContain('zip');
+
+    const valid = doneOutcome((await run([
+      createUserMessage('hi'),
+      createSystemMessage('Loaded: weather', undefined, [weatherV1]),
+      unload,
+      createSystemMessage('Loaded: weather', undefined, [weatherV2]),
+    ], '{"zip":94107}')).outcome);
+    expect(valid.message.toolCalls).toMatchObject([
+      { name: 'weather', arguments: '{"zip":94107}' },
+    ]);
+  });
+
+  it('validates against the last declaration when one message discloses a tool twice', async () => {
+    const weatherV1 = {
+      name: 'weather',
+      description: 'Get weather v1',
+      parameters: {
+        type: 'object',
+        properties: { city: { type: 'string' } },
+        required: ['city'],
+      },
+    };
+    const weatherV2 = {
+      name: 'weather',
+      description: 'Get weather v2',
+      parameters: {
+        type: 'object',
+        properties: { zip: { type: 'number' } },
+        required: ['zip'],
+      },
+    };
+    const run = (args: string) => runGenerate(fakeProtocol({
+      chunks: [
+        { tool: { type: 'function', id: 'call-duplicate', name: 'weather', arguments: args } },
+        { finish: { finishReason: 'tool_calls', rawFinishReason: 'stop' } },
+      ],
+    }), {
+      module: testModule({
+        messages: [
+          createUserMessage('hi'),
+          createSystemMessage('Loaded: weather', undefined, [weatherV1, weatherV2]),
+        ],
+      }),
+      maxAttemptsPerStep: 1,
+    });
+
+    const stale = failedOutcome((await run('{"city":"sf"}')).outcome);
+    expect(stale.error).toMatchObject({ kind: 'invalid_tool_arguments', retryable: true });
+    expect(stale.error.message).toContain('zip');
+
+    const current = doneOutcome((await run('{"zip":94107}')).outcome);
+    expect(current.message.toolCalls).toMatchObject([
+      { name: 'weather', arguments: '{"zip":94107}' },
+    ]);
+  });
+
+  it('accepts empty arguments for disclosed tools whose schema permits them', async () => {
+    const generated = await runGenerate(fakeProtocol({
+      chunks: [
+        { tool: { type: 'function', id: 'call-noop', name: 'noop', arguments: null } },
+        { finish: { finishReason: 'tool_calls', rawFinishReason: 'stop' } },
+      ],
+    }), {
+      module: testModule({
+        messages: [
+          createUserMessage('hi'),
+          createSystemMessage('Loaded: noop', undefined, [{
+            name: 'noop',
+            description: 'No-op',
+            parameters: { type: 'object', properties: {} },
+          }]),
+        ],
+      }),
+    });
+
+    expect(doneOutcome(generated.outcome).message.toolCalls).toMatchObject([
+      { name: 'noop', arguments: null },
+    ]);
+  });
+
+  it('rejects non-object and unapproved empty arguments without executing or normalizing them', async () => {
+    const run = (args: string | null, required = true, stream = true) => {
+      const tool: ToolCall = {
+        type: 'function',
+        id: 'call-arguments',
+        name: 'weather',
+        arguments: args,
+      };
+      return runGenerate(fakeProtocol({
+        chunks: [
+          { tool },
+          { finish: { finishReason: 'tool_calls', rawFinishReason: 'stop' } },
+        ],
+      }), {
+        module: testModule({
+          profile: {
+            tools: [{
+              name: 'weather',
+              description: 'Get weather',
+              parameters: {
+                type: 'object',
+                properties: { city: { type: 'string' } },
+                required: required ? ['city'] : [],
+              },
+            }],
+          },
+        }),
+        stream,
+      });
+    };
+
+    for (const args of [null, '', 'null', '[]', '42', '"text"', '{"city":']) {
+      const generated = await run(args);
+      const failed = failedOutcome(generated.outcome);
+      expect(failed.error).toMatchObject({ kind: 'invalid_tool_arguments', retryable: true });
+      expect(failed.message).toBeUndefined();
+      expect(generated.events.some((event) => event.type === 'llm.delta.tool_call_end')).toBe(false);
+    }
+
+    const replayed = failedOutcome((await run('null', true, false)).outcome);
+    expect(replayed.error.kind).toBe('invalid_tool_arguments');
+
+    const empty = doneOutcome((await run('', false)).outcome);
+    expect(empty.message.toolCalls[0]?.arguments).toBe('');
+  });
+
+  it('preserves correction feedback across transient retries', async () => {
+    const encoded: (readonly Message[])[] = [];
+    let attempts = 0;
+    const profile = {
+      tools: [{
+        name: 'weather',
+        description: 'Get weather',
+        parameters: {
+          type: 'object',
+          properties: { city: { type: 'string' } },
+          required: ['city'],
+        },
+      }],
+    };
+    const protocol = fakeProtocol({
+      retryable: true,
+      encode: (module) => {
+        encoded.push(module.content.messages);
+        return module.content.messages;
+      },
+      sendStream: async () => {
+        attempts += 1;
+        if (attempts === 2) throw new Error('temporary 429');
+        const tool: ToolCall = {
+          type: 'function',
+          id: 'call-weather',
+          name: 'weather',
+          arguments: attempts === 1 ? '{"city":' : '{"city":"sf"}',
+        };
+        return {
+          body: asyncChunks([
+            { tool },
+            { usage: attempts === 1 ? { inputOther: 2, output: 1 } : { inputOther: 4, output: 3 } },
+            { finish: { finishReason: 'tool_calls', rawFinishReason: 'stop' } },
+          ]),
+        };
+      },
+    });
+    const generated = await runGenerate(protocol, {
+      module: testModule({ profile }),
+      maxAttemptsPerStep: 3,
+    });
+
+    expect(attempts).toBe(3);
+    expect(doneOutcome(generated.outcome).usage).toMatchObject({ inputOther: 4, output: 3 });
+    expect(doneOutcome(generated.outcome).message.attributes?.usage).toMatchObject({ inputOther: 4, output: 3 });
+    expect(generated.events.filter((event) => event.type === 'llm.retry').map((event) => event.reason)).toEqual([
+      'invalid_tool_arguments',
+      'backoff',
+    ]);
+    expect(encoded[2]?.at(-1)).toMatchObject({ role: 'system' });
+    expect(JSON.stringify(encoded[2]?.at(-1))).toContain('not executed');
+
+    const rejected = failedOutcome((await runGenerate(fakeProtocol({
+      chunks: [
+        { part: { type: 'text', text: 'I will call weather' } },
+        { tool: { type: 'function', id: 'call-rejected', name: 'weather', arguments: '{"city":' } },
+        { usage: { inputOther: 2, output: 1 } },
+        { finish: { finishReason: 'tool_calls', rawFinishReason: 'stop' } },
+      ],
+    }), {
+      module: testModule({ profile }),
+      maxAttemptsPerStep: 1,
+    })).outcome);
+    expect(rejected.message).toBeUndefined();
+  });
+
+  it('validates finalized calls when tool-call-end is missing or arrives before later deltas', async () => {
+    const profile = {
+      tools: [{
+        name: 'weather',
+        description: 'Get weather',
+        parameters: {
+          type: 'object',
+          properties: { city: { type: 'string' } },
+          required: ['city'],
+        },
+      }],
+    };
+    const missingBoundary = failedOutcome((await runGenerate(fakeProtocol({
+      emitToolCallEnd: false,
+      chunks: [
+        { tool: { type: 'function', id: 'call-missing', name: 'weather', arguments: 'null' } },
+        { finish: { finishReason: 'tool_calls', rawFinishReason: 'stop' } },
+      ],
+    }), { module: testModule({ profile }) })).outcome);
+    expect(missingBoundary.error.kind).toBe('invalid_tool_arguments');
+
+    const completed = await runGenerate(fakeProtocol({
+      chunks: [
+        { tool: { type: 'function', id: 'call-interleaved', name: 'weather', arguments: '{"city":', _streamIndex: 0 } },
+        { part: { type: 'tool_call_part', argumentsPart: '"sf"}', index: 0 } },
+        { finish: { finishReason: 'tool_calls', rawFinishReason: 'stop' } },
+      ],
+    }), { module: testModule({ profile }) });
+    expect(doneOutcome(completed.outcome).message.toolCalls).toMatchObject([
+      { id: 'call-interleaved', arguments: '{"city":"sf"}' },
+    ]);
+    expect(completed.events.filter((event) => event.type === 'llm.delta.tool_call_end')).toMatchObject([
+      { index: 0, toolCall: { id: 'call-interleaved' } },
+    ]);
+
+    const missingCompletion = await runGenerate(fakeProtocol({
+      emitToolCallEnd: false,
+      chunks: [
+        { tool: { type: 'function', id: 'call-missing-valid', name: 'weather', arguments: '{"city":"sf"}' } },
+        { finish: { finishReason: 'tool_calls', rawFinishReason: 'stop' } },
+      ],
+    }), { module: testModule({ profile }) });
+    expect(doneOutcome(missingCompletion.outcome).message.toolCalls).toMatchObject([
+      { id: 'call-missing-valid', arguments: '{"city":"sf"}' },
+    ]);
+    expect(missingCompletion.events.filter((event) => event.type === 'llm.delta.tool_call_end')).toMatchObject([
+      { toolCall: { id: 'call-missing-valid' } },
+    ]);
+  });
+
+  it('treats schema compilation failures as deterministic configuration errors', async () => {
+    const generated = await runGenerate(fakeProtocol({
+      chunks: [
+        { tool: { type: 'function', id: 'call-broken', name: 'broken', arguments: '{}' } },
+        { finish: { finishReason: 'tool_calls', rawFinishReason: 'stop' } },
+      ],
+    }), {
+      module: testModule({
+        profile: {
+          tools: [{
+            name: 'broken',
+            description: 'Broken schema',
+            parameters: { $ref: '#/definitions/missing' },
+          }],
+        },
+      }),
+      maxAttemptsPerStep: 2,
+    });
+
+    expect(failedOutcome(generated.outcome).error).toMatchObject({
+      kind: 'syntax',
+      code: 'request_format',
+    });
+    expect(generated.events.some((event) => event.type === 'llm.retry')).toBe(false);
+  });
+});

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
-import { createApp, h, nextTick, type App } from 'vue';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { createApp, h, nextTick, ref, type App } from 'vue';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createKimiI18n } from '@moonshot-ai/app-i18n';
 import SlashMenu from '../src/composer/SlashMenu.vue';
 import slashMenuSource from '../src/composer/SlashMenu.vue?raw';
@@ -73,12 +73,13 @@ describe('SlashMenu pointer selection', () => {
 
 
 describe('skill source labels', () => {
-  it('renders global and built-in labels in the slash menu only for skill rows', async () => {
+  it('renders global, built-in and plugin labels in the slash menu only for skill rows', async () => {
     app = createApp({
       render: () => h(SlashMenu, {
         items: [
           { name: '/skill:global', desc: 'Global skill', isSkill: true, sourceKind: 'global' },
           { name: '/builtin', desc: 'Built-in skill', isSkill: true, sourceKind: 'builtin' },
+          { name: '/skill:from-plugin', desc: 'Plugin skill', isSkill: true, sourceKind: 'plugin' },
           { name: '/swarm', desc: 'commands.swarm.desc' },
         ],
         activeIndex: 0,
@@ -91,15 +92,17 @@ describe('skill source labels', () => {
     expect([...document.querySelectorAll('.slash-dir')].map((element) => element.textContent)).toEqual([
       'Global',
       'Built-in',
+      'Plugin',
     ]);
   });
 
-  it('renders global and built-in labels in the mention menu', async () => {
+  it('renders global, built-in and plugin labels in the mention menu', async () => {
     app = createApp({
       render: () => h(MentionMenu, {
         items: [
           { kind: 'skill', skill: { name: 'global', description: 'Global skill', source: 'user', path: '/user/global/SKILL.md' } },
           { kind: 'skill', skill: { name: 'builtin', description: 'Built-in skill', source: 'builtin', path: 'builtin://builtin' } },
+          { kind: 'skill', skill: { name: 'from-plugin', description: 'Plugin skill', source: 'plugin', path: '/plugins/demo/skills/from-plugin/SKILL.md' } },
         ],
         activeIndex: 0,
         loading: false,
@@ -112,7 +115,55 @@ describe('skill source labels', () => {
     expect([...document.querySelectorAll('.mention-dir')].map((element) => element.textContent)).toEqual([
       'Global',
       'Built-in',
+      'Plugin',
     ]);
+  });
+
+  it('shows a searching row under a Files header while file results are pending', async () => {
+    app = createApp({
+      render: () => h(MentionMenu, {
+        items: [
+          { kind: 'skill', skill: { name: 'readme-writer', description: '', source: 'user', path: '/user/readme-writer/SKILL.md' } },
+        ],
+        activeIndex: 0,
+        loading: true,
+        query: 'readm',
+      }),
+    });
+    app.use(createKimiI18n({ locale: 'en' }));
+    app.mount(host);
+    await nextTick();
+
+    expect([...document.querySelectorAll('.mention-section-label')].map((element) => element.textContent?.trim()))
+      .toEqual(['Skills', 'Files']);
+    expect(document.querySelector('.mention-searching')?.textContent).toBe('Searching for “readm”…');
+    expect(document.querySelectorAll('[role="option"]')).toHaveLength(1);
+  });
+
+  it('shows the searching row alone when nothing else matches yet', async () => {
+    app = createApp({
+      render: () => h(MentionMenu, { items: [], activeIndex: 0, loading: true }),
+    });
+    app.use(createKimiI18n({ locale: 'en' }));
+    app.mount(host);
+    await nextTick();
+
+    expect(document.querySelector('.mention-searching')?.textContent).toBe('Searching…');
+    expect(document.querySelector('.mention-state')).toBeNull();
+    expect(document.querySelector('.composer-menu-hints')).toBeNull();
+  });
+
+  it('shows the searching row without a Files header in the sessions submenu', async () => {
+    app = createApp({
+      render: () => h(MentionMenu, { items: [], activeIndex: 0, loading: true, query: 'login', submenuTitle: 'Sessions' }),
+    });
+    app.use(createKimiI18n({ locale: 'en' }));
+    app.mount(host);
+    await nextTick();
+
+    expect(document.querySelector('.mention-submenu-head')?.textContent).toBe('Sessions');
+    expect(document.querySelector('.mention-section-label')).toBeNull();
+    expect(document.querySelector('.mention-searching')?.textContent).toBe('Searching for “login”…');
   });
 });
 
@@ -141,7 +192,7 @@ describe('mobile command layout', () => {
 });
 
 describe('skill grouping', () => {
-  it('renders one skills section after ordinary commands', async () => {
+  it('renders a commands section followed by one skills section', async () => {
     app = createApp({
       render: () => h(SlashMenu, {
         items: [
@@ -156,14 +207,120 @@ describe('skill grouping', () => {
     app.mount(host);
     await nextTick();
 
-    const section = document.querySelector('.slash-section-label');
-    expect(section?.textContent).toBe('Skills');
-    expect(section?.nextElementSibling?.querySelector('.slash-name')?.textContent).toBe('/skill:lark-calendar');
-    expect(document.querySelectorAll('.slash-section-label')).toHaveLength(1);
+    const sections = [...document.querySelectorAll('.slash-section-label')];
+    expect(sections.map((section) => section.textContent)).toEqual(['Commands', 'Skills']);
+    expect(sections[0]?.nextElementSibling?.querySelector('.slash-name')?.textContent).toBe('plan');
+    expect(sections[1]?.nextElementSibling?.querySelector('.slash-name')?.textContent).toBe('lark-calendar');
+    expect([...document.querySelectorAll('.slash-item')].map((row) => row.querySelector('.slash-icon') !== null))
+      .toEqual([false, true, true]);
+    expect(document.querySelector('.composer-menu-hints')?.textContent).toContain('complete');
     expect([...document.querySelectorAll('.slash-name')].map((element) => element.textContent)).toEqual([
-      '/plan',
-      '/skill:lark-calendar',
-      '/skill:lark-approval',
+      'plan',
+      'lark-calendar',
+      'lark-approval',
     ]);
+  });
+
+  it('highlights the match in a name shown without its leading slash and skill prefix', async () => {
+    app = createApp({
+      render: () => h(SlashMenu, {
+        items: [
+          { name: '/plan', desc: 'commands.plan.desc' },
+          { name: '/skill:lark-calendar', desc: 'Calendar', isSkill: true },
+        ],
+        ranges: [{ name: [[1, 3]] }, { name: [[1, 6], [7, 11]] }],
+        activeIndex: 0,
+      }),
+    });
+    app.use(createKimiI18n({ locale: 'en' }));
+    app.mount(host);
+    await nextTick();
+
+    const names = [...document.querySelectorAll('.slash-name')];
+    expect(names.map((name) => name.textContent)).toEqual(['plan', 'lark-calendar']);
+    expect(names.map((name) => [...name.querySelectorAll('.slash-match')].map((hit) => hit.textContent)))
+      .toEqual([['pl'], ['lark']]);
+  });
+
+  it('drops highlights that only match the hidden skill prefix when computing ranges from the query', async () => {
+    app = createApp({
+      render: () => h(SlashMenu, {
+        items: [{ name: '/skill:lark-calendar', desc: 'Calendar', isSkill: true }],
+        query: 'skill',
+        activeIndex: 0,
+      }),
+    });
+    app.use(createKimiI18n({ locale: 'en' }));
+    app.mount(host);
+    await nextTick();
+
+    const name = document.querySelector('.slash-name')!;
+    expect(name.textContent).toBe('lark-calendar');
+    expect(name.querySelectorAll('.slash-match')).toHaveLength(0);
+  });
+});
+
+describe('popup height clamp', () => {
+  const HINTS_HEIGHT = 30;
+  const originalOffsetParent = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'offsetParent')!;
+  const originalOffsetHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'offsetHeight')!;
+
+  beforeEach(() => {
+    Object.defineProperty(HTMLElement.prototype, 'offsetParent', {
+      configurable: true,
+      get: () => host,
+    });
+    Object.defineProperty(HTMLElement.prototype, 'offsetHeight', {
+      configurable: true,
+      get(this: HTMLElement) {
+        return this.classList.contains('composer-menu-hints') ? HINTS_HEIGHT : 0;
+      },
+    });
+    host.getBoundingClientRect = () => ({ top: 300, bottom: 340, left: 0, right: 600, width: 600, height: 40, x: 0, y: 300, toJSON: () => ({}) });
+  });
+
+  afterEach(() => {
+    Object.defineProperty(HTMLElement.prototype, 'offsetParent', originalOffsetParent);
+    Object.defineProperty(HTMLElement.prototype, 'offsetHeight', originalOffsetHeight);
+  });
+
+  function listMaxHeight(selector: string): number {
+    return Number.parseFloat(document.querySelector<HTMLElement>(selector)!.style.maxHeight);
+  }
+
+  it('shrinks the slash list when the key hints appear with the first matches', async () => {
+    const items = ref<Array<{ name: string; desc: string }>>([]);
+    app = createApp({ render: () => h(SlashMenu, { items: items.value, activeIndex: 0 }) });
+    app.use(createKimiI18n({ locale: 'en' }));
+    app.mount(host);
+    await nextTick();
+    const empty = listMaxHeight('.slash-scroll');
+    expect(empty).toBeGreaterThan(HINTS_HEIGHT);
+
+    items.value = [{ name: '/new', desc: 'commands.new.desc' }];
+    await nextTick();
+    expect(document.querySelector('.composer-menu-hints')).not.toBeNull();
+    await vi.waitFor(() => expect(listMaxHeight('.slash-scroll')).toBe(empty - HINTS_HEIGHT));
+  });
+
+  it('shrinks the mention list when the key hints appear with the first results', async () => {
+    const loaded = ref(false);
+    app = createApp({
+      render: () => h(MentionMenu, {
+        items: loaded.value ? [{ kind: 'file', file: { path: 'src/a.ts', name: 'a.ts' } }] : [],
+        activeIndex: 0,
+        loading: !loaded.value,
+      }),
+    });
+    app.use(createKimiI18n({ locale: 'en' }));
+    app.mount(host);
+    await nextTick();
+    const searching = listMaxHeight('.mention-scroll');
+    expect(searching).toBeGreaterThan(HINTS_HEIGHT);
+
+    loaded.value = true;
+    await nextTick();
+    expect(document.querySelector('.composer-menu-hints')).not.toBeNull();
+    await vi.waitFor(() => expect(listMaxHeight('.mention-scroll')).toBe(searching - HINTS_HEIGHT));
   });
 });

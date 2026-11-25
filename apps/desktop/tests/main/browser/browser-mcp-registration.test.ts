@@ -5,7 +5,6 @@ import { afterEach, expect, it, vi } from 'vitest';
 import {
   IAgentLifecycleService,
   IAgentLoopService,
-  IAgentReminderService,
   IAgentMcpService,
   IEventBus,
   SubagentSpawned,
@@ -61,6 +60,26 @@ function createControl(initial = true): DesktopBrowserAgentControl & { set(enabl
   };
 }
 
+async function runReminderStep(loop: IAgentLoopService): Promise<void> {
+  await loop.start();
+  const entries = Reflect.get(loop.hooks.onWillBeginStep, 'entries') as readonly {
+    readonly id: string;
+    readonly handler: (
+      context: { turnId: number; step: number; firstStepOfTurn: boolean; signal: AbortSignal },
+      next: () => Promise<void>,
+    ) => void | Promise<void>;
+  }[];
+  const injector = entries.find((entry) => entry.id === 'context-injector');
+  if (injector === undefined) throw new Error('expected context-injector hook');
+  await injector.handler({
+    turnId: 0,
+    step: 0,
+    firstStepOfTurn: false,
+    signal: new AbortController().signal,
+  }, async () => {});
+  loop.flushReminders();
+}
+
 afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
@@ -76,7 +95,7 @@ it('loads the browser through upstream MCP selection and restores it with sessio
     homeDir: home,
     port: 0,
     logLevel: 'silent',
-    env: { ...process.env, KIMI_CODE_EXPERIMENTAL_TOOL_SELECT: '1' },
+    env: { ...process.env },
   });
   const registration = registerDesktopBrowserMcp(server.core, browser.config, createDesktopBrowserAccess(createControl()));
   try {
@@ -115,7 +134,9 @@ it('loads the browser through upstream MCP selection and restores it with sessio
     expect(registry.resolve(name)).toBeDefined();
     await selection.prepareForRequest();
     expect(selection.shapeTools(registry.list()).map((tool) => tool.name)).not.toContain(name);
-    expect(selection.loadableToolsAnnouncement()?.content).toContain(name);
+    expect(selection.loadableToolsAnnouncement()?.content[0]).toMatchObject({
+      text: expect.stringContaining(name),
+    });
     const loaded = selection.load([name]);
     expect(loaded.toLoad).toEqual([name]);
     expect(loaded.schemas.map((tool) => tool.name)).toEqual([name]);
@@ -165,7 +186,7 @@ it('reminds agents about the built-in browser and follows the agent control swit
     homeDir: home,
     port: 0,
     logLevel: 'silent',
-    env: { ...process.env, KIMI_CODE_EXPERIMENTAL_TOOL_SELECT: '1' },
+    env: { ...process.env },
   });
   const sessions = server.core.accessor.get(ISessionManager);
   const existing = await sessions.create({ workDir: home });
@@ -191,7 +212,7 @@ it('reminds agents about the built-in browser and follows the agent control swit
       .filter((message) => message.origin?.kind === 'injection' && message.origin.variant === DESKTOP_BROWSER_REMINDER_VARIANT)
       .map((message) => JSON.stringify(message.content));
     const reconcile = (agent: (typeof agents)[number]) =>
-      agent.accessor.get(IAgentReminderService).reconcileWhenIdle(DESKTOP_BROWSER_REMINDER_VARIANT);
+      runReminderStep(agent.accessor.get(IAgentLoopService));
 
     for (const agent of agents) {
       await reconcile(agent);
@@ -208,13 +229,33 @@ it('reminds agents about the built-in browser and follows the agent control swit
 
     const registry = agent!.accessor.get(IAgentToolRegistryService);
     const selection = agent!.accessor.get(IAgentToolSelectService);
+    const loop = agent!.accessor.get(IAgentLoopService);
+    const requestView = () => {
+      const base = loop.baselineTools();
+      const disclosure = selection.enabled();
+      const tools = selection.requestTools(base, disclosure);
+      const deferred = base.filter((tool) => tool.deferred === true);
+      const messages = selection.shapeHistory(loop.history(), disclosure, tools, deferred);
+      const announcements = messages
+        .map((message) => JSON.stringify(message.content))
+        .filter((text) => text.includes('<tools_added>') || text.includes('<tools_removed>'))
+        .join('\n');
+      return { toolNames: tools.map((tool) => tool.name), announcements };
+    };
     await selection.prepareForRequest();
     expect(registry.resolve(name)).toBeDefined();
-    expect(selection.loadableToolsAnnouncement()?.content).toContain(name);
+    const enabledView = requestView();
+    expect(enabledView.toolNames).not.toContain(name);
+    expect(enabledView.announcements).toContain(name);
     control.set(false);
     await vi.waitFor(() => expect(registry.resolve(name)).toBeUndefined());
     await selection.prepareForRequest();
-    expect(selection.loadableToolsAnnouncement()?.content ?? '').not.toContain(name);
+    const disabledView = requestView();
+    expect(disabledView.toolNames).not.toContain(name);
+    await reconcile(agent!);
+    const disabledAfterStep = requestView();
+    expect(disabledAfterStep.announcements).toContain('<tools_removed>');
+    expect(disabledAfterStep.announcements).toContain(name);
     const denied = await agent!.accessor.get(IAgentMcpService).resolved('desktop_browser')!.client.callTool('run', { protocol: 'kimi.browser/1.0.0', operation: 'browser.get_state' });
     expect(denied.isError).toBe(true);
     expect(JSON.stringify(denied.content)).toContain(DESKTOP_BROWSER_DISABLED_ERROR);
@@ -231,7 +272,9 @@ it('reminds agents about the built-in browser and follows the agent control swit
     control.set(true);
     await vi.waitFor(() => expect(registry.resolve(name)).toBeDefined());
     await selection.prepareForRequest();
-    expect(selection.loadableToolsAnnouncement()?.content).toContain(name);
+    const reenabledView = requestView();
+    expect(reenabledView.toolNames).not.toContain(name);
+    expect(reenabledView.announcements).toContain(name);
     await reconcile(agent!);
     expect(reminders(agent!)).toHaveLength(2);
     expect(reminders(agent!)[1]).toContain('select_tools');
@@ -258,7 +301,7 @@ it('keeps the built-in browser for chats that already used it when agent control
     homeDir: home,
     port: 0,
     logLevel: 'silent',
-    env: { ...process.env, KIMI_CODE_EXPERIMENTAL_TOOL_SELECT: '1' },
+    env: { ...process.env },
   });
   const sessions = server.core.accessor.get(ISessionManager);
   const registration = registerDesktopBrowserMcp(server.core, browser.config, access);
@@ -280,7 +323,7 @@ it('keeps the built-in browser for chats that already used it when agent control
     .filter((message) => message.origin?.kind === 'injection' && message.origin.variant === DESKTOP_BROWSER_REMINDER_VARIANT)
     .map((message) => JSON.stringify(message.content));
   const reconcile = (agent: Agent) =>
-    agent.accessor.get(IAgentReminderService).reconcileWhenIdle(DESKTOP_BROWSER_REMINDER_VARIANT);
+    runReminderStep(agent.accessor.get(IAgentLoopService));
   const tool = (agent: Agent) => agent.accessor.get(IAgentToolRegistryService).resolve(name);
   const callBrowser = (agent: Agent) => agent.accessor.get(IAgentMcpService).resolved('desktop_browser')!.client
     .callTool('run', { protocol: 'kimi.browser/1.0.0', operation: 'browser.get_state' });
@@ -365,7 +408,7 @@ it('does not keep the built-in browser for chats whose only browser attempts wer
     homeDir: home,
     port: 0,
     logLevel: 'silent',
-    env: { ...process.env, KIMI_CODE_EXPERIMENTAL_TOOL_SELECT: '1' },
+    env: { ...process.env },
   });
   const sessions = server.core.accessor.get(ISessionManager);
   const registration = registerDesktopBrowserMcp(server.core, browser.config, access);
@@ -389,8 +432,9 @@ it('does not keep the built-in browser for chats whose only browser attempts wer
   const reminders = (agent: Agent) => agent.accessor.get(IAgentLoopService).history()
     .filter((message) => message.origin?.kind === 'injection' && message.origin.variant === DESKTOP_BROWSER_REMINDER_VARIANT)
     .map((message) => JSON.stringify(message.content));
-  const settle = (agent: Agent, toolName: string, args: string, output: string) => {
+  const settle = async (agent: Agent, toolName: string, args: string, output: string) => {
     const loop = agent.accessor.get(IAgentLoopService);
+    await loop.start();
     const id = `call-${toolName}`;
     loop.remind(
       historyEntryFromContext({ role: 'assistant', content: [], toolCalls: [{ type: 'function', id, name: toolName, arguments: args }] }),
@@ -399,7 +443,7 @@ it('does not keep the built-in browser for chats whose only browser attempts wer
     loop.flushReminders();
   };
   type Kind = 'call' | 'rewritten' | 'select' | 'erred';
-  const histories: Record<Kind, (agent: Agent) => void> = {
+  const histories: Record<Kind, (agent: Agent) => Promise<void>> = {
     call: (agent) => settle(agent, name, '{}', `Tool "${name}" not found`),
     rewritten: (agent) => settle(
       agent,
@@ -424,7 +468,7 @@ it('does not keep the built-in browser for chats whose only browser attempts wer
         await mkdir(workDir);
         const session = await sessions.create({ workDir });
         const agent = await prepare(session);
-        histories[kind](agent);
+        await histories[kind](agent);
         if (phase === 'live') live[kind] = agent;
         else {
           closed[kind] = session.id;
@@ -435,7 +479,7 @@ it('does not keep the built-in browser for chats whose only browser attempts wer
     const directDir = join(home, 'direct');
     await mkdir(directDir);
     const direct = await prepare(await sessions.create({ workDir: directDir }), false);
-    await direct.accessor.get(IAgentReminderService).reconcileWhenIdle(DESKTOP_BROWSER_REMINDER_VARIANT);
+    await runReminderStep(direct.accessor.get(IAgentLoopService));
     expect(reminders(direct)).toHaveLength(1);
     expect(reminders(direct)[0]).toContain(DESKTOP_BROWSER_DIRECT_REMINDER.slice(0, 80));
     expect(reminders(direct)[0]).not.toContain('select_tools');
@@ -483,7 +527,7 @@ it('tells every agent why the built-in browser is blocked and allows other avail
     homeDir: home,
     port: 0,
     logLevel: 'silent',
-    env: { ...process.env, KIMI_CODE_EXPERIMENTAL_TOOL_SELECT: '1' },
+    env: { ...process.env },
   });
   const sessions = server.core.accessor.get(ISessionManager);
   const registration = registerDesktopBrowserMcp(server.core, browser.config, access);
@@ -533,7 +577,7 @@ it('tells every agent why the built-in browser is blocked and allows other avail
     };
 
     for (const agent of [main!, worker!]) {
-      await agent.accessor.get(IAgentReminderService).reconcileWhenIdle(DESKTOP_BROWSER_REMINDER_VARIANT);
+      await runReminderStep(agent.accessor.get(IAgentLoopService));
       expect(reminders(agent)).toHaveLength(1);
       expect(reminders(agent)[0]).toContain(DESKTOP_BROWSER_DISABLED_REMINDER.slice(0, 120));
       expect(DESKTOP_BROWSER_DISABLED_REMINDER).toContain(DESKTOP_BROWSER_BLOCKED_GUIDANCE);
@@ -566,10 +610,10 @@ it('tells every agent why the built-in browser is blocked and allows other avail
     expect(allowed.isError).not.toBe(true);
     expect(JSON.stringify(allowed.output)).toContain('browser.get_state');
     expect(JSON.stringify(allowed.output)).not.toContain(DESKTOP_BROWSER_BLOCKED_GUIDANCE);
-    await worker!.accessor.get(IAgentReminderService).reconcileWhenIdle(DESKTOP_BROWSER_REMINDER_VARIANT);
+    await runReminderStep(worker!.accessor.get(IAgentLoopService));
     expect(reminders(worker!)).toHaveLength(2);
     expect(reminders(worker!)[1]).not.toContain(DESKTOP_BROWSER_BLOCKED_GUIDANCE);
-    await runner!.accessor.get(IAgentReminderService).reconcileWhenIdle(DESKTOP_BROWSER_REMINDER_VARIANT);
+    await runReminderStep(runner!.accessor.get(IAgentLoopService));
     expect(reminders(runner!)).toEqual([expect.stringContaining('built-in browser of Kimi Code Desktop')]);
   } finally {
     registration.dispose();
@@ -593,7 +637,7 @@ it('injects trusted subagent runs through dynamic and direct tools without weake
     homeDir: home,
     port: 0,
     logLevel: 'silent',
-    env: { ...process.env, KIMI_CODE_EXPERIMENTAL_TOOL_SELECT: '1' },
+    env: { ...process.env },
   });
   const sessions = server.core.accessor.get(ISessionManager);
   const registration = registerDesktopBrowserMcp(server.core, browser.config, access);
@@ -742,7 +786,7 @@ it('attaches trusted identity to an eligible subagent scope that already exists'
     homeDir: home,
     port: 0,
     logLevel: 'silent',
-    env: { ...process.env, KIMI_CODE_EXPERIMENTAL_TOOL_SELECT: '1' },
+    env: { ...process.env },
   });
   let registration: ReturnType<typeof registerDesktopBrowserMcp> | undefined;
   try {

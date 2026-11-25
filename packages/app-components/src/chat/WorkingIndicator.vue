@@ -2,11 +2,12 @@
 defineProps<{
   label?: string;
   idle?: boolean;
+  staticLabel?: boolean;
 }>();
 </script>
 
 <template>
-  <div class="working-indicator" :class="{ idle }" role="status">
+  <div class="working-indicator" :class="{ idle, 'static-label': staticLabel }" role="status">
     <span class="wi-face" aria-hidden="true">
       <span class="wi-eyes">
         <span class="wi-eye wi-eye--left" />
@@ -14,6 +15,7 @@ defineProps<{
       </span>
     </span>
     <span v-if="label" class="wi-label">{{ label }}</span>
+    <slot />
   </div>
 </template>
 
@@ -21,7 +23,8 @@ defineProps<{
 .working-indicator {
   display: inline-flex;
   align-items: center;
-  gap: var(--space-3);
+  flex-wrap: wrap;
+  gap: var(--space-1-5) var(--space-3);
   align-self: flex-start;
   font-family: var(--markdown-font-family);
   font-size: var(--markdown-body-font-size);
@@ -60,11 +63,12 @@ defineProps<{
 }
 
 .wi-label {
-  animation: wi-breathe 1.6s var(--ease-in-out) infinite;
+  animation: ui-breathe 1.6s var(--ease-in-out) infinite;
 }
 
 .working-indicator.idle .wi-eyes,
-.working-indicator.idle .wi-eye {
+.working-indicator.idle .wi-eye,
+.working-indicator.static-label .wi-label {
   animation: none;
 }
 
@@ -77,15 +81,6 @@ defineProps<{
 @keyframes wi-blink {
   0%, 88%, 100% { transform: translate(-50%, -50%) scaleY(1); }
   92% { transform: translate(-50%, -50%) scaleY(0.15); }
-}
-@keyframes wi-breathe {
-  0%,
-  100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.45;
-  }
 }
 @media (prefers-reduced-motion: reduce) {
   .wi-eyes,

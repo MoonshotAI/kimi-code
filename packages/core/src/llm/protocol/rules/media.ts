@@ -1,6 +1,7 @@
 import {
   isMediaPart,
   mediaKindOfPart,
+  mediaOmissionOf,
   mediaPlaceholderText,
   type ContentPart,
   type MediaKind,
@@ -62,6 +63,8 @@ function placeholderReason(
   position: MediaPosition,
   support: MediaSupport,
 ): MediaPlaceholderReason | undefined {
+  const omitted = mediaOmissionOf(part);
+  if (omitted !== undefined) return omitted;
   const kind = mediaKindOfPart(part);
   const spec = mediaSupportAt(support, kind, position);
   if (spec === undefined) return 'protocol_unsupported';

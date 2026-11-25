@@ -332,6 +332,22 @@ export type UpdateSessionRequest = z.infer<typeof updateSessionRequestSchema>;
 export const updateSessionResponseSchema = updateSessionProfileResponseSchema;
 export type UpdateSessionResponse = z.infer<typeof updateSessionResponseSchema>;
 
+export type SessionAction =
+  | 'fork'
+  | 'compact'
+  | 'undo'
+  | 'cancel'
+  | 'wait'
+  | 'continue'
+  | 'btw'
+  | 'predict-prompt'
+  | 'cancel-prompt-prediction'
+  | 'restore'
+  | 'archive'
+  | 'delete'
+  | 'reload'
+  | 'takeover';
+
 export const forkSessionRequestSchema = sessionForkSchema;
 export type ForkSessionRequest = z.infer<typeof forkSessionRequestSchema>;
 
@@ -343,11 +359,57 @@ export const startBtwSessionResponseSchema = z.object({
 });
 export type StartBtwSessionResponse = z.infer<typeof startBtwSessionResponseSchema>;
 
+export const predictPromptRequestSchema = z.object({
+  prediction_id: z.string().min(1),
+  expected_turn_id: z.number().int().nonnegative(),
+});
+export type PredictPromptRequest = z.infer<typeof predictPromptRequestSchema>;
+
+export const predictPromptResponseSchema = z.object({
+  prediction: z.string().nullable(),
+});
+export type PredictPromptResponse = z.infer<typeof predictPromptResponseSchema>;
+
+export const cancelPromptPredictionRequestSchema = z.object({
+  prediction_id: z.string().min(1),
+  reason: z.enum([
+    'input',
+    'escape',
+    'new_turn',
+    'session',
+    'dialog',
+    'queue',
+    'submit',
+    'plan',
+    'visibility',
+    'shutdown',
+    'disconnect',
+    'activity_turn_started',
+    'activity_turn_ended',
+    'activity_background',
+    'activity_interaction',
+    'activity_agent_lifecycle',
+    'agent_will_close',
+    'agent_replaced',
+    'agent_closed',
+    'disposed',
+    'unspecified',
+  ]).optional(),
+});
+export type CancelPromptPredictionRequest = z.infer<typeof cancelPromptPredictionRequestSchema>;
+
+export const cancelPromptPredictionResponseSchema = z.object({
+  cancelled: z.boolean(),
+});
+export type CancelPromptPredictionResponse = z.infer<typeof cancelPromptPredictionResponseSchema>;
+
+export const compactSessionBodySchema = z.object({
+  instruction: z.string().optional(),
+});
+
 export const compactSessionRequestSchema = z.preprocess(
   (value) => value === undefined ? {} : value,
-  z.object({
-    instruction: z.string().optional(),
-  }),
+  compactSessionBodySchema,
 );
 export type CompactSessionRequest = z.infer<typeof compactSessionRequestSchema>;
 
@@ -364,6 +426,15 @@ export const undoSessionResponseSchema = z.object({
   removed_turn_ids: z.array(z.string().min(1)),
 });
 export type UndoSessionResponse = z.infer<typeof undoSessionResponseSchema>;
+
+export const undoUnavailableDataSchema = z.object({
+  reason: z.enum(['empty', 'compaction_boundary', 'insufficient']),
+  requested_count: z.number().int().nonnegative(),
+  undoable_count: z.number().int().nonnegative(),
+  requestedCount: z.number().int().nonnegative().meta({ deprecated: true }),
+  undoableCount: z.number().int().nonnegative().meta({ deprecated: true }),
+});
+export type UndoUnavailableData = z.infer<typeof undoUnavailableDataSchema>;
 
 export const archiveSessionResponseSchema = z.object({
   archived: z.literal(true),

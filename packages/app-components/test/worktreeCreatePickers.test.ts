@@ -228,7 +228,7 @@ describe('CreateSourceBranchPicker', () => {
   it('opens a heading-less panel with the search focused and both groups', async () => {
     await mountOpen();
 
-    expect(document.activeElement).toBe(q('.wsb-search-input'));
+    expect(document.activeElement).toBe(q('.wsb-search input'));
     expect(api.getWorkspaceGitBranches).toHaveBeenCalledWith('ws1');
     expect(all('.wsb-group').map((el) => el.textContent)).toEqual(['Local File Status', 'Local Branches']);
     expect(q('.wsb-row[data-row="local"] .wsb-row-name')?.textContent).toBe('main');
@@ -296,7 +296,7 @@ describe('CreateSourceBranchPicker', () => {
 
   it('filters while typing and reports no matches', async () => {
     await mountOpen();
-    const input = q<HTMLInputElement>('.wsb-search-input')!;
+    const input = q<HTMLInputElement>('.wsb-search input')!;
     input.value = 'LOGIN';
     input.dispatchEvent(new Event('input'));
     await settle();
@@ -311,7 +311,7 @@ describe('CreateSourceBranchPicker', () => {
 
   it('navigates with the arrow keys and selects with Enter without closing', async () => {
     await mountOpen({ ...repo, dirty: false });
-    const input = q<HTMLInputElement>('.wsb-search-input')!;
+    const input = q<HTMLInputElement>('.wsb-search input')!;
     expect(q('.wsb-row.active')?.dataset.row).toBe('main');
     pressKey(input, 'ArrowUp');
     await nextTick();

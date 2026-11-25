@@ -12,8 +12,19 @@ export type ConfirmOptions = {
   action?: () => unknown;
 };
 
+export type ConfirmCheckbox = {
+  label: string;
+  checked: boolean;
+};
+
+export type ConfirmCheckboxResult = {
+  confirmed: boolean;
+  checked: boolean;
+};
+
 type ConfirmRequest = ConfirmOptions & {
   seq: number;
+  checkbox?: ConfirmCheckbox;
   resolve: (ok: boolean) => void;
   reject: (err: unknown) => void;
 };
@@ -56,13 +67,31 @@ async function runAction(): Promise<void> {
 
 let confirmSeq = 0;
 
-function confirm(options: ConfirmOptions): Promise<boolean> {
+function open(options: ConfirmOptions, checkbox?: ConfirmCheckbox): Promise<boolean> {
   if (busy.value) return Promise.resolve(false);
   if (current.value) settle(false);
   return new Promise<boolean>((resolve, reject) => {
     confirmSeq += 1;
-    current.value = { ...options, seq: confirmSeq, resolve, reject };
+    current.value = { ...options, checkbox, seq: confirmSeq, resolve, reject };
   });
+}
+
+function confirm(options: ConfirmOptions): Promise<boolean> {
+  return open(options);
+}
+
+async function confirmWithCheckbox(
+  options: ConfirmOptions & { checkbox: ConfirmCheckbox },
+): Promise<ConfirmCheckboxResult> {
+  const checkbox = { ...options.checkbox };
+  const confirmed = await open(options, checkbox);
+  return { confirmed, checked: checkbox.checked };
+}
+
+function setCheckboxChecked(checked: boolean): void {
+  const req = current.value;
+  if (!req?.checkbox || busy.value) return;
+  req.checkbox.checked = checked;
 }
 
 export function useConfirmDialog(): {
@@ -70,8 +99,10 @@ export function useConfirmDialog(): {
   busy: typeof busy;
   isConfirmOpen: typeof isConfirmOpen;
   confirm: typeof confirm;
+  confirmWithCheckbox: typeof confirmWithCheckbox;
+  setCheckboxChecked: typeof setCheckboxChecked;
   settle: typeof settle;
   runAction: typeof runAction;
 } {
-  return { current, busy, isConfirmOpen, confirm, settle, runAction };
+  return { current, busy, isConfirmOpen, confirm, confirmWithCheckbox, setCheckboxChecked, settle, runAction };
 }

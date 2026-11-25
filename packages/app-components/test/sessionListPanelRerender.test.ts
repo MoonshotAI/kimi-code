@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 import { createApp, defineComponent, h, nextTick, reactive, ref, type App } from 'vue';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import type { Session, WorkspaceGroup as WorkspaceGroupView } from '@moonshot-ai/app-core/client/types';
+import { loadCollapsedWorkspaces, loadSidebarViewMode, saveCollapsedWorkspaces, saveSidebarViewMode } from '@moonshot-ai/app-core/lib';
 import { createKimiI18n } from '@moonshot-ai/app-i18n';
 import { IconResolverKey } from '@moonshot-ai/app-ui';
 
@@ -281,6 +282,53 @@ describe('SessionListPanel re-render scope', () => {
     expect(fakes.client.togglePinWorkspace).toHaveBeenCalledWith('ws-1');
   });
 
+  async function locateSearchResult(mode: 'flat' | 'grouped', target: string) {
+    app?.unmount();
+    saveSidebarViewMode(mode);
+    saveCollapsedWorkspaces(['ws-1']);
+    fakes.client.sidebarFlatSessions = ref([session(1, 0)]);
+    fakes.client.sidebarFlatSessionsHasMore = ref(true);
+    fakes.client.loadMoreSidebarFlatSessions = vi.fn();
+    vi.stubGlobal('matchMedia', () => ({ matches: false }));
+    const scroll = vi.fn();
+    Element.prototype.scrollIntoView = scroll;
+    onTestFinished(() => {
+      Reflect.deleteProperty(Element.prototype, 'scrollIntoView');
+      vi.unstubAllGlobals();
+    });
+    app = installTestPlugins(createApp(SessionListPanel, { statusTab: 'open' }));
+    const panel = app.mount(host) as InstanceType<typeof SessionListPanel>;
+
+    panel.locateSession(target);
+    await nextTick();
+    await nextTick();
+
+    return scroll;
+  }
+
+  it.each(['flat', 'grouped'] as const)('scrolls to and highlights a rendered search result in %s view', async (mode) => {
+    const target = 's-1-0';
+    const scroll = await locateSearchResult(mode, target);
+    const row = rowOf(target);
+
+    expect(loadSidebarViewMode()).toBe(mode);
+    expect(loadCollapsedWorkspaces()).toEqual(mode === 'flat' ? ['ws-1'] : []);
+    expect(fakes.client.loadMoreSidebarFlatSessions).not.toHaveBeenCalled();
+    expect(scroll.mock.contexts).toEqual([row]);
+    expect(row?.classList.contains('se-locate-flash')).toBe(true);
+  });
+
+  it('keeps flat view without scrolling or loading more for a search result outside the rendered page', async () => {
+    const target = 's-1-1';
+    const scroll = await locateSearchResult('flat', target);
+
+    expect(loadSidebarViewMode()).toBe('flat');
+    expect(loadCollapsedWorkspaces()).toEqual(['ws-1']);
+    expect(fakes.client.loadMoreSidebarFlatSessions).not.toHaveBeenCalled();
+    expect(rowOf(target)).toBeNull();
+    expect(scroll).not.toHaveBeenCalled();
+  });
+
   it('returns to Open before locating a session in a pinned workspace', async () => {
     app?.unmount();
     const pinned = group(0);
@@ -512,7 +560,7 @@ describe('SessionListPanel re-render scope', () => {
 
     const pinnedRoot = host.querySelector('.pinned')!;
     const pinnedRow = () => host.querySelector(`.pinned [data-session-id="${pinnedSingle.id}"]`)!;
-    const openPinnedMenu = () => document.body.querySelector('.pinned-menu:not(.menu-pop-leave-active)');
+    const openPinnedMenu = () => document.body.querySelector('.pinned-menu:not(.ui-menu-pop-leave-active)');
 
     const pinnedHeading = pinnedRoot.querySelector<HTMLElement>('.pinned-heading')!;
     expect(pinnedHeading.firstElementChild?.classList.contains('pinned-title')).toBe(true);

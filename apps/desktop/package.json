@@ -1,6 +1,6 @@
 {
   "name": "kimi-code-app",
-  "version": "1.4.2",
+  "version": "1.4.3",
   "private": true,
   "description": "Kimi Code Desktop — Everything you love about Kimi Code, now on desktop",
   "author": "Moonshot AI",
@@ -24,7 +24,8 @@
     "e2e": "node e2e/run.mjs",
     "e2e:headless": "node e2e/run.mjs",
     "postinstall": "node scripts/rebuild-native.mjs",
-    "dist": "npm run build:renderer && npm run build:native:screenshot && npm run build:native:clamshell && tsdown && electron-builder --config electron-builder.config.cjs"
+    "dist": "npm run build:renderer && npm run dist:prebuilt-renderer --",
+    "dist:prebuilt-renderer": "npm run build:native:screenshot && npm run build:native:clamshell && tsdown && electron-builder --config electron-builder.config.cjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",

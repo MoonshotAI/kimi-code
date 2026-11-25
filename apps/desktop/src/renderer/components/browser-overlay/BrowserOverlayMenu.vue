@@ -260,7 +260,7 @@ function hide(payload: BrowserOverlayVisibilityRequest): void {
 
 function activate(itemId: string): void {
   const current = config.value;
-  if (current?.kind === 'dialog' && current.input && (itemId === 'confirm' || itemId === 'cancel' || itemId === 'auxiliary')) {
+  if (current?.kind === 'dialog' && (current.input || current.checkbox) && (itemId === 'confirm' || itemId === 'cancel' || itemId === 'auxiliary')) {
     bridge?.submitForm({ requestId: current.requestId, action: itemId, value: inputValue.value, checked: current.checkbox === undefined ? undefined : checkboxChecked.value });
     return;
   }
@@ -283,6 +283,11 @@ function onKeydown(event: KeyboardEvent): void {
   if (event.isComposing || event.keyCode === 229) return;
   const current = config.value;
   if (current === null) return;
+  if (current.kind === 'menu' && current.submitOnCtrlEnter === true && event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+    event.preventDefault();
+    dismiss('dismiss');
+    return;
+  }
   if (event.key === 'Escape') {
     if (current.kind === 'dialog' && current.loading === true) return;
     event.preventDefault();

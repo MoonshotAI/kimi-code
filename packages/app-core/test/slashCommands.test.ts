@@ -369,10 +369,10 @@ describe('same-name skill variants', () => {
 });
 
 describe('skill source labels', () => {
-  it('classifies global and built-in sources without changing project defaults', () => {
+  it('classifies global, plugin and built-in sources without changing project defaults', () => {
     expect(skillSourceKind('user')).toBe('global');
     expect(skillSourceKind('extra')).toBe('global');
-    expect(skillSourceKind('plugin')).toBe('global');
+    expect(skillSourceKind('plugin')).toBe('plugin');
     expect(skillSourceKind('builtin')).toBe('builtin');
     expect(skillSourceKind('project')).toBeUndefined();
     expect(skillSourceKind(undefined)).toBeUndefined();
@@ -380,9 +380,10 @@ describe('skill source labels', () => {
     const items = buildSlashItems([
       { name: 'global-skill', description: 'Global', source: 'user' },
       { name: 'builtin-skill', description: 'Built-in', source: 'builtin' },
+      { name: 'plugin-skill', description: 'Plugin', source: 'plugin' },
       { name: 'project-skill', description: 'Project', source: 'project' },
     ]).filter((item) => item.isSkill);
-    expect(items.map((item) => item.sourceKind)).toEqual(['global', 'builtin', undefined]);
+    expect(items.map((item) => item.sourceKind)).toEqual(['global', 'builtin', 'plugin', undefined]);
   });
 });
 
@@ -398,6 +399,16 @@ describe('buildSlashItems /tower listing gate', () => {
   it('a typed /tower resolves from the decision list (always opted in)', () => {
     expect(matchSlashItem(buildSlashItems([], { towerEnabled: true }), '/tower')?.name).toBe('/tower');
     expect(matchSlashItem(buildSlashItems(), '/tower')).toBeUndefined();
+  });
+
+  it.each([
+    { command: '/plan', option: { planEnabled: false } },
+    { command: '/swarm', option: { swarmEnabled: false } },
+    { command: '/goal', option: { goalEnabled: false } },
+  ])('hides $command from listing and typed-command resolution when disabled', ({ command, option }) => {
+    expect(buildSlashItems([], option).some((item) => item.name === command)).toBe(false);
+    expect(matchSlashItem(buildSlashItems([], option), command)).toBeUndefined();
+    expect(buildSlashItems().some((item) => item.name === command)).toBe(true);
   });
 });
 

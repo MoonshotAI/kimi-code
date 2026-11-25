@@ -682,6 +682,32 @@ it('rejects /compact while a compaction is running and sends directly once it en
   await vi.waitFor(() => expect(api.compactSession).toHaveBeenCalledWith('a', 'shorter'));
 });
 
+it('reports compaction as running immediately while compactSession is in flight and clears on failure', async () => {
+  const h = await setup();
+  let rejectCompact!: (error: Error) => void;
+  const api = h.api as typeof h.api & { compactSession: ReturnType<typeof vi.fn> };
+  api.compactSession = vi.fn(
+    () =>
+      new Promise((_resolve, reject) => {
+        rejectCompact = reject;
+      }),
+  );
+  await h.client.selectSession('a');
+  await vi.waitFor(() => expect(h.client.sessionLoading.value).toBe(false));
+
+  expect(h.client.compaction.value).toBeNull();
+  expect(h.client.wouldEnqueuePrompt()).toBe(false);
+  expect(h.client.compact()).toBe('sent');
+  expect(h.client.compaction.value).toEqual({ status: 'running' });
+  expect(h.client.wouldEnqueuePrompt()).toBe(true);
+  expect(h.client.compact()).toBe('compacting');
+  expect(api.compactSession).toHaveBeenCalledTimes(1);
+
+  rejectCompact(new Error('network down'));
+  await vi.waitFor(() => expect(h.client.compaction.value).toBeNull());
+  expect(h.client.wouldEnqueuePrompt()).toBe(false);
+});
+
 it('skips a queued /compact when an auto compaction completed while it waited', async () => {
   const h = await setup();
   const api = h.api as typeof h.api & {

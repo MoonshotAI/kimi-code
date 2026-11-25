@@ -191,9 +191,9 @@ describe.each([['desktop', DesktopConversationPane]])('%s ConversationPane proje
 
     const rows = [...el.querySelectorAll<HTMLButtonElement>('.ws-list .ws-row')];
     expect(rows.map((row) => row.querySelector('.ws-name')?.textContent)).toEqual(['local-app', 'trainer']);
-    expect(rows[1]?.querySelector('.ws-path')?.textContent).toBe('GPU 开发机 · /home/ubuntu/trainer');
+    expect(rows[1]?.querySelector('.ui-menu-item__description')?.textContent).toBe('GPU 开发机 · /home/ubuntu/trainer');
 
-    const search = el.querySelector<HTMLInputElement>('.ws-search-input')!;
+    const search = el.querySelector<HTMLInputElement>('.ws-search input')!;
     search.value = '10.0.0.8';
     search.dispatchEvent(new Event('input'));
     await nextTick();
@@ -219,7 +219,7 @@ describe.each([['desktop', DesktopConversationPane]])('%s ConversationPane proje
 
     const remoteRow = el.querySelectorAll<HTMLButtonElement>('.ws-list .ws-row')[1]!;
     expect(remoteRow.disabled).toBe(true);
-    expect(remoteRow.querySelector('.ws-path')?.textContent).toContain('GPU 开发机 · /home/ubuntu/trainer');
+    expect(remoteRow.querySelector('.ui-menu-item__description')?.textContent).toContain('GPU 开发机 · /home/ubuntu/trainer');
     remoteRow.click();
     await nextTick();
     expect(onSelectWorkspace).not.toHaveBeenCalled();

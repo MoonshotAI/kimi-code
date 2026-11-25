@@ -1,5 +1,6 @@
 import { isSleepPreventionMode, type PreventSleepState, type SleepPreventionMode } from '../../shared/prevent-sleep';
 import { isDesktopFailureKind, type DesktopFailureKind } from '../../shared/failure-feedback';
+import { asQuitConfirmDetails, type QuitBlockReason, type QuitConfirmDetails } from '../../shared/quit-confirm';
 import { asBrowserAnnotationPickOptions, asBrowserAnnotationPickRequest, browserValidators as annotationValidators, type BrowserAnnotationCaptureAction } from '../../shared/browser-annotation';
 import { browserValidators as receiptValidators, type BrowserReceiptImage } from '../../shared/browser-receipt';
 import { isBrowserTabCommand, type BrowserTabCommand } from '../../shared/browser';
@@ -52,6 +53,7 @@ import type {
   BrowserOverlayMenuRequest,
 } from '../../shared/browser-overlay';
 import { isBrowserUiRequest, isBrowserUiResponse, type BrowserUiRequest, type BrowserUiResponse } from '../../shared/browser-automation-ui';
+import type { FeedbackDiagnosticsArchive } from '../../shared/feedback-diagnostics';
 
 export type DialogOptions = Record<string, unknown>;
 
@@ -306,15 +308,21 @@ function asJumpListWorkspaces(value: unknown): value is JumpListWorkspace[] {
   );
 }
 
-export type LaunchActionPayload = { action: 'new-chat' } | { action: 'open-workspace'; root: string; newChat?: boolean };
+export type LaunchActionPayload =
+  | { action: 'new-chat' }
+  | { action: 'open-workspace'; root: string; newChat?: boolean }
+  | { action: 'open-session'; sessionId: string };
 
 function asLaunchActionPayload(value: unknown): LaunchActionPayload | null {
   if (typeof value !== 'object' || value === null) {
     return null;
   }
-  const candidate = value as { action?: unknown; root?: unknown; newChat?: unknown };
+  const candidate = value as { action?: unknown; root?: unknown; newChat?: unknown; sessionId?: unknown };
   if (candidate.action === 'new-chat') {
     return { action: 'new-chat' };
+  }
+  if (candidate.action === 'open-session' && typeof candidate.sessionId === 'string' && candidate.sessionId !== '') {
+    return { action: 'open-session', sessionId: candidate.sessionId };
   }
   if (candidate.action === 'open-workspace' && typeof candidate.root === 'string' && candidate.root !== '') {
     if (candidate.newChat !== undefined && typeof candidate.newChat !== 'boolean') return null;
@@ -381,6 +389,7 @@ function asNativeTerminalInfo(value: unknown): NativeTerminalInfo | null {
 
 export type KimiDesktopApi = {
   browserOverlaySupported: boolean;
+  sessionLinksSupported: boolean;
   inspectNativeTerminals: (ids: string[]) => Promise<TerminalActivity[]>;
   setTheme: (scheme: 'light' | 'dark' | 'system') => void;
   popupWindowsMenu: (request: {
@@ -393,6 +402,7 @@ export type KimiDesktopApi = {
   onShortcut: (cb: (accel: string) => void) => () => void;
   openExternal: (url: string) => Promise<void>;
   writeClipboardText: (text: string) => Promise<boolean>;
+  collectFeedbackDiagnostics: () => Promise<FeedbackDiagnosticsArchive>;
   onFailureToast: (cb: (kind: DesktopFailureKind, url?: string) => void) => () => void;
   updateServerCredential: (token: string) => Promise<void>;
   showOpenDialog: (opts: DialogOptions) => Promise<{ canceled: boolean; filePaths: string[] }>;
@@ -431,9 +441,15 @@ export type KimiDesktopApi = {
   showSelectionContextMenu: (selectionText: string) => void;
   setJumpList: (workspaces: JumpListWorkspace[]) => void;
   onLaunchAction: (cb: (payload: LaunchActionPayload) => void) => () => void;
-  onQuitConfirm: (cb: (requestId: number, reasons: Array<'busy' | 'remote-control'>) => void) => () => void;
+  onQuitConfirm: (
+    cb: (requestId: number, reasons: QuitBlockReason[], details: QuitConfirmDetails) => void,
+  ) => () => void;
   onQuitConfirmCancel: (cb: (requestId: number) => void) => () => void;
-  respondQuitConfirm: (choice: 'quit' | 'cancel' | 'unavailable', requestId: number) => Promise<void>;
+  respondQuitConfirm: (
+    choice: 'quit' | 'cancel' | 'unavailable',
+    requestId: number,
+    continueSessions?: boolean,
+  ) => Promise<void>;
   onDeepLinkAuth: (cb: () => void) => () => void;
   setVibrancy: (enabled: boolean) => void;
   getVibrancy: () => Promise<boolean>;
@@ -555,6 +571,7 @@ export type KimiDesktopApi = {
 
 export const api: KimiDesktopApi = {
   browserOverlaySupported: process.argv.includes('--kimi-native-overlay-host'),
+  sessionLinksSupported: process.argv.includes('--kimi-session-links'),
   inspectNativeTerminals: async ids => {
     const result: unknown = await ipcRenderer.invoke('kimi:terminal-inspect', ids);
     if (!isTerminalActivityList(result)) throw new Error('Invalid terminal activity response');
@@ -583,6 +600,7 @@ export const api: KimiDesktopApi = {
   },
   openExternal: (url) => ipcRenderer.invoke('kimi:open-external', url),
   writeClipboardText: (text) => ipcRenderer.invoke('kimi:write-clipboard-text', text),
+  collectFeedbackDiagnostics: () => ipcRenderer.invoke('kimi:feedback-diagnostics-collect'),
   onFailureToast: (cb) => {
     const listener = (_event: unknown, kind: unknown, url: unknown) => {
       if (!isDesktopFailureKind(kind)) return;
@@ -758,12 +776,12 @@ export const api: KimiDesktopApi = {
     return () => ipcRenderer.removeListener('kimi:launch-action', listener);
   },
   onQuitConfirm: (cb) => {
-    const listener = (_event: unknown, requestId: unknown, reasons: unknown) => {
+    const listener = (_event: unknown, requestId: unknown, reasons: unknown, details: unknown) => {
       if (typeof requestId !== 'number' || !Number.isInteger(requestId)) return;
       const list = Array.isArray(reasons)
-        ? reasons.filter((r): r is 'busy' | 'remote-control' => r === 'busy' || r === 'remote-control')
+        ? reasons.filter((r): r is QuitBlockReason => r === 'busy' || r === 'remote-control')
         : [];
-      cb(requestId, list);
+      cb(requestId, list, asQuitConfirmDetails(details));
     };
     ipcRenderer.on('kimi:quit-confirm', listener);
     return () => ipcRenderer.removeListener('kimi:quit-confirm', listener);
@@ -777,10 +795,14 @@ export const api: KimiDesktopApi = {
     ipcRenderer.on('kimi:quit-confirm-cancel', listener);
     return () => ipcRenderer.removeListener('kimi:quit-confirm-cancel', listener);
   },
-  respondQuitConfirm: (choice, requestId) => {
+  respondQuitConfirm: (choice, requestId, continueSessions) => {
     if (choice !== 'quit' && choice !== 'cancel' && choice !== 'unavailable') return Promise.resolve();
     if (typeof requestId !== 'number' || !Number.isInteger(requestId)) return Promise.resolve();
-    return ipcRenderer.invoke('kimi:quit-confirm-response', { choice, requestId });
+    return ipcRenderer.invoke('kimi:quit-confirm-response', {
+      choice,
+      requestId,
+      continueSessions: continueSessions === true,
+    });
   },
   onDeepLinkAuth: (cb) => {
     const listener = () => cb();

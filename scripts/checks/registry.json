@@ -1,6 +1,11 @@
 {
   "invocations": [
     {
+      "run": "node scripts/checks/cli-dependencies.mjs",
+      "in": "package.json#scripts.lint",
+      "why": "The npm CLI bundles its required packages; declaring dependencies would make users install them separately."
+    },
+    {
       "run": "node scripts/check-comments.mjs",
       "in": "package.json#scripts.lint",
       "why": "AGENTS.md forbids comments in JS/TS code, and this check is what enforces it."
@@ -31,6 +36,11 @@
       "why": "New tests must script models through the shared testkit; this check freezes the legacy model doubles at their current use per file so new cases cannot add to them."
     },
     {
+      "run": "node scripts/checks/legacy-e2e.mjs",
+      "in": "package.json#scripts.lint",
+      "why": "The old Desktop and TUI E2E directories no longer run on pull requests or main; this check freezes their test cases per file so a new case lands in tests/e2e, where it runs, instead of looking like coverage that nothing executes."
+    },
+    {
       "run": "node scripts/checks/quarantine.mjs",
       "in": "package.json#scripts.lint",
       "why": "A quarantined Desktop journey must name an owner, a reason and an expiry date, and a protected or smoke journey can never be quarantined; without it a quarantine quietly becomes permanent."
@@ -39,6 +49,11 @@
       "run": "node scripts/checks/instructions.mjs",
       "in": "package.json#scripts.lint",
       "why": "Agents follow the paths and links in AGENTS.md files, and every session loads the root one; this check fails on a dead reference and keeps the root file within its byte budget."
+    },
+    {
+      "run": "node scripts/checks/e2e-boundary.mjs",
+      "in": "package.json#scripts.lint",
+      "why": "The scenarios in tests/e2e are only worth trusting while their drivers reach the product the way a user does; this check keeps product internals, page and network backdoors, skips, retries, fixed waits and undocumented KIMI_* switches out of that directory."
     },
     {
       "run": "node scripts/vitest-l0-gate.mjs .vitest-reports",
@@ -76,7 +91,7 @@
       "why": "The pre-commit hook rejects comments in staged files before CI does."
     },
     {
-      "run": "oxlint --type-aware --deny-warnings",
+      "run": "oxlint --type-aware --deny-warnings --no-error-on-unmatched-pattern",
       "in": "package.json#lint-staged",
       "why": "The pre-commit hook lints staged files with the same rules CI enforces."
     },

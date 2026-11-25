@@ -42,6 +42,40 @@ function readCssNumber(el: HTMLElement, name: string, fallback: number): number 
   return Number.isFinite(value) ? value : fallback;
 }
 
+export function dragOverlayScrollbarThumb(
+  event: PointerEvent,
+  el: HTMLElement,
+  thumbHeight: number,
+  trackInset: number,
+  onStop: () => void,
+): () => void {
+  event.preventDefault();
+  const dragPointerId = event.pointerId;
+  (event.target as HTMLElement).setPointerCapture?.(event.pointerId);
+  const trackRange = el.clientHeight - trackInset * 2 - thumbHeight;
+  const scrollRange = el.scrollHeight - el.clientHeight;
+  const startY = event.clientY;
+  const startScrollTop = el.scrollTop;
+  const onMove = (ev: PointerEvent): void => {
+    if (ev.pointerId !== dragPointerId || trackRange <= 0) return;
+    el.scrollTop = startScrollTop + ((ev.clientY - startY) / trackRange) * scrollRange;
+  };
+  const onUp = (ev: PointerEvent): void => {
+    if (ev.pointerId !== dragPointerId) return;
+    stop();
+  };
+  const stop = (): void => {
+    window.removeEventListener('pointerup', onUp);
+    window.removeEventListener('pointermove', onMove);
+    window.removeEventListener('pointercancel', onUp);
+    onStop();
+  };
+  window.addEventListener('pointermove', onMove);
+  window.addEventListener('pointerup', onUp);
+  window.addEventListener('pointercancel', onUp);
+  return stop;
+}
+
 export function useOverlayScrollbar(scrollEl: Ref<HTMLElement | null>): UseOverlayScrollbar {
   const thumb = ref<OverlayScrollbarThumb | null>(null);
   const listHover = ref(false);
@@ -94,35 +128,13 @@ export function useOverlayScrollbar(scrollEl: Ref<HTMLElement | null>): UseOverl
     const el = scrollEl.value;
     const current = thumb.value;
     if (!el || !current) return;
-    event.preventDefault();
     activeDragCleanup?.();
-    const dragPointerId = event.pointerId;
-    (event.target as HTMLElement).setPointerCapture?.(event.pointerId);
-    const inset = readCssNumber(el, '--overlay-scrollbar-track-inset', 0);
-    const trackRange = el.clientHeight - inset * 2 - current.height;
-    const scrollRange = el.scrollHeight - el.clientHeight;
-    const startY = event.clientY;
-    const startScrollTop = el.scrollTop;
     dragging.value = true;
-    const onMove = (ev: PointerEvent): void => {
-      if (ev.pointerId !== dragPointerId || trackRange <= 0) return;
-      el.scrollTop = startScrollTop + ((ev.clientY - startY) / trackRange) * scrollRange;
-    };
-    const onUp = (ev: PointerEvent): void => {
-      if (ev.pointerId !== dragPointerId) return;
-      stop();
-    };
-    const stop = (): void => {
-      window.removeEventListener('pointerup', onUp);
-      window.removeEventListener('pointermove', onMove);
-      window.removeEventListener('pointercancel', onUp);
+    const stop = dragOverlayScrollbarThumb(event, el, current.height, readCssNumber(el, '--overlay-scrollbar-track-inset', 0), () => {
       dragging.value = false;
       if (activeDragCleanup === stop) activeDragCleanup = null;
-    };
+    });
     activeDragCleanup = stop;
-    window.addEventListener('pointermove', onMove);
-    window.addEventListener('pointerup', onUp);
-    window.addEventListener('pointercancel', onUp);
   }
 
   function onListMouseEnter(): void {

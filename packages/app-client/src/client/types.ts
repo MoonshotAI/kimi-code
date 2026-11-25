@@ -62,6 +62,7 @@ export type ManagedMembership = 'member' | 'free' | null;
 
 export interface ExtendedState extends KimiClientState {
   sessionStatusSettledBySession: Record<string, true>;
+  unavailableModelBySession: Record<string, string>;
   serverVersion: string;
   dangerousBypassAuth: boolean;
   backend: 'v1' | 'v2';

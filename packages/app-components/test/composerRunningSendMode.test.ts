@@ -7,9 +7,14 @@ const clientState = vi.hoisted(() => ({
   activity: null as null | { value: string },
   working: null as null | { value: boolean },
   environment: null as null | { value: string },
-  canContinue: null as null | { value: boolean },
-  activeTurnEnd: null as null | { value: { outcome: string; end_reason?: string } | undefined },
   visibleWorkspace: null as null | { value: { hostId?: string } | null },
+  searchFiles: null as null | ((query: string) => Promise<unknown[]>),
+  planModeAvailable: null as null | { value: boolean },
+  swarmModeAvailable: null as null | { value: boolean },
+  towerModeAvailable: null as null | { value: boolean },
+  goalModeAvailable: null as null | { value: boolean },
+  experimentalFlags: null as null | { value: Record<string, boolean> },
+  notify: null as null | ReturnType<typeof vi.fn>,
 }));
 
 vi.mock('@moonshot-ai/app-client/client', async (importOriginal) => {
@@ -19,9 +24,13 @@ vi.mock('@moonshot-ai/app-client/client', async (importOriginal) => {
   clientState.activity = vue.ref('idle');
   clientState.working = vue.ref(false);
   clientState.environment = vue.ref('local');
-  clientState.canContinue = vue.ref(false);
-  clientState.activeTurnEnd = vue.ref<{ outcome: string; end_reason?: string } | undefined>(undefined);
   clientState.visibleWorkspace = vue.ref<{ hostId?: string } | null>(null);
+  clientState.planModeAvailable = vue.ref(true);
+  clientState.swarmModeAvailable = vue.ref(true);
+  clientState.towerModeAvailable = vue.ref(true);
+  clientState.goalModeAvailable = vue.ref(true);
+  clientState.experimentalFlags = vue.ref<Record<string, boolean>>({});
+  clientState.notify = vi.fn();
   return {
     ...actual,
     useKimiWebClient: () => ({
@@ -31,11 +40,11 @@ vi.mock('@moonshot-ai/app-client/client', async (importOriginal) => {
       activity: clientState.activity!,
       working: clientState.working!,
       activeSessionEnvironment: clientState.environment!,
-      canContinue: clientState.canContinue!,
-      activeTurnEnd: clientState.activeTurnEnd!,
       isStartingFirstPrompt: vue.ref(false),
       queued: vue.ref([]),
-      searchFiles: vi.fn(async () => []),
+      searchFiles: async (query: string) => clientState.searchFiles?.(query) ?? [],
+      sessionMentionCandidates: vue.ref([]),
+      searchSessionMentions: vi.fn(async () => []),
       uploadImage: vi.fn(),
       status: vue.ref({}),
       thinking: vue.ref('high'),
@@ -43,6 +52,10 @@ vi.mock('@moonshot-ai/app-client/client', async (importOriginal) => {
       planArmed: vue.ref(false),
       swarmMode: vue.ref(false),
       towerMode: vue.ref(false),
+      planModeAvailable: clientState.planModeAvailable!,
+      swarmModeAvailable: clientState.swarmModeAvailable!,
+      towerModeAvailable: clientState.towerModeAvailable!,
+      goalModeAvailable: clientState.goalModeAvailable!,
       goalMode: vue.ref(false),
       goal: vue.ref(null),
       activationBadges: vue.ref([]),
@@ -51,8 +64,12 @@ vi.mock('@moonshot-ai/app-client/client', async (importOriginal) => {
       skills: vue.ref([]),
       skillsLoaded: vue.ref(true),
       chatGateVerdict: vue.ref(null),
-      experimentalFlags: vue.ref({}),
-      notify: vi.fn(),
+      experimentalFlags: clientState.experimentalFlags!,
+      promptPrediction: vue.ref(null),
+      acceptPromptPrediction: vi.fn(() => null),
+      handlePromptPredictionInput: vi.fn(),
+      handlePromptPredictionSubmit: vi.fn(),
+      notify: clientState.notify!,
       toggleGoalMode: vi.fn(),
       togglePlanMode: vi.fn(),
       toggleSwarmMode: vi.fn(),
@@ -77,6 +94,12 @@ beforeAll(async () => {
 });
 
 beforeEach(() => {
+  clientState.planModeAvailable!.value = true;
+  clientState.swarmModeAvailable!.value = true;
+  clientState.towerModeAvailable!.value = true;
+  clientState.goalModeAvailable!.value = true;
+  clientState.experimentalFlags!.value = {};
+  clientState.notify!.mockReset();
   storage = new Map<string, string>();
   vi.stubGlobal('localStorage', {
     getItem: (key: string) => storage.get(key) ?? null,
@@ -125,7 +148,6 @@ async function mountFreshComposer(locale: 'zh' | 'en' = 'zh') {
   const steers: Array<Record<string, unknown>> = [];
   const commands: Array<Record<string, unknown>> = [];
   const interruptArmed = ref(false);
-  let continues = 0;
   app = createApp({
     setup() {
       dialogs = useAppDialogs();
@@ -136,7 +158,6 @@ async function mountFreshComposer(locale: 'zh' | 'en' = 'zh') {
         onSubmit: (payload: Record<string, unknown>) => submits.push(payload),
         onSteer: (payload: Record<string, unknown>) => steers.push(payload),
         onCommand: (payload: Record<string, unknown>) => commands.push(payload),
-        onContinue: () => { continues += 1; },
       });
     },
   });
@@ -151,7 +172,6 @@ async function mountFreshComposer(locale: 'zh' | 'en' = 'zh') {
     submits,
     steers,
     commands,
-    getContinues: () => continues,
     dialogs,
     runningMode,
   };
@@ -408,46 +428,6 @@ describe('Composer running send mode and first-time steer tip', () => {
     expect(hostsStore().focusHostId).toBe('devbox');
   });
 
-  it('switches the empty send button to continue only on interrupted turns and restores send on typing', async () => {
-    const { setDraft, submits, getContinues } = await mountFreshComposer('zh');
-    clientState.activity!.value = 'idle';
-    clientState.working!.value = false;
-    clientState.canContinue!.value = true;
-    clientState.activeTurnEnd!.value = { outcome: 'failed', end_reason: 'error' };
-    await nextTick();
-
-    const button = host.querySelector<HTMLButtonElement>('button.send')!;
-    const input = host.querySelector('[aria-label="消息输入框"]')!;
-    expect(button.disabled).toBe(true);
-    expect(button.getAttribute('aria-label')).toBe('发送 ↵');
-
-    clientState.activeTurnEnd!.value = { outcome: 'interrupted', end_reason: 'user_cancelled' };
-    await nextTick();
-
-    expect(button.disabled).toBe(false);
-    expect(button.getAttribute('aria-label')).toBe('继续');
-
-    pressKey(input, { key: 'Enter' });
-    await nextTick();
-    expect(getContinues()).toBe(0);
-
-    button.click();
-    await nextTick();
-    expect(getContinues()).toBe(1);
-    expect(submits).toHaveLength(0);
-
-    setDraft('换个思路继续');
-    await nextTick();
-    expect(button.getAttribute('aria-label')).toBe('发送 ↵');
-
-    button.click();
-    await nextTick();
-    expect(getContinues()).toBe(1);
-    expect(submits).toHaveLength(1);
-    expect(submits[0]?.text).toBe('换个思路继续');
-    expect(button.getAttribute('aria-label')).toBe('继续');
-  });
-
   it('shows the compact ESC stop label when interruptArmed is active', async () => {
     const { interruptArmed } = await mountFreshComposer('zh');
     clientState.activity!.value = 'running';
@@ -461,5 +441,79 @@ describe('Composer running send mode and first-time steer tip', () => {
 
     const stopEsc = host.querySelector('.stop-esc');
     expect(stopEsc?.textContent).toBe('ESC');
+  });
+});
+
+describe('Composer mention menu while file results are pending', () => {
+  afterEach(() => {
+    clientState.searchFiles = null;
+  });
+
+  it('keeps Enter from sending the unfinished token until results arrive', async () => {
+    let resolveSearch!: (files: unknown[]) => void;
+    clientState.searchFiles = () => new Promise((resolve) => {
+      resolveSearch = resolve;
+    });
+    const { setDraft, steers } = await mountFreshComposer('en');
+    clientState.activity!.value = 'running';
+    clientState.working!.value = true;
+    await nextTick();
+    const input = host.querySelector('[aria-label="Message input"]')!;
+
+    setDraft('@read');
+    await nextTick();
+    await nextTick();
+    expect(host.querySelector('.mention-searching')).not.toBeNull();
+    expect(host.querySelectorAll('.mention-item')).toHaveLength(0);
+
+    pressKey(input, { key: 'Enter' });
+    await nextTick();
+    expect(steers).toHaveLength(0);
+
+    resolveSearch([]);
+    await vi.waitFor(() => expect(host.querySelector('.mention-searching')).toBeNull());
+    pressKey(input, { key: 'Enter' });
+    await nextTick();
+    expect(steers).toHaveLength(1);
+  });
+});
+
+describe('Composer mode availability in the shared Web/Desktop composer', () => {
+  it('warns on disabled mode commands without sending them, while keeping exit commands dispatchable', async () => {
+    clientState.planModeAvailable!.value = false;
+    clientState.swarmModeAvailable!.value = false;
+    clientState.towerModeAvailable!.value = false;
+    clientState.experimentalFlags!.value = { tower: true };
+    const { setDraft, submits, commands } = await mountFreshComposer('en');
+    const input = host.querySelector('[aria-label="Message input"]')!;
+
+    setDraft('/plan');
+    await nextTick();
+    pressKey(input, { key: 'Enter' });
+    await nextTick();
+    expect(clientState.notify).toHaveBeenCalledWith({ severity: 'warning', title: '/plan is disabled in tool settings' });
+    expect(submits).toHaveLength(0);
+    expect(commands).toHaveLength(0);
+
+    setDraft('/tower on');
+    await nextTick();
+    pressKey(input, { key: 'Enter' });
+    await nextTick();
+    expect(clientState.notify).toHaveBeenCalledWith({ severity: 'warning', title: '/tower is disabled in tool settings' });
+    expect(submits).toHaveLength(0);
+    expect(commands).toHaveLength(0);
+
+    setDraft('/swarm off');
+    await nextTick();
+    pressKey(input, { key: 'Enter' });
+    await nextTick();
+    expect(commands.at(-1)).toMatchObject({ cmd: '/swarm off' });
+
+    setDraft('/tower off');
+    await nextTick();
+    pressKey(input, { key: 'Enter' });
+    await nextTick();
+    expect(commands.at(-1)).toMatchObject({ cmd: '/tower off' });
+    expect(submits).toHaveLength(0);
   });
 });

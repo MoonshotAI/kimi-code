@@ -23,6 +23,7 @@
   "divergences": {},
   "exempt": {
     "kap.file_upload": "KAP uploads attachments to /files before the prompt, while ACP clients embed them in the prompt, so there is no shared step to compare.",
+    "kap.feedback": "KAP accepts feedback and reply ratings from desktop and web clients. ACP has no corresponding request.",
     "kap.fs_query": "Workspace browsing for the desktop and web clients; ACP clients read the workspace themselves.",
     "kap.mcp": "Not compared yet: KAP hosts configure MCP servers, while ACP clients pass them with each session.",
     "kap.tasks": "Background task controls exist only in KAP.",
@@ -43,7 +44,7 @@
   },
   "advertised": {
     "kap": {
-      "websocket": true, "file_upload": true, "fs_query": true, "mcp": true, "tasks": true,
+      "websocket": true, "file_upload": true, "feedback": true, "fs_query": true, "mcp": true, "tasks": true,
       "interactions_list": true, "session_wait": true, "agent_close": true, "session_continue": true
     },
     "acp": {

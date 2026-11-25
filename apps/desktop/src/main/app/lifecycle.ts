@@ -9,6 +9,7 @@ import { installUncaughtErrorNotice } from './uncaught-error-notice';
 import { IPC } from '../ipc/ipc-channels';
 import { registerRendererProtocol } from './protocol';
 import { connect, rendererDistRoot, closeServerHandle, shutdownServerTelemetry } from '../server/connect';
+import { prepareSessionContinue } from '../server/session-continue';
 import { screenLocale, type ScreenAction } from './screens';
 import { getColorScheme } from './ui-state';
 import { stopShellEnvProbe } from '../system/shell-env';
@@ -29,7 +30,7 @@ import { parseLaunchArgs } from '../shell/jump-list';
 import { handleDeepLink, extractDeepLink, registerDeepLinkScheme } from './deep-link';
 import { trackDesktopEvent } from '../diagnostics/track';
 import { finalizeWindowLifecycle } from '../window/window-lifecycle';
-import { shouldBlockQuit } from './quit-confirm';
+import { confirmUpdateRestart, shouldBlockQuit } from './quit-confirm';
 import { applyPreventSleepOnLaunch, restorePreventSleepBeforeQuit } from '../system/prevent-lid-sleep';
 
 const TERMINAL_EXIT_WAIT_MS = 5_000;
@@ -52,10 +53,18 @@ function openDeepLinkWorkspace(root: string): void {
   sendLaunchAction({ action: 'open-workspace', root, newChat: true });
 }
 
+function openDeepLinkSession(sessionId: string): void {
+  sendLaunchAction({ action: 'open-session', sessionId });
+}
+
+function routeDeepLink(url: string): void {
+  handleDeepLink(url, showMainWindow, notifyDeepLinkAuth, openDeepLinkWorkspace, openDeepLinkSession);
+}
+
 function handleSecondInstanceArgv(argv: readonly string[]): void {
   const deepLink = extractDeepLink(argv);
   if (deepLink !== undefined) {
-    handleDeepLink(deepLink, showMainWindow, notifyDeepLinkAuth, openDeepLinkWorkspace);
+    routeDeepLink(deepLink);
     return;
   }
   showMainWindow();
@@ -123,7 +132,7 @@ export function main(): void {
       pendingDeepLinks.push(url);
       return;
     }
-    handleDeepLink(url, showMainWindow, notifyDeepLinkAuth, openDeepLinkWorkspace);
+    routeDeepLink(url);
   });
 
   registerIpcHandlers();
@@ -256,11 +265,14 @@ export function main(): void {
       });
     }
     if (!isPreviewVersion(app.getVersion())) {
-      initAutoUpdater(() => shouldBlockQuit(getMainWindow()));
+      initAutoUpdater({
+        confirmRestart: () => confirmUpdateRestart(getMainWindow()),
+        prepareSessionContinue,
+      });
     }
     const startupDeepLink = process.platform === 'darwin' ? undefined : extractDeepLink(process.argv);
     if (startupDeepLink !== undefined) {
-      handleDeepLink(startupDeepLink, showMainWindow, notifyDeepLinkAuth, openDeepLinkWorkspace);
+      routeDeepLink(startupDeepLink);
     } else {
       forwardLaunchArgs(process.argv);
     }
@@ -270,7 +282,7 @@ export function main(): void {
     const deepLinks = pendingDeepLinks.splice(0);
     launchRoutingReady = true;
     for (const url of deepLinks) {
-      handleDeepLink(url, showMainWindow, notifyDeepLinkAuth, openDeepLinkWorkspace);
+      routeDeepLink(url);
     }
     app.on('activate', () => {
       showMainWindow();

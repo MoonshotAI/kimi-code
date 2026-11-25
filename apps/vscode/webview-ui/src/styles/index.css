@@ -102,9 +102,49 @@ body {
   --text-xs: 0.795rem;
 }
 
+a:focus,
+input:focus,
+select:focus,
+textarea:focus {
+  outline: none;
+}
+
+:is(
+  a[href],
+  input[type="checkbox"],
+  input[type="radio"],
+  input[type="range"],
+  input[type="color"],
+  select
+):not([data-slot]):focus-visible {
+  outline: 2px solid color-mix(in oklab, var(--ring) 50%, transparent);
+  outline-offset: 1px;
+}
+
 @layer base {
   * {
     @apply border-border;
+  }
+  :where(*):focus {
+    outline: none;
+  }
+  :where(
+    button,
+    [type="button"],
+    [type="reset"],
+    [type="submit"],
+    summary,
+    a[href],
+    [role="button"],
+    [role="tab"],
+    [role="menuitem"],
+    [role="option"],
+    [role="switch"],
+    [role="checkbox"],
+    [role="radio"]
+  ):focus-visible {
+    outline: 2px solid color-mix(in oklab, var(--ring) 50%, transparent);
+    outline-offset: 1px;
   }
   body {
     @apply bg-background text-foreground font-sans antialiased;

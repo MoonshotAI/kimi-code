@@ -52,7 +52,6 @@
     "apps/desktop/e2e/turn-steer-into-wait.spec.ts": 2,
     "apps/desktop/e2e/turn-steer-then-stop.spec.ts": 2,
     "apps/desktop/e2e/turn-steer.spec.ts": 2,
-    "apps/desktop/e2e/turn-stop-during-approval.spec.ts": 2,
     "apps/desktop/e2e/turn-stop-then-send.spec.ts": 2,
     "apps/desktop/e2e/undelivered-records-and-session-cleanup.spec.ts": 2,
     "apps/desktop/e2e/undetermined-and-history-leave.spec.ts": 1,
@@ -61,13 +60,24 @@
     "apps/desktop/tests/main/e2e-stub-model.test.ts": 1
   },
   "engine-harness-import": {
-    "packages/acp-server/test/_helpers/scriptedProvider.ts": 1,
     "packages/klient/test/helpers/conformance.ts": 1,
     "packages/product/test/survey-turns.test.ts": 1
   },
+  "engine-mock-provider": {
+    "packages/agent-core-v2/test/agent/fullCompaction/fullCompaction.test.ts": 53,
+    "packages/agent-core-v2/test/agent/llmRequester/llmRequester.test.ts": 10,
+    "packages/agent-core-v2/test/agent/loop/loop.test.ts": 3,
+    "packages/agent-core-v2/test/agent/profile/config-state.test.ts": 4,
+    "packages/agent-core-v2/test/agent/prompt/promptService.test.ts": 2,
+    "packages/agent-core-v2/test/agent/tokenCounting/tokenCounting.test.ts": 1,
+    "packages/agent-core-v2/test/agent/undo/undo.test.ts": 1,
+    "packages/agent-core-v2/test/features/goal/goal.test.ts": 6,
+    "packages/agent-core-v2/test/features/skill/skill.test.ts": 2,
+    "packages/agent-core-v2/test/llm-adapter/model/catalog.test.ts": 2,
+    "packages/agent-core-v2/test/session/subagent/forkParity.test.ts": 5,
+    "packages/klient/test/helpers/conformance.ts": 2
+  },
   "engine-mock-response": {
-    "packages/acp-server/test/_helpers/scriptedProvider.ts": 3,
-    "packages/acp-server/test/e2e-turn.test.ts": 9,
     "packages/agent-core-v2/test/agent/contextMemory/context.test.ts": 4,
     "packages/agent-core-v2/test/agent/fullCompaction/fullCompaction.test.ts": 50,
     "packages/agent-core-v2/test/agent/llmRequester/llmRequester.test.ts": 10,
@@ -85,7 +95,7 @@
     "packages/agent-core-v2/test/agent/task/tools/task-tools.test.ts": 12,
     "packages/agent-core-v2/test/agent/tokenCounting/tokenCounting.test.ts": 4,
     "packages/agent-core-v2/test/agent/toolDedupe/toolDedupe.test.ts": 8,
-    "packages/agent-core-v2/test/agent/toolSelect/toolSelect.e2e.test.ts": 44,
+    "packages/agent-core-v2/test/agent/toolSelect/toolSelect.e2e.test.ts": 42,
     "packages/agent-core-v2/test/agent/undo/undo.test.ts": 5,
     "packages/agent-core-v2/test/app/config/config.test.ts": 3,
     "packages/agent-core-v2/test/features/cron/cron-fire-steer.e2e.test.ts": 3,
@@ -102,7 +112,7 @@
     "packages/agent-core-v2/test/features/tower/towerService.test.ts": 3,
     "packages/agent-core-v2/test/integration/conversation/first-turn.test.ts": 2,
     "packages/agent-core-v2/test/integration/conversation/testkit-model.test.ts": 1,
-    "packages/agent-core-v2/test/session/subagent/forkParity.test.ts": 14,
+    "packages/agent-core-v2/test/session/subagent/forkParity.test.ts": 8,
     "packages/agent-core-v2/test/tool/tool.test.ts": 24,
     "packages/agent-core-v2/test/wire/resume.test.ts": 15,
     "packages/product/test/survey-turns.test.ts": 2
@@ -112,7 +122,6 @@
     "apps/vscode/test/kimi-harness.integration.test.ts": 1,
     "apps/vscode/test/replay-resume.integration.test.ts": 1,
     "packages/agent-core-v2/src/human/test/llm/tool-call-ids.test.ts": 1,
-    "packages/kap-server/test/conversationContract.e2e.test.ts": 6,
     "packages/kap-server/test/sessions.test.ts": 2,
     "packages/klient/test/e2e/invalid-input-matrix.test.ts": 4,
     "packages/klient/test/helpers/conformance.ts": 1,

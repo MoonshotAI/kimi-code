@@ -435,6 +435,8 @@ onUnmounted(() => {
   cursor: pointer;
 }
 .ui-select__option.is-active { background: var(--color-hover); color: var(--color-text-strong); }
+.ui-select__option:focus,
+.ui-select__option:focus-visible { outline: none; }
 .ui-select__option:disabled { opacity: 0.45; cursor: not-allowed; }
 .ui-select__option--with-description { align-items: flex-start; padding: var(--space-2); }
 .ui-select__option--with-description .ui-select__check { margin-top: 3px; }

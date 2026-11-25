@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import type { AppModel } from '@moonshot-ai/app-core/api';
+import { MANAGED_KIMI_CODE_PROVIDER_ID, type AppModel } from '@moonshot-ai/app-core/api';
 import { useDialogFocus } from '@moonshot-ai/app-components';
 import { formatTokens, providerDisplayName } from '@moonshot-ai/app-core/lib';
 import { Dialog, Icon, IconButton, Input, Kbd, Spinner, Tooltip, useImeComposition } from '@moonshot-ai/app-ui';
@@ -76,13 +76,19 @@ const shellProps = computed(() =>
 
 const providerTabs = computed(() => {
   const seen = new Set<string>();
-  const tabs: { id: string; label: string }[] = [{ id: 'all', label: t('model.allTab') }];
+  const providerIds: string[] = [];
   for (const model of props.models) {
     if (seen.has(model.provider)) continue;
     seen.add(model.provider);
-    tabs.push({ id: model.provider, label: providerDisplayName(model.provider, t) });
+    providerIds.push(model.provider);
   }
-  return tabs;
+  const orderedProviderIds = seen.has(MANAGED_KIMI_CODE_PROVIDER_ID)
+    ? [MANAGED_KIMI_CODE_PROVIDER_ID, ...providerIds.filter((id) => id !== MANAGED_KIMI_CODE_PROVIDER_ID)]
+    : providerIds;
+  return [
+    { id: 'all', label: t('model.allTab') },
+    ...orderedProviderIds.map((id) => ({ id, label: providerDisplayName(id, t) })),
+  ];
 });
 
 const filtered = computed<AppModel[]>(() => {

@@ -1,6 +1,7 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi, type TestContext } from 'vitest';
 import { appendContext } from '../contextMemory/stubs';
 import { createControlledPromise } from '@antfu/utils';
+import { call, say } from '@moonshot-ai/testkit/model';
 
 import { IAgentConversationUndoService } from '#/agent/undo/undo';
 import type { ContextMessage } from '#/agent/contextMemory/types';
@@ -9,10 +10,9 @@ import type { ExecutableTool, ToolExecution } from '#/tool/toolContract';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IAgentStateService } from '#/agent/state/agentState';
-import { TOOL_SELECT_FLAG_ENV } from '#/agent/toolSelect/flag';
 import { IAgentToolSelectService } from '#/agent/toolSelect/toolSelect';
 import { IAgentToolSelectAnnouncementsService } from '#/agent/toolSelect/toolSelectAnnouncements';
-import { LOADABLE_TOOLS_VARIANT } from '#/agent/toolSelect/dynamicTools';
+import { isToolSelectAnnouncementDisclosure, LOADABLE_TOOLS_VARIANT } from '#/agent/toolSelect/dynamicTools';
 import { toolSelectKey } from '#/agent/toolSelect/toolSelectOps';
 import { IAgentUserToolService } from '#/agent/userTool/userTool';
 import { McpConnectionManager } from '#/mcpCore/connection-manager';
@@ -25,8 +25,10 @@ import {
   InMemoryWireRecordPersistence,
   mcpServices,
   sessionService,
+  testkitAgentFixtures,
   wireRecordPersistenceServices,
   type TestAgentContext,
+  type TestkitAgentFixtures,
 } from '../../harness';
 import { createMemoryMcpOAuthStore, startInProcessHttpMcpServer } from '../../mcpCore/stubs';
 import type { Message } from '@moonshot-ai/core/llm/message';
@@ -93,6 +95,29 @@ function historyText(history: readonly ContextMessage[]): string {
     .join('\n');
 }
 
+function viewText(request: { readonly view: { readonly messages: readonly { readonly text: string }[] } }): string {
+  return request.view.messages.map((message) => message.text).join('\n');
+}
+
+async function withTestkitMcpAgent(
+  context: TestContext,
+  mcp: { readonly ready: Promise<void>; readonly onWait: () => void },
+  body: (agent: TestkitAgentFixtures['agent'], model: TestkitAgentFixtures['model']) => Promise<void>,
+): Promise<void> {
+  const fixtures = testkitAgentFixtures(sessionService(ISessionMcpHandle, {
+    _serviceBrand: undefined,
+    get ready() {
+      mcp.onWait();
+      return mcp.ready;
+    },
+    connectionManager: new McpConnectionManager(),
+    isBaselineServer: () => true,
+  }));
+  await fixtures.model(context, async (model) => {
+    await fixtures.agent({ model }, async (agent) => body(agent, model));
+  });
+}
+
 describe('progressive tool disclosure end-to-end', () => {
   let ctx: TestAgentContext;
   let alpha: StubMcpTool;
@@ -101,7 +126,6 @@ describe('progressive tool disclosure end-to-end', () => {
   let onMcpWait: () => void;
 
   beforeEach(async () => {
-    vi.stubEnv(TOOL_SELECT_FLAG_ENV, '1');
     mcpReady = Promise.resolve();
     onMcpWait = () => {};
     ctx = createTestAgent(sessionService(ISessionMcpHandle, {
@@ -131,46 +155,104 @@ describe('progressive tool disclosure end-to-end', () => {
     await ctx.dispose();
   });
 
-  it('announces MCP tools discovered during startup in the first model request', async () => {
-    registration?.dispose();
+  it('announces MCP tools discovered during startup in the first model request', async (context) => {
     const ready = createControlledPromise<void>();
     const waiting = createControlledPromise<void>();
-    mcpReady = ready;
-    onMcpWait = waiting.resolve;
-    ctx.mockNextResponse({ type: 'text', text: 'done' });
+    await withTestkitMcpAgent(context, { ready, onWait: waiting.resolve }, async (agent, model) => {
+      agent.get(IAgentToolSelectService);
+      agent.get(IAgentToolSelectAnnouncementsService);
+      agent.get(IAgentToolExecutorService);
+      agent.configure({ modelCapabilities: DISCLOSURE_CAPABILITIES });
 
-    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'use the server tool' }] });
-    await waiting;
-    expect(ctx.llmCalls).toHaveLength(0);
-    registration = ctx.get(IAgentToolRegistryService)
-      .register(alpha, { source: 'mcp', disclosure: 'deferred' });
-    ready.resolve();
-    await ctx.untilTurnEnd();
+      const restored = agent.restorePersisted();
+      await waiting;
+      expect(model.requests('main')).toHaveLength(0);
+      registration = agent.get(IAgentToolRegistryService)
+        .register(alpha, { source: 'mcp', disclosure: 'deferred' });
+      ready.resolve();
+      await restored;
+      await agent.rpc.setPermission({ mode: 'yolo' });
+      model.script(say('done'));
+      await agent.rpc.prompt({ input: [{ type: 'text', text: 'use the server tool' }] });
+      await agent.untilTurnEnd();
 
-    const firstWire = ctx.llmCalls[0]!;
-    expect(toolNames(firstWire.tools)).not.toContain(MCP_ALPHA);
-    expect(historyText(firstWire.history)).toContain('<tools_added>');
-    expect(historyText(firstWire.history)).toContain(MCP_ALPHA);
+      const firstWire = model.requests('main')[0]!;
+      expect(firstWire.view.tools.map((tool) => tool.name)).not.toContain(MCP_ALPHA);
+      expect(firstWire.view.tools.map((tool) => tool.name)).toContain('select_tools');
+      expect(agent.get(IAgentStateService).get(toolSelectKey).initial?.map((tool) => tool.name))
+        .toContain(MCP_ALPHA);
+      expect(viewText(firstWire)).toContain(MCP_ALPHA);
+    });
   });
 
-  it('can cancel the first turn while MCP discovery is still pending', async () => {
+  async function expectStartupToolExposed(
+    context: TestContext,
+    disclosure: 'inline' | 'deferred',
+    dynamicallyLoaded: boolean,
+  ): Promise<void> {
+    const ready = createControlledPromise<void>();
     const waiting = createControlledPromise<void>();
-    mcpReady = new Promise(() => {});
-    onMcpWait = waiting.resolve;
-    ctx.mockNextResponse({ type: 'text', text: 'must not be requested' });
+    await withTestkitMcpAgent(context, { ready, onWait: waiting.resolve }, async (agent, model) => {
+      agent.get(IAgentToolSelectService);
+      agent.get(IAgentToolSelectAnnouncementsService);
+      agent.get(IAgentToolExecutorService);
+      agent.configure({
+        modelCapabilities: { ...DISCLOSURE_CAPABILITIES, dynamically_loaded_tools: dynamicallyLoaded },
+      });
 
-    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'use the server tool' }] });
-    await waiting;
-    expect(ctx.get(IAgentLoopService).cancel()).toBe(true);
-    if (!ctx.allEvents.some((entry) => entry.type === '[rpc]' && entry.event === 'turn.ended')) {
-      await ctx.untilTurnEnd();
-    }
+      const restored = agent.restorePersisted();
+      await waiting;
+      expect(model.requests('main')).toHaveLength(0);
+      registration = agent.get(IAgentToolRegistryService)
+        .register(alpha, { source: 'mcp', disclosure });
+      ready.resolve();
+      await restored;
+      await agent.rpc.setPermission({ mode: 'yolo' });
+      model.script(say('done'));
+      await agent.rpc.prompt({ input: [{ type: 'text', text: 'use the server tool' }] });
+      await agent.untilTurnEnd();
 
-    const turnEnded = ctx.allEvents.find(
-      (entry) => entry.type === '[rpc]' && entry.event === 'turn.ended',
-    );
-    expect(turnEnded?.args).toMatchObject({ reason: 'cancelled' });
-    expect(ctx.llmCalls).toHaveLength(0);
+      const firstWire = model.requests('main')[0]!;
+      expect(firstWire.view.tools.map((tool) => tool.name)).toContain(MCP_ALPHA);
+      expect(agent.get(IAgentStateService).get(toolSelectKey).initial?.map((tool) => tool.name))
+        .toContain(MCP_ALPHA);
+      const schema = firstWire.view.tools.find((tool) => tool.name === MCP_ALPHA);
+      expect(schema?.parameters).toEqual(alpha.parameters);
+      expect(schema).not.toHaveProperty('deferred', true);
+    });
+  }
+
+  it('exposes inline MCP tools discovered during startup in the first request tools (dynamic: true)', (context) =>
+    expectStartupToolExposed(context, 'inline', true));
+
+  it('exposes inline MCP tools discovered during startup in the first request tools (dynamic: false)', (context) =>
+    expectStartupToolExposed(context, 'inline', false));
+
+  it('exposes deferred MCP tools discovered during startup in the first request tools (dynamic: false)', (context) =>
+    expectStartupToolExposed(context, 'deferred', false));
+
+  it('cancels a prompt queued while startup MCP discovery is pending without sending a request', async (context) => {
+    const ready = createControlledPromise<void>();
+    const waiting = createControlledPromise<void>();
+    await withTestkitMcpAgent(context, { ready, onWait: waiting.resolve }, async (agent, model) => {
+      agent.configure({ modelCapabilities: DISCLOSURE_CAPABILITIES });
+
+      const loop = agent.get(IAgentLoopService);
+      const { id } = loop.submit({
+        role: 'user',
+        content: [{ type: 'text', text: 'use the server tool' }],
+      });
+      const handle = loop.promptHandle(id)!;
+      await waiting;
+      expect(model.requests('main')).toHaveLength(0);
+      loop.cancel({ promptId: id });
+      ready.resolve();
+      await agent.restorePersisted();
+      await handle.completion;
+
+      expect(handle.state).toBe('cancelled');
+      expect(model.requests('main')).toHaveLength(0);
+    });
   });
 
   it('announces, loads, preserves schemas through replacements and restore, and keeps the baseline stable', async () => {
@@ -192,6 +274,16 @@ describe('progressive tool disclosure end-to-end', () => {
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'try the srv alpha tool' }] });
     await ctx.untilTurnEnd();
     const initialTools = ctx.get(IAgentStateService).get(toolSelectKey).initial;
+    const initialAnnouncements = ctx.get(IAgentLoopService).history().filter(
+      (message) => message.origin?.kind === 'injection' && message.origin.variant === LOADABLE_TOOLS_VARIANT,
+    );
+    expect(initialAnnouncements).toHaveLength(1);
+    expect(initialAnnouncements[0]).toMatchObject({
+      origin: { disclosure: { kind: 'delta', added: [
+        { name: MCP_ALPHA },
+        { name: inlineName },
+      ] } },
+    });
 
     inlineRegistration.dispose();
     const updatedInlineTool = new StubMcpTool(inlineName);
@@ -306,15 +398,16 @@ describe('progressive tool disclosure end-to-end', () => {
     expect(ctx.get(IAgentLoopService).data().activeToolNames).toBeUndefined();
     expect(ctx.get(IAgentToolSelectService).defaultTools(false).map((tool) => tool.name))
       .toContain(MCP_ALPHA);
-    expect(toolNames(switchWire.tools)).toContain(MCP_ALPHA);
-    expect(toolNames(switchWire.tools)).toContain(inlineName);
-    expect(switchWire.tools.find((tool) => tool.name === inlineName)?.description)
-      .toBe(`${inlineName} desc`);
+    expect(toolNames(switchWire.tools)).not.toContain(MCP_ALPHA);
+    expect(toolNames(switchWire.tools)).not.toContain(inlineName);
     expect(toolNames(switchWire.tools)).not.toContain(runtimeTool);
     expect(toolNames(switchWire.tools)).not.toContain('select_tools');
     expect(historyText(switchWire.history)).toContain(runtimeTool);
     expect(historyText(switchWire.history)).toContain('The available tools changed during this session.');
     expect(historyText(switchWire.history)).not.toContain('Use the select_tools tool');
+    expect(switchWire.history.flatMap((message) => message.content).some(
+      (part) => part.type === 'text' && part.meta?.kind === 'tool_lifecycle',
+    )).toBe(false);
 
     const dynamicAgainWire = priorCalls[8]!;
     expect(toolNames(dynamicAgainWire.tools)).toContain('select_tools');
@@ -337,6 +430,12 @@ describe('progressive tool disclosure end-to-end', () => {
     expect(snapshotHashes.size).toBe(2);
     expect(ctx.get(IAgentLoopService).history().some((message) =>
       message.origin?.kind === 'injection' && message.origin.variant === LOADABLE_TOOLS_VARIANT)).toBe(true);
+    expect(ctx.get(IAgentLoopService).history().flatMap((message) => message.content)).toContainEqual(
+      expect.objectContaining({
+        type: 'text',
+        meta: expect.objectContaining({ kind: 'tool_lifecycle', removed: [runtimeTool] }),
+      }),
+    );
 
     expect(alpha.calls).toBe(1);
     expect(inlineTool.calls).toBe(0);
@@ -543,7 +642,6 @@ describe('progressive tool disclosure end-to-end', () => {
 
 describe('same-turn MCP tool replacement', () => {
   it.each([true, false])('authenticates and calls the replacement tool with deferred=%s', async (deferred) => {
-    vi.stubEnv(TOOL_SELECT_FLAG_ENV, '1');
     const server = await startInProcessHttpMcpServer({ authToken: 'test-token' });
     const oauthService = new McpOAuthService({ store: createMemoryMcpOAuthStore() });
     const authenticating = createControlledPromise<void>();
@@ -607,7 +705,11 @@ describe('same-turn MCP tool replacement', () => {
         .map((match) => match[1])).toEqual(deferred ? [authenticate, echo] : [echo]);
       expect([...catalog.matchAll(/<tools_removed>\n([\s\S]*?)\n<\/tools_removed>/g)]
         .map((match) => match[1])).toEqual([authenticate]);
-      expect(announcements).toHaveLength(2);
+      expect(announcements).toHaveLength(deferred ? 2 : 1);
+      expect(announcements.every((message) =>
+        message.origin?.kind === 'injection' &&
+        isToolSelectAnnouncementDisclosure(message.origin.disclosure) &&
+        message.origin.disclosure.kind === 'delta')).toBe(true);
       expect(afterAuthentication.history.flatMap((message) => toolsOf(message) ?? [])
         .some((tool) => tool.name === echo)).toBe(false);
       const schema = beforeEcho.history.flatMap((message) => toolsOf(message) ?? [])
@@ -625,6 +727,40 @@ describe('same-turn MCP tool replacement', () => {
       await server.close();
       vi.restoreAllMocks();
       vi.unstubAllEnvs();
+    }
+  });
+});
+
+const correctionTest = it.extend<TestkitAgentFixtures>(testkitAgentFixtures());
+
+describe('deferred tool argument correction', () => {
+  correctionTest('retries schema-invalid deferred tool arguments with a correction instead of executing', async ({ agent, model }) => {
+    agent.configure({ modelCapabilities: DISCLOSURE_CAPABILITIES });
+    const weather = new StubMcpTool('deferred_weather');
+    const registration = agent.get(IAgentToolRegistryService).register(weather, {
+      source: 'mcp',
+      disclosure: 'deferred',
+    });
+    try {
+      await agent.restorePersisted();
+      await agent.rpc.setPermission({ mode: 'yolo' });
+      model.script(
+        call('select_tools', { names: ['deferred_weather'] }, { id: 'select-weather', invalid: true }),
+        call('deferred_weather', {}, { id: 'rejected-deferred', rawArguments: '{"query":42}', invalid: true }),
+        call('deferred_weather', { query: 'sf' }, { id: 'valid-deferred', invalid: true }),
+        say('done'),
+      );
+
+      await agent.rpc.prompt({ input: [{ type: 'text', text: 'load and call the deferred weather tool' }] });
+      await agent.untilTurnEnd();
+
+      expect(model.requests('main')).toHaveLength(4);
+      const correction = model.requests('main')[2]!;
+      expect(correction.view.system).toContain('was not executed because its arguments were invalid');
+      expect(JSON.stringify(correction.view.messages)).not.toContain('rejected-deferred');
+      expect(weather.calls).toBe(1);
+    } finally {
+      registration.dispose();
     }
   });
 });

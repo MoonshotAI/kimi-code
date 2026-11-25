@@ -2,6 +2,7 @@
 import { computed, inject, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Markdown } from '@moonshot-ai/app-markdown';
+import { StatusDot } from '@moonshot-ai/app-ui';
 import { panelApiKey } from '@moonshot-ai/app-client/panel';
 import { HistoryStateKey } from '@moonshot-ai/app-core/contracts';
 import { LatestNotifyToolCallIdKey } from '@moonshot-ai/app-client/contracts';
@@ -47,7 +48,7 @@ const open = computed<boolean>({
     :expandable="expandable"
     @toggle="open = !open"
   >
-    <template #leading><span class="pg-dot" aria-hidden="true" /></template>
+    <template #leading><StatusDot status="unread" ring="halo" /></template>
     <span class="pg-title">{{ title }}</span>
     <template #trailing>
       <span v-if="time" class="tl-chip pg-time">{{ time }}</span>
@@ -61,14 +62,6 @@ const open = computed<boolean>({
 </template>
 
 <style scoped>
-.pg-dot {
-  width: 7px;
-  height: 7px;
-  flex: none;
-  border-radius: var(--radius-full);
-  background: var(--color-accent);
-  box-shadow: 0 0 0 3px var(--color-accent-soft);
-}
 .pg-title {
   min-width: 0;
   overflow: hidden;

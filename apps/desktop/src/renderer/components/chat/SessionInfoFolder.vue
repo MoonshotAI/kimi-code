@@ -209,17 +209,17 @@ const branchTooltip = computed(() => {
             @retry="emit('retry')"
           />
         </div>
-        <button
-          v-else-if="pr"
-          type="button"
-          class="sif-line sif-action sif-pr"
-          :title="t('header.openPr')"
-          @click="emit('openPr', pr.url)"
-        >
-          <span class="sif-ico"><Icon :name="pullRequestIcon(pr.state)" size="md" /></span>
-          <span class="sif-pr-number">PR #{{ pr.number }}</span>
-          <SessionPullRequestState class="sif-pr-state" :state="pr.state" />
-        </button>
+        <Tooltip v-else-if="pr" :text="t('header.openPr')">
+          <button
+            type="button"
+            class="sif-line sif-action sif-pr"
+            @click="emit('openPr', pr.url)"
+          >
+            <span class="sif-ico"><Icon :name="pullRequestIcon(pr.state)" size="md" /></span>
+            <span class="sif-pr-number">PR #{{ pr.number }}</span>
+            <SessionPullRequestState class="sif-pr-state" :state="pr.state" />
+          </button>
+        </Tooltip>
         <div v-else-if="prPending" class="sif-line sif-pr-pending">
           <span class="sif-ico"><Icon name="git-pull-request" size="md" /></span>
           <span class="sif-placeholder">-</span>

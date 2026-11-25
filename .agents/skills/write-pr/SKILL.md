@@ -27,11 +27,11 @@ description: 在 kimi-code 仓库里创建或更新 PR 时使用：如何写出�
    - 改动让用户看到的界面或输出变了的，准备视觉证据，见"UI/UX 变化的视觉证据"。
 
 4. 按模板各节写描述。描述用用户当前使用的语言，行为变化表也一样；只有三样固定：PR 标题保持英文 Conventional Commit，changeset 保持英文（见 `gen-changesets` skill），节标题沿用模板原文。
+   - **Screenshots / Recordings**：模板里没有这一节。有可见的 UI/UX 变化时作为第一节放在描述最前面（Requirement or Bug 之前），让 reviewer 打开 PR 先看到效果；没有就不加，见"UI/UX 变化的视觉证据"。
    - **Requirement or Bug**：两三句话讲清谁遇到了什么问题、这个 PR 之后能做到什么；有 issue 的写 `Resolve #<number>`，再补一句背景。解决办法留给 Code Changes。
    - **Bug Reproduction Steps**：只有 bug 类 PR 需要；feature 写 `N/A`。步骤已在 issue 里的写 `See linked issue`。
    - **Root Cause**：只有 bug 类 PR 需要；feature 写 `N/A`。说明根因，以及这是根本修复还是绕过。机制要靠时序或状态才说得清的，用图，见"代码变更的可视化大纲"。
    - **Code Changes**：先判断要不要先建立整体理解，再讲具体变化，见"讲清楚改动"。
-   - **Screenshots / Recordings**：模板里没有这一节。有可见的 UI/UX 变化时加在 Code Changes 后面，没有就不加，见"UI/UX 变化的视觉证据"。
    - **Behavior Changes and Affected Users**：先填行为变化表，再列受影响模块与测试覆盖，见"行为变化与受影响人群"。验证只写结论：覆盖了哪些场景、哪些没验证；测试文件清单、全量运行结果和修复过程放进折叠块。
    - **Checklist**：勾上所有适用的项。
 
@@ -190,27 +190,30 @@ interface SessionEvents {
 | GIF | 只用于交互和时序：按键、展开折叠、流式输出、动画 | 本机有录屏工具就录；没有就退回关键帧截图或文本快照，不为此装工具 |
 
 写法：
-- 加在 Code Changes 后面，节标题 `## Screenshots / Recordings`。
+- 作为第一节放在描述最前面（Requirement or Bug 之前），节标题 `## Screenshots / Recordings`。
 - 改动前后用两列表格并排；全新的界面只放改动后。每组图前用一句话说明该看哪里。
 - 证据来自 PR 分支的真实运行或测试渲染，不要手画示意图冒充。文本快照保持原样，不手工调整对齐。
 - GIF 只录能说明问题的几秒，体积控制在几 MB 内。
 - 素材先放在 `.tmp/pr-media/`，不提交进 PR 分支。
 
-上传：`gh` 不能把图片传成 GitHub 附件，所以把素材推到 origin 上专门放图的孤立分支 `pr-assets/<number>`。在仓库根目录执行：
+上传：`gh` 不能把图片传成 GitHub 附件，所以把素材统一推到 origin 上专门放图的孤立分支 `pr-assets`，按 `<number>/<file>` 分目录存放。在仓库根目录执行：
 
 ```bash
 url=$(git remote get-url origin)
-dir=$(mktemp -d) && cp .tmp/pr-media/<files> "$dir"/ && cd "$dir" && git init -q
-git fetch -q "$url" pr-assets/<number> 2>/dev/null && git reset -q --soft FETCH_HEAD  # 分支已存在就接在后面
-git add -A && git commit -qm "chore: add screenshots for #<number>"
-git push -q "$url" HEAD:refs/heads/pr-assets/<number>
-git rev-parse HEAD  # 链接里的 <sha>
+dir=$(mktemp -d) && cd "$dir" && git init -q
+git fetch -q "$url" pr-assets && git checkout -q FETCH_HEAD  # 基于统一分支最新提交，保留全部已有素材
+mkdir -p <number> && cp "$OLDPWD"/.tmp/pr-media/<files> <number>/
+git add <number> && git commit -qm "chore: add screenshots for #<number>"
+git push -q "$url" HEAD:refs/heads/pr-assets || {
+  git fetch -q "$url" pr-assets && git rebase -q FETCH_HEAD && git push -q "$url" HEAD:refs/heads/pr-assets
+} && git rev-parse HEAD  # 仅在推送成功后输出链接里的 <sha>
 ```
 
-引用写成 `![说明](https://github.com/MoonshotAI/kimi-code/blob/<sha>/<file>?raw=true)`。
+引用写成 `![说明](https://github.com/MoonshotAI/kimi-code/blob/<sha>/<number>/<file>?raw=true)`。
 
-- 链接用 `<sha>`，不要用分支名：追加的提交只含新文件，按分支名引用会让旧图失效。
-- 只推 `pr-assets/` 分支，不建 release。CI 只在 `main` 和 `release/*` 的 push 上触发，这类分支不会跑 CI。
+- 链接用 `<sha>`，不要用分支名：后续更新同名 `<number>/<file>` 时，按分支名引用会让旧图变化。
+- 多人同时上传时推送可能被拒；上述命令会自动 fetch 并 rebase 后重试一次，只有推送成功才会输出 `<sha>`。若 rebase 出现冲突，先 `git rebase --abort`，不要 force push。
+- 只推统一的 `pr-assets` 分支，不再按 PR 新建 `pr-assets/<number>` 分支，也不建 release。CI 只在 `main` 和 `release/*` 的 push 上触发，`pr-assets` 不会跑 CI。
 - 不要 force push，合入后也不要删这个分支，否则引用的提交不可达，图会失效。
 - 本仓库公开，上传等于公开发布。上传前逐张看一遍：用中性的工作区和示例数据截图，画面里不能出现本机用户名路径、API key、真实会话内容，以及内部域名、未发布的模型名这类内部标识。
 - 会话里有人类协作时，推送前列出要上传的文件，等对方确认。

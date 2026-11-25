@@ -24,8 +24,9 @@ function syncMotion(): void {
     return;
   }
   if (spin) return;
+  const duration = parseFloat(getComputedStyle(el).getPropertyValue('--duration-spin'));
   spin = el.animate([{ transform: 'rotate(0deg)' }, { transform: 'rotate(360deg)' }], {
-    duration: 850,
+    duration: Number.isFinite(duration) && duration > 0 ? duration : 700,
     iterations: Infinity,
   });
   spin.startTime = 0;

@@ -10,7 +10,7 @@
   bottom: var(--space-4);
   padding: 0 var(--space-6);
   color: var(--color-text-on-scrim);
-  font-size: var(--ui-font-size-xs);
+  font-size: var(--text-xs);
   text-align: center;
   overflow: hidden;
   text-overflow: ellipsis;

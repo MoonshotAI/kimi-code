@@ -26,7 +26,6 @@ export { default as SessionRow } from './SessionRow.vue';
 export { default as WorkspaceGroup } from './WorkspaceGroup.vue';
 export { default as FilterSelect } from './admin/FilterSelect.vue';
 export { default as MultiSelectMenu } from './admin/MultiSelectMenu.vue';
-export { default as MenuSearchField } from './MenuSearchField.vue';
 export { default as SessionAdminMenu } from './admin/SessionAdminMenu.vue';
 export { default as SessionAdminPagination } from './admin/SessionAdminPagination.vue';
 export { default as SessionAdminTable } from './admin/SessionAdminTable.vue';
@@ -58,10 +57,11 @@ export { default as WorkspaceRecentSessions } from './chat/WorkspaceRecentSessio
 export { default as SelectionActionBubble } from './chat/SelectionActionBubble.vue';
 export { default as TableSelectionContextMenu } from './chat/TableSelectionContextMenu.vue';
 export { default as SideChatPanel } from './chat/SideChatPanel.vue';
+export { default as JumpToBottomPill } from './chat/JumpToBottomPill.vue';
 export { default as StatusGlyph } from './chat/StatusGlyph.vue';
 export { default as StatusPanel } from './chat/StatusPanel.vue';
 export { default as ThinkingBlock } from './chat/ThinkingBlock.vue';
-export { default as ThinkingPanel } from './chat/ThinkingPanel.vue';
+export { default as CompactionPanel } from './chat/CompactionPanel.vue';
 export { default as ToolCall } from './chat/ToolCall.vue';
 export { default as TurnDiffPanel } from './chat/TurnDiffPanel.vue';
 export { default as TurnFilesSummary } from './chat/TurnFilesSummary.vue';
@@ -120,6 +120,7 @@ export { default as AddProviderPage } from './settings/AddProviderPage.vue';
 export { default as BrowserTabTitleSetting } from './settings/BrowserTabTitleSetting.vue';
 export { default as FontSettingsPage } from './settings/FontSettingsPage.vue';
 export { default as FontSettingsRow } from './settings/FontSettingsRow.vue';
+export { default as GlobalAgentsMdSetting } from './settings/GlobalAgentsMdSetting.vue';
 export { default as SettingsSubpage } from './settings/SettingsSubpage.vue';
 export {
   SettingsSubpageHostKey,
@@ -144,6 +145,9 @@ export { default as PluginsPanel } from './settings/PluginsPanel.vue';
 export { default as HostsPanel } from './settings/HostsPanel.vue';
 export { default as WorktreesPanel } from './settings/WorktreesPanel.vue';
 export { default as WorktreeManageDialogHost } from './worktree/ManageDialogHost.vue';
+export { default as DefaultToolsPanel } from './settings/DefaultToolsPanel.vue';
+export { default as DefaultToolsRow } from './settings/DefaultToolsRow.vue';
+export { default as DefaultToolsSetting } from './settings/DefaultToolsSetting.vue';
 export { default as SecondaryModelPicker } from './settings/SecondaryModelPicker.vue';
 
 export * from './chatTurnRendering';

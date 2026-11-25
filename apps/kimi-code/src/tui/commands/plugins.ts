@@ -267,6 +267,7 @@ async function showPluginsPicker(
     initialTab: options?.initialTab,
     selectedId: options?.selectedId,
     pluginHint: options?.pluginHint,
+    terminalRows: () => host.state.terminal.rows,
     onSelect: (selection) => {
       void handlePluginsPanelSelection(
         host,
