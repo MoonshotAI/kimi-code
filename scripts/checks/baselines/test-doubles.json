@@ -64,6 +64,21 @@
     "packages/klient/test/helpers/conformance.ts": 1,
     "packages/product/test/survey-turns.test.ts": 1
   },
+  "engine-mock-provider": {
+    "packages/acp-server/test/_helpers/scriptedProvider.ts": 2,
+    "packages/agent-core-v2/test/agent/fullCompaction/fullCompaction.test.ts": 53,
+    "packages/agent-core-v2/test/agent/llmRequester/llmRequester.test.ts": 10,
+    "packages/agent-core-v2/test/agent/loop/loop.test.ts": 3,
+    "packages/agent-core-v2/test/agent/profile/config-state.test.ts": 4,
+    "packages/agent-core-v2/test/agent/prompt/promptService.test.ts": 2,
+    "packages/agent-core-v2/test/agent/tokenCounting/tokenCounting.test.ts": 1,
+    "packages/agent-core-v2/test/agent/undo/undo.test.ts": 1,
+    "packages/agent-core-v2/test/features/goal/goal.test.ts": 6,
+    "packages/agent-core-v2/test/features/skill/skill.test.ts": 2,
+    "packages/agent-core-v2/test/llm-adapter/model/catalog.test.ts": 2,
+    "packages/agent-core-v2/test/session/subagent/forkParity.test.ts": 5,
+    "packages/klient/test/helpers/conformance.ts": 2
+  },
   "engine-mock-response": {
     "packages/acp-server/test/_helpers/scriptedProvider.ts": 3,
     "packages/acp-server/test/e2e-turn.test.ts": 9,

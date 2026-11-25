@@ -1,25 +1,28 @@
 # 测试指南
 
-> 临时状态：Desktop E2E、E2E smoke 和 Layered QA 目前仅手动触发；主 CI 的 built CLI 子进程旅程和 L0 汇总暂停，普通分片暂时排除 `apps/kimi-code/test/e2e/tui/` 和 `packages/app-core/test/reconnect/`。`packages/kap-server/test/` 和 `tests/scenarios/` 仍在主 CI 自动运行。下文涉及这些自动触发与门禁的段落描述恢复后的配置。
+> 现状：旧的 Desktop E2E（`apps/desktop/e2e/`、`apps/desktop/test/e2e/`）、旧的 TUI E2E（`apps/kimi-code/test/e2e/tui/`）、E2E smoke 和 Layered QA 已停止自动运行，正在迁往 `tests/e2e` 或删除。主 CI 的 built CLI 子进程旅程和 L0 汇总也已暂停，普通分片排除 `packages/app-core/test/reconnect/`。PR 上自动运行的是各包的测试、`tests/scenarios/` 和 `tests/e2e/`。下文 L0、smoke、Desktop 隔离和分层检查几节描述的是暂停前的配置。
 
 先写出用户或调用方依赖的行为，再选能复现故障、能直接观察结果的入口。「桌面用户看到了回答」要读真实窗口。「引擎重试后完成了原回合」可以从引擎会话验收。选定位置后，再读该目录最近的 AGENTS.md。
 
+用户在 TUI、Web、Desktop 或 ACP 编辑器里能观察到的行为，新用例一律写进 [`tests/e2e`](e2e/AGENTS.md)。`apps/desktop/e2e/`、`apps/desktop/test/e2e/` 和 `apps/kimi-code/test/e2e/tui/` 是旧目录：只在把用例迁进 `tests/e2e` 或删除时修改，不新增用例。迁移时照旧用例的断言重写，不 import 旧夹具。`pnpm lint` 里的 `scripts/checks/legacy-e2e.mjs` 按文件冻结这三个目录的用例数。
+
 ## 测试今天写在哪
 
-普通修复优先补到已有覆盖该行为的文件。下表列的是当前仓库入口，路径从仓库根目录算起。
+普通修复优先补到已有覆盖该行为的文件；已有覆盖在上面三个旧目录里的，补到 `tests/e2e`。下表列的是当前仓库入口，路径从仓库根目录算起。
 
 | 要观察的行为 | 现有入口 |
 |---|---|
 | 一个模块的公开接口、边界输入 | 随模块放在所属包的测试目录，如 [core 的 LLM 测试](../packages/core/test/llm/)。桌面主进程和渲染端分别有 [main](../apps/desktop/tests/main/) 和 [renderer](../apps/desktop/tests/renderer/) 测试。 |
 | 真实引擎如何调度工具、压缩历史、结束回合 | 从会话 RPC 发起操作，检查回合结果或下一次模型请求。新用例用 `testkitAgentFixtures()` 取得由 testkit 模型驱动的 `agent`，用 `model.script(...)` 编排回复，旧的 `mockNextResponse` 只留给存量用例。[testkit 驱动的引擎用例](../packages/agent-core-v2/test/integration/conversation/testkit-model.test.ts) · [首轮对话与追问](../packages/agent-core-v2/test/integration/conversation/first-turn.test.ts) · [agent-core-v2 测试](../packages/agent-core-v2/test/) |
 | KAP 客户端能调用哪些接口，运行时能读到什么 | 接口形状看 [KAP 契约测试](../packages/kap-server/test/apiSurface.test.ts)。跨服务端和引擎的行为在 [KAP 场景](scenarios/AGENTS.md)里经 REST、WebSocket 驱动。 |
-| 用户在 Electron 窗口中看到了什么、还能做什么 | [Desktop E2E](../apps/desktop/e2e/) 用 Playwright 操作真实窗口。把可见回复、输入恢复或实际文件变化作为验收结果。 |
-| TUI 如何响应输入，或 CLI 如何结束 | [TUI 首问](../apps/kimi-code/test/e2e/tui/conversation/first-turn.test.ts)启动 CLI 子进程，在标准输入发送字符和 Enter，通过[虚拟终端](../packages/pi-tui/test/virtual-terminal.ts)读取屏幕。[TUI 测试](../apps/kimi-code/test/tui/)另有控制器和布局用例。 |
+| 用户在 TUI、Web、Desktop 或 ACP 编辑器里看到了什么、还能做什么 | [新 E2E](e2e/AGENTS.md) 启动真实产品，只有模型是假的。同一个场景在四个面上跑，只适用部分面时写明理由。把可见回复、工具卡状态和磁盘上的实际变化作为验收结果。 |
+| TUI 控制器和布局 | [TUI 测试](../apps/kimi-code/test/tui/)。 |
+| 无界面 CLI 的输出和退出码 | [CLI 测试](../apps/kimi-code/test/cli/)。 |
 | 客户端如何从协议事件还原会话 | 找到负责消费事件的包，在 [app-core](../packages/app-core/test/) 或 [app-client](../packages/app-client/test/) 的相应测试旁补断言。 |
 
 ## 计划迁入的目录
 
-以下是目标布局。尖括号代表业务或模块名。引擎会话集成和 TUI 读屏目录已接入 Vitest。Desktop 的新 E2E 目录也已接入 Playwright。`tests/e2e` 有自己的 Playwright 配置，TUI、ACP、Desktop、Web 四个面都已接通，写法见[新 E2E 指南](e2e/AGENTS.md)。其余目标目录仍在规划中。已登记的首轮 smoke 见[受保护清单](protected.yaml)。
+以下是目标布局。尖括号代表业务或模块名。引擎会话集成已接入 Vitest。`tests/e2e` 有自己的 Playwright 配置，TUI、ACP、Desktop、Web 四个面都已接通，写法见[新 E2E 指南](e2e/AGENTS.md)。其余目标目录仍在规划中。已登记的首轮 smoke 见[受保护清单](protected.yaml)。
 
 ```text
 packages/<包>/test/unit/<模块>/                   模块单测
@@ -29,32 +32,28 @@ packages/agent-core-v2/test/integration/<领域>/   引擎会话集成
 packages/kap-server/test/contract/                KAP 公开契约
 tests/kap/<领域>/                                 从外部驱动的 KAP 场景
 tests/e2e/scenarios/<业务>/                       新 E2E：各个面共用的用户场景
-apps/desktop/test/e2e/<业务>/                     Electron 用户旅程
-apps/kimi-code/test/e2e/tui/<业务>/               终端键盘与读屏
-apps/kimi-code/test/e2e/tui/pty/                  通过真 PTY 验证宿主终端行为
-apps/kimi-code/test/e2e/print/                    无界面 CLI 的输出与退出码
 packages/app-core/test/replay/                    KAP 客户端回放
 packages/app-client/test/replay/                  渲染端状态回放
 ```
 
-按用户行为逐条迁移。先列出旧用例的断言，在新入口确认 runner 能枚举并执行相应用例，再核对旧文件里其余行为仍有覆盖。接入一个目录时，在同一改动中更新本指南的现有入口、运行命令和对应 CI 的选测范围。尤其要核对 [Desktop 的 spec 发现配置](../apps/desktop/e2e/playwright.config.ts)、[新 E2E 的 Playwright 配置](e2e/playwright.config.ts)和 [Vitest 的项目列表](../vitest.config.ts)。
+按用户行为逐条迁移。先列出旧用例的断言，在新入口确认 runner 能枚举并执行相应用例，再核对旧文件里其余行为仍有覆盖。接入一个目录时，在同一改动中更新本指南的现有入口、运行命令和对应 CI 的选测范围。尤其要核对[新 E2E 的 Playwright 配置](e2e/playwright.config.ts)和 [Vitest 的项目列表](../vitest.config.ts)。
 
 ## 什么时候用 testkit
 
 需要可编排的模型、真实 KAP 会话或隔离工作区时，复用私有包 `@moonshot-ai/testkit`。新使用方在自己的 `devDependencies` 加入 `"@moonshot-ai/testkit": "workspace:^"`。[接入说明](../packages/testkit/README.md)
 
+需要假模型时只用 testkit。`mockNextResponse`、`createMockProvider` 一类的引擎 harness 函数、手写的模型流、各包自己的假 provider 只留给存量用例；只测 loop core、只需要一个 requester 的单元测试可以继续用 `createMockProviderRequester`。测试也不 import 别的包的测试代码，例如 `packages/agent-core-v2/test/harness`。`pnpm lint` 里的 `scripts/checks/test-doubles.mjs` 按文件冻结其中能识别的写法：引擎 harness 的这些函数、手写的 OpenAI 流、VS Code 的假 provider 和跨包 import 测试代码，新增会失败；其余的靠评审。
+
 - **在引擎进程内测试**用 agent-core-v2 harness 的 `testkitAgentFixtures()`。它把 testkit 模型的 `model.fetch` 接到引擎真实的 provider 请求链上，不开端口；收尾时先 `verify()` 再释放引擎。和其他层一样，每个请求都会检查消息序列和工具参数。[引擎用例](../packages/agent-core-v2/test/integration/conversation/testkit-model.test.ts)
-- **控制模型回复**用 `@moonshot-ai/testkit/model`。例如 `model.script(say('hello'))` 安排主通道的下一次回答。测试中途取消时，用命名挂起点等到请求到达。如果要验证已显示的文字，还要等窗口或屏幕实际出现该文字，再触发取消。[假模型指南](../packages/testkit/docs/model.md) · [桌面端接入示例](../packages/testkit/docs/model.md#在桌面端接入假模型)
+- **控制模型回复**用 `@moonshot-ai/testkit/model`。例如 `model.script(say('hello'))` 安排主通道的下一次回答。测试中途取消时，用命名挂起点等到请求到达。如果要验证已显示的文字，还要等窗口或屏幕实际出现该文字，再触发取消。[假模型指南](../packages/testkit/docs/model.md) · [在新 E2E 里接入](../packages/testkit/docs/model.md#在新-e2e-里接入假模型)
 - **从 KAP 发起一轮对话**用 `@moonshot-ai/testkit/kap`。现有场景通过 [scenarioFixtures](scenarios/support/scenario.ts) 和 `@moonshot-ai/testkit/vitest` 取得 `kap`、`model`。用 `const { id } = await kap.createSession()` 创建会话，依次执行 `await kap.prompt(id, 'hi')` 和 `await kap.waitIdle(id)`，再从 `await kap.turns(id)` 检查最终回答。要验实时帧，就在发送前订阅 WebSocket，并等到相应帧。[完整可运行用例](scenarios/conversation.test.ts) · [KAP 场景指南](../packages/testkit/docs/kap-scenarios.md)
 - **隔离数据和工作区**用 `@moonshot-ai/testkit/fixtures`。文件类场景在临时工作区执行，直接读回磁盘内容验收。[夹具、隔离与快照](../packages/testkit/docs/fixtures.md)
 
 Vitest 夹具收尾时会调用 `model.verify()`，检查未消费的脚本、仍挂起的请求等问题。用例本身还要断言产品结果。手动创建假模型时，在断言后调用 `model.verify()`，并在 `finally` 里 `await model.close()`。
 
-## 编写 Desktop 和 TUI 旅程
+## 编写 E2E
 
-- Desktop 新旅程放在 `apps/desktop/test/e2e/<业务>/`。从[桌面夹具](../apps/desktop/e2e/fixtures/app.ts)导入 `testWithProvider` 和 `expect`，用 `provider.script(...)` 编排模型，再用 `app.submit(prompt)` 从窗口发送。夹具在首次启动前配置模型，收尾校验脚本和渲染进程未处理异常。每次 Electron 启动都有独立于宿主的 OS home、Kimi 配置和用户数据；同一旅程内重启复用它们。环境从 testkit 的 `testEnv()` 起步，不继承宿主的模型密钥和代理设置。Kimi 服务地址指向测试主机，两个可选配置接口和 models.dev 目录回 404，目录因此回落到内置快照。Electron 主进程（包括内嵌的 KAP 服务）预加载 testkit 的网络守卫，连接回环以外的地址会被阻止，收尾时报错；渲染进程发出的请求不在守卫范围内。[环境隔离用例](../apps/desktop/test/e2e/environment/home-isolation.spec.ts)
-- TUI 测试用 Vitest 的 `base.extend<TerminalFixtures>(terminalFixtures)`。夹具已启动真实 CLI、配置好假模型并等到首屏。普通键入用 `await terminal.type(text)`，整段粘贴用 `terminal.paste(text)`，提交用 `terminal.press('Enter')`。普通键入的字符间隔模拟人工输入节奏。动作是否成功由 `waitForText`、`waitForTextGone` 或模型事件判定。屏幕和滚动历史可以分别读取。超时会报告最近输入、最后一屏、stderr 和请求状态。[首问示例](../apps/kimi-code/test/e2e/tui/conversation/first-turn.test.ts) · [夹具自测](../apps/kimi-code/test/e2e/tui/support/terminal-session.test.ts)
-- TUI 和 KAP 子进程都经 testkit 的 `TestProcess` 启动，环境来自 `kimiCliEnv`：Kimi 服务地址指向网络守卫会拦截的测试主机，只有两个已知的可选配置接口和 fd 下载在子进程中回 404，其他服务请求都会记为违例。CLI 的 Node 进程尝试其他非回环 TCP 连接时会被阻止，收尾时报错，被强杀后也能读到记录。TUI 使用管道和虚拟屏幕，虚拟终端对查询的应答（例如 DA1）会转回 CLI，尺寸用 `terminalFixturesWith({ columns, rows })` 调整，`type()` 等到输入回显才返回；正常收尾经 CLI 退出，超时才强制清理进程树并报告失败。[真 PTY 冒烟](../apps/kimi-code/test/e2e/tui/terminal/real-pty.test.ts)在 macOS 和 Linux 上借系统的 `script` 命令给 CLI 一个真终端，完成首轮并退出后由同一个 shell 打印终端模式，确认 CLI 把终端恢复成规范模式。这些子进程默认从源码运行 CLI；主 CI 的 `build` 任务构建全部产物后，设置 `TESTKIT_CLI_BUILD=dist` 再跑一遍 TUI 旅程和冷恢复，验证发布包本身。本地先 `pnpm --filter @moonshot-ai/kimi-code run build`，再用同样的变量运行。[进程夹具](../packages/testkit/docs/fixtures.md#启动被测程序的子进程)
+新旅程照[新 E2E 指南](e2e/AGENTS.md)写进 `tests/e2e`。旧目录里的旅程只迁不加：迁一条，就在同一个改动里删掉旧用例，并把它的断言搬到新场景上。被测程序的子进程、隔离环境和网络守卫见[进程夹具](../packages/testkit/docs/fixtures.md#启动被测程序的子进程)。
 
 ## 哪些用例值得成为 L0
 
