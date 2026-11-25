@@ -3516,7 +3516,7 @@ export class KimiTUI {
     this.promptPredictionController.reset();
     this.surveyController.reset();
     this.streamingUI.discardPending();
-    this.streamingUI.resetLoopLifecycle();
+    this.streamingUI.resetContinuation();
     this.resetSteerDeliveries();
     if (options?.keepQueuedMessages !== true) this.clearQueuedMessages();
     this.programStatus.resetSession();
