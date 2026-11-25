@@ -734,15 +734,18 @@ watch(
   { immediate: true },
 );
 
-function archiveWorkspaceOf(session: AppSession): { id: string; label: string } {
+function archiveWorkspaceOf(session: AppSession): { id: string; label: string; path?: string } {
   const id = workspacesStore().workspaceIdForSession(session);
   const workspace = workspacesStore().workspaces.find((w) => w.id === id);
-  return workspace === undefined ? { id: session.cwd, label: session.cwd } : { id, label: workspace.name };
+  if (workspace === undefined) return { id: session.cwd, label: session.cwd };
+  const shortPath = workspacesStore().workspaceById.get(id)?.shortPath ?? workspace.root;
+  return { id, label: workspace.name, path: hostsStore().workspacePathLabel({ shortPath, hostId: workspace.hostId }, t) };
 }
 
 const archiveWorkspaces = computed(() => {
-  const labels = new Map(archivedItems.value.map(archiveWorkspaceOf).map(({ id, label }) => [id, label]));
-  return Array.from(labels, ([value, label]) => ({ value, label })).sort((a, b) => a.label.localeCompare(b.label));
+  const workspaces = new Map(archivedItems.value.map(archiveWorkspaceOf).map((workspace) => [workspace.id, workspace]));
+  return Array.from(workspaces.values(), ({ id, label, path }) => ({ value: id, label, description: path }))
+    .sort((a, b) => a.label.localeCompare(b.label));
 });
 const archiveWorkspaceSelectOptions = computed(() => [
   { value: 'all', label: t('settings.archivedAllWorkspaces') },
@@ -769,8 +772,8 @@ const filteredArchived = computed<AppSession[]>(() => {
   return rows;
 });
 
-const groupedArchived = computed<{ id: string; label: string; items: AppSession[] }[]>(() => {
-  const map = new Map<string, { id: string; label: string; items: AppSession[] }>();
+const groupedArchived = computed<{ id: string; label: string; path?: string; items: AppSession[] }[]>(() => {
+  const map = new Map<string, { id: string; label: string; path?: string; items: AppSession[] }>();
   for (const s of filteredArchived.value) {
     const workspace = archiveWorkspaceOf(s);
     const group = map.get(workspace.id) ?? { ...workspace, items: [] };
@@ -1551,6 +1554,7 @@ defineExpose({ confirmDiscard });
                 <div class="archive-workspace">
                   <Icon name="folder-closed" size="md" />
                   <span class="path">{{ g.label }}</span>
+                  <span v-if="g.path" class="path hint">{{ g.path }}</span>
                   <span class="count">{{ t('settings.archivedSessionsCount', { count: g.items.length }) }}</span>
                 </div>
                 <div class="setting-card">
