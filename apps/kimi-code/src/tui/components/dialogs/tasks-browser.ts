@@ -22,6 +22,7 @@ import {
   fitLineExactly,
   renderViewerFooter,
 } from '#/tui/components/chrome/screen-takeover-view';
+import { TRUNCATION_ELLIPSIS } from '#/tui/constant/rendering';
 import { SELECT_POINTER } from '#/tui/constant/symbols';
 import { currentTheme } from '#/tui/theme';
 import {
@@ -37,8 +38,6 @@ import { sanitizeShellOutput } from '#/tui/utils/shell-output';
 
 import { modelDisplayName } from './model-selector';
 import { STATUS_LABEL, statusColor } from './task-output-viewer';
-
-const ELLIPSIS = '…';
 
 export type TasksFilter = 'all' | 'active';
 
@@ -164,6 +163,9 @@ export class TasksBrowserApp extends ScreenTakeoverView {
   private sortedVisible: BackgroundTaskInfo[];
   private selectedIndex = 0;
   private pendingRevealSelection = true;
+  private lastSelectedRange:
+    | { readonly taskId: string; readonly start: number; readonly end: number }
+    | undefined = undefined;
   private previewRawLines: string[];
   private pendingStopTaskId: string | undefined = undefined;
   private pendingStopTimer: NodeJS.Timeout | undefined = undefined;
@@ -585,6 +587,7 @@ export class TasksBrowserApp extends ScreenTakeoverView {
 
     if (this.sortedVisible.length === 0) {
       this.pendingRevealSelection = false;
+      this.lastSelectedRange = undefined;
       const empty =
         this.props.filter === 'active'
           ? 'No active tasks. Tab = show all.'
@@ -603,10 +606,21 @@ export class TasksBrowserApp extends ScreenTakeoverView {
       });
     }
 
-    if (this.pendingRevealSelection) {
+    const selected = this.sortedVisible[this.selectedIndex];
+    const range = selected === undefined ? undefined : this.listTracker.rangeOf(selected.taskId);
+    const rangeChanged =
+      selected !== undefined &&
+      range !== undefined &&
+      (this.lastSelectedRange === undefined ||
+        this.lastSelectedRange.taskId !== selected.taskId ||
+        this.lastSelectedRange.start !== range.start ||
+        this.lastSelectedRange.end !== range.end);
+    this.lastSelectedRange =
+      selected !== undefined && range !== undefined
+        ? { taskId: selected.taskId, start: range.start, end: range.end }
+        : undefined;
+    if (this.pendingRevealSelection || rangeChanged) {
       this.pendingRevealSelection = false;
-      const selected = this.sortedVisible[this.selectedIndex];
-      const range = selected === undefined ? undefined : this.listTracker.rangeOf(selected.taskId);
       if (range !== undefined) {
         this.listPane.scrollView.scrollIntoView(range.start, range.end, { silent: true });
       }
@@ -642,7 +656,7 @@ export class TasksBrowserApp extends ScreenTakeoverView {
       singleLine(task.description) ||
       (task.kind === 'process' ? singleLine(task.command) : '') ||
       '(no description)';
-    const desc = truncateToWidth(description, descBudget, ELLIPSIS);
+    const desc = truncateToWidth(description, descBudget, TRUNCATION_ELLIPSIS);
     return fitLineExactly(`${prefix} ${currentTheme.fg('text', desc)}`, innerWidth);
   }
 
@@ -654,7 +668,7 @@ export class TasksBrowserApp extends ScreenTakeoverView {
 
   private renderModelRow(text: string, innerWidth: number): string {
     const indent = '  ';
-    const clipped = truncateToWidth(text, Math.max(0, innerWidth - indent.length), ELLIPSIS);
+    const clipped = truncateToWidth(text, Math.max(0, innerWidth - indent.length), TRUNCATION_ELLIPSIS);
     return fitLineExactly(indent + currentTheme.fg('textMuted', clipped), innerWidth);
   }
 

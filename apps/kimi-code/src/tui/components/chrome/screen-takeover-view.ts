@@ -16,6 +16,7 @@ import {
 } from '@moonshot-ai/pi-tui';
 import chalk from 'chalk';
 
+import { TRUNCATION_ELLIPSIS } from '#/tui/constant/rendering';
 import { currentTheme } from '#/tui/theme';
 import {
   SpanHitMap,
@@ -26,8 +27,6 @@ import {
 import { printableChar } from '#/tui/utils/printable-key';
 
 import { OverflowScrollView } from './overflow-scroll-view';
-
-const ELLIPSIS = '…';
 
 function mouseTarget(component: Component, event: TuiMouseEvent): TuiMouseDispatchResult['target'] {
   return {
@@ -45,7 +44,7 @@ export function fitLineExactly(line: string, width: number): string {
   const w = visibleWidth(line);
   if (w === safeWidth) return line;
   if (w > safeWidth) {
-    const truncated = truncateToWidth(line, safeWidth, ELLIPSIS);
+    const truncated = truncateToWidth(line, safeWidth, TRUNCATION_ELLIPSIS);
     const tw = visibleWidth(truncated);
     return tw < safeWidth ? truncated + ' '.repeat(safeWidth - tw) : truncated;
   }

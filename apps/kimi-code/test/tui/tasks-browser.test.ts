@@ -1312,4 +1312,60 @@ describe('TasksBrowserApp — fullscreen mouse, panes, and layout parity', () =>
     await vt.waitForRender();
     expect(onCancel).toHaveBeenCalledTimes(1);
   });
+
+  it('reveals the selected task when polling re-sorts its row while preserving wheel scroll on steady polls', async () => {
+    const initialTasks = [
+      task({ taskId: 'bash-00000001', status: 'running', startedAt: 1 }),
+      ...Array.from({ length: 18 }, (_, i) =>
+        task({
+          taskId: `bash-${String(i + 2).padStart(8, '0')}`,
+          status: 'completed',
+          startedAt: 100 - i,
+        }),
+      ),
+    ];
+
+    const vt = new VirtualTerminal(100, 14);
+    const ui = new TuiAltScreen(vt, undefined, undefined, { wheelScrollLines: 3 });
+    const app = new TasksBrowserApp(
+      makeProps({ tasks: initialTasks, selectedTaskId: 'bash-00000001' }),
+      vt,
+    );
+    const takeover = beginScreenTakeover(ui, app);
+    ui.setFocus(app);
+    ui.start();
+    onTestFinished(() => {
+      endScreenTakeover(ui, takeover);
+      ui.stop();
+    });
+    await vt.waitForRender();
+
+    const listColumnText = (): string =>
+      vt
+        .getViewport()
+        .slice(2, 12)
+        .map((line) => strip(line).slice(0, 28))
+        .join('\n');
+
+    expect(listColumnText()).toContain('bash-00000001');
+
+    vt.sendInput('\x1b[<65;6;6M');
+    vt.sendInput('\x1b[<65;6;6M');
+    await vt.waitForRender();
+    expect(listColumnText()).not.toContain('bash-00000001');
+
+    app.setProps(makeProps({ tasks: [...initialTasks], selectedTaskId: 'bash-00000001' }));
+    ui.requestRender();
+    await vt.waitForRender();
+    expect(listColumnText()).not.toContain('bash-00000001');
+
+    const reorderedTasks = [
+      task({ taskId: 'bash-00000001', status: 'completed', startedAt: 1 }),
+      ...initialTasks.slice(1),
+    ];
+    app.setProps(makeProps({ tasks: reorderedTasks, selectedTaskId: 'bash-00000001' }));
+    ui.requestRender();
+    await vt.waitForRender();
+    expect(listColumnText()).toContain('bash-00000001');
+  });
 });
