@@ -234,7 +234,7 @@ onUnmounted(hideHover);
         <button
           type="button"
           class="wsb-row cp-row"
-          :class="{ on: row.selected, active: activeIndex === index }"
+          :class="{ on: row.selected, active: activeIndex === index, 'has-desc': row.includeLocalChanges }"
           role="option"
           tabindex="-1"
           :aria-selected="row.selected"
@@ -373,8 +373,21 @@ onUnmounted(hideHover);
   font-weight: var(--weight-section-label);
   user-select: none;
 }
+.wsb-search.ui-menu-search {
+  margin-top: calc(-1 * var(--space-1));
+  padding-block: calc(var(--menu-item-padding-block) + var(--space-1) / 2);
+}
 .wsb-row {
   min-height: var(--wsb-row-h);
+}
+.wsb-row.cp-row.has-desc {
+  align-items: flex-start;
+}
+.wsb-row.has-desc > .wsb-glyph {
+  margin-top: calc((var(--text-base) * var(--leading-normal) - 16px) / 2);
+}
+.wsb-row.has-desc > .wsb-row-check {
+  margin-top: calc((var(--text-base) * var(--leading-normal) - 14px) / 2);
 }
 .wsb-row .wsb-glyph {
   color: var(--color-text-muted);

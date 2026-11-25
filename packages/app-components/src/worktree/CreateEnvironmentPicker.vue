@@ -193,8 +193,12 @@ function onPanelKeydown(event: KeyboardEvent): void {
 .wce-row.disabled {
   cursor: default;
 }
+.wce-row.cp-row {
+  align-items: flex-start;
+}
 .wce-row-icon {
   flex: none;
+  margin-top: calc((var(--text-base) * var(--leading-normal) - 16px) / 2);
   color: var(--color-text-muted);
 }
 .wce-row-text {
@@ -221,6 +225,7 @@ function onPanelKeydown(event: KeyboardEvent): void {
 }
 .wce-row-end {
   flex: none;
+  margin-top: calc((var(--text-base) * var(--leading-normal) - 14px) / 2);
   margin-left: var(--space-3);
   color: var(--color-text);
 }
