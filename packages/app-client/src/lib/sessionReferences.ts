@@ -80,21 +80,26 @@ function localWorkspaceId(session: Pick<AppSession, 'workspaceId' | 'hostId'>): 
   return session.hostId === undefined ? session.workspaceId ?? null : null;
 }
 
+function loadedSession(sessionId: string): AppSession | undefined {
+  return sessionsStore().sessions.find((session) => session.id === sessionId);
+}
+
 function referencedWorkspaceId(sessionId: string): string | null | undefined {
-  const loaded = sessionsStore().sessions.find((session) => session.id === sessionId);
+  const loaded = loadedSession(sessionId);
   return loaded === undefined ? fetchedWorkspaceBySession.get(sessionId) : localWorkspaceId(loaded);
 }
 
 export function hasUnresolvedSessionReferences(text: string): boolean {
-  return mayContainSessionLink(text) && referencedSessions(text).some(({ sessionId }) => referencedWorkspaceId(sessionId) === undefined);
+  return mayContainSessionLink(text) && referencedSessions(text).some(({ sessionId }) => loadedSession(sessionId) === undefined);
 }
 
 export async function resolveSessionReferences(text: string): Promise<void> {
-  const missing = referencedSessions(text).filter(({ sessionId }) => referencedWorkspaceId(sessionId) === undefined);
-  await Promise.all(missing.map(async ({ sessionId }) => {
+  const unloaded = referencedSessions(text).filter(({ sessionId }) => loadedSession(sessionId) === undefined);
+  await Promise.all(unloaded.map(async ({ sessionId }) => {
     try {
       fetchedWorkspaceBySession.set(sessionId, localWorkspaceId(await getKimiWebApi().getSession(sessionId, { background: true })));
     } catch {
+      fetchedWorkspaceBySession.delete(sessionId);
     }
   }));
 }

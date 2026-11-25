@@ -30,6 +30,10 @@ export interface SessionSelectionDeps {
   setSessionLoading: (loading: boolean) => void;
 }
 
+function locationPath(): string | undefined {
+  return typeof window === 'undefined' ? undefined : window.location.pathname;
+}
+
 export function createSessionSelection(deps: SessionSelectionDeps) {
   let navigationAttempt = 0;
   let selectionGeneration = 0;
@@ -155,8 +159,9 @@ export function createSessionSelection(deps: SessionSelectionDeps) {
   async function openSessionLink(sessionId: string, source: SessionCreatedSource): Promise<void> {
     if (!sessionsStore().sessions.some((s) => s.id === sessionId)) {
       const attempt = ++navigationAttempt;
+      const path = locationPath();
       const outcome = await fetchSessionIntoList(sessionId);
-      if (attempt !== navigationAttempt) return;
+      if (attempt !== navigationAttempt || locationPath() !== path) return;
       if (outcome !== 'ok') {
         warningsStore().pushWarning({
           severity: 'warning',

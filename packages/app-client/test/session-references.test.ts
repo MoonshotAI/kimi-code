@@ -191,8 +191,21 @@ describe('withSessionReferences', () => {
     await resolveSessionReferences(text);
 
     expect(getSession).toHaveBeenCalledExactlyOnceWith('session_old', { background: true });
-    expect(hasUnresolvedSessionReferences(text)).toBe(false);
     expect(withSessionReferences(text)).toContain(`<session id="session_old" title="Old work" log="${logPath(API_WORKSPACE, 'session_old')}" />`);
+  });
+
+  it('looks an unloaded session up again before each send and drops it once it is gone', async () => {
+    getSession.mockResolvedValueOnce(session('session_deleted_later', { workspaceId: API_WORKSPACE }));
+    const text = `continue ${mention('session_deleted_later', 'Old work')}`;
+    await resolveSessionReferences(text);
+    expect(withSessionReferences(text)).toContain('id="session_deleted_later"');
+
+    getSession.mockRejectedValueOnce(new Error('session not found'));
+    expect(hasUnresolvedSessionReferences(text)).toBe(true);
+    await resolveSessionReferences(text);
+
+    expect(getSession).toHaveBeenCalledTimes(2);
+    expect(withSessionReferences(text)).toBe(text);
   });
 
   it('leaves out sessions on a remote host and retries sessions it could not fetch', async () => {
@@ -214,7 +227,6 @@ describe('withSessionReferences', () => {
     expect(block).toContain('id="session_1"');
     expect(block).not.toMatch(/remote_loaded|remote_fetched|gone/);
     expect(hasUnresolvedSessionReferences(text)).toBe(true);
-    expect(hasUnresolvedSessionReferences(mention('remote_fetched', 'Fetched remote'))).toBe(false);
   });
 
   it('lists sessions referenced with the earlier <workspaceId>/<sessionId> links', () => {
