@@ -143,6 +143,8 @@ export function stubLoopWithHooks(options: StubLoopOptions = {}): StubLoop {
       });
     },
     start: async () => {},
+    started: false,
+    hasPersistedState: false,
     baselineTools: () => [],
     bindingSnapshot: () => ({ thinkingLevel: 'off', systemPrompt: '' }),
     setProfile: async () => {},

@@ -39,6 +39,7 @@ import { TOWER_FLAG_ID } from '#/features/tower/tower';
 import { ITowerRateLimitService } from '#/features/tower/towerRateLimit';
 import {
   TowerFeature,
+  TOWER_TOOL_CONTRIBUTIONS,
   isTowerFeatureAssembled,
 } from '#/features/tower/towerFeature';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
@@ -101,25 +102,39 @@ describe('TowerFeature — experimental flag gating', () => {
     const profiles = collectionViewOf(host.app, AgentProfileContribution).items;
     expect(profiles).toHaveLength(1);
     expect(profiles[0]!.sourceId).toBe('feature:tower');
+    const contributedAgentServices = manager
+      .contributedServices()
+      .filter((entry) => entry.scope === LifecycleScope.Agent)
+      .map((entry) => entry.id);
+    for (const tool of TOWER_TOOL_CONTRIBUTIONS) {
+      expect(contributedAgentServices).toContain(tool.id);
+    }
     const agent = host.child(LifecycleScope.Agent, 'agent-1');
-    const tools = collectionViewOf(agent, AgentToolContribution).items.map((record) =>
-      record.options.name,
-    );
-    expect(tools.toSorted()).toEqual(
+    const records = collectionViewOf(agent, AgentToolContribution).items;
+    expect(records.map((record) => record.options.name).toSorted()).toEqual(
       [
         'TowerComplete',
         'TowerFinding',
         'TowerInbox',
-        'TowerInit',
-        'TowerMerge',
         'TowerMission',
-        'TowerPlan',
-        'TowerRebase',
         'TowerReview',
         'TowerSend',
-        'TowerSpawn',
         'TowerStatus',
-        'TowerTeardown',
+      ].toSorted(),
+    );
+    expect(
+      records
+        .filter((record) => record.options.when !== undefined)
+        .map((record) => record.options.name)
+        .toSorted(),
+    ).toEqual(
+      [
+        'TowerFinding',
+        'TowerInbox',
+        'TowerMission',
+        'TowerReview',
+        'TowerSend',
+        'TowerStatus',
       ].toSorted(),
     );
     host.dispose();
@@ -198,7 +213,7 @@ describe('TowerFeature — config-sourced flag assembly', () => {
         ),
     ).toHaveLength(1);
     const agent = host.child(LifecycleScope.Agent, 'agent-1');
-    expect(collectionViewOf(agent, AgentToolContribution).items).toHaveLength(13);
+    expect(collectionViewOf(agent, AgentToolContribution).items).toHaveLength(7);
     host.dispose();
   });
 
