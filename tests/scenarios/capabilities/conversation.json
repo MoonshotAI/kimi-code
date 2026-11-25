@@ -29,6 +29,7 @@
     "kap.tasks": "Background task controls exist only in KAP.",
     "kap.agent_close": "Side-channel (btw) agents exist only in KAP; ACP sessions have none to close.",
     "kap.session_continue": "Continuing an interrupted or failed turn without a new user message is a KAP session action; ACP has no request for it.",
+    "kap.system_stats": "Usage of the computer running the server, read by desktop and web clients for remote devices. ACP has no corresponding request.",
     "acp.loadSession": "Not compared yet: KAP returns turn pages, while ACP replays session updates.",
     "acp.promptCapabilities.image": "Not compared yet: KAP sends images as uploaded files.",
     "acp.promptCapabilities.embeddedContext": "Embedded resources are an ACP prompt format with no KAP counterpart.",
@@ -45,7 +46,8 @@
   "advertised": {
     "kap": {
       "websocket": true, "file_upload": true, "feedback": true, "fs_query": true, "mcp": true, "tasks": true,
-      "interactions_list": true, "session_wait": true, "agent_close": true, "session_continue": true
+      "interactions_list": true, "session_wait": true, "agent_close": true, "session_continue": true,
+      "system_stats": true
     },
     "acp": {
       "loadSession": true,
