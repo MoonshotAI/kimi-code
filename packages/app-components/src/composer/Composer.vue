@@ -163,6 +163,7 @@ const props = defineProps<{
   hideContext?: boolean;
   submitDisabled?: boolean;
   sessionSubmitBlockedReason?: string;
+  sessionSubmitBlockedTooltip?: string;
   statusNote?: string;
   beforeSubmit?: () => boolean;
   deferSubmitReset?: boolean;
@@ -3580,7 +3581,7 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
         @change="handleFileInputChange"
       />
 
-      <div ref="toolbarRef" class="toolbar">
+      <div ref="toolbarRef" class="toolbar" :inert="composerStatusNote !== undefined || undefined">
         <div ref="menuMeasureRef" class="menu-measure" aria-hidden="true">
           <span class="pd-desc" />
         </div>
@@ -3807,7 +3808,6 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
             </template>
           </button>
           </Tooltip>
-          <span v-if="composerStatusNote" class="status-note" role="status">{{ composerStatusNote }}</span>
           <Tooltip v-if="stopButtonVisible" :text="t(interruptArmed ? 'composer.interruptConfirm' : 'composer.interruptTitle')">
             <button
               class="stop"
@@ -3931,6 +3931,20 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
           </Menu>
         </Transition>
       </div>
+
+      <Transition name="trust-overlay">
+        <div
+          v-if="composerStatusNote"
+          class="trust-overlay"
+          role="status"
+          :aria-label="sessionSubmitBlockedTooltip ?? composerStatusNote"
+        >
+          <div class="trust-overlay-pill">
+            <Spinner size="sm" class="trust-overlay-spinner" />
+            <span class="trust-overlay-text">{{ composerStatusNote }}</span>
+          </div>
+        </div>
+      </Transition>
   </div>
 
   <!-- Optional footer (empty-session workspace picker) — a sibling of the
@@ -4549,14 +4563,61 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
   color: var(--color-text-muted);
 }
 
-.status-note {
+.trust-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: var(--z-raised);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-3);
+  border-radius: inherit;
+  corner-shape: inherit;
+  background: color-mix(in srgb, var(--color-composer-bg) 60%, transparent);
+  pointer-events: none;
+  user-select: none;
+}
+.trust-overlay-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  max-width: 100%;
+  min-height: var(--composer-control-size);
+  padding: var(--space-1-5) var(--space-4);
+  border: var(--p-hairline) solid var(--color-line);
+  border-radius: var(--radius-full);
+  background: var(--color-surface-raised);
+  box-shadow: var(--shadow-xs);
+  color: var(--color-text);
+  font-family: var(--font-ui);
+  font-size: var(--text-sm);
+  line-height: 1.4;
+}
+.trust-overlay-spinner {
   flex: none;
-  max-width: 40%;
+  color: var(--color-accent);
+}
+.trust-overlay-text {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: var(--text-xs);
-  color: var(--color-text-faint);
+}
+.trust-overlay-enter-active {
+  transition: opacity var(--duration-base) var(--ease-out) 150ms;
+}
+.trust-overlay-leave-active {
+  transition: opacity var(--duration-fast) var(--ease-out);
+}
+.trust-overlay-enter-from,
+.trust-overlay-leave-to {
+  opacity: 0;
+}
+@media (prefers-reduced-motion: reduce) {
+  .trust-overlay-enter-active,
+  .trust-overlay-leave-active {
+    transition: none;
+  }
 }
 
 .send {
